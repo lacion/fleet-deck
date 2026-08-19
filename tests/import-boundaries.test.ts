@@ -35,6 +35,7 @@ const BOARD_SRC = path.join(REPO, 'board', 'src');
 const CONTRACTS = path.join(REPO, 'contracts');
 const APP = path.join(DAEMON, 'app');
 const LIVE_LAYER = path.join(APP, 'live-layer.ts');
+const BOOTSTRAP_PROCESS_RUNTIME = path.join(APP, 'bootstrap-process-runtime.ts');
 const PLATFORM = path.join(DAEMON, 'platform');
 const UNSTABLE_IMPORTS_REGISTER = path.join(
   REPO,
@@ -633,6 +634,51 @@ test('boundary: native implementations are selected only in app/live-layer.ts', 
     violations,
     [],
     `only app/live-layer.ts may select a native platform implementation:\n${violations.join('\n')}`,
+  );
+});
+
+test('policy: P3 has exactly one pre-root ManagedRuntime in its bootstrap bridge', () => {
+  const daemonSources = walkSources(DAEMON);
+  const importViolations = scan(
+    daemonSources,
+    (file, spec) => spec === 'effect/ManagedRuntime' && file !== BOOTSTRAP_PROCESS_RUNTIME,
+  );
+  assert.deepEqual(
+    importViolations,
+    [],
+    `ManagedRuntime is permitted only in P3's disposable bootstrap bridge:\n${importViolations.join('\n')}`,
+  );
+
+  const bridgeSource = fs.readFileSync(BOOTSTRAP_PROCESS_RUNTIME, 'utf8');
+  assert.ok(
+    specifiersOf(BOOTSTRAP_PROCESS_RUNTIME, bridgeSource).includes('effect/ManagedRuntime'),
+    'the P3 bootstrap bridge must own the sole ManagedRuntime import until P4 deletes it',
+  );
+  const bridgeAst = ts.createSourceFile(
+    BOOTSTRAP_PROCESS_RUNTIME,
+    bridgeSource,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  let managedRuntimeMakeCalls = 0;
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.expression) &&
+      node.expression.expression.text === 'ManagedRuntime' &&
+      node.expression.name.text === 'make'
+    ) {
+      managedRuntimeMakeCalls += 1;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(bridgeAst);
+  assert.equal(
+    managedRuntimeMakeCalls,
+    1,
+    'the P3 bootstrap bridge must construct exactly one lazy ProcessRunner ManagedRuntime',
   );
 });
 

@@ -3,6 +3,12 @@ import * as Layer from 'effect/Layer';
 import type { StartupError } from './errors.ts';
 import { AppConfig, type AppConfigService } from './services/app-config.ts';
 import { ProcessRunner, type ProcessRunnerService } from './services/process-runner.ts';
+import { ProcessRunnerLive } from '../platform/bun/process-runner-live.ts';
+
+// Native selection belongs in this module. The temporary P3 bootstrap bridge
+// imports this re-export rather than reaching into platform/** itself; P4
+// deletes the bridge and provides this Layer from the one daemon root.
+export { ProcessRunnerLive };
 
 export interface LiveLayerOptions<E extends StartupError> {
   readonly config: AppConfigService;

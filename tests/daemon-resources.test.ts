@@ -5,6 +5,7 @@ import {
   type CloseOwner,
   type CoreLifecycleOwner,
   type HttpLifecycleOwner,
+  type ProcessRuntimeOwner,
 } from '../src/daemon/daemon-resources.ts';
 
 function owner(events: string[], name: string, fail = false): CloseOwner {
@@ -37,6 +38,17 @@ function httpOwner(events: string[]): HttpLifecycleOwner {
     },
     close() {
       events.push('http.close');
+    },
+  };
+}
+
+function processRuntimeOwner(events: string[]): ProcessRuntimeOwner {
+  return {
+    quiesce() {
+      events.push('runtime.quiesce');
+    },
+    close() {
+      events.push('runtime.close');
     },
   };
 }
@@ -126,6 +138,64 @@ describe('DaemonResources', () => {
       'db',
       'pid',
     ]);
+  });
+
+  test('process runtime refuses work first and disposes after callers but before SQLite', async () => {
+    const events: string[] = [];
+    const resources = new DaemonResources({
+      processRuntime: { name: 'runtime', owner: processRuntimeOwner(events) },
+      http: httpOwner(events),
+      core: coreOwner(events),
+      producers: [{ name: 'agents', owner: owner(events, 'agents') }],
+      discovery: [{ name: 'mdns', owner: owner(events, 'mdns') }],
+      store: { name: 'db', owner: owner(events, 'db') },
+      process: { name: 'pid', owner: owner(events, 'pid') },
+    });
+
+    await resources.close();
+
+    assert.deepEqual(events, [
+      'runtime.quiesce',
+      'http.quiesce',
+      'core.quiesce',
+      'agents',
+      'mdns',
+      'http.releaseHolds',
+      'http.close',
+      'core.close',
+      'runtime.close',
+      'db',
+      'pid',
+    ]);
+  });
+
+  test('a process-runtime disposal failure keeps SQLite alive but still releases the pid', async () => {
+    const events: string[] = [];
+    const diagnostics: string[] = [];
+    const resources = new DaemonResources({
+      processRuntime: {
+        name: 'runtime',
+        owner: {
+          quiesce() {
+            events.push('runtime.quiesce');
+          },
+          close() {
+            events.push('runtime.close');
+            throw new Error('runtime finalizer failed');
+          },
+        },
+      },
+      store: { name: 'db', owner: owner(events, 'db') },
+      process: { name: 'pid', owner: owner(events, 'pid') },
+      onCloseError(name) {
+        diagnostics.push(name);
+      },
+    });
+
+    await resources.close();
+
+    assert.deepEqual(events, ['runtime.quiesce', 'runtime.close', 'pid']);
+    assert.deepEqual(diagnostics, ['runtime.close']);
   });
 
   test('publishes the close promise before an owner callback can re-enter', async () => {

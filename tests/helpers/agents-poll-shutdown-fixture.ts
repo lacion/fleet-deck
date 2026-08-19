@@ -1,9 +1,8 @@
-// Direct-argv stand-in for `claude agents --json` used by the real-daemon P1
+// Direct-argv stand-in for `claude agents --json` used by the real-daemon P3
 // shutdown proof. It publishes its pid before waiting so the test can signal
 // fleetd only after execFileP owns a live child. A release marker starts a delay
-// longer than the historical 1.5 s root watchdog but shorter than the poller's
-// 5 s exec timeout; the eventual empty registry would tombstone every live
-// agents-cli card if startAgentsPoll delivered it after stop began.
+// shorter than the poller's 5 s exec timeout. P3 must interrupt this sleep,
+// reap the child, and suppress the eventual empty registry during shutdown.
 
 import { existsSync, writeFileSync } from 'node:fs';
 

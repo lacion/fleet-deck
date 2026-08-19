@@ -8,8 +8,12 @@ import * as Exit from 'effect/Exit';
 import * as Fiber from 'effect/Fiber';
 import {
   ApplicationQuiescingError,
+  ProcessNonZeroExitError,
+  ProcessOutputLimitError,
   ProcessRunnerStartupError,
   ProcessRunnerUnavailableError,
+  ProcessSpawnError,
+  ProcessTimeoutError,
   StartupConfigurationError,
 } from '../../src/daemon/app/errors.ts';
 import { kernelProbe } from '../../src/daemon/app/kernel.ts';
@@ -55,7 +59,7 @@ async function forceRetire(child: Bun.Subprocess, label: string): Promise<void> 
 }
 
 describe('Effect application kernel', () => {
-  test('tagged startup and application families remain narrow Error values', () => {
+  test('tagged startup, application, and process families remain narrow Error values', () => {
     const configuration = new StartupConfigurationError({
       setting: 'port',
       message: 'must be a positive integer',
@@ -66,12 +70,44 @@ describe('Effect application kernel', () => {
       operation: 'spawn',
       message: 'application is quiescing',
     });
+    const spawnResult = { ok: false as const, code: 'ENOENT', err: 'missing executable' };
+    const spawn = new ProcessSpawnError({
+      message: spawnResult.err,
+      result: spawnResult,
+    });
+    const nonZeroResult = { ok: false as const, code: 7, err: 'process exited 7' };
+    const nonZero = new ProcessNonZeroExitError({
+      message: nonZeroResult.err,
+      exitCode: 7,
+      result: nonZeroResult,
+    });
+    const timeoutResult = { ok: false as const, code: 'ETIMEDOUT', err: 'timed out after 25ms' };
+    const timeout = new ProcessTimeoutError({
+      message: timeoutResult.err,
+      timeoutMs: 25,
+      result: timeoutResult,
+    });
+    const outputResult = {
+      ok: false as const,
+      code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER',
+      err: 'subprocess output exceeded 1048576 bytes',
+    };
+    const outputLimit = new ProcessOutputLimitError({
+      message: outputResult.err,
+      maxOutputBytes: 1_048_576,
+      result: outputResult,
+    });
 
     assert.ok(configuration instanceof Error);
     assert.equal(configuration._tag, 'StartupConfigurationError');
     assert.equal(startup._tag, 'ProcessRunnerStartupError');
     assert.equal(unavailable._tag, 'ProcessRunnerUnavailableError');
     assert.equal(quiescing._tag, 'ApplicationQuiescingError');
+    assert.equal(spawn._tag, 'ProcessSpawnError');
+    assert.equal(nonZero._tag, 'ProcessNonZeroExitError');
+    assert.equal(timeout._tag, 'ProcessTimeoutError');
+    assert.equal(outputLimit._tag, 'ProcessOutputLimitError');
+    assert.equal(spawn.result, spawnResult);
   });
 
   test('Live Layer composes successful config with effectful service acquisition', async () => {
@@ -88,6 +124,14 @@ describe('Effect application kernel', () => {
             out: `${config.version}:${request.argv.join('|')}`,
           });
         },
+        runBounded: () =>
+          Effect.succeed({
+            code: 0,
+            stdout: Buffer.alloc(0),
+            stderr: '',
+            truncated: false,
+            timedOut: false,
+          }),
       } satisfies ProcessRunnerService;
     });
     const layer = makeLiveLayer({
@@ -145,8 +189,47 @@ describe('Effect application kernel', () => {
     );
   });
 
+  test('fake Layers preserve typed process failures, interruption, and defects', async () => {
+    const result = { ok: false as const, code: 'ETIMEDOUT', err: 'timed out after 10ms' };
+    const typedError = new ProcessTimeoutError({
+      message: result.err,
+      timeoutMs: 10,
+      result,
+    });
+    const typed = makeFakeProcessRunner({ execute: () => Effect.fail(typedError) });
+    const typedLayer = fakeKernelLayer({ processRunner: typed }).layer;
+    const typedExit = await runEffectExit(
+      Effect.provide(kernelProbe({ argv: ['typed-failure'] }), typedLayer),
+    );
+    assert.ok(Exit.isFailure(typedExit));
+    assert.equal(Exit.hasFails(typedExit), true);
+    assert.equal(Cause.squash(typedExit.cause), typedError);
+
+    const interrupted = makeFakeProcessRunner({ execute: () => Effect.interrupt });
+    const interruptedLayer = fakeKernelLayer({ processRunner: interrupted }).layer;
+    const interruptedExit = await runEffectExit(
+      Effect.provide(kernelProbe({ argv: ['interrupted'] }), interruptedLayer),
+    );
+    assert.ok(Exit.isFailure(interruptedExit));
+    assert.equal(Cause.hasInterruptsOnly(interruptedExit.cause), true);
+
+    const defect = new Error('fake process defect');
+    const defective = makeFakeProcessRunner({ execute: () => Effect.die(defect) });
+    const defectiveLayer = fakeKernelLayer({ processRunner: defective }).layer;
+    const defectExit = await runEffectExit(
+      Effect.provide(kernelProbe({ argv: ['defect'] }), defectiveLayer),
+    );
+    assert.ok(Exit.isFailure(defectExit));
+    assert.equal(Exit.hasDies(defectExit), true);
+    assert.equal(Cause.squash(defectExit.cause), defect);
+  });
+
   test('runEffectExit keeps typed failures and defects distinct', async () => {
-    const typedError = new ProcessRunnerUnavailableError({ message: 'expected refusal' });
+    const failure = { ok: false as const, code: 'ENOENT', err: 'expected refusal' };
+    const typedError = new ProcessSpawnError({
+      message: failure.err,
+      result: failure,
+    });
     const defect = new Error('unexpected defect');
     const typedExit = await runEffectExit(Effect.fail(typedError));
     const defectExit = await runEffectExit(Effect.die(defect));

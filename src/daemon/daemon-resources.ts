@@ -19,9 +19,18 @@ export interface HttpLifecycleOwner extends CloseOwner {
   releaseHolds: () => MaybePromise<unknown>;
 }
 
+export interface ProcessRuntimeOwner extends CloseOwner {
+  quiesce: () => MaybePromise<unknown>;
+}
+
 export interface NamedCloseOwner {
   name: string;
   owner: CloseOwner;
+}
+
+export interface NamedProcessRuntimeOwner {
+  name: string;
+  owner: ProcessRuntimeOwner;
 }
 
 export interface DaemonResourcesOptions {
@@ -29,6 +38,7 @@ export interface DaemonResourcesOptions {
   core?: CoreLifecycleOwner;
   producers?: NamedCloseOwner[];
   discovery?: NamedCloseOwner[];
+  processRuntime?: NamedProcessRuntimeOwner;
   store?: NamedCloseOwner;
   process?: NamedCloseOwner;
   onCloseError?: (name: string, error: unknown) => void;
@@ -54,6 +64,7 @@ export class DaemonResources {
   private core: CoreLifecycleOwner | null = null;
   private readonly producers: NamedCloseOwner[] = [];
   private readonly discovery: NamedCloseOwner[] = [];
+  private processRuntime: NamedProcessRuntimeOwner | null = null;
   private store: NamedCloseOwner | null = null;
   private process: NamedCloseOwner | null = null;
   private readonly onCloseError: (name: string, error: unknown) => void;
@@ -65,6 +76,7 @@ export class DaemonResources {
     this.core = options.core ?? null;
     this.producers.push(...(options.producers ?? []));
     this.discovery.push(...(options.discovery ?? []));
+    this.processRuntime = options.processRuntime ?? null;
     this.store = options.store ?? null;
     this.process = options.process ?? null;
     this.onCloseError =
@@ -92,6 +104,11 @@ export class DaemonResources {
   addDiscovery(name: string, owner: CloseOwner): void {
     this.assertOpen();
     this.discovery.push({ name, owner });
+  }
+
+  setProcessRuntime(name: string, owner: ProcessRuntimeOwner): void {
+    this.assertOpen();
+    this.processRuntime = { name, owner };
   }
 
   setStore(name: string, owner: CloseOwner): void {
@@ -151,9 +168,18 @@ export class DaemonResources {
   }
 
   private async closeOnce(): Promise<void> {
-    // Refuse native ingress first. Quiescing core maintenance prevents expiry or
+    // Refuse Promise-facade process submissions before any callback can enqueue
+    // more native work. The runtime itself stays alive until every legacy
+    // caller has joined, so interrupted Effects can finish their cleanup while
+    // HTTP/core still own the state their continuations may observe.
+    let storeSafe = await this.attempt(
+      this.processRuntime ? `${this.processRuntime.name}.quiesce` : 'process-runtime.quiesce',
+      this.processRuntime?.owner.quiesce,
+    );
+
+    // Refuse native ingress next. Quiescing core maintenance prevents expiry or
     // retention callbacks from racing the later transport/store phases.
-    let storeSafe = await this.attempt('http.quiesce', this.http?.quiesce);
+    storeSafe = (await this.attempt('http.quiesce', this.http?.quiesce)) && storeSafe;
     storeSafe = (await this.attempt('core.quiesce', this.core?.quiesce)) && storeSafe;
 
     // Stop and join every producer before discovery withdraws or downstream
@@ -165,9 +191,20 @@ export class DaemonResources {
     storeSafe = (await this.attempt('http.releaseHolds', this.http?.releaseHolds)) && storeSafe;
     storeSafe = (await this.attempt('http.close', this.http?.close)) && storeSafe;
 
-    // Core close joins retention/question maintenance. Only after every store
-    // user is gone may SQLite close; pid ownership is released last.
+    // Core close joins retention/question maintenance. Only now can the
+    // pre-root ManagedRuntime be disposed: every Promise caller has returned,
+    // and its ProcessRunner Layer finalizer joins any remaining child cleanup.
     storeSafe = (await this.attempt('core.close', this.core?.close)) && storeSafe;
+    if (this.processRuntime) {
+      storeSafe =
+        (await this.attempt(
+          `${this.processRuntime.name}.close`,
+          this.processRuntime.owner.close,
+        )) && storeSafe;
+    }
+
+    // Only after every store user is gone may SQLite close; pid ownership is
+    // released last.
     // A rejected upstream close cannot prove that its DB-using callbacks are
     // gone. The process will still release the pid and exit non-zero, at which
     // point the OS closes SQLite; closing it here would permit a late callback

@@ -1,10 +1,12 @@
 import * as Effect from 'effect/Effect';
 import * as Layer from 'effect/Layer';
-import type { ProcessRunnerUnavailableError } from '../../src/daemon/app/errors.ts';
+import type { ProcessError, ProcessRunnerUnavailableError } from '../../src/daemon/app/errors.ts';
 import { AppConfig, type AppConfigService } from '../../src/daemon/app/services/app-config.ts';
 import {
+  type BoundedProcessRequest,
+  type BoundedProcessResult,
   type ProcessRequest,
-  type ProcessResult,
+  type ProcessSuccess,
   ProcessRunner,
   type ProcessRunnerService,
 } from '../../src/daemon/app/services/process-runner.ts';
@@ -22,19 +24,22 @@ export function fakeAppConfigLayer(
 }
 
 export interface FakeProcessRunnerOptions {
-  readonly execute?: (
-    request: ProcessRequest,
-  ) => Effect.Effect<ProcessResult, ProcessRunnerUnavailableError>;
+  readonly execute?: (request: ProcessRequest) => Effect.Effect<ProcessSuccess, ProcessError>;
+  readonly executeBounded?: (
+    request: BoundedProcessRequest,
+  ) => Effect.Effect<BoundedProcessResult, ProcessRunnerUnavailableError>;
 }
 
 export interface FakeProcessRunner {
   readonly requests: readonly ProcessRequest[];
+  readonly boundedRequests: readonly BoundedProcessRequest[];
   readonly service: ProcessRunnerService;
   readonly layer: Layer.Layer<ProcessRunner>;
 }
 
 export function makeFakeProcessRunner(options: FakeProcessRunnerOptions = {}): FakeProcessRunner {
   const requests: ProcessRequest[] = [];
+  const boundedRequests: BoundedProcessRequest[] = [];
   const execute =
     options.execute ??
     ((request: ProcessRequest) =>
@@ -42,15 +47,30 @@ export function makeFakeProcessRunner(options: FakeProcessRunnerOptions = {}): F
         ok: true as const,
         out: request.argv.join('\u0000'),
       }));
+  const executeBounded =
+    options.executeBounded ??
+    (() =>
+      Effect.succeed({
+        code: 0,
+        stdout: Buffer.alloc(0),
+        stderr: '',
+        truncated: false,
+        timedOut: false,
+      }));
   const service: ProcessRunnerService = {
     run(request) {
       requests.push(request);
       return execute(request);
     },
+    runBounded(request) {
+      boundedRequests.push(request);
+      return executeBounded(request);
+    },
   };
 
   return {
     requests,
+    boundedRequests,
     service,
     layer: Layer.succeed(ProcessRunner, service),
   };

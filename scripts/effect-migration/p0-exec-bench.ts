@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, writeSync } from 'nod
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execFileP } from '../../src/daemon/exec.ts';
+import { bindExecFileDelegate, execFileP } from '../../src/daemon/exec.ts';
 import type { ExecResult } from '../../src/daemon/exec.ts';
 import { summarize, writeJsonReport } from './metrics.ts';
 
@@ -1357,6 +1357,17 @@ async function main(): Promise<void> {
     return;
   }
   const scratch = mkdtempSync(path.join(tmpdir(), 'fleetdeck-p0-exec-bench-'));
+  // Internal fixture children recursively execute this file. Load Effect and
+  // the candidate runtime only in the parent benchmark so child readiness
+  // remains comparable to P0 instead of paying kernel initialization first.
+  const { createBootstrapProcessRuntimeBridge } = await import(
+    '../../src/daemon/app/bootstrap-process-runtime.ts'
+  );
+  const processRuntime = createBootstrapProcessRuntimeBridge();
+  const unbindExecFile = bindExecFileDelegate({
+    run: processRuntime.run,
+    runBounded: processRuntime.runBounded,
+  });
   const ownership = new FixtureOwnership();
   const overallBefore = resourceSnapshot();
   const overallStartedAt = performance.now();
@@ -1501,7 +1512,7 @@ async function main(): Promise<void> {
       baseline: {
         module: 'src/daemon/exec.ts',
         export: 'execFileP',
-        implementation: 'node:child_process spawn under Bun',
+        implementation: 'Bun.spawn through ProcessRunnerLive and BootstrapRuntimeBridge',
         directArgv: true,
         shell: false,
         combinedOutputLimitBytes: MAX_OUTPUT_BYTES,
@@ -1566,7 +1577,13 @@ async function main(): Promise<void> {
     });
     process.exitCode = 1;
   } finally {
-    rmSync(scratch, { recursive: true, force: true });
+    processRuntime.quiesce();
+    try {
+      await processRuntime.close();
+    } finally {
+      unbindExecFile();
+      rmSync(scratch, { recursive: true, force: true });
+    }
   }
 }
 

@@ -101,7 +101,8 @@ function hasLiveInteractive(records: unknown): boolean {
  * Start the agents-cli poller against a running core (a derive.mjs
  * createCore() instance). stop() is idempotent: it clears the pending timer,
  * prevents post-quiesce callbacks, and joins the current tick. It deliberately
- * does not cancel an in-flight subprocess; that belongs to the P3 process seam.
+ * does not cancel an in-flight subprocess by itself. During daemon shutdown,
+ * P3's process-runtime owner interrupts it before this producer is joined.
  *
  * v1.2: the owned-pane liveness sweep (CONTRACT "Owned-pane liveness", ~10 s)
  * rides this same cadence — so the timers now ALWAYS run; disabling the
@@ -131,8 +132,8 @@ export function startAgentsPoll(
     if (stopped) return;
     if (agentsEnabled && Date.now() >= nextAgentsPollAt) {
       const out = await runAgents(argv);
-      // P1 can join but cannot cancel the current exec. Once stop() begins,
-      // discard its late result so shutdown cannot mutate core state afterward.
+      // stop() always suppresses a late result. P3 daemon shutdown additionally
+      // interrupts the owned exec through the process-runtime bridge first.
       if (stopped) return;
       let validPoll = false;
       let records: unknown;

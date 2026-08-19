@@ -10,13 +10,13 @@
 // (agents-poll.mjs), which tokenizes the operator-supplied FLEETDECK_AGENTS_CMD
 // on whitespace and runs it by argv. There is therefore NO shell execution
 // anywhere in the daemon — the no-shell security boundary holds without exception.
+// files.ts uses the same single bound facade through the overload below, while
+// retaining its older partial-byte/truncation result instead of ExecResult.
 //
 // One sibling wrapper deliberately does NOT share this and is not moved here:
 //   - repo-identity.mjs `git()` is SYNCHRONOUS (execFileSync) on purpose — its
 //     caller (derive.mjs) consumes results inline while building SQL, and making
 //     it async would thread Promises into session state (see its own comment).
-import { spawn } from 'node:child_process';
-import type { ChildProcess } from 'node:child_process';
 // Both are pure string functions (payload-capture itself imports only
 // node:fs/node:path, so this stays acyclic). NOTHING added below runs a
 // subprocess, let alone a shell: the no-shell boundary declared above is a
@@ -32,151 +32,119 @@ export type ExecResult =
   | { ok: true; out: string }
   | { ok: false; code?: string | number | null | undefined; err: string };
 
-// Grace between the timeout's SIGTERM and the SIGKILL escalation below.
-// 1s is enough for tmux/git/agents-cli to exit cleanly on TERM, and bounds the
-// worst-case overshoot of any advertised deadline to timeout + 1s.
-const KILL_GRACE_MS = 1_000;
-const MAX_OUTPUT_BYTES = 1024 * 1024;
-
-interface ExecOptions {
+export interface ExecOptions {
   timeout?: number;
   env?: NodeJS.ProcessEnv;
   signal?: AbortSignal | undefined;
   killTree?: boolean;
+  cwd?: string;
+  stdin?: string | Uint8Array;
 }
 
-function signalChild(child: ChildProcess, signal: NodeJS.Signals, killTree: boolean): void {
-  try {
-    if (killTree && process.platform !== 'win32' && child.pid != null) {
-      // A detached POSIX child leads its own process group. Git credential/SSH
-      // helpers are grandchildren, so killing only `git clone` leaves exactly
-      // the stuck `coder gitssh` process this boundary exists to cancel.
-      process.kill(-child.pid, signal);
-    } else {
-      child.kill(signal);
-    }
-  } catch {
-    /* already gone */
-  }
+export interface ExecBoundedOptions {
+  timeout: number;
+  maxBytes: number;
+  env?: NodeJS.ProcessEnv;
+  cwd?: string;
+  stdin?: string | Uint8Array;
+}
+
+/** Plain compatibility DTO: domain modules remain independent of app/Effect. */
+export interface ExecRequest {
+  readonly argv: readonly [executable: string, ...arguments_: string[]];
+  readonly cwd?: string;
+  readonly env?: Readonly<Record<string, string | undefined>>;
+  readonly stdin?: string | Uint8Array;
+  readonly timeoutMs?: number;
+  readonly signal?: AbortSignal;
+  readonly killTree?: boolean;
+}
+
+export interface ExecBoundedRequest {
+  readonly argv: readonly [executable: string, ...arguments_: string[]];
+  readonly cwd?: string;
+  readonly env?: Readonly<Record<string, string | undefined>>;
+  readonly stdin?: string | Uint8Array;
+  readonly timeoutMs: number;
+  readonly maxBytes: number;
+}
+
+export interface ExecBoundedResult {
+  readonly code: number | null;
+  readonly stdout: Buffer;
+  readonly stderr: string;
+  readonly truncated: boolean;
+  readonly timedOut: boolean;
+}
+
+export interface ExecFileDelegate {
+  readonly run: (request: ExecRequest) => Promise<ExecResult>;
+  readonly runBounded: (request: ExecBoundedRequest) => Promise<ExecBoundedResult>;
+}
+
+let execFileDelegate: ExecFileDelegate | null = null;
+
+/**
+ * Bind the sole temporary P3 Promise facade to its already-owned runtime edge.
+ * Production binds once before opening SQLite; tests bind an injected driver.
+ * P4 replaces this binding with the root IngressSupervisor in one synchronous
+ * composition step, and P13 removes the facade with its final legacy callers.
+ */
+export function bindExecFileDelegate(delegate: ExecFileDelegate): () => void {
+  if (execFileDelegate) throw new Error('execFileP delegate is already bound');
+  execFileDelegate = delegate;
+  let bound = true;
+  return () => {
+    if (!bound) return;
+    bound = false;
+    if (execFileDelegate === delegate) execFileDelegate = null;
+  };
 }
 
 export function execFileP(
   cmd: string,
   args: readonly string[],
-  { timeout = 30_000, env, signal, killTree = false }: ExecOptions = {},
-): Promise<ExecResult> {
-  return new Promise<ExecResult>((resolve) => {
-    try {
-      let done = false;
-      let killTimer: NodeJS.Timeout | null = null;
-      let deadline: NodeJS.Timeout | null = null;
-      let child: ChildProcess | null = null;
-      const abort = () => {
-        settle(() => ({ ok: false, code: 'ECANCELED', err: 'cancelled' }));
-        if (child) terminate(child);
-      };
-      // Settle EXACTLY once, on whatever happens first — exit, error, or our
-      // own wall-clock deadline. execFile's `timeout` only SIGTERMs the child;
-      // the CALLBACK still waits for the pipes to close, so a child that
-      // ignores TERM (or that leaves a grandchild holding an inherited
-      // stdout/stderr pipe open) would keep the callback — and this promise —
-      // pending forever, silently wedging agents-poll's whole scheduling loop.
-      // The deadline timer therefore OWNS settlement: it kills the child, kills
-      // the attempt, and resolves regardless of what the child does later.
-      const settle = (fn: () => ExecResult) => {
-        if (done) return;
-        done = true;
-        if (killTimer) clearTimeout(killTimer);
-        if (deadline) clearTimeout(deadline);
-        signal?.removeEventListener('abort', abort);
-        resolve(fn());
-      };
-      const terminate = (target: ChildProcess) => {
-        signalChild(target, 'SIGTERM', killTree);
-        killTimer = setTimeout(() => {
-          if (target.pid == null) return;
-          let alive = true;
-          try {
-            // A cancellable clone owns a detached process GROUP. Its leader can
-            // exit after SIGTERM while an SSH or credential-helper descendant
-            // remains, so probing only the leader would suppress escalation.
-            const probe = killTree && process.platform !== 'win32' ? -target.pid : target.pid;
-            process.kill(probe, 0);
-          } catch {
-            alive = false;
-          }
-          if (alive) signalChild(target, 'SIGKILL', killTree);
-        }, KILL_GRACE_MS);
-        killTimer.unref();
-      };
-      child = spawn(cmd, [...args], {
-        shell: false,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        windowsHide: true,
-        detached: killTree && process.platform !== 'win32',
-        // Always pass the LIVE process.env explicitly. Under Node this equals
-        // the default inheritance and is a no-op. Under Bun it is load-bearing:
-        // node:child_process's default env inheritance uses an environ
-        // SNAPSHOT taken at process start, so runtime mutations otherwise do
-        // not reach the child.
-        env: env ? { ...process.env, ...env } : process.env,
-      });
-      const stdout: Buffer[] = [];
-      const stderr: Buffer[] = [];
-      let outputBytes = 0;
-      const capture = (chunks: Buffer[], chunk: Buffer | string) => {
-        if (done) return;
-        const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-        outputBytes += data.byteLength;
-        if (outputBytes > MAX_OUTPUT_BYTES) {
-          settle(() => ({
-            ok: false,
-            code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER',
-            err: `subprocess output exceeded ${MAX_OUTPUT_BYTES} bytes`,
-          }));
-          if (child) terminate(child);
-          return;
-        }
-        chunks.push(data);
-      };
-      child.stdout?.on('data', (chunk: Buffer | string) => {
-        capture(stdout, chunk);
-      });
-      child.stderr?.on('data', (chunk: Buffer | string) => {
-        capture(stderr, chunk);
-      });
-      child.once('error', (err) => {
-        settle(() => ({
-          ok: false,
-          code: 'code' in err ? (err.code as string | number | undefined) : undefined,
-          err: err.message || err.name,
-        }));
-      });
-      child.once('close', (code) => {
-        const out = Buffer.concat(stdout).toString('utf8');
-        const errorText = Buffer.concat(stderr).toString('utf8').trim();
-        if (code === 0) settle(() => ({ ok: true, out }));
-        else settle(() => ({ ok: false, code, err: errorText || `process exited ${code ?? ''}` }));
-      });
-      deadline = setTimeout(() => {
-        // Settle FIRST: settle() clears any armed killTimer, and only this
-        // timeout path can leave a child alive needing a KILL (every other
-        // settle means execFile's callback ran, i.e. the child already
-        // exited), so the escalation below is armed AFTER settlement on
-        // purpose.
-        settle(() => ({ ok: false, code: 'ETIMEDOUT', err: `timed out after ${timeout}ms` }));
-        if (child) terminate(child);
-      }, timeout);
-      // The deadline (and the escalation grace below) exist only to bound THIS
-      // attempt; they must not keep the daemon's event loop alive when they are
-      // the only handles left.
-      deadline.unref();
-      if (signal?.aborted) abort();
-      else signal?.addEventListener('abort', abort, { once: true });
-    } catch (err) {
-      resolve({ ok: false, err: err instanceof Error ? err.message || String(err) : String(err) });
-    }
-  });
+  options: ExecBoundedOptions,
+): Promise<ExecBoundedResult>;
+export function execFileP(
+  cmd: string,
+  args: readonly string[],
+  options?: ExecOptions,
+): Promise<ExecResult>;
+export function execFileP(
+  cmd: string,
+  args: readonly string[],
+  options: ExecOptions | ExecBoundedOptions = {},
+): Promise<ExecResult | ExecBoundedResult> {
+  const delegate = execFileDelegate;
+  if (!delegate) return Promise.reject(new Error('execFileP process runtime is not bound'));
+
+  if ('maxBytes' in options) {
+    const request: ExecBoundedRequest = {
+      argv: [cmd, ...args],
+      timeoutMs: options.timeout,
+      maxBytes: options.maxBytes,
+      ...(options.env === undefined ? {} : { env: options.env }),
+      ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+      ...(options.stdin === undefined ? {} : { stdin: options.stdin }),
+    };
+    return Promise.resolve().then(() => delegate.runBounded(request));
+  }
+
+  const { timeout = 30_000, env, signal, killTree = false, cwd, stdin } = options;
+
+  const request: ExecRequest = {
+    argv: [cmd, ...args],
+    timeoutMs: timeout,
+    ...(env === undefined ? {} : { env }),
+    ...(signal === undefined ? {} : { signal }),
+    ...(killTree ? { killTree: true } : {}),
+    ...(cwd === undefined ? {} : { cwd }),
+    ...(stdin === undefined ? {} : { stdin }),
+  };
+  // Defer invocation by one microtask, preserving the old API's always-Promise
+  // publication even if a future binding accidentally throws synchronously.
+  return Promise.resolve().then(() => delegate.run(request));
 }
 
 // Distil a git subprocess's stderr down to the one line a human needs on a

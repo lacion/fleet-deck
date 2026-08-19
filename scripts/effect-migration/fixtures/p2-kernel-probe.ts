@@ -20,6 +20,14 @@ const layer = makeLiveLayer({
           out: `${config.version}:${request.argv.join('\u0000')}`,
         });
       },
+      runBounded: () =>
+        Effect.succeed({
+          code: 0,
+          stdout: Buffer.alloc(0),
+          stderr: '',
+          truncated: false,
+          timedOut: false,
+        }),
     } satisfies ProcessRunnerService;
   }),
 });

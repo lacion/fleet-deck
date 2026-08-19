@@ -11,8 +11,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn, type ChildProcess } from 'node:child_process';
 import { deriveRepo } from './repo-identity.ts';
+import { execFileP } from './exec.ts';
 import { dropOrphanSurrogate } from './helpers.ts';
 import type { Statements } from './statements.ts';
 
@@ -354,90 +354,11 @@ export function runBounded(
   args: readonly string[],
   { cwd, timeoutMs, maxBytes, input = null }: RunOptions,
 ): Promise<RunResult> {
-  return new Promise((resolve) => {
-    let child: ChildProcess;
-    try {
-      child = spawn(cmd, args, {
-        cwd,
-        windowsHide: true,
-        stdio: [input == null ? 'ignore' : 'pipe', 'pipe', 'pipe'],
-        // Live env, not Bun's startup snapshot (see exec.ts); a no-op under Node.
-        env: process.env,
-      });
-    } catch (error) {
-      resolve({
-        code: null,
-        stdout: Buffer.alloc(0),
-        stderr: error instanceof Error ? error.message : String(error),
-        truncated: false,
-        timedOut: false,
-      });
-      return;
-    }
-
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-    let bytes = 0;
-    let truncated = false;
-    let timedOut = false;
-    let settled = false;
-    let spawnError: Error | null = null;
-
-    const take = (chunks: Buffer[], chunk: Buffer): void => {
-      const remaining = Math.max(0, maxBytes - bytes);
-      if (remaining) chunks.push(chunk.subarray(0, remaining));
-      bytes += chunk.length;
-      if (bytes > maxBytes && !truncated) {
-        truncated = true;
-        try {
-          child.kill('SIGKILL');
-        } catch {
-          /* already gone */
-        }
-      }
-    };
-    child.stdout?.on('data', (chunk: Buffer) => {
-      take(stdout, chunk);
-    });
-    child.stderr?.on('data', (chunk: Buffer) => {
-      take(stderr, chunk);
-    });
-    child.on('error', (error: Error) => {
-      spawnError = error;
-    });
-
-    const timer = setTimeout(() => {
-      timedOut = true;
-      truncated = true;
-      try {
-        child.kill('SIGKILL');
-      } catch {
-        /* already gone */
-      }
-    }, timeoutMs);
-    timer.unref();
-
-    child.on('close', (code: number | null) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve({
-        code,
-        stdout: Buffer.concat(stdout),
-        stderr: spawnError
-          ? String(spawnError.message || spawnError)
-          : Buffer.concat(stderr).toString('utf8'),
-        truncated,
-        timedOut,
-      });
-    });
-
-    if (input != null) {
-      child.stdin?.on('error', () => {
-        /* early child exit */
-      });
-      child.stdin?.end(input);
-    }
+  return execFileP(cmd, args, {
+    timeout: timeoutMs,
+    maxBytes,
+    ...(cwd === undefined ? {} : { cwd }),
+    ...(input === null ? {} : { stdin: input }),
   });
 }
 

@@ -12,6 +12,8 @@ change as its import. Candidate areas in the migration plan are not pre-approval
 <!-- unstable-import-registry:start -->
 | Exact import | Rationale | Owning tests | Last reviewed RC | Rollback module |
 | --- | --- | --- | --- | --- |
+| `effect/unstable/process/ChildProcess` | P3.9 comparison of the public command, pipeline, stream, and scope contract against a Bun-native adapter. | `tests/effect/bun-child-process-spawner.test.ts` | `4.0.0-rc.110` | `src/daemon/platform/bun/child-process-spawner.ts` |
+| `effect/unstable/process/ChildProcessSpawner` | P3.9 implementation of the RC.110 process service and handle contract without selecting it in the production Live Layer. | `tests/effect/bun-child-process-spawner.test.ts` | `4.0.0-rc.110` | `src/daemon/platform/bun/child-process-spawner.ts` |
 <!-- unstable-import-registry:end -->
 
 The register is intentionally empty at P2. The approved cohort is `4.0.0-rc.110`; an RC upgrade

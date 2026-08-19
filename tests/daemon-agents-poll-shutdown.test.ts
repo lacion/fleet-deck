@@ -69,7 +69,7 @@ function pidAlive(pid: number | null): boolean {
   }
 }
 
-test('P1 real SIGTERM joins an in-flight agents poll, suppresses its result, and leaves no child', {
+test('P3 real SIGTERM cancels and joins an in-flight agents poll without delivering its result', {
   timeout: 20_000,
 }, async (t) => {
   const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-p1-agents-shutdown-'));
@@ -132,24 +132,22 @@ test('P1 real SIGTERM joins an in-flight agents poll, suppresses its result, and
   });
   assert.equal(pidAlive(fixturePid), true, 'poll child is live before SIGTERM');
 
-  // Publish the gate immediately before SIGTERM. The fixture now remains live
-  // for 2 s: below execFileP's 5 s timeout, above the removed 1.5 s fallback.
+  // Publish the gate immediately before SIGTERM. The fixture would now remain
+  // live for 2 s, below execFileP's 5 s timeout, unless P3 interruption owns it.
   writeFileSync(releaseFile, 'complete after shutdown begins\n');
   const exited = childExit(daemon.proc);
+  const signaledAt = Date.now();
   assert.equal(daemon.proc.kill('SIGTERM'), true);
   const result = await within(exited, 'fleetd joining its in-flight agents poll');
 
   assert.deepEqual(result, { code: 0, signal: null }, daemon.stderr || daemon.stdout);
   assert.equal(
     existsSync(completedFile),
-    true,
-    'fleetd did not exit until the accepted poll command completed naturally',
+    false,
+    'the interrupted poll command must not reach its natural completion marker',
   );
-  await waitUntil(() => !pidAlive(fixturePid), {
-    timeoutMs: 1_000,
-    intervalMs: 10,
-    label: 'agents poll fixture child to be reaped',
-  });
+  assert.equal(pidAlive(fixturePid), false, 'daemon exit follows poll child cleanup/reap');
+  assert.ok(Date.now() - signaledAt < scaleMs(2_000), 'shutdown interrupts the 2 s fixture sleep');
 
   const verified = openDb(path.join(home, 'fleetd.db'));
   try {

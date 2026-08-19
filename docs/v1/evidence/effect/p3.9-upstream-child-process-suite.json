@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "phase": "P3.9",
+  "generatedAtUtc": "2026-08-19T19:37:12Z",
+  "subject": "Effect RC.110 Bun-native ChildProcessSpawner upstream comparison",
+  "upstream": {
+    "repository": "https://github.com/Effect-TS/effect.git",
+    "baseCommit": "66114151c2b4640bf773f2b3456ce70d679422f6",
+    "currentMainApplyCheckCommit": "d5689682e963f43157571cd71d4b422247ae09b9"
+  },
+  "artifact": {
+    "path": "docs/v1/evidence/effect/upstream/effect-platform-bun-child-process-spawner-rc110.patch",
+    "sha256": "6dd17fec62838b6a70a6fa155a551a9aad8b60b259c07877cd6c6a65e1ffe2f1",
+    "upstreamFiles": [
+      "packages/platform/bun/src/BunChildProcessSpawner.ts",
+      "packages/platform/bun/test/BunChildProcessSpawner.test.ts"
+    ]
+  },
+  "runtimeFloor": {
+    "bunVersion": "1.3.14",
+    "bunRevision": "1.3.14+0d9b296af",
+    "pnpmVersion": "11.20.0",
+    "nodeBootstrapVersion": "26.4.0"
+  },
+  "normalizedCommands": {
+    "checkout": "git checkout --detach 66114151c2b4640bf773f2b3456ce70d679422f6 && git apply $FLEETDECK/docs/v1/evidence/effect/upstream/effect-platform-bun-child-process-spawner-rc110.patch",
+    "install": "pnpm install --frozen-lockfile --ignore-scripts --store-dir $PNPM_STORE",
+    "format": "pnpm exec dprint check packages/platform/bun/src/BunChildProcessSpawner.ts packages/platform/bun/test/BunChildProcessSpawner.test.ts",
+    "typecheck": "pnpm --filter @effect/platform-bun check",
+    "suite": "bun node_modules/vitest/vitest.mjs run --project @effect/platform-bun packages/platform/bun/test/BunChildProcessSpawner.test.ts"
+  },
+  "bootstrap": {
+    "workspaceProjects": 41,
+    "installedPackages": 1124,
+    "lockfileFrozen": true,
+    "installScriptsEnabledForAuthoritativeLinuxRun": false,
+    "freshStoreDownloadedPackages": 1124
+  },
+  "checks": {
+    "patchApplyRc110": {
+      "status": "pass",
+      "commit": "66114151c2b4640bf773f2b3456ce70d679422f6"
+    },
+    "patchApplyCurrentMain": {
+      "status": "pass",
+      "commit": "d5689682e963f43157571cd71d4b422247ae09b9"
+    },
+    "dprint": {
+      "status": "pass"
+    },
+    "platformBunTypecheck": {
+      "status": "pass",
+      "host": "macOS arm64"
+    },
+    "linuxSuite": {
+      "status": "pass",
+      "host": "Linux arm64",
+      "containerImage": "oven/bun:1.3.14",
+      "containerDigest": "sha256:e10577f0db68676a7024391c6e5cb4b879ebd17188ab750cf10024a6d700e5c4",
+      "testFilesPassed": 1,
+      "testsPassed": 61,
+      "testsSkipped": 7,
+      "testsFailed": 0,
+      "durationSeconds": 3.53
+    }
+  },
+  "skips": {
+    "count": 7,
+    "reason": "The shared upstream additionalFds group is disabled because Bun 1.3.14 cannot reliably publish EOF for parent-to-child additional descriptor pipes; the adapter separately asserts typed BadArgument refusal."
+  },
+  "portabilityObservation": {
+    "host": "macOS arm64",
+    "status": "upstream-fixture-race",
+    "detail": "A fresh cold full run saw only the Bash leader at the shared fixture's fixed 100 ms process-count assertion (expected at least 7, observed 1). The same shared test passed when targeted, a direct Bun process-group probe observed 13 group members after 100 ms, and the authoritative Linux run passed the complete suite. No adapter source change was made for this host timing race."
+  }
+}

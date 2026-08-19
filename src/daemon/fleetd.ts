@@ -14,8 +14,10 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDb } from './db.ts';
+import { createBootstrapProcessRuntimeBridge } from './app/bootstrap-process-runtime.ts';
 import { DaemonResources } from './daemon-resources.ts';
 import { createCore } from './derive.ts';
+import { bindExecFileDelegate } from './exec.ts';
 import { createHttp, isLoopbackAddress, parseTrustedOrigins } from './http.ts';
 import { startAgentsPoll } from './agents-poll.ts';
 import { createPayloadCapture } from './payload-capture.ts';
@@ -534,6 +536,24 @@ daemonResources.setProcess('pid-file', { close: removeOwnedPidFile });
 let db: ReturnType<typeof openDb>;
 let core: ReturnType<typeof createCore>;
 try {
+  // P3's only pre-root runtime is registered before any subprocess-capable
+  // core/store acquisition. A failure anywhere below therefore closes the
+  // exact acquired prefix and unbinds the Promise facade with it.
+  const bootstrapProcessRuntime = createBootstrapProcessRuntimeBridge();
+  const unbindExecFile = bindExecFileDelegate({
+    run: bootstrapProcessRuntime.run,
+    runBounded: bootstrapProcessRuntime.runBounded,
+  });
+  daemonResources.setProcessRuntime('bootstrap-process-runtime', {
+    quiesce: bootstrapProcessRuntime.quiesce,
+    close: async () => {
+      try {
+        await bootstrapProcessRuntime.close();
+      } finally {
+        unbindExecFile();
+      }
+    },
+  });
   db = openDb(DB_FILE);
   daemonResources.setStore('sqlite', { close: () => db.close() });
   core = createCore(db, { port: PORT, version }); // holdMs resolves from FLEETDECK_HOLD_MS inside
@@ -951,8 +971,8 @@ async function shutdown(): Promise<void> {
   // The plain P1 aggregate is now the sole normal cleanup path. It stops
   // admission, joins producers, releases held hooks while HTTP can still
   // answer, closes transports/maintenance, then closes SQLite and the owned
-  // pidfile. In-flight subprocess interruption remains deliberately deferred
-  // to the shared P3 process seam.
+  // pidfile. P3's registered runtime owner interrupts and joins subprocesses
+  // before any producer, transport, core, or SQLite owner can retire.
   await daemonResources.close();
   process.exit(discoveryShutdownTimedOut || daemonResources.closeErrors.length > 0 ? 1 : 0);
 }
