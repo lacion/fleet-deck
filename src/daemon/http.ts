@@ -150,6 +150,7 @@ class HttpResShim {
   private _headers: Record<string, string> = {};
   private _ended = false;
   private _destroyed = false;
+  private _closeEmitted = false;
   // A1/C: which per-request idle FIN (if any) is armed. 'refuse' = the ~4s FIN
   // set by shouldKeepAlive on the oversized-refuse path; 'stall' = the
   // BODY_STALL_FIN_S bound armed by boundStalledDrain when the body-drain grace
@@ -182,13 +183,7 @@ class HttpResShim {
       'abort',
       () => {
         this._destroyed = true;
-        for (const cb of this._closeListeners) {
-          try {
-            cb();
-          } catch {
-            /* listener hygiene only */
-          }
-        }
+        this._emitClose();
       },
       { once: true },
     );
@@ -233,6 +228,32 @@ class HttpResShim {
   on(event: 'close', cb: ResCloseListener): this {
     if (event === 'close') this._closeListeners.push(cb);
     return this;
+  }
+  // P1 lifecycle escape hatch for a request whose body never finishes. Such a
+  // request has not reached any application operation yet, so shutdown may
+  // cancel its reader and publish the admission-latch response without racing
+  // a store user. Completed-body requests are deliberately not forced: their
+  // route promise remains owned until it settles.
+  forceEnd(status: number, body: string): void {
+    if (this._ended) return;
+    this._destroyed = true;
+    this._emitClose();
+    this.writeHead(status, {
+      'content-type': 'application/json',
+      'x-content-type-options': 'nosniff',
+    });
+    this.end(body);
+  }
+  private _emitClose(): void {
+    if (this._closeEmitted) return;
+    this._closeEmitted = true;
+    for (const cb of this._closeListeners) {
+      try {
+        cb();
+      } catch {
+        /* listener hygiene only */
+      }
+    }
   }
   // node's "close this keep-alive socket after the response". Bun has no per-socket
   // close, so force the shortest per-request idle timeout — a ~4s FIN (uSockets 4s
@@ -307,6 +328,7 @@ class HttpReqShim {
   private _dataListeners: ReqDataListener[] = [];
   private _endListeners: ReqEndListener[] = [];
   private _destroyed = false;
+  private _reader: { cancel: (reason?: unknown) => Promise<void> } | null = null;
   constructor(request: Request, server: Server<WsData>) {
     this._request = request;
     this.method = request.method;
@@ -324,6 +346,8 @@ class HttpReqShim {
   }
   destroy(): void {
     this._destroyed = true;
+    const reader = this._reader;
+    if (reader) void reader.cancel().catch(() => {});
   }
   // Mirrors HttpResShim.destroyed. True once destroy() ran OR _pump's catch
   // fired — a mid-stream body read error, or a 'data'/'end' listener that threw
@@ -353,6 +377,7 @@ class HttpReqShim {
       return;
     }
     const reader = body.getReader();
+    this._reader = reader;
     try {
       for (;;) {
         const { done, value } = await reader.read();
@@ -374,6 +399,13 @@ class HttpReqShim {
     } catch {
       // A mid-stream read error tears the request down without a spurious 'end'.
       this._destroyed = true;
+    } finally {
+      if (this._reader === reader) this._reader = null;
+      try {
+        reader.releaseLock();
+      } catch {
+        /* reader cancellation may already have released it */
+      }
     }
   }
   private _emitEnd(): void {
@@ -650,6 +682,44 @@ export function createHttp(
   //   otherwise the 0.16.0 gate stands: /ws/term demands the bearer on
   //   loopback too (LAN/REQUIRE_TOKEN only ever make it stricter).
   const termAuth = { term_token: !(proxyAuth === 'trust' || trustLoopback) };
+
+  // P1 RESOURCE OWNER: lifecycle state is installed before any callback can be
+  // admitted. The returned owner flips this latch first, so every native Bun
+  // callback has one cheap, synchronous admission check while close drains the
+  // work that was already accepted.
+  let quiescing = false;
+  interface ActiveResponse {
+    request: HttpReqShim;
+    response: HttpResShim;
+    promise: Promise<Response>;
+    hook: boolean;
+    drained: boolean;
+    drainFaulted: boolean;
+  }
+  const activeResponses = new Set<ActiveResponse>();
+  const activeWatchClosers = new Set<() => void>();
+  const openTermTasks = new Set<Promise<void>>();
+
+  function forceFaultedResponseDuringShutdown(active: ActiveResponse): void {
+    if (!quiescing || active.response.writableEnded) return;
+    // A cleanly drained request may already be running an asynchronous route
+    // operation that still owns SQLite/process state, so it must be joined.
+    // A body that has not drained, a pump fault, or a disconnected peer cannot
+    // produce a response on its own and must be settled explicitly.
+    if (
+      active.drained &&
+      !active.drainFaulted &&
+      !active.request.destroyed &&
+      !active.response.destroyed
+    ) {
+      return;
+    }
+    active.request.destroy();
+    active.response.forceEnd(
+      active.hook ? 200 : 503,
+      active.hook ? '{}' : '{"ok":false,"reason":"shutting-down"}',
+    );
+  }
 
   // The board renders its share panel from this: the exact URLs a peer can
   // open, token included (a browser cannot send an Authorization header on its
@@ -1108,6 +1178,13 @@ export function createHttp(
   // disconnects. questions.mjs owns the arbitration; this only wires the
   // socket to it. Fail open like every hook path: intake errors still 200 {}.
   function holdHook(res: HttpResShim, ev: unknown, name: string) {
+    // A request that crossed the router immediately before quiesce must not
+    // create a fresh durable question after shutdown began. Hooks always fail
+    // open with their canonical response.
+    if (quiescing) {
+      json(res, 200, {});
+      return;
+    }
     let row: ReturnType<typeof core.hookHoldQuestion> | null = null;
     try {
       row = core.hookHoldQuestion(ev as Parameters<typeof core.hookHoldQuestion>[0], name);
@@ -1196,6 +1273,10 @@ export function createHttp(
   //   `wg` (a hand-rolled poll, an older watcher) claims exactly as before.
   function watchHook(_req: HttpReqShim, res: HttpResShim, url: URL) {
     const sid = url.searchParams.get('session') ?? '';
+    if (quiescing) {
+      json(res, 200, { status: 'idle', session_alive: false, pending: 0 });
+      return;
+    }
     const holdRaw = Number(url.searchParams.get('hold_ms'));
     const holdMs = Number.isFinite(holdRaw) ? Math.max(0, Math.min(holdRaw, 25_000)) : 25_000;
     // Empty `wg=` MUST collapse to null, not stay '': claimMail treats a
@@ -1225,18 +1306,24 @@ export function createHttp(
     let unregister = () => {
       /* no-op until addWatchWaiter below returns the real unregister */
     };
+    let timer: ReturnType<typeof setTimeout> | null = null;
     const finish = (obj: unknown) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       unregister();
+      activeWatchClosers.delete(closeForShutdown);
       try {
         json(res, 200, obj);
       } catch {
         /* socket gone */
       }
     };
-    const timer = setTimeout(() => {
+    const closeForShutdown = () => {
+      finish({ status: 'idle', session_alive: false, pending: 0 });
+    };
+    activeWatchClosers.add(closeForShutdown);
+    timer = setTimeout(() => {
       finish({ status: 'idle', ...core.watchInfo(sid) });
     }, holdMs);
     timer.unref();
@@ -1247,8 +1334,9 @@ export function createHttp(
     });
     res.on('close', () => {
       settled = true;
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       unregister();
+      activeWatchClosers.delete(closeForShutdown);
     });
     // response intentionally left open
   }
@@ -2069,7 +2157,7 @@ export function createHttp(
   // runs.
   let idleWaiters: (() => void)[] = [];
   function whenBroadcastIdle() {
-    if (!flushTimer) return Promise.resolve();
+    if (quiescing || !flushTimer) return Promise.resolve();
     return new Promise<void>((resolve) => idleWaiters.push(resolve));
   }
   // H-S1: the broadcast/connect snapshot deliberately uses core.snapshot() and
@@ -2085,6 +2173,7 @@ export function createHttp(
   }
   function broadcast() {
     dirty = false;
+    if (quiescing) return;
     if (!snapshotClients.size) return;
     const msg = JSON.stringify(wsSnapshot());
     for (const c of snapshotClients) {
@@ -2110,6 +2199,7 @@ export function createHttp(
     }
   }
   function scheduleBroadcast() {
+    if (quiescing) return;
     dirty = true;
     if (flushTimer) return;
     flushTimer = setTimeout(() => {
@@ -2129,6 +2219,15 @@ export function createHttp(
   // data.abort.closed), preserving the node-era M-R5 open/close race guard.
   const websocket: WebSocketHandler<WsData> = {
     open(ws) {
+      if (quiescing) {
+        if (ws.data.kind === 'term') ws.data.abort.closed = true;
+        try {
+          ws.terminate();
+        } catch {
+          /* already gone */
+        }
+        return;
+      }
       ws.data.isAlive = true;
       if (ws.data.kind === 'snapshot') {
         snapshotClients.add(ws);
@@ -2143,6 +2242,7 @@ export function createHttp(
       openTerm(ws);
     },
     message(ws, message) {
+      if (quiescing) return;
       if (ws.data.kind !== 'term') return;
       const data = ws.data;
       if (!data.handle) return;
@@ -2208,6 +2308,7 @@ export function createHttp(
   // the socket unwinds its tmux subscription (close() runs handle.close()) so a slow
   // viewer can never buffer a pane's whole output into a dead socket.
   function sendTermFrame(ws: LiveSocket, frame: unknown): void {
+    if (quiescing) return;
     if (ws.readyState !== 1) return;
     if (ws.getBufferedAmount() > MAX_TERM_WS_BUFFER) {
       try {
@@ -2225,10 +2326,20 @@ export function createHttp(
   function openTerm(ws: LiveSocket): void {
     if (ws.data.kind !== 'term') return;
     const data = ws.data;
+    if (quiescing) {
+      data.abort.closed = true;
+      try {
+        ws.terminate();
+      } catch {
+        /* already gone */
+      }
+      return;
+    }
     // Async work (awaits termbridge.openViewer) runs inside a void-ed IIFE so the
     // caller returns void, not a floating promise. Fully try/caught; never rejects.
-    void (async () => {
+    const task = (async () => {
       const send = (frame: unknown) => {
+        if (quiescing) return;
         sendTermFrame(ws, frame);
       };
       try {
@@ -2252,8 +2363,9 @@ export function createHttp(
             }
           },
         });
-        if (data.abort.closed) data.handle.close();
+        if (data.abort.closed || quiescing) data.handle.close();
       } catch (err) {
+        if (quiescing) return;
         const e = err as { gone?: unknown; reason?: unknown; message?: unknown } | null;
         if (e?.gone) {
           // The row said live but its pane was already gone (agent ended, tick
@@ -2285,6 +2397,11 @@ export function createHttp(
         }
       }
     })();
+    openTermTasks.add(task);
+    void task.then(
+      () => openTermTasks.delete(task),
+      () => openTermTasks.delete(task),
+    );
   }
   // H-R3 + M-P1: a real keepalive replaces the "full snapshot every 5 s"
   // heartbeat. Ping every peer on both servers; terminate any that missed the
@@ -2292,6 +2409,7 @@ export function createHttp(
   // and — for /ws/term — the viewer + (once the last leaves) the shared tmux
   // client, the exact leak a phone that dropped wifi used to cause.
   const keepalive = setInterval(() => {
+    if (quiescing) return;
     for (const clients of [snapshotClients, termClients]) {
       for (const ws of clients) {
         if (!ws.data.isAlive) {
@@ -2316,6 +2434,7 @@ export function createHttp(
   // instead of node's socket.destroy() — the client sees an HTTP error rather than
   // a dropped connection, which the ws test clients accept.
   function handleUpgrade(request: Request, srv: Server<WsData>, url: URL): Response | undefined {
+    if (quiescing) return new Response(null, { status: 503 });
     const req = new HttpReqShim(request, srv);
     // C: every refusal below bypasses HttpResShim.end(), so arm the keep-alive-idle
     // FIN here or the socket sits in the immortal between-requests phase under
@@ -2379,6 +2498,18 @@ export function createHttp(
       }
       return new Response(null, { status: 400 });
     }
+    if (quiescing) {
+      // Hooks are fail-open even when they lose the admission race with
+      // shutdown. Other callers get a conventional retryable refusal.
+      const hook = url.pathname.startsWith('/hook/');
+      return new Response(hook ? '{}' : '{"ok":false,"reason":"shutting-down"}', {
+        status: hook ? 200 : 503,
+        headers: {
+          'content-type': 'application/json',
+          'x-content-type-options': 'nosniff',
+        },
+      });
+    }
     const upgrade = (request.headers.get('upgrade') ?? '').toLowerCase();
     const connection = (request.headers.get('connection') ?? '').toLowerCase();
     if (upgrade === 'websocket' && connection.includes('upgrade')) {
@@ -2408,7 +2539,41 @@ export function createHttp(
     const req = new HttpReqShim(request, srv);
     const res = new HttpResShim(request, srv);
     routeRequest(req, res);
-    return drainThenRespond(req, req._pump(), res);
+    const drained = req._pump();
+    const response = drainThenRespond(req, drained, res);
+    const active: ActiveResponse = {
+      request: req,
+      response: res,
+      promise: response,
+      hook: url.pathname.startsWith('/hook/'),
+      drained: false,
+      drainFaulted: false,
+    };
+    activeResponses.add(active);
+    // The peer can disconnect after closeHttpOnce's synchronous scan but while
+    // it is awaiting this response. Re-check on the close notification so that
+    // race cannot leave res.done unresolved. Queueing avoids re-entering
+    // forceEnd() from the close event it emits itself.
+    res.on('close', () => {
+      if (!quiescing) return;
+      queueMicrotask(() => forceFaultedResponseDuringShutdown(active));
+    });
+    void drained.then(
+      () => {
+        active.drained = true;
+        forceFaultedResponseDuringShutdown(active);
+      },
+      () => {
+        active.drainFaulted = true;
+        active.drained = true;
+        forceFaultedResponseDuringShutdown(active);
+      },
+    );
+    void response.then(
+      () => activeResponses.delete(active),
+      () => activeResponses.delete(active),
+    );
+    return response;
   }
 
   // Hand Bun the response only after the request body has finished draining, so a
@@ -2462,6 +2627,7 @@ export function createHttp(
   // election exit-3 path — on a microtask, matching node's async 'error' emit
   // ordering (register .on('error'), then call .listen()).
   let bunServer: Server<WsData> | null = null;
+  let closeHttp!: () => Promise<void>;
   // The shim only ever emits 'error', and only once — Bun.serve's sole failure mode
   // here is a synchronous bind throw (EADDRINUSE) surfaced from listen(). So 'once'
   // and 'on' are identical: both register an error listener that fires at most once.
@@ -2474,6 +2640,15 @@ export function createHttp(
       if (event === 'error') errorListeners.push(cb);
     },
     listen(port: number, host: string, cb?: () => void): void {
+      if (quiescing) {
+        const err = Object.assign(new Error('fleetd HTTP lifecycle is closed'), {
+          code: 'ERR_SERVER_CLOSED',
+        }) as NodeJS.ErrnoException;
+        queueMicrotask(() => {
+          for (const l of errorListeners) l(err);
+        });
+        return;
+      }
       try {
         bunServer = Bun.serve({
           port,
@@ -2507,20 +2682,161 @@ export function createHttp(
       if (cb) cb();
     },
     close(cb?: () => void): void {
-      // stop(true) force-closes active connections too. node's server.close() drains
-      // idle then waits, but this daemon deliberately keeps sockets alive
-      // (idleTimeout:0, held long-polls, ws keepalive), so a graceful stop would hang
-      // teardown; tests and shutdown want a prompt close.
-      try {
-        bunServer?.stop(true);
-      } catch {
-        /* already stopped */
-      }
-      bunServer = null;
-      if (cb) cb();
+      // Backwards-compatible node-shaped callback surface. The explicit
+      // lifecycle below is authoritative and awaitable; legacy tests that call
+      // server.close(cb) now receive the callback only after every owned
+      // resource has settled.
+      void closeHttp().then(
+        () => cb?.(),
+        () => cb?.(),
+      );
     },
   };
   core.onMutate = scheduleBroadcast;
+
+  type QuestionsLifecycle = typeof core.questions & {
+    quiesce?: () => void;
+    releaseAll?: () => number;
+  };
+
+  const questionsLifecycle = core.questions as QuestionsLifecycle;
+  let closePromise: Promise<void> | null = null;
+
+  function resolveBroadcastWaiters(): void {
+    const waiters = idleWaiters;
+    idleWaiters = [];
+    for (const resolve of waiters) resolve();
+  }
+
+  function quiesceHttp(): void {
+    if (quiescing) return;
+    quiescing = true;
+
+    // Producers can still call the core while their own owners are joining;
+    // detach the transport callback first so none can schedule a post-close
+    // timer or touch a retired websocket set.
+    core.onMutate = () => {
+      /* transport is quiescing */
+    };
+    questionsLifecycle.setBoardConsumerProbe(() => false);
+    questionsLifecycle.quiesce?.();
+
+    clearInterval(keepalive);
+    if (flushTimer) {
+      clearTimeout(flushTimer);
+      flushTimer = null;
+    }
+    dirty = false;
+    resolveBroadcastWaiters();
+  }
+
+  function releaseHeldResponses(): number {
+    // P1 questions exposes releaseAll(); keep the existing fail-open method as
+    // the additive fallback so this HTTP owner remains compatible with narrow
+    // test doubles and with a partially acquired createCore.
+    return questionsLifecycle.releaseAll?.() ?? questionsLifecycle.failOpenAllHolds();
+  }
+
+  async function closeHttpOnce(): Promise<void> {
+    quiesceHttp();
+
+    // Held hooks must receive canonical 200 {} while Bun can still write their
+    // responses. Watch polls are not hook decisions; settle them as an idle
+    // watcher before the listener is stopped.
+    try {
+      releaseHeldResponses();
+    } catch (err) {
+      console.error('fleetd shutdown hold-release error:', err);
+    }
+    for (const closeWatch of [...activeWatchClosers]) {
+      try {
+        closeWatch();
+      } catch {
+        activeWatchClosers.delete(closeWatch);
+      }
+    }
+
+    // A peer can withhold a declared POST body forever. Those requests have not
+    // entered an application handler, so cancel their readers and publish the
+    // shutdown admission response (hooks retain canonical 200 {}). Requests
+    // whose bodies did drain may own DB/process work; join their response
+    // promise so SQLite cannot close underneath them.
+    for (const active of activeResponses) forceFaultedResponseDuringShutdown(active);
+    await Promise.allSettled([...activeResponses].map((active) => active.promise));
+    activeResponses.clear();
+
+    const live = bunServer;
+    bunServer = null;
+    if (live) {
+      try {
+        // Bun 1.3.14 floor quirk: terminating a ServerWebSocket before
+        // stop(true) leaves the returned stop Promise pending forever even
+        // though the peer is already CLOSED. Let the server own native socket
+        // termination first; the explicit loop below is the idempotent
+        // application-handle backstop. This exact order is covered by the
+        // subprocess lifecycle fixture.
+        await live.stop(true);
+      } catch {
+        /* already stopped */
+      }
+    }
+
+    // Close application handles explicitly instead of depending on when Bun
+    // dispatches each websocket close callback after stop() resolves. Terminal
+    // handles are idempotent, so this and the callback path may both run.
+    for (const ws of snapshotClients) {
+      try {
+        ws.terminate();
+      } catch {
+        /* already gone */
+      }
+    }
+    for (const ws of termClients) {
+      if (ws.data.kind !== 'term') continue;
+      ws.data.abort.closed = true;
+      ws.data.handle?.close();
+      try {
+        ws.terminate();
+      } catch {
+        /* already gone */
+      }
+    }
+    snapshotClients.clear();
+    termClients.clear();
+
+    const bridgeWithClose = termbridge as typeof termbridge & { close?: () => Promise<void> };
+    try {
+      await bridgeWithClose.close?.();
+    } catch (err) {
+      console.error('fleetd terminal bridge close error:', err);
+    }
+    await Promise.allSettled([...openTermTasks]);
+    openTermTasks.clear();
+
+    errorListeners.length = 0;
+  }
+
+  closeHttp = (): Promise<void> => {
+    closePromise ??= closeHttpOnce();
+    return closePromise;
+  };
+
+  const lifecycle = {
+    quiesce: quiesceHttp,
+    releaseHolds: releaseHeldResponses,
+    close: closeHttp,
+    isQuiescing: () => quiescing,
+    ownedCounts: () => ({
+      listener: bunServer ? 1 : 0,
+      snapshotClients: snapshotClients.size,
+      terminalClients: termClients.size,
+      activeResponses: activeResponses.size,
+      watchWaiters: activeWatchClosers.size,
+      terminalOpens: openTermTasks.size,
+      broadcastTimers: flushTimer ? 1 : 0,
+      keepaliveTimers: quiescing ? 0 : 1,
+    }),
+  };
 
   // `server`, `whenBroadcastIdle` and `refreshLan` are used externally:
   // fleetd.mjs listens on the server, awaits whenBroadcastIdle so the boot
@@ -2533,12 +2849,14 @@ export function createHttp(
   // shows the address the host has NOW. wss/termWss/broadcast stay internal.
   return {
     server,
+    lifecycle,
     whenBroadcastIdle,
     // Arrow-PROPERTY (not method shorthand) so the daemon entry can destructure it
     // without tripping @typescript-eslint/unbound-method: the body closes over
     // refreshLanHosts/lan and never touches `this`, so an arrow is behaviorally
     // identical while typing the field as a property rather than a method.
     refreshLan: (nextLan: LanSource | (() => LanSource) | null) => {
+      if (quiescing) return;
       refreshLanHosts();
       lan = nextLan;
     },

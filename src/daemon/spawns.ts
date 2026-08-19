@@ -270,6 +270,26 @@ interface LaunchResumeArgs {
   gatewayEnv?: Record<string, string> | null;
 }
 
+// P1 lifecycle seam shared by every detached callback that can reach the
+// spawn/store slice. `run` admits work only while the owner is open and joins
+// every admitted promise. `schedule` additionally owns the timer and resolves
+// it with the caller's cancellation value when quiesce clears the timer, so a
+// waiter can never be stranded by shutdown.
+export interface SpawnMaintenance {
+  isOpen: () => boolean;
+  run: <T>(operation: () => T | PromiseLike<T>) => Promise<T> | null;
+  schedule: <T>(
+    delayMs: number,
+    operation: () => T | PromiseLike<T>,
+    cancelled: () => T,
+  ) => Promise<T> | null;
+}
+
+export interface SpawnLifecycle {
+  quiesce: () => boolean;
+  close: () => Promise<void>;
+}
+
 export const SETUP_WRAPPER = [
   'cmd=$FLEETDECK_SETUP_CMD; unset FLEETDECK_SETUP_CMD',
   'printf \'▶ fleetdeck setup: %s\\n\' "$cmd"',
@@ -400,6 +420,127 @@ export function createSpawns(ctx: SpawnsCtx) {
     acquireWorktreePathLock,
     claimWorktreeCustody, // remove-vs-revive serialization (revive side; derive wires it)
   } = ctx;
+
+  // ------------------------------------------------ P1 maintenance ownership
+  // A core can stop accepting HTTP before SQLite closes, but that alone does
+  // not own work already detached from its response: clone provisioning,
+  // registration harvests, nudge timers, boot reconciliation, and late adapter
+  // callbacks all used to retain raw q/updateSession closures. This owner is the
+  // admission gate and join point for that whole slice.
+  type ScheduledTask = {
+    timer: ReturnType<typeof setTimeout>;
+    cancel: () => void;
+  };
+  const scheduledTasks = new Set<ScheduledTask>();
+  const inFlightMaintenance = new Set<Promise<unknown>>();
+  let maintenancePhase: 'open' | 'quiescing' | 'closed' = 'open';
+  let maintenanceClosePromise: Promise<void> | null = null;
+
+  function runMaintenance<T>(operation: () => T | PromiseLike<T>): Promise<T> | null {
+    if (maintenancePhase !== 'open') return null;
+    let promise: Promise<T>;
+    try {
+      // Invoke now, preserving the existing synchronous prefix of async control
+      // methods and their single-flight claims. JavaScript cannot interleave a
+      // quiesce until this stack returns; registration below therefore happens
+      // before control can pass to shutdown.
+      promise = Promise.resolve(operation());
+    } catch (err) {
+      promise = Promise.reject(err);
+    }
+    inFlightMaintenance.add(promise);
+    const forget = () => {
+      inFlightMaintenance.delete(promise);
+    };
+    void promise.then(forget, forget);
+    return promise;
+  }
+
+  function scheduleMaintenance<T>(
+    delayMs: number,
+    operation: () => T | PromiseLike<T>,
+    cancelled: () => T,
+  ): Promise<T> | null {
+    if (maintenancePhase !== 'open') return null;
+    let scheduled!: ScheduledTask;
+    let settleCancelled!: () => void;
+    const promise = new Promise<T>((resolve, reject) => {
+      let settled = false;
+      settleCancelled = () => {
+        if (settled) return;
+        settled = true;
+        try {
+          resolve(cancelled());
+        } catch (err) {
+          reject(err);
+        }
+      };
+      const timer = setTimeout(
+        () => {
+          scheduledTasks.delete(scheduled);
+          if (settled) return;
+          if (maintenancePhase !== 'open') {
+            settleCancelled();
+            return;
+          }
+          const active = runMaintenance(operation);
+          if (!active) {
+            settleCancelled();
+            return;
+          }
+          void active.then(
+            (value) => {
+              if (settled) return;
+              settled = true;
+              resolve(value);
+            },
+            (err: unknown) => {
+              if (settled) return;
+              settled = true;
+              reject(err);
+            },
+          );
+        },
+        Math.max(0, delayMs),
+      );
+      timer.unref();
+      scheduled = {
+        timer,
+        cancel: () => {
+          clearTimeout(timer);
+          settleCancelled();
+        },
+      };
+      scheduledTasks.add(scheduled);
+    });
+    return promise;
+  }
+
+  function quiesceMaintenance(): boolean {
+    if (maintenancePhase !== 'open') return false;
+    maintenancePhase = 'quiescing';
+    for (const scheduled of scheduledTasks) scheduled.cancel();
+    scheduledTasks.clear();
+    return true;
+  }
+
+  function closeMaintenance(): Promise<void> {
+    if (maintenanceClosePromise) return maintenanceClosePromise;
+    quiesceMaintenance();
+    maintenanceClosePromise = (async () => {
+      while (inFlightMaintenance.size > 0) {
+        await Promise.allSettled([...inFlightMaintenance]);
+      }
+      maintenancePhase = 'closed';
+    })();
+    return maintenanceClosePromise;
+  }
+
+  const spawnMaintenance: SpawnMaintenance = {
+    isOpen: () => maintenancePhase === 'open',
+    run: runMaintenance,
+    schedule: scheduleMaintenance,
+  };
 
   // ------------------------------------------- unsupervised arm gate (0.16.0)
   // The board's red two-step is UI; the API needs its own proof of intent, or
@@ -638,8 +779,9 @@ export function createSpawns(ctx: SpawnsCtx) {
     /do you trust the files in this folder|trust this folder|trust the files|trust this workspace|quick safety check|new mcp server|mcp server.{0,40}(approve|allow|trust)|use this and all future mcp servers/i;
   const nudged = new Set<string>();
   function scheduleNudge(spawn_id: string, window: string, callsign: string) {
-    // async work fired via a void wrapper below so setTimeout gets a `() => void`
-    // (no-misused-promises); the body is fully try/caught so nudge never rejects.
+    // The body is fully try/caught so nudge never rejects. Its timer and task
+    // are both owned: quiesce cancels a not-yet-fired nudge, while close joins a
+    // nudge already awaiting tmux before SQLite is released.
     const nudge = async () => {
       try {
         if (nudged.has(spawn_id)) return;
@@ -689,8 +831,12 @@ export function createSpawns(ctx: SpawnsCtx) {
         /* nudge is best-effort; never disturb the daemon */
       }
     };
-    const t = setTimeout(() => void nudge(), NUDGE_MS);
-    t.unref();
+    const scheduled = spawnMaintenance.schedule(NUDGE_MS, nudge, () => undefined);
+    if (scheduled) {
+      void scheduled.catch(() => {
+        /* nudge is best-effort; never disturb the daemon */
+      });
+    }
   }
 
   const RC_URL_RE = /https:\/\/claude\.ai\/\S+/;
@@ -837,22 +983,15 @@ export function createSpawns(ctx: SpawnsCtx) {
     // harvestRemote is now internally guarded, but keep the .catch() as the
     // documented belt-and-suspenders against an unhandled rejection.
     if (RC_HARVEST_MS === 0) {
-      return Promise.resolve()
-        .then(() => harvestRemote(spawn_id))
-        .catch(() => ({ url: null }));
+      const active = spawnMaintenance.run(() => harvestRemote(spawn_id));
+      return active?.catch(() => ({ url: null })) ?? Promise.resolve({ url: null });
     }
-    let timer: ReturnType<typeof setTimeout>;
-    const promise = new Promise<{ url: string | null }>((resolve) => {
-      timer = setTimeout(
-        () =>
-          void harvestRemote(spawn_id).then(resolve, () => {
-            resolve({ url: null });
-          }),
-        RC_HARVEST_MS,
-      );
-      timer.unref();
-    });
-    return promise;
+    const scheduled = spawnMaintenance.schedule(
+      RC_HARVEST_MS,
+      () => harvestRemote(spawn_id).catch(() => ({ url: null })),
+      () => ({ url: null }),
+    );
+    return scheduled ?? Promise.resolve({ url: null });
   }
 
   function scheduleRegistrationRemoteHarvest(spawn_id: string) {
@@ -1054,14 +1193,16 @@ export function createSpawns(ctx: SpawnsCtx) {
         tmux: { session: tmux_session, window: tmux_window },
         argv,
       };
-      tmuxAdapter.launchOverride(
-        override,
-        spec,
-        (err) =>
-          void compensate(`spawn override: ${errMessage(err)}`).catch(() => {
+      tmuxAdapter.launchOverride(override, spec, (err) => {
+        // launchOverride exposes an error callback but no success/completion
+        // handle. Admit and join compensation only while the owner is open;
+        // a callback arriving after quiesce must not touch a closed store.
+        const active = spawnMaintenance.run(() => compensate(`spawn override: ${errMessage(err)}`));
+        if (active)
+          void active.catch(() => {
             /* compensation is best-effort; the durable row/card already settled */
-          }),
-      );
+          });
+      });
     } else {
       try {
         await tmuxAdapter.ensureSession(port);
@@ -1658,6 +1799,30 @@ export function createSpawns(ctx: SpawnsCtx) {
 
       // Clone provisioning continues after the HTTP 202 response. The guarded
       // detached chain owns both compensation and the single-flight release.
+      // A spawn admitted before quiesce may reach this point only after its
+      // access/materialization awaits. Do not launch a NEW clone once shutdown
+      // has begun; compensate the already-durable provisional row while the
+      // admitted parent operation is still owned.
+      if (!spawnMaintenance.isOpen()) {
+        await spawnCompensate({
+          spawn_id,
+          session_id,
+          callsign,
+          cwd: target.dest,
+          worktree_path: null,
+          tmux_window: null,
+          reason: 'spawn cancelled',
+          created: { clone: false, worktree: false },
+          cancelled: true,
+        });
+        releaseCloneSlot();
+        releaseTarget();
+        releasePlanClaim();
+        return {
+          status: 503,
+          body: { ok: false, reason: 'daemon is shutting down; spawn was cancelled' },
+        };
+      }
       const controller = new AbortController();
       let resolveProvisioning!: () => void;
       const provisioningDone = new Promise<void>((resolve) => {
@@ -1665,86 +1830,97 @@ export function createSpawns(ctx: SpawnsCtx) {
       });
       const provisioningOp = { controller, done: provisioningDone };
       provisioningOps.set(spawn_id, provisioningOp);
-      Promise.resolve()
-        .then(async () => {
-          let created = { clone: false, worktree: false };
-          let worktree_path: string | null = null;
-          let paneMayExist = false;
-          try {
-            await cloneRepo({
-              origin_url: target.origin_url,
-              dest: target.dest,
-              spawn_id,
-              signal: controller.signal,
-            });
-            created.clone = true;
-            if (controller.signal.aborted) throw new Error('spawn cancelled');
-            updateSession(session_id, { note: `preparing ${body.branch}…` });
-            onMutate();
-            const materialized = await materializeBranch({
-              root: target.dest,
-              branch,
-              mode: branchMode,
-              spawn_id,
-              sid: session_id,
-              clone: true,
-              signal: controller.signal,
-            });
-            created = materialized.created;
-            worktree_path = branchMode === 'worktree' ? materialized.runCwd : null;
-            if (controller.signal.aborted) throw new Error('spawn cancelled');
-            await finishMaterialization(materialized, 'clone');
-            if (controller.signal.aborted) throw new Error('spawn cancelled');
-            paneMayExist = true;
-            const launched = await launchPane({
-              spawn_id,
-              session_id,
-              callsign,
-              tmux_session,
-              tmux_window,
-              requestedCwd: target.dest,
-              runCwd: materialized.runCwd,
-              cleanupRoot: target.dest,
-              worktree_path,
-              body,
-              skipPermissions,
-              created,
-              gatewayEnv: gateway.env,
-              signal: controller.signal,
-            });
-            if (launched.status >= 400) releasePlanClaim();
-            else completePlanClaim(spawn_id);
-          } catch (err) {
-            const cancelled = controller.signal.aborted;
-            const reason = cancelled
-              ? 'spawn cancelled'
-              : branchMode === 'in-place' && created.clone
-                ? `${errMessage(err)} — ${path.basename(target.dest)} was left switched to ${body.branch}`
-                : errMessage(err);
-            await spawnCompensate({
-              spawn_id,
-              session_id,
-              callsign,
-              cwd: target.dest,
-              worktree_path,
-              tmux_window: paneMayExist ? tmux_window : null,
-              reason,
-              created,
-              cancelled,
-            });
-            releasePlanClaim();
-          } finally {
-            releaseCloneSlot();
-            releaseTarget();
-            if (provisioningOps.get(spawn_id) === provisioningOp) {
-              provisioningOps.delete(spawn_id);
-            }
-            resolveProvisioning();
+      const provisioning = spawnMaintenance.run(async () => {
+        let created = { clone: false, worktree: false };
+        let worktree_path: string | null = null;
+        let paneMayExist = false;
+        try {
+          await cloneRepo({
+            origin_url: target.origin_url,
+            dest: target.dest,
+            spawn_id,
+            signal: controller.signal,
+          });
+          created.clone = true;
+          if (controller.signal.aborted) throw new Error('spawn cancelled');
+          updateSession(session_id, { note: `preparing ${body.branch}…` });
+          onMutate();
+          const materialized = await materializeBranch({
+            root: target.dest,
+            branch,
+            mode: branchMode,
+            spawn_id,
+            sid: session_id,
+            clone: true,
+            signal: controller.signal,
+          });
+          created = materialized.created;
+          worktree_path = branchMode === 'worktree' ? materialized.runCwd : null;
+          if (controller.signal.aborted) throw new Error('spawn cancelled');
+          await finishMaterialization(materialized, 'clone');
+          if (controller.signal.aborted) throw new Error('spawn cancelled');
+          paneMayExist = true;
+          const launched = await launchPane({
+            spawn_id,
+            session_id,
+            callsign,
+            tmux_session,
+            tmux_window,
+            requestedCwd: target.dest,
+            runCwd: materialized.runCwd,
+            cleanupRoot: target.dest,
+            worktree_path,
+            body,
+            skipPermissions,
+            created,
+            gatewayEnv: gateway.env,
+            signal: controller.signal,
+          });
+          if (launched.status >= 400) releasePlanClaim();
+          else completePlanClaim(spawn_id);
+        } catch (err) {
+          const cancelled = controller.signal.aborted;
+          const reason = cancelled
+            ? 'spawn cancelled'
+            : branchMode === 'in-place' && created.clone
+              ? `${errMessage(err)} — ${path.basename(target.dest)} was left switched to ${body.branch}`
+              : errMessage(err);
+          await spawnCompensate({
+            spawn_id,
+            session_id,
+            callsign,
+            cwd: target.dest,
+            worktree_path,
+            tmux_window: paneMayExist ? tmux_window : null,
+            reason,
+            created,
+            cancelled,
+          });
+          releasePlanClaim();
+        } finally {
+          releaseCloneSlot();
+          releaseTarget();
+          if (provisioningOps.get(spawn_id) === provisioningOp) {
+            provisioningOps.delete(spawn_id);
           }
-        })
-        .catch((err: unknown) => {
+          resolveProvisioning();
+        }
+      });
+      // The open check and run() call are synchronous neighbours, so refusal
+      // here is unreachable without a programming error. Keep a defensive
+      // settle path so a future refactor cannot strand Kill/close waiters.
+      if (!provisioning) {
+        controller.abort();
+        provisioningOps.delete(spawn_id);
+        releaseCloneSlot();
+        releaseTarget();
+        releasePlanClaim();
+        resolveProvisioning();
+      } else {
+        void provisioning.catch((err: unknown) => {
           console.error('fleetd detached repo provisioning error:', err);
         });
+      }
 
       return {
         status: 202,
@@ -2316,10 +2492,15 @@ export function createSpawns(ctx: SpawnsCtx) {
           tmux: { session: tmux_session, window: tmux_window },
           argv,
         },
-        (err) =>
-          void compensateResume(`spawn override: ${errMessage(err)}`).catch(() => {
-            /* compensation is best-effort; the durable row/card already settled */
-          }),
+        (err) => {
+          const active = spawnMaintenance.run(() =>
+            compensateResume(`spawn override: ${errMessage(err)}`),
+          );
+          if (active)
+            void active.catch(() => {
+              /* compensation is best-effort; the durable row/card already settled */
+            });
+        },
       );
     } else {
       try {
@@ -2999,7 +3180,9 @@ export function createSpawns(ctx: SpawnsCtx) {
   let livenessInFlight: Promise<void> | null = null;
   function spawnLivenessTick() {
     if (livenessInFlight) return livenessInFlight;
-    livenessInFlight = runSpawnLivenessTick().finally(() => {
+    const active = spawnMaintenance.run(runSpawnLivenessTick);
+    if (!active) return Promise.resolve();
+    livenessInFlight = active.finally(() => {
       livenessInFlight = null;
     });
     return livenessInFlight;
@@ -3209,7 +3392,10 @@ export function createSpawns(ctx: SpawnsCtx) {
   // scoped windows with no row at all → spawn_orphans ("unadopted" on the
   // board; surfaced, never operated on).
   const spawnState: { orphans: { window: string }[] } = { orphans: [] };
-  async function reconcileSpawns() {
+  function reconcileSpawns(): Promise<void> {
+    return spawnMaintenance.run(runReconcileSpawns) ?? Promise.resolve();
+  }
+  async function runReconcileSpawns() {
     // BOOT TOCTOU: snapshot the rows to reconcile BEFORE awaiting the tmux
     // window list. reconcile exists to settle rows that PRE-EXIST this boot
     // against the current windows; it runs fire-and-forget the instant the
@@ -3388,6 +3574,7 @@ export function createSpawns(ctx: SpawnsCtx) {
   // succeeded_by, and a healed predecessor is archived out of the candidate set),
   // and a no-op on a fleet that never forked.
   function reconcileClearForks() {
+    if (!spawnMaintenance.isOpen()) return { healed: 0 };
     let healed = 0;
     // Walk the HEIRS, not the predecessors. Walking predecessors invites two of
     // them to claim the same heir (two pane-less sessions clearing minutes apart
@@ -3459,13 +3646,59 @@ export function createSpawns(ctx: SpawnsCtx) {
     return { healed };
   }
 
+  let spawnClosePromise: Promise<void> | null = null;
+  function quiesceSpawns(): boolean {
+    const changed = quiesceMaintenance();
+    // Clone/materialization already accepts AbortSignal and its compensation
+    // path is part of the owned provisioning promise. Abort is therefore a
+    // supported cancellation, not the P3 process-seam work that remains for
+    // unrelated subprocesses.
+    for (const operation of provisioningOps.values()) operation.controller.abort();
+    return changed;
+  }
+
+  function closeSpawns(): Promise<void> {
+    if (spawnClosePromise) return spawnClosePromise;
+    quiesceSpawns();
+    spawnClosePromise = closeMaintenance();
+    return spawnClosePromise;
+  }
+
+  const spawnLifecycle: SpawnLifecycle = {
+    quiesce: quiesceSpawns,
+    close: closeSpawns,
+  };
+
+  const shuttingDown = () => ({
+    status: 503,
+    body: { ok: false, reason: 'daemon is shutting down; spawn maintenance is quiescing' },
+  });
+  const ownedSpawn = (body: SpawnBody) =>
+    spawnMaintenance.run(() => spawn(body)) ?? Promise.resolve(shuttingDown());
+  const ownedRevive = (spawn_id: string, body: SpawnBody = {}) =>
+    spawnMaintenance.run(() => revive(spawn_id, body)) ?? Promise.resolve(shuttingDown());
+  const ownedAdoptSession = (
+    session_id: string,
+    body: SpawnBody = {},
+    opts: { deferred?: boolean } = {},
+  ) =>
+    spawnMaintenance.run(() => adoptSession(session_id, body, opts)) ??
+    Promise.resolve(shuttingDown());
+  const ownedEnableRemote = (spawn_id: string) =>
+    spawnMaintenance.run(() => enableRemote(spawn_id)) ?? Promise.resolve(shuttingDown());
+  const ownedSpawnKill = (spawn_id: string, force: unknown) =>
+    spawnMaintenance.run(() => spawnKill(spawn_id, force)) ?? Promise.resolve(shuttingDown());
+
   return {
-    spawn,
-    revive,
-    adoptSession,
-    enableRemote,
-    spawnKill,
-    spawnCapability,
+    spawn: ownedSpawn,
+    revive: ownedRevive,
+    adoptSession: ownedAdoptSession,
+    enableRemote: ownedEnableRemote,
+    spawnKill: ownedSpawnKill,
+    spawnCapability: () =>
+      spawnMaintenance.isOpen()
+        ? spawnCapability()
+        : { available: false as const, reason: 'daemon is shutting down', active: 0 },
     spawnLivenessTick,
     reconcileSpawns,
     reconcileClearForks,
@@ -3473,5 +3706,7 @@ export function createSpawns(ctx: SpawnsCtx) {
     forgetSpawn,
     spawnState,
     armUnsupervised,
+    spawnMaintenance,
+    spawnLifecycle,
   };
 }

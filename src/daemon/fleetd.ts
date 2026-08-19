@@ -14,11 +14,13 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDb } from './db.ts';
+import { DaemonResources } from './daemon-resources.ts';
 import { createCore } from './derive.ts';
 import { createHttp, isLoopbackAddress, parseTrustedOrigins } from './http.ts';
 import { startAgentsPoll } from './agents-poll.ts';
 import { createPayloadCapture } from './payload-capture.ts';
 import { createMdns, hostLabel } from './mdns.ts';
+import { startNetworkWatch } from './network-watch.ts';
 import { networkInterfaces } from './os-net.ts';
 // Runtime-agnostic test seam (foundations-hardening §16): every export is a
 // no-op unless FLEETDECK_TEST_NET_MOCK / a record-sink var is set, so this is
@@ -522,8 +524,26 @@ function mdnsInstanceName(): string {
 }
 
 const DB_FILE = path.join(HOME, 'fleetd.db');
-const db = openDb(DB_FILE);
-const core = createCore(db, { port: PORT, version }); // holdMs resolves from FLEETDECK_HOLD_MS inside
+const daemonResources = new DaemonResources({
+  onCloseError(name, error) {
+    console.error(`fleetd ${name} shutdown error:`, error);
+  },
+});
+daemonResources.setProcess('pid-file', { close: removeOwnedPidFile });
+
+let db: ReturnType<typeof openDb>;
+let core: ReturnType<typeof createCore>;
+try {
+  db = openDb(DB_FILE);
+  daemonResources.setStore('sqlite', { close: () => db.close() });
+  core = createCore(db, { port: PORT, version }); // holdMs resolves from FLEETDECK_HOLD_MS inside
+  daemonResources.setCore(core.lifecycle);
+} catch (error) {
+  // A constructor may fail after HOME was claimed or SQLite was opened. Close
+  // the exact acquired prefix before preserving the original startup failure.
+  await daemonResources.close();
+  throw error;
+}
 
 // BOOT-RECONCILIATION READINESS: the listen callback kicks the boot heals
 // fire-and-forget (see below), so /health answering 200 has never meant they
@@ -569,45 +589,43 @@ function lanInfoFor(addresses: string[]): LanInfo {
 }
 const LAN_INFO = lanInfoFor(lanAddresses());
 
-const { server, whenBroadcastIdle, refreshLan } = createHttp(core, {
-  port: PORT,
-  token: AUTH_TOKEN,
-  // lan.mdns reflects the responder's LIVE state, not the boot snapshot: if the
-  // responder disables itself after start() (no multicast membership, a socket
-  // error), the share panel stops offering a URL that cannot resolve.
-  lan: () => (LAN_INFO.mdns && mdns && !mdns.alive() ? { ...LAN_INFO, mdns: null } : LAN_INFO),
-  version,
-  trustedOrigins: TRUSTED_ORIGINS,
-  proxyAuth: PROXY_AUTH,
-  managed: MANAGED,
-  requireToken: REQUIRE_TOKEN,
-  trustLoopback: TRUST_LOOPBACK,
-  startup: bootReadiness,
-  // validation aid: first 3 raw payloads per hook event → HOME/hook-payloads.jsonl
-  capture: createPayloadCapture(HOME, { secrets: AUTH_TOKEN ? [AUTH_TOKEN] : [] }),
-});
+let http: ReturnType<typeof createHttp>;
+try {
+  http = createHttp(core, {
+    port: PORT,
+    token: AUTH_TOKEN,
+    // lan.mdns reflects the responder's LIVE state, not the boot snapshot: if the
+    // responder disables itself after start() (no multicast membership, a socket
+    // error), the share panel stops offering a URL that cannot resolve.
+    lan: () => (LAN_INFO.mdns && mdns && !mdns.alive() ? { ...LAN_INFO, mdns: null } : LAN_INFO),
+    version,
+    trustedOrigins: TRUSTED_ORIGINS,
+    proxyAuth: PROXY_AUTH,
+    managed: MANAGED,
+    requireToken: REQUIRE_TOKEN,
+    trustLoopback: TRUST_LOOPBACK,
+    startup: bootReadiness,
+    // validation aid: first 3 raw payloads per hook event → HOME/hook-payloads.jsonl
+    capture: createPayloadCapture(HOME, { secrets: AUTH_TOKEN ? [AUTH_TOKEN] : [] }),
+  });
+  daemonResources.setHttp(http.lifecycle);
+} catch (error) {
+  await daemonResources.close();
+  throw error;
+}
+const { server, whenBroadcastIdle, refreshLan } = http;
 
 // -------------------------------------------------------------- election
 server.on('error', (e: NodeJS.ErrnoException) => {
   if (e.code === 'EADDRINUSE') {
     console.error('fleetd already running (port bind lost the election)');
-    removeOwnedPidFile();
-    try {
-      db.close();
-    } catch {
-      /* process is exiting */
-    }
-    process.exit(3);
+    void daemonResources.close().finally(() => process.exit(3));
+    return;
   }
-  // A bind/runtime setup failure is terminal too. Release only our exact pid
-  // record before the uncaught throw exits, so startup errors do not orphan HOME.
-  removeOwnedPidFile();
-  try {
-    db.close();
-  } catch {
-    /* the original server error still wins */
-  }
-  throw e;
+  // A bind/runtime setup failure is terminal too. Report the original error,
+  // close the acquired prefix, and retain its historical exit code (1).
+  console.error(e);
+  void daemonResources.close().finally(() => process.exit(1));
 });
 
 // Every non-internal IPv4 this host answers on. Wildcard and interface-specific
@@ -650,10 +668,6 @@ const LAN_REFRESH_MS = (() => {
   const n = Number(process.env['FLEETDECK_LAN_REFRESH_MS']);
   return Number.isFinite(n) && n > 0 ? n : 30_000;
 })();
-
-function sameAddresses(a: string[], b: string[]): boolean {
-  return a.length === b.length && [...a].sort().join(' ') === [...b].sort().join(' ');
-}
 
 function startMdns(addresses: string[]): void {
   // A spawned audit-regression daemon swaps node:dgram for a socket that never
@@ -728,17 +742,14 @@ function refreshNetwork(addresses: string[]): void {
 
 let lastLanAddresses: string[] | null = null;
 
-function watchNetwork(): void {
-  if (!LAN_MODE) return;
-  const poll = () => {
-    let addresses: string[] | null = null;
-    try {
-      addresses = lanAddresses();
-    } catch {
-      /* enumeration is best effort */
-    }
-    if (addresses && lastLanAddresses && !sameAddresses(addresses, lastLanAddresses)) {
-      const gone = lastLanAddresses.filter((a) => !addresses.includes(a));
+function watchNetwork(): ReturnType<typeof startNetworkWatch> {
+  return startNetworkWatch({
+    enabled: LAN_MODE,
+    intervalMs: LAN_REFRESH_MS,
+    readAddresses: lanAddresses,
+    previousAddresses: () => lastLanAddresses,
+    onChange(addresses, previous) {
+      const gone = previous.filter((a) => !addresses.includes(a));
       refreshNetwork(addresses);
       if (addresses.length) {
         console.log(
@@ -762,11 +773,61 @@ function watchNetwork(): void {
       } catch {
         /* feed line is non-essential */
       }
-    }
-  };
-  const timer = setInterval(poll, LAN_REFRESH_MS);
-  timer.unref(); // a refresh timer must never hold the daemon's event loop open
+    },
+    onError(error) {
+      console.error('fleetd network watcher error:', error);
+    },
+  });
 }
+
+let networkWatchOwner: ReturnType<typeof watchNetwork> | null = null;
+let agentsPollOwner: ReturnType<typeof startAgentsPoll> | null = null;
+let bootWork: Promise<unknown> | null = null;
+let discoveryShutdownTimedOut = false;
+
+async function stopMdnsOwned(): Promise<void> {
+  const stopping = mdns?.stop();
+  if (!stopping) return;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const watchdog = new Promise<void>((resolve) => {
+    timer = setTimeout(() => {
+      discoveryShutdownTimedOut = true;
+      console.error('fleetd shutdown timed out waiting for discovery; continuing cleanup');
+      resolve();
+    }, 1000);
+    timer.unref();
+  });
+  try {
+    await Promise.race([stopping, watchdog]);
+  } catch {
+    /* discovery is never load-bearing */
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+// Register dynamic owners before listen() can invoke any callback. Their close
+// functions resolve the handle that was actually acquired (or no-op for a
+// partial startup), so shutdown never needs to mutate the aggregate after its
+// admission latch has closed.
+daemonResources.addProducer('boot-reconciliation', {
+  close: async () => {
+    await bootWork;
+  },
+});
+daemonResources.addProducer('agents-poll', {
+  close: async () => {
+    await agentsPollOwner?.stop();
+  },
+});
+daemonResources.addProducer('network-watch', {
+  close: async () => {
+    await networkWatchOwner?.stop();
+  },
+});
+daemonResources.addDiscovery('mdns', {
+  close: stopMdnsOwned,
+});
 
 server.listen(PORT, BIND, () => {
   const boundHost = BIND.includes(':') && !BIND.startsWith('[') ? `[${BIND}]` : BIND;
@@ -839,7 +900,7 @@ server.listen(PORT, BIND, () => {
     if (MDNS_ENABLED && lastLanAddresses.length) {
       startMdns(lastLanAddresses);
     }
-    watchNetwork();
+    networkWatchOwner = watchNetwork();
   }
   // v1.2 restart reconciliation: spawn rows survive in SQLite, panes survive
   // in tmux — re-join them (rows with a missing window → 'gone' + card
@@ -859,7 +920,7 @@ server.listen(PORT, BIND, () => {
   // runtime, so assert it for the boot-readiness chain. `void` marks the chain
   // fire-and-forget exactly as the .mjs did — /health answering 200 never meant
   // the heals ran; the settle below is what flips reconciliationStatus.
-  void (core.reconcileSpawns() as Promise<unknown>)
+  bootWork = (core.reconcileSpawns() as Promise<unknown>)
     .catch((err: unknown) => {
       console.error('fleetd spawn reconciliation error:', err);
     })
@@ -879,7 +940,7 @@ server.listen(PORT, BIND, () => {
       settleReconciliation?.();
       settleReconciliation = null;
     });
-  startAgentsPoll(core); // F1 secondary session source; first run shortly after listen
+  agentsPollOwner = startAgentsPoll(core); // F1 secondary session source; first run shortly after listen
 });
 
 let shuttingDown = false;
@@ -887,38 +948,13 @@ async function shutdown(): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
 
-  // The responder normally caps goodbye delivery at ~250 ms. This outer guard
-  // protects shutdown even if a future responder regression returns a promise
-  // that never settles. `unref` means the guard itself never prolongs shutdown.
-  const hardExit = setTimeout(() => {
-    console.error('fleetd shutdown timed out waiting for discovery; forcing exit');
-    // These operations are synchronous and best effort, so they cannot await
-    // the discovery promise that this watchdog exists to escape.
-    removeOwnedPidFile();
-    try {
-      db.close();
-    } catch {
-      /* forced exit still wins */
-    }
-    process.exit(1);
-  }, 1000);
-  hardExit.unref();
-
-  // Goodbye records (TTL 0) retire the .local name immediately; without them a
-  // peer's resolver would keep pointing at a dead board for the record's TTL.
-  try {
-    await mdns?.stop();
-  } catch {
-    /* discovery is never load-bearing */
-  }
-  removeOwnedPidFile();
-  try {
-    db.close();
-  } catch {
-    /* already closed */
-  }
-  clearTimeout(hardExit);
-  process.exit(0);
+  // The plain P1 aggregate is now the sole normal cleanup path. It stops
+  // admission, joins producers, releases held hooks while HTTP can still
+  // answer, closes transports/maintenance, then closes SQLite and the owned
+  // pidfile. In-flight subprocess interruption remains deliberately deferred
+  // to the shared P3 process seam.
+  await daemonResources.close();
+  process.exit(discoveryShutdownTimedOut || daemonResources.closeErrors.length > 0 ? 1 : 0);
 }
 process.on('SIGINT', () => {
   void shutdown();

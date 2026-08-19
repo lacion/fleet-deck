@@ -12,6 +12,7 @@ import { SHELL_RE, NOT_RESUMABLE_END, safeParse } from './helpers.ts';
 import { CONFLICT_WINDOW_MS } from './ledger.ts';
 import { pruneRunNonces } from './run-nonce.ts';
 import type { Statements, SessionRow, SpawnRow } from './statements.ts';
+import type { SpawnMaintenance } from './spawns.ts';
 
 // ── ctx contract ─────────────────────────────────────────────────────────────
 // The owning modules of these callbacks/adapters are still .mjs (unchecked), so
@@ -95,6 +96,9 @@ interface RetentionCtx {
   PRESUME_DEAD_WORKING_MS: number;
   RETAIN_OFFLINE_MS: number;
   RETAIN_LEDGER_MS: number;
+  // Optional for standalone retention factory tests; createCore always wires
+  // it before createRetention.
+  spawnMaintenance?: SpawnMaintenance;
 }
 
 export function createRetention(ctx: RetentionCtx) {
@@ -115,6 +119,7 @@ export function createRetention(ctx: RetentionCtx) {
     PRESUME_DEAD_WORKING_MS,
     RETAIN_OFFLINE_MS,
     RETAIN_LEDGER_MS,
+    spawnMaintenance,
   } = ctx;
 
   // Silence → presumed-ended tombstone. Pane-less hook sessions have no window
@@ -277,17 +282,16 @@ export function createRetention(ctx: RetentionCtx) {
       // "may this end be resumed?", so a third hand-rolled copy can't drift
       // (0.7.1's 'superseded' would have slipped straight through the old test).
       if (s.ended_at != null && !NOT_RESUMABLE_END.has(s.end_reason)) {
-        // Fire-and-forget: a tmux stall must never wedge the sweep. Same
-        // failure surface as the SessionEnd trigger — loud only for real
-        // failures, never for benign 409 races.
-        Promise.resolve(
-          adoptSession(
-            s.session_id,
-            { dangerously_skip_permissions: !!s.adopt_armed_skip },
-            { deferred: true },
-          ),
-        )
-          .then((out) => {
+        // The adopt remains detached from the sweep (a tmux stall must never
+        // wedge retention), but it is no longer detached from the daemon: the
+        // spawn owner admits/joins the full adopt + failure-report callback.
+        const runDeferredAdopt = async () => {
+          try {
+            const out = await adoptSession(
+              s.session_id,
+              { dangerously_skip_permissions: !!s.adopt_armed_skip },
+              { deferred: true },
+            );
             if (!out || (out.status >= 400 && out.status !== 409)) {
               tick(
                 `✗ move-to-tmux failed for ${s.callsign}: ${out?.body?.reason ?? 'unknown'}`.slice(
@@ -296,15 +300,23 @@ export function createRetention(ctx: RetentionCtx) {
                 ),
               );
             }
-          })
-          .catch((err: unknown) => {
+          } catch (err) {
             tick(
               `✗ move-to-tmux failed for ${s.callsign}: ${err instanceof Error ? err.message : String(err)}`.slice(
                 0,
                 100,
               ),
             );
+          }
+        };
+        const active = spawnMaintenance
+          ? spawnMaintenance.run(runDeferredAdopt)
+          : Promise.resolve().then(runDeferredAdopt);
+        if (active) {
+          void active.catch(() => {
+            /* runDeferredAdopt owns its failure surface */
           });
+        }
         changed = true;
       }
     }

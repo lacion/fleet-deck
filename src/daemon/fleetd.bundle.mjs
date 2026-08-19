@@ -487,6 +487,96 @@ function openDb(file, fsImpl = { chmodSync, statSync }) {
   return db2;
 }
 
+// src/daemon/daemon-resources.ts
+var DaemonResources = class {
+  http = null;
+  core = null;
+  producers = [];
+  discovery = [];
+  store = null;
+  process = null;
+  onCloseError;
+  failures = [];
+  closePromise = null;
+  constructor(options = {}) {
+    this.http = options.http ?? null;
+    this.core = options.core ?? null;
+    this.producers.push(...options.producers ?? []);
+    this.discovery.push(...options.discovery ?? []);
+    this.store = options.store ?? null;
+    this.process = options.process ?? null;
+    this.onCloseError = options.onCloseError ?? (() => {
+    });
+  }
+  setHttp(owner) {
+    this.assertOpen();
+    this.http = owner;
+  }
+  setCore(owner) {
+    this.assertOpen();
+    this.core = owner;
+  }
+  addProducer(name, owner) {
+    this.assertOpen();
+    this.producers.push({ name, owner });
+  }
+  addDiscovery(name, owner) {
+    this.assertOpen();
+    this.discovery.push({ name, owner });
+  }
+  setStore(name, owner) {
+    this.assertOpen();
+    this.store = { name, owner };
+  }
+  setProcess(name, owner) {
+    this.assertOpen();
+    this.process = { name, owner };
+  }
+  get closeErrors() {
+    return this.failures;
+  }
+  close() {
+    this.closePromise ??= Promise.resolve().then(() => this.closeOnce());
+    return this.closePromise;
+  }
+  assertOpen() {
+    if (this.closePromise) throw new Error("daemon resources are closing");
+  }
+  async attempt(name, action) {
+    if (!action) return true;
+    try {
+      await action();
+      return true;
+    } catch (error) {
+      this.failures.push({ name, error });
+      try {
+        this.onCloseError(name, error);
+      } catch {
+      }
+      return false;
+    }
+  }
+  async closeGroup(group) {
+    let closed = true;
+    for (let index = group.length - 1; index >= 0; index -= 1) {
+      const entry = group[index];
+      if (entry) closed = await this.attempt(entry.name, entry.owner.close) && closed;
+    }
+    return closed;
+  }
+  async closeOnce() {
+    let storeSafe = await this.attempt("http.quiesce", this.http?.quiesce);
+    storeSafe = await this.attempt("core.quiesce", this.core?.quiesce) && storeSafe;
+    storeSafe = await this.closeGroup(this.producers) && storeSafe;
+    await this.closeGroup(this.discovery);
+    storeSafe = await this.attempt("http.releaseHolds", this.http?.releaseHolds) && storeSafe;
+    storeSafe = await this.attempt("http.close", this.http?.close) && storeSafe;
+    storeSafe = await this.attempt("core.close", this.core?.close) && storeSafe;
+    if (this.store && storeSafe) await this.attempt(this.store.name, this.store.owner.close);
+    if (this.process) await this.attempt(this.process.name, this.process.owner.close);
+  }
+};
+
 // src/daemon/derive.ts
 import fs14 from "node:fs";
 import path15 from "node:path";
@@ -1081,7 +1171,8 @@ function createQuestions(db2, {
   // DISABLES the whole re-arm machinery — an expiry then behaves exactly as it
   // did before 2.1.
   rearmGraceMs = REARM_GRACE_MS,
-  rearmMax = MAX_REARMS
+  rearmMax = MAX_REARMS,
+  sweepMs = SWEEP_MS
 } = {}) {
   const q = {
     insert: db2.prepare(`INSERT INTO questions (session_id, kind, payload_json, status, created_at, expires_at)
@@ -1106,11 +1197,21 @@ function createQuestions(db2, {
   const rearmMeta = /* @__PURE__ */ new Map();
   const rearmChains = /* @__PURE__ */ new Map();
   const completedKeys = /* @__PURE__ */ new Map();
+  const completedKeyTimers = /* @__PURE__ */ new Set();
+  let phase = "active";
+  let closePromise = null;
   let boardConsumerProbe = () => false;
+  const active = () => phase === "active";
+  const quiescingError = () => new Error("fleetd questions are quiescing");
+  function respondFailOpen(respond) {
+    respond({}, 200);
+  }
   function setBoardConsumerProbe(probe2) {
+    if (!active()) return;
     boardConsumerProbe = probe2;
   }
   function boardConsumerAvailable() {
+    if (!active()) return false;
     try {
       return boardConsumerProbe() === true;
     } catch {
@@ -1118,6 +1219,7 @@ function createQuestions(db2, {
     }
   }
   function create(kind, sessionId, payload) {
+    if (!active()) throw quiescingError();
     const now = Date.now();
     let windowMs = holdMs;
     if (HOLD_KINDS.has(kind) && resolveHoldWindow) {
@@ -1141,6 +1243,13 @@ function createQuestions(db2, {
     return row;
   }
   function attachHold(row, respond) {
+    if (!active()) {
+      try {
+        respondFailOpen(respond);
+      } catch {
+      }
+      return false;
+    }
     const mine = [...holds.keys()].filter((id) => holds.get(id)?.session_id === row.session_id).sort((a, b) => a - b);
     if (mine.length >= MAX_HOLDS_PER_SESSION) {
       const oldest = mine[0];
@@ -1148,13 +1257,14 @@ function createQuestions(db2, {
     }
     const timer = setTimeout(
       () => {
+        if (!active()) return;
         try {
           settleExpired(row.id);
         } catch (err) {
           const h = releaseHold(row.id);
           if (h) {
             try {
-              h.respond({});
+              respondFailOpen(h.respond);
             } catch {
             }
           }
@@ -1165,6 +1275,7 @@ function createQuestions(db2, {
     );
     timer.unref();
     holds.set(row.id, { session_id: row.session_id, respond, timer });
+    return true;
   }
   function releaseHold(id) {
     const h = holds.get(id);
@@ -1173,17 +1284,19 @@ function createQuestions(db2, {
     holds.delete(id);
     return h;
   }
-  function failOpenAllHolds() {
-    const ids = [...holds.keys()];
-    if (ids.length === 0) return 0;
-    const retired = [];
-    for (const id of ids) {
-      const h = releaseHold(id);
-      if (!h) continue;
+  function releaseAll() {
+    const entries = [...holds.entries()];
+    if (entries.length === 0) return 0;
+    for (const [id] of entries) holds.delete(id);
+    for (const [, h] of entries) {
       try {
-        h.respond({});
+        respondFailOpen(h.respond);
       } catch {
       }
+    }
+    const retired = [];
+    for (const [id, h] of entries) {
+      clearTimeout(h.timer);
       cancelRearm(id);
       try {
         if (q.markExpired.run(id).changes) retired.push(id);
@@ -1198,14 +1311,18 @@ function createQuestions(db2, {
       }
     }
     onChange();
-    return ids.length;
+    return entries.length;
   }
+  const failOpenAllHolds = releaseAll;
   function noteCompleted(sessionId, key) {
+    if (!active()) return;
     let byKey = completedKeys.get(sessionId);
     if (!byKey) completedKeys.set(sessionId, byKey = /* @__PURE__ */ new Map());
     byKey.set(key, (byKey.get(key) ?? 0) + 1);
     const entry = byKey;
     const timer = setTimeout(() => {
+      if (!active()) return;
+      completedKeyTimers.delete(timer);
       if (completedKeys.get(sessionId) !== entry) return;
       const n = entry.get(key);
       if (n == null) return;
@@ -1213,9 +1330,11 @@ function createQuestions(db2, {
       else entry.set(key, n - 1);
       if (entry.size === 0) completedKeys.delete(sessionId);
     }, COMPLETED_KEY_TTL_MS);
+    completedKeyTimers.add(timer);
     timer.unref();
   }
   function consumeCompleted(sessionId, key) {
+    if (!active()) return false;
     const byKey = completedKeys.get(sessionId);
     if (!byKey) return false;
     const n = byKey.get(key);
@@ -1226,10 +1345,11 @@ function createQuestions(db2, {
     return true;
   }
   function settleExpired(id) {
+    if (!active()) return;
     const h = releaseHold(id);
     if (h) {
       try {
-        h.respond({});
+        respondFailOpen(h.respond);
       } catch {
       }
     }
@@ -1241,6 +1361,7 @@ function createQuestions(db2, {
     }
   }
   function scheduleRearm(row) {
+    if (!active()) return false;
     if (!(rearmGraceMs > 0)) return false;
     if (!row || !HOLD_KINDS.has(row.kind)) return false;
     const chainRoot = safeParse(row.payload_json)?.chain_root ?? row.id;
@@ -1254,6 +1375,7 @@ function createQuestions(db2, {
       row.id
     );
     const timer = setTimeout(() => {
+      if (!active()) return;
       try {
         fireRearm(row.id, chainRoot);
       } catch {
@@ -1269,6 +1391,7 @@ function createQuestions(db2, {
     return true;
   }
   function fireRearm(sourceId, chainRoot) {
+    if (!active()) return;
     if (!rearmById.delete(sourceId)) return;
     const row = q.get.get(sourceId);
     if (row?.status !== "expired") return;
@@ -1294,6 +1417,7 @@ function createQuestions(db2, {
     onChange();
   }
   function recycleRearm(id) {
+    if (!active()) return false;
     const meta = rearmMeta.get(id);
     rearmMeta.delete(id);
     if (!meta) return false;
@@ -1304,6 +1428,7 @@ function createQuestions(db2, {
     if ((rearmChains.get(chainRoot) ?? 0) >= rearmMax) return true;
     rearmById.delete(meta.sourceId);
     const timer = setTimeout(() => {
+      if (!active()) return;
       try {
         fireRearm(id, chainRoot);
       } catch {
@@ -1322,6 +1447,7 @@ function createQuestions(db2, {
     rearmMeta.delete(id);
   }
   function disarmRearmsForSession(sessionId) {
+    if (!active()) return false;
     for (const [id, m] of [...rearmById]) {
       if (m.session_id !== sessionId) continue;
       if (m.timer) clearTimeout(m.timer);
@@ -1338,6 +1464,7 @@ function createQuestions(db2, {
     return retired.length > 0;
   }
   function socketClosed(id) {
+    if (!active()) return;
     if (!holds.has(id)) return;
     releaseHold(id);
     if (q.markExpired.run(id).changes) {
@@ -1346,6 +1473,7 @@ function createQuestions(db2, {
     }
   }
   function expireUnheld(id) {
+    if (!active()) return false;
     if (holds.has(id)) return false;
     if (!q.markExpired.run(id).changes) return false;
     onRetired(q.get.get(id));
@@ -1358,6 +1486,9 @@ function createQuestions(db2, {
     return { status: 413, body: { ok: false, err: ANSWER_TOO_LONG_ERR } };
   }
   function answer(id, body) {
+    if (!active()) {
+      return { status: 503, body: { ok: false, err: "questions are quiescing" } };
+    }
     const row = q.get.get(Number(id));
     if (!row) return { status: 404, body: { ok: false, err: "no such question" } };
     if (row.status !== "pending")
@@ -1513,7 +1644,7 @@ function createQuestions(db2, {
         };
       }
       try {
-        h.respond(hookResponse);
+        h.respond(hookResponse, 200);
       } catch {
       }
       if (payload?.tool_name != null) {
@@ -1551,6 +1682,7 @@ function createQuestions(db2, {
     return { status: 400, body: { ok: false, err: `unknown question kind ${row.kind}` } };
   }
   function expireOnActivity(sessionId, { toolName, toolInput } = {}) {
+    if (!active()) return false;
     const activityKey = typeof toolName === "string" && toolName !== "" ? toolCallKey(toolName, toolInput) : null;
     const correlated = activityKey !== null;
     let rows = q.pendingBySession.all(sessionId).filter((r) => {
@@ -1589,7 +1721,7 @@ function createQuestions(db2, {
       const h = releaseHold(r.id);
       if (h) {
         try {
-          h.respond({});
+          respondFailOpen(h.respond);
         } catch {
         }
       }
@@ -1600,11 +1732,13 @@ function createQuestions(db2, {
     return retired.length > 0 || rearmDisarmed;
   }
   function purgeResolved() {
+    if (!active()) return 0;
     const out = db2.prepare("DELETE FROM questions WHERE status != 'pending'").run();
     if (out.changes) onChange();
     return Number(out.changes);
   }
   function dismiss(id, { activity = false } = {}) {
+    if (!active()) return { ok: false, reason: "questions are quiescing" };
     const row = q.get.get(id);
     if (!row) return { ok: false, reason: "no such question" };
     cancelRearm(row.id);
@@ -1612,7 +1746,7 @@ function createQuestions(db2, {
     const h = releaseHold(row.id);
     if (h) {
       try {
-        h.respond({});
+        respondFailOpen(h.respond);
       } catch {
       }
     }
@@ -1624,6 +1758,7 @@ function createQuestions(db2, {
     return { ok: true, callsign: callsignOf(row.session_id) ?? null };
   }
   function expireOrphans() {
+    if (!active()) return false;
     let changed = false;
     for (const r of q.pending.all()) {
       if (!HOLD_KINDS.has(r.kind) || holds.has(r.id)) continue;
@@ -1640,6 +1775,7 @@ function createQuestions(db2, {
     return changed;
   }
   function expireAllForSession(sessionId, { includeFreeform = false } = {}) {
+    if (!active()) return 0;
     let expired = 0;
     const retired = [];
     for (const r of q.pendingBySession.all(sessionId)) {
@@ -1647,7 +1783,7 @@ function createQuestions(db2, {
       const h = releaseHold(r.id);
       if (h) {
         try {
-          h.respond({});
+          respondFailOpen(h.respond);
         } catch {
         }
       }
@@ -1693,16 +1829,49 @@ function createQuestions(db2, {
       };
     });
   }
+  const orphanSweepMs = Number.isFinite(sweepMs) && sweepMs > 0 ? Math.max(1, Math.floor(sweepMs)) : SWEEP_MS;
   const sweep = setInterval(() => {
+    if (!active()) return;
     try {
       expireOrphans();
     } catch {
     }
-  }, SWEEP_MS);
+  }, orphanSweepMs);
   sweep.unref();
+  function quiesce() {
+    if (!active()) return false;
+    phase = "quiesced";
+    boardConsumerProbe = () => false;
+    return true;
+  }
+  function close() {
+    if (closePromise) return closePromise;
+    quiesce();
+    closePromise = Promise.resolve().then(() => {
+      try {
+        releaseAll();
+      } finally {
+        clearInterval(sweep);
+        for (const entry of rearmById.values()) {
+          if (entry.timer) clearTimeout(entry.timer);
+        }
+        rearmById.clear();
+        rearmMeta.clear();
+        rearmChains.clear();
+        for (const timer of completedKeyTimers) clearTimeout(timer);
+        completedKeyTimers.clear();
+        completedKeys.clear();
+        phase = "closed";
+      }
+    });
+    return closePromise;
+  }
   return {
     create,
     attachHold,
+    quiesce,
+    releaseAll,
+    close,
     setBoardConsumerProbe,
     boardConsumerAvailable,
     failOpenAllHolds,
@@ -4831,11 +5000,16 @@ function createRepos(ctx) {
     if (!origin_url) {
       const rootDir = root;
       const repoId = repo_id;
-      Promise.resolve().then(() => originOf(rootDir)).then((found) => {
+      const backfill = async () => {
+        const found = await originOf(rootDir);
         if (found) q.setRepoOrigin.run(found, repoId);
-      }).catch((err) => {
-        console.error("fleetd repo origin backfill error:", err);
-      });
+      };
+      const active = ctx.spawnMaintenance ? ctx.spawnMaintenance.run(backfill) : Promise.resolve().then(backfill);
+      if (active) {
+        void active.catch((err) => {
+          console.error("fleetd repo origin backfill error:", err);
+        });
+      }
     }
   }
   async function resolveTarget(body) {
@@ -6452,7 +6626,26 @@ function createMail(ctx) {
     MAIL_PANE_BATCH: PANE_BATCH = MAIL_PANE_BATCH,
     MAIL_PANE_BATCH_BYTES: PANE_BATCH_BYTES = MAIL_PANE_BATCH_BYTES
   } = ctx;
+  const inFlight = /* @__PURE__ */ new Set();
+  let phase = "open";
+  let closePromise = null;
+  const isOpen = () => phase === "open";
+  function own(promise) {
+    inFlight.add(promise);
+    const forget = () => {
+      inFlight.delete(promise);
+    };
+    void promise.then(forget, forget);
+    return promise;
+  }
+  function quiescingPostMailResult() {
+    return {
+      status: 503,
+      body: { ok: false, reason: "mail lifecycle is quiescing" }
+    };
+  }
   function mail(toSession, from, text) {
+    if (!isOpen()) return { refused: true, reason: "mail lifecycle is quiescing" };
     const raw = asText(text);
     const stored = clampMail(raw);
     const stats = q.pendingMailStats.get(toSession) ?? { n: 0, bytes: 0 };
@@ -6466,10 +6659,11 @@ function createMail(ctx) {
   }
   const paneMailTimers = /* @__PURE__ */ new Map();
   function armPaneMailTimer(sid) {
-    if (paneMailTimers.has(sid)) return;
+    if (!isOpen() || paneMailTimers.has(sid)) return;
     const timer = setTimeout(() => {
       paneMailTimers.delete(sid);
-      tryOwnedPaneDelivery(sid).catch(() => {
+      if (!isOpen()) return;
+      void tryOwnedPaneDelivery(sid).catch(() => {
       });
     }, PANE_MAIL_GRACE_MS);
     timer.unref();
@@ -6477,6 +6671,7 @@ function createMail(ctx) {
   }
   function rearmPaneMailTimer(sid) {
     paneMailTimers.delete(sid);
+    if (!isOpen()) return;
     armPaneMailTimer(sid);
   }
   function drainMail(sid, { lease = false } = {}) {
@@ -6597,14 +6792,16 @@ function createMail(ctx) {
       throw err;
     }
   }
-  async function tryOwnedPaneDelivery(sid) {
+  async function tryOwnedPaneDeliveryImpl(sid) {
     const pair = ownedPaneRow(sid);
     if (!pair || hasWatchWaiter(sid)) return false;
     const win = await findScopedWindow(pair.sp.tmux_window);
+    if (!isOpen()) return false;
     if (win === null) return false;
     if (!win || win.pane_dead) return false;
     const target = scopedPaneTarget(win);
     const pane = await tmuxAdapter.paneCurrentCommand(target);
+    if (!isOpen()) return false;
     if (!pane || pane.dead || pane.cmd !== "claude") return false;
     if (hasWatchWaiter(sid)) return false;
     if (!ownedPaneRow(sid)) return false;
@@ -6613,6 +6810,7 @@ function createMail(ctx) {
     if (remaining) rearmPaneMailTimer(sid);
     const text = box.map((m) => `[FLEETDECK MAIL from ${m.from_id}] ${m.text}`).join("\n");
     const pasted = await tmuxAdapter.pasteText(target, text);
+    if (!isOpen()) return false;
     if (!pasted) {
       for (const m of box) q.releaseClaim.run(m.id);
       onMutate();
@@ -6625,6 +6823,7 @@ function createMail(ctx) {
       return true;
     }
     const entered = await tmuxAdapter.sendEnter(target);
+    if (!isOpen()) return false;
     if (!entered) {
       const now = Date.now();
       for (const m of box) q.ackMail.run(now, m.id);
@@ -6653,6 +6852,10 @@ function createMail(ctx) {
     onMutate();
     return true;
   }
+  function tryOwnedPaneDelivery(sid) {
+    if (!isOpen()) return Promise.resolve(false);
+    return own(tryOwnedPaneDeliveryImpl(sid));
+  }
   function claimMail(sid, gen = null) {
     if (gen !== null && !isWatchGen(sid, gen)) return null;
     const now = Date.now();
@@ -6675,7 +6878,7 @@ function createMail(ctx) {
       pending: questions.pendingOf(sid).filter((r) => r.kind === "freeform").length
     };
   }
-  async function postMail({ to, from, text }) {
+  async function postMailImpl({ to, from, text }) {
     const sender = from ?? "board";
     if (typeof sender !== "string" || sender.length === 0) {
       return { status: 422, body: { ok: false, reason: "sender name must be a non-empty string" } };
@@ -6726,6 +6929,7 @@ function createMail(ctx) {
         return q.getSession.get(sid)?.ended_at != null ? "offline-queued" : "turn-boundary";
       })
     );
+    if (!isOpen()) return quiescingPostMailResult();
     const outcomes = targets.map((sid) => mail(sid, sender, text));
     const refusedAll = targets.length > 0 && outcomes.every((o) => o.refused);
     if (refusedAll) {
@@ -6757,6 +6961,30 @@ function createMail(ctx) {
       ...truncated ? { truncated: true, original_length: raw.length, max_length: MAIL_MAX_LEN } : {}
     };
   }
+  function postMail(args) {
+    if (!isOpen()) return Promise.resolve(quiescingPostMailResult());
+    return own(postMailImpl(args));
+  }
+  function quiesce() {
+    if (!isOpen()) return false;
+    phase = "quiescing";
+    for (const timer of paneMailTimers.values()) clearTimeout(timer);
+    paneMailTimers.clear();
+    return true;
+  }
+  async function closeImpl() {
+    while (inFlight.size > 0) {
+      await Promise.allSettled([...inFlight]);
+    }
+    phase = "closed";
+  }
+  function close() {
+    if (closePromise) return closePromise;
+    quiesce();
+    closePromise = Promise.resolve().then(closeImpl);
+    return closePromise;
+  }
+  const mailLifecycle = { quiesce, close };
   return {
     mail,
     drainMail,
@@ -6771,7 +6999,8 @@ function createMail(ctx) {
     claimMail,
     watchInfo,
     postMail,
-    registerWatchGen
+    registerWatchGen,
+    mailLifecycle
   };
 }
 
@@ -7267,6 +7496,103 @@ function createSpawns(ctx) {
     claimWorktreeCustody
     // remove-vs-revive serialization (revive side; derive wires it)
   } = ctx;
+  const scheduledTasks = /* @__PURE__ */ new Set();
+  const inFlightMaintenance = /* @__PURE__ */ new Set();
+  let maintenancePhase = "open";
+  let maintenanceClosePromise = null;
+  function runMaintenance(operation) {
+    if (maintenancePhase !== "open") return null;
+    let promise;
+    try {
+      promise = Promise.resolve(operation());
+    } catch (err) {
+      promise = Promise.reject(err);
+    }
+    inFlightMaintenance.add(promise);
+    const forget = () => {
+      inFlightMaintenance.delete(promise);
+    };
+    void promise.then(forget, forget);
+    return promise;
+  }
+  function scheduleMaintenance(delayMs, operation, cancelled) {
+    if (maintenancePhase !== "open") return null;
+    let scheduled;
+    let settleCancelled;
+    const promise = new Promise((resolve, reject) => {
+      let settled = false;
+      settleCancelled = () => {
+        if (settled) return;
+        settled = true;
+        try {
+          resolve(cancelled());
+        } catch (err) {
+          reject(err);
+        }
+      };
+      const timer = setTimeout(
+        () => {
+          scheduledTasks.delete(scheduled);
+          if (settled) return;
+          if (maintenancePhase !== "open") {
+            settleCancelled();
+            return;
+          }
+          const active = runMaintenance(operation);
+          if (!active) {
+            settleCancelled();
+            return;
+          }
+          void active.then(
+            (value) => {
+              if (settled) return;
+              settled = true;
+              resolve(value);
+            },
+            (err) => {
+              if (settled) return;
+              settled = true;
+              reject(err);
+            }
+          );
+        },
+        Math.max(0, delayMs)
+      );
+      timer.unref();
+      scheduled = {
+        timer,
+        cancel: () => {
+          clearTimeout(timer);
+          settleCancelled();
+        }
+      };
+      scheduledTasks.add(scheduled);
+    });
+    return promise;
+  }
+  function quiesceMaintenance() {
+    if (maintenancePhase !== "open") return false;
+    maintenancePhase = "quiescing";
+    for (const scheduled of scheduledTasks) scheduled.cancel();
+    scheduledTasks.clear();
+    return true;
+  }
+  function closeMaintenance() {
+    if (maintenanceClosePromise) return maintenanceClosePromise;
+    quiesceMaintenance();
+    maintenanceClosePromise = (async () => {
+      while (inFlightMaintenance.size > 0) {
+        await Promise.allSettled([...inFlightMaintenance]);
+      }
+      maintenancePhase = "closed";
+    })();
+    return maintenanceClosePromise;
+  }
+  const spawnMaintenance = {
+    isOpen: () => maintenancePhase === "open",
+    run: runMaintenance,
+    schedule: scheduleMaintenance
+  };
   const ARM_TTL_MS = 6e4;
   const armTokens = /* @__PURE__ */ new Map();
   function armUnsupervised() {
@@ -7407,8 +7733,11 @@ function createSpawns(ctx) {
       } catch {
       }
     };
-    const t = setTimeout(() => void nudge(), NUDGE_MS);
-    t.unref();
+    const scheduled = spawnMaintenance.schedule(NUDGE_MS, nudge, () => void 0);
+    if (scheduled) {
+      void scheduled.catch(() => {
+      });
+    }
   }
   const RC_URL_RE = /https:\/\/claude\.ai\/\S+/;
   const registrationRemoteHarvests = /* @__PURE__ */ new Map();
@@ -7471,19 +7800,15 @@ function createSpawns(ctx) {
   }
   function delayedRemoteHarvest(spawn_id) {
     if (RC_HARVEST_MS === 0) {
-      return Promise.resolve().then(() => harvestRemote(spawn_id)).catch(() => ({ url: null }));
+      const active = spawnMaintenance.run(() => harvestRemote(spawn_id));
+      return active?.catch(() => ({ url: null })) ?? Promise.resolve({ url: null });
     }
-    let timer;
-    const promise = new Promise((resolve) => {
-      timer = setTimeout(
-        () => void harvestRemote(spawn_id).then(resolve, () => {
-          resolve({ url: null });
-        }),
-        RC_HARVEST_MS
-      );
-      timer.unref();
-    });
-    return promise;
+    const scheduled = spawnMaintenance.schedule(
+      RC_HARVEST_MS,
+      () => harvestRemote(spawn_id).catch(() => ({ url: null })),
+      () => ({ url: null })
+    );
+    return scheduled ?? Promise.resolve({ url: null });
   }
   function scheduleRegistrationRemoteHarvest(spawn_id) {
     if (registrationRemoteHarvests.has(spawn_id)) return registrationRemoteHarvests.get(spawn_id);
@@ -7645,12 +7970,12 @@ function createSpawns(ctx) {
         tmux: { session: tmux_session, window: tmux_window },
         argv
       };
-      tmuxAdapter.launchOverride(
-        override2,
-        spec,
-        (err) => void compensate(`spawn override: ${errMessage(err)}`).catch(() => {
-        })
-      );
+      tmuxAdapter.launchOverride(override2, spec, (err) => {
+        const active = spawnMaintenance.run(() => compensate(`spawn override: ${errMessage(err)}`));
+        if (active)
+          void active.catch(() => {
+          });
+      });
     } else {
       try {
         await tmuxAdapter.ensureSession(port);
@@ -8131,6 +8456,26 @@ function createSpawns(ctx) {
           releaseTarget();
         }
       }
+      if (!spawnMaintenance.isOpen()) {
+        await spawnCompensate({
+          spawn_id: spawn_id2,
+          session_id: session_id2,
+          callsign: callsign2,
+          cwd: target.dest,
+          worktree_path: null,
+          tmux_window: null,
+          reason: "spawn cancelled",
+          created: { clone: false, worktree: false },
+          cancelled: true
+        });
+        releaseCloneSlot();
+        releaseTarget();
+        releasePlanClaim();
+        return {
+          status: 503,
+          body: { ok: false, reason: "daemon is shutting down; spawn was cancelled" }
+        };
+      }
       const controller = new AbortController();
       let resolveProvisioning;
       const provisioningDone = new Promise((resolve) => {
@@ -8138,7 +8483,7 @@ function createSpawns(ctx) {
       });
       const provisioningOp = { controller, done: provisioningDone };
       provisioningOps.set(spawn_id2, provisioningOp);
-      Promise.resolve().then(async () => {
+      const provisioning = spawnMaintenance.run(async () => {
         let created = { clone: false, worktree: false };
         let worktree_path2 = null;
         let paneMayExist = false;
@@ -8209,9 +8554,19 @@ function createSpawns(ctx) {
           }
           resolveProvisioning();
         }
-      }).catch((err) => {
-        console.error("fleetd detached repo provisioning error:", err);
       });
+      if (!provisioning) {
+        controller.abort();
+        provisioningOps.delete(spawn_id2);
+        releaseCloneSlot();
+        releaseTarget();
+        releasePlanClaim();
+        resolveProvisioning();
+      } else {
+        void provisioning.catch((err) => {
+          console.error("fleetd detached repo provisioning error:", err);
+        });
+      }
       return {
         status: 202,
         body: {
@@ -8597,8 +8952,14 @@ function createSpawns(ctx) {
           tmux: { session: tmux_session, window: tmux_window },
           argv
         },
-        (err) => void compensateResume(`spawn override: ${errMessage(err)}`).catch(() => {
-        })
+        (err) => {
+          const active = spawnMaintenance.run(
+            () => compensateResume(`spawn override: ${errMessage(err)}`)
+          );
+          if (active)
+            void active.catch(() => {
+            });
+        }
       );
     } else {
       try {
@@ -9030,7 +9391,9 @@ function createSpawns(ctx) {
   let livenessInFlight = null;
   function spawnLivenessTick() {
     if (livenessInFlight) return livenessInFlight;
-    livenessInFlight = runSpawnLivenessTick().finally(() => {
+    const active = spawnMaintenance.run(runSpawnLivenessTick);
+    if (!active) return Promise.resolve();
+    livenessInFlight = active.finally(() => {
       livenessInFlight = null;
     });
     return livenessInFlight;
@@ -9164,7 +9527,10 @@ ${detail}` : note);
     }
   }
   const spawnState = { orphans: [] };
-  async function reconcileSpawns() {
+  function reconcileSpawns() {
+    return spawnMaintenance.run(runReconcileSpawns) ?? Promise.resolve();
+  }
+  async function runReconcileSpawns() {
     const active = q.activeSpawns.all();
     const staleProvisioning = q.staleProvisioningSpawns.all();
     const wins = await tmuxAdapter.listScopedWindows(port);
@@ -9264,6 +9630,7 @@ ${detail}` : note);
     return stranded.length;
   }
   function reconcileClearForks() {
+    if (!spawnMaintenance.isOpen()) return { healed: 0 };
     let healed = 0;
     const born = q.clearBornSessionsSince.all(Date.now() - 24 * 3600 * 1e3, Date.now());
     for (const b of born) {
@@ -9301,20 +9668,47 @@ ${detail}` : note);
     }
     return { healed };
   }
+  let spawnClosePromise = null;
+  function quiesceSpawns() {
+    const changed = quiesceMaintenance();
+    for (const operation of provisioningOps.values()) operation.controller.abort();
+    return changed;
+  }
+  function closeSpawns() {
+    if (spawnClosePromise) return spawnClosePromise;
+    quiesceSpawns();
+    spawnClosePromise = closeMaintenance();
+    return spawnClosePromise;
+  }
+  const spawnLifecycle = {
+    quiesce: quiesceSpawns,
+    close: closeSpawns
+  };
+  const shuttingDown2 = () => ({
+    status: 503,
+    body: { ok: false, reason: "daemon is shutting down; spawn maintenance is quiescing" }
+  });
+  const ownedSpawn = (body) => spawnMaintenance.run(() => spawn4(body)) ?? Promise.resolve(shuttingDown2());
+  const ownedRevive = (spawn_id, body = {}) => spawnMaintenance.run(() => revive(spawn_id, body)) ?? Promise.resolve(shuttingDown2());
+  const ownedAdoptSession = (session_id, body = {}, opts = {}) => spawnMaintenance.run(() => adoptSession(session_id, body, opts)) ?? Promise.resolve(shuttingDown2());
+  const ownedEnableRemote = (spawn_id) => spawnMaintenance.run(() => enableRemote(spawn_id)) ?? Promise.resolve(shuttingDown2());
+  const ownedSpawnKill = (spawn_id, force) => spawnMaintenance.run(() => spawnKill(spawn_id, force)) ?? Promise.resolve(shuttingDown2());
   return {
-    spawn: spawn4,
-    revive,
-    adoptSession,
-    enableRemote,
-    spawnKill,
-    spawnCapability,
+    spawn: ownedSpawn,
+    revive: ownedRevive,
+    adoptSession: ownedAdoptSession,
+    enableRemote: ownedEnableRemote,
+    spawnKill: ownedSpawnKill,
+    spawnCapability: () => spawnMaintenance.isOpen() ? spawnCapability() : { available: false, reason: "daemon is shutting down", active: 0 },
     spawnLivenessTick,
     reconcileSpawns,
     reconcileClearForks,
     scheduleRegistrationRemoteHarvest,
     forgetSpawn,
     spawnState,
-    armUnsupervised
+    armUnsupervised,
+    spawnMaintenance,
+    spawnLifecycle
   };
 }
 
@@ -9365,7 +9759,8 @@ function createEvents(ctx) {
     // 'proposed' whose question is no longer pending flips to
     // 'handled-in-terminal'. Never fired at Stop/Notification/SessionEnd —
     // none of those proves the human decided anything in the terminal.
-    settleTerminalPlans
+    settleTerminalPlans,
+    spawnMaintenance
   } = ctx;
   const holdScopeRaw = (process.env["FLEETDECK_HOLD_SCOPE"] ?? "spawned").trim().toLowerCase();
   const holdScope = holdScopeRaw === "all" || holdScopeRaw === "off" ? holdScopeRaw : "spawned";
@@ -9780,8 +10175,13 @@ function createEvents(ctx) {
     const armed = q.getSession.get(sid);
     if (armed?.adopt_armed_until != null && armed.adopt_armed_until > Date.now()) {
       const skip = !!armed.adopt_armed_skip;
-      const timer = setTimeout(() => {
-        adoptSession(sid, { dangerously_skip_permissions: skip }, { deferred: true }).then((out) => {
+      const runDeferredAdopt = async () => {
+        try {
+          const out = await adoptSession(
+            sid,
+            { dangerously_skip_permissions: skip },
+            { deferred: true }
+          );
           if (!out || out.status >= 400 && out.status !== 409) {
             const c = q.getSession.get(sid);
             tick(
@@ -9791,14 +10191,25 @@ function createEvents(ctx) {
               )
             );
           }
-        }).catch((err) => {
+        } catch (err) {
           const c = q.getSession.get(sid);
-          tick(
-            `\u2717 move-to-tmux failed for ${c?.callsign ?? sid}: ${errMessage(err)}`.slice(0, 100)
-          );
-        });
-      }, ADOPT_DELAY_MS);
-      timer.unref();
+          tick(`\u2717 move-to-tmux failed for ${c?.callsign ?? sid}: ${errMessage(err)}`.slice(0, 100));
+        }
+      };
+      if (spawnMaintenance) {
+        const scheduled = spawnMaintenance.schedule(
+          ADOPT_DELAY_MS,
+          runDeferredAdopt,
+          () => void 0
+        );
+        if (scheduled) {
+          void scheduled.catch(() => {
+          });
+        }
+      } else {
+        const timer = setTimeout(() => void runDeferredAdopt(), ADOPT_DELAY_MS);
+        timer.unref();
+      }
     }
     modelMemo.delete(sid);
     const sp = q.spawnBySession.get(sid);
@@ -10186,7 +10597,8 @@ function createRetention(ctx) {
     PRESUME_DEAD_MS,
     PRESUME_DEAD_WORKING_MS,
     RETAIN_OFFLINE_MS,
-    RETAIN_LEDGER_MS
+    RETAIN_LEDGER_MS,
+    spawnMaintenance
   } = ctx;
   function presumeDeadSilent(s, now) {
     const hours = Math.max(0, (now - s.last_seen) / 36e5);
@@ -10271,29 +10683,35 @@ function createRetention(ctx) {
         continue;
       }
       if (s.ended_at != null && !NOT_RESUMABLE_END.has(s.end_reason)) {
-        Promise.resolve(
-          adoptSession(
-            s.session_id,
-            { dangerously_skip_permissions: !!s.adopt_armed_skip },
-            { deferred: true }
-          )
-        ).then((out) => {
-          if (!out || out.status >= 400 && out.status !== 409) {
+        const runDeferredAdopt = async () => {
+          try {
+            const out = await adoptSession(
+              s.session_id,
+              { dangerously_skip_permissions: !!s.adopt_armed_skip },
+              { deferred: true }
+            );
+            if (!out || out.status >= 400 && out.status !== 409) {
+              tick(
+                `\u2717 move-to-tmux failed for ${s.callsign}: ${out?.body?.reason ?? "unknown"}`.slice(
+                  0,
+                  100
+                )
+              );
+            }
+          } catch (err) {
             tick(
-              `\u2717 move-to-tmux failed for ${s.callsign}: ${out?.body?.reason ?? "unknown"}`.slice(
+              `\u2717 move-to-tmux failed for ${s.callsign}: ${err instanceof Error ? err.message : String(err)}`.slice(
                 0,
                 100
               )
             );
           }
-        }).catch((err) => {
-          tick(
-            `\u2717 move-to-tmux failed for ${s.callsign}: ${err instanceof Error ? err.message : String(err)}`.slice(
-              0,
-              100
-            )
-          );
-        });
+        };
+        const active = spawnMaintenance ? spawnMaintenance.run(runDeferredAdopt) : Promise.resolve().then(runDeferredAdopt);
+        if (active) {
+          void active.catch(() => {
+          });
+        }
         changed = true;
       }
     }
@@ -10844,12 +11262,20 @@ function createCore(db2, {
     const rivals = q.clearedPredecessors.all(cwd, now - CLEAR_SUCCESSION_MS, prevSid);
     if (rivals.length) return null;
     if (!settled && CLEAR_SETTLE_MS > 0) {
-      setTimeout(() => {
-        try {
-          succeedForwardFromClear(prevSid, cwd, { settled: true });
-        } catch {
-        }
-      }, CLEAR_SETTLE_MS).unref();
+      const scheduled = ctx.spawnMaintenance.schedule(
+        CLEAR_SETTLE_MS,
+        () => {
+          try {
+            succeedForwardFromClear(prevSid, cwd, { settled: true });
+          } catch {
+          }
+        },
+        () => void 0
+      );
+      if (scheduled) {
+        void scheduled.catch(() => {
+        });
+      }
       return null;
     }
     const [heir] = cands;
@@ -10998,7 +11424,8 @@ function createCore(db2, {
     claimMail,
     watchInfo,
     postMail,
-    registerWatchGen
+    registerWatchGen,
+    mailLifecycle
   } = ctx;
   function tombstoneCard(sid, {
     note,
@@ -11060,7 +11487,8 @@ function createCore(db2, {
     spawnLivenessTick,
     reconcileSpawns,
     reconcileClearForks,
-    armUnsupervised
+    armUnsupervised,
+    spawnLifecycle
   } = ctx;
   Object.assign(ctx, createEvents(ctx));
   const {
@@ -11076,12 +11504,28 @@ function createCore(db2, {
   Object.assign(ctx, createSnapshot(ctx));
   const { snapshot, fleetSize, terminalSpawn } = ctx;
   Object.assign(ctx, createRetention(ctx));
-  const { retentionSweep, cleanup, dismissSession, dismissRetry } = ctx;
+  const { retentionSweep: runRetentionSweep, cleanup, dismissSession, dismissRetry } = ctx;
+  const inFlightRetentionSweeps = /* @__PURE__ */ new Set();
+  let retentionQuiesced = false;
+  let retentionClosePromise = null;
+  function retentionSweep(now) {
+    if (retentionQuiesced) {
+      return Promise.reject(new Error("fleetd retention cadence is quiescing"));
+    }
+    const sweep = runRetentionSweep(now);
+    inFlightRetentionSweeps.add(sweep);
+    void sweep.then(
+      () => inFlightRetentionSweeps.delete(sweep),
+      () => inFlightRetentionSweeps.delete(sweep)
+    );
+    return sweep;
+  }
   const bootRetention = retentionSweep().catch((err) => {
     console.error("fleetd retention sweep error:", err);
   });
-  setInterval(
+  const retentionCadence = setInterval(
     () => {
+      if (retentionQuiesced) return;
       try {
         q.pruneEvents.run(Date.now() - 24 * 3600 * 1e3);
       } catch {
@@ -11090,7 +11534,57 @@ function createCore(db2, {
       });
     },
     10 * 60 * 1e3
-  ).unref();
+  );
+  retentionCadence.unref();
+  function quiesceRetention() {
+    if (retentionQuiesced) return false;
+    retentionQuiesced = true;
+    clearInterval(retentionCadence);
+    return true;
+  }
+  function closeRetention() {
+    if (retentionClosePromise) return retentionClosePromise;
+    quiesceRetention();
+    retentionClosePromise = (async () => {
+      while (inFlightRetentionSweeps.size > 0) {
+        await Promise.allSettled([...inFlightRetentionSweeps]);
+      }
+    })();
+    return retentionClosePromise;
+  }
+  const retentionLifecycle = {
+    quiesce: quiesceRetention,
+    close: closeRetention
+  };
+  let coreClosePromise = null;
+  function quiesceCore() {
+    const mailChanged = mailLifecycle.quiesce();
+    const questionsChanged = questions.quiesce();
+    const retentionChanged = quiesceRetention();
+    const spawnsChanged = spawnLifecycle.quiesce();
+    return mailChanged || questionsChanged || retentionChanged || spawnsChanged;
+  }
+  function closeCore() {
+    if (coreClosePromise) return coreClosePromise;
+    quiesceCore();
+    coreClosePromise = Promise.resolve().then(async () => {
+      const settled = await Promise.allSettled([
+        mailLifecycle.close(),
+        questions.close(),
+        closeRetention(),
+        spawnLifecycle.close()
+      ]);
+      const failed = settled.find(
+        (outcome) => outcome.status === "rejected"
+      );
+      if (failed) throw failed.reason;
+    });
+    return coreClosePromise;
+  }
+  const lifecycle = {
+    quiesce: quiesceCore,
+    close: closeCore
+  };
   return {
     applyEvent,
     hookSessionStart,
@@ -11158,6 +11652,9 @@ function createCore(db2, {
     retentionSweep,
     bootRetention,
     // the boot sweep's settle promise — fleetd folds it into boot readiness
+    retentionLifecycle,
+    spawnLifecycle,
+    lifecycle,
     cleanup,
     dismissSession,
     // POST /api/sessions/:id/dismiss — per-card cleanup → {status, body}
@@ -11363,11 +11860,34 @@ function createTermBridge({
   port,
   resolveSpawn,
   log = () => {
-  }
+  },
+  closeGraceMs = 1e3
 }) {
   const session = sessionName(port);
   const viewers = /* @__PURE__ */ new Set();
+  const clients = /* @__PURE__ */ new Set();
+  const closeRecheckTimers = /* @__PURE__ */ new Set();
+  const attachTimers = /* @__PURE__ */ new Set();
+  const delaySettlers = /* @__PURE__ */ new Set();
+  const terminateGraceMs = Number.isFinite(closeGraceMs) && closeGraceMs >= 1 ? Math.floor(closeGraceMs) : 1e3;
   let client = null;
+  let phase = "open";
+  let closePromise = null;
+  const bridgeClosedError = () => new TermBridgeError("terminal bridge is closed");
+  function delay(ms) {
+    return new Promise((resolve) => {
+      let timer = null;
+      const settle = () => {
+        if (!delaySettlers.delete(settle)) return;
+        if (timer) clearTimeout(timer);
+        timer = null;
+        resolve();
+      };
+      delaySettlers.add(settle);
+      timer = setTimeout(settle, ms);
+      timer.unref();
+    });
+  }
   function createClient() {
     let readyResolve = () => {
     };
@@ -11446,10 +11966,16 @@ function createTermBridge({
           }
         }).catch(() => {
         });
-      }, PANE_DEAD_POLL_MS)
+      }, PANE_DEAD_POLL_MS),
+      exited: Promise.resolve(),
+      detachDataListeners: () => {
+      },
+      detachAllListeners: () => {
+      }
     };
     c.deadTimer.unref();
     const onEvent = (ev) => {
+      if (c.closed || phase !== "open") return;
       if (ev.type === "response") {
         c.waiters.shift()?.resolve(ev);
       } else if (ev.type === "session-changed") {
@@ -11459,6 +11985,7 @@ function createTermBridge({
       } else if (ev.type === "window-close") {
         if (!c.panes.size) return;
         c.command("list-panes -a -F '#{pane_id}'").then((res) => {
+          if (c.closed || phase !== "open") return;
           if (!res.ok) {
             scheduleCloseRecheck();
             return;
@@ -11485,9 +12012,17 @@ function createTermBridge({
       env: process.env
     });
     c.child = child;
-    child.stdout.on("data", (chunk) => {
+    clients.add(c);
+    let exitedResolve = () => {
+    };
+    c.exited = new Promise((resolve) => {
+      exitedResolve = resolve;
+    });
+    const onStdout = (chunk) => {
+      if (c.closed || phase !== "open") return;
       const batched = /* @__PURE__ */ new Map();
       const flush = () => {
+        if (c.closed || phase !== "open") return;
         for (const [pane, parts] of batched) {
           const stream = c.panes.get(pane);
           if (!stream) continue;
@@ -11508,16 +12043,46 @@ function createTermBridge({
         }
       }
       flush();
-    });
-    child.stderr.on("data", (chunk) => {
+    };
+    const onStderr = (chunk) => {
+      if (c.closed || phase !== "open") return;
       log(`terminal control stderr: ${String(chunk).trim()}`);
-    });
-    child.on("error", (err) => {
-      teardown(`terminal control client failed: ${err.message}`);
-    });
-    child.on("exit", () => {
+    };
+    const onError = (err) => {
+      if (!c.closed && phase === "open") {
+        teardown(`terminal control client failed: ${err.message}`);
+      }
+    };
+    const onExit = () => {
+      exitedResolve();
       if (!c.closed) teardown("terminal control client exited");
-    });
+    };
+    const onClose = () => {
+      exitedResolve();
+      clients.delete(c);
+      c.detachAllListeners();
+    };
+    let dataListenersDetached = false;
+    let allListenersDetached = false;
+    c.detachDataListeners = () => {
+      if (dataListenersDetached) return;
+      dataListenersDetached = true;
+      child.stdout.off("data", onStdout);
+      child.stderr.off("data", onStderr);
+    };
+    c.detachAllListeners = () => {
+      if (allListenersDetached) return;
+      allListenersDetached = true;
+      c.detachDataListeners();
+      child.off("error", onError);
+      child.off("exit", onExit);
+      child.off("close", onClose);
+    };
+    child.stdout.on("data", onStdout);
+    child.stderr.on("data", onStderr);
+    child.on("error", onError);
+    child.on("exit", onExit);
+    child.on("close", onClose);
     return c;
   }
   function teardown(reason) {
@@ -11538,10 +12103,12 @@ function createTermBridge({
   }
   function scheduleCloseRecheck() {
     const c = client;
-    if (!c || c.closed || !c.panes.size) return;
+    if (!c || c.closed || phase !== "open" || !c.panes.size) return;
     const timer = setTimeout(() => {
-      if (client !== c || c.closed || !c.panes.size) return;
+      closeRecheckTimers.delete(timer);
+      if (phase !== "open" || client !== c || c.closed || !c.panes.size) return;
       c.command("list-panes -a -F '#{pane_id}'").then((res) => {
+        if (phase !== "open" || c.closed) return;
         if (!res.ok) return;
         const alive = new Set(res.lines.map((s) => s.trim()));
         for (const [paneId, stream] of [...c.panes]) {
@@ -11551,9 +12118,11 @@ function createTermBridge({
       }).catch(() => {
       });
     }, CLOSE_RECHECK_MS);
+    closeRecheckTimers.add(timer);
     timer.unref();
   }
   async function ensureClient() {
+    if (phase !== "open") throw bridgeClosedError();
     client ??= createClient();
     const c = client;
     let timer;
@@ -11562,13 +12131,17 @@ function createTermBridge({
         c.ready,
         new Promise((_, reject) => {
           timer = setTimeout(() => {
+            if (timer) attachTimers.delete(timer);
             reject(new Error("terminal control attach timed out"));
           }, ATTACH_TIMEOUT_MS);
+          attachTimers.add(timer);
         })
       ]);
     } finally {
       clearTimeout(timer);
+      if (timer) attachTimers.delete(timer);
     }
+    if (phase !== "open") throw bridgeClosedError();
     if (c.closed) throw new Error("terminal control client exited");
     return c;
   }
@@ -11608,14 +12181,17 @@ function createTermBridge({
     },
     isAborted = () => false
   }) {
+    if (phase !== "open") throw bridgeClosedError();
     if (process.env["FLEETDECK_TERM"]?.trim().toLowerCase() === "off")
       throw new TermBridgeError("live terminal disabled");
     const size = dimensions(cols, rows);
     if (!size) throw new TermBridgeError("invalid terminal dimensions");
     const abortIfClosed = () => {
+      if (phase !== "open") throw bridgeClosedError();
       if (isAborted()) throw new Error("terminal viewer closed during open");
     };
     const row = await resolveSpawn(spawn_id);
+    abortIfClosed();
     if (!row) throw new TermBridgeError("no such spawn");
     if (!ACTIVE_STATUSES.has(row.status)) throw new TermBridgeError("spawn is not live");
     const windowName2 = row.tmux_window;
@@ -11723,10 +12299,7 @@ function createTermBridge({
         await sizeWindow(c, windowName2, size.cols, size.rows);
         throw new Error("terminal resize failed");
       }
-      await new Promise((r) => {
-        const t = setTimeout(r, REPAINT_MS);
-        t.unref();
-      });
+      await delay(REPAINT_MS);
       abortIfClosed();
       subscribe(c, pane, viewer);
       const captured = await c.command(`capture-pane -p -e -t ${pane}`);
@@ -11844,7 +12417,106 @@ function createTermBridge({
       }
     };
   }
-  return { openViewer };
+  async function settlesWithin(promise, milliseconds) {
+    let timer;
+    try {
+      return await Promise.race([
+        promise.then(() => true),
+        new Promise((resolve) => {
+          timer = setTimeout(() => resolve(false), milliseconds);
+          timer.unref();
+        })
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+  function releaseClientProcessHandles(c, child) {
+    c.detachAllListeners();
+    try {
+      child.stdin?.destroy();
+    } catch {
+    }
+    try {
+      child.stdout?.destroy();
+    } catch {
+    }
+    try {
+      child.stderr?.destroy();
+    } catch {
+    }
+    clients.delete(c);
+  }
+  async function terminateClient(c) {
+    const child = c.child;
+    if (!child) return;
+    if (child.exitCode === null && child.signalCode === null) {
+      try {
+        child.kill("SIGTERM");
+      } catch {
+      }
+    }
+    const exitedDuringGrace = await settlesWithin(c.exited, terminateGraceMs);
+    if (!exitedDuringGrace && child.exitCode === null && child.signalCode === null) {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+      }
+    }
+    if (!exitedDuringGrace) {
+      const exitedAfterKill = await settlesWithin(c.exited, terminateGraceMs);
+      if (!exitedAfterKill) child.unref();
+    }
+    releaseClientProcessHandles(c, child);
+  }
+  async function closeImpl() {
+    phase = "closing";
+    const reason = "terminal bridge is closed";
+    const ownedClients = [...clients];
+    const ownedViewers = [...viewers];
+    client = null;
+    for (const timer of closeRecheckTimers) clearTimeout(timer);
+    closeRecheckTimers.clear();
+    for (const timer of attachTimers) clearTimeout(timer);
+    attachTimers.clear();
+    for (const settle of [...delaySettlers]) settle();
+    const inputChains = ownedViewers.map((viewer) => viewer.inputChain);
+    for (const c of ownedClients) {
+      c.closed = true;
+      clearInterval(c.deadTimer);
+      c.readyReject(new Error(reason));
+      for (const waiter of c.waiters.splice(0)) waiter.reject(new Error(reason));
+      c.detachDataListeners();
+    }
+    for (const viewer of ownedViewers) {
+      viewer.finish(reason);
+      viewer.pending = [];
+      viewer.pendingBytes = 0;
+      viewer.pendingExit = null;
+    }
+    for (const c of ownedClients) {
+      c.panes.clear();
+      c.manualSizing.clear();
+    }
+    await Promise.all([
+      ...inputChains.map((chain) => chain.catch(() => {
+      })),
+      ...ownedClients.map((c) => terminateClient(c))
+    ]);
+    for (const viewer of ownedViewers) {
+      viewer.queuedInput = 0;
+      viewer.inputChain = Promise.resolve();
+    }
+    clients.clear();
+    phase = "closed";
+  }
+  function close() {
+    if (closePromise) return closePromise;
+    phase = "closing";
+    closePromise = Promise.resolve().then(closeImpl);
+    return closePromise;
+  }
+  return { openViewer, close };
 }
 
 // src/daemon/http.ts
@@ -11874,6 +12546,7 @@ var HttpResShim = class {
   _headers = {};
   _ended = false;
   _destroyed = false;
+  _closeEmitted = false;
   // A1/C: which per-request idle FIN (if any) is armed. 'refuse' = the ~4s FIN
   // set by shouldKeepAlive on the oversized-refuse path; 'stall' = the
   // BODY_STALL_FIN_S bound armed by boundStalledDrain when the body-drain grace
@@ -11902,12 +12575,7 @@ var HttpResShim = class {
       "abort",
       () => {
         this._destroyed = true;
-        for (const cb of this._closeListeners) {
-          try {
-            cb();
-          } catch {
-          }
-        }
+        this._emitClose();
       },
       { once: true }
     );
@@ -11940,6 +12608,31 @@ var HttpResShim = class {
   on(event, cb) {
     if (event === "close") this._closeListeners.push(cb);
     return this;
+  }
+  // P1 lifecycle escape hatch for a request whose body never finishes. Such a
+  // request has not reached any application operation yet, so shutdown may
+  // cancel its reader and publish the admission-latch response without racing
+  // a store user. Completed-body requests are deliberately not forced: their
+  // route promise remains owned until it settles.
+  forceEnd(status, body) {
+    if (this._ended) return;
+    this._destroyed = true;
+    this._emitClose();
+    this.writeHead(status, {
+      "content-type": "application/json",
+      "x-content-type-options": "nosniff"
+    });
+    this.end(body);
+  }
+  _emitClose() {
+    if (this._closeEmitted) return;
+    this._closeEmitted = true;
+    for (const cb of this._closeListeners) {
+      try {
+        cb();
+      } catch {
+      }
+    }
   }
   // node's "close this keep-alive socket after the response". Bun has no per-socket
   // close, so force the shortest per-request idle timeout — a ~4s FIN (uSockets 4s
@@ -12005,6 +12698,7 @@ var HttpReqShim = class {
   _dataListeners = [];
   _endListeners = [];
   _destroyed = false;
+  _reader = null;
   constructor(request, server2) {
     this._request = request;
     this.method = request.method;
@@ -12020,6 +12714,9 @@ var HttpReqShim = class {
   }
   destroy() {
     this._destroyed = true;
+    const reader = this._reader;
+    if (reader) void reader.cancel().catch(() => {
+    });
   }
   // Mirrors HttpResShim.destroyed. True once destroy() ran OR _pump's catch
   // fired — a mid-stream body read error, or a 'data'/'end' listener that threw
@@ -12049,6 +12746,7 @@ var HttpReqShim = class {
       return;
     }
     const reader = body.getReader();
+    this._reader = reader;
     try {
       for (; ; ) {
         const { done, value } = await reader.read();
@@ -12071,6 +12769,12 @@ var HttpReqShim = class {
       this._emitEnd();
     } catch {
       this._destroyed = true;
+    } finally {
+      if (this._reader === reader) this._reader = null;
+      try {
+        reader.releaseLock();
+      } catch {
+      }
     }
   }
   _emitEnd() {
@@ -12194,6 +12898,21 @@ function createHttp(core2, {
   startup = null
 }) {
   const termAuth = { term_token: !(proxyAuth === "trust" || trustLoopback) };
+  let quiescing = false;
+  const activeResponses = /* @__PURE__ */ new Set();
+  const activeWatchClosers = /* @__PURE__ */ new Set();
+  const openTermTasks = /* @__PURE__ */ new Set();
+  function forceFaultedResponseDuringShutdown(active) {
+    if (!quiescing || active.response.writableEnded) return;
+    if (active.drained && !active.drainFaulted && !active.request.destroyed && !active.response.destroyed) {
+      return;
+    }
+    active.request.destroy();
+    active.response.forceEnd(
+      active.hook ? 200 : 503,
+      active.hook ? "{}" : '{"ok":false,"reason":"shutting-down"}'
+    );
+  }
   function currentLan() {
     const source = typeof lan === "function" ? lan() : lan;
     return source?.enabled ? { enabled: true, urls: source.urls ?? [], mdns: source.mdns ?? null } : { enabled: false, urls: [] };
@@ -12406,6 +13125,10 @@ function createHttp(core2, {
     CwdChanged: (ev) => (core2.applyEvent({ ...ev, hook_event_name: "CwdChanged" }), {})
   };
   function holdHook(res, ev, name) {
+    if (quiescing) {
+      json(res, 200, {});
+      return;
+    }
     let row = null;
     try {
       row = core2.hookHoldQuestion(ev, name);
@@ -12432,6 +13155,10 @@ function createHttp(core2, {
   }
   function watchHook(_req, res, url) {
     const sid = url.searchParams.get("session") ?? "";
+    if (quiescing) {
+      json(res, 200, { status: "idle", session_alive: false, pending: 0 });
+      return;
+    }
     const holdRaw = Number(url.searchParams.get("hold_ms"));
     const holdMs = Number.isFinite(holdRaw) ? Math.max(0, Math.min(holdRaw, 25e3)) : 25e3;
     const wgParam = url.searchParams.get("wg");
@@ -12452,17 +13179,23 @@ function createHttp(core2, {
     let settled = false;
     let unregister = () => {
     };
+    let timer = null;
     const finish = (obj) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       unregister();
+      activeWatchClosers.delete(closeForShutdown);
       try {
         json(res, 200, obj);
       } catch {
       }
     };
-    const timer = setTimeout(() => {
+    const closeForShutdown = () => {
+      finish({ status: "idle", session_alive: false, pending: 0 });
+    };
+    activeWatchClosers.add(closeForShutdown);
+    timer = setTimeout(() => {
       finish({ status: "idle", ...core2.watchInfo(sid) });
     }, holdMs);
     timer.unref();
@@ -12473,8 +13206,9 @@ function createHttp(core2, {
     });
     res.on("close", () => {
       settled = true;
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       unregister();
+      activeWatchClosers.delete(closeForShutdown);
     });
   }
   const isPublicShell = (method, pathname) => method === "GET" && (pathname === "/" || pathname === "/index.html" || pathname === "/favicon.ico" || pathname.startsWith("/assets/"));
@@ -12953,7 +13687,7 @@ function createHttp(core2, {
   let flushTimer = null;
   let idleWaiters = [];
   function whenBroadcastIdle2() {
-    if (!flushTimer) return Promise.resolve();
+    if (quiescing || !flushTimer) return Promise.resolve();
     return new Promise((resolve) => idleWaiters.push(resolve));
   }
   function wsSnapshot() {
@@ -12961,6 +13695,7 @@ function createHttp(core2, {
   }
   function broadcast() {
     dirty = false;
+    if (quiescing) return;
     if (!snapshotClients.size) return;
     const msg = JSON.stringify(wsSnapshot());
     for (const c of snapshotClients) {
@@ -12976,6 +13711,7 @@ function createHttp(core2, {
     }
   }
   function scheduleBroadcast() {
+    if (quiescing) return;
     dirty = true;
     if (flushTimer) return;
     flushTimer = setTimeout(() => {
@@ -12989,6 +13725,14 @@ function createHttp(core2, {
   }
   const websocket = {
     open(ws) {
+      if (quiescing) {
+        if (ws.data.kind === "term") ws.data.abort.closed = true;
+        try {
+          ws.terminate();
+        } catch {
+        }
+        return;
+      }
       ws.data.isAlive = true;
       if (ws.data.kind === "snapshot") {
         snapshotClients.add(ws);
@@ -13002,6 +13746,7 @@ function createHttp(core2, {
       openTerm(ws);
     },
     message(ws, message) {
+      if (quiescing) return;
       if (ws.data.kind !== "term") return;
       const data = ws.data;
       if (!data.handle) return;
@@ -13046,6 +13791,7 @@ function createHttp(core2, {
     }
   };
   function sendTermFrame(ws, frame) {
+    if (quiescing) return;
     if (ws.readyState !== 1) return;
     if (ws.getBufferedAmount() > MAX_TERM_WS_BUFFER) {
       try {
@@ -13059,8 +13805,17 @@ function createHttp(core2, {
   function openTerm(ws) {
     if (ws.data.kind !== "term") return;
     const data = ws.data;
-    void (async () => {
+    if (quiescing) {
+      data.abort.closed = true;
+      try {
+        ws.terminate();
+      } catch {
+      }
+      return;
+    }
+    const task = (async () => {
       const send = (frame) => {
+        if (quiescing) return;
         sendTermFrame(ws, frame);
       };
       try {
@@ -13080,8 +13835,9 @@ function createHttp(core2, {
             }
           }
         });
-        if (data.abort.closed) data.handle.close();
+        if (data.abort.closed || quiescing) data.handle.close();
       } catch (err) {
+        if (quiescing) return;
         const e = err;
         if (e?.gone) {
           send({ t: "exit", reason: e.reason });
@@ -13098,8 +13854,14 @@ function createHttp(core2, {
         }
       }
     })();
+    openTermTasks.add(task);
+    void task.then(
+      () => openTermTasks.delete(task),
+      () => openTermTasks.delete(task)
+    );
   }
   const keepalive = setInterval(() => {
+    if (quiescing) return;
     for (const clients of [snapshotClients, termClients]) {
       for (const ws of clients) {
         if (!ws.data.isAlive) {
@@ -13116,6 +13878,7 @@ function createHttp(core2, {
   }, WS_PING_MS);
   keepalive.unref();
   function handleUpgrade(request, srv, url) {
+    if (quiescing) return new Response(null, { status: 503 });
     const req = new HttpReqShim(request, srv);
     const refuse = (status) => {
       try {
@@ -13156,6 +13919,16 @@ function createHttp(core2, {
       }
       return new Response(null, { status: 400 });
     }
+    if (quiescing) {
+      const hook = url.pathname.startsWith("/hook/");
+      return new Response(hook ? "{}" : '{"ok":false,"reason":"shutting-down"}', {
+        status: hook ? 200 : 503,
+        headers: {
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        }
+      });
+    }
     const upgrade = (request.headers.get("upgrade") ?? "").toLowerCase();
     const connection = (request.headers.get("connection") ?? "").toLowerCase();
     if (upgrade === "websocket" && connection.includes("upgrade")) {
@@ -13168,7 +13941,37 @@ function createHttp(core2, {
     const req = new HttpReqShim(request, srv);
     const res = new HttpResShim(request, srv);
     routeRequest(req, res);
-    return drainThenRespond(req, req._pump(), res);
+    const drained = req._pump();
+    const response = drainThenRespond(req, drained, res);
+    const active = {
+      request: req,
+      response: res,
+      promise: response,
+      hook: url.pathname.startsWith("/hook/"),
+      drained: false,
+      drainFaulted: false
+    };
+    activeResponses.add(active);
+    res.on("close", () => {
+      if (!quiescing) return;
+      queueMicrotask(() => forceFaultedResponseDuringShutdown(active));
+    });
+    void drained.then(
+      () => {
+        active.drained = true;
+        forceFaultedResponseDuringShutdown(active);
+      },
+      () => {
+        active.drainFaulted = true;
+        active.drained = true;
+        forceFaultedResponseDuringShutdown(active);
+      }
+    );
+    void response.then(
+      () => activeResponses.delete(active),
+      () => activeResponses.delete(active)
+    );
+    return response;
   }
   function drainThenRespond(req, drained, res) {
     return new Promise((resolve) => {
@@ -13191,6 +13994,7 @@ function createHttp(core2, {
     });
   }
   let bunServer = null;
+  let closeHttp;
   const errorListeners = [];
   const server2 = {
     on(event, cb) {
@@ -13200,6 +14004,15 @@ function createHttp(core2, {
       if (event === "error") errorListeners.push(cb);
     },
     listen(port2, host, cb) {
+      if (quiescing) {
+        const err = Object.assign(new Error("fleetd HTTP lifecycle is closed"), {
+          code: "ERR_SERVER_CLOSED"
+        });
+        queueMicrotask(() => {
+          for (const l of errorListeners) l(err);
+        });
+        return;
+      }
       try {
         bunServer = Bun.serve({
           port: port2,
@@ -13233,23 +14046,120 @@ function createHttp(core2, {
       if (cb) cb();
     },
     close(cb) {
-      try {
-        bunServer?.stop(true);
-      } catch {
-      }
-      bunServer = null;
-      if (cb) cb();
+      void closeHttp().then(
+        () => cb?.(),
+        () => cb?.()
+      );
     }
   };
   core2.onMutate = scheduleBroadcast;
+  const questionsLifecycle = core2.questions;
+  let closePromise = null;
+  function resolveBroadcastWaiters() {
+    const waiters = idleWaiters;
+    idleWaiters = [];
+    for (const resolve of waiters) resolve();
+  }
+  function quiesceHttp() {
+    if (quiescing) return;
+    quiescing = true;
+    core2.onMutate = () => {
+    };
+    questionsLifecycle.setBoardConsumerProbe(() => false);
+    questionsLifecycle.quiesce?.();
+    clearInterval(keepalive);
+    if (flushTimer) {
+      clearTimeout(flushTimer);
+      flushTimer = null;
+    }
+    dirty = false;
+    resolveBroadcastWaiters();
+  }
+  function releaseHeldResponses() {
+    return questionsLifecycle.releaseAll?.() ?? questionsLifecycle.failOpenAllHolds();
+  }
+  async function closeHttpOnce() {
+    quiesceHttp();
+    try {
+      releaseHeldResponses();
+    } catch (err) {
+      console.error("fleetd shutdown hold-release error:", err);
+    }
+    for (const closeWatch of [...activeWatchClosers]) {
+      try {
+        closeWatch();
+      } catch {
+        activeWatchClosers.delete(closeWatch);
+      }
+    }
+    for (const active of activeResponses) forceFaultedResponseDuringShutdown(active);
+    await Promise.allSettled([...activeResponses].map((active) => active.promise));
+    activeResponses.clear();
+    const live = bunServer;
+    bunServer = null;
+    if (live) {
+      try {
+        await live.stop(true);
+      } catch {
+      }
+    }
+    for (const ws of snapshotClients) {
+      try {
+        ws.terminate();
+      } catch {
+      }
+    }
+    for (const ws of termClients) {
+      if (ws.data.kind !== "term") continue;
+      ws.data.abort.closed = true;
+      ws.data.handle?.close();
+      try {
+        ws.terminate();
+      } catch {
+      }
+    }
+    snapshotClients.clear();
+    termClients.clear();
+    const bridgeWithClose = termbridge;
+    try {
+      await bridgeWithClose.close?.();
+    } catch (err) {
+      console.error("fleetd terminal bridge close error:", err);
+    }
+    await Promise.allSettled([...openTermTasks]);
+    openTermTasks.clear();
+    errorListeners.length = 0;
+  }
+  closeHttp = () => {
+    closePromise ??= closeHttpOnce();
+    return closePromise;
+  };
+  const lifecycle = {
+    quiesce: quiesceHttp,
+    releaseHolds: releaseHeldResponses,
+    close: closeHttp,
+    isQuiescing: () => quiescing,
+    ownedCounts: () => ({
+      listener: bunServer ? 1 : 0,
+      snapshotClients: snapshotClients.size,
+      terminalClients: termClients.size,
+      activeResponses: activeResponses.size,
+      watchWaiters: activeWatchClosers.size,
+      terminalOpens: openTermTasks.size,
+      broadcastTimers: flushTimer ? 1 : 0,
+      keepaliveTimers: quiescing ? 0 : 1
+    })
+  };
   return {
     server: server2,
+    lifecycle,
     whenBroadcastIdle: whenBroadcastIdle2,
     // Arrow-PROPERTY (not method shorthand) so the daemon entry can destructure it
     // without tripping @typescript-eslint/unbound-method: the body closes over
     // refreshLanHosts/lan and never touches `this`, so an arrow is behaviorally
     // identical while typing the field as a property rather than a method.
     refreshLan: (nextLan) => {
+      if (quiescing) return;
       refreshLanHosts();
       lan = nextLan;
     }
@@ -13286,57 +14196,76 @@ function hasLiveInteractive(records) {
     return r.kind === "interactive" && typeof r.pid === "number" && pidOwnedBy(r.pid, typeof r.startedAt === "number" ? r.startedAt : NaN);
   });
 }
-function startAgentsPoll(core2) {
-  const argv = resolveArgv();
+function startAgentsPoll(core2, options = {}) {
+  const argv = options.argv === void 0 ? resolveArgv() : options.argv;
   const agentsEnabled = argv !== null;
+  const firstRunDelayMs = options.firstRunDelayMs ?? FIRST_RUN_DELAY_MS;
+  const pollIntervalMs = options.pollIntervalMs ?? POLL_INTERVAL_MS;
+  const idlePollIntervalMs = options.idlePollIntervalMs ?? IDLE_POLL_INTERVAL_MS;
+  const runAgents = options.runAgents ?? runOnce;
   let stopped = false;
-  let running = false;
   let timer = null;
+  let currentTick = null;
+  let stopPromise = null;
   let nextAgentsPollAt = 0;
   let agentsWereActive = false;
   async function tick() {
-    if (stopped || running) return;
-    running = true;
-    try {
-      if (agentsEnabled && Date.now() >= nextAgentsPollAt) {
-        const out = await runOnce(argv);
-        let validPoll = false;
-        let records;
-        if (out != null) {
+    if (stopped) return;
+    if (agentsEnabled && Date.now() >= nextAgentsPollAt) {
+      const out = await runAgents(argv);
+      if (stopped) return;
+      let validPoll = false;
+      let records;
+      if (out != null) {
+        try {
+          records = JSON.parse(out);
+          validPoll = true;
+        } catch {
+          records = void 0;
+        }
+        if (records !== void 0) {
           try {
-            records = JSON.parse(out);
-            validPoll = true;
+            core2.ingestAgentsPoll(records);
           } catch {
-            records = void 0;
-          }
-          if (records !== void 0) {
-            try {
-              core2.ingestAgentsPoll(records);
-            } catch {
-            }
           }
         }
-        if (validPoll) agentsWereActive = hasLiveInteractive(records);
-        nextAgentsPollAt = Date.now() + (agentsWereActive ? POLL_INTERVAL_MS : IDLE_POLL_INTERVAL_MS);
       }
-      try {
-        await core2.spawnLivenessTick?.();
-      } catch {
-      }
-    } finally {
-      running = false;
-      if (!stopped) schedule(POLL_INTERVAL_MS);
+      if (validPoll) agentsWereActive = hasLiveInteractive(records);
+      nextAgentsPollAt = Date.now() + (agentsWereActive ? pollIntervalMs : idlePollIntervalMs);
+    }
+    if (stopped) return;
+    try {
+      await core2.spawnLivenessTick?.();
+    } catch {
     }
   }
   function schedule(delayMs) {
-    timer = setTimeout(() => void tick(), delayMs);
+    if (stopped) return;
+    timer = setTimeout(() => {
+      timer = null;
+      if (stopped || currentTick) return;
+      const active = Promise.resolve().then(tick).catch(() => {
+      });
+      currentTick = active;
+      void active.then(() => {
+        if (currentTick === active) currentTick = null;
+        if (!stopped) schedule(pollIntervalMs);
+      });
+    }, delayMs);
     timer.unref();
   }
-  schedule(FIRST_RUN_DELAY_MS);
+  schedule(firstRunDelayMs);
   return {
     stop() {
+      if (stopPromise) return stopPromise;
       stopped = true;
-      if (timer) clearTimeout(timer);
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      const active = currentTick;
+      stopPromise = active ? active.then(() => void 0) : Promise.resolve();
+      return stopPromise;
     }
   };
 }
@@ -14229,6 +15158,67 @@ function createMdns({
   return { start, stop, update, alive: () => started && !dead && socket !== null };
 }
 
+// src/daemon/network-watch.ts
+function sameAddressSet(a, b) {
+  return a.length === b.length && [...a].sort().join(" ") === [...b].sort().join(" ");
+}
+function startNetworkWatch({
+  enabled = true,
+  intervalMs,
+  onChange,
+  onError = () => {
+  },
+  previousAddresses,
+  readAddresses
+}) {
+  let stopped = false;
+  let timer = null;
+  let currentTick = null;
+  let stopPromise = null;
+  async function tick() {
+    let addresses = null;
+    try {
+      addresses = readAddresses();
+    } catch {
+      return;
+    }
+    if (stopped || addresses === null) return;
+    const previous = previousAddresses();
+    if (stopped || previous === null || sameAddressSet(addresses, previous)) return;
+    await onChange([...addresses], [...previous]);
+  }
+  function launchTick() {
+    if (stopped || currentTick) return;
+    const active = Promise.resolve().then(tick).catch((error) => {
+      try {
+        onError(error);
+      } catch {
+      }
+    });
+    currentTick = active;
+    void active.then(() => {
+      if (currentTick === active) currentTick = null;
+    });
+  }
+  if (enabled) {
+    timer = setInterval(launchTick, intervalMs);
+    timer.unref();
+  }
+  return {
+    stop() {
+      if (stopPromise) return stopPromise;
+      stopped = true;
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+      const active = currentTick;
+      stopPromise = active ? active.then(() => void 0) : Promise.resolve();
+      return stopPromise;
+    }
+  };
+}
+
 // src/daemon/test-seam.ts
 import { appendFileSync } from "node:fs";
 function testNetMock() {
@@ -14731,8 +15721,23 @@ function mdnsInstanceName() {
   }
 }
 var DB_FILE = path18.join(HOME, "fleetd.db");
-var db = openDb(DB_FILE);
-var core = createCore(db, { port: PORT, version });
+var daemonResources = new DaemonResources({
+  onCloseError(name, error) {
+    console.error(`fleetd ${name} shutdown error:`, error);
+  }
+});
+daemonResources.setProcess("pid-file", { close: removeOwnedPidFile });
+var db;
+var core;
+try {
+  db = openDb(DB_FILE);
+  daemonResources.setStore("sqlite", { close: () => db.close() });
+  core = createCore(db, { port: PORT, version });
+  daemonResources.setCore(core.lifecycle);
+} catch (error) {
+  await daemonResources.close();
+  throw error;
+}
 var settleReconciliation = null;
 var bootReconciliation = new Promise((resolve) => {
   settleReconciliation = () => {
@@ -14752,39 +15757,39 @@ function lanInfoFor(addresses) {
   } : { enabled: false, urls: [] };
 }
 var LAN_INFO = lanInfoFor(lanAddresses());
-var { server, whenBroadcastIdle, refreshLan } = createHttp(core, {
-  port: PORT,
-  token: AUTH_TOKEN,
-  // lan.mdns reflects the responder's LIVE state, not the boot snapshot: if the
-  // responder disables itself after start() (no multicast membership, a socket
-  // error), the share panel stops offering a URL that cannot resolve.
-  lan: () => LAN_INFO.mdns && mdns && !mdns.alive() ? { ...LAN_INFO, mdns: null } : LAN_INFO,
-  version,
-  trustedOrigins: TRUSTED_ORIGINS,
-  proxyAuth: PROXY_AUTH,
-  managed: MANAGED,
-  requireToken: REQUIRE_TOKEN,
-  trustLoopback: TRUST_LOOPBACK,
-  startup: bootReadiness,
-  // validation aid: first 3 raw payloads per hook event → HOME/hook-payloads.jsonl
-  capture: createPayloadCapture(HOME, { secrets: AUTH_TOKEN ? [AUTH_TOKEN] : [] })
-});
+var http;
+try {
+  http = createHttp(core, {
+    port: PORT,
+    token: AUTH_TOKEN,
+    // lan.mdns reflects the responder's LIVE state, not the boot snapshot: if the
+    // responder disables itself after start() (no multicast membership, a socket
+    // error), the share panel stops offering a URL that cannot resolve.
+    lan: () => LAN_INFO.mdns && mdns && !mdns.alive() ? { ...LAN_INFO, mdns: null } : LAN_INFO,
+    version,
+    trustedOrigins: TRUSTED_ORIGINS,
+    proxyAuth: PROXY_AUTH,
+    managed: MANAGED,
+    requireToken: REQUIRE_TOKEN,
+    trustLoopback: TRUST_LOOPBACK,
+    startup: bootReadiness,
+    // validation aid: first 3 raw payloads per hook event → HOME/hook-payloads.jsonl
+    capture: createPayloadCapture(HOME, { secrets: AUTH_TOKEN ? [AUTH_TOKEN] : [] })
+  });
+  daemonResources.setHttp(http.lifecycle);
+} catch (error) {
+  await daemonResources.close();
+  throw error;
+}
+var { server, whenBroadcastIdle, refreshLan } = http;
 server.on("error", (e) => {
   if (e.code === "EADDRINUSE") {
     console.error("fleetd already running (port bind lost the election)");
-    removeOwnedPidFile();
-    try {
-      db.close();
-    } catch {
-    }
-    process.exit(3);
+    void daemonResources.close().finally(() => process.exit(3));
+    return;
   }
-  removeOwnedPidFile();
-  try {
-    db.close();
-  } catch {
-  }
-  throw e;
+  console.error(e);
+  void daemonResources.close().finally(() => process.exit(1));
 });
 function lanAddresses() {
   const addresses = /* @__PURE__ */ new Set();
@@ -14805,9 +15810,6 @@ var LAN_REFRESH_MS = (() => {
   const n = Number(process.env["FLEETDECK_LAN_REFRESH_MS"]);
   return Number.isFinite(n) && n > 0 ? n : 3e4;
 })();
-function sameAddresses(a, b) {
-  return a.length === b.length && [...a].sort().join(" ") === [...b].sort().join(" ");
-}
 function startMdns(addresses) {
   const inject = mdnsDgramInject();
   mdns = createMdns({
@@ -14855,15 +15857,13 @@ function refreshNetwork(addresses) {
 }
 var lastLanAddresses = null;
 function watchNetwork() {
-  if (!LAN_MODE) return;
-  const poll = () => {
-    let addresses = null;
-    try {
-      addresses = lanAddresses();
-    } catch {
-    }
-    if (addresses && lastLanAddresses && !sameAddresses(addresses, lastLanAddresses)) {
-      const gone = lastLanAddresses.filter((a) => !addresses.includes(a));
+  return startNetworkWatch({
+    enabled: LAN_MODE,
+    intervalMs: LAN_REFRESH_MS,
+    readAddresses: lanAddresses,
+    previousAddresses: () => lastLanAddresses,
+    onChange(addresses, previous) {
+      const gone = previous.filter((a) => !addresses.includes(a));
       refreshNetwork(addresses);
       if (addresses.length) {
         console.log(
@@ -14881,11 +15881,53 @@ function watchNetwork() {
         );
       } catch {
       }
+    },
+    onError(error) {
+      console.error("fleetd network watcher error:", error);
     }
-  };
-  const timer = setInterval(poll, LAN_REFRESH_MS);
-  timer.unref();
+  });
 }
+var networkWatchOwner = null;
+var agentsPollOwner = null;
+var bootWork = null;
+var discoveryShutdownTimedOut = false;
+async function stopMdnsOwned() {
+  const stopping = mdns?.stop();
+  if (!stopping) return;
+  let timer = null;
+  const watchdog = new Promise((resolve) => {
+    timer = setTimeout(() => {
+      discoveryShutdownTimedOut = true;
+      console.error("fleetd shutdown timed out waiting for discovery; continuing cleanup");
+      resolve();
+    }, 1e3);
+    timer.unref();
+  });
+  try {
+    await Promise.race([stopping, watchdog]);
+  } catch {
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+daemonResources.addProducer("boot-reconciliation", {
+  close: async () => {
+    await bootWork;
+  }
+});
+daemonResources.addProducer("agents-poll", {
+  close: async () => {
+    await agentsPollOwner?.stop();
+  }
+});
+daemonResources.addProducer("network-watch", {
+  close: async () => {
+    await networkWatchOwner?.stop();
+  }
+});
+daemonResources.addDiscovery("mdns", {
+  close: stopMdnsOwned
+});
 server.listen(PORT, BIND, () => {
   const boundHost = BIND.includes(":") && !BIND.startsWith("[") ? `[${BIND}]` : BIND;
   console.log(`fleetd up on http://${boundHost}:${PORT} (pid ${process.pid}, db ${DB_FILE})`);
@@ -14926,46 +15968,27 @@ server.listen(PORT, BIND, () => {
     if (MDNS_ENABLED && lastLanAddresses.length) {
       startMdns(lastLanAddresses);
     }
-    watchNetwork();
+    networkWatchOwner = watchNetwork();
   }
   try {
     core.reconcileClearForks();
   } catch (err) {
     console.error("fleetd /clear fork heal error:", err);
   }
-  void core.reconcileSpawns().catch((err) => {
+  bootWork = core.reconcileSpawns().catch((err) => {
     console.error("fleetd spawn reconciliation error:", err);
   }).then(() => core.bootRetention).then(() => whenBroadcastIdle()).finally(() => {
     settleReconciliation?.();
     settleReconciliation = null;
   });
-  startAgentsPoll(core);
+  agentsPollOwner = startAgentsPoll(core);
 });
 var shuttingDown = false;
 async function shutdown() {
   if (shuttingDown) return;
   shuttingDown = true;
-  const hardExit = setTimeout(() => {
-    console.error("fleetd shutdown timed out waiting for discovery; forcing exit");
-    removeOwnedPidFile();
-    try {
-      db.close();
-    } catch {
-    }
-    process.exit(1);
-  }, 1e3);
-  hardExit.unref();
-  try {
-    await mdns?.stop();
-  } catch {
-  }
-  removeOwnedPidFile();
-  try {
-    db.close();
-  } catch {
-  }
-  clearTimeout(hardExit);
-  process.exit(0);
+  await daemonResources.close();
+  process.exit(discoveryShutdownTimedOut || daemonResources.closeErrors.length > 0 ? 1 : 0);
 }
 process.on("SIGINT", () => {
   void shutdown();

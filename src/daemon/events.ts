@@ -18,6 +18,7 @@ import { mungeClaudeProjectCwd, userHomeDir, safeParse } from './helpers.ts';
 import { errMessage } from './errors.ts';
 import type { Statements, SessionRow } from './statements.ts';
 import type { SqliteHandle } from './sqlite.ts';
+import type { SpawnMaintenance } from './spawns.ts';
 
 // The Claude Code hook payload as it arrives on the wire. Every field is
 // optional: http.mjs authenticates the REQUEST, not its SHAPE, so applyEvent
@@ -129,6 +130,9 @@ interface EventsCtx {
     source: string;
   }) => void;
   settleTerminalPlans: (sid: string) => void;
+  // Optional only for the standalone factory tests. createCore always wires
+  // this before createEvents, making deferred adopt a root-owned task.
+  spawnMaintenance?: SpawnMaintenance;
 }
 
 const EDIT_TOOLS = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
@@ -191,6 +195,7 @@ export function createEvents(ctx: EventsCtx) {
     // 'handled-in-terminal'. Never fired at Stop/Notification/SessionEnd —
     // none of those proves the human decided anything in the terminal.
     settleTerminalPlans,
+    spawnMaintenance,
   } = ctx;
 
   // Interactive hooks are a control-plane feature, not telemetry. By default
@@ -1017,32 +1022,49 @@ export function createEvents(ctx: EventsCtx) {
       // one-shot still holds — whoever consumes the arm first wins, nothing
       // ever retries a failed launch.
       const skip = !!armed.adopt_armed_skip;
-      const timer = setTimeout(() => {
-        adoptSession(sid, { dangerously_skip_permissions: skip }, { deferred: true })
-          .then((out) => {
-            // One loud ticker line on REAL failures only. 409s are benign
-            // races — a manual adopt-now click (or a revive) beat the timer and
-            // the move actually happened; shouting "failed" over a success was
-            // the confirmed false-alarm bug. canceled:true outcomes already
-            // ticked (or deliberately stayed silent) inside adoptSession.
-            if (!out || (out.status >= 400 && out.status !== 409)) {
-              const c = q.getSession.get(sid);
-              tick(
-                `✗ move-to-tmux failed for ${c?.callsign ?? sid}: ${out?.body?.reason ?? 'unknown'}`.slice(
-                  0,
-                  100,
-                ),
-              );
-            }
-          })
-          .catch((err: unknown) => {
+      const runDeferredAdopt = async () => {
+        try {
+          const out = await adoptSession(
+            sid,
+            { dangerously_skip_permissions: skip },
+            { deferred: true },
+          );
+          // One loud ticker line on REAL failures only. 409s are benign
+          // races — a manual adopt-now click (or a revive) beat the timer and
+          // the move actually happened; shouting "failed" over a success was
+          // the confirmed false-alarm bug. canceled:true outcomes already
+          // ticked (or deliberately stayed silent) inside adoptSession.
+          if (!out || (out.status >= 400 && out.status !== 409)) {
             const c = q.getSession.get(sid);
             tick(
-              `✗ move-to-tmux failed for ${c?.callsign ?? sid}: ${errMessage(err)}`.slice(0, 100),
+              `✗ move-to-tmux failed for ${c?.callsign ?? sid}: ${out?.body?.reason ?? 'unknown'}`.slice(
+                0,
+                100,
+              ),
             );
+          }
+        } catch (err) {
+          const c = q.getSession.get(sid);
+          tick(`✗ move-to-tmux failed for ${c?.callsign ?? sid}: ${errMessage(err)}`.slice(0, 100));
+        }
+      };
+      if (spawnMaintenance) {
+        const scheduled = spawnMaintenance.schedule(
+          ADOPT_DELAY_MS,
+          runDeferredAdopt,
+          () => undefined,
+        );
+        if (scheduled) {
+          void scheduled.catch(() => {
+            /* runDeferredAdopt contains its failure surface */
           });
-      }, ADOPT_DELAY_MS);
-      timer.unref(); // never keep the daemon alive for a deferred adopt
+        }
+      } else {
+        // Standalone factory tests have no root lifecycle; preserve their old
+        // timer behavior. Production createCore always takes the owned branch.
+        const timer = setTimeout(() => void runDeferredAdopt(), ADOPT_DELAY_MS);
+        timer.unref();
+      }
     }
     modelMemo.delete(sid); // a revive re-stamps the floor at its SessionStart
     // v1.2: SessionEnd on a spawned session does NOT kill its pane — the

@@ -208,8 +208,8 @@ test('agents polling is single-flight and backs off the CLI while liveness stays
       return Promise.resolve();
     },
   });
-  t.after(() => {
-    poller.stop();
+  t.after(async () => {
+    await poller.stop();
   });
   const readEvents = () => {
     if (!fs.existsSync(log)) return [];
@@ -236,11 +236,10 @@ test('agents polling is single-flight and backs off the CLI while liveness stays
   } catch (error) {
     observationFailure = error;
   } finally {
-    poller.stop();
+    await poller.stop();
   }
-  // stop() prevents another launch but intentionally does not kill a command
-  // already in flight. Balance start/end before scratch cleanup so even the
-  // failure path cannot strand a child that still owns the temporary log.
+  // stop() joins but intentionally does not kill a command already in flight.
+  // Verify the child balanced its own start/end records before scratch cleanup.
   const events = await waitUntil(
     () => {
       const observed = readEvents();

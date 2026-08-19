@@ -13,6 +13,7 @@ import { detectCoderWorkspaceRoot } from './config.ts';
 import { errStatus, errMessage } from './errors.ts';
 import { repoTransportChoice } from './repo-policy.ts';
 import type { Statements } from './statements.ts';
+import type { SpawnMaintenance } from './spawns.ts';
 
 // eslint-disable-next-line no-control-regex -- refusing NUL/C0/DEL in a repos_dir path is the entire purpose of this gate
 const CONTROL_RE = /[\x00-\x1f\x7f]/;
@@ -490,6 +491,9 @@ function dirtyNames(porcelain: string): string[] {
 
 interface ReposCtx {
   q: Statements['q'];
+  // createRepos is built before createSpawns, so this is read dynamically from
+  // the shared ctx at touch time. Standalone repos tests intentionally omit it.
+  spawnMaintenance?: SpawnMaintenance;
 }
 
 type ResolvedTarget =
@@ -934,14 +938,18 @@ export function createRepos(ctx: ReposCtx) {
       // locals the Promise chain can rely on.
       const rootDir = root;
       const repoId = repo_id;
-      Promise.resolve()
-        .then(() => originOf(rootDir))
-        .then((found) => {
-          if (found) q.setRepoOrigin.run(found, repoId);
-        })
-        .catch((err: unknown) => {
+      const backfill = async () => {
+        const found = await originOf(rootDir);
+        if (found) q.setRepoOrigin.run(found, repoId);
+      };
+      const active = ctx.spawnMaintenance
+        ? ctx.spawnMaintenance.run(backfill)
+        : Promise.resolve().then(backfill);
+      if (active) {
+        void active.catch((err: unknown) => {
           console.error('fleetd repo origin backfill error:', err);
         });
+      }
     }
   }
 

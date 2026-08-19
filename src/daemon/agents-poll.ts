@@ -56,7 +56,7 @@ function resolveArgv(): string[] | null {
   return trimmed.split(/\s+/);
 }
 
-async function runOnce(argv: string[]): Promise<string | null> {
+async function runOnce(argv: readonly string[]): Promise<string | null> {
   // execFileP runs by argv (no shell), absorbs synchronous throws, and applies
   // windowsHide itself — so a bad command yields { ok: false } rather than
   // escaping. ANY failure (absent CLI / timeout / non-zero exit) → null skip.
@@ -64,6 +64,18 @@ async function runOnce(argv: string[]): Promise<string | null> {
   if (cmd === undefined) return null; // resolveArgv never yields an empty argv, but the type allows it
   const res = await execFileP(cmd, argv.slice(1), { timeout: EXEC_TIMEOUT_MS });
   return res.ok ? res.out : null;
+}
+
+export interface AgentsPollOwner {
+  stop: () => Promise<void>;
+}
+
+export interface AgentsPollOptions {
+  argv?: readonly string[] | null;
+  firstRunDelayMs?: number;
+  idlePollIntervalMs?: number;
+  pollIntervalMs?: number;
+  runAgents?: (argv: readonly string[]) => Promise<string | null>;
 }
 
 function hasLiveInteractive(records: unknown): boolean {
@@ -87,7 +99,9 @@ function hasLiveInteractive(records: unknown): boolean {
 
 /**
  * Start the agents-cli poller against a running core (a derive.mjs
- * createCore() instance). Returns { stop() } to clear the timers.
+ * createCore() instance). stop() is idempotent: it clears the pending timer,
+ * prevents post-quiesce callbacks, and joins the current tick. It deliberately
+ * does not cancel an in-flight subprocess; that belongs to the P3 process seam.
  *
  * v1.2: the owned-pane liveness sweep (CONTRACT "Owned-pane liveness", ~10 s)
  * rides this same cadence — so the timers now ALWAYS run; disabling the
@@ -96,73 +110,97 @@ function hasLiveInteractive(records: unknown): boolean {
  * still needs crash detection). The sweep is a cheap no-op when there are no
  * active spawn rows.
  */
-export function startAgentsPoll(core: AgentsPollCore): { stop: () => void } {
-  const argv = resolveArgv();
+export function startAgentsPoll(
+  core: AgentsPollCore,
+  options: AgentsPollOptions = {},
+): AgentsPollOwner {
+  const argv = options.argv === undefined ? resolveArgv() : options.argv;
   const agentsEnabled = argv !== null;
+  const firstRunDelayMs = options.firstRunDelayMs ?? FIRST_RUN_DELAY_MS;
+  const pollIntervalMs = options.pollIntervalMs ?? POLL_INTERVAL_MS;
+  const idlePollIntervalMs = options.idlePollIntervalMs ?? IDLE_POLL_INTERVAL_MS;
+  const runAgents = options.runAgents ?? runOnce;
   let stopped = false;
-  let running = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let currentTick: Promise<void> | null = null;
+  let stopPromise: Promise<void> | null = null;
   let nextAgentsPollAt = 0;
   let agentsWereActive = false;
 
-  async function tick() {
-    // Recursive scheduling below already provides single-flight. This guard is
-    // retained as a second line of defence against an accidental/manual second
-    // invocation during future lifecycle refactors.
-    if (stopped || running) return;
-    running = true;
-    try {
-      if (agentsEnabled && Date.now() >= nextAgentsPollAt) {
-        const out = await runOnce(argv);
-        let validPoll = false;
-        let records: unknown;
-        if (out != null) {
-          // exec failed/timed out: silent skip
+  async function tick(): Promise<void> {
+    if (stopped) return;
+    if (agentsEnabled && Date.now() >= nextAgentsPollAt) {
+      const out = await runAgents(argv);
+      // P1 can join but cannot cancel the current exec. Once stop() begins,
+      // discard its late result so shutdown cannot mutate core state afterward.
+      if (stopped) return;
+      let validPoll = false;
+      let records: unknown;
+      if (out != null) {
+        // exec failed/timed out: silent skip
+        try {
+          records = JSON.parse(out);
+          validPoll = true;
+        } catch {
+          records = undefined; // garbage output: silent skip
+        }
+        if (records !== undefined) {
           try {
-            records = JSON.parse(out);
-            validPoll = true;
+            core.ingestAgentsPoll(records);
           } catch {
-            records = undefined; // garbage output: silent skip
-          }
-          if (records !== undefined) {
-            try {
-              core.ingestAgentsPoll(records);
-            } catch {
-              /* a bad poll result must never take the daemon down */
-            }
+            /* a bad poll result must never take the daemon down */
           }
         }
-        // A valid empty registry is the strongest cheap signal that the fleet
-        // is idle. On a transient CLI failure, retain the prior cadence: an
-        // active fleet retries promptly, while an absent CLI does not burn CPU.
-        if (validPoll) agentsWereActive = hasLiveInteractive(records);
-        nextAgentsPollAt =
-          Date.now() + (agentsWereActive ? POLL_INTERVAL_MS : IDLE_POLL_INTERVAL_MS);
       }
-      // v1.2 owned-pane liveness keeps its ~10 s contract even while the much
-      // heavier agents CLI is backed off. Failures remain a silent retry.
-      try {
-        await core.spawnLivenessTick?.();
-      } catch {
-        /* tmux hiccups are a silent skip; next tick retries */
-      }
-    } finally {
-      running = false;
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- live guard, not dead: stop() can flip `stopped` during an in-flight await above; TS carries the entry-guard narrowing (stopped===false) across awaits and wrongly sees this as always-true.
-      if (!stopped) schedule(POLL_INTERVAL_MS);
+      // A valid empty registry is the strongest cheap signal that the fleet
+      // is idle. On a transient CLI failure, retain the prior cadence: an
+      // active fleet retries promptly, while an absent CLI does not burn CPU.
+      if (validPoll) agentsWereActive = hasLiveInteractive(records);
+      nextAgentsPollAt = Date.now() + (agentsWereActive ? pollIntervalMs : idlePollIntervalMs);
+    }
+    if (stopped) return;
+    // v1.2 owned-pane liveness keeps its ~10 s contract even while the much
+    // heavier agents CLI is backed off. Failures remain a silent retry.
+    try {
+      await core.spawnLivenessTick?.();
+    } catch {
+      /* tmux hiccups are a silent skip; next tick retries */
     }
   }
 
-  function schedule(delayMs: number) {
-    timer = setTimeout(() => void tick(), delayMs);
+  function schedule(delayMs: number): void {
+    if (stopped) return;
+    timer = setTimeout(() => {
+      timer = null;
+      if (stopped || currentTick) return;
+      // Register ownership before tick() executes so stop() can never miss a
+      // tick whose first synchronous callback itself initiates shutdown.
+      const active = Promise.resolve()
+        .then(tick)
+        .catch(() => {
+          /* polling is best effort; the next scheduled tick retries */
+        });
+      currentTick = active;
+      void active.then(() => {
+        if (currentTick === active) currentTick = null;
+        if (!stopped) schedule(pollIntervalMs);
+      });
+    }, delayMs);
     timer.unref();
   }
-  schedule(FIRST_RUN_DELAY_MS);
+  schedule(firstRunDelayMs);
 
   return {
-    stop() {
+    stop(): Promise<void> {
+      if (stopPromise) return stopPromise;
       stopped = true;
-      if (timer) clearTimeout(timer);
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      const active = currentTick;
+      stopPromise = active ? active.then(() => undefined) : Promise.resolve();
+      return stopPromise;
     },
   };
 }

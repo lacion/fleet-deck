@@ -274,6 +274,9 @@ interface Client {
   readyReject: (err: Error) => void;
   command: (line: string) => Promise<ResponseEvent>;
   deadTimer: ReturnType<typeof setInterval>;
+  exited: Promise<void>;
+  detachDataListeners: () => void;
+  detachAllListeners: () => void;
 }
 interface Viewer {
   pane: string | null;
@@ -314,6 +317,8 @@ interface TermBridgeOptions {
   port: number;
   resolveSpawn: (spawnId: string) => SpawnRow | null | Promise<SpawnRow | null>;
   log?: (message: string) => void;
+  /** P1 lifecycle test seam; production keeps the one-second TERM grace. */
+  closeGraceMs?: number;
 }
 
 /** Factory lifetime equals the daemon lifetime. The shared control client is
@@ -325,12 +330,40 @@ export function createTermBridge({
   log = () => {
     /* silent by default */
   },
+  closeGraceMs = 1_000,
 }: TermBridgeOptions) {
   const session = sessionName(port);
   const viewers = new Set<Viewer>();
+  const clients = new Set<Client>();
+  const closeRecheckTimers = new Set<ReturnType<typeof setTimeout>>();
+  const attachTimers = new Set<ReturnType<typeof setTimeout>>();
+  const delaySettlers = new Set<() => void>();
+  const terminateGraceMs =
+    Number.isFinite(closeGraceMs) && closeGraceMs >= 1 ? Math.floor(closeGraceMs) : 1_000;
   let client: Client | null = null;
+  let phase: 'open' | 'closing' | 'closed' = 'open';
+  let closePromise: Promise<void> | null = null;
 
   // ---------------------------------------------------------------- the client
+
+  const bridgeClosedError = () => new TermBridgeError('terminal bridge is closed');
+
+  /** A close-aware delay: quiesce resolves it immediately instead of leaving an
+   * in-progress openViewer parked until a repaint timer fires. */
+  function delay(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      const settle = () => {
+        if (!delaySettlers.delete(settle)) return;
+        if (timer) clearTimeout(timer);
+        timer = null;
+        resolve();
+      };
+      delaySettlers.add(settle);
+      timer = setTimeout(settle, ms);
+      timer.unref();
+    });
+  }
 
   function createClient(): Client {
     let readyResolve: () => void = () => {
@@ -425,10 +458,18 @@ export function createTermBridge({
             /* a failed probe is not proof a pane died */
           });
       }, PANE_DEAD_POLL_MS),
+      exited: Promise.resolve(),
+      detachDataListeners: () => {
+        /* installed after spawn */
+      },
+      detachAllListeners: () => {
+        /* installed after spawn */
+      },
     };
     c.deadTimer.unref();
 
     const onEvent = (ev: ControlEvent) => {
+      if (c.closed || phase !== 'open') return;
       if (ev.type === 'response') {
         c.waiters.shift()?.resolve(ev);
       } else if (ev.type === 'session-changed') {
@@ -442,6 +483,7 @@ export function createTermBridge({
         if (!c.panes.size) return;
         c.command("list-panes -a -F '#{pane_id}'")
           .then((res) => {
+            if (c.closed || phase !== 'open') return;
             if (!res.ok) {
               scheduleCloseRecheck();
               return;
@@ -473,6 +515,13 @@ export function createTermBridge({
       env: process.env,
     });
     c.child = child;
+    clients.add(c);
+    let exitedResolve: () => void = () => {
+      /* installed by the Promise executor */
+    };
+    c.exited = new Promise<void>((resolve) => {
+      exitedResolve = resolve;
+    });
     // M-P6: batch %output per pane across ONE feed() chunk. tmux flushes a TUI
     // redraw as a burst of %output lines; emitting one ws frame per line meant
     // dozens of ws.send calls (× every viewer) for a single keystroke's repaint.
@@ -480,9 +529,11 @@ export function createTermBridge({
     // bonus, hands the pane decoder the whole burst so it splits fewer multibyte
     // glyphs. A non-output event flushes the pending batch first, so a pane's
     // bytes can never overtake its own exit/close.
-    child.stdout.on('data', (chunk: Buffer) => {
+    const onStdout = (chunk: Buffer) => {
+      if (c.closed || phase !== 'open') return;
       const batched = new Map<string, Buffer[]>(); // pane id -> Buffer[]
       const flush = () => {
+        if (c.closed || phase !== 'open') return;
         for (const [pane, parts] of batched) {
           const stream = c.panes.get(pane);
           if (!stream) continue;
@@ -503,16 +554,51 @@ export function createTermBridge({
         }
       }
       flush();
-    });
-    child.stderr.on('data', (chunk: Buffer) => {
+    };
+    const onStderr = (chunk: Buffer) => {
+      if (c.closed || phase !== 'open') return;
       log(`terminal control stderr: ${String(chunk).trim()}`);
-    });
-    child.on('error', (err) => {
-      teardown(`terminal control client failed: ${err.message}`);
-    });
-    child.on('exit', () => {
+    };
+    const onError = (err: Error) => {
+      if (!c.closed && phase === 'open') {
+        teardown(`terminal control client failed: ${err.message}`);
+      }
+    };
+    const onExit = () => {
+      // `exit` means the direct control child has been reaped. `close` can be
+      // delayed forever by a grandchild that inherited stdout/stderr, so the
+      // lifecycle join below deliberately waits on this event instead.
+      exitedResolve();
       if (!c.closed) teardown('terminal control client exited');
-    });
+    };
+    const onClose = () => {
+      // A failed spawn can reach `close` without a useful `exit`; either event
+      // is terminal for the direct child from this bridge's point of view.
+      exitedResolve();
+      clients.delete(c);
+      c.detachAllListeners();
+    };
+    let dataListenersDetached = false;
+    let allListenersDetached = false;
+    c.detachDataListeners = () => {
+      if (dataListenersDetached) return;
+      dataListenersDetached = true;
+      child.stdout.off('data', onStdout);
+      child.stderr.off('data', onStderr);
+    };
+    c.detachAllListeners = () => {
+      if (allListenersDetached) return;
+      allListenersDetached = true;
+      c.detachDataListeners();
+      child.off('error', onError);
+      child.off('exit', onExit);
+      child.off('close', onClose);
+    };
+    child.stdout.on('data', onStdout);
+    child.stderr.on('data', onStderr);
+    child.on('error', onError);
+    child.on('exit', onExit);
+    child.on('close', onClose);
     return c;
   }
 
@@ -544,11 +630,13 @@ export function createTermBridge({
    * already torn down. */
   function scheduleCloseRecheck() {
     const c = client;
-    if (!c || c.closed || !c.panes.size) return;
+    if (!c || c.closed || phase !== 'open' || !c.panes.size) return;
     const timer = setTimeout(() => {
-      if (client !== c || c.closed || !c.panes.size) return;
+      closeRecheckTimers.delete(timer);
+      if (phase !== 'open' || client !== c || c.closed || !c.panes.size) return;
       c.command("list-panes -a -F '#{pane_id}'")
         .then((res) => {
+          if (phase !== 'open' || c.closed) return;
           if (!res.ok) return;
           const alive = new Set(res.lines.map((s) => s.trim()));
           for (const [paneId, stream] of [...c.panes]) {
@@ -560,11 +648,13 @@ export function createTermBridge({
           /* a failed probe is not proof a pane died */
         });
     }, CLOSE_RECHECK_MS);
+    closeRecheckTimers.add(timer);
     timer.unref();
   }
 
   /** Attach (once) and wait for tmux to confirm. Concurrent openers share it. */
   async function ensureClient(): Promise<Client> {
+    if (phase !== 'open') throw bridgeClosedError();
     client ??= createClient();
     const c = client;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -573,13 +663,17 @@ export function createTermBridge({
         c.ready,
         new Promise<never>((_, reject) => {
           timer = setTimeout(() => {
+            if (timer) attachTimers.delete(timer);
             reject(new Error('terminal control attach timed out'));
           }, ATTACH_TIMEOUT_MS);
+          attachTimers.add(timer);
         }),
       ]);
     } finally {
       clearTimeout(timer);
+      if (timer) attachTimers.delete(timer);
     }
+    if (phase !== 'open') throw bridgeClosedError();
     if (c.closed) throw new Error('terminal control client exited');
     return c;
   }
@@ -654,6 +748,7 @@ export function createTermBridge({
     },
     isAborted = () => false,
   }: OpenViewerOptions): Promise<ViewerHandle> {
+    if (phase !== 'open') throw bridgeClosedError();
     if (process.env['FLEETDECK_TERM']?.trim().toLowerCase() === 'off')
       throw new TermBridgeError('live terminal disabled');
     const size = dimensions(cols, rows);
@@ -661,10 +756,12 @@ export function createTermBridge({
     // M-R5: the WS can close mid-open, before a handle exists to close(). Bail
     // between awaits so the half-opened viewer is torn down, not left counted.
     const abortIfClosed = () => {
+      if (phase !== 'open') throw bridgeClosedError();
       if (isAborted()) throw new Error('terminal viewer closed during open');
     };
 
     const row = await resolveSpawn(spawn_id);
+    abortIfClosed();
     if (!row) throw new TermBridgeError('no such spawn');
     if (!ACTIVE_STATUSES.has(row.status)) throw new TermBridgeError('spawn is not live');
     const windowName = row.tmux_window;
@@ -813,10 +910,7 @@ export function createTermBridge({
         await sizeWindow(c, windowName, size.cols, size.rows);
         throw new Error('terminal resize failed');
       }
-      await new Promise<void>((r) => {
-        const t = setTimeout(r, REPAINT_MS);
-        t.unref();
-      });
+      await delay(REPAINT_MS);
       abortIfClosed();
 
       // R1-4/BUG-056: subscribe BEFORE the seed is even requested — not after the
@@ -1008,5 +1102,132 @@ export function createTermBridge({
     };
   }
 
-  return { openViewer };
+  async function settlesWithin(promise: Promise<void>, milliseconds: number): Promise<boolean> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        promise.then(() => true),
+        new Promise<false>((resolve) => {
+          timer = setTimeout(() => resolve(false), milliseconds);
+          timer.unref();
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  function releaseClientProcessHandles(c: Client, child: ChildProcess): void {
+    // Once the direct child has exited (or the post-KILL deadline elapsed), no
+    // bridge callback may retain the ChildProcess or its pipe handles. Destroy
+    // only the parent-owned ends: descendants that inherited the write ends
+    // must not hold daemon shutdown hostage waiting for ChildProcess `close`.
+    c.detachAllListeners();
+    try {
+      child.stdin?.destroy();
+    } catch {
+      /* already closed */
+    }
+    try {
+      child.stdout?.destroy();
+    } catch {
+      /* already closed */
+    }
+    try {
+      child.stderr?.destroy();
+    } catch {
+      /* already closed */
+    }
+    clients.delete(c);
+  }
+
+  async function terminateClient(c: Client): Promise<void> {
+    const child = c.child;
+    if (!child) return;
+    if (child.exitCode === null && child.signalCode === null) {
+      try {
+        child.kill('SIGTERM');
+      } catch {
+        /* already gone */
+      }
+    }
+
+    const exitedDuringGrace = await settlesWithin(c.exited, terminateGraceMs);
+    if (!exitedDuringGrace && child.exitCode === null && child.signalCode === null) {
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        /* already gone */
+      }
+    }
+    if (!exitedDuringGrace) {
+      const exitedAfterKill = await settlesWithin(c.exited, terminateGraceMs);
+      // SIGKILL should make the direct child observable promptly. If the host
+      // fails to deliver an exit event inside the hard bound, release the host
+      // handle as well so an unobservable child cannot pin daemon shutdown.
+      if (!exitedAfterKill) child.unref();
+    }
+    releaseClientProcessHandles(c, child);
+  }
+
+  async function closeImpl(): Promise<void> {
+    phase = 'closing';
+    const reason = 'terminal bridge is closed';
+    const ownedClients = [...clients];
+    const ownedViewers = [...viewers];
+    client = null;
+
+    for (const timer of closeRecheckTimers) clearTimeout(timer);
+    closeRecheckTimers.clear();
+    for (const timer of attachTimers) clearTimeout(timer);
+    attachTimers.clear();
+    for (const settle of [...delaySettlers]) settle();
+
+    const inputChains = ownedViewers.map((viewer) => viewer.inputChain);
+    for (const c of ownedClients) {
+      c.closed = true;
+      clearInterval(c.deadTimer);
+      c.readyReject(new Error(reason));
+      for (const waiter of c.waiters.splice(0)) waiter.reject(new Error(reason));
+      // Quiesce output/log callbacks immediately; retain only child lifecycle
+      // listeners until the process has been joined below.
+      c.detachDataListeners();
+    }
+    for (const viewer of ownedViewers) {
+      viewer.finish(reason);
+      viewer.pending = [];
+      viewer.pendingBytes = 0;
+      viewer.pendingExit = null;
+    }
+    for (const c of ownedClients) {
+      c.panes.clear();
+      c.manualSizing.clear();
+    }
+
+    await Promise.all([
+      ...inputChains.map((chain) => chain.catch(() => {})),
+      ...ownedClients.map((c) => terminateClient(c)),
+    ]);
+    for (const viewer of ownedViewers) {
+      viewer.queuedInput = 0;
+      viewer.inputChain = Promise.resolve();
+    }
+    clients.clear();
+    phase = 'closed';
+  }
+
+  /** Permanently quiesce the bridge and join every control child. The exact
+   * Promise is memoized so concurrent/double close shares one release. */
+  function close(): Promise<void> {
+    if (closePromise) return closePromise;
+    // Latch admission synchronously, but defer release work until after the
+    // memoized Promise has been published. viewer.finish() invokes arbitrary
+    // onClose code, which is allowed to re-enter close() and must receive this
+    // exact same Promise rather than start a second release.
+    phase = 'closing';
+    closePromise = Promise.resolve().then(closeImpl);
+    return closePromise;
+  }
+
+  return { openViewer, close };
 }

@@ -158,6 +158,8 @@ interface QuestionsOptions {
   onRetired?: (row: QuestionRow | undefined, opts?: { activity?: boolean }) => void;
   rearmGraceMs?: number;
   rearmMax?: number;
+  // P1 lifecycle test seam; production keeps the five-second orphan cadence.
+  sweepMs?: number;
 }
 
 // v1.3 plan library (CONTRACT "B. Plan library"): the mail sent to the
@@ -260,7 +262,7 @@ function toolCallKey(toolName: unknown, toolInput: unknown): string {
 // over. A re-arm entry's timer is null once the grace window fired and the
 // entry survives only as a successor link.
 type Timer = ReturnType<typeof setTimeout>;
-type RespondFn = (response: unknown) => void;
+type RespondFn = (response: unknown, status: number) => void;
 interface HoldEntry {
   session_id: string;
   respond: RespondFn;
@@ -319,6 +321,7 @@ export function createQuestions(
     // did before 2.1.
     rearmGraceMs = REARM_GRACE_MS,
     rearmMax = MAX_REARMS,
+    sweepMs = SWEEP_MS,
   }: QuestionsOptions = {},
 ) {
   const q = {
@@ -369,6 +372,9 @@ export function createQuestions(
   // sibling's completion. Answered-in-terminal completions are unaffected: they
   // left no ledger entry and retire a matching pending hold exactly as before.
   const completedKeys = new Map<string, Map<string, number>>();
+  const completedKeyTimers = new Set<Timer>();
+  let phase: 'active' | 'quiesced' | 'closed' = 'active';
+  let closePromise: Promise<void> | null = null;
   // Interactive holds are useful only while an authorized board can actually
   // render and answer them. The HTTP layer owns that fact (its authenticated
   // snapshot-WebSocket set), so it installs a live probe after createHttp has
@@ -376,11 +382,23 @@ export function createQuestions(
   // a partially wired daemon must fail hooks open, never park them blindly.
   let boardConsumerProbe: () => boolean = () => false;
 
+  const active = (): boolean => phase === 'active';
+  const quiescingError = (): Error => new Error('fleetd questions are quiescing');
+
+  // Every hook fail-open response has one wire contract. The HTTP adapter has
+  // always emitted status 200; carrying it through this seam makes shutdown
+  // release explicit and lets non-HTTP owners preserve the same contract.
+  function respondFailOpen(respond: RespondFn): void {
+    respond({}, 200);
+  }
+
   function setBoardConsumerProbe(probe: () => boolean): void {
+    if (!active()) return;
     boardConsumerProbe = probe;
   }
 
   function boardConsumerAvailable(): boolean {
+    if (!active()) return false;
     try {
       return boardConsumerProbe() === true;
     } catch {
@@ -394,6 +412,7 @@ export function createQuestions(
     sessionId: string | null | undefined,
     payload?: unknown,
   ): QuestionRow {
+    if (!active()) throw quiescingError();
     const now = Date.now();
     // The window resolves per creation when a resolver is wired: the hold_ms
     // settings row can change between daemon boots (settings.mjs), and a hold
@@ -437,7 +456,18 @@ export function createQuestions(
   // Called synchronously in the same tick as create() (no timer can
   // interleave), so a pending hold-kind row without a holds entry is always
   // an orphan (restart/disconnect), never a race.
-  function attachHold(row: QuestionRow, respond: RespondFn) {
+  function attachHold(row: QuestionRow, respond: RespondFn): boolean {
+    // Intake that reaches this seam after quiesce cannot be parked. Fail the
+    // hook open, but do not touch durable state: shutdown owns the rows that
+    // were admitted before its latch flipped.
+    if (!active()) {
+      try {
+        respondFailOpen(respond);
+      } catch {
+        /* socket already gone */
+      }
+      return false;
+    }
     // Held responses must not leak sockets: cap concurrent holds per session
     // at MAX_HOLDS_PER_SESSION; the OLDEST is failed open ({}) to make room.
     const mine = [...holds.keys()]
@@ -455,13 +485,14 @@ export function createQuestions(
     // future edit adds a throwing operation before settleExpired's release.
     const timer = setTimeout(
       () => {
+        if (!active()) return;
         try {
           settleExpired(row.id);
         } catch (err) {
           const h = releaseHold(row.id);
           if (h) {
             try {
-              h.respond({});
+              respondFailOpen(h.respond);
             } catch {
               /* socket already gone */
             }
@@ -473,6 +504,7 @@ export function createQuestions(
     );
     timer.unref();
     holds.set(row.id, { session_id: row.session_id, respond, timer });
+    return true;
   }
 
   function releaseHold(id: number): HoldEntry | null {
@@ -490,19 +522,25 @@ export function createQuestions(
   // disconnect the terminal owns the question and no board is present to answer
   // a successor. Work from a snapshot so responder close events can safely call
   // socketClosed while this loop is running.
-  function failOpenAllHolds(): number {
-    const ids = [...holds.keys()];
-    if (ids.length === 0) return 0;
+  function releaseAll(): number {
+    const entries = [...holds.entries()];
+    if (entries.length === 0) return 0;
 
-    const retired: number[] = [];
-    for (const id of ids) {
-      const h = releaseHold(id);
-      if (!h) continue;
+    // Remove ownership before invoking arbitrary responder code, but leave the
+    // timers armed until every response has settled. A synchronous close event
+    // therefore observes "not held" and cannot race a second retirement.
+    for (const [id] of entries) holds.delete(id);
+    for (const [, h] of entries) {
       try {
-        h.respond({});
+        respondFailOpen(h.respond);
       } catch {
         /* socket already gone */
       }
+    }
+
+    const retired: number[] = [];
+    for (const [id, h] of entries) {
+      clearTimeout(h.timer);
       // Defensive: a live hold normally has no re-arm metadata yet, but keeping
       // this explicit makes the no-successor contract survive future refactors.
       cancelRearm(id);
@@ -523,19 +561,26 @@ export function createQuestions(
       }
     }
     onChange();
-    return ids.length;
+    return entries.length;
   }
+
+  // Compatibility name used by the board-disconnect path. The lifecycle name
+  // is releaseAll(); both share the same responder-first implementation.
+  const failOpenAllHolds = releaseAll;
 
   // -------------------------------------------- BUG-138: completion ledger
   // noteCompleted / consumeCompleted implement the completedKeys ledger above.
   // TTL'd entries: the timer deletes ONLY this entry (verified by identity), so
   // answers and expirations interleaving on one key can never double-count.
   function noteCompleted(sessionId: string, key: string) {
+    if (!active()) return;
     let byKey = completedKeys.get(sessionId);
     if (!byKey) completedKeys.set(sessionId, (byKey = new Map<string, number>()));
     byKey.set(key, (byKey.get(key) ?? 0) + 1);
     const entry = byKey;
     const timer = setTimeout(() => {
+      if (!active()) return;
+      completedKeyTimers.delete(timer);
       if (completedKeys.get(sessionId) !== entry) return; // session ledger already dropped
       const n = entry.get(key);
       if (n == null) return;
@@ -543,6 +588,7 @@ export function createQuestions(
       else entry.set(key, n - 1);
       if (entry.size === 0) completedKeys.delete(sessionId);
     }, COMPLETED_KEY_TTL_MS);
+    completedKeyTimers.add(timer);
     timer.unref();
   }
 
@@ -550,6 +596,7 @@ export function createQuestions(
   // still awaiting ITS completion, consume it (one answer absorbs one
   // completion) and tell expireOnActivity to leave the pending twins alone.
   function consumeCompleted(sessionId: string, key: string): boolean {
+    if (!active()) return false;
     const byKey = completedKeys.get(sessionId);
     if (!byKey) return false;
     const n = byKey.get(key);
@@ -564,10 +611,11 @@ export function createQuestions(
   // answer the held request with {} so the normal flow resumes in the
   // terminal, and mark the row expired.
   function settleExpired(id: number) {
+    if (!active()) return;
     const h = releaseHold(id);
     if (h) {
       try {
-        h.respond({});
+        respondFailOpen(h.respond);
       } catch {
         /* socket already gone */
       }
@@ -606,6 +654,7 @@ export function createQuestions(
   // sockets, and there is no socket here. Chains are capped separately at
   // MAX_REARMS so a session nobody answers can't refill the rail forever.
   function scheduleRearm(row: QuestionRow | undefined): boolean {
+    if (!active()) return false;
     if (!(rearmGraceMs > 0)) return false; // disabled (tests, future kill-switch)
     if (!row || !HOLD_KINDS.has(row.kind)) return false; // freeform never expires on a timer
     const chainRoot = safeParse<QuestionPayload>(row.payload_json)?.chain_root ?? row.id;
@@ -625,6 +674,7 @@ export function createQuestions(
       row.id,
     );
     const timer = setTimeout(() => {
+      if (!active()) return;
       try {
         fireRearm(row.id, chainRoot);
       } catch {
@@ -647,6 +697,7 @@ export function createQuestions(
   // a session that demonstrably moved on) suppresses the re-arm — don't pile
   // a recovery card on a session that is clearly talking again.
   function fireRearm(sourceId: number, chainRoot: number) {
+    if (!active()) return;
     if (!rearmById.delete(sourceId)) return; // cancelled while the timer was queued
     const row = q.get.get(sourceId);
     if (row?.status !== 'expired') return;
@@ -681,6 +732,7 @@ export function createQuestions(
   // its time on the rail), arms the NEXT grace window, and keeps the chain's
   // bookkeeping pointing at the row the timer hangs off.
   function recycleRearm(id: number): boolean {
+    if (!active()) return false;
     const meta = rearmMeta.get(id);
     rearmMeta.delete(id);
     if (!meta) return false;
@@ -693,6 +745,7 @@ export function createQuestions(
     if ((rearmChains.get(chainRoot) ?? 0) >= rearmMax) return true;
     rearmById.delete(meta.sourceId);
     const timer = setTimeout(() => {
+      if (!active()) return;
       try {
         fireRearm(id, chainRoot);
       } catch {
@@ -724,6 +777,7 @@ export function createQuestions(
   // parked got answered (or abandoned) in the terminal, and the card must not
   // outlive the question it represents.
   function disarmRearmsForSession(sessionId: string): boolean {
+    if (!active()) return false;
     for (const [id, m] of [...rearmById]) {
       // rearmById is global to the daemon. Activity in one session proves only
       // that session moved on; cancelling another session's grace timer would
@@ -749,6 +803,7 @@ export function createQuestions(
   // Path (c): the hook client disconnected before we responded. 'close' also
   // fires after a NORMAL completion, so only act while the hold still exists.
   function socketClosed(id: number) {
+    if (!active()) return;
     if (!holds.has(id)) return;
     releaseHold(id);
     if (q.markExpired.run(id).changes) {
@@ -764,6 +819,7 @@ export function createQuestions(
   // or re-arm. Retire that row immediately and fire the ordinary retirement
   // callback so the plan's handled-in-terminal gate remains intact.
   function expireUnheld(id: number): boolean {
+    if (!active()) return false;
     if (holds.has(id)) return false;
     if (!q.markExpired.run(id).changes) return false;
     onRetired(q.get.get(id));
@@ -803,6 +859,9 @@ export function createQuestions(
   // the row stays pending — the mailbox never stores a truncated answer.
   // Returns { status, body } for the HTTP layer.
   function answer(id: string | number, body: AnswerBody | null | undefined) {
+    if (!active()) {
+      return { status: 503, body: { ok: false, err: 'questions are quiescing' } };
+    }
     const row = q.get.get(Number(id));
     if (!row) return { status: 404, body: { ok: false, err: 'no such question' } };
     if (row.status !== 'pending')
@@ -991,7 +1050,7 @@ export function createQuestions(
         };
       }
       try {
-        h.respond(hookResponse);
+        h.respond(hookResponse, 200);
       } catch {
         /* socket died as we answered */
       }
@@ -1093,6 +1152,7 @@ export function createQuestions(
     sessionId: string,
     { toolName, toolInput }: { toolName?: unknown; toolInput?: unknown } = {},
   ): boolean {
+    if (!active()) return false;
     // A completed tool call correlates; a turn boundary (no toolName) is
     // session-wide.
     const activityKey =
@@ -1169,7 +1229,7 @@ export function createQuestions(
       const h = releaseHold(r.id);
       if (h) {
         try {
-          h.respond({});
+          respondFailOpen(h.respond);
         } catch {
           /* socket already gone */
         }
@@ -1185,6 +1245,7 @@ export function createQuestions(
   // for good. PENDING rows are the human's actual queue and are never touched
   // here — Clear tidies the past, it does not silence the present.
   function purgeResolved(): number {
+    if (!active()) return 0;
     const out = db.prepare("DELETE FROM questions WHERE status != 'pending'").run();
     if (out.changes) onChange();
     return Number(out.changes);
@@ -1200,6 +1261,7 @@ export function createQuestions(
   // moves (the activity gate — a human dismissing a card has NOT decided the
   // plan in the terminal).
   function dismiss(id: number, { activity = false }: { activity?: boolean } = {}) {
+    if (!active()) return { ok: false, reason: 'questions are quiescing' };
     const row = q.get.get(id);
     if (!row) return { ok: false, reason: 'no such question' };
     // The human declared the card handled — cancel any re-arm timer chained to
@@ -1212,7 +1274,7 @@ export function createQuestions(
     const h = releaseHold(row.id);
     if (h) {
       try {
-        h.respond({});
+        respondFailOpen(h.respond);
       } catch {
         /* socket already gone */
       }
@@ -1235,6 +1297,7 @@ export function createQuestions(
   // that sat unanswered long enough to fall out of the recent-resolved window
   // gets its chain's next grace window (recycleRearm), up to the cap.
   function expireOrphans(): boolean {
+    if (!active()) return false;
     let changed = false;
     for (const r of q.pending.all()) {
       if (!HOLD_KINDS.has(r.kind) || holds.has(r.id)) continue;
@@ -1265,6 +1328,7 @@ export function createQuestions(
     sessionId: string,
     { includeFreeform = false }: { includeFreeform?: boolean } = {},
   ): number {
+    if (!active()) return 0;
     let expired = 0;
     const retired: number[] = [];
     for (const r of q.pendingBySession.all(sessionId)) {
@@ -1272,7 +1336,7 @@ export function createQuestions(
       const h = releaseHold(r.id);
       if (h) {
         try {
-          h.respond({});
+          respondFailOpen(h.respond);
         } catch {
           /* gone */
         }
@@ -1354,18 +1418,59 @@ export function createQuestions(
   }
 
   // Orphan sweep (restart hygiene). Live holds settle via their own timers.
+  const orphanSweepMs =
+    Number.isFinite(sweepMs) && sweepMs > 0 ? Math.max(1, Math.floor(sweepMs)) : SWEEP_MS;
   const sweep = setInterval(() => {
+    if (!active()) return;
     try {
       expireOrphans();
     } catch {
       /* hygiene only */
     }
-  }, SWEEP_MS);
+  }, orphanSweepMs);
   sweep.unref();
+
+  // P1 resource owner. Quiesce is the synchronous admission latch; releaseAll
+  // settles every parked hook before any hold/re-arm/sweep timer is cancelled;
+  // close composes the two and then tears down every remaining timer class.
+  function quiesce(): boolean {
+    if (!active()) return false;
+    phase = 'quiesced';
+    boardConsumerProbe = () => false;
+    return true;
+  }
+
+  function close(): Promise<void> {
+    if (closePromise) return closePromise;
+    quiesce();
+    // Queue the drain after publishing closePromise so a responder that
+    // synchronously re-enters close() observes and returns this same owner.
+    closePromise = Promise.resolve().then(() => {
+      try {
+        releaseAll();
+      } finally {
+        clearInterval(sweep);
+        for (const entry of rearmById.values()) {
+          if (entry.timer) clearTimeout(entry.timer);
+        }
+        rearmById.clear();
+        rearmMeta.clear();
+        rearmChains.clear();
+        for (const timer of completedKeyTimers) clearTimeout(timer);
+        completedKeyTimers.clear();
+        completedKeys.clear();
+        phase = 'closed';
+      }
+    });
+    return closePromise;
+  }
 
   return {
     create,
     attachHold,
+    quiesce,
+    releaseAll,
+    close,
     setBoardConsumerProbe,
     boardConsumerAvailable,
     failOpenAllHolds,

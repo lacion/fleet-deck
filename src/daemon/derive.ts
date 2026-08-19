@@ -25,7 +25,7 @@ import { createLedger } from './ledger.ts';
 import { createIngest } from './ingest.ts';
 import { createCommands } from './commands.ts';
 import { createPlans } from './plans.ts';
-import { createSpawns } from './spawns.ts';
+import { createSpawns, type SpawnLifecycle, type SpawnMaintenance } from './spawns.ts';
 import { createEvents } from './events.ts';
 import { createSnapshot } from './snapshot.ts';
 import { createRetention } from './retention.ts';
@@ -150,6 +150,8 @@ interface SpawnsSurface {
   forgetSpawn: (spawnId: string) => void;
   spawnState: { orphans: unknown };
   armUnsupervised: (...args: unknown[]) => unknown;
+  spawnMaintenance: SpawnMaintenance;
+  spawnLifecycle: SpawnLifecycle;
 }
 
 // Locally-produced closure state (statements, the session writer, tick /
@@ -920,13 +922,22 @@ export function createCore(
     // path. Tests set FLEETDECK_CLEAR_SETTLE_MS=0 and take the synchronous fast
     // path below, so the settlement only runs when the knob is nonzero.
     if (!settled && CLEAR_SETTLE_MS > 0) {
-      setTimeout(() => {
-        try {
-          succeedForwardFromClear(prevSid, cwd, { settled: true });
-        } catch {
+      const scheduled = ctx.spawnMaintenance.schedule(
+        CLEAR_SETTLE_MS,
+        () => {
+          try {
+            succeedForwardFromClear(prevSid, cwd, { settled: true });
+          } catch {
+            /* the boot heal remains the backstop */
+          }
+        },
+        () => undefined,
+      );
+      if (scheduled) {
+        void scheduled.catch(() => {
           /* the boot heal remains the backstop */
-        }
-      }, CLEAR_SETTLE_MS).unref();
+        });
+      }
       return null;
     }
     const [heir] = cands;
@@ -1140,6 +1151,7 @@ export function createCore(
     watchInfo,
     postMail,
     registerWatchGen,
+    mailLifecycle,
   } = ctx;
 
   // D8: the offline-tombstone write, in one place. Every terminal transition
@@ -1253,6 +1265,7 @@ export function createCore(
     reconcileSpawns,
     reconcileClearForks,
     armUnsupervised,
+    spawnLifecycle,
   } = ctx;
 
   // Hook state machine (applyEvent + hook endpoints + brief + plan capture) → events.ts.
@@ -1274,7 +1287,28 @@ export function createCore(
 
   // Retention sweep + manual cleanup → retention.mjs.
   Object.assign(ctx, createRetention(ctx));
-  const { retentionSweep, cleanup, dismissSession, dismissRetry } = ctx;
+  const { retentionSweep: runRetentionSweep, cleanup, dismissSession, dismissRetry } = ctx;
+
+  // P1 resource owner: every sweep launched through the core surface is
+  // registered before control returns to its caller. Quiesce synchronously
+  // stops the cadence and refuses new runs; close then joins the exact set
+  // already in flight (including the boot sweep).
+  const inFlightRetentionSweeps = new Set<ReturnType<typeof runRetentionSweep>>();
+  let retentionQuiesced = false;
+  let retentionClosePromise: Promise<void> | null = null;
+
+  function retentionSweep(now?: number): ReturnType<typeof runRetentionSweep> {
+    if (retentionQuiesced) {
+      return Promise.reject(new Error('fleetd retention cadence is quiescing'));
+    }
+    const sweep = runRetentionSweep(now);
+    inFlightRetentionSweeps.add(sweep);
+    void sweep.then(
+      () => inFlightRetentionSweeps.delete(sweep),
+      () => inFlightRetentionSweeps.delete(sweep),
+    );
+    return sweep;
+  }
 
   // Run retention once at core boot, then alongside event pruning every 10m.
   // BUG 2: retentionSweep is async now (it may probe tmux for spawned silence),
@@ -1285,8 +1319,9 @@ export function createCore(
   const bootRetention = retentionSweep().catch((err: unknown) => {
     console.error('fleetd retention sweep error:', err);
   });
-  setInterval(
+  const retentionCadence = setInterval(
     () => {
+      if (retentionQuiesced) return;
       try {
         q.pruneEvents.run(Date.now() - 24 * 3600 * 1000);
       } catch {
@@ -1297,7 +1332,63 @@ export function createCore(
       });
     },
     10 * 60 * 1000,
-  ).unref();
+  );
+  retentionCadence.unref();
+
+  function quiesceRetention(): boolean {
+    if (retentionQuiesced) return false;
+    retentionQuiesced = true;
+    clearInterval(retentionCadence);
+    return true;
+  }
+
+  function closeRetention(): Promise<void> {
+    if (retentionClosePromise) return retentionClosePromise;
+    quiesceRetention();
+    retentionClosePromise = (async () => {
+      while (inFlightRetentionSweeps.size > 0) {
+        await Promise.allSettled([...inFlightRetentionSweeps]);
+      }
+    })();
+    return retentionClosePromise;
+  }
+
+  const retentionLifecycle = {
+    quiesce: quiesceRetention,
+    close: closeRetention,
+  };
+
+  let coreClosePromise: Promise<void> | null = null;
+  function quiesceCore(): boolean {
+    const mailChanged = mailLifecycle.quiesce();
+    const questionsChanged = questions.quiesce();
+    const retentionChanged = quiesceRetention();
+    const spawnsChanged = spawnLifecycle.quiesce();
+    return mailChanged || questionsChanged || retentionChanged || spawnsChanged;
+  }
+
+  function closeCore(): Promise<void> {
+    if (coreClosePromise) return coreClosePromise;
+    quiesceCore();
+    coreClosePromise = Promise.resolve().then(async () => {
+      const settled = await Promise.allSettled([
+        mailLifecycle.close(),
+        questions.close(),
+        closeRetention(),
+        spawnLifecycle.close(),
+      ]);
+      const failed = settled.find(
+        (outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected',
+      );
+      if (failed) throw failed.reason;
+    });
+    return coreClosePromise;
+  }
+
+  const lifecycle = {
+    quiesce: quiesceCore,
+    close: closeCore,
+  };
 
   return {
     applyEvent,
@@ -1346,6 +1437,9 @@ export function createCore(
     // (BUG 2) deterministically; production callers keep using the interval.
     retentionSweep,
     bootRetention, // the boot sweep's settle promise — fleetd folds it into boot readiness
+    retentionLifecycle,
+    spawnLifecycle,
+    lifecycle,
     cleanup,
     dismissSession, // POST /api/sessions/:id/dismiss — per-card cleanup → {status, body}
     dismissRetry, // POST /api/sessions/:id/dismiss/retry — re-attempt the window kills of a partial dismiss (BUG-145)

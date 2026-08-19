@@ -193,6 +193,13 @@ interface MailResult {
   original_length?: number;
 }
 
+export interface MailLifecycle {
+  /** Stop new mail work synchronously and cancel every pending grace timer. */
+  quiesce: () => boolean;
+  /** Join every async mail operation admitted before quiesce. */
+  close: () => Promise<void>;
+}
+
 export function createMail(ctx: MailCtx) {
   const {
     db,
@@ -213,6 +220,34 @@ export function createMail(ctx: MailCtx) {
     MAIL_PANE_BATCH: PANE_BATCH = MAIL_PANE_BATCH,
     MAIL_PANE_BATCH_BYTES: PANE_BATCH_BYTES = MAIL_PANE_BATCH_BYTES,
   } = ctx;
+
+  // P1 resource ownership. postMail and owned-pane delivery both cross native
+  // tmux awaits and then return to SQLite; without one admission latch + join,
+  // daemon shutdown could close the database while either continuation still
+  // held q/db callbacks. Keep the synchronous prefix of both async functions
+  // unchanged, register their returned promises before control can pass back
+  // to the event loop, and check this phase after every non-cancellable await.
+  const inFlight = new Set<Promise<unknown>>();
+  let phase: 'open' | 'quiescing' | 'closed' = 'open';
+  let closePromise: Promise<void> | null = null;
+
+  const isOpen = (): boolean => phase === 'open';
+
+  function own<T>(promise: Promise<T>): Promise<T> {
+    inFlight.add(promise);
+    const forget = () => {
+      inFlight.delete(promise);
+    };
+    void promise.then(forget, forget);
+    return promise;
+  }
+
+  function quiescingPostMailResult() {
+    return {
+      status: 503,
+      body: { ok: false, reason: 'mail lifecycle is quiescing' },
+    };
+  }
 
   // BUG-034: a claim is now an EXPIRING IN-FLIGHT LEASE, not a delivery. The
   // three loss windows the audit pinned are all the same shape — the text left
@@ -239,6 +274,11 @@ export function createMail(ctx: MailCtx) {
   // BUG-128: returns {refused, reason} instead when the pending budget below
   // would be exceeded — the row is never inserted.
   function mail(toSession: string, from: string | null, text: unknown): MailResult {
+    // Direct daemon callers (commands, questions, plans, ledger) are
+    // synchronous, so this latch either admits the complete insert or refuses
+    // it before the first SQLite read. Core shutdown quiesces those owners too,
+    // but mail remains safe as a standalone factory and after DB close.
+    if (!isOpen()) return { refused: true, reason: 'mail lifecycle is quiescing' };
     const raw = asText(text);
     // BUG-128: backpressure. Price the would-be insert against the pending
     // budget BEFORE writing — stats only, never a full mailbox scan. The sum
@@ -273,10 +313,11 @@ export function createMail(ctx: MailCtx) {
   // re-arms it when a bounded batch left rows pending.
   const paneMailTimers = new Map<string, ReturnType<typeof setTimeout>>();
   function armPaneMailTimer(sid: string): void {
-    if (paneMailTimers.has(sid)) return;
+    if (!isOpen() || paneMailTimers.has(sid)) return;
     const timer = setTimeout(() => {
       paneMailTimers.delete(sid);
-      tryOwnedPaneDelivery(sid).catch(() => {
+      if (!isOpen()) return;
+      void tryOwnedPaneDelivery(sid).catch(() => {
         /* fail-open; mail stays pending */
       });
     }, PANE_MAIL_GRACE_MS);
@@ -287,6 +328,7 @@ export function createMail(ctx: MailCtx) {
   // from inside it), so drop the stale handle and schedule the next round.
   function rearmPaneMailTimer(sid: string): void {
     paneMailTimers.delete(sid);
+    if (!isOpen()) return;
     armPaneMailTimer(sid);
   }
 
@@ -496,14 +538,16 @@ export function createMail(ctx: MailCtx) {
     }
   }
 
-  async function tryOwnedPaneDelivery(sid: string): Promise<boolean> {
+  async function tryOwnedPaneDeliveryImpl(sid: string): Promise<boolean> {
     const pair = ownedPaneRow(sid); // session + spawn
     if (!pair || hasWatchWaiter(sid)) return false; // watcher priority
     const win = await findScopedWindow(pair.sp.tmux_window); // live scoped pane
+    if (!isOpen()) return false;
     if (win === null) return false; // UNKNOWN: leave mail queued
     if (!win || win.pane_dead) return false;
     const target = scopedPaneTarget(win);
     const pane = await tmuxAdapter.paneCurrentCommand(target);
+    if (!isOpen()) return false;
     if (!pane || pane.dead || pane.cmd !== 'claude') return false;
 
     // Re-check waiter priority after the asynchronous probes, then atomically
@@ -525,6 +569,11 @@ export function createMail(ctx: MailCtx) {
     if (remaining) rearmPaneMailTimer(sid);
     const text = box.map((m) => `[FLEETDECK MAIL from ${m.from_id}] ${m.text}`).join('\n');
     const pasted = await tmuxAdapter.pasteText(target, text);
+    // pasteText cannot be interrupted. Once shutdown latches, the lease is the
+    // durable recovery boundary: do not release/ack/log against a DB that the
+    // composition root is preparing to close. An unacked lease becomes
+    // claimable again through the existing expiry path on the next daemon.
+    if (!isOpen()) return false;
     if (!pasted) {
       // paste failed → redeliver at a later turn
       for (const m of box) q.releaseClaim.run(m.id);
@@ -544,6 +593,10 @@ export function createMail(ctx: MailCtx) {
       return true;
     }
     const entered = await tmuxAdapter.sendEnter(target);
+    // sendEnter has the same non-cancellable boundary. Suppress every late
+    // acknowledgement/event callback; close() still joins this promise before
+    // reporting that the mail owner is settled.
+    if (!isOpen()) return false;
     // BUG-033 × BUG-034: once pasteText succeeded the text is already IN the
     // pane, so a failed/uncertain Enter must NOT requeue the rows — re-pasting
     // would submit the same text twice (duplicated prompts, repeated
@@ -582,6 +635,14 @@ export function createMail(ctx: MailCtx) {
     );
     onMutate();
     return true;
+  }
+
+  function tryOwnedPaneDelivery(sid: string): Promise<boolean> {
+    if (!isOpen()) return Promise.resolve(false);
+    // Calling the implementation before own() preserves its historical
+    // synchronous prefix. JavaScript cannot interleave quiesce on this stack,
+    // so the promise is registered before shutdown can begin.
+    return own(tryOwnedPaneDeliveryImpl(sid));
   }
 
   // ATOMIC claim of the oldest undelivered mail for a session — ANY sender
@@ -625,7 +686,7 @@ export function createMail(ctx: MailCtx) {
     };
   }
 
-  async function postMail({ to, from, text }: { to: string; from?: unknown; text?: unknown }) {
+  async function postMailImpl({ to, from, text }: { to: string; from?: unknown; text?: unknown }) {
     // BUG-037: resolve the FINAL sender FIRST. The old flow validated the raw
     // input and defaulted LATER (`from || 'human'`), so an omitted/empty/zero/
     // false `from` sailed past the reserved check and was then stored — row and
@@ -703,6 +764,9 @@ export function createMail(ctx: MailCtx) {
         return q.getSession.get(sid)?.ended_at != null ? 'offline-queued' : 'turn-boundary';
       }),
     );
+    // The route probes are not cancellable. Quiesce turns their continuation
+    // into an explicit refusal before mail() performs any SQLite mutation.
+    if (!isOpen()) return quiescingPostMailResult();
     // BUG-128: the per-mailbox pending budget can refuse an insert. That
     // refusal is loud, never silent: if EVERY fanout target refused, the send
     // 429s so the caller knows nothing landed; a partial fanout reports the
@@ -746,6 +810,41 @@ export function createMail(ctx: MailCtx) {
     };
   }
 
+  function postMail(args: { to: string; from?: unknown; text?: unknown }) {
+    if (!isOpen()) return Promise.resolve(quiescingPostMailResult());
+    return own(postMailImpl(args));
+  }
+
+  function quiesce(): boolean {
+    if (!isOpen()) return false;
+    phase = 'quiescing';
+    for (const timer of paneMailTimers.values()) clearTimeout(timer);
+    paneMailTimers.clear();
+    return true;
+  }
+
+  async function closeImpl(): Promise<void> {
+    // No new owned work can enter after quiesce, but use a loop so close stays
+    // correct if an already-admitted operation settles another owned promise
+    // in the same microtask turn before its forget callback runs.
+    while (inFlight.size > 0) {
+      await Promise.allSettled([...inFlight]);
+    }
+    phase = 'closed';
+  }
+
+  function close(): Promise<void> {
+    if (closePromise) return closePromise;
+    // Admission and timer cancellation are synchronous. The join itself is
+    // deferred behind the memoized promise, making double close share the
+    // exact same settlement object for the rest of the factory's lifetime.
+    quiesce();
+    closePromise = Promise.resolve().then(closeImpl);
+    return closePromise;
+  }
+
+  const mailLifecycle: MailLifecycle = { quiesce, close };
+
   return {
     mail,
     drainMail,
@@ -761,5 +860,6 @@ export function createMail(ctx: MailCtx) {
     watchInfo,
     postMail,
     registerWatchGen,
+    mailLifecycle,
   };
 }
