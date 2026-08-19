@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cannot switch Fleet Deck off. Older, prerelease, and unidentifiable builds
   still stay silently inactive; strict event-specific response validation and
   the fail-open launcher remain the safety boundary for future releases.
+- **The board terminal allows multi-line text paste.** Text now follows xterm's
+  normal paste behavior instead of being blocked when bracketed-paste mode is
+  unavailable; shells retain ordinary terminal semantics, so embedded newlines
+  may execute just as they do in a native terminal.
 
 ### Fixed
 

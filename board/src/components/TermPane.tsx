@@ -12,7 +12,6 @@ import {
   isMacUA,
   isTermCopyChord,
   isTermPasteChord,
-  pasteTextSafe,
   termChordHints,
   unwrapTmuxPassthrough,
 } from '../util.ts';
@@ -493,9 +492,8 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
       // Ctrl+V: take the chord away from xterm (which would send ^V) but leave
       // the event ALONE otherwise — no preventDefault — so the browser performs
       // its own trusted paste. xterm's paste handler then does the bracketing
-      // when the pane asked for it; the capture-phase paste listener refuses
-      // the multi-line case when it did not (see onPaste). See isTermPasteChord
-      // for why a remote terminal must not send ^V here.
+      // when the pane asked for it. See isTermPasteChord for why a remote
+      // terminal must not send ^V here.
       if (isTermPasteChord(e, IS_MAC)) return false;
       if (e.type !== 'keydown' || e.key !== 'Enter' || e.metaKey) return true;
       if (!(e.shiftKey || e.ctrlKey || e.altKey)) return true; // bare Enter: submit, as always
@@ -521,28 +519,11 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
     // the upload too — no point shipping bytes nothing may type).
     const onPaste = (e: ClipboardEvent) => {
       const item = imageFromClipboard(e.clipboardData?.items);
-      if (!item) {
-        // Text paste. xterm brackets it ONLY while the program in the pane has
-        // enabled DEC mode 2004 — and the board cannot know it has: a fresh
-        // viewer seeds its screen from capture-pane, which carries cells, not
-        // terminal mode state, so this emulator comes up with
-        // bracketedPasteMode false even when the agent asked for it. With the
-        // mode off (or unreconstructable — same thing here) xterm sends the
-        // text VERBATIM, and in a shell like dash each newline executes as it
-        // arrives: a multi-line paste submits itself line by line. That case
-        // is refused outright — it is the whole reason this listener exists.
-        // Single-line text can never self-submit, so it falls through.
-        const text = e.clipboardData?.getData('text/plain') ?? '';
-        if (!pasteTextSafe(text, (term as TermModesView).modes?.bracketedPasteMode)) {
-          e.preventDefault();
-          e.stopPropagation();
-          flash(
-            'err',
-            'multi-line paste blocked — this pane did not ask for bracketed paste (a shell like dash), so pasting would run each line as it lands. Paste one line at a time.',
-          );
-        }
-        return;
-      }
+      // Text — including multiple lines — follows xterm's normal paste path.
+      // When the program requested bracketed paste xterm wraps it; otherwise it
+      // has ordinary terminal semantics, where embedded newlines may submit.
+      // Fleet Deck deliberately does not override that explicit user action.
+      if (!item) return;
       e.preventDefault();
       e.stopPropagation();
       if (st.done || term.options.disableStdin) return; // non-live tile: refuse before uploading
