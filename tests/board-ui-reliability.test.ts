@@ -4,6 +4,7 @@ import path from 'node:path';
 import test from './helpers/harness-test.ts';
 import { shareInfoForHref } from '../board/src/share.ts';
 import { joinBrowsePath, normalizeBrowseRoot, relativeBrowsePath } from '../board/src/fsPath.ts';
+import { branchProblem } from '../board/src/branch.ts';
 
 const app = readFileSync(path.resolve('board/src/App.tsx'), 'utf8');
 const hotkeys = readFileSync(path.resolve('board/src/hooks/useBoardHotkeys.ts'), 'utf8');
@@ -117,8 +118,12 @@ test('repo spawning checks exact Git access and explains Coder auth without owni
   assert.match(spawnForm, /FleetDeck never stores Git tokens/);
   assert.match(spawnForm, /Git diagnostic/);
   const submit = spawnForm.slice(spawnForm.indexOf('const submit = async'));
+  const preflightIndex = submit.indexOf('await checkRepoAccess(body)');
+  const persistIndex = submit.indexOf('await persistSetupDefault()');
+  assert.ok(preflightIndex >= 0, 'Spawn performs repository preflight');
+  assert.ok(persistIndex >= 0, 'Spawn persists setup defaults');
   assert.ok(
-    submit.indexOf('await checkRepoAccess(body)') < submit.indexOf('await persistSetupDefault()'),
+    preflightIndex < persistIndex,
     'Spawn proves Git access before any settings write or spawn request',
   );
   assert.match(submit, /const body = baseBody\(\)/);
@@ -142,8 +147,40 @@ test('a held Claude trust dialog opens the owned terminal instead of looking lik
 
 test('terminal text paste keeps normal xterm semantics, including multiple lines', () => {
   assert.match(termPane, /Text — including multiple lines — follows xterm's normal paste path/);
-  assert.match(termPane, /if \(!item\) return/);
+  const pasteHandler = termPane.slice(
+    termPane.indexOf('const onPaste ='),
+    termPane.indexOf("screenEl.addEventListener('paste'"),
+  );
+  const noImageReturn = pasteHandler.indexOf('if (!item) return;');
+  const preventDefault = pasteHandler.indexOf('e.preventDefault()');
+  const stopPropagation = pasteHandler.indexOf('e.stopPropagation()');
+  assert.ok(noImageReturn >= 0, 'text paste has an explicit no-image return');
+  assert.ok(preventDefault >= 0 && stopPropagation >= 0, 'image paste claims the event');
+  assert.ok(
+    noImageReturn < preventDefault && noImageReturn < stopPropagation,
+    'text paste returns before the image-only event cancellation',
+  );
+  const keyHandler = termPane.slice(
+    termPane.indexOf('term.attachCustomKeyEventHandler'),
+    termPane.indexOf('// Ctrl+V of an IMAGE'),
+  );
+  const pasteChord = keyHandler.indexOf('if (isTermPasteChord(e, IS_MAC)) return false;');
+  const nextKeyBranch = keyHandler.indexOf("if (e.type !== 'keydown'", pasteChord);
+  assert.ok(pasteChord >= 0 && nextKeyBranch > pasteChord, 'Ctrl+V has a dedicated key branch');
+  assert.doesNotMatch(
+    keyHandler.slice(pasteChord, nextKeyBranch),
+    /preventDefault/,
+    'Ctrl+V leaves the browser paste event intact',
+  );
   assert.doesNotMatch(termPane, /pasteTextSafe|multi-line paste blocked/);
+});
+
+test('branch preview rejects names Git will reject while preserving @', () => {
+  for (const branch of ['feature//x', '.feature', 'feature.', 'feature/.x', 'feature/x.']) {
+    assert.ok(branchProblem(branch), `${branch} is rejected before Spawn`);
+  }
+  assert.equal(branchProblem('@'), null);
+  assert.equal(branchProblem('feature/x'), null);
 });
 
 test('bulk worktree removal reports a failed refresh instead of leaving stale success UI', () => {

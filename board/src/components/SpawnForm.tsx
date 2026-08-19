@@ -8,6 +8,7 @@ import {
   type ApiResult,
   type GitAccessHelp,
 } from '../api.ts';
+import { branchProblem } from '../branch.ts';
 import { batchTotal, copyText, expandBatchTasks, parseBatchTasks } from '../util.ts';
 import { useModal } from '../useModal.ts';
 import DirPicker from './DirPicker.tsx';
@@ -124,27 +125,6 @@ interface SpawnFormProps {
   onOpenTerminal: (session: SessionEntry) => void;
   onSpawned?: ((json: SpawnJson) => Promise<SpawnResult | null>) | undefined;
 }
-
-// v2.2 repo+branch mode — client-side mirrors of the daemon's input gates, for
-// instant feedback only: the DAEMON is the authority (git check-ref-format gets
-// the last word on a branch, parseRepoInput on a repo), same doctrine as
-// validSuffix in util.js. Refusing the obvious junk here just saves a POST.
-const branchProblem = (b: string): string | null => {
-  if (b.length > 200) return 'too long for a branch name';
-  if (b.startsWith('-')) return 'a branch cannot start with “-”';
-  let hasControl = false;
-  for (let i = 0; i < b.length; i++) {
-    if (b.charCodeAt(i) <= 0x1f) {
-      hasControl = true;
-      break;
-    }
-  }
-  if (/[\s~^:?*[\\]/.test(b) || hasControl)
-    return 'no spaces or git-special characters (~ ^ : ? * [ \\)';
-  if (b.includes('..') || b.includes('@{')) return 'no “..” or “@{”';
-  if (b.endsWith('.lock') || b.endsWith('/') || b.startsWith('/')) return 'not a valid ref name';
-  return null;
-};
 
 // The repo's basename, for the destination preview — works for https/ssh URLs,
 // scp-like git@host:org/repo, org/repo shorthand (incl. gitlab subgroups —
