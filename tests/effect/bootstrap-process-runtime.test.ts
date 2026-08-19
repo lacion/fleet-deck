@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, test } from 'bun:test';
 import * as Effect from 'effect/Effect';
 import * as Layer from 'effect/Layer';
@@ -11,6 +15,7 @@ import {
   ProcessSpawnError,
   ProcessTimeoutError,
 } from '../../src/daemon/app/errors.ts';
+import { PROCESS_DRIVER_KILL_GRACE_MS } from '../../src/daemon/app/services/process-driver.ts';
 import {
   type BoundedProcessRequest,
   type BoundedProcessResult,
@@ -19,6 +24,9 @@ import {
   ProcessRunner,
   type ProcessRunnerService,
 } from '../../src/daemon/app/services/process-runner.ts';
+import { scaleMs, waitUntil } from '../helpers/wait.ts';
+
+const PROCESS_FIXTURE = fileURLToPath(new URL('./fixtures/bun-process-child.ts', import.meta.url));
 
 const request = { argv: ['/bin/echo', 'hello'] as const };
 const boundedRequest: BoundedProcessRequest = {
@@ -38,6 +46,67 @@ const boundedCancelled: BoundedProcessResult = {
   truncated: true,
   timedOut: false,
 };
+
+interface SignalMetrics {
+  active: number;
+  added: number;
+  removed: number;
+}
+
+function trackedSignal(controller: AbortController): {
+  readonly signal: AbortSignal;
+  readonly metrics: SignalMetrics;
+} {
+  const metrics = { active: 0, added: 0, removed: 0 };
+  const listeners = new Set<unknown>();
+  const source = controller.signal;
+  const signal = {
+    get aborted() {
+      return source.aborted;
+    },
+    addEventListener(...arguments_: Parameters<AbortSignal['addEventListener']>) {
+      metrics.added += 1;
+      if (!listeners.has(arguments_[1])) {
+        listeners.add(arguments_[1]);
+        metrics.active += 1;
+      }
+      source.addEventListener(...arguments_);
+    },
+    removeEventListener(...arguments_: Parameters<AbortSignal['removeEventListener']>) {
+      metrics.removed += 1;
+      if (listeners.delete(arguments_[1])) metrics.active -= 1;
+      source.removeEventListener(...arguments_);
+    },
+  } as AbortSignal;
+  return { signal, metrics };
+}
+
+function readPid(pidFile: string): number | null {
+  try {
+    const pid = Number(readFileSync(pidFile, 'utf8'));
+    return Number.isSafeInteger(pid) && pid > 1 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function forceKill(pid: number | null): void {
+  if (pid === null) return;
+  try {
+    process.kill(pid, 'SIGKILL');
+  } catch {
+    // Already reaped.
+  }
+}
 
 function completeService(
   service: Pick<ProcessRunnerService, 'run'> & Partial<Pick<ProcessRunnerService, 'runBounded'>>,
@@ -164,6 +233,85 @@ describe('BootstrapProcessRuntimeBridge', () => {
     await bridge.close();
   });
 
+  test('a pre-aborted request publishes cancellation immediately and removes its listener', async () => {
+    const controller = new AbortController();
+    const { signal, metrics } = trackedSignal(controller);
+    controller.abort();
+    const bridge = createBootstrapProcessRuntimeBridge();
+
+    const startedAt = performance.now();
+    assert.deepEqual(
+      await bridge.run({ argv: [process.execPath, '-e', '0'], signal, timeoutMs: 5_000 }),
+      cancelled,
+    );
+    assert.ok(performance.now() - startedAt < scaleMs(100));
+    await bridge.close();
+    assert.deepEqual(metrics, { active: 0, added: 0, removed: 1 });
+  });
+
+  test('request abort settles publicly before owned TERM/KILL cleanup and reap', async () => {
+    const scratch = mkdtempSync(path.join(tmpdir(), 'fleetdeck-bootstrap-cancel-'));
+    const pidFile = path.join(scratch, 'child.pid');
+    const controller = new AbortController();
+    const { signal, metrics } = trackedSignal(controller);
+    const bridge = createBootstrapProcessRuntimeBridge();
+    let pid: number | null = null;
+
+    try {
+      let publicDeliveries = 0;
+      const running = bridge
+        .run({
+          argv: [process.execPath, PROCESS_FIXTURE, 'term-resistant', pidFile],
+          signal,
+          timeoutMs: 10_000,
+          killTree: true,
+        })
+        .then(
+          (result) => {
+            publicDeliveries += 1;
+            return result;
+          },
+          (defect) => {
+            publicDeliveries += 1;
+            throw defect;
+          },
+        );
+      pid = await waitUntil(() => readPid(pidFile), {
+        timeoutMs: 2_000,
+        intervalMs: 10,
+        label: 'bootstrap cancellation child pid',
+      });
+
+      const abortedAt = performance.now();
+      controller.abort();
+      assert.deepEqual(await running, cancelled);
+      const publicLatencyMs = performance.now() - abortedAt;
+      assert.ok(
+        publicLatencyMs < scaleMs(100),
+        `cancellation took ${String(publicLatencyMs)}ms to publish`,
+      );
+
+      let closed = false;
+      const closeStartedAt = performance.now();
+      const closing = bridge.close().then(() => {
+        closed = true;
+      });
+      await Bun.sleep(scaleMs(100));
+      assert.equal(closed, false);
+      assert.equal(pidAlive(pid), true);
+
+      await closing;
+      assert.ok(performance.now() - closeStartedAt >= PROCESS_DRIVER_KILL_GRACE_MS - 350);
+      assert.equal(pidAlive(pid), false);
+      assert.equal(publicDeliveries, 1);
+      assert.deepEqual(metrics, { active: 0, added: 1, removed: 1 });
+    } finally {
+      await bridge.close();
+      forceKill(pid);
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
   test('bounded requests use the same runtime and retain their distinct result contract', async () => {
     const expected: BoundedProcessResult = {
       code: 7,
@@ -203,12 +351,15 @@ describe('BootstrapProcessRuntimeBridge', () => {
 
   test('defects reject with their original identity instead of becoming process failures', async () => {
     const defect = new Error('runner invariant broke');
+    const controller = new AbortController();
+    const { signal, metrics } = trackedSignal(controller);
     const bridge = createBootstrapProcessRuntimeBridge(
       serviceLayer({ run: () => Effect.die(defect) }),
     );
 
-    await assert.rejects(bridge.run(request), (error: unknown) => error === defect);
+    await assert.rejects(bridge.run({ ...request, signal }), (error: unknown) => error === defect);
     await bridge.close();
+    assert.equal(metrics.active, 0);
   });
 
   test('quiesce interrupts and joins admitted work before Layer release', async () => {

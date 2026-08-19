@@ -51,10 +51,10 @@ function effectFromExecution<Decision, Success, Error>(
   start: () => ProcessExecution<Decision>,
   interpret: (decision: Decision) => Effect.Effect<Success, Error>,
 ): Effect.Effect<Success, Error> {
-  return Effect.callback<Success, Error>((resume) => {
+  const awaitDecision = Effect.callback<Decision>((resume) => {
     const execution = start();
     void execution.decision.then(
-      (decision) => resume(interpret(decision)),
+      (decision) => resume(Effect.succeed(decision)),
       (defect) => resume(Effect.die(defect)),
     );
 
@@ -63,6 +63,12 @@ function effectFromExecution<Decision, Success, Error>(
       return execution.cleanup;
     });
   });
+
+  // Complete the callback with the raw driver decision before interpreting it.
+  // A published ECANCELED can therefore become application interruption only
+  // after the callback canceler is disarmed, preserving immediate legacy
+  // settlement while driver.close still owns and joins the cleanup channel.
+  return Effect.flatMap(awaitDecision, interpret);
 }
 
 function processFailureEffect(
@@ -105,9 +111,10 @@ function interpretProcessResult(
 }
 
 /**
- * Lift one already-acquired driver into the application service. Interruption
- * waits for the driver's ownership channel instead of merely abandoning the
- * public decision Promise.
+ * Lift one already-acquired driver into the application service. Fiber/runtime
+ * interruption while awaiting a decision cancels and joins cleanup. A
+ * driver-published cancellation is interpreted only after decision completion,
+ * leaving its still-running cleanup owned by driver.close.
  */
 export function makeProcessRunnerServiceFromDriver(driver: ProcessDriver): ProcessRunnerService {
   return {

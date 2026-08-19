@@ -3069,10 +3069,10 @@ var PROCESS_DRIVER_DEFAULT_TIMEOUT_MS = 3e4;
 var PROCESS_DRIVER_KILL_GRACE_MS = 1e3;
 var PROCESS_DRIVER_MAX_OUTPUT_BYTES = 1024 * 1024;
 function effectFromExecution(start, interpret) {
-  return callback2((resume) => {
+  const awaitDecision = callback2((resume) => {
     const execution = start();
     void execution.decision.then(
-      (decision) => resume(interpret(decision)),
+      (decision) => resume(succeed2(decision)),
       (defect) => resume(die2(defect))
     );
     return promise2(() => {
@@ -3080,6 +3080,7 @@ function effectFromExecution(start, interpret) {
       return execution.cleanup;
     });
   });
+  return flatMap2(awaitDecision, interpret);
 }
 function processFailureEffect(request, result2) {
   const details = { message: result2.err, result: result2 };
