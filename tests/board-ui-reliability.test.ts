@@ -145,20 +145,21 @@ test('a held Claude trust dialog opens the owned terminal instead of looking lik
   );
 });
 
-test('terminal text paste keeps normal xterm semantics, including multiple lines', () => {
-  assert.match(termPane, /Text — including multiple lines — follows xterm's normal paste path/);
+test('terminal multiline paste uses the daemon atomic-paste path', () => {
+  assert.match(termPane, /Multi-line text takes the daemon paste path/);
   const pasteHandler = termPane.slice(
     termPane.indexOf('const onPaste ='),
     termPane.indexOf("screenEl.addEventListener('paste'"),
   );
-  const noImageReturn = pasteHandler.indexOf('if (!item) return;');
+  const newlineGate = pasteHandler.indexOf('if (!/[\\r\\n]/.test(text)) return;');
+  const sendPaste = pasteHandler.indexOf('sendPaste(text)');
   const preventDefault = pasteHandler.indexOf('e.preventDefault()');
   const stopPropagation = pasteHandler.indexOf('e.stopPropagation()');
-  assert.ok(noImageReturn >= 0, 'text paste has an explicit no-image return');
-  assert.ok(preventDefault >= 0 && stopPropagation >= 0, 'image paste claims the event');
+  assert.ok(newlineGate >= 0, 'single-line paste still falls through to xterm');
+  assert.ok(preventDefault >= 0 && stopPropagation >= 0, 'multiline paste claims the event');
   assert.ok(
-    noImageReturn < preventDefault && noImageReturn < stopPropagation,
-    'text paste returns before the image-only event cancellation',
+    newlineGate < preventDefault && newlineGate < stopPropagation && sendPaste > stopPropagation,
+    'multiline paste is cancelled before one dedicated daemon frame is sent',
   );
   const keyHandler = termPane.slice(
     termPane.indexOf('term.attachCustomKeyEventHandler'),
@@ -172,7 +173,8 @@ test('terminal text paste keeps normal xterm semantics, including multiple lines
     /preventDefault/,
     'Ctrl+V leaves the browser paste event intact',
   );
-  assert.doesNotMatch(termPane, /pasteTextSafe|multi-line paste blocked/);
+  assert.match(termPane, /JSON\.stringify\(\{ t: 'paste', data \}\)/);
+  assert.doesNotMatch(termPane, /multi-line paste blocked/);
 });
 
 test('branch preview rejects names Git will reject while preserving @', () => {

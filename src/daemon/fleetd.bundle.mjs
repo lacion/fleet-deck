@@ -11257,6 +11257,8 @@ var MAX_PENDING_OUTPUT_BYTES = envInt("FLEETDECK_TERM_PENDING_MAX_BYTES", MAX_IN
 });
 var CLEAR_SCREEN = "\x1B[H\x1B[2J";
 var BRACKETED_PASTE_ON = "\x1B[?2004h";
+var BRACKETED_PASTE_START = "\x1B[200~";
+var BRACKETED_PASTE_END = "\x1B[201~";
 var REPAINT_MS = envInt("FLEETDECK_TERM_REPAINT_MS", 80);
 var PANE_DEAD_POLL_MS = envInt("FLEETDECK_TERM_DEAD_POLL_MS", 5e3, { min: 100 });
 function dimensions(cols, rows) {
@@ -11764,36 +11766,68 @@ function createTermBridge({
       if (err instanceof TermBridgeError) throw err;
       throw new TermBridgeError(detail);
     }
+    const queueInput = (bytes, beforeSend) => {
+      if (viewer.finished || bytes.length === 0) return;
+      const c = client;
+      if (!c) return;
+      const pane = viewer.pane;
+      if (!pane) return;
+      if (viewer.queuedInput + bytes.length > MAX_INPUT_QUEUE_BYTES) {
+        viewer.finish("terminal input overflow");
+        return;
+      }
+      viewer.queuedInput += bytes.length;
+      viewer.inputChain = viewer.inputChain.then(async () => {
+        try {
+          if (beforeSend && !await beforeSend()) return;
+          for (let offset = 0; offset < bytes.length; offset += INPUT_CHUNK_BYTES) {
+            if (viewer.finished || client !== c) return;
+            const hex = [...bytes.subarray(offset, offset + INPUT_CHUNK_BYTES)].map((b) => b.toString(16).padStart(2, "0")).join(" ");
+            const res = await c.command(`send-keys -t ${pane} -H ${hex}`);
+            if (!res.ok) {
+              viewer.finish("terminal pane closed");
+              return;
+            }
+          }
+        } catch {
+          viewer.finish("terminal pane closed");
+        } finally {
+          viewer.queuedInput -= bytes.length;
+        }
+      });
+    };
+    const refusePaste = (reason) => {
+      if (viewer.finished) return;
+      try {
+        send({ t: "paste-refused", reason });
+      } catch {
+        viewer.finish("terminal socket closed", false);
+      }
+    };
     return {
       input(dataString) {
-        if (viewer.finished || typeof dataString !== "string" || !dataString) return;
-        const c = client;
-        if (!c) return;
-        const pane = viewer.pane;
-        if (!pane) return;
-        const bytes = Buffer.from(dataString, "utf8");
-        if (viewer.queuedInput + bytes.length > MAX_INPUT_QUEUE_BYTES) {
-          viewer.finish("terminal input overflow");
-          return;
-        }
-        viewer.queuedInput += bytes.length;
-        viewer.inputChain = viewer.inputChain.then(async () => {
-          try {
-            for (let offset = 0; offset < bytes.length; offset += INPUT_CHUNK_BYTES) {
-              if (viewer.finished || client !== c) return;
-              const hex = [...bytes.subarray(offset, offset + INPUT_CHUNK_BYTES)].map((b) => b.toString(16).padStart(2, "0")).join(" ");
-              const res = await c.command(`send-keys -t ${pane} -H ${hex}`);
-              if (!res.ok) {
-                viewer.finish("terminal pane closed");
-                return;
-              }
-            }
-          } catch {
-            viewer.finish("terminal pane closed");
-          } finally {
-            viewer.queuedInput -= bytes.length;
-          }
-        });
+        if (typeof dataString !== "string" || !dataString) return;
+        queueInput(Buffer.from(dataString, "utf8"));
+      },
+      paste(dataString) {
+        if (typeof dataString !== "string" || !dataString) return;
+        const safe = sanitizePaneText(dataString).replace(/\n/g, "\r");
+        if (!safe) return;
+        const bytes = Buffer.from(BRACKETED_PASTE_START + safe + BRACKETED_PASTE_END, "utf8");
+        const provePasteSupport = row.kind !== "shell" ? void 0 : async () => {
+          const c = client;
+          const pane = viewer.pane;
+          if (!c || !pane || viewer.finished) return false;
+          const mode = await c.command(
+            `display-message -p -t ${pane} '#{bracket_paste_flag}'`
+          );
+          if (mode.ok && mode.lines.at(-1)?.trim() === "1") return true;
+          refusePaste(
+            "multiline paste needs bracketed-paste support \u2014 this shell did not request it"
+          );
+          return false;
+        };
+        queueInput(bytes, provePasteSupport);
       },
       resize(nextCols, nextRows) {
         const next = dimensions(nextCols, nextRows);
@@ -12988,6 +13022,7 @@ function createHttp(core2, {
       if (!frame || typeof frame !== "object") return;
       const fr = frame;
       if (fr["t"] === "in" && typeof fr["data"] === "string") data.handle.input(fr["data"]);
+      else if (fr["t"] === "paste" && typeof fr["data"] === "string") data.handle.paste(fr["data"]);
       else if (fr["t"] === "resize") data.handle.resize(fr["cols"], fr["rows"]);
     },
     close(ws) {

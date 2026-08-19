@@ -27,10 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cannot switch Fleet Deck off. Older, prerelease, and unidentifiable builds
   still stay silently inactive; strict event-specific response validation and
   the fail-open launcher remain the safety boundary for future releases.
-- **The board terminal allows multi-line text paste.** Text now follows xterm's
-  normal paste behavior instead of being blocked when bracketed-paste mode is
-  unavailable; shells retain ordinary terminal semantics, so embedded newlines
-  may execute just as they do in a native terminal.
+- **The board terminal delivers multi-line text as one paste.** Multi-line
+  clipboard text now takes a dedicated, FIFO-serialized bracketed-paste path,
+  so a stale browser-side terminal mode cannot turn each line into a separate
+  Claude submission. Paste control sequences are stripped before delivery.
+  Shell panes work when their application advertises bracketed-paste support
+  and are refused safely otherwise; single-line and image paste are unchanged.
 
 ### Fixed
 

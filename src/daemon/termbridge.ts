@@ -30,7 +30,7 @@
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
-import { exactWindowTarget, sessionName } from './spawn.ts';
+import { exactWindowTarget, sanitizePaneText, sessionName } from './spawn.ts';
 import { envInt } from './helpers.ts';
 import type { SpawnRow } from './statements.ts';
 
@@ -99,6 +99,11 @@ const CLEAR_SCREEN = '\u001b[H\u001b[2J';
 // DEC private mode 2004 (bracketed paste) ON. Replayed into a fresh viewer's seed
 // when the pane has the mode set; capture-pane restores cells, not mode state.
 const BRACKETED_PASTE_ON = '\u001b[?2004h';
+// The input-side bracketed-paste transaction. A browser paste must be ONE
+// editable composer operation, not N live Enter keys. Built visibly in source:
+// literal ESC bytes are nearly impossible to review correctly.
+const BRACKETED_PASTE_START = '\u001b[200~';
+const BRACKETED_PASTE_END = '\u001b[201~';
 // Delay before the post-seed repaint jiggle — long enough that the seed has
 // rendered, short enough that the human never sees the snapshot's seams.
 const REPAINT_MS = envInt('FLEETDECK_TERM_REPAINT_MS', 80);
@@ -288,7 +293,8 @@ interface Viewer {
 }
 export type TermFrame =
   | { t: 'out'; data: string }
-  | { t: 'init'; cols: number; rows: number; screen: string };
+  | { t: 'init'; cols: number; rows: number; screen: string }
+  | { t: 'paste-refused'; reason: string };
 type TermSend = (frame: TermFrame) => void;
 interface OpenViewerOptions {
   spawn_id: string;
@@ -300,6 +306,7 @@ interface OpenViewerOptions {
 }
 interface ViewerHandle {
   input(dataString: string): void;
+  paste(dataString: string): void;
   resize(nextCols: number, nextRows: number): void;
   close(): void;
 }
@@ -891,44 +898,94 @@ export function createTermBridge({
       throw new TermBridgeError(detail);
     }
 
+    // Queue bytes behind every earlier keystroke/paste. The board can deliver a
+    // paste and a key in adjacent websocket frames; one FIFO is what keeps the
+    // following Enter from overtaking the paste it submits.
+    const queueInput = (bytes: Buffer, beforeSend?: () => Promise<boolean>): void => {
+      if (viewer.finished || bytes.length === 0) return;
+      const c = client;
+      if (!c) return;
+      const pane = viewer.pane;
+      if (!pane) return;
+      // M-R4: bound and SERIALIZE input. Firing one send-keys promise per 1 KB
+      // the instant bytes arrived let a multi-megabyte paste stack thousands of
+      // hex commands into c.waiters at once, with no backpressure. Instead we
+      // refuse to queue more than MAX_INPUT_QUEUE_BYTES of pending input (a
+      // viewer that outruns that has lost its trustworthy FIFO slot — evict it)
+      // and send the 1 KB chunks strictly one after another, in order.
+      if (viewer.queuedInput + bytes.length > MAX_INPUT_QUEUE_BYTES) {
+        viewer.finish('terminal input overflow');
+        return;
+      }
+      viewer.queuedInput += bytes.length;
+      viewer.inputChain = viewer.inputChain.then(async () => {
+        try {
+          if (beforeSend && !(await beforeSend())) return;
+          for (let offset = 0; offset < bytes.length; offset += INPUT_CHUNK_BYTES) {
+            if (viewer.finished || client !== c) return;
+            const hex = [...bytes.subarray(offset, offset + INPUT_CHUNK_BYTES)]
+              .map((b) => b.toString(16).padStart(2, '0'))
+              .join(' ');
+            const res = await c.command(`send-keys -t ${pane} -H ${hex}`);
+            if (!res.ok) {
+              viewer.finish('terminal pane closed');
+              return;
+            }
+          }
+        } catch {
+          viewer.finish('terminal pane closed');
+        } finally {
+          viewer.queuedInput -= bytes.length;
+        }
+      });
+    };
+
+    const refusePaste = (reason: string): void => {
+      if (viewer.finished) return;
+      try {
+        send({ t: 'paste-refused', reason });
+      } catch {
+        viewer.finish('terminal socket closed', false);
+      }
+    };
+
     return {
       input(dataString) {
-        if (viewer.finished || typeof dataString !== 'string' || !dataString) return;
-        const c = client;
-        if (!c) return;
-        const pane = viewer.pane;
-        if (!pane) return;
-        const bytes = Buffer.from(dataString, 'utf8');
-        // M-R4: bound and SERIALIZE input. Firing one send-keys promise per 1 KB
-        // the instant bytes arrived let a multi-megabyte paste stack thousands of
-        // hex commands into c.waiters at once, with no backpressure. Instead we
-        // refuse to queue more than MAX_INPUT_QUEUE_BYTES of pending input (a
-        // viewer that outruns that has lost its trustworthy FIFO slot — evict it)
-        // and send the 1 KB chunks strictly one after another, in order.
-        if (viewer.queuedInput + bytes.length > MAX_INPUT_QUEUE_BYTES) {
-          viewer.finish('terminal input overflow');
-          return;
-        }
-        viewer.queuedInput += bytes.length;
-        viewer.inputChain = viewer.inputChain.then(async () => {
-          try {
-            for (let offset = 0; offset < bytes.length; offset += INPUT_CHUNK_BYTES) {
-              if (viewer.finished || client !== c) return;
-              const hex = [...bytes.subarray(offset, offset + INPUT_CHUNK_BYTES)]
-                .map((b) => b.toString(16).padStart(2, '0'))
-                .join(' ');
-              const res = await c.command(`send-keys -t ${pane} -H ${hex}`);
-              if (!res.ok) {
-                viewer.finish('terminal pane closed');
-                return;
-              }
-            }
-          } catch {
-            viewer.finish('terminal pane closed');
-          } finally {
-            viewer.queuedInput -= bytes.length;
-          }
-        });
+        if (typeof dataString !== 'string' || !dataString) return;
+        queueInput(Buffer.from(dataString, 'utf8'));
+      },
+      paste(dataString) {
+        if (typeof dataString !== 'string' || !dataString) return;
+        // Reuse the owned-pane injection sanitizer: clipboard text must not be
+        // able to smuggle an END marker (or another terminal control) out of the
+        // bracket and turn its suffix into live keystrokes. xterm normalizes
+        // pasted line endings to CR; preserve those exact native semantics.
+        const safe = sanitizePaneText(dataString).replace(/\n/g, '\r');
+        if (!safe) return;
+        const bytes = Buffer.from(BRACKETED_PASTE_START + safe + BRACKETED_PASTE_END, 'utf8');
+
+        // A Fleet Deck Claude pane is contractually a Claude TUI, which supports
+        // bracketed paste even if the browser's reconstructed xterm mode raced
+        // its init seed. A shell pane is open-ended: ask tmux for the CURRENT
+        // application mode at the paste boundary and refuse rather than execute
+        // each line if that shell did not opt in.
+        const provePasteSupport =
+          row.kind !== 'shell'
+            ? undefined
+            : async (): Promise<boolean> => {
+                const c = client;
+                const pane = viewer.pane;
+                if (!c || !pane || viewer.finished) return false;
+                const mode = await c.command(
+                  `display-message -p -t ${pane} '#{bracket_paste_flag}'`,
+                );
+                if (mode.ok && mode.lines.at(-1)?.trim() === '1') return true;
+                refusePaste(
+                  'multiline paste needs bracketed-paste support — this shell did not request it',
+                );
+                return false;
+              };
+        queueInput(bytes, provePasteSupport);
       },
       resize(nextCols, nextRows) {
         const next = dimensions(nextCols, nextRows);

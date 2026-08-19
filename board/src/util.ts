@@ -801,9 +801,8 @@ export function questionView(q: QuestionEntry): QuestionView {
 // The first image item on a clipboard, or null. Pure selection logic so the
 // terminal's paste handler stays a thin DOM shim: given event.clipboardData
 // .items (or any array-like of {kind,type,getAsFile}), pick what the paste
-// feature ingests. Text-only clipboards return null — the caller must then let
-// the event fall through to xterm untouched, so ordinary text paste keeps
-// working exactly as before.
+// feature ingests. Text-only clipboards return null — the caller then chooses
+// native xterm handling for one line or the daemon's atomic path for many.
 // The shape the selector reads off each clipboard entry — deliberately a subset
 // of DataTransferItem so a real `event.clipboardData.items` flows in unchanged,
 // while the generic hands the concrete item (with .getAsFile) back to the caller.
@@ -964,10 +963,9 @@ export function isTermCopyChord(
 //
 // The caller must NOT preventDefault: the whole trick is to stop xterm turning
 // the chord into ^V while letting the BROWSER perform its own native paste. The
-// resulting paste event is trusted, needs no clipboard-read permission, and
-// reaches xterm's own handler — which brackets it (ESC[200~) when the app asked
-// for bracketed paste (DEC mode 2004). Otherwise it retains normal terminal
-// semantics, including newlines, because the human explicitly requested paste.
+// resulting paste event is trusted and needs no clipboard-read permission.
+// TermPane lets a single line reach xterm, while a multiline event takes the
+// daemon's FIFO bracketed-paste path so its newlines never become live submits.
 //
 // On a Mac ⌘V is already the browser's paste and xterm never intercepts meta
 // chords, so there is nothing to claim.

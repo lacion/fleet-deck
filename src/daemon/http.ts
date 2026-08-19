@@ -2169,6 +2169,7 @@ export function createHttp(
       if (!frame || typeof frame !== 'object') return;
       const fr = frame as Record<string, unknown>;
       if (fr['t'] === 'in' && typeof fr['data'] === 'string') data.handle.input(fr['data']);
+      else if (fr['t'] === 'paste' && typeof fr['data'] === 'string') data.handle.paste(fr['data']);
       else if (fr['t'] === 'resize') data.handle.resize(fr['cols'] as number, fr['rows'] as number);
     },
     close(ws) {

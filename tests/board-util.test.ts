@@ -307,8 +307,8 @@ test('every family modelFamily() can return has a badge rule and tokens in BOTH 
 // The DOM handler in TermPane must stay a thin shim, so the decision "does this
 // clipboard carry an image we ingest?" lives here where node --test can reach
 // it. The contract worth pinning: only file-kind image/* items count, the first
-// one wins, and a text-only clipboard yields null — which is what lets ordinary
-// text paste fall through to xterm untouched.
+// one wins, and a text-only clipboard yields null — which hands text to the
+// single-line xterm / multiline daemon split in TermPane.
 test('imageFromClipboard picks the first image file item', () => {
   const text = { kind: 'string', type: 'text/plain' };
   const png = { kind: 'file', type: 'image/png' };
@@ -644,7 +644,7 @@ test('both terminal frames tell the human how to select and copy', () => {
   }
 });
 
-test('the SHIPPED board-dist actually contains the copy chord', () => {
+test('the SHIPPED board-dist contains the terminal copy and atomic-paste paths', () => {
   // Same hazard the git-output test above pins — a green board gate over a
   // board-dist that predates the fix — but the terminal lives in a LAZY chunk
   // index.html never names, so that test's entry-only scan cannot see it. Walk
@@ -685,6 +685,10 @@ test('the SHIPPED board-dist actually contains the copy chord', () => {
   assert.ok(
     js.includes('selection cleared'),
     'the shipped board bundle predates the pane copy fix — rerun npm run build:board',
+  );
+  assert.ok(
+    js.includes('paste-refused') && js.includes('multiline paste unavailable'),
+    'the shipped board bundle predates the atomic multiline-paste fix — rerun npm run build:board',
   );
 });
 
@@ -1116,8 +1120,8 @@ test('the paste chord is surrendered to the BROWSER, never preventDefaulted', ()
   // The whole mechanism: stop xterm turning Ctrl+V into ^V, but leave the event
   // alone so the browser performs its own TRUSTED paste. That needs no
   // clipboard-read permission, and the resulting paste event reaches xterm's
-  // handler, which brackets it — without that, a multi-line paste submits
-  // itself line by line into a live agent.
+  // handler. TermPane then routes multiline text through the daemon's atomic
+  // paste frame rather than allowing its newlines to submit independently.
   const src = readFileSync(
     path.join(HERE, '..', 'board', 'src', 'components', 'TermPane.tsx'),
     'utf8',
@@ -1148,12 +1152,17 @@ test('the headless image paste survives the Ctrl+V change', () => {
     'the image-paste listener must stay in the CAPTURE phase — xterm handles paste on the textarea below it',
   );
   const pasteHandler = src.indexOf('const onPaste = (e: ClipboardEvent) =>');
-  const textReturn = src.indexOf('if (!item) return;', pasteHandler);
-  const imagePreventDefault = src.indexOf('e.preventDefault();', pasteHandler);
+  const textBranch = src.indexOf('if (!item) {', pasteHandler);
+  const textSend = src.indexOf('sendPaste(text)', textBranch);
+  const imageFile = src.indexOf('const file = item.getAsFile();', textSend);
   assert.ok(pasteHandler >= 0, 'the image-paste handler must still exist');
   assert.ok(
-    textReturn > pasteHandler && textReturn < imagePreventDefault,
-    'text paste must return to xterm before the image-only preventDefault path',
+    textBranch > pasteHandler && textSend > textBranch && imageFile > textSend,
+    'text paste must finish its own path before image upload begins',
+  );
+  assert.ok(
+    src.slice(textBranch, imageFile).includes('if (!/[\\r\\n]/.test(text)) return;'),
+    'single-line text must still use xterm while multiline text takes the daemon paste path',
   );
   assert.match(
     src,

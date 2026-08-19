@@ -22,7 +22,7 @@ import {
 //
 // Speaks the daemon's /ws/term JSON-frame contract:
 //   server → {t:'init', cols, rows, screen} · {t:'out', data} · {t:'exit', reason} · {t:'err', reason}
-//   client → {t:'in', data} · {t:'resize', cols, rows}
+//   client → {t:'in', data} · {t:'paste', data} · {t:'resize', cols, rows}
 //
 // `live` is what makes a grid possible. Every open pane STREAMS, but only the
 // one the human is focused on may TYPE: keystrokes are irreversible and land in
@@ -174,7 +174,7 @@ interface WsFrame {
 // a defensive `?.` kept verbatim; this structural view (fields optional) keeps
 // that guard honest while the real Terminal flows in structurally.
 interface TermModesView {
-  modes?: { bracketedPasteMode?: boolean; mouseTrackingMode?: string };
+  modes?: { mouseTrackingMode?: string };
 }
 
 // The one field TermPane reads off GET /health (fetchHealth returns unknown).
@@ -350,6 +350,8 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
         if (f.screen) term.write(write(f.screen));
       } else if (f.t === 'out') {
         term.write(write(f.data ?? ''));
+      } else if (f.t === 'paste-refused') {
+        flash('err', f.reason ?? 'multiline paste unavailable in this pane');
       } else if (f.t === 'exit') {
         end('exit', `agent ended — ${(f.reason ?? '') || 'pane closed'}`);
       } else if (f.t === 'err') {
@@ -406,6 +408,11 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
     const sendIn = (data: string): boolean => {
       if (st.done || term.options.disableStdin || ws.readyState !== WebSocket.OPEN) return false;
       ws.send(JSON.stringify({ t: 'in', data }));
+      return true;
+    };
+    const sendPaste = (data: string): boolean => {
+      if (st.done || term.options.disableStdin || ws.readyState !== WebSocket.OPEN) return false;
+      ws.send(JSON.stringify({ t: 'paste', data }));
       return true;
     };
 
@@ -512,18 +519,24 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
     // must never submit on its own.
     //
     // Capture phase, so this runs before xterm's paste listener on the hidden
-    // textarea inside screenRef. A clipboard with no image falls through
-    // untouched — plain text paste behaves exactly as it always has. Routing
-    // the typed path through sendIn keeps the grid's one-tile-types discipline:
+    // textarea inside screenRef. Single-line text falls through untouched.
+    // Multi-line text takes the daemon paste path: it is serialized with every
+    // keystroke and arrives as ONE bracketed composer edit even if this fresh
+    // xterm viewer has not reconstructed DEC mode 2004 yet. Routing both that
+    // paste and the typed image path through the same live-pane gate keeps the
+    // grid's one-tile-types discipline:
     // a non-live tile refuses at the same gate a keystroke would (and we skip
     // the upload too — no point shipping bytes nothing may type).
     const onPaste = (e: ClipboardEvent) => {
       const item = imageFromClipboard(e.clipboardData?.items);
-      // Text — including multiple lines — follows xterm's normal paste path.
-      // When the program requested bracketed paste xterm wraps it; otherwise it
-      // has ordinary terminal semantics, where embedded newlines may submit.
-      // Fleet Deck deliberately does not override that explicit user action.
-      if (!item) return;
+      if (!item) {
+        const text = e.clipboardData?.getData('text/plain') ?? '';
+        if (!/[\r\n]/.test(text)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (!sendPaste(text)) flash('err', 'pane lost focus — paste discarded');
+        return;
+      }
       e.preventDefault();
       e.stopPropagation();
       if (st.done || term.options.disableStdin) return; // non-live tile: refuse before uploading
