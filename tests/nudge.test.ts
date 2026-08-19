@@ -167,6 +167,12 @@ test('nudge holds on a trust dialog: no Enter, board says waiting', {
   );
 
   const state = await getState<NudgeState>(daemon.baseUrl);
+  const held = state.sessions.find((s) => s.session_id === (res.json as SpawnResponse).session_id);
+  assert.equal(
+    held?.spawn?.attention,
+    'folder-trust',
+    'the board gets a structured action state instead of parsing note prose',
+  );
   const tickText = (state.ticker ?? []).map((x) => x.msg ?? x.text ?? '').join('\n');
   assert.match(tickText, /waits on a trust dialog/, 'ticker reports the held trust dialog');
   assert.doesNotMatch(tickText, /nudged .* through bring-up/, 'no bring-up Enter was sent');

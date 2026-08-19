@@ -25,6 +25,7 @@ import { redactDiagnosticText, scrubUrlCredentials } from './payload-capture.ts'
 import { redactGitText } from './exec.ts';
 import type { ExecResult } from './exec.ts';
 import type { Statements, SessionRow, SpawnRow } from './statements.ts';
+import { SPAWN_FOLDER_TRUST_NOTE, SPAWN_PANE_UNREADABLE_NOTE } from './spawn-attention.ts';
 
 // ---------------------------------------------------------- strict-typing seam
 // Sibling module surfaces obtained as type queries: erased under
@@ -127,11 +128,12 @@ interface SpawnsCtx {
   // repo-guarded body). See ts-migration-bugs.md.
   validateBranch: ReposSurface['validateBranch'];
   resolveTarget: ReposSurface['resolveTarget'];
+  probeRepoAccess: ReposSurface['probeRepoAccess'];
   cloneRepo: ReposSurface['cloneRepo'];
   materializeBranch: ReposSurface['materializeBranch'];
   touchRepo: ReposSurface['touchRepo'];
   claimTarget: ReposSurface['claimTarget'];
-  targetOwner: ReposSurface['targetOwner'];
+  relabelTarget: ReposSurface['relabelTarget'];
   reserveCloneSlot: () => ReturnType<ReposSurface['reserveCloneSlot']>;
   persistRepoTransport: (v: unknown) => ReturnType<SettingsSurface['persistRepoTransport']>;
   persistRepoDefaultOrg: (v: unknown) => ReturnType<SettingsSurface['persistRepoDefaultOrg']>;
@@ -224,6 +226,7 @@ interface SpawnCompensateArgs {
   tmux_window?: string | null | undefined;
   reason: string;
   created?: { clone: boolean; worktree: boolean };
+  cancelled?: boolean;
 }
 
 interface LaunchPaneArgs {
@@ -240,6 +243,7 @@ interface LaunchPaneArgs {
   skipPermissions: boolean;
   gatewayEnv?: Record<string, string> | null;
   created?: { clone: boolean; worktree: boolean };
+  signal?: AbortSignal;
 }
 
 // The shared resume-launch options. callsign/tmux_window/requested_cwd arrive
@@ -381,11 +385,12 @@ export function createSpawns(ctx: SpawnsCtx) {
     hasLivePane,
     validateBranch,
     resolveTarget,
+    probeRepoAccess,
     cloneRepo,
     materializeBranch,
     touchRepo,
     claimTarget,
-    targetOwner,
+    relabelTarget,
     reserveCloneSlot,
     persistRepoTransport,
     persistRepoDefaultOrg,
@@ -658,7 +663,7 @@ export function createSpawns(ctx: SpawnsCtx) {
         if (typeof screen !== 'string' || screen.trim() === '') {
           logEvent(row.session_id, 'SpawnNudge', null, 'pane unreadable — bring-up Enter held');
           updateSession(row.session_id, {
-            note: 'no bring-up keystroke sent — pane unreadable; check the terminal',
+            note: SPAWN_PANE_UNREADABLE_NOTE,
           });
           tick(`🔒 ${callsign} needs a look — no bring-up keystroke sent`);
           onMutate();
@@ -670,7 +675,7 @@ export function createSpawns(ctx: SpawnsCtx) {
         if (TRUST_DIALOG_RE.test(squashed)) {
           logEvent(row.session_id, 'SpawnNudge', null, 'trust/MCP dialog held for human approval');
           updateSession(row.session_id, {
-            note: 'waiting on the folder-trust dialog — approve it in the terminal',
+            note: SPAWN_FOLDER_TRUST_NOTE,
           });
           tick(`🔒 ${callsign} waits on a trust dialog — approve it in the terminal`);
           onMutate();
@@ -701,6 +706,11 @@ export function createSpawns(ctx: SpawnsCtx) {
   // core; a restart naturally clears it (a mid-flight revive is a provisioning
   // row that boot reconciliation settles).
   const revivingSessions = new Set<string>();
+  // Detached repo provisioning needs a real owner that Kill can cancel. A card
+  // is not a process handle: keeping the AbortController + completion promise
+  // here lets the control route stop git and wait for compensation instead of
+  // reporting "window already gone" while credential helpers keep running.
+  const provisioningOps = new Map<string, { controller: AbortController; done: Promise<void> }>();
 
   // BUG-053: per-pane serialization for daemon control input into an owned
   // TUI (the enableRemote `/rc` type+Enter). Two concurrent /rc requests for
@@ -868,6 +878,7 @@ export function createSpawns(ctx: SpawnsCtx) {
     tmux_window,
     reason,
     created = { clone: false, worktree: !!worktree_path },
+    cancelled = false,
   }: SpawnCompensateArgs) {
     if (tmux_window) {
       let killed: {
@@ -917,7 +928,17 @@ export function createSpawns(ctx: SpawnsCtx) {
     }
     q.setSpawnStatus.run('gone', spawn_id);
     forgetSpawn(spawn_id);
-    spawnFailed(session_id, callsign, reason);
+    if (cancelled) {
+      logEvent(session_id, 'SpawnCancelled', null, 'cancelled during repository provisioning');
+      tombstoneCard(session_id, {
+        note: 'spawn cancelled',
+        tickMsg: `○ cancelled repository provisioning for ${callsign}`,
+        forgetModel: true,
+        mutate: true,
+      });
+    } else {
+      spawnFailed(session_id, callsign, reason);
+    }
     return { resolved: true };
   }
 
@@ -935,7 +956,9 @@ export function createSpawns(ctx: SpawnsCtx) {
     skipPermissions,
     gatewayEnv = null,
     created = { clone: false, worktree: !!worktree_path },
+    signal,
   }: LaunchPaneArgs) {
+    if (signal?.aborted) throw new Error('spawn cancelled');
     const kind = body.kind ?? 'claude';
     const setupCmd = body.setup_cmd ?? null;
     const launchEnv = {
@@ -1042,8 +1065,14 @@ export function createSpawns(ctx: SpawnsCtx) {
     } else {
       try {
         await tmuxAdapter.ensureSession(port);
+        if (signal?.aborted) throw new Error('spawn cancelled');
         await tmuxAdapter.newWindow({ port, callsign, cwd: runCwd, argv, env: launchEnvOrNull });
+        // If Cancel raced new-window, the outer provisioning owner already
+        // marked paneMayExist; throwing here routes through verified kill and
+        // filesystem compensation before the operation reports completion.
+        if (signal?.aborted) throw new Error('spawn cancelled');
       } catch (err) {
+        if (signal?.aborted) throw err;
         const cleanup = await compensate(errMessage(err));
         const unresolved = !cleanup.resolved ? `; cleanup unresolved: ${cleanup.error}` : '';
         return {
@@ -1377,16 +1406,41 @@ export function createSpawns(ctx: SpawnsCtx) {
         };
       }
       const targetPath = target.mode === 'clone' ? target.dest : target.root;
-      const owner = targetOwner(targetPath);
-      if (owner) {
+      let releaseTarget: () => void;
+      try {
+        // The claim itself is the atomic check. A separate targetOwner probe
+        // before an awaited auth preflight let two same-destination requests
+        // both pass, then the second threw after its card existed.
+        releaseTarget = claimTarget(targetPath, 'repository access check');
+      } catch (err) {
         releasePlanClaim();
         return {
           status: 409,
           body: {
             ok: false,
-            reason: `${path.resolve(targetPath)} is already being provisioned by ${owner}`,
+            reason: errMessage(err),
           },
         };
+      }
+      // Authenticate the exact origin before a durable card, clone slot, temp
+      // directory, or tmux name exists. This is deliberately the daemon's gate
+      // (the board also offers a friendly Check button): curl clients and stale
+      // boards must not recreate the old ten-minute "cloning…" ghost when
+      // Coder/GitHub/GitLab credentials are missing.
+      if (target.mode === 'clone') {
+        const access = await probeRepoAccess(target.origin_url);
+        if (!access.ok) {
+          releaseTarget();
+          releasePlanClaim();
+          return {
+            status: access.status,
+            body: {
+              ok: false,
+              reason: access.reason,
+              git_access: access.git_access,
+            },
+          };
+        }
       }
       // Reserve a clone slot BEFORE any card/row exists, so a full pool returns a
       // clean 429 with nothing to compensate. Local materialization is uncapped.
@@ -1397,6 +1451,7 @@ export function createSpawns(ctx: SpawnsCtx) {
         try {
           releaseCloneSlot = reserveCloneSlot();
         } catch (err) {
+          releaseTarget();
           releasePlanClaim();
           return {
             status: errStatus(err) ?? 429,
@@ -1439,16 +1494,55 @@ export function createSpawns(ctx: SpawnsCtx) {
       // refusal owes. The two materialization paths BELOW already own their
       // failure surfaces (spawnCompensate tombstones + a real status body) —
       // this guard deliberately covers the card-creation prefix only.
-      let c: SessionRow;
+      let callsign: string;
+      let tmux_session: string;
+      let tmux_window: string;
       try {
-        c = createSpawnedCard(session_id, targetPath, body.prompt, {
+        const c = createSpawnedCard(session_id, targetPath, body.prompt, {
           repo_name: target.repo_name,
           branch: body.branch,
           note: initialNote,
         });
+        if (c.callsign == null) throw new Error('spawned card is missing its callsign');
+        callsign = c.callsign;
+        tmux_session = tmuxAdapter.sessionName(port);
+        tmux_window = tmuxAdapter.windowName(port, callsign);
+        if (!relabelTarget(targetPath, 'repository access check', callsign)) {
+          throw new Error('repository destination claim vanished before provisioning');
+        }
+        q.insertProvisionalSpawn.run(
+          spawn_id,
+          session_id,
+          callsign,
+          tmux_session,
+          tmux_window,
+          targetPath,
+          null,
+          Date.now(),
+          skipPermissions ? 1 : 0,
+          body.remote_control === true ? 1 : 0,
+          target.origin_url ?? null,
+          body.branch,
+          branchMode,
+          gateway.use ? 1 : 0,
+          kind,
+          body.setup_cmd ?? null,
+        );
       } catch (err) {
         releaseCloneSlot();
+        releaseTarget();
         releasePlanClaim();
+        try {
+          // createSpawnedCard can fail after its session INSERT (for example
+          // while deriving ticket metadata), so look up the row rather than
+          // relying on its return assignment having completed.
+          if (q.getSession.get(session_id)) {
+            tombstoneCard(session_id, { note: 'spawn setup failed', mutate: true });
+          }
+        } catch {
+          // The originating storage error can also block the best-effort
+          // tombstone. The in-memory claims above are already released.
+        }
         return {
           status: 500,
           body: {
@@ -1457,34 +1551,6 @@ export function createSpawns(ctx: SpawnsCtx) {
           },
         };
       }
-      const callsign = c.callsign;
-      // createSpawnedCard runs the callsign lottery and INSERTs it (see the guard
-      // comment above), so a freshly created card always carries one — but the
-      // row type is SELECT-* nullable. Prove it here rather than thread `string |
-      // null` through windowName/claimTarget/spawnCompensate, all of which require
-      // a real name. Impossible in practice; an honest throw beats a silent `!`.
-      if (callsign == null) throw new Error('spawned card is missing its callsign');
-      const releaseTarget = claimTarget(targetPath, callsign);
-      const tmux_session = tmuxAdapter.sessionName(port);
-      const tmux_window = tmuxAdapter.windowName(port, callsign);
-      q.insertProvisionalSpawn.run(
-        spawn_id,
-        session_id,
-        callsign,
-        tmux_session,
-        tmux_window,
-        targetPath,
-        null,
-        Date.now(),
-        skipPermissions ? 1 : 0,
-        body.remote_control === true ? 1 : 0,
-        target.origin_url ?? null,
-        body.branch,
-        branchMode,
-        gateway.use ? 1 : 0,
-        kind,
-        body.setup_cmd ?? null,
-      );
 
       const finishMaterialization = async (materialized: Materialized, source: string) => {
         const worktree_path = branchMode === 'worktree' ? materialized.runCwd : null;
@@ -1592,14 +1658,27 @@ export function createSpawns(ctx: SpawnsCtx) {
 
       // Clone provisioning continues after the HTTP 202 response. The guarded
       // detached chain owns both compensation and the single-flight release.
+      const controller = new AbortController();
+      let resolveProvisioning!: () => void;
+      const provisioningDone = new Promise<void>((resolve) => {
+        resolveProvisioning = resolve;
+      });
+      const provisioningOp = { controller, done: provisioningDone };
+      provisioningOps.set(spawn_id, provisioningOp);
       Promise.resolve()
         .then(async () => {
           let created = { clone: false, worktree: false };
           let worktree_path: string | null = null;
           let paneMayExist = false;
           try {
-            await cloneRepo({ origin_url: target.origin_url, dest: target.dest, spawn_id });
+            await cloneRepo({
+              origin_url: target.origin_url,
+              dest: target.dest,
+              spawn_id,
+              signal: controller.signal,
+            });
             created.clone = true;
+            if (controller.signal.aborted) throw new Error('spawn cancelled');
             updateSession(session_id, { note: `preparing ${body.branch}…` });
             onMutate();
             const materialized = await materializeBranch({
@@ -1609,12 +1688,15 @@ export function createSpawns(ctx: SpawnsCtx) {
               spawn_id,
               sid: session_id,
               clone: true,
+              signal: controller.signal,
             });
             created = materialized.created;
             worktree_path = branchMode === 'worktree' ? materialized.runCwd : null;
+            if (controller.signal.aborted) throw new Error('spawn cancelled');
             await finishMaterialization(materialized, 'clone');
+            if (controller.signal.aborted) throw new Error('spawn cancelled');
             paneMayExist = true;
-            await launchPane({
+            const launched = await launchPane({
               spawn_id,
               session_id,
               callsign,
@@ -1628,11 +1710,15 @@ export function createSpawns(ctx: SpawnsCtx) {
               skipPermissions,
               created,
               gatewayEnv: gateway.env,
+              signal: controller.signal,
             });
-            completePlanClaim(spawn_id);
+            if (launched.status >= 400) releasePlanClaim();
+            else completePlanClaim(spawn_id);
           } catch (err) {
-            const reason =
-              branchMode === 'in-place' && created.clone
+            const cancelled = controller.signal.aborted;
+            const reason = cancelled
+              ? 'spawn cancelled'
+              : branchMode === 'in-place' && created.clone
                 ? `${errMessage(err)} — ${path.basename(target.dest)} was left switched to ${body.branch}`
                 : errMessage(err);
             await spawnCompensate({
@@ -1644,11 +1730,16 @@ export function createSpawns(ctx: SpawnsCtx) {
               tmux_window: paneMayExist ? tmux_window : null,
               reason,
               created,
+              cancelled,
             });
             releasePlanClaim();
           } finally {
             releaseCloneSlot();
             releaseTarget();
+            if (provisioningOps.get(spawn_id) === provisioningOp) {
+              provisioningOps.delete(spawn_id);
+            }
+            resolveProvisioning();
           }
         })
         .catch((err: unknown) => {
@@ -2710,6 +2801,64 @@ export function createSpawns(ctx: SpawnsCtx) {
     // to the type system for the owner check and verified kill-window below
     // without altering behavior.
     if (row.tmux_window == null) throw new Error('spawn is missing its tmux window');
+    if (row.status === 'provisioning') {
+      const op = provisioningOps.get(spawn_id);
+      if (op) {
+        op.controller.abort();
+        let timer: NodeJS.Timeout | null = null;
+        const bounded = new Promise<'pending'>((resolve) => {
+          timer = setTimeout(() => resolve('pending'), 5_000);
+          timer.unref();
+        });
+        const settled = await Promise.race([op.done.then(() => 'done' as const), bounded]);
+        if (timer) clearTimeout(timer);
+        if (settled === 'pending') {
+          return {
+            status: 202,
+            body: { ok: true, spawn_id, status: 'cancelling' },
+          };
+        }
+        const after = q.getSpawn.get(spawn_id);
+        if (after?.status === 'gone' || after?.status === 'killed') {
+          return {
+            status: 200,
+            body: { ok: true, spawn_id, status: 'cancelled' },
+          };
+        }
+        // The operation finished but a verified tmux cleanup could not settle
+        // it. Fall through to the ordinary exact-window path so the refusal is
+        // honest and the user can retry.
+      } else {
+        // A provisioning row with no in-memory operation is residue from a
+        // daemon restart. No detached chain in THIS process can later launch a
+        // pane, so exact absence is safe to settle as a successful cancel.
+        const stale = await tmuxAdapter.killWindowVerified(row.tmux_window);
+        if (stale.ok || stale.gone) {
+          q.setSpawnStatus.run(stale.ok ? 'killed' : 'gone', spawn_id);
+          forgetSpawn(spawn_id);
+          const c = q.getSession.get(row.session_id);
+          if (c && c.ended_at == null) {
+            tombstoneCard(row.session_id, {
+              note: 'spawn cancelled',
+              tickMsg: `○ cancelled repository provisioning for ${c.callsign ?? row.callsign}`,
+              forgetModel: true,
+              mutate: true,
+            });
+          }
+          return {
+            status: 200,
+            body: { ok: true, spawn_id, status: 'cancelled' },
+          };
+        }
+        return {
+          status: 500,
+          body: {
+            ok: false,
+            reason: stale.error ?? 'provisioning cancellation could not be verified',
+          },
+        };
+      }
+    }
     // H-R5: a revive reuses the dead row's tmux_window, so one physical window
     // can be named by several rows across a session's lifetime. Killing by a
     // STALE id would kill the window the NEWEST (revived) row now owns while
@@ -2743,7 +2892,7 @@ export function createSpawns(ctx: SpawnsCtx) {
       // Discovery: the pane is already gone — settle the row AND the card
       // (same tombstone every terminal row state applies; only reachable for
       // a non-offline card via an explicit force:true).
-      if (['spawning', 'stalled', 'live', 'pane-dead'].includes(row.status)) {
+      if (['provisioning', 'spawning', 'stalled', 'live', 'pane-dead'].includes(row.status)) {
         q.setSpawnStatus.run('gone', spawn_id);
         forgetSpawn(spawn_id); // M-G2
         if (c && c.ended_at == null) {

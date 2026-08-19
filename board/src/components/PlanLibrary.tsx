@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Activity, useEffect, useMemo, useRef, useState } from 'react';
 import { human, TURN_BOUNDARY_HINT } from '../util.ts';
 import { renderMarkdown, planTitle } from '../markdown.ts';
 import { assignPlan, markPlan, reasonOf } from '../api.ts';
@@ -278,10 +278,9 @@ export default function PlanLibrary({
     return stored === null ? plans.length > 0 : stored === '1';
   });
   const toggle = () => {
-    setOpen((o) => {
-      storageSet('fd-plans-open', o ? '0' : '1');
-      return !o;
-    });
+    const next = !open;
+    setOpen(next);
+    storageSet('fd-plans-open', next ? '1' : '0');
   };
   const liveSessions = (sessions ?? []).filter((s) => s.col !== 'offline');
 
@@ -303,7 +302,10 @@ export default function PlanLibrary({
           the fleet plan library — spawn a NEW executor session, assign to a live one, or archive
         </span>
       </button>
-      {open && (
+      {/* Collapsing the library is a temporary view change, not an instruction
+          to discard expanded plans or an in-progress assignment draft. Activity
+          hides the list and pauses its effects while preserving that local UI. */}
+      <Activity mode={open ? 'visible' : 'hidden'}>
         <div className="fd-planlist">
           {plans.length === 0 && (
             <div className="none">
@@ -322,7 +324,7 @@ export default function PlanLibrary({
             />
           ))}
         </div>
-      )}
+      </Activity>
     </div>
   );
 }

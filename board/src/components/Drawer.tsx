@@ -213,8 +213,8 @@ function OwnedPane({
       </div>
       <div className="fd-attach">
         $ tmux attach -t {tmuxSession}
-        {'\n'}
-        {'  '}window {win}
+        <br />
+        window {win}
       </div>
       {s.spawn.stalled && (
         <div className="fd-stalldiag">

@@ -4,11 +4,24 @@ import path from 'node:path';
 import test from './helpers/harness-test.ts';
 import { shareInfoForHref } from '../board/src/share.ts';
 import { joinBrowsePath, normalizeBrowseRoot, relativeBrowsePath } from '../board/src/fsPath.ts';
+import { branchProblem } from '../board/src/branch.ts';
 
 const app = readFileSync(path.resolve('board/src/App.tsx'), 'utf8');
 const hotkeys = readFileSync(path.resolve('board/src/hooks/useBoardHotkeys.ts'), 'utf8');
 const fleetState = readFileSync(path.resolve('board/src/useFleetState.ts'), 'utf8');
 const fleetConnection = readFileSync(path.resolve('board/src/fleetConnection.ts'), 'utf8');
+const api = readFileSync(path.resolve('board/src/api.ts'), 'utf8');
+const spawnForm = readFileSync(path.resolve('board/src/components/SpawnForm.tsx'), 'utf8');
+const termPane = readFileSync(path.resolve('board/src/components/TermPane.tsx'), 'utf8');
+const worktreesModal = readFileSync(
+  path.resolve('board/src/components/WorktreesModal.tsx'),
+  'utf8',
+);
+const killConfirm = readFileSync(path.resolve('board/src/components/KillConfirm.tsx'), 'utf8');
+const fileViewer = readFileSync(path.resolve('board/src/components/FileViewer.tsx'), 'utf8');
+const planLibrary = readFileSync(path.resolve('board/src/components/PlanLibrary.tsx'), 'utf8');
+const main = readFileSync(path.resolve('board/src/main.tsx'), 'utf8');
+const vite = readFileSync(path.resolve('board/vite.config.js'), 'utf8');
 
 test('Share recognizes a Coder/proxy origin and never leaks the board token', () => {
   const got = shareInfoForHref(
@@ -61,8 +74,32 @@ test('an idle healthy WebSocket is not recycled by an invented frame heartbeat',
 });
 
 test('the session drawer blocks global answer hotkeys behind its modal scrim', () => {
-  assert.match(app, /drawerOpen:\s*drawerOpenRef/);
+  assert.match(app, /drawerOpen:\s*drawerSid != null/);
+  assert.match(hotkeys, /useEffectEvent/);
   assert.match(hotkeys, /blockingOverlayOpen\([\s\S]*?drawerOpen,[\s\S]*?\]\)/);
+});
+
+test('the board build and long-lived listeners use the React 19 runtime model', () => {
+  assert.match(vite, /reactCompilerPreset/);
+  assert.match(main, /<StrictMode>/);
+  assert.match(app, /<ClockContext value=\{now\}>/);
+  assert.match(hotkeys, /useEffectEvent/);
+  assert.doesNotMatch(app, /ClockContext\.Provider/);
+});
+
+test('large board surfaces load on demand and long file views are virtualized', () => {
+  assert.match(app, /React\.lazy\(\(\) => import\('\.\/components\/SpawnForm\.tsx'\)\)/);
+  assert.match(app, /React\.lazy\(\(\) => import\('\.\/components\/FileViewer\.tsx'\)\)/);
+  assert.match(app, /React\.lazy\(\(\) => import\('\.\/components\/WorktreesModal\.tsx'\)\)/);
+  assert.match(app, /<LazySurfaceFallback/);
+  assert.match(app, /useModal\(dialogRef\)/);
+  assert.match(fileViewer, /useVirtualizer/);
+});
+
+test('collapsing the plan library preserves in-progress card state', () => {
+  assert.match(planLibrary, /<Activity mode=\{open \? 'visible' : 'hidden'\}>/);
+  assert.match(planLibrary, /setOpen\(next\);\s*storageSet\('fd-plans-open'/);
+  assert.doesNotMatch(planLibrary, /setOpen\(\(o\) => \{\s*storageSet/);
 });
 
 test('lazy terminal surfaces have visible, dismissible loading and failure states', () => {
@@ -71,4 +108,90 @@ test('lazy terminal surfaces have visible, dismissible loading and failure state
   assert.match(app, /<TerminalFallback[\s\S]*?grid[\s\S]*?setGrid\(null\)/);
   assert.match(app, /<ErrorBoundary/);
   assert.match(app, /window\.location\.reload\(\)/);
+});
+
+test('repo spawning checks exact Git access and explains Coder auth without owning tokens', () => {
+  assert.match(spawnForm, /preflightRepo/);
+  assert.match(spawnForm, /auth_label/);
+  assert.match(spawnForm, /Use HTTPS instead/);
+  assert.match(spawnForm, /Copy SSH key/);
+  assert.match(spawnForm, /FleetDeck never stores Git tokens/);
+  assert.match(spawnForm, /Git diagnostic/);
+  const submit = spawnForm.slice(spawnForm.indexOf('const submit = async'));
+  const preflightIndex = submit.indexOf('await checkRepoAccess(body)');
+  const persistIndex = submit.indexOf('await persistSetupDefault()');
+  assert.ok(preflightIndex >= 0, 'Spawn performs repository preflight');
+  assert.ok(persistIndex >= 0, 'Spawn persists setup defaults');
+  assert.ok(
+    preflightIndex < persistIndex,
+    'Spawn proves Git access before any settings write or spawn request',
+  );
+  assert.match(submit, /const body = baseBody\(\)/);
+  assert.match(submit, /await submitOne\(body\)/);
+  assert.match(spawnForm, /const repoFieldsLocked = busy \|\| gitAccess\.state === 'checking'/);
+  assert.match(spawnForm, /disabled=\{repoFieldsLocked\}/);
+  assert.match(spawnForm, /checking repository access before creating a session/);
+  assert.match(spawnForm, /Checking access…/);
+  assert.match(api, /post\('\/api\/repos\/preflight', body, 65_000\)/);
+});
+
+test('a held Claude trust dialog opens the owned terminal instead of looking like a spawn hang', () => {
+  assert.match(spawnForm, /attention === 'folder-trust'/);
+  assert.match(spawnForm, /approval required — trust this new folder once/);
+  assert.match(spawnForm, /onOpenTerminal\(sess\)/);
+  assert.match(
+    app,
+    /onOpenTerminal=\{\(session\) => \{[\s\S]*?setSpawnForm\(null\);[\s\S]*?openTerm\(session\)/,
+  );
+});
+
+test('terminal multiline paste uses the daemon atomic-paste path', () => {
+  assert.match(termPane, /Multi-line text takes the daemon paste path/);
+  const pasteHandler = termPane.slice(
+    termPane.indexOf('const onPaste ='),
+    termPane.indexOf("screenEl.addEventListener('paste'"),
+  );
+  const newlineGate = pasteHandler.indexOf('if (!/[\\r\\n]/.test(text)) return;');
+  const sendPaste = pasteHandler.indexOf('sendPaste(text)');
+  const preventDefault = pasteHandler.indexOf('e.preventDefault()');
+  const stopPropagation = pasteHandler.indexOf('e.stopPropagation()');
+  assert.ok(newlineGate >= 0, 'single-line paste still falls through to xterm');
+  assert.ok(preventDefault >= 0 && stopPropagation >= 0, 'multiline paste claims the event');
+  assert.ok(
+    newlineGate < preventDefault && newlineGate < stopPropagation && sendPaste > stopPropagation,
+    'multiline paste is cancelled before one dedicated daemon frame is sent',
+  );
+  const keyHandler = termPane.slice(
+    termPane.indexOf('term.attachCustomKeyEventHandler'),
+    termPane.indexOf('// Ctrl+V of an IMAGE'),
+  );
+  const pasteChord = keyHandler.indexOf('if (isTermPasteChord(e, IS_MAC)) return false;');
+  const nextKeyBranch = keyHandler.indexOf("if (e.type !== 'keydown'", pasteChord);
+  assert.ok(pasteChord >= 0 && nextKeyBranch > pasteChord, 'Ctrl+V has a dedicated key branch');
+  assert.doesNotMatch(
+    keyHandler.slice(pasteChord, nextKeyBranch),
+    /preventDefault/,
+    'Ctrl+V leaves the browser paste event intact',
+  );
+  assert.match(termPane, /JSON\.stringify\(\{ t: 'paste', data \}\)/);
+  assert.doesNotMatch(termPane, /multi-line paste blocked/);
+});
+
+test('branch preview rejects names Git will reject while preserving @', () => {
+  for (const branch of ['feature//x', '.feature', 'feature.', 'feature/.x', 'feature/x.']) {
+    assert.ok(branchProblem(branch), `${branch} is rejected before Spawn`);
+  }
+  assert.equal(branchProblem('@'), null);
+  assert.equal(branchProblem('feature/x'), null);
+});
+
+test('bulk worktree removal reports a failed refresh instead of leaving stale success UI', () => {
+  assert.match(worktreesModal, /await onReload\(\);[\s\S]*?catch[\s\S]*?refresh failed/);
+  assert.match(worktreesModal, /click Refresh to retry/);
+});
+
+test('a provisioning card offers clone cancellation rather than a fake pane kill', () => {
+  assert.match(killConfirm, /Cancel the repository clone/);
+  assert.match(killConfirm, /stops Git and its credential helpers/);
+  assert.match(killConfirm, /Cancel clone/);
 });

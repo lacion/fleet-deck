@@ -12,6 +12,7 @@ import { scrubUrlCredentials } from './payload-capture.ts';
 // bundle inlines it; the engine floor runs the bundle). See ts-migration.md.
 import { WIRE_SCHEMA_VERSION } from '../../contracts/index.ts';
 import type { Statements, SpawnRow } from './statements.ts';
+import { spawnAttentionForNote } from './spawn-attention.ts';
 
 // resolveSettings()'s /state block. snapshot.ts reads only browse_root.resolved
 // (→ home_dir) and otherwise ships the object verbatim, so the index tail keeps
@@ -185,6 +186,7 @@ export function createSnapshot(ctx: SnapshotCtx) {
                 tmux_window: sp.tmux_window,
                 status: sp.status,
                 kind: sp.kind ?? 'claude',
+                attention: spawnAttentionForNote(s.note),
                 setup_cmd: sp.setup_cmd ?? null,
                 stalled: sp.status === 'stalled', // watchdog chip ("never registered")
                 stall_detail: sp.status === 'stalled' ? (sp.stall_detail ?? null) : null,

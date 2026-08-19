@@ -7,12 +7,12 @@ html, body, #root { margin: 0; height: 100%; background: var(--bg); }
 button { font-family: inherit; }
 a { color: var(--act); } a:hover { opacity: .85; }
 
-@keyframes fdPulse { 0%,100% { opacity:1; transform:scale(1); } 50% { opacity:.35; transform:scale(.72); } }
-@keyframes fdRipple { 0% { box-shadow:0 0 0 0 rgba(255,107,84,.55); } 100% { box-shadow:0 0 0 14px rgba(255,107,84,0); } }
-@keyframes fdSlideIn { from { opacity:0; transform:translateY(-6px); } to { opacity:1; transform:none; } }
-@keyframes fdDrawer { from { transform:translateX(24px); opacity:0; } to { transform:none; opacity:1; } }
+@keyframes fd-pulse { 0%,100% { opacity:1; transform:scale(1); } 50% { opacity:.35; transform:scale(.72); } }
+@keyframes fd-ripple { 0% { box-shadow:0 0 0 0 rgba(255,107,84,.55); } 100% { box-shadow:0 0 0 14px rgba(255,107,84,0); } }
+@keyframes fd-slide-in { 0% { opacity:0; transform:translateY(-6px); } 100% { opacity:1; transform:none; } }
+@keyframes fd-drawer { 0% { transform:translateX(24px); opacity:0; } 100% { transform:none; opacity:1; } }
 /* one-shot amber ping — "the window you asked for is THIS one" (see .fd-termfloat.attn) */
-@keyframes fdTermAttn { 0%,100% { box-shadow:0 24px 60px rgba(0,0,0,.4); } 35% { box-shadow:0 0 0 3px var(--act), 0 0 34px 6px var(--act-bg), 0 24px 60px rgba(0,0,0,.4); } }
+@keyframes fd-term-attn { 0%,100% { box-shadow:0 24px 60px rgba(0,0,0,.4); } 35% { box-shadow:0 0 0 3px var(--act), 0 0 34px 6px var(--act-bg), 0 24px 60px rgba(0,0,0,.4); } }
 
 ::-webkit-scrollbar { width:8px; height:8px; }
 ::-webkit-scrollbar-thumb { background:var(--border); border-radius:4px; }
@@ -46,11 +46,11 @@ a { color: var(--act); } a:hover { opacity: .85; }
   padding: 3px 10px; border-radius: var(--r-pill); border: 1px solid var(--border);
   font-family: var(--font-data); font-size: 11px;
 }
-.fd-wspill .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.fd-wspill .dot { width: 7px; height: 7px; border-radius: 50%; background: currentcolor; }
 .fd-wspill.live { color: var(--ok); }
-.fd-wspill.live .dot { animation: fdPulse var(--pulse-working) ease-in-out infinite; }
+.fd-wspill.live .dot { animation: fd-pulse var(--pulse-working) ease-in-out infinite; }
 .fd-wspill.reconnecting { color: var(--act); }
-.fd-wspill.reconnecting .dot { animation: fdPulse .8s ease-in-out infinite; }
+.fd-wspill.reconnecting .dot { animation: fd-pulse .8s ease-in-out infinite; }
 .fd-wspill.offline { color: var(--hazard); }
 .fd-stale { font-family: var(--font-data); font-size: 11px; color: var(--hazard); }
 .fd-needschip {
@@ -81,7 +81,7 @@ a { color: var(--act); } a:hover { opacity: .85; }
   flex: none; display: flex; align-items: center; gap: 10px; padding: 7px 16px;
   background: var(--hazard-bg); border-bottom: 1px solid var(--hazard);
   font-family: var(--font-data); font-size: 12px; color: var(--hazard);
-  animation: fdSlideIn .3s ease-out 1;
+  animation: fd-slide-in .3s ease-out 1;
 }
 .fd-confstrip .hd { font-weight: 600; white-space: nowrap; }
 .fd-confstrip .msg { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -177,7 +177,7 @@ a.fd-remotechip.link { text-decoration: none; }
 .fd-card.priority { border-left-color: var(--act); }
 .fd-card.needsyou { border-left-color: var(--act); }
 .fd-card.offline { opacity: .45; }
-.fd-card.ripple { animation: fdRipple var(--ripple-conflict) ease-out 1; }
+.fd-card.ripple { animation: fd-ripple var(--ripple-conflict) ease-out 1; }
 
 /* Wraps, deliberately. Every chip in here is flex:none / nowrap, so on a card
    that carries several at once — an unsupervised OFFLINE spawn shows the
@@ -186,9 +186,9 @@ a.fd-remotechip.link { text-decoration: none; }
    worse than one that costs a second row. */
 .fd-card .row1 { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; min-width: 0; }
 .fd-pulse { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--faint); border: 1.5px solid var(--faint); }
-.fd-pulse.working { background: var(--ok); border-color: var(--ok); animation: fdPulse var(--pulse-working) ease-in-out infinite; }
-.fd-pulse.verifying { background: var(--m-comet); border-color: var(--m-comet); animation: fdPulse 3.2s ease-in-out infinite; }
-.fd-pulse.needsyou { background: var(--act); border-color: var(--act); animation: fdPulse var(--pulse-needs) ease-in-out infinite; }
+.fd-pulse.working { background: var(--ok); border-color: var(--ok); animation: fd-pulse var(--pulse-working) ease-in-out infinite; }
+.fd-pulse.verifying { background: var(--m-comet); border-color: var(--m-comet); animation: fd-pulse 3.2s ease-in-out infinite; }
+.fd-pulse.needsyou { background: var(--act); border-color: var(--act); animation: fd-pulse var(--pulse-needs) ease-in-out infinite; }
 .fd-pulse.offline { background: transparent; }
 .fd.stale .fd-pulse { animation: none; }
 
@@ -259,7 +259,7 @@ a.fd-remotechip.link { text-decoration: none; }
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-panel);
   padding: 12px 13px; display: flex; flex-direction: column; gap: 9px; cursor: pointer;
   transition: border-color var(--t-fast), opacity .3s, box-shadow var(--t-fast);
-  animation: fdSlideIn .3s ease-out 1;
+  animation: fd-slide-in .3s ease-out 1;
 }
 .fd-q.sel { border-color: var(--act); box-shadow: 0 0 0 1px var(--act); }
 .fd-q.done { border-color: var(--border-soft); opacity: .55; cursor: default; }
@@ -365,7 +365,7 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
 .fd-drawer {
   position: fixed; top: 0; right: 0; bottom: 0; width: 470px; max-width: 92vw;
   background: var(--surface); border-left: 1px solid var(--border);
-  display: flex; flex-direction: column; animation: fdDrawer var(--t-drawer) 1;
+  display: flex; flex-direction: column; animation: fd-drawer var(--t-drawer) 1;
   box-shadow: -18px 0 40px rgba(0,0,0,.35); z-index: 10;
 }
 .fd-drawerhead { flex: none; display: flex; align-items: center; gap: 10px; padding: 16px 18px 12px; border-bottom: 1px solid var(--border-soft); }
@@ -402,7 +402,7 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
 .fd-compose {
   width: 520px; max-width: 92vw; background: var(--surface); border: 1px solid var(--border);
   border-radius: 12px; padding: 18px 20px; display: flex; flex-direction: column; gap: 13px;
-  box-shadow: 0 24px 60px rgba(0,0,0,.4); animation: fdSlideIn .2s ease-out 1; cursor: auto; text-align: left;
+  box-shadow: 0 24px 60px rgba(0,0,0,.4); animation: fd-slide-in .2s ease-out 1; cursor: auto; text-align: left;
 }
 .fd-compose .lbl { font-family: var(--font-data); font-size: 11px; letter-spacing: 2px; color: var(--faint); }
 .fd-targets { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -437,7 +437,7 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
   width: min(760px, 100%); max-height: 88vh;
   background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
   display: flex; flex-direction: column; overflow: hidden; text-align: left;
-  box-shadow: 0 24px 60px rgba(0,0,0,.4); animation: fdSlideIn .2s ease-out 1;
+  box-shadow: 0 24px 60px rgba(0,0,0,.4); animation: fd-slide-in .2s ease-out 1;
 }
 .fd-helphead {
   flex: none; display: flex; align-items: center; gap: 10px;
@@ -478,6 +478,30 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
 .fd-check input[type="checkbox"] { accent-color: var(--act); margin: 0; }
 .fd-spawnerr { font-family: var(--font-data); font-size: 11.5px; color: var(--hazard); overflow-wrap: anywhere; white-space: pre-wrap; }
 .fd-spawnhint { font-family: var(--font-data); font-size: 10px; color: var(--faint); line-height: 1.5; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.fd-gitaccess {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 7px;
+  border: 1px solid var(--border); border-radius: var(--r-ctl); padding: 8px 10px;
+  color: var(--dim); font-family: var(--font-data); font-size: 10.5px; line-height: 1.45;
+}
+.fd-gitaccess.bad { border-color: color-mix(in srgb, var(--hazard) 55%, var(--border)); }
+.fd-gitaccess-head, .fd-gitaccess-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.fd-gitaccess-head > span { flex: 1; min-width: 180px; }
+.fd-gitcheck, .fd-gitlogin {
+  flex: none; border: 1px solid var(--border); border-radius: var(--r-ctl);
+  background: var(--raised); color: var(--text); padding: 5px 9px;
+  font: inherit; cursor: pointer; text-decoration: none;
+}
+.fd-gitcheck:disabled { opacity: .55; cursor: default; }
+.fd-gitcheck:hover:not(:disabled), .fd-gitlogin:hover { border-color: var(--act); }
+.fd-gitaccess-action { color: var(--hazard); }
+.fd-gitaccess code, .fd-gitaccess pre {
+  max-width: 100%; overflow: auto; border-radius: var(--r-ctl); background: var(--code);
+  color: var(--dim); padding: 5px 7px; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.fd-gitaccess details summary { cursor: pointer; color: var(--faint); }
+.fd-gitaccess details pre { margin: 6px 0 0; max-height: 120px; }
+.fd-gitkey { display: flex; align-items: flex-start; gap: 8px; }
+.fd-gitkey code { flex: 1; min-width: 0; }
 
 /* pane / stale chips on session cards */
 .fd-panechip {
@@ -531,7 +555,7 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
 .fd-hazardconfirm {
   flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 7px;
   background: var(--hazard-bg); border: 1px solid var(--hazard); border-radius: var(--r-ctl);
-  padding: 10px 12px; animation: fdSlideIn .2s ease-out 1;
+  padding: 10px 12px; animation: fd-slide-in .2s ease-out 1;
 }
 .fd-hazardconfirm .warn { font-family: var(--font-data); font-size: 11.5px; font-weight: 600; color: var(--hazard); }
 .fd-hazardconfirm .sub { font-family: var(--font-data); font-size: 10.5px; color: var(--dim); }
@@ -541,7 +565,7 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
 .fd-batchpreview {
   flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px;
   background: var(--raised); border: 1px solid var(--border); border-radius: var(--r-ctl);
-  padding: 10px 12px; animation: fdSlideIn .2s ease-out 1;
+  padding: 10px 12px; animation: fd-slide-in .2s ease-out 1;
 }
 .fd-batchpreview .hd { font-family: var(--font-data); font-size: 11px; color: var(--dim); }
 .fd-batchpreview .hd b { color: var(--text); font-weight: 600; }
@@ -640,7 +664,7 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
   flex: none; display: flex; align-items: center; gap: 10px; padding: 7px 16px;
   background: var(--raised); border-bottom: 1px solid var(--border);
   font-family: var(--font-data); font-size: 12px; color: var(--dim);
-  animation: fdSlideIn .3s ease-out 1;
+  animation: fd-slide-in .3s ease-out 1;
 }
 .fd-clearstrip .hd { font-weight: 600; white-space: nowrap; color: var(--ok); }
 .fd-clearstrip .msg { color: var(--text); white-space: nowrap; }
@@ -656,7 +680,7 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
   flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 7px 16px;
   background: var(--hazard-bg); border-bottom: 1px solid var(--hazard);
   font-family: var(--font-data); font-size: 12px; color: var(--dim);
-  animation: fdSlideIn .3s ease-out 1;
+  animation: fd-slide-in .3s ease-out 1;
 }
 .fd-spawnfailstrip .hd { font-weight: 600; white-space: nowrap; color: var(--hazard); }
 .fd-spawnfailstrip .msg { color: var(--text); min-width: 0; overflow-wrap: anywhere; }
@@ -787,7 +811,7 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
   position: fixed; z-index: 15;
   background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
   display: flex; flex-direction: column; overflow: hidden; text-align: left;
-  box-shadow: 0 24px 60px rgba(0,0,0,.4); animation: fdSlideIn .2s ease-out 1;
+  box-shadow: 0 24px 60px rgba(0,0,0,.4); animation: fd-slide-in .2s ease-out 1;
 }
 /* M1 — the float is non-modal, so "are my keys going here?" must read from
    across the room: the amber ring IS the board's typing-here language (the
@@ -821,7 +845,7 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
    state (same spawnId, same key, no remount), so the request needs its own
    visible answer: TermWindow pulses once per mount, and an App key that varies
    per request (spawnId:nonce) replays it by remounting. */
-.fd-termfloat.attn { animation: fdSlideIn .2s ease-out 1, fdTermAttn 1s ease-out 1; }
+.fd-termfloat.attn { animation: fd-slide-in .2s ease-out 1, fd-term-attn 1s ease-out 1; }
 .fd-termgrab { cursor: grab; user-select: none; touch-action: none; }
 .fd-termgrab:active { cursor: grabbing; }
 .fd-winbtn {
@@ -901,7 +925,7 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
   display: flex; align-items: center; gap: 12px; padding: 9px 14px;
   background: var(--surface); border-top: 1px solid var(--border);
   font-family: var(--font-data); font-size: var(--fs-data); color: var(--dim);
-  animation: fdSlideIn .2s ease-out 1;
+  animation: fd-slide-in .2s ease-out 1;
 }
 .fd-termnote .msg { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .fd-termnote.err .msg { color: var(--hazard); }
@@ -920,7 +944,7 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
   width: 100%; height: 100%;
   background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
   display: flex; flex-direction: column; overflow: hidden; text-align: left;
-  box-shadow: 0 24px 60px rgba(0,0,0,.4); animation: fdSlideIn .2s ease-out 1;
+  box-shadow: 0 24px 60px rgba(0,0,0,.4); animation: fd-slide-in .2s ease-out 1;
 }
 .fd-gridhead {
   flex: none; display: flex; align-items: center; gap: 10px;
@@ -984,7 +1008,7 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
 /* header: LAN is on — a quiet green tell, not a badge that shouts */
 .fd-landot {
   width: 6px; height: 6px; border-radius: 50%; background: var(--ok); flex: none;
-  animation: fdPulse var(--pulse-working) ease-in-out infinite;
+  animation: fd-pulse var(--pulse-working) ease-in-out infinite;
 }
 
 .fd-lan { width: 460px; gap: 14px; }
@@ -1035,7 +1059,7 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
 .fd-gatecard {
   width: 480px; max-width: 100%; display: flex; flex-direction: column; gap: 13px;
   background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
-  padding: 26px 28px; box-shadow: 0 24px 60px rgba(0,0,0,.4); animation: fdSlideIn .2s ease-out 1;
+  padding: 26px 28px; box-shadow: 0 24px 60px rgba(0,0,0,.4); animation: fd-slide-in .2s ease-out 1;
 }
 .fd-gatecard .fd-wordmark { color: var(--text); margin-bottom: 2px; }
 .fd-gatecard .t1 { font-family: var(--font-data); font-size: 12px; letter-spacing: 2px; color: var(--act); font-weight: 600; }
@@ -1224,7 +1248,7 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
   border-radius: var(--r-card); padding: 10px 12px;
 }
 .fd-wtrow.safe { border-left-color: var(--ok); }
-.fd-wtrow.has-work { border-left-color: var(--hazard); border-color: var(--hazard); }
+.fd-wtrow.has-work { border-color: var(--hazard); border-left-color: var(--hazard); }
 .fd-wtrow.unknown { border-left-color: var(--act); }
 .fd-wtrow.gone { border-left-color: var(--border); opacity: .72; }
 .fd-wtrow.busy { opacity: .6; }
@@ -1405,7 +1429,10 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
   flex: 1; overflow: auto; border: 1px solid var(--border-soft); border-radius: 8px;
   background: var(--code); padding: 8px 0; font-family: var(--font-data); font-size: 12px;
 }
-.fd-fsline { display: flex; gap: 12px; padding: 0 12px; line-height: 1.65; }
+.fd-fsvirtual { position: relative; width: 100%; }
+.fd-fsline {
+  position: absolute; inset: 0 0 auto; display: flex; gap: 12px; padding: 0 12px; line-height: 1.65;
+}
 .fd-fsline .n { flex: none; text-align: right; color: var(--faint); user-select: none; }
 .fd-fsline .c { white-space: pre; color: var(--text); }
 .fd-fsline.hit { background: var(--act-bg); }
@@ -1489,7 +1516,7 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
 .fd-gwconfig {
   flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 7px;
   background: var(--raised); border: 1px solid var(--border); border-radius: var(--r-ctl);
-  padding: 10px 12px; animation: fdSlideIn .2s ease-out 1;
+  padding: 10px 12px; animation: fd-slide-in .2s ease-out 1;
 }
 .fd-gwconfig .fd-input { font-family: var(--font-data); font-size: 12px; }
 .fd-gwconfig .row { display: flex; align-items: center; gap: 8px; min-width: 0; }

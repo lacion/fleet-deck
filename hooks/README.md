@@ -15,7 +15,9 @@ process; an unsupported, prerelease, missing, or corrupt verdict makes
 exit 0 with exactly `{}` on stdout and empty stderr. The gate runs before token,
 daemon, timer, or network work. That is the definition of *fail open* here:
 Claude continues normally and Fleet Deck adds no warning, UI message, or model
-context. The supported inclusive range lives only in `compatibility.json`.
+context. The supported stable-version minimum lives only in `compatibility.json`;
+newer stable releases remain enabled and are protected by the strict output
+firewall and silent fail-open boundary below.
 
 `FileChanged` is intentionally not registered. Claude Code's watcher has no
 exclusion contract: a dynamic cwd watch traverses `.git` and `node_modules`,

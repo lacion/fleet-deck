@@ -1,0 +1,1 @@
+function e(e){return(e||`~`).replace(/\/+$/,``)||`/`}function t(t,n){let r=e(t);if(n===r)return``;let i=r.endsWith(`/`)?r:`${r}/`;return n.startsWith(i)?n.slice(i.length):null}function n(t,n){let r=e(t);return n?`${r.endsWith(`/`)?r:`${r}/`}${n.replace(/^\/+/,``)}`:r}export{e as n,t as r,n as t};

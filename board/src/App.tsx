@@ -28,20 +28,18 @@ import {
 } from './api.ts';
 import { useAuth, saveToken } from './token.ts';
 import { storageGet, storageSet } from './storage.ts';
+import { useModal } from './useModal.ts';
 import Header from './components/Header.tsx';
 import BoardLanes from './components/BoardLanes.tsx';
 import Inbox from './components/Inbox.tsx';
 import Feed from './components/Feed.tsx';
 import Drawer from './components/Drawer.tsx';
 import Compose from './components/Compose.tsx';
-import SpawnForm from './components/SpawnForm.tsx';
 import PlanLibrary from './components/PlanLibrary.tsx';
 import LanPanel from './components/LanPanel.tsx';
 import KillConfirm from './components/KillConfirm.tsx';
 import ArmMoveConfirm from './components/ArmMoveConfirm.tsx';
 import RenameDialog from './components/RenameDialog.tsx';
-import WorktreesModal from './components/WorktreesModal.tsx';
-import FileViewer from './components/FileViewer.tsx';
 import TokenGate from './components/TokenGate.tsx';
 import HelpOverlay from './components/HelpOverlay.tsx';
 import { ErrorBoundary } from './components/ErrorBoundary.tsx';
@@ -52,6 +50,12 @@ import type { PlanEntry } from '../../contracts/index.ts';
 // v2.6 — TermWindow (floating) replaced the full-screen TermModal.
 const TermWindow = React.lazy(() => import('./components/TermWindow.tsx'));
 const TermGrid = React.lazy(() => import('./components/TermGrid.tsx'));
+// These large modal-only surfaces are interaction-loaded as well. The board's
+// first paint should not pay for provisioning, worktree management, or a full
+// filesystem browser before the user opens one of them.
+const SpawnForm = React.lazy(() => import('./components/SpawnForm.tsx'));
+const WorktreesModal = React.lazy(() => import('./components/WorktreesModal.tsx'));
+const FileViewer = React.lazy(() => import('./components/FileViewer.tsx'));
 
 // Stable empty singletons for absent snapshot fields — a fresh `[]`/`{}` per
 // render would break the memoized board (M-P4) on every 1 s clock tick.
@@ -100,6 +104,82 @@ function TerminalFallback({ grid = false, error, onClose }: TerminalFallbackProp
         Close
       </button>
     </div>
+  );
+}
+
+interface LazySurfaceProps {
+  children: React.ReactNode;
+  label: string;
+  onClose: () => void;
+}
+
+function LazySurfaceFallback({
+  label,
+  error,
+  onClose,
+}: Omit<LazySurfaceProps, 'children'> & {
+  error?: Error;
+}) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModal(dialogRef);
+
+  return (
+    <div className="fd-composewrap">
+      <div
+        ref={dialogRef}
+        className="fd-compose"
+        role="dialog"
+        aria-modal="true"
+        aria-label={label}
+      >
+        <div role={error ? 'alert' : 'status'}>
+          {error ? `${label} failed to load. Reload the board to retry.` : `Loading ${label}…`}
+        </div>
+        <div className="actions">
+          {error && (
+            <button
+              type="button"
+              className="fd-ghostbtn"
+              onClick={() => {
+                window.location.reload();
+              }}
+            >
+              Reload board
+            </button>
+          )}
+          <button type="button" className="fd-ghostbtn" onClick={onClose}>
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LazySurface({ children, label, onClose }: LazySurfaceProps) {
+  // The loading fallback may receive focus before the real modal mounts. Keep
+  // the original trigger at this stable wrapper level so closing the eventual
+  // lazy surface still restores focus to the control that opened it.
+  const [opener] = useState<HTMLElement | null>(() =>
+    typeof document !== 'undefined' && document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null,
+  );
+  useEffect(
+    () => () => {
+      if (opener && document.contains(opener)) opener.focus();
+    },
+    [opener],
+  );
+
+  return (
+    <ErrorBoundary
+      fallback={(error) => <LazySurfaceFallback label={label} error={error} onClose={onClose} />}
+    >
+      <React.Suspense fallback={<LazySurfaceFallback label={label} onClose={onClose} />}>
+        {children}
+      </React.Suspense>
+    </ErrorBoundary>
   );
 }
 
@@ -165,6 +245,11 @@ export default function App() {
   const questions = snap.questions;
   const conflicts: ConflictLike[] = snap.conflicts;
   const pendingQs = useMemo(() => questions.filter((q) => q.status === 'pending'), [questions]);
+  // Selection is derived during render so a resolved/expired question never
+  // produces a transient stale selection plus a corrective Effect render.
+  const selectedQuestionId = pendingQs.some((q) => q.id === selQ)
+    ? selQ
+    : (pendingQs[0]?.id ?? null);
   const byId = useMemo(() => sessionsById(sessions), [sessions]);
 
   // ---- subsystem hooks ------------------------------------------------------
@@ -227,9 +312,7 @@ export default function App() {
     dismissing,
     doSpawnShell,
   } = useFleetActions({ showNote, revive, reviveAll, enableRemoteAction, adopt, spawnShellAction });
-  // terminal / grid / watch windows — killAsk + armAsk + renameAsk are threaded in
-  // for the keydown mirrors (Esc cancels the topmost dialog, leaves the drawer
-  // standing)
+  // terminal / grid / watch windows
   const {
     term,
     grid,
@@ -251,10 +334,7 @@ export default function App() {
     openGrid,
     closeGridTile,
     gridOpen,
-    killOpen,
-    armOpen,
-    renameOpen,
-  } = useTermWindows(sessions, killAsk, armAsk, renameAsk);
+  } = useTermWindows(sessions);
   // worktrees list — reloads on boot and whenever the fleet gains/loses a session
   const {
     worktrees,
@@ -293,11 +373,6 @@ export default function App() {
     storageSet('fd-compact', compact ? '1' : '0');
   }, [compact]);
 
-  // keep a valid rail selection
-  useEffect(() => {
-    if (!pendingQs.some((q) => q.id === selQ)) setSelQ(pendingQs[0]?.id ?? null);
-  }, [pendingQs, selQ]);
-
   // 2.3 option 2 — the board-level spawn-failure watcher: any card that
   // transitions to offline with a "spawn failed:" note banners once, whatever
   // kicked the clone off. Dedup by session_id lives inside the hook.
@@ -305,29 +380,18 @@ export default function App() {
     watchSpawnFailures(sessions, prevSessions);
   }, [sessions, prevSessions, watchSpawnFailures]);
 
-  // M-F7 — mirror the four remaining modal open-states into refs so the global
-  // answer/nav hotkeys suppress while any is open. The keydown closure reads refs,
-  // never React state (same reason useTermWindows mirrors killAsk→killOpen), so a
-  // button-focus press under Compose/SpawnForm/LanPanel/WorktreesModal can no
-  // longer leak a y/n/1-9 into a hidden permission. Assigning .current on render
-  // is the intended "latest value" ref pattern — idempotent, no effect needed.
-  const composeOpenRef = useRef(false);
-  composeOpenRef.current = compose != null;
-  const spawnOpenRef = useRef(false);
-  spawnOpenRef.current = spawnForm != null;
-  const lanOpenRef = useRef(false);
-  lanOpenRef.current = lanOpen;
-  const wtOpenRef = useRef(false);
-  wtOpenRef.current = wtOpen;
-  const helpOpenRef = useRef(false);
-  helpOpenRef.current = helpOpen;
-  // the first-run help auto-open below consults these so it never stacks
-  const fsOpenRef = useRef(false);
-  fsOpenRef.current = fsView != null;
-  const drawerOpenRef = useRef(false);
-  drawerOpenRef.current = drawerSid != null;
-  const confirmOpenRef = useRef(false);
-  confirmOpenRef.current = killAsk != null || armAsk != null || renameAsk != null;
+  const hasBlockingOverlay =
+    compose != null ||
+    spawnForm != null ||
+    lanOpen ||
+    wtOpen ||
+    helpOpen ||
+    gridOpen ||
+    fsView != null ||
+    drawerSid != null ||
+    killAsk != null ||
+    armAsk != null ||
+    renameAsk != null;
   // Keeps the first-run greeting one-shot for this tab even when browser
   // storage is disabled and cannot persist fd-help-seen.
   const helpGreetedRef = useRef(false);
@@ -337,12 +401,12 @@ export default function App() {
   // only the grid suppresses (gridOpen).
   useBoardHotkeys({
     pendingQs,
-    selQ,
+    selQ: selectedQuestionId,
     setSelQ,
     gridOpen,
-    killOpen,
-    armOpen,
-    renameOpen,
+    killOpen: killAsk != null,
+    armOpen: armAsk != null,
+    renameOpen: renameAsk != null,
     fsOpen: !!fsView,
     setKillAsk,
     setArmAsk,
@@ -354,41 +418,31 @@ export default function App() {
     setWtOpen,
     setFsView,
     setHelpOpen,
-    composeOpen: composeOpenRef,
-    spawnOpen: spawnOpenRef,
-    lanOpen: lanOpenRef,
-    wtOpen: wtOpenRef,
-    helpOpen: helpOpenRef,
-    drawerOpen: drawerOpenRef,
+    composeOpen: compose != null,
+    spawnOpen: spawnForm != null,
+    lanOpen,
+    wtOpen,
+    helpOpen,
+    drawerOpen: drawerSid != null,
   });
 
   // First-run concept help (fd-help-seen): open the "?" overlay exactly once,
   // only when NOTHING else is up. The TokenGate early-return below prevents
-  // firing before auth; the ref bundle (mirrored above from the modal states)
-  // defers while Compose/Spawn/LAN/Worktrees/files/drawer/a confirm dialog —
+  // firing before auth; the derived overlay flag above defers while
+  // Compose/Spawn/LAN/Worktrees/files/drawer/a confirm dialog —
   // or help itself — is open, so the overlay never stacks. Marking `seen`
   // happens when the overlay actually OPENS (a busy first load retries on the
   // next render until it gets through, then never again).
   useEffect(() => {
     if (unauthorized) return;
     if (helpGreetedRef.current || storageGet('fd-help-seen')) return;
-    if (
-      composeOpenRef.current ||
-      spawnOpenRef.current ||
-      lanOpenRef.current ||
-      wtOpenRef.current ||
-      helpOpenRef.current ||
-      fsOpenRef.current ||
-      drawerOpenRef.current ||
-      confirmOpenRef.current
-    )
-      return;
+    if (hasBlockingOverlay) return;
     helpGreetedRef.current = true;
     // Private/blocked storage simply means this greeting may appear next load;
     // it must never prevent the board itself from rendering.
     storageSet('fd-help-seen', '1');
     setHelpOpen(true);
-  });
+  }, [unauthorized, hasBlockingOverlay]);
 
   const stale = status !== 'live';
   const liveN = sessions.filter((s) => s.col !== 'offline').length;
@@ -454,7 +508,7 @@ export default function App() {
     );
     setSpawnForm({
       prompt:
-        'Execute this approved plan exactly. Custom instructions: \n\n---\n' + (p.plan_md || ''),
+        'Execute this approved plan exactly. Custom instructions:\n\n---\n' + (p.plan_md || ''),
       cwd: peer ? (peer.worktree ?? '') || (peer.cwd ?? '') : '',
       planId: p.plan_id,
     });
@@ -484,7 +538,7 @@ export default function App() {
     // M-P4 — the 1 s `now` reaches only the leaves that read this context (the
     // card <Age> spans). App re-renders each second for the header clock, but
     // the memoized board below skips because none of its props changed.
-    <ClockContext.Provider value={now}>
+    <ClockContext value={now}>
       <div className={`fd${compact ? ' compact' : ''}${stale ? ' stale' : ''}`}>
         <Header
           status={status}
@@ -720,7 +774,7 @@ export default function App() {
             questions={questions}
             sessions={sessions}
             now={now}
-            selQ={selQ}
+            selQ={selectedQuestionId}
             onSelect={setSelQ}
             onOpenTerm={openTerm}
           />
@@ -833,17 +887,19 @@ export default function App() {
 
         {/* ============ worktrees (v1.9 — the ONLY door to removeWorktree) ============ */}
         {wtOpen && (
-          <WorktreesModal
-            worktrees={worktrees}
-            loading={wtLoading}
-            error={wtErr}
-            now={now}
-            onReload={loadWorktrees}
-            onRemove={doRemoveWorktree}
-            onClose={() => {
-              setWtOpen(false);
-            }}
-          />
+          <LazySurface label="worktrees" onClose={() => setWtOpen(false)}>
+            <WorktreesModal
+              worktrees={worktrees}
+              loading={wtLoading}
+              error={wtErr}
+              now={now}
+              onReload={loadWorktrees}
+              onRemove={doRemoveWorktree}
+              onClose={() => {
+                setWtOpen(false);
+              }}
+            />
+          </LazySurface>
         )}
 
         {/* ====== file viewer (v2.2 read-only) — a session's tree, or all of the
@@ -853,51 +909,56 @@ export default function App() {
               remount the viewer — its per-directory cache, open set, and current
               file all name paths relative to the OLD root and would silently lie
               under the new one. ====== */}
-        {fsView &&
-          (fsView.scope === 'home' ? (
-            <FileViewer
-              key={`home:${browseRoot}`}
-              title={browseRoot}
-              root={browseRoot}
-              favs={snap.settings?.fav_dirs ?? EMPTY_ARR}
-              list={fsListHome}
-              read={fsReadHome}
-              search={fsSearchHome}
-              onClose={() => {
-                setFsView(null);
-              }}
-            />
-          ) : (
-            <FileViewer
-              key={fsView.sid}
-              title={fsView.callsign}
-              root={fsView.root}
-              initialPath={fsView.path}
-              list={(p) => fsList(fsView.sid, p)}
-              read={(p) => fsRead(fsView.sid, p)}
-              search={(q, m) => fsSearch(fsView.sid, q, m)}
-              onClose={() => {
-                setFsView(null);
-              }}
-            />
-          ))}
+        {fsView && (
+          <LazySurface label="file browser" onClose={() => setFsView(null)}>
+            {fsView.scope === 'home' ? (
+              <FileViewer
+                key={`home:${browseRoot}`}
+                title={browseRoot}
+                root={browseRoot}
+                favs={snap.settings?.fav_dirs ?? EMPTY_ARR}
+                list={fsListHome}
+                read={fsReadHome}
+                search={fsSearchHome}
+                onClose={() => setFsView(null)}
+              />
+            ) : (
+              <FileViewer
+                key={fsView.sid}
+                title={fsView.callsign}
+                root={fsView.root}
+                initialPath={fsView.path}
+                list={(p) => fsList(fsView.sid, p)}
+                read={(p) => fsRead(fsView.sid, p)}
+                search={(q, m) => fsSearch(fsView.sid, q, m)}
+                onClose={() => setFsView(null)}
+              />
+            )}
+          </LazySurface>
+        )}
 
         {/* ============ spawn (v1.2 — explicit human click only) ============ */}
         {spawnForm && (
-          <SpawnForm
-            sessions={sessions}
-            repoCatalog={snap.repo_catalog ?? EMPTY_ARR}
-            settings={snap.settings ?? EMPTY_OBJ}
-            homeDir={snap.home_dir ?? ''}
-            prefillPrompt={spawnForm.prompt ?? ''}
-            prefillCwd={spawnForm.cwd ?? ''}
-            planMode={!!spawnForm.planId}
-            planId={(spawnForm.planId ?? 0) || null}
-            onSpawned={spawnForm.planId ? onSpawnedForPlan : undefined}
-            onClose={() => {
-              setSpawnForm(null);
-            }}
-          />
+          <LazySurface label="session launcher" onClose={() => setSpawnForm(null)}>
+            <SpawnForm
+              sessions={sessions}
+              repoCatalog={snap.repo_catalog ?? EMPTY_ARR}
+              settings={snap.settings ?? EMPTY_OBJ}
+              homeDir={snap.home_dir ?? ''}
+              prefillPrompt={spawnForm.prompt ?? ''}
+              prefillCwd={spawnForm.cwd ?? ''}
+              planMode={!!spawnForm.planId}
+              planId={(spawnForm.planId ?? 0) || null}
+              onSpawned={spawnForm.planId ? onSpawnedForPlan : undefined}
+              onOpenTerminal={(session) => {
+                setSpawnForm(null);
+                openTerm(session);
+              }}
+              onClose={() => {
+                setSpawnForm(null);
+              }}
+            />
+          </LazySurface>
         )}
 
         {/* ============ kill confirmation (v1.8 — the ONLY door to killSpawn) ============ */}
@@ -906,6 +967,7 @@ export default function App() {
             callsign={killAsk.callsign}
             tmuxWindow={killAsk.window}
             alive={killAsk.alive}
+            provisioning={killAsk.provisioning}
             busy={killBusy}
             onCancel={() => {
               setKillAsk(null);
@@ -1034,6 +1096,6 @@ export default function App() {
           </ErrorBoundary>
         )}
       </div>
-    </ClockContext.Provider>
+    </ClockContext>
   );
 }

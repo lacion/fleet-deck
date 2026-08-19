@@ -22,7 +22,7 @@ export function seedHookCompatibility(home: string): Record<string, string> {
       identity: { key: Number(CLAUDE_PID), source: 'CLAUDE_PID' },
       generation: { kind: 'test', value: `${CLAUDE_PID}:${VERSION}` },
       fleetdeckVersion: packageJson.version,
-      policy: `${compatibility.schema}:${compatibility.claudeCode.min}:${compatibility.claudeCode.max}`,
+      policy: `${compatibility.schema}:${compatibility.claudeCode.min}`,
       claudeVersion: VERSION,
       active: true,
       createdAt: now,

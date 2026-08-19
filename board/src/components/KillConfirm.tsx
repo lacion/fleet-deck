@@ -5,6 +5,7 @@ interface KillConfirmProps {
   callsign: string;
   tmuxWindow: string | null | undefined;
   alive: boolean;
+  provisioning: boolean;
   busy: boolean;
   onCancel: () => void;
   onConfirm: () => void;
@@ -24,6 +25,7 @@ export default function KillConfirm({
   callsign,
   tmuxWindow,
   alive,
+  provisioning,
   busy,
   onCancel,
   onConfirm,
@@ -36,27 +38,40 @@ export default function KillConfirm({
 
   return (
     <ConfirmDialogFrame
-      ariaLabel={`Kill ${callsign}`}
+      ariaLabel={`${provisioning ? 'Cancel clone for' : 'Kill'} ${callsign}`}
       busy={busy}
-      title="☠ KILL SESSION"
+      title={provisioning ? '○ CANCEL CLONE' : '☠ KILL SESSION'}
       titleClassName="haz"
       onCancel={onCancel}
     >
-      <div className="ask">
-        Kill <b>{callsign}</b> and close its tmux window{' '}
-        <span className="win">{(tmuxWindow ?? '') || '(unknown)'}</span>?
-      </div>
+      {provisioning ? (
+        <>
+          <div className="ask">
+            Cancel the repository clone for <b>{callsign}</b>?
+          </div>
+          <div className="sub">
+            FleetDeck stops Git and its credential helpers, removes the temporary checkout, and
+            moves the card to OFFLINE. No agent or tmux window has started yet.
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="ask">
+            Kill <b>{callsign}</b> and close its tmux window{' '}
+            <span className="win">{(tmuxWindow ?? '') || '(unknown)'}</span>?
+          </div>
+          <div className="sub">
+            The agent’s process dies immediately. Whatever it was doing this turn stops unfinished
+            and the card moves to OFFLINE.
+          </div>
+          <div className="sub">
+            Its worktree and branch are left on disk, untouched — no files are deleted, no commits
+            are lost, and every uncommitted change stays exactly where it is.
+          </div>
+        </>
+      )}
 
-      <div className="sub">
-        The agent’s process dies immediately. Whatever it was doing this turn stops unfinished and
-        the card moves to OFFLINE.
-      </div>
-      <div className="sub">
-        Its worktree and branch are left on disk, untouched — no files are deleted, no commits are
-        lost, and every uncommitted change stays exactly where it is.
-      </div>
-
-      {alive && (
+      {alive && !provisioning && (
         <div className="fd-lanwarn">
           ⚠ This session is not offline — it is still alive. Killing it now forces the pane down
           mid-flight.
@@ -75,7 +90,15 @@ export default function KillConfirm({
           Cancel
         </button>
         <button type="button" className="fd-dangerbtn" disabled={busy} onClick={onConfirm}>
-          {busy ? 'Killing…' : alive ? '☠ Force kill' : '☠ Kill session'}
+          {busy
+            ? provisioning
+              ? 'Canceling…'
+              : 'Killing…'
+            : provisioning
+              ? 'Cancel clone'
+              : alive
+                ? '☠ Force kill'
+                : '☠ Kill session'}
         </button>
       </div>
     </ConfirmDialogFrame>

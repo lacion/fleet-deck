@@ -24,8 +24,8 @@ import assert from 'node:assert/strict';
 // board/node_modules — a separate dependency tree the root install does not
 // create — so the module cannot simply be imported here. The proxy target
 // config is plain data, so we evaluate the shipped config SOURCE directly with
-// identity/no-op stand-ins for those two imports (defineConfig is identity,
-// react() returns a stub plugin). Evaluating the source is byte-faithful to the
+// identity/no-op stand-ins for those imports (defineConfig is identity, and
+// each build plugin/preset returns a stub). Evaluating the source is byte-faithful to the
 // shipped file — the same pattern board-util.test.ts uses on TermPane — and runs
 // identically on Node and Bun, needing neither ESM loader hooks (which Bun
 // ignores) nor import-cache busting (which Bun does not honour on a ?query).
@@ -46,6 +46,8 @@ interface ViteConfig {
 
 type DefineConfig = (config: ViteConfig) => ViteConfig;
 type ReactStub = () => { name: string };
+type BabelStub = (options: unknown) => { name: string };
+type CompilerPresetStub = () => { name: string };
 
 // The config reads process.env.FLEETDECK_PORT when its body runs, so each case
 // re-evaluates a fresh copy with the variable set — or deleted — around the call.
@@ -56,14 +58,24 @@ function importConfigWithPort(port: string | undefined): ViteConfig {
   try {
     const defineConfig: DefineConfig = (config) => config;
     const react: ReactStub = () => ({ name: 'react-stub' });
+    const babel: BabelStub = () => ({ name: 'babel-stub' });
+    const reactCompilerPreset: CompilerPresetStub = () => ({ name: 'compiler-preset-stub' });
     // The slice is the repo's own committed config — no user input. new Function
     // evaluates it as a plain body; process is the real global it reads env from.
     // eslint-disable-next-line @typescript-eslint/no-implied-eval
-    const factory = new Function('defineConfig', 'react', CONFIG_BODY) as (
+    const factory = new Function(
+      'defineConfig',
+      'react',
+      'babel',
+      'reactCompilerPreset',
+      CONFIG_BODY,
+    ) as (
       d: DefineConfig,
       r: ReactStub,
+      b: BabelStub,
+      compilerPreset: CompilerPresetStub,
     ) => ViteConfig;
-    return factory(defineConfig, react);
+    return factory(defineConfig, react, babel, reactCompilerPreset);
   } finally {
     if (saved === undefined) delete process.env['FLEETDECK_PORT'];
     else process.env['FLEETDECK_PORT'] = saved;

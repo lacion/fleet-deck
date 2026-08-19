@@ -12,7 +12,20 @@
 
 import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { execFileP } from '../src/daemon/exec.ts';
+import { waitUntil } from './helpers/wait.ts';
+
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 test('execFileP settles on a child that ignores SIGTERM', async () => {
   // A TERM-immune child is BUG-026's exact daemon scenario: the old
@@ -80,4 +93,38 @@ test('execFileP settles at the deadline while a grandchild holds an inherited pi
     elapsed < 2_000,
     `settlement took ${elapsed}ms; the deadline must bound it (300ms + 1s SIGKILL grace), not wait for the pipes`,
   );
+});
+
+test('execFileP aborts a cancellable process group instead of leaving its helper alive', async (t) => {
+  if (process.platform === 'win32') return;
+  const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-exec-group-'));
+  const pidFile = path.join(dir, 'helper.pid');
+  t.after(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const controller = new AbortController();
+  const started = Date.now();
+  const run = execFileP(
+    process.execPath,
+    [
+      '-e',
+      `const { spawn } = require('node:child_process');
+       const fs = require('node:fs');
+       const helper = spawn(process.execPath, ['-e', 'process.on("SIGTERM", () => {}); setTimeout(() => {}, 10_000)'], { stdio: ['ignore', 1, 2] });
+       fs.writeFileSync(${JSON.stringify(pidFile)}, String(helper.pid));
+       setTimeout(() => {}, 10_000);`,
+    ],
+    { timeout: 10_000, signal: controller.signal, killTree: true },
+  );
+  await waitUntil(() => existsSync(pidFile), { timeoutMs: 2_000, label: 'helper pid file' });
+  const helperPid = Number(readFileSync(pidFile, 'utf8'));
+  assert.ok(Number.isInteger(helperPid) && helperPid > 1, 'fixture records the helper pid');
+  controller.abort();
+  const result = await run;
+  assert.deepEqual(result, { ok: false, code: 'ECANCELED', err: 'cancelled' });
+  assert.ok(Date.now() - started < 2_000, 'abort owns the wall-clock settlement');
+  await waitUntil(() => !pidAlive(helperPid), {
+    timeoutMs: 3_000,
+    label: 'SIGKILL reaps the TERM-immune helper after its leader exits',
+  });
 });

@@ -6,13 +6,16 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'nod
 import os, { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
+  ACCESS_CACHE_MAX,
   createRepos,
   parseRepoInput,
   quickBranchCheck,
+  rememberRepoAccess,
   repoDefaultOrgChoice,
   repoDefaultOrgProblem,
 } from '../src/daemon/repos.ts';
 import { detectCoderWorkspaceRoot, resolveHome } from '../src/daemon/config.ts';
+import { repoTransportChoice } from '../src/daemon/repo-policy.ts';
 import { openDb } from '../src/daemon/db.ts';
 import { createCore } from '../src/daemon/derive.ts';
 import { createStatements } from '../src/daemon/statements.ts';
@@ -60,6 +63,35 @@ interface SnapshotFrame {
   type?: string;
   repo_catalog: OriginCatalogRow[];
 }
+
+test('successful repository access probes keep a bounded, expiring cache', () => {
+  const cache = new Map<string, number>();
+  const now = 1_000_000;
+  for (let i = 0; i < ACCESS_CACHE_MAX + 3; i++) {
+    rememberRepoAccess(cache, `origin-${i}`, now);
+  }
+  assert.equal(cache.size, ACCESS_CACHE_MAX);
+  assert.equal(cache.has('origin-0'), false, 'oldest excess result is evicted');
+  assert.equal(cache.has('origin-2'), false, 'all entries beyond the cap are evicted');
+  assert.equal(cache.has(`origin-${ACCESS_CACHE_MAX + 2}`), true, 'newest result remains cached');
+
+  rememberRepoAccess(cache, 'fresh', now + 30_001);
+  assert.deepEqual([...cache.keys()], ['fresh'], 'expired results are pruned on the next success');
+});
+
+test('a repository destination claim is relabeled with the real callsign', () => {
+  const repos = createRepos(fakeReposCtx());
+  const target = path.join(tmpdir(), `fleetdeck-claim-${randomUUID()}`);
+  const release = repos.claimTarget(target, 'repository access check');
+  assert.equal(repos.targetOwner(target), 'repository access check');
+  assert.equal(repos.relabelTarget(target, 'someone else', 'raven-a1b2'), false);
+  assert.equal(repos.targetOwner(target), 'repository access check');
+  assert.equal(repos.relabelTarget(target, 'repository access check', 'raven-a1b2'), true);
+  assert.equal(repos.targetOwner(target), 'raven-a1b2');
+  assert.throws(() => repos.claimTarget(target, 'second'), /provisioned by raven-a1b2/);
+  release();
+  assert.equal(repos.targetOwner(target), null);
+});
 
 test('parseRepoInput accepts supported forms and rejects argv/scheme hazards', () => {
   assert.deepEqual(parseRepoInput('org/repo'), {
@@ -488,6 +520,19 @@ test('default org choice precedence and Coder seed are explicit', () => {
   ]) {
     assert.equal(typeof repoDefaultOrgProblem(bad), 'string', bad);
   }
+});
+
+test('repository transport defaults to Coder HTTPS but preserves explicit choices', () => {
+  assert.deepEqual(repoTransportChoice({ coder: true }), { value: 'https', source: 'coder' });
+  assert.deepEqual(repoTransportChoice(), { value: 'ssh', source: 'default' });
+  assert.deepEqual(repoTransportChoice({ setting: 'ssh', coder: true }), {
+    value: 'ssh',
+    source: 'override',
+  });
+  assert.deepEqual(repoTransportChoice({ setting: 'https' }), {
+    value: 'https',
+    source: 'override',
+  });
 });
 
 test('resolveTarget promotes an unknown bare name through the default org, but a known checkout still wins', async (t) => {

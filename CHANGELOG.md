@@ -5,6 +5,60 @@ All notable changes to Fleet Deck are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.23.6] - 2026-08-19
+
+### Added
+
+- **Repo spawns prove Git access before creating a card.** The daemon resolves
+  the exact origin and runs a bounded, non-interactive `git ls-remote`; the
+  Spawn action runs the same check first and labels that phase explicitly; the
+  separate Check access button remains available. Failures return redacted,
+  structured GitHub/GitLab guidance. Coder defaults to its OAuth-backed HTTPS
+  path; SSH failures instead explain the separate public-key flow, show the
+  copyable Coder key, and offer HTTPS. Fleet Deck never receives or stores the
+  provider token.
+
+### Changed
+
+- **Claude compatibility is now a minimum, not a bounded range.** Stable Claude
+  Code releases at or above 2.1.206 remain enabled, so a routine Claude update
+  cannot switch Fleet Deck off. Older, prerelease, and unidentifiable builds
+  still stay silently inactive; strict event-specific response validation and
+  the fail-open launcher remain the safety boundary for future releases.
+- **The board terminal delivers multi-line text as one paste.** Multi-line
+  clipboard text now takes a dedicated, FIFO-serialized bracketed-paste path,
+  so a stale browser-side terminal mode cannot turn each line into a separate
+  Claude submission. Paste control sequences are stripped before delivery.
+  Shell panes work when their application advertises bracketed-paste support
+  and are refused safely otherwise; single-line and image paste are unchanged.
+
+### Fixed
+
+- **A failed or cancelled clone could leave a permanent “cloning…” card and
+  credential helper.** Provisioning now has an abortable process-group owner.
+  Kill cancels Git and its SSH/credential descendants, removes the temporary
+  checkout, prevents a late tmux launch, and retires the card as cancelled.
+  Restart-residual provisioning rows are also cancellable when exact pane
+  absence is verified.
+- **Concurrent clone requests could both pass a preflight before either owned
+  the destination.** The destination claim now covers the access check and is
+  acquired atomically before any await, so the loser returns a clean 409 with
+  no card.
+- **A successful clone waiting at Claude's project-trust dialog looked like a
+  hung spawn.** The daemon now publishes that held security state explicitly;
+  the spawn form stops saying “Spawning…” and opens the owned terminal for the
+  one-time human approval. Fleet Deck still never answers trust or MCP-consent
+  dialogs automatically.
+- **Git access errors could lose their actionable response to a timeout race.**
+  The browser now outlives the daemon's bounded Git probe, so the structured
+  authentication guidance arrives instead of a generic “daemon unreachable.”
+- **A terminal pane dying during viewer startup could leave the board waiting
+  forever.** Pane-death and window-close signals that race the initial terminal
+  snapshot are now delivered immediately after that snapshot, preserving the
+  ordered `init` → `exit` contract instead of silently dropping both states.
+
 ## [0.23.5] - 2026-08-18
 
 ### Fixed

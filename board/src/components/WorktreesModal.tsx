@@ -479,7 +479,13 @@ export default function WorktreesModal({
           ? `removed ${done}/${safeRows.length} — ${failed.length} refused, the reason is on the row`
           : `removed ${done} safe worktree${done === 1 ? '' : 's'} — branches left alone`,
       );
-      await onReload();
+      try {
+        await onReload();
+      } catch {
+        setBulkNote(
+          `removed ${done}/${safeRows.length}, but refresh failed — click Refresh to retry`,
+        );
+      }
     } finally {
       bulkBusyRef.current = false;
       setBulkBusy(false);

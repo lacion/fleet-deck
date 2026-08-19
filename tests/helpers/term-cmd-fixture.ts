@@ -80,9 +80,9 @@ function noPaneModeFor(window: string): 'empty' | 'error' | null {
 //                                     once the first pane streams) condemns it.
 //   FLEETDECK_TEST_BRACKET_PASTE    — cursor reply carries #{bracket_paste_flag}=1
 //                                     ('1'), so the init seed replays the pane's
-//                                     bracketed-paste mode-set and the board
-//                                     unblocks multi-line paste. Default 0 (off)
-//                                     keeps the seed cursor-only.
+//                                     bracketed-paste mode-set; a shell's later
+//                                     paste-time probe reads the same flag.
+//                                     Default 0 (off) keeps the seed cursor-only.
 // <cmd> on a knob's value scopes the fault to commands starting with that word.
 const hangKnob = process.env['FLEETDECK_TEST_TERM_HANG_MS'];
 function hangFor(cmd: string): number {
@@ -293,6 +293,10 @@ input.on('line', (line: string) => {
       closeWindowSent = true;
       setTimeout(() => process.stdout.write('%window-close @1\n'), 40);
     }
+  } else if (line.includes('#{bracket_paste_flag}')) {
+    // Paste-time capability probe for shell panes. Claude panes have a known
+    // bracketed-paste contract and skip this extra round-trip.
+    response([bracketPasteKnob === '1' ? '1' : '0'], true, line);
   } else {
     response([], true, line);
   }

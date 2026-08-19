@@ -285,17 +285,16 @@ import path4 from "node:path";
 
 // compatibility.json
 var compatibility_default = {
-  schema: 1,
+  schema: 2,
   claudeCode: {
-    min: "2.1.206",
-    max: "2.1.234"
+    min: "2.1.206"
   }
 };
 
 // package.json
 var package_default = {
   name: "fleetdeck",
-  version: "0.23.5",
+  version: "0.23.6",
   description: "Fleet Deck \u2014 localhost daemon + board for Claude Code, guarded by a release-bound compatibility policy.",
   type: "module",
   license: "MIT",
@@ -386,18 +385,15 @@ function compareVersion(a, b) {
   return 0;
 }
 function normalizedPolicy(policy) {
-  if (policy.schema !== 1) return null;
+  if (policy.schema !== 2) return null;
   const min = parseStableClaudeVersion(policy.claudeCode?.min);
-  const max = parseStableClaudeVersion(policy.claudeCode?.max);
-  if (!min || !max || compareVersion(min, max) > 0) return null;
-  return { min, max, signature: `1:${min.raw}:${max.raw}` };
+  if (!min) return null;
+  return { min, signature: `2:${min.raw}` };
 }
 function supportsClaudeVersion(version, policy = POLICY) {
   const parsed = parseStableClaudeVersion(version);
   const normalized = normalizedPolicy(policy);
-  return Boolean(
-    parsed && normalized && compareVersion(parsed, normalized.min) >= 0 && compareVersion(parsed, normalized.max) <= 0
-  );
+  return Boolean(parsed && normalized && compareVersion(parsed, normalized.min) >= 0);
 }
 function identity(env, ppid) {
   return runKey(env, ppid);

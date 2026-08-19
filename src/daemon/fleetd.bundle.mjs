@@ -1958,7 +1958,7 @@ __export(spawn_exports, {
 import { execFileSync as execFileSync2, spawn as spawnChild } from "node:child_process";
 
 // src/daemon/exec.ts
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 
 // src/daemon/payload-capture.ts
 import fs4 from "node:fs";
@@ -2195,80 +2195,107 @@ function createPayloadCapture(homeDir, {
 
 // src/daemon/exec.ts
 var KILL_GRACE_MS = 1e3;
-function execFileP(cmd, args, { timeout = 3e4, env } = {}) {
+var MAX_OUTPUT_BYTES = 1024 * 1024;
+function signalChild(child, signal, killTree) {
+  try {
+    if (killTree && process.platform !== "win32" && child.pid != null) {
+      process.kill(-child.pid, signal);
+    } else {
+      child.kill(signal);
+    }
+  } catch {
+  }
+}
+function execFileP(cmd, args, { timeout = 3e4, env, signal, killTree = false } = {}) {
   return new Promise((resolve) => {
     try {
       let done = false;
       let killTimer = null;
+      let deadline = null;
+      let child = null;
+      const abort = () => {
+        settle(() => ({ ok: false, code: "ECANCELED", err: "cancelled" }));
+        if (child) terminate(child);
+      };
       const settle = (fn) => {
         if (done) return;
         done = true;
         if (killTimer) clearTimeout(killTimer);
+        if (deadline) clearTimeout(deadline);
+        signal?.removeEventListener("abort", abort);
         resolve(fn());
       };
-      const child = execFile(
-        cmd,
-        args,
-        {
-          // utf8 is execFile's runtime default; pinning it makes the callback's
-          // stdout/stderr resolve to `string` (the buffer overload would otherwise
-          // widen them to `string | Buffer`) with no change in behaviour.
-          encoding: "utf8",
-          // 0 disables execFile's own SIGTERM-only timeout: the deadline below is
-          // strictly stronger (same TERM, then KILL, then settle), and a second
-          // timer race inside execFile would change the shape of the callback
-          // error without changing settlement.
-          timeout: 0,
-          windowsHide: true,
-          // Always pass the LIVE process.env explicitly. Under Node this equals
-          // the default inheritance and is a no-op. Under Bun it is load-bearing:
-          // node:child_process's default env inheritance uses an environ
-          // SNAPSHOT taken at process start, so a runtime `process.env` mutation
-          // — a test isolating via FLEETDECK_*/TMUX_TMPDIR, or a caller setting
-          // GIT_TERMINAL_PROMPT=0 — never reaches the child unless env is passed
-          // explicitly. A supplied env is still MERGED over the daemon's own
-          // (never replacing it) so PATH and the rest survive.
-          env: env ? { ...process.env, ...env } : process.env
-        },
-        (err, stdout, stderr) => {
-          clearTimeout(deadline);
-          if (err) {
-            settle(() => ({
-              ok: false,
-              code: err.code,
-              err: (stderr || err.message || err.name).trim()
-            }));
-            return;
-          }
-          settle(() => ({ ok: true, out: stdout }));
-        }
-      );
-      const deadline = setTimeout(() => {
-        settle(() => ({ ok: false, code: "ETIMEDOUT", err: `timed out after ${timeout}ms` }));
-        if (!child.killed) {
+      const terminate = (target) => {
+        signalChild(target, "SIGTERM", killTree);
+        killTimer = setTimeout(() => {
+          if (target.pid == null) return;
+          let alive = true;
           try {
-            child.kill("SIGTERM");
+            const probe2 = killTree && process.platform !== "win32" ? -target.pid : target.pid;
+            process.kill(probe2, 0);
           } catch {
+            alive = false;
           }
-          killTimer = setTimeout(() => {
-            let alive = true;
-            try {
-              if (child.pid == null) alive = false;
-              else process.kill(child.pid, 0);
-            } catch {
-              alive = false;
-            }
-            if (alive) {
-              try {
-                child.kill("SIGKILL");
-              } catch {
-              }
-            }
-          }, KILL_GRACE_MS);
-          killTimer.unref();
+          if (alive) signalChild(target, "SIGKILL", killTree);
+        }, KILL_GRACE_MS);
+        killTimer.unref();
+      };
+      child = spawn(cmd, [...args], {
+        shell: false,
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+        detached: killTree && process.platform !== "win32",
+        // Always pass the LIVE process.env explicitly. Under Node this equals
+        // the default inheritance and is a no-op. Under Bun it is load-bearing:
+        // node:child_process's default env inheritance uses an environ
+        // SNAPSHOT taken at process start, so runtime mutations otherwise do
+        // not reach the child.
+        env: env ? { ...process.env, ...env } : process.env
+      });
+      const stdout = [];
+      const stderr = [];
+      let outputBytes = 0;
+      const capture = (chunks, chunk) => {
+        if (done) return;
+        const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        outputBytes += data.byteLength;
+        if (outputBytes > MAX_OUTPUT_BYTES) {
+          settle(() => ({
+            ok: false,
+            code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
+            err: `subprocess output exceeded ${MAX_OUTPUT_BYTES} bytes`
+          }));
+          if (child) terminate(child);
+          return;
         }
+        chunks.push(data);
+      };
+      child.stdout?.on("data", (chunk) => {
+        capture(stdout, chunk);
+      });
+      child.stderr?.on("data", (chunk) => {
+        capture(stderr, chunk);
+      });
+      child.once("error", (err) => {
+        settle(() => ({
+          ok: false,
+          code: "code" in err ? err.code : void 0,
+          err: err.message || err.name
+        }));
+      });
+      child.once("close", (code) => {
+        const out = Buffer.concat(stdout).toString("utf8");
+        const errorText = Buffer.concat(stderr).toString("utf8").trim();
+        if (code === 0) settle(() => ({ ok: true, out }));
+        else settle(() => ({ ok: false, code, err: errorText || `process exited ${code ?? ""}` }));
+      });
+      deadline = setTimeout(() => {
+        settle(() => ({ ok: false, code: "ETIMEDOUT", err: `timed out after ${timeout}ms` }));
+        if (child) terminate(child);
       }, timeout);
       deadline.unref();
+      if (signal?.aborted) abort();
+      else signal?.addEventListener("abort", abort, { once: true });
     } catch (err) {
       resolve({ ok: false, err: err instanceof Error ? err.message || String(err) : String(err) });
     }
@@ -4226,6 +4253,7 @@ function createWorktrees(ctx) {
 import fs7 from "node:fs";
 import os3 from "node:os";
 import path7 from "node:path";
+import { createHash } from "node:crypto";
 
 // src/daemon/config.ts
 import fs6 from "node:fs";
@@ -4263,11 +4291,35 @@ function detectCoderWorkspaceRoot({
   return null;
 }
 
+// src/daemon/repo-policy.ts
+function repoTransportChoice({
+  setting = null,
+  coder = false
+} = {}) {
+  if (setting === "ssh" || setting === "https") return { value: setting, source: "override" };
+  if (coder) return { value: "https", source: "coder" };
+  return { value: "ssh", source: "default" };
+}
+
 // src/daemon/repos.ts
 var CONTROL_RE = /[\x00-\x1f\x7f]/;
 var SPACE_OR_CONTROL_RE = /[\s\x00-\x1f\x7f]/;
 var FORGE_SLUG_SEGMENT_RE = /^[A-Za-z0-9._-]+$/;
 var CODER_DEFAULT_ORG = "textemma";
+var ACCESS_CACHE_TTL_MS = 3e4;
+var ACCESS_CACHE_MAX = 256;
+function rememberRepoAccess(cache, key, now) {
+  for (const [cachedKey, expiresAt] of cache) {
+    if (expiresAt <= now) cache.delete(cachedKey);
+  }
+  cache.delete(key);
+  while (cache.size >= ACCESS_CACHE_MAX) {
+    const oldest = cache.keys().next();
+    if (oldest.done) break;
+    cache.delete(oldest.value);
+  }
+  cache.set(key, now + ACCESS_CACHE_TTL_MS);
+}
 var RepoError = class extends Error {
   status;
   constructor(status, message) {
@@ -4524,6 +4576,7 @@ function createRepos(ctx) {
   const { q } = ctx;
   const touchedAt = /* @__PURE__ */ new Map();
   const provisioningTargets = /* @__PURE__ */ new Map();
+  const accessCache = /* @__PURE__ */ new Map();
   const cloneCap = (() => {
     const n = Number(process.env["FLEETDECK_CLONE_CONCURRENCY"]);
     return Number.isInteger(n) && n > 0 ? n : 3;
@@ -4543,6 +4596,139 @@ function createRepos(ctx) {
         released = true;
         clonesInFlight -= 1;
       }
+    };
+  }
+  function originKind(origin) {
+    const host = /^https:\/\/([^/@:]+@)?([^/:?#]+)/i.exec(origin)?.[2] ?? /^ssh:\/\/([^/@:]+@)?([^/:?#]+)/i.exec(origin)?.[2] ?? /^[^/@:]+@([^/:]+):/.exec(origin)?.[1] ?? "";
+    return {
+      provider: host.toLowerCase() === "github.com" ? "github" : host.toLowerCase() === "gitlab.com" ? "gitlab" : "other",
+      transport: /^https:\/\//i.test(origin) ? "https" : "ssh"
+    };
+  }
+  function coderExternalAuthUrl() {
+    const raw = process.env["CODER_AGENT_URL"];
+    if (!raw) return null;
+    try {
+      const url = new URL(raw);
+      if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+      return new URL("/settings/external-auth", url.origin).toString();
+    } catch {
+      return null;
+    }
+  }
+  function sshKeySettingsUrl(provider) {
+    if (provider === "github") return "https://github.com/settings/ssh/new";
+    if (provider === "gitlab") return "https://gitlab.com/-/profile/keys";
+    return null;
+  }
+  function coderPublicKey(raw) {
+    const found = raw.match(
+      /(?:^|\n)(ssh-(?:ed25519|rsa)|ecdsa-sha2-nistp(?:256|384|521)) [A-Za-z0-9+/=]{20,8192}(?: [^\r\n]{0,256})?(?=\r?$|\n)/m
+    )?.[0];
+    return found?.trim() ?? null;
+  }
+  function accessFailure(origin, result) {
+    const { provider, transport } = originKind(origin);
+    const raw = result.err ?? "";
+    const lower = raw.toLowerCase();
+    const coderUrl = coderExternalAuthUrl();
+    const providerName = provider === "github" ? "GitHub" : provider === "gitlab" ? "GitLab" : "the Git server";
+    const detail = gitStderrDetail(redactGitText(raw, originSecrets(origin)));
+    if (result.code === "ETIMEDOUT") {
+      const coderHttps = coderUrl != null && transport === "https";
+      return {
+        ok: false,
+        status: 504,
+        reason: `Git access check timed out before ${providerName} answered`,
+        git_access: {
+          provider,
+          transport,
+          code: "timeout",
+          title: "Git authentication did not finish",
+          detail,
+          action: coderHttps ? "Reconnect the Git provider in Coder, then check access again." : transport === "ssh" ? "The SSH check did not finish. Verify the host/key in a terminal, or switch this spawn to HTTPS." : "Finish any Git credential login in a terminal, then check access again.",
+          auth_url: coderHttps ? coderUrl : null,
+          auth_label: coderHttps ? "Open Coder authentication" : null,
+          cli_command: null,
+          ssh_public_key: null,
+          suggested_transport: null
+        }
+      };
+    }
+    const hostKey = /host key verification failed|authenticity of host .* can't be established/.test(lower);
+    const coderSsh = coderUrl != null && transport === "ssh" && /coder gitssh|coder publickey|coder authenticates with git|coder-generated.*ssh|add to github and gitlab/.test(
+      lower
+    );
+    const coderAuth = coderUrl != null && transport === "https" && (/coder gitssh|coder publickey|external.auth|authenticate with (github|gitlab)/.test(lower) || /could not read from remote repository|authentication failed|could not read username/.test(
+      lower
+    ));
+    const code = coderSsh ? "coder_ssh_key" : coderAuth ? "coder_external_auth" : hostKey ? "host_key" : /authentication failed|permission denied|publickey|could not read username|http basic|access rights|repository not found/.test(
+      lower
+    ) ? "credentials" : "unreachable";
+    const cliCommand = coderSsh ? "coder publickey" : coderUrl != null ? null : provider === "github" ? "gh auth login --hostname github.com --git-protocol https" : provider === "gitlab" ? "glab auth login --hostname gitlab.com" : null;
+    const action = coderSsh ? `Coder login covers HTTPS, not SSH. Switch this spawn to HTTPS, or add the Coder SSH key below to ${providerName}.` : coderAuth ? `Connect ${providerName} in Coder, then return here and check access again.` : hostKey ? `Trust ${providerName}'s SSH host key in a terminal, or switch this spawn to HTTPS.` : cliCommand ? `Authenticate with ${providerName} in a terminal (${cliCommand}), then check access again.` : "Authenticate Git in this developer environment, then check access again.";
+    return {
+      ok: false,
+      status: 409,
+      reason: `Git cannot read this repository with the workspace's current ${transport.toUpperCase()} credentials`,
+      git_access: {
+        provider,
+        transport,
+        code,
+        title: coderSsh ? `${providerName} does not recognize this Coder SSH key` : coderAuth ? `${providerName} is not connected to this Coder workspace` : hostKey ? `${providerName} SSH host trust is not ready` : `${providerName} repository access is not ready`,
+        detail,
+        action,
+        auth_url: coderSsh ? sshKeySettingsUrl(provider) : coderAuth ? coderUrl : null,
+        auth_label: coderSsh ? `Add SSH key to ${providerName}` : coderAuth ? "Open Coder authentication" : null,
+        cli_command: cliCommand,
+        ssh_public_key: coderSsh ? coderPublicKey(raw) : null,
+        suggested_transport: coderSsh ? "https" : null
+      }
+    };
+  }
+  async function probeRepoAccess(origin, signal) {
+    const kind = originKind(origin);
+    const cacheKey = createHash("sha256").update(origin).digest("base64url");
+    const cachedUntil = accessCache.get(cacheKey) ?? 0;
+    if (cachedUntil > Date.now()) return { ok: true, ...kind };
+    accessCache.delete(cacheKey);
+    const configured = Number(process.env["FLEETDECK_GIT_PREFLIGHT_TIMEOUT_MS"]);
+    const timeout = Number.isFinite(configured) && configured >= 1e3 && configured <= 6e4 ? configured : 15e3;
+    const result = await execFileP("git", ["ls-remote", "--", origin, "HEAD"], {
+      timeout,
+      signal,
+      killTree: true,
+      env: { GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "Never" }
+    });
+    if (!result.ok) return accessFailure(origin, result);
+    rememberRepoAccess(accessCache, cacheKey, Date.now());
+    return { ok: true, ...kind };
+  }
+  async function preflightRepo(body) {
+    let target;
+    try {
+      target = await resolveTarget(body);
+    } catch (err) {
+      return {
+        status: errStatus(err) ?? 400,
+        body: { ok: false, reason: errMessage(err) }
+      };
+    }
+    if (target.mode === "local") {
+      return { status: 200, body: { ok: true, mode: "local" } };
+    }
+    const access = await probeRepoAccess(target.origin_url);
+    return access.ok ? {
+      status: 200,
+      body: {
+        ok: true,
+        mode: "clone",
+        provider: access.provider,
+        transport: access.transport
+      }
+    } : {
+      status: access.status,
+      body: { ok: false, reason: access.reason, git_access: access.git_access }
     };
   }
   function recordFailDetail(spawn_id, detail) {
@@ -4575,7 +4761,10 @@ function createRepos(ctx) {
     return { value, source: "default", resolved: value };
   }
   function resolveRepoTransport() {
-    return q.getSetting.get("repo_transport")?.value ?? "ssh";
+    return repoTransportChoice({
+      setting: q.getSetting.get("repo_transport")?.value ?? null,
+      coder: !!detectCoderWorkspaceRoot()
+    }).value;
   }
   function resolveRepoDefaultOrg() {
     return repoDefaultOrgChoice({
@@ -4761,7 +4950,8 @@ function createRepos(ctx) {
   async function cloneRepo({
     origin_url,
     dest,
-    spawn_id
+    spawn_id,
+    signal
   }) {
     if (typeof origin_url !== "string" || !origin_url || SPACE_OR_CONTROL_RE.test(origin_url) || origin_url.startsWith("-") || unsafeDashSegment(origin_url)) {
       throw namedError(409, "refusing to clone an unsafe origin URL");
@@ -4775,9 +4965,12 @@ function createRepos(ctx) {
       const timeout = Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 6e5;
       const result = await execFileP("git", ["clone", "--", origin_url, temp], {
         timeout,
-        env: { GIT_TERMINAL_PROMPT: "0" }
+        env: { GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "Never" },
+        signal,
+        killTree: true
       });
       if (!result.ok) {
+        if (result.code === "ECANCELED") throw namedError(409, "spawn cancelled");
         if (result.err) console.error(`fleetd clone failed \u2014 ${origin_url}
 ${result.err}`);
         const { note, detail } = gitFailureText(result.err, origin_url);
@@ -4800,28 +4993,35 @@ ${result.err}`);
     mode,
     spawn_id = "",
     sid = spawn_id,
-    clone = false
+    clone = false,
+    signal
   }) {
-    const localBefore = await execFileP(
-      "git",
+    const git2 = async (args, options = {}) => {
+      const result = await execFileP("git", args, {
+        ...options,
+        signal,
+        killTree: true
+      });
+      if (!result.ok && result.code === "ECANCELED") throw namedError(409, "spawn cancelled");
+      return result;
+    };
+    const localBefore = await git2(
       ["-C", root, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`],
       { timeout: 5e3 }
     );
-    const fetched = await execFileP("git", ["-C", root, "fetch", "origin", "--prune"], {
+    const fetched = await git2(["-C", root, "fetch", "origin", "--prune"], {
       timeout: 12e4,
-      env: { GIT_TERMINAL_PROMPT: "0" }
+      env: { GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "Never" }
     });
-    const local = localBefore.ok ? localBefore : await execFileP(
-      "git",
-      ["-C", root, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`],
-      { timeout: 5e3 }
-    );
-    const remote = await execFileP(
-      "git",
+    const local = localBefore.ok ? localBefore : await git2(["-C", root, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`], {
+      timeout: 5e3
+    });
+    const remote = await git2(
       ["-C", root, "show-ref", "--verify", "--quiet", `refs/remotes/origin/${branch}`],
       { timeout: 5e3 }
     );
     const base = await baseBranch(root);
+    if (signal?.aborted) throw namedError(409, "spawn cancelled");
     const requireBaseRef = () => {
       if (!base)
         throw namedError(409, `branch ${branch} cannot be created \u2014 no base branch is available`);
@@ -4834,7 +5034,7 @@ ${result.err}`);
           `branch ${branch} does not exist and no base branch is available to create it from`
         );
       }
-      const originUrl = await execFileP("git", ["-C", root, "remote", "get-url", "origin"], {
+      const originUrl = await git2(["-C", root, "remote", "get-url", "origin"], {
         timeout: 5e3
       });
       const { note, detail } = gitFailureText(
@@ -4848,7 +5048,7 @@ ${result.err}`);
       );
     }
     if (mode === "in-place") {
-      const status = await execFileP("git", ["-C", root, "status", "--porcelain"], {
+      const status = await git2(["-C", root, "status", "--porcelain"], {
         timeout: 3e4
       });
       if (!status.ok) throw namedError(409, redactGitText(status.err) || "git status failed");
@@ -4861,11 +5061,11 @@ ${result.err}`);
         );
       }
       const args = local.ok ? ["-C", root, "switch", branch] : remote.ok ? ["-C", root, "switch", "--track", `origin/${branch}`] : ["-C", root, "switch", "-c", branch, requireBaseRef()];
-      const switched = await execFileP("git", args, { timeout: 3e4 });
+      const switched = await git2(args, { timeout: 3e4 });
       if (!switched.ok) throw namedError(409, redactGitText(switched.err) || "git switch failed");
       return { runCwd: root, created: { clone, worktree: false }, reused: false };
     }
-    const listed = await execFileP("git", ["-C", root, "worktree", "list", "--porcelain"], {
+    const listed = await git2(["-C", root, "worktree", "list", "--porcelain"], {
       timeout: 1e4
     });
     if (!listed.ok) throw namedError(409, redactGitText(listed.err) || "git worktree list failed");
@@ -4880,7 +5080,7 @@ ${result.err}`);
     for (const candidate of candidates) {
       const existedBefore = exists(candidate);
       const args = local.ok ? ["-C", root, "worktree", "add", candidate, branch] : remote.ok ? ["-C", root, "worktree", "add", "--track", "-b", branch, candidate, `origin/${branch}`] : ["-C", root, "worktree", "add", "-b", branch, candidate, requireBaseRef()];
-      last = await execFileP("git", args, { timeout: 3e4 });
+      last = await git2(args, { timeout: 3e4 });
       if (last.ok) return { runCwd: candidate, created: { clone, worktree: true }, reused: false };
       if (!existedBefore && exists(candidate)) {
         await execFileP("git", ["-C", root, "worktree", "remove", "--force", candidate], {
@@ -4908,15 +5108,24 @@ ${result.err}`);
       return path7.resolve(dest);
     }
   }
-  function claimTarget(dest, callsign) {
+  function claimTarget(dest, ownerName) {
     const canonical2 = canonicalTarget(dest);
-    const owner = provisioningTargets.get(canonical2);
-    if (owner) throw namedError(409, `${canonical2} is already being provisioned by ${owner}`);
-    provisioningTargets.set(canonical2, callsign);
-    return () => provisioningTargets.delete(canonical2);
+    const held = provisioningTargets.get(canonical2);
+    if (held) throw namedError(409, `${canonical2} is already being provisioned by ${held.owner}`);
+    const id = Symbol(canonical2);
+    provisioningTargets.set(canonical2, { id, owner: ownerName });
+    return () => {
+      if (provisioningTargets.get(canonical2)?.id === id) provisioningTargets.delete(canonical2);
+    };
+  }
+  function relabelTarget(dest, expectedOwner, ownerName) {
+    const held = provisioningTargets.get(canonicalTarget(dest));
+    if (!held || held.owner !== expectedOwner) return false;
+    held.owner = ownerName;
+    return true;
   }
   function targetOwner(dest) {
-    return provisioningTargets.get(canonicalTarget(dest)) ?? null;
+    return provisioningTargets.get(canonicalTarget(dest))?.owner ?? null;
   }
   return {
     validateBranch,
@@ -4926,9 +5135,12 @@ ${result.err}`);
     resolveRepoDefaultOrg,
     validateRepoDefaultOrg,
     resolveTarget,
+    probeRepoAccess,
+    preflightRepo,
     cloneRepo,
     materializeBranch,
     claimTarget,
+    relabelTarget,
     targetOwner,
     reserveCloneSlot
   };
@@ -5017,9 +5229,10 @@ function createSettings(ctx) {
     return q.getSetting.get(key)?.value ?? null;
   }
   function resolveRepoTransport() {
-    const value = readSetting("repo_transport");
-    const known = value === "ssh" || value === "https";
-    return { value: known ? value : "ssh", source: known ? "override" : "default" };
+    return repoTransportChoice({
+      setting: readSetting("repo_transport"),
+      coder: !!detectCoderWorkspaceRoot()
+    });
   }
   function browseRootChoice() {
     const setting = readSetting("browse_root");
@@ -5470,7 +5683,7 @@ function createSettings(ctx) {
 import fs9 from "node:fs";
 import os5 from "node:os";
 import path9 from "node:path";
-import { spawn } from "node:child_process";
+import { spawn as spawn2 } from "node:child_process";
 function envInt2(name, fallback, { min = 1 } = {}) {
   const n = Number(process.env[name]);
   return Number.isInteger(n) && n >= min ? n : fallback;
@@ -5654,7 +5867,7 @@ function runBounded(cmd, args, { cwd, timeoutMs, maxBytes, input = null }) {
   return new Promise((resolve) => {
     let child;
     try {
-      child = spawn(cmd, args, {
+      child = spawn2(cmd, args, {
         cwd,
         windowsHide: true,
         stdio: [input == null ? "ignore" : "pipe", "pipe", "pipe"],
@@ -6952,6 +7165,17 @@ ${p.plan_md ?? ""}`;
 import fs11 from "node:fs";
 import path12 from "node:path";
 import { randomUUID as randomUUID2, randomBytes } from "node:crypto";
+
+// src/daemon/spawn-attention.ts
+var SPAWN_FOLDER_TRUST_NOTE = "waiting on the folder-trust dialog \u2014 approve it in the terminal";
+var SPAWN_PANE_UNREADABLE_NOTE = "no bring-up keystroke sent \u2014 pane unreadable; check the terminal";
+function spawnAttentionForNote(note) {
+  if (note === SPAWN_FOLDER_TRUST_NOTE) return "folder-trust";
+  if (note === SPAWN_PANE_UNREADABLE_NOTE) return "pane-unreadable";
+  return null;
+}
+
+// src/daemon/spawns.ts
 function runtimeOverrideRefusal(body) {
   if (body.remote_control != null && typeof body.remote_control !== "boolean") {
     return "remote_control must be a boolean";
@@ -7027,11 +7251,12 @@ function createSpawns(ctx) {
     hasLivePane,
     validateBranch,
     resolveTarget,
+    probeRepoAccess,
     cloneRepo,
     materializeBranch,
     touchRepo,
     claimTarget,
-    targetOwner,
+    relabelTarget,
     reserveCloneSlot,
     persistRepoTransport,
     persistRepoDefaultOrg,
@@ -7159,7 +7384,7 @@ function createSpawns(ctx) {
         if (typeof screen !== "string" || screen.trim() === "") {
           logEvent(row.session_id, "SpawnNudge", null, "pane unreadable \u2014 bring-up Enter held");
           updateSession(row.session_id, {
-            note: "no bring-up keystroke sent \u2014 pane unreadable; check the terminal"
+            note: SPAWN_PANE_UNREADABLE_NOTE
           });
           tick(`\u{1F512} ${callsign} needs a look \u2014 no bring-up keystroke sent`);
           onMutate();
@@ -7169,7 +7394,7 @@ function createSpawns(ctx) {
         if (TRUST_DIALOG_RE.test(squashed)) {
           logEvent(row.session_id, "SpawnNudge", null, "trust/MCP dialog held for human approval");
           updateSession(row.session_id, {
-            note: "waiting on the folder-trust dialog \u2014 approve it in the terminal"
+            note: SPAWN_FOLDER_TRUST_NOTE
           });
           tick(`\u{1F512} ${callsign} waits on a trust dialog \u2014 approve it in the terminal`);
           onMutate();
@@ -7188,6 +7413,7 @@ function createSpawns(ctx) {
   const RC_URL_RE = /https:\/\/claude\.ai\/\S+/;
   const registrationRemoteHarvests = /* @__PURE__ */ new Map();
   const revivingSessions = /* @__PURE__ */ new Set();
+  const provisioningOps = /* @__PURE__ */ new Map();
   const rcInputLocks = /* @__PURE__ */ new Map();
   const condemnStreak = /* @__PURE__ */ new Map();
   function forgetSpawn(spawn_id) {
@@ -7273,7 +7499,8 @@ function createSpawns(ctx) {
     worktree_path,
     tmux_window,
     reason,
-    created = { clone: false, worktree: !!worktree_path }
+    created = { clone: false, worktree: !!worktree_path },
+    cancelled = false
   }) {
     if (tmux_window) {
       let killed;
@@ -7314,7 +7541,17 @@ function createSpawns(ctx) {
     }
     q.setSpawnStatus.run("gone", spawn_id);
     forgetSpawn(spawn_id);
-    spawnFailed(session_id, callsign, reason);
+    if (cancelled) {
+      logEvent(session_id, "SpawnCancelled", null, "cancelled during repository provisioning");
+      tombstoneCard(session_id, {
+        note: "spawn cancelled",
+        tickMsg: `\u25CB cancelled repository provisioning for ${callsign}`,
+        forgetModel: true,
+        mutate: true
+      });
+    } else {
+      spawnFailed(session_id, callsign, reason);
+    }
     return { resolved: true };
   }
   async function launchPane({
@@ -7330,8 +7567,10 @@ function createSpawns(ctx) {
     body,
     skipPermissions,
     gatewayEnv = null,
-    created = { clone: false, worktree: !!worktree_path }
+    created = { clone: false, worktree: !!worktree_path },
+    signal
   }) {
+    if (signal?.aborted) throw new Error("spawn cancelled");
     const kind = body.kind ?? "claude";
     const setupCmd = body.setup_cmd ?? null;
     const launchEnv = {
@@ -7415,8 +7654,11 @@ function createSpawns(ctx) {
     } else {
       try {
         await tmuxAdapter.ensureSession(port);
+        if (signal?.aborted) throw new Error("spawn cancelled");
         await tmuxAdapter.newWindow({ port, callsign, cwd: runCwd, argv, env: launchEnvOrNull });
+        if (signal?.aborted) throw new Error("spawn cancelled");
       } catch (err) {
+        if (signal?.aborted) throw err;
         const cleanup = await compensate(errMessage(err));
         const unresolved = !cleanup.resolved ? `; cleanup unresolved: ${cleanup.error}` : "";
         return {
@@ -7446,7 +7688,7 @@ function createSpawns(ctx) {
       }
     };
   }
-  async function spawn3(body) {
+  async function spawn4(body) {
     const cap = spawnCapability();
     if (!cap.available) {
       return { status: 400, body: { ok: false, reason: `spawning unavailable: ${cap.reason}` } };
@@ -7685,16 +7927,33 @@ function createSpawns(ctx) {
         };
       }
       const targetPath = target.mode === "clone" ? target.dest : target.root;
-      const owner = targetOwner(targetPath);
-      if (owner) {
+      let releaseTarget;
+      try {
+        releaseTarget = claimTarget(targetPath, "repository access check");
+      } catch (err) {
         releasePlanClaim();
         return {
           status: 409,
           body: {
             ok: false,
-            reason: `${path12.resolve(targetPath)} is already being provisioned by ${owner}`
+            reason: errMessage(err)
           }
         };
+      }
+      if (target.mode === "clone") {
+        const access = await probeRepoAccess(target.origin_url);
+        if (!access.ok) {
+          releaseTarget();
+          releasePlanClaim();
+          return {
+            status: access.status,
+            body: {
+              ok: false,
+              reason: access.reason,
+              git_access: access.git_access
+            }
+          };
+        }
       }
       let releaseCloneSlot = () => {
       };
@@ -7702,6 +7961,7 @@ function createSpawns(ctx) {
         try {
           releaseCloneSlot = reserveCloneSlot();
         } catch (err) {
+          releaseTarget();
           releasePlanClaim();
           return {
             status: errStatus(err) ?? 429,
@@ -7722,16 +7982,50 @@ function createSpawns(ctx) {
       const session_id2 = randomUUID2();
       const spawn_id2 = randomUUID2();
       const initialNote = target.mode === "clone" ? `cloning ${target.repo_name}\u2026` : `preparing ${body.branch}\u2026`;
-      let c2;
+      let callsign2;
+      let tmux_session2;
+      let tmux_window2;
       try {
-        c2 = createSpawnedCard(session_id2, targetPath, body.prompt, {
+        const c2 = createSpawnedCard(session_id2, targetPath, body.prompt, {
           repo_name: target.repo_name,
           branch: body.branch,
           note: initialNote
         });
+        if (c2.callsign == null) throw new Error("spawned card is missing its callsign");
+        callsign2 = c2.callsign;
+        tmux_session2 = tmuxAdapter.sessionName(port);
+        tmux_window2 = tmuxAdapter.windowName(port, callsign2);
+        if (!relabelTarget(targetPath, "repository access check", callsign2)) {
+          throw new Error("repository destination claim vanished before provisioning");
+        }
+        q.insertProvisionalSpawn.run(
+          spawn_id2,
+          session_id2,
+          callsign2,
+          tmux_session2,
+          tmux_window2,
+          targetPath,
+          null,
+          Date.now(),
+          skipPermissions ? 1 : 0,
+          body.remote_control === true ? 1 : 0,
+          target.origin_url ?? null,
+          body.branch,
+          branchMode,
+          gateway.use ? 1 : 0,
+          kind,
+          body.setup_cmd ?? null
+        );
       } catch (err) {
         releaseCloneSlot();
+        releaseTarget();
         releasePlanClaim();
+        try {
+          if (q.getSession.get(session_id2)) {
+            tombstoneCard(session_id2, { note: "spawn setup failed", mutate: true });
+          }
+        } catch {
+        }
         return {
           status: 500,
           body: {
@@ -7740,29 +8034,6 @@ function createSpawns(ctx) {
           }
         };
       }
-      const callsign2 = c2.callsign;
-      if (callsign2 == null) throw new Error("spawned card is missing its callsign");
-      const releaseTarget = claimTarget(targetPath, callsign2);
-      const tmux_session2 = tmuxAdapter.sessionName(port);
-      const tmux_window2 = tmuxAdapter.windowName(port, callsign2);
-      q.insertProvisionalSpawn.run(
-        spawn_id2,
-        session_id2,
-        callsign2,
-        tmux_session2,
-        tmux_window2,
-        targetPath,
-        null,
-        Date.now(),
-        skipPermissions ? 1 : 0,
-        body.remote_control === true ? 1 : 0,
-        target.origin_url ?? null,
-        body.branch,
-        branchMode,
-        gateway.use ? 1 : 0,
-        kind,
-        body.setup_cmd ?? null
-      );
       const finishMaterialization = async (materialized, source) => {
         const worktree_path2 = branchMode === "worktree" ? materialized.runCwd : null;
         if (worktree_path2)
@@ -7860,13 +8131,26 @@ function createSpawns(ctx) {
           releaseTarget();
         }
       }
+      const controller = new AbortController();
+      let resolveProvisioning;
+      const provisioningDone = new Promise((resolve) => {
+        resolveProvisioning = resolve;
+      });
+      const provisioningOp = { controller, done: provisioningDone };
+      provisioningOps.set(spawn_id2, provisioningOp);
       Promise.resolve().then(async () => {
         let created = { clone: false, worktree: false };
         let worktree_path2 = null;
         let paneMayExist = false;
         try {
-          await cloneRepo({ origin_url: target.origin_url, dest: target.dest, spawn_id: spawn_id2 });
+          await cloneRepo({
+            origin_url: target.origin_url,
+            dest: target.dest,
+            spawn_id: spawn_id2,
+            signal: controller.signal
+          });
           created.clone = true;
+          if (controller.signal.aborted) throw new Error("spawn cancelled");
           updateSession(session_id2, { note: `preparing ${body.branch}\u2026` });
           onMutate();
           const materialized = await materializeBranch({
@@ -7875,13 +8159,16 @@ function createSpawns(ctx) {
             mode: branchMode,
             spawn_id: spawn_id2,
             sid: session_id2,
-            clone: true
+            clone: true,
+            signal: controller.signal
           });
           created = materialized.created;
           worktree_path2 = branchMode === "worktree" ? materialized.runCwd : null;
+          if (controller.signal.aborted) throw new Error("spawn cancelled");
           await finishMaterialization(materialized, "clone");
+          if (controller.signal.aborted) throw new Error("spawn cancelled");
           paneMayExist = true;
-          await launchPane({
+          const launched = await launchPane({
             spawn_id: spawn_id2,
             session_id: session_id2,
             callsign: callsign2,
@@ -7894,11 +8181,14 @@ function createSpawns(ctx) {
             body,
             skipPermissions,
             created,
-            gatewayEnv: gateway.env
+            gatewayEnv: gateway.env,
+            signal: controller.signal
           });
-          completePlanClaim(spawn_id2);
+          if (launched.status >= 400) releasePlanClaim();
+          else completePlanClaim(spawn_id2);
         } catch (err) {
-          const reason = branchMode === "in-place" && created.clone ? `${errMessage(err)} \u2014 ${path12.basename(target.dest)} was left switched to ${body.branch}` : errMessage(err);
+          const cancelled = controller.signal.aborted;
+          const reason = cancelled ? "spawn cancelled" : branchMode === "in-place" && created.clone ? `${errMessage(err)} \u2014 ${path12.basename(target.dest)} was left switched to ${body.branch}` : errMessage(err);
           await spawnCompensate({
             spawn_id: spawn_id2,
             session_id: session_id2,
@@ -7907,12 +8197,17 @@ function createSpawns(ctx) {
             worktree_path: worktree_path2,
             tmux_window: paneMayExist ? tmux_window2 : null,
             reason,
-            created
+            created,
+            cancelled
           });
           releasePlanClaim();
         } finally {
           releaseCloneSlot();
           releaseTarget();
+          if (provisioningOps.get(spawn_id2) === provisioningOp) {
+            provisioningOps.delete(spawn_id2);
+          }
+          resolveProvisioning();
         }
       }).catch((err) => {
         console.error("fleetd detached repo provisioning error:", err);
@@ -8602,6 +8897,58 @@ function createSpawns(ctx) {
     const row = q.getSpawn.get(spawn_id);
     if (!row) return { status: 404, body: { ok: false, reason: "no such spawn" } };
     if (row.tmux_window == null) throw new Error("spawn is missing its tmux window");
+    if (row.status === "provisioning") {
+      const op = provisioningOps.get(spawn_id);
+      if (op) {
+        op.controller.abort();
+        let timer = null;
+        const bounded = new Promise((resolve) => {
+          timer = setTimeout(() => resolve("pending"), 5e3);
+          timer.unref();
+        });
+        const settled = await Promise.race([op.done.then(() => "done"), bounded]);
+        if (timer) clearTimeout(timer);
+        if (settled === "pending") {
+          return {
+            status: 202,
+            body: { ok: true, spawn_id, status: "cancelling" }
+          };
+        }
+        const after = q.getSpawn.get(spawn_id);
+        if (after?.status === "gone" || after?.status === "killed") {
+          return {
+            status: 200,
+            body: { ok: true, spawn_id, status: "cancelled" }
+          };
+        }
+      } else {
+        const stale = await tmuxAdapter.killWindowVerified(row.tmux_window);
+        if (stale.ok || stale.gone) {
+          q.setSpawnStatus.run(stale.ok ? "killed" : "gone", spawn_id);
+          forgetSpawn(spawn_id);
+          const c2 = q.getSession.get(row.session_id);
+          if (c2 && c2.ended_at == null) {
+            tombstoneCard(row.session_id, {
+              note: "spawn cancelled",
+              tickMsg: `\u25CB cancelled repository provisioning for ${c2.callsign ?? row.callsign}`,
+              forgetModel: true,
+              mutate: true
+            });
+          }
+          return {
+            status: 200,
+            body: { ok: true, spawn_id, status: "cancelled" }
+          };
+        }
+        return {
+          status: 500,
+          body: {
+            ok: false,
+            reason: stale.error ?? "provisioning cancellation could not be verified"
+          }
+        };
+      }
+    }
     const owner = q.currentWindowOwner.get(row.tmux_window);
     if (owner && owner.spawn_id !== spawn_id) {
       return {
@@ -8625,7 +8972,7 @@ function createSpawns(ctx) {
     }
     const res = await tmuxAdapter.killWindowVerified(row.tmux_window);
     if (!res.ok && res.gone) {
-      if (["spawning", "stalled", "live", "pane-dead"].includes(row.status)) {
+      if (["provisioning", "spawning", "stalled", "live", "pane-dead"].includes(row.status)) {
         q.setSpawnStatus.run("gone", spawn_id);
         forgetSpawn(spawn_id);
         if (c && c.ended_at == null) {
@@ -8955,7 +9302,7 @@ ${detail}` : note);
     return { healed };
   }
   return {
-    spawn: spawn3,
+    spawn: spawn4,
     revive,
     adoptSession,
     enableRemote,
@@ -9615,6 +9962,7 @@ function createSnapshot(ctx) {
             tmux_window: sp.tmux_window,
             status: sp.status,
             kind: sp.kind ?? "claude",
+            attention: spawnAttentionForNote(s.note),
             setup_cmd: sp.setup_cmd ?? null,
             stalled: sp.status === "stalled",
             // watchdog chip ("never registered")
@@ -10669,7 +11017,7 @@ function createCore(db2, {
   ctx.tombstoneCard = tombstoneCard;
   Object.assign(ctx, createRepos(ctx));
   Object.assign(ctx, createSettings(ctx));
-  const { resolveReposDir, setSettings, resolveSettings, setRepoSetupEntry } = ctx;
+  const { resolveReposDir, preflightRepo, setSettings, resolveSettings, setRepoSetupEntry } = ctx;
   Object.assign(ctx, createLedger(ctx));
   Object.assign(ctx, createIngest(ctx));
   const { ingestAgentsPoll } = ctx;
@@ -10703,7 +11051,7 @@ function createCore(db2, {
   const { fsList, fsRead, fsSearch, fsListHome, fsReadHome, fsSearchHome } = ctx;
   Object.assign(ctx, createSpawns(ctx));
   const {
-    spawn: spawn3,
+    spawn: spawn4,
     revive,
     adoptSession,
     enableRemote,
@@ -10782,8 +11130,10 @@ function createCore(db2, {
     // POST /api/paste-image → {status, body} (stateless; paste.mjs)
     ingestAgentsPoll,
     // v1.2 dynamic fleet
-    spawn: spawn3,
+    spawn: spawn4,
     // POST /api/spawn flow → {status, body}
+    preflightRepo,
+    // POST /api/repos/preflight — exact non-interactive Git read probe
     revive,
     // POST /api/spawn/:id/revive → {status, body}
     adoptSession,
@@ -10894,7 +11244,7 @@ function networkInterfaces() {
 }
 
 // src/daemon/termbridge.ts
-import { spawn as spawn2 } from "node:child_process";
+import { spawn as spawn3 } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 var ACTIVE_STATUSES = /* @__PURE__ */ new Set(["spawning", "stalled", "live"]);
 var INPUT_CHUNK_BYTES = 1024;
@@ -10907,6 +11257,8 @@ var MAX_PENDING_OUTPUT_BYTES = envInt("FLEETDECK_TERM_PENDING_MAX_BYTES", MAX_IN
 });
 var CLEAR_SCREEN = "\x1B[H\x1B[2J";
 var BRACKETED_PASTE_ON = "\x1B[?2004h";
+var BRACKETED_PASTE_START = "\x1B[200~";
+var BRACKETED_PASTE_END = "\x1B[201~";
 var REPAINT_MS = envInt("FLEETDECK_TERM_REPAINT_MS", 80);
 var PANE_DEAD_POLL_MS = envInt("FLEETDECK_TERM_DEAD_POLL_MS", 5e3, { min: 100 });
 function dimensions(cols, rows) {
@@ -11090,7 +11442,7 @@ function createTermBridge({
           }
           for (const [paneId, stream] of [...c.panes]) {
             if (state.get(paneId) !== "1") continue;
-            for (const v of [...stream.subs]) v.finish("terminal pane closed");
+            for (const v of [...stream.subs]) v.end("terminal pane closed");
           }
         }).catch(() => {
         });
@@ -11114,7 +11466,7 @@ function createTermBridge({
           const alive = new Set(res.lines.map((s) => s.trim()));
           for (const [paneId, stream] of [...c.panes]) {
             if (alive.has(paneId)) continue;
-            for (const v of [...stream.subs]) v.finish("terminal pane closed");
+            for (const v of [...stream.subs]) v.end("terminal pane closed");
           }
         }).catch(() => {
           scheduleCloseRecheck();
@@ -11124,7 +11476,7 @@ function createTermBridge({
     const override2 = process.env["FLEETDECK_TERM_CMD"]?.trim();
     const socket = process.env["FLEETDECK_TMUX_SOCKET"]?.trim();
     const argv = socket ? ["-L", socket, "-C", "attach-session", "-t", "=" + session] : ["-C", "attach-session", "-t", "=" + session];
-    const child = spawn2(override2 || "tmux", override2 ? [] : argv, {
+    const child = spawn3(override2 || "tmux", override2 ? [] : argv, {
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
       // Live env, not Bun's startup snapshot (see exec.ts): the attach reads
@@ -11194,7 +11546,7 @@ function createTermBridge({
         const alive = new Set(res.lines.map((s) => s.trim()));
         for (const [paneId, stream] of [...c.panes]) {
           if (alive.has(paneId)) continue;
-          for (const v of [...stream.subs]) v.finish("terminal pane closed");
+          for (const v of [...stream.subs]) v.end("terminal pane closed");
         }
       }).catch(() => {
       });
@@ -11276,6 +11628,7 @@ function createTermBridge({
       established: false,
       initialized: false,
       finished: false,
+      pendingExit: null,
       pending: [],
       // R1-4: %output that arrived after we
       // subscribed but before the init frame shipped
@@ -11319,6 +11672,19 @@ function createTermBridge({
             this.finish("terminal socket closed", false);
           }
         }
+      },
+      // The pane-death poll and window-close probe can race the seed sequence:
+      // viewers subscribe before capture so no terminal output is lost, but the
+      // socket is not established until its init frame is ready. Remember an
+      // early terminal exit and deliver it immediately after init instead of
+      // silently finishing a viewer that the HTTP layer cannot notify yet.
+      end(reason) {
+        if (this.finished) return;
+        if (!this.established) {
+          this.pendingExit ??= reason;
+          return;
+        }
+        this.finish(reason);
       },
       finish(reason, notify = true) {
         if (this.finished) return;
@@ -11387,43 +11753,81 @@ function createTermBridge({
         (bracketedPaste ? BRACKETED_PASTE_ON : "")
       });
       viewer.initialized = true;
-      viewer.flushPending();
+      if (viewer.pendingExit) {
+        const reason = viewer.pendingExit;
+        viewer.pendingExit = null;
+        viewer.finish(reason);
+      } else {
+        viewer.flushPending();
+      }
     } catch (err) {
       const detail = err instanceof Error && err.message ? err.message : "terminal open failed";
       viewer.finish(detail, false);
       if (err instanceof TermBridgeError) throw err;
       throw new TermBridgeError(detail);
     }
+    const queueInput = (bytes, beforeSend) => {
+      if (viewer.finished || bytes.length === 0) return;
+      const c = client;
+      if (!c) return;
+      const pane = viewer.pane;
+      if (!pane) return;
+      if (viewer.queuedInput + bytes.length > MAX_INPUT_QUEUE_BYTES) {
+        viewer.finish("terminal input overflow");
+        return;
+      }
+      viewer.queuedInput += bytes.length;
+      viewer.inputChain = viewer.inputChain.then(async () => {
+        try {
+          if (beforeSend && !await beforeSend()) return;
+          for (let offset = 0; offset < bytes.length; offset += INPUT_CHUNK_BYTES) {
+            if (viewer.finished || client !== c) return;
+            const hex = [...bytes.subarray(offset, offset + INPUT_CHUNK_BYTES)].map((b) => b.toString(16).padStart(2, "0")).join(" ");
+            const res = await c.command(`send-keys -t ${pane} -H ${hex}`);
+            if (!res.ok) {
+              viewer.finish("terminal pane closed");
+              return;
+            }
+          }
+        } catch {
+          viewer.finish("terminal pane closed");
+        } finally {
+          viewer.queuedInput -= bytes.length;
+        }
+      });
+    };
+    const refusePaste = (reason) => {
+      if (viewer.finished) return;
+      try {
+        send({ t: "paste-refused", reason });
+      } catch {
+        viewer.finish("terminal socket closed", false);
+      }
+    };
     return {
       input(dataString) {
-        if (viewer.finished || typeof dataString !== "string" || !dataString) return;
-        const c = client;
-        if (!c) return;
-        const pane = viewer.pane;
-        if (!pane) return;
-        const bytes = Buffer.from(dataString, "utf8");
-        if (viewer.queuedInput + bytes.length > MAX_INPUT_QUEUE_BYTES) {
-          viewer.finish("terminal input overflow");
-          return;
-        }
-        viewer.queuedInput += bytes.length;
-        viewer.inputChain = viewer.inputChain.then(async () => {
-          try {
-            for (let offset = 0; offset < bytes.length; offset += INPUT_CHUNK_BYTES) {
-              if (viewer.finished || client !== c) return;
-              const hex = [...bytes.subarray(offset, offset + INPUT_CHUNK_BYTES)].map((b) => b.toString(16).padStart(2, "0")).join(" ");
-              const res = await c.command(`send-keys -t ${pane} -H ${hex}`);
-              if (!res.ok) {
-                viewer.finish("terminal pane closed");
-                return;
-              }
-            }
-          } catch {
-            viewer.finish("terminal pane closed");
-          } finally {
-            viewer.queuedInput -= bytes.length;
-          }
-        });
+        if (typeof dataString !== "string" || !dataString) return;
+        queueInput(Buffer.from(dataString, "utf8"));
+      },
+      paste(dataString) {
+        if (typeof dataString !== "string" || !dataString) return;
+        const safe = sanitizePaneText(dataString).replace(/\n/g, "\r");
+        if (!safe) return;
+        const bytes = Buffer.from(BRACKETED_PASTE_START + safe + BRACKETED_PASTE_END, "utf8");
+        const provePasteSupport = row.kind !== "shell" ? void 0 : async () => {
+          const c = client;
+          const pane = viewer.pane;
+          if (!c || !pane || viewer.finished) return false;
+          const mode = await c.command(
+            `display-message -p -t ${pane} '#{bracket_paste_flag}'`
+          );
+          if (mode.ok && mode.lines.at(-1)?.trim() === "1") return true;
+          refusePaste(
+            "multiline paste needs bracketed-paste support \u2014 this shell did not request it"
+          );
+          return false;
+        };
+        queueInput(bytes, provePasteSupport);
       },
       resize(nextCols, nextRows) {
         const next = dimensions(nextCols, nextRows);
@@ -12330,6 +12734,32 @@ function createHttp(core2, {
               json(res, 200, { ok: true, arm_token: core2.armUnsupervised() });
               return;
             }
+            if (url.pathname === "/api/repos/preflight") {
+              const body2 = asRecord(ev);
+              if (typeof body2["repo"] !== "string") {
+                json(res, 400, { ok: false, reason: "repo must be a string" });
+                return;
+              }
+              for (const key of ["repo_host", "repo_transport", "repo_org"]) {
+                if (body2[key] != null && typeof body2[key] !== "string") {
+                  json(res, 400, { ok: false, reason: `${key} must be a string` });
+                  return;
+                }
+              }
+              logExec(url.pathname, req);
+              core2.preflightRepo({
+                repo: body2["repo"],
+                repo_host: body2["repo_host"] ?? null,
+                repo_transport: body2["repo_transport"] ?? null,
+                repo_org: body2["repo_org"] ?? null
+              }).then((out) => {
+                json(res, out.status, out.body);
+              }).catch((err) => {
+                console.error("fleetd repo preflight error:", err);
+                json(res, 500, { ok: false, reason: "Git access check failed internally" });
+              });
+              return;
+            }
             if (url.pathname === "/api/spawn") {
               if (!validateSpawnRequest(ev).ok) {
                 json(res, 400, { ok: false, reason: "spawn body must be a JSON object" });
@@ -12592,6 +13022,7 @@ function createHttp(core2, {
       if (!frame || typeof frame !== "object") return;
       const fr = frame;
       if (fr["t"] === "in" && typeof fr["data"] === "string") data.handle.input(fr["data"]);
+      else if (fr["t"] === "paste" && typeof fr["data"] === "string") data.handle.paste(fr["data"]);
       else if (fr["t"] === "resize") data.handle.resize(fr["cols"], fr["rows"]);
     },
     close(ws) {

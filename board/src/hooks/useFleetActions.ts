@@ -27,6 +27,7 @@ import type { FeedbackNote } from './useFeedbackStrip.ts';
 interface FleetSpawnLike {
   spawn_id: string;
   tmux_window: string | null;
+  status?: string;
 }
 interface Session {
   session_id: string;
@@ -74,6 +75,7 @@ interface KillAsk {
   callsign: string;
   window: string;
   alive: boolean;
+  provisioning: boolean;
 }
 interface ArmAsk {
   sessionId: string;
@@ -270,6 +272,7 @@ export function useFleetActions({
       callsign: s.callsign || s.session_id,
       window: s.spawn.tmux_window ?? '',
       alive: s.col !== 'offline',
+      provisioning: s.spawn.status === 'provisioning',
     });
   }, []);
   const doKill = async () => {
@@ -281,8 +284,17 @@ export function useFleetActions({
     // otherwise. `alive` is exactly that condition (see the dialog's warning).
     const res = await killSpawn(spawnId, alive);
     if (res.ok && res.json?.ok !== false) {
+      const cancelling = res.json?.status === 'cancelling';
+      const cancelled = res.json?.status === 'cancelled';
       showNote(
-        { hd: '✓ KILLED', msg: `${callsign} — pane killed · worktree and branch left on disk` },
+        cancelling
+          ? { hd: '◌ CANCELING', msg: `${callsign} — stopping repository provisioning…` }
+          : cancelled
+            ? { hd: '✓ CANCELED', msg: `${callsign} — repository provisioning canceled` }
+            : {
+                hd: '✓ KILLED',
+                msg: `${callsign} — pane killed · worktree and branch left on disk`,
+              },
         8000,
       );
     } else {

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useEffectEvent, useRef, useState } from 'react';
 import { Terminal, type ITheme } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { ClipboardAddon, type IClipboardProvider } from '@xterm/addon-clipboard';
@@ -12,7 +12,6 @@ import {
   isMacUA,
   isTermCopyChord,
   isTermPasteChord,
-  pasteTextSafe,
   termChordHints,
   unwrapTmuxPassthrough,
 } from '../util.ts';
@@ -23,7 +22,7 @@ import {
 //
 // Speaks the daemon's /ws/term JSON-frame contract:
 //   server → {t:'init', cols, rows, screen} · {t:'out', data} · {t:'exit', reason} · {t:'err', reason}
-//   client → {t:'in', data} · {t:'resize', cols, rows}
+//   client → {t:'in', data} · {t:'paste', data} · {t:'resize', cols, rows}
 //
 // `live` is what makes a grid possible. Every open pane STREAMS, but only the
 // one the human is focused on may TYPE: keystrokes are irreversible and land in
@@ -175,7 +174,7 @@ interface WsFrame {
 // a defensive `?.` kept verbatim; this structural view (fields optional) keeps
 // that guard honest while the real Terminal flows in structurally.
 interface TermModesView {
-  modes?: { bracketedPasteMode?: boolean; mouseTrackingMode?: string };
+  modes?: { mouseTrackingMode?: string };
 }
 
 // The one field TermPane reads off GET /health (fetchHealth returns unknown).
@@ -231,13 +230,16 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
   // change (a new spawn deserves a fresh budget).
   const [attempt, setAttempt] = useState(0);
   const retriesRef = useRef(0);
+  const reportNote = useEffectEvent((next: TermNote | null) => {
+    onNote?.(next);
+  });
   useEffect(() => {
     retriesRef.current = 0;
   }, [spawnId]);
 
   useEffect(() => {
     noteRef.current = note;
-    onNote?.(note);
+    reportNote(note);
   }, [note]);
 
   useEffect(() => {
@@ -348,6 +350,8 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
         if (f.screen) term.write(write(f.screen));
       } else if (f.t === 'out') {
         term.write(write(f.data ?? ''));
+      } else if (f.t === 'paste-refused') {
+        flash('err', f.reason ?? 'multiline paste unavailable in this pane');
       } else if (f.t === 'exit') {
         end('exit', `agent ended — ${(f.reason ?? '') || 'pane closed'}`);
       } else if (f.t === 'err') {
@@ -404,6 +408,11 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
     const sendIn = (data: string): boolean => {
       if (st.done || term.options.disableStdin || ws.readyState !== WebSocket.OPEN) return false;
       ws.send(JSON.stringify({ t: 'in', data }));
+      return true;
+    };
+    const sendPaste = (data: string): boolean => {
+      if (st.done || term.options.disableStdin || ws.readyState !== WebSocket.OPEN) return false;
+      ws.send(JSON.stringify({ t: 'paste', data }));
       return true;
     };
 
@@ -490,9 +499,8 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
       // Ctrl+V: take the chord away from xterm (which would send ^V) but leave
       // the event ALONE otherwise — no preventDefault — so the browser performs
       // its own trusted paste. xterm's paste handler then does the bracketing
-      // when the pane asked for it; the capture-phase paste listener refuses
-      // the multi-line case when it did not (see onPaste). See isTermPasteChord
-      // for why a remote terminal must not send ^V here.
+      // when the pane asked for it. See isTermPasteChord for why a remote
+      // terminal must not send ^V here.
       if (isTermPasteChord(e, IS_MAC)) return false;
       if (e.type !== 'keydown' || e.key !== 'Enter' || e.metaKey) return true;
       if (!(e.shiftKey || e.ctrlKey || e.altKey)) return true; // bare Enter: submit, as always
@@ -511,33 +519,22 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
     // must never submit on its own.
     //
     // Capture phase, so this runs before xterm's paste listener on the hidden
-    // textarea inside screenRef. A clipboard with no image falls through
-    // untouched — plain text paste behaves exactly as it always has. Routing
-    // the typed path through sendIn keeps the grid's one-tile-types discipline:
+    // textarea inside screenRef. Single-line text falls through untouched.
+    // Multi-line text takes the daemon paste path: it is serialized with every
+    // keystroke and arrives as ONE bracketed composer edit even if this fresh
+    // xterm viewer has not reconstructed DEC mode 2004 yet. Routing both that
+    // paste and the typed image path through the same live-pane gate keeps the
+    // grid's one-tile-types discipline:
     // a non-live tile refuses at the same gate a keystroke would (and we skip
     // the upload too — no point shipping bytes nothing may type).
     const onPaste = (e: ClipboardEvent) => {
       const item = imageFromClipboard(e.clipboardData?.items);
       if (!item) {
-        // Text paste. xterm brackets it ONLY while the program in the pane has
-        // enabled DEC mode 2004 — and the board cannot know it has: a fresh
-        // viewer seeds its screen from capture-pane, which carries cells, not
-        // terminal mode state, so this emulator comes up with
-        // bracketedPasteMode false even when the agent asked for it. With the
-        // mode off (or unreconstructable — same thing here) xterm sends the
-        // text VERBATIM, and in a shell like dash each newline executes as it
-        // arrives: a multi-line paste submits itself line by line. That case
-        // is refused outright — it is the whole reason this listener exists.
-        // Single-line text can never self-submit, so it falls through.
         const text = e.clipboardData?.getData('text/plain') ?? '';
-        if (!pasteTextSafe(text, (term as TermModesView).modes?.bracketedPasteMode)) {
-          e.preventDefault();
-          e.stopPropagation();
-          flash(
-            'err',
-            'multi-line paste blocked — this pane did not ask for bracketed paste (a shell like dash), so pasting would run each line as it lands. Paste one line at a time.',
-          );
-        }
+        if (!/[\r\n]/.test(text)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (!sendPaste(text)) flash('err', 'pane lost focus — paste discarded');
         return;
       }
       e.preventDefault();

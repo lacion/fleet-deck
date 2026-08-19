@@ -44,6 +44,7 @@ interface TermRecord {
 type ServerFrame =
   | { t: 'init'; cols: number; rows: number; screen: string }
   | { t: 'out'; data: string }
+  | { t: 'paste-refused'; reason: string }
   | { t: 'err'; reason: string }
   | { t: 'exit'; reason: string };
 type FrameOf<K extends ServerFrame['t']> = Extract<ServerFrame, { t: K }>;
@@ -116,6 +117,12 @@ async function createSpawn(daemon: Daemon, cwd: string): Promise<SpawnResponse> 
   return res.json as SpawnResponse;
 }
 
+async function createShellSpawn(daemon: Daemon, cwd: string): Promise<SpawnResponse> {
+  const res = await postJson(`${daemon.baseUrl}/api/spawn`, { kind: 'shell', cwd });
+  assert.equal(res.status, 200, res.text);
+  return res.json as SpawnResponse;
+}
+
 function termUrl(daemon: Daemon, spawnId: string, cols: number, rows: number): string {
   // 0.16.0: /ws/term requires the bearer at upgrade (?t= carries it for WS).
   return `${daemon.baseUrl.replace('http', 'ws')}/ws/term?spawn=${spawnId}&cols=${String(cols)}&rows=${String(rows)}&t=${daemon.token}`;
@@ -159,6 +166,24 @@ test('live terminal WS seeds, streams, relays hex input/resize, and kills its co
     () => records(record).some((r) => r.line === 'send-keys -t %1 -H 1b 0d'),
     'ESC CR relayed as bytes',
   );
+
+  // A multiline browser paste is ONE bracketed-paste transaction even when
+  // this viewer's reconstructed xterm mode is off. Its embedded END marker is
+  // removed before the bytes reach the pane, CRLF is normalized like xterm,
+  // and the whole transaction keeps its FIFO slot ahead of the following key.
+  ws.send(JSON.stringify({ t: 'paste', data: `one\n${ESC}[201~two\r\né` }));
+  ws.send(JSON.stringify({ t: 'in', data: 'Z' }));
+  const pasteLine =
+    'send-keys -t %1 -H 1b 5b 32 30 30 7e 6f 6e 65 0d 74 77 6f 0d c3 a9 1b 5b 32 30 31 7e';
+  await waitUntil(() => records(record).some((r) => r.line === pasteLine), 'atomic paste bytes');
+  await waitUntil(
+    () => records(record).some((r) => r.line === 'send-keys -t %1 -H 5a'),
+    'post-paste key',
+  );
+  const inputLines = records(record)
+    .map((r) => r.line)
+    .filter((line): line is string => typeof line === 'string' && line.startsWith('send-keys '));
+  assert.ok(inputLines.indexOf(pasteLine) < inputLines.indexOf('send-keys -t %1 -H 5a'));
 
   // v1.9: geometry is set on the WINDOW, not on the client. `refresh-client -C`
   // sized whoever was attached — which is precisely what made N tiles fight over
@@ -216,6 +241,60 @@ test('bracketed-paste flag replays the mode-set into the viewer seed', async (t)
   assert.equal(
     init.screen,
     `${ESC}[H${ESC}[2Jseed %1 ${ESC}[31mred${ESC}[0m${ESC}[4;3H${ESC}[?2004h`,
+  );
+});
+
+test('a shell paste is atomic only when its current application advertises support', async (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-term-shell-paste-'));
+  const record = path.join(dir, 'term.jsonl');
+  const daemon = await startDaemon({ env: env(record, { FLEETDECK_TEST_BRACKET_PASTE: '1' }) });
+  t.after(async () => {
+    await daemon.stop();
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+  const spawned = await createShellSpawn(daemon, dir);
+  const { ws, frames } = connect(termUrl(daemon, spawned.spawn_id, 90, 30));
+  t.after(() => ws.close());
+  await waitUntil(() => frames.find(frameOf('init')), 'init frame');
+
+  ws.send(JSON.stringify({ t: 'paste', data: 'one\ntwo' }));
+  await waitUntil(
+    () =>
+      records(record).some(
+        (r) =>
+          r.line === 'send-keys -t %1 -H 1b 5b 32 30 30 7e 6f 6e 65 0d 74 77 6f 1b 5b 32 30 31 7e',
+      ),
+    'supported shell atomic paste',
+  );
+  assert.ok(
+    records(record).some((r) => r.line === "display-message -p -t %1 '#{bracket_paste_flag}'"),
+    'shell support is proved at paste time rather than inferred from a stale viewer seed',
+  );
+});
+
+test('a shell without bracketed-paste support refuses multiline text without typing it', async (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-term-shell-no-paste-'));
+  const record = path.join(dir, 'term.jsonl');
+  const daemon = await startDaemon({ env: env(record) });
+  t.after(async () => {
+    await daemon.stop();
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+  const spawned = await createShellSpawn(daemon, dir);
+  const { ws, frames } = connect(termUrl(daemon, spawned.spawn_id, 90, 30));
+  t.after(() => ws.close());
+  await waitUntil(() => frames.find(frameOf('init')), 'init frame');
+
+  ws.send(JSON.stringify({ t: 'paste', data: 'one\ntwo' }));
+  const refused = await waitUntil(
+    () => frames.find(frameOf('paste-refused')),
+    'unsupported shell refusal',
+  );
+  assert.match(refused.reason, /did not request it/);
+  assert.equal(
+    records(record).filter((r) => r.line?.startsWith('send-keys ')).length,
+    0,
+    'an unsupported shell receives no clipboard bytes, especially no live newlines',
   );
 });
 
@@ -415,10 +494,14 @@ test('live terminal WS ends the viewer when its pane is dead under remain-on-exi
   const spawned = await createSpawn(daemon, dir);
   const { ws, frames, closes } = connect(termUrl(daemon, spawned.spawn_id, 80, 24));
 
-  await waitUntil(() => frames.find(frameOf('init')), 'init frame');
+  const init = await waitUntil(() => frames.find(frameOf('init')), 'init frame');
   const exit = await waitUntil(
     () => frames.find(frameOf('exit')),
     'exit frame from the pane_dead poll',
+  );
+  assert.ok(
+    frames.indexOf(init) < frames.indexOf(exit),
+    'a death detected during open is delivered immediately after the init frame',
   );
   assert.match(exit.reason, /pane closed/);
   assert.equal(

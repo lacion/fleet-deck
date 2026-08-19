@@ -1,6 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { spawnSession, saveSettings, reasonOf, armUnsupervised, type ApiResult } from '../api.ts';
-import { batchTotal, expandBatchTasks, parseBatchTasks } from '../util.ts';
+import {
+  spawnSession,
+  preflightRepo,
+  saveSettings,
+  reasonOf,
+  armUnsupervised,
+  type ApiResult,
+  type GitAccessHelp,
+} from '../api.ts';
+import { branchProblem } from '../branch.ts';
+import { batchTotal, copyText, expandBatchTasks, parseBatchTasks } from '../util.ts';
 import { useModal } from '../useModal.ts';
 import DirPicker from './DirPicker.tsx';
 import type { SessionEntry } from '../../../contracts/index.ts';
@@ -113,29 +122,9 @@ interface SpawnFormProps {
   planMode: boolean;
   planId: number | null;
   onClose: () => void;
+  onOpenTerminal: (session: SessionEntry) => void;
   onSpawned?: ((json: SpawnJson) => Promise<SpawnResult | null>) | undefined;
 }
-
-// v2.2 repo+branch mode — client-side mirrors of the daemon's input gates, for
-// instant feedback only: the DAEMON is the authority (git check-ref-format gets
-// the last word on a branch, parseRepoInput on a repo), same doctrine as
-// validSuffix in util.js. Refusing the obvious junk here just saves a POST.
-const branchProblem = (b: string): string | null => {
-  if (b.length > 200) return 'too long for a branch name';
-  if (b.startsWith('-')) return 'a branch cannot start with “-”';
-  let hasControl = false;
-  for (let i = 0; i < b.length; i++) {
-    if (b.charCodeAt(i) <= 0x1f) {
-      hasControl = true;
-      break;
-    }
-  }
-  if (/[\s~^:?*[\\]/.test(b) || hasControl)
-    return 'no spaces or git-special characters (~ ^ : ? * [ \\)';
-  if (b.includes('..') || b.includes('@{')) return 'no “..” or “@{”';
-  if (b.endsWith('.lock') || b.endsWith('/') || b.startsWith('/')) return 'not a valid ref name';
-  return null;
-};
 
 // The repo's basename, for the destination preview — works for https/ssh URLs,
 // scp-like git@host:org/repo, org/repo shorthand (incl. gitlab subgroups —
@@ -225,6 +214,7 @@ export default function SpawnForm({
   planMode,
   planId,
   onClose,
+  onOpenTerminal,
   onSpawned,
 }: SpawnFormProps) {
   const [cwd, setCwd] = useState(prefillCwd || '');
@@ -261,13 +251,16 @@ export default function SpawnForm({
   // in the spawn body; single-use, 60s TTL, re-fetched on every arm.
   const armTokenRef = useRef<string | null>(null);
   const armRequestSeq = useRef(0);
-  const [busy, setBusy] = useState(false);
+  const [submitPhase, setSubmitPhaseState] = useState<'idle' | 'checking-access' | 'spawning'>(
+    'idle',
+  );
+  const busy = submitPhase !== 'idle';
   // React state paints the button; the ref closes the same-render double-click
   // window so one gesture can never launch two billed sessions.
   const submitBusyRef = useRef(false);
-  const setSubmitBusy = (on: boolean) => {
+  const setSubmitBusy = (on: boolean, phase: 'checking-access' | 'spawning' = 'spawning') => {
     submitBusyRef.current = on;
-    setBusy(on);
+    setSubmitPhaseState(on ? phase : 'idle');
   };
   const [err, setErr] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null); // "spawning — <callsign>"
@@ -283,8 +276,9 @@ export default function SpawnForm({
   // but this user is on github AND gitlab, so shorthand needs an explicit pick.
   const [repoHost, setRepoHost] = useState<'github' | 'gitlab'>('github'); // 'github' | 'gitlab'
   // v2.5 — clone transport for `org/repo` shorthand: ssh (scp-style git@…) or
-  // https. Seeded ONCE, at mount, from the daemon's RESOLVED setting (ssh is the
-  // durable default — this fleet's forge auth is SSH-only).
+  // https. Seeded ONCE, at mount, from the daemon's RESOLVED setting (Coder
+  // defaults to HTTPS because external-auth supplies HTTPS credentials; a
+  // standalone daemon keeps the historical SSH default).
   // DOCTRINE: this is deliberately NOT live-adopted from later snapshot frames
   // the way reposDir is. A transport pill the user is looking at must never flip
   // under them — not when an unrelated frame arrives, and least of all when
@@ -295,6 +289,11 @@ export default function SpawnForm({
   const [repoTransport, setRepoTransport] = useState<'ssh' | 'https'>(
     () => settings?.repo_transport?.value ?? 'ssh',
   );
+  const [gitAccess, setGitAccess] = useState<{
+    state: 'idle' | 'checking' | 'ready';
+    issue: GitAccessHelp | null;
+  }>({ state: 'idle', issue: null });
+  const [sshKeyCopied, setSshKeyCopied] = useState(false);
   // Bare repo names resolve through this namespace when they are not already in
   // the local catalog. Seeded ONCE like transport (never flips under the human).
   // On Coder the daemon resolves `textemma` unless an env/persisted choice wins.
@@ -374,6 +373,26 @@ export default function SpawnForm({
     const sess = (sessions ?? []).find((s) => s.session_id === watchSid);
     if (!sess) return undefined; // not in a frame yet — the cap below bounds the wait
     if (watchDone.current) return undefined;
+    if (sess.spawn?.attention === 'folder-trust') {
+      // Claude deliberately refuses to relay project-trust/MCP-consent dialogs.
+      // Do not leave the spawn modal green and "Spawning…" forever: the pane is
+      // ready and the next required action is local human approval. Hand the
+      // user directly to the owned terminal; never synthesize the approval.
+      watchDone.current = true;
+      clearTimeout(watchTimer.current ?? undefined);
+      setSubmitBusy(false);
+      setNote('approval required — trust this new folder once in the terminal');
+      onOpenTerminal(sess);
+      return undefined;
+    }
+    if (sess.spawn?.attention === 'pane-unreadable') {
+      watchDone.current = true;
+      clearTimeout(watchTimer.current ?? undefined);
+      setSubmitBusy(false);
+      setNote('terminal needs a look before Claude can continue');
+      onOpenTerminal(sess);
+      return undefined;
+    }
     if (sess.col === 'offline') {
       // ANY offline transition ends the watch as a failure — a tombstone
       // without the "spawn failed:" prefix (daemon crash mid-clone, watchdog
@@ -401,7 +420,7 @@ export default function SpawnForm({
     // still queued: keep narrating the card's own note
     if (sess.note && sess.note !== 'spawning…') setNote(sess.note);
     return undefined;
-  }, [watchSid, sessions]);
+  }, [watchSid, sessions, onOpenTerminal]);
 
   // v2.2 — snapshots keep flowing while the form is open; adopt a repos-root
   // that arrives (or changes under us) ONLY while the box is untouched — a
@@ -413,6 +432,13 @@ export default function SpawnForm({
       setReposDir(v);
     }
   }, [settings?.repos_dir?.resolved]);
+
+  // Access is a property of the exact origin spelling. Any edit retires the
+  // previous verdict; the next explicit check or Spawn re-probes it.
+  useEffect(() => {
+    setGitAccess({ state: 'idle', issue: null });
+    setSshKeyCopied(false);
+  }, [repo, repoHost, repoTransport, defaultOrg]);
 
   // distinct places the fleet has been seen working → cwd suggestions
   const suggestions = [
@@ -647,15 +673,40 @@ export default function SpawnForm({
     return false;
   };
 
+  const checkRepoAccess = async (body: SpawnBody = baseBody()): Promise<boolean> => {
+    if (!repoMode) return true;
+    setGitAccess({ state: 'checking', issue: null });
+    const res = await preflightRepo({
+      repo: body.repo,
+      repo_host: body.repo_host,
+      repo_transport: body.repo_transport,
+      repo_org: body.repo_org,
+    });
+    if (res.ok && res.json?.ok) {
+      setGitAccess({ state: 'ready', issue: null });
+      setErr(null);
+      return true;
+    }
+    const issue = res.json?.git_access ?? null;
+    setGitAccess({ state: 'idle', issue });
+    // Structured guidance owns the error surface when present. Repeating its
+    // generic HTTP reason at the bottom of the modal only adds noise.
+    setErr(issue ? null : reasonOf(res, `Git access check failed (${res.status})`));
+    return false;
+  };
+
   // One agent — the original path, byte for byte, including the plan-mark hook.
-  const submitOne = async () => {
-    const body = baseBody();
+  const submitOne = async (bodySeed?: SpawnBody) => {
+    const body = bodySeed ? { ...bodySeed } : baseBody();
     if (prompt.trim()) body.prompt = prompt.trim();
     const res = await spawnSession(body);
     // The capability is single-use and may have been consumed even when the
     // transport answer is a failure. A retry must require a fresh explicit arm.
     if (unsupEffective && armed) armTokenRef.current = null;
     if (!(res.ok && res.json?.ok)) {
+      if (res.json?.git_access) {
+        setGitAccess({ state: 'idle', issue: res.json.git_access });
+      }
       setErr(reasonOf(res, `spawn failed (${res.status})`));
       if (unsupEffective && armed) clearArm();
       setSubmitBusy(false);
@@ -747,6 +798,9 @@ export default function SpawnForm({
         const sb = res.json as SpawnJson;
         launched.push((sb.callsign ?? '') || (sb.session_id ?? ''));
       } else {
+        if (res?.json?.git_access) {
+          setGitAccess({ state: 'idle', issue: res.json.git_access });
+        }
         failed.push({
           prompt: p,
           reason: res ? reasonOf(res, `spawn failed (${res.status})`) : 'daemon unreachable',
@@ -817,15 +871,28 @@ export default function SpawnForm({
 
   const submit = async () => {
     if (!targetReady || submitBusyRef.current || note || blocked || emptyBatch) return;
-    setSubmitBusy(true);
+    // One immutable click snapshot crosses the access-check await and becomes
+    // the eventual spawn body. Repository controls are locked for the same
+    // interval below, but the snapshot is the authority even if React already
+    // queued an input event before the disabled state painted.
+    const body = baseBody();
+    setSubmitBusy(true, repoMode ? 'checking-access' : 'spawning');
     setErr(null);
     try {
+      // A repo spawn first proves the exact origin is readable. Until this
+      // returns true there is no session, card, worktree, clone, or settings
+      // write to clean up — "Spawn" is a guided preflight, not a hopeful clone.
+      if (repoMode && !(await checkRepoAccess(body))) {
+        setSubmitBusy(false);
+        return;
+      }
+      setSubmitBusy(true, 'spawning');
       if (!(await persistSetupDefault())) {
         setSubmitBusy(false);
         return;
       }
       if (batching) await submitBatch();
-      else await submitOne();
+      else await submitOne(body);
     } catch {
       setErr('daemon unreachable');
       if (unsupEffective && armed) clearArm();
@@ -857,6 +924,7 @@ export default function SpawnForm({
   // operation. Closing while the initial POST/batch is still in flight is not
   // safe because reopening can duplicate billed sessions.
   const closeAllowed = !busy || !!watchSid || !!note;
+  const repoFieldsLocked = busy || gitAccess.state === 'checking';
   const requestClose = () => {
     if (closeAllowed) onClose();
   };
@@ -905,6 +973,7 @@ export default function SpawnForm({
                   role="radio"
                   aria-checked={!repoMode}
                   className={`fd-target${!repoMode ? ' on' : ''}`}
+                  disabled={repoFieldsLocked}
                   onClick={() => {
                     setTargetMode('dir');
                     if (err) setErr(null);
@@ -917,6 +986,7 @@ export default function SpawnForm({
                   role="radio"
                   aria-checked={repoMode}
                   className={`fd-target${repoMode ? ' on' : ''}`}
+                  disabled={repoFieldsLocked}
                   onClick={() => {
                     setTargetMode('repo');
                     setBatch(false);
@@ -997,6 +1067,7 @@ export default function SpawnForm({
                   list="fd-repo-suggest"
                   placeholder="repo (uses default org) · org/repo · https://… · git@…"
                   value={repo}
+                  disabled={repoFieldsLocked}
                   onChange={(e) => {
                     setRepo(e.target.value);
                     setDirNote(null);
@@ -1008,6 +1079,7 @@ export default function SpawnForm({
                   type="button"
                   className="fd-browsebtn"
                   title="browse for a local repo folder"
+                  disabled={repoFieldsLocked}
                   onClick={() => {
                     setPickerFor('repo');
                   }}
@@ -1028,6 +1100,7 @@ export default function SpawnForm({
                       className="fd-input"
                       placeholder="owner or group/subgroup"
                       value={defaultOrg}
+                      disabled={repoFieldsLocked}
                       onChange={(e) => {
                         setDefaultOrg(e.target.value);
                         setOrgNote(null);
@@ -1075,7 +1148,7 @@ export default function SpawnForm({
                       role="radio"
                       aria-checked={effectiveHost === 'github'}
                       className={`fd-target${effectiveHost === 'github' ? ' on' : ''}`}
-                      disabled={subgrouped}
+                      disabled={repoFieldsLocked || subgrouped}
                       title={
                         subgrouped
                           ? 'github shorthand is org/repo — subgroups need gitlab or a full URL'
@@ -1093,6 +1166,7 @@ export default function SpawnForm({
                       role="radio"
                       aria-checked={effectiveHost === 'gitlab'}
                       className={`fd-target${effectiveHost === 'gitlab' ? ' on' : ''}`}
+                      disabled={repoFieldsLocked}
                       onClick={() => {
                         setRepoHost('gitlab');
                         if (err) setErr(null);
@@ -1103,9 +1177,9 @@ export default function SpawnForm({
                   </div>
                 </div>
               )}
-              {/* v2.5 — clone transport for the shorthand: ssh default (this
-                  fleet's forge auth is SSH), https selectable. SAME visibility as
-                  the host toggle above (showHostToggle) and the same pill look
+              {/* v2.5 — clone transport for shorthand. The daemon supplies the
+                  environment-aware default; both options stay explicit here.
+                  SAME visibility as the host toggle above and the same pill look
                   (fd-fsmodes / fd-target). No save on click — the accepted spawn
                   persists the pick daemon-side (D2); this is a live preview knob. */}
               {showHostToggle && (
@@ -1117,6 +1191,7 @@ export default function SpawnForm({
                       role="radio"
                       aria-checked={repoTransport === 'ssh'}
                       className={`fd-target${repoTransport === 'ssh' ? ' on' : ''}`}
+                      disabled={repoFieldsLocked}
                       onClick={() => {
                         setRepoTransport('ssh');
                         if (err) setErr(null);
@@ -1129,6 +1204,7 @@ export default function SpawnForm({
                       role="radio"
                       aria-checked={repoTransport === 'https'}
                       className={`fd-target${repoTransport === 'https' ? ' on' : ''}`}
+                      disabled={repoFieldsLocked}
                       onClick={() => {
                         setRepoTransport('https');
                         if (err) setErr(null);
@@ -1139,12 +1215,89 @@ export default function SpawnForm({
                   </div>
                 </div>
               )}
+              <div className="frow top">
+                <span className="fl">git access</span>
+                <div className={`fd-gitaccess${gitAccess.issue ? ' bad' : ''}`} aria-live="polite">
+                  <div className="fd-gitaccess-head">
+                    <span>
+                      {gitAccess.state === 'checking'
+                        ? 'checking the exact repository… this can take up to 15 seconds'
+                        : gitAccess.state === 'ready'
+                          ? '✓ repository access ready'
+                          : (gitAccess.issue?.title ??
+                            'check before spawning — FleetDeck never stores Git tokens')}
+                    </span>
+                    <button
+                      type="button"
+                      className="fd-gitcheck"
+                      disabled={repoFieldsLocked || !repo.trim()}
+                      onClick={() => void checkRepoAccess()}
+                    >
+                      {gitAccess.state === 'checking' ? 'Checking…' : 'Check access'}
+                    </button>
+                  </div>
+                  {gitAccess.issue && (
+                    <>
+                      {gitAccess.issue.action && (
+                        <div className="fd-gitaccess-action">{gitAccess.issue.action}</div>
+                      )}
+                      <div className="fd-gitaccess-controls">
+                        {gitAccess.issue.auth_url && (
+                          <a
+                            className="fd-gitlogin"
+                            href={gitAccess.issue.auth_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            {gitAccess.issue.auth_label ?? 'Open authentication'} ↗
+                          </a>
+                        )}
+                        {gitAccess.issue.suggested_transport === 'https' && shorthand && (
+                          <button
+                            type="button"
+                            className="fd-gitcheck"
+                            disabled={repoFieldsLocked}
+                            onClick={() => {
+                              setRepoTransport('https');
+                              setErr(null);
+                            }}
+                          >
+                            Use HTTPS instead
+                          </button>
+                        )}
+                        {gitAccess.issue.cli_command && <code>{gitAccess.issue.cli_command}</code>}
+                      </div>
+                      {gitAccess.issue.ssh_public_key && (
+                        <div className="fd-gitkey">
+                          <code>{gitAccess.issue.ssh_public_key}</code>
+                          <button
+                            type="button"
+                            className="fd-gitcheck"
+                            onClick={() => {
+                              void copyText(gitAccess.issue?.ssh_public_key).then(setSshKeyCopied);
+                            }}
+                          >
+                            {sshKeyCopied ? '✓ copied' : 'Copy SSH key'}
+                          </button>
+                        </div>
+                      )}
+                      {gitAccess.issue.detail && (
+                        <details>
+                          <summary>Git diagnostic</summary>
+                          <pre>{gitAccess.issue.detail}</pre>
+                        </details>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
               <div className="frow">
                 <span className="fl">branch *</span>
                 <input
                   className="fd-input"
                   placeholder="existing branch, or a new one to create"
                   value={branch}
+                  disabled={busy}
                   onChange={(e) => {
                     setBranch(e.target.value);
                     if (err) setErr(null);
@@ -1166,6 +1319,7 @@ export default function SpawnForm({
                       type="radio"
                       name="fd-branch-mode"
                       checked={branchMode === 'worktree'}
+                      disabled={busy}
                       onChange={() => {
                         setBranchMode('worktree');
                       }}
@@ -1177,6 +1331,7 @@ export default function SpawnForm({
                       type="radio"
                       name="fd-branch-mode"
                       checked={branchMode === 'in-place'}
+                      disabled={busy}
                       onChange={() => {
                         setBranchMode('in-place');
                       }}
@@ -1618,6 +1773,8 @@ export default function SpawnForm({
             <span className="note">
               spawning {progress.done} of {progress.total}…
             </span>
+          ) : submitPhase === 'checking-access' && !note ? (
+            <span className="note">checking repository access before creating a session…</span>
           ) : busy && !note ? (
             <span className="note">
               spawning — the request can take a while (a fresh clone holds it open up to 2 min)…
@@ -1652,7 +1809,9 @@ export default function SpawnForm({
             disabled={!targetReady || busy || !!note || blocked || emptyBatch}
           >
             {busy
-              ? 'Spawning…'
+              ? submitPhase === 'checking-access'
+                ? 'Checking access…'
+                : 'Spawning…'
               : shellOnly
                 ? 'Open shell ⏎'
                 : total > 1

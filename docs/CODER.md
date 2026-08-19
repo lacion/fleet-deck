@@ -29,7 +29,7 @@ resource "coder_script" "fleetdeck" {
       set -e
       # Pin this deliberately. For a fleet rollout, use the immutable runtime
       # pattern below instead of updating a live global install in place.
-      npm install -g fleetdeck@0.23.5
+      npm install -g fleetdeck@0.23.6
 
       # A named coder_app's hostname is <slug>--<workspace>--<owner> — the agent
       # name appears only in raw-PORT app hostnames (see "The exact hostname" below).
@@ -101,9 +101,9 @@ A reliable workspace-start script has these properties:
 7. `fleetdeck service install` and `service start` run through the absolute validated runtime only
    after the pinned plugin source is ready. Fleet Deck re-enables only a disable it owns, and only
    after service health succeeds; a manual disable remains untouched.
-8. `compatibility.json` is the sole Claude range definition. The range is never copied into the Coder
-   template, and every hook independently rechecks the exact running Claude process in case it changed
-   after workspace startup.
+8. `compatibility.json` is the sole Claude minimum-version definition. The minimum is never copied
+   into the Coder template, and every hook independently rechecks the exact running Claude process in
+   case it changed after workspace startup.
 9. Claude Code remains under the engineer's control. The image installs Claude's normal current
    release and does not set `DISABLE_AUTOUPDATER`; engineers may update or downgrade independently.
 10. Every network call and lock acquisition has a timeout. An EXIT trap removes only the exact staging
@@ -263,7 +263,7 @@ runtime compatibility check passes. Do not rely on an image-baked copy when the 
 `~/.claude`, because that mount hides the image layer:
 
 ```sh
-FLEETDECK_VERSION=0.23.5
+FLEETDECK_VERSION=0.23.6
 claude plugin marketplace add "lacion/fleet-deck@v$FLEETDECK_VERSION" --scope user
 claude plugin install fleetdeck@fleetdeck
 ```
@@ -279,8 +279,9 @@ repair succeeds. A valid exact plugin may remain disabled by the engineer; sourc
 state are separate facts. Serialize this with every other writer of Claude's configuration and bound
 both the lock acquisition and network repair so a GitHub outage never blocks workspace login.
 
-If Claude is outside the range in `compatibility.json`, do not repair the marketplace or start Fleet
-Deck. Stop the service and quarantine an enabled user-scope plugin quietly. Publish the owner-only
+If Claude is older than the minimum in `compatibility.json`, prerelease, or unidentifiable, do not
+repair the marketplace or start Fleet Deck. Stop the service and quarantine an enabled user-scope
+plugin quietly. Publish the owner-only
 `plugin-disabled-by-compat` marker before attempting that disable so a crash cannot lose ownership of
 the transition; on a later supported start, re-enable only when that marker proves Fleet Deck owns the
 disable. A separate crash-recovery marker preserves a manual disable across uninstall/reinstall
@@ -300,7 +301,7 @@ board up to read the warning.
 - **tmux 3.4+** — every managed Claude agent runs in a pane, and Fleet Deck uses the 3.4 no-start
   probe to avoid attaching to an unintended replacement tmux server.
 - **The `claude` CLI**, on whichever update channel or exact version the engineer chooses. Fleet Deck
-  activates the plugin only when that version is inside `compatibility.json`.
+  activates the plugin only when that stable version meets the minimum in `compatibility.json`.
 
 `fleetdeck doctor` checks the runtime, tmux, Claude CLI and plugin, and exits non-zero if a hard
 requirement is missing.
@@ -320,6 +321,40 @@ exists, it roots two defaults there instead of home:
 
 Both are just seeded defaults: an explicit setting or env var always wins, and
 nothing changes for non-Coder machines.
+
+## Git authentication for repo spawns
+
+Fleet Deck does not own GitHub or GitLab credentials. Before a remote repo
+spawn creates a card, it resolves the exact origin and runs a bounded,
+non-interactive `git ls-remote`. This is the authority: `gh auth status` or
+`glab auth status` can be green while Git itself is still using another
+credential path.
+
+Coder configures Git-over-HTTPS through `GIT_ASKPASS` and its external-auth
+providers, so HTTPS is Fleet Deck's default transport inside Coder. Clicking
+**Spawn** first runs the same access check and creates no card, clone, worktree,
+or session until it passes. If access is missing, the form links to the workspace
+owner's Coder **External authentication** page. Complete the GitHub/GitLab OAuth
+flow there, return to the still-open form, and click **Spawn** again (or use
+**Check access** for an explicit probe).
+
+SSH is a separate authentication path: Coder OAuth does not register the
+Coder-generated SSH key with GitHub or GitLab. The form explains that distinction,
+offers a one-click switch to HTTPS, and—when Coder prints it—shows a copyable
+public key plus the forge's SSH-key settings link. Fleet Deck never auto-accepts
+Claude's project-trust dialog; for a newly cloned directory it opens the owned
+terminal so the user can approve that security boundary once.
+
+The board never asks for, receives, or persists an OAuth token. Outside Coder
+it shows the relevant `gh auth login` or `glab auth login` command instead.
+See Coder's [external Git authentication](https://coder.com/docs/admin/external-auth),
+the [GitHub CLI auth manual](https://cli.github.com/manual/gh_auth_login), and
+the [GitLab CLI documentation](https://docs.gitlab.com/cli/).
+
+Provisioning is cancellable. Kill on a card that still says `cloning…` stops
+the Git process group (including credential/SSH helpers), removes only the
+Fleet Deck temporary checkout, prevents a late tmux launch, and retires the
+card as `spawn cancelled`.
 
 ## Test the complete Coder path locally
 
@@ -350,10 +385,12 @@ Then verify the story, not just the landing page:
 2. With a supported Claude version, `fleetdeck status` and `/health` report `managed: true` and the
    exact pinned **Fleet Deck** version; `claude plugin list --json` reports that same Fleet Deck
    version.
-3. With versions immediately below and above the declared Claude range, workspace startup still
-   succeeds, the Fleet Deck service/plugin stay inactive, and a real Claude session receives no hook
-   stderr, warning, or model context. Return to a supported version and prove only a
-   compatibility-disabled plugin is re-enabled; a manually disabled plugin stays disabled.
+3. With a version immediately below the declared Claude minimum, workspace startup still succeeds,
+   the Fleet Deck service/plugin stay inactive, and a real Claude session receives no hook stderr,
+   warning, or model context. With a future stable version above the currently tested release,
+   Fleet Deck remains active and its strict output firewall preserves the silent fail-open contract.
+   Return from the below-minimum version and prove only a compatibility-disabled plugin is re-enabled;
+   a manually disabled plugin stays disabled.
 4. A normal Coder terminal Claude question renders natively without waiting on the board.
 5. A board-spawned Claude question appears in Needs you, accepts every required answer, and resumes.
 6. Terminal input/output, terminal grid, files, worktrees, compose, rename, share, theme, and density
@@ -400,7 +437,7 @@ themselves), and this knob refuses to combine with LAN mode or `FLEETDECK_REQUIR
 | Daemon refuses to start | It prints the reason on stderr — a malformed trusted origin, or `trust` with nothing to trust. Check `$FLEETDECK_HOME/fleetd.log`. |
 | `Cannot find module .../src/daemon/takeover.ts` | The CLI and package payload are stale or incomplete. Install the current exact release into a clean runtime slot; validate the bundled daemon before switching, then re-run `service install` and `service start`. |
 | Startup says no managed daemon answered within 5 s | Upgrade the CLI. Current startup uses a progressive 30 s readiness deadline. If it still fails, `fleetdeck status` distinguishes an owned slow boot from another process on the port; inspect `fleetd.log`. |
-| Fleet Deck is inactive after a Claude update | Compare `claude --version` with the installed runtime's `compatibility.json`. Claude is intentionally unaffected; install a Fleet Deck release that supports it rather than pinning or silently downgrading the engineer's CLI. |
+| Fleet Deck is inactive after a Claude update | Compare `claude --version` with the installed runtime's `compatibility.json`. Stable versions at or above its minimum should remain active; inspect `fleetdeck doctor`, plugin state, and the compatibility verdict instead of pinning or downgrading Claude. |
 | A manually disabled Fleet Deck plugin comes back | This is a bootstrap bug. Re-enabling is allowed only when the owner-only compatibility marker proves Fleet Deck disabled it; without that marker, preserve the engineer's choice. |
 | `AskUserQuestion` stalls an ordinary terminal | The plugin or daemon is stale. Update both Fleet Deck channels to the same version, re-run `service install`, and start a new Claude session. Current shims require an exact Fleet Deck-owned session marker before any long wait. |
 | Cards appear and never change | The plugin is not installed for the `claude` CLI. Run `fleetdeck doctor`. |
