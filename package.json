@@ -47,6 +47,10 @@
     "effect:p0:exec": "bun scripts/effect-migration/p0-exec-bench.ts",
     "effect:p0:workloads": "bun scripts/effect-migration/p0-workloads.ts",
     "effect:p0:probe": "bun scripts/effect-migration/p0-effect-probe.ts",
+    "effect:p2:check": "bun scripts/effect-migration/check-effect-cohort.ts",
+    "effect:p2:kernel": "bun scripts/effect-migration/p2-kernel-probe.ts",
+    "effect:p2:measure": "bun scripts/effect-migration/check-effect-cohort.ts --measure",
+    "test:bun-platform-conformance": "bun test --timeout 300000 tests/bun-platform-conformance.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p board/tsconfig.json",
     "typecheck:board-tests": "tsc --noEmit -p tsconfig.board-tests.json",
     "lint": "biome lint",
@@ -58,10 +62,13 @@
   "engines": {
     "bun": ">=1.3.14"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@effect/platform-bun": "4.0.0-rc.110",
+    "effect": "4.0.0-rc.110"
+  },
   "devDependencies": {
     "@biomejs/biome": "2.5.8",
-    "@types/bun": "^1.3.14",
+    "@types/bun": "1.3.14",
     "@types/node": "22",
     "@types/ws": "^8.18.1",
     "esbuild": "^0.28.1",

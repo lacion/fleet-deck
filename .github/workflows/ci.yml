@@ -36,6 +36,8 @@ jobs:
           bun-version: 1.3.14
       - run: bun install --frozen-lockfile --ignore-scripts
       - run: cd board && bun install --frozen-lockfile --ignore-scripts
+      - name: Effect cohort, closure, and supply-chain gate
+        run: bun run effect:p2:measure --out "$RUNNER_TEMP/effect-p2-cohort.json"
       - run: bun run typecheck
       - run: bun run ci
 
@@ -60,23 +62,8 @@ jobs:
         with:
           bun-version: 1.3.14
       - run: bun install --frozen-lockfile --ignore-scripts
-      - name: bun:sqlite adapter contract (the dual-seam gate)
-        run: |
-          bun -e '
-            const { openDatabase } = await import("./src/daemon/sqlite.ts");
-            const db = openDatabase(":memory:");
-            db.exec("CREATE TABLE t(id INTEGER PRIMARY KEY, name TEXT)");
-            const r = db.prepare("INSERT INTO t(name) VALUES (?)").run("heron");
-            const one = db.prepare("SELECT name FROM t WHERE id = ?").get(r.lastInsertRowid);
-            const miss = db.prepare("SELECT name FROM t WHERE id = ?").get(999);
-            const all = db.prepare("SELECT id, name FROM t").all();
-            db.close();
-            const ok = one.name === "heron" && miss === undefined
-              && all.length === 1 && typeof r.lastInsertRowid === "number";
-            console.log(JSON.stringify({ got: one.name, missIsUndefined: miss === undefined, rows: all.length }));
-            if (!ok) { console.error("bun:sqlite adapter contract FAILED"); process.exit(1); }
-            console.log("bun:sqlite channel OK");
-          '
+      - name: Generic Bun-platform adapter conformance
+        run: bun run test:bun-platform-conformance
       # Shared CI runners are slow and noisy in exactly the way the macOS lane is;
       # every wait routes through the WAIT_SCALE knob (tests/helpers/wait.ts), so
       # give the Linux gate the same headroom instead of tuning timeouts per flake.
@@ -106,24 +93,14 @@ jobs:
           bun --version
           bun -e 'console.log(`Bun.revision=${Bun.revision}`)'
           uname -a
-      - name: bun:sqlite adapter contract (latest-stable canary)
+      - name: Latest @types/bun generic platform conformance (no lock mutation)
         run: |
-          bun -e '
-            const { openDatabase } = await import("./src/daemon/sqlite.ts");
-            const db = openDatabase(":memory:");
-            db.exec("CREATE TABLE t(id INTEGER PRIMARY KEY, name TEXT)");
-            const r = db.prepare("INSERT INTO t(name) VALUES (?)").run("heron");
-            const one = db.prepare("SELECT name FROM t WHERE id = ?").get(r.lastInsertRowid);
-            const miss = db.prepare("SELECT name FROM t WHERE id = ?").get(999);
-            const all = db.prepare("SELECT id, name FROM t").all();
-            db.close();
-            const ok = one.name === "heron" && miss === undefined
-              && all.length === 1 && typeof r.lastInsertRowid === "number";
-            console.log(JSON.stringify({ got: one.name, missIsUndefined: miss === undefined, rows: all.length }));
-            if (!ok) { console.error("bun:sqlite adapter contract FAILED"); process.exit(1); }
-            console.log("bun:sqlite channel OK");
-          '
-      - run: bun run typecheck
+          sha256sum package.json bun.lock > "$RUNNER_TEMP/fleetdeck-types-canary.sha256"
+          trap 'sha256sum --check "$RUNNER_TEMP/fleetdeck-types-canary.sha256"' EXIT
+          bun add --dev --no-save --ignore-scripts @types/bun@latest
+          bun -e 'console.log(`@types/bun=${require("@types/bun/package.json").version}`)'
+          bun run typecheck
+          bun run test:bun-platform-conformance
       - run: bun run test
         env:
           FLEETDECK_TEST_WAIT_SCALE: 3

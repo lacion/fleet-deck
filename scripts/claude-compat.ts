@@ -13,7 +13,6 @@ import { execFile, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import compatibilityJson from '../compatibility.json' with { type: 'json' };
-import packageJson from '../package.json' with { type: 'json' };
 import { runKey } from '../src/daemon/run-nonce.ts';
 
 export interface ClaudeCompatibilityPolicy {
@@ -83,7 +82,16 @@ const MAX_VERDICT_BYTES = 4096;
 const VERDICT_LIFETIME_MS = 30 * 24 * 3600_000;
 const STALE_RETENTION_MS = VERDICT_LIFETIME_MS + 24 * 3600_000;
 const POLICY = compatibilityJson as ClaudeCompatibilityPolicy;
-const FLEETDECK_VERSION = packageJson.version;
+const FLEETDECK_VERSION = (() => {
+  try {
+    const parsed = JSON.parse(
+      fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+    ) as { version?: unknown };
+    return typeof parsed.version === 'string' && parsed.version ? parsed.version : '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+})();
 
 /** Parse only a stable Claude Code X.Y.Z version (with its known CLI label). */
 export function parseStableClaudeVersion(output: unknown): StableVersion | null {

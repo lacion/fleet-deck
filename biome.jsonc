@@ -118,11 +118,10 @@
   // Biome 2.5.8 noRestrictedImports `patterns.group` gitignore-style globs match
   // the RESOLVED import path (verified: a relative `../../src/daemon/db.ts` from
   // board/src matches `**/src/daemon/**` at any nesting depth), so the directional
-  // bans are fully expressible here. The R2 SUITE test remains the stronger anchor
-  // (a green-or-revert test can't be silenced per-line); this lint is the earlier
-  // signal. The floor-seam ALLOWLIST (scripts/fleet-*.ts → config/run-nonce/
-  // env-scrub/takeover) is a denylist-shaped-hole noRestrictedImports cannot
-  // express, so it stays solely in the R2 test — intentionally not encoded here.
+  // bans are fully expressible here. The R2/P2 suite remains the stronger anchor
+  // and also owns the hook seam allowlist, unstable-register join, v4 API
+  // vocabulary, and generated-output fingerprints noRestrictedImports cannot
+  // express.
   "overrides": [
     {
       "includes": ["board/src/**"],
@@ -139,13 +138,15 @@
                       "**/src/daemon/**",
                       "effect",
                       "effect/**",
+                      "@effect",
+                      "@effect/**",
                       "kysely",
                       "kysely/**",
                       "hono",
                       "hono/**",
                       "bun:*"
                     ],
-                    "message": "board/src talks to the daemon over HTTP, never by import, and must never pull the daemon-only deps effect/kysely/hono/bun:* into the browser bundle. See tests/import-boundaries.test.ts."
+                    "message": "board/src talks to the daemon over HTTP, never by import, and must never pull effect/@effect or daemon-only dependencies into the browser bundle. See tests/import-boundaries.test.ts."
                   }
                 ]
               }
@@ -155,7 +156,12 @@
       }
     },
     {
-      "includes": ["src/daemon/**"],
+      "includes": [
+        "src/daemon/**",
+        "!src/daemon/app/**",
+        "!src/daemon/platform/**",
+        "!src/daemon/fleetd.ts"
+      ],
       "linter": {
         "rules": {
           "style": {
@@ -164,8 +170,170 @@
               "options": {
                 "patterns": [
                   {
-                    "group": ["**/board", "**/board/**"],
-                    "message": "src/daemon must not depend on the UI (board/**). See tests/import-boundaries.test.ts."
+                    "group": [
+                      "**/board",
+                      "**/board/**",
+                      "**/src/daemon/app",
+                      "**/src/daemon/app/**",
+                      "**/src/daemon/platform",
+                      "**/src/daemon/platform/**",
+                      "**/app",
+                      "**/app/**",
+                      "**/platform",
+                      "**/platform/**",
+                      "@effect/platform-bun",
+                      "@effect/platform-bun/**",
+                      "@effect/sql-sqlite-bun",
+                      "@effect/sql-sqlite-bun/**",
+                      "@effect/platform",
+                      "@effect/platform/**",
+                      "@effect/sql",
+                      "@effect/sql/**",
+                      "@effect/experimental",
+                      "@effect/experimental/**"
+                    ],
+                    "message": "domain modules cannot import app/platform, select native implementations, use Effect v3 packages, or depend on board/**. See tests/import-boundaries.test.ts."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "contracts/**",
+        "scripts/fleet-hook.ts",
+        "scripts/fleet-sessionstart.ts",
+        "scripts/fleet-watch.ts"
+      ],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "effect",
+                      "effect/**",
+                      "@effect",
+                      "@effect/**",
+                      "**/src/daemon/app",
+                      "**/src/daemon/app/**",
+                      "**/src/daemon/platform",
+                      "**/src/daemon/platform/**",
+                      "**/app",
+                      "**/app/**",
+                      "**/platform",
+                      "**/platform/**"
+                    ],
+                    "message": "contracts and thin hook sources must stay Effect-free and cannot import app/platform composition. The hook seam allowlist is suite-enforced."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/daemon/app/**", "!src/daemon/app/live-layer.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "**/board",
+                      "**/board/**",
+                      "**/src/daemon/platform",
+                      "**/src/daemon/platform/**",
+                      "**/platform",
+                      "**/platform/**",
+                      "@effect/platform-bun",
+                      "@effect/platform-bun/**",
+                      "@effect/sql-sqlite-bun",
+                      "@effect/sql-sqlite-bun/**",
+                      "@effect/platform",
+                      "@effect/platform/**",
+                      "@effect/sql",
+                      "@effect/sql/**",
+                      "@effect/experimental",
+                      "@effect/experimental/**"
+                    ],
+                    "message": "app workflows cannot select platform implementations; only app/live-layer.ts composes native Layers. Effect v3 packages and board/** remain forbidden."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/daemon/app/live-layer.ts", "src/daemon/platform/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "**/board",
+                      "**/board/**",
+                      "@effect/platform",
+                      "@effect/platform/**",
+                      "@effect/sql",
+                      "@effect/sql/**",
+                      "@effect/experimental",
+                      "@effect/experimental/**"
+                    ],
+                    "message": "Effect composition/platform modules may use the approved v4 cohort but never v3 packages or board/**."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/daemon/fleetd.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "**/board",
+                      "**/board/**",
+                      "**/src/daemon/platform",
+                      "**/src/daemon/platform/**",
+                      "**/platform",
+                      "**/platform/**",
+                      "@effect/platform-bun",
+                      "@effect/platform-bun/**",
+                      "@effect/sql-sqlite-bun",
+                      "@effect/sql-sqlite-bun/**",
+                      "@effect/platform",
+                      "@effect/platform/**",
+                      "@effect/sql",
+                      "@effect/sql/**",
+                      "@effect/experimental",
+                      "@effect/experimental/**"
+                    ],
+                    "message": "fleetd may import app/live-layer.ts, but native implementation selection stays inside that layer; Effect v3 packages and board/** are forbidden."
                   }
                 ]
               }

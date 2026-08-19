@@ -87,10 +87,12 @@ test('effect CI policy: latest canary exercises the required compatibility gates
   assert.match(combinedCommands, /(?:^|\n)bun --version(?:\n|$)/);
   assert.match(combinedCommands, /Bun\.revision/);
   assert.match(combinedCommands, /(?:^|\n)uname -a(?:\n|$)/);
-  assert.match(combinedCommands, /bun:sqlite adapter contract/);
-  assert.match(combinedCommands, /openDatabase\(":memory:"\)/);
-  assert.match(combinedCommands, /miss === undefined/);
-  assert.ok(commands.includes('bun run typecheck'));
+  assert.match(combinedCommands, /sha256sum package\.json bun\.lock/);
+  assert.match(combinedCommands, /sha256sum --check/);
+  assert.match(combinedCommands, /bun add --dev --no-save --ignore-scripts @types\/bun@latest/);
+  assert.match(combinedCommands, /bun run typecheck/);
+  assert.match(combinedCommands, /bun run test:bun-platform-conformance/);
+  assert.doesNotMatch(combinedCommands, /bun add --dev(?! --no-save).*@types\/bun@(?:latest|\*)/);
 
   const sourceSuite = steps.find((step) => step['run'] === 'bun run test');
   assert.ok(sourceSuite, 'latest canary must run the full source suite');
@@ -100,4 +102,20 @@ test('effect CI policy: latest canary exercises the required compatibility gates
     typeof waitScale === 'number' && waitScale >= 2,
     'latest canary must give the source suite WAIT_SCALE headroom',
   );
+});
+
+test('effect CI policy: blocking floor validates cohort and generic Bun adapter contract', () => {
+  const toolchainCommands = stepsOf(requireJob('toolchain'), 'toolchain').flatMap((step) =>
+    typeof step['run'] === 'string' ? [step['run']] : [],
+  );
+  assert.ok(
+    toolchainCommands.includes(
+      'bun run effect:p2:measure --out "$RUNNER_TEMP/effect-p2-cohort.json"',
+    ),
+  );
+
+  const testCommands = stepsOf(requireJob('test'), 'test').flatMap((step) =>
+    typeof step['run'] === 'string' ? [step['run']] : [],
+  );
+  assert.ok(testCommands.includes('bun run test:bun-platform-conformance'));
 });
