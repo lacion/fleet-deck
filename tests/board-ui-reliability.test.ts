@@ -113,9 +113,13 @@ test('repo spawning checks exact Git access and explains Coder auth without owni
   assert.match(spawnForm, /Git diagnostic/);
   const submit = spawnForm.slice(spawnForm.indexOf('const submit = async'));
   assert.ok(
-    submit.indexOf('await checkRepoAccess()') < submit.indexOf('await persistSetupDefault()'),
+    submit.indexOf('await checkRepoAccess(body)') < submit.indexOf('await persistSetupDefault()'),
     'Spawn proves Git access before any settings write or spawn request',
   );
+  assert.match(submit, /const body = baseBody\(\)/);
+  assert.match(submit, /await submitOne\(body\)/);
+  assert.match(spawnForm, /const repoFieldsLocked = busy \|\| gitAccess\.state === 'checking'/);
+  assert.match(spawnForm, /disabled=\{repoFieldsLocked\}/);
   assert.match(spawnForm, /checking repository access before creating a session/);
   assert.match(spawnForm, /Checking access…/);
   assert.match(api, /post\('\/api\/repos\/preflight', body, 65_000\)/);

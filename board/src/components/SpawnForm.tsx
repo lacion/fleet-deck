@@ -693,9 +693,8 @@ export default function SpawnForm({
     return false;
   };
 
-  const checkRepoAccess = async (): Promise<boolean> => {
+  const checkRepoAccess = async (body: SpawnBody = baseBody()): Promise<boolean> => {
     if (!repoMode) return true;
-    const body = baseBody();
     setGitAccess({ state: 'checking', issue: null });
     const res = await preflightRepo({
       repo: body.repo,
@@ -717,8 +716,8 @@ export default function SpawnForm({
   };
 
   // One agent — the original path, byte for byte, including the plan-mark hook.
-  const submitOne = async () => {
-    const body = baseBody();
+  const submitOne = async (bodySeed?: SpawnBody) => {
+    const body = bodySeed ? { ...bodySeed } : baseBody();
     if (prompt.trim()) body.prompt = prompt.trim();
     const res = await spawnSession(body);
     // The capability is single-use and may have been consumed even when the
@@ -892,13 +891,18 @@ export default function SpawnForm({
 
   const submit = async () => {
     if (!targetReady || submitBusyRef.current || note || blocked || emptyBatch) return;
+    // One immutable click snapshot crosses the access-check await and becomes
+    // the eventual spawn body. Repository controls are locked for the same
+    // interval below, but the snapshot is the authority even if React already
+    // queued an input event before the disabled state painted.
+    const body = baseBody();
     setSubmitBusy(true, repoMode ? 'checking-access' : 'spawning');
     setErr(null);
     try {
       // A repo spawn first proves the exact origin is readable. Until this
       // returns true there is no session, card, worktree, clone, or settings
       // write to clean up — "Spawn" is a guided preflight, not a hopeful clone.
-      if (repoMode && !(await checkRepoAccess())) {
+      if (repoMode && !(await checkRepoAccess(body))) {
         setSubmitBusy(false);
         return;
       }
@@ -908,7 +912,7 @@ export default function SpawnForm({
         return;
       }
       if (batching) await submitBatch();
-      else await submitOne();
+      else await submitOne(body);
     } catch {
       setErr('daemon unreachable');
       if (unsupEffective && armed) clearArm();
@@ -940,6 +944,7 @@ export default function SpawnForm({
   // operation. Closing while the initial POST/batch is still in flight is not
   // safe because reopening can duplicate billed sessions.
   const closeAllowed = !busy || !!watchSid || !!note;
+  const repoFieldsLocked = busy || gitAccess.state === 'checking';
   const requestClose = () => {
     if (closeAllowed) onClose();
   };
@@ -988,6 +993,7 @@ export default function SpawnForm({
                   role="radio"
                   aria-checked={!repoMode}
                   className={`fd-target${!repoMode ? ' on' : ''}`}
+                  disabled={repoFieldsLocked}
                   onClick={() => {
                     setTargetMode('dir');
                     if (err) setErr(null);
@@ -1000,6 +1006,7 @@ export default function SpawnForm({
                   role="radio"
                   aria-checked={repoMode}
                   className={`fd-target${repoMode ? ' on' : ''}`}
+                  disabled={repoFieldsLocked}
                   onClick={() => {
                     setTargetMode('repo');
                     setBatch(false);
@@ -1080,6 +1087,7 @@ export default function SpawnForm({
                   list="fd-repo-suggest"
                   placeholder="repo (uses default org) · org/repo · https://… · git@…"
                   value={repo}
+                  disabled={repoFieldsLocked}
                   onChange={(e) => {
                     setRepo(e.target.value);
                     setDirNote(null);
@@ -1091,6 +1099,7 @@ export default function SpawnForm({
                   type="button"
                   className="fd-browsebtn"
                   title="browse for a local repo folder"
+                  disabled={repoFieldsLocked}
                   onClick={() => {
                     setPickerFor('repo');
                   }}
@@ -1111,6 +1120,7 @@ export default function SpawnForm({
                       className="fd-input"
                       placeholder="owner or group/subgroup"
                       value={defaultOrg}
+                      disabled={repoFieldsLocked}
                       onChange={(e) => {
                         setDefaultOrg(e.target.value);
                         setOrgNote(null);
@@ -1158,7 +1168,7 @@ export default function SpawnForm({
                       role="radio"
                       aria-checked={effectiveHost === 'github'}
                       className={`fd-target${effectiveHost === 'github' ? ' on' : ''}`}
-                      disabled={subgrouped}
+                      disabled={repoFieldsLocked || subgrouped}
                       title={
                         subgrouped
                           ? 'github shorthand is org/repo — subgroups need gitlab or a full URL'
@@ -1176,6 +1186,7 @@ export default function SpawnForm({
                       role="radio"
                       aria-checked={effectiveHost === 'gitlab'}
                       className={`fd-target${effectiveHost === 'gitlab' ? ' on' : ''}`}
+                      disabled={repoFieldsLocked}
                       onClick={() => {
                         setRepoHost('gitlab');
                         if (err) setErr(null);
@@ -1200,6 +1211,7 @@ export default function SpawnForm({
                       role="radio"
                       aria-checked={repoTransport === 'ssh'}
                       className={`fd-target${repoTransport === 'ssh' ? ' on' : ''}`}
+                      disabled={repoFieldsLocked}
                       onClick={() => {
                         setRepoTransport('ssh');
                         if (err) setErr(null);
@@ -1212,6 +1224,7 @@ export default function SpawnForm({
                       role="radio"
                       aria-checked={repoTransport === 'https'}
                       className={`fd-target${repoTransport === 'https' ? ' on' : ''}`}
+                      disabled={repoFieldsLocked}
                       onClick={() => {
                         setRepoTransport('https');
                         if (err) setErr(null);
@@ -1237,7 +1250,7 @@ export default function SpawnForm({
                     <button
                       type="button"
                       className="fd-gitcheck"
-                      disabled={gitAccess.state === 'checking' || !repo.trim()}
+                      disabled={repoFieldsLocked || !repo.trim()}
                       onClick={() => void checkRepoAccess()}
                     >
                       {gitAccess.state === 'checking' ? 'Checking…' : 'Check access'}
@@ -1263,6 +1276,7 @@ export default function SpawnForm({
                           <button
                             type="button"
                             className="fd-gitcheck"
+                            disabled={repoFieldsLocked}
                             onClick={() => {
                               setRepoTransport('https');
                               setErr(null);
@@ -1303,6 +1317,7 @@ export default function SpawnForm({
                   className="fd-input"
                   placeholder="existing branch, or a new one to create"
                   value={branch}
+                  disabled={busy}
                   onChange={(e) => {
                     setBranch(e.target.value);
                     if (err) setErr(null);
@@ -1324,6 +1339,7 @@ export default function SpawnForm({
                       type="radio"
                       name="fd-branch-mode"
                       checked={branchMode === 'worktree'}
+                      disabled={busy}
                       onChange={() => {
                         setBranchMode('worktree');
                       }}
@@ -1335,6 +1351,7 @@ export default function SpawnForm({
                       type="radio"
                       name="fd-branch-mode"
                       checked={branchMode === 'in-place'}
+                      disabled={busy}
                       onChange={() => {
                         setBranchMode('in-place');
                       }}
