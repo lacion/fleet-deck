@@ -1,0 +1,920 @@
+{
+  "schema": 2,
+  "kind": "fleetdeck-effect-p2-cohort",
+  "recordedAt": "2026-08-19T17:59:56.478Z",
+  "runtime": {
+    "bun": "1.3.14",
+    "revision": "0d9b296af33f2b851fcbf4df3e9ec89751734ba4",
+    "platform": "darwin",
+    "arch": "arm64"
+  },
+  "report": {
+    "ok": true,
+    "policy": {
+      "effectCohort": "4.0.0-rc.110",
+      "bunFloor": "1.3.14",
+      "bunFloorRevision": "0d9b296af33f2b851fcbf4df3e9ec89751734ba4",
+      "maxDirectProductionPackages": 2,
+      "maxResolvedProductionPackages": 24,
+      "maxInstalledProductionBytes": 78643200
+    },
+    "direct": {
+      "count": 2,
+      "specs": {
+        "@effect/platform-bun": "4.0.0-rc.110",
+        "effect": "4.0.0-rc.110"
+      },
+      "typesBun": "1.3.14",
+      "lockAligned": true
+    },
+    "cohort": [
+      {
+        "key": "@effect/platform-bun",
+        "name": "@effect/platform-bun",
+        "version": "4.0.0-rc.110"
+      },
+      {
+        "key": "@effect/platform-node-shared",
+        "name": "@effect/platform-node-shared",
+        "version": "4.0.0-rc.110"
+      },
+      {
+        "key": "effect",
+        "name": "effect",
+        "version": "4.0.0-rc.110"
+      }
+    ],
+    "closure": {
+      "count": 20,
+      "packages": [
+        {
+          "key": "@effect/platform-bun",
+          "name": "@effect/platform-bun",
+          "version": "4.0.0-rc.110",
+          "integrity": "sha512-f4AcFTWVwGby9RvSitqAcG/McN8OCDy7LW8PYRG4NIOO2eYphlW73S5Z7jm3UDP+FmIwwzjfgfIfBYkfPR+YfA==",
+          "optional": false
+        },
+        {
+          "key": "@effect/platform-node-shared",
+          "name": "@effect/platform-node-shared",
+          "version": "4.0.0-rc.110",
+          "integrity": "sha512-P8EZloxS7RtCOSL3VSBPyqSenUm93xLbXf9jkWoy67cibZ2wgZ9nAou9iN8f1i4vzgxUsWtDuy6BEmg67np6Zw==",
+          "optional": false
+        },
+        {
+          "key": "@msgpackr-extract/msgpackr-extract-darwin-arm64",
+          "name": "@msgpackr-extract/msgpackr-extract-darwin-arm64",
+          "version": "3.0.4",
+          "integrity": "sha512-LCkGo6JDfaBhgST7UpPWgNgLINpcpabaHfyz5OBx75nUYxBsaEPxjnyNjWpeb/xBup/682QnBfRBy2/LvPutZQ==",
+          "optional": true
+        },
+        {
+          "key": "@msgpackr-extract/msgpackr-extract-darwin-x64",
+          "name": "@msgpackr-extract/msgpackr-extract-darwin-x64",
+          "version": "3.0.4",
+          "integrity": "sha512-zExlW9zUJKZH/tOtVMttwjKa4Xm/3KcNjnE3dPN92uCktwavMxpgCA3MoJK/DOnTWsQgo224OaST27/mPNAf+w==",
+          "optional": true
+        },
+        {
+          "key": "@msgpackr-extract/msgpackr-extract-linux-arm",
+          "name": "@msgpackr-extract/msgpackr-extract-linux-arm",
+          "version": "3.0.4",
+          "integrity": "sha512-Tg3yX65f5GbtXLkrYEHE5oibZG9epyYWas7FogTTEJeDEF9JlXJzKgXaNhT3UXlTOeA+AfZpYZYZ0uPj7Cfquw==",
+          "optional": true
+        },
+        {
+          "key": "@msgpackr-extract/msgpackr-extract-linux-arm64",
+          "name": "@msgpackr-extract/msgpackr-extract-linux-arm64",
+          "version": "3.0.4",
+          "integrity": "sha512-dgX0P/9wGPJeHFBG+ZmhgE6bmtMt7NP5CRBGyyktpopdk/mW4POnrpQsSLtKI1dwpc+pPLuXHDh6vvskyQE/sw==",
+          "optional": true
+        },
+        {
+          "key": "@msgpackr-extract/msgpackr-extract-linux-x64",
+          "name": "@msgpackr-extract/msgpackr-extract-linux-x64",
+          "version": "3.0.4",
+          "integrity": "sha512-8TNXMEjJc3QEy7R/x1INhgiU+XakDAFUzBhaz7+Rbrs8NH5UQeHQxxmzsSBJGyV6I1jW79undiQm8tOI+D+8FQ==",
+          "optional": true
+        },
+        {
+          "key": "@msgpackr-extract/msgpackr-extract-win32-x64",
+          "name": "@msgpackr-extract/msgpackr-extract-win32-x64",
+          "version": "3.0.4",
+          "integrity": "sha512-CmCXPQrkbwExx3j946/PtHWHbYJiCRBRDl4BlkRQcJB/YOwQxJRTpoo7aTsortjgoJ1x7opzTSxn7C+ASSLVjQ==",
+          "optional": true
+        },
+        {
+          "key": "@standard-schema/spec",
+          "name": "@standard-schema/spec",
+          "version": "1.1.0",
+          "integrity": "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==",
+          "optional": false
+        },
+        {
+          "key": "@types/ws",
+          "name": "@types/ws",
+          "version": "8.18.1",
+          "integrity": "sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==",
+          "optional": false
+        },
+        {
+          "key": "@types/ws/@types/node",
+          "name": "@types/node",
+          "version": "26.2.0",
+          "integrity": "sha512-5IviulTZeRNp2vAJ514cc/HUlY5nZ9fCbq9DMyC52BrhFZACo3nI0R7qBxhQmo/d27NFe96ur/b7Wwxklda+kg==",
+          "optional": false
+        },
+        {
+          "key": "@types/ws/@types/node/undici-types",
+          "name": "undici-types",
+          "version": "8.3.0",
+          "integrity": "sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ==",
+          "optional": false
+        },
+        {
+          "key": "detect-libc",
+          "name": "detect-libc",
+          "version": "2.1.2",
+          "integrity": "sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==",
+          "optional": true
+        },
+        {
+          "key": "effect",
+          "name": "effect",
+          "version": "4.0.0-rc.110",
+          "integrity": "sha512-ega6FTJ8CS2of7tHZiADvgyJyV999Q6tZ9juE56V81O0jw6flRwydaPNtyfvP2a5LL9PZrse8A1jnNUD5sWVHg==",
+          "optional": false
+        },
+        {
+          "key": "fast-check",
+          "name": "fast-check",
+          "version": "4.9.0",
+          "integrity": "sha512-7ms6T7SybUev/PQITciI0yLM2pOSFy5zpG8Ty7tQofcVaQUvrMXp6CBwqF6fThLCLOrfBtuHAtwq6Yu4XPCllg==",
+          "optional": false
+        },
+        {
+          "key": "msgpackr",
+          "name": "msgpackr",
+          "version": "2.0.5",
+          "integrity": "sha512-cef05H/dSYpLpqp3sj/qyZh5vhUYCalnaLO7j1yOmpsR0y/XwLVtK7r5gn+U/F7CTEfMowcGhlUQJDLcLf7jcA==",
+          "optional": false
+        },
+        {
+          "key": "msgpackr-extract",
+          "name": "msgpackr-extract",
+          "version": "3.0.4",
+          "integrity": "sha512-4kmO/MdyUIkLIvTPr8VHLil4AtoKIoniWPIEk5+CDy0xnWC84azhSFmuJ7PxZdsYtiP5kEeQsORAVIeMgxT+Hw==",
+          "optional": true
+        },
+        {
+          "key": "node-gyp-build-optional-packages",
+          "name": "node-gyp-build-optional-packages",
+          "version": "5.2.2",
+          "integrity": "sha512-s+w+rBWnpTMwSFbaE0UXsRlg7hU4FjekKU4eyAih5T8nJuNZT1nNsskXpxmeqSK9UzkBl6UgRlnKc8hz8IEqOw==",
+          "optional": true
+        },
+        {
+          "key": "pure-rand",
+          "name": "pure-rand",
+          "version": "8.4.2",
+          "integrity": "sha512-vvuOGgcuPJAirlHvuQw1TrOiw7ptaIXXmIbNuiNOY6lNGJJH49PQ1Kj4nd783nPdQhQdicgOjVI2yI/9BD6/Ng==",
+          "optional": false
+        },
+        {
+          "key": "ws",
+          "name": "ws",
+          "version": "8.21.2",
+          "integrity": "sha512-54dMVAo4WIe6SKy3vBgN+9bJZqqQ8IMRevAkOLQALhi49qkkQDQfWdAZ8KQlXiEabw88ARXXdUrlvtbKQX+aKw==",
+          "optional": false
+        }
+      ]
+    },
+    "wsMovement": {
+      "before": {
+        "ws": "8.21.2",
+        "@types/ws": "8.18.1"
+      },
+      "after": {
+        "ws": [
+          "8.21.2"
+        ],
+        "@types/ws": [
+          "8.18.1"
+        ]
+      },
+      "unchanged": true,
+      "deduped": true,
+      "platformNodeSharedSpecs": {
+        "ws": "^8.21.0",
+        "@types/ws": "^8.18.1"
+      }
+    },
+    "violations": []
+  },
+  "measurement": {
+    "cleanInstall": {
+      "argv": [
+        "bun",
+        "install",
+        "--production",
+        "--frozen-lockfile",
+        "--ignore-scripts"
+      ],
+      "cwd": "<scratch>",
+      "elapsedMs": 297.095,
+      "timeoutMs": 120000,
+      "timedOut": false,
+      "exitCode": 0,
+      "stdout": "bun install v1.3.14 (0d9b296a)\n\n+ @effect/platform-bun@4.0.0-rc.110\n+ effect@4.0.0-rc.110\n\n15 packages installed [69.00ms]\n",
+      "stderr": "",
+      "frozenLockfile": true,
+      "ignoredScripts": true,
+      "productionOnly": true
+    },
+    "installedTree": {
+      "bytes": 53823214,
+      "files": 2991
+    },
+    "installedPackages": [
+      {
+        "key": "@effect/platform-bun",
+        "name": "@effect/platform-bun",
+        "version": "4.0.0-rc.110",
+        "installPath": "@effect/platform-bun",
+        "license": "MIT",
+        "repository": "https://github.com/Effect-TS/effect.git",
+        "installScripts": []
+      },
+      {
+        "key": "@effect/platform-node-shared",
+        "name": "@effect/platform-node-shared",
+        "version": "4.0.0-rc.110",
+        "installPath": "@effect/platform-node-shared",
+        "license": "MIT",
+        "repository": "https://github.com/Effect-TS/effect.git",
+        "installScripts": []
+      },
+      {
+        "key": "@msgpackr-extract/msgpackr-extract-darwin-arm64",
+        "name": "@msgpackr-extract/msgpackr-extract-darwin-arm64",
+        "version": "3.0.4",
+        "installPath": "@msgpackr-extract/msgpackr-extract-darwin-arm64",
+        "license": "MIT",
+        "repository": "http://github.com/kriszyp/msgpackr-extract",
+        "installScripts": []
+      },
+      {
+        "key": "@standard-schema/spec",
+        "name": "@standard-schema/spec",
+        "version": "1.1.0",
+        "installPath": "@standard-schema/spec",
+        "license": "MIT",
+        "repository": "https://github.com/standard-schema/standard-schema",
+        "installScripts": []
+      },
+      {
+        "key": "@types/ws",
+        "name": "@types/ws",
+        "version": "8.18.1",
+        "installPath": "@types/ws",
+        "license": "MIT",
+        "repository": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+        "installScripts": []
+      },
+      {
+        "key": "@types/ws/@types/node",
+        "name": "@types/node",
+        "version": "26.2.0",
+        "installPath": "@types/node",
+        "license": "MIT",
+        "repository": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+        "installScripts": []
+      },
+      {
+        "key": "@types/ws/@types/node/undici-types",
+        "name": "undici-types",
+        "version": "8.3.0",
+        "installPath": "undici-types",
+        "license": "MIT",
+        "repository": "git+https://github.com/nodejs/undici.git",
+        "installScripts": []
+      },
+      {
+        "key": "detect-libc",
+        "name": "detect-libc",
+        "version": "2.1.2",
+        "installPath": "detect-libc",
+        "license": "Apache-2.0",
+        "repository": "git://github.com/lovell/detect-libc.git",
+        "installScripts": []
+      },
+      {
+        "key": "effect",
+        "name": "effect",
+        "version": "4.0.0-rc.110",
+        "installPath": "effect",
+        "license": "MIT",
+        "repository": "https://github.com/Effect-TS/effect.git",
+        "installScripts": []
+      },
+      {
+        "key": "fast-check",
+        "name": "fast-check",
+        "version": "4.9.0",
+        "installPath": "fast-check",
+        "license": "MIT",
+        "repository": "git+https://github.com/dubzzz/fast-check.git",
+        "installScripts": []
+      },
+      {
+        "key": "msgpackr",
+        "name": "msgpackr",
+        "version": "2.0.5",
+        "installPath": "msgpackr",
+        "license": "MIT",
+        "repository": "http://github.com/kriszyp/msgpackr",
+        "installScripts": []
+      },
+      {
+        "key": "msgpackr-extract",
+        "name": "msgpackr-extract",
+        "version": "3.0.4",
+        "installPath": "msgpackr-extract",
+        "license": "MIT",
+        "repository": "http://github.com/kriszyp/msgpackr-extract",
+        "installScripts": [
+          "install"
+        ]
+      },
+      {
+        "key": "node-gyp-build-optional-packages",
+        "name": "node-gyp-build-optional-packages",
+        "version": "5.2.2",
+        "installPath": "node-gyp-build-optional-packages",
+        "license": "MIT",
+        "repository": "https://github.com/prebuild/node-gyp-build.git",
+        "installScripts": []
+      },
+      {
+        "key": "pure-rand",
+        "name": "pure-rand",
+        "version": "8.4.2",
+        "installPath": "pure-rand",
+        "license": "MIT",
+        "repository": "git+https://github.com/dubzzz/pure-rand.git",
+        "installScripts": []
+      },
+      {
+        "key": "ws",
+        "name": "ws",
+        "version": "8.21.2",
+        "installPath": "ws",
+        "license": "MIT",
+        "repository": "git+https://github.com/websockets/ws.git",
+        "installScripts": []
+      }
+    ],
+    "nativeBinaries": [
+      "@msgpackr-extract/msgpackr-extract-darwin-arm64/node.napi.glibc.node"
+    ],
+    "registry": {
+      "packages": [
+        {
+          "name": "@effect/platform-bun",
+          "version": "4.0.0-rc.110",
+          "license": "MIT",
+          "repository": "https://github.com/Effect-TS/effect.git",
+          "integrityMatchesLock": true,
+          "provenance": true,
+          "signatures": 1
+        },
+        {
+          "name": "@effect/platform-node-shared",
+          "version": "4.0.0-rc.110",
+          "license": "MIT",
+          "repository": "https://github.com/Effect-TS/effect.git",
+          "integrityMatchesLock": true,
+          "provenance": true,
+          "signatures": 2
+        },
+        {
+          "name": "@msgpackr-extract/msgpackr-extract-darwin-arm64",
+          "version": "3.0.4",
+          "license": "MIT",
+          "repository": "git+ssh://git@github.com/kriszyp/msgpackr-extract.git",
+          "integrityMatchesLock": true,
+          "provenance": false,
+          "signatures": 1
+        },
+        {
+          "name": "@msgpackr-extract/msgpackr-extract-darwin-x64",
+          "version": "3.0.4",
+          "license": "MIT",
+          "repository": "git+ssh://git@github.com/kriszyp/msgpackr-extract.git",
+          "integrityMatchesLock": true,
+          "provenance": false,
+          "signatures": 1
+        },
+        {
+          "name": "@msgpackr-extract/msgpackr-extract-linux-arm",
+          "version": "3.0.4",
+          "license": "MIT",
+          "repository": "git+ssh://git@github.com/kriszyp/msgpackr-extract.git",
+          "integrityMatchesLock": true,
+          "provenance": false,
+          "signatures": 1
+        },
+        {
+          "name": "@msgpackr-extract/msgpackr-extract-linux-arm64",
+          "version": "3.0.4",
+          "license": "MIT",
+          "repository": "git+ssh://git@github.com/kriszyp/msgpackr-extract.git",
+          "integrityMatchesLock": true,
+          "provenance": false,
+          "signatures": 1
+        },
+        {
+          "name": "@msgpackr-extract/msgpackr-extract-linux-x64",
+          "version": "3.0.4",
+          "license": "MIT",
+          "repository": "git+ssh://git@github.com/kriszyp/msgpackr-extract.git",
+          "integrityMatchesLock": true,
+          "provenance": false,
+          "signatures": 1
+        },
+        {
+          "name": "@msgpackr-extract/msgpackr-extract-win32-x64",
+          "version": "3.0.4",
+          "license": "MIT",
+          "repository": "git+ssh://git@github.com/kriszyp/msgpackr-extract.git",
+          "integrityMatchesLock": true,
+          "provenance": false,
+          "signatures": 1
+        },
+        {
+          "name": "@standard-schema/spec",
+          "version": "1.1.0",
+          "license": "MIT",
+          "repository": "git+https://github.com/standard-schema/standard-schema.git",
+          "integrityMatchesLock": true,
+          "provenance": true,
+          "signatures": 1
+        },
+        {
+          "name": "@types/node",
+          "version": "26.2.0",
+          "license": "MIT",
+          "repository": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+          "integrityMatchesLock": true,
+          "provenance": false,
+          "signatures": 2
+        },
+        {
+          "name": "@types/ws",
+          "version": "8.18.1",
+          "license": "MIT",
+          "repository": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+          "integrityMatchesLock": true,
+          "provenance": false,
+          "signatures": 1
+        },
+        {
+          "name": "detect-libc",
+          "version": "2.1.2",
+          "license": "Apache-2.0",
+          "repository": "git://github.com/lovell/detect-libc.git",
+          "integrityMatchesLock": true,
+          "provenance": true,
+          "signatures": 1
+        },
+        {
+          "name": "effect",
+          "version": "4.0.0-rc.110",
+          "license": "MIT",
+          "repository": "https://github.com/Effect-TS/effect.git",
+          "integrityMatchesLock": true,
+          "provenance": true,
+          "signatures": 2
+        },
+        {
+          "name": "fast-check",
+          "version": "4.9.0",
+          "license": "MIT",
+          "repository": "git+https://github.com/dubzzz/fast-check.git",
+          "integrityMatchesLock": true,
+          "provenance": true,
+          "signatures": 1
+        },
+        {
+          "name": "msgpackr-extract",
+          "version": "3.0.4",
+          "license": "MIT",
+          "repository": "git+ssh://git@github.com/kriszyp/msgpackr-extract.git",
+          "integrityMatchesLock": true,
+          "provenance": false,
+          "signatures": 1
+        },
+        {
+          "name": "msgpackr",
+          "version": "2.0.5",
+          "license": "MIT",
+          "repository": "git+ssh://git@github.com/kriszyp/msgpackr.git",
+          "integrityMatchesLock": true,
+          "provenance": false,
+          "signatures": 2
+        },
+        {
+          "name": "node-gyp-build-optional-packages",
+          "version": "5.2.2",
+          "license": "MIT",
+          "repository": "git+https://github.com/prebuild/node-gyp-build.git",
+          "integrityMatchesLock": true,
+          "provenance": false,
+          "signatures": 1
+        },
+        {
+          "name": "pure-rand",
+          "version": "8.4.2",
+          "license": "MIT",
+          "repository": "git+https://github.com/dubzzz/pure-rand.git",
+          "integrityMatchesLock": true,
+          "provenance": true,
+          "signatures": 1
+        },
+        {
+          "name": "undici-types",
+          "version": "8.3.0",
+          "license": "MIT",
+          "repository": "git+https://github.com/nodejs/undici.git",
+          "integrityMatchesLock": true,
+          "provenance": true,
+          "signatures": 1
+        },
+        {
+          "name": "ws",
+          "version": "8.21.2",
+          "license": "MIT",
+          "repository": "git+https://github.com/websockets/ws.git",
+          "integrityMatchesLock": true,
+          "provenance": false,
+          "signatures": 2
+        }
+      ],
+      "provenancePresent": 8,
+      "provenanceMissing": [
+        "@msgpackr-extract/msgpackr-extract-darwin-arm64@3.0.4",
+        "@msgpackr-extract/msgpackr-extract-darwin-x64@3.0.4",
+        "@msgpackr-extract/msgpackr-extract-linux-arm@3.0.4",
+        "@msgpackr-extract/msgpackr-extract-linux-arm64@3.0.4",
+        "@msgpackr-extract/msgpackr-extract-linux-x64@3.0.4",
+        "@msgpackr-extract/msgpackr-extract-win32-x64@3.0.4",
+        "@types/node@26.2.0",
+        "@types/ws@8.18.1",
+        "msgpackr-extract@3.0.4",
+        "msgpackr@2.0.5",
+        "node-gyp-build-optional-packages@5.2.2",
+        "ws@8.21.2"
+      ]
+    },
+    "advisories": {
+      "command": {
+        "argv": [
+          "bun",
+          "audit",
+          "--json",
+          "--audit-level=high"
+        ],
+        "cwd": "<scratch>",
+        "elapsedMs": 656.229,
+        "timeoutMs": 60000,
+        "timedOut": false,
+        "exitCode": 0,
+        "stdout": "{}\n",
+        "stderr": "\u001b[0m\u001b[1mbun audit \u001b[0m\u001b[2mv1.3.14 (0d9b296a)\u001b[0m\n"
+      },
+      "report": {},
+      "highOrCriticalFound": false
+    },
+    "violations": []
+  },
+  "facts": {
+    "directProductionPackageCount": 2,
+    "resolvedProductionPackageCount": 20,
+    "installedProductionPackageCount": 15,
+    "nodeModulesBytes": 53823214,
+    "nodeModulesFiles": 2991,
+    "cleanInstallMs": 297.095,
+    "cleanInstallExitCode": 0,
+    "cleanInstallTimedOut": false,
+    "licenses": [
+      {
+        "name": "@effect/platform-bun",
+        "version": "4.0.0-rc.110",
+        "license": "MIT"
+      },
+      {
+        "name": "@effect/platform-node-shared",
+        "version": "4.0.0-rc.110",
+        "license": "MIT"
+      },
+      {
+        "name": "@msgpackr-extract/msgpackr-extract-darwin-arm64",
+        "version": "3.0.4",
+        "license": "MIT"
+      },
+      {
+        "name": "@standard-schema/spec",
+        "version": "1.1.0",
+        "license": "MIT"
+      },
+      {
+        "name": "@types/ws",
+        "version": "8.18.1",
+        "license": "MIT"
+      },
+      {
+        "name": "@types/node",
+        "version": "26.2.0",
+        "license": "MIT"
+      },
+      {
+        "name": "undici-types",
+        "version": "8.3.0",
+        "license": "MIT"
+      },
+      {
+        "name": "detect-libc",
+        "version": "2.1.2",
+        "license": "Apache-2.0"
+      },
+      {
+        "name": "effect",
+        "version": "4.0.0-rc.110",
+        "license": "MIT"
+      },
+      {
+        "name": "fast-check",
+        "version": "4.9.0",
+        "license": "MIT"
+      },
+      {
+        "name": "msgpackr",
+        "version": "2.0.5",
+        "license": "MIT"
+      },
+      {
+        "name": "msgpackr-extract",
+        "version": "3.0.4",
+        "license": "MIT"
+      },
+      {
+        "name": "node-gyp-build-optional-packages",
+        "version": "5.2.2",
+        "license": "MIT"
+      },
+      {
+        "name": "pure-rand",
+        "version": "8.4.2",
+        "license": "MIT"
+      },
+      {
+        "name": "ws",
+        "version": "8.21.2",
+        "license": "MIT"
+      }
+    ],
+    "nativeBinaries": [
+      "@msgpackr-extract/msgpackr-extract-darwin-arm64/node.napi.glibc.node"
+    ],
+    "installScripts": [
+      {
+        "name": "msgpackr-extract",
+        "version": "3.0.4",
+        "scripts": [
+          "install"
+        ]
+      }
+    ],
+    "provenance": {
+      "checked": 20,
+      "present": 8,
+      "missing": [
+        "@msgpackr-extract/msgpackr-extract-darwin-arm64@3.0.4",
+        "@msgpackr-extract/msgpackr-extract-darwin-x64@3.0.4",
+        "@msgpackr-extract/msgpackr-extract-linux-arm@3.0.4",
+        "@msgpackr-extract/msgpackr-extract-linux-arm64@3.0.4",
+        "@msgpackr-extract/msgpackr-extract-linux-x64@3.0.4",
+        "@msgpackr-extract/msgpackr-extract-win32-x64@3.0.4",
+        "@types/node@26.2.0",
+        "@types/ws@8.18.1",
+        "msgpackr-extract@3.0.4",
+        "msgpackr@2.0.5",
+        "node-gyp-build-optional-packages@5.2.2",
+        "ws@8.21.2"
+      ],
+      "packages": [
+        {
+          "name": "@effect/platform-bun",
+          "version": "4.0.0-rc.110",
+          "provenance": true,
+          "signatures": 1,
+          "integrityMatchesLock": true
+        },
+        {
+          "name": "@effect/platform-node-shared",
+          "version": "4.0.0-rc.110",
+          "provenance": true,
+          "signatures": 2,
+          "integrityMatchesLock": true
+        },
+        {
+          "name": "@msgpackr-extract/msgpackr-extract-darwin-arm64",
+          "version": "3.0.4",
+          "provenance": false,
+          "signatures": 1,
+          "integrityMatchesLock": true
+        },
+        {
+          "name": "@msgpackr-extract/msgpackr-extract-darwin-x64",
+          "version": "3.0.4",
+          "provenance": false,
+          "signatures": 1,
+          "integrityMatchesLock": true
+        },
+        {
+          "name": "@msgpackr-extract/msgpackr-extract-linux-arm",
+          "version": "3.0.4",
+          "provenance": false,
+          "signatures": 1,
+          "integrityMatchesLock": true
+        },
+        {
+          "name": "@msgpackr-extract/msgpackr-extract-linux-arm64",
+          "version": "3.0.4",
+          "provenance": false,
+          "signatures": 1,
+          "integrityMatchesLock": true
+        },
+        {
+          "name": "@msgpackr-extract/msgpackr-extract-linux-x64",
+          "version": "3.0.4",
+          "provenance": false,
+          "signatures": 1,
+          "integrityMatchesLock": true
+        },
+        {
+          "name": "@msgpackr-extract/msgpackr-extract-win32-x64",
+          "version": "3.0.4",
+          "provenance": false,
+          "signatures": 1,
+          "integrityMatchesLock": true
+        },
+        {
+          "name": "@standard-schema/spec",
+          "version": "1.1.0",
+          "provenance": true,
+          "signatures": 1,
+          "integrityMatchesLock": true
+        },
+        {
+          "name": "@types/node",
+          "version": "26.2.0",
+          "provenance": false,
+          "signatures": 2,
+          "integrityMatchesLock": true
+        },
+        {
+          "name": "@types/ws",
+          "version": "8.18.1",
+          "provenance": false,
+          "signatures": 1,
+          "integrityMatchesLock": true
+        },
+        {
+          "name": "detect-libc",
+          "version": "2.1.2",
+          "provenance": true,
+          "signatures": 1,
+          "integrityMatchesLock": true
+        },
+        {
+          "name": "effect",
+          "version": "4.0.0-rc.110",
+          "provenance": true,
+          "signatures": 2,
+          "integrityMatchesLock": true
+        },
+        {
+          "name": "fast-check",
+          "version": "4.9.0",
+          "provenance": true,
+          "signatures": 1,
+          "integrityMatchesLock": true
+        },
+        {
+          "name": "msgpackr-extract",
+          "version": "3.0.4",
+          "provenance": false,
+          "signatures": 1,
+          "integrityMatchesLock": true
+        },
+        {
+          "name": "msgpackr",
+          "version": "2.0.5",
+          "provenance": false,
+          "signatures": 2,
+          "integrityMatchesLock": true
+        },
+        {
+          "name": "node-gyp-build-optional-packages",
+          "version": "5.2.2",
+          "provenance": false,
+          "signatures": 1,
+          "integrityMatchesLock": true
+        },
+        {
+          "name": "pure-rand",
+          "version": "8.4.2",
+          "provenance": true,
+          "signatures": 1,
+          "integrityMatchesLock": true
+        },
+        {
+          "name": "undici-types",
+          "version": "8.3.0",
+          "provenance": true,
+          "signatures": 1,
+          "integrityMatchesLock": true
+        },
+        {
+          "name": "ws",
+          "version": "8.21.2",
+          "provenance": false,
+          "signatures": 2,
+          "integrityMatchesLock": true
+        }
+      ]
+    },
+    "advisories": {
+      "auditExitCode": 0,
+      "auditTimedOut": false,
+      "highOrCriticalFound": false,
+      "report": {}
+    },
+    "wsMovement": {
+      "before": {
+        "ws": "8.21.2",
+        "@types/ws": "8.18.1"
+      },
+      "after": {
+        "ws": [
+          "8.21.2"
+        ],
+        "@types/ws": [
+          "8.18.1"
+        ]
+      },
+      "unchanged": true,
+      "deduped": true,
+      "platformNodeSharedSpecs": {
+        "ws": "^8.21.0",
+        "@types/ws": "^8.18.1"
+      }
+    }
+  },
+  "hardGates": {
+    "exactBunFloor": true,
+    "exactDirectSpecs": true,
+    "directPackageCeiling": true,
+    "exactResolvedCohort": true,
+    "platformNodeSharedPresent": true,
+    "exactBunTypesFloor": true,
+    "packageLockAligned": true,
+    "resolvedPackageCeiling": true,
+    "lockIntegrityPresent": true,
+    "wsVersionsUnchanged": true,
+    "wsVersionsDeduped": true,
+    "frozenProductionInstall": true,
+    "installedByteCeiling": true,
+    "installedClosureComplete": true,
+    "licensesApproved": true,
+    "installScriptsReviewed": true,
+    "nativeBinariesReviewed": true,
+    "registryMetadataAvailable": true,
+    "registryIntegrityMatchesLock": true,
+    "registrySignatureOrProvenancePresent": true,
+    "cohortProvenancePresent": true,
+    "highCriticalAdvisoriesAbsent": true,
+    "all": true
+  },
+  "comparison": {
+    "stableFactsSha256": "f584ce11336ac424b51fe1caa9888faeb361910f76c0ebe463930ceb43d1021f",
+    "normalizedScratchPaths": true,
+    "excludedVolatileFields": [
+      "recordedAt",
+      "facts.cleanInstallMs",
+      "measurement.cleanInstall.elapsedMs",
+      "measurement.advisories.command.elapsedMs"
+    ]
+  }
+}

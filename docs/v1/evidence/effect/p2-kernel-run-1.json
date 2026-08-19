@@ -1,0 +1,344 @@
+{
+  "schema": 1,
+  "kind": "fleetdeck-effect-p2-kernel-probe",
+  "recordedAt": "2026-08-19T17:59:52.597Z",
+  "ok": true,
+  "stableEvidenceSha256": "1b235a1c1c88b280b9edc797f599a224e211fbc2d5fb2c214af92c8fd20ff16e",
+  "runtime": {
+    "bun": "1.3.14",
+    "revision": "0d9b296af33f2b851fcbf4df3e9ec89751734ba4",
+    "effect": "4.0.0-rc.110",
+    "platformBun": "4.0.0-rc.110"
+  },
+  "machine": {
+    "platform": "darwin",
+    "release": "25.5.0",
+    "arch": "arm64",
+    "cpu": "Apple M4 Pro",
+    "logicalCpuCount": 14,
+    "totalMemoryBytes": 25769803776
+  },
+  "config": {
+    "buildRuns": 2,
+    "executionRuns": 10,
+    "fixture": "scripts/effect-migration/fixtures/p2-kernel-probe.ts",
+    "gzip": {
+      "api": "Bun.gzipSync",
+      "level": 9,
+      "library": "zlib"
+    }
+  },
+  "result": {
+    "version": "p2-kernel-probe",
+    "port": 4711,
+    "process": {
+      "ok": true,
+      "out": "p2-kernel-probe:fleetdeck-probe\u0000--direct-argv\u0000value with spaces"
+    }
+  },
+  "artifact": {
+    "bytes": 97531,
+    "gzipBytes": 23058,
+    "sha256": "4caaa87b9a9618cf435f97e703c74de27d4350b1d979c7bd3b3f731461eaa897",
+    "gzipSha256": "b6de5074893ff89f0a137e2ae16e17fd3d19466bc625312e55060e9145edea26"
+  },
+  "deterministic": true,
+  "naturalSourceExit": true,
+  "naturalBundleExit": true,
+  "comparison": {
+    "key": "144d663f60a8e2e84bae68c41085990006af4d2e1fc0328a6690b570e062dd42",
+    "requirement": "compare timings only with identical key on the same idle machine",
+    "p0StandaloneProbeBytes": 83456,
+    "artifactDelta": {
+      "bytes": 14075,
+      "percent": 16.865
+    }
+  },
+  "timing": {
+    "buildMs": {
+      "count": 2,
+      "min": 65.268,
+      "p50": 65.268,
+      "p95": 79.832,
+      "p99": 79.832,
+      "max": 79.832,
+      "mean": 72.55
+    },
+    "sourceProcessMs": {
+      "count": 10,
+      "min": 69.153,
+      "p50": 83.443,
+      "p95": 113.872,
+      "p99": 113.872,
+      "max": 113.872,
+      "mean": 86.008
+    },
+    "bundleProcessMs": {
+      "count": 10,
+      "min": 79.073,
+      "p50": 82.213,
+      "p95": 95.558,
+      "p99": 95.558,
+      "max": 95.558,
+      "mean": 83.342
+    }
+  },
+  "commands": {
+    "builds": [
+      {
+        "command": [
+          "<bun>",
+          "build",
+          "scripts/effect-migration/fixtures/p2-kernel-probe.ts",
+          "--target=bun",
+          "--format=esm",
+          "--outfile=<scratch>/kernel-probe-1.mjs"
+        ],
+        "cwd": "<repo>",
+        "durationMs": 65.268,
+        "exitCode": 0,
+        "stdout": "Bundled 69 modules in 11ms\n\n  kernel-probe-1.mjs  97.53 KB  (entry point)\n\n",
+        "stderr": ""
+      },
+      {
+        "command": [
+          "<bun>",
+          "build",
+          "scripts/effect-migration/fixtures/p2-kernel-probe.ts",
+          "--target=bun",
+          "--format=esm",
+          "--outfile=<scratch>/kernel-probe-2.mjs"
+        ],
+        "cwd": "<repo>",
+        "durationMs": 79.832,
+        "exitCode": 0,
+        "stdout": "Bundled 69 modules in 8ms\n\n  kernel-probe-2.mjs  97.53 KB  (entry point)\n\n",
+        "stderr": ""
+      }
+    ],
+    "sourceRuns": [
+      {
+        "command": [
+          "<bun>",
+          "scripts/effect-migration/fixtures/p2-kernel-probe.ts"
+        ],
+        "cwd": "<repo>",
+        "durationMs": 113.872,
+        "exitCode": 0,
+        "stdout": "{\"version\":\"p2-kernel-probe\",\"port\":4711,\"process\":{\"ok\":true,\"out\":\"p2-kernel-probe:fleetdeck-probe\\u0000--direct-argv\\u0000value with spaces\"}}\n",
+        "stderr": ""
+      },
+      {
+        "command": [
+          "<bun>",
+          "scripts/effect-migration/fixtures/p2-kernel-probe.ts"
+        ],
+        "cwd": "<repo>",
+        "durationMs": 69.153,
+        "exitCode": 0,
+        "stdout": "{\"version\":\"p2-kernel-probe\",\"port\":4711,\"process\":{\"ok\":true,\"out\":\"p2-kernel-probe:fleetdeck-probe\\u0000--direct-argv\\u0000value with spaces\"}}\n",
+        "stderr": ""
+      },
+      {
+        "command": [
+          "<bun>",
+          "scripts/effect-migration/fixtures/p2-kernel-probe.ts"
+        ],
+        "cwd": "<repo>",
+        "durationMs": 90.382,
+        "exitCode": 0,
+        "stdout": "{\"version\":\"p2-kernel-probe\",\"port\":4711,\"process\":{\"ok\":true,\"out\":\"p2-kernel-probe:fleetdeck-probe\\u0000--direct-argv\\u0000value with spaces\"}}\n",
+        "stderr": ""
+      },
+      {
+        "command": [
+          "<bun>",
+          "scripts/effect-migration/fixtures/p2-kernel-probe.ts"
+        ],
+        "cwd": "<repo>",
+        "durationMs": 82.451,
+        "exitCode": 0,
+        "stdout": "{\"version\":\"p2-kernel-probe\",\"port\":4711,\"process\":{\"ok\":true,\"out\":\"p2-kernel-probe:fleetdeck-probe\\u0000--direct-argv\\u0000value with spaces\"}}\n",
+        "stderr": ""
+      },
+      {
+        "command": [
+          "<bun>",
+          "scripts/effect-migration/fixtures/p2-kernel-probe.ts"
+        ],
+        "cwd": "<repo>",
+        "durationMs": 88.043,
+        "exitCode": 0,
+        "stdout": "{\"version\":\"p2-kernel-probe\",\"port\":4711,\"process\":{\"ok\":true,\"out\":\"p2-kernel-probe:fleetdeck-probe\\u0000--direct-argv\\u0000value with spaces\"}}\n",
+        "stderr": ""
+      },
+      {
+        "command": [
+          "<bun>",
+          "scripts/effect-migration/fixtures/p2-kernel-probe.ts"
+        ],
+        "cwd": "<repo>",
+        "durationMs": 80.335,
+        "exitCode": 0,
+        "stdout": "{\"version\":\"p2-kernel-probe\",\"port\":4711,\"process\":{\"ok\":true,\"out\":\"p2-kernel-probe:fleetdeck-probe\\u0000--direct-argv\\u0000value with spaces\"}}\n",
+        "stderr": ""
+      },
+      {
+        "command": [
+          "<bun>",
+          "scripts/effect-migration/fixtures/p2-kernel-probe.ts"
+        ],
+        "cwd": "<repo>",
+        "durationMs": 87.302,
+        "exitCode": 0,
+        "stdout": "{\"version\":\"p2-kernel-probe\",\"port\":4711,\"process\":{\"ok\":true,\"out\":\"p2-kernel-probe:fleetdeck-probe\\u0000--direct-argv\\u0000value with spaces\"}}\n",
+        "stderr": ""
+      },
+      {
+        "command": [
+          "<bun>",
+          "scripts/effect-migration/fixtures/p2-kernel-probe.ts"
+        ],
+        "cwd": "<repo>",
+        "durationMs": 83.443,
+        "exitCode": 0,
+        "stdout": "{\"version\":\"p2-kernel-probe\",\"port\":4711,\"process\":{\"ok\":true,\"out\":\"p2-kernel-probe:fleetdeck-probe\\u0000--direct-argv\\u0000value with spaces\"}}\n",
+        "stderr": ""
+      },
+      {
+        "command": [
+          "<bun>",
+          "scripts/effect-migration/fixtures/p2-kernel-probe.ts"
+        ],
+        "cwd": "<repo>",
+        "durationMs": 81.172,
+        "exitCode": 0,
+        "stdout": "{\"version\":\"p2-kernel-probe\",\"port\":4711,\"process\":{\"ok\":true,\"out\":\"p2-kernel-probe:fleetdeck-probe\\u0000--direct-argv\\u0000value with spaces\"}}\n",
+        "stderr": ""
+      },
+      {
+        "command": [
+          "<bun>",
+          "scripts/effect-migration/fixtures/p2-kernel-probe.ts"
+        ],
+        "cwd": "<repo>",
+        "durationMs": 83.928,
+        "exitCode": 0,
+        "stdout": "{\"version\":\"p2-kernel-probe\",\"port\":4711,\"process\":{\"ok\":true,\"out\":\"p2-kernel-probe:fleetdeck-probe\\u0000--direct-argv\\u0000value with spaces\"}}\n",
+        "stderr": ""
+      }
+    ],
+    "bundledRuns": [
+      {
+        "command": [
+          "<bun>",
+          "<scratch>/kernel-probe-1.mjs"
+        ],
+        "cwd": "<repo>",
+        "durationMs": 95.558,
+        "exitCode": 0,
+        "stdout": "{\"version\":\"p2-kernel-probe\",\"port\":4711,\"process\":{\"ok\":true,\"out\":\"p2-kernel-probe:fleetdeck-probe\\u0000--direct-argv\\u0000value with spaces\"}}\n",
+        "stderr": ""
+      },
+      {
+        "command": [
+          "<bun>",
+          "<scratch>/kernel-probe-1.mjs"
+        ],
+        "cwd": "<repo>",
+        "durationMs": 80.783,
+        "exitCode": 0,
+        "stdout": "{\"version\":\"p2-kernel-probe\",\"port\":4711,\"process\":{\"ok\":true,\"out\":\"p2-kernel-probe:fleetdeck-probe\\u0000--direct-argv\\u0000value with spaces\"}}\n",
+        "stderr": ""
+      },
+      {
+        "command": [
+          "<bun>",
+          "<scratch>/kernel-probe-1.mjs"
+        ],
+        "cwd": "<repo>",
+        "durationMs": 85.012,
+        "exitCode": 0,
+        "stdout": "{\"version\":\"p2-kernel-probe\",\"port\":4711,\"process\":{\"ok\":true,\"out\":\"p2-kernel-probe:fleetdeck-probe\\u0000--direct-argv\\u0000value with spaces\"}}\n",
+        "stderr": ""
+      },
+      {
+        "command": [
+          "<bun>",
+          "<scratch>/kernel-probe-1.mjs"
+        ],
+        "cwd": "<repo>",
+        "durationMs": 79.073,
+        "exitCode": 0,
+        "stdout": "{\"version\":\"p2-kernel-probe\",\"port\":4711,\"process\":{\"ok\":true,\"out\":\"p2-kernel-probe:fleetdeck-probe\\u0000--direct-argv\\u0000value with spaces\"}}\n",
+        "stderr": ""
+      },
+      {
+        "command": [
+          "<bun>",
+          "<scratch>/kernel-probe-1.mjs"
+        ],
+        "cwd": "<repo>",
+        "durationMs": 82.852,
+        "exitCode": 0,
+        "stdout": "{\"version\":\"p2-kernel-probe\",\"port\":4711,\"process\":{\"ok\":true,\"out\":\"p2-kernel-probe:fleetdeck-probe\\u0000--direct-argv\\u0000value with spaces\"}}\n",
+        "stderr": ""
+      },
+      {
+        "command": [
+          "<bun>",
+          "<scratch>/kernel-probe-1.mjs"
+        ],
+        "cwd": "<repo>",
+        "durationMs": 82.213,
+        "exitCode": 0,
+        "stdout": "{\"version\":\"p2-kernel-probe\",\"port\":4711,\"process\":{\"ok\":true,\"out\":\"p2-kernel-probe:fleetdeck-probe\\u0000--direct-argv\\u0000value with spaces\"}}\n",
+        "stderr": ""
+      },
+      {
+        "command": [
+          "<bun>",
+          "<scratch>/kernel-probe-1.mjs"
+        ],
+        "cwd": "<repo>",
+        "durationMs": 81.908,
+        "exitCode": 0,
+        "stdout": "{\"version\":\"p2-kernel-probe\",\"port\":4711,\"process\":{\"ok\":true,\"out\":\"p2-kernel-probe:fleetdeck-probe\\u0000--direct-argv\\u0000value with spaces\"}}\n",
+        "stderr": ""
+      },
+      {
+        "command": [
+          "<bun>",
+          "<scratch>/kernel-probe-1.mjs"
+        ],
+        "cwd": "<repo>",
+        "durationMs": 79.939,
+        "exitCode": 0,
+        "stdout": "{\"version\":\"p2-kernel-probe\",\"port\":4711,\"process\":{\"ok\":true,\"out\":\"p2-kernel-probe:fleetdeck-probe\\u0000--direct-argv\\u0000value with spaces\"}}\n",
+        "stderr": ""
+      },
+      {
+        "command": [
+          "<bun>",
+          "<scratch>/kernel-probe-1.mjs"
+        ],
+        "cwd": "<repo>",
+        "durationMs": 83.114,
+        "exitCode": 0,
+        "stdout": "{\"version\":\"p2-kernel-probe\",\"port\":4711,\"process\":{\"ok\":true,\"out\":\"p2-kernel-probe:fleetdeck-probe\\u0000--direct-argv\\u0000value with spaces\"}}\n",
+        "stderr": ""
+      },
+      {
+        "command": [
+          "<bun>",
+          "<scratch>/kernel-probe-1.mjs"
+        ],
+        "cwd": "<repo>",
+        "durationMs": 82.969,
+        "exitCode": 0,
+        "stdout": "{\"version\":\"p2-kernel-probe\",\"port\":4711,\"process\":{\"ok\":true,\"out\":\"p2-kernel-probe:fleetdeck-probe\\u0000--direct-argv\\u0000value with spaces\"}}\n",
+        "stderr": ""
+      }
+    ]
+  }
+}
