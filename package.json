@@ -50,6 +50,7 @@
     "effect:p2:check": "bun scripts/effect-migration/check-effect-cohort.ts",
     "effect:p2:kernel": "bun scripts/effect-migration/p2-kernel-probe.ts",
     "effect:p2:measure": "bun scripts/effect-migration/check-effect-cohort.ts --measure",
+    "effect:p3:packed-smoke": "bun scripts/effect-migration/p3-packed-install-smoke.ts",
     "test:bun-platform-conformance": "bun test --timeout 300000 tests/bun-platform-conformance.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p board/tsconfig.json",
     "typecheck:board-tests": "tsc --noEmit -p tsconfig.board-tests.json",
