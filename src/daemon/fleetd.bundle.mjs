@@ -2231,7 +2231,8 @@ function execFileP(cmd, args, { timeout = 3e4, env, signal, killTree = false } =
           if (target.pid == null) return;
           let alive = true;
           try {
-            process.kill(target.pid, 0);
+            const probe2 = killTree && process.platform !== "win32" ? -target.pid : target.pid;
+            process.kill(probe2, 0);
           } catch {
             alive = false;
           }
@@ -4305,6 +4306,20 @@ var CONTROL_RE = /[\x00-\x1f\x7f]/;
 var SPACE_OR_CONTROL_RE = /[\s\x00-\x1f\x7f]/;
 var FORGE_SLUG_SEGMENT_RE = /^[A-Za-z0-9._-]+$/;
 var CODER_DEFAULT_ORG = "textemma";
+var ACCESS_CACHE_TTL_MS = 3e4;
+var ACCESS_CACHE_MAX = 256;
+function rememberRepoAccess(cache, key, now) {
+  for (const [cachedKey, expiresAt] of cache) {
+    if (expiresAt <= now) cache.delete(cachedKey);
+  }
+  cache.delete(key);
+  while (cache.size >= ACCESS_CACHE_MAX) {
+    const oldest = cache.keys().next();
+    if (oldest.done) break;
+    cache.delete(oldest.value);
+  }
+  cache.set(key, now + ACCESS_CACHE_TTL_MS);
+}
 var RepoError = class extends Error {
   status;
   constructor(status, message) {
@@ -4686,7 +4701,7 @@ function createRepos(ctx) {
       env: { GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "Never" }
     });
     if (!result.ok) return accessFailure(origin, result);
-    accessCache.set(cacheKey, Date.now() + 3e4);
+    rememberRepoAccess(accessCache, cacheKey, Date.now());
     return { ok: true, ...kind };
   }
   async function preflightRepo(body) {
@@ -5093,15 +5108,24 @@ ${result.err}`);
       return path7.resolve(dest);
     }
   }
-  function claimTarget(dest, callsign) {
+  function claimTarget(dest, ownerName) {
     const canonical2 = canonicalTarget(dest);
-    const owner = provisioningTargets.get(canonical2);
-    if (owner) throw namedError(409, `${canonical2} is already being provisioned by ${owner}`);
-    provisioningTargets.set(canonical2, callsign);
-    return () => provisioningTargets.delete(canonical2);
+    const held = provisioningTargets.get(canonical2);
+    if (held) throw namedError(409, `${canonical2} is already being provisioned by ${held.owner}`);
+    const id = Symbol(canonical2);
+    provisioningTargets.set(canonical2, { id, owner: ownerName });
+    return () => {
+      if (provisioningTargets.get(canonical2)?.id === id) provisioningTargets.delete(canonical2);
+    };
+  }
+  function relabelTarget(dest, expectedOwner, ownerName) {
+    const held = provisioningTargets.get(canonicalTarget(dest));
+    if (!held || held.owner !== expectedOwner) return false;
+    held.owner = ownerName;
+    return true;
   }
   function targetOwner(dest) {
-    return provisioningTargets.get(canonicalTarget(dest)) ?? null;
+    return provisioningTargets.get(canonicalTarget(dest))?.owner ?? null;
   }
   return {
     validateBranch,
@@ -5116,6 +5140,7 @@ ${result.err}`);
     cloneRepo,
     materializeBranch,
     claimTarget,
+    relabelTarget,
     targetOwner,
     reserveCloneSlot
   };
@@ -7231,6 +7256,7 @@ function createSpawns(ctx) {
     materializeBranch,
     touchRepo,
     claimTarget,
+    relabelTarget,
     reserveCloneSlot,
     persistRepoTransport,
     persistRepoDefaultOrg,
@@ -7956,17 +7982,50 @@ function createSpawns(ctx) {
       const session_id2 = randomUUID2();
       const spawn_id2 = randomUUID2();
       const initialNote = target.mode === "clone" ? `cloning ${target.repo_name}\u2026` : `preparing ${body.branch}\u2026`;
-      let c2;
+      let callsign2;
+      let tmux_session2;
+      let tmux_window2;
       try {
-        c2 = createSpawnedCard(session_id2, targetPath, body.prompt, {
+        const c2 = createSpawnedCard(session_id2, targetPath, body.prompt, {
           repo_name: target.repo_name,
           branch: body.branch,
           note: initialNote
         });
+        if (c2.callsign == null) throw new Error("spawned card is missing its callsign");
+        callsign2 = c2.callsign;
+        tmux_session2 = tmuxAdapter.sessionName(port);
+        tmux_window2 = tmuxAdapter.windowName(port, callsign2);
+        if (!relabelTarget(targetPath, "repository access check", callsign2)) {
+          throw new Error("repository destination claim vanished before provisioning");
+        }
+        q.insertProvisionalSpawn.run(
+          spawn_id2,
+          session_id2,
+          callsign2,
+          tmux_session2,
+          tmux_window2,
+          targetPath,
+          null,
+          Date.now(),
+          skipPermissions ? 1 : 0,
+          body.remote_control === true ? 1 : 0,
+          target.origin_url ?? null,
+          body.branch,
+          branchMode,
+          gateway.use ? 1 : 0,
+          kind,
+          body.setup_cmd ?? null
+        );
       } catch (err) {
         releaseCloneSlot();
         releaseTarget();
         releasePlanClaim();
+        try {
+          if (q.getSession.get(session_id2)) {
+            tombstoneCard(session_id2, { note: "spawn setup failed", mutate: true });
+          }
+        } catch {
+        }
         return {
           status: 500,
           body: {
@@ -7975,28 +8034,6 @@ function createSpawns(ctx) {
           }
         };
       }
-      const callsign2 = c2.callsign;
-      if (callsign2 == null) throw new Error("spawned card is missing its callsign");
-      const tmux_session2 = tmuxAdapter.sessionName(port);
-      const tmux_window2 = tmuxAdapter.windowName(port, callsign2);
-      q.insertProvisionalSpawn.run(
-        spawn_id2,
-        session_id2,
-        callsign2,
-        tmux_session2,
-        tmux_window2,
-        targetPath,
-        null,
-        Date.now(),
-        skipPermissions ? 1 : 0,
-        body.remote_control === true ? 1 : 0,
-        target.origin_url ?? null,
-        body.branch,
-        branchMode,
-        gateway.use ? 1 : 0,
-        kind,
-        body.setup_cmd ?? null
-      );
       const finishMaterialization = async (materialized, source) => {
         const worktree_path2 = branchMode === "worktree" ? materialized.runCwd : null;
         if (worktree_path2)

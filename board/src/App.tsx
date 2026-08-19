@@ -508,7 +508,7 @@ export default function App() {
     );
     setSpawnForm({
       prompt:
-        'Execute this approved plan exactly. Custom instructions: \n\n---\n' + (p.plan_md || ''),
+        'Execute this approved plan exactly. Custom instructions:\n\n---\n' + (p.plan_md || ''),
       cwd: peer ? (peer.worktree ?? '') || (peer.cwd ?? '') : '',
       planId: p.plan_id,
     });

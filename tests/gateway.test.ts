@@ -1024,9 +1024,25 @@ test('gateway: a repo-mode spawn persists and delivers routing too', async (t) =
 test('2.3: a credentialed origin URL reaches NO surface through access preflight', async (t) => {
   const secret = 'glpat-DEADBEEFdeadbeef00';
   const origin = `https://fdtest:${secret}@127.0.0.1:1/x.git`;
+  const shimDir = scratchDir();
+  t.after(() => {
+    rmSync(shimDir, { recursive: true, force: true });
+  });
+  const gitShim = path.join(shimDir, 'git');
+  writeFileSync(
+    gitShim,
+    '#!/bin/sh\n' +
+      'if [ "$1" = "ls-remote" ]; then\n' +
+      '  printf "fatal: unable to access %s: deterministic refusal\\n" "$3" >&2\n' +
+      '  exit 128\n' +
+      'fi\n' +
+      'exec "$FD_REAL_GIT" "$@"\n',
+    { mode: 0o755 },
+  );
+  const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
   const { daemon } = await gatewayDaemon(t, {
-    FLEETDECK_CLONE_TIMEOUT_MS: '1',
-    GIT_SSH_COMMAND: 'false',
+    PATH: `${shimDir}:${process.env['PATH'] ?? ''}`,
+    FD_REAL_GIT: realGit,
   });
   t.after(() => daemon.stop());
 

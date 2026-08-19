@@ -23,6 +23,23 @@ const FORGE_SLUG_SEGMENT_RE = /^[A-Za-z0-9._-]+$/;
 // often than a full owner/repo slug. Precedence is persisted setting → env →
 // this Coder-only seed → no default. Non-Coder installs never inherit it.
 const CODER_DEFAULT_ORG = 'textemma';
+const ACCESS_CACHE_TTL_MS = 30_000;
+export const ACCESS_CACHE_MAX = 256;
+
+/** Keep successful access probes bounded and discard stale entries. Exported
+ * so the eviction contract is testable without launching 257 Git processes. */
+export function rememberRepoAccess(cache: Map<string, number>, key: string, now: number): void {
+  for (const [cachedKey, expiresAt] of cache) {
+    if (expiresAt <= now) cache.delete(cachedKey);
+  }
+  cache.delete(key); // a refreshed key becomes the newest insertion
+  while (cache.size >= ACCESS_CACHE_MAX) {
+    const oldest = cache.keys().next();
+    if (oldest.done) break;
+    cache.delete(oldest.value);
+  }
+  cache.set(key, now + ACCESS_CACHE_TTL_MS);
+}
 
 // A git failure carries an HTTP status the daemon relays verbatim. The old
 // namedError stamped `.status` onto a plain Error, which strict TS rejects
@@ -529,7 +546,7 @@ type RepoAccessProbe =
 export function createRepos(ctx: ReposCtx) {
   const { q } = ctx;
   const touchedAt = new Map<string, number>();
-  const provisioningTargets = new Map<string, string>();
+  const provisioningTargets = new Map<string, { id: symbol; owner: string }>();
   const accessCache = new Map<string, number>();
 
   // A clone is an unbounded, minutes-long subprocess that writes to disk;
@@ -735,7 +752,7 @@ export function createRepos(ctx: ReposCtx) {
       env: { GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'Never' },
     });
     if (!result.ok) return accessFailure(origin, result);
-    accessCache.set(cacheKey, Date.now() + 30_000);
+    rememberRepoAccess(accessCache, cacheKey, Date.now());
     return { ok: true, ...kind };
   }
 
@@ -1340,16 +1357,27 @@ export function createRepos(ctx: ReposCtx) {
     }
   }
 
-  function claimTarget(dest: string, callsign: string): () => void {
+  function claimTarget(dest: string, ownerName: string): () => void {
     const canonical = canonicalTarget(dest);
-    const owner = provisioningTargets.get(canonical);
-    if (owner) throw namedError(409, `${canonical} is already being provisioned by ${owner}`);
-    provisioningTargets.set(canonical, callsign);
-    return () => provisioningTargets.delete(canonical);
+    const held = provisioningTargets.get(canonical);
+    if (held) throw namedError(409, `${canonical} is already being provisioned by ${held.owner}`);
+    const id = Symbol(canonical);
+    provisioningTargets.set(canonical, { id, owner: ownerName });
+    return () => {
+      // A delayed release from an old attempt must never erase a future owner.
+      if (provisioningTargets.get(canonical)?.id === id) provisioningTargets.delete(canonical);
+    };
+  }
+
+  function relabelTarget(dest: string, expectedOwner: string, ownerName: string): boolean {
+    const held = provisioningTargets.get(canonicalTarget(dest));
+    if (!held || held.owner !== expectedOwner) return false;
+    held.owner = ownerName;
+    return true;
   }
 
   function targetOwner(dest: string): string | null {
-    return provisioningTargets.get(canonicalTarget(dest)) ?? null;
+    return provisioningTargets.get(canonicalTarget(dest))?.owner ?? null;
   }
 
   return {
@@ -1365,6 +1393,7 @@ export function createRepos(ctx: ReposCtx) {
     cloneRepo,
     materializeBranch,
     claimTarget,
+    relabelTarget,
     targetOwner,
     reserveCloneSlot,
   };

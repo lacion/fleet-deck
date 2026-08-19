@@ -12,6 +12,10 @@ const fleetConnection = readFileSync(path.resolve('board/src/fleetConnection.ts'
 const api = readFileSync(path.resolve('board/src/api.ts'), 'utf8');
 const spawnForm = readFileSync(path.resolve('board/src/components/SpawnForm.tsx'), 'utf8');
 const termPane = readFileSync(path.resolve('board/src/components/TermPane.tsx'), 'utf8');
+const worktreesModal = readFileSync(
+  path.resolve('board/src/components/WorktreesModal.tsx'),
+  'utf8',
+);
 const killConfirm = readFileSync(path.resolve('board/src/components/KillConfirm.tsx'), 'utf8');
 const fileViewer = readFileSync(path.resolve('board/src/components/FileViewer.tsx'), 'utf8');
 const planLibrary = readFileSync(path.resolve('board/src/components/PlanLibrary.tsx'), 'utf8');
@@ -140,6 +144,11 @@ test('terminal text paste keeps normal xterm semantics, including multiple lines
   assert.match(termPane, /Text — including multiple lines — follows xterm's normal paste path/);
   assert.match(termPane, /if \(!item\) return/);
   assert.doesNotMatch(termPane, /pasteTextSafe|multi-line paste blocked/);
+});
+
+test('bulk worktree removal reports a failed refresh instead of leaving stale success UI', () => {
+  assert.match(worktreesModal, /await onReload\(\);[\s\S]*?catch[\s\S]*?refresh failed/);
+  assert.match(worktreesModal, /click Refresh to retry/);
 });
 
 test('a provisioning card offers clone cancellation rather than a fake pane kill', () => {

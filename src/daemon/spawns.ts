@@ -133,6 +133,7 @@ interface SpawnsCtx {
   materializeBranch: ReposSurface['materializeBranch'];
   touchRepo: ReposSurface['touchRepo'];
   claimTarget: ReposSurface['claimTarget'];
+  relabelTarget: ReposSurface['relabelTarget'];
   reserveCloneSlot: () => ReturnType<ReposSurface['reserveCloneSlot']>;
   persistRepoTransport: (v: unknown) => ReturnType<SettingsSurface['persistRepoTransport']>;
   persistRepoDefaultOrg: (v: unknown) => ReturnType<SettingsSurface['persistRepoDefaultOrg']>;
@@ -389,6 +390,7 @@ export function createSpawns(ctx: SpawnsCtx) {
     materializeBranch,
     touchRepo,
     claimTarget,
+    relabelTarget,
     reserveCloneSlot,
     persistRepoTransport,
     persistRepoDefaultOrg,
@@ -1492,17 +1494,55 @@ export function createSpawns(ctx: SpawnsCtx) {
       // refusal owes. The two materialization paths BELOW already own their
       // failure surfaces (spawnCompensate tombstones + a real status body) —
       // this guard deliberately covers the card-creation prefix only.
-      let c: SessionRow;
+      let callsign: string;
+      let tmux_session: string;
+      let tmux_window: string;
       try {
-        c = createSpawnedCard(session_id, targetPath, body.prompt, {
+        const c = createSpawnedCard(session_id, targetPath, body.prompt, {
           repo_name: target.repo_name,
           branch: body.branch,
           note: initialNote,
         });
+        if (c.callsign == null) throw new Error('spawned card is missing its callsign');
+        callsign = c.callsign;
+        tmux_session = tmuxAdapter.sessionName(port);
+        tmux_window = tmuxAdapter.windowName(port, callsign);
+        if (!relabelTarget(targetPath, 'repository access check', callsign)) {
+          throw new Error('repository destination claim vanished before provisioning');
+        }
+        q.insertProvisionalSpawn.run(
+          spawn_id,
+          session_id,
+          callsign,
+          tmux_session,
+          tmux_window,
+          targetPath,
+          null,
+          Date.now(),
+          skipPermissions ? 1 : 0,
+          body.remote_control === true ? 1 : 0,
+          target.origin_url ?? null,
+          body.branch,
+          branchMode,
+          gateway.use ? 1 : 0,
+          kind,
+          body.setup_cmd ?? null,
+        );
       } catch (err) {
         releaseCloneSlot();
         releaseTarget();
         releasePlanClaim();
+        try {
+          // createSpawnedCard can fail after its session INSERT (for example
+          // while deriving ticket metadata), so look up the row rather than
+          // relying on its return assignment having completed.
+          if (q.getSession.get(session_id)) {
+            tombstoneCard(session_id, { note: 'spawn setup failed', mutate: true });
+          }
+        } catch {
+          // The originating storage error can also block the best-effort
+          // tombstone. The in-memory claims above are already released.
+        }
         return {
           status: 500,
           body: {
@@ -1511,33 +1551,6 @@ export function createSpawns(ctx: SpawnsCtx) {
           },
         };
       }
-      const callsign = c.callsign;
-      // createSpawnedCard runs the callsign lottery and INSERTs it (see the guard
-      // comment above), so a freshly created card always carries one — but the
-      // row type is SELECT-* nullable. Prove it here rather than thread `string |
-      // null` through windowName/claimTarget/spawnCompensate, all of which require
-      // a real name. Impossible in practice; an honest throw beats a silent `!`.
-      if (callsign == null) throw new Error('spawned card is missing its callsign');
-      const tmux_session = tmuxAdapter.sessionName(port);
-      const tmux_window = tmuxAdapter.windowName(port, callsign);
-      q.insertProvisionalSpawn.run(
-        spawn_id,
-        session_id,
-        callsign,
-        tmux_session,
-        tmux_window,
-        targetPath,
-        null,
-        Date.now(),
-        skipPermissions ? 1 : 0,
-        body.remote_control === true ? 1 : 0,
-        target.origin_url ?? null,
-        body.branch,
-        branchMode,
-        gateway.use ? 1 : 0,
-        kind,
-        body.setup_cmd ?? null,
-      );
 
       const finishMaterialization = async (materialized: Materialized, source: string) => {
         const worktree_path = branchMode === 'worktree' ? materialized.runCwd : null;

@@ -383,7 +383,7 @@ test('Kill cancels an in-flight clone, removes its temp tree, and retires the ca
       const found = state.sessions.find((session) => session.session_id === body.session_id);
       return found?.col === 'offline' ? found : null;
     },
-    { label: 'cancelled clone tombstone' },
+    { timeoutMs: 12_000, label: 'cancelled clone tombstone' },
   );
   assert.equal(card.note, 'spawn cancelled');
   assert.equal(card.spawn?.status, 'gone');

@@ -97,7 +97,11 @@ export function execFileP(
           if (target.pid == null) return;
           let alive = true;
           try {
-            process.kill(target.pid, 0);
+            // A cancellable clone owns a detached process GROUP. Its leader can
+            // exit after SIGTERM while an SSH or credential-helper descendant
+            // remains, so probing only the leader would suppress escalation.
+            const probe = killTree && process.platform !== 'win32' ? -target.pid : target.pid;
+            process.kill(probe, 0);
           } catch {
             alive = false;
           }
