@@ -1,0 +1,706 @@
+{
+  "schema": 1,
+  "kind": "fleetdeck-effect-p0-workloads",
+  "ok": true,
+  "recordedAt": "2026-08-19T15:18:55.468Z",
+  "runtimeFloor": {
+    "expected": {
+      "bun": "1.3.14",
+      "revision": "0d9b296af33f2b851fcbf4df3e9ec89751734ba4"
+    },
+    "actual": {
+      "bun": "1.3.14",
+      "revision": "0d9b296af33f2b851fcbf4df3e9ec89751734ba4"
+    },
+    "exactMatch": true
+  },
+  "runtime": {
+    "bun": "1.3.14",
+    "revision": "0d9b296af33f2b851fcbf4df3e9ec89751734ba4"
+  },
+  "machine": {
+    "platform": "darwin",
+    "release": "25.5.0",
+    "arch": "arm64",
+    "cpu": "Apple M4 Pro",
+    "logicalCpuCount": 14
+  },
+  "config": {
+    "iterations": 1000,
+    "concurrency": [
+      1,
+      10,
+      100
+    ],
+    "warmup": 20,
+    "wsIterations": 30,
+    "wsClients": 10,
+    "wsHeartbeatMs": 31000,
+    "terminalViewers": 10,
+    "pasteIterations": 10,
+    "pasteBytes": 2097152,
+    "stallTimeoutMs": 15000,
+    "sqliteIterations": 10000,
+    "sqliteStatements": 1000,
+    "requestTimeoutMs": 15000,
+    "healthTimeoutMs": 10000,
+    "shutdownTimeoutMs": 3000,
+    "daemonPath": "src/daemon/fleetd.bundle.mjs"
+  },
+  "comparison": {
+    "key": "f02b8d9911dfae51528f69fa28a88774871fa7c766ede17af592fe0b8bef272a",
+    "requirement": "compare only reports with identical key on the same idle machine"
+  },
+  "daemon": {
+    "pid": 8447,
+    "healthMs": 93.727,
+    "reconciliationReadyMs": 158.835,
+    "shutdown": {
+      "idleAfterWorkloads": {
+        "durationMs": 5.741,
+        "forced": false,
+        "exitCode": 0,
+        "signalCode": null,
+        "processUsage": {
+          "maxRSS": 891879424,
+          "cpuTime": {
+            "user": "1929588",
+            "system": "1122315",
+            "total": "3051903"
+          },
+          "contextSwitches": {
+            "voluntary": 603,
+            "involuntary": 18098
+          },
+          "messages": {
+            "sent": 12715,
+            "received": 13031
+          },
+          "ops": {
+            "in": 0,
+            "out": 0
+          },
+          "shmSize": 0,
+          "signalCount": 1,
+          "swapCount": 0
+        },
+        "stdoutBytes": 247,
+        "stderrBytes": 176
+      },
+      "busy": {
+        "state": "busy-incomplete-request-bodies",
+        "inFlight": 15,
+        "settled": 15,
+        "rejected": 0,
+        "requestDurationMs": {
+          "count": 15,
+          "min": 1305.578,
+          "p50": 1306.019,
+          "p95": 1306.535,
+          "p99": 1306.535,
+          "max": 1306.535,
+          "mean": 1306.023
+        },
+        "responseBytes": 0,
+        "shutdown": {
+          "durationMs": 5.378,
+          "forced": false,
+          "exitCode": 0,
+          "signalCode": null,
+          "processUsage": {
+            "maxRSS": 56098816,
+            "cpuTime": {
+              "user": "45753",
+              "system": "17884",
+              "total": "63637"
+            },
+            "contextSwitches": {
+              "voluntary": 14,
+              "involuntary": 652
+            },
+            "messages": {
+              "sent": 16,
+              "received": 30
+            },
+            "ops": {
+              "in": 0,
+              "out": 0
+            },
+            "shmSize": 0,
+            "signalCount": 1,
+            "swapCount": 0
+          },
+          "stdoutBytes": 247,
+          "stderrBytes": 0
+        }
+      },
+      "heldHook": {
+        "state": "held-PermissionRequest-with-live-board-consumer",
+        "confirmedHeldBeforeSignal": true,
+        "heldBeforeSignalMs": 201.499,
+        "requestOutcome": {
+          "kind": "error",
+          "error": "The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"
+        },
+        "shutdown": {
+          "durationMs": 4.699,
+          "forced": false,
+          "exitCode": 0,
+          "signalCode": null,
+          "processUsage": {
+            "maxRSS": 49479680,
+            "cpuTime": {
+              "user": "60200",
+              "system": "30247",
+              "total": "90447"
+            },
+            "contextSwitches": {
+              "voluntary": 6,
+              "involuntary": 604
+            },
+            "messages": {
+              "sent": 23,
+              "received": 21
+            },
+            "ops": {
+              "in": 0,
+              "out": 0
+            },
+            "shmSize": 0,
+            "signalCount": 1,
+            "swapCount": 0
+          },
+          "stdoutBytes": 247,
+          "stderrBytes": 0
+        }
+      }
+    },
+    "eventLoop": {
+      "driver": {
+        "observer": "workload driver process",
+        "intervalMs": 10,
+        "samples": 3836,
+        "delayMs": {
+          "count": 3836,
+          "min": 0,
+          "p50": 1.011,
+          "p95": 1.064,
+          "p99": 1.552,
+          "max": 6.677,
+          "mean": 0.815
+        },
+        "available": true
+      },
+      "daemonRoundTripProxy": {
+        "source": "/health response latency by configured concurrency",
+        "directInternalCounterAvailable": false,
+        "unavailableReason": "the P0 daemon exposes no internal event-loop-delay counter",
+        "p99Ms": [
+          {
+            "concurrency": 1,
+            "p99": 0.297
+          },
+          {
+            "concurrency": 10,
+            "p99": 1.341
+          },
+          {
+            "concurrency": 100,
+            "p99": 8.056
+          }
+        ]
+      }
+    }
+  },
+  "http": {
+    "seededSessions": 15,
+    "sessionIds": [
+      "effect-p0-http-0-4b70c8b8-daa7-42ad-9f23-356d0b35e437",
+      "effect-p0-http-1-ea3d1296-9428-4167-af2b-6b34ac3e1ca8",
+      "effect-p0-http-2-54e70926-4494-4785-b313-d60ac973c679",
+      "effect-p0-http-3-a7f96f9b-5925-4f0a-b907-629f79851f8b",
+      "effect-p0-http-4-c0c72624-eb25-413b-a273-3dae586ced98",
+      "effect-p0-http-5-e17aa77a-9784-4c8f-9161-07ed3c24fb4a",
+      "effect-p0-http-6-0736baa7-6d44-4a7c-9e9e-5c91f5ac321c",
+      "effect-p0-http-7-4ee4ef81-e48e-4adb-a4bd-6a60c566e554",
+      "effect-p0-http-8-cd16cf34-9a22-4258-ab7f-4d48a3933946",
+      "effect-p0-http-9-a662f08b-af3f-46d2-9ba8-2b53f75a68fd",
+      "effect-p0-http-10-6fd86638-a08a-4525-ba9e-8217c7c28c22",
+      "effect-p0-http-11-83d47db1-6b3c-4350-b7c6-bd3ff6645431",
+      "effect-p0-http-12-f9676caf-9b54-4480-a22a-8873faa3a6fd",
+      "effect-p0-http-13-63ce7c38-0948-487d-a2a0-0f7429a112e6",
+      "effect-p0-http-14-1290035b-ae35-4401-a4c1-6976bfded527"
+    ],
+    "health": [
+      {
+        "count": 1000,
+        "concurrency": 1,
+        "durationMs": 111.13,
+        "operationsPerSecond": 8998.46,
+        "responseBytes": 178000,
+        "latencyMs": {
+          "count": 1000,
+          "min": 0.078,
+          "p50": 0.099,
+          "p95": 0.154,
+          "p99": 0.297,
+          "max": 0.824,
+          "mean": 0.111
+        }
+      },
+      {
+        "count": 1000,
+        "concurrency": 10,
+        "durationMs": 70.653,
+        "operationsPerSecond": 14153.606,
+        "responseBytes": 178000,
+        "latencyMs": {
+          "count": 1000,
+          "min": 0.115,
+          "p50": 0.618,
+          "p95": 1.229,
+          "p99": 1.341,
+          "max": 1.896,
+          "mean": 0.703
+        }
+      },
+      {
+        "count": 1000,
+        "concurrency": 100,
+        "durationMs": 69.53,
+        "operationsPerSecond": 14382.315,
+        "responseBytes": 178000,
+        "latencyMs": {
+          "count": 1000,
+          "min": 0.647,
+          "p50": 6.809,
+          "p95": 7.518,
+          "p99": 8.056,
+          "max": 14.112,
+          "mean": 6.629
+        }
+      }
+    ],
+    "state": [
+      {
+        "count": 1000,
+        "concurrency": 1,
+        "durationMs": 371.293,
+        "operationsPerSecond": 2693.293,
+        "responseBytes": 16101490,
+        "latencyMs": {
+          "count": 1000,
+          "min": 0.31,
+          "p50": 0.349,
+          "p95": 0.529,
+          "p99": 0.679,
+          "max": 1.632,
+          "mean": 0.371
+        }
+      },
+      {
+        "count": 1000,
+        "concurrency": 10,
+        "durationMs": 309.779,
+        "operationsPerSecond": 3228.113,
+        "responseBytes": 16103000,
+        "latencyMs": {
+          "count": 1000,
+          "min": 0.403,
+          "p50": 2.759,
+          "p95": 5.431,
+          "p99": 6.021,
+          "max": 8.477,
+          "mean": 3.085
+        }
+      },
+      {
+        "count": 1000,
+        "concurrency": 100,
+        "durationMs": 311.928,
+        "operationsPerSecond": 3205.872,
+        "responseBytes": 16103000,
+        "latencyMs": {
+          "count": 1000,
+          "min": 1.072,
+          "p50": 30.604,
+          "p95": 34.238,
+          "p99": 50.332,
+          "max": 62.28,
+          "mean": 29.504
+        }
+      }
+    ],
+    "static": [
+      {
+        "count": 1000,
+        "concurrency": 1,
+        "durationMs": 84.552,
+        "operationsPerSecond": 11826.977,
+        "responseBytes": 1022000,
+        "latencyMs": {
+          "count": 1000,
+          "min": 0.052,
+          "p50": 0.072,
+          "p95": 0.124,
+          "p99": 0.27,
+          "max": 0.663,
+          "mean": 0.085
+        }
+      },
+      {
+        "count": 1000,
+        "concurrency": 10,
+        "durationMs": 31.862,
+        "operationsPerSecond": 31385.513,
+        "responseBytes": 1022000,
+        "latencyMs": {
+          "count": 1000,
+          "min": 0.091,
+          "p50": 0.275,
+          "p95": 0.556,
+          "p99": 0.652,
+          "max": 0.949,
+          "mean": 0.317
+        }
+      },
+      {
+        "count": 1000,
+        "concurrency": 100,
+        "durationMs": 29.953,
+        "operationsPerSecond": 33386.195,
+        "responseBytes": 1022000,
+        "latencyMs": {
+          "count": 1000,
+          "min": 0.357,
+          "p50": 2.888,
+          "p95": 4.757,
+          "p99": 5.679,
+          "max": 5.984,
+          "mean": 2.836
+        }
+      }
+    ],
+    "hook": [
+      {
+        "count": 1000,
+        "concurrency": 1,
+        "durationMs": 198.637,
+        "operationsPerSecond": 5034.309,
+        "responseBytes": 2000,
+        "latencyMs": {
+          "count": 1000,
+          "min": 0.134,
+          "p50": 0.157,
+          "p95": 0.414,
+          "p99": 1.276,
+          "max": 2.549,
+          "mean": 0.199
+        }
+      },
+      {
+        "count": 1000,
+        "concurrency": 10,
+        "durationMs": 158.774,
+        "operationsPerSecond": 6298.255,
+        "responseBytes": 2000,
+        "latencyMs": {
+          "count": 1000,
+          "min": 0.217,
+          "p50": 1.258,
+          "p95": 2.895,
+          "p99": 4.012,
+          "max": 5.128,
+          "mean": 1.58
+        }
+      },
+      {
+        "count": 1000,
+        "concurrency": 100,
+        "durationMs": 161.172,
+        "operationsPerSecond": 6204.566,
+        "responseBytes": 2000,
+        "latencyMs": {
+          "count": 1000,
+          "min": 1.195,
+          "p50": 15.864,
+          "p95": 18.265,
+          "p99": 33.728,
+          "max": 35.129,
+          "mean": 15.319
+        }
+      }
+    ],
+    "largePaste": {
+      "decodedBytes": 2097152,
+      "requestBytes": 2796215,
+      "sha256": "324e6fa7b9eb28b00d12d6fd211a1b761b9e172987933cc75f9682d9014cd4d5",
+      "persistedExact": true,
+      "acknowledgedUniquePaths": 121,
+      "matrix": [
+        {
+          "count": 10,
+          "concurrency": 1,
+          "durationMs": 34.202,
+          "operationsPerSecond": 292.382,
+          "responseBytes": 1720,
+          "latencyMs": {
+            "count": 10,
+            "min": 2.758,
+            "p50": 3.43,
+            "p95": 4.283,
+            "p99": 4.283,
+            "max": 4.283,
+            "mean": 3.419
+          }
+        },
+        {
+          "count": 10,
+          "concurrency": 10,
+          "durationMs": 34.743,
+          "operationsPerSecond": 287.828,
+          "responseBytes": 1720,
+          "latencyMs": {
+            "count": 10,
+            "min": 5.131,
+            "p50": 20.47,
+            "p95": 34.29,
+            "p99": 34.29,
+            "max": 34.29,
+            "mean": 20.954
+          }
+        },
+        {
+          "count": 100,
+          "concurrency": 100,
+          "durationMs": 384.674,
+          "operationsPerSecond": 259.961,
+          "responseBytes": 17200,
+          "latencyMs": {
+            "count": 100,
+            "min": 11.223,
+            "p50": 230.392,
+            "p95": 368.604,
+            "p99": 378.786,
+            "max": 381.341,
+            "mean": 228.01
+          }
+        }
+      ]
+    },
+    "rawBody": {
+      "withheld": {
+        "mode": "withheld-client-abort",
+        "durationMs": 1159.357,
+        "requestAgeMs": 1157.563,
+        "connectedMs": 1.629,
+        "declaredBytes": 200,
+        "sentBodyBytes": 50,
+        "responseBytes": 0,
+        "heldPastDrainGrace": true,
+        "noPrematureResponse": true,
+        "closeKind": "end"
+      },
+      "stalledFin": {
+        "mode": "stalled-server-fin",
+        "durationMs": 3997.503,
+        "requestAgeMs": 3996.889,
+        "connectedMs": 0.575,
+        "declaredBytes": 200,
+        "sentBodyBytes": 50,
+        "responseBytes": 0,
+        "heldPastDrainGrace": true,
+        "noPrematureResponse": true,
+        "closeKind": "end"
+      }
+    }
+  },
+  "websocket": {
+    "snapshotBroadcast": {
+      "clients": 10,
+      "broadcasts": 30,
+      "deliveredFrames": 310,
+      "receivedBytes": 6001461,
+      "queue": {
+        "serverBufferedAmountLimitBytes": 1048576,
+        "droppedFrames": 0,
+        "resyncs": 0
+      },
+      "connectLatencyMs": {
+        "count": 10,
+        "min": 2.745,
+        "p50": 5.401,
+        "p95": 9.304,
+        "p99": 9.304,
+        "max": 9.304,
+        "mean": 5.869
+      },
+      "broadcastFanoutLatencyMs": {
+        "count": 30,
+        "min": 62.348,
+        "p50": 64.46,
+        "p95": 68.433,
+        "p99": 140.423,
+        "max": 140.423,
+        "mean": 67.189
+      },
+      "reconnectMs": 2.719,
+      "heartbeat": {
+        "holdMs": 31000.844,
+        "serverCadenceMs": 30000,
+        "expectedPingCadences": 1,
+        "clientsStillOpen": 10
+      },
+      "closeMs": 1.057
+    },
+    "slowReaderBackpressure": {
+      "seam": "FLEETDECK_WS_BUFFER_MAX=-1 treats an otherwise-drained peer as slow",
+      "configuredQueueLimitBytes": -1,
+      "mutations": 1,
+      "sentBeforeEviction": 0,
+      "droppedOrResyncedFrames": 1,
+      "initialBytes": 870,
+      "freshSnapshotBytes": 2341,
+      "evictionMs": 220.616,
+      "close": {
+        "code": 1006,
+        "reason": "Connection ended"
+      },
+      "reconnectMs": 1.309,
+      "resynced": true,
+      "shutdown": {
+        "durationMs": 2.467,
+        "forced": false,
+        "exitCode": 0,
+        "signalCode": null,
+        "processUsage": {
+          "maxRSS": 49102848,
+          "cpuTime": {
+            "user": "58003",
+            "system": "28622",
+            "total": "86625"
+          },
+          "contextSwitches": {
+            "voluntary": 11,
+            "involuntary": 513
+          },
+          "messages": {
+            "sent": 24,
+            "received": 22
+          },
+          "ops": {
+            "in": 0,
+            "out": 0
+          },
+          "shmSize": 0,
+          "signalCount": 1,
+          "swapCount": 0
+        },
+        "stdoutBytes": 247,
+        "stderrBytes": 0
+      }
+    },
+    "terminalOutputFanout": {
+      "viewers": 10,
+      "spawnId": "868fe262-c03e-46c6-904b-605e7fe9635f",
+      "initFrames": 10,
+      "outputFrames": 10,
+      "deliveredFrames": 20,
+      "receivedBytes": 1500,
+      "queue": {
+        "preInitOutputLimitBytes": 262144,
+        "socketBufferedAmountLimitBytes": 4194304,
+        "droppedFrames": 0
+      },
+      "initLatencyMs": {
+        "count": 10,
+        "min": 301.696,
+        "p50": 302.038,
+        "p95": 302.23,
+        "p99": 302.23,
+        "max": 302.23,
+        "mean": 302.02
+      },
+      "outputFanoutLatencyMs": {
+        "count": 10,
+        "min": 327.791,
+        "p50": 327.811,
+        "p95": 327.828,
+        "p99": 327.828,
+        "max": 327.828,
+        "mean": 327.812
+      },
+      "closeMs": 0.157
+    }
+  },
+  "sqlite": {
+    "api": "Fleet Deck openDb/createCore over bun:sqlite",
+    "strictProductionSchema": true,
+    "iterations": 10000,
+    "openAndMigrateMs": 22.755,
+    "userVersion": 1,
+    "expectedUserVersion": 1,
+    "durationMs": 3247.598,
+    "operationsPerSecond": 3079.199,
+    "mix": {
+      "reads": 6000,
+      "writes": 3000,
+      "transactions": 1000
+    },
+    "latencyMs": {
+      "snapshotReads": {
+        "count": 6000,
+        "min": 0.15,
+        "p50": 0.466,
+        "p95": 0.751,
+        "p99": 0.848,
+        "max": 1.301,
+        "mean": 0.471
+      },
+      "writes": {
+        "count": 3000,
+        "min": 0.05,
+        "p50": 0.064,
+        "p95": 0.099,
+        "p99": 1.797,
+        "max": 12.133,
+        "mean": 0.107
+      },
+      "transactions": {
+        "count": 1000,
+        "min": 0.051,
+        "p50": 0.068,
+        "p95": 0.097,
+        "p99": 0.922,
+        "max": 3.421,
+        "mean": 0.102
+      }
+    },
+    "rows": {
+      "sessions": 15,
+      "events": 5015
+    },
+    "statementGrowth": {
+      "distinctPreparedStatements": 1000,
+      "rssBytes": 3637248
+    },
+    "busyContention": {
+      "surfaced": true,
+      "timeoutMs": 50,
+      "durationMs": 61.866,
+      "error": "database is locked"
+    },
+    "blockedEventLoopMs": 3248.666,
+    "restart": {
+      "verified": true,
+      "durationMs": 3.403,
+      "userVersion": 1
+    },
+    "databaseBytes": 1257472,
+    "processDelta": {
+      "rssBytes": 93978624,
+      "cpuUserMicros": 2682731,
+      "cpuSystemMicros": 552310
+    }
+  }
+}

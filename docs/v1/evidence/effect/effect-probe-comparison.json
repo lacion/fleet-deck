@@ -1,0 +1,118 @@
+{
+  "schema": 1,
+  "kind": "fleetdeck-effect-p0-comparison",
+  "ok": true,
+  "recordedAt": "2026-08-19T15:22:21.372Z",
+  "source": {
+    "schema": 1,
+    "kind": "fleetdeck-effect-p0-probe"
+  },
+  "inputs": {
+    "left": "docs/v1/evidence/effect/effect-probe-run-1.json",
+    "right": "docs/v1/evidence/effect/effect-probe-run-2.json"
+  },
+  "requiredRuntime": {
+    "bun": "1.3.14",
+    "revision": "0d9b296af33f2b851fcbf4df3e9ec89751734ba4"
+  },
+  "checks": {
+    "sameSchema": true,
+    "sameKind": true,
+    "exactBunFloor": true,
+    "sameMachineWhenRecorded": true,
+    "sameConfigWhenRecorded": true,
+    "correctnessAndVerificationHealthy": true,
+    "stableEvidenceEqual": true,
+    "matchingMetricShape": true
+  },
+  "coverage": {
+    "machineRecorded": false,
+    "configRecorded": false,
+    "correctnessChecks": 10,
+    "distributions": 0
+  },
+  "stableEvidence": {
+    "sha256": "c0e8367f9aa026a45973bfd77bab2fc577e6b02804b40c178369ecc07784f470",
+    "equal": true
+  },
+  "metrics": {
+    "distributions": [],
+    "scalarTimings": [
+      {
+        "path": "$.commands.install.durationMs",
+        "left": 92.857,
+        "right": 44.663,
+        "delta": {
+          "absolute": -48.194,
+          "percent": -51.901
+        }
+      },
+      {
+        "path": "$.commands.source.durationMs",
+        "left": 334.437,
+        "right": 238.1,
+        "delta": {
+          "absolute": -96.337,
+          "percent": -28.806
+        }
+      },
+      {
+        "path": "$.commands.build.durationMs",
+        "left": 16.435,
+        "right": 72.56,
+        "delta": {
+          "absolute": 56.125,
+          "percent": 341.497
+        }
+      },
+      {
+        "path": "$.commands.bundled.durationMs",
+        "left": 28.682,
+        "right": 85.205,
+        "delta": {
+          "absolute": 56.523,
+          "percent": 197.068
+        }
+      },
+      {
+        "path": "$.commands.signals.durationMs",
+        "left": 709.963,
+        "right": 776.804,
+        "delta": {
+          "absolute": 66.841,
+          "percent": 9.415
+        }
+      },
+      {
+        "path": "$.commands.dependencyTree.durationMs",
+        "left": 8.243,
+        "right": 8.268,
+        "delta": {
+          "absolute": 0.025,
+          "percent": 0.303
+        }
+      }
+    ],
+    "scalarSizes": [
+      {
+        "path": "$.verification.installedTree.bytes",
+        "left": 53823351,
+        "right": 53823351,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.verification.probeBundleBytes",
+        "left": 83456,
+        "right": 83456,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      }
+    ],
+    "convention": "delta is right minus left; percent is relative to abs(left)"
+  }
+}

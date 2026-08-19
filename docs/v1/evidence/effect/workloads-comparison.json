@@ -1,0 +1,1439 @@
+{
+  "schema": 1,
+  "kind": "fleetdeck-effect-p0-comparison",
+  "ok": true,
+  "recordedAt": "2026-08-19T15:22:21.363Z",
+  "source": {
+    "schema": 1,
+    "kind": "fleetdeck-effect-p0-workloads"
+  },
+  "inputs": {
+    "left": "docs/v1/evidence/effect/workloads-run-1.json",
+    "right": "docs/v1/evidence/effect/workloads-run-2.json"
+  },
+  "requiredRuntime": {
+    "bun": "1.3.14",
+    "revision": "0d9b296af33f2b851fcbf4df3e9ec89751734ba4"
+  },
+  "checks": {
+    "sameSchema": true,
+    "sameKind": true,
+    "exactBunFloor": true,
+    "sameMachineWhenRecorded": true,
+    "sameConfigWhenRecorded": true,
+    "correctnessAndVerificationHealthy": true,
+    "stableEvidenceEqual": true,
+    "matchingMetricShape": true
+  },
+  "coverage": {
+    "machineRecorded": true,
+    "configRecorded": true,
+    "correctnessChecks": 34,
+    "distributions": 24
+  },
+  "stableEvidence": {
+    "sha256": "3457e1a9791ec578897275aefd21970d67a4871c7d26fca60a11a17fe1c410c2",
+    "equal": true
+  },
+  "metrics": {
+    "distributions": [
+      {
+        "path": "$.daemon.shutdown.busy.requestDurationMs",
+        "category": "timing",
+        "left": {
+          "count": 15,
+          "p50": 1306.019,
+          "p95": 1306.535,
+          "p99": 1306.535
+        },
+        "right": {
+          "count": 15,
+          "p50": 1311.141,
+          "p95": 1311.883,
+          "p99": 1311.883
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": 5.122,
+            "percent": 0.392
+          },
+          "p95": {
+            "absolute": 5.348,
+            "percent": 0.409
+          },
+          "p99": {
+            "absolute": 5.348,
+            "percent": 0.409
+          }
+        }
+      },
+      {
+        "path": "$.daemon.eventLoop.driver.delayMs",
+        "category": "timing",
+        "left": {
+          "count": 3836,
+          "p50": 1.011,
+          "p95": 1.064,
+          "p99": 1.552
+        },
+        "right": {
+          "count": 3831,
+          "p50": 1.011,
+          "p95": 1.072,
+          "p99": 1.579
+        },
+        "delta": {
+          "count": -5,
+          "p50": {
+            "absolute": 0,
+            "percent": 0
+          },
+          "p95": {
+            "absolute": 0.008,
+            "percent": 0.752
+          },
+          "p99": {
+            "absolute": 0.027,
+            "percent": 1.74
+          }
+        }
+      },
+      {
+        "path": "$.http.health[0].latencyMs",
+        "category": "timing",
+        "left": {
+          "count": 1000,
+          "p50": 0.099,
+          "p95": 0.154,
+          "p99": 0.297
+        },
+        "right": {
+          "count": 1000,
+          "p50": 0.086,
+          "p95": 0.132,
+          "p99": 0.2
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -0.013,
+            "percent": -13.131
+          },
+          "p95": {
+            "absolute": -0.022,
+            "percent": -14.286
+          },
+          "p99": {
+            "absolute": -0.097,
+            "percent": -32.66
+          }
+        }
+      },
+      {
+        "path": "$.http.health[1].latencyMs",
+        "category": "timing",
+        "left": {
+          "count": 1000,
+          "p50": 0.618,
+          "p95": 1.229,
+          "p99": 1.341
+        },
+        "right": {
+          "count": 1000,
+          "p50": 0.602,
+          "p95": 1.179,
+          "p99": 1.372
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -0.016,
+            "percent": -2.589
+          },
+          "p95": {
+            "absolute": -0.05,
+            "percent": -4.068
+          },
+          "p99": {
+            "absolute": 0.031,
+            "percent": 2.312
+          }
+        }
+      },
+      {
+        "path": "$.http.health[2].latencyMs",
+        "category": "timing",
+        "left": {
+          "count": 1000,
+          "p50": 6.809,
+          "p95": 7.518,
+          "p99": 8.056
+        },
+        "right": {
+          "count": 1000,
+          "p50": 6.406,
+          "p95": 7.403,
+          "p99": 11.591
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -0.403,
+            "percent": -5.919
+          },
+          "p95": {
+            "absolute": -0.115,
+            "percent": -1.53
+          },
+          "p99": {
+            "absolute": 3.535,
+            "percent": 43.88
+          }
+        }
+      },
+      {
+        "path": "$.http.state[0].latencyMs",
+        "category": "timing",
+        "left": {
+          "count": 1000,
+          "p50": 0.349,
+          "p95": 0.529,
+          "p99": 0.679
+        },
+        "right": {
+          "count": 1000,
+          "p50": 0.371,
+          "p95": 0.609,
+          "p99": 0.814
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": 0.022,
+            "percent": 6.304
+          },
+          "p95": {
+            "absolute": 0.08,
+            "percent": 15.123
+          },
+          "p99": {
+            "absolute": 0.135,
+            "percent": 19.882
+          }
+        }
+      },
+      {
+        "path": "$.http.state[1].latencyMs",
+        "category": "timing",
+        "left": {
+          "count": 1000,
+          "p50": 2.759,
+          "p95": 5.431,
+          "p99": 6.021
+        },
+        "right": {
+          "count": 1000,
+          "p50": 3.047,
+          "p95": 5.764,
+          "p99": 6.477
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": 0.288,
+            "percent": 10.439
+          },
+          "p95": {
+            "absolute": 0.333,
+            "percent": 6.131
+          },
+          "p99": {
+            "absolute": 0.456,
+            "percent": 7.573
+          }
+        }
+      },
+      {
+        "path": "$.http.state[2].latencyMs",
+        "category": "timing",
+        "left": {
+          "count": 1000,
+          "p50": 30.604,
+          "p95": 34.238,
+          "p99": 50.332
+        },
+        "right": {
+          "count": 1000,
+          "p50": 30.934,
+          "p95": 32.765,
+          "p99": 50.592
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": 0.33,
+            "percent": 1.078
+          },
+          "p95": {
+            "absolute": -1.473,
+            "percent": -4.302
+          },
+          "p99": {
+            "absolute": 0.26,
+            "percent": 0.517
+          }
+        }
+      },
+      {
+        "path": "$.http.static[0].latencyMs",
+        "category": "timing",
+        "left": {
+          "count": 1000,
+          "p50": 0.072,
+          "p95": 0.124,
+          "p99": 0.27
+        },
+        "right": {
+          "count": 1000,
+          "p50": 0.067,
+          "p95": 0.117,
+          "p99": 0.169
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -0.005,
+            "percent": -6.944
+          },
+          "p95": {
+            "absolute": -0.007,
+            "percent": -5.645
+          },
+          "p99": {
+            "absolute": -0.101,
+            "percent": -37.407
+          }
+        }
+      },
+      {
+        "path": "$.http.static[1].latencyMs",
+        "category": "timing",
+        "left": {
+          "count": 1000,
+          "p50": 0.275,
+          "p95": 0.556,
+          "p99": 0.652
+        },
+        "right": {
+          "count": 1000,
+          "p50": 0.238,
+          "p95": 0.497,
+          "p99": 0.631
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -0.037,
+            "percent": -13.455
+          },
+          "p95": {
+            "absolute": -0.059,
+            "percent": -10.612
+          },
+          "p99": {
+            "absolute": -0.021,
+            "percent": -3.221
+          }
+        }
+      },
+      {
+        "path": "$.http.static[2].latencyMs",
+        "category": "timing",
+        "left": {
+          "count": 1000,
+          "p50": 2.888,
+          "p95": 4.757,
+          "p99": 5.679
+        },
+        "right": {
+          "count": 1000,
+          "p50": 2.606,
+          "p95": 3.117,
+          "p99": 5.342
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -0.282,
+            "percent": -9.765
+          },
+          "p95": {
+            "absolute": -1.64,
+            "percent": -34.476
+          },
+          "p99": {
+            "absolute": -0.337,
+            "percent": -5.934
+          }
+        }
+      },
+      {
+        "path": "$.http.hook[0].latencyMs",
+        "category": "timing",
+        "left": {
+          "count": 1000,
+          "p50": 0.157,
+          "p95": 0.414,
+          "p99": 1.276
+        },
+        "right": {
+          "count": 1000,
+          "p50": 0.159,
+          "p95": 0.302,
+          "p99": 1.294
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": 0.002,
+            "percent": 1.274
+          },
+          "p95": {
+            "absolute": -0.112,
+            "percent": -27.053
+          },
+          "p99": {
+            "absolute": 0.018,
+            "percent": 1.411
+          }
+        }
+      },
+      {
+        "path": "$.http.hook[1].latencyMs",
+        "category": "timing",
+        "left": {
+          "count": 1000,
+          "p50": 1.258,
+          "p95": 2.895,
+          "p99": 4.012
+        },
+        "right": {
+          "count": 1000,
+          "p50": 1.245,
+          "p95": 3.052,
+          "p99": 3.961
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -0.013,
+            "percent": -1.033
+          },
+          "p95": {
+            "absolute": 0.157,
+            "percent": 5.423
+          },
+          "p99": {
+            "absolute": -0.051,
+            "percent": -1.271
+          }
+        }
+      },
+      {
+        "path": "$.http.hook[2].latencyMs",
+        "category": "timing",
+        "left": {
+          "count": 1000,
+          "p50": 15.864,
+          "p95": 18.265,
+          "p99": 33.728
+        },
+        "right": {
+          "count": 1000,
+          "p50": 15.556,
+          "p95": 17.392,
+          "p99": 35.558
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -0.308,
+            "percent": -1.942
+          },
+          "p95": {
+            "absolute": -0.873,
+            "percent": -4.78
+          },
+          "p99": {
+            "absolute": 1.83,
+            "percent": 5.426
+          }
+        }
+      },
+      {
+        "path": "$.http.largePaste.matrix[0].latencyMs",
+        "category": "timing",
+        "left": {
+          "count": 10,
+          "p50": 3.43,
+          "p95": 4.283,
+          "p99": 4.283
+        },
+        "right": {
+          "count": 10,
+          "p50": 3.619,
+          "p95": 4.901,
+          "p99": 4.901
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": 0.189,
+            "percent": 5.51
+          },
+          "p95": {
+            "absolute": 0.618,
+            "percent": 14.429
+          },
+          "p99": {
+            "absolute": 0.618,
+            "percent": 14.429
+          }
+        }
+      },
+      {
+        "path": "$.http.largePaste.matrix[1].latencyMs",
+        "category": "timing",
+        "left": {
+          "count": 10,
+          "p50": 20.47,
+          "p95": 34.29,
+          "p99": 34.29
+        },
+        "right": {
+          "count": 10,
+          "p50": 17.976,
+          "p95": 36.417,
+          "p99": 36.417
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -2.494,
+            "percent": -12.184
+          },
+          "p95": {
+            "absolute": 2.127,
+            "percent": 6.203
+          },
+          "p99": {
+            "absolute": 2.127,
+            "percent": 6.203
+          }
+        }
+      },
+      {
+        "path": "$.http.largePaste.matrix[2].latencyMs",
+        "category": "timing",
+        "left": {
+          "count": 100,
+          "p50": 230.392,
+          "p95": 368.604,
+          "p99": 378.786
+        },
+        "right": {
+          "count": 100,
+          "p50": 231.552,
+          "p95": 383.033,
+          "p99": 395.071
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": 1.16,
+            "percent": 0.503
+          },
+          "p95": {
+            "absolute": 14.429,
+            "percent": 3.914
+          },
+          "p99": {
+            "absolute": 16.285,
+            "percent": 4.299
+          }
+        }
+      },
+      {
+        "path": "$.websocket.snapshotBroadcast.connectLatencyMs",
+        "category": "timing",
+        "left": {
+          "count": 10,
+          "p50": 5.401,
+          "p95": 9.304,
+          "p99": 9.304
+        },
+        "right": {
+          "count": 10,
+          "p50": 6.912,
+          "p95": 11.987,
+          "p99": 11.987
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": 1.511,
+            "percent": 27.976
+          },
+          "p95": {
+            "absolute": 2.683,
+            "percent": 28.837
+          },
+          "p99": {
+            "absolute": 2.683,
+            "percent": 28.837
+          }
+        }
+      },
+      {
+        "path": "$.websocket.snapshotBroadcast.broadcastFanoutLatencyMs",
+        "category": "timing",
+        "left": {
+          "count": 30,
+          "p50": 64.46,
+          "p95": 68.433,
+          "p99": 140.423
+        },
+        "right": {
+          "count": 30,
+          "p50": 64.162,
+          "p95": 68.09,
+          "p99": 113.36
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -0.298,
+            "percent": -0.462
+          },
+          "p95": {
+            "absolute": -0.343,
+            "percent": -0.501
+          },
+          "p99": {
+            "absolute": -27.063,
+            "percent": -19.272
+          }
+        }
+      },
+      {
+        "path": "$.websocket.terminalOutputFanout.initLatencyMs",
+        "category": "timing",
+        "left": {
+          "count": 10,
+          "p50": 302.038,
+          "p95": 302.23,
+          "p99": 302.23
+        },
+        "right": {
+          "count": 10,
+          "p50": 280.873,
+          "p95": 281.108,
+          "p99": 281.108
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -21.165,
+            "percent": -7.007
+          },
+          "p95": {
+            "absolute": -21.122,
+            "percent": -6.989
+          },
+          "p99": {
+            "absolute": -21.122,
+            "percent": -6.989
+          }
+        }
+      },
+      {
+        "path": "$.websocket.terminalOutputFanout.outputFanoutLatencyMs",
+        "category": "timing",
+        "left": {
+          "count": 10,
+          "p50": 327.811,
+          "p95": 327.828,
+          "p99": 327.828
+        },
+        "right": {
+          "count": 10,
+          "p50": 306.569,
+          "p95": 306.586,
+          "p99": 306.586
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -21.242,
+            "percent": -6.48
+          },
+          "p95": {
+            "absolute": -21.242,
+            "percent": -6.48
+          },
+          "p99": {
+            "absolute": -21.242,
+            "percent": -6.48
+          }
+        }
+      },
+      {
+        "path": "$.sqlite.latencyMs.snapshotReads",
+        "category": "timing",
+        "left": {
+          "count": 6000,
+          "p50": 0.466,
+          "p95": 0.751,
+          "p99": 0.848
+        },
+        "right": {
+          "count": 6000,
+          "p50": 0.487,
+          "p95": 0.797,
+          "p99": 1.08
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": 0.021,
+            "percent": 4.506
+          },
+          "p95": {
+            "absolute": 0.046,
+            "percent": 6.125
+          },
+          "p99": {
+            "absolute": 0.232,
+            "percent": 27.358
+          }
+        }
+      },
+      {
+        "path": "$.sqlite.latencyMs.writes",
+        "category": "timing",
+        "left": {
+          "count": 3000,
+          "p50": 0.064,
+          "p95": 0.099,
+          "p99": 1.797
+        },
+        "right": {
+          "count": 3000,
+          "p50": 0.068,
+          "p95": 0.182,
+          "p99": 1.906
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": 0.004,
+            "percent": 6.25
+          },
+          "p95": {
+            "absolute": 0.083,
+            "percent": 83.838
+          },
+          "p99": {
+            "absolute": 0.109,
+            "percent": 6.066
+          }
+        }
+      },
+      {
+        "path": "$.sqlite.latencyMs.transactions",
+        "category": "timing",
+        "left": {
+          "count": 1000,
+          "p50": 0.068,
+          "p95": 0.097,
+          "p99": 0.922
+        },
+        "right": {
+          "count": 1000,
+          "p50": 0.071,
+          "p95": 0.141,
+          "p99": 1.485
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": 0.003,
+            "percent": 4.412
+          },
+          "p95": {
+            "absolute": 0.044,
+            "percent": 45.361
+          },
+          "p99": {
+            "absolute": 0.563,
+            "percent": 61.063
+          }
+        }
+      }
+    ],
+    "scalarTimings": [
+      {
+        "path": "$.machine.logicalCpuCount",
+        "left": 14,
+        "right": 14,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.config.wsHeartbeatMs",
+        "left": 31000,
+        "right": 31000,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.config.stallTimeoutMs",
+        "left": 15000,
+        "right": 15000,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.config.requestTimeoutMs",
+        "left": 15000,
+        "right": 15000,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.config.healthTimeoutMs",
+        "left": 10000,
+        "right": 10000,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.config.shutdownTimeoutMs",
+        "left": 3000,
+        "right": 3000,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.daemon.healthMs",
+        "left": 93.727,
+        "right": 89.641,
+        "delta": {
+          "absolute": -4.086,
+          "percent": -4.359
+        }
+      },
+      {
+        "path": "$.daemon.reconciliationReadyMs",
+        "left": 158.835,
+        "right": 154.704,
+        "delta": {
+          "absolute": -4.131,
+          "percent": -2.601
+        }
+      },
+      {
+        "path": "$.daemon.shutdown.idleAfterWorkloads.durationMs",
+        "left": 5.741,
+        "right": 4.504,
+        "delta": {
+          "absolute": -1.237,
+          "percent": -21.547
+        }
+      },
+      {
+        "path": "$.daemon.shutdown.busy.shutdown.durationMs",
+        "left": 5.378,
+        "right": 10.422,
+        "delta": {
+          "absolute": 5.044,
+          "percent": 93.79
+        }
+      },
+      {
+        "path": "$.daemon.shutdown.heldHook.heldBeforeSignalMs",
+        "left": 201.499,
+        "right": 201.916,
+        "delta": {
+          "absolute": 0.417,
+          "percent": 0.207
+        }
+      },
+      {
+        "path": "$.daemon.shutdown.heldHook.shutdown.durationMs",
+        "left": 4.699,
+        "right": 7.453,
+        "delta": {
+          "absolute": 2.754,
+          "percent": 58.608
+        }
+      },
+      {
+        "path": "$.daemon.eventLoop.driver.intervalMs",
+        "left": 10,
+        "right": 10,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.http.rawBody.withheld.durationMs",
+        "left": 1159.357,
+        "right": 1148.324,
+        "delta": {
+          "absolute": -11.033,
+          "percent": -0.952
+        }
+      },
+      {
+        "path": "$.http.rawBody.withheld.requestAgeMs",
+        "left": 1157.563,
+        "right": 1146.637,
+        "delta": {
+          "absolute": -10.926,
+          "percent": -0.944
+        }
+      },
+      {
+        "path": "$.http.rawBody.withheld.connectedMs",
+        "left": 1.629,
+        "right": 1.459,
+        "delta": {
+          "absolute": -0.17,
+          "percent": -10.436
+        }
+      },
+      {
+        "path": "$.http.rawBody.stalledFin.durationMs",
+        "left": 3997.503,
+        "right": 3995.159,
+        "delta": {
+          "absolute": -2.344,
+          "percent": -0.059
+        }
+      },
+      {
+        "path": "$.http.rawBody.stalledFin.requestAgeMs",
+        "left": 3996.889,
+        "right": 3994.335,
+        "delta": {
+          "absolute": -2.554,
+          "percent": -0.064
+        }
+      },
+      {
+        "path": "$.http.rawBody.stalledFin.connectedMs",
+        "left": 0.575,
+        "right": 0.813,
+        "delta": {
+          "absolute": 0.238,
+          "percent": 41.391
+        }
+      },
+      {
+        "path": "$.websocket.snapshotBroadcast.reconnectMs",
+        "left": 2.719,
+        "right": 1.501,
+        "delta": {
+          "absolute": -1.218,
+          "percent": -44.796
+        }
+      },
+      {
+        "path": "$.websocket.snapshotBroadcast.heartbeat.holdMs",
+        "left": 31000.844,
+        "right": 31000.747,
+        "delta": {
+          "absolute": -0.097,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.websocket.snapshotBroadcast.heartbeat.serverCadenceMs",
+        "left": 30000,
+        "right": 30000,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.websocket.snapshotBroadcast.closeMs",
+        "left": 1.057,
+        "right": 1.127,
+        "delta": {
+          "absolute": 0.07,
+          "percent": 6.623
+        }
+      },
+      {
+        "path": "$.websocket.slowReaderBackpressure.evictionMs",
+        "left": 220.616,
+        "right": 225.616,
+        "delta": {
+          "absolute": 5,
+          "percent": 2.266
+        }
+      },
+      {
+        "path": "$.websocket.slowReaderBackpressure.reconnectMs",
+        "left": 1.309,
+        "right": 0.801,
+        "delta": {
+          "absolute": -0.508,
+          "percent": -38.808
+        }
+      },
+      {
+        "path": "$.websocket.slowReaderBackpressure.shutdown.durationMs",
+        "left": 2.467,
+        "right": 3.619,
+        "delta": {
+          "absolute": 1.152,
+          "percent": 46.696
+        }
+      },
+      {
+        "path": "$.websocket.terminalOutputFanout.closeMs",
+        "left": 0.157,
+        "right": 0.155,
+        "delta": {
+          "absolute": -0.002,
+          "percent": -1.274
+        }
+      },
+      {
+        "path": "$.sqlite.openAndMigrateMs",
+        "left": 22.755,
+        "right": 10.581,
+        "delta": {
+          "absolute": -12.174,
+          "percent": -53.5
+        }
+      },
+      {
+        "path": "$.sqlite.durationMs",
+        "left": 3247.598,
+        "right": 3514.413,
+        "delta": {
+          "absolute": 266.815,
+          "percent": 8.216
+        }
+      },
+      {
+        "path": "$.sqlite.busyContention.timeoutMs",
+        "left": 50,
+        "right": 50,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.sqlite.busyContention.durationMs",
+        "left": 61.866,
+        "right": 65.517,
+        "delta": {
+          "absolute": 3.651,
+          "percent": 5.901
+        }
+      },
+      {
+        "path": "$.sqlite.blockedEventLoopMs",
+        "left": 3248.666,
+        "right": 3515.423,
+        "delta": {
+          "absolute": 266.757,
+          "percent": 8.211
+        }
+      },
+      {
+        "path": "$.sqlite.restart.durationMs",
+        "left": 3.403,
+        "right": 2.524,
+        "delta": {
+          "absolute": -0.879,
+          "percent": -25.83
+        }
+      },
+      {
+        "path": "$.sqlite.processDelta.cpuUserMicros",
+        "left": 2682731,
+        "right": 2769327,
+        "delta": {
+          "absolute": 86596,
+          "percent": 3.228
+        }
+      },
+      {
+        "path": "$.sqlite.processDelta.cpuSystemMicros",
+        "left": 552310,
+        "right": 670704,
+        "delta": {
+          "absolute": 118394,
+          "percent": 21.436
+        }
+      }
+    ],
+    "scalarSizes": [
+      {
+        "path": "$.config.pasteBytes",
+        "left": 2097152,
+        "right": 2097152,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.daemon.shutdown.idleAfterWorkloads.processUsage.maxRSS",
+        "left": 891879424,
+        "right": 934805504,
+        "delta": {
+          "absolute": 42926080,
+          "percent": 4.813
+        }
+      },
+      {
+        "path": "$.daemon.shutdown.idleAfterWorkloads.processUsage.shmSize",
+        "left": 0,
+        "right": 0,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.daemon.shutdown.idleAfterWorkloads.stdoutBytes",
+        "left": 247,
+        "right": 247,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.daemon.shutdown.idleAfterWorkloads.stderrBytes",
+        "left": 176,
+        "right": 176,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.daemon.shutdown.busy.responseBytes",
+        "left": 0,
+        "right": 0,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.daemon.shutdown.busy.shutdown.processUsage.maxRSS",
+        "left": 56098816,
+        "right": 56082432,
+        "delta": {
+          "absolute": -16384,
+          "percent": -0.029
+        }
+      },
+      {
+        "path": "$.daemon.shutdown.busy.shutdown.processUsage.shmSize",
+        "left": 0,
+        "right": 0,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.daemon.shutdown.busy.shutdown.stdoutBytes",
+        "left": 247,
+        "right": 247,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.daemon.shutdown.busy.shutdown.stderrBytes",
+        "left": 0,
+        "right": 0,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.daemon.shutdown.heldHook.shutdown.processUsage.maxRSS",
+        "left": 49479680,
+        "right": 49545216,
+        "delta": {
+          "absolute": 65536,
+          "percent": 0.132
+        }
+      },
+      {
+        "path": "$.daemon.shutdown.heldHook.shutdown.processUsage.shmSize",
+        "left": 0,
+        "right": 0,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.daemon.shutdown.heldHook.shutdown.stdoutBytes",
+        "left": 247,
+        "right": 247,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.daemon.shutdown.heldHook.shutdown.stderrBytes",
+        "left": 0,
+        "right": 0,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.http.largePaste.decodedBytes",
+        "left": 2097152,
+        "right": 2097152,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.http.largePaste.requestBytes",
+        "left": 2796215,
+        "right": 2796215,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.http.rawBody.withheld.declaredBytes",
+        "left": 200,
+        "right": 200,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.http.rawBody.withheld.sentBodyBytes",
+        "left": 50,
+        "right": 50,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.http.rawBody.withheld.responseBytes",
+        "left": 0,
+        "right": 0,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.http.rawBody.stalledFin.declaredBytes",
+        "left": 200,
+        "right": 200,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.http.rawBody.stalledFin.sentBodyBytes",
+        "left": 50,
+        "right": 50,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.http.rawBody.stalledFin.responseBytes",
+        "left": 0,
+        "right": 0,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.websocket.snapshotBroadcast.receivedBytes",
+        "left": 6001461,
+        "right": 6001461,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.websocket.snapshotBroadcast.queue.serverBufferedAmountLimitBytes",
+        "left": 1048576,
+        "right": 1048576,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.websocket.slowReaderBackpressure.configuredQueueLimitBytes",
+        "left": -1,
+        "right": -1,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.websocket.slowReaderBackpressure.initialBytes",
+        "left": 870,
+        "right": 872,
+        "delta": {
+          "absolute": 2,
+          "percent": 0.23
+        }
+      },
+      {
+        "path": "$.websocket.slowReaderBackpressure.freshSnapshotBytes",
+        "left": 2341,
+        "right": 2375,
+        "delta": {
+          "absolute": 34,
+          "percent": 1.452
+        }
+      },
+      {
+        "path": "$.websocket.slowReaderBackpressure.shutdown.processUsage.maxRSS",
+        "left": 49102848,
+        "right": 49283072,
+        "delta": {
+          "absolute": 180224,
+          "percent": 0.367
+        }
+      },
+      {
+        "path": "$.websocket.slowReaderBackpressure.shutdown.processUsage.shmSize",
+        "left": 0,
+        "right": 0,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.websocket.slowReaderBackpressure.shutdown.stdoutBytes",
+        "left": 247,
+        "right": 247,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.websocket.slowReaderBackpressure.shutdown.stderrBytes",
+        "left": 0,
+        "right": 0,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.websocket.terminalOutputFanout.receivedBytes",
+        "left": 1500,
+        "right": 1500,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.websocket.terminalOutputFanout.queue.preInitOutputLimitBytes",
+        "left": 262144,
+        "right": 262144,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.websocket.terminalOutputFanout.queue.socketBufferedAmountLimitBytes",
+        "left": 4194304,
+        "right": 4194304,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.sqlite.statementGrowth.rssBytes",
+        "left": 3637248,
+        "right": 3620864,
+        "delta": {
+          "absolute": -16384,
+          "percent": -0.45
+        }
+      },
+      {
+        "path": "$.sqlite.databaseBytes",
+        "left": 1257472,
+        "right": 1257472,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.sqlite.processDelta.rssBytes",
+        "left": 93978624,
+        "right": 93159424,
+        "delta": {
+          "absolute": -819200,
+          "percent": -0.872
+        }
+      }
+    ],
+    "convention": "delta is right minus left; percent is relative to abs(left)"
+  }
+}

@@ -1,0 +1,6096 @@
+{
+  "schema": 1,
+  "kind": "fleetdeck-effect-p0-baseline",
+  "ok": true,
+  "recordedAt": "2026-08-19T15:10:21.485Z",
+  "config": {
+    "launches": 30,
+    "forcedLaunches": 3,
+    "mdnsLaunches": 3,
+    "commandRuns": 30,
+    "builds": 2,
+    "packs": 2,
+    "idleMs": 300000,
+    "idleSampleMs": 1000,
+    "healthTimeoutMs": 10000,
+    "shutdownTimeoutMs": 3000,
+    "residueTimeoutMs": 1000,
+    "mdnsWatchdogMs": 1000,
+    "hookDeadlineMs": 2500,
+    "cliDeadlineMs": 1500,
+    "daemonPath": "src/daemon/fleetd.bundle.mjs"
+  },
+  "comparison": {
+    "key": "ceabfe87061f4e2206e6322993d6e7fe15313a18d4d30ebbb25d1486eb153228",
+    "requirement": "compare only reports with identical key on the same idle machine"
+  },
+  "runtimeFloor": {
+    "expected": {
+      "bun": "1.3.14",
+      "revision": "0d9b296af33f2b851fcbf4df3e9ec89751734ba4"
+    },
+    "actual": {
+      "bun": "1.3.14",
+      "revision": "0d9b296af33f2b851fcbf4df3e9ec89751734ba4"
+    },
+    "exactMatch": true
+  },
+  "metadata": {
+    "commit": "a9fb3a2abf207c5805d4d9f0d9661fb124a4a49f",
+    "dirty": true,
+    "dirtyPaths": [
+      ".github/workflows/ci.yml",
+      "docs/v1/README.md",
+      "docs/v1/architecture.md",
+      "docs/v1/foundations-hardening.md",
+      "docs/v1/validation-and-gates.md",
+      "package.json",
+      "docs/v1/effect-feasibility.md",
+      "docs/v1/effect-migration-plan.md",
+      "docs/v1/evidence/effect/baseline-context.json",
+      "docs/v1/evidence/effect/baseline.md",
+      "docs/v1/evidence/effect/effect-probe-comparison.json",
+      "docs/v1/evidence/effect/effect-probe-run-1.json",
+      "docs/v1/evidence/effect/effect-probe-run-2.json",
+      "docs/v1/evidence/effect/exec-comparison.json",
+      "docs/v1/evidence/effect/exec-run-1.json",
+      "docs/v1/evidence/effect/exec-run-2.json",
+      "docs/v1/evidence/effect/migration-ledger.md",
+      "scripts/effect-migration/fixtures/p0-probe/bun.lock",
+      "scripts/effect-migration/fixtures/p0-probe/package.json",
+      "scripts/effect-migration/fixtures/p0-probe/probe.ts.fixture",
+      "scripts/effect-migration/fixtures/p0-probe/signal-probe.ts.fixture",
+      "scripts/effect-migration/metrics.ts",
+      "scripts/effect-migration/p0-baseline.ts",
+      "scripts/effect-migration/p0-compare.ts",
+      "scripts/effect-migration/p0-effect-probe.ts",
+      "scripts/effect-migration/p0-exec-bench.ts",
+      "scripts/effect-migration/p0-workloads.ts",
+      "tests/effect-ci-policy.test.ts"
+    ],
+    "runtime": {
+      "bun": "1.3.14",
+      "revision": "0d9b296af33f2b851fcbf4df3e9ec89751734ba4",
+      "executable": "<bun>"
+    },
+    "machine": {
+      "platform": "darwin",
+      "release": "25.5.0",
+      "arch": "arm64",
+      "cpu": "Apple M4 Pro",
+      "logicalCpuCount": 14,
+      "totalMemoryBytes": 25769803776
+    },
+    "testFiles": 138
+  },
+  "artifact": {
+    "path": "src/daemon/fleetd.bundle.mjs",
+    "rawBytes": 566619,
+    "rawSha256": "000ae99ef7749ce81336d1ad8e56d12dc2549012969cd8b1530302179e6ed28c",
+    "gzipBytes": 147431,
+    "gzipSha256": "e97ac601b275473ce5654a30cfd2495680a62cd93dadb9fc2e2024490c4b5575",
+    "gzip": {
+      "api": "Bun.gzipSync",
+      "level": 9,
+      "library": "zlib"
+    }
+  },
+  "build": {
+    "pipeline": [
+      "bun run bundle",
+      "bun run bundle:bin",
+      "bun run bundle:hooks",
+      "bun run build:board"
+    ],
+    "workspace": "disposable repository copy",
+    "runs": [
+      {
+        "totalDurationMs": 3812.929,
+        "commands": [
+          {
+            "script": "bundle",
+            "durationMs": 189.641
+          },
+          {
+            "script": "bundle:bin",
+            "durationMs": 39.581
+          },
+          {
+            "script": "bundle:hooks",
+            "durationMs": 46.782
+          },
+          {
+            "script": "build:board",
+            "durationMs": 3536.869
+          }
+        ],
+        "manifest": {
+          "bytes": 1545785,
+          "sha256": "cf0d44b29b4b86115f6ccdef32464a8dfa9e41c61441ded9d125dbc676c629fb",
+          "artifacts": [
+            {
+              "path": "bin/fleetdeck.mjs",
+              "bytes": 32863,
+              "sha256": "12d781cd7a71c41738f919ba3bc9fe7b7f42472d1a0186602debc123e7a296ed"
+            },
+            {
+              "path": "scripts/fleet-hook.mjs",
+              "bytes": 25352,
+              "sha256": "3ae113bfb05b39c80482259517225dcc2e00d78674e0339c59d781face8934b3"
+            },
+            {
+              "path": "scripts/fleet-sessionstart.mjs",
+              "bytes": 29059,
+              "sha256": "e39d9112bd26aff725c40b4d3ccebdd9118dc2ceac341ecc46bb8757af636abc"
+            },
+            {
+              "path": "scripts/fleet-watch.mjs",
+              "bytes": 17634,
+              "sha256": "85c43e03d3a4904968e3be8101dec98372f4275576975fe8adfb7ed2c2c22936"
+            },
+            {
+              "path": "src/daemon/board-dist/assets/FileViewer-BE0wx-9-.js",
+              "bytes": 37127,
+              "sha256": "371e27417d38258cb204ad2b9bf52e0d757b3b762c50a83375c4353bbd49382a"
+            },
+            {
+              "path": "src/daemon/board-dist/assets/SpawnForm-C1Vz6VJo.js",
+              "bytes": 34805,
+              "sha256": "702922f9c17fe11a232285df6a1433f2919ee9534aedb0f39cdb1aa297eba38a"
+            },
+            {
+              "path": "src/daemon/board-dist/assets/TermGrid-BYQfgT01.js",
+              "bytes": 4719,
+              "sha256": "7047e6decefb5bd5f092217bf39e8cca4e4c5b038a1c0b2fdd2e90bb48af8983"
+            },
+            {
+              "path": "src/daemon/board-dist/assets/TermPane-BrP-ENHg.css",
+              "bytes": 3939,
+              "sha256": "0e5386f16cb4be78a2fe911e014a810da76ea2db47d8c8b2a966516b2fd5270b"
+            },
+            {
+              "path": "src/daemon/board-dist/assets/TermPane-Cfohz_9v.js",
+              "bytes": 345031,
+              "sha256": "70fbf0987e8ea627fa3f8d30b42222d61e0f81bc934cc7cc0618d15fd15f5a40"
+            },
+            {
+              "path": "src/daemon/board-dist/assets/TermWindow-BACtjfzF.js",
+              "bytes": 5329,
+              "sha256": "b35b895d2f1cb28a523bc5e617aa2b0986d94170fb8aec0e9ebc564b5dc2deef"
+            },
+            {
+              "path": "src/daemon/board-dist/assets/WorktreesModal-CenIKhJc.js",
+              "bytes": 12587,
+              "sha256": "940f5da3d9219da02214709e8ef81c66d04076eff2a49b446b257ac4307d8abf"
+            },
+            {
+              "path": "src/daemon/board-dist/assets/fsPath-C--M3dBM.js",
+              "bytes": 297,
+              "sha256": "d18787b6da811ccad8299622a935f96b349c06a05f084bb3ebc28c60c17e0c31"
+            },
+            {
+              "path": "src/daemon/board-dist/assets/index-3Mfq9nch.css",
+              "bytes": 81742,
+              "sha256": "1de5b655ac068b54da7dfdd36622bb1dd76b3994f24f75e0496c84b8d56c4dd6"
+            },
+            {
+              "path": "src/daemon/board-dist/assets/index-D05vGQV1.js",
+              "bytes": 347660,
+              "sha256": "1ec4c7255f7a014a2b17e6b505aebcc60a86c2b98c9618f8c57f5b72037e65f2"
+            },
+            {
+              "path": "src/daemon/board-dist/index.html",
+              "bytes": 1022,
+              "sha256": "1336ddf0700ac311ecd08daec0a880dad923fef161a40566d1faad40da4e0d9b"
+            },
+            {
+              "path": "src/daemon/fleetd.bundle.mjs",
+              "bytes": 566619,
+              "sha256": "000ae99ef7749ce81336d1ad8e56d12dc2549012969cd8b1530302179e6ed28c"
+            }
+          ]
+        }
+      },
+      {
+        "totalDurationMs": 2569.587,
+        "commands": [
+          {
+            "script": "bundle",
+            "durationMs": 41.797
+          },
+          {
+            "script": "bundle:bin",
+            "durationMs": 42.184
+          },
+          {
+            "script": "bundle:hooks",
+            "durationMs": 55.577
+          },
+          {
+            "script": "build:board",
+            "durationMs": 2429.982
+          }
+        ],
+        "manifest": {
+          "bytes": 1545785,
+          "sha256": "cf0d44b29b4b86115f6ccdef32464a8dfa9e41c61441ded9d125dbc676c629fb",
+          "artifacts": [
+            {
+              "path": "bin/fleetdeck.mjs",
+              "bytes": 32863,
+              "sha256": "12d781cd7a71c41738f919ba3bc9fe7b7f42472d1a0186602debc123e7a296ed"
+            },
+            {
+              "path": "scripts/fleet-hook.mjs",
+              "bytes": 25352,
+              "sha256": "3ae113bfb05b39c80482259517225dcc2e00d78674e0339c59d781face8934b3"
+            },
+            {
+              "path": "scripts/fleet-sessionstart.mjs",
+              "bytes": 29059,
+              "sha256": "e39d9112bd26aff725c40b4d3ccebdd9118dc2ceac341ecc46bb8757af636abc"
+            },
+            {
+              "path": "scripts/fleet-watch.mjs",
+              "bytes": 17634,
+              "sha256": "85c43e03d3a4904968e3be8101dec98372f4275576975fe8adfb7ed2c2c22936"
+            },
+            {
+              "path": "src/daemon/board-dist/assets/FileViewer-BE0wx-9-.js",
+              "bytes": 37127,
+              "sha256": "371e27417d38258cb204ad2b9bf52e0d757b3b762c50a83375c4353bbd49382a"
+            },
+            {
+              "path": "src/daemon/board-dist/assets/SpawnForm-C1Vz6VJo.js",
+              "bytes": 34805,
+              "sha256": "702922f9c17fe11a232285df6a1433f2919ee9534aedb0f39cdb1aa297eba38a"
+            },
+            {
+              "path": "src/daemon/board-dist/assets/TermGrid-BYQfgT01.js",
+              "bytes": 4719,
+              "sha256": "7047e6decefb5bd5f092217bf39e8cca4e4c5b038a1c0b2fdd2e90bb48af8983"
+            },
+            {
+              "path": "src/daemon/board-dist/assets/TermPane-BrP-ENHg.css",
+              "bytes": 3939,
+              "sha256": "0e5386f16cb4be78a2fe911e014a810da76ea2db47d8c8b2a966516b2fd5270b"
+            },
+            {
+              "path": "src/daemon/board-dist/assets/TermPane-Cfohz_9v.js",
+              "bytes": 345031,
+              "sha256": "70fbf0987e8ea627fa3f8d30b42222d61e0f81bc934cc7cc0618d15fd15f5a40"
+            },
+            {
+              "path": "src/daemon/board-dist/assets/TermWindow-BACtjfzF.js",
+              "bytes": 5329,
+              "sha256": "b35b895d2f1cb28a523bc5e617aa2b0986d94170fb8aec0e9ebc564b5dc2deef"
+            },
+            {
+              "path": "src/daemon/board-dist/assets/WorktreesModal-CenIKhJc.js",
+              "bytes": 12587,
+              "sha256": "940f5da3d9219da02214709e8ef81c66d04076eff2a49b446b257ac4307d8abf"
+            },
+            {
+              "path": "src/daemon/board-dist/assets/fsPath-C--M3dBM.js",
+              "bytes": 297,
+              "sha256": "d18787b6da811ccad8299622a935f96b349c06a05f084bb3ebc28c60c17e0c31"
+            },
+            {
+              "path": "src/daemon/board-dist/assets/index-3Mfq9nch.css",
+              "bytes": 81742,
+              "sha256": "1de5b655ac068b54da7dfdd36622bb1dd76b3994f24f75e0496c84b8d56c4dd6"
+            },
+            {
+              "path": "src/daemon/board-dist/assets/index-D05vGQV1.js",
+              "bytes": 347660,
+              "sha256": "1ec4c7255f7a014a2b17e6b505aebcc60a86c2b98c9618f8c57f5b72037e65f2"
+            },
+            {
+              "path": "src/daemon/board-dist/index.html",
+              "bytes": 1022,
+              "sha256": "1336ddf0700ac311ecd08daec0a880dad923fef161a40566d1faad40da4e0d9b"
+            },
+            {
+              "path": "src/daemon/fleetd.bundle.mjs",
+              "bytes": 566619,
+              "sha256": "000ae99ef7749ce81336d1ad8e56d12dc2549012969cd8b1530302179e6ed28c"
+            }
+          ]
+        }
+      }
+    ],
+    "totalDurationMs": {
+      "count": 2,
+      "min": 2569.587,
+      "p50": 2569.587,
+      "p95": 3812.929,
+      "p99": 3812.929,
+      "max": 3812.929,
+      "mean": 3191.258
+    },
+    "commandDurationMs": {
+      "bundle": {
+        "count": 2,
+        "min": 41.797,
+        "p50": 41.797,
+        "p95": 189.641,
+        "p99": 189.641,
+        "max": 189.641,
+        "mean": 115.719
+      },
+      "bundle:bin": {
+        "count": 2,
+        "min": 39.581,
+        "p50": 39.581,
+        "p95": 42.184,
+        "p99": 42.184,
+        "max": 42.184,
+        "mean": 40.883
+      },
+      "bundle:hooks": {
+        "count": 2,
+        "min": 46.782,
+        "p50": 46.782,
+        "p95": 55.577,
+        "p99": 55.577,
+        "max": 55.577,
+        "mean": 51.18
+      },
+      "build:board": {
+        "count": 2,
+        "min": 2429.982,
+        "p50": 2429.982,
+        "p95": 3536.869,
+        "p99": 3536.869,
+        "max": 3536.869,
+        "mean": 2983.426
+      }
+    },
+    "deterministic": true
+  },
+  "package": {
+    "runs": [
+      {
+        "command": [
+          "<bun>",
+          "pm",
+          "pack",
+          "--destination",
+          "<scratch>/run-0",
+          "--ignore-scripts",
+          "--gzip-level",
+          "9",
+          "--quiet"
+        ],
+        "durationMs": 69.625,
+        "filename": "fleetdeck-0.23.6.tgz",
+        "bytes": 453844,
+        "sha256": "e0147883caa1ce2619546908c638e3c4059faf23961c802ffeb172791b9a0c62",
+        "normalizedManifestSha256": "815776b0c8e48ad06d514a16dfd64aa881e8ba44a24c0e0d8a87f47061d740e7",
+        "fileCount": 20,
+        "contents": [
+          {
+            "path": "package/bin/fleetdeck.mjs",
+            "bytes": 32863,
+            "sha256": "12d781cd7a71c41738f919ba3bc9fe7b7f42472d1a0186602debc123e7a296ed"
+          },
+          {
+            "path": "package/bin/fleetdeck.ts",
+            "bytes": 58767,
+            "sha256": "44622bdd95f052c737013d8d66c9acadf6824254f472b3f89db20745790f459e"
+          },
+          {
+            "path": "package/bin/tmux-version.ts",
+            "bytes": 2054,
+            "sha256": "7f29afe54606c13418a850760be2502312c0a5f0659dd0b1298748e25e59c57c"
+          },
+          {
+            "path": "package/compatibility.json",
+            "bytes": 62,
+            "sha256": "e1cd2e3bb981668a1868fe83e34738b8633f76baf3d73fd5a22b0d19e08a2ba2"
+          },
+          {
+            "path": "package/docs/CODER.md",
+            "bytes": 27872,
+            "sha256": "e82d49cb4b0af40fd319c1c4ad7d55bbc24025539ee6e46bb906ec0d0a503336"
+          },
+          {
+            "path": "package/LICENSE",
+            "bytes": 1069,
+            "sha256": "1aef2c8952532461c7b6bf16172928d8d6e92a552c433e802c9fe8e2a4f57a55"
+          },
+          {
+            "path": "package/package.json",
+            "bytes": 3295,
+            "sha256": "4975d213c2a9832e23ec317377cc8bb1a548a09a5952ad973c7e8b1af2865e30"
+          },
+          {
+            "path": "package/README.md",
+            "bytes": 54447,
+            "sha256": "78b0122ffb2882bb549cf3736182e5d577a46136582c8bf60054ac2a69641254"
+          },
+          {
+            "path": "package/src/daemon/board-dist/assets/FileViewer-BE0wx-9-.js",
+            "bytes": 37127,
+            "sha256": "371e27417d38258cb204ad2b9bf52e0d757b3b762c50a83375c4353bbd49382a"
+          },
+          {
+            "path": "package/src/daemon/board-dist/assets/fsPath-C--M3dBM.js",
+            "bytes": 297,
+            "sha256": "d18787b6da811ccad8299622a935f96b349c06a05f084bb3ebc28c60c17e0c31"
+          },
+          {
+            "path": "package/src/daemon/board-dist/assets/index-3Mfq9nch.css",
+            "bytes": 81742,
+            "sha256": "1de5b655ac068b54da7dfdd36622bb1dd76b3994f24f75e0496c84b8d56c4dd6"
+          },
+          {
+            "path": "package/src/daemon/board-dist/assets/index-D05vGQV1.js",
+            "bytes": 347660,
+            "sha256": "1ec4c7255f7a014a2b17e6b505aebcc60a86c2b98c9618f8c57f5b72037e65f2"
+          },
+          {
+            "path": "package/src/daemon/board-dist/assets/SpawnForm-C1Vz6VJo.js",
+            "bytes": 34805,
+            "sha256": "702922f9c17fe11a232285df6a1433f2919ee9534aedb0f39cdb1aa297eba38a"
+          },
+          {
+            "path": "package/src/daemon/board-dist/assets/TermGrid-BYQfgT01.js",
+            "bytes": 4719,
+            "sha256": "7047e6decefb5bd5f092217bf39e8cca4e4c5b038a1c0b2fdd2e90bb48af8983"
+          },
+          {
+            "path": "package/src/daemon/board-dist/assets/TermPane-BrP-ENHg.css",
+            "bytes": 3939,
+            "sha256": "0e5386f16cb4be78a2fe911e014a810da76ea2db47d8c8b2a966516b2fd5270b"
+          },
+          {
+            "path": "package/src/daemon/board-dist/assets/TermPane-Cfohz_9v.js",
+            "bytes": 345031,
+            "sha256": "70fbf0987e8ea627fa3f8d30b42222d61e0f81bc934cc7cc0618d15fd15f5a40"
+          },
+          {
+            "path": "package/src/daemon/board-dist/assets/TermWindow-BACtjfzF.js",
+            "bytes": 5329,
+            "sha256": "b35b895d2f1cb28a523bc5e617aa2b0986d94170fb8aec0e9ebc564b5dc2deef"
+          },
+          {
+            "path": "package/src/daemon/board-dist/assets/WorktreesModal-CenIKhJc.js",
+            "bytes": 12587,
+            "sha256": "940f5da3d9219da02214709e8ef81c66d04076eff2a49b446b257ac4307d8abf"
+          },
+          {
+            "path": "package/src/daemon/board-dist/index.html",
+            "bytes": 1022,
+            "sha256": "1336ddf0700ac311ecd08daec0a880dad923fef161a40566d1faad40da4e0d9b"
+          },
+          {
+            "path": "package/src/daemon/fleetd.bundle.mjs",
+            "bytes": 566619,
+            "sha256": "000ae99ef7749ce81336d1ad8e56d12dc2549012969cd8b1530302179e6ed28c"
+          }
+        ]
+      },
+      {
+        "command": [
+          "<bun>",
+          "pm",
+          "pack",
+          "--destination",
+          "<scratch>/run-1",
+          "--ignore-scripts",
+          "--gzip-level",
+          "9",
+          "--quiet"
+        ],
+        "durationMs": 48.268,
+        "filename": "fleetdeck-0.23.6.tgz",
+        "bytes": 453844,
+        "sha256": "e0147883caa1ce2619546908c638e3c4059faf23961c802ffeb172791b9a0c62",
+        "normalizedManifestSha256": "815776b0c8e48ad06d514a16dfd64aa881e8ba44a24c0e0d8a87f47061d740e7",
+        "fileCount": 20,
+        "contents": [
+          {
+            "path": "package/bin/fleetdeck.mjs",
+            "bytes": 32863,
+            "sha256": "12d781cd7a71c41738f919ba3bc9fe7b7f42472d1a0186602debc123e7a296ed"
+          },
+          {
+            "path": "package/bin/fleetdeck.ts",
+            "bytes": 58767,
+            "sha256": "44622bdd95f052c737013d8d66c9acadf6824254f472b3f89db20745790f459e"
+          },
+          {
+            "path": "package/bin/tmux-version.ts",
+            "bytes": 2054,
+            "sha256": "7f29afe54606c13418a850760be2502312c0a5f0659dd0b1298748e25e59c57c"
+          },
+          {
+            "path": "package/compatibility.json",
+            "bytes": 62,
+            "sha256": "e1cd2e3bb981668a1868fe83e34738b8633f76baf3d73fd5a22b0d19e08a2ba2"
+          },
+          {
+            "path": "package/docs/CODER.md",
+            "bytes": 27872,
+            "sha256": "e82d49cb4b0af40fd319c1c4ad7d55bbc24025539ee6e46bb906ec0d0a503336"
+          },
+          {
+            "path": "package/LICENSE",
+            "bytes": 1069,
+            "sha256": "1aef2c8952532461c7b6bf16172928d8d6e92a552c433e802c9fe8e2a4f57a55"
+          },
+          {
+            "path": "package/package.json",
+            "bytes": 3295,
+            "sha256": "4975d213c2a9832e23ec317377cc8bb1a548a09a5952ad973c7e8b1af2865e30"
+          },
+          {
+            "path": "package/README.md",
+            "bytes": 54447,
+            "sha256": "78b0122ffb2882bb549cf3736182e5d577a46136582c8bf60054ac2a69641254"
+          },
+          {
+            "path": "package/src/daemon/board-dist/assets/FileViewer-BE0wx-9-.js",
+            "bytes": 37127,
+            "sha256": "371e27417d38258cb204ad2b9bf52e0d757b3b762c50a83375c4353bbd49382a"
+          },
+          {
+            "path": "package/src/daemon/board-dist/assets/fsPath-C--M3dBM.js",
+            "bytes": 297,
+            "sha256": "d18787b6da811ccad8299622a935f96b349c06a05f084bb3ebc28c60c17e0c31"
+          },
+          {
+            "path": "package/src/daemon/board-dist/assets/index-3Mfq9nch.css",
+            "bytes": 81742,
+            "sha256": "1de5b655ac068b54da7dfdd36622bb1dd76b3994f24f75e0496c84b8d56c4dd6"
+          },
+          {
+            "path": "package/src/daemon/board-dist/assets/index-D05vGQV1.js",
+            "bytes": 347660,
+            "sha256": "1ec4c7255f7a014a2b17e6b505aebcc60a86c2b98c9618f8c57f5b72037e65f2"
+          },
+          {
+            "path": "package/src/daemon/board-dist/assets/SpawnForm-C1Vz6VJo.js",
+            "bytes": 34805,
+            "sha256": "702922f9c17fe11a232285df6a1433f2919ee9534aedb0f39cdb1aa297eba38a"
+          },
+          {
+            "path": "package/src/daemon/board-dist/assets/TermGrid-BYQfgT01.js",
+            "bytes": 4719,
+            "sha256": "7047e6decefb5bd5f092217bf39e8cca4e4c5b038a1c0b2fdd2e90bb48af8983"
+          },
+          {
+            "path": "package/src/daemon/board-dist/assets/TermPane-BrP-ENHg.css",
+            "bytes": 3939,
+            "sha256": "0e5386f16cb4be78a2fe911e014a810da76ea2db47d8c8b2a966516b2fd5270b"
+          },
+          {
+            "path": "package/src/daemon/board-dist/assets/TermPane-Cfohz_9v.js",
+            "bytes": 345031,
+            "sha256": "70fbf0987e8ea627fa3f8d30b42222d61e0f81bc934cc7cc0618d15fd15f5a40"
+          },
+          {
+            "path": "package/src/daemon/board-dist/assets/TermWindow-BACtjfzF.js",
+            "bytes": 5329,
+            "sha256": "b35b895d2f1cb28a523bc5e617aa2b0986d94170fb8aec0e9ebc564b5dc2deef"
+          },
+          {
+            "path": "package/src/daemon/board-dist/assets/WorktreesModal-CenIKhJc.js",
+            "bytes": 12587,
+            "sha256": "940f5da3d9219da02214709e8ef81c66d04076eff2a49b446b257ac4307d8abf"
+          },
+          {
+            "path": "package/src/daemon/board-dist/index.html",
+            "bytes": 1022,
+            "sha256": "1336ddf0700ac311ecd08daec0a880dad923fef161a40566d1faad40da4e0d9b"
+          },
+          {
+            "path": "package/src/daemon/fleetd.bundle.mjs",
+            "bytes": 566619,
+            "sha256": "000ae99ef7749ce81336d1ad8e56d12dc2549012969cd8b1530302179e6ed28c"
+          }
+        ]
+      }
+    ],
+    "durationMs": {
+      "count": 2,
+      "min": 48.268,
+      "p50": 48.268,
+      "p95": 69.625,
+      "p99": 69.625,
+      "max": 69.625,
+      "mean": 58.947
+    },
+    "normalizedDeterministic": true,
+    "rawTarballDeterministic": true,
+    "bytes": 453844,
+    "fileCount": 20,
+    "contents": [
+      {
+        "path": "package/bin/fleetdeck.mjs",
+        "bytes": 32863,
+        "sha256": "12d781cd7a71c41738f919ba3bc9fe7b7f42472d1a0186602debc123e7a296ed"
+      },
+      {
+        "path": "package/bin/fleetdeck.ts",
+        "bytes": 58767,
+        "sha256": "44622bdd95f052c737013d8d66c9acadf6824254f472b3f89db20745790f459e"
+      },
+      {
+        "path": "package/bin/tmux-version.ts",
+        "bytes": 2054,
+        "sha256": "7f29afe54606c13418a850760be2502312c0a5f0659dd0b1298748e25e59c57c"
+      },
+      {
+        "path": "package/compatibility.json",
+        "bytes": 62,
+        "sha256": "e1cd2e3bb981668a1868fe83e34738b8633f76baf3d73fd5a22b0d19e08a2ba2"
+      },
+      {
+        "path": "package/docs/CODER.md",
+        "bytes": 27872,
+        "sha256": "e82d49cb4b0af40fd319c1c4ad7d55bbc24025539ee6e46bb906ec0d0a503336"
+      },
+      {
+        "path": "package/LICENSE",
+        "bytes": 1069,
+        "sha256": "1aef2c8952532461c7b6bf16172928d8d6e92a552c433e802c9fe8e2a4f57a55"
+      },
+      {
+        "path": "package/package.json",
+        "bytes": 3295,
+        "sha256": "4975d213c2a9832e23ec317377cc8bb1a548a09a5952ad973c7e8b1af2865e30"
+      },
+      {
+        "path": "package/README.md",
+        "bytes": 54447,
+        "sha256": "78b0122ffb2882bb549cf3736182e5d577a46136582c8bf60054ac2a69641254"
+      },
+      {
+        "path": "package/src/daemon/board-dist/assets/FileViewer-BE0wx-9-.js",
+        "bytes": 37127,
+        "sha256": "371e27417d38258cb204ad2b9bf52e0d757b3b762c50a83375c4353bbd49382a"
+      },
+      {
+        "path": "package/src/daemon/board-dist/assets/fsPath-C--M3dBM.js",
+        "bytes": 297,
+        "sha256": "d18787b6da811ccad8299622a935f96b349c06a05f084bb3ebc28c60c17e0c31"
+      },
+      {
+        "path": "package/src/daemon/board-dist/assets/index-3Mfq9nch.css",
+        "bytes": 81742,
+        "sha256": "1de5b655ac068b54da7dfdd36622bb1dd76b3994f24f75e0496c84b8d56c4dd6"
+      },
+      {
+        "path": "package/src/daemon/board-dist/assets/index-D05vGQV1.js",
+        "bytes": 347660,
+        "sha256": "1ec4c7255f7a014a2b17e6b505aebcc60a86c2b98c9618f8c57f5b72037e65f2"
+      },
+      {
+        "path": "package/src/daemon/board-dist/assets/SpawnForm-C1Vz6VJo.js",
+        "bytes": 34805,
+        "sha256": "702922f9c17fe11a232285df6a1433f2919ee9534aedb0f39cdb1aa297eba38a"
+      },
+      {
+        "path": "package/src/daemon/board-dist/assets/TermGrid-BYQfgT01.js",
+        "bytes": 4719,
+        "sha256": "7047e6decefb5bd5f092217bf39e8cca4e4c5b038a1c0b2fdd2e90bb48af8983"
+      },
+      {
+        "path": "package/src/daemon/board-dist/assets/TermPane-BrP-ENHg.css",
+        "bytes": 3939,
+        "sha256": "0e5386f16cb4be78a2fe911e014a810da76ea2db47d8c8b2a966516b2fd5270b"
+      },
+      {
+        "path": "package/src/daemon/board-dist/assets/TermPane-Cfohz_9v.js",
+        "bytes": 345031,
+        "sha256": "70fbf0987e8ea627fa3f8d30b42222d61e0f81bc934cc7cc0618d15fd15f5a40"
+      },
+      {
+        "path": "package/src/daemon/board-dist/assets/TermWindow-BACtjfzF.js",
+        "bytes": 5329,
+        "sha256": "b35b895d2f1cb28a523bc5e617aa2b0986d94170fb8aec0e9ebc564b5dc2deef"
+      },
+      {
+        "path": "package/src/daemon/board-dist/assets/WorktreesModal-CenIKhJc.js",
+        "bytes": 12587,
+        "sha256": "940f5da3d9219da02214709e8ef81c66d04076eff2a49b446b257ac4307d8abf"
+      },
+      {
+        "path": "package/src/daemon/board-dist/index.html",
+        "bytes": 1022,
+        "sha256": "1336ddf0700ac311ecd08daec0a880dad923fef161a40566d1faad40da4e0d9b"
+      },
+      {
+        "path": "package/src/daemon/fleetd.bundle.mjs",
+        "bytes": 566619,
+        "sha256": "000ae99ef7749ce81336d1ad8e56d12dc2549012969cd8b1530302179e6ed28c"
+      }
+    ]
+  },
+  "daemon": {
+    "coldLaunches": {
+      "healthMs": {
+        "count": 30,
+        "min": 42.239,
+        "p50": 47.726,
+        "p95": 168.796,
+        "p99": 169.485,
+        "max": 169.485,
+        "mean": 61.678
+      },
+      "reconciliationReadyMs": {
+        "count": 30,
+        "min": 107.359,
+        "p50": 114.027,
+        "p95": 235.057,
+        "p99": 236.717,
+        "max": 236.717,
+        "mean": 127.122
+      },
+      "gracefulShutdownMs": {
+        "count": 30,
+        "min": 2.001,
+        "p50": 2.166,
+        "p95": 6.671,
+        "p99": 10.186,
+        "max": 10.186,
+        "mean": 2.652
+      },
+      "runs": [
+        {
+          "mode": "graceful",
+          "pid": 97851,
+          "port": 61000,
+          "healthMs": 111.489,
+          "reconciliationReadyMs": 178.641,
+          "shutdownMs": 2.497,
+          "deadlineExceeded": false,
+          "exitCode": 0,
+          "signalCode": null,
+          "processUsage": {
+            "maxRSS": 46989312,
+            "cpuTime": {
+              "user": "40942",
+              "system": "18686",
+              "total": "59628"
+            },
+            "contextSwitches": {
+              "voluntary": 19,
+              "involuntary": 557
+            },
+            "messages": {
+              "sent": 16,
+              "received": 14
+            },
+            "ops": {
+              "in": 0,
+              "out": 0
+            },
+            "shmSize": 0,
+            "signalCount": 1,
+            "swapCount": 0
+          },
+          "output": {
+            "stdoutBytes": 248,
+            "stderrBytes": 0,
+            "stdoutSha256": "841b4f8924f1e489e1181b6cbf30356270f99b0290e521397b76a8c54c2372f7",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "before": {
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 17,
+              "sockets": 4
+            },
+            "descendants": {
+              "available": true,
+              "pids": []
+            }
+          },
+          "residue": {
+            "pidAlive": false,
+            "portRebindSucceeded": true,
+            "pidFilePresent": false,
+            "knownDescendantsAlive": [],
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 0,
+              "sockets": 0
+            },
+            "released": true,
+            "waitMs": 13.83,
+            "timeoutMs": 1000
+          },
+          "checks": {
+            "exitedWithinDeadline": true,
+            "expectedExit": true,
+            "pidReleased": true,
+            "portReleased": true,
+            "descendantsReleased": true,
+            "descriptorsReleased": true,
+            "pidFileReleased": true,
+            "residueReleasedWithinDeadline": true
+          }
+        },
+        {
+          "mode": "graceful",
+          "pid": 97858,
+          "port": 61012,
+          "healthMs": 54.503,
+          "reconciliationReadyMs": 119.898,
+          "shutdownMs": 2.001,
+          "deadlineExceeded": false,
+          "exitCode": 0,
+          "signalCode": null,
+          "processUsage": {
+            "maxRSS": 47022080,
+            "cpuTime": {
+              "user": "37325",
+              "system": "13805",
+              "total": "51130"
+            },
+            "contextSwitches": {
+              "voluntary": 7,
+              "involuntary": 434
+            },
+            "messages": {
+              "sent": 16,
+              "received": 14
+            },
+            "ops": {
+              "in": 0,
+              "out": 0
+            },
+            "shmSize": 0,
+            "signalCount": 1,
+            "swapCount": 0
+          },
+          "output": {
+            "stdoutBytes": 248,
+            "stderrBytes": 0,
+            "stdoutSha256": "1b258531bfd48fbe8633b39039b434ad3a682343b81a3fd4350b94e6d2ec3085",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "before": {
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 17,
+              "sockets": 4
+            },
+            "descendants": {
+              "available": true,
+              "pids": []
+            }
+          },
+          "residue": {
+            "pidAlive": false,
+            "portRebindSucceeded": true,
+            "pidFilePresent": false,
+            "knownDescendantsAlive": [],
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 0,
+              "sockets": 0
+            },
+            "released": true,
+            "waitMs": 14.181,
+            "timeoutMs": 1000
+          },
+          "checks": {
+            "exitedWithinDeadline": true,
+            "expectedExit": true,
+            "pidReleased": true,
+            "portReleased": true,
+            "descendantsReleased": true,
+            "descriptorsReleased": true,
+            "pidFileReleased": true,
+            "residueReleasedWithinDeadline": true
+          }
+        },
+        {
+          "mode": "graceful",
+          "pid": 97865,
+          "port": 61020,
+          "healthMs": 53.387,
+          "reconciliationReadyMs": 115.386,
+          "shutdownMs": 2.074,
+          "deadlineExceeded": false,
+          "exitCode": 0,
+          "signalCode": null,
+          "processUsage": {
+            "maxRSS": 47005696,
+            "cpuTime": {
+              "user": "37957",
+              "system": "13641",
+              "total": "51598"
+            },
+            "contextSwitches": {
+              "voluntary": 9,
+              "involuntary": 409
+            },
+            "messages": {
+              "sent": 16,
+              "received": 14
+            },
+            "ops": {
+              "in": 0,
+              "out": 0
+            },
+            "shmSize": 0,
+            "signalCount": 1,
+            "swapCount": 0
+          },
+          "output": {
+            "stdoutBytes": 248,
+            "stderrBytes": 0,
+            "stdoutSha256": "6d36ea957d803a9ff8ff674ff4eab62aa6ce9bfb0cbfefc8191daf264424df07",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "before": {
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 17,
+              "sockets": 4
+            },
+            "descendants": {
+              "available": true,
+              "pids": []
+            }
+          },
+          "residue": {
+            "pidAlive": false,
+            "portRebindSucceeded": true,
+            "pidFilePresent": false,
+            "knownDescendantsAlive": [],
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 0,
+              "sockets": 0
+            },
+            "released": true,
+            "waitMs": 13.568,
+            "timeoutMs": 1000
+          },
+          "checks": {
+            "exitedWithinDeadline": true,
+            "expectedExit": true,
+            "pidReleased": true,
+            "portReleased": true,
+            "descendantsReleased": true,
+            "descriptorsReleased": true,
+            "pidFileReleased": true,
+            "residueReleasedWithinDeadline": true
+          }
+        },
+        {
+          "mode": "graceful",
+          "pid": 97872,
+          "port": 61029,
+          "healthMs": 44.888,
+          "reconciliationReadyMs": 109.567,
+          "shutdownMs": 2.006,
+          "deadlineExceeded": false,
+          "exitCode": 0,
+          "signalCode": null,
+          "processUsage": {
+            "maxRSS": 46989312,
+            "cpuTime": {
+              "user": "37122",
+              "system": "12961",
+              "total": "50083"
+            },
+            "contextSwitches": {
+              "voluntary": 6,
+              "involuntary": 369
+            },
+            "messages": {
+              "sent": 16,
+              "received": 14
+            },
+            "ops": {
+              "in": 0,
+              "out": 0
+            },
+            "shmSize": 0,
+            "signalCount": 1,
+            "swapCount": 0
+          },
+          "output": {
+            "stdoutBytes": 248,
+            "stderrBytes": 0,
+            "stdoutSha256": "c92808ba77367cbb01e009e03891fe08b614b839a546698127030deb6ab654f0",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "before": {
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 17,
+              "sockets": 4
+            },
+            "descendants": {
+              "available": true,
+              "pids": []
+            }
+          },
+          "residue": {
+            "pidAlive": false,
+            "portRebindSucceeded": true,
+            "pidFilePresent": false,
+            "knownDescendantsAlive": [],
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 0,
+              "sockets": 0
+            },
+            "released": true,
+            "waitMs": 13.386,
+            "timeoutMs": 1000
+          },
+          "checks": {
+            "exitedWithinDeadline": true,
+            "expectedExit": true,
+            "pidReleased": true,
+            "portReleased": true,
+            "descendantsReleased": true,
+            "descriptorsReleased": true,
+            "pidFileReleased": true,
+            "residueReleasedWithinDeadline": true
+          }
+        },
+        {
+          "mode": "graceful",
+          "pid": 97879,
+          "port": 61040,
+          "healthMs": 42.239,
+          "reconciliationReadyMs": 107.359,
+          "shutdownMs": 2.08,
+          "deadlineExceeded": false,
+          "exitCode": 0,
+          "signalCode": null,
+          "processUsage": {
+            "maxRSS": 47022080,
+            "cpuTime": {
+              "user": "37647",
+              "system": "13182",
+              "total": "50829"
+            },
+            "contextSwitches": {
+              "voluntary": 6,
+              "involuntary": 362
+            },
+            "messages": {
+              "sent": 16,
+              "received": 14
+            },
+            "ops": {
+              "in": 0,
+              "out": 0
+            },
+            "shmSize": 0,
+            "signalCount": 1,
+            "swapCount": 0
+          },
+          "output": {
+            "stdoutBytes": 248,
+            "stderrBytes": 0,
+            "stdoutSha256": "60cc2635f8fd39415b80db45cf563aab20e527c7a78625ecf74023e6f517b025",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "before": {
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 17,
+              "sockets": 4
+            },
+            "descendants": {
+              "available": true,
+              "pids": []
+            }
+          },
+          "residue": {
+            "pidAlive": false,
+            "portRebindSucceeded": true,
+            "pidFilePresent": false,
+            "knownDescendantsAlive": [],
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 0,
+              "sockets": 0
+            },
+            "released": true,
+            "waitMs": 13.581,
+            "timeoutMs": 1000
+          },
+          "checks": {
+            "exitedWithinDeadline": true,
+            "expectedExit": true,
+            "pidReleased": true,
+            "portReleased": true,
+            "descendantsReleased": true,
+            "descriptorsReleased": true,
+            "pidFileReleased": true,
+            "residueReleasedWithinDeadline": true
+          }
+        },
+        {
+          "mode": "graceful",
+          "pid": 97886,
+          "port": 61050,
+          "healthMs": 46.533,
+          "reconciliationReadyMs": 112.288,
+          "shutdownMs": 2.089,
+          "deadlineExceeded": false,
+          "exitCode": 0,
+          "signalCode": null,
+          "processUsage": {
+            "maxRSS": 46858240,
+            "cpuTime": {
+              "user": "37961",
+              "system": "14943",
+              "total": "52904"
+            },
+            "contextSwitches": {
+              "voluntary": 7,
+              "involuntary": 443
+            },
+            "messages": {
+              "sent": 16,
+              "received": 14
+            },
+            "ops": {
+              "in": 0,
+              "out": 0
+            },
+            "shmSize": 0,
+            "signalCount": 1,
+            "swapCount": 0
+          },
+          "output": {
+            "stdoutBytes": 248,
+            "stderrBytes": 0,
+            "stdoutSha256": "b5362120b9ffd6eb7971215949dd1bdaa1d67ea6f954ef7de43669e3bc9dc35a",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "before": {
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 17,
+              "sockets": 4
+            },
+            "descendants": {
+              "available": true,
+              "pids": []
+            }
+          },
+          "residue": {
+            "pidAlive": false,
+            "portRebindSucceeded": true,
+            "pidFilePresent": false,
+            "knownDescendantsAlive": [],
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 0,
+              "sockets": 0
+            },
+            "released": true,
+            "waitMs": 13.644,
+            "timeoutMs": 1000
+          },
+          "checks": {
+            "exitedWithinDeadline": true,
+            "expectedExit": true,
+            "pidReleased": true,
+            "portReleased": true,
+            "descendantsReleased": true,
+            "descriptorsReleased": true,
+            "pidFileReleased": true,
+            "residueReleasedWithinDeadline": true
+          }
+        },
+        {
+          "mode": "graceful",
+          "pid": 97894,
+          "port": 61059,
+          "healthMs": 52.481,
+          "reconciliationReadyMs": 117.776,
+          "shutdownMs": 2.377,
+          "deadlineExceeded": false,
+          "exitCode": 0,
+          "signalCode": null,
+          "processUsage": {
+            "maxRSS": 46874624,
+            "cpuTime": {
+              "user": "37454",
+              "system": "14319",
+              "total": "51773"
+            },
+            "contextSwitches": {
+              "voluntary": 7,
+              "involuntary": 461
+            },
+            "messages": {
+              "sent": 16,
+              "received": 14
+            },
+            "ops": {
+              "in": 0,
+              "out": 0
+            },
+            "shmSize": 0,
+            "signalCount": 1,
+            "swapCount": 0
+          },
+          "output": {
+            "stdoutBytes": 248,
+            "stderrBytes": 0,
+            "stdoutSha256": "7e9ea52c07cc288107a4b3b28e3283df15db07c45d61ff155335cb098846542b",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "before": {
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 17,
+              "sockets": 4
+            },
+            "descendants": {
+              "available": true,
+              "pids": []
+            }
+          },
+          "residue": {
+            "pidAlive": false,
+            "portRebindSucceeded": true,
+            "pidFilePresent": false,
+            "knownDescendantsAlive": [],
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 0,
+              "sockets": 0
+            },
+            "released": true,
+            "waitMs": 13.936,
+            "timeoutMs": 1000
+          },
+          "checks": {
+            "exitedWithinDeadline": true,
+            "expectedExit": true,
+            "pidReleased": true,
+            "portReleased": true,
+            "descendantsReleased": true,
+            "descriptorsReleased": true,
+            "pidFileReleased": true,
+            "residueReleasedWithinDeadline": true
+          }
+        },
+        {
+          "mode": "graceful",
+          "pid": 97901,
+          "port": 61069,
+          "healthMs": 48.398,
+          "reconciliationReadyMs": 114.692,
+          "shutdownMs": 2.199,
+          "deadlineExceeded": false,
+          "exitCode": 0,
+          "signalCode": null,
+          "processUsage": {
+            "maxRSS": 46858240,
+            "cpuTime": {
+              "user": "38646",
+              "system": "15279",
+              "total": "53925"
+            },
+            "contextSwitches": {
+              "voluntary": 6,
+              "involuntary": 491
+            },
+            "messages": {
+              "sent": 16,
+              "received": 14
+            },
+            "ops": {
+              "in": 0,
+              "out": 0
+            },
+            "shmSize": 0,
+            "signalCount": 1,
+            "swapCount": 0
+          },
+          "output": {
+            "stdoutBytes": 248,
+            "stderrBytes": 0,
+            "stdoutSha256": "334d62ab0ad087ecd9ae7f21a2aeed1286b0c4c5908b197b9b0215f66cc837a7",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "before": {
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 17,
+              "sockets": 4
+            },
+            "descendants": {
+              "available": true,
+              "pids": []
+            }
+          },
+          "residue": {
+            "pidAlive": false,
+            "portRebindSucceeded": true,
+            "pidFilePresent": false,
+            "knownDescendantsAlive": [],
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 0,
+              "sockets": 0
+            },
+            "released": true,
+            "waitMs": 14.327,
+            "timeoutMs": 1000
+          },
+          "checks": {
+            "exitedWithinDeadline": true,
+            "expectedExit": true,
+            "pidReleased": true,
+            "portReleased": true,
+            "descendantsReleased": true,
+            "descriptorsReleased": true,
+            "pidFileReleased": true,
+            "residueReleasedWithinDeadline": true
+          }
+        },
+        {
+          "mode": "graceful",
+          "pid": 97908,
+          "port": 61081,
+          "healthMs": 47.011,
+          "reconciliationReadyMs": 114.027,
+          "shutdownMs": 2.07,
+          "deadlineExceeded": false,
+          "exitCode": 0,
+          "signalCode": null,
+          "processUsage": {
+            "maxRSS": 46825472,
+            "cpuTime": {
+              "user": "37620",
+              "system": "13163",
+              "total": "50783"
+            },
+            "contextSwitches": {
+              "voluntary": 6,
+              "involuntary": 413
+            },
+            "messages": {
+              "sent": 16,
+              "received": 14
+            },
+            "ops": {
+              "in": 0,
+              "out": 0
+            },
+            "shmSize": 0,
+            "signalCount": 1,
+            "swapCount": 0
+          },
+          "output": {
+            "stdoutBytes": 248,
+            "stderrBytes": 0,
+            "stdoutSha256": "7b6585d87fd2a6614546ecce86af68bd03b184d56738e18ad8faa74a41f17ac4",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "before": {
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 17,
+              "sockets": 4
+            },
+            "descendants": {
+              "available": true,
+              "pids": []
+            }
+          },
+          "residue": {
+            "pidAlive": false,
+            "portRebindSucceeded": true,
+            "pidFilePresent": false,
+            "knownDescendantsAlive": [],
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 0,
+              "sockets": 0
+            },
+            "released": true,
+            "waitMs": 13.85,
+            "timeoutMs": 1000
+          },
+          "checks": {
+            "exitedWithinDeadline": true,
+            "expectedExit": true,
+            "pidReleased": true,
+            "portReleased": true,
+            "descendantsReleased": true,
+            "descriptorsReleased": true,
+            "pidFileReleased": true,
+            "residueReleasedWithinDeadline": true
+          }
+        },
+        {
+          "mode": "graceful",
+          "pid": 97916,
+          "port": 61090,
+          "healthMs": 44.791,
+          "reconciliationReadyMs": 110.742,
+          "shutdownMs": 2.548,
+          "deadlineExceeded": false,
+          "exitCode": 0,
+          "signalCode": null,
+          "processUsage": {
+            "maxRSS": 46874624,
+            "cpuTime": {
+              "user": "37828",
+              "system": "14371",
+              "total": "52199"
+            },
+            "contextSwitches": {
+              "voluntary": 6,
+              "involuntary": 442
+            },
+            "messages": {
+              "sent": 16,
+              "received": 14
+            },
+            "ops": {
+              "in": 0,
+              "out": 0
+            },
+            "shmSize": 0,
+            "signalCount": 1,
+            "swapCount": 0
+          },
+          "output": {
+            "stdoutBytes": 248,
+            "stderrBytes": 0,
+            "stdoutSha256": "1f77b1480f12be4e592bb52e8e2c4b2bcf9573e574e089d361295650fae71962",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "before": {
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 17,
+              "sockets": 4
+            },
+            "descendants": {
+              "available": true,
+              "pids": []
+            }
+          },
+          "residue": {
+            "pidAlive": false,
+            "portRebindSucceeded": true,
+            "pidFilePresent": false,
+            "knownDescendantsAlive": [],
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 0,
+              "sockets": 0
+            },
+            "released": true,
+            "waitMs": 13.558,
+            "timeoutMs": 1000
+          },
+          "checks": {
+            "exitedWithinDeadline": true,
+            "expectedExit": true,
+            "pidReleased": true,
+            "portReleased": true,
+            "descendantsReleased": true,
+            "descriptorsReleased": true,
+            "pidFileReleased": true,
+            "residueReleasedWithinDeadline": true
+          }
+        },
+        {
+          "mode": "graceful",
+          "pid": 97923,
+          "port": 61098,
+          "healthMs": 57.393,
+          "reconciliationReadyMs": 122.64,
+          "shutdownMs": 2.095,
+          "deadlineExceeded": false,
+          "exitCode": 0,
+          "signalCode": null,
+          "processUsage": {
+            "maxRSS": 46792704,
+            "cpuTime": {
+              "user": "37329",
+              "system": "15518",
+              "total": "52847"
+            },
+            "contextSwitches": {
+              "voluntary": 6,
+              "involuntary": 451
+            },
+            "messages": {
+              "sent": 16,
+              "received": 14
+            },
+            "ops": {
+              "in": 0,
+              "out": 0
+            },
+            "shmSize": 0,
+            "signalCount": 1,
+            "swapCount": 0
+          },
+          "output": {
+            "stdoutBytes": 248,
+            "stderrBytes": 0,
+            "stdoutSha256": "f35843c049704682e721c09fb9f76bf9ffe39be51b758cf26f1cf0b64538fb2f",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "before": {
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 17,
+              "sockets": 4
+            },
+            "descendants": {
+              "available": true,
+              "pids": []
+            }
+          },
+          "residue": {
+            "pidAlive": false,
+            "portRebindSucceeded": true,
+            "pidFilePresent": false,
+            "knownDescendantsAlive": [],
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 0,
+              "sockets": 0
+            },
+            "released": true,
+            "waitMs": 13.365,
+            "timeoutMs": 1000
+          },
+          "checks": {
+            "exitedWithinDeadline": true,
+            "expectedExit": true,
+            "pidReleased": true,
+            "portReleased": true,
+            "descendantsReleased": true,
+            "descriptorsReleased": true,
+            "pidFileReleased": true,
+            "residueReleasedWithinDeadline": true
+          }
+        },
+        {
+          "mode": "graceful",
+          "pid": 97930,
+          "port": 61106,
+          "healthMs": 56.268,
+          "reconciliationReadyMs": 121.176,
+          "shutdownMs": 2.453,
+          "deadlineExceeded": false,
+          "exitCode": 0,
+          "signalCode": null,
+          "processUsage": {
+            "maxRSS": 46841856,
+            "cpuTime": {
+              "user": "38014",
+              "system": "16059",
+              "total": "54073"
+            },
+            "contextSwitches": {
+              "voluntary": 7,
+              "involuntary": 499
+            },
+            "messages": {
+              "sent": 16,
+              "received": 14
+            },
+            "ops": {
+              "in": 0,
+              "out": 0
+            },
+            "shmSize": 0,
+            "signalCount": 1,
+            "swapCount": 0
+          },
+          "output": {
+            "stdoutBytes": 248,
+            "stderrBytes": 0,
+            "stdoutSha256": "9f9cf1b71f7dcd679d1b55d28238de8d8e7b3877ff16a79349c6df94a2613c11",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "before": {
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 17,
+              "sockets": 4
+            },
+            "descendants": {
+              "available": true,
+              "pids": []
+            }
+          },
+          "residue": {
+            "pidAlive": false,
+            "portRebindSucceeded": true,
+            "pidFilePresent": false,
+            "knownDescendantsAlive": [],
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 0,
+              "sockets": 0
+            },
+            "released": true,
+            "waitMs": 13.472,
+            "timeoutMs": 1000
+          },
+          "checks": {
+            "exitedWithinDeadline": true,
+            "expectedExit": true,
+            "pidReleased": true,
+            "portReleased": true,
+            "descendantsReleased": true,
+            "descriptorsReleased": true,
+            "pidFileReleased": true,
+            "residueReleasedWithinDeadline": true
+          }
+        },
+        {
+          "mode": "graceful",
+          "pid": 97937,
+          "port": 61114,
+          "healthMs": 53.741,
+          "reconciliationReadyMs": 118.934,
+          "shutdownMs": 2.134,
+          "deadlineExceeded": false,
+          "exitCode": 0,
+          "signalCode": null,
+          "processUsage": {
+            "maxRSS": 46972928,
+            "cpuTime": {
+              "user": "38537",
+              "system": "14116",
+              "total": "52653"
+            },
+            "contextSwitches": {
+              "voluntary": 7,
+              "involuntary": 521
+            },
+            "messages": {
+              "sent": 16,
+              "received": 14
+            },
+            "ops": {
+              "in": 0,
+              "out": 0
+            },
+            "shmSize": 0,
+            "signalCount": 1,
+            "swapCount": 0
+          },
+          "output": {
+            "stdoutBytes": 248,
+            "stderrBytes": 0,
+            "stdoutSha256": "019ad3e677d5be9babd93fafb4d19721b1b907816f2529511102e39375b0b3b9",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "before": {
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 17,
+              "sockets": 4
+            },
+            "descendants": {
+              "available": true,
+              "pids": []
+            }
+          },
+          "residue": {
+            "pidAlive": false,
+            "portRebindSucceeded": true,
+            "pidFilePresent": false,
+            "knownDescendantsAlive": [],
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 0,
+              "sockets": 0
+            },
+            "released": true,
+            "waitMs": 13.512,
+            "timeoutMs": 1000
+          },
+          "checks": {
+            "exitedWithinDeadline": true,
+            "expectedExit": true,
+            "pidReleased": true,
+            "portReleased": true,
+            "descendantsReleased": true,
+            "descriptorsReleased": true,
+            "pidFileReleased": true,
+            "residueReleasedWithinDeadline": true
+          }
+        },
+        {
+          "mode": "graceful",
+          "pid": 97944,
+          "port": 61122,
+          "healthMs": 47.726,
+          "reconciliationReadyMs": 113.611,
+          "shutdownMs": 2.138,
+          "deadlineExceeded": false,
+          "exitCode": 0,
+          "signalCode": null,
+          "processUsage": {
+            "maxRSS": 46891008,
+            "cpuTime": {
+              "user": "37097",
+              "system": "15249",
+              "total": "52346"
+            },
+            "contextSwitches": {
+              "voluntary": 7,
+              "involuntary": 446
+            },
+            "messages": {
+              "sent": 16,
+              "received": 14
+            },
+            "ops": {
+              "in": 0,
+              "out": 0
+            },
+            "shmSize": 0,
+            "signalCount": 1,
+            "swapCount": 0
+          },
+          "output": {
+            "stdoutBytes": 248,
+            "stderrBytes": 0,
+            "stdoutSha256": "c13d830278f09d5c75eb15b4ede6e839e255cb4df83aa3956a9291b4b72eee0d",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "before": {
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 17,
+              "sockets": 4
+            },
+            "descendants": {
+              "available": true,
+              "pids": []
+            }
+          },
+          "residue": {
+            "pidAlive": false,
+            "portRebindSucceeded": true,
+            "pidFilePresent": false,
+            "knownDescendantsAlive": [],
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 0,
+              "sockets": 0
+            },
+            "released": true,
+            "waitMs": 13.626,
+            "timeoutMs": 1000
+          },
+          "checks": {
+            "exitedWithinDeadline": true,
+            "expectedExit": true,
+            "pidReleased": true,
+            "portReleased": true,
+            "descendantsReleased": true,
+            "descriptorsReleased": true,
+            "pidFileReleased": true,
+            "residueReleasedWithinDeadline": true
+          }
+        },
+        {
+          "mode": "graceful",
+          "pid": 97951,
+          "port": 61130,
+          "healthMs": 45.116,
+          "reconciliationReadyMs": 111.581,
+          "shutdownMs": 2.334,
+          "deadlineExceeded": false,
+          "exitCode": 0,
+          "signalCode": null,
+          "processUsage": {
+            "maxRSS": 46792704,
+            "cpuTime": {
+              "user": "37941",
+              "system": "15733",
+              "total": "53674"
+            },
+            "contextSwitches": {
+              "voluntary": 6,
+              "involuntary": 411
+            },
+            "messages": {
+              "sent": 16,
+              "received": 14
+            },
+            "ops": {
+              "in": 0,
+              "out": 0
+            },
+            "shmSize": 0,
+            "signalCount": 1,
+            "swapCount": 0
+          },
+          "output": {
+            "stdoutBytes": 248,
+            "stderrBytes": 0,
+            "stdoutSha256": "c8faa33290cbc08ce752d1729518f0db0312ea3e3affaed27e17bf8abc2e21e2",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "before": {
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 17,
+              "sockets": 4
+            },
+            "descendants": {
+              "available": true,
+              "pids": []
+            }
+          },
+          "residue": {
+            "pidAlive": false,
+            "portRebindSucceeded": true,
+            "pidFilePresent": false,
+            "knownDescendantsAlive": [],
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 0,
+              "sockets": 0
+            },
+            "released": true,
+            "waitMs": 14.107,
+            "timeoutMs": 1000
+          },
+          "checks": {
+            "exitedWithinDeadline": true,
+            "expectedExit": true,
+            "pidReleased": true,
+            "portReleased": true,
+            "descendantsReleased": true,
+            "descriptorsReleased": true,
+            "pidFileReleased": true,
+            "residueReleasedWithinDeadline": true
+          }
+        },
+        {
+          "mode": "graceful",
+          "pid": 97958,
+          "port": 61138,
+          "healthMs": 168.796,
+          "reconciliationReadyMs": 235.057,
+          "shutdownMs": 3.775,
+          "deadlineExceeded": false,
+          "exitCode": 0,
+          "signalCode": null,
+          "processUsage": {
+            "maxRSS": 46907392,
+            "cpuTime": {
+              "user": "40420",
+              "system": "15377",
+              "total": "55797"
+            },
+            "contextSwitches": {
+              "voluntary": 6,
+              "involuntary": 517
+            },
+            "messages": {
+              "sent": 16,
+              "received": 14
+            },
+            "ops": {
+              "in": 0,
+              "out": 0
+            },
+            "shmSize": 0,
+            "signalCount": 1,
+            "swapCount": 0
+          },
+          "output": {
+            "stdoutBytes": 248,
+            "stderrBytes": 0,
+            "stdoutSha256": "53de57e332016fc3918113f8d41b8fdd0f4afd6a37dcee4cf65bfe876a6af15f",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "before": {
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 17,
+              "sockets": 4
+            },
+            "descendants": {
+              "available": true,
+              "pids": []
+            }
+          },
+          "residue": {
+            "pidAlive": false,
+            "portRebindSucceeded": true,
+            "pidFilePresent": false,
+            "knownDescendantsAlive": [],
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 0,
+              "sockets": 0
+            },
+            "released": true,
+            "waitMs": 14.932,
+            "timeoutMs": 1000
+          },
+          "checks": {
+            "exitedWithinDeadline": true,
+            "expectedExit": true,
+            "pidReleased": true,
+            "portReleased": true,
+            "descendantsReleased": true,
+            "descriptorsReleased": true,
+            "pidFileReleased": true,
+            "residueReleasedWithinDeadline": true
+          }
+        },
+        {
+          "mode": "graceful",
+          "pid": 97984,
+          "port": 61146,
+          "healthMs": 120.035,
+          "reconciliationReadyMs": 185.28,
+          "shutdownMs": 6.671,
+          "deadlineExceeded": false,
+          "exitCode": 0,
+          "signalCode": null,
+          "processUsage": {
+            "maxRSS": 46972928,
+            "cpuTime": {
+              "user": "39830",
+              "system": "21485",
+              "total": "61315"
+            },
+            "contextSwitches": {
+              "voluntary": 6,
+              "involuntary": 528
+            },
+            "messages": {
+              "sent": 16,
+              "received": 14
+            },
+            "ops": {
+              "in": 0,
+              "out": 0
+            },
+            "shmSize": 0,
+            "signalCount": 1,
+            "swapCount": 0
+          },
+          "output": {
+            "stdoutBytes": 248,
+            "stderrBytes": 0,
+            "stdoutSha256": "dd4c370584b9a686d67034e76030d9ba5dd7638e123807c3f1b95138b423bba8",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "before": {
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 17,
+              "sockets": 4
+            },
+            "descendants": {
+              "available": true,
+              "pids": []
+            }
+          },
+          "residue": {
+            "pidAlive": false,
+            "portRebindSucceeded": true,
+            "pidFilePresent": false,
+            "knownDescendantsAlive": [],
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 0,
+              "sockets": 0
+            },
+            "released": true,
+            "waitMs": 13.584,
+            "timeoutMs": 1000
+          },
+          "checks": {
+            "exitedWithinDeadline": true,
+            "expectedExit": true,
+            "pidReleased": true,
+            "portReleased": true,
+            "descendantsReleased": true,
+            "descriptorsReleased": true,
+            "pidFileReleased": true,
+            "residueReleasedWithinDeadline": true
+          }
+        },
+        {
+          "mode": "graceful",
+          "pid": 97992,
+          "port": 61160,
+          "healthMs": 43.661,
+          "reconciliationReadyMs": 109.201,
+          "shutdownMs": 2.194,
+          "deadlineExceeded": false,
+          "exitCode": 0,
+          "signalCode": null,
+          "processUsage": {
+            "maxRSS": 46907392,
+            "cpuTime": {
+              "user": "38443",
+              "system": "13841",
+              "total": "52284"
+            },
+            "contextSwitches": {
+              "voluntary": 6,
+              "involuntary": 397
+            },
+            "messages": {
+              "sent": 16,
+              "received": 14
+            },
+            "ops": {
+              "in": 0,
+              "out": 0
+            },
+            "shmSize": 0,
+            "signalCount": 1,
+            "swapCount": 0
+          },
+          "output": {
+            "stdoutBytes": 248,
+            "stderrBytes": 0,
+            "stdoutSha256": "ccde2a417f4432ce86ee9b29872da19b75680d0d67807024783039a510178bfe",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "before": {
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 17,
+              "sockets": 4
+            },
+            "descendants": {
+              "available": true,
+              "pids": []
+            }
+          },
+          "residue": {
+            "pidAlive": false,
+            "portRebindSucceeded": true,
+            "pidFilePresent": false,
+            "knownDescendantsAlive": [],
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 0,
+              "sockets": 0
+            },
+            "released": true,
+            "waitMs": 13.392,
+            "timeoutMs": 1000
+          },
+          "checks": {
+            "exitedWithinDeadline": true,
+            "expectedExit": true,
+            "pidReleased": true,
+            "portReleased": true,
+            "descendantsReleased": true,
+            "descriptorsReleased": true,
+            "pidFileReleased": true,
+            "residueReleasedWithinDeadline": true
+          }
+        },
+        {
+          "mode": "graceful",
+          "pid": 97999,
+          "port": 61168,
+          "healthMs": 46.582,
+          "reconciliationReadyMs": 111.393,
+          "shutdownMs": 2.107,
+          "deadlineExceeded": false,
+          "exitCode": 0,
+          "signalCode": null,
+          "processUsage": {
+            "maxRSS": 46874624,
+            "cpuTime": {
+              "user": "37728",
+              "system": "13758",
+              "total": "51486"
+            },
+            "contextSwitches": {
+              "voluntary": 6,
+              "involuntary": 405
+            },
+            "messages": {
+              "sent": 16,
+              "received": 14
+            },
+            "ops": {
+              "in": 0,
+              "out": 0
+            },
+            "shmSize": 0,
+            "signalCount": 1,
+            "swapCount": 0
+          },
+          "output": {
+            "stdoutBytes": 248,
+            "stderrBytes": 0,
+            "stdoutSha256": "02227bfc96e4e0a1ec9fd48d77c13c2d94ba18ec0c0b87905a475ce056285f18",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "before": {
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 17,
+              "sockets": 4
+            },
+            "descendants": {
+              "available": true,
+              "pids": []
+            }
+          },
+          "residue": {
+            "pidAlive": false,
+            "portRebindSucceeded": true,
+            "pidFilePresent": false,
+            "knownDescendantsAlive": [],
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 0,
+              "sockets": 0
+            },
+            "released": true,
+            "waitMs": 13.985,
+            "timeoutMs": 1000
+          },
+          "checks": {
+            "exitedWithinDeadline": true,
+            "expectedExit": true,
+            "pidReleased": true,
+            "portReleased": true,
+            "descendantsReleased": true,
+            "descriptorsReleased": true,
+            "pidFileReleased": true,
+            "residueReleasedWithinDeadline": true
+          }
+        },
+        {
+          "mode": "graceful",
+          "pid": 98006,
+          "port": 61176,
+          "healthMs": 45.411,
+          "reconciliationReadyMs": 109.781,
+          "shutdownMs": 10.186,
+          "deadlineExceeded": false,
+          "exitCode": 0,
+          "signalCode": null,
+          "processUsage": {
+            "maxRSS": 46809088,
+            "cpuTime": {
+              "user": "38901",
+              "system": "15883",
+              "total": "54784"
+            },
+            "contextSwitches": {
+              "voluntary": 6,
+              "involuntary": 484
+            },
+            "messages": {
+              "sent": 16,
+              "received": 14
+            },
+            "ops": {
+              "in": 0,
+              "out": 0
+            },
+            "shmSize": 0,
+            "signalCount": 1,
+            "swapCount": 0
+          },
+          "output": {
+            "stdoutBytes": 248,
+            "stderrBytes": 0,
+            "stdoutSha256": "c53089d69fad5998bc52bc5dc286714b112923dffd6758ea0cc58db3a9af5c14",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "before": {
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 17,
+              "sockets": 4
+            },
+            "descendants": {
+              "available": true,
+              "pids": []
+            }
+          },
+          "residue": {
+            "pidAlive": false,
+            "portRebindSucceeded": true,
+            "pidFilePresent": false,
+            "knownDescendantsAlive": [],
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 0,
+              "sockets": 0
+            },
+            "released": true,
+            "waitMs": 17.319,
+            "timeoutMs": 1000
+          },
+          "checks": {
+            "exitedWithinDeadline": true,
+            "expectedExit": true,
+            "pidReleased": true,
+            "portReleased": true,
+            "descendantsReleased": true,
+            "descriptorsReleased": true,
+            "pidFileReleased": true,
+            "residueReleasedWithinDeadline": true
+          }
+        },
+        {
+          "mode": "graceful",
+          "pid": 98013,
+          "port": 61184,
+          "healthMs": 45.063,
+          "reconciliationReadyMs": 111.163,
+          "shutdownMs": 2.177,
+          "deadlineExceeded": false,
+          "exitCode": 0,
+          "signalCode": null,
+          "processUsage": {
+            "maxRSS": 46972928,
+            "cpuTime": {
+              "user": "37557",
+              "system": "13701",
+              "total": "51258"
+            },
+            "contextSwitches": {
+              "voluntary": 6,
+              "involuntary": 387
+            },
+            "messages": {
+              "sent": 16,
+              "received": 14
+            },
+            "ops": {
+              "in": 0,
+              "out": 0
+            },
+            "shmSize": 0,
+            "signalCount": 1,
+            "swapCount": 0
+          },
+          "output": {
+            "stdoutBytes": 248,
+            "stderrBytes": 0,
+            "stdoutSha256": "fc75b5d0b31fd5f074620e5d167513c90c1c77a68fb9f0d38886abdd23a0cad1",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "before": {
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 17,
+              "sockets": 4
+            },
+            "descendants": {
+              "available": true,
+              "pids": []
+            }
+          },
+          "residue": {
+            "pidAlive": false,
+            "portRebindSucceeded": true,
+            "pidFilePresent": false,
+            "knownDescendantsAlive": [],
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 0,
+              "sockets": 0
+            },
+            "released": true,
+            "waitMs": 13.133,
+            "timeoutMs": 1000
+          },
+          "checks": {
+            "exitedWithinDeadline": true,
+            "expectedExit": true,
+            "pidReleased": true,
+            "portReleased": true,
+            "descendantsReleased": true,
+            "descriptorsReleased": true,
+            "pidFileReleased": true,
+            "residueReleasedWithinDeadline": true
+          }
+        },
+        {
+          "mode": "graceful",
+          "pid": 98020,
+          "port": 61192,
+          "healthMs": 53.294,
+          "reconciliationReadyMs": 119.859,
+          "shutdownMs": 2.2,
+          "deadlineExceeded": false,
+          "exitCode": 0,
+          "signalCode": null,
+          "processUsage": {
+            "maxRSS": 46891008,
+            "cpuTime": {
+              "user": "37326",
+              "system": "13870",
+              "total": "51196"
+            },
+            "contextSwitches": {
+              "voluntary": 6,
+              "involuntary": 438
+            },
+            "messages": {
+              "sent": 16,
+              "received": 14
+            },
+            "ops": {
+              "in": 0,
+              "out": 0
+            },
+            "shmSize": 0,
+            "signalCount": 1,
+            "swapCount": 0
+          },
+          "output": {
+            "stdoutBytes": 248,
+            "stderrBytes": 0,
+            "stdoutSha256": "2898936f4fad561625580b328c67339d2ca1f9b4b5a6477fac0cedc16bdeba65",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "before": {
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 17,
+              "sockets": 4
+            },
+            "descendants": {
+              "available": true,
+              "pids": []
+            }
+          },
+          "residue": {
+            "pidAlive": false,
+            "portRebindSucceeded": true,
+            "pidFilePresent": false,
+            "knownDescendantsAlive": [],
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 0,
+              "sockets": 0
+            },
+            "released": true,
+            "waitMs": 13.47,
+            "timeoutMs": 1000
+          },
+          "checks": {
+            "exitedWithinDeadline": true,
+            "expectedExit": true,
+            "pidReleased": true,
+            "portReleased": true,
+            "descendantsReleased": true,
+            "descriptorsReleased": true,
+            "pidFileReleased": true,
+            "residueReleasedWithinDeadline": true
+          }
+        },
+        {
+          "mode": "graceful",
+          "pid": 98028,
+          "port": 61200,
+          "healthMs": 57.311,
+          "reconciliationReadyMs": 123.663,
+          "shutdownMs": 2.077,
+          "deadlineExceeded": false,
+          "exitCode": 0,
+          "signalCode": null,
+          "processUsage": {
+            "maxRSS": 46841856,
+            "cpuTime": {
+              "user": "38373",
+              "system": "14228",
+              "total": "52601"
+            },
+            "contextSwitches": {
+              "voluntary": 6,
+              "involuntary": 461
+            },
+            "messages": {
+              "sent": 16,
+              "received": 14
+            },
+            "ops": {
+              "in": 0,
+              "out": 0
+            },
+            "shmSize": 0,
+            "signalCount": 1,
+            "swapCount": 0
+          },
+          "output": {
+            "stdoutBytes": 248,
+            "stderrBytes": 0,
+            "stdoutSha256": "ccacfa2e7bbcf38449a5c87e4ea45faa83f01376306dc51a6eb8eb44475c8fde",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "before": {
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 17,
+              "sockets": 4
+            },
+            "descendants": {
+              "available": true,
+              "pids": []
+            }
+          },
+          "residue": {
+            "pidAlive": false,
+            "portRebindSucceeded": true,
+            "pidFilePresent": false,
+            "knownDescendantsAlive": [],
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 0,
+              "sockets": 0
+            },
+            "released": true,
+            "waitMs": 13.661,
+            "timeoutMs": 1000
+          },
+          "checks": {
+            "exitedWithinDeadline": true,
+            "expectedExit": true,
+            "pidReleased": true,
+            "portReleased": true,
+            "descendantsReleased": true,
+            "descriptorsReleased": true,
+            "pidFileReleased": true,
+            "residueReleasedWithinDeadline": true
+          }
+        },
+        {
+          "mode": "graceful",
+          "pid": 98035,
+          "port": 61208,
+          "healthMs": 53.636,
+          "reconciliationReadyMs": 119.56,
+          "shutdownMs": 2.052,
+          "deadlineExceeded": false,
+          "exitCode": 0,
+          "signalCode": null,
+          "processUsage": {
+            "maxRSS": 46825472,
+            "cpuTime": {
+              "user": "37923",
+              "system": "13664",
+              "total": "51587"
+            },
+            "contextSwitches": {
+              "voluntary": 7,
+              "involuntary": 469
+            },
+            "messages": {
+              "sent": 16,
+              "received": 14
+            },
+            "ops": {
+              "in": 0,
+              "out": 0
+            },
+            "shmSize": 0,
+            "signalCount": 1,
+            "swapCount": 0
+          },
+          "output": {
+            "stdoutBytes": 248,
+            "stderrBytes": 0,
+            "stdoutSha256": "96869d7a841bbc3cbf964b3282dde62836935563ea8590bdaa50e35265773db7",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "before": {
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 17,
+              "sockets": 4
+            },
+            "descendants": {
+              "available": true,
+              "pids": []
+            }
+          },
+          "residue": {
+            "pidAlive": false,
+            "portRebindSucceeded": true,
+            "pidFilePresent": false,
+            "knownDescendantsAlive": [],
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 0,
+              "sockets": 0
+            },
+            "released": true,
+            "waitMs": 13.847,
+            "timeoutMs": 1000
+          },
+          "checks": {
+            "exitedWithinDeadline": true,
+            "expectedExit": true,
+            "pidReleased": true,
+            "portReleased": true,
+            "descendantsReleased": true,
+            "descriptorsReleased": true,
+            "pidFileReleased": true,
+            "residueReleasedWithinDeadline": true
+          }
+        },
+        {
+          "mode": "graceful",
+          "pid": 98042,
+          "port": 61216,
+          "healthMs": 64.55,
+          "reconciliationReadyMs": 128.007,
+          "shutdownMs": 2.02,
+          "deadlineExceeded": false,
+          "exitCode": 0,
+          "signalCode": null,
+          "processUsage": {
+            "maxRSS": 47038464,
+            "cpuTime": {
+              "user": "39274",
+              "system": "16058",
+              "total": "55332"
+            },
+            "contextSwitches": {
+              "voluntary": 6,
+              "involuntary": 440
+            },
+            "messages": {
+              "sent": 16,
+              "received": 14
+            },
+            "ops": {
+              "in": 0,
+              "out": 0
+            },
+            "shmSize": 0,
+            "signalCount": 1,
+            "swapCount": 0
+          },
+          "output": {
+            "stdoutBytes": 248,
+            "stderrBytes": 0,
+            "stdoutSha256": "1453703d05d397cee30d2bb5cba5615ea57f0bf3f14455f29fc6a1c950811fd0",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "before": {
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 17,
+              "sockets": 4
+            },
+            "descendants": {
+              "available": true,
+              "pids": []
+            }
+          },
+          "residue": {
+            "pidAlive": false,
+            "portRebindSucceeded": true,
+            "pidFilePresent": false,
+            "knownDescendantsAlive": [],
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 0,
+              "sockets": 0
+            },
+            "released": true,
+            "waitMs": 13.396,
+            "timeoutMs": 1000
+          },
+          "checks": {
+            "exitedWithinDeadline": true,
+            "expectedExit": true,
+            "pidReleased": true,
+            "portReleased": true,
+            "descendantsReleased": true,
+            "descriptorsReleased": true,
+            "pidFileReleased": true,
+            "residueReleasedWithinDeadline": true
+          }
+        },
+        {
+          "mode": "graceful",
+          "pid": 98049,
+          "port": 61225,
+          "healthMs": 45.178,
+          "reconciliationReadyMs": 109.776,
+          "shutdownMs": 2.364,
+          "deadlineExceeded": false,
+          "exitCode": 0,
+          "signalCode": null,
+          "processUsage": {
+            "maxRSS": 46891008,
+            "cpuTime": {
+              "user": "38313",
+              "system": "14450",
+              "total": "52763"
+            },
+            "contextSwitches": {
+              "voluntary": 7,
+              "involuntary": 419
+            },
+            "messages": {
+              "sent": 16,
+              "received": 14
+            },
+            "ops": {
+              "in": 0,
+              "out": 0
+            },
+            "shmSize": 0,
+            "signalCount": 1,
+            "swapCount": 0
+          },
+          "output": {
+            "stdoutBytes": 248,
+            "stderrBytes": 0,
+            "stdoutSha256": "d0d4df45b16e2be2510fdb16e0d3f5c7830742f046b9585a4e666f7978772e77",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "before": {
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 17,
+              "sockets": 4
+            },
+            "descendants": {
+              "available": true,
+              "pids": []
+            }
+          },
+          "residue": {
+            "pidAlive": false,
+            "portRebindSucceeded": true,
+            "pidFilePresent": false,
+            "knownDescendantsAlive": [],
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 0,
+              "sockets": 0
+            },
+            "released": true,
+            "waitMs": 13.623,
+            "timeoutMs": 1000
+          },
+          "checks": {
+            "exitedWithinDeadline": true,
+            "expectedExit": true,
+            "pidReleased": true,
+            "portReleased": true,
+            "descendantsReleased": true,
+            "descriptorsReleased": true,
+            "pidFileReleased": true,
+            "residueReleasedWithinDeadline": true
+          }
+        },
+        {
+          "mode": "graceful",
+          "pid": 98056,
+          "port": 61235,
+          "healthMs": 43.137,
+          "reconciliationReadyMs": 108.615,
+          "shutdownMs": 2.166,
+          "deadlineExceeded": false,
+          "exitCode": 0,
+          "signalCode": null,
+          "processUsage": {
+            "maxRSS": 46972928,
+            "cpuTime": {
+              "user": "36542",
+              "system": "13899",
+              "total": "50441"
+            },
+            "contextSwitches": {
+              "voluntary": 6,
+              "involuntary": 374
+            },
+            "messages": {
+              "sent": 16,
+              "received": 14
+            },
+            "ops": {
+              "in": 0,
+              "out": 0
+            },
+            "shmSize": 0,
+            "signalCount": 1,
+            "swapCount": 0
+          },
+          "output": {
+            "stdoutBytes": 248,
+            "stderrBytes": 0,
+            "stdoutSha256": "c29c73631d2202a753cf996359937e7d3ed2391c8857148a58722a9781df416d",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "before": {
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 17,
+              "sockets": 4
+            },
+            "descendants": {
+              "available": true,
+              "pids": []
+            }
+          },
+          "residue": {
+            "pidAlive": false,
+            "portRebindSucceeded": true,
+            "pidFilePresent": false,
+            "knownDescendantsAlive": [],
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 0,
+              "sockets": 0
+            },
+            "released": true,
+            "waitMs": 14.172,
+            "timeoutMs": 1000
+          },
+          "checks": {
+            "exitedWithinDeadline": true,
+            "expectedExit": true,
+            "pidReleased": true,
+            "portReleased": true,
+            "descendantsReleased": true,
+            "descriptorsReleased": true,
+            "pidFileReleased": true,
+            "residueReleasedWithinDeadline": true
+          }
+        },
+        {
+          "mode": "graceful",
+          "pid": 98063,
+          "port": 61243,
+          "healthMs": 43.648,
+          "reconciliationReadyMs": 109.237,
+          "shutdownMs": 2.055,
+          "deadlineExceeded": false,
+          "exitCode": 0,
+          "signalCode": null,
+          "processUsage": {
+            "maxRSS": 46743552,
+            "cpuTime": {
+              "user": "38184",
+              "system": "13284",
+              "total": "51468"
+            },
+            "contextSwitches": {
+              "voluntary": 6,
+              "involuntary": 453
+            },
+            "messages": {
+              "sent": 16,
+              "received": 14
+            },
+            "ops": {
+              "in": 0,
+              "out": 0
+            },
+            "shmSize": 0,
+            "signalCount": 1,
+            "swapCount": 0
+          },
+          "output": {
+            "stdoutBytes": 248,
+            "stderrBytes": 0,
+            "stdoutSha256": "f32d869af0a82c0c7cf13ef6ec087bb9e206a9547fd0dc2b5287a23a1e9bf0a6",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "before": {
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 17,
+              "sockets": 4
+            },
+            "descendants": {
+              "available": true,
+              "pids": []
+            }
+          },
+          "residue": {
+            "pidAlive": false,
+            "portRebindSucceeded": true,
+            "pidFilePresent": false,
+            "knownDescendantsAlive": [],
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 0,
+              "sockets": 0
+            },
+            "released": true,
+            "waitMs": 13.486,
+            "timeoutMs": 1000
+          },
+          "checks": {
+            "exitedWithinDeadline": true,
+            "expectedExit": true,
+            "pidReleased": true,
+            "portReleased": true,
+            "descendantsReleased": true,
+            "descriptorsReleased": true,
+            "pidFileReleased": true,
+            "residueReleasedWithinDeadline": true
+          }
+        },
+        {
+          "mode": "graceful",
+          "pid": 98071,
+          "port": 61251,
+          "healthMs": 44.593,
+          "reconciliationReadyMs": 108.042,
+          "shutdownMs": 2.173,
+          "deadlineExceeded": false,
+          "exitCode": 0,
+          "signalCode": null,
+          "processUsage": {
+            "maxRSS": 46923776,
+            "cpuTime": {
+              "user": "38235",
+              "system": "14974",
+              "total": "53209"
+            },
+            "contextSwitches": {
+              "voluntary": 6,
+              "involuntary": 407
+            },
+            "messages": {
+              "sent": 16,
+              "received": 14
+            },
+            "ops": {
+              "in": 0,
+              "out": 0
+            },
+            "shmSize": 0,
+            "signalCount": 1,
+            "swapCount": 0
+          },
+          "output": {
+            "stdoutBytes": 248,
+            "stderrBytes": 0,
+            "stdoutSha256": "e0187555b422529e3a7fd2dd66524c205ea25ec35c6e9611a3cc5991fe113e85",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "before": {
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 17,
+              "sockets": 4
+            },
+            "descendants": {
+              "available": true,
+              "pids": []
+            }
+          },
+          "residue": {
+            "pidAlive": false,
+            "portRebindSucceeded": true,
+            "pidFilePresent": false,
+            "knownDescendantsAlive": [],
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 0,
+              "sockets": 0
+            },
+            "released": true,
+            "waitMs": 14.219,
+            "timeoutMs": 1000
+          },
+          "checks": {
+            "exitedWithinDeadline": true,
+            "expectedExit": true,
+            "pidReleased": true,
+            "portReleased": true,
+            "descendantsReleased": true,
+            "descriptorsReleased": true,
+            "pidFileReleased": true,
+            "residueReleasedWithinDeadline": true
+          }
+        },
+        {
+          "mode": "graceful",
+          "pid": 98086,
+          "port": 61259,
+          "healthMs": 169.485,
+          "reconciliationReadyMs": 236.717,
+          "shutdownMs": 2.254,
+          "deadlineExceeded": false,
+          "exitCode": 0,
+          "signalCode": null,
+          "processUsage": {
+            "maxRSS": 46841856,
+            "cpuTime": {
+              "user": "40544",
+              "system": "16233",
+              "total": "56777"
+            },
+            "contextSwitches": {
+              "voluntary": 6,
+              "involuntary": 445
+            },
+            "messages": {
+              "sent": 16,
+              "received": 14
+            },
+            "ops": {
+              "in": 0,
+              "out": 0
+            },
+            "shmSize": 0,
+            "signalCount": 1,
+            "swapCount": 0
+          },
+          "output": {
+            "stdoutBytes": 248,
+            "stderrBytes": 0,
+            "stdoutSha256": "aad6e2e81ad5b052e51007579ae5316ea4d37c51d42c08b89e14f5c068272ea5",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "before": {
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 17,
+              "sockets": 4
+            },
+            "descendants": {
+              "available": true,
+              "pids": []
+            }
+          },
+          "residue": {
+            "pidAlive": false,
+            "portRebindSucceeded": true,
+            "pidFilePresent": false,
+            "knownDescendantsAlive": [],
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 0,
+              "sockets": 0
+            },
+            "released": true,
+            "waitMs": 13.676,
+            "timeoutMs": 1000
+          },
+          "checks": {
+            "exitedWithinDeadline": true,
+            "expectedExit": true,
+            "pidReleased": true,
+            "portReleased": true,
+            "descendantsReleased": true,
+            "descriptorsReleased": true,
+            "pidFileReleased": true,
+            "residueReleasedWithinDeadline": true
+          }
+        }
+      ]
+    },
+    "forcedShutdowns": {
+      "mechanism": "direct SIGKILL (pre-P4 baseline has no force latch)",
+      "durationMs": {
+        "count": 3,
+        "min": 1.584,
+        "p50": 1.589,
+        "p95": 1.688,
+        "p99": 1.688,
+        "max": 1.688,
+        "mean": 1.62
+      },
+      "runs": [
+        {
+          "mode": "sigkill",
+          "pid": 98108,
+          "port": 61271,
+          "healthMs": 240.403,
+          "reconciliationReadyMs": 307.688,
+          "shutdownMs": 1.688,
+          "deadlineExceeded": false,
+          "exitCode": 137,
+          "signalCode": "SIGKILL",
+          "processUsage": {
+            "maxRSS": 46612480,
+            "cpuTime": {
+              "user": "39334",
+              "system": "14348",
+              "total": "53682"
+            },
+            "contextSwitches": {
+              "voluntary": 6,
+              "involuntary": 397
+            },
+            "messages": {
+              "sent": 16,
+              "received": 14
+            },
+            "ops": {
+              "in": 0,
+              "out": 0
+            },
+            "shmSize": 0,
+            "signalCount": 0,
+            "swapCount": 0
+          },
+          "output": {
+            "stdoutBytes": 248,
+            "stderrBytes": 0,
+            "stdoutSha256": "8299bbc66e450f9a63f6810433a471de5e6d9a137fbafd0f3aae9dc10802217e",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "before": {
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 17,
+              "sockets": 4
+            },
+            "descendants": {
+              "available": true,
+              "pids": []
+            }
+          },
+          "residue": {
+            "pidAlive": false,
+            "portRebindSucceeded": true,
+            "pidFilePresent": true,
+            "knownDescendantsAlive": [],
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 0,
+              "sockets": 0
+            },
+            "released": true,
+            "waitMs": 14.06,
+            "timeoutMs": 1000
+          },
+          "checks": {
+            "exitedWithinDeadline": true,
+            "expectedExit": true,
+            "pidReleased": true,
+            "portReleased": true,
+            "descendantsReleased": true,
+            "descriptorsReleased": true,
+            "pidFileReleased": null,
+            "residueReleasedWithinDeadline": true
+          }
+        },
+        {
+          "mode": "sigkill",
+          "pid": 98125,
+          "port": 61285,
+          "healthMs": 43.268,
+          "reconciliationReadyMs": 108.608,
+          "shutdownMs": 1.589,
+          "deadlineExceeded": false,
+          "exitCode": 137,
+          "signalCode": "SIGKILL",
+          "processUsage": {
+            "maxRSS": 46858240,
+            "cpuTime": {
+              "user": "38084",
+              "system": "13594",
+              "total": "51678"
+            },
+            "contextSwitches": {
+              "voluntary": 6,
+              "involuntary": 406
+            },
+            "messages": {
+              "sent": 16,
+              "received": 14
+            },
+            "ops": {
+              "in": 0,
+              "out": 0
+            },
+            "shmSize": 0,
+            "signalCount": 0,
+            "swapCount": 0
+          },
+          "output": {
+            "stdoutBytes": 248,
+            "stderrBytes": 0,
+            "stdoutSha256": "a94fc3aea64f8ecf8f8467350a9c318d2be4b59c63ba05e23c0dab17298b718f",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "before": {
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 17,
+              "sockets": 4
+            },
+            "descendants": {
+              "available": true,
+              "pids": []
+            }
+          },
+          "residue": {
+            "pidAlive": false,
+            "portRebindSucceeded": true,
+            "pidFilePresent": true,
+            "knownDescendantsAlive": [],
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 0,
+              "sockets": 0
+            },
+            "released": true,
+            "waitMs": 13.779,
+            "timeoutMs": 1000
+          },
+          "checks": {
+            "exitedWithinDeadline": true,
+            "expectedExit": true,
+            "pidReleased": true,
+            "portReleased": true,
+            "descendantsReleased": true,
+            "descriptorsReleased": true,
+            "pidFileReleased": null,
+            "residueReleasedWithinDeadline": true
+          }
+        },
+        {
+          "mode": "sigkill",
+          "pid": 98132,
+          "port": 61293,
+          "healthMs": 47.813,
+          "reconciliationReadyMs": 112.93,
+          "shutdownMs": 1.584,
+          "deadlineExceeded": false,
+          "exitCode": 137,
+          "signalCode": "SIGKILL",
+          "processUsage": {
+            "maxRSS": 46792704,
+            "cpuTime": {
+              "user": "37162",
+              "system": "13370",
+              "total": "50532"
+            },
+            "contextSwitches": {
+              "voluntary": 6,
+              "involuntary": 399
+            },
+            "messages": {
+              "sent": 16,
+              "received": 14
+            },
+            "ops": {
+              "in": 0,
+              "out": 0
+            },
+            "shmSize": 0,
+            "signalCount": 0,
+            "swapCount": 0
+          },
+          "output": {
+            "stdoutBytes": 248,
+            "stderrBytes": 0,
+            "stdoutSha256": "bf8c9b90e73adffe9387d79ac387c16569b77d3a83bb98a21045324b47f3c9a8",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "before": {
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 17,
+              "sockets": 4
+            },
+            "descendants": {
+              "available": true,
+              "pids": []
+            }
+          },
+          "residue": {
+            "pidAlive": false,
+            "portRebindSucceeded": true,
+            "pidFilePresent": true,
+            "knownDescendantsAlive": [],
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 0,
+              "sockets": 0
+            },
+            "released": true,
+            "waitMs": 13.588,
+            "timeoutMs": 1000
+          },
+          "checks": {
+            "exitedWithinDeadline": true,
+            "expectedExit": true,
+            "pidReleased": true,
+            "portReleased": true,
+            "descendantsReleased": true,
+            "descriptorsReleased": true,
+            "pidFileReleased": null,
+            "residueReleasedWithinDeadline": true
+          }
+        }
+      ]
+    },
+    "mdnsStartup": {
+      "bind": "0.0.0.0",
+      "enabled": true,
+      "reconciliationReadyMs": {
+        "count": 3,
+        "min": 109.789,
+        "p50": 113.84,
+        "p95": 117.773,
+        "p99": 117.773,
+        "max": 117.773,
+        "mean": 113.801
+      },
+      "gracefulGoodbye": {
+        "implementationWatchdogMs": 1000,
+        "shutdownMs": {
+          "count": 3,
+          "min": 3.209,
+          "p50": 3.373,
+          "p95": 3.513,
+          "p99": 3.513,
+          "max": 3.513,
+          "mean": 3.365
+        },
+        "withinWatchdog": true
+      },
+      "runs": [
+        {
+          "mode": "graceful",
+          "pid": 98139,
+          "port": 61302,
+          "healthMs": 48.352,
+          "reconciliationReadyMs": 113.84,
+          "shutdownMs": 3.209,
+          "deadlineExceeded": false,
+          "exitCode": 0,
+          "signalCode": null,
+          "processUsage": {
+            "maxRSS": 50315264,
+            "cpuTime": {
+              "user": "43392",
+              "system": "14672",
+              "total": "58064"
+            },
+            "contextSwitches": {
+              "voluntary": 7,
+              "involuntary": 460
+            },
+            "messages": {
+              "sent": 30,
+              "received": 18
+            },
+            "ops": {
+              "in": 0,
+              "out": 0
+            },
+            "shmSize": 0,
+            "signalCount": 1,
+            "swapCount": 0
+          },
+          "output": {
+            "stdoutBytes": 678,
+            "stderrBytes": 131,
+            "stdoutSha256": "fb4b7e336513ac7eaebce0cb152c9fcd059f22c4c329117f86424cc707bb6990",
+            "stderrSha256": "d17d776536619a9c01944bca3797761c9ca5d9f8cb09375709d990911ad7e67f"
+          },
+          "before": {
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 18,
+              "sockets": 5
+            },
+            "descendants": {
+              "available": true,
+              "pids": []
+            }
+          },
+          "residue": {
+            "pidAlive": false,
+            "portRebindSucceeded": true,
+            "pidFilePresent": false,
+            "knownDescendantsAlive": [],
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 0,
+              "sockets": 0
+            },
+            "released": true,
+            "waitMs": 13.55,
+            "timeoutMs": 1000
+          },
+          "checks": {
+            "exitedWithinDeadline": true,
+            "expectedExit": true,
+            "pidReleased": true,
+            "portReleased": true,
+            "descendantsReleased": true,
+            "descriptorsReleased": true,
+            "pidFileReleased": true,
+            "residueReleasedWithinDeadline": true
+          }
+        },
+        {
+          "mode": "graceful",
+          "pid": 98146,
+          "port": 61310,
+          "healthMs": 51.059,
+          "reconciliationReadyMs": 117.773,
+          "shutdownMs": 3.513,
+          "deadlineExceeded": false,
+          "exitCode": 0,
+          "signalCode": null,
+          "processUsage": {
+            "maxRSS": 50298880,
+            "cpuTime": {
+              "user": "45150",
+              "system": "14490",
+              "total": "59640"
+            },
+            "contextSwitches": {
+              "voluntary": 6,
+              "involuntary": 465
+            },
+            "messages": {
+              "sent": 30,
+              "received": 18
+            },
+            "ops": {
+              "in": 0,
+              "out": 0
+            },
+            "shmSize": 0,
+            "signalCount": 1,
+            "swapCount": 0
+          },
+          "output": {
+            "stdoutBytes": 678,
+            "stderrBytes": 131,
+            "stdoutSha256": "29102c94bbcad5a6c844a83ef576bbd02114a93ead6806609e79f2571cf3e35e",
+            "stderrSha256": "d8befaadb5c3b69cd022cb553df3e34e16e26b9a7b346d9666b2a18ccaccc582"
+          },
+          "before": {
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 18,
+              "sockets": 5
+            },
+            "descendants": {
+              "available": true,
+              "pids": []
+            }
+          },
+          "residue": {
+            "pidAlive": false,
+            "portRebindSucceeded": true,
+            "pidFilePresent": false,
+            "knownDescendantsAlive": [],
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 0,
+              "sockets": 0
+            },
+            "released": true,
+            "waitMs": 13.996,
+            "timeoutMs": 1000
+          },
+          "checks": {
+            "exitedWithinDeadline": true,
+            "expectedExit": true,
+            "pidReleased": true,
+            "portReleased": true,
+            "descendantsReleased": true,
+            "descriptorsReleased": true,
+            "pidFileReleased": true,
+            "residueReleasedWithinDeadline": true
+          }
+        },
+        {
+          "mode": "graceful",
+          "pid": 98153,
+          "port": 61319,
+          "healthMs": 45.488,
+          "reconciliationReadyMs": 109.789,
+          "shutdownMs": 3.373,
+          "deadlineExceeded": false,
+          "exitCode": 0,
+          "signalCode": null,
+          "processUsage": {
+            "maxRSS": 50298880,
+            "cpuTime": {
+              "user": "42428",
+              "system": "13694",
+              "total": "56122"
+            },
+            "contextSwitches": {
+              "voluntary": 7,
+              "involuntary": 415
+            },
+            "messages": {
+              "sent": 30,
+              "received": 18
+            },
+            "ops": {
+              "in": 0,
+              "out": 0
+            },
+            "shmSize": 0,
+            "signalCount": 1,
+            "swapCount": 0
+          },
+          "output": {
+            "stdoutBytes": 678,
+            "stderrBytes": 131,
+            "stdoutSha256": "189c3430da072d9e51b7bbb3aae96b6480a35ee29c8e00e81da85b426eeabdde",
+            "stderrSha256": "aa782e0df174fb784799688391e9f8fd98cb92974e984cdccad2668555d85f9c"
+          },
+          "before": {
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 18,
+              "sockets": 5
+            },
+            "descendants": {
+              "available": true,
+              "pids": []
+            }
+          },
+          "residue": {
+            "pidAlive": false,
+            "portRebindSucceeded": true,
+            "pidFilePresent": false,
+            "knownDescendantsAlive": [],
+            "descriptors": {
+              "available": true,
+              "source": "lsof",
+              "fds": 0,
+              "sockets": 0
+            },
+            "released": true,
+            "waitMs": 13.611,
+            "timeoutMs": 1000
+          },
+          "checks": {
+            "exitedWithinDeadline": true,
+            "expectedExit": true,
+            "pidReleased": true,
+            "portReleased": true,
+            "descendantsReleased": true,
+            "descriptorsReleased": true,
+            "pidFileReleased": true,
+            "residueReleasedWithinDeadline": true
+          }
+        }
+      ]
+    },
+    "commands": {
+      "hook": {
+        "artifact": "scripts/fleet-hook.mjs",
+        "event": "Notification",
+        "hardDeadlineMs": 2500,
+        "durationMs": {
+          "count": 30,
+          "min": 17.091,
+          "p50": 18.427,
+          "p95": 19.152,
+          "p99": 23.269,
+          "max": 23.269,
+          "mean": 18.547
+        },
+        "minimumMarginMs": 2476.731,
+        "withinDeadline": true
+      },
+      "cli": {
+        "artifact": "bin/fleetdeck.mjs",
+        "command": "status",
+        "hardDeadlineMs": 1500,
+        "durationMs": {
+          "count": 30,
+          "min": 23.732,
+          "p50": 24.612,
+          "p95": 27.251,
+          "p99": 27.606,
+          "max": 27.606,
+          "mean": 24.878
+        },
+        "minimumMarginMs": 1472.394,
+        "withinDeadline": true
+      }
+    },
+    "idle": {
+      "available": true,
+      "unavailableReason": null,
+      "requestedDurationMs": 300000,
+      "measuredDurationMs": 300009.477,
+      "source": "ps rss/%cpu/time",
+      "sampleCount": 297,
+      "rssBytes": {
+        "count": 297,
+        "min": 32096256,
+        "p50": 33226752,
+        "p95": 48201728,
+        "p99": 48349184,
+        "max": 48349184,
+        "mean": 34069507.448
+      },
+      "reportedCpuPercent": {
+        "count": 297,
+        "min": 0,
+        "p50": 0,
+        "p95": 0.3,
+        "p99": 0.7,
+        "max": 4.1,
+        "mean": 0.059
+      },
+      "intervalCpuPercent": 0.18,
+      "samples": [
+        {
+          "elapsedMs": 4.274,
+          "sample": {
+            "rssBytes": 48349184,
+            "reportedCpuPercent": 4.1,
+            "cumulativeCpuMs": 80
+          }
+        },
+        {
+          "elapsedMs": 1010.717,
+          "sample": {
+            "rssBytes": 48349184,
+            "reportedCpuPercent": 0.1,
+            "cumulativeCpuMs": 80
+          }
+        },
+        {
+          "elapsedMs": 2017.785,
+          "sample": {
+            "rssBytes": 48349184,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 90
+          }
+        },
+        {
+          "elapsedMs": 3053.943,
+          "sample": {
+            "rssBytes": 48349184,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 90
+          }
+        },
+        {
+          "elapsedMs": 4063.003,
+          "sample": {
+            "rssBytes": 48349184,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 90
+          }
+        },
+        {
+          "elapsedMs": 5083.069,
+          "sample": {
+            "rssBytes": 48349184,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 90
+          }
+        },
+        {
+          "elapsedMs": 6092.286,
+          "sample": {
+            "rssBytes": 48349184,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 90
+          }
+        },
+        {
+          "elapsedMs": 7101.106,
+          "sample": {
+            "rssBytes": 48349184,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 100
+          }
+        },
+        {
+          "elapsedMs": 8108.569,
+          "sample": {
+            "rssBytes": 48349184,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 100
+          }
+        },
+        {
+          "elapsedMs": 9116.023,
+          "sample": {
+            "rssBytes": 48349184,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 100
+          }
+        },
+        {
+          "elapsedMs": 10126.309,
+          "sample": {
+            "rssBytes": 48283648,
+            "reportedCpuPercent": 0.2,
+            "cumulativeCpuMs": 110
+          }
+        },
+        {
+          "elapsedMs": 11136.687,
+          "sample": {
+            "rssBytes": 48283648,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 110
+          }
+        },
+        {
+          "elapsedMs": 12177.759,
+          "sample": {
+            "rssBytes": 48283648,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 110
+          }
+        },
+        {
+          "elapsedMs": 13186.167,
+          "sample": {
+            "rssBytes": 48201728,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 110
+          }
+        },
+        {
+          "elapsedMs": 14190.206,
+          "sample": {
+            "rssBytes": 48201728,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 110
+          }
+        },
+        {
+          "elapsedMs": 15199.195,
+          "sample": {
+            "rssBytes": 48201728,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 110
+          }
+        },
+        {
+          "elapsedMs": 16213.519,
+          "sample": {
+            "rssBytes": 48201728,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 110
+          }
+        },
+        {
+          "elapsedMs": 17222.438,
+          "sample": {
+            "rssBytes": 48201728,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 120
+          }
+        },
+        {
+          "elapsedMs": 18231.504,
+          "sample": {
+            "rssBytes": 48201728,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 120
+          }
+        },
+        {
+          "elapsedMs": 19272.825,
+          "sample": {
+            "rssBytes": 48201728,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 120
+          }
+        },
+        {
+          "elapsedMs": 20338.129,
+          "sample": {
+            "rssBytes": 48201728,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 120
+          }
+        },
+        {
+          "elapsedMs": 21348.83,
+          "sample": {
+            "rssBytes": 32931840,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 120
+          }
+        },
+        {
+          "elapsedMs": 22358.451,
+          "sample": {
+            "rssBytes": 32686080,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 130
+          }
+        },
+        {
+          "elapsedMs": 23367.798,
+          "sample": {
+            "rssBytes": 32686080,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 130
+          }
+        },
+        {
+          "elapsedMs": 24378.568,
+          "sample": {
+            "rssBytes": 32686080,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 130
+          }
+        },
+        {
+          "elapsedMs": 25389.195,
+          "sample": {
+            "rssBytes": 32686080,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 130
+          }
+        },
+        {
+          "elapsedMs": 26397.72,
+          "sample": {
+            "rssBytes": 32686080,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 130
+          }
+        },
+        {
+          "elapsedMs": 27403.312,
+          "sample": {
+            "rssBytes": 32686080,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 130
+          }
+        },
+        {
+          "elapsedMs": 28407.522,
+          "sample": {
+            "rssBytes": 32686080,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 130
+          }
+        },
+        {
+          "elapsedMs": 29411.835,
+          "sample": {
+            "rssBytes": 33046528,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 130
+          }
+        },
+        {
+          "elapsedMs": 30420.197,
+          "sample": {
+            "rssBytes": 33112064,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 140
+          }
+        },
+        {
+          "elapsedMs": 31444.625,
+          "sample": {
+            "rssBytes": 33112064,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 140
+          }
+        },
+        {
+          "elapsedMs": 32453.729,
+          "sample": {
+            "rssBytes": 33112064,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 140
+          }
+        },
+        {
+          "elapsedMs": 33495.682,
+          "sample": {
+            "rssBytes": 33112064,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 140
+          }
+        },
+        {
+          "elapsedMs": 34570.075,
+          "sample": {
+            "rssBytes": 33112064,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 140
+          }
+        },
+        {
+          "elapsedMs": 35641.609,
+          "sample": {
+            "rssBytes": 33112064,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 140
+          }
+        },
+        {
+          "elapsedMs": 36650.408,
+          "sample": {
+            "rssBytes": 33112064,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 150
+          }
+        },
+        {
+          "elapsedMs": 37660.121,
+          "sample": {
+            "rssBytes": 33112064,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 150
+          }
+        },
+        {
+          "elapsedMs": 38668.827,
+          "sample": {
+            "rssBytes": 33112064,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 150
+          }
+        },
+        {
+          "elapsedMs": 39677.361,
+          "sample": {
+            "rssBytes": 33308672,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 150
+          }
+        },
+        {
+          "elapsedMs": 40685.405,
+          "sample": {
+            "rssBytes": 33325056,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 160
+          }
+        },
+        {
+          "elapsedMs": 41692.791,
+          "sample": {
+            "rssBytes": 33325056,
+            "reportedCpuPercent": 0.1,
+            "cumulativeCpuMs": 160
+          }
+        },
+        {
+          "elapsedMs": 42751.48,
+          "sample": {
+            "rssBytes": 33325056,
+            "reportedCpuPercent": 0.1,
+            "cumulativeCpuMs": 160
+          }
+        },
+        {
+          "elapsedMs": 43760.452,
+          "sample": {
+            "rssBytes": 33357824,
+            "reportedCpuPercent": 0.3,
+            "cumulativeCpuMs": 160
+          }
+        },
+        {
+          "elapsedMs": 44771.985,
+          "sample": {
+            "rssBytes": 33357824,
+            "reportedCpuPercent": 0.2,
+            "cumulativeCpuMs": 160
+          }
+        },
+        {
+          "elapsedMs": 45780.222,
+          "sample": {
+            "rssBytes": 33357824,
+            "reportedCpuPercent": 0.1,
+            "cumulativeCpuMs": 170
+          }
+        },
+        {
+          "elapsedMs": 46787.234,
+          "sample": {
+            "rssBytes": 33357824,
+            "reportedCpuPercent": 0.1,
+            "cumulativeCpuMs": 170
+          }
+        },
+        {
+          "elapsedMs": 47794.705,
+          "sample": {
+            "rssBytes": 33357824,
+            "reportedCpuPercent": 0.2,
+            "cumulativeCpuMs": 170
+          }
+        },
+        {
+          "elapsedMs": 48801.979,
+          "sample": {
+            "rssBytes": 33390592,
+            "reportedCpuPercent": 0.1,
+            "cumulativeCpuMs": 170
+          }
+        },
+        {
+          "elapsedMs": 49811.079,
+          "sample": {
+            "rssBytes": 33390592,
+            "reportedCpuPercent": 0.7,
+            "cumulativeCpuMs": 180
+          }
+        },
+        {
+          "elapsedMs": 50821.953,
+          "sample": {
+            "rssBytes": 33390592,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 180
+          }
+        },
+        {
+          "elapsedMs": 51829.509,
+          "sample": {
+            "rssBytes": 33390592,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 180
+          }
+        },
+        {
+          "elapsedMs": 52839.75,
+          "sample": {
+            "rssBytes": 33390592,
+            "reportedCpuPercent": 0.1,
+            "cumulativeCpuMs": 180
+          }
+        },
+        {
+          "elapsedMs": 53848.254,
+          "sample": {
+            "rssBytes": 33439744,
+            "reportedCpuPercent": 0.1,
+            "cumulativeCpuMs": 180
+          }
+        },
+        {
+          "elapsedMs": 54856.336,
+          "sample": {
+            "rssBytes": 33439744,
+            "reportedCpuPercent": 0.1,
+            "cumulativeCpuMs": 180
+          }
+        },
+        {
+          "elapsedMs": 55929.123,
+          "sample": {
+            "rssBytes": 33439744,
+            "reportedCpuPercent": 0.1,
+            "cumulativeCpuMs": 190
+          }
+        },
+        {
+          "elapsedMs": 56937.364,
+          "sample": {
+            "rssBytes": 33439744,
+            "reportedCpuPercent": 0.1,
+            "cumulativeCpuMs": 190
+          }
+        },
+        {
+          "elapsedMs": 57947.239,
+          "sample": {
+            "rssBytes": 33439744,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 190
+          }
+        },
+        {
+          "elapsedMs": 59029.511,
+          "sample": {
+            "rssBytes": 33439744,
+            "reportedCpuPercent": 0.1,
+            "cumulativeCpuMs": 190
+          }
+        },
+        {
+          "elapsedMs": 60040.862,
+          "sample": {
+            "rssBytes": 33423360,
+            "reportedCpuPercent": 0.6,
+            "cumulativeCpuMs": 200
+          }
+        },
+        {
+          "elapsedMs": 61048.819,
+          "sample": {
+            "rssBytes": 33423360,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 200
+          }
+        },
+        {
+          "elapsedMs": 62055.123,
+          "sample": {
+            "rssBytes": 33423360,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 200
+          }
+        },
+        {
+          "elapsedMs": 63078.849,
+          "sample": {
+            "rssBytes": 33423360,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 200
+          }
+        },
+        {
+          "elapsedMs": 64086.075,
+          "sample": {
+            "rssBytes": 33423360,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 200
+          }
+        },
+        {
+          "elapsedMs": 65095.312,
+          "sample": {
+            "rssBytes": 33423360,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 200
+          }
+        },
+        {
+          "elapsedMs": 66106.415,
+          "sample": {
+            "rssBytes": 33423360,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 200
+          }
+        },
+        {
+          "elapsedMs": 67141.482,
+          "sample": {
+            "rssBytes": 33423360,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 200
+          }
+        },
+        {
+          "elapsedMs": 68150.887,
+          "sample": {
+            "rssBytes": 33423360,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 200
+          }
+        },
+        {
+          "elapsedMs": 69159.228,
+          "sample": {
+            "rssBytes": 33423360,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 200
+          }
+        },
+        {
+          "elapsedMs": 70170.769,
+          "sample": {
+            "rssBytes": 33423360,
+            "reportedCpuPercent": 0.1,
+            "cumulativeCpuMs": 210
+          }
+        },
+        {
+          "elapsedMs": 71182.99,
+          "sample": {
+            "rssBytes": 33423360,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 210
+          }
+        },
+        {
+          "elapsedMs": 72223.257,
+          "sample": {
+            "rssBytes": 33423360,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 210
+          }
+        },
+        {
+          "elapsedMs": 73231.102,
+          "sample": {
+            "rssBytes": 33423360,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 210
+          }
+        },
+        {
+          "elapsedMs": 74240.655,
+          "sample": {
+            "rssBytes": 33423360,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 210
+          }
+        },
+        {
+          "elapsedMs": 75247.852,
+          "sample": {
+            "rssBytes": 33423360,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 210
+          }
+        },
+        {
+          "elapsedMs": 76257.914,
+          "sample": {
+            "rssBytes": 33423360,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 210
+          }
+        },
+        {
+          "elapsedMs": 77266.919,
+          "sample": {
+            "rssBytes": 33423360,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 220
+          }
+        },
+        {
+          "elapsedMs": 78275.528,
+          "sample": {
+            "rssBytes": 33423360,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 220
+          }
+        },
+        {
+          "elapsedMs": 79289.657,
+          "sample": {
+            "rssBytes": 33423360,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 220
+          }
+        },
+        {
+          "elapsedMs": 80302.303,
+          "sample": {
+            "rssBytes": 33423360,
+            "reportedCpuPercent": 0.1,
+            "cumulativeCpuMs": 220
+          }
+        },
+        {
+          "elapsedMs": 81310.068,
+          "sample": {
+            "rssBytes": 33374208,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 220
+          }
+        },
+        {
+          "elapsedMs": 82319.113,
+          "sample": {
+            "rssBytes": 33374208,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 230
+          }
+        },
+        {
+          "elapsedMs": 83322.976,
+          "sample": {
+            "rssBytes": 33357824,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 230
+          }
+        },
+        {
+          "elapsedMs": 84331.696,
+          "sample": {
+            "rssBytes": 32522240,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 230
+          }
+        },
+        {
+          "elapsedMs": 85341.456,
+          "sample": {
+            "rssBytes": 32538624,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 230
+          }
+        },
+        {
+          "elapsedMs": 86346.451,
+          "sample": {
+            "rssBytes": 32538624,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 230
+          }
+        },
+        {
+          "elapsedMs": 87355.526,
+          "sample": {
+            "rssBytes": 32538624,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 230
+          }
+        },
+        {
+          "elapsedMs": 88422.205,
+          "sample": {
+            "rssBytes": 32538624,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 230
+          }
+        },
+        {
+          "elapsedMs": 89429.97,
+          "sample": {
+            "rssBytes": 32178176,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 230
+          }
+        },
+        {
+          "elapsedMs": 90440.465,
+          "sample": {
+            "rssBytes": 32227328,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 240
+          }
+        },
+        {
+          "elapsedMs": 91446.913,
+          "sample": {
+            "rssBytes": 32227328,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 240
+          }
+        },
+        {
+          "elapsedMs": 92487.248,
+          "sample": {
+            "rssBytes": 32227328,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 240
+          }
+        },
+        {
+          "elapsedMs": 93494.34,
+          "sample": {
+            "rssBytes": 32227328,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 240
+          }
+        },
+        {
+          "elapsedMs": 94506.868,
+          "sample": {
+            "rssBytes": 32227328,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 240
+          }
+        },
+        {
+          "elapsedMs": 95513.457,
+          "sample": {
+            "rssBytes": 32227328,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 250
+          }
+        },
+        {
+          "elapsedMs": 96562.652,
+          "sample": {
+            "rssBytes": 32227328,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 250
+          }
+        },
+        {
+          "elapsedMs": 97569.038,
+          "sample": {
+            "rssBytes": 32227328,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 250
+          }
+        },
+        {
+          "elapsedMs": 98600.535,
+          "sample": {
+            "rssBytes": 32096256,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 250
+          }
+        },
+        {
+          "elapsedMs": 99655.65,
+          "sample": {
+            "rssBytes": 32096256,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 250
+          }
+        },
+        {
+          "elapsedMs": 100665.039,
+          "sample": {
+            "rssBytes": 32210944,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 250
+          }
+        },
+        {
+          "elapsedMs": 101672.31,
+          "sample": {
+            "rssBytes": 32210944,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 260
+          }
+        },
+        {
+          "elapsedMs": 102680.23,
+          "sample": {
+            "rssBytes": 32210944,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 260
+          }
+        },
+        {
+          "elapsedMs": 103688.399,
+          "sample": {
+            "rssBytes": 32210944,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 260
+          }
+        },
+        {
+          "elapsedMs": 104697.803,
+          "sample": {
+            "rssBytes": 32210944,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 260
+          }
+        },
+        {
+          "elapsedMs": 105707.691,
+          "sample": {
+            "rssBytes": 32210944,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 260
+          }
+        },
+        {
+          "elapsedMs": 106745.044,
+          "sample": {
+            "rssBytes": 32194560,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 260
+          }
+        },
+        {
+          "elapsedMs": 107753.884,
+          "sample": {
+            "rssBytes": 32194560,
+            "reportedCpuPercent": 0.1,
+            "cumulativeCpuMs": 260
+          }
+        },
+        {
+          "elapsedMs": 108761.936,
+          "sample": {
+            "rssBytes": 32194560,
+            "reportedCpuPercent": 0.1,
+            "cumulativeCpuMs": 270
+          }
+        },
+        {
+          "elapsedMs": 109779.693,
+          "sample": {
+            "rssBytes": 32194560,
+            "reportedCpuPercent": 0.3,
+            "cumulativeCpuMs": 270
+          }
+        },
+        {
+          "elapsedMs": 110786.768,
+          "sample": {
+            "rssBytes": 32194560,
+            "reportedCpuPercent": 0.1,
+            "cumulativeCpuMs": 270
+          }
+        },
+        {
+          "elapsedMs": 111794.602,
+          "sample": {
+            "rssBytes": 32194560,
+            "reportedCpuPercent": 0.1,
+            "cumulativeCpuMs": 270
+          }
+        },
+        {
+          "elapsedMs": 112847.935,
+          "sample": {
+            "rssBytes": 32194560,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 270
+          }
+        },
+        {
+          "elapsedMs": 113854.763,
+          "sample": {
+            "rssBytes": 32194560,
+            "reportedCpuPercent": 0.1,
+            "cumulativeCpuMs": 270
+          }
+        },
+        {
+          "elapsedMs": 114930,
+          "sample": {
+            "rssBytes": 32194560,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 280
+          }
+        },
+        {
+          "elapsedMs": 115937.087,
+          "sample": {
+            "rssBytes": 32194560,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 280
+          }
+        },
+        {
+          "elapsedMs": 116946.207,
+          "sample": {
+            "rssBytes": 32194560,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 280
+          }
+        },
+        {
+          "elapsedMs": 117955,
+          "sample": {
+            "rssBytes": 32194560,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 280
+          }
+        },
+        {
+          "elapsedMs": 118959.389,
+          "sample": {
+            "rssBytes": 32358400,
+            "reportedCpuPercent": 0.1,
+            "cumulativeCpuMs": 280
+          }
+        },
+        {
+          "elapsedMs": 119967.241,
+          "sample": {
+            "rssBytes": 32358400,
+            "reportedCpuPercent": 0.5,
+            "cumulativeCpuMs": 280
+          }
+        },
+        {
+          "elapsedMs": 120975.081,
+          "sample": {
+            "rssBytes": 32358400,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 290
+          }
+        },
+        {
+          "elapsedMs": 121982.354,
+          "sample": {
+            "rssBytes": 32358400,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 290
+          }
+        },
+        {
+          "elapsedMs": 123023.431,
+          "sample": {
+            "rssBytes": 32358400,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 290
+          }
+        },
+        {
+          "elapsedMs": 124028.999,
+          "sample": {
+            "rssBytes": 32358400,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 290
+          }
+        },
+        {
+          "elapsedMs": 125038.573,
+          "sample": {
+            "rssBytes": 32358400,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 290
+          }
+        },
+        {
+          "elapsedMs": 126048.488,
+          "sample": {
+            "rssBytes": 32358400,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 290
+          }
+        },
+        {
+          "elapsedMs": 127057.977,
+          "sample": {
+            "rssBytes": 32358400,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 290
+          }
+        },
+        {
+          "elapsedMs": 128064.714,
+          "sample": {
+            "rssBytes": 32358400,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 290
+          }
+        },
+        {
+          "elapsedMs": 129072.641,
+          "sample": {
+            "rssBytes": 32358400,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 300
+          }
+        },
+        {
+          "elapsedMs": 130082.125,
+          "sample": {
+            "rssBytes": 32374784,
+            "reportedCpuPercent": 0.4,
+            "cumulativeCpuMs": 300
+          }
+        },
+        {
+          "elapsedMs": 131124.244,
+          "sample": {
+            "rssBytes": 32374784,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 300
+          }
+        },
+        {
+          "elapsedMs": 132168.442,
+          "sample": {
+            "rssBytes": 32374784,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 300
+          }
+        },
+        {
+          "elapsedMs": 133179.193,
+          "sample": {
+            "rssBytes": 32309248,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 300
+          }
+        },
+        {
+          "elapsedMs": 134189.51,
+          "sample": {
+            "rssBytes": 32309248,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 310
+          }
+        },
+        {
+          "elapsedMs": 135196.897,
+          "sample": {
+            "rssBytes": 32309248,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 310
+          }
+        },
+        {
+          "elapsedMs": 136206.65,
+          "sample": {
+            "rssBytes": 32309248,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 310
+          }
+        },
+        {
+          "elapsedMs": 137215.405,
+          "sample": {
+            "rssBytes": 32309248,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 310
+          }
+        },
+        {
+          "elapsedMs": 138223.895,
+          "sample": {
+            "rssBytes": 32309248,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 310
+          }
+        },
+        {
+          "elapsedMs": 139232.104,
+          "sample": {
+            "rssBytes": 32309248,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 310
+          }
+        },
+        {
+          "elapsedMs": 140241.192,
+          "sample": {
+            "rssBytes": 32325632,
+            "reportedCpuPercent": 0.1,
+            "cumulativeCpuMs": 320
+          }
+        },
+        {
+          "elapsedMs": 141249.998,
+          "sample": {
+            "rssBytes": 32325632,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 320
+          }
+        },
+        {
+          "elapsedMs": 142260.592,
+          "sample": {
+            "rssBytes": 32325632,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 320
+          }
+        },
+        {
+          "elapsedMs": 143270.485,
+          "sample": {
+            "rssBytes": 32325632,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 320
+          }
+        },
+        {
+          "elapsedMs": 144282.082,
+          "sample": {
+            "rssBytes": 32325632,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 320
+          }
+        },
+        {
+          "elapsedMs": 145288.876,
+          "sample": {
+            "rssBytes": 32325632,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 320
+          }
+        },
+        {
+          "elapsedMs": 146302.501,
+          "sample": {
+            "rssBytes": 32325632,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 320
+          }
+        },
+        {
+          "elapsedMs": 147310.232,
+          "sample": {
+            "rssBytes": 32325632,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 320
+          }
+        },
+        {
+          "elapsedMs": 148318.904,
+          "sample": {
+            "rssBytes": 32325632,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 320
+          }
+        },
+        {
+          "elapsedMs": 149336.174,
+          "sample": {
+            "rssBytes": 32325632,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 320
+          }
+        },
+        {
+          "elapsedMs": 150390.662,
+          "sample": {
+            "rssBytes": 32325632,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 320
+          }
+        },
+        {
+          "elapsedMs": 151396.151,
+          "sample": {
+            "rssBytes": 32325632,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 320
+          }
+        },
+        {
+          "elapsedMs": 152411.022,
+          "sample": {
+            "rssBytes": 32325632,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 320
+          }
+        },
+        {
+          "elapsedMs": 153418.967,
+          "sample": {
+            "rssBytes": 32325632,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 330
+          }
+        },
+        {
+          "elapsedMs": 154427.655,
+          "sample": {
+            "rssBytes": 32325632,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 330
+          }
+        },
+        {
+          "elapsedMs": 155437.382,
+          "sample": {
+            "rssBytes": 32325632,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 330
+          }
+        },
+        {
+          "elapsedMs": 156443.799,
+          "sample": {
+            "rssBytes": 32325632,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 330
+          }
+        },
+        {
+          "elapsedMs": 157452.576,
+          "sample": {
+            "rssBytes": 32325632,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 330
+          }
+        },
+        {
+          "elapsedMs": 158463.571,
+          "sample": {
+            "rssBytes": 32325632,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 330
+          }
+        },
+        {
+          "elapsedMs": 159472.546,
+          "sample": {
+            "rssBytes": 32800768,
+            "reportedCpuPercent": 0.1,
+            "cumulativeCpuMs": 340
+          }
+        },
+        {
+          "elapsedMs": 160482.242,
+          "sample": {
+            "rssBytes": 32899072,
+            "reportedCpuPercent": 0.1,
+            "cumulativeCpuMs": 350
+          }
+        },
+        {
+          "elapsedMs": 161493.506,
+          "sample": {
+            "rssBytes": 32899072,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 350
+          }
+        },
+        {
+          "elapsedMs": 162551.462,
+          "sample": {
+            "rssBytes": 32899072,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 350
+          }
+        },
+        {
+          "elapsedMs": 163562.468,
+          "sample": {
+            "rssBytes": 32899072,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 350
+          }
+        },
+        {
+          "elapsedMs": 164571.821,
+          "sample": {
+            "rssBytes": 33013760,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 350
+          }
+        },
+        {
+          "elapsedMs": 165582.348,
+          "sample": {
+            "rssBytes": 33013760,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 360
+          }
+        },
+        {
+          "elapsedMs": 166686.229,
+          "sample": {
+            "rssBytes": 33013760,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 360
+          }
+        },
+        {
+          "elapsedMs": 167696.519,
+          "sample": {
+            "rssBytes": 33013760,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 360
+          }
+        },
+        {
+          "elapsedMs": 168774.992,
+          "sample": {
+            "rssBytes": 33046528,
+            "reportedCpuPercent": 0.4,
+            "cumulativeCpuMs": 360
+          }
+        },
+        {
+          "elapsedMs": 169785.446,
+          "sample": {
+            "rssBytes": 33128448,
+            "reportedCpuPercent": 0.3,
+            "cumulativeCpuMs": 370
+          }
+        },
+        {
+          "elapsedMs": 170792.575,
+          "sample": {
+            "rssBytes": 33128448,
+            "reportedCpuPercent": 0.1,
+            "cumulativeCpuMs": 370
+          }
+        },
+        {
+          "elapsedMs": 171800.906,
+          "sample": {
+            "rssBytes": 33128448,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 370
+          }
+        },
+        {
+          "elapsedMs": 172811.206,
+          "sample": {
+            "rssBytes": 33128448,
+            "reportedCpuPercent": 0.1,
+            "cumulativeCpuMs": 370
+          }
+        },
+        {
+          "elapsedMs": 173819.12,
+          "sample": {
+            "rssBytes": 33128448,
+            "reportedCpuPercent": 0.3,
+            "cumulativeCpuMs": 370
+          }
+        },
+        {
+          "elapsedMs": 174826.756,
+          "sample": {
+            "rssBytes": 33128448,
+            "reportedCpuPercent": 0.1,
+            "cumulativeCpuMs": 380
+          }
+        },
+        {
+          "elapsedMs": 175837.272,
+          "sample": {
+            "rssBytes": 33128448,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 380
+          }
+        },
+        {
+          "elapsedMs": 176848.106,
+          "sample": {
+            "rssBytes": 33128448,
+            "reportedCpuPercent": 0.2,
+            "cumulativeCpuMs": 380
+          }
+        },
+        {
+          "elapsedMs": 177893.65,
+          "sample": {
+            "rssBytes": 33128448,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 380
+          }
+        },
+        {
+          "elapsedMs": 178902.923,
+          "sample": {
+            "rssBytes": 33325056,
+            "reportedCpuPercent": 0.2,
+            "cumulativeCpuMs": 380
+          }
+        },
+        {
+          "elapsedMs": 179913.976,
+          "sample": {
+            "rssBytes": 33374208,
+            "reportedCpuPercent": 1.3,
+            "cumulativeCpuMs": 390
+          }
+        },
+        {
+          "elapsedMs": 180924.786,
+          "sample": {
+            "rssBytes": 33374208,
+            "reportedCpuPercent": 0.1,
+            "cumulativeCpuMs": 390
+          }
+        },
+        {
+          "elapsedMs": 181933.471,
+          "sample": {
+            "rssBytes": 33374208,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 390
+          }
+        },
+        {
+          "elapsedMs": 182983.509,
+          "sample": {
+            "rssBytes": 33374208,
+            "reportedCpuPercent": 0.1,
+            "cumulativeCpuMs": 400
+          }
+        },
+        {
+          "elapsedMs": 183992.355,
+          "sample": {
+            "rssBytes": 33374208,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 400
+          }
+        },
+        {
+          "elapsedMs": 185012.829,
+          "sample": {
+            "rssBytes": 33374208,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 400
+          }
+        },
+        {
+          "elapsedMs": 186022.037,
+          "sample": {
+            "rssBytes": 33308672,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 400
+          }
+        },
+        {
+          "elapsedMs": 187028.588,
+          "sample": {
+            "rssBytes": 33308672,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 400
+          }
+        },
+        {
+          "elapsedMs": 188035.792,
+          "sample": {
+            "rssBytes": 33308672,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 400
+          }
+        },
+        {
+          "elapsedMs": 189041.075,
+          "sample": {
+            "rssBytes": 33406976,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 410
+          }
+        },
+        {
+          "elapsedMs": 190094.612,
+          "sample": {
+            "rssBytes": 33406976,
+            "reportedCpuPercent": 0.4,
+            "cumulativeCpuMs": 410
+          }
+        },
+        {
+          "elapsedMs": 191136.755,
+          "sample": {
+            "rssBytes": 33406976,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 410
+          }
+        },
+        {
+          "elapsedMs": 192180.922,
+          "sample": {
+            "rssBytes": 33406976,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 410
+          }
+        },
+        {
+          "elapsedMs": 193186.149,
+          "sample": {
+            "rssBytes": 33406976,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 420
+          }
+        },
+        {
+          "elapsedMs": 194197.033,
+          "sample": {
+            "rssBytes": 33406976,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 420
+          }
+        },
+        {
+          "elapsedMs": 195207.173,
+          "sample": {
+            "rssBytes": 33406976,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 420
+          }
+        },
+        {
+          "elapsedMs": 196218.621,
+          "sample": {
+            "rssBytes": 33406976,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 420
+          }
+        },
+        {
+          "elapsedMs": 197229.081,
+          "sample": {
+            "rssBytes": 33406976,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 420
+          }
+        },
+        {
+          "elapsedMs": 198238.426,
+          "sample": {
+            "rssBytes": 33406976,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 430
+          }
+        },
+        {
+          "elapsedMs": 199250.409,
+          "sample": {
+            "rssBytes": 33357824,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 430
+          }
+        },
+        {
+          "elapsedMs": 200261.003,
+          "sample": {
+            "rssBytes": 33357824,
+            "reportedCpuPercent": 0.1,
+            "cumulativeCpuMs": 430
+          }
+        },
+        {
+          "elapsedMs": 201270.907,
+          "sample": {
+            "rssBytes": 33357824,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 440
+          }
+        },
+        {
+          "elapsedMs": 202283.048,
+          "sample": {
+            "rssBytes": 33357824,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 440
+          }
+        },
+        {
+          "elapsedMs": 203294.083,
+          "sample": {
+            "rssBytes": 33357824,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 440
+          }
+        },
+        {
+          "elapsedMs": 204307.585,
+          "sample": {
+            "rssBytes": 33357824,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 440
+          }
+        },
+        {
+          "elapsedMs": 205314.556,
+          "sample": {
+            "rssBytes": 33357824,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 440
+          }
+        },
+        {
+          "elapsedMs": 206321.534,
+          "sample": {
+            "rssBytes": 33357824,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 440
+          }
+        },
+        {
+          "elapsedMs": 207331.204,
+          "sample": {
+            "rssBytes": 33357824,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 450
+          }
+        },
+        {
+          "elapsedMs": 208343.543,
+          "sample": {
+            "rssBytes": 33357824,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 450
+          }
+        },
+        {
+          "elapsedMs": 209368.92,
+          "sample": {
+            "rssBytes": 33357824,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 450
+          }
+        },
+        {
+          "elapsedMs": 210378.341,
+          "sample": {
+            "rssBytes": 33308672,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 450
+          }
+        },
+        {
+          "elapsedMs": 211387.307,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 450
+          }
+        },
+        {
+          "elapsedMs": 212393.527,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 460
+          }
+        },
+        {
+          "elapsedMs": 213402.066,
+          "sample": {
+            "rssBytes": 33210368,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 460
+          }
+        },
+        {
+          "elapsedMs": 214410.526,
+          "sample": {
+            "rssBytes": 33210368,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 460
+          }
+        },
+        {
+          "elapsedMs": 215420.434,
+          "sample": {
+            "rssBytes": 33210368,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 460
+          }
+        },
+        {
+          "elapsedMs": 216431.672,
+          "sample": {
+            "rssBytes": 33210368,
+            "reportedCpuPercent": 0.1,
+            "cumulativeCpuMs": 460
+          }
+        },
+        {
+          "elapsedMs": 217441.672,
+          "sample": {
+            "rssBytes": 33210368,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 460
+          }
+        },
+        {
+          "elapsedMs": 218451.077,
+          "sample": {
+            "rssBytes": 33210368,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 470
+          }
+        },
+        {
+          "elapsedMs": 219460.891,
+          "sample": {
+            "rssBytes": 33210368,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 470
+          }
+        },
+        {
+          "elapsedMs": 220471.073,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0.1,
+            "cumulativeCpuMs": 470
+          }
+        },
+        {
+          "elapsedMs": 221515.978,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 480
+          }
+        },
+        {
+          "elapsedMs": 222522.961,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 480
+          }
+        },
+        {
+          "elapsedMs": 223534.793,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 480
+          }
+        },
+        {
+          "elapsedMs": 224584.923,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 480
+          }
+        },
+        {
+          "elapsedMs": 225616.092,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 480
+          }
+        },
+        {
+          "elapsedMs": 226624.563,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 480
+          }
+        },
+        {
+          "elapsedMs": 227634.518,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 480
+          }
+        },
+        {
+          "elapsedMs": 228645.529,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 480
+          }
+        },
+        {
+          "elapsedMs": 229658.056,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 480
+          }
+        },
+        {
+          "elapsedMs": 230669.456,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 480
+          }
+        },
+        {
+          "elapsedMs": 231678.655,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 490
+          }
+        },
+        {
+          "elapsedMs": 232691.293,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 490
+          }
+        },
+        {
+          "elapsedMs": 233700.781,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 490
+          }
+        },
+        {
+          "elapsedMs": 234711.538,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0.3,
+            "cumulativeCpuMs": 490
+          }
+        },
+        {
+          "elapsedMs": 235721.274,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0.2,
+            "cumulativeCpuMs": 500
+          }
+        },
+        {
+          "elapsedMs": 236729.796,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0.2,
+            "cumulativeCpuMs": 500
+          }
+        },
+        {
+          "elapsedMs": 237735.649,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 500
+          }
+        },
+        {
+          "elapsedMs": 238748.967,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0.1,
+            "cumulativeCpuMs": 500
+          }
+        },
+        {
+          "elapsedMs": 239757.451,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0.4,
+            "cumulativeCpuMs": 500
+          }
+        },
+        {
+          "elapsedMs": 240767.323,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0.2,
+            "cumulativeCpuMs": 510
+          }
+        },
+        {
+          "elapsedMs": 241782.568,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0.1,
+            "cumulativeCpuMs": 510
+          }
+        },
+        {
+          "elapsedMs": 242789.73,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 510
+          }
+        },
+        {
+          "elapsedMs": 243796.898,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0.2,
+            "cumulativeCpuMs": 510
+          }
+        },
+        {
+          "elapsedMs": 244805.783,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0.1,
+            "cumulativeCpuMs": 510
+          }
+        },
+        {
+          "elapsedMs": 245863.78,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 510
+          }
+        },
+        {
+          "elapsedMs": 246872.767,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 510
+          }
+        },
+        {
+          "elapsedMs": 247883.691,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 520
+          }
+        },
+        {
+          "elapsedMs": 248893.085,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0.1,
+            "cumulativeCpuMs": 520
+          }
+        },
+        {
+          "elapsedMs": 249902.438,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0.4,
+            "cumulativeCpuMs": 520
+          }
+        },
+        {
+          "elapsedMs": 250913.715,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0.1,
+            "cumulativeCpuMs": 520
+          }
+        },
+        {
+          "elapsedMs": 251970.427,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 530
+          }
+        },
+        {
+          "elapsedMs": 252976.263,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 530
+          }
+        },
+        {
+          "elapsedMs": 253985.389,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0.1,
+            "cumulativeCpuMs": 530
+          }
+        },
+        {
+          "elapsedMs": 254994.24,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 530
+          }
+        },
+        {
+          "elapsedMs": 256005.268,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 530
+          }
+        },
+        {
+          "elapsedMs": 257015.02,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 530
+          }
+        },
+        {
+          "elapsedMs": 258022.888,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 540
+          }
+        },
+        {
+          "elapsedMs": 259033.803,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 540
+          }
+        },
+        {
+          "elapsedMs": 260042.555,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0.4,
+            "cumulativeCpuMs": 540
+          }
+        },
+        {
+          "elapsedMs": 261053.593,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 540
+          }
+        },
+        {
+          "elapsedMs": 262060.1,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 550
+          }
+        },
+        {
+          "elapsedMs": 263069.71,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 550
+          }
+        },
+        {
+          "elapsedMs": 264078.926,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 550
+          }
+        },
+        {
+          "elapsedMs": 265118.448,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 550
+          }
+        },
+        {
+          "elapsedMs": 266128.088,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 550
+          }
+        },
+        {
+          "elapsedMs": 267138.025,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 550
+          }
+        },
+        {
+          "elapsedMs": 268145.315,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 560
+          }
+        },
+        {
+          "elapsedMs": 269156.32,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 560
+          }
+        },
+        {
+          "elapsedMs": 270161.043,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0.1,
+            "cumulativeCpuMs": 560
+          }
+        },
+        {
+          "elapsedMs": 271170.928,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 560
+          }
+        },
+        {
+          "elapsedMs": 272180.718,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 570
+          }
+        },
+        {
+          "elapsedMs": 273206.625,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 570
+          }
+        },
+        {
+          "elapsedMs": 274215.437,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 570
+          }
+        },
+        {
+          "elapsedMs": 275224.952,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 570
+          }
+        },
+        {
+          "elapsedMs": 276233.019,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 580
+          }
+        },
+        {
+          "elapsedMs": 277240.273,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 580
+          }
+        },
+        {
+          "elapsedMs": 278247.317,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 580
+          }
+        },
+        {
+          "elapsedMs": 279253.721,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 580
+          }
+        },
+        {
+          "elapsedMs": 280261.079,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0.4,
+            "cumulativeCpuMs": 590
+          }
+        },
+        {
+          "elapsedMs": 281271.108,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 590
+          }
+        },
+        {
+          "elapsedMs": 282282.016,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 590
+          }
+        },
+        {
+          "elapsedMs": 283293.638,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 590
+          }
+        },
+        {
+          "elapsedMs": 284334.409,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 600
+          }
+        },
+        {
+          "elapsedMs": 285345.746,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 600
+          }
+        },
+        {
+          "elapsedMs": 286353.88,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 600
+          }
+        },
+        {
+          "elapsedMs": 287361.177,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 600
+          }
+        },
+        {
+          "elapsedMs": 288372.712,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 600
+          }
+        },
+        {
+          "elapsedMs": 289380.551,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 600
+          }
+        },
+        {
+          "elapsedMs": 290389.595,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0.1,
+            "cumulativeCpuMs": 610
+          }
+        },
+        {
+          "elapsedMs": 291398.755,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 610
+          }
+        },
+        {
+          "elapsedMs": 292405.183,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 610
+          }
+        },
+        {
+          "elapsedMs": 293416.677,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 610
+          }
+        },
+        {
+          "elapsedMs": 294429.011,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 610
+          }
+        },
+        {
+          "elapsedMs": 295437.374,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 610
+          }
+        },
+        {
+          "elapsedMs": 296447.403,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 610
+          }
+        },
+        {
+          "elapsedMs": 297457.071,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 610
+          }
+        },
+        {
+          "elapsedMs": 298464.695,
+          "sample": {
+            "rssBytes": 33226752,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 610
+          }
+        },
+        {
+          "elapsedMs": 299472.497,
+          "sample": {
+            "rssBytes": 33079296,
+            "reportedCpuPercent": 0,
+            "cumulativeCpuMs": 610
+          }
+        },
+        {
+          "elapsedMs": 300009.459,
+          "sample": {
+            "rssBytes": 33193984,
+            "reportedCpuPercent": 0.3,
+            "cumulativeCpuMs": 620
+          }
+        }
+      ]
+    },
+    "steadyShutdown": {
+      "mode": "graceful",
+      "pid": 98160,
+      "port": 61327,
+      "healthMs": 44.72,
+      "reconciliationReadyMs": 109.956,
+      "shutdownMs": 2.872,
+      "deadlineExceeded": false,
+      "exitCode": 0,
+      "signalCode": null,
+      "processUsage": {
+        "maxRSS": 48365568,
+        "cpuTime": {
+          "user": "439088",
+          "system": "186887",
+          "total": "625975"
+        },
+        "contextSwitches": {
+          "voluntary": 9,
+          "involuntary": 17323
+        },
+        "messages": {
+          "sent": 46,
+          "received": 44
+        },
+        "ops": {
+          "in": 0,
+          "out": 0
+        },
+        "shmSize": 0,
+        "signalCount": 1,
+        "swapCount": 0
+      },
+      "output": {
+        "stdoutBytes": 248,
+        "stderrBytes": 0,
+        "stdoutSha256": "f3f2d8c7a1e5c5f009cdccd56138320441e3efebe6ebffdfd1a7afe106fc4362",
+        "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "before": {
+        "descriptors": {
+          "available": true,
+          "source": "lsof",
+          "fds": 16,
+          "sockets": 3
+        },
+        "descendants": {
+          "available": true,
+          "pids": []
+        }
+      },
+      "residue": {
+        "pidAlive": false,
+        "portRebindSucceeded": true,
+        "pidFilePresent": false,
+        "knownDescendantsAlive": [],
+        "descriptors": {
+          "available": true,
+          "source": "lsof",
+          "fds": 0,
+          "sockets": 0
+        },
+        "released": true,
+        "waitMs": 14.472,
+        "timeoutMs": 1000
+      },
+      "checks": {
+        "exitedWithinDeadline": true,
+        "expectedExit": true,
+        "pidReleased": true,
+        "portReleased": true,
+        "descendantsReleased": true,
+        "descriptorsReleased": true,
+        "pidFileReleased": true,
+        "residueReleasedWithinDeadline": true
+      }
+    }
+  },
+  "violations": []
+}

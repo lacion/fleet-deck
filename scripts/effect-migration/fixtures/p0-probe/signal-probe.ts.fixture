@@ -1,0 +1,87 @@
+async function within<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function run(signal: 'SIGINT' | 'SIGTERM') {
+  const child = Bun.spawn([process.execPath, 'probe.ts', 'hold'], {
+    cwd: import.meta.dir,
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+  const reader = child.stdout.getReader();
+  const decoder = new TextDecoder();
+  let stdout = '';
+  let completed = false;
+  try {
+    const deadline = Date.now() + 5000;
+    while (!stdout.includes('"event":"ready"')) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new Error(`${signal} probe never became ready`);
+      const next = await within(reader.read(), remaining, `${signal} probe never became ready`);
+      if (next.done) throw new Error(`${signal} probe exited before ready`);
+      stdout += decoder.decode(next.value, { stream: true });
+    }
+    const keepAliveObservationMs = 250;
+    const keepAliveOutcome = await Promise.race([
+      child.exited.then((exitCode) => ({ exited: true as const, exitCode })),
+      Bun.sleep(keepAliveObservationMs).then(() => ({ exited: false as const, exitCode: null })),
+    ]);
+    if (keepAliveOutcome.exited || child.exitCode !== null) {
+      throw new Error(
+        `${signal} held root exited during the ${keepAliveObservationMs}ms keep-alive observation window`,
+      );
+    }
+    const aliveBeforeSignal = true;
+    const exitCodeBeforeSignal = child.exitCode;
+    child.kill(signal);
+    const drainStdout = async (): Promise<string> => {
+      while (true) {
+        const next = await reader.read();
+        if (next.done) break;
+        stdout += decoder.decode(next.value, { stream: true });
+      }
+      stdout += decoder.decode();
+      return stdout;
+    };
+    const [completeStdout, stderr, exitCode] = await within(
+      Promise.all([
+        drainStdout(),
+        Bun.readableStreamToText(child.stderr),
+        child.exited,
+      ]),
+      5000,
+      `${signal} probe did not finalize and exit within 5000ms`,
+    );
+    completed = true;
+    return {
+      signal,
+      exitCode,
+      stdout: completeStdout.trim().split('\n'),
+      stderr,
+      forcedCleanup: false,
+      keepAliveObservationMs,
+      aliveBeforeSignal,
+      exitCodeBeforeSignal,
+    };
+  } finally {
+    if (!completed && child.exitCode === null) {
+      child.kill('SIGKILL');
+      await within(child.exited, 1000, `${signal} probe resisted forced cleanup`).catch(() => -1);
+    }
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
+}
+
+console.log(JSON.stringify(await run('SIGINT')));
+console.log(JSON.stringify(await run('SIGTERM')));

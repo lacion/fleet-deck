@@ -1,0 +1,36 @@
+import { BunRuntime } from '@effect/platform-bun';
+import * as Effect from 'effect/Effect';
+
+const mode = Bun.argv[2] ?? 'natural';
+
+const resource = Effect.acquireRelease(
+  Effect.sync(() => {
+    console.log(JSON.stringify({ event: 'acquire', mode, pid: process.pid }));
+    return { acquiredAt: Date.now() };
+  }),
+  ({ acquiredAt }, exit) =>
+    Effect.sync(() => {
+      console.log(
+        JSON.stringify({
+          event: 'release',
+          mode,
+          lifetimeMs: Date.now() - acquiredAt,
+          exit: exit._tag,
+        }),
+      );
+    }),
+);
+
+const program = Effect.scoped(
+  Effect.gen(function* () {
+    yield* resource;
+    if (mode === 'hold') {
+      console.log(JSON.stringify({ event: 'ready', mode }));
+      yield* Effect.never;
+    }
+    yield* Effect.sleep(10);
+    console.log(JSON.stringify({ event: 'complete', mode }));
+  }),
+);
+
+BunRuntime.runMain(program, { disableErrorReporting: true });

@@ -1,0 +1,813 @@
+{
+  "schema": 1,
+  "kind": "fleetdeck-effect-p0-comparison",
+  "ok": true,
+  "recordedAt": "2026-08-19T15:22:21.365Z",
+  "source": {
+    "schema": 1,
+    "kind": "fleetdeck-effect-p0-baseline"
+  },
+  "inputs": {
+    "left": "docs/v1/evidence/effect/baseline-run-1.json",
+    "right": "docs/v1/evidence/effect/baseline-run-2.json"
+  },
+  "requiredRuntime": {
+    "bun": "1.3.14",
+    "revision": "0d9b296af33f2b851fcbf4df3e9ec89751734ba4"
+  },
+  "checks": {
+    "sameSchema": true,
+    "sameKind": true,
+    "exactBunFloor": true,
+    "sameMachineWhenRecorded": true,
+    "sameConfigWhenRecorded": true,
+    "correctnessAndVerificationHealthy": true,
+    "stableEvidenceEqual": true,
+    "matchingMetricShape": true
+  },
+  "coverage": {
+    "machineRecorded": true,
+    "configRecorded": true,
+    "correctnessChecks": 608,
+    "distributions": 16
+  },
+  "stableEvidence": {
+    "sha256": "28c655c671e4ab3735b1569f9030dbded2787e041649a7f68d3c3cfbe1fce135",
+    "equal": true
+  },
+  "metrics": {
+    "distributions": [
+      {
+        "path": "$.build.totalDurationMs",
+        "category": "timing",
+        "left": {
+          "count": 2,
+          "p50": 2569.587,
+          "p95": 3812.929,
+          "p99": 3812.929
+        },
+        "right": {
+          "count": 2,
+          "p50": 2376.256,
+          "p95": 3655.217,
+          "p99": 3655.217
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -193.331,
+            "percent": -7.524
+          },
+          "p95": {
+            "absolute": -157.712,
+            "percent": -4.136
+          },
+          "p99": {
+            "absolute": -157.712,
+            "percent": -4.136
+          }
+        }
+      },
+      {
+        "path": "$.build.commandDurationMs.bundle",
+        "category": "timing",
+        "left": {
+          "count": 2,
+          "p50": 41.797,
+          "p95": 189.641,
+          "p99": 189.641
+        },
+        "right": {
+          "count": 2,
+          "p50": 36.834,
+          "p95": 186.014,
+          "p99": 186.014
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -4.963,
+            "percent": -11.874
+          },
+          "p95": {
+            "absolute": -3.627,
+            "percent": -1.913
+          },
+          "p99": {
+            "absolute": -3.627,
+            "percent": -1.913
+          }
+        }
+      },
+      {
+        "path": "$.build.commandDurationMs.bundle:bin",
+        "category": "timing",
+        "left": {
+          "count": 2,
+          "p50": 39.581,
+          "p95": 42.184,
+          "p99": 42.184
+        },
+        "right": {
+          "count": 2,
+          "p50": 23.328,
+          "p95": 30.983,
+          "p99": 30.983
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -16.253,
+            "percent": -41.063
+          },
+          "p95": {
+            "absolute": -11.201,
+            "percent": -26.553
+          },
+          "p99": {
+            "absolute": -11.201,
+            "percent": -26.553
+          }
+        }
+      },
+      {
+        "path": "$.build.commandDurationMs.bundle:hooks",
+        "category": "timing",
+        "left": {
+          "count": 2,
+          "p50": 46.782,
+          "p95": 55.577,
+          "p99": 55.577
+        },
+        "right": {
+          "count": 2,
+          "p50": 40.718,
+          "p95": 52.753,
+          "p99": 52.753
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -6.064,
+            "percent": -12.962
+          },
+          "p95": {
+            "absolute": -2.824,
+            "percent": -5.081
+          },
+          "p99": {
+            "absolute": -2.824,
+            "percent": -5.081
+          }
+        }
+      },
+      {
+        "path": "$.build.commandDurationMs.build:board",
+        "category": "timing",
+        "left": {
+          "count": 2,
+          "p50": 2429.982,
+          "p95": 3536.869,
+          "p99": 3536.869
+        },
+        "right": {
+          "count": 2,
+          "p50": 2255.645,
+          "p95": 3405.104,
+          "p99": 3405.104
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -174.337,
+            "percent": -7.174
+          },
+          "p95": {
+            "absolute": -131.765,
+            "percent": -3.725
+          },
+          "p99": {
+            "absolute": -131.765,
+            "percent": -3.725
+          }
+        }
+      },
+      {
+        "path": "$.package.durationMs",
+        "category": "timing",
+        "left": {
+          "count": 2,
+          "p50": 48.268,
+          "p95": 69.625,
+          "p99": 69.625
+        },
+        "right": {
+          "count": 2,
+          "p50": 50.107,
+          "p95": 68.973,
+          "p99": 68.973
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": 1.839,
+            "percent": 3.81
+          },
+          "p95": {
+            "absolute": -0.652,
+            "percent": -0.936
+          },
+          "p99": {
+            "absolute": -0.652,
+            "percent": -0.936
+          }
+        }
+      },
+      {
+        "path": "$.daemon.coldLaunches.healthMs",
+        "category": "timing",
+        "left": {
+          "count": 30,
+          "p50": 47.726,
+          "p95": 168.796,
+          "p99": 169.485
+        },
+        "right": {
+          "count": 30,
+          "p50": 42.718,
+          "p95": 49.579,
+          "p99": 73.825
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -5.008,
+            "percent": -10.493
+          },
+          "p95": {
+            "absolute": -119.217,
+            "percent": -70.628
+          },
+          "p99": {
+            "absolute": -95.66,
+            "percent": -56.442
+          }
+        }
+      },
+      {
+        "path": "$.daemon.coldLaunches.reconciliationReadyMs",
+        "category": "timing",
+        "left": {
+          "count": 30,
+          "p50": 114.027,
+          "p95": 235.057,
+          "p99": 236.717
+        },
+        "right": {
+          "count": 30,
+          "p50": 106.023,
+          "p95": 115.366,
+          "p99": 156.92
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -8.004,
+            "percent": -7.019
+          },
+          "p95": {
+            "absolute": -119.691,
+            "percent": -50.92
+          },
+          "p99": {
+            "absolute": -79.797,
+            "percent": -33.71
+          }
+        }
+      },
+      {
+        "path": "$.daemon.coldLaunches.gracefulShutdownMs",
+        "category": "timing",
+        "left": {
+          "count": 30,
+          "p50": 2.166,
+          "p95": 6.671,
+          "p99": 10.186
+        },
+        "right": {
+          "count": 30,
+          "p50": 1.937,
+          "p95": 2.207,
+          "p99": 2.238
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -0.229,
+            "percent": -10.572
+          },
+          "p95": {
+            "absolute": -4.464,
+            "percent": -66.917
+          },
+          "p99": {
+            "absolute": -7.948,
+            "percent": -78.029
+          }
+        }
+      },
+      {
+        "path": "$.daemon.forcedShutdowns.durationMs",
+        "category": "timing",
+        "left": {
+          "count": 3,
+          "p50": 1.589,
+          "p95": 1.688,
+          "p99": 1.688
+        },
+        "right": {
+          "count": 3,
+          "p50": 1.422,
+          "p95": 1.464,
+          "p99": 1.464
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -0.167,
+            "percent": -10.51
+          },
+          "p95": {
+            "absolute": -0.224,
+            "percent": -13.27
+          },
+          "p99": {
+            "absolute": -0.224,
+            "percent": -13.27
+          }
+        }
+      },
+      {
+        "path": "$.daemon.mdnsStartup.reconciliationReadyMs",
+        "category": "timing",
+        "left": {
+          "count": 3,
+          "p50": 113.84,
+          "p95": 117.773,
+          "p99": 117.773
+        },
+        "right": {
+          "count": 3,
+          "p50": 111.305,
+          "p95": 213.484,
+          "p99": 213.484
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -2.535,
+            "percent": -2.227
+          },
+          "p95": {
+            "absolute": 95.711,
+            "percent": 81.267
+          },
+          "p99": {
+            "absolute": 95.711,
+            "percent": 81.267
+          }
+        }
+      },
+      {
+        "path": "$.daemon.mdnsStartup.gracefulGoodbye.shutdownMs",
+        "category": "timing",
+        "left": {
+          "count": 3,
+          "p50": 3.373,
+          "p95": 3.513,
+          "p99": 3.513
+        },
+        "right": {
+          "count": 3,
+          "p50": 3.044,
+          "p95": 3.839,
+          "p99": 3.839
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -0.329,
+            "percent": -9.754
+          },
+          "p95": {
+            "absolute": 0.326,
+            "percent": 9.28
+          },
+          "p99": {
+            "absolute": 0.326,
+            "percent": 9.28
+          }
+        }
+      },
+      {
+        "path": "$.daemon.commands.hook.durationMs",
+        "category": "timing",
+        "left": {
+          "count": 30,
+          "p50": 18.427,
+          "p95": 19.152,
+          "p99": 23.269
+        },
+        "right": {
+          "count": 30,
+          "p50": 17.249,
+          "p95": 19.378,
+          "p99": 23.216
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -1.178,
+            "percent": -6.393
+          },
+          "p95": {
+            "absolute": 0.226,
+            "percent": 1.18
+          },
+          "p99": {
+            "absolute": -0.053,
+            "percent": -0.228
+          }
+        }
+      },
+      {
+        "path": "$.daemon.commands.cli.durationMs",
+        "category": "timing",
+        "left": {
+          "count": 30,
+          "p50": 24.612,
+          "p95": 27.251,
+          "p99": 27.606
+        },
+        "right": {
+          "count": 30,
+          "p50": 22.766,
+          "p95": 68.311,
+          "p99": 87.971
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -1.846,
+            "percent": -7.5
+          },
+          "p95": {
+            "absolute": 41.06,
+            "percent": 150.673
+          },
+          "p99": {
+            "absolute": 60.365,
+            "percent": 218.666
+          }
+        }
+      },
+      {
+        "path": "$.daemon.idle.rssBytes",
+        "category": "size",
+        "left": {
+          "count": 297,
+          "p50": 33226752,
+          "p95": 48201728,
+          "p99": 48349184
+        },
+        "right": {
+          "count": 297,
+          "p50": 15794176,
+          "p95": 48037888,
+          "p99": 48087040
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -17432576,
+            "percent": -52.465
+          },
+          "p95": {
+            "absolute": -163840,
+            "percent": -0.34
+          },
+          "p99": {
+            "absolute": -262144,
+            "percent": -0.542
+          }
+        }
+      },
+      {
+        "path": "$.daemon.idle.reportedCpuPercent",
+        "category": "timing",
+        "left": {
+          "count": 297,
+          "p50": 0,
+          "p95": 0.3,
+          "p99": 0.7
+        },
+        "right": {
+          "count": 297,
+          "p50": 0,
+          "p95": 0.3,
+          "p99": 0.8
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": 0,
+            "percent": 0
+          },
+          "p95": {
+            "absolute": 0,
+            "percent": 0
+          },
+          "p99": {
+            "absolute": 0.1,
+            "percent": 14.286
+          }
+        }
+      }
+    ],
+    "scalarTimings": [
+      {
+        "path": "$.config.idleMs",
+        "left": 300000,
+        "right": 300000,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.config.idleSampleMs",
+        "left": 1000,
+        "right": 1000,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.config.healthTimeoutMs",
+        "left": 10000,
+        "right": 10000,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.config.shutdownTimeoutMs",
+        "left": 3000,
+        "right": 3000,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.config.residueTimeoutMs",
+        "left": 1000,
+        "right": 1000,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.config.mdnsWatchdogMs",
+        "left": 1000,
+        "right": 1000,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.config.hookDeadlineMs",
+        "left": 2500,
+        "right": 2500,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.config.cliDeadlineMs",
+        "left": 1500,
+        "right": 1500,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.metadata.machine.logicalCpuCount",
+        "left": 14,
+        "right": 14,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.daemon.mdnsStartup.gracefulGoodbye.implementationWatchdogMs",
+        "left": 1000,
+        "right": 1000,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.daemon.commands.hook.hardDeadlineMs",
+        "left": 2500,
+        "right": 2500,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.daemon.commands.hook.minimumMarginMs",
+        "left": 2476.731,
+        "right": 2476.784,
+        "delta": {
+          "absolute": 0.053,
+          "percent": 0.002
+        }
+      },
+      {
+        "path": "$.daemon.commands.cli.hardDeadlineMs",
+        "left": 1500,
+        "right": 1500,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.daemon.commands.cli.minimumMarginMs",
+        "left": 1472.394,
+        "right": 1412.029,
+        "delta": {
+          "absolute": -60.365,
+          "percent": -4.1
+        }
+      },
+      {
+        "path": "$.daemon.idle.requestedDurationMs",
+        "left": 300000,
+        "right": 300000,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.daemon.idle.measuredDurationMs",
+        "left": 300009.477,
+        "right": 300014.403,
+        "delta": {
+          "absolute": 4.926,
+          "percent": 0.002
+        }
+      },
+      {
+        "path": "$.daemon.idle.intervalCpuPercent",
+        "left": 0.18,
+        "right": 0.173,
+        "delta": {
+          "absolute": -0.007,
+          "percent": -3.889
+        }
+      },
+      {
+        "path": "$.daemon.steadyShutdown.healthMs",
+        "left": 44.72,
+        "right": 45.157,
+        "delta": {
+          "absolute": 0.437,
+          "percent": 0.977
+        }
+      },
+      {
+        "path": "$.daemon.steadyShutdown.reconciliationReadyMs",
+        "left": 109.956,
+        "right": 107.674,
+        "delta": {
+          "absolute": -2.282,
+          "percent": -2.075
+        }
+      },
+      {
+        "path": "$.daemon.steadyShutdown.shutdownMs",
+        "left": 2.872,
+        "right": 4.963,
+        "delta": {
+          "absolute": 2.091,
+          "percent": 72.806
+        }
+      },
+      {
+        "path": "$.daemon.steadyShutdown.residue.waitMs",
+        "left": 14.472,
+        "right": 14.542,
+        "delta": {
+          "absolute": 0.07,
+          "percent": 0.484
+        }
+      },
+      {
+        "path": "$.daemon.steadyShutdown.residue.timeoutMs",
+        "left": 1000,
+        "right": 1000,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      }
+    ],
+    "scalarSizes": [
+      {
+        "path": "$.metadata.machine.totalMemoryBytes",
+        "left": 25769803776,
+        "right": 25769803776,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.artifact.rawBytes",
+        "left": 566619,
+        "right": 566619,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.artifact.gzipBytes",
+        "left": 147431,
+        "right": 147431,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.package.bytes",
+        "left": 453844,
+        "right": 453844,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.daemon.steadyShutdown.processUsage.maxRSS",
+        "left": 48365568,
+        "right": 48103424,
+        "delta": {
+          "absolute": -262144,
+          "percent": -0.542
+        }
+      },
+      {
+        "path": "$.daemon.steadyShutdown.processUsage.shmSize",
+        "left": 0,
+        "right": 0,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.daemon.steadyShutdown.output.stdoutBytes",
+        "left": 248,
+        "right": 247,
+        "delta": {
+          "absolute": -1,
+          "percent": -0.403
+        }
+      },
+      {
+        "path": "$.daemon.steadyShutdown.output.stderrBytes",
+        "left": 0,
+        "right": 0,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      }
+    ],
+    "convention": "delta is right minus left; percent is relative to abs(left)"
+  }
+}
