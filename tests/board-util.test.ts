@@ -1147,10 +1147,13 @@ test('the headless image paste survives the Ctrl+V change', () => {
     /screenEl\.addEventListener\('paste', onPaste, true\)/,
     'the image-paste listener must stay in the CAPTURE phase — xterm handles paste on the textarea below it',
   );
-  assert.match(
-    src,
-    /if \(!item\) \{/,
-    'a text paste must enter the text branch and fall through to xterm when safe',
+  const pasteHandler = src.indexOf('const onPaste = (e: ClipboardEvent) =>');
+  const textReturn = src.indexOf('if (!item) return;', pasteHandler);
+  const imagePreventDefault = src.indexOf('e.preventDefault();', pasteHandler);
+  assert.ok(pasteHandler >= 0, 'the image-paste handler must still exist');
+  assert.ok(
+    textReturn > pasteHandler && textReturn < imagePreventDefault,
+    'text paste must return to xterm before the image-only preventDefault path',
   );
   assert.match(
     src,
