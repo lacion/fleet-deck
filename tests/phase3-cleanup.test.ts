@@ -13,8 +13,9 @@
 
 import test, { type TestContext } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -37,6 +38,42 @@ function scratch(t: TestContext, prefix: string): string {
     rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
   return dir;
+}
+
+async function freePort(): Promise<number> {
+  const server = createServer();
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string', 'ephemeral TCP listener has an address');
+  const port = address.port;
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
+  return port;
+}
+
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isOwnedStub(pid: number): boolean {
+  const probe = spawnSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8' });
+  return (
+    probe.status === 0 &&
+    probe.stdout.includes('stub-daemon.mjs') &&
+    probe.stdout.includes('p3test-stub')
+  );
 }
 
 // Wait until fn() is truthy (or throw). Small bounded poll for server boot.
@@ -80,7 +117,10 @@ async function runTruncatedGate(
   { daemonJs }: { daemonJs: string },
 ): Promise<TruncatedGateResult> {
   const home = scratch(t, 'fleetdeck-p3-home-');
-  const port = 20000 + (process.pid % 20000);
+  // This file runs beside many daemon suites. A PID-derived fixed port can be
+  // occupied by an unrelated concurrent fixture, making the first assertion
+  // fail and its surviving stub poison the following two cases.
+  const port = await freePort();
   writeFileSync(path.join(home, 'stub-daemon.mjs'), daemonJs);
 
   const gate = path.join(scratch(t, 'fleetdeck-p3-gate-'), 'gate.sh');
@@ -130,6 +170,24 @@ exit 3
   } catch {
     /* pidfile may not have been written yet */
   }
+  t.after(async () => {
+    // Assertion failures must not leave this test-owned background stub on the
+    // shared runner. Verify the marker argv before signalling the exact PID.
+    if (
+      stubPid == null ||
+      !Number.isInteger(stubPid) ||
+      !pidAlive(stubPid) ||
+      !isOwnedStub(stubPid)
+    ) {
+      return;
+    }
+    try {
+      process.kill(stubPid, 'SIGKILL');
+    } catch {
+      return;
+    }
+    await waitFor(async () => !pidAlive(stubPid), { tries: 200, stepMs: 10 });
+  });
   return { code, stdout, stderr, home, port, stubPid };
 }
 
