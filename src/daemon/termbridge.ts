@@ -276,12 +276,14 @@ interface Viewer {
   established: boolean;
   initialized: boolean;
   finished: boolean;
+  pendingExit: string | null;
   pending: string[];
   pendingBytes: number;
   queuedInput: number;
   inputChain: Promise<void>;
   emit(data: string): void;
   flushPending(): void;
+  end(reason: string): void;
   finish(reason: string, notify?: boolean): void;
 }
 export type TermFrame =
@@ -409,7 +411,7 @@ export function createTermBridge({
             }
             for (const [paneId, stream] of [...c.panes]) {
               if (state.get(paneId) !== '1') continue;
-              for (const v of [...stream.subs]) v.finish('terminal pane closed');
+              for (const v of [...stream.subs]) v.end('terminal pane closed');
             }
           })
           .catch(() => {
@@ -440,7 +442,7 @@ export function createTermBridge({
             const alive = new Set(res.lines.map((s) => s.trim()));
             for (const [paneId, stream] of [...c.panes]) {
               if (alive.has(paneId)) continue;
-              for (const v of [...stream.subs]) v.finish('terminal pane closed');
+              for (const v of [...stream.subs]) v.end('terminal pane closed');
             }
           })
           .catch(() => {
@@ -544,7 +546,7 @@ export function createTermBridge({
           const alive = new Set(res.lines.map((s) => s.trim()));
           for (const [paneId, stream] of [...c.panes]) {
             if (alive.has(paneId)) continue;
-            for (const v of [...stream.subs]) v.finish('terminal pane closed');
+            for (const v of [...stream.subs]) v.end('terminal pane closed');
           }
         })
         .catch(() => {
@@ -669,6 +671,7 @@ export function createTermBridge({
       established: false,
       initialized: false,
       finished: false,
+      pendingExit: null,
       pending: [], // R1-4: %output that arrived after we
       // subscribed but before the init frame shipped
       pendingBytes: 0, // byte bound on the above (BUG-158)
@@ -720,6 +723,19 @@ export function createTermBridge({
             this.finish('terminal socket closed', false);
           }
         }
+      },
+      // The pane-death poll and window-close probe can race the seed sequence:
+      // viewers subscribe before capture so no terminal output is lost, but the
+      // socket is not established until its init frame is ready. Remember an
+      // early terminal exit and deliver it immediately after init instead of
+      // silently finishing a viewer that the HTTP layer cannot notify yet.
+      end(reason) {
+        if (this.finished) return;
+        if (!this.established) {
+          this.pendingExit ??= reason;
+          return;
+        }
+        this.finish(reason);
       },
       finish(reason, notify = true) {
         if (this.finished) return;
@@ -858,8 +874,14 @@ export function createTermBridge({
           (bracketedPaste ? BRACKETED_PASTE_ON : ''),
       });
       viewer.initialized = true;
-      // R1-4: replay whatever arrived during the cursor lookup / init build.
-      viewer.flushPending();
+      if (viewer.pendingExit) {
+        const reason = viewer.pendingExit;
+        viewer.pendingExit = null;
+        viewer.finish(reason);
+      } else {
+        // R1-4: replay whatever arrived during the cursor lookup / init build.
+        viewer.flushPending();
+      }
     } catch (err) {
       const detail = err instanceof Error && err.message ? err.message : 'terminal open failed';
       viewer.finish(detail, false);

@@ -415,10 +415,14 @@ test('live terminal WS ends the viewer when its pane is dead under remain-on-exi
   const spawned = await createSpawn(daemon, dir);
   const { ws, frames, closes } = connect(termUrl(daemon, spawned.spawn_id, 80, 24));
 
-  await waitUntil(() => frames.find(frameOf('init')), 'init frame');
+  const init = await waitUntil(() => frames.find(frameOf('init')), 'init frame');
   const exit = await waitUntil(
     () => frames.find(frameOf('exit')),
     'exit frame from the pane_dead poll',
+  );
+  assert.ok(
+    frames.indexOf(init) < frames.indexOf(exit),
+    'a death detected during open is delivered immediately after the init frame',
   );
   assert.match(exit.reason, /pane closed/);
   assert.equal(

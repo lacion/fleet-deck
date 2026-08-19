@@ -48,6 +48,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Git access errors could lose their actionable response to a timeout race.**
   The browser now outlives the daemon's bounded Git probe, so the structured
   authentication guidance arrives instead of a generic “daemon unreachable.”
+- **A terminal pane dying during viewer startup could leave the board waiting
+  forever.** Pane-death and window-close signals that race the initial terminal
+  snapshot are now delivered immediately after that snapshot, preserving the
+  ordered `init` → `exit` contract instead of silently dropping both states.
 
 ## [0.23.5] - 2026-08-18
 
