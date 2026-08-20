@@ -46,8 +46,11 @@ test('P3 production composition selects the Bun driver and excludes both compari
   // The generated daemon is part of the production contract. Pin both the
   // selected implementation and the absence of the two differential oracles,
   // whose source remains available only to tests and the upstream patch.
-  expect(bundle).toContain('var BunProcessDriver = class');
-  expect(bundle).toContain('sync2(makeBunProcessDriver)');
+  // The production daemon intentionally minifies local identifiers while
+  // preserving function/class names for diagnostics. Assert those semantic
+  // names instead of esbuild's incidental local variable spelling.
+  expect(bundle).toContain('"BunProcessDriver"');
+  expect(bundle).toContain('"makeBunProcessDriver"');
   expect(bundle).not.toContain('makeNodeProcessDriverReference');
   expect(bundle).not.toContain('startNodeExecution');
   expect(bundle).not.toContain('BunChildProcessSpawner');
@@ -66,5 +69,6 @@ test('P3 files execution has one bounded facade and every git subprocess uses it
     /export function runBounded\([\s\S]*?\): Promise<RunResult> \{\s*return execFileP\(cmd, args,/,
   );
 
-  expect(bundle).toMatch(/function runBounded\([\s\S]*?\) \{\s*return execFileP\(cmd, args2,/);
+  expect(bundle).toContain('"runBounded"');
+  expect(bundle).toContain('"execFileP"');
 });

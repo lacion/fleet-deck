@@ -4,18 +4,21 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, test } from 'bun:test';
+import * as Context from 'effect/Context';
 import * as Effect from 'effect/Effect';
+import * as Exit from 'effect/Exit';
 import * as Layer from 'effect/Layer';
-import { createBootstrapProcessRuntimeBridge } from '../../src/daemon/app/bootstrap-process-runtime.ts';
+import * as Scope from 'effect/Scope';
+import { makeIngressExecFileDelegate } from '../../src/daemon/app/legacy-process-facade.ts';
 import {
   ProcessNonZeroExitError,
   ProcessOutputLimitError,
-  ProcessRunnerStartupError,
   ProcessRunnerUnavailableError,
   ProcessSpawnError,
   ProcessTimeoutError,
 } from '../../src/daemon/app/errors.ts';
 import { PROCESS_DRIVER_KILL_GRACE_MS } from '../../src/daemon/app/services/process-driver.ts';
+import type { IngressSupervisorService } from '../../src/daemon/app/services/ingress-supervisor.ts';
 import {
   type BoundedProcessRequest,
   type BoundedProcessResult,
@@ -24,6 +27,8 @@ import {
   ProcessRunner,
   type ProcessRunnerService,
 } from '../../src/daemon/app/services/process-runner.ts';
+import { makeIngressSupervisor } from '../../src/daemon/platform/bun/ingress-supervisor-live.ts';
+import { ProcessRunnerLive } from '../../src/daemon/platform/bun/process-runner-live.ts';
 import { scaleMs, waitUntil } from '../helpers/wait.ts';
 
 const PROCESS_FIXTURE = fileURLToPath(new URL('./fixtures/bun-process-child.ts', import.meta.url));
@@ -132,8 +137,51 @@ function serviceLayer(
   return Layer.succeed(ProcessRunner, completeService(service));
 }
 
-describe('BootstrapProcessRuntimeBridge', () => {
-  test('an unused bridge stays lazy, shares close identity, and refuses later work', async () => {
+const runTestPromise = Effect.runPromiseWith(Context.empty());
+
+interface FacadeFixture {
+  readonly rootScope: Scope.Closeable;
+  readonly ingress: IngressSupervisorService<ProcessRunner>;
+  readonly delegate: ReturnType<typeof makeIngressExecFileDelegate>;
+}
+
+async function makeFixture(
+  layer: Layer.Layer<ProcessRunner> = ProcessRunnerLive,
+): Promise<FacadeFixture> {
+  const rootScope = Scope.makeUnsafe('sequential');
+  try {
+    const context = await runTestPromise(Layer.buildWithScope(layer, rootScope));
+    const ingress = await runTestPromise(makeIngressSupervisor(context, rootScope));
+    return {
+      rootScope,
+      ingress,
+      delegate: makeIngressExecFileDelegate(ingress),
+    };
+  } catch (error) {
+    await runTestPromise(Scope.close(rootScope, Exit.void));
+    throw error;
+  }
+}
+
+async function closeIngress(fixture: FacadeFixture): Promise<void> {
+  fixture.ingress.quiesce();
+  await fixture.ingress.close();
+}
+
+async function closeRoot(fixture: FacadeFixture): Promise<void> {
+  await runTestPromise(Scope.close(fixture.rootScope, Exit.void));
+}
+
+async function closeFixture(fixture: FacadeFixture): Promise<void> {
+  try {
+    await closeIngress(fixture);
+  } finally {
+    await closeRoot(fixture);
+  }
+}
+
+describe('legacy process facade through root IngressSupervisor', () => {
+  test('reuses one eager root Context and owns no runtime, Layer, or Scope', async () => {
     let acquired = 0;
     let released = 0;
     const layer = Layer.effect(
@@ -151,23 +199,29 @@ describe('BootstrapProcessRuntimeBridge', () => {
           }),
       ),
     );
-    const bridge = createBootstrapProcessRuntimeBridge(layer);
+    const fixture = await makeFixture(layer);
+    try {
+      assert.equal(acquired, 1, 'the test-owned root Scope eagerly builds ProcessRunner once');
 
-    const first = bridge.close();
-    const refusedBeforeCloseSettles = bridge.run(request);
-    const second = bridge.close();
-    assert.equal(first, second);
-    assert.deepEqual(await refusedBeforeCloseSettles, cancelled);
-    await first;
+      fixture.ingress.quiesce();
+      assert.deepEqual(await fixture.delegate.run(request), cancelled);
+      assert.deepEqual(await fixture.delegate.run(request), cancelled);
+      assert.equal(acquired, 1, 'the delegate never rebuilds its captured Context');
 
-    assert.equal(acquired, 0);
-    assert.equal(released, 0);
-    assert.deepEqual(await bridge.run(request), cancelled);
+      const first = fixture.ingress.close();
+      assert.equal(first, fixture.ingress.close());
+      await first;
+      assert.equal(released, 0, 'the facade and ingress do not own the ProcessRunner Layer');
+      await closeRoot(fixture);
+      assert.equal(released, 1);
+    } finally {
+      await closeFixture(fixture);
+    }
   });
 
-  test('success and typed process/startup failures retain exact compatibility results', async () => {
+  test('success and typed process failures retain exact compatibility results', async () => {
     const seen: unknown[] = [];
-    const success = createBootstrapProcessRuntimeBridge(
+    const success = await makeFixture(
       serviceLayer({
         run(actual) {
           seen.push(actual);
@@ -175,9 +229,15 @@ describe('BootstrapProcessRuntimeBridge', () => {
         },
       }),
     );
-    assert.deepEqual(await success.run(request), { ok: true, out: '/bin/echo\u0000hello' });
-    assert.deepEqual(seen, [request]);
-    await success.close();
+    try {
+      assert.deepEqual(await success.delegate.run(request), {
+        ok: true,
+        out: '/bin/echo\u0000hello',
+      });
+      assert.deepEqual(seen, [request]);
+    } finally {
+      await closeFixture(success);
+    }
 
     const failures = [
       new ProcessSpawnError({
@@ -205,61 +265,58 @@ describe('BootstrapProcessRuntimeBridge', () => {
       }),
     ] as const;
     for (const failure of failures) {
-      const failed = createBootstrapProcessRuntimeBridge(
-        serviceLayer({ run: () => Effect.fail(failure) }),
-      );
-      assert.deepEqual(await failed.run(request), failure.result);
-      await failed.close();
+      const failed = await makeFixture(serviceLayer({ run: () => Effect.fail(failure) }));
+      try {
+        assert.deepEqual(await failed.delegate.run(request), failure.result);
+      } finally {
+        await closeFixture(failed);
+      }
     }
-
-    const startup = createBootstrapProcessRuntimeBridge(
-      Layer.effect(
-        ProcessRunner,
-        Effect.fail(new ProcessRunnerStartupError({ message: 'driver acquisition failed' })),
-      ),
-    );
-    assert.deepEqual(await startup.run(request), {
-      ok: false,
-      err: 'driver acquisition failed',
-    });
-    await startup.close();
   });
 
   test('application interruption maps to canonical cancellation without becoming a tag', async () => {
-    const bridge = createBootstrapProcessRuntimeBridge(
-      serviceLayer({ run: () => Effect.interrupt }),
-    );
-    assert.deepEqual(await bridge.run(request), cancelled);
-    await bridge.close();
+    const fixture = await makeFixture(serviceLayer({ run: () => Effect.interrupt }));
+    try {
+      assert.deepEqual(await fixture.delegate.run(request), cancelled);
+    } finally {
+      await closeFixture(fixture);
+    }
   });
 
   test('a pre-aborted request publishes cancellation immediately and removes its listener', async () => {
     const controller = new AbortController();
     const { signal, metrics } = trackedSignal(controller);
     controller.abort();
-    const bridge = createBootstrapProcessRuntimeBridge();
+    const fixture = await makeFixture();
 
-    const startedAt = performance.now();
-    assert.deepEqual(
-      await bridge.run({ argv: [process.execPath, '-e', '0'], signal, timeoutMs: 5_000 }),
-      cancelled,
-    );
-    assert.ok(performance.now() - startedAt < scaleMs(100));
-    await bridge.close();
-    assert.deepEqual(metrics, { active: 0, added: 0, removed: 1 });
+    try {
+      const startedAt = performance.now();
+      assert.deepEqual(
+        await fixture.delegate.run({
+          argv: [process.execPath, '-e', '0'],
+          signal,
+          timeoutMs: 5_000,
+        }),
+        cancelled,
+      );
+      assert.ok(performance.now() - startedAt < scaleMs(100));
+      assert.deepEqual(metrics, { active: 0, added: 0, removed: 1 });
+    } finally {
+      await closeFixture(fixture);
+    }
   });
 
-  test('request abort settles publicly before owned TERM/KILL cleanup and reap', async () => {
-    const scratch = mkdtempSync(path.join(tmpdir(), 'fleetdeck-bootstrap-cancel-'));
+  test('request abort settles publicly before root Scope joins TERM/KILL cleanup', async () => {
+    const scratch = mkdtempSync(path.join(tmpdir(), 'fleetdeck-ingress-cancel-'));
     const pidFile = path.join(scratch, 'child.pid');
     const controller = new AbortController();
     const { signal, metrics } = trackedSignal(controller);
-    const bridge = createBootstrapProcessRuntimeBridge();
+    const fixture = await makeFixture();
     let pid: number | null = null;
 
     try {
       let publicDeliveries = 0;
-      const running = bridge
+      const running = fixture.delegate
         .run({
           argv: [process.execPath, PROCESS_FIXTURE, 'term-resistant', pidFile],
           signal,
@@ -279,7 +336,7 @@ describe('BootstrapProcessRuntimeBridge', () => {
       pid = await waitUntil(() => readPid(pidFile), {
         timeoutMs: 2_000,
         intervalMs: 10,
-        label: 'bootstrap cancellation child pid',
+        label: 'ingress cancellation child pid',
       });
 
       const abortedAt = performance.now();
@@ -291,13 +348,14 @@ describe('BootstrapProcessRuntimeBridge', () => {
         `cancellation took ${String(publicLatencyMs)}ms to publish`,
       );
 
-      let closed = false;
+      await closeIngress(fixture);
+      let scopeClosed = false;
       const closeStartedAt = performance.now();
-      const closing = bridge.close().then(() => {
-        closed = true;
+      const closing = closeRoot(fixture).then(() => {
+        scopeClosed = true;
       });
       await Bun.sleep(scaleMs(100));
-      assert.equal(closed, false);
+      assert.equal(scopeClosed, false);
       assert.equal(pidAlive(pid), true);
 
       await closing;
@@ -306,13 +364,13 @@ describe('BootstrapProcessRuntimeBridge', () => {
       assert.equal(publicDeliveries, 1);
       assert.deepEqual(metrics, { active: 0, added: 1, removed: 1 });
     } finally {
-      await bridge.close();
+      await closeFixture(fixture);
       forceKill(pid);
       rmSync(scratch, { recursive: true, force: true });
     }
   });
 
-  test('bounded requests use the same runtime and retain their distinct result contract', async () => {
+  test('bounded requests use the same ingress and retain their distinct result contract', async () => {
     const expected: BoundedProcessResult = {
       code: 7,
       stdout: Buffer.from('partial'),
@@ -320,49 +378,59 @@ describe('BootstrapProcessRuntimeBridge', () => {
       truncated: true,
       timedOut: false,
     };
-    const bridge = createBootstrapProcessRuntimeBridge(
+    const fixture = await makeFixture(
       serviceLayer({
         run: () => Effect.succeed({ ok: true, out: 'unused' }),
         runBounded: () => Effect.succeed(expected),
       }),
     );
 
-    assert.deepEqual(await bridge.runBounded(boundedRequest), expected);
-    bridge.quiesce();
-    assert.deepEqual(await bridge.runBounded(boundedRequest), boundedCancelled);
-    await bridge.close();
+    try {
+      assert.deepEqual(await fixture.delegate.runBounded(boundedRequest), expected);
+      fixture.ingress.quiesce();
+      assert.deepEqual(await fixture.delegate.runBounded(boundedRequest), boundedCancelled);
+    } finally {
+      await closeFixture(fixture);
+    }
 
-    const unavailable = createBootstrapProcessRuntimeBridge(
+    const unavailable = await makeFixture(
       serviceLayer({
         run: () => Effect.succeed({ ok: true, out: 'unused' }),
         runBounded: () =>
           Effect.fail(new ProcessRunnerUnavailableError({ message: 'bounded runner unavailable' })),
       }),
     );
-    assert.deepEqual(await unavailable.runBounded(boundedRequest), {
-      code: null,
-      stdout: Buffer.alloc(0),
-      stderr: 'bounded runner unavailable',
-      truncated: false,
-      timedOut: false,
-    });
-    await unavailable.close();
+    try {
+      assert.deepEqual(await unavailable.delegate.runBounded(boundedRequest), {
+        code: null,
+        stdout: Buffer.alloc(0),
+        stderr: 'bounded runner unavailable',
+        truncated: false,
+        timedOut: false,
+      });
+    } finally {
+      await closeFixture(unavailable);
+    }
   });
 
   test('defects reject with their original identity instead of becoming process failures', async () => {
     const defect = new Error('runner invariant broke');
     const controller = new AbortController();
     const { signal, metrics } = trackedSignal(controller);
-    const bridge = createBootstrapProcessRuntimeBridge(
-      serviceLayer({ run: () => Effect.die(defect) }),
-    );
+    const fixture = await makeFixture(serviceLayer({ run: () => Effect.die(defect) }));
 
-    await assert.rejects(bridge.run({ ...request, signal }), (error: unknown) => error === defect);
-    await bridge.close();
-    assert.equal(metrics.active, 0);
+    try {
+      await assert.rejects(
+        fixture.delegate.run({ ...request, signal }),
+        (error: unknown) => error === defect,
+      );
+      assert.equal(metrics.active, 0);
+    } finally {
+      await closeFixture(fixture);
+    }
   });
 
-  test('quiesce interrupts and joins admitted work before Layer release', async () => {
+  test('quiesce refuses and close interrupts admitted work before Layer release', async () => {
     let startedResolve: () => void = () => undefined;
     const started = new Promise<void>((resolve) => {
       startedResolve = resolve;
@@ -391,25 +459,32 @@ describe('BootstrapProcessRuntimeBridge', () => {
         }),
       ),
     );
-    const bridge = createBootstrapProcessRuntimeBridge(layer);
+    const fixture = await makeFixture(layer);
 
-    const running = bridge.run(request);
-    await started;
-    bridge.quiesce();
-    assert.deepEqual(await bridge.run(request), cancelled);
+    try {
+      const running = fixture.delegate.run(request);
+      await started;
+      fixture.ingress.quiesce();
+      assert.deepEqual(await fixture.delegate.run(request), cancelled);
 
-    let closed = false;
-    const closing = bridge.close().then(() => {
-      closed = true;
-    });
-    await Bun.sleep(20);
-    assert.equal(cleanupStarted, 1);
-    assert.equal(closed, false);
-    assert.equal(released, 0);
+      let closed = false;
+      const closing = fixture.ingress.close().then(() => {
+        closed = true;
+      });
+      await Bun.sleep(20);
+      assert.equal(cleanupStarted, 1);
+      assert.equal(closed, false);
+      assert.equal(released, 0);
 
-    cleanupResolve();
-    assert.deepEqual(await running, cancelled);
-    await closing;
-    assert.equal(released, 1);
+      cleanupResolve();
+      assert.deepEqual(await running, cancelled);
+      await closing;
+      assert.equal(released, 0);
+      await closeRoot(fixture);
+      assert.equal(released, 1);
+    } finally {
+      cleanupResolve();
+      await closeFixture(fixture);
+    }
   });
 });

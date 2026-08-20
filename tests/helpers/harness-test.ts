@@ -20,7 +20,7 @@
 
 import process from 'node:process';
 import type { TestContext } from 'node:test';
-import { closeTestProcessRuntime } from './process-runtime-test.ts';
+import { closeTestProcessIngress } from './ingress-process-facade-test.ts';
 
 export type { TestContext };
 
@@ -246,15 +246,15 @@ if (process.versions.bun) {
 }
 
 // Direct source tests call domain modules without booting fleetd. Install the
-// same owned P3 bridge once per test process. node:test isolates files in
+// same root-owned P4 ingress facade once per test process. node:test isolates files in
 // workers, so its global hook owns that worker's runtime. Bun shares this module
 // instance across files but scopes afterAll to whichever file imported it first;
 // closing there would unbind later files. Its process-level beforeExit event is
 // therefore the only suite-wide owner and runs once the last file is idle.
 if (process.versions.bun) {
-  process.once('beforeExit', () => closeTestProcessRuntime());
+  process.once('beforeExit', () => closeTestProcessIngress());
 } else {
-  after(closeTestProcessRuntime);
+  after(closeTestProcessIngress);
 }
 
 export { test as default, test, after, before, beforeEach, afterEach, describe };

@@ -5,6 +5,7 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { ChildProcess } from 'node:child_process';
+import { DAEMON_SHUTDOWN_TIMEOUT_MS } from '../src/daemon/app/root-program.ts';
 import { openDb } from '../src/daemon/db.ts';
 import { decodeMessage } from '../src/daemon/mdns.ts';
 import { startDaemon, type DaemonHandle } from './helpers/daemon.ts';
@@ -193,8 +194,8 @@ test('actual fleetd SIGTERM drains a held hook, closes storage/listener, and rel
   assert.deepEqual(response.json, {});
   assert.deepEqual(result, { code: 0, signal: null }, daemon.stderr || daemon.stdout);
   assert.ok(
-    shutdownMs < 1_000,
-    `clean shutdown (${shutdownMs.toFixed(1)}ms) must beat the existing 1s watchdog`,
+    shutdownMs < DAEMON_SHUTDOWN_TIMEOUT_MS,
+    `forced transport shutdown (${shutdownMs.toFixed(1)}ms) must beat the ${DAEMON_SHUTDOWN_TIMEOUT_MS}ms absolute root deadline`,
   );
   assert.equal(existsSync(pidFile), false, 'the exact owned pidfile is removed last');
   assert.equal(hasMdnsPacket(mdnsRecord, 0), true, 'mDNS emitted its TTL-0 goodbye');

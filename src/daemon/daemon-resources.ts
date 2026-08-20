@@ -16,11 +16,29 @@ export interface CoreLifecycleOwner extends CloseOwner {
 
 export interface HttpLifecycleOwner extends CloseOwner {
   quiesce: () => MaybePromise<unknown>;
+  /** P4 starts this once during quiescing, but joins it only in closing-http. */
+  beginGracefulStop?: () => Promise<void>;
+  /** Synchronous invocation; its returned completion retains native stop failures. */
+  forceStop?: () => Promise<void>;
   releaseHolds: () => MaybePromise<unknown>;
+  /** Join route, terminal and client ownership while the listener remains owned. */
+  closeClients?: () => Promise<void>;
+  /** Callback-safe escalation for application clients; never retires native WS. */
+  forceClients?: () => void;
 }
 
 export interface ProcessRuntimeOwner extends CloseOwner {
   quiesce: () => MaybePromise<unknown>;
+  /** Callback-safe interruption request used by the coordinator force latch. */
+  interrupt?: () => void;
+  /** Join every admitted Effect before core/runtime/store retirement. */
+  join?: () => MaybePromise<unknown>;
+}
+
+/** Root-owned ProcessRunner driver control, structurally independent of Effect. */
+export interface ProcessDriverLifecycleOwner extends CloseOwner {
+  /** Callback-safe immediate escalation for every active child/process group. */
+  force: () => void;
 }
 
 export interface NamedCloseOwner {
@@ -33,12 +51,18 @@ export interface NamedProcessRuntimeOwner {
   owner: ProcessRuntimeOwner;
 }
 
+export interface NamedProcessDriverLifecycleOwner {
+  name: string;
+  owner: ProcessDriverLifecycleOwner;
+}
+
 export interface DaemonResourcesOptions {
   http?: HttpLifecycleOwner;
   core?: CoreLifecycleOwner;
   producers?: NamedCloseOwner[];
   discovery?: NamedCloseOwner[];
   processRuntime?: NamedProcessRuntimeOwner;
+  processDriver?: NamedProcessDriverLifecycleOwner;
   store?: NamedCloseOwner;
   process?: NamedCloseOwner;
   onCloseError?: (name: string, error: unknown) => void;
@@ -47,6 +71,23 @@ export interface DaemonResourcesOptions {
 export interface DaemonResourceCloseError {
   name: string;
   error: unknown;
+}
+
+/**
+ * Sealed, dependency-free ownership view consumed by the app lifecycle adapter.
+ * Keeping this type in the domain module preserves the directional boundary:
+ * daemon resources know nothing about Effect or LifecycleCoordinator.
+ */
+export interface DaemonResourceLifecycleSnapshot {
+  readonly http: HttpLifecycleOwner | null;
+  readonly core: CoreLifecycleOwner | null;
+  readonly producers: readonly NamedCloseOwner[];
+  readonly discovery: readonly NamedCloseOwner[];
+  readonly processRuntime: NamedProcessRuntimeOwner | null;
+  readonly processDriver: NamedProcessDriverLifecycleOwner | null;
+  readonly store: NamedCloseOwner | null;
+  readonly process: NamedCloseOwner | null;
+  readonly retainFailure: (name: string, error: unknown) => void;
 }
 
 /**
@@ -65,11 +106,13 @@ export class DaemonResources {
   private readonly producers: NamedCloseOwner[] = [];
   private readonly discovery: NamedCloseOwner[] = [];
   private processRuntime: NamedProcessRuntimeOwner | null = null;
+  private processDriver: NamedProcessDriverLifecycleOwner | null = null;
   private store: NamedCloseOwner | null = null;
   private process: NamedCloseOwner | null = null;
   private readonly onCloseError: (name: string, error: unknown) => void;
   private readonly failures: DaemonResourceCloseError[] = [];
   private closePromise: Promise<void> | null = null;
+  private lifecycleSnapshot: DaemonResourceLifecycleSnapshot | null = null;
 
   constructor(options: DaemonResourcesOptions = {}) {
     this.http = options.http ?? null;
@@ -77,6 +120,7 @@ export class DaemonResources {
     this.producers.push(...(options.producers ?? []));
     this.discovery.push(...(options.discovery ?? []));
     this.processRuntime = options.processRuntime ?? null;
+    this.processDriver = options.processDriver ?? null;
     this.store = options.store ?? null;
     this.process = options.process ?? null;
     this.onCloseError =
@@ -111,6 +155,11 @@ export class DaemonResources {
     this.processRuntime = { name, owner };
   }
 
+  setProcessDriver(name: string, owner: ProcessDriverLifecycleOwner): void {
+    this.assertOpen();
+    this.processDriver = { name, owner };
+  }
+
   setStore(name: string, owner: CloseOwner): void {
     this.assertOpen();
     this.store = { name, owner };
@@ -125,6 +174,27 @@ export class DaemonResources {
     return this.failures;
   }
 
+  /** Seal acquisition and expose an app-agnostic ownership snapshot exactly once. */
+  sealLifecycleOwnership(): DaemonResourceLifecycleSnapshot {
+    if (this.lifecycleSnapshot) return this.lifecycleSnapshot;
+    if (this.closePromise) throw new Error('daemon resources are closing');
+
+    this.lifecycleSnapshot = {
+      http: this.http,
+      core: this.core,
+      producers: [...this.producers],
+      discovery: [...this.discovery],
+      processRuntime: this.processRuntime,
+      processDriver: this.processDriver,
+      store: this.store,
+      process: this.process,
+      retainFailure: (name, error) => {
+        this.retainFailure(name, error);
+      },
+    };
+    return this.lifecycleSnapshot;
+  }
+
   close(): Promise<void> {
     // Publish the shared Promise before invoking any owner callback. A lifecycle
     // callback is allowed to observe/re-enter aggregate shutdown, and must see
@@ -134,7 +204,18 @@ export class DaemonResources {
   }
 
   private assertOpen(): void {
-    if (this.closePromise) throw new Error('daemon resources are closing');
+    if (this.closePromise || this.lifecycleSnapshot) {
+      throw new Error('daemon resources are closing or lifecycle ownership is sealed');
+    }
+  }
+
+  private retainFailure(name: string, error: unknown): void {
+    this.failures.push({ name, error });
+    try {
+      this.onCloseError(name, error);
+    } catch {
+      /* diagnostics cannot interrupt cleanup */
+    }
   }
 
   private async attempt(
@@ -146,12 +227,7 @@ export class DaemonResources {
       await action();
       return true;
     } catch (error) {
-      this.failures.push({ name, error });
-      try {
-        this.onCloseError(name, error);
-      } catch {
-        /* diagnostics cannot interrupt cleanup */
-      }
+      this.retainFailure(name, error);
       return false;
     }
   }
@@ -191,9 +267,11 @@ export class DaemonResources {
     storeSafe = (await this.attempt('http.releaseHolds', this.http?.releaseHolds)) && storeSafe;
     storeSafe = (await this.attempt('http.close', this.http?.close)) && storeSafe;
 
-    // Core close joins retention/question maintenance. Only now can the
-    // pre-root ManagedRuntime be disposed: every Promise caller has returned,
-    // and its ProcessRunner Layer finalizer joins any remaining child cleanup.
+    // Core close joins retention/question maintenance. Only now can root
+    // ingress be closed and unbound: every Promise caller has returned, and
+    // its tracked Effects are interrupted and joined before store retirement.
+    // The shared ProcessRunner driver closes next; its Layer finalizer observes
+    // this same idempotent join as a fallback rather than starting new cleanup.
     storeSafe = (await this.attempt('core.close', this.core?.close)) && storeSafe;
     if (this.processRuntime) {
       storeSafe =
@@ -201,6 +279,10 @@ export class DaemonResources {
           `${this.processRuntime.name}.close`,
           this.processRuntime.owner.close,
         )) && storeSafe;
+    }
+    if (this.processDriver) {
+      storeSafe =
+        (await this.attempt(this.processDriver.name, this.processDriver.owner.close)) && storeSafe;
     }
 
     // Only after every store user is gone may SQLite close; pid ownership is

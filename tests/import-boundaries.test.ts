@@ -34,9 +34,11 @@ const BOARD = path.join(REPO, 'board');
 const BOARD_SRC = path.join(REPO, 'board', 'src');
 const CONTRACTS = path.join(REPO, 'contracts');
 const APP = path.join(DAEMON, 'app');
+const ENTRYPOINT = path.join(DAEMON, 'fleetd.ts');
 const LIVE_LAYER = path.join(APP, 'live-layer.ts');
 const BOOTSTRAP_PROCESS_RUNTIME = path.join(APP, 'bootstrap-process-runtime.ts');
 const PLATFORM = path.join(DAEMON, 'platform');
+const INGRESS_SUPERVISOR_LIVE = path.join(PLATFORM, 'bun', 'ingress-supervisor-live.ts');
 const UNSTABLE_IMPORTS_REGISTER = path.join(
   REPO,
   'docs',
@@ -46,6 +48,16 @@ const UNSTABLE_IMPORTS_REGISTER = path.join(
   'unstable-imports.md',
 );
 const APPROVED_EFFECT_RC = '4.0.0-rc.110';
+const BUN_RUNTIME_MODULE = '@effect/platform-bun/BunRuntime';
+
+type DaemonRuntimePolicy = 'p3-bootstrap' | 'p4-root';
+
+// P4.4 is an atomic cutover: the production diff that deletes the bootstrap
+// bridge flips this one return value in the same change. Both complete policies
+// are implemented below, so no intermediate two-runtime topology can be green.
+function expectedDaemonRuntimePolicy(): DaemonRuntimePolicy {
+  return 'p4-root';
+}
 
 const V3_PACKAGES = ['@effect/platform', '@effect/sql', '@effect/experimental'] as const;
 const NATIVE_EFFECT_PACKAGES = ['@effect/platform-bun', '@effect/sql-sqlite-bun'] as const;
@@ -265,6 +277,7 @@ function isDomainSource(file: string): boolean {
 // A platform module may import its native dependencies to implement a service;
 // selection/wiring belongs only to the production Live Layer.
 function selectsNativeImplementation(fromFile: string, spec: string): boolean {
+  if (fromFile === ENTRYPOINT && spec === BUN_RUNTIME_MODULE) return false;
   if (fromFile === LIVE_LAYER || isUnder(fromFile, PLATFORM)) return false;
   const r = resolveSpec(fromFile, spec);
   if (r.kind === 'bare') return isNativeEffectPackage(r.bare);
@@ -300,6 +313,156 @@ function moduleSpecifierText(
 ): string | undefined {
   const specifier = node.moduleSpecifier;
   return specifier && ts.isStringLiteralLike(specifier) ? specifier.text : undefined;
+}
+
+interface LocatedRuntimeCall {
+  readonly file: string;
+  readonly line: number;
+  readonly api: string;
+  readonly binding: string;
+}
+
+function effectRunWithCallsInSource(file: string, source: string): LocatedRuntimeCall[] {
+  const sourceFile = ts.createSourceFile(
+    file,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+  const effectNamespaces = new Set<string>();
+  const effectRootNamespaces = new Set<string>();
+  const namedRuns = new Map<string, string>();
+
+  for (const statement of sourceFile.statements) {
+    if (!ts.isImportDeclaration(statement)) continue;
+    const spec = moduleSpecifierText(statement);
+    const clause = statement.importClause;
+    const bindings = clause?.namedBindings;
+    if (!spec || !clause) continue;
+
+    if (spec === 'effect/Effect') {
+      if (clause.name) effectNamespaces.add(clause.name.text);
+      if (bindings && ts.isNamespaceImport(bindings)) effectNamespaces.add(bindings.name.text);
+      if (bindings && ts.isNamedImports(bindings)) {
+        for (const element of bindings.elements) {
+          const imported = (element.propertyName ?? element.name).text;
+          if (/^run[A-Z][A-Za-z0-9]*With$/.test(imported)) {
+            namedRuns.set(element.name.text, imported);
+          }
+        }
+      }
+    } else if (spec === 'effect' && bindings) {
+      if (ts.isNamespaceImport(bindings)) {
+        effectRootNamespaces.add(bindings.name.text);
+      } else {
+        for (const element of bindings.elements) {
+          const imported = (element.propertyName ?? element.name).text;
+          if (imported === 'Effect') effectNamespaces.add(element.name.text);
+        }
+      }
+    }
+  }
+
+  const calls: LocatedRuntimeCall[] = [];
+  function record(node: ts.Node, api: string, binding: string): void {
+    calls.push({
+      file: path.relative(REPO, file),
+      line: sourceLine(sourceFile, node),
+      api,
+      binding,
+    });
+  }
+  function inspect(node: ts.Node): void {
+    if (ts.isCallExpression(node)) {
+      const expression = node.expression;
+      if (ts.isIdentifier(expression)) {
+        const api = namedRuns.get(expression.text);
+        if (api) record(expression, `Effect.${api}`, expression.text);
+      } else if (
+        ts.isPropertyAccessExpression(expression) &&
+        /^run[A-Z][A-Za-z0-9]*With$/.test(expression.name.text)
+      ) {
+        if (
+          ts.isIdentifier(expression.expression) &&
+          effectNamespaces.has(expression.expression.text)
+        ) {
+          record(expression, `Effect.${expression.name.text}`, expression.expression.text);
+        } else if (
+          ts.isPropertyAccessExpression(expression.expression) &&
+          ts.isIdentifier(expression.expression.expression) &&
+          effectRootNamespaces.has(expression.expression.expression.text) &&
+          expression.expression.name.text === 'Effect'
+        ) {
+          record(expression, `Effect.${expression.name.text}`, expression.expression.getText());
+        }
+      }
+    }
+    ts.forEachChild(node, inspect);
+  }
+  inspect(sourceFile);
+  return calls;
+}
+
+function bunRuntimeRunMainCallsInSource(file: string, source: string): LocatedRuntimeCall[] {
+  const sourceFile = ts.createSourceFile(
+    file,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+  const namespaces = new Set<string>();
+  const namedRunMain = new Set<string>();
+
+  for (const statement of sourceFile.statements) {
+    if (!ts.isImportDeclaration(statement)) continue;
+    if (moduleSpecifierText(statement) !== BUN_RUNTIME_MODULE) continue;
+    const clause = statement.importClause;
+    const bindings = clause?.namedBindings;
+    if (bindings && ts.isNamespaceImport(bindings)) namespaces.add(bindings.name.text);
+    if (bindings && ts.isNamedImports(bindings)) {
+      for (const element of bindings.elements) {
+        if ((element.propertyName ?? element.name).text === 'runMain') {
+          namedRunMain.add(element.name.text);
+        }
+      }
+    }
+  }
+
+  const calls: LocatedRuntimeCall[] = [];
+  function record(node: ts.Node, binding: string): void {
+    calls.push({
+      file: path.relative(REPO, file),
+      line: sourceLine(sourceFile, node),
+      api: 'BunRuntime.runMain',
+      binding,
+    });
+  }
+  function inspect(node: ts.Node): void {
+    if (ts.isCallExpression(node)) {
+      const expression = node.expression;
+      if (ts.isIdentifier(expression) && namedRunMain.has(expression.text)) {
+        record(expression, expression.text);
+      } else if (
+        ts.isPropertyAccessExpression(expression) &&
+        expression.name.text === 'runMain' &&
+        ts.isIdentifier(expression.expression) &&
+        namespaces.has(expression.expression.text)
+      ) {
+        record(expression, expression.expression.text);
+      }
+    }
+    ts.forEachChild(node, inspect);
+  }
+  inspect(sourceFile);
+  return calls;
+}
+
+function formatRuntimeCalls(calls: readonly LocatedRuntimeCall[]): string {
+  return calls
+    .map((call) => `${call.file}:${call.line} → ${call.api} via ${call.binding}`)
+    .join('\n');
 }
 
 type NamespaceBinding = { module: EffectNamespace; local: string };
@@ -637,7 +800,7 @@ test('boundary: native implementations are selected only in app/live-layer.ts', 
   );
 });
 
-test('policy: P3 has exactly one pre-root ManagedRuntime in its bootstrap bridge', () => {
+function assertP3BootstrapRuntimePolicy(): void {
   const daemonSources = walkSources(DAEMON);
   const importViolations = scan(
     daemonSources,
@@ -680,6 +843,93 @@ test('policy: P3 has exactly one pre-root ManagedRuntime in its bootstrap bridge
     1,
     'the P3 bootstrap bridge must construct exactly one lazy ProcessRunner ManagedRuntime',
   );
+}
+
+function assertP4RootRuntimePolicy(): void {
+  const daemonSources = walkSources(DAEMON);
+  assert.equal(
+    fs.existsSync(BOOTSTRAP_PROCESS_RUNTIME),
+    false,
+    'P4 must delete the pre-root bootstrap-process-runtime bridge in the same cutover',
+  );
+
+  const managedRuntimeImports = scan(
+    daemonSources,
+    (_file, spec) => spec === 'effect/ManagedRuntime',
+  );
+  assert.deepEqual(
+    managedRuntimeImports,
+    [],
+    `P4 daemon source must contain zero ManagedRuntime imports:\n${managedRuntimeImports.join('\n')}`,
+  );
+
+  const bootstrapImports = scan(daemonSources, (file, spec) => {
+    const resolved = resolveSpec(file, spec);
+    return resolved.kind === 'rel' && resolved.abs === BOOTSTRAP_PROCESS_RUNTIME;
+  });
+  assert.deepEqual(
+    bootstrapImports,
+    [],
+    `P4 daemon source must contain zero bootstrap-runtime imports:\n${bootstrapImports.join('\n')}`,
+  );
+
+  const bunRuntimeImports = scan(
+    daemonSources,
+    (file, spec) => spec === BUN_RUNTIME_MODULE && file !== ENTRYPOINT,
+  );
+  assert.deepEqual(
+    bunRuntimeImports,
+    [],
+    `only fleetd.ts may import the Bun root runner:\n${bunRuntimeImports.join('\n')}`,
+  );
+  const entrypointSource = fs.readFileSync(ENTRYPOINT, 'utf8');
+  assert.deepEqual(
+    specifiersOf(ENTRYPOINT, entrypointSource).filter((spec) => spec === BUN_RUNTIME_MODULE),
+    [BUN_RUNTIME_MODULE],
+    'fleetd.ts must import @effect/platform-bun/BunRuntime exactly once',
+  );
+
+  const runMainCalls = daemonSources.flatMap((file) =>
+    bunRuntimeRunMainCallsInSource(file, fs.readFileSync(file, 'utf8')),
+  );
+  assert.equal(
+    runMainCalls.length,
+    1,
+    `P4 requires exactly one BunRuntime.runMain in daemon source:\n${formatRuntimeCalls(runMainCalls)}`,
+  );
+  const rootCall = runMainCalls[0];
+  assert.ok(rootCall);
+  assert.equal(rootCall.file, path.relative(REPO, ENTRYPOINT));
+  assert.equal(
+    rootCall.binding,
+    'BunRuntime',
+    'fleetd.ts must spell the root namespace BunRuntime',
+  );
+
+  const runWithCalls = daemonSources.flatMap((file) =>
+    effectRunWithCallsInSource(file, fs.readFileSync(file, 'utf8')),
+  );
+  const wrongOwners = runWithCalls.filter(
+    (call) => call.file !== path.relative(REPO, INGRESS_SUPERVISOR_LIVE),
+  );
+  assert.deepEqual(
+    wrongOwners,
+    [],
+    `Effect run*With bridges belong only to the ingress supervisor:\n${formatRuntimeCalls(wrongOwners)}`,
+  );
+  const ingressApis = new Set(runWithCalls.map((call) => call.api));
+  for (const api of ['Effect.runForkWith', 'Effect.runCallbackWith', 'Effect.runPromiseWith']) {
+    assert.equal(ingressApis.has(api), true, `the ingress supervisor must own ${api}`);
+  }
+}
+
+test('policy: daemon has the expected single-runtime topology', () => {
+  const policy = expectedDaemonRuntimePolicy();
+  if (policy === 'p3-bootstrap') {
+    assertP3BootstrapRuntimePolicy();
+  } else {
+    assertP4RootRuntimePolicy();
+  }
 });
 
 test('policy: source rejects Effect v3 package names and APIs', () => {
@@ -793,6 +1043,7 @@ test('boundary: the predicates catch violations and clear the sanctioned edges',
   assert.equal(domainImportForbidden(domainFile, './db.ts'), false);
   assert.equal(selectsNativeImplementation(appFile, '../platform/bun/foo.ts'), true);
   assert.equal(selectsNativeImplementation(appFile, '@effect/platform-bun/BunRuntime'), true);
+  assert.equal(selectsNativeImplementation(ENTRYPOINT, BUN_RUNTIME_MODULE), false);
   assert.equal(selectsNativeImplementation(LIVE_LAYER, '../platform/bun/foo.ts'), false);
   assert.equal(selectsNativeImplementation(platformFile, '@effect/platform-bun/BunRuntime'), false);
 
@@ -847,5 +1098,32 @@ test('boundary: the predicates catch violations and clear the sanctioned edges',
       'import { Effect as E, Context as C } from "effect"; E.async(() => {}); C.Tag("Bad");',
     ).map((violation) => violation.replace(/^.* → /, '')),
     ['Context.Tag', 'Effect.async'],
+  );
+
+  // The P4 single-runtime scanner is binding-aware: aliases cannot evade it,
+  // while prose and unrelated properties remain clear.
+  assert.deepEqual(
+    effectRunWithCallsInSource(
+      syntheticPolicyFile,
+      [
+        'import * as Fx from "effect/Effect";',
+        'import { runPromiseWith as promiseWith } from "effect/Effect";',
+        'Fx.runForkWith(context)(program);',
+        'promiseWith(context)(program);',
+        'other.runCallbackWith(context);',
+      ].join('\n'),
+    ).map((call) => call.api),
+    ['Effect.runForkWith', 'Effect.runPromiseWith'],
+  );
+  assert.deepEqual(
+    bunRuntimeRunMainCallsInSource(
+      syntheticPolicyFile,
+      [
+        `import * as RootRunner from "${BUN_RUNTIME_MODULE}";`,
+        'RootRunner.runMain(program);',
+        'other.runMain(program);',
+      ].join('\n'),
+    ).map(({ api, binding }) => ({ api, binding })),
+    [{ api: 'BunRuntime.runMain', binding: 'RootRunner' }],
   );
 });

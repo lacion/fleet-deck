@@ -74,11 +74,14 @@ process.on('SIGTERM', () => {
 note({ type: 'start' });
 if (inheritPipes) {
   // Keep the direct child's stdout/stderr pipe write ends open after that child
-  // is SIGKILLed. Node emits ChildProcess `exit` for the direct child but holds
-  // `close` until this descendant releases the inherited descriptors.
-  const pipeHolder = spawn(process.execPath, ['-e', 'setInterval(() => {}, 60_000)'], {
-    stdio: ['ignore', 'inherit', 'inherit'],
-  });
+  // exits. The descendant ignores TERM too: bridge close must own the POSIX
+  // control process group, escalate the whole tree, and prove it is gone rather
+  // than settling on the direct ChildProcess `exit` event.
+  const pipeHolder = spawn(
+    process.execPath,
+    ['-e', "process.on('SIGTERM', () => {}); setInterval(() => {}, 60_000)"],
+    { stdio: ['ignore', 'inherit', 'inherit'] },
+  );
   note({ type: 'pipe-holder', pid: pipeHolder.pid });
 }
 process.stdout.write('%begin 99 0 0\n%end 99 0 0\n');

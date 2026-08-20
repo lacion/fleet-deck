@@ -185,7 +185,68 @@ test('termbridge close closes active viewers, TERM-to-KILL reaps the child, and 
   );
 });
 
-test('termbridge bounds its post-KILL join when a descendant inherits the control pipes', async (t) => {
+test('termbridge force synchronously bypasses a TERM-resistant close grace and reaps the child', async (t) => {
+  const scratch = mkdtempSync(path.join(tmpdir(), 'fleetdeck-termbridge-force-'));
+  const record = path.join(scratch, 'fixture.jsonl');
+  const ownsProcessGroup = process.platform !== 'win32';
+  fixtureEnvironment(t, record, {
+    FLEETDECK_TEST_TERM_LIFECYCLE_IGNORE_SIGTERM: '1',
+    ...(ownsProcessGroup ? { FLEETDECK_TEST_TERM_LIFECYCLE_INHERIT_PIPES: '1' } : {}),
+  });
+  const bridge = createTermBridge({
+    port: 22006,
+    resolveSpawn: () => liveRow(22006),
+    // If force failed to wake the ordinary grace, this test would take ten
+    // seconds (TERM grace plus post-KILL join) rather than fitting the root's
+    // 250 ms force reserve.
+    closeGraceMs: 5_000,
+    forceJoinGraceMs: 100,
+  });
+  t.after(() => bridge.force());
+  t.after(() => rmSync(scratch, { recursive: true, force: true }));
+
+  await bridge.openViewer({ spawn_id: 'force', cols: 80, rows: 24, send: () => {} });
+  const pid = await waitUntil(
+    () => records(record).find((entry) => entry.type === 'start')?.pid,
+    'force fixture pid',
+  );
+  const descendantPid = ownsProcessGroup
+    ? await waitUntil(
+        () => records(record).find((entry) => entry.type === 'pipe-holder')?.pid,
+        'force fixture descendant pid',
+      )
+    : null;
+
+  const closing = bridge.close();
+  await waitUntil(
+    () => records(record).some((entry) => entry.type === 'signal' && entry.signal === 'SIGTERM'),
+    'ordinary TERM attempt',
+  );
+
+  const startedAt = performance.now();
+  const forced = bridge.force();
+  const callbackElapsedMs = performance.now() - startedAt;
+  assert.strictEqual(forced, closing, 'force must retain the one memoized close join');
+  assert.ok(callbackElapsedMs < 25, `force callback blocked for ${callbackElapsedMs}ms`);
+  await forced;
+  const elapsedMs = performance.now() - startedAt;
+
+  assert.equal(alive(pid), false, 'force must reap the TERM-resistant control child');
+  if (descendantPid !== null) {
+    assert.equal(
+      alive(descendantPid),
+      false,
+      'force must synchronously SIGKILL the TERM-resistant control process group',
+    );
+  }
+  assert.ok(elapsedMs < 250, `forced terminal join exceeded the root reserve (${elapsedMs}ms)`);
+});
+
+test('termbridge joins its owned POSIX process group when a descendant inherits the control pipes', async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('POSIX process-group ownership is unavailable on Windows');
+    return;
+  }
   const scratch = mkdtempSync(path.join(tmpdir(), 'fleetdeck-termbridge-inherited-pipe-'));
   const record = path.join(scratch, 'fixture.jsonl');
   fixtureEnvironment(t, record, {
@@ -198,16 +259,6 @@ test('termbridge bounds its post-KILL join when a descendant inherits the contro
     closeGraceMs: 50,
   });
   t.after(() => bridge.close());
-  t.after(() => {
-    for (const entry of records(record)) {
-      if (entry.type !== 'pipe-holder' || !alive(entry.pid)) continue;
-      try {
-        process.kill(entry.pid, 'SIGKILL');
-      } catch {
-        /* already gone */
-      }
-    }
-  });
   t.after(() => rmSync(scratch, { recursive: true, force: true }));
 
   await bridge.openViewer({ spawn_id: 'inherited-pipe', cols: 80, rows: 24, send: () => {} });
@@ -240,10 +291,10 @@ test('termbridge bounds its post-KILL join when a descendant inherits the contro
   assert.equal(alive(directPid), false, 'the direct control child must be gone when close settles');
   assert.equal(
     alive(pipeHolderPid),
-    true,
-    'the pipe-holding descendant proves close did not wait for ChildProcess close',
+    false,
+    'close must not settle until the pipe-holding descendant is gone',
   );
-  assert.ok(Date.now() - startedAt < 1_000, 'post-KILL join must remain bounded');
+  assert.ok(Date.now() - startedAt < 1_000, 'process-group TERM/KILL join must remain bounded');
 });
 
 test('termbridge close rejects a wedged command and waits for its input chain to settle', async (t) => {

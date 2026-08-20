@@ -14,9 +14,11 @@ Each child doc is a **PRD + tech spec** for one slice of the release. PRD = the 
 |---|-----|----------------|------|
 | — | **[README](./README.md)** (this file) | North star, doctrine, the map, sequencing, definition of done | Index |
 | — | **[architecture](./architecture.md)** | The provider seam, canonical events, the strategy object, the DB/runtime seam, migrations — the backbone every pillar rides | Tech spec |
-| F | **[foundations](./foundations.md)** | F1 TypeScript (contracts-first) and F2 Bun single binary | PRD + spec |
+| F | **[foundations](./foundations.md)** | F1 TypeScript/contracts-first and the historical path to F2 Bun-primary runtime; compiled distribution remains optional | PRD + outcome spec |
 | F | **[ts-migration](./ts-migration.md)** | Companion to F1 — the progressive, file-by-file `.mjs`→`.ts` playbook (recipe, order, restructure) | Tech spec |
-| F | **[foundations-hardening](./foundations-hardening.md)** | The Bun-primary spine — Biome, `bun:sqlite`/Kysely, `Bun.serve` + native WebSocket, Zod, Effect v4 — as a phase **after** the TS migration and **before** the pillars. **Supersedes F2** (Bun becomes the runtime, not an optional binary). | PRD + spec |
+| F | **[foundations-hardening](./foundations-hardening.md)** | The Bun-primary spine and its outcome notes — relocation, Biome, migrations, `bun:sqlite`, `Bun.serve` + native WebSocket, and the remaining foundation bets. **Supersedes F2** (Bun becomes the runtime, not an optional binary). | PRD + spec |
+| F | **[effect-feasibility](./effect-feasibility.md)** | The accepted Effect v4-on-Bun architecture decision: exact RC policy, what "full Effect" means, native boundaries, and immutable behavior constraints | Decision record |
+| F | **[effect-migration-plan](./effect-migration-plan.md)** | The executable P0–P14 migration: resource seams, Bun-native process work, root Scope, HTTP/WS, terminal, SQLite, workflows, gates, budgets, rollback, and a copy-paste Codex goal | Program plan |
 | P1 | **[p1-cc-provider](./p1-cc-provider.md)** | Claude Code as a first-class provider — the observe floor, the reference card, and the Layer-4 strategy the drive tier extends | PRD + spec |
 | P1 | **[p1-codex-provider](./p1-codex-provider.md)** | Codex as a first-class *observed* provider — the Codex floor | PRD + spec |
 | P2 | **[p2-harvest-surface](./p2-harvest-surface.md)** | Diff view, per-turn checkpoints, notes → one batched mail | PRD + spec |
@@ -70,8 +72,8 @@ The five rules hold; the scope they cover grows.
 
 | ID | Name | 1.0 commitment | Where the risk is | Cuttable? |
 |----|------|----------------|-------------------|-----------|
-| **F1** | TypeScript, contracts-first | **F1a** contracts module (timeboxed) + **F1b** standing rule: new code TS, convert modules only when a pillar touches them | No `tsc` in repo today; esbuild strips types without checking → CI must add `tsc --noEmit` + runtime boundary validation | F1a no; F1b is a rule |
-| **F2** | Bun single binary + brew | Standalone board server as a compiled binary, *additive* beside Node | Not sqlite (well centralized) — it's `mdns`/dgram, `ws`, tmux control pipes under Bun | **Yes — explicitly** |
+| **F1** | TypeScript, contracts-first | **Landed:** strict TS daemon/board, shared contracts, required `tsc --noEmit`, runtime boundary validation. **Standing rule:** new code stays typed and boundaries stay enforced | Contract/wire skew and runtime input still require fixtures; static types alone are not validation | No |
+| **F2** | Bun-primary runtime + optional binary | **Runtime landed:** daemon, hooks, tests, `bun:sqlite`, `Bun.serve`, native WS. **Remaining:** Effect-owned Bun application and evidence-gated Bun.build/compiled distribution | Lifecycle/process streams, mDNS multicast, generated artifacts, and cross-platform packaging | Runtime no; compiled distribution yes |
 | **P1** | Provider layer — Claude floor + Codex floor | Claude reference card extracted behind the strategy object (no behavior change); Codex Tier A floor card (turn-level + shell telemetry), spawn/kill/worktree, checkpoints, usage burn | Codex hooks are **experimental, opt-in, shell-tool-only** → Tier C file-chips are an honest floor gap (the drive tier, P7, softens it via `turn/diff`) | Codex Tier C floor-gap yes; floors non-negotiable |
 | **P2** | Harvest surface | Base-ref recording, diff renderer, async per-turn checkpoints, notes → one batched mail | Base ref **is not recorded today** — must land first; checkpoints must run off the hook path | Core no |
 | **P3** | Issue/PR spawning | Issue → parallel agents, point-at-PR review, PR-scoped write (GitHub + GitLab) | Prompt-injection chain; forge writes are new surface | Jira/Linear cut; write→read-only if security slips |
@@ -86,17 +88,22 @@ A **cross-cutting tidy** rides P6: consolidate the two overlapping permission co
 
 ## Sequencing to 1.0 (revised)
 
-> **Amendment (2026-08-09):** a **[Foundations-Hardening](./foundations-hardening.md)** phase now sits **between the TS migration and step 1 below** — Bun-primary runtime, Biome, `bun:sqlite`/Kysely, `Bun.serve` + native WebSocket, Zod, Effect v4. It **supersedes F2** (formerly step 7, "additive & cuttable"): Bun is now the runtime, proven behind a go/no-go spike, not an optional binary. The pillar order below is unchanged, but F2's old row and the F1/F2 validation proofs are now propagation debt tracked in [foundations-hardening §8](./foundations-hardening.md#8-doctrine-check--and-the-propagation-debt).
+> **Amendment (2026-08-09):** a **[Foundations-Hardening](./foundations-hardening.md)** phase now sits **between the TS migration and step 1 below**. Bun-primary runtime, TypeScript, relocation, Biome, transactional migrations, `bun:sqlite`, `bun test`, and `Bun.serve` + native WebSocket have landed; Kysely, Hono, and Zod were not prerequisites and did not land as part of that spine. It **supersedes F2** (formerly step 7, "additive & cuttable"): Bun is the runtime, not an optional binary. **2026-08-19 decision:** Fleet Deck will adopt an exact-pinned Effect v4 RC as the daemon application architecture, with selected unstable modules and deliberate Bun-native adapters. See the [decision](./effect-feasibility.md) and executable [P0–P14 migration plan](./effect-migration-plan.md).
 
 The vision's original order (F1 → P1+P4 → P2 → …) fronted a migration with no user-visible value, gated everything on the pillar with the most *external* risk (experimental Codex hooks), and demoted T0.1 completions to fifth after `fleetdeck-future.md` ranked them **first**. The plan of record adopts the review's revised order:
 
+0. **Complete the [Effect v4 + Bun foundation P0–P14](./effect-migration-plan.md)** — exact RC,
+   explicit resource handles, one root Scope/ingress supervisor, Bun-native process work,
+   lifecycle/schedule/HTTP/terminal/store/workflow migration, capability/build gates, and release
+   evidence. The pure domain, board, contracts, and hook floor stay framework-free.
 1. **Base-ref recording** (~1 day — data starts accruing immediately) **+ F1a contracts module** (timeboxed, includes the canonical event vocabulary). *F1a and the P1 intake-normalization are the same task — sequence them as one.* **+ the [P7](./p7-drive-and-observe.md) linchpin proof** — confirm Fleet Deck's existing `http` hooks fire from an SDK-driven `query()`. The whole drive default rests on it, so it's proven first and cheaply, off the critical path.
 2. **P2 harvest** (diff route → renderer → async checkpoints → batched notes) **+ P5 T0.1 completions** in parallel — both pure git/SQLite/UI, zero external risk, felt daily.
 3. **P1 provider floors** (intake normalization + Claude strategy extraction + Codex Tier A floor) **+ P7 `claudeSdk` drive-default** layered on the Claude floor (answerable approvals, interrupt, steer, resume, runner-in-a-pane) **+ P4 Claude usage meter** alongside.
 4. **P3 issue/PR** (land `fd/git-auth` first; GitHub → GitLab; injection-hardened; PR-write allowlist) **+ P4 Codex usage**.
 5. **P5 completion**: privilege model (token classes + spawn caps) + T0.2 daemon-served skill.
 6. **P6**: stream (new event subsystem) → chat composer → permission-ladder consolidation **+ P7 `codexAppServer` drive tier** once Codex's hooks stabilize (its floor already shipped in step 3).
-7. **F2 Bun binary + brew** — explicitly cuttable ("1.0 ships without brew if compat drags").
+7. **Optional Bun compiled binary + brew** — the Bun runtime is already non-cuttable; only the
+   compiled distribution remains cuttable and follows the Effect/Bun build gate.
 8. **Security-review gate** (delta audit of the new surface: forge writes, control API, multi-account env, **the drive-control surface**), then **cut v1.0**.
 
 **Why this order:** it puts the highest-value, lowest-risk work (harvest, completions) first and behind nothing; it proves the P7 linchpin cheaply and up front so the drive default rests on a confirmed fact rather than an assumption; it ships Claude's drive tier early while staging Codex's behind its stabilizing hooks (the floor carries Codex until then); and it restores consistency with `fleetdeck-future.md`.
@@ -116,7 +123,7 @@ Fleet Deck 1.0 is:
 
 — and all of it still a **fail-open, loopback, deterministic-core plugin**, optionally installable as a single **brew binary** for the standalone board.
 
-**Plus the gates the vision omitted** (see [validation-and-gates](./validation-and-gates.md)): per-pillar validation proofs, a numbered/transactional migration story with `PRAGMA user_version`, a named per-pillar test strategy, performance bars for 15 sessions × per-turn checkpoints, an honest platform statement (Codex hooks Windows-disabled; macOS CI advisory), and a security-review delta gate before the cut.
+**Plus the gates the vision omitted** (see [validation-and-gates](./validation-and-gates.md)): per-pillar validation proofs, a numbered/transactional migration story with `PRAGMA user_version`, a named per-pillar test strategy, performance bars for 15 sessions × per-turn checkpoints, an honest platform statement (Codex hooks Windows-disabled; macOS lifecycle/real-tmux CI blocking before the Effect foundation closes), and a security-review delta gate before the cut.
 
 ---
 

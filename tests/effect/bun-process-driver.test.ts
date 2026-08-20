@@ -613,6 +613,53 @@ describe('Bun ProcessDriver compatibility policy', () => {
       rmSync(scratch.dir, { recursive: true, force: true });
     }
   });
+
+  test('forceClose bypasses an in-flight TERM grace and reaps the complete process group', async () => {
+    if (process.platform === 'win32') return;
+    const driver = makeBunProcessDriver();
+    const scratch = scratchPidFile('fleetdeck-bun-process-force-close-');
+    let helperPid: number | null = null;
+    try {
+      const execution = driver.start({
+        argv: fixtureArgv('group-parent', scratch.pidFile),
+        timeoutMs: 10_000,
+        killTree: true,
+      });
+      helperPid = await waitUntil(() => readPid(scratch.pidFile), {
+        timeoutMs: 2_000,
+        intervalMs: 10,
+        label: 'force-close TERM-immune group helper pid',
+      });
+
+      const close = driver.close();
+      assert.deepEqual(await within(execution.decision, 'force-close decision'), CANCELLED_RESULT);
+      await pause(50);
+      const forcedAt = Date.now();
+      driver.forceClose();
+      assert.equal(driver.close(), close, 'force escalation retains the published close join');
+      await within(close, 'forced process-group join', 1_000);
+      const forceElapsed = Date.now() - forcedAt;
+
+      assert.ok(
+        forceElapsed < scaleMs(500),
+        `force join must bypass the one-second TERM grace (${String(forceElapsed)}ms)`,
+      );
+      await waitUntil(() => !pidAlive(helperPid as number), {
+        timeoutMs: 500,
+        intervalMs: 10,
+        label: 'forced TERM-immune group helper reaped',
+      });
+      assert.deepEqual(
+        await settled(driver.start({ argv: fixtureArgv('immediate'), timeoutMs: 2_000 })),
+        CANCELLED_RESULT,
+        'force closes later process admission',
+      );
+    } finally {
+      await driver.close();
+      forceKill(helperPid);
+      rmSync(scratch.dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('Bun ProcessRunnerLive ownership', () => {

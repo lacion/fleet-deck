@@ -5,6 +5,7 @@ import {
   type CloseOwner,
   type CoreLifecycleOwner,
   type HttpLifecycleOwner,
+  type ProcessDriverLifecycleOwner,
   type ProcessRuntimeOwner,
 } from '../src/daemon/daemon-resources.ts';
 
@@ -49,6 +50,17 @@ function processRuntimeOwner(events: string[]): ProcessRuntimeOwner {
     },
     close() {
       events.push('runtime.close');
+    },
+  };
+}
+
+function processDriverOwner(events: string[]): ProcessDriverLifecycleOwner {
+  return {
+    force() {
+      events.push('process-driver.force');
+    },
+    close() {
+      events.push('process-driver.close');
     },
   };
 }
@@ -140,10 +152,11 @@ describe('DaemonResources', () => {
     ]);
   });
 
-  test('process runtime refuses work first and disposes after callers but before SQLite', async () => {
+  test('process runtime and shared driver dispose after callers but before SQLite', async () => {
     const events: string[] = [];
     const resources = new DaemonResources({
       processRuntime: { name: 'runtime', owner: processRuntimeOwner(events) },
+      processDriver: { name: 'process-driver', owner: processDriverOwner(events) },
       http: httpOwner(events),
       core: coreOwner(events),
       producers: [{ name: 'agents', owner: owner(events, 'agents') }],
@@ -164,6 +177,7 @@ describe('DaemonResources', () => {
       'http.close',
       'core.close',
       'runtime.close',
+      'process-driver.close',
       'db',
       'pid',
     ]);

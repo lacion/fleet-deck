@@ -446,6 +446,35 @@ interface CreateHttpOptions {
   startup?: { reconciliationStatus?: () => unknown } | null;
 }
 
+/**
+ * Awaitable bind result for the Effect-owned application root.
+ *
+ * Bun reports bind failures by throwing synchronously from `Bun.serve`. The
+ * legacy node-shaped facade below deliberately replays that same error through
+ * an asynchronous `error` callback, but the new root must not have to recover
+ * structured startup data from callback timing. Keep the original thrown value
+ * and copy its errno fields so startup can map EADDRINUSE to exit 3 without
+ * parsing Bun's human-readable message.
+ */
+export interface HttpBound {
+  readonly _tag: 'Bound';
+  readonly hostname: string;
+  readonly port: number;
+}
+
+export interface HttpBindFailed {
+  readonly _tag: 'BindFailed';
+  readonly reason: 'address-in-use' | 'closed' | 'other';
+  readonly origin: 'bun-serve-throw' | 'lifecycle-guard';
+  readonly legacyDelivery: 'error-callback-microtask';
+  readonly error: unknown;
+  readonly code: string | null;
+  readonly errno: string | number | null;
+  readonly message: string;
+}
+
+export type HttpBindResult = HttpBound | HttpBindFailed;
+
 // A parsed JSON POST body is any value — object, array, scalar, or null. asRecord
 // gives a typed view for the handful of fields http reads defensively WITHOUT
 // asserting object-ness: a non-object body (null / array / scalar) reads every
@@ -691,6 +720,7 @@ export function createHttp(
   interface ActiveResponse {
     request: HttpReqShim;
     response: HttpResShim;
+    drain: Promise<void>;
     promise: Promise<Response>;
     hook: boolean;
     drained: boolean;
@@ -2131,6 +2161,13 @@ export function createHttp(
   // auth/CSRF gate lives in the fetch handler's handleUpgrade, before server.upgrade.
   const snapshotClients = new Set<LiveSocket>();
   const termClients = new Set<LiveSocket>();
+  // Sockets whose application close has begun but whose native close callback
+  // may not have fired yet. They remain transport-owned until stop(false) or
+  // stop(true) settles, and are retained here for the post-stop terminate
+  // backstop. The live sets retain them too until the native callback/stop so
+  // ownedCounts never reports zero while a transport socket is still open;
+  // quiescing, not Set membership, is the admission gate.
+  const closingSockets = new Set<LiveSocket>();
   // createCore is built before the HTTP surface, so the question relay starts
   // fail-closed and receives this live probe now. Hooks cannot arrive until the
   // returned server is listened, making admission -> row creation -> attachHold
@@ -2544,6 +2581,7 @@ export function createHttp(
     const active: ActiveResponse = {
       request: req,
       response: res,
+      drain: drained,
       promise: response,
       hook: url.pathname.startsWith('/hook/'),
       drained: false,
@@ -2627,11 +2665,122 @@ export function createHttp(
   // election exit-3 path — on a microtask, matching node's async 'error' emit
   // ordering (register .on('error'), then call .listen()).
   let bunServer: Server<WsData> | null = null;
+  let boundResult: HttpBound | null = null;
+  let boundPromise: Promise<HttpBindResult> | null = null;
+  let gracefulStartBarrier: Promise<void> = Promise.resolve();
+  let resolveHoldsReleased: () => void = () => undefined;
+  const holdsReleased = new Promise<void>((resolve) => {
+    resolveHoldsReleased = resolve;
+  });
+  let holdsReleaseStarted = false;
+  let gracefulStopPromise: Promise<void> | null = null;
+  let forceStopPromise: Promise<void> | null = null;
+  let closeClientsPromise: Promise<void> | null = null;
   let closeHttp!: () => Promise<void>;
   // The shim only ever emits 'error', and only once — Bun.serve's sole failure mode
   // here is a synchronous bind throw (EADDRINUSE) surfaced from listen(). So 'once'
   // and 'on' are identical: both register an error listener that fires at most once.
   const errorListeners: ((err: NodeJS.ErrnoException) => void)[] = [];
+
+  function lifecycleClosedError(): NodeJS.ErrnoException {
+    return Object.assign(new Error('fleetd HTTP lifecycle is closed'), {
+      code: 'ERR_SERVER_CLOSED',
+    }) as NodeJS.ErrnoException;
+  }
+
+  function bindFailure(error: unknown, origin: HttpBindFailed['origin']): HttpBindFailed {
+    const record =
+      error !== null && typeof error === 'object' ? (error as Record<string, unknown>) : null;
+    const code = typeof record?.['code'] === 'string' ? record['code'] : null;
+    const rawErrno = record?.['errno'];
+    const errno = typeof rawErrno === 'string' || typeof rawErrno === 'number' ? rawErrno : null;
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      _tag: 'BindFailed',
+      reason:
+        code === 'EADDRINUSE'
+          ? 'address-in-use'
+          : code === 'ERR_SERVER_CLOSED'
+            ? 'closed'
+            : 'other',
+      origin,
+      legacyDelivery: 'error-callback-microtask',
+      error,
+      code,
+      errno,
+      message,
+    };
+  }
+
+  function attemptBind(port: number, host: string): HttpBindResult {
+    if (quiescing) return bindFailure(lifecycleClosedError(), 'lifecycle-guard');
+    if (boundResult) return boundResult;
+
+    let live: Server<WsData>;
+    try {
+      live = Bun.serve({
+        port,
+        hostname: host,
+        // 0 = never time out an idle connection (node's default): a held hook /
+        // watch long-poll response must survive its full wait; the default 10s
+        // idleTimeout would sever it (see bun-serve-runtime-limits). Bounded idle
+        // is enforced per-request instead, across BOTH idle phases: WHILE a
+        // request is in flight the stalled-drain FIN (HttpResShim.boundStalledDrain,
+        // armed only when the body-drain grace expires with the body un-drained)
+        // reaps a withheld-body socket; once a response completes the keep-alive
+        // FIN (HttpResShim.end, ~KEEPALIVE_FIN_S) reaps a between-requests idle
+        // socket whose client made one request then vanished. The fetchHandler
+        // entry-clear drops both for each new in-flight request, so active
+        // requests and held long-polls (bodies drain in ms) stay exempt by
+        // construction while idle sockets are always bounded. NOTE: a socket that
+        // connects but never completes its request line+headers is out of reach
+        // here (fetch never runs) — Bun reaps that pre-request phase itself at a
+        // fixed ~12s regardless of idleTimeout (bun-serve-runtime-limits).
+        idleTimeout: 0,
+        maxRequestBodySize: MAX_PASTE_BODY,
+        fetch: fetchHandler,
+        websocket,
+      });
+    } catch (error) {
+      return bindFailure(error, 'bun-serve-throw');
+    }
+
+    bunServer = live;
+    const success: HttpBound = {
+      _tag: 'Bound',
+      hostname: live.hostname ?? host,
+      port: live.port ?? port,
+    };
+    boundResult = success;
+    boundPromise = Promise.resolve(success);
+    return success;
+  }
+
+  function bindHttp(port: number, host: string): Promise<HttpBindResult> {
+    // A prior successful bind is only an acquisition identity while the owner
+    // is live. Once quiesce/close retires the listener, returning that cached
+    // Bound value would falsely tell the Effect root that ingress exists.
+    if (quiescing) return Promise.resolve(bindFailure(lifecycleClosedError(), 'lifecycle-guard'));
+    if (boundPromise) return boundPromise;
+    const result = attemptBind(port, host);
+    // A failed bind is deliberately retryable: the legacy node server could be
+    // listened again after an error, while a successful owner is single-bind and
+    // every caller observes the same completion object.
+    return result._tag === 'Bound' && boundPromise ? boundPromise : Promise.resolve(result);
+  }
+
+  function emitLegacyBindFailure(failure: HttpBindFailed): void {
+    const error: NodeJS.ErrnoException =
+      failure.error instanceof Error
+        ? (failure.error as NodeJS.ErrnoException)
+        : new Error(failure.message);
+    if (failure.code !== null) error.code = failure.code;
+    if (typeof failure.errno === 'number') error.errno = failure.errno;
+    queueMicrotask(() => {
+      for (const listener of errorListeners) listener(error);
+    });
+  }
+
   const server = {
     on(event: string, cb: (err: NodeJS.ErrnoException) => void): void {
       if (event === 'error') errorListeners.push(cb);
@@ -2640,46 +2789,9 @@ export function createHttp(
       if (event === 'error') errorListeners.push(cb);
     },
     listen(port: number, host: string, cb?: () => void): void {
-      if (quiescing) {
-        const err = Object.assign(new Error('fleetd HTTP lifecycle is closed'), {
-          code: 'ERR_SERVER_CLOSED',
-        }) as NodeJS.ErrnoException;
-        queueMicrotask(() => {
-          for (const l of errorListeners) l(err);
-        });
-        return;
-      }
-      try {
-        bunServer = Bun.serve({
-          port,
-          hostname: host,
-          // 0 = never time out an idle connection (node's default): a held hook /
-          // watch long-poll response must survive its full wait; the default 10s
-          // idleTimeout would sever it (see bun-serve-runtime-limits). Bounded idle
-          // is enforced per-request instead, across BOTH idle phases: WHILE a
-          // request is in flight the stalled-drain FIN (HttpResShim.boundStalledDrain,
-          // armed only when the body-drain grace expires with the body un-drained)
-          // reaps a withheld-body socket; once a response completes the keep-alive
-          // FIN (HttpResShim.end, ~KEEPALIVE_FIN_S) reaps a between-requests idle
-          // socket whose client made one request then vanished. The fetchHandler
-          // entry-clear drops both for each new in-flight request, so active
-          // requests and held long-polls (bodies drain in ms) stay exempt by
-          // construction while idle sockets are always bounded. NOTE: a socket that
-          // connects but never completes its request line+headers is out of reach
-          // here (fetch never runs) — Bun reaps that pre-request phase itself at a
-          // fixed ~12s regardless of idleTimeout (bun-serve-runtime-limits).
-          idleTimeout: 0,
-          maxRequestBodySize: MAX_PASTE_BODY,
-          fetch: fetchHandler,
-          websocket,
-        });
-      } catch (err) {
-        queueMicrotask(() => {
-          for (const l of errorListeners) l(err as NodeJS.ErrnoException);
-        });
-        return;
-      }
-      if (cb) cb();
+      const result = attemptBind(port, host);
+      if (result._tag === 'BindFailed') emitLegacyBindFailure(result);
+      else cb?.();
     },
     close(cb?: () => void): void {
       // Backwards-compatible node-shaped callback surface. The explicit
@@ -2708,6 +2820,99 @@ export function createHttp(
     for (const resolve of waiters) resolve();
   }
 
+  function finalizeNativeClients(): void {
+    const clients = new Set<LiveSocket>([...closingSockets, ...snapshotClients, ...termClients]);
+    for (const ws of clients) {
+      if (ws.data.kind === 'term') {
+        ws.data.abort.closed = true;
+        ws.data.handle?.close();
+      }
+      try {
+        ws.terminate();
+      } catch {
+        /* already gone */
+      }
+    }
+    closingSockets.clear();
+    snapshotClients.clear();
+    termClients.clear();
+  }
+
+  function startGracefulStop(): Promise<void> {
+    if (gracefulStopPromise) return gracefulStopPromise;
+    const live = bunServer;
+    if (!live) {
+      gracefulStopPromise = Promise.resolve();
+      return gracefulStopPromise;
+    }
+
+    // Let any body-fault shutdown response synchronously published by quiesce
+    // cross the fetch Promise boundary before native stop begins. The operation
+    // itself is still created exactly once during quiesce. A concurrent force
+    // skips a not-yet-started graceful call instead of invoking stop(false)
+    // against a server that stop(true) already retired.
+    gracefulStopPromise = Promise.all([gracefulStartBarrier, holdsReleased])
+      // `active.promise` means Bun has received the Response object, not that
+      // uSockets has flushed its bytes. Yield one host turn before stop(false)
+      // so a released held hook's canonical body reaches the existing socket.
+      .then(() => Bun.sleep(0))
+      .then(async () => {
+        // Force may win while this operation is still parked behind the body /
+        // held-response flush barriers. In that case graceful shutdown must
+        // join the already-published force Promise; it must not clear bunServer
+        // or terminate WebSockets ahead of stop(true). Bun 1.3.14 can wedge the
+        // force Promise permanently when a socket is terminated first.
+        if (forceStopPromise) {
+          await forceStopPromise;
+          return;
+        }
+        if (bunServer !== live) return;
+
+        await live.stop(false);
+        if (bunServer === live) bunServer = null;
+        finalizeNativeClients();
+      });
+    // Quiesce is intentionally synchronous and cannot await this completion.
+    // Observe a rejection here so a caller may still await the original shared
+    // Promise without creating a process-level unhandled rejection meanwhile.
+    void gracefulStopPromise.catch(() => undefined);
+    return gracefulStopPromise;
+  }
+
+  function beginGracefulStopHttp(): Promise<void> {
+    quiesceHttp();
+    return startGracefulStop();
+  }
+
+  function forceStopHttp(): Promise<void> {
+    if (forceStopPromise) return forceStopPromise;
+    const live = bunServer;
+    if (!live) {
+      finalizeNativeClients();
+      forceStopPromise = Promise.resolve();
+      return forceStopPromise;
+    }
+
+    try {
+      // Crucially, this does not await gracefulStopPromise. The whole-daemon
+      // deadline or a second signal may enter here while stop(false) is still
+      // waiting on a quiet keep-alive, held response, or WebSocket.
+      forceStopPromise = Promise.resolve(live.stop(true)).then(
+        () => {
+          if (bunServer === live) bunServer = null;
+          finalizeNativeClients();
+        },
+        (error: unknown) => {
+          throw error;
+        },
+      );
+    } catch (error) {
+      forceStopPromise = Promise.reject(error);
+    }
+    void forceStopPromise.catch(() => undefined);
+    return forceStopPromise;
+  }
+
   function quiesceHttp(): void {
     if (quiescing) return;
     quiescing = true;
@@ -2728,26 +2933,86 @@ export function createHttp(
     }
     dirty = false;
     resolveBroadcastWaiters();
+
+    // Settle body-faulted/disconnected requests before asking Bun to enter its
+    // native graceful state. Bun 1.3.14 can otherwise leave a withheld request
+    // socket parked without delivering the canonical shutdown response after
+    // stop(false) has begun. Cleanly drained application requests are untouched
+    // here and remain owned until their route Promise joins below.
+    const preStopSettlements: Promise<unknown>[] = [];
+    for (const active of activeResponses) {
+      const needsForcedResponse =
+        !active.drained ||
+        active.drainFaulted ||
+        active.request.destroyed ||
+        active.response.destroyed;
+      forceFaultedResponseDuringShutdown(active);
+      if (needsForcedResponse) preStopSettlements.push(active.drain, active.promise);
+    }
+    gracefulStartBarrier = Promise.allSettled(preStopSettlements).then(() => undefined);
+
+    // Start native graceful shutdown now but never wait here. Holds and route /
+    // client owners still need a writable transport during the following policy
+    // phases, while closing-http later races this exact Promise against the one
+    // absolute daemon deadline and may independently escalate through forceStop.
+    void startGracefulStop();
   }
 
   function releaseHeldResponses(): number {
     // P1 questions exposes releaseAll(); keep the existing fail-open method as
     // the additive fallback so this HTTP owner remains compatible with narrow
     // test doubles and with a partially acquired createCore.
-    return questionsLifecycle.releaseAll?.() ?? questionsLifecycle.failOpenAllHolds();
+    try {
+      return questionsLifecycle.releaseAll?.() ?? questionsLifecycle.failOpenAllHolds();
+    } finally {
+      if (!holdsReleaseStarted) {
+        holdsReleaseStarted = true;
+        // Bun 1.3.14 can reset an existing held-hook socket if stop(false)
+        // begins before the response published by releaseAll crosses the fetch
+        // Promise boundary. Quiesce has already created the one graceful-stop
+        // operation; this barrier delays only its native call until every hook
+        // response present at the phase boundary is observable by Bun.
+        const hookResponses = [...activeResponses]
+          .filter((active) => active.hook)
+          .map((active) => active.promise);
+        void Promise.allSettled(hookResponses).then(resolveHoldsReleased);
+      }
+    }
   }
 
-  async function closeHttpOnce(): Promise<void> {
+  function beginNativeClientClose(): void {
+    // Do not close OR terminate a ServerWebSocket before native stop(true): Bun
+    // 1.3.14 can then leave that stop Promise pending forever. Retire the
+    // application handles now; stop(false)/stop(true) remains the independently
+    // awaitable owner of native socket closure in the closing-http phase.
+    for (const ws of [...snapshotClients, ...termClients]) {
+      closingSockets.add(ws);
+      if (ws.data.kind === 'term') {
+        ws.data.abort.closed = true;
+        ws.data.handle?.close();
+      }
+    }
+  }
+
+  function forceClientsHttp(): void {
+    quiesceHttp();
+    // This is deliberately application-only. In Bun 1.3.14, closing or
+    // terminating a native ServerWebSocket before stop(true) can leave that
+    // native stop Promise pending forever. Retire viewer handles, then ask the
+    // bridge to synchronously SIGKILL any control child that ignored TERM; the
+    // closing-http phase remains the sole native socket force owner.
+    beginNativeClientClose();
+    void termbridge.force().catch((err: unknown) => {
+      console.error('fleetd terminal bridge force error:', err);
+    });
+  }
+
+  async function closeClientsOnce(): Promise<void> {
     quiesceHttp();
 
-    // Held hooks must receive canonical 200 {} while Bun can still write their
-    // responses. Watch polls are not hook decisions; settle them as an idle
-    // watcher before the listener is stopped.
-    try {
-      releaseHeldResponses();
-    } catch (err) {
-      console.error('fleetd shutdown hold-release error:', err);
-    }
+    // Watch polls are not hook decisions; settle them as an idle watcher while
+    // the transport can still write. Held hook decisions are owned by the
+    // preceding releaseHolds phase and deliberately stay separate.
     for (const closeWatch of [...activeWatchClosers]) {
       try {
         closeWatch();
@@ -2756,62 +3021,65 @@ export function createHttp(
       }
     }
 
-    // A peer can withhold a declared POST body forever. Those requests have not
-    // entered an application handler, so cancel their readers and publish the
-    // shutdown admission response (hooks retain canonical 200 {}). Requests
-    // whose bodies did drain may own DB/process work; join their response
-    // promise so SQLite cannot close underneath them.
-    for (const active of activeResponses) forceFaultedResponseDuringShutdown(active);
-    await Promise.allSettled([...activeResponses].map((active) => active.promise));
-    activeResponses.clear();
+    // Start every independent client retirement before awaiting any one owner.
+    // In particular, a cleanly drained route may own DB/process work and remain
+    // joined indefinitely; it must not delay terminal SIGTERM, terminal-open
+    // cancellation, watch retirement, or application WebSocket handle close.
+    const responsesAtClose = [...activeResponses];
+    const terminalOpensAtClose = [...openTermTasks];
+    for (const active of responsesAtClose) forceFaultedResponseDuringShutdown(active);
+    beginNativeClientClose();
 
-    const live = bunServer;
-    bunServer = null;
-    if (live) {
-      try {
-        // Bun 1.3.14 floor quirk: terminating a ServerWebSocket before
-        // stop(true) leaves the returned stop Promise pending forever even
-        // though the peer is already CLOSED. Let the server own native socket
-        // termination first; the explicit loop below is the idempotent
-        // application-handle backstop. This exact order is covered by the
-        // subprocess lifecycle fixture.
-        await live.stop(true);
-      } catch {
-        /* already stopped */
-      }
-    }
-
-    // Close application handles explicitly instead of depending on when Bun
-    // dispatches each websocket close callback after stop() resolves. Terminal
-    // handles are idempotent, so this and the callback path may both run.
-    for (const ws of snapshotClients) {
-      try {
-        ws.terminate();
-      } catch {
-        /* already gone */
-      }
-    }
-    for (const ws of termClients) {
-      if (ws.data.kind !== 'term') continue;
-      ws.data.abort.closed = true;
-      ws.data.handle?.close();
-      try {
-        ws.terminate();
-      } catch {
-        /* already gone */
-      }
-    }
-    snapshotClients.clear();
-    termClients.clear();
-
-    const bridgeWithClose = termbridge as typeof termbridge & { close?: () => Promise<void> };
+    let bridgeClose: Promise<void>;
     try {
-      await bridgeWithClose.close?.();
+      bridgeClose = termbridge.close().catch((err: unknown) => {
+        console.error('fleetd terminal bridge close error:', err);
+      });
     } catch (err) {
       console.error('fleetd terminal bridge close error:', err);
+      bridgeClose = Promise.resolve();
     }
-    await Promise.allSettled([...openTermTasks]);
+
+    await Promise.all([
+      Promise.allSettled(responsesAtClose.map((active) => active.promise)),
+      Promise.allSettled(terminalOpensAtClose),
+      bridgeClose,
+    ]);
+    activeResponses.clear();
     openTermTasks.clear();
+  }
+
+  function closeClientsHttp(): Promise<void> {
+    closeClientsPromise ??= closeClientsOnce();
+    return closeClientsPromise;
+  }
+
+  async function closeHttpOnce(): Promise<void> {
+    quiesceHttp();
+
+    // Held hooks must receive canonical 200 {} while Bun can still write their
+    // responses. The P4 coordinator invokes this as its own preceding phase;
+    // the P1 aggregate still reaches the same ordering through close().
+    try {
+      releaseHeldResponses();
+    } catch (err) {
+      console.error('fleetd shutdown hold-release error:', err);
+    }
+    await closeClientsHttp();
+
+    try {
+      // Never await stop(false) here. A quiet keep-alive or a peer that ignores
+      // its WebSocket close frame may hold it open indefinitely; this P1 facade
+      // preserves its bounded forced close while the P4 coordinator races the
+      // two shared stop operations against its absolute deadline.
+      await forceStopHttp();
+    } catch {
+      // Preserve the P1 close contract: native stop failures never prevent the
+      // remaining application handles from being retired. P4 may await the
+      // shared forceStop Promise directly when it needs the typed phase failure.
+    }
+
+    finalizeNativeClients();
 
     errorListeners.length = 0;
   }
@@ -2823,7 +3091,11 @@ export function createHttp(
 
   const lifecycle = {
     quiesce: quiesceHttp,
+    beginGracefulStop: beginGracefulStopHttp,
+    forceStop: forceStopHttp,
     releaseHolds: releaseHeldResponses,
+    closeClients: closeClientsHttp,
+    forceClients: forceClientsHttp,
     close: closeHttp,
     isQuiescing: () => quiescing,
     ownedCounts: () => ({
@@ -2849,6 +3121,7 @@ export function createHttp(
   // shows the address the host has NOW. wss/termWss/broadcast stay internal.
   return {
     server,
+    bind: bindHttp,
     lifecycle,
     whenBroadcastIdle,
     // Arrow-PROPERTY (not method shorthand) so the daemon entry can destructure it

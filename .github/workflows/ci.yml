@@ -125,6 +125,8 @@ jobs:
       - run: bun run bundle:hooks
       - name: Fail if committed hook artifacts are stale
         run: git diff --exit-code scripts/fleet-hook.mjs scripts/fleet-sessionstart.mjs scripts/fleet-watch.mjs
+      - name: Clean packed-install daemon lifecycle
+        run: bun run effect:p3:packed-smoke
       # The committed bundle is the shipped artifact; run the full suite against
       # it under bun (FLEETDECK_TEST_DAEMON_SCRIPT points the daemon at the bundle).
       - run: bun run test:bundle

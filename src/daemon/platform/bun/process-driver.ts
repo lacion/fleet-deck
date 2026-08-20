@@ -28,6 +28,12 @@ const OUTPUT_LIMIT_RESULT: ProcessResult = {
 // SIGKILL is uncatchable, but waitpid/process-group visibility can lag briefly.
 // Keep the complete owner bounded to one grace interval for TERM plus one for reap.
 const PROCESS_REAP_BUDGET_MS = PROCESS_DRIVER_KILL_GRACE_MS;
+// The P4 root opens its force latch with 250ms left in the one absolute
+// shutdown budget. Once that latch opens, replace the ordinary one-second reap
+// allowance with a short referenced join so the enclosing Layer finalizer is
+// already settled (or has discharged its bounded ownership attempt) before the
+// root deadline.
+const PROCESS_FORCE_REAP_BUDGET_MS = 200;
 const PROCESS_GROUP_POLL_MS = 10;
 type BunOutputReader = NodeReadableStreamDefaultReader<Uint8Array<ArrayBuffer>>;
 
@@ -67,6 +73,8 @@ export interface BunProcessAttempt<Decision> {
   readonly decision: Promise<Decision>;
   readonly cleanup: Promise<void>;
   cancel(): void;
+  /** Preserve the selected decision while escalating owned work to SIGKILL. */
+  force(): void;
 }
 
 interface DeferredValue<T> {
@@ -94,27 +102,6 @@ function delay(milliseconds: number): Promise<void> {
     // termination path starts, its bounded poll must keep a standalone Bun
     // process alive long enough to deliver KILL and prove the child/group gone.
     setTimeout(resolve, milliseconds);
-  });
-}
-
-function settlesWithin(promise: Promise<unknown>, milliseconds: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    let settled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const finish = (value: boolean) => {
-      if (settled) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      resolve(value);
-    };
-
-    // Unlike the ordinary command deadline, a cleanup budget is referenced:
-    // natural parent exit before this race settles would orphan owned work.
-    timer = setTimeout(() => finish(false), Math.max(0, milliseconds));
-    void promise.then(
-      () => finish(true),
-      () => finish(true),
-    );
   });
 }
 
@@ -297,6 +284,7 @@ class BunProcessExecution<Decision> implements BunProcessAttempt<Decision> {
   private readonly resolveDecision: (result: Decision) => void;
   private readonly resolveCleanup: () => void;
   private readonly exited = deferred<BunProcessExit>();
+  private readonly forceRequested = deferred<void>();
   private readonly signal: AbortSignal | undefined;
   private readonly killTree: boolean;
   private readonly policy: BunProcessPolicy<Decision>;
@@ -319,6 +307,8 @@ class BunProcessExecution<Decision> implements BunProcessAttempt<Decision> {
   private cleanupSettled = false;
   private finalizingExit = false;
   private terminating = false;
+  private forced = false;
+  private forceDeadline: number | null = null;
   private pendingDecision: (() => Decision) | null = null;
 
   constructor(request: ProcessRequest, policy: BunProcessPolicy<Decision>) {
@@ -337,6 +327,22 @@ class BunProcessExecution<Decision> implements BunProcessAttempt<Decision> {
 
   cancel(): void {
     this.selectTermination(() => this.policy.onCancel(this.output()));
+  }
+
+  force(): void {
+    if (!this.terminalSelected) {
+      this.selectTermination(() => this.policy.onCancel(this.output()));
+    }
+    if (this.forced) return;
+    this.forced = true;
+    this.forceDeadline = Date.now() + PROCESS_FORCE_REAP_BUDGET_MS;
+
+    const child = this.child;
+    if (child) this.signalChild(child, 'SIGKILL');
+    // Reader cancellation is initiated from the synchronous force callback;
+    // its Promise remains owned and joined by terminateAndReap below.
+    void this.cancelStreams();
+    this.forceRequested.resolve(undefined);
   }
 
   private spawn(request: ProcessRequest): void {
@@ -506,24 +512,27 @@ class BunProcessExecution<Decision> implements BunProcessAttempt<Decision> {
         const groupGone =
           this.policy.killGraceMs === 0
             ? false
-            : await this.waitForProcessGroupGone(child.pid, this.policy.killGraceMs);
+            : await this.waitForProcessGroupGone(child.pid, Date.now() + this.policy.killGraceMs);
         if (!groupGone && this.policy.killGraceMs > 0) {
           this.signalChild(child, 'SIGKILL');
         }
-        await this.waitForProcessGroupGone(child.pid, remaining(cleanupDeadline));
-        await settlesWithin(this.exited.promise, remaining(cleanupDeadline));
+        await this.waitForProcessGroupGone(child.pid, cleanupDeadline);
+        await this.settlesWithinCleanupBudget(this.exited.promise, cleanupDeadline);
       } else {
         const exitedAfterTerm =
           this.exitObservation !== null ||
           (this.policy.killGraceMs > 0 &&
-            (await settlesWithin(this.exited.promise, this.policy.killGraceMs)));
+            (await this.settlesWithinCleanupBudget(
+              this.exited.promise,
+              Date.now() + this.policy.killGraceMs,
+            )));
         if (!exitedAfterTerm && this.policy.killGraceMs > 0) {
           this.signalChild(child, 'SIGKILL');
         }
-        await settlesWithin(this.exited.promise, remaining(cleanupDeadline));
+        await this.settlesWithinCleanupBudget(this.exited.promise, cleanupDeadline);
       }
 
-      await settlesWithin(streams, remaining(cleanupDeadline));
+      await this.settlesWithinCleanupBudget(streams, cleanupDeadline);
     } finally {
       this.finishCleanup();
     }
@@ -547,14 +556,54 @@ class BunProcessExecution<Decision> implements BunProcessAttempt<Decision> {
     }
   }
 
-  private async waitForProcessGroupGone(pid: number, milliseconds: number): Promise<boolean> {
-    const deadline = Date.now() + milliseconds;
+  private effectiveCleanupDeadline(deadline: number): number {
+    return this.forceDeadline === null ? deadline : Math.min(deadline, this.forceDeadline);
+  }
+
+  private async waitForProcessGroupGone(pid: number, deadline: number): Promise<boolean> {
     while (this.processGroupAlive(pid)) {
-      const wait = remaining(deadline);
+      const wait = remaining(this.effectiveCleanupDeadline(deadline));
       if (wait === 0) return false;
-      await delay(Math.min(PROCESS_GROUP_POLL_MS, wait));
+      const poll = delay(Math.min(PROCESS_GROUP_POLL_MS, wait));
+      if (this.forced) await poll;
+      else await Promise.race([poll, this.forceRequested.promise]);
     }
     return true;
+  }
+
+  private async settlesWithinCleanupBudget(
+    promise: Promise<unknown>,
+    deadline: number,
+  ): Promise<boolean> {
+    return new Promise((resolve) => {
+      let completed = false;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      const finish = (settled: boolean): void => {
+        if (completed) return;
+        completed = true;
+        if (timer) clearTimeout(timer);
+        resolve(settled);
+      };
+      const armDeadline = (): void => {
+        if (completed) return;
+        if (timer) clearTimeout(timer);
+        // Cleanup timers are referenced: natural parent exit before this owner
+        // settles would orphan native work. Force re-arms this same timer at
+        // the short root-reserve deadline instead of leaving a stale 1s timer.
+        timer = setTimeout(() => finish(false), remaining(this.effectiveCleanupDeadline(deadline)));
+      };
+
+      void promise.then(
+        () => finish(true),
+        () => finish(true),
+      );
+      if (!this.forced) {
+        void this.forceRequested.promise.then(() => {
+          armDeadline();
+        });
+      }
+      armDeadline();
+    });
   }
 
   private cancelStreams(): Promise<void> {
@@ -602,7 +651,7 @@ export function startBunProcessAttempt<Decision>(
 
 /** Direct Bun.spawn implementation of Fleet Deck's compatibility process policy. */
 export class BunProcessDriver implements ProcessDriver {
-  private readonly active = new Set<Pick<ProcessExecution<unknown>, 'cleanup' | 'cancel'>>();
+  private readonly active = new Set<BunProcessAttempt<unknown>>();
   private closed = false;
   private closePromise: Promise<void> | null = null;
 
@@ -641,7 +690,7 @@ export class BunProcessDriver implements ProcessDriver {
     return this.own(startBunProcessAttempt(request, boundedProcessPolicy(request)));
   }
 
-  private own<Decision>(execution: ProcessExecution<Decision>): ProcessExecution<Decision> {
+  private own<Decision>(execution: BunProcessAttempt<Decision>): ProcessExecution<Decision> {
     this.active.add(execution);
     void execution.cleanup.then(
       () => this.active.delete(execution),
@@ -651,18 +700,48 @@ export class BunProcessDriver implements ProcessDriver {
   }
 
   close(): Promise<void> {
+    return this.beginClose(false);
+  }
+
+  /**
+   * Callback-safe root escalation. Admission closes and every active child or
+   * detached process group receives SIGKILL before this method returns. The
+   * same close Promise retains the asynchronous waitpid/stream join.
+   */
+  forceClose(): void {
+    if (this.closePromise) {
+      for (const execution of [...this.active]) execution.force();
+      return;
+    }
+    void this.beginClose(true);
+  }
+
+  private beginClose(force: boolean): Promise<void> {
     if (this.closePromise) return this.closePromise;
     this.closed = true;
-    // Publish one Promise before cancellation can synchronously wake consumers.
-    this.closePromise = Promise.resolve().then(async () => {
-      const executions = [...this.active];
-      for (const execution of executions) execution.cancel();
-      await Promise.allSettled(executions.map((execution) => execution.cleanup));
+
+    let resolveClose: () => void = () => undefined;
+    this.closePromise = new Promise<void>((resolve) => {
+      resolveClose = resolve;
     });
+
+    const executions = [...this.active];
+    const closeExecutions = async (): Promise<void> => {
+      for (const execution of executions) {
+        if (force) execution.force();
+        else execution.cancel();
+      }
+      await Promise.allSettled(executions.map((execution) => execution.cleanup));
+      resolveClose();
+    };
+    // Preserve P3's normal close timing; only force escalation must signal
+    // synchronously from the host callback.
+    if (force) void closeExecutions();
+    else void Promise.resolve().then(closeExecutions);
     return this.closePromise;
   }
 }
 
-export function makeBunProcessDriver(): ProcessDriver {
+export function makeBunProcessDriver(): BunProcessDriver {
   return new BunProcessDriver();
 }

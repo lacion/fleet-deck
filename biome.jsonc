@@ -322,8 +322,6 @@
                       "**/src/daemon/platform/**",
                       "**/platform",
                       "**/platform/**",
-                      "@effect/platform-bun",
-                      "@effect/platform-bun/**",
                       "@effect/sql-sqlite-bun",
                       "@effect/sql-sqlite-bun/**",
                       "@effect/platform",
@@ -333,7 +331,7 @@
                       "@effect/experimental",
                       "@effect/experimental/**"
                     ],
-                    "message": "fleetd may import app/live-layer.ts, but native implementation selection stays inside that layer; Effect v3 packages and board/** are forbidden."
+                    "message": "fleetd may import the BunRuntime root runner and app composition only; other platform implementations, Effect v3 packages, and board/** are forbidden."
                   }
                 ]
               }

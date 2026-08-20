@@ -30,6 +30,7 @@
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
+import { errCode } from './errors.ts';
 import { exactWindowTarget, sanitizePaneText, sessionName } from './spawn.ts';
 import { envInt } from './helpers.ts';
 import type { SpawnRow } from './statements.ts';
@@ -264,6 +265,8 @@ interface PaneStream {
 }
 interface Client {
   child: ChildProcess | null;
+  /** POSIX process group created for the control child and every descendant. */
+  processGroupId: number | null;
   parser: ControlModeParser;
   waiters: Waiter[];
   panes: Map<string, PaneStream>;
@@ -319,6 +322,8 @@ interface TermBridgeOptions {
   log?: (message: string) => void;
   /** P1 lifecycle test seam; production keeps the one-second TERM grace. */
   closeGraceMs?: number;
+  /** P4 force-join seam; production leaves room inside the root's force reserve. */
+  forceJoinGraceMs?: number;
 }
 
 /** Factory lifetime equals the daemon lifetime. The shared control client is
@@ -331,6 +336,7 @@ export function createTermBridge({
     /* silent by default */
   },
   closeGraceMs = 1_000,
+  forceJoinGraceMs = 125,
 }: TermBridgeOptions) {
   const session = sessionName(port);
   const viewers = new Set<Viewer>();
@@ -340,9 +346,16 @@ export function createTermBridge({
   const delaySettlers = new Set<() => void>();
   const terminateGraceMs =
     Number.isFinite(closeGraceMs) && closeGraceMs >= 1 ? Math.floor(closeGraceMs) : 1_000;
+  const forcedTerminateGraceMs =
+    Number.isFinite(forceJoinGraceMs) && forceJoinGraceMs >= 1 ? Math.floor(forceJoinGraceMs) : 125;
   let client: Client | null = null;
   let phase: 'open' | 'closing' | 'closed' = 'open';
   let closePromise: Promise<void> | null = null;
+  let forceRequested = false;
+  let resolveForceRequested: () => void = () => undefined;
+  const forceRequest = new Promise<void>((resolve) => {
+    resolveForceRequested = resolve;
+  });
 
   // ---------------------------------------------------------------- the client
 
@@ -386,6 +399,7 @@ export function createTermBridge({
 
     const c: Client = {
       child: null,
+      processGroupId: null,
       parser: new ControlModeParser(),
       waiters: [],
       // pane id -> { decoder, subs:Set<viewer> }. The decoder is PER PANE, not
@@ -506,15 +520,23 @@ export function createTermBridge({
       ? ['-L', socket, '-C', 'attach-session', '-t', '=' + session]
       : ['-C', 'attach-session', '-t', '=' + session];
     // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- an empty FLEETDECK_TERM_CMD means "unset", so fall back to the real tmux
+    const ownsProcessGroup = process.platform !== 'win32';
     const child = spawn(override || 'tmux', override ? [] : argv, {
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
+      // On POSIX the control peer owns a session/process group. tmux itself or
+      // a test peer may leave descendants behind after the direct child exits;
+      // the bridge lifetime owns that entire tree, not only ChildProcess.pid.
+      // Windows has no negative-pid group signalling, so it retains the direct
+      // child fallback below.
+      detached: ownsProcessGroup,
       // Live env, not Bun's startup snapshot (see exec.ts): the attach reads
       // FLEETDECK_TMUX_SOCKET/TMUX_TMPDIR above, so the child tmux must see the
       // same runtime-mutated values; a no-op under Node.
       env: process.env,
     });
     c.child = child;
+    c.processGroupId = ownsProcessGroup && child.pid ? child.pid : null;
     clients.add(c);
     let exitedResolve: () => void = () => {
       /* installed by the Promise executor */
@@ -575,8 +597,13 @@ export function createTermBridge({
       // A failed spawn can reach `close` without a useful `exit`; either event
       // is terminal for the direct child from this bridge's point of view.
       exitedResolve();
-      clients.delete(c);
-      c.detachAllListeners();
+      // Do not forget an owned group merely because the direct child closed.
+      // A descendant without inherited pipes can outlive ChildProcess `close`;
+      // root close still has to TERM/KILL and join that group.
+      if (clientProcessTreeGone(c)) {
+        clients.delete(c);
+        c.detachAllListeners();
+      }
     };
     let dataListenersDetached = false;
     let allListenersDetached = false;
@@ -612,13 +639,7 @@ export function createTermBridge({
     c.readyReject(new Error(reason));
     for (const waiter of c.waiters.splice(0)) waiter.reject(new Error(reason));
     for (const v of [...viewers]) v.finish(reason);
-    if (c.child?.exitCode === null && !c.child.killed) {
-      try {
-        c.child.kill('SIGTERM');
-      } catch {
-        /* already gone */
-      }
-    }
+    signalClientProcessTree(c, 'SIGTERM');
   }
 
   /** A window-close probe failed: re-list ONCE after a short settle delay. The
@@ -1102,18 +1123,119 @@ export function createTermBridge({
     };
   }
 
-  async function settlesWithin(promise: Promise<void>, milliseconds: number): Promise<boolean> {
+  function directChildAlive(c: Client): boolean {
+    const child = c.child;
+    return Boolean(child?.pid && child.exitCode === null && child.signalCode === null);
+  }
+
+  function processGroupAlive(c: Client): boolean {
+    const groupId = c.processGroupId;
+    if (groupId === null) return false;
+    try {
+      process.kill(-groupId, 0);
+      return true;
+    } catch (error) {
+      const code = errCode(error);
+      if (code === 'ESRCH') return false;
+      // Some non-Windows hosts may expose POSIX-looking process APIs without
+      // negative-pid group support. Retire the group capability once proved
+      // unsupported and use the direct ChildProcess fallback consistently.
+      if (code === 'EINVAL' || code === 'ENOSYS' || code === 'ENOTSUP') {
+        c.processGroupId = null;
+        return false;
+      }
+      // EPERM (or an unknown host error) means the group may still exist. Keep
+      // ownership so the bounded join surfaces the failure instead of claiming
+      // cleanup that was not proved.
+      return true;
+    }
+  }
+
+  function clientProcessTreeGone(c: Client): boolean {
+    return !processGroupAlive(c) && !directChildAlive(c);
+  }
+
+  function signalClientProcessTree(c: Client, signal: 'SIGTERM' | 'SIGKILL'): void {
+    const groupId = c.processGroupId;
+    if (groupId !== null) {
+      try {
+        process.kill(-groupId, signal);
+        return;
+      } catch (error) {
+        const code = errCode(error);
+        if (code === 'EINVAL' || code === 'ENOSYS' || code === 'ENOTSUP') {
+          c.processGroupId = null;
+        }
+        // ESRCH can race direct-child bookkeeping, and EPERM/unknown errors
+        // should still make a best-effort direct kill. Retaining a supported
+        // group id makes the join fail closed if descendants remain.
+      }
+    }
+
+    const child = c.child;
+    if (!directChildAlive(c) || !child) return;
+    try {
+      child.kill(signal);
+    } catch {
+      /* already gone */
+    }
+  }
+
+  function waitForClientProcessTree(
+    c: Client,
+    milliseconds: number,
+  ): { completion: Promise<boolean>; cancel: () => void } {
+    const deadline = Date.now() + milliseconds;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let settled = false;
+    let resolveResult: (gone: boolean) => void = () => undefined;
+    const completion = new Promise<boolean>((resolve) => {
+      resolveResult = resolve;
+    });
+    const settle = (gone: boolean) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      resolveResult(gone);
+    };
+    const poll = () => {
+      if (clientProcessTreeGone(c)) {
+        settle(true);
+        return;
+      }
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        settle(false);
+        return;
+      }
+      // This cleanup timer deliberately remains referenced: close must keep
+      // the daemon alive until the owned group is gone or the bound expires.
+      timer = setTimeout(poll, Math.min(10, remaining));
+    };
+    poll();
+    return {
+      completion,
+      cancel: () => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+      },
+    };
+  }
+
+  async function waitForClientTreeBeforeForce(
+    c: Client,
+    milliseconds: number,
+  ): Promise<'settled' | 'forced' | 'timed-out'> {
+    if (forceRequested) return 'forced';
+    const waiter = waitForClientProcessTree(c, milliseconds);
     try {
       return await Promise.race([
-        promise.then(() => true),
-        new Promise<false>((resolve) => {
-          timer = setTimeout(() => resolve(false), milliseconds);
-          timer.unref();
-        }),
+        waiter.completion.then((gone) => (gone ? ('settled' as const) : ('timed-out' as const))),
+        forceRequest.then(() => 'forced' as const),
       ]);
     } finally {
-      if (timer) clearTimeout(timer);
+      waiter.cancel();
     }
   }
 
@@ -1144,30 +1266,41 @@ export function createTermBridge({
   async function terminateClient(c: Client): Promise<void> {
     const child = c.child;
     if (!child) return;
-    if (child.exitCode === null && child.signalCode === null) {
-      try {
-        child.kill('SIGTERM');
-      } catch {
-        /* already gone */
+    let joined = clientProcessTreeGone(c);
+    try {
+      if (!joined && !forceRequested) {
+        signalClientProcessTree(c, 'SIGTERM');
+        joined = (await waitForClientTreeBeforeForce(c, terminateGraceMs)) === 'settled';
       }
-    }
 
-    const exitedDuringGrace = await settlesWithin(c.exited, terminateGraceMs);
-    if (!exitedDuringGrace && child.exitCode === null && child.signalCode === null) {
-      try {
-        child.kill('SIGKILL');
-      } catch {
-        /* already gone */
+      if (!joined) {
+        signalClientProcessTree(c, 'SIGKILL');
+        if (forceRequested) {
+          joined = await waitForClientProcessTree(c, forcedTerminateGraceMs).completion;
+        } else {
+          const normalKillResult = await waitForClientTreeBeforeForce(c, terminateGraceMs);
+          joined = normalKillResult === 'settled';
+          if (normalKillResult === 'forced') {
+            // A force request during the ordinary post-KILL join shortens that
+            // join too; it must fit inside the root force reserve.
+            signalClientProcessTree(c, 'SIGKILL');
+            joined = await waitForClientProcessTree(c, forcedTerminateGraceMs).completion;
+          }
+        }
       }
+
+      if (!joined) {
+        // The failure is bounded and observable. Unref the direct host handle
+        // only after the final group-KILL/join attempt so it cannot pin exit.
+        child.unref();
+        const target = c.processGroupId
+          ? `terminal control process group ${c.processGroupId}`
+          : `terminal control child ${child.pid ?? 'unknown'}`;
+        throw new Error(`${target} remained alive after the bounded SIGKILL join`);
+      }
+    } finally {
+      releaseClientProcessHandles(c, child);
     }
-    if (!exitedDuringGrace) {
-      const exitedAfterKill = await settlesWithin(c.exited, terminateGraceMs);
-      // SIGKILL should make the direct child observable promptly. If the host
-      // fails to deliver an exit event inside the hard bound, release the host
-      // handle as well so an unobservable child cannot pin daemon shutdown.
-      if (!exitedAfterKill) child.unref();
-    }
-    releaseClientProcessHandles(c, child);
   }
 
   async function closeImpl(): Promise<void> {
@@ -1204,7 +1337,7 @@ export function createTermBridge({
       c.manualSizing.clear();
     }
 
-    await Promise.all([
+    const releases = await Promise.allSettled([
       ...inputChains.map((chain) => chain.catch(() => {})),
       ...ownedClients.map((c) => terminateClient(c)),
     ]);
@@ -1214,6 +1347,13 @@ export function createTermBridge({
     }
     clients.clear();
     phase = 'closed';
+    const failures = releases
+      .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+      .map((result) => result.reason);
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) {
+      throw new AggregateError(failures, 'terminal bridge process trees failed to close');
+    }
   }
 
   /** Permanently quiesce the bridge and join every control child. The exact
@@ -1229,5 +1369,18 @@ export function createTermBridge({
     return closePromise;
   }
 
-  return { openViewer, close };
+  /** Escalate the shared close synchronously. This is safe to invoke directly
+   * from a signal/deadline callback: admission and the memoized join are
+   * published before every still-owned control child receives SIGKILL. Native
+   * process handles stay attached just long enough to observe/reap that exit. */
+  function force(): Promise<void> {
+    const completion = close();
+    const firstForce = !forceRequested;
+    forceRequested = true;
+    for (const ownedClient of clients) signalClientProcessTree(ownedClient, 'SIGKILL');
+    if (firstForce) resolveForceRequested();
+    return completion;
+  }
+
+  return { openViewer, close, force };
 }

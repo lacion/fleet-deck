@@ -50,6 +50,7 @@ import {
 const HOOK_SCRIPT = path.join(REPO_ROOT, 'scripts/fleet-sessionstart.mjs');
 const HOOK_SOURCE = path.join(REPO_ROOT, 'scripts/fleet-sessionstart.ts');
 const FLEETD_SOURCE = path.join(REPO_ROOT, 'src/daemon/fleetd.ts');
+const FLEETD_UNDER_TEST = process.env['FLEETDECK_TEST_DAEMON_SCRIPT'] ?? FLEETD_SOURCE;
 const STUB = path.join(REPO_ROOT, 'tests/helpers/stub-immortal-daemon.ts');
 const COLD_RACE_FLEETD = path.join(REPO_ROOT, 'tests/helpers/cold-race/fleetd.ts');
 const PKG_VERSION = (
@@ -135,10 +136,10 @@ interface HookRun {
 }
 
 // Spawn the REAL SessionStart hook the way Claude Code does: a SessionStart
-// payload on stdin, scratch-daemon env. FLEETDECK_TEST_DAEMON_SCRIPT pins the
-// launcher to fleetd.ts SOURCE (the committed bundle is deliberately stale
-// mid-iteration); FLEETDECK_TMUX_SOCKET isolates any tmux server the spawned
-// daemon might create; FLEETDECK_AGENTS_CMD=false keeps the poller off.
+// payload on stdin, scratch-daemon env. FLEETDECK_TEST_DAEMON_SCRIPT selects
+// the same source/generated daemon variant as the parent suite;
+// FLEETDECK_TMUX_SOCKET isolates any tmux server the spawned daemon might
+// create; FLEETDECK_AGENTS_CMD=false keeps the poller off.
 function runHook({ port, home, env = {}, payload, script = HOOK_SCRIPT }: RunHookOptions): HookRun {
   const childEnv: NodeJS.ProcessEnv = {
     ...process.env,
@@ -148,7 +149,7 @@ function runHook({ port, home, env = {}, payload, script = HOOK_SCRIPT }: RunHoo
     FLEETDECK_HOME: home,
     FLEETDECK_AGENTS_CMD: 'false',
     FLEETDECK_TMUX_SOCKET: `fleetdeck-test-${port}`,
-    FLEETDECK_TEST_DAEMON_SCRIPT: FLEETD_SOURCE,
+    FLEETDECK_TEST_DAEMON_SCRIPT: FLEETD_UNDER_TEST,
     ...env,
   };
   // A hook run from inside the suite (itself a Claude session / tmux) must not

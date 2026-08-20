@@ -23,11 +23,14 @@
 
 ## 2. Upgrade / migration story (the review's biggest omission)
 
-Today there are **~30 ad-hoc `ALTER TABLE` migrations** implemented as column-introspection branches with **no `user_version` and no transaction** around the migration block (`db.mjs:261-386`). Workable at today's churn; **not** at v1.0's, which adds **≥4 new tables/columns**: base ref (P2), checkpoint refs (P2), completions (P5), event stream (P6), accounts (P4).
+**Outcome (2026-08-19):** `src/daemon/db.ts` already has numbered, transactional migrations gated
+on `PRAGMA user_version`, with fresh/legacy/idempotency and rollback coverage in
+`tests/db-migrations.test.ts`. The v1 gate is to preserve and extend that mechanism, not adopt it
+from scratch.
 
-**Adopt for 1.0:**
+**Still required for 1.0:**
 
-- **numbered, transactional migrations** gated on **`PRAGMA user_version`** — the migration block runs inside a transaction and bumps the version atomically;
+- every pillar schema change extends the numbered ladder and bumps the version atomically;
 - a stated **compatibility rule per skew direction** — *old daemon + new board?* *new hooks + old daemon?* (the SessionStart shim already prefers a committed bundle, which helps);
 - a **downgrade answer** — what a rolled-back daemon does when it meets a newer schema.
 
@@ -62,23 +65,29 @@ The suite is the repo's **trust anchor** — [[test-suite-is-trust]]: never quar
 
 - **15 sessions × per-turn checkpoints** — a real git cost budget. Checkpoints run **async off the hook path** with a size guard, and must add **zero** hook-response latency (P2).
 - **Event-stream write volume** — **selective** tool events, not a firehose; PostToolUse does not tick today and a full firehose would swamp the table and the broadcast (P6).
-- **WS full-snapshot broadcast pressure** — `BROADCAST_COALESCE_MS=60` (`http.mjs:1370-1382`); the stream needs a **delta or per-channel fetch**, not the broadcast-everything path (P6).
+- **WS full-snapshot broadcast pressure** — `BROADCAST_COALESCE_MS=60` in
+  `src/daemon/http.ts`; the stream needs a **delta or per-channel fetch**, not the
+  broadcast-everything path (P6).
 - **Rollout tails** — Codex files balloon (20 MB+ observed); **tail, never slurp** (P1, P4).
+- **Effect/Bun foundation** — root-scope shutdown, subprocess cancellation/tree cleanup,
+  held-hook release, active-resource leaks, source/generated parity, bundle/install cost, and the
+  per-capability Bun benchmarks use the concrete budgets in
+  [effect-migration-plan §8](./effect-migration-plan.md#8-performance-and-soak-plan).
 
 ---
 
 ## 6. Platform statement (promises the CI must back)
 
 - **Codex hooks are Windows-disabled** — a Codex card on Windows is **notify + pane-liveness only**, and must say so (P1).
-- **macOS CI is advisory-only today** ([[oss-repo-infrastructure]], issue #2 — the `test-macos` job runs `continue-on-error`). Bun is now the runtime on macOS too, so a **load-bearing** macOS lane is what backs the platform statement: drop `continue-on-error` before macOS is a promise rather than a hope.
-- **Runtime floor** — the old `node:sqlite` floor (22.5–22.12 couldn't boot the daemon, [[local-dev-018-testing]]) is **gone**: the runtime is Bun-primary and `engines` is `bun >=1.3.14`, so that entire version-floor class of boot failure is retired outright rather than worked around.
+- **macOS CI is advisory-only today** ([[oss-repo-infrastructure]], issue #2 — the `test-macos` job runs `continue-on-error`). Bun is now the runtime on macOS too, so a **load-bearing** macOS lane is what backs the platform statement: the Effect/Bun plan makes lifecycle + real-tmux macOS blocking before terminal P7 completes and records `uname -m` rather than assuming runner architecture.
+- **Runtime floor** — the old `node:sqlite` floor (22.5–22.12 couldn't boot the daemon, [[local-dev-018-testing]]) is **gone**: the runtime is Bun-primary and `engines` is `bun >=1.3.14`. Bun 1.3.14 is the blocking floor/performance baseline; latest stable becomes a blocking compatibility canary before retaining that open-ended engine promise for the Effect migration release.
 - **CI lanes today** — the gates a PR actually runs: **toolchain** (`tsc --noEmit` + `biome ci`), the authoritative **test** lane (whole suite under Bun / `bun:sqlite`), **bundle** (rebuild + stale-artifact diff, suite against the committed bundle), **board** (build + stale-`board-dist` diff), **test-macos** (advisory), **version** (four manifests agree), and **hook-integrity** (plugin payload rode a version bump). One runtime — Bun — across every lane that installs or runs the product (**version** + **hook-integrity** are script-only one-liners on the runner's ambient node — utilities, not a second lane).
 
 ---
 
 ## 7. docs/internals (the t3code lesson the vision dropped)
 
-A **glossary + route map + state-machine doc** is near-free and 1.0 is its natural moment. Name it a deliverable: the **canonical event vocabulary**, the **provider strategy surface**, the **route table**, and the **lifecycle state machine** — the internals a new contributor needs to touch the spine without re-deriving it from `events.mjs`.
+A **glossary + route map + state-machine doc** is near-free and 1.0 is its natural moment. Name it a deliverable: the **canonical event vocabulary**, the **provider strategy surface**, the **route table**, and the **lifecycle state machine** — the internals a new contributor needs to touch the spine without re-deriving it from `src/daemon/events.ts`.
 
 ---
 

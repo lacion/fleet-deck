@@ -1,0 +1,1918 @@
+{
+  "schema": 1,
+  "kind": "fleetdeck-effect-p0-exec-bench",
+  "recordedAt": "2026-08-19T22:38:00.102Z",
+  "runtime": {
+    "bun": "1.3.14",
+    "revision": "0d9b296af33f2b851fcbf4df3e9ec89751734ba4",
+    "platform": "darwin",
+    "arch": "arm64"
+  },
+  "runtimeFloor": {
+    "expected": {
+      "bun": "1.3.14",
+      "revision": "0d9b296af33f2b851fcbf4df3e9ec89751734ba4"
+    },
+    "observed": {
+      "bun": "1.3.14",
+      "revision": "0d9b296af33f2b851fcbf4df3e9ec89751734ba4"
+    },
+    "exact": true
+  },
+  "baseline": {
+    "module": "src/daemon/exec.ts",
+    "export": "execFileP",
+    "implementation": "Bun.spawn through ProcessRunnerLive and BootstrapRuntimeBridge",
+    "directArgv": true,
+    "shell": false,
+    "combinedOutputLimitBytes": 1048576,
+    "termToKillGraceMs": 1000
+  },
+  "resourceCapabilities": {
+    "childSelfSampling": {
+      "available": true,
+      "platform": "darwin",
+      "rss": "process.memoryUsage().rss bytes with sampled peak",
+      "cpu": "process.cpuUsage() cumulative microseconds with interval peak and lifetime average"
+    },
+    "exitedChildAggregateRusage": {
+      "available": false,
+      "platform": "darwin",
+      "reason": "execFileP intentionally exposes only ExecResult, not the ChildProcess handle or exited-child rusage"
+    }
+  },
+  "config": {
+    "shortIterations": 1000,
+    "warmupIterations": 100,
+    "scenarioIterations": 5,
+    "timeoutMs": 250,
+    "readyTimeoutMs": 5000,
+    "cleanupTimeoutMs": 5000,
+    "settlementToleranceMs": 100
+  },
+  "workloads": {
+    "shortArgv": {
+      "command": [
+        "<bun>",
+        "-e",
+        "0"
+      ],
+      "directArgv": true,
+      "shell": false,
+      "warmupIterations": 100,
+      "measuredIterations": 1000,
+      "latencyMs": {
+        "count": 1000,
+        "min": 7.019,
+        "p50": 7.905,
+        "p95": 15.824,
+        "p99": 89.879,
+        "max": 128.738,
+        "mean": 11.856
+      },
+      "resultContract": {
+        "expected": {
+          "ok": true,
+          "out": ""
+        },
+        "observedDistinct": [
+          {
+            "ok": true,
+            "out": ""
+          }
+        ],
+        "observedKeySets": [
+          [
+            "ok",
+            "out"
+          ]
+        ],
+        "allExact": true
+      },
+      "settlement": {
+        "method": "temporarily wraps the Promise constructor while execFileP constructs its outer promise, counting executor resolve/reject calls independently of then/await delivery",
+        "observedDistinct": [
+          {
+            "promiseConstructions": 1,
+            "rejectAttempts": 0,
+            "resolveAttempts": 1
+          }
+        ],
+        "allExactlyOnce": true
+      },
+      "settlementExactlyOnce": true,
+      "childResources": {
+        "available": false,
+        "platform": "darwin",
+        "reason": "the compatibility facade does not expose a pid or exited-child rusage, and changing the short command to a reporting fixture would invalidate this startup workload"
+      },
+      "resources": {
+        "scope": "benchmark-parent-process",
+        "wallMs": 11860.307,
+        "cpuDelta": {
+          "userMicroseconds": 387879,
+          "systemMicroseconds": 352559,
+          "totalMicroseconds": 740438,
+          "percentOfOneCore": 6.243
+        },
+        "rss": {
+          "beforeBytes": 102989824,
+          "afterBytes": 118292480,
+          "deltaBytes": 15302656,
+          "peakSampledBytes": 118423552,
+          "maxRssRuntimeUnits": {
+            "note": "process.resourceUsage().maxRSS units are runtime-defined; use rss byte fields for comparisons",
+            "before": 102989824,
+            "after": 118423552,
+            "delta": 15433728
+          }
+        }
+      }
+    },
+    "boundedOutput": {
+      "exactLimit": {
+        "measuredIterations": 5,
+        "stdoutBytes": 1,
+        "stderrBytes": 1048575,
+        "combinedBytes": 1048576,
+        "latencyMs": {
+          "count": 5,
+          "min": 17.021,
+          "p50": 21.829,
+          "p95": 23.233,
+          "p99": 23.233,
+          "max": 23.233,
+          "mean": 21.381
+        },
+        "resultContract": {
+          "expected": {
+            "ok": true,
+            "out": "o"
+          },
+          "observedDistinct": [
+            {
+              "ok": true,
+              "out": "o"
+            }
+          ],
+          "observedKeySets": [
+            [
+              "ok",
+              "out"
+            ]
+          ],
+          "allExact": true
+        },
+        "settlement": {
+          "method": "temporarily wraps the Promise constructor while execFileP constructs its outer promise, counting executor resolve/reject calls independently of then/await delivery",
+          "observedDistinct": [
+            {
+              "promiseConstructions": 1,
+              "rejectAttempts": 0,
+              "resolveAttempts": 1
+            }
+          ],
+          "allExactlyOnce": true
+        },
+        "settlementExactlyOnce": true,
+        "childResources": {
+          "available": true,
+          "platform": "darwin",
+          "source": "each fixture process self-samples process.cpuUsage(), process.memoryUsage().rss, and process.resourceUsage().maxRSS",
+          "samplingNote": "CPU percentages include lightweight fixture state publication; maxRSS units are runtime-defined",
+          "processCount": 5,
+          "peakSampledRssBytes": {
+            "count": 5,
+            "min": 32047104,
+            "p50": 32096256,
+            "p95": 32178176,
+            "p99": 32178176,
+            "max": 32178176,
+            "mean": 32112640
+          },
+          "peakSampledCpuPercentOfOneCore": {
+            "available": true,
+            "distribution": {
+              "count": 5,
+              "min": 47.531,
+              "p50": 83.437,
+              "p95": 85.48,
+              "p99": 85.48,
+              "max": 85.48,
+              "mean": 74.657
+            },
+            "unavailableProcessPids": [],
+            "unavailableReason": null
+          },
+          "cpuTotalMicroseconds": {
+            "distribution": {
+              "count": 5,
+              "min": 14195,
+              "p50": 16731,
+              "p95": 17451,
+              "p99": 17451,
+              "max": 17451,
+              "mean": 16104.6
+            },
+            "sum": 80523
+          },
+          "processes": [
+            {
+              "pid": 55778,
+              "resources": {
+                "averageCpuPercentOfOneCore": 107.592,
+                "cpuIntervalSampleCount": 1,
+                "cpuSystemMicroseconds": 4470,
+                "cpuTotalMicroseconds": 14195,
+                "cpuUserMicroseconds": 9725,
+                "elapsedMs": 13.193,
+                "maxRssRuntimeUnits": 32161792,
+                "peakSampledCpuPercentOfOneCore": 47.531,
+                "peakSampledRssBytes": 32161792,
+                "rssBytes": 32161792,
+                "sampleCount": 2
+              }
+            },
+            {
+              "pid": 55779,
+              "resources": {
+                "averageCpuPercentOfOneCore": 136.822,
+                "cpuIntervalSampleCount": 1,
+                "cpuSystemMicroseconds": 5811,
+                "cpuTotalMicroseconds": 16731,
+                "cpuUserMicroseconds": 10920,
+                "elapsedMs": 12.228,
+                "maxRssRuntimeUnits": 32096256,
+                "peakSampledCpuPercentOfOneCore": 83.437,
+                "peakSampledRssBytes": 32096256,
+                "rssBytes": 32096256,
+                "sampleCount": 2
+              }
+            },
+            {
+              "pid": 55780,
+              "resources": {
+                "averageCpuPercentOfOneCore": 132.532,
+                "cpuIntervalSampleCount": 1,
+                "cpuSystemMicroseconds": 4813,
+                "cpuTotalMicroseconds": 15009,
+                "cpuUserMicroseconds": 10196,
+                "elapsedMs": 11.325,
+                "maxRssRuntimeUnits": 32178176,
+                "peakSampledCpuPercentOfOneCore": 85.48,
+                "peakSampledRssBytes": 32178176,
+                "rssBytes": 32178176,
+                "sampleCount": 2
+              }
+            },
+            {
+              "pid": 55781,
+              "resources": {
+                "averageCpuPercentOfOneCore": 107.525,
+                "cpuIntervalSampleCount": 1,
+                "cpuSystemMicroseconds": 5333,
+                "cpuTotalMicroseconds": 17137,
+                "cpuUserMicroseconds": 11804,
+                "elapsedMs": 15.938,
+                "maxRssRuntimeUnits": 32047104,
+                "peakSampledCpuPercentOfOneCore": 83.899,
+                "peakSampledRssBytes": 32047104,
+                "rssBytes": 32047104,
+                "sampleCount": 2
+              }
+            },
+            {
+              "pid": 55782,
+              "resources": {
+                "averageCpuPercentOfOneCore": 133.369,
+                "cpuIntervalSampleCount": 1,
+                "cpuSystemMicroseconds": 6067,
+                "cpuTotalMicroseconds": 17451,
+                "cpuUserMicroseconds": 11384,
+                "elapsedMs": 13.085,
+                "maxRssRuntimeUnits": 32079872,
+                "peakSampledCpuPercentOfOneCore": 72.94,
+                "peakSampledRssBytes": 32079872,
+                "rssBytes": 32079872,
+                "sampleCount": 2
+              }
+            }
+          ]
+        },
+        "cleanup": {
+          "waitMs": 0.098,
+          "timeoutMs": 6000,
+          "processes": [
+            {
+              "pid": 55778,
+              "alive": false
+            },
+            {
+              "pid": 55779,
+              "alive": false
+            },
+            {
+              "pid": 55780,
+              "alive": false
+            },
+            {
+              "pid": 55781,
+              "alive": false
+            },
+            {
+              "pid": 55782,
+              "alive": false
+            }
+          ],
+          "groupLeaderPid": null,
+          "groupAlive": false,
+          "allGone": true
+        },
+        "resources": {
+          "scope": "benchmark-parent-process",
+          "wallMs": 108.576,
+          "cpuDelta": {
+            "userMicroseconds": 6590,
+            "systemMicroseconds": 4691,
+            "totalMicroseconds": 11281,
+            "percentOfOneCore": 10.39
+          },
+          "rss": {
+            "beforeBytes": 118636544,
+            "afterBytes": 124272640,
+            "deltaBytes": 5636096,
+            "peakSampledBytes": 124272640,
+            "maxRssRuntimeUnits": {
+              "note": "process.resourceUsage().maxRSS units are runtime-defined; use rss byte fields for comparisons",
+              "before": 118636544,
+              "after": 124272640,
+              "delta": 5636096
+            }
+          }
+        }
+      },
+      "oneByteOver": {
+        "measuredIterations": 5,
+        "stdoutBytes": 1,
+        "stderrBytes": 1048576,
+        "combinedBytes": 1048577,
+        "latencyMs": {
+          "count": 5,
+          "min": 17.561,
+          "p50": 18.35,
+          "p95": 22.566,
+          "p99": 22.566,
+          "max": 22.566,
+          "mean": 19.256
+        },
+        "resultContract": {
+          "expected": {
+            "ok": false,
+            "code": "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
+            "err": "subprocess output exceeded 1048576 bytes"
+          },
+          "observedDistinct": [
+            {
+              "ok": false,
+              "code": "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
+              "err": "subprocess output exceeded 1048576 bytes"
+            }
+          ],
+          "observedKeySets": [
+            [
+              "code",
+              "err",
+              "ok"
+            ]
+          ],
+          "allExact": true
+        },
+        "settlement": {
+          "method": "temporarily wraps the Promise constructor while execFileP constructs its outer promise, counting executor resolve/reject calls independently of then/await delivery",
+          "observedDistinct": [
+            {
+              "promiseConstructions": 1,
+              "rejectAttempts": 0,
+              "resolveAttempts": 1
+            }
+          ],
+          "allExactlyOnce": true
+        },
+        "settlementExactlyOnce": true,
+        "childResources": {
+          "available": true,
+          "platform": "darwin",
+          "source": "each fixture process self-samples process.cpuUsage(), process.memoryUsage().rss, and process.resourceUsage().maxRSS",
+          "samplingNote": "CPU percentages include lightweight fixture state publication; maxRSS units are runtime-defined",
+          "processCount": 5,
+          "peakSampledRssBytes": {
+            "count": 5,
+            "min": 32112640,
+            "p50": 32145408,
+            "p95": 32227328,
+            "p99": 32227328,
+            "max": 32227328,
+            "mean": 32151961.6
+          },
+          "peakSampledCpuPercentOfOneCore": {
+            "available": true,
+            "distribution": {
+              "count": 5,
+              "min": 29.674,
+              "p50": 74.32,
+              "p95": 89.859,
+              "p99": 89.859,
+              "max": 89.859,
+              "mean": 68.892
+            },
+            "unavailableProcessPids": [],
+            "unavailableReason": null
+          },
+          "cpuTotalMicroseconds": {
+            "distribution": {
+              "count": 5,
+              "min": 15678,
+              "p50": 15807,
+              "p95": 16037,
+              "p99": 16037,
+              "max": 16037,
+              "mean": 15815.8
+            },
+            "sum": 79079
+          },
+          "processes": [
+            {
+              "pid": 55783,
+              "resources": {
+                "averageCpuPercentOfOneCore": 127.075,
+                "cpuIntervalSampleCount": 1,
+                "cpuSystemMicroseconds": 4852,
+                "cpuTotalMicroseconds": 15861,
+                "cpuUserMicroseconds": 11009,
+                "elapsedMs": 12.482,
+                "maxRssRuntimeUnits": 32145408,
+                "peakSampledCpuPercentOfOneCore": 65.596,
+                "peakSampledRssBytes": 32145408,
+                "rssBytes": 32145408,
+                "sampleCount": 2
+              }
+            },
+            {
+              "pid": 55784,
+              "resources": {
+                "averageCpuPercentOfOneCore": 130.506,
+                "cpuIntervalSampleCount": 1,
+                "cpuSystemMicroseconds": 5141,
+                "cpuTotalMicroseconds": 16037,
+                "cpuUserMicroseconds": 10896,
+                "elapsedMs": 12.288,
+                "maxRssRuntimeUnits": 32161792,
+                "peakSampledCpuPercentOfOneCore": 85.013,
+                "peakSampledRssBytes": 32161792,
+                "rssBytes": 32161792,
+                "sampleCount": 2
+              }
+            },
+            {
+              "pid": 55785,
+              "resources": {
+                "averageCpuPercentOfOneCore": 129.204,
+                "cpuIntervalSampleCount": 1,
+                "cpuSystemMicroseconds": 4909,
+                "cpuTotalMicroseconds": 15696,
+                "cpuUserMicroseconds": 10787,
+                "elapsedMs": 12.148,
+                "maxRssRuntimeUnits": 32112640,
+                "peakSampledCpuPercentOfOneCore": 74.32,
+                "peakSampledRssBytes": 32112640,
+                "rssBytes": 32112640,
+                "sampleCount": 2
+              }
+            },
+            {
+              "pid": 55786,
+              "resources": {
+                "averageCpuPercentOfOneCore": 125.384,
+                "cpuIntervalSampleCount": 1,
+                "cpuSystemMicroseconds": 4811,
+                "cpuTotalMicroseconds": 15678,
+                "cpuUserMicroseconds": 10867,
+                "elapsedMs": 12.504,
+                "maxRssRuntimeUnits": 32112640,
+                "peakSampledCpuPercentOfOneCore": 29.674,
+                "peakSampledRssBytes": 32112640,
+                "rssBytes": 32112640,
+                "sampleCount": 2
+              }
+            },
+            {
+              "pid": 55787,
+              "resources": {
+                "averageCpuPercentOfOneCore": 131.348,
+                "cpuIntervalSampleCount": 1,
+                "cpuSystemMicroseconds": 4944,
+                "cpuTotalMicroseconds": 15807,
+                "cpuUserMicroseconds": 10863,
+                "elapsedMs": 12.034,
+                "maxRssRuntimeUnits": 32227328,
+                "peakSampledCpuPercentOfOneCore": 89.859,
+                "peakSampledRssBytes": 32227328,
+                "rssBytes": 32227328,
+                "sampleCount": 2
+              }
+            }
+          ]
+        },
+        "cleanup": {
+          "waitMs": 11.029,
+          "timeoutMs": 6000,
+          "processes": [
+            {
+              "pid": 55783,
+              "alive": false
+            },
+            {
+              "pid": 55784,
+              "alive": false
+            },
+            {
+              "pid": 55785,
+              "alive": false
+            },
+            {
+              "pid": 55786,
+              "alive": false
+            },
+            {
+              "pid": 55787,
+              "alive": false
+            }
+          ],
+          "groupLeaderPid": null,
+          "groupAlive": false,
+          "allGone": true
+        },
+        "resources": {
+          "scope": "benchmark-parent-process",
+          "wallMs": 107.91,
+          "cpuDelta": {
+            "userMicroseconds": 8864,
+            "systemMicroseconds": 4379,
+            "totalMicroseconds": 13243,
+            "percentOfOneCore": 12.272
+          },
+          "rss": {
+            "beforeBytes": 124272640,
+            "afterBytes": 124370944,
+            "deltaBytes": 98304,
+            "peakSampledBytes": 124370944,
+            "maxRssRuntimeUnits": {
+              "note": "process.resourceUsage().maxRSS units are runtime-defined; use rss byte fields for comparisons",
+              "before": 124272640,
+              "after": 124370944,
+              "delta": 98304
+            }
+          }
+        }
+      }
+    },
+    "timeoutTermResistant": {
+      "measuredIterations": 5,
+      "timeoutMs": 250,
+      "latencyMs": {
+        "count": 5,
+        "min": 251.196,
+        "p50": 252.285,
+        "p95": 253.61,
+        "p99": 253.61,
+        "max": 253.61,
+        "mean": 252.386
+      },
+      "settlementAccuracy": {
+        "targetMs": 250,
+        "toleranceMs": 100,
+        "observedMs": {
+          "count": 5,
+          "min": 251.196,
+          "p50": 252.285,
+          "p95": 253.61,
+          "p99": 253.61,
+          "max": 253.61,
+          "mean": 252.386
+        },
+        "signedErrorMs": {
+          "count": 5,
+          "min": 1.196,
+          "p50": 2.285,
+          "p95": 3.61,
+          "p99": 3.61,
+          "max": 3.61,
+          "mean": 2.386
+        },
+        "absoluteErrorMs": {
+          "count": 5,
+          "min": 1.196,
+          "p50": 2.285,
+          "p95": 3.61,
+          "p99": 3.61,
+          "max": 3.61,
+          "mean": 2.386
+        },
+        "withinTolerance": true
+      },
+      "resultContract": {
+        "expected": {
+          "ok": false,
+          "code": "ETIMEDOUT",
+          "err": "timed out after 250ms"
+        },
+        "observedDistinct": [
+          {
+            "ok": false,
+            "code": "ETIMEDOUT",
+            "err": "timed out after 250ms"
+          }
+        ],
+        "observedKeySets": [
+          [
+            "code",
+            "err",
+            "ok"
+          ]
+        ],
+        "allExact": true
+      },
+      "settlement": {
+        "method": "temporarily wraps the Promise constructor while execFileP constructs its outer promise, counting executor resolve/reject calls independently of then/await delivery",
+        "observedDistinct": [
+          {
+            "promiseConstructions": 1,
+            "rejectAttempts": 0,
+            "resolveAttempts": 1
+          }
+        ],
+        "allExactlyOnce": true
+      },
+      "settlementExactlyOnce": true,
+      "termResistanceObserved": true,
+      "childStates": [
+        {
+          "pid": 55788,
+          "ready": true,
+          "resources": {
+            "averageCpuPercentOfOneCore": 2.193,
+            "cpuIntervalSampleCount": 25,
+            "cpuSystemMicroseconds": 11403,
+            "cpuTotalMicroseconds": 27087,
+            "cpuUserMicroseconds": 15684,
+            "elapsedMs": 1235.433,
+            "maxRssRuntimeUnits": 32391168,
+            "peakSampledCpuPercentOfOneCore": 6.993,
+            "peakSampledRssBytes": 32391168,
+            "rssBytes": 32391168,
+            "sampleCount": 26
+          },
+          "termSignals": 1
+        },
+        {
+          "pid": 55790,
+          "ready": true,
+          "resources": {
+            "averageCpuPercentOfOneCore": 2.814,
+            "cpuIntervalSampleCount": 25,
+            "cpuSystemMicroseconds": 12436,
+            "cpuTotalMicroseconds": 34947,
+            "cpuUserMicroseconds": 22511,
+            "elapsedMs": 1242.092,
+            "maxRssRuntimeUnits": 32358400,
+            "peakSampledCpuPercentOfOneCore": 6.05,
+            "peakSampledRssBytes": 32358400,
+            "rssBytes": 32358400,
+            "sampleCount": 26
+          },
+          "termSignals": 1
+        },
+        {
+          "pid": 55794,
+          "ready": true,
+          "resources": {
+            "averageCpuPercentOfOneCore": 2.851,
+            "cpuIntervalSampleCount": 25,
+            "cpuSystemMicroseconds": 13642,
+            "cpuTotalMicroseconds": 35428,
+            "cpuUserMicroseconds": 21786,
+            "elapsedMs": 1242.637,
+            "maxRssRuntimeUnits": 32342016,
+            "peakSampledCpuPercentOfOneCore": 3.079,
+            "peakSampledRssBytes": 32342016,
+            "rssBytes": 32342016,
+            "sampleCount": 26
+          },
+          "termSignals": 1
+        },
+        {
+          "pid": 55808,
+          "ready": true,
+          "resources": {
+            "averageCpuPercentOfOneCore": 2.26,
+            "cpuIntervalSampleCount": 24,
+            "cpuSystemMicroseconds": 9939,
+            "cpuTotalMicroseconds": 26835,
+            "cpuUserMicroseconds": 16896,
+            "elapsedMs": 1187.458,
+            "maxRssRuntimeUnits": 32456704,
+            "peakSampledCpuPercentOfOneCore": 2.088,
+            "peakSampledRssBytes": 32456704,
+            "rssBytes": 32456704,
+            "sampleCount": 25
+          },
+          "termSignals": 1
+        },
+        {
+          "pid": 55827,
+          "ready": true,
+          "resources": {
+            "averageCpuPercentOfOneCore": 2.228,
+            "cpuIntervalSampleCount": 24,
+            "cpuSystemMicroseconds": 11190,
+            "cpuTotalMicroseconds": 26412,
+            "cpuUserMicroseconds": 15222,
+            "elapsedMs": 1185.372,
+            "maxRssRuntimeUnits": 32423936,
+            "peakSampledCpuPercentOfOneCore": 3.131,
+            "peakSampledRssBytes": 32423936,
+            "rssBytes": 32423936,
+            "sampleCount": 25
+          },
+          "termSignals": 1
+        }
+      ],
+      "childResources": {
+        "available": true,
+        "platform": "darwin",
+        "source": "each fixture process self-samples process.cpuUsage(), process.memoryUsage().rss, and process.resourceUsage().maxRSS",
+        "samplingNote": "CPU percentages include lightweight fixture state publication; maxRSS units are runtime-defined",
+        "processCount": 5,
+        "peakSampledRssBytes": {
+          "count": 5,
+          "min": 32342016,
+          "p50": 32391168,
+          "p95": 32456704,
+          "p99": 32456704,
+          "max": 32456704,
+          "mean": 32394444.8
+        },
+        "peakSampledCpuPercentOfOneCore": {
+          "available": true,
+          "distribution": {
+            "count": 5,
+            "min": 2.088,
+            "p50": 3.131,
+            "p95": 6.993,
+            "p99": 6.993,
+            "max": 6.993,
+            "mean": 4.268
+          },
+          "unavailableProcessPids": [],
+          "unavailableReason": null
+        },
+        "cpuTotalMicroseconds": {
+          "distribution": {
+            "count": 5,
+            "min": 26412,
+            "p50": 27087,
+            "p95": 35428,
+            "p99": 35428,
+            "max": 35428,
+            "mean": 30141.8
+          },
+          "sum": 150709
+        },
+        "processes": [
+          {
+            "pid": 55788,
+            "resources": {
+              "averageCpuPercentOfOneCore": 2.193,
+              "cpuIntervalSampleCount": 25,
+              "cpuSystemMicroseconds": 11403,
+              "cpuTotalMicroseconds": 27087,
+              "cpuUserMicroseconds": 15684,
+              "elapsedMs": 1235.433,
+              "maxRssRuntimeUnits": 32391168,
+              "peakSampledCpuPercentOfOneCore": 6.993,
+              "peakSampledRssBytes": 32391168,
+              "rssBytes": 32391168,
+              "sampleCount": 26
+            }
+          },
+          {
+            "pid": 55790,
+            "resources": {
+              "averageCpuPercentOfOneCore": 2.814,
+              "cpuIntervalSampleCount": 25,
+              "cpuSystemMicroseconds": 12436,
+              "cpuTotalMicroseconds": 34947,
+              "cpuUserMicroseconds": 22511,
+              "elapsedMs": 1242.092,
+              "maxRssRuntimeUnits": 32358400,
+              "peakSampledCpuPercentOfOneCore": 6.05,
+              "peakSampledRssBytes": 32358400,
+              "rssBytes": 32358400,
+              "sampleCount": 26
+            }
+          },
+          {
+            "pid": 55794,
+            "resources": {
+              "averageCpuPercentOfOneCore": 2.851,
+              "cpuIntervalSampleCount": 25,
+              "cpuSystemMicroseconds": 13642,
+              "cpuTotalMicroseconds": 35428,
+              "cpuUserMicroseconds": 21786,
+              "elapsedMs": 1242.637,
+              "maxRssRuntimeUnits": 32342016,
+              "peakSampledCpuPercentOfOneCore": 3.079,
+              "peakSampledRssBytes": 32342016,
+              "rssBytes": 32342016,
+              "sampleCount": 26
+            }
+          },
+          {
+            "pid": 55808,
+            "resources": {
+              "averageCpuPercentOfOneCore": 2.26,
+              "cpuIntervalSampleCount": 24,
+              "cpuSystemMicroseconds": 9939,
+              "cpuTotalMicroseconds": 26835,
+              "cpuUserMicroseconds": 16896,
+              "elapsedMs": 1187.458,
+              "maxRssRuntimeUnits": 32456704,
+              "peakSampledCpuPercentOfOneCore": 2.088,
+              "peakSampledRssBytes": 32456704,
+              "rssBytes": 32456704,
+              "sampleCount": 25
+            }
+          },
+          {
+            "pid": 55827,
+            "resources": {
+              "averageCpuPercentOfOneCore": 2.228,
+              "cpuIntervalSampleCount": 24,
+              "cpuSystemMicroseconds": 11190,
+              "cpuTotalMicroseconds": 26412,
+              "cpuUserMicroseconds": 15222,
+              "elapsedMs": 1185.372,
+              "maxRssRuntimeUnits": 32423936,
+              "peakSampledCpuPercentOfOneCore": 3.131,
+              "peakSampledRssBytes": 32423936,
+              "rssBytes": 32423936,
+              "sampleCount": 25
+            }
+          }
+        ]
+      },
+      "cleanup": {
+        "waitMs": 1006.225,
+        "timeoutMs": 6000,
+        "processes": [
+          {
+            "pid": 55788,
+            "alive": false
+          },
+          {
+            "pid": 55790,
+            "alive": false
+          },
+          {
+            "pid": 55794,
+            "alive": false
+          },
+          {
+            "pid": 55808,
+            "alive": false
+          },
+          {
+            "pid": 55827,
+            "alive": false
+          }
+        ],
+        "groupLeaderPid": null,
+        "groupAlive": false,
+        "allGone": true
+      },
+      "resources": {
+        "scope": "benchmark-parent-process",
+        "wallMs": 2269.369,
+        "cpuDelta": {
+          "userMicroseconds": 26886,
+          "systemMicroseconds": 17626,
+          "totalMicroseconds": 44512,
+          "percentOfOneCore": 1.961
+        },
+        "rss": {
+          "beforeBytes": 124370944,
+          "afterBytes": 106627072,
+          "deltaBytes": -17743872,
+          "peakSampledBytes": 124370944,
+          "maxRssRuntimeUnits": {
+            "note": "process.resourceUsage().maxRSS units are runtime-defined; use rss byte fields for comparisons",
+            "before": 124370944,
+            "after": 124370944,
+            "delta": 0
+          }
+        }
+      }
+    },
+    "preAborted": {
+      "measuredIterations": 5,
+      "signalStateBeforeCall": "aborted",
+      "latencyMs": {
+        "count": 5,
+        "min": 0.569,
+        "p50": 0.843,
+        "p95": 2.144,
+        "p99": 2.144,
+        "max": 2.144,
+        "mean": 1.061
+      },
+      "settlementAccuracy": {
+        "targetMs": 0,
+        "toleranceMs": 100,
+        "observedMs": {
+          "count": 5,
+          "min": 0.569,
+          "p50": 0.843,
+          "p95": 2.144,
+          "p99": 2.144,
+          "max": 2.144,
+          "mean": 1.061
+        },
+        "signedErrorMs": {
+          "count": 5,
+          "min": 0.569,
+          "p50": 0.843,
+          "p95": 2.144,
+          "p99": 2.144,
+          "max": 2.144,
+          "mean": 1.061
+        },
+        "absoluteErrorMs": {
+          "count": 5,
+          "min": 0.569,
+          "p50": 0.843,
+          "p95": 2.144,
+          "p99": 2.144,
+          "max": 2.144,
+          "mean": 1.061
+        },
+        "withinTolerance": true
+      },
+      "resultContract": {
+        "expected": {
+          "ok": false,
+          "code": "ECANCELED",
+          "err": "cancelled"
+        },
+        "observedDistinct": [
+          {
+            "ok": false,
+            "code": "ECANCELED",
+            "err": "cancelled"
+          }
+        ],
+        "observedKeySets": [
+          [
+            "code",
+            "err",
+            "ok"
+          ]
+        ],
+        "allExact": true
+      },
+      "settlement": {
+        "method": "temporarily wraps the Promise constructor while execFileP constructs its outer promise, counting executor resolve/reject calls independently of then/await delivery",
+        "observedDistinct": [
+          {
+            "promiseConstructions": 1,
+            "rejectAttempts": 0,
+            "resolveAttempts": 1
+          }
+        ],
+        "allExactlyOnce": true
+      },
+      "settlementExactlyOnce": true,
+      "childResources": {
+        "available": false,
+        "platform": "darwin",
+        "reason": "the already-aborted signal may terminate the subprocess before fixture code can publish a pid or self-resource sample"
+      },
+      "resources": {
+        "scope": "benchmark-parent-process",
+        "wallMs": 32.854,
+        "cpuDelta": {
+          "userMicroseconds": 4637,
+          "systemMicroseconds": 3826,
+          "totalMicroseconds": 8463,
+          "percentOfOneCore": 25.759
+        },
+        "rss": {
+          "beforeBytes": 106627072,
+          "afterBytes": 106676224,
+          "deltaBytes": 49152,
+          "peakSampledBytes": 106676224,
+          "maxRssRuntimeUnits": {
+            "note": "process.resourceUsage().maxRSS units are runtime-defined; use rss byte fields for comparisons",
+            "before": 124370944,
+            "after": 124370944,
+            "delta": 0
+          }
+        }
+      }
+    },
+    "inFlightCancellation": {
+      "measuredIterations": 5,
+      "startToReadyMs": {
+        "count": 5,
+        "min": 16.996,
+        "p50": 23.112,
+        "p95": 34.731,
+        "p99": 34.731,
+        "max": 34.731,
+        "mean": 25.078
+      },
+      "abortToSettlementMs": {
+        "count": 5,
+        "min": 0.168,
+        "p50": 0.227,
+        "p95": 0.272,
+        "p99": 0.272,
+        "max": 0.272,
+        "mean": 0.214
+      },
+      "settlementAccuracy": {
+        "targetMs": 0,
+        "toleranceMs": 100,
+        "observedMs": {
+          "count": 5,
+          "min": 0.168,
+          "p50": 0.227,
+          "p95": 0.272,
+          "p99": 0.272,
+          "max": 0.272,
+          "mean": 0.214
+        },
+        "signedErrorMs": {
+          "count": 5,
+          "min": 0.168,
+          "p50": 0.227,
+          "p95": 0.272,
+          "p99": 0.272,
+          "max": 0.272,
+          "mean": 0.214
+        },
+        "absoluteErrorMs": {
+          "count": 5,
+          "min": 0.168,
+          "p50": 0.227,
+          "p95": 0.272,
+          "p99": 0.272,
+          "max": 0.272,
+          "mean": 0.214
+        },
+        "withinTolerance": true
+      },
+      "resultContract": {
+        "expected": {
+          "ok": false,
+          "code": "ECANCELED",
+          "err": "cancelled"
+        },
+        "observedDistinct": [
+          {
+            "ok": false,
+            "code": "ECANCELED",
+            "err": "cancelled"
+          }
+        ],
+        "observedKeySets": [
+          [
+            "code",
+            "err",
+            "ok"
+          ]
+        ],
+        "allExact": true
+      },
+      "settlement": {
+        "method": "temporarily wraps the Promise constructor while execFileP constructs its outer promise, counting executor resolve/reject calls independently of then/await delivery",
+        "observedDistinct": [
+          {
+            "promiseConstructions": 1,
+            "rejectAttempts": 0,
+            "resolveAttempts": 1
+          }
+        ],
+        "allExactlyOnce": true
+      },
+      "settlementExactlyOnce": true,
+      "termResistanceObserved": true,
+      "childStates": [
+        {
+          "pid": 55857,
+          "ready": true,
+          "resources": {
+            "averageCpuPercentOfOneCore": 3.771,
+            "cpuIntervalSampleCount": 20,
+            "cpuSystemMicroseconds": 14391,
+            "cpuTotalMicroseconds": 37208,
+            "cpuUserMicroseconds": 22817,
+            "elapsedMs": 986.621,
+            "maxRssRuntimeUnits": 32325632,
+            "peakSampledCpuPercentOfOneCore": 22.644,
+            "peakSampledRssBytes": 32325632,
+            "rssBytes": 32325632,
+            "sampleCount": 21
+          },
+          "termSignals": 1
+        },
+        {
+          "pid": 55858,
+          "ready": true,
+          "resources": {
+            "averageCpuPercentOfOneCore": 2.941,
+            "cpuIntervalSampleCount": 20,
+            "cpuSystemMicroseconds": 11503,
+            "cpuTotalMicroseconds": 28909,
+            "cpuUserMicroseconds": 17406,
+            "elapsedMs": 982.853,
+            "maxRssRuntimeUnits": 32358400,
+            "peakSampledCpuPercentOfOneCore": 24.023,
+            "peakSampledRssBytes": 32358400,
+            "rssBytes": 32358400,
+            "sampleCount": 21
+          },
+          "termSignals": 1
+        },
+        {
+          "pid": 55859,
+          "ready": true,
+          "resources": {
+            "averageCpuPercentOfOneCore": 2.557,
+            "cpuIntervalSampleCount": 20,
+            "cpuSystemMicroseconds": 10569,
+            "cpuTotalMicroseconds": 25062,
+            "cpuUserMicroseconds": 14493,
+            "elapsedMs": 980.086,
+            "maxRssRuntimeUnits": 32407552,
+            "peakSampledCpuPercentOfOneCore": 20.374,
+            "peakSampledRssBytes": 32407552,
+            "rssBytes": 32407552,
+            "sampleCount": 21
+          },
+          "termSignals": 1
+        },
+        {
+          "pid": 55860,
+          "ready": true,
+          "resources": {
+            "averageCpuPercentOfOneCore": 2.755,
+            "cpuIntervalSampleCount": 20,
+            "cpuSystemMicroseconds": 11414,
+            "cpuTotalMicroseconds": 26972,
+            "cpuUserMicroseconds": 15558,
+            "elapsedMs": 978.969,
+            "maxRssRuntimeUnits": 32342016,
+            "peakSampledCpuPercentOfOneCore": 24.838,
+            "peakSampledRssBytes": 32342016,
+            "rssBytes": 32342016,
+            "sampleCount": 21
+          },
+          "termSignals": 1
+        },
+        {
+          "pid": 55861,
+          "ready": true,
+          "resources": {
+            "averageCpuPercentOfOneCore": 2.832,
+            "cpuIntervalSampleCount": 20,
+            "cpuSystemMicroseconds": 12254,
+            "cpuTotalMicroseconds": 27682,
+            "cpuUserMicroseconds": 15428,
+            "elapsedMs": 977.573,
+            "maxRssRuntimeUnits": 32423936,
+            "peakSampledCpuPercentOfOneCore": 70.38,
+            "peakSampledRssBytes": 32423936,
+            "rssBytes": 32423936,
+            "sampleCount": 21
+          },
+          "termSignals": 1
+        }
+      ],
+      "childResources": {
+        "available": true,
+        "platform": "darwin",
+        "source": "each fixture process self-samples process.cpuUsage(), process.memoryUsage().rss, and process.resourceUsage().maxRSS",
+        "samplingNote": "CPU percentages include lightweight fixture state publication; maxRSS units are runtime-defined",
+        "processCount": 5,
+        "peakSampledRssBytes": {
+          "count": 5,
+          "min": 32325632,
+          "p50": 32358400,
+          "p95": 32423936,
+          "p99": 32423936,
+          "max": 32423936,
+          "mean": 32371507.2
+        },
+        "peakSampledCpuPercentOfOneCore": {
+          "available": true,
+          "distribution": {
+            "count": 5,
+            "min": 20.374,
+            "p50": 24.023,
+            "p95": 70.38,
+            "p99": 70.38,
+            "max": 70.38,
+            "mean": 32.452
+          },
+          "unavailableProcessPids": [],
+          "unavailableReason": null
+        },
+        "cpuTotalMicroseconds": {
+          "distribution": {
+            "count": 5,
+            "min": 25062,
+            "p50": 27682,
+            "p95": 37208,
+            "p99": 37208,
+            "max": 37208,
+            "mean": 29166.6
+          },
+          "sum": 145833
+        },
+        "processes": [
+          {
+            "pid": 55857,
+            "resources": {
+              "averageCpuPercentOfOneCore": 3.771,
+              "cpuIntervalSampleCount": 20,
+              "cpuSystemMicroseconds": 14391,
+              "cpuTotalMicroseconds": 37208,
+              "cpuUserMicroseconds": 22817,
+              "elapsedMs": 986.621,
+              "maxRssRuntimeUnits": 32325632,
+              "peakSampledCpuPercentOfOneCore": 22.644,
+              "peakSampledRssBytes": 32325632,
+              "rssBytes": 32325632,
+              "sampleCount": 21
+            }
+          },
+          {
+            "pid": 55858,
+            "resources": {
+              "averageCpuPercentOfOneCore": 2.941,
+              "cpuIntervalSampleCount": 20,
+              "cpuSystemMicroseconds": 11503,
+              "cpuTotalMicroseconds": 28909,
+              "cpuUserMicroseconds": 17406,
+              "elapsedMs": 982.853,
+              "maxRssRuntimeUnits": 32358400,
+              "peakSampledCpuPercentOfOneCore": 24.023,
+              "peakSampledRssBytes": 32358400,
+              "rssBytes": 32358400,
+              "sampleCount": 21
+            }
+          },
+          {
+            "pid": 55859,
+            "resources": {
+              "averageCpuPercentOfOneCore": 2.557,
+              "cpuIntervalSampleCount": 20,
+              "cpuSystemMicroseconds": 10569,
+              "cpuTotalMicroseconds": 25062,
+              "cpuUserMicroseconds": 14493,
+              "elapsedMs": 980.086,
+              "maxRssRuntimeUnits": 32407552,
+              "peakSampledCpuPercentOfOneCore": 20.374,
+              "peakSampledRssBytes": 32407552,
+              "rssBytes": 32407552,
+              "sampleCount": 21
+            }
+          },
+          {
+            "pid": 55860,
+            "resources": {
+              "averageCpuPercentOfOneCore": 2.755,
+              "cpuIntervalSampleCount": 20,
+              "cpuSystemMicroseconds": 11414,
+              "cpuTotalMicroseconds": 26972,
+              "cpuUserMicroseconds": 15558,
+              "elapsedMs": 978.969,
+              "maxRssRuntimeUnits": 32342016,
+              "peakSampledCpuPercentOfOneCore": 24.838,
+              "peakSampledRssBytes": 32342016,
+              "rssBytes": 32342016,
+              "sampleCount": 21
+            }
+          },
+          {
+            "pid": 55861,
+            "resources": {
+              "averageCpuPercentOfOneCore": 2.832,
+              "cpuIntervalSampleCount": 20,
+              "cpuSystemMicroseconds": 12254,
+              "cpuTotalMicroseconds": 27682,
+              "cpuUserMicroseconds": 15428,
+              "elapsedMs": 977.573,
+              "maxRssRuntimeUnits": 32423936,
+              "peakSampledCpuPercentOfOneCore": 70.38,
+              "peakSampledRssBytes": 32423936,
+              "rssBytes": 32423936,
+              "sampleCount": 21
+            }
+          }
+        ]
+      },
+      "cleanup": {
+        "waitMs": 1013.721,
+        "timeoutMs": 6000,
+        "processes": [
+          {
+            "pid": 55857,
+            "alive": false
+          },
+          {
+            "pid": 55858,
+            "alive": false
+          },
+          {
+            "pid": 55859,
+            "alive": false
+          },
+          {
+            "pid": 55860,
+            "alive": false
+          },
+          {
+            "pid": 55861,
+            "alive": false
+          }
+        ],
+        "groupLeaderPid": null,
+        "groupAlive": false,
+        "allGone": true
+      },
+      "resources": {
+        "scope": "benchmark-parent-process",
+        "wallMs": 1142.052,
+        "cpuDelta": {
+          "userMicroseconds": 18495,
+          "systemMicroseconds": 16299,
+          "totalMicroseconds": 34794,
+          "percentOfOneCore": 3.047
+        },
+        "rss": {
+          "beforeBytes": 106676224,
+          "afterBytes": 106758144,
+          "deltaBytes": 81920,
+          "peakSampledBytes": 106758144,
+          "maxRssRuntimeUnits": {
+            "note": "process.resourceUsage().maxRSS units are runtime-defined; use rss byte fields for comparisons",
+            "before": 124370944,
+            "after": 124370944,
+            "delta": 0
+          }
+        }
+      }
+    },
+    "posixDescendantCleanup": {
+      "skipped": false,
+      "killTree": true,
+      "directArgv": true,
+      "shell": false,
+      "startToReadyMs": 57.665,
+      "abortToSettlementMs": 0.398,
+      "settlementAccuracy": {
+        "targetMs": 0,
+        "toleranceMs": 100,
+        "observedMs": {
+          "count": 1,
+          "min": 0.398,
+          "p50": 0.398,
+          "p95": 0.398,
+          "p99": 0.398,
+          "max": 0.398,
+          "mean": 0.398
+        },
+        "signedErrorMs": {
+          "count": 1,
+          "min": 0.398,
+          "p50": 0.398,
+          "p95": 0.398,
+          "p99": 0.398,
+          "max": 0.398,
+          "mean": 0.398
+        },
+        "absoluteErrorMs": {
+          "count": 1,
+          "min": 0.398,
+          "p50": 0.398,
+          "p95": 0.398,
+          "p99": 0.398,
+          "max": 0.398,
+          "mean": 0.398
+        },
+        "withinTolerance": true
+      },
+      "resultContract": {
+        "expected": {
+          "ok": false,
+          "code": "ECANCELED",
+          "err": "cancelled"
+        },
+        "observedDistinct": [
+          {
+            "ok": false,
+            "code": "ECANCELED",
+            "err": "cancelled"
+          }
+        ],
+        "observedKeySets": [
+          [
+            "code",
+            "err",
+            "ok"
+          ]
+        ],
+        "allExact": true
+      },
+      "settlement": {
+        "method": "temporarily wraps the Promise constructor while execFileP constructs its outer promise, counting executor resolve/reject calls independently of then/await delivery",
+        "observedDistinct": [
+          {
+            "promiseConstructions": 1,
+            "rejectAttempts": 0,
+            "resolveAttempts": 1
+          }
+        ],
+        "allExactlyOnce": true
+      },
+      "settlementExactlyOnce": true,
+      "rootState": {
+        "pid": 55864,
+        "ready": true,
+        "resources": {
+          "averageCpuPercentOfOneCore": 4.482,
+          "cpuIntervalSampleCount": 21,
+          "cpuSystemMicroseconds": 19283,
+          "cpuTotalMicroseconds": 46731,
+          "cpuUserMicroseconds": 27448,
+          "elapsedMs": 1042.54,
+          "maxRssRuntimeUnits": 32702464,
+          "peakSampledCpuPercentOfOneCore": 7.523,
+          "peakSampledRssBytes": 32702464,
+          "rssBytes": 32702464,
+          "sampleCount": 22
+        },
+        "termSignals": 1,
+        "descendantPid": 55865
+      },
+      "descendantState": {
+        "pid": 55865,
+        "ready": true,
+        "resources": {
+          "averageCpuPercentOfOneCore": 3.412,
+          "cpuIntervalSampleCount": 20,
+          "cpuSystemMicroseconds": 13783,
+          "cpuTotalMicroseconds": 33555,
+          "cpuUserMicroseconds": 19772,
+          "elapsedMs": 983.469,
+          "maxRssRuntimeUnits": 32358400,
+          "peakSampledCpuPercentOfOneCore": 31.797,
+          "peakSampledRssBytes": 32358400,
+          "rssBytes": 32358400,
+          "sampleCount": 21
+        },
+        "termSignals": 1
+      },
+      "rootRecordedDescendantMatches": true,
+      "termResistanceObserved": true,
+      "childResources": {
+        "available": true,
+        "platform": "darwin",
+        "source": "each fixture process self-samples process.cpuUsage(), process.memoryUsage().rss, and process.resourceUsage().maxRSS",
+        "samplingNote": "CPU percentages include lightweight fixture state publication; maxRSS units are runtime-defined",
+        "processCount": 2,
+        "peakSampledRssBytes": {
+          "count": 2,
+          "min": 32358400,
+          "p50": 32358400,
+          "p95": 32702464,
+          "p99": 32702464,
+          "max": 32702464,
+          "mean": 32530432
+        },
+        "peakSampledCpuPercentOfOneCore": {
+          "available": true,
+          "distribution": {
+            "count": 2,
+            "min": 7.523,
+            "p50": 7.523,
+            "p95": 31.797,
+            "p99": 31.797,
+            "max": 31.797,
+            "mean": 19.66
+          },
+          "unavailableProcessPids": [],
+          "unavailableReason": null
+        },
+        "cpuTotalMicroseconds": {
+          "distribution": {
+            "count": 2,
+            "min": 33555,
+            "p50": 33555,
+            "p95": 46731,
+            "p99": 46731,
+            "max": 46731,
+            "mean": 40143
+          },
+          "sum": 80286
+        },
+        "processes": [
+          {
+            "pid": 55864,
+            "resources": {
+              "averageCpuPercentOfOneCore": 4.482,
+              "cpuIntervalSampleCount": 21,
+              "cpuSystemMicroseconds": 19283,
+              "cpuTotalMicroseconds": 46731,
+              "cpuUserMicroseconds": 27448,
+              "elapsedMs": 1042.54,
+              "maxRssRuntimeUnits": 32702464,
+              "peakSampledCpuPercentOfOneCore": 7.523,
+              "peakSampledRssBytes": 32702464,
+              "rssBytes": 32702464,
+              "sampleCount": 22
+            }
+          },
+          {
+            "pid": 55865,
+            "resources": {
+              "averageCpuPercentOfOneCore": 3.412,
+              "cpuIntervalSampleCount": 20,
+              "cpuSystemMicroseconds": 13783,
+              "cpuTotalMicroseconds": 33555,
+              "cpuUserMicroseconds": 19772,
+              "elapsedMs": 983.469,
+              "maxRssRuntimeUnits": 32358400,
+              "peakSampledCpuPercentOfOneCore": 31.797,
+              "peakSampledRssBytes": 32358400,
+              "rssBytes": 32358400,
+              "sampleCount": 21
+            }
+          }
+        ]
+      },
+      "cleanup": {
+        "waitMs": 1009.591,
+        "timeoutMs": 6000,
+        "processes": [
+          {
+            "pid": 55864,
+            "alive": false
+          },
+          {
+            "pid": 55865,
+            "alive": false
+          }
+        ],
+        "groupLeaderPid": 55864,
+        "groupAlive": false,
+        "allGone": true
+      },
+      "noDescendantsRemain": true,
+      "resources": {
+        "scope": "benchmark-parent-process",
+        "wallMs": 1068.723,
+        "cpuDelta": {
+          "userMicroseconds": 16003,
+          "systemMicroseconds": 27213,
+          "totalMicroseconds": 43216,
+          "percentOfOneCore": 4.044
+        },
+        "rss": {
+          "beforeBytes": 106758144,
+          "afterBytes": 106790912,
+          "deltaBytes": 32768,
+          "peakSampledBytes": 106790912,
+          "maxRssRuntimeUnits": {
+            "note": "process.resourceUsage().maxRSS units are runtime-defined; use rss byte fields for comparisons",
+            "before": 124370944,
+            "after": 124370944,
+            "delta": 0
+          }
+        }
+      }
+    },
+    "openInheritedPipeDescendant": {
+      "skipped": false,
+      "killTree": true,
+      "directArgv": true,
+      "shell": false,
+      "inheritedPipeOwners": [
+        "stdout",
+        "stderr"
+      ],
+      "fixtureSequence": "root spawns an unrefed TERM-resistant descendant inheriting both captured pipes, publishes its pid, then exits before the descendant",
+      "latencyMs": {
+        "count": 1,
+        "min": 254.349,
+        "p50": 254.349,
+        "p95": 254.349,
+        "p99": 254.349,
+        "max": 254.349,
+        "mean": 254.349
+      },
+      "settlementAccuracy": {
+        "targetMs": 250,
+        "toleranceMs": 100,
+        "observedMs": {
+          "count": 1,
+          "min": 254.349,
+          "p50": 254.349,
+          "p95": 254.349,
+          "p99": 254.349,
+          "max": 254.349,
+          "mean": 254.349
+        },
+        "signedErrorMs": {
+          "count": 1,
+          "min": 4.349,
+          "p50": 4.349,
+          "p95": 4.349,
+          "p99": 4.349,
+          "max": 4.349,
+          "mean": 4.349
+        },
+        "absoluteErrorMs": {
+          "count": 1,
+          "min": 4.349,
+          "p50": 4.349,
+          "p95": 4.349,
+          "p99": 4.349,
+          "max": 4.349,
+          "mean": 4.349
+        },
+        "withinTolerance": true
+      },
+      "resultContract": {
+        "expected": {
+          "ok": false,
+          "code": "ETIMEDOUT",
+          "err": "timed out after 250ms"
+        },
+        "observedDistinct": [
+          {
+            "ok": false,
+            "code": "ETIMEDOUT",
+            "err": "timed out after 250ms"
+          }
+        ],
+        "observedKeySets": [
+          [
+            "code",
+            "err",
+            "ok"
+          ]
+        ],
+        "allExact": true
+      },
+      "settlement": {
+        "method": "temporarily wraps the Promise constructor while execFileP constructs its outer promise, counting executor resolve/reject calls independently of then/await delivery",
+        "observedDistinct": [
+          {
+            "promiseConstructions": 1,
+            "rejectAttempts": 0,
+            "resolveAttempts": 1
+          }
+        ],
+        "allExactlyOnce": true
+      },
+      "settlementExactlyOnce": true,
+      "rootExitedBeforeSettlement": true,
+      "promisePendingAfterRootExit": true,
+      "descendantAliveWhilePromisePending": true,
+      "groupAliveAfterRootExit": true,
+      "rootState": {
+        "pid": 55866,
+        "ready": true,
+        "resources": {
+          "averageCpuPercentOfOneCore": 147.095,
+          "cpuIntervalSampleCount": 0,
+          "cpuSystemMicroseconds": 10657,
+          "cpuTotalMicroseconds": 30654,
+          "cpuUserMicroseconds": 19997,
+          "elapsedMs": 20.84,
+          "maxRssRuntimeUnits": 32210944,
+          "peakSampledCpuPercentOfOneCore": null,
+          "peakSampledRssBytes": 32210944,
+          "rssBytes": 32210944,
+          "sampleCount": 1
+        },
+        "termSignals": 0,
+        "descendantPid": 55867
+      },
+      "descendantState": {
+        "pid": 55867,
+        "ready": true,
+        "resources": {
+          "averageCpuPercentOfOneCore": 2.883,
+          "cpuIntervalSampleCount": 24,
+          "cpuSystemMicroseconds": 14102,
+          "cpuTotalMicroseconds": 34141,
+          "cpuUserMicroseconds": 20039,
+          "elapsedMs": 1184.393,
+          "maxRssRuntimeUnits": 32325632,
+          "peakSampledCpuPercentOfOneCore": 3.972,
+          "peakSampledRssBytes": 32325632,
+          "rssBytes": 32325632,
+          "sampleCount": 25
+        },
+        "termSignals": 1
+      },
+      "rootRecordedDescendantMatches": true,
+      "termResistanceObserved": true,
+      "childResources": {
+        "available": true,
+        "platform": "darwin",
+        "source": "each fixture process self-samples process.cpuUsage(), process.memoryUsage().rss, and process.resourceUsage().maxRSS",
+        "samplingNote": "CPU percentages include lightweight fixture state publication; maxRSS units are runtime-defined",
+        "processCount": 2,
+        "peakSampledRssBytes": {
+          "count": 2,
+          "min": 32210944,
+          "p50": 32210944,
+          "p95": 32325632,
+          "p99": 32325632,
+          "max": 32325632,
+          "mean": 32268288
+        },
+        "peakSampledCpuPercentOfOneCore": {
+          "available": true,
+          "distribution": {
+            "count": 1,
+            "min": 3.972,
+            "p50": 3.972,
+            "p95": 3.972,
+            "p99": 3.972,
+            "max": 3.972,
+            "mean": 3.972
+          },
+          "unavailableProcessPids": [
+            55866
+          ],
+          "unavailableReason": "process exited before a second self-sample could form a CPU interval"
+        },
+        "cpuTotalMicroseconds": {
+          "distribution": {
+            "count": 2,
+            "min": 30654,
+            "p50": 30654,
+            "p95": 34141,
+            "p99": 34141,
+            "max": 34141,
+            "mean": 32397.5
+          },
+          "sum": 64795
+        },
+        "processes": [
+          {
+            "pid": 55866,
+            "resources": {
+              "averageCpuPercentOfOneCore": 147.095,
+              "cpuIntervalSampleCount": 0,
+              "cpuSystemMicroseconds": 10657,
+              "cpuTotalMicroseconds": 30654,
+              "cpuUserMicroseconds": 19997,
+              "elapsedMs": 20.84,
+              "maxRssRuntimeUnits": 32210944,
+              "peakSampledCpuPercentOfOneCore": null,
+              "peakSampledRssBytes": 32210944,
+              "rssBytes": 32210944,
+              "sampleCount": 1
+            }
+          },
+          {
+            "pid": 55867,
+            "resources": {
+              "averageCpuPercentOfOneCore": 2.883,
+              "cpuIntervalSampleCount": 24,
+              "cpuSystemMicroseconds": 14102,
+              "cpuTotalMicroseconds": 34141,
+              "cpuUserMicroseconds": 20039,
+              "elapsedMs": 1184.393,
+              "maxRssRuntimeUnits": 32325632,
+              "peakSampledCpuPercentOfOneCore": 3.972,
+              "peakSampledRssBytes": 32325632,
+              "rssBytes": 32325632,
+              "sampleCount": 25
+            }
+          }
+        ]
+      },
+      "cleanup": {
+        "waitMs": 1003.678,
+        "timeoutMs": 6000,
+        "processes": [
+          {
+            "pid": 55866,
+            "alive": false
+          },
+          {
+            "pid": 55867,
+            "alive": false
+          }
+        ],
+        "groupLeaderPid": 55866,
+        "groupAlive": false,
+        "allGone": true
+      },
+      "noDescendantsRemain": true,
+      "resources": {
+        "scope": "benchmark-parent-process",
+        "wallMs": 1258.863,
+        "cpuDelta": {
+          "userMicroseconds": 24938,
+          "systemMicroseconds": 23969,
+          "totalMicroseconds": 48907,
+          "percentOfOneCore": 3.885
+        },
+        "rss": {
+          "beforeBytes": 106807296,
+          "afterBytes": 106938368,
+          "deltaBytes": 131072,
+          "peakSampledBytes": 106938368,
+          "maxRssRuntimeUnits": {
+            "note": "process.resourceUsage().maxRSS units are runtime-defined; use rss byte fields for comparisons",
+            "before": 124370944,
+            "after": 124370944,
+            "delta": 0
+          }
+        }
+      }
+    }
+  },
+  "resources": {
+    "scope": "benchmark-parent-process",
+    "wallMs": 18707.137,
+    "cpuDelta": {
+      "userMicroseconds": 556894,
+      "systemMicroseconds": 486590,
+      "totalMicroseconds": 1043484,
+      "percentOfOneCore": 5.578
+    },
+    "rss": {
+      "beforeBytes": 39190528,
+      "afterBytes": 106938368,
+      "deltaBytes": 67747840,
+      "peakSampledBytes": 124370944,
+      "maxRssRuntimeUnits": {
+        "note": "process.resourceUsage().maxRSS units are runtime-defined; use rss byte fields for comparisons",
+        "before": 39190528,
+        "after": 124370944,
+        "delta": 85180416
+      }
+    }
+  },
+  "ownershipCleanup": {
+    "bounded": true,
+    "timeoutMs": 6000,
+    "waitMs": 0.038,
+    "signalPasses": 1,
+    "discoveredPids": [],
+    "discoveredGroupLeaders": [],
+    "residue": {
+      "alivePids": [],
+      "aliveGroups": [],
+      "unresolvedIdentityPaths": []
+    },
+    "assertionPassed": true
+  },
+  "verification": {
+    "checks": {
+      "runtimeFloorExact": true,
+      "finalCleanupNoResidue": true,
+      "shortArgvExact": true,
+      "exactCombinedLimit": true,
+      "oneByteOverCombinedLimit": true,
+      "timeoutExact": true,
+      "timeoutSettlementWithinTolerance": true,
+      "preAbortExact": true,
+      "preAbortSettlementWithinTolerance": true,
+      "cancellationExact": true,
+      "cancellationSettlementWithinTolerance": true,
+      "descendantCleanup": true,
+      "inheritedPipeDescendant": true
+    },
+    "passed": true
+  }
+}

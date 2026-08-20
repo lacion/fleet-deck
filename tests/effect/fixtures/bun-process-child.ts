@@ -107,6 +107,19 @@ switch (mode) {
     await new Promise<never>(() => undefined);
     break;
   }
+  case 'term-resistant-group-parent': {
+    const helperPidFile = requiredArgument(arguments_, 0, 'helper pid file');
+    const fixture = fileURLToPath(import.meta.url);
+    process.on('SIGTERM', () => undefined);
+    Bun.spawn([process.execPath, fixture, 'term-resistant', helperPidFile], {
+      stdin: 'ignore',
+      stdout: 'inherit',
+      stderr: 'inherit',
+    });
+    setInterval(() => undefined, 1_000);
+    await new Promise<never>(() => undefined);
+    break;
+  }
   case 'immediate':
     break;
   default:

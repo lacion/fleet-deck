@@ -85,10 +85,10 @@ export interface ExecFileDelegate {
 let execFileDelegate: ExecFileDelegate | null = null;
 
 /**
- * Bind the sole temporary P3 Promise facade to its already-owned runtime edge.
- * Production binds once before opening SQLite; tests bind an injected driver.
- * P4 replaces this binding with the root IngressSupervisor in one synchronous
- * composition step, and P13 removes the facade with its final legacy callers.
+ * Bind the sole temporary Promise facade to the already-built root ingress.
+ * Production binds once before opening SQLite; tests bind one explicitly
+ * scoped driver Context through the same IngressSupervisor adapter. P13 removes
+ * the facade with its final legacy callers.
  */
 export function bindExecFileDelegate(delegate: ExecFileDelegate): () => void {
   if (execFileDelegate) throw new Error('execFileP delegate is already bound');

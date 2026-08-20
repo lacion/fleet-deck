@@ -2,11 +2,24 @@
 
 *Part of [Fleet Deck v1.0](./README.md). This is the shared technical spine that F1, F2, P1, P4, and P7 all ride. Read it before any pillar doc: the seam decision here is the one that makes multi-provider — and multi-provider *drive* ([P7](./p7-drive-and-observe.md)) — tractable instead of a smear.*
 
+> **Runtime application amendment (2026-08-19):** Fleet Deck has accepted Effect
+> `4.0.0-rc.110` as the daemon application architecture on Bun. One root Scope and ingress
+> supervisor own resources/asynchronous workflows; `Bun.spawn`, `Bun.serve`, native WebSockets,
+> and `bun:sqlite` remain visible platform adapters; contracts, board, hook shims, and pure domain
+> functions remain framework-free. The [decision](./effect-feasibility.md) and executable
+> [migration plan](./effect-migration-plan.md) are the authority for that new outer layer.
+>
+> **Current source baseline:** the original provider analysis below was written before F1 landed.
+> Daemon source now lives as TypeScript under `src/daemon/`, the board imports its snapshot types
+> from `contracts/`, `tsc --noEmit` and Biome are required gates, and esbuild's `.mjs` files are
+> generated artifacts. Old `.mjs`/`.js` line anchors in the historical discovery narrative explain
+> where the design came from; use CodeGraph and the current `.ts` symbols before implementation.
+
 ## The one decision that matters: normalize at intake, not in derive
 
 The vision said "`derive.mjs` becomes provider-aware." The review verified that this **mislocates the work**:
 
-- the status transition switch lives in **`events.mjs:273-424`**, not `derive.mjs`;
+- the status transition switch lives in **`src/daemon/events.ts`**, not `derive.ts`;
 - Claude-coupling smears across **≥6 modules and two side-channels** (`claude agents --json`, transcript JSONL);
 - nine distinct Claude-coupling categories were catalogued in the tree.
 
@@ -20,16 +33,19 @@ Hook payloads are the *only* churn-exposed boundary (both vendors ship experimen
 
 ## Layer 1 — the contracts module (F1a)
 
-A `contracts/` module (T3 Code's `packages/contracts` model) holding the typed shapes for every boundary, consumed by the daemon, the board, *and* the future Bun binary:
+The landed `contracts/` module holds typed shapes for shared boundaries and is consumed by the
+daemon and board; an optional future compiled distribution consumes the same contracts:
 
-- the `/state` snapshot (today hand-mirrored in `board/src/useFleetState.js:25-41` with the contract living in *comments* on both sides of the wire — the motivation is literally that the contract is prose today);
+- the `/state` snapshot (`contracts/state.ts`; imported by `board/src/useFleetState.ts`, replacing
+  the former hand-mirrored comment contract);
 - **canonical hook events** (below);
 - `/api/spawn` body, mail/command/questions wire formats, the completions rows (P5), the usage payloads (P4);
 - a **`schema_version`** field on every wire shape from day one, so hooks, board, and daemon can detect skew (the run-nonce work was exactly this class of bug).
 
-Two hard requirements the review pinned, because **esbuild strips types without checking them** and **no `tsc` exists anywhere in the repo today**:
+Two hard requirements the review pinned have landed and remain mandatory because esbuild strips
+types without checking them:
 
-1. a required CI lane running `tsc --noEmit` (or `checkJs`);
+1. the required `tsc --noEmit` CI lane;
 2. **runtime validation of hostile boundary JSON** — hook bodies and spawn bodies are attacker-reachable; static types do not validate wire input. Validate at intake, reject malformed, fail-open.
 
 See [foundations](./foundations.md) for the F1a timebox and the F1b standing rule.
@@ -38,7 +54,8 @@ See [foundations](./foundations.md) for the F1a timebox and the F1b standing rul
 
 ## Layer 2 — canonical event vocabulary
 
-A frozen, provider-agnostic event set in `contracts/`. This is roughly what `events.mjs:273-424` already switches on — renamed and pinned:
+A frozen, provider-agnostic event set in `contracts/`. This is roughly what
+`src/daemon/events.ts` already switches on — renamed and pinned:
 
 ```
 session-start
@@ -54,7 +71,9 @@ cwd-changed
 
 Plus, on every event: `provider` and `schema_version`.
 
-The `events` table gains a **`provider`** column (sessions already carry `source`, `db.mjs:49`). `applyEvent` consumes canonical events only and **stops knowing provider names**.
+The `events` table gains a **`provider`** column (sessions already carry `source` in
+`src/daemon/db.ts`). `applyEvent` consumes canonical events only and **stops knowing provider
+names**.
 
 ---
 
@@ -134,7 +153,10 @@ The SQLite store, callsigns/tickets, worktrees, the mail queue + transport, ques
 
 The runtime is now **Bun-primary and single-runtime** — the review's "additive Bun binary beside Node" was superseded by foundations-hardening (see [foundations](./foundations.md) §F2). The daemon, the standalone/dev path, and the Claude Code plugin fail-open hook floor **all run on Bun**; the Node version floor was deleted (`beb18cea`) and `engines` is `bun >=1.3.14`.
 
-The deep dive that made the swap safe still holds: DB access is **strongly centralized**. The store opens through **one seam — `sqlite.ts`'s `openDatabase()`**, the only module that names a SQLite builtin (`statements.ts`/`db.ts` build on it — 113 statements in the `statements` map, 35 in `db`, only **28 direct uses across 7 other modules**, mostly `BEGIN/COMMIT` strings + `questions`). The two drivers agree ~1:1 (no `backup()`, no UDFs, raw portable `BEGIN IMMEDIATE` strings), so the seam is **one import site + a class alias** (`DatabaseSync` ↔ `Database`).
+The deep dive that made the swap safe still holds: DB access is **strongly centralized**. The store
+opens through **one seam — `sqlite.ts`'s `openDatabase()`**, the only module that names the SQLite
+builtin; `statements.ts` and `db.ts` build on it. The former Node/Bun driver matrix is retired:
+the seam now imports `bun:sqlite` directly and preserves its normalization contract.
 
 - **`node:sqlite` is retired.** `openDatabase()` resolves to **`bun:sqlite`** under the single Bun runtime, still normalizing the one observed divergence (a missed `.get()` → `undefined`) so behavior stays stable.
 - **CI is one authoritative Bun test lane**, not a node×bun matrix — a `bun:sqlite` adapter-contract check gates the seam, then the whole suite runs under `bun test`.
@@ -146,15 +168,20 @@ Hooks are runtime-agnostic — they just POST HTTP — but they too now run unde
 
 ## Migrations & versioning (the omission the review flagged)
 
-Today there are ~30 ad-hoc `ALTER TABLE` migrations as column-introspection branches with **no `user_version` and no transaction around the migration block** (`db.mjs:261-386`). Workable at today's churn; **not** at v1.0's, which adds ≥4 tables/columns: base ref (P2), checkpoint refs (P2), completions (P5), event stream (P6), accounts (P4).
+**Outcome (2026-08-19):** the old ad-hoc column-introspection block has already been replaced in
+`src/daemon/db.ts` by a numbered, transactional `PRAGMA user_version` ladder. Fresh, legacy,
+partial-failure rollback, later-step rollback, range, duplicate-version, and idempotency behavior
+are covered by `tests/db-migrations.test.ts`. This is current infrastructure, not future P2 work.
 
-**Adopt for 1.0:**
+**Keep for 1.0:**
 
-- numbered, **transactional** migrations gated on **`PRAGMA user_version`**;
+- every new schema change extends that numbered transactional ladder and bumps `user_version`
+  atomically;
 - a stated **compatibility rule** for each skew direction — old daemon + new board? new hooks + old daemon? (the SessionStart shim already prefers a committed bundle) — and a **downgrade answer**;
 - **`schema_version`** carried in canonical events *and* in the daemon-served control skill (P5), so agents and hooks detect skew instead of silently misbehaving.
 
-This is small, near-free plumbing, and 1.0 is its natural moment — every new pillar adds schema.
+The migration mechanism is landed; compatibility/downgrade policy and the new pillar migrations
+remain v1 deliverables.
 
 ---
 

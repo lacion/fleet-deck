@@ -300,8 +300,10 @@ export async function terminateDaemon(
   {
     timeoutMs = 2000,
     sleep = defaultSleep,
-  }: { timeoutMs?: number; sleep?: (ms: number) => Promise<void> } = {},
+    signal,
+  }: { timeoutMs?: number; sleep?: (ms: number) => Promise<void>; signal?: AbortSignal } = {},
 ): Promise<boolean> {
+  signal?.throwIfAborted();
   try {
     process.kill(pid, 'SIGTERM');
   } catch (err) {
@@ -314,7 +316,33 @@ export async function terminateDaemon(
   const stepMs = 100;
   const steps = Math.max(1, Math.ceil(timeoutMs / stepMs));
   for (let i = 0; i < steps; i += 1) {
-    await sleep(stepMs);
+    if (!signal) {
+      await sleep(stepMs);
+    } else {
+      await new Promise<void>((resolve, reject) => {
+        let settled = false;
+        const finish = (error?: unknown): void => {
+          if (settled) return;
+          settled = true;
+          signal.removeEventListener('abort', onAbort);
+          if (error === undefined) resolve();
+          else reject(error);
+        };
+        const onAbort = (): void => {
+          try {
+            signal.throwIfAborted();
+          } catch (error) {
+            finish(error);
+          }
+        };
+        signal.addEventListener('abort', onAbort, { once: true });
+        if (signal.aborted) {
+          onAbort();
+          return;
+        }
+        void sleep(stepMs).then(() => finish(), finish);
+      });
+    }
     if (!pidIsLive(pid)) return true;
   }
   // Wedged daemon that ignored SIGTERM. NO SIGKILL escalation — a stale daemon

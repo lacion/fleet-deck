@@ -1,0 +1,3100 @@
+{
+  "schema": 1,
+  "kind": "fleetdeck-effect-p0-comparison",
+  "ok": true,
+  "recordedAt": "2026-08-19T22:38:06.729Z",
+  "source": {
+    "schema": 1,
+    "kind": "fleetdeck-effect-p0-exec-bench"
+  },
+  "inputs": {
+    "left": "/Users/luismorales/project/lacion/fleet-deck/docs/v1/evidence/effect/p3-exec-run-1.json",
+    "right": "/Users/luismorales/project/lacion/fleet-deck/docs/v1/evidence/effect/p3-exec-run-2.json"
+  },
+  "requiredRuntime": {
+    "bun": "1.3.14",
+    "revision": "0d9b296af33f2b851fcbf4df3e9ec89751734ba4"
+  },
+  "checks": {
+    "sameSchema": true,
+    "sameKind": true,
+    "exactBunFloor": true,
+    "sameMachineWhenRecorded": true,
+    "sameConfigWhenRecorded": true,
+    "correctnessAndVerificationHealthy": true,
+    "stableEvidenceEqual": true,
+    "matchingMetricShape": true
+  },
+  "coverage": {
+    "machineRecorded": true,
+    "configRecorded": true,
+    "correctnessChecks": 30,
+    "distributions": 41
+  },
+  "stableEvidence": {
+    "sha256": "2dbf4a2db32fd5da33b7dbac177a719dde7efe824c518d73782b5e25d610890d",
+    "equal": true
+  },
+  "metrics": {
+    "distributions": [
+      {
+        "path": "$.workloads.shortArgv.latencyMs",
+        "category": "timing",
+        "left": {
+          "count": 1000,
+          "p50": 7.78,
+          "p95": 11.101,
+          "p99": 88.627
+        },
+        "right": {
+          "count": 1000,
+          "p50": 7.905,
+          "p95": 15.824,
+          "p99": 89.879
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": 0.125,
+            "percent": 1.607
+          },
+          "p95": {
+            "absolute": 4.723,
+            "percent": 42.546
+          },
+          "p99": {
+            "absolute": 1.252,
+            "percent": 1.413
+          }
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.exactLimit.latencyMs",
+        "category": "timing",
+        "left": {
+          "count": 5,
+          "p50": 90.243,
+          "p95": 141.996,
+          "p99": 141.996
+        },
+        "right": {
+          "count": 5,
+          "p50": 21.829,
+          "p95": 23.233,
+          "p99": 23.233
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -68.414,
+            "percent": -75.811
+          },
+          "p95": {
+            "absolute": -118.763,
+            "percent": -83.638
+          },
+          "p99": {
+            "absolute": -118.763,
+            "percent": -83.638
+          }
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.exactLimit.childResources.peakSampledRssBytes",
+        "category": "size",
+        "left": {
+          "count": 5,
+          "p50": 32063488,
+          "p95": 32260096,
+          "p99": 32260096
+        },
+        "right": {
+          "count": 5,
+          "p50": 32096256,
+          "p95": 32178176,
+          "p99": 32178176
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": 32768,
+            "percent": 0.102
+          },
+          "p95": {
+            "absolute": -81920,
+            "percent": -0.254
+          },
+          "p99": {
+            "absolute": -81920,
+            "percent": -0.254
+          }
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.exactLimit.childResources.peakSampledCpuPercentOfOneCore.distribution",
+        "category": "timing",
+        "left": {
+          "count": 5,
+          "p50": 83.389,
+          "p95": 87.843,
+          "p99": 87.843
+        },
+        "right": {
+          "count": 5,
+          "p50": 83.437,
+          "p95": 85.48,
+          "p99": 85.48
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": 0.048,
+            "percent": 0.058
+          },
+          "p95": {
+            "absolute": -2.363,
+            "percent": -2.69
+          },
+          "p99": {
+            "absolute": -2.363,
+            "percent": -2.69
+          }
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.exactLimit.childResources.cpuTotalMicroseconds.distribution",
+        "category": "timing",
+        "left": {
+          "count": 5,
+          "p50": 15855,
+          "p95": 17818,
+          "p99": 17818
+        },
+        "right": {
+          "count": 5,
+          "p50": 16731,
+          "p95": 17451,
+          "p99": 17451
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": 876,
+            "percent": 5.525
+          },
+          "p95": {
+            "absolute": -367,
+            "percent": -2.06
+          },
+          "p99": {
+            "absolute": -367,
+            "percent": -2.06
+          }
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.oneByteOver.latencyMs",
+        "category": "timing",
+        "left": {
+          "count": 5,
+          "p50": 16.118,
+          "p95": 97.904,
+          "p99": 97.904
+        },
+        "right": {
+          "count": 5,
+          "p50": 18.35,
+          "p95": 22.566,
+          "p99": 22.566
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": 2.232,
+            "percent": 13.848
+          },
+          "p95": {
+            "absolute": -75.338,
+            "percent": -76.951
+          },
+          "p99": {
+            "absolute": -75.338,
+            "percent": -76.951
+          }
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.oneByteOver.childResources.peakSampledRssBytes",
+        "category": "size",
+        "left": {
+          "count": 5,
+          "p50": 32145408,
+          "p95": 32260096,
+          "p99": 32260096
+        },
+        "right": {
+          "count": 5,
+          "p50": 32145408,
+          "p95": 32227328,
+          "p99": 32227328
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": 0,
+            "percent": 0
+          },
+          "p95": {
+            "absolute": -32768,
+            "percent": -0.102
+          },
+          "p99": {
+            "absolute": -32768,
+            "percent": -0.102
+          }
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.oneByteOver.childResources.peakSampledCpuPercentOfOneCore.distribution",
+        "category": "timing",
+        "left": {
+          "count": 5,
+          "p50": 85.654,
+          "p95": 90.114,
+          "p99": 90.114
+        },
+        "right": {
+          "count": 5,
+          "p50": 74.32,
+          "p95": 89.859,
+          "p99": 89.859
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -11.334,
+            "percent": -13.232
+          },
+          "p95": {
+            "absolute": -0.255,
+            "percent": -0.283
+          },
+          "p99": {
+            "absolute": -0.255,
+            "percent": -0.283
+          }
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.oneByteOver.childResources.cpuTotalMicroseconds.distribution",
+        "category": "timing",
+        "left": {
+          "count": 5,
+          "p50": 15257,
+          "p95": 23972,
+          "p99": 23972
+        },
+        "right": {
+          "count": 5,
+          "p50": 15807,
+          "p95": 16037,
+          "p99": 16037
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": 550,
+            "percent": 3.605
+          },
+          "p95": {
+            "absolute": -7935,
+            "percent": -33.101
+          },
+          "p99": {
+            "absolute": -7935,
+            "percent": -33.101
+          }
+        }
+      },
+      {
+        "path": "$.workloads.timeoutTermResistant.latencyMs",
+        "category": "timing",
+        "left": {
+          "count": 5,
+          "p50": 254.182,
+          "p95": 266.173,
+          "p99": 266.173
+        },
+        "right": {
+          "count": 5,
+          "p50": 252.285,
+          "p95": 253.61,
+          "p99": 253.61
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -1.897,
+            "percent": -0.746
+          },
+          "p95": {
+            "absolute": -12.563,
+            "percent": -4.72
+          },
+          "p99": {
+            "absolute": -12.563,
+            "percent": -4.72
+          }
+        }
+      },
+      {
+        "path": "$.workloads.timeoutTermResistant.settlementAccuracy.observedMs",
+        "category": "timing",
+        "left": {
+          "count": 5,
+          "p50": 254.182,
+          "p95": 266.173,
+          "p99": 266.173
+        },
+        "right": {
+          "count": 5,
+          "p50": 252.285,
+          "p95": 253.61,
+          "p99": 253.61
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -1.897,
+            "percent": -0.746
+          },
+          "p95": {
+            "absolute": -12.563,
+            "percent": -4.72
+          },
+          "p99": {
+            "absolute": -12.563,
+            "percent": -4.72
+          }
+        }
+      },
+      {
+        "path": "$.workloads.timeoutTermResistant.settlementAccuracy.signedErrorMs",
+        "category": "timing",
+        "left": {
+          "count": 5,
+          "p50": 4.182,
+          "p95": 16.173,
+          "p99": 16.173
+        },
+        "right": {
+          "count": 5,
+          "p50": 2.285,
+          "p95": 3.61,
+          "p99": 3.61
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -1.897,
+            "percent": -45.361
+          },
+          "p95": {
+            "absolute": -12.563,
+            "percent": -77.679
+          },
+          "p99": {
+            "absolute": -12.563,
+            "percent": -77.679
+          }
+        }
+      },
+      {
+        "path": "$.workloads.timeoutTermResistant.settlementAccuracy.absoluteErrorMs",
+        "category": "timing",
+        "left": {
+          "count": 5,
+          "p50": 4.182,
+          "p95": 16.173,
+          "p99": 16.173
+        },
+        "right": {
+          "count": 5,
+          "p50": 2.285,
+          "p95": 3.61,
+          "p99": 3.61
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -1.897,
+            "percent": -45.361
+          },
+          "p95": {
+            "absolute": -12.563,
+            "percent": -77.679
+          },
+          "p99": {
+            "absolute": -12.563,
+            "percent": -77.679
+          }
+        }
+      },
+      {
+        "path": "$.workloads.timeoutTermResistant.childResources.peakSampledRssBytes",
+        "category": "size",
+        "left": {
+          "count": 5,
+          "p50": 32309248,
+          "p95": 32407552,
+          "p99": 32407552
+        },
+        "right": {
+          "count": 5,
+          "p50": 32391168,
+          "p95": 32456704,
+          "p99": 32456704
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": 81920,
+            "percent": 0.254
+          },
+          "p95": {
+            "absolute": 49152,
+            "percent": 0.152
+          },
+          "p99": {
+            "absolute": 49152,
+            "percent": 0.152
+          }
+        }
+      },
+      {
+        "path": "$.workloads.timeoutTermResistant.childResources.peakSampledCpuPercentOfOneCore.distribution",
+        "category": "timing",
+        "left": {
+          "count": 5,
+          "p50": 6.852,
+          "p95": 10.216,
+          "p99": 10.216
+        },
+        "right": {
+          "count": 5,
+          "p50": 3.131,
+          "p95": 6.993,
+          "p99": 6.993
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -3.721,
+            "percent": -54.305
+          },
+          "p95": {
+            "absolute": -3.223,
+            "percent": -31.549
+          },
+          "p99": {
+            "absolute": -3.223,
+            "percent": -31.549
+          }
+        }
+      },
+      {
+        "path": "$.workloads.timeoutTermResistant.childResources.cpuTotalMicroseconds.distribution",
+        "category": "timing",
+        "left": {
+          "count": 5,
+          "p50": 46892,
+          "p95": 52429,
+          "p99": 52429
+        },
+        "right": {
+          "count": 5,
+          "p50": 27087,
+          "p95": 35428,
+          "p99": 35428
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -19805,
+            "percent": -42.235
+          },
+          "p95": {
+            "absolute": -17001,
+            "percent": -32.427
+          },
+          "p99": {
+            "absolute": -17001,
+            "percent": -32.427
+          }
+        }
+      },
+      {
+        "path": "$.workloads.preAborted.latencyMs",
+        "category": "timing",
+        "left": {
+          "count": 5,
+          "p50": 0.337,
+          "p95": 0.657,
+          "p99": 0.657
+        },
+        "right": {
+          "count": 5,
+          "p50": 0.843,
+          "p95": 2.144,
+          "p99": 2.144
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": 0.506,
+            "percent": 150.148
+          },
+          "p95": {
+            "absolute": 1.487,
+            "percent": 226.332
+          },
+          "p99": {
+            "absolute": 1.487,
+            "percent": 226.332
+          }
+        }
+      },
+      {
+        "path": "$.workloads.preAborted.settlementAccuracy.observedMs",
+        "category": "timing",
+        "left": {
+          "count": 5,
+          "p50": 0.337,
+          "p95": 0.657,
+          "p99": 0.657
+        },
+        "right": {
+          "count": 5,
+          "p50": 0.843,
+          "p95": 2.144,
+          "p99": 2.144
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": 0.506,
+            "percent": 150.148
+          },
+          "p95": {
+            "absolute": 1.487,
+            "percent": 226.332
+          },
+          "p99": {
+            "absolute": 1.487,
+            "percent": 226.332
+          }
+        }
+      },
+      {
+        "path": "$.workloads.preAborted.settlementAccuracy.signedErrorMs",
+        "category": "timing",
+        "left": {
+          "count": 5,
+          "p50": 0.337,
+          "p95": 0.657,
+          "p99": 0.657
+        },
+        "right": {
+          "count": 5,
+          "p50": 0.843,
+          "p95": 2.144,
+          "p99": 2.144
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": 0.506,
+            "percent": 150.148
+          },
+          "p95": {
+            "absolute": 1.487,
+            "percent": 226.332
+          },
+          "p99": {
+            "absolute": 1.487,
+            "percent": 226.332
+          }
+        }
+      },
+      {
+        "path": "$.workloads.preAborted.settlementAccuracy.absoluteErrorMs",
+        "category": "timing",
+        "left": {
+          "count": 5,
+          "p50": 0.337,
+          "p95": 0.657,
+          "p99": 0.657
+        },
+        "right": {
+          "count": 5,
+          "p50": 0.843,
+          "p95": 2.144,
+          "p99": 2.144
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": 0.506,
+            "percent": 150.148
+          },
+          "p95": {
+            "absolute": 1.487,
+            "percent": 226.332
+          },
+          "p99": {
+            "absolute": 1.487,
+            "percent": 226.332
+          }
+        }
+      },
+      {
+        "path": "$.workloads.inFlightCancellation.startToReadyMs",
+        "category": "timing",
+        "left": {
+          "count": 5,
+          "p50": 95.26,
+          "p95": 216.785,
+          "p99": 216.785
+        },
+        "right": {
+          "count": 5,
+          "p50": 23.112,
+          "p95": 34.731,
+          "p99": 34.731
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -72.148,
+            "percent": -75.738
+          },
+          "p95": {
+            "absolute": -182.054,
+            "percent": -83.979
+          },
+          "p99": {
+            "absolute": -182.054,
+            "percent": -83.979
+          }
+        }
+      },
+      {
+        "path": "$.workloads.inFlightCancellation.abortToSettlementMs",
+        "category": "timing",
+        "left": {
+          "count": 5,
+          "p50": 0.193,
+          "p95": 0.483,
+          "p99": 0.483
+        },
+        "right": {
+          "count": 5,
+          "p50": 0.227,
+          "p95": 0.272,
+          "p99": 0.272
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": 0.034,
+            "percent": 17.617
+          },
+          "p95": {
+            "absolute": -0.211,
+            "percent": -43.685
+          },
+          "p99": {
+            "absolute": -0.211,
+            "percent": -43.685
+          }
+        }
+      },
+      {
+        "path": "$.workloads.inFlightCancellation.settlementAccuracy.observedMs",
+        "category": "timing",
+        "left": {
+          "count": 5,
+          "p50": 0.193,
+          "p95": 0.483,
+          "p99": 0.483
+        },
+        "right": {
+          "count": 5,
+          "p50": 0.227,
+          "p95": 0.272,
+          "p99": 0.272
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": 0.034,
+            "percent": 17.617
+          },
+          "p95": {
+            "absolute": -0.211,
+            "percent": -43.685
+          },
+          "p99": {
+            "absolute": -0.211,
+            "percent": -43.685
+          }
+        }
+      },
+      {
+        "path": "$.workloads.inFlightCancellation.settlementAccuracy.signedErrorMs",
+        "category": "timing",
+        "left": {
+          "count": 5,
+          "p50": 0.193,
+          "p95": 0.483,
+          "p99": 0.483
+        },
+        "right": {
+          "count": 5,
+          "p50": 0.227,
+          "p95": 0.272,
+          "p99": 0.272
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": 0.034,
+            "percent": 17.617
+          },
+          "p95": {
+            "absolute": -0.211,
+            "percent": -43.685
+          },
+          "p99": {
+            "absolute": -0.211,
+            "percent": -43.685
+          }
+        }
+      },
+      {
+        "path": "$.workloads.inFlightCancellation.settlementAccuracy.absoluteErrorMs",
+        "category": "timing",
+        "left": {
+          "count": 5,
+          "p50": 0.193,
+          "p95": 0.483,
+          "p99": 0.483
+        },
+        "right": {
+          "count": 5,
+          "p50": 0.227,
+          "p95": 0.272,
+          "p99": 0.272
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": 0.034,
+            "percent": 17.617
+          },
+          "p95": {
+            "absolute": -0.211,
+            "percent": -43.685
+          },
+          "p99": {
+            "absolute": -0.211,
+            "percent": -43.685
+          }
+        }
+      },
+      {
+        "path": "$.workloads.inFlightCancellation.childResources.peakSampledRssBytes",
+        "category": "size",
+        "left": {
+          "count": 5,
+          "p50": 32342016,
+          "p95": 32456704,
+          "p99": 32456704
+        },
+        "right": {
+          "count": 5,
+          "p50": 32358400,
+          "p95": 32423936,
+          "p99": 32423936
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": 16384,
+            "percent": 0.051
+          },
+          "p95": {
+            "absolute": -32768,
+            "percent": -0.101
+          },
+          "p99": {
+            "absolute": -32768,
+            "percent": -0.101
+          }
+        }
+      },
+      {
+        "path": "$.workloads.inFlightCancellation.childResources.peakSampledCpuPercentOfOneCore.distribution",
+        "category": "timing",
+        "left": {
+          "count": 5,
+          "p50": 27.635,
+          "p95": 62.057,
+          "p99": 62.057
+        },
+        "right": {
+          "count": 5,
+          "p50": 24.023,
+          "p95": 70.38,
+          "p99": 70.38
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -3.612,
+            "percent": -13.07
+          },
+          "p95": {
+            "absolute": 8.323,
+            "percent": 13.412
+          },
+          "p99": {
+            "absolute": 8.323,
+            "percent": 13.412
+          }
+        }
+      },
+      {
+        "path": "$.workloads.inFlightCancellation.childResources.cpuTotalMicroseconds.distribution",
+        "category": "timing",
+        "left": {
+          "count": 5,
+          "p50": 29322,
+          "p95": 38476,
+          "p99": 38476
+        },
+        "right": {
+          "count": 5,
+          "p50": 27682,
+          "p95": 37208,
+          "p99": 37208
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -1640,
+            "percent": -5.593
+          },
+          "p95": {
+            "absolute": -1268,
+            "percent": -3.296
+          },
+          "p99": {
+            "absolute": -1268,
+            "percent": -3.296
+          }
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.settlementAccuracy.observedMs",
+        "category": "timing",
+        "left": {
+          "count": 1,
+          "p50": 0.356,
+          "p95": 0.356,
+          "p99": 0.356
+        },
+        "right": {
+          "count": 1,
+          "p50": 0.398,
+          "p95": 0.398,
+          "p99": 0.398
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": 0.042,
+            "percent": 11.798
+          },
+          "p95": {
+            "absolute": 0.042,
+            "percent": 11.798
+          },
+          "p99": {
+            "absolute": 0.042,
+            "percent": 11.798
+          }
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.settlementAccuracy.signedErrorMs",
+        "category": "timing",
+        "left": {
+          "count": 1,
+          "p50": 0.356,
+          "p95": 0.356,
+          "p99": 0.356
+        },
+        "right": {
+          "count": 1,
+          "p50": 0.398,
+          "p95": 0.398,
+          "p99": 0.398
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": 0.042,
+            "percent": 11.798
+          },
+          "p95": {
+            "absolute": 0.042,
+            "percent": 11.798
+          },
+          "p99": {
+            "absolute": 0.042,
+            "percent": 11.798
+          }
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.settlementAccuracy.absoluteErrorMs",
+        "category": "timing",
+        "left": {
+          "count": 1,
+          "p50": 0.356,
+          "p95": 0.356,
+          "p99": 0.356
+        },
+        "right": {
+          "count": 1,
+          "p50": 0.398,
+          "p95": 0.398,
+          "p99": 0.398
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": 0.042,
+            "percent": 11.798
+          },
+          "p95": {
+            "absolute": 0.042,
+            "percent": 11.798
+          },
+          "p99": {
+            "absolute": 0.042,
+            "percent": 11.798
+          }
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.childResources.peakSampledRssBytes",
+        "category": "size",
+        "left": {
+          "count": 2,
+          "p50": 32358400,
+          "p95": 32718848,
+          "p99": 32718848
+        },
+        "right": {
+          "count": 2,
+          "p50": 32358400,
+          "p95": 32702464,
+          "p99": 32702464
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": 0,
+            "percent": 0
+          },
+          "p95": {
+            "absolute": -16384,
+            "percent": -0.05
+          },
+          "p99": {
+            "absolute": -16384,
+            "percent": -0.05
+          }
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.childResources.peakSampledCpuPercentOfOneCore.distribution",
+        "category": "timing",
+        "left": {
+          "count": 2,
+          "p50": 4.252,
+          "p95": 20.561,
+          "p99": 20.561
+        },
+        "right": {
+          "count": 2,
+          "p50": 7.523,
+          "p95": 31.797,
+          "p99": 31.797
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": 3.271,
+            "percent": 76.929
+          },
+          "p95": {
+            "absolute": 11.236,
+            "percent": 54.647
+          },
+          "p99": {
+            "absolute": 11.236,
+            "percent": 54.647
+          }
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.childResources.cpuTotalMicroseconds.distribution",
+        "category": "timing",
+        "left": {
+          "count": 2,
+          "p50": 36606,
+          "p95": 37243,
+          "p99": 37243
+        },
+        "right": {
+          "count": 2,
+          "p50": 33555,
+          "p95": 46731,
+          "p99": 46731
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -3051,
+            "percent": -8.335
+          },
+          "p95": {
+            "absolute": 9488,
+            "percent": 25.476
+          },
+          "p99": {
+            "absolute": 9488,
+            "percent": 25.476
+          }
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.latencyMs",
+        "category": "timing",
+        "left": {
+          "count": 1,
+          "p50": 255.194,
+          "p95": 255.194,
+          "p99": 255.194
+        },
+        "right": {
+          "count": 1,
+          "p50": 254.349,
+          "p95": 254.349,
+          "p99": 254.349
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -0.845,
+            "percent": -0.331
+          },
+          "p95": {
+            "absolute": -0.845,
+            "percent": -0.331
+          },
+          "p99": {
+            "absolute": -0.845,
+            "percent": -0.331
+          }
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.settlementAccuracy.observedMs",
+        "category": "timing",
+        "left": {
+          "count": 1,
+          "p50": 255.194,
+          "p95": 255.194,
+          "p99": 255.194
+        },
+        "right": {
+          "count": 1,
+          "p50": 254.349,
+          "p95": 254.349,
+          "p99": 254.349
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -0.845,
+            "percent": -0.331
+          },
+          "p95": {
+            "absolute": -0.845,
+            "percent": -0.331
+          },
+          "p99": {
+            "absolute": -0.845,
+            "percent": -0.331
+          }
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.settlementAccuracy.signedErrorMs",
+        "category": "timing",
+        "left": {
+          "count": 1,
+          "p50": 5.194,
+          "p95": 5.194,
+          "p99": 5.194
+        },
+        "right": {
+          "count": 1,
+          "p50": 4.349,
+          "p95": 4.349,
+          "p99": 4.349
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -0.845,
+            "percent": -16.269
+          },
+          "p95": {
+            "absolute": -0.845,
+            "percent": -16.269
+          },
+          "p99": {
+            "absolute": -0.845,
+            "percent": -16.269
+          }
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.settlementAccuracy.absoluteErrorMs",
+        "category": "timing",
+        "left": {
+          "count": 1,
+          "p50": 5.194,
+          "p95": 5.194,
+          "p99": 5.194
+        },
+        "right": {
+          "count": 1,
+          "p50": 4.349,
+          "p95": 4.349,
+          "p99": 4.349
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -0.845,
+            "percent": -16.269
+          },
+          "p95": {
+            "absolute": -0.845,
+            "percent": -16.269
+          },
+          "p99": {
+            "absolute": -0.845,
+            "percent": -16.269
+          }
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.childResources.peakSampledRssBytes",
+        "category": "size",
+        "left": {
+          "count": 2,
+          "p50": 32243712,
+          "p95": 32358400,
+          "p99": 32358400
+        },
+        "right": {
+          "count": 2,
+          "p50": 32210944,
+          "p95": 32325632,
+          "p99": 32325632
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -32768,
+            "percent": -0.102
+          },
+          "p95": {
+            "absolute": -32768,
+            "percent": -0.101
+          },
+          "p99": {
+            "absolute": -32768,
+            "percent": -0.101
+          }
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.childResources.peakSampledCpuPercentOfOneCore.distribution",
+        "category": "timing",
+        "left": {
+          "count": 1,
+          "p50": 40.12,
+          "p95": 40.12,
+          "p99": 40.12
+        },
+        "right": {
+          "count": 1,
+          "p50": 3.972,
+          "p95": 3.972,
+          "p99": 3.972
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": -36.148,
+            "percent": -90.1
+          },
+          "p95": {
+            "absolute": -36.148,
+            "percent": -90.1
+          },
+          "p99": {
+            "absolute": -36.148,
+            "percent": -90.1
+          }
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.childResources.cpuTotalMicroseconds.distribution",
+        "category": "timing",
+        "left": {
+          "count": 2,
+          "p50": 23378,
+          "p95": 39202,
+          "p99": 39202
+        },
+        "right": {
+          "count": 2,
+          "p50": 30654,
+          "p95": 34141,
+          "p99": 34141
+        },
+        "delta": {
+          "count": 0,
+          "p50": {
+            "absolute": 7276,
+            "percent": 31.123
+          },
+          "p95": {
+            "absolute": -5061,
+            "percent": -12.91
+          },
+          "p99": {
+            "absolute": -5061,
+            "percent": -12.91
+          }
+        }
+      }
+    ],
+    "scalarTimings": [
+      {
+        "path": "$.baseline.termToKillGraceMs",
+        "left": 1000,
+        "right": 1000,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.config.timeoutMs",
+        "left": 250,
+        "right": 250,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.config.readyTimeoutMs",
+        "left": 5000,
+        "right": 5000,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.config.cleanupTimeoutMs",
+        "left": 5000,
+        "right": 5000,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.config.settlementToleranceMs",
+        "left": 100,
+        "right": 100,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.workloads.shortArgv.resources.wallMs",
+        "left": 10710.256,
+        "right": 11860.307,
+        "delta": {
+          "absolute": 1150.051,
+          "percent": 10.738
+        }
+      },
+      {
+        "path": "$.workloads.shortArgv.resources.cpuDelta.userMicroseconds",
+        "left": 373536,
+        "right": 387879,
+        "delta": {
+          "absolute": 14343,
+          "percent": 3.84
+        }
+      },
+      {
+        "path": "$.workloads.shortArgv.resources.cpuDelta.systemMicroseconds",
+        "left": 346250,
+        "right": 352559,
+        "delta": {
+          "absolute": 6309,
+          "percent": 1.822
+        }
+      },
+      {
+        "path": "$.workloads.shortArgv.resources.cpuDelta.totalMicroseconds",
+        "left": 719786,
+        "right": 740438,
+        "delta": {
+          "absolute": 20652,
+          "percent": 2.869
+        }
+      },
+      {
+        "path": "$.workloads.shortArgv.resources.cpuDelta.percentOfOneCore",
+        "left": 6.721,
+        "right": 6.243,
+        "delta": {
+          "absolute": -0.478,
+          "percent": -7.112
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.exactLimit.childResources.cpuTotalMicroseconds.sum",
+        "left": 79933,
+        "right": 80523,
+        "delta": {
+          "absolute": 590,
+          "percent": 0.738
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.exactLimit.cleanup.waitMs",
+        "left": 0.976,
+        "right": 0.098,
+        "delta": {
+          "absolute": -0.878,
+          "percent": -89.959
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.exactLimit.cleanup.timeoutMs",
+        "left": 6000,
+        "right": 6000,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.exactLimit.resources.wallMs",
+        "left": 494.061,
+        "right": 108.576,
+        "delta": {
+          "absolute": -385.485,
+          "percent": -78.024
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.exactLimit.resources.cpuDelta.userMicroseconds",
+        "left": 10447,
+        "right": 6590,
+        "delta": {
+          "absolute": -3857,
+          "percent": -36.92
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.exactLimit.resources.cpuDelta.systemMicroseconds",
+        "left": 6312,
+        "right": 4691,
+        "delta": {
+          "absolute": -1621,
+          "percent": -25.681
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.exactLimit.resources.cpuDelta.totalMicroseconds",
+        "left": 16759,
+        "right": 11281,
+        "delta": {
+          "absolute": -5478,
+          "percent": -32.687
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.exactLimit.resources.cpuDelta.percentOfOneCore",
+        "left": 3.392,
+        "right": 10.39,
+        "delta": {
+          "absolute": 6.998,
+          "percent": 206.309
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.oneByteOver.childResources.cpuTotalMicroseconds.sum",
+        "left": 86372,
+        "right": 79079,
+        "delta": {
+          "absolute": -7293,
+          "percent": -8.444
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.oneByteOver.cleanup.waitMs",
+        "left": 11.333,
+        "right": 11.029,
+        "delta": {
+          "absolute": -0.304,
+          "percent": -2.682
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.oneByteOver.cleanup.timeoutMs",
+        "left": 6000,
+        "right": 6000,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.oneByteOver.resources.wallMs",
+        "left": 175.953,
+        "right": 107.91,
+        "delta": {
+          "absolute": -68.043,
+          "percent": -38.671
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.oneByteOver.resources.cpuDelta.userMicroseconds",
+        "left": 6337,
+        "right": 8864,
+        "delta": {
+          "absolute": 2527,
+          "percent": 39.877
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.oneByteOver.resources.cpuDelta.systemMicroseconds",
+        "left": 3940,
+        "right": 4379,
+        "delta": {
+          "absolute": 439,
+          "percent": 11.142
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.oneByteOver.resources.cpuDelta.totalMicroseconds",
+        "left": 10277,
+        "right": 13243,
+        "delta": {
+          "absolute": 2966,
+          "percent": 28.861
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.oneByteOver.resources.cpuDelta.percentOfOneCore",
+        "left": 5.841,
+        "right": 12.272,
+        "delta": {
+          "absolute": 6.431,
+          "percent": 110.101
+        }
+      },
+      {
+        "path": "$.workloads.timeoutTermResistant.measuredIterations",
+        "left": 5,
+        "right": 5,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.workloads.timeoutTermResistant.timeoutMs",
+        "left": 250,
+        "right": 250,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.workloads.timeoutTermResistant.settlementAccuracy.targetMs",
+        "left": 250,
+        "right": 250,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.workloads.timeoutTermResistant.settlementAccuracy.toleranceMs",
+        "left": 100,
+        "right": 100,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.workloads.timeoutTermResistant.childResources.processCount",
+        "left": 5,
+        "right": 5,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.workloads.timeoutTermResistant.childResources.cpuTotalMicroseconds.sum",
+        "left": 219624,
+        "right": 150709,
+        "delta": {
+          "absolute": -68915,
+          "percent": -31.379
+        }
+      },
+      {
+        "path": "$.workloads.timeoutTermResistant.cleanup.waitMs",
+        "left": 1006.444,
+        "right": 1006.225,
+        "delta": {
+          "absolute": -0.219,
+          "percent": -0.022
+        }
+      },
+      {
+        "path": "$.workloads.timeoutTermResistant.cleanup.timeoutMs",
+        "left": 6000,
+        "right": 6000,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.workloads.timeoutTermResistant.resources.wallMs",
+        "left": 2289.73,
+        "right": 2269.369,
+        "delta": {
+          "absolute": -20.361,
+          "percent": -0.889
+        }
+      },
+      {
+        "path": "$.workloads.timeoutTermResistant.resources.cpuDelta.userMicroseconds",
+        "left": 59323,
+        "right": 26886,
+        "delta": {
+          "absolute": -32437,
+          "percent": -54.679
+        }
+      },
+      {
+        "path": "$.workloads.timeoutTermResistant.resources.cpuDelta.systemMicroseconds",
+        "left": 32742,
+        "right": 17626,
+        "delta": {
+          "absolute": -15116,
+          "percent": -46.167
+        }
+      },
+      {
+        "path": "$.workloads.timeoutTermResistant.resources.cpuDelta.totalMicroseconds",
+        "left": 92065,
+        "right": 44512,
+        "delta": {
+          "absolute": -47553,
+          "percent": -51.652
+        }
+      },
+      {
+        "path": "$.workloads.timeoutTermResistant.resources.cpuDelta.percentOfOneCore",
+        "left": 4.021,
+        "right": 1.961,
+        "delta": {
+          "absolute": -2.06,
+          "percent": -51.231
+        }
+      },
+      {
+        "path": "$.workloads.preAborted.settlementAccuracy.targetMs",
+        "left": 0,
+        "right": 0,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.workloads.preAborted.settlementAccuracy.toleranceMs",
+        "left": 100,
+        "right": 100,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.workloads.preAborted.resources.wallMs",
+        "left": 28.497,
+        "right": 32.854,
+        "delta": {
+          "absolute": 4.357,
+          "percent": 15.289
+        }
+      },
+      {
+        "path": "$.workloads.preAborted.resources.cpuDelta.userMicroseconds",
+        "left": 1818,
+        "right": 4637,
+        "delta": {
+          "absolute": 2819,
+          "percent": 155.061
+        }
+      },
+      {
+        "path": "$.workloads.preAborted.resources.cpuDelta.systemMicroseconds",
+        "left": 1589,
+        "right": 3826,
+        "delta": {
+          "absolute": 2237,
+          "percent": 140.78
+        }
+      },
+      {
+        "path": "$.workloads.preAborted.resources.cpuDelta.totalMicroseconds",
+        "left": 3407,
+        "right": 8463,
+        "delta": {
+          "absolute": 5056,
+          "percent": 148.4
+        }
+      },
+      {
+        "path": "$.workloads.preAborted.resources.cpuDelta.percentOfOneCore",
+        "left": 11.956,
+        "right": 25.759,
+        "delta": {
+          "absolute": 13.803,
+          "percent": 115.448
+        }
+      },
+      {
+        "path": "$.workloads.inFlightCancellation.settlementAccuracy.targetMs",
+        "left": 0,
+        "right": 0,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.workloads.inFlightCancellation.settlementAccuracy.toleranceMs",
+        "left": 100,
+        "right": 100,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.workloads.inFlightCancellation.childResources.cpuTotalMicroseconds.sum",
+        "left": 149760,
+        "right": 145833,
+        "delta": {
+          "absolute": -3927,
+          "percent": -2.622
+        }
+      },
+      {
+        "path": "$.workloads.inFlightCancellation.cleanup.waitMs",
+        "left": 1009.148,
+        "right": 1013.721,
+        "delta": {
+          "absolute": 4.573,
+          "percent": 0.453
+        }
+      },
+      {
+        "path": "$.workloads.inFlightCancellation.cleanup.timeoutMs",
+        "left": 6000,
+        "right": 6000,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.workloads.inFlightCancellation.resources.wallMs",
+        "left": 1678.72,
+        "right": 1142.052,
+        "delta": {
+          "absolute": -536.668,
+          "percent": -31.969
+        }
+      },
+      {
+        "path": "$.workloads.inFlightCancellation.resources.cpuDelta.userMicroseconds",
+        "left": 29290,
+        "right": 18495,
+        "delta": {
+          "absolute": -10795,
+          "percent": -36.856
+        }
+      },
+      {
+        "path": "$.workloads.inFlightCancellation.resources.cpuDelta.systemMicroseconds",
+        "left": 19096,
+        "right": 16299,
+        "delta": {
+          "absolute": -2797,
+          "percent": -14.647
+        }
+      },
+      {
+        "path": "$.workloads.inFlightCancellation.resources.cpuDelta.totalMicroseconds",
+        "left": 48386,
+        "right": 34794,
+        "delta": {
+          "absolute": -13592,
+          "percent": -28.091
+        }
+      },
+      {
+        "path": "$.workloads.inFlightCancellation.resources.cpuDelta.percentOfOneCore",
+        "left": 2.882,
+        "right": 3.047,
+        "delta": {
+          "absolute": 0.165,
+          "percent": 5.725
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.startToReadyMs",
+        "left": 119.366,
+        "right": 57.665,
+        "delta": {
+          "absolute": -61.701,
+          "percent": -51.691
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.abortToSettlementMs",
+        "left": 0.356,
+        "right": 0.398,
+        "delta": {
+          "absolute": 0.042,
+          "percent": 11.798
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.settlementAccuracy.targetMs",
+        "left": 0,
+        "right": 0,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.settlementAccuracy.toleranceMs",
+        "left": 100,
+        "right": 100,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.rootState.resources.averageCpuPercentOfOneCore",
+        "left": 3.449,
+        "right": 4.482,
+        "delta": {
+          "absolute": 1.033,
+          "percent": 29.951
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.rootState.resources.cpuIntervalSampleCount",
+        "left": 22,
+        "right": 21,
+        "delta": {
+          "absolute": -1,
+          "percent": -4.545
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.rootState.resources.cpuSystemMicroseconds",
+        "left": 17137,
+        "right": 19283,
+        "delta": {
+          "absolute": 2146,
+          "percent": 12.523
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.rootState.resources.cpuTotalMicroseconds",
+        "left": 37243,
+        "right": 46731,
+        "delta": {
+          "absolute": 9488,
+          "percent": 25.476
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.rootState.resources.cpuUserMicroseconds",
+        "left": 20106,
+        "right": 27448,
+        "delta": {
+          "absolute": 7342,
+          "percent": 36.516
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.rootState.resources.elapsedMs",
+        "left": 1079.948,
+        "right": 1042.54,
+        "delta": {
+          "absolute": -37.408,
+          "percent": -3.464
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.rootState.resources.peakSampledCpuPercentOfOneCore",
+        "left": 4.252,
+        "right": 7.523,
+        "delta": {
+          "absolute": 3.271,
+          "percent": 76.929
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.rootState.termSignals",
+        "left": 1,
+        "right": 1,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.descendantState.resources.averageCpuPercentOfOneCore",
+        "left": 3.731,
+        "right": 3.412,
+        "delta": {
+          "absolute": -0.319,
+          "percent": -8.55
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.descendantState.resources.cpuIntervalSampleCount",
+        "left": 20,
+        "right": 20,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.descendantState.resources.cpuSystemMicroseconds",
+        "left": 17102,
+        "right": 13783,
+        "delta": {
+          "absolute": -3319,
+          "percent": -19.407
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.descendantState.resources.cpuTotalMicroseconds",
+        "left": 36606,
+        "right": 33555,
+        "delta": {
+          "absolute": -3051,
+          "percent": -8.335
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.descendantState.resources.cpuUserMicroseconds",
+        "left": 19504,
+        "right": 19772,
+        "delta": {
+          "absolute": 268,
+          "percent": 1.374
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.descendantState.resources.elapsedMs",
+        "left": 981.194,
+        "right": 983.469,
+        "delta": {
+          "absolute": 2.275,
+          "percent": 0.232
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.descendantState.resources.peakSampledCpuPercentOfOneCore",
+        "left": 20.561,
+        "right": 31.797,
+        "delta": {
+          "absolute": 11.236,
+          "percent": 54.647
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.descendantState.termSignals",
+        "left": 1,
+        "right": 1,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.childResources.cpuTotalMicroseconds.sum",
+        "left": 73849,
+        "right": 80286,
+        "delta": {
+          "absolute": 6437,
+          "percent": 8.716
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.cleanup.waitMs",
+        "left": 1006.922,
+        "right": 1009.591,
+        "delta": {
+          "absolute": 2.669,
+          "percent": 0.265
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.cleanup.timeoutMs",
+        "left": 6000,
+        "right": 6000,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.resources.wallMs",
+        "left": 1127.959,
+        "right": 1068.723,
+        "delta": {
+          "absolute": -59.236,
+          "percent": -5.252
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.resources.cpuDelta.userMicroseconds",
+        "left": 34979,
+        "right": 16003,
+        "delta": {
+          "absolute": -18976,
+          "percent": -54.25
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.resources.cpuDelta.systemMicroseconds",
+        "left": 31021,
+        "right": 27213,
+        "delta": {
+          "absolute": -3808,
+          "percent": -12.276
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.resources.cpuDelta.totalMicroseconds",
+        "left": 66000,
+        "right": 43216,
+        "delta": {
+          "absolute": -22784,
+          "percent": -34.521
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.resources.cpuDelta.percentOfOneCore",
+        "left": 5.851,
+        "right": 4.044,
+        "delta": {
+          "absolute": -1.807,
+          "percent": -30.884
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.settlementAccuracy.targetMs",
+        "left": 250,
+        "right": 250,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.settlementAccuracy.toleranceMs",
+        "left": 100,
+        "right": 100,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.rootState.resources.averageCpuPercentOfOneCore",
+        "left": 149.921,
+        "right": 147.095,
+        "delta": {
+          "absolute": -2.826,
+          "percent": -1.885
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.rootState.resources.cpuIntervalSampleCount",
+        "left": 0,
+        "right": 0,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.rootState.resources.cpuSystemMicroseconds",
+        "left": 7689,
+        "right": 10657,
+        "delta": {
+          "absolute": 2968,
+          "percent": 38.601
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.rootState.resources.cpuTotalMicroseconds",
+        "left": 23378,
+        "right": 30654,
+        "delta": {
+          "absolute": 7276,
+          "percent": 31.123
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.rootState.resources.cpuUserMicroseconds",
+        "left": 15689,
+        "right": 19997,
+        "delta": {
+          "absolute": 4308,
+          "percent": 27.459
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.rootState.resources.elapsedMs",
+        "left": 15.594,
+        "right": 20.84,
+        "delta": {
+          "absolute": 5.246,
+          "percent": 33.641
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.rootState.termSignals",
+        "left": 0,
+        "right": 0,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.descendantState.resources.averageCpuPercentOfOneCore",
+        "left": 3.299,
+        "right": 2.883,
+        "delta": {
+          "absolute": -0.416,
+          "percent": -12.61
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.descendantState.resources.cpuIntervalSampleCount",
+        "left": 24,
+        "right": 24,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.descendantState.resources.cpuSystemMicroseconds",
+        "left": 17754,
+        "right": 14102,
+        "delta": {
+          "absolute": -3652,
+          "percent": -20.57
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.descendantState.resources.cpuTotalMicroseconds",
+        "left": 39202,
+        "right": 34141,
+        "delta": {
+          "absolute": -5061,
+          "percent": -12.91
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.descendantState.resources.cpuUserMicroseconds",
+        "left": 21448,
+        "right": 20039,
+        "delta": {
+          "absolute": -1409,
+          "percent": -6.569
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.descendantState.resources.elapsedMs",
+        "left": 1188.261,
+        "right": 1184.393,
+        "delta": {
+          "absolute": -3.868,
+          "percent": -0.326
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.descendantState.resources.peakSampledCpuPercentOfOneCore",
+        "left": 40.12,
+        "right": 3.972,
+        "delta": {
+          "absolute": -36.148,
+          "percent": -90.1
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.descendantState.termSignals",
+        "left": 1,
+        "right": 1,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.childResources.cpuTotalMicroseconds.sum",
+        "left": 62580,
+        "right": 64795,
+        "delta": {
+          "absolute": 2215,
+          "percent": 3.539
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.cleanup.waitMs",
+        "left": 1012.798,
+        "right": 1003.678,
+        "delta": {
+          "absolute": -9.12,
+          "percent": -0.9
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.cleanup.timeoutMs",
+        "left": 6000,
+        "right": 6000,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.resources.wallMs",
+        "left": 1268.876,
+        "right": 1258.863,
+        "delta": {
+          "absolute": -10.013,
+          "percent": -0.789
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.resources.cpuDelta.userMicroseconds",
+        "left": 31627,
+        "right": 24938,
+        "delta": {
+          "absolute": -6689,
+          "percent": -21.15
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.resources.cpuDelta.systemMicroseconds",
+        "left": 27107,
+        "right": 23969,
+        "delta": {
+          "absolute": -3138,
+          "percent": -11.576
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.resources.cpuDelta.totalMicroseconds",
+        "left": 58734,
+        "right": 48907,
+        "delta": {
+          "absolute": -9827,
+          "percent": -16.731
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.resources.cpuDelta.percentOfOneCore",
+        "left": 4.629,
+        "right": 3.885,
+        "delta": {
+          "absolute": -0.744,
+          "percent": -16.073
+        }
+      },
+      {
+        "path": "$.resources.wallMs",
+        "left": 18625.224,
+        "right": 18707.137,
+        "delta": {
+          "absolute": 81.913,
+          "percent": 0.44
+        }
+      },
+      {
+        "path": "$.resources.cpuDelta.userMicroseconds",
+        "left": 607435,
+        "right": 556894,
+        "delta": {
+          "absolute": -50541,
+          "percent": -8.32
+        }
+      },
+      {
+        "path": "$.resources.cpuDelta.systemMicroseconds",
+        "left": 509461,
+        "right": 486590,
+        "delta": {
+          "absolute": -22871,
+          "percent": -4.489
+        }
+      },
+      {
+        "path": "$.resources.cpuDelta.totalMicroseconds",
+        "left": 1116896,
+        "right": 1043484,
+        "delta": {
+          "absolute": -73412,
+          "percent": -6.573
+        }
+      },
+      {
+        "path": "$.resources.cpuDelta.percentOfOneCore",
+        "left": 5.997,
+        "right": 5.578,
+        "delta": {
+          "absolute": -0.419,
+          "percent": -6.987
+        }
+      },
+      {
+        "path": "$.ownershipCleanup.timeoutMs",
+        "left": 6000,
+        "right": 6000,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.ownershipCleanup.waitMs",
+        "left": 0.037,
+        "right": 0.038,
+        "delta": {
+          "absolute": 0.001,
+          "percent": 2.703
+        }
+      }
+    ],
+    "scalarSizes": [
+      {
+        "path": "$.baseline.combinedOutputLimitBytes",
+        "left": 1048576,
+        "right": 1048576,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.workloads.shortArgv.resources.rss.beforeBytes",
+        "left": 102531072,
+        "right": 102989824,
+        "delta": {
+          "absolute": 458752,
+          "percent": 0.447
+        }
+      },
+      {
+        "path": "$.workloads.shortArgv.resources.rss.afterBytes",
+        "left": 143523840,
+        "right": 118292480,
+        "delta": {
+          "absolute": -25231360,
+          "percent": -17.58
+        }
+      },
+      {
+        "path": "$.workloads.shortArgv.resources.rss.deltaBytes",
+        "left": 40992768,
+        "right": 15302656,
+        "delta": {
+          "absolute": -25690112,
+          "percent": -62.67
+        }
+      },
+      {
+        "path": "$.workloads.shortArgv.resources.rss.peakSampledBytes",
+        "left": 143654912,
+        "right": 118423552,
+        "delta": {
+          "absolute": -25231360,
+          "percent": -17.564
+        }
+      },
+      {
+        "path": "$.workloads.shortArgv.resources.rss.maxRssRuntimeUnits.before",
+        "left": 102531072,
+        "right": 102989824,
+        "delta": {
+          "absolute": 458752,
+          "percent": 0.447
+        }
+      },
+      {
+        "path": "$.workloads.shortArgv.resources.rss.maxRssRuntimeUnits.after",
+        "left": 143654912,
+        "right": 118423552,
+        "delta": {
+          "absolute": -25231360,
+          "percent": -17.564
+        }
+      },
+      {
+        "path": "$.workloads.shortArgv.resources.rss.maxRssRuntimeUnits.delta",
+        "left": 41123840,
+        "right": 15433728,
+        "delta": {
+          "absolute": -25690112,
+          "percent": -62.47
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.exactLimit.stdoutBytes",
+        "left": 1,
+        "right": 1,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.exactLimit.stderrBytes",
+        "left": 1048575,
+        "right": 1048575,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.exactLimit.combinedBytes",
+        "left": 1048576,
+        "right": 1048576,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.exactLimit.resources.rss.beforeBytes",
+        "left": 144015360,
+        "right": 118636544,
+        "delta": {
+          "absolute": -25378816,
+          "percent": -17.622
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.exactLimit.resources.rss.afterBytes",
+        "left": 150208512,
+        "right": 124272640,
+        "delta": {
+          "absolute": -25935872,
+          "percent": -17.267
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.exactLimit.resources.rss.deltaBytes",
+        "left": 6193152,
+        "right": 5636096,
+        "delta": {
+          "absolute": -557056,
+          "percent": -8.995
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.exactLimit.resources.rss.peakSampledBytes",
+        "left": 150208512,
+        "right": 124272640,
+        "delta": {
+          "absolute": -25935872,
+          "percent": -17.267
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.exactLimit.resources.rss.maxRssRuntimeUnits.before",
+        "left": 144015360,
+        "right": 118636544,
+        "delta": {
+          "absolute": -25378816,
+          "percent": -17.622
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.exactLimit.resources.rss.maxRssRuntimeUnits.after",
+        "left": 150208512,
+        "right": 124272640,
+        "delta": {
+          "absolute": -25935872,
+          "percent": -17.267
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.exactLimit.resources.rss.maxRssRuntimeUnits.delta",
+        "left": 6193152,
+        "right": 5636096,
+        "delta": {
+          "absolute": -557056,
+          "percent": -8.995
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.oneByteOver.stdoutBytes",
+        "left": 1,
+        "right": 1,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.oneByteOver.stderrBytes",
+        "left": 1048576,
+        "right": 1048576,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.oneByteOver.combinedBytes",
+        "left": 1048577,
+        "right": 1048577,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.oneByteOver.resources.rss.beforeBytes",
+        "left": 150208512,
+        "right": 124272640,
+        "delta": {
+          "absolute": -25935872,
+          "percent": -17.267
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.oneByteOver.resources.rss.afterBytes",
+        "left": 152403968,
+        "right": 124370944,
+        "delta": {
+          "absolute": -28033024,
+          "percent": -18.394
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.oneByteOver.resources.rss.deltaBytes",
+        "left": 2195456,
+        "right": 98304,
+        "delta": {
+          "absolute": -2097152,
+          "percent": -95.522
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.oneByteOver.resources.rss.peakSampledBytes",
+        "left": 152403968,
+        "right": 124370944,
+        "delta": {
+          "absolute": -28033024,
+          "percent": -18.394
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.oneByteOver.resources.rss.maxRssRuntimeUnits.before",
+        "left": 150208512,
+        "right": 124272640,
+        "delta": {
+          "absolute": -25935872,
+          "percent": -17.267
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.oneByteOver.resources.rss.maxRssRuntimeUnits.after",
+        "left": 152403968,
+        "right": 124370944,
+        "delta": {
+          "absolute": -28033024,
+          "percent": -18.394
+        }
+      },
+      {
+        "path": "$.workloads.boundedOutput.oneByteOver.resources.rss.maxRssRuntimeUnits.delta",
+        "left": 2195456,
+        "right": 98304,
+        "delta": {
+          "absolute": -2097152,
+          "percent": -95.522
+        }
+      },
+      {
+        "path": "$.workloads.timeoutTermResistant.resources.rss.beforeBytes",
+        "left": 152403968,
+        "right": 124370944,
+        "delta": {
+          "absolute": -28033024,
+          "percent": -18.394
+        }
+      },
+      {
+        "path": "$.workloads.timeoutTermResistant.resources.rss.afterBytes",
+        "left": 152436736,
+        "right": 106627072,
+        "delta": {
+          "absolute": -45809664,
+          "percent": -30.052
+        }
+      },
+      {
+        "path": "$.workloads.timeoutTermResistant.resources.rss.deltaBytes",
+        "left": 32768,
+        "right": -17743872,
+        "delta": {
+          "absolute": -17776640,
+          "percent": -54250
+        }
+      },
+      {
+        "path": "$.workloads.timeoutTermResistant.resources.rss.peakSampledBytes",
+        "left": 152436736,
+        "right": 124370944,
+        "delta": {
+          "absolute": -28065792,
+          "percent": -18.411
+        }
+      },
+      {
+        "path": "$.workloads.timeoutTermResistant.resources.rss.maxRssRuntimeUnits.before",
+        "left": 152403968,
+        "right": 124370944,
+        "delta": {
+          "absolute": -28033024,
+          "percent": -18.394
+        }
+      },
+      {
+        "path": "$.workloads.timeoutTermResistant.resources.rss.maxRssRuntimeUnits.after",
+        "left": 152436736,
+        "right": 124370944,
+        "delta": {
+          "absolute": -28065792,
+          "percent": -18.411
+        }
+      },
+      {
+        "path": "$.workloads.timeoutTermResistant.resources.rss.maxRssRuntimeUnits.delta",
+        "left": 32768,
+        "right": 0,
+        "delta": {
+          "absolute": -32768,
+          "percent": -100
+        }
+      },
+      {
+        "path": "$.workloads.preAborted.resources.rss.beforeBytes",
+        "left": 152436736,
+        "right": 106627072,
+        "delta": {
+          "absolute": -45809664,
+          "percent": -30.052
+        }
+      },
+      {
+        "path": "$.workloads.preAborted.resources.rss.afterBytes",
+        "left": 152469504,
+        "right": 106676224,
+        "delta": {
+          "absolute": -45793280,
+          "percent": -30.034
+        }
+      },
+      {
+        "path": "$.workloads.preAborted.resources.rss.deltaBytes",
+        "left": 32768,
+        "right": 49152,
+        "delta": {
+          "absolute": 16384,
+          "percent": 50
+        }
+      },
+      {
+        "path": "$.workloads.preAborted.resources.rss.peakSampledBytes",
+        "left": 152469504,
+        "right": 106676224,
+        "delta": {
+          "absolute": -45793280,
+          "percent": -30.034
+        }
+      },
+      {
+        "path": "$.workloads.preAborted.resources.rss.maxRssRuntimeUnits.before",
+        "left": 152436736,
+        "right": 124370944,
+        "delta": {
+          "absolute": -28065792,
+          "percent": -18.411
+        }
+      },
+      {
+        "path": "$.workloads.preAborted.resources.rss.maxRssRuntimeUnits.after",
+        "left": 152469504,
+        "right": 124370944,
+        "delta": {
+          "absolute": -28098560,
+          "percent": -18.429
+        }
+      },
+      {
+        "path": "$.workloads.preAborted.resources.rss.maxRssRuntimeUnits.delta",
+        "left": 32768,
+        "right": 0,
+        "delta": {
+          "absolute": -32768,
+          "percent": -100
+        }
+      },
+      {
+        "path": "$.workloads.inFlightCancellation.resources.rss.beforeBytes",
+        "left": 152469504,
+        "right": 106676224,
+        "delta": {
+          "absolute": -45793280,
+          "percent": -30.034
+        }
+      },
+      {
+        "path": "$.workloads.inFlightCancellation.resources.rss.afterBytes",
+        "left": 152633344,
+        "right": 106758144,
+        "delta": {
+          "absolute": -45875200,
+          "percent": -30.056
+        }
+      },
+      {
+        "path": "$.workloads.inFlightCancellation.resources.rss.deltaBytes",
+        "left": 163840,
+        "right": 81920,
+        "delta": {
+          "absolute": -81920,
+          "percent": -50
+        }
+      },
+      {
+        "path": "$.workloads.inFlightCancellation.resources.rss.peakSampledBytes",
+        "left": 152633344,
+        "right": 106758144,
+        "delta": {
+          "absolute": -45875200,
+          "percent": -30.056
+        }
+      },
+      {
+        "path": "$.workloads.inFlightCancellation.resources.rss.maxRssRuntimeUnits.before",
+        "left": 152469504,
+        "right": 124370944,
+        "delta": {
+          "absolute": -28098560,
+          "percent": -18.429
+        }
+      },
+      {
+        "path": "$.workloads.inFlightCancellation.resources.rss.maxRssRuntimeUnits.after",
+        "left": 152633344,
+        "right": 124370944,
+        "delta": {
+          "absolute": -28262400,
+          "percent": -18.517
+        }
+      },
+      {
+        "path": "$.workloads.inFlightCancellation.resources.rss.maxRssRuntimeUnits.delta",
+        "left": 163840,
+        "right": 0,
+        "delta": {
+          "absolute": -163840,
+          "percent": -100
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.rootState.resources.maxRssRuntimeUnits",
+        "left": 32718848,
+        "right": 32702464,
+        "delta": {
+          "absolute": -16384,
+          "percent": -0.05
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.rootState.resources.peakSampledRssBytes",
+        "left": 32718848,
+        "right": 32702464,
+        "delta": {
+          "absolute": -16384,
+          "percent": -0.05
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.rootState.resources.rssBytes",
+        "left": 32718848,
+        "right": 32702464,
+        "delta": {
+          "absolute": -16384,
+          "percent": -0.05
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.descendantState.resources.maxRssRuntimeUnits",
+        "left": 32358400,
+        "right": 32358400,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.descendantState.resources.peakSampledRssBytes",
+        "left": 32358400,
+        "right": 32358400,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.descendantState.resources.rssBytes",
+        "left": 32358400,
+        "right": 32358400,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.resources.rss.beforeBytes",
+        "left": 152633344,
+        "right": 106758144,
+        "delta": {
+          "absolute": -45875200,
+          "percent": -30.056
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.resources.rss.afterBytes",
+        "left": 152666112,
+        "right": 106790912,
+        "delta": {
+          "absolute": -45875200,
+          "percent": -30.049
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.resources.rss.deltaBytes",
+        "left": 32768,
+        "right": 32768,
+        "delta": {
+          "absolute": 0,
+          "percent": 0
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.resources.rss.peakSampledBytes",
+        "left": 152666112,
+        "right": 106790912,
+        "delta": {
+          "absolute": -45875200,
+          "percent": -30.049
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.resources.rss.maxRssRuntimeUnits.before",
+        "left": 152633344,
+        "right": 124370944,
+        "delta": {
+          "absolute": -28262400,
+          "percent": -18.517
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.resources.rss.maxRssRuntimeUnits.after",
+        "left": 152666112,
+        "right": 124370944,
+        "delta": {
+          "absolute": -28295168,
+          "percent": -18.534
+        }
+      },
+      {
+        "path": "$.workloads.posixDescendantCleanup.resources.rss.maxRssRuntimeUnits.delta",
+        "left": 32768,
+        "right": 0,
+        "delta": {
+          "absolute": -32768,
+          "percent": -100
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.rootState.resources.maxRssRuntimeUnits",
+        "left": 32243712,
+        "right": 32210944,
+        "delta": {
+          "absolute": -32768,
+          "percent": -0.102
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.rootState.resources.peakSampledRssBytes",
+        "left": 32243712,
+        "right": 32210944,
+        "delta": {
+          "absolute": -32768,
+          "percent": -0.102
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.rootState.resources.rssBytes",
+        "left": 32243712,
+        "right": 32210944,
+        "delta": {
+          "absolute": -32768,
+          "percent": -0.102
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.descendantState.resources.maxRssRuntimeUnits",
+        "left": 32358400,
+        "right": 32325632,
+        "delta": {
+          "absolute": -32768,
+          "percent": -0.101
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.descendantState.resources.peakSampledRssBytes",
+        "left": 32358400,
+        "right": 32325632,
+        "delta": {
+          "absolute": -32768,
+          "percent": -0.101
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.descendantState.resources.rssBytes",
+        "left": 32358400,
+        "right": 32325632,
+        "delta": {
+          "absolute": -32768,
+          "percent": -0.101
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.resources.rss.beforeBytes",
+        "left": 152666112,
+        "right": 106807296,
+        "delta": {
+          "absolute": -45858816,
+          "percent": -30.039
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.resources.rss.afterBytes",
+        "left": 152715264,
+        "right": 106938368,
+        "delta": {
+          "absolute": -45776896,
+          "percent": -29.975
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.resources.rss.deltaBytes",
+        "left": 49152,
+        "right": 131072,
+        "delta": {
+          "absolute": 81920,
+          "percent": 166.667
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.resources.rss.peakSampledBytes",
+        "left": 152715264,
+        "right": 106938368,
+        "delta": {
+          "absolute": -45776896,
+          "percent": -29.975
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.resources.rss.maxRssRuntimeUnits.before",
+        "left": 152666112,
+        "right": 124370944,
+        "delta": {
+          "absolute": -28295168,
+          "percent": -18.534
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.resources.rss.maxRssRuntimeUnits.after",
+        "left": 152715264,
+        "right": 124370944,
+        "delta": {
+          "absolute": -28344320,
+          "percent": -18.56
+        }
+      },
+      {
+        "path": "$.workloads.openInheritedPipeDescendant.resources.rss.maxRssRuntimeUnits.delta",
+        "left": 49152,
+        "right": 0,
+        "delta": {
+          "absolute": -49152,
+          "percent": -100
+        }
+      },
+      {
+        "path": "$.resources.rss.beforeBytes",
+        "left": 39337984,
+        "right": 39190528,
+        "delta": {
+          "absolute": -147456,
+          "percent": -0.375
+        }
+      },
+      {
+        "path": "$.resources.rss.afterBytes",
+        "left": 152715264,
+        "right": 106938368,
+        "delta": {
+          "absolute": -45776896,
+          "percent": -29.975
+        }
+      },
+      {
+        "path": "$.resources.rss.deltaBytes",
+        "left": 113377280,
+        "right": 67747840,
+        "delta": {
+          "absolute": -45629440,
+          "percent": -40.246
+        }
+      },
+      {
+        "path": "$.resources.rss.peakSampledBytes",
+        "left": 152715264,
+        "right": 124370944,
+        "delta": {
+          "absolute": -28344320,
+          "percent": -18.56
+        }
+      },
+      {
+        "path": "$.resources.rss.maxRssRuntimeUnits.before",
+        "left": 39337984,
+        "right": 39190528,
+        "delta": {
+          "absolute": -147456,
+          "percent": -0.375
+        }
+      },
+      {
+        "path": "$.resources.rss.maxRssRuntimeUnits.after",
+        "left": 152715264,
+        "right": 124370944,
+        "delta": {
+          "absolute": -28344320,
+          "percent": -18.56
+        }
+      },
+      {
+        "path": "$.resources.rss.maxRssRuntimeUnits.delta",
+        "left": 113377280,
+        "right": 85180416,
+        "delta": {
+          "absolute": -28196864,
+          "percent": -24.87
+        }
+      }
+    ],
+    "convention": "delta is right minus left; percent is relative to abs(left)"
+  }
+}

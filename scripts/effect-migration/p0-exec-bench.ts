@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { bindExecFileDelegate, execFileP } from '../../src/daemon/exec.ts';
 import type { ExecResult } from '../../src/daemon/exec.ts';
+import type { RootIngressSupervisorService } from '../../src/daemon/app/services/ingress-supervisor.ts';
 import { summarize, writeJsonReport } from './metrics.ts';
 
 const MAX_OUTPUT_BYTES = 1024 * 1024;
@@ -1356,23 +1357,38 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
-  const scratch = mkdtempSync(path.join(tmpdir(), 'fleetdeck-p0-exec-bench-'));
   // Internal fixture children recursively execute this file. Load Effect and
-  // the candidate runtime only in the parent benchmark so child readiness
+  // the candidate root Context only in the parent benchmark so child readiness
   // remains comparable to P0 instead of paying kernel initialization first.
-  const { createBootstrapProcessRuntimeBridge } = await import(
-    '../../src/daemon/app/bootstrap-process-runtime.ts'
-  );
-  const processRuntime = createBootstrapProcessRuntimeBridge();
-  const unbindExecFile = bindExecFileDelegate({
-    run: processRuntime.run,
-    runBounded: processRuntime.runBounded,
-  });
+  const [Context, Effect, Exit, Layer, Scope, facadeModule, ingressModule, processModule] =
+    await Promise.all([
+      import('effect/Context'),
+      import('effect/Effect'),
+      import('effect/Exit'),
+      import('effect/Layer'),
+      import('effect/Scope'),
+      import('../../src/daemon/app/legacy-process-facade.ts'),
+      import('../../src/daemon/platform/bun/ingress-supervisor-live.ts'),
+      import('../../src/daemon/platform/bun/process-runner-live.ts'),
+    ]);
+  const scratch = mkdtempSync(path.join(tmpdir(), 'fleetdeck-p0-exec-bench-'));
+  const rootScope = Scope.makeUnsafe('sequential');
+  const runBenchmarkPromise = Effect.runPromiseWith(Context.empty());
+  let ingress: RootIngressSupervisorService | null = null;
+  let unbindExecFile: (() => void) | null = null;
   const ownership = new FixtureOwnership();
   const overallBefore = resourceSnapshot();
   const overallStartedAt = performance.now();
   let peakOverallRssBytes = overallBefore.rssBytes;
   try {
+    const rootContext = await runBenchmarkPromise(
+      Layer.buildWithScope(processModule.ProcessRunnerLive, rootScope),
+    );
+    ingress = (await runBenchmarkPromise(
+      ingressModule.makeIngressSupervisor(rootContext, rootScope),
+    )) as RootIngressSupervisorService;
+    unbindExecFile = bindExecFileDelegate(facadeModule.makeIngressExecFileDelegate(ingress));
+
     const shortArgv = await runShortArgv(config);
     peakOverallRssBytes = Math.max(peakOverallRssBytes, shortArgv.resources.rss.peakSampledBytes);
 
@@ -1512,7 +1528,8 @@ async function main(): Promise<void> {
       baseline: {
         module: 'src/daemon/exec.ts',
         export: 'execFileP',
-        implementation: 'Bun.spawn through ProcessRunnerLive and BootstrapRuntimeBridge',
+        implementation:
+          'Bun.spawn through one root ProcessRunnerLive Context and IngressSupervisor',
         directArgv: true,
         shell: false,
         combinedOutputLimitBytes: MAX_OUTPUT_BYTES,
@@ -1577,12 +1594,16 @@ async function main(): Promise<void> {
     });
     process.exitCode = 1;
   } finally {
-    processRuntime.quiesce();
+    ingress?.quiesce();
     try {
-      await processRuntime.close();
+      if (ingress) await ingress.close();
     } finally {
-      unbindExecFile();
-      rmSync(scratch, { recursive: true, force: true });
+      try {
+        unbindExecFile?.();
+        await runBenchmarkPromise(Scope.close(rootScope, Exit.void));
+      } finally {
+        rmSync(scratch, { recursive: true, force: true });
+      }
     }
   }
 }

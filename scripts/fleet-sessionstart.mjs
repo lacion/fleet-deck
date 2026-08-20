@@ -228,8 +228,10 @@ function replacementMatches(ownVersion2, healthVersion) {
 var defaultSleep = sleep;
 async function terminateDaemon(pid, {
   timeoutMs = 2e3,
-  sleep: sleep2 = defaultSleep
+  sleep: sleep2 = defaultSleep,
+  signal
 } = {}) {
+  signal?.throwIfAborted();
   try {
     process.kill(pid, "SIGTERM");
   } catch (err) {
@@ -239,7 +241,33 @@ async function terminateDaemon(pid, {
   const stepMs = 100;
   const steps = Math.max(1, Math.ceil(timeoutMs / stepMs));
   for (let i = 0; i < steps; i += 1) {
-    await sleep2(stepMs);
+    if (!signal) {
+      await sleep2(stepMs);
+    } else {
+      await new Promise((resolve, reject) => {
+        let settled = false;
+        const finish = (error) => {
+          if (settled) return;
+          settled = true;
+          signal.removeEventListener("abort", onAbort);
+          if (error === void 0) resolve();
+          else reject(error);
+        };
+        const onAbort = () => {
+          try {
+            signal.throwIfAborted();
+          } catch (error) {
+            finish(error);
+          }
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+        if (signal.aborted) {
+          onAbort();
+          return;
+        }
+        void sleep2(stepMs).then(() => finish(), finish);
+      });
+    }
     if (!pidIsLive(pid)) return true;
   }
   return !pidIsLive(pid);

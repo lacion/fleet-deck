@@ -56,13 +56,13 @@ function resolveArgv(): string[] | null {
   return trimmed.split(/\s+/);
 }
 
-async function runOnce(argv: readonly string[]): Promise<string | null> {
+async function runOnce(argv: readonly string[], signal?: AbortSignal): Promise<string | null> {
   // execFileP runs by argv (no shell), absorbs synchronous throws, and applies
   // windowsHide itself — so a bad command yields { ok: false } rather than
   // escaping. ANY failure (absent CLI / timeout / non-zero exit) → null skip.
   const cmd = argv[0];
   if (cmd === undefined) return null; // resolveArgv never yields an empty argv, but the type allows it
-  const res = await execFileP(cmd, argv.slice(1), { timeout: EXEC_TIMEOUT_MS });
+  const res = await execFileP(cmd, argv.slice(1), { timeout: EXEC_TIMEOUT_MS, signal });
   return res.ok ? res.out : null;
 }
 
@@ -75,7 +75,7 @@ export interface AgentsPollOptions {
   firstRunDelayMs?: number;
   idlePollIntervalMs?: number;
   pollIntervalMs?: number;
-  runAgents?: (argv: readonly string[]) => Promise<string | null>;
+  runAgents?: (argv: readonly string[], signal?: AbortSignal) => Promise<string | null>;
 }
 
 function hasLiveInteractive(records: unknown): boolean {
@@ -100,9 +100,9 @@ function hasLiveInteractive(records: unknown): boolean {
 /**
  * Start the agents-cli poller against a running core (a derive.mjs
  * createCore() instance). stop() is idempotent: it clears the pending timer,
- * prevents post-quiesce callbacks, and joins the current tick. It deliberately
- * does not cancel an in-flight subprocess by itself. During daemon shutdown,
- * P3's process-runtime owner interrupts it before this producer is joined.
+ * prevents post-quiesce callbacks, aborts the current CLI subprocess, and joins
+ * the current tick. Injected runners may ignore the signal; stop still joins
+ * them, while the production ProcessRunner turns it into owned child cleanup.
  *
  * v1.2: the owned-pane liveness sweep (CONTRACT "Owned-pane liveness", ~10 s)
  * rides this same cadence — so the timers now ALWAYS run; disabling the
@@ -124,16 +124,17 @@ export function startAgentsPoll(
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let currentTick: Promise<void> | null = null;
+  let currentTickController: AbortController | null = null;
   let stopPromise: Promise<void> | null = null;
   let nextAgentsPollAt = 0;
   let agentsWereActive = false;
 
-  async function tick(): Promise<void> {
+  async function tick(signal: AbortSignal): Promise<void> {
     if (stopped) return;
     if (agentsEnabled && Date.now() >= nextAgentsPollAt) {
-      const out = await runAgents(argv);
-      // stop() always suppresses a late result. P3 daemon shutdown additionally
-      // interrupts the owned exec through the process-runtime bridge first.
+      const out = await runAgents(argv, signal);
+      // stop() always suppresses a late result, including a runner that ignored
+      // the abort and settled naturally after shutdown began.
       if (stopped) return;
       let validPoll = false;
       let records: unknown;
@@ -176,14 +177,17 @@ export function startAgentsPoll(
       if (stopped || currentTick) return;
       // Register ownership before tick() executes so stop() can never miss a
       // tick whose first synchronous callback itself initiates shutdown.
+      const controller = new AbortController();
+      currentTickController = controller;
       const active = Promise.resolve()
-        .then(tick)
+        .then(() => tick(controller.signal))
         .catch(() => {
           /* polling is best effort; the next scheduled tick retries */
         });
       currentTick = active;
       void active.then(() => {
         if (currentTick === active) currentTick = null;
+        if (currentTickController === controller) currentTickController = null;
         if (!stopped) schedule(pollIntervalMs);
       });
     }, delayMs);
@@ -199,6 +203,7 @@ export function startAgentsPoll(
         clearTimeout(timer);
         timer = null;
       }
+      currentTickController?.abort();
       const active = currentTick;
       stopPromise = active ? active.then(() => undefined) : Promise.resolve();
       return stopPromise;

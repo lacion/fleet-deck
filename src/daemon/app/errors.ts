@@ -1,4 +1,5 @@
 import * as Data from 'effect/Data';
+import * as Runtime from 'effect/Runtime';
 import type { ProcessFailure } from './services/process-runner.ts';
 
 /** A daemon setting could not be validated before resource acquisition. */
@@ -12,7 +13,48 @@ export class ProcessRunnerStartupError extends Data.TaggedError('ProcessRunnerSt
   readonly message: string;
 }> {}
 
-export type StartupError = StartupConfigurationError | ProcessRunnerStartupError;
+/**
+ * An expected daemon preflight refused startup after synchronously attempting
+ * to release its owned process state. The root interpreter is the only place
+ * that emits `message`, preserving the historical one-line stderr contract
+ * without terminating from inside resource acquisition.
+ */
+export class DaemonStartupRefusalError extends Data.TaggedError('DaemonStartupRefusalError')<{
+  /** Refusal detail without the stable fleetd prefix. */
+  readonly reason: string;
+  /** Exact operator-facing line, excluding only the trailing newline. */
+  readonly message: string;
+  /** A synchronous pid-release failure retained without replacing the refusal. */
+  readonly cleanupCause: unknown | null;
+}> {
+  override readonly [Runtime.errorExitCode] = 1;
+}
+
+/** The aggregate daemon owner could not be acquired or assembled for the root Layer. */
+export class DaemonStartupError extends Data.TaggedError('DaemonStartupError')<{
+  readonly message: string;
+  readonly cause: unknown;
+}> {}
+
+/** The native HTTP listener could not be acquired during daemon startup. */
+export class HttpBindStartupError extends Data.TaggedError('HttpBindStartupError')<{
+  readonly reason: 'address-in-use' | 'closed' | 'other';
+  readonly origin: 'bun-serve-throw' | 'lifecycle-guard';
+  readonly code: string | null;
+  readonly errno: string | number | null;
+  readonly message: string;
+  readonly cause: unknown;
+}> {
+  /** Preserve the daemon's established election-loser status; all other bind failures stay 1. */
+  override readonly [Runtime.errorExitCode]: 1 | 3 = this.reason === 'address-in-use' ? 3 : 1;
+}
+
+export type StartupError =
+  | StartupConfigurationError
+  | ProcessRunnerStartupError
+  | DaemonStartupRefusalError
+  | DaemonStartupError
+  | HttpBindStartupError;
 
 /** The process service was present but could not accept an application request. */
 export class ProcessRunnerUnavailableError extends Data.TaggedError(

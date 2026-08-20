@@ -77,6 +77,54 @@ test('agents poll stop joins an in-flight tick and suppresses its late result', 
   assert.equal(owner.stop(), firstStop, 'stop remains idempotent after settlement');
 });
 
+test('agents poll stop aborts a production-shaped in-flight command immediately', async (t) => {
+  let runs = 0;
+  let observedAbort = false;
+  const owner = startAgentsPoll(
+    {
+      ingestAgentsPoll() {
+        throw new Error('an aborted poll must not ingest');
+      },
+    },
+    {
+      argv: ['agents-fixture'],
+      firstRunDelayMs: 0,
+      pollIntervalMs: 10_000,
+      runAgents: async (_argv, signal) => {
+        runs++;
+        await new Promise<void>((resolve) => {
+          if (signal?.aborted) {
+            observedAbort = true;
+            resolve();
+            return;
+          }
+          signal?.addEventListener(
+            'abort',
+            () => {
+              observedAbort = true;
+              resolve();
+            },
+            { once: true },
+          );
+        });
+        return '[]';
+      },
+    },
+  );
+  t.after(() => owner.stop());
+
+  await waitUntil(() => runs === 1, {
+    timeoutMs: 1_000,
+    intervalMs: 2,
+    label: 'abort-aware agents poll to start',
+  });
+  const stoppedAt = performance.now();
+  await owner.stop();
+
+  assert.equal(observedAbort, true);
+  assert.ok(performance.now() - stoppedAt < 100, 'producer stop must not wait for exec timeout');
+});
+
 test('network watch stop joins its callback and prevents later reads or callbacks', async (t) => {
   const releaseCallback = latch();
   let current = ['192.0.2.20'];
