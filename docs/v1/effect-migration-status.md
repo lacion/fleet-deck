@@ -1,186 +1,150 @@
 # Effect migration checkpoint status
 
-**Checkpoint date:** 2026-08-20
-**Branch:** `fd/v1-effect-feasibility`
-**Implementation checkpoint:** `661dfe31b66843f70a1dcebbc4f340ad9c62f76f`
-**Previous P3 anchor / P4 rollback target:** `bcf3337e48d7dd35437d2e2369d0a91fbcbfa114`
-**Runtime floor:** Bun 1.3.14, revision `0d9b296af33f2b851fcbf4df3e9ec89751734ba4`
+- **Checkpoint date:** 2026-08-20
+- **Branch:** `fd/v1-effect-feasibility`
+- **Current implementation checkpoint:** `972621d` (`feat(effect): supervise daemon background schedules`)
+- **P4 root-cutover checkpoint:** `661dfe31b66843f70a1dcebbc4f340ad9c62f76f`
+- **P3 rollback anchor:** `bcf3337e48d7dd35437d2e2369d0a91fbcbfa114`
+- **Runtime floor:** Bun 1.3.14, revision `0d9b296af33f2b851fcbf4df3e9ec89751734ba4`
 
 This is the durable handoff for the executable
-[Effect migration plan](./effect-migration-plan.md). The implementation checkpoint was committed
-locally at the user's request. It has not been pushed, published, tagged, or released.
+[Effect migration plan](./effect-migration-plan.md). All checkpoint commits are local. Nothing has
+been pushed, published, tagged, or released.
 
 ## Executive status
 
 | Package | State | Resume point |
 | --- | --- | --- |
-| P0 | Complete and committed | Baselines, workloads, probes, comparisons, and CI policy are recorded. |
-| P1 | Complete and committed | Explicit resource owners and ordered plain shutdown remain the rollback seam. |
-| P2 | Complete and committed | Exact Effect RC cohort, kernel, boundaries, and Bun conformance are recorded. |
-| P3 | Implementation complete and committed | Bun process routing is live. Quiet-host performance evidence remains an explicit ledger item. |
-| P4 | Implemented and checkpointed at `661dfe3` | Focused, packed, artifact, and measured shutdown gates are green. The final isolated global source and bundle reruns remain open because the latest source run found two failures. |
-| P5 | Isolated slices implemented, not production-integrated | Integrate one aggregate Background owner before `DaemonResources` is sealed; then remove the replaced legacy timers. |
-| P6 | Read-only preflight complete | Freeze route/wire behavior, extract pure policy, then introduce one scoped Bun HttpServer adapter. |
-| P7–P14 | Not started | Continue in plan order after the P5/P6 exit gates. |
+| P0 | Complete | Baselines, workloads, probes, comparisons, and CI policy are recorded. |
+| P1 | Complete | Explicit resource owners and ordered shutdown remain the rollback seam. |
+| P2 | Complete | The exact Effect RC cohort, kernel, boundaries, and Bun conformance are recorded. |
+| P3 | Implementation complete | Bun process routing is live. Quiet-host performance evidence remains an explicit ledger item. |
+| P4 | Implemented and checkpointed | The root cutover and shutdown evidence are complete for the pre-P5 artifact. Do not relabel that evidence as measuring the current P5 tree. |
+| P5 | Production-integrated checkpoint; exit gate open | Resolve the current gzip budget miss, run the two quiet global suites, then record P5 evidence and ledger completion. |
+| P6 | Read-only preflight complete | Freeze route/wire behavior, extract pure policy, then introduce one scoped Bun HTTP server adapter. |
+| P7–P14 | Not started | Continue in plan order after the P5 exit gate. |
 
-## P4 checkpoint that is already proven
+P5 is deliberately not marked complete in the plan or migration ledger. Its production wiring is
+present, but its bundle-size and final global-suite gates are still open.
 
-P4 replaces the bootstrap `ManagedRuntime` with one `BunRuntime.runMain` root, one captured-context
-`IngressSupervisor`, an eight-phase `LifecycleCoordinator`, first/second-signal policy, typed
-startup/defect/interruption exits, force-aware process and terminal ownership, and pidfile release
-at actual host teardown. The generated daemon and packed CLI exercise the same path.
+## What `972621d` implements
 
-Accepted evidence is in [p4.md](./evidence/effect/p4.md) and
-[p4-shutdown.json](./evidence/effect/p4-shutdown.json):
+P5 background work is now integrated into the production daemon root:
 
-- 100 measured shutdowns plus ten warmups, across source and generated daemon, all passed residue
-  checks.
-- Graceful idle p95: 6.676 ms source and 6.014 ms bundle, below the 500 ms gate.
-- Worst measured forced total: 223.079 ms source and 220.594 ms bundle, below the 1,750 ms root
-  deadline.
-- mDNS goodbye p95: 219.746 ms source and 219.634 ms bundle, below the separate 1,000 ms watchdog.
-- Generated daemon: 688,199 B raw and 186,978 B gzip-9, SHA-256
-  `da3c674a088d9ff2ab624f422c85c2095cec389f6ac2e57343a95bbc6e8d6e88`.
-- Two full daemon/bin/hook builds had aggregate SHA-256
-  `7e4a56a2b7c1b269e6ff34b979fa456bc12eb30a8c113f710db4985a252716cf`.
-- Two packs were identical at 493,842 B with SHA-256
-  `5edb764bdb6e99872fee7a7afaaa111e88c2dbb5cbae7a8d6f6a8008a58babe9`.
-- P4-focused aggregate: 124 pass, 0 fail. Generated boundary/policy/freshness group: 22 pass,
-  0 fail. Packed installed-bin lifecycle: green.
+- `prepareBackgroundOwner` separates cold preparation from one idempotent fiber start.
+- One aggregate background program owns boot reconciliation, retention, agents polling, and LAN
+  refresh.
+- `AppConfigLive` replaces the transitional root configuration service.
+- `acquireDaemonResources` receives the prepared Background service/controller and returns a cold
+  background program.
+- The live Layer starts and registers the single Background owner before lifecycle ownership is
+  sealed, then publishes both `Background` and `DaemonLifecycle`.
+- The root waits on `Background.awaitFailure` instead of an unconditional `Effect.never`.
+- The legacy boot Promise chain, legacy agents-poll start, and legacy network-watch start are no
+  longer production entrypoints.
+- `createCore` no longer owns the boot retention sweep or ten-minute retention interval. It exposes
+  narrow `retentionSweep` and `pruneEvents` capabilities for the Effect schedule.
+- Legacy agents and network cadence timers are no longer unref'ed; explicit owner shutdown now
+  governs natural exit.
+- A real BunRuntime fixture proves the three async scheduler finalizers finish before store close,
+  callbacks remain stable afterward, and the process exits naturally without `process.exit`.
 
-## Latest verification state
+The same checkpoint also stabilizes two previously failing test fixtures:
 
-The fast gates were rerun immediately before `661dfe3`:
+- BUG-145: the tmux cleanup fixture sets remain-on-exit atomically, runs `/usr/bin/true`, and owns
+  its test server cleanup instead of relying on a login shell/path helper.
+- BUG-153: the spawn-reconciliation fixture asserts the durable `spawning` row directly instead of
+  depending on a best-effort hook POST and transient `live` observation.
 
-- `bun run typecheck`: pass for daemon and board.
-- `bun run ci`: pass, Biome checked 382 files.
+The generated daemon was rebuilt with identifier and syntax minification while preserving names and
+line-oriented diagnostics. The package recipe intentionally does not use whitespace minification.
+
+## Verification at this checkpoint
+
+Completed against `972621d` on Bun 1.3.14:
+
+- `bun run typecheck`: pass.
+- `bun run ci`: pass; Biome checked 387 files.
 - `git diff --check`: pass.
+- P5 background focused group: 33 pass, 0 fail.
+- Real Bun P5 natural-exit fixture: 5/5 repeated passes; latest single rerun also passed.
+- Root/lifecycle/acquisition group: 27 pass, 0 fail.
+- Production acquisition matrix: 4 pass, 0 fail.
+- Real source signal/lifecycle group: 4 pass, 0 fail.
+- Agents/LAN/mDNS group: 25 pass, 1 platform skip.
+- BUG-145: 10/10 repeated passes; full cleanup API file 3/3.
+- BUG-153: 11/11 repeated source passes; full spawn file 21/21; generated focused case 1/1.
+- Regenerated-bundle signal escalation smoke: 1 pass.
+- Import boundaries plus P3 production selection: 13 pass, 0 fail.
 
-The latest full source run is **not an accepted global gate**:
+The full `bun run test` and `bun run test:bundle` suites have **not** been rerun after P5
+integration. The earlier full-source failures are now understood and fixed as fixture defects, but a
+quiet global rerun is still required before closing P5.
 
-```text
-1459 pass, 1 skip, 2 fail, 1 error
-1462 tests across 180 files in 1148.79s
-```
+## Open bundle-size gate
 
-Failures to resolve before updating the P4 full-suite placeholders:
+The current generated daemon is deterministic and below the raw ceiling, but it exceeds the gzip-9
+ceiling:
 
-1. `tests/cleanup-api.test.ts` — `BUG-145: Clear and dismiss fail loud when tmux is unreachable,
-   with a retry path`. It failed waiting five seconds for a manually created remain-on-exit pane to
-   become dead. It reproduces alone (`2 pass, 1 fail`). A manual probe showed the new tmux pane's
-   login zsh still blocked in `/usr/libexec/path_helper -s`, so the injected `exit` never ran. Treat
-   that as a host/fixture lead, not yet a proven product-code cause.
-2. `tests/spawn.test.ts` — `restart reconciliation removes a spawn-owned worktree left by a spawn
-   interrupted before launch (BUG-153)`. It timed out at 60 seconds after failing to observe the
-   spawn become live within eight seconds. This case has not yet been rerun alone.
+- Raw: 668,967 B, below the 768,000 B ceiling.
+- gzip-9 zlib: 190,303 B, which is 863 B above the 189,440 B ceiling.
+- SHA-256: `8d17c569e5b8600b38134b41e9391a656ced7dfed2d25daf4ed471754a75d5b4`.
+- `tests/effect/daemon-bundle-policy.test.ts`: one pass and one intentional failure on the gzip
+  ceiling only.
 
-That source run overlapped the tail of focused agent verification, so it is unsuitable as a quiet
-acceptance measurement even apart from the reproducible cleanup fixture failure. The final shipped
-bundle suite was deliberately not started after the source gate failed.
+Do not silently raise the ceiling or add `--minify-whitespace`. The next session should either
+remove at least 863 compressed bytes while preserving diagnostic quality, or obtain explicit
+maintainer acceptance and record the exception in evidence.
 
-Resume verification in this order:
+## P4 evidence remains historical
 
-1. Run the BUG-145 case alone after fixing or stabilizing its tmux fixture.
-2. Run the BUG-153 case alone and diagnose any repeat.
-3. Keep all agents and other test commands idle; run `bun run test` once.
-4. If source is green, run `bun run test:bundle` once against the same tree.
-5. Replace `FINAL_P4_SOURCE_SUITE` and `FINAL_P4_BUNDLE_SUITE` in
-   [p4.md](./evidence/effect/p4.md), then update the P4 ledger row.
+Accepted P4 evidence in [p4.md](./evidence/effect/p4.md) and
+[p4-shutdown.json](./evidence/effect/p4-shutdown.json) measures the pre-P5 tree:
 
-Do not reinterpret the accepted `p4-shutdown.json` closure hash as covering later P5 files. The P5
-modules are additive and not reachable from the daemon root yet; the measured P4 artifact remains
-the byte-identical `da3c674a…` bundle.
+- Source closure prefix: `15c62de5…`.
+- Daemon bundle: 688,199 B raw and 186,978 B gzip-9.
+- Bundle SHA-256: `da3c674a088d9ff2ab624f422c85c2095cec389f6ac2e57343a95bbc6e8d6e88`.
+- 100 measured shutdowns plus ten warmups passed their exit, response, WebSocket, discovery,
+  pidfile, listener, socket, child, timer, and root-keepalive residue gates.
 
-## P5 work already present
+That evidence is still valid for the P4 checkpoint, but it must not be rewritten as if it describes
+the current P5 artifact.
 
-The following boundary-clean slices and focused tests are implemented in `661dfe3`, but they are
-not wired into production:
+## Exact resume order
 
-- `app/background-owner.ts` and `services/background.ts`: status `Ref`, readiness/failure
-  `Deferred`s, explicit fiber owner, joined legacy Promise adapter; focused 7/7.
-- `app/boot-reconciliation.ts`: clear-fork first, reconciliation plus first retention concurrently,
-  broadcast flush last, degraded named failures, defect propagation, joined interruption; focused
-  8/8.
-- `app/agents-poll.ts`: scoped ProcessRunner polling, active/idle cadence, no overlap, fail-open
-  named skips, in-flight cancellation/join; focused 6/6.
-- `app/lan-refresh.ts` and `fixed-grid-schedule.ts`: delayed fixed-grid cadence, missed-tick skip,
-  no overlap, typed recovery, joined interruption; focused 7/7.
-- `app/retention-schedule.ts`: immediate boot sweep, ten-minute fixed grid, first-run readiness,
-  typed retry and no overlap; focused 7/7.
-- `app/app-config-live.ts`: cold AppConfig Layer, exact port-before-HOME/version ordering,
-  source/bundle path normalization, typed startup refusal; focused 8/8.
+1. Confirm the checkpoint and runtime:
 
-Production still runs the legacy boot Promise chain, `startAgentsPoll`, `startNetworkWatch`, and
-`createCore`'s boot-retention Promise plus interval. Integrating the new modules without removing
-those paths would double-run work.
+   ```sh
+   git switch fd/v1-effect-feasibility
+   git status --short
+   git log --oneline -5
+   bun --version
+   ```
 
-### P5 integration order
+2. Resolve the 863 B gzip overage without whitespace minification or obtain and document explicit
+   acceptance.
+3. Rebuild daemon/bin/hooks twice and verify deterministic build and pack identities.
+4. Run the bundle policy, import-boundary, P5 aggregate, and real natural-exit gates.
+5. Keep the host otherwise idle; run `bun run test`, then `bun run test:bundle` against the same
+   tree.
+6. Record P5 evidence, update the migration ledger, and check the applicable P5 plan boxes only
+   after every exit gate is green.
+7. Begin P6 from the frozen HTTP behavior matrix.
 
-1. Split background preparation from fiber start. HTTP needs the same synchronous
-   `reconciliationStatus()` before `createHttp`, while the owner must start only after native daemon
-   acquisition. A prepared value should expose `service`, `controller`, and an idempotent `start`.
-2. Make `lanRefresh` copy and validate its callbacks/options at construction, matching agents and
-   retention.
-3. In `derive.ts`, keep plain `retentionSweep(nowMs)` and expose a narrow event-prune callback.
-   Remove its automatic boot sweep, ten-minute interval, and retention lifecycle. Leave the
-   question orphan sweep on its explicit P1 owner until P10.
-4. Change `acquireDaemonResources` to accept prepared Background readiness and return cold
-   background capabilities instead of starting legacy producers. Keep mDNS as discovery.
-5. Build one aggregate background program containing retention, agents, LAN, and boot. Pass
-   `retention.awaitFirstRun` directly into boot reconciliation; do not wrap it in another legacy
-   Promise.
-6. In `makeDaemonLifecycleLayer`, use this exact order: prepare signals; acquire daemon; attach the
-   process driver; start the aggregate owner; register it as a producer; then construct the
-   coordinator, which seals resources. Publish both `DaemonLifecycle` and `Background`.
-7. Replace `TransitionalAppConfig` with `AppConfigLive` and remove duplicate port/HOME/version
-   probing from `program.ts`.
-8. Replace root `Effect.never` with `Background.awaitFailure`; retain lifecycle close in `onExit`
-   inside the provided Layer.
-9. Add one aggregate `TestClock` test and one real BunRuntime/natural-exit fixture. Only after the
-   latter passes, remove the replaced `unref()` calls in legacy agents polling, network watch, and
-   derive retention. Do not remove question or mDNS/watchdog timers.
-
-Production must give the Background owner a shutdown bound compatible with the 1,750 ms root and
-250 ms force reserve; the current generic default join timeout is only 1,000 ms.
-
-## P6 preflight handoff
-
-`http.ts` remains a roughly 3,100-line monolith containing pure policy, Node-shaped request/response
-shims, body/FIN handling, all routes, snapshot and terminal WebSockets, `Bun.serve`, and lifecycle.
-The existing phased shutdown behavior is already hardened and must be preserved.
-
-Key constraints:
+## P6 preflight constraints
 
 - Introduce a temporary exact legacy `Core` service; do not force the SQLite/P8 migration early.
-- Adapt and join every legacy async route Promise before request interruption can be enabled.
-- Keep hook holds/watch waiters behind their P1 lifecycle owners until P10.
-- Keep termbridge internals behind the present owned facade until P7.
-- Characterize Bun WebSocket `send()` return values (`-1`, `0`, positive) before defining a new
-  backpressure abstraction.
-- Make import-time HTTP env caps and FIN timers cold/injectable without changing bytes.
-- Freeze the P5 `whenBroadcastIdle` readiness handoff before moving HTTP ownership.
+- Adapt and join every legacy async route Promise before enabling request interruption.
+- Keep hook holds/watch waiters under their P1 owners until P10 and termbridge behind its owned
+  facade until P7.
+- Characterize Bun WebSocket `send()` return values before defining the new backpressure policy.
+- Preserve the established held-response barriers and `stop(false)`/`stop(true)` ordering on Bun
+  1.3.14.
+- One integrator should own shared edits to `http.ts`, `live-layer.ts`, and `program.ts`; parallel
+  route work should stay in new workflow and test files.
 
-Recommended parallel lanes after P5 integration is stable:
+## Repository handoff expectation
 
-1. P6.1 machine-readable route/wire matrix and black-box characterization.
-2. Pure HTTP/hook/auth/security policy extraction with byte-exact differential tests.
-3. `HttpServer` service plus scoped Bun transport/lifecycle adapter.
-4. WebSocket send-result and terminal-ingress characterization.
-
-One integrator should exclusively own `http.ts`, `live-layer.ts`, and `program.ts`; route agents
-should stay in new workflow and test files.
-
-## Repository handoff checks
-
-At the start of the next session:
-
-```sh
-git switch fd/v1-effect-feasibility
-git status --short
-git log --oneline -5
-bun --version
-```
-
-Expected implementation anchor is `661dfe3`; the follow-up documentation commit contains this
-handoff. There should be no staged or unstaged migration work after that documentation commit.
-Nothing from this checkpoint has been pushed.
+After the documentation checkpoint commit, the worktree should be clean, with no staged migration
+changes and no known fixture processes or listeners left behind. The next session should start from
+`972621d` plus the following documentation commit. Nothing has been pushed.
