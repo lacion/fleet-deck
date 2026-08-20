@@ -4,13 +4,15 @@
 v1 [plan of record](./README.md). This document is intended to be handed directly to a Codex goal
 and updated as each gate lands.*
 
-**Status:** implementation-ready plan; implementation not started
+**Status:** P0–P4 checkpointed; P5 isolated schedulers prepared but not integrated
 **Working branch:** `fd/v1-effect-feasibility`
 **Starting point:** v0.23.6
 **Runtime floor:** exact Bun 1.3.14 in CI; `engines.bun >=1.3.14`
 **Effect cohort:** exact `4.0.0-rc.110`
 **Migration posture:** complete the application architecture, but replace optional platform
 adapters only when their own behavior and performance gates pass
+
+Current continuation state is recorded in [effect-migration-status.md](./effect-migration-status.md).
 
 ## 1. Goal contract
 
