@@ -4,6 +4,7 @@ import * as Context from 'effect/Context';
 import * as Effect from 'effect/Effect';
 import * as Exit from 'effect/Exit';
 import * as Scope from 'effect/Scope';
+import { prepareBackgroundOwner } from '../../../src/daemon/app/background-owner.ts';
 import { acquireDaemonResources } from '../../../src/daemon/app/program.ts';
 import type { RootIngressSupervisorService } from '../../../src/daemon/app/services/ingress-supervisor.ts';
 import {
@@ -41,8 +42,32 @@ const runTestPromise = Effect.runPromiseWith(Context.empty());
 const ingress = (await runTestPromise(
   makeIngressSupervisor(Context.make(ProcessRunner, processRunner), rootScope),
 )) as RootIngressSupervisorService;
-const acquired = await acquireDaemonResources(new AbortController().signal, ingress);
-await acquired.readiness;
+let acquired: Awaited<ReturnType<typeof acquireDaemonResources>> | null = null;
+const prepared = await runTestPromise(
+  prepareBackgroundOwner({
+    name: 'pid-release-retry-fixture',
+    run: () =>
+      acquired?.backgroundProgram ??
+      Effect.die(new Error('background program started before daemon acquisition')),
+  }),
+);
+acquired = await acquireDaemonResources(new AbortController().signal, ingress, {
+  config: {
+    home,
+    port: Number(process.env['FLEETDECK_PORT']),
+    version: 'pid-release-retry-fixture',
+  },
+  background: prepared.service,
+  backgroundController: prepared.controller,
+});
+const backgroundOwner = await runTestPromise(
+  prepared.start.pipe(
+    Effect.provideService(ProcessRunner, processRunner),
+    Effect.provideService(Scope.Scope, rootScope),
+  ),
+);
+acquired.resources.addProducer('effect-background', { close: backgroundOwner.close });
+await runTestPromise(prepared.service.awaitReady);
 
 const originalUnlinkSync = fs.unlinkSync;
 const injected = Object.assign(new Error('injected pid unlink failure'), { code: 'EACCES' });

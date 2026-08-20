@@ -111,9 +111,9 @@ const daemonLayer = makeDaemonLifecycleLayer({
   acquisitionShutdownTimeoutMs: 1_750,
   acquisitionShutdownReserveMs: 250,
   onAcquisitionShutdownFailure: () => undefined,
-  acquireDaemonResources: (signal, ingress) => {
+  acquireDaemonResources: (signal, ingress, inputs) => {
     capturedIngress = ingress;
-    return acquireDaemonResources(signal, ingress, {
+    return acquireDaemonResources(signal, ingress, inputs, {
       afterAcquire(checkpoint) {
         checkpoints.push(checkpoint);
         if (checkpoint !== target) return;

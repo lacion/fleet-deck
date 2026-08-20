@@ -1240,17 +1240,16 @@ test('restart reconciliation removes a spawn-owned worktree left by a spawn inte
   // reconciliation settles that row 'gone'; before the fix it left the
   // worktree's directory, fd/<callsign> branch and git registration behind
   // on every such restart. Simulating the death without killing the daemon
-  // mid-launch: spawn with worktree:true against the fixture backend, wait
-  // for the pane to register (by then the worktree is created AND the
-  // ownership bit persisted), rewind the row to 'provisioning' (the state a
-  // crash in that gap would have left it in), stop keeping the DB, and boot
-  // a fresh daemon on the same FLEETDECK_HOME with no fleet windows in tmux.
+  // mid-launch: spawn with worktree:true against the fixture backend (the
+  // successful response is published only after the worktree is created and
+  // its ownership bit persisted), prove that exact durable row, rewind it to
+  // 'provisioning' (the state a crash in that gap would have left it in), and
+  // boot a fresh daemon on the same FLEETDECK_HOME with no fleet windows in
+  // tmux. Do not use the fixture's best-effort SessionStart POST as the
+  // precondition: live status is downstream of launch and unrelated to the
+  // interrupted-before-launch state this regression exercises.
   const home = scratchDir('fleetdeck-spawn-home-');
   const port = randomPort();
-  const baseUrl = `http://127.0.0.1:${port}`;
-  // BUG-213: use the cleaned helper so the spec-record dir (not just the file)
-  // is removed on teardown — a bare scratchDir() here leaked its owning dir.
-  const rec = makeSpecRecordFile(t);
   const repo = makeRepoWithWorktree({ repoName: 'fleetdeck-bug153-worktree' });
   t.after(() => {
     rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
@@ -1260,7 +1259,7 @@ test('restart reconciliation removes a spawn-owned worktree left by a spawn inte
   const first = await startDaemon({
     port,
     home,
-    env: spawnCmdEnv({ recordFile: rec, postUrl: baseUrl }),
+    env: spawnCmdEnv(),
   });
   let sid!: string;
   let spawnId!: string;
@@ -1276,13 +1275,6 @@ test('restart reconciliation removes a spawn-owned worktree left by a spawn inte
       `worktree spawn should 200 (got ${spawnRes.status}: ${JSON.stringify(spawnRes.json)})`,
     );
     ({ session_id: sid, spawn_id: spawnId, callsign } = spawnRes.json as SpawnOk);
-    await waitUntil(
-      async () => {
-        const state = await getState<StateResponse>(first.baseUrl);
-        return findSession(state, sid)?.spawn?.status === 'live' ? true : null;
-      },
-      { label: 'spawn reaches status live before the simulated crash' },
-    );
   } finally {
     await first.stop({ keepHome: true });
   }
@@ -1301,10 +1293,23 @@ test('restart reconciliation removes a spawn-owned worktree left by a spawn inte
     }).trim();
 
   // Rewind the row into the exact shape a crash between worktree persistence
-  // and pane launch would have left: 'provisioning', worktree_path set.
+  // and pane launch would have left. Pin the ownership precondition directly:
+  // this cleanup is allowed only for a path the spawn durably marked as its own.
   const { openDatabase } = await import('../src/daemon/sqlite.ts');
   const db = openDatabase(path.join(home, 'fleetd.db'));
   try {
+    const persisted = db
+      .prepare<{
+        status: string;
+        worktree_path: string | null;
+        worktree_owned: number | null;
+      }>('SELECT status, worktree_path, worktree_owned FROM spawns WHERE spawn_id = ?')
+      .get(spawnId);
+    assert.deepEqual(
+      persisted,
+      { status: 'spawning', worktree_path: worktreePath, worktree_owned: 1 },
+      'fixture launch must leave the exact spawn-owned worktree row that restart reconciliation may remove',
+    );
     db.prepare("UPDATE spawns SET status = 'provisioning' WHERE spawn_id = ?").run(spawnId);
   } finally {
     db.close();

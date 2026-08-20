@@ -5,6 +5,7 @@ import * as Effect from 'effect/Effect';
 import * as Exit from 'effect/Exit';
 import * as Runtime from 'effect/Runtime';
 import * as Scope from 'effect/Scope';
+import { prepareBackgroundOwner } from '../../../src/daemon/app/background-owner.ts';
 import {
   acquireDaemonResources,
   type AcquiredDaemonResources,
@@ -72,14 +73,37 @@ const blocker =
     : null;
 
 let acquired: AcquiredDaemonResources | null = null;
+const prepared = await runTestPromise(
+  prepareBackgroundOwner({
+    name: 'daemon-acquisition-fixture',
+    run: () =>
+      acquired?.backgroundProgram ??
+      Effect.die(new Error('background program started before daemon acquisition')),
+  }),
+);
 let healthStatus: number | null = null;
 let startupError: unknown = null;
 try {
-  const acquiring = acquireDaemonResources(controller.signal, ingress);
+  const acquiring = acquireDaemonResources(controller.signal, ingress, {
+    config: {
+      home,
+      port,
+      version: 'effect-acquisition-fixture',
+    },
+    background: prepared.service,
+    backgroundController: prepared.controller,
+  });
   if (mode === 'abort') controller.abort();
   acquired = await acquiring;
+  const backgroundOwner = await runTestPromise(
+    prepared.start.pipe(
+      Effect.provideService(ProcessRunner, processRunner),
+      Effect.provideService(Scope.Scope, rootScope),
+    ),
+  );
+  acquired.resources.addProducer('effect-background', { close: backgroundOwner.close });
   healthStatus = (await fetch(`http://127.0.0.1:${port}/health`)).status;
-  await acquired.readiness;
+  await runTestPromise(prepared.service.awaitReady);
 } catch (error) {
   startupError = error;
 } finally {

@@ -58,6 +58,19 @@ export interface BackgroundRegistration {
   readonly owner: BackgroundOwner;
 }
 
+/**
+ * Cold background registration state.
+ *
+ * Readiness is available to native acquisition before the daemon-long fiber is
+ * admitted. Evaluating `start` later starts that fiber exactly once and binds
+ * its fallback finalizer to the Scope of the first evaluation.
+ */
+export interface PreparedBackgroundOwner<R> {
+  readonly service: BackgroundService;
+  readonly controller: BackgroundController;
+  readonly start: Effect.Effect<BackgroundOwner, never, R | Scope.Scope>;
+}
+
 export interface BackgroundOwnerOptions<R> {
   readonly name: string;
   readonly run: (
@@ -188,27 +201,16 @@ function closeExitError(
  * finalizer is only a synchronous interruption fallback, so teardown can never
  * start a second unbounded join after the policy deadline has already expired.
  */
-export function makeBackgroundOwner<R>(
+function startBackgroundOwner<R>(
   options: BackgroundOwnerOptions<R>,
-): Effect.Effect<BackgroundRegistration, never, R | Scope.Scope> {
+  controller: BackgroundController,
+  ready: Deferred.Deferred<void, BackgroundOperationalError>,
+  failure: Deferred.Deferred<never, BackgroundOperationalError>,
+  joinTimeoutMs: number,
+): Effect.Effect<BackgroundOwner, never, R | Scope.Scope> {
   return Effect.uninterruptible(
     Effect.gen(function* () {
-      const joinTimeoutMs = validateJoinTimeout(options.joinTimeoutMs ?? DEFAULT_JOIN_TIMEOUT_MS);
-      const status = yield* Ref.make<ReconciliationStatus>('reconciling');
-      const ready = yield* Deferred.make<void, BackgroundOperationalError>();
-      const failure = yield* Deferred.make<never, BackgroundOperationalError>();
       const scope = yield* Effect.scope;
-
-      const markReconciliationReady = Ref.set(status, 'settled').pipe(
-        Effect.andThen(Deferred.succeed(ready, undefined)),
-        Effect.asVoid,
-      );
-      const controller: BackgroundController = { markReconciliationReady };
-      const service: BackgroundService = {
-        reconciliationStatus: () => Ref.getUnsafe(status),
-        awaitReady: Deferred.await(ready),
-        awaitFailure: Deferred.await(failure),
-      };
 
       let phase: 'running' | 'interrupting' | 'closed' = 'running';
       let interruptionRequested = false;
@@ -297,7 +299,61 @@ export function makeBackgroundOwner<R>(
       // bounded join. Never await close here or Scope teardown could start a new
       // unbounded wait after that join timed out.
       yield* Scope.addFinalizer(scope, Effect.sync(interrupt));
-      return { service, controller, owner };
+      return owner;
+    }),
+  );
+}
+
+/**
+ * Allocate Background readiness without starting its daemon-long fiber.
+ *
+ * `start` is a cold, concurrent-safe cached Effect. Its first evaluation owns
+ * the one detached fiber and installs the Scope fallback; later evaluations
+ * return the exact same owner without invoking `options.run` again.
+ */
+export function prepareBackgroundOwner<R>(
+  options: BackgroundOwnerOptions<R>,
+): Effect.Effect<PreparedBackgroundOwner<R>> {
+  return Effect.uninterruptible(
+    Effect.gen(function* () {
+      const joinTimeoutMs = validateJoinTimeout(options.joinTimeoutMs ?? DEFAULT_JOIN_TIMEOUT_MS);
+      const status = yield* Ref.make<ReconciliationStatus>('reconciling');
+      const ready = yield* Deferred.make<void, BackgroundOperationalError>();
+      const failure = yield* Deferred.make<never, BackgroundOperationalError>();
+
+      const markReconciliationReady = Ref.set(status, 'settled').pipe(
+        Effect.andThen(Deferred.succeed(ready, undefined)),
+        Effect.asVoid,
+      );
+      const controller: BackgroundController = { markReconciliationReady };
+      const service: BackgroundService = {
+        reconciliationStatus: () => Ref.getUnsafe(status),
+        awaitReady: Deferred.await(ready),
+        awaitFailure: Deferred.await(failure),
+      };
+      const start = yield* Effect.cached(
+        startBackgroundOwner(options, controller, ready, failure, joinTimeoutMs),
+      );
+
+      return { service, controller, start };
+    }),
+  );
+}
+
+/**
+ * Start one daemon-long fiber and bridge it to the imperative producer owner.
+ *
+ * Compatibility wrapper for callers that do not need to expose Background
+ * readiness before native acquisition.
+ */
+export function makeBackgroundOwner<R>(
+  options: BackgroundOwnerOptions<R>,
+): Effect.Effect<BackgroundRegistration, never, R | Scope.Scope> {
+  return Effect.uninterruptible(
+    Effect.gen(function* () {
+      const prepared = yield* prepareBackgroundOwner(options);
+      const owner = yield* prepared.start;
+      return { service: prepared.service, controller: prepared.controller, owner };
     }),
   );
 }

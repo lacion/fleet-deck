@@ -11,16 +11,14 @@
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import * as Effect from 'effect/Effect';
 import { openDb } from '../db.ts';
 import { DaemonResources } from '../daemon-resources.ts';
 import { createCore } from '../derive.ts';
 import { bindExecFileDelegate } from '../exec.ts';
 import { createHttp, isLoopbackAddress, parseTrustedOrigins } from '../http.ts';
-import { startAgentsPoll } from '../agents-poll.ts';
 import { createPayloadCapture } from '../payload-capture.ts';
 import { createMdns, hostLabel } from '../mdns.ts';
-import { startNetworkWatch } from '../network-watch.ts';
 import { networkInterfaces } from '../os-net.ts';
 // Runtime-agnostic test seam (foundations-hardening §16): every export is a
 // no-op unless FLEETDECK_TEST_NET_MOCK / a record-sink var is set, so this is
@@ -37,18 +35,19 @@ import {
   verifyDaemonPid,
   terminateDaemon,
 } from '../takeover.ts';
-import { resolveHome, resolvePort } from '../config.ts';
 import { errText, errCode } from '../errors.ts';
+import { makeAgentsPollProgram } from './agents-poll.ts';
+import type { BackgroundController } from './background-owner.ts';
+import { makeDaemonBackgroundProgram } from './background-program.ts';
+import { legacyBootReconciliationWithoutRetentionWork } from './boot-reconciliation.ts';
 import { DaemonStartupRefusalError, HttpBindStartupError } from './errors.ts';
+import { lanRefresh } from './lan-refresh.ts';
 import { makeIngressExecFileDelegate } from './legacy-process-facade.ts';
+import { legacyRetentionWork, makeRetentionSchedule } from './retention-schedule.ts';
+import type { AppConfigService } from './services/app-config.ts';
+import type { BackgroundService } from './services/background.ts';
 import type { RootIngressSupervisorService } from './services/ingress-supervisor.ts';
-
-const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
-// program.ts is nested below the historical source entrypoint, while Bun's
-// single-file build resolves import.meta.url beside fleetd.ts. Normalize both
-// layouts so package version discovery keeps the same source and bundle path.
-const daemonDirectory =
-  path.basename(moduleDirectory) === 'app' ? path.dirname(moduleDirectory) : moduleDirectory;
+import type { ProcessRunner } from './services/process-runner.ts';
 
 // takeover.ts exports the pidRecord PARSER but not its result interface, so
 // derive the record shape from the parser's return type rather than reaching
@@ -81,9 +80,6 @@ export type DaemonAcquisitionOwner =
   | 'database'
   | 'core'
   | 'http-owner'
-  | 'boot-reconciliation'
-  | 'agents-poll'
-  | 'network-watch'
   | 'mdns';
 
 export interface DaemonAcquisitionTestHooks {
@@ -109,7 +105,8 @@ function startupRefusal(
  */
 export interface AcquiredDaemonResources {
   readonly resources: DaemonResources;
-  readonly readiness: Promise<void>;
+  /** Cold until the root Background owner admits it after complete native acquisition. */
+  readonly backgroundProgram: Effect.Effect<never, never, ProcessRunner>;
   readonly shutdownExitCode: () => DaemonShutdownExitCode;
   /**
    * Idempotent synchronous fallback used by the custom host teardown only.
@@ -120,9 +117,16 @@ export interface AcquiredDaemonResources {
   readonly releaseProcessAtHostExit: () => void;
 }
 
+export interface DaemonAcquisitionInputs {
+  readonly config: AppConfigService;
+  readonly background: BackgroundService;
+  readonly backgroundController: BackgroundController;
+}
+
 async function bootDaemon(
   signal: AbortSignal,
   ingress: RootIngressSupervisorService,
+  inputs: DaemonAcquisitionInputs,
   testHooks?: DaemonAcquisitionTestHooks,
 ): Promise<AcquiredDaemonResources> {
   signal.throwIfAborted();
@@ -159,26 +163,10 @@ async function bootDaemon(
   // reaches the parent test.
   installConsoleRecorder();
 
-  // The port is the daemon's identity (pidfile, hooks, board URLs), so an
-  // invalid FLEETDECK_PORT must refuse startup BEFORE HOME is claimed. Two
-  // guards cover both resolvePort contracts: if resolvePort throws on a
-  // malformed value, catch it and raise the exact typed refusal for the root
-  // stderr interpreter, ahead of HOME resolution and pidfile cleanup; if
-  // resolvePort cannot throw (the hook scripts import it too and
-  // must always be able to REPORT to some port), the daemon — the only process
-  // that LISTENS — rejects the out-of-range result itself. Without this,
-  // the native HTTP bind's synchronous argument validation throws AFTER claimHome
-  // wrote the pidfile unless the typed bind boundary owns cleanup, and
-  // HOME stays claimed by a stale pidfile whose recorded port is garbage,
-  // wedging supervised restarts until the pidfile is removed by hand. Both
-  // guards run before mkdir/claimHome, so a refused boot touches nothing and
-  // owns nothing.
-  let PORT: number;
-  try {
-    PORT = resolvePort();
-  } catch (err) {
-    throw startupRefusal(err instanceof Error ? err.message : String(err));
-  }
+  // AppConfigLive resolves port before HOME/version. Retain this defensive
+  // boundary for injected Layers so a malformed service still refuses startup
+  // before HOME can be claimed.
+  const PORT = inputs.config.port;
   if (!Number.isInteger(PORT) || PORT < 0 || PORT > 65535) {
     throw startupRefusal(
       `FLEETDECK_PORT must be an integer between 0 and 65535 (got '${String(process.env['FLEETDECK_PORT'])}')`,
@@ -186,7 +174,8 @@ async function bootDaemon(
   }
   const BIND = (process.env['FLEETDECK_BIND'] ?? '').trim() || '127.0.0.1';
   const LAN_MODE = !isLoopbackAddress(BIND);
-  const HOME = resolveHome();
+  const HOME = inputs.config.home;
+  const version = inputs.config.version;
   const PID_FILE = path.join(HOME, 'fleetd.pid');
   let ownsPidFile = false;
   // The tmux adapter is imported before runtime config resolves, but reads this
@@ -258,33 +247,6 @@ async function bootDaemon(
     fs.chmodSync(HOME, 0o700);
   } catch {
     /* dir confidentiality is best effort */
-  }
-
-  // The daemon's OWN version, resolved BEFORE claimHome: the same-HOME
-  // arbitration below needs it to decide whether a live incumbent is a strictly
-  // older build this boot should supersede (BUG-156). Historically this block
-  // sat further down; the rules are unchanged.
-  let version = '0.0.0';
-  // Test-only override: FLEETDECK_VERSION_OVERRIDE lets the takeover suite stand
-  // up an "older" or "newer" daemon deterministically without editing (or
-  // depending on the current value of) package.json. Trimmed, and it wins over
-  // the package.json read below when present. Production installs never set it.
-  const versionOverride = process.env['FLEETDECK_VERSION_OVERRIDE']?.trim();
-  if (versionOverride) {
-    version = versionOverride;
-  } else {
-    try {
-      version =
-        (
-          JSON.parse(
-            fs.readFileSync(path.resolve(daemonDirectory, '../../package.json'), 'utf8'),
-          ) as {
-            version?: string;
-          }
-        ).version ?? version;
-    } catch {
-      /* standalone install; /health just reports 0.0.0 */
-    }
   }
 
   function removeOwnedPidFile(): void {
@@ -771,27 +733,6 @@ async function bootDaemon(
     throw error;
   }
 
-  // BOOT-RECONCILIATION READINESS: successful bind kicks the boot heals
-  // fire-and-forget (see below), so /health answering 200 has never meant they
-  // ran. createCore itself also fires one async sweep (the boot retentionSweep);
-  // fold it into the same readiness so `settled` truly closes the startup
-  // mutation window a strict /ws client must wait out before connecting. The
-  // settled PROMISE object is wired in after createHttp returns so a response
-  // never awaits a heal — /health stays sub-millisecond even with tmux down —
-  // and settling 'settled' from the heals' own .finally is safe even in the
-  // artificial all-synchronous path (readiness() is never consulted before that).
-  let settleReconciliation: (() => void) | null = null;
-  const bootReconciliation = new Promise<void>((resolve) => {
-    settleReconciliation = () => {
-      resolve();
-    };
-  });
-  const bootReadiness = {
-    reconciliationStatus: (): 'settled' | 'reconciling' =>
-      settleReconciliation === null ? 'settled' : 'reconciling',
-    readiness: bootReconciliation,
-  };
-
   // The board's share panel owns the complete credentialed URLs. Startup logs only
   // describe the same endpoints with the credential deliberately redacted.
   const MDNS_ENABLED = LAN_MODE && process.env['FLEETDECK_MDNS']?.trim().toLowerCase() !== 'off';
@@ -831,7 +772,10 @@ async function bootDaemon(
       managed: MANAGED,
       requireToken: REQUIRE_TOKEN,
       trustLoopback: TRUST_LOOPBACK,
-      startup: bootReadiness,
+      // The prepared Background service exists before native acquisition, so
+      // /health can expose `reconciling` without starting a second runtime or a
+      // manually settled Promise chain.
+      startup: inputs.background,
       // validation aid: first 3 raw payloads per hook event → HOME/hook-payloads.jsonl
       capture: createPayloadCapture(HOME, { secrets: AUTH_TOKEN ? [AUTH_TOKEN] : [] }),
     });
@@ -957,48 +901,6 @@ async function bootDaemon(
   }
 
   let lastLanAddresses: string[] | null = null;
-
-  function watchNetwork(): ReturnType<typeof startNetworkWatch> {
-    return startNetworkWatch({
-      enabled: LAN_MODE,
-      intervalMs: LAN_REFRESH_MS,
-      readAddresses: lanAddresses,
-      previousAddresses: () => lastLanAddresses,
-      onChange(addresses, previous) {
-        const gone = previous.filter((a) => !addresses.includes(a));
-        refreshNetwork(addresses);
-        if (addresses.length) {
-          console.log(
-            `fleetd LAN addresses now ${addresses.join(', ')}${gone.length ? ` (was ${gone.join(', ')})` : ''}`,
-          );
-        } else {
-          console.log(
-            'fleetd LAN interface lost; board still reachable at its last addresses only until the link returns',
-          );
-        }
-        // A responder that never started (no address at boot) is created on the
-        // same transition — the network coming up is exactly its cue.
-        if (!mdns && MDNS_ENABLED && addresses.length) startMdns(addresses);
-        // A board left open across a roam keeps showing the stale URL set until
-        // its next /state poll otherwise. tick() rides the same coalesced
-        // broadcast as every other feed line.
-        try {
-          core.tick(
-            `🌐 LAN address changed — share panel updated${gone.length ? ` (was ${gone.join(', ')})` : ''}`,
-          );
-        } catch {
-          /* feed line is non-essential */
-        }
-      },
-      onError(error) {
-        console.error('fleetd network watcher error:', error);
-      },
-    });
-  }
-
-  let networkWatchOwner: ReturnType<typeof watchNetwork> | null = null;
-  let agentsPollOwner: ReturnType<typeof startAgentsPoll> | null = null;
-  let bootWork: Promise<unknown> | null = null;
   let discoveryShutdownTimedOut = false;
 
   async function stopMdnsOwned(): Promise<void> {
@@ -1022,35 +924,11 @@ async function bootDaemon(
     }
   }
 
-  // Register dynamic owners before bind can publish success. Their close
-  // functions resolve the handle that was actually acquired (or no-op for a
-  // partial startup), so shutdown never needs to mutate the aggregate after its
-  // admission latch has closed.
+  // Discovery is acquired before bind and remains a separate policy phase. The
+  // aggregate Background producer is started and registered by the root Layer
+  // after this complete native acquisition returns, but before lifecycle
+  // ownership is sealed.
   try {
-    daemonResources.addProducer(
-      'boot-reconciliation',
-      observeRelease('boot-reconciliation', {
-        close: async () => {
-          await bootWork;
-        },
-      }),
-    );
-    daemonResources.addProducer(
-      'agents-poll',
-      observeRelease('agents-poll', {
-        close: async () => {
-          await agentsPollOwner?.stop();
-        },
-      }),
-    );
-    daemonResources.addProducer(
-      'network-watch',
-      observeRelease('network-watch', {
-        close: async () => {
-          await networkWatchOwner?.stop();
-        },
-      }),
-    );
     daemonResources.addDiscovery(
       'mdns',
       observeRelease('mdns', {
@@ -1160,48 +1038,11 @@ async function bootDaemon(
       if (MDNS_ENABLED && lastLanAddresses.length) {
         startMdns(lastLanAddresses);
       }
-      networkWatchOwner = watchNetwork();
     }
     if (testHooks) await acquisitionCheckpoint('discovery-network');
-    // v1.2 restart reconciliation: spawn rows survive in SQLite, panes survive
-    // in tmux — re-join them (rows with a missing window → 'gone' + card
-    // offline; scoped fd<PORT>-* windows with no row → /state spawn_orphans).
-    // 0.7.1: heal cards split by a /clear fork before succession shipped (the CLI
-    // mints a new session id on /clear, which used to strand the predecessor's
-    // pane on a card that never updates again). Synchronous, idempotent, a no-op
-    // on a fleet that never forked — and it runs BEFORE reconcileSpawns so the
-    // pane rows it moves are already on the right session when tmux is consulted.
-    try {
-      core.reconcileClearForks();
-    } catch (err) {
-      console.error('fleetd /clear fork heal error:', err);
-    }
-    // reconcileSpawns is typed `(...args) => unknown` on the core surface (it is
-    // destructured out of the untyped spawns factory); it returns a promise at
-    // runtime, so assert it for the boot-readiness chain. `void` marks the chain
-    // fire-and-forget exactly as the .mjs did — /health answering 200 never meant
-    // the heals ran; the settle below is what flips reconciliationStatus.
-    bootWork = (core.reconcileSpawns() as Promise<unknown>)
-      .catch((err: unknown) => {
-        console.error('fleetd spawn reconciliation error:', err);
-      })
-      // The boot retentionSweep kicked inside createCore is the other half of
-      // the startup mutation window — `settled` means BOTH are done. Each leg
-      // already carries its own .catch above, so this chain cannot reject.
-      .then(() => core.bootRetention)
-      // The heals' onMutate calls only SCHEDULE a coalesced broadcast; the flush
-      // fires up to BROADCAST_COALESCE_MS later. Settling 'settled' the instant
-      // the heals resolve would let a strict /ws client connect into that
-      // trailing flush and take a broadcast it did not cause (BUG-066). Wait out
-      // the pending flush before flipping the signal.
-      .then(() => whenBroadcastIdle())
-      .finally(() => {
-        // Settling is irreversible: flip the status /health reports FIRST, then
-        // resolve the (unexposed) readiness promise for in-process embedders.
-        settleReconciliation?.();
-        settleReconciliation = null;
-      });
-    agentsPollOwner = startAgentsPoll(core); // F1 secondary session source; first run shortly after bind
+    // The Effect program is still cold here. The root starts and registers its
+    // one owner immediately after this acquisition publishes, before lifecycle
+    // ownership can be sealed.
     if (testHooks) await acquisitionCheckpoint('pollers-boot');
   } catch (error) {
     // A synchronous post-bind producer/banner failure occurs before the Layer
@@ -1211,9 +1052,85 @@ async function bootDaemon(
     throw error;
   }
 
+  const boot = legacyBootReconciliationWithoutRetentionWork({
+    clearForkHealing: () => {
+      core.reconcileClearForks();
+    },
+    reconcileSpawns: () => Promise.resolve(core.reconcileSpawns()),
+    awaitBroadcastIdle: whenBroadcastIdle,
+  });
+  const retentionWork = legacyRetentionWork({
+    pruneEvents: core.pruneEvents,
+    retentionSweep: core.retentionSweep,
+  });
+  const backgroundProgram: Effect.Effect<never, never, ProcessRunner> = Effect.gen(function* () {
+    const retention = yield* makeRetentionSchedule({
+      ...retentionWork,
+      onOperationalFailure: ({ phase, error }) =>
+        phase === 'boot'
+          ? Effect.sync(() => {
+              console.error('fleetd retention sweep error:', error.cause);
+            })
+          : Effect.void,
+    });
+    return yield* makeDaemonBackgroundProgram(inputs.backgroundController, {
+      agentsPoll: makeAgentsPollProgram(core),
+      lanRefresh: lanRefresh({
+        enabled: LAN_MODE,
+        interval: LAN_REFRESH_MS,
+        readAddresses: () => Effect.sync(lanAddresses),
+        previousAddresses: () => Effect.sync(() => lastLanAddresses),
+        onChange: (addresses, previous) =>
+          Effect.try({
+            try: () => {
+              const next = [...addresses];
+              const gone = previous.filter((address) => !addresses.includes(address));
+              refreshNetwork(next);
+              if (next.length) {
+                console.log(
+                  `fleetd LAN addresses now ${next.join(', ')}${gone.length ? ` (was ${gone.join(', ')})` : ''}`,
+                );
+              } else {
+                console.log(
+                  'fleetd LAN interface lost; board still reachable at its last addresses only until the link returns',
+                );
+              }
+              if (!mdns && MDNS_ENABLED && next.length) startMdns(next);
+              try {
+                core.tick(
+                  `🌐 LAN address changed — share panel updated${gone.length ? ` (was ${gone.join(', ')})` : ''}`,
+                );
+              } catch {
+                /* feed line is non-essential */
+              }
+            },
+            catch: (error) => error,
+          }),
+        onError: (error) =>
+          Effect.sync(() => {
+            console.error('fleetd network watcher error:', error);
+          }),
+      }),
+      retention,
+      boot: {
+        ...boot,
+        onOperationalFailure: ({ operation, error }) =>
+          Effect.sync(() => {
+            const label =
+              operation === 'clear-fork-healing'
+                ? 'fleetd /clear fork heal error:'
+                : operation === 'spawn-reconciliation'
+                  ? 'fleetd spawn reconciliation error:'
+                  : 'fleetd broadcast idle error:';
+            console.error(label, error.cause);
+          }),
+      },
+    });
+  });
+
   const acquired: AcquiredDaemonResources = {
     resources: daemonResources,
-    readiness: bootReconciliation,
+    backgroundProgram,
     shutdownExitCode: () =>
       discoveryShutdownTimedOut || daemonResources.closeErrors.length > 0 ? 1 : 0,
     releaseProcessAtHostExit: releaseHostProcessOwnership,
@@ -1225,7 +1142,8 @@ async function bootDaemon(
 export function acquireDaemonResources(
   signal: AbortSignal,
   ingress: RootIngressSupervisorService,
+  inputs: DaemonAcquisitionInputs,
   testHooks?: DaemonAcquisitionTestHooks,
 ): Promise<AcquiredDaemonResources> {
-  return bootDaemon(signal, ingress, testHooks);
+  return bootDaemon(signal, ingress, inputs, testHooks);
 }

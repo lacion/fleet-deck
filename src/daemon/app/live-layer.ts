@@ -1,7 +1,10 @@
 import * as Cause from 'effect/Cause';
+import * as Context from 'effect/Context';
+import * as Deferred from 'effect/Deferred';
 import * as Effect from 'effect/Effect';
 import * as Exit from 'effect/Exit';
 import * as Layer from 'effect/Layer';
+import { prepareBackgroundOwner } from './background-owner.ts';
 import {
   DaemonStartupError,
   DaemonStartupRefusalError,
@@ -25,7 +28,8 @@ import {
   ProcessRuntimeControl,
   type ProcessRuntimeControlService,
 } from './services/process-runtime-control.ts';
-import type { AcquiredDaemonResources } from './program.ts';
+import type { AcquiredDaemonResources, DaemonAcquisitionInputs } from './program.ts';
+import { Background } from './services/background.ts';
 import { makeIngressSupervisorLayer } from '../platform/bun/ingress-supervisor-live.ts';
 import { ProcessRunnerLive } from '../platform/bun/process-runner-live.ts';
 
@@ -65,6 +69,7 @@ export interface DaemonLifecycleLayerOptions {
   readonly acquireDaemonResources: (
     signal: AbortSignal,
     ingress: RootIngressSupervisorService,
+    inputs: DaemonAcquisitionInputs,
   ) => Promise<AcquiredDaemonResources>;
   /**
    * The root takeover contract's complete signal-to-exit budget. Cancellation
@@ -88,6 +93,7 @@ export interface DaemonLifecycleLayerOptions {
 
 export type DaemonRootServices =
   | AppConfig
+  | Background
   | ProcessRunner
   | ProcessRuntimeControl
   | DaemonLifecycle
@@ -199,6 +205,7 @@ function acquireDaemonResourcesOwned(
   options: DaemonLifecycleLayerOptions,
   ingress: RootIngressSupervisorService,
   processControl: ProcessRuntimeControlService,
+  inputs: DaemonAcquisitionInputs,
 ): Effect.Effect<AcquiredDaemonResources, DaemonRootStartupError> {
   return Effect.callback<AcquiredDaemonResources, DaemonRootStartupError>((resume, signal) => {
     let timing: ReturnType<typeof acquisitionShutdownTiming>;
@@ -211,7 +218,7 @@ function acquireDaemonResourcesOwned(
 
     let acquisition: Promise<AcquiredDaemonResources>;
     try {
-      acquisition = Promise.resolve(options.acquireDaemonResources(signal, ingress));
+      acquisition = Promise.resolve(options.acquireDaemonResources(signal, ingress, inputs));
     } catch (cause) {
       resume(Effect.fail(mapDaemonStartupError(cause)));
       return;
@@ -427,41 +434,57 @@ export function makeDaemonLifecycleCoordinator(
 export function makeDaemonLifecycleLayer(
   options: DaemonLifecycleLayerOptions,
 ): Layer.Layer<
-  DaemonLifecycle,
+  DaemonLifecycle | Background,
   DaemonRootStartupError,
   AppConfig | ProcessRunner | ProcessRuntimeControl | IngressSupervisor
 > {
   const acquireDaemonResources = Effect.gen(function* () {
     yield* Effect.context<AppConfig | ProcessRunner | ProcessRuntimeControl | IngressSupervisor>();
+    const config = yield* AppConfig;
     const ingress = yield* IngressSupervisor;
     const processControl = yield* ProcessRuntimeControl;
-    const acquired = yield* acquireDaemonResourcesOwned(options, ingress, processControl);
+    const program = yield* Deferred.make<Effect.Effect<never, never, ProcessRunner>>();
+    const prepared = yield* prepareBackgroundOwner<ProcessRunner>({
+      name: 'daemon-background',
+      run: () => Deferred.await(program).pipe(Effect.flatten),
+    });
+    const acquired = yield* acquireDaemonResourcesOwned(options, ingress, processControl, {
+      config,
+      background: prepared.service,
+      backgroundController: prepared.controller,
+    });
 
     // acquireRelease restores interruption only around this complete acquire
-    // Effect. Re-enter the mask after the callback publishes a value so driver
-    // registration and coordinator sealing cannot be split by a signal.
+    // Effect. Re-enter the mask after the callback publishes a value so the
+    // Background owner registration and coordinator sealing cannot be split by
+    // a signal.
     return yield* Effect.uninterruptible(
-      Effect.tryPromise({
-        try: async () => {
-          try {
+      Effect.gen(function* () {
+        yield* Deferred.succeed(program, acquired.backgroundProgram);
+        const owner = yield* prepared.start;
+        let registered = false;
+
+        return yield* Effect.try({
+          try: () => {
+            acquired.resources.addProducer('effect-background', { close: owner.close });
+            registered = true;
             return {
               acquired,
+              background: prepared.service,
               coordinator: options.makeLifecycleCoordinator(acquired),
             };
-          } catch (cause) {
-            // acquireRelease cannot install its finalizer until this value is
-            // published. Retire the successfully acquired P1 prefix if assembly
-            // fails in that narrow window, preserving the original startup cause.
-            try {
-              await acquired.resources.close();
-            } catch {
-              // DaemonResources.close is non-rejecting; structural test doubles
-              // are allowed to be worse without masking the startup failure.
-            }
-            throw cause;
-          }
-        },
-        catch: mapDaemonStartupError,
+          },
+          catch: mapDaemonStartupError,
+        }).pipe(
+          Effect.onError(() =>
+            Effect.promise(() =>
+              Promise.allSettled([
+                ...(registered ? [] : [owner.close()]),
+                acquired.resources.close(),
+              ]).then(() => undefined),
+            ),
+          ),
+        );
       }),
     );
   });
@@ -472,7 +495,15 @@ export function makeDaemonLifecycleLayer(
     { interruptible: true },
   );
 
-  return Layer.effect(DaemonLifecycle, scopedLifecycle);
+  return Layer.effectContext(
+    scopedLifecycle.pipe(
+      Effect.map(({ acquired, background, coordinator }) =>
+        Context.make(DaemonLifecycle, { acquired, coordinator }).pipe(
+          Context.add(Background, background),
+        ),
+      ),
+    ),
+  );
 }
 
 /**
@@ -488,7 +519,7 @@ export function composeDaemonRootLayer<ApplicationError, DaemonError, Requiremen
     Requirements
   >,
   daemonLifecycleLayer: Layer.Layer<
-    DaemonLifecycle,
+    DaemonLifecycle | Background,
     DaemonError,
     AppConfig | ProcessRunner | ProcessRuntimeControl | IngressSupervisor
   >,

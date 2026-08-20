@@ -1228,7 +1228,7 @@ async function sqliteWorkload(config: WorkloadConfig) {
       home: scratch,
       version: 'effect-p0-workload',
     });
-    await core.bootRetention;
+    await core.retentionSweep();
     const sessionIds = Array.from(
       { length: 15 },
       (_, index) => `effect-p0-sqlite-${index}-${randomUUID()}`,
@@ -1377,7 +1377,7 @@ async function sqliteWorkload(config: WorkloadConfig) {
       home: scratch,
       version: 'effect-p0-workload-restart',
     });
-    await restartedCore.bootRetention;
+    await restartedCore.retentionSweep();
     const restartedSessions = snapshotSessions(restartedCore.snapshot());
     const restartMs = rounded(performance.now() - restartStartedAt);
     if (

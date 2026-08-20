@@ -1407,10 +1407,12 @@ test('M-B8: a remote harvest whose capture throws resolves cleanly (no unhandled
 // M-G1
 // ---------------------------------------------------------------------------
 
-test('M-G1: retentionSweep ages file_touches/commands/conflicts/settled-mail past the ledger window; pending mail is spared', (t) => {
+test('M-G1: retentionSweep ages file_touches/commands/conflicts/settled-mail past the ledger window; pending mail is spared', async (t) => {
   setEnv(t, { FLEETDECK_NUDGE_MS: 1_000_000, FLEETDECK_PANE_MAIL_GRACE_MS: 1_000_000 });
   const db = openDb(':memory:');
-  t.after(() => {
+  let closeCore: (() => Promise<void>) | undefined;
+  t.after(async () => {
+    await closeCore?.();
     db.close();
   });
   const now = Date.now();
@@ -1446,12 +1448,15 @@ test('M-G1: retentionSweep ages file_touches/commands/conflicts/settled-mail pas
     'INSERT INTO mail (to_session, from_id, text, at, delivered_at) VALUES (?,?,?,?,NULL)',
   ).run('nobody', 'ops', 'pending old', old); // pending → must survive
 
-  // Boot runs retentionSweep once, which ages the old rows.
-  createCore(db, {
+  const core = createCore(db, {
     port: 4711,
     home: '/h',
     tmuxAdapter: makeAdapter().adapter as unknown as CoreTmuxAdapter,
   });
+  closeCore = core.lifecycle.close;
+  // The Effect background schedule owns the boot invocation; exercise its
+  // ownerless core callback directly at this focused boundary.
+  await core.retentionSweep(now);
 
   assert.equal(
     db.prepare<CountRow>('SELECT COUNT(*) AS n FROM file_touches').get()?.n,

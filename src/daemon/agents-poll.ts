@@ -191,7 +191,8 @@ export function startAgentsPoll(
         if (!stopped) schedule(pollIntervalMs);
       });
     }, delayMs);
-    timer.unref();
+    // Deliberately referenced: the owner participates in daemon lifetime and
+    // stop() is the single cleanup boundary that clears this scheduled work.
   }
   schedule(firstRunDelayMs);
 

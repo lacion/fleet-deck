@@ -820,10 +820,12 @@ test('tmux input/capture helpers use isolated-socket argv without shell interpol
   ]);
 });
 
-test('retention presumes dead, archives, expires mail, hides archived rows, and resurrects late hooks', (t) => {
+test('retention presumes dead, archives, expires mail, hides archived rows, and resurrects late hooks', async (t) => {
   setEnv(t, { FLEETDECK_NUDGE_MS: 1_000_000, FLEETDECK_PANE_MAIL_GRACE_MS: 1_000_000 });
   const db = openDb(':memory:');
-  t.after(() => {
+  let closeCore: (() => Promise<void>) | undefined;
+  t.after(async () => {
+    await closeCore?.();
     db.close();
   });
   const now = Date.now();
@@ -863,6 +865,8 @@ test('retention presumes dead, archives, expires mail, hides archived rows, and 
     home: '/home',
     tmuxAdapter: fakeTmux().adapter as unknown as CoreTmuxAdapter,
   });
+  closeCore = core.lifecycle.close;
+  await core.retentionSweep(now);
   const silent = db.prepare<SessionRow>("SELECT * FROM sessions WHERE session_id = 'silent'").get();
   assert.ok(silent);
   assert.equal(silent.col, 'offline');

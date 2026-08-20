@@ -1,9 +1,22 @@
 import assert from 'node:assert/strict';
+import { fileURLToPath } from 'node:url';
 
 import { startAgentsPoll } from '../src/daemon/agents-poll.ts';
 import { startNetworkWatch } from '../src/daemon/network-watch.ts';
 import test from './helpers/harness-test.ts';
 import { waitUntil } from './helpers/wait.ts';
+
+const NATURAL_EXIT_FIXTURE = fileURLToPath(
+  new URL('./helpers/poll-owner-natural-exit.ts', import.meta.url),
+);
+
+interface NaturalExitReport {
+  type: 'closed';
+  mode: 'agents' | 'network';
+  callbacksAtStop: number;
+  callbacksAfterObservation: number;
+  closedAtMs: number;
+}
 
 function latch(): { promise: Promise<void>; release: () => void } {
   let release = () => {};
@@ -15,6 +28,47 @@ function latch(): { promise: Promise<void>; release: () => void } {
 
 function pause(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function within<T>(promise: Promise<T>, label: string, timeoutMs = 2_000): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function runNaturalExitFixture(mode: NaturalExitReport['mode']): Promise<NaturalExitReport> {
+  const child = Bun.spawn([process.execPath, NATURAL_EXIT_FIXTURE, mode], {
+    stdin: 'ignore',
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+  const stdoutPromise = new Response(child.stdout).text();
+  const stderrPromise = new Response(child.stderr).text();
+
+  try {
+    const exitCode = await within(child.exited, `${mode} poll owner natural exit`);
+    const [stdout, stderr] = await Promise.all([stdoutPromise, stderrPromise]);
+    assert.equal(exitCode, 0, stderr || stdout);
+
+    const report = stdout
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as NaturalExitReport | { type: 'started' })
+      .find((message): message is NaturalExitReport => message.type === 'closed');
+    assert.ok(report, `${mode} owner exited before its explicit stop callback:\n${stdout}`);
+    return report;
+  } finally {
+    if (child.exitCode === null) child.kill('SIGKILL');
+    await within(child.exited, `${mode} poll owner fixture cleanup`).catch(() => undefined);
+  }
 }
 
 test('agents poll stop joins an in-flight tick and suppresses its late result', async (t) => {
@@ -210,4 +264,24 @@ test('stopping a network watch before its first interval prevents every callback
   await pause(20);
   assert.equal(reads, 0);
   assert.equal(callbacks, 0);
+});
+
+test('poll owner timers keep Bun alive until stop and then allow natural exit', async () => {
+  const reports = await Promise.all([
+    runNaturalExitFixture('agents'),
+    runNaturalExitFixture('network'),
+  ]);
+
+  for (const report of reports) {
+    assert.ok(report.callbacksAtStop > 0, `${report.mode} cadence never ran before stop`);
+    assert.equal(
+      report.callbacksAfterObservation,
+      report.callbacksAtStop,
+      `${report.mode} owner invoked a callback after stop settled`,
+    );
+    assert.ok(
+      report.closedAtMs >= 60,
+      `${report.mode} owner did not keep Bun alive until the explicit close timer`,
+    );
+  }
 });

@@ -193,6 +193,13 @@ test('BUG-145: Clear and dismiss fail loud when tmux is unreachable, with a retr
   const tmux = (...args: string[]): Buffer | string =>
     execFileSync('tmux', ['-L', socket, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
   const winName = `fd${daemon.port}-z145`;
+  t.after(() => {
+    try {
+      tmux('kill-server');
+    } catch {
+      // The fixture may already be gone after a failed assertion.
+    }
+  });
 
   // An offline card that owns a terminal ('pane-dead') spawn row naming a
   // window that really exists on the scoped server — stood up BY HAND (the
@@ -225,12 +232,26 @@ test('BUG-145: Clear and dismiss fail loud when tmux is unreachable, with a retr
       db.close();
     }
   }
-  tmux('new-session', '-d', '-s', `fleetdeck-${daemon.port}`, '-n', winName);
-  // remain-on-exit keeps the pane standing after its command exits — the exact
-  // corpse shape cleanup/dismiss are responsible for killing. Session scope,
-  // so it is in force for the window that already exists.
-  tmux('set-option', 'remain-on-exit', 'on');
-  tmux('send-keys', '-t', winName, 'exit', 'Enter');
+  // Install remain-on-exit before creating the pane, then run a deterministic
+  // non-login command. Typing `exit` into the default login shell races macOS
+  // shell startup (which can block in path_helper before reading the PTY).
+  // One tmux command queue guarantees the option is active before `true` exits.
+  tmux(
+    'start-server',
+    ';',
+    'set-option',
+    '-g',
+    'remain-on-exit',
+    'on',
+    ';',
+    'new-session',
+    '-d',
+    '-s',
+    `fleetdeck-${daemon.port}`,
+    '-n',
+    winName,
+    '/usr/bin/true',
+  );
   await waitUntil(
     () => {
       try {

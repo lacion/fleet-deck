@@ -127,8 +127,6 @@ test('P1 spawn lifecycle aborts and joins detached clone provisioning before DB 
     await core.lifecycle.close();
     if (dbOpen) db.close();
   });
-  await core.bootRetention;
-
   const spawned = (await core.spawn({
     repo: 'https://example.com/fleetdeck-p1.git',
     branch: 'main',
@@ -185,7 +183,6 @@ test('P1 spawn lifecycle joins in-flight liveness and suppresses post-quiesce re
   t.after(async () => {
     await core.lifecycle.close();
   });
-  await core.bootRetention;
   const now = Date.now();
   db.prepare(
     `INSERT INTO sessions
@@ -247,7 +244,6 @@ test('P1 spawn lifecycle cancels store timers and phase-guards late launchOverri
   t.after(async () => {
     await core.lifecycle.close();
   });
-  await core.bootRetention;
   let mutations = 0;
   core.onMutate = () => {
     mutations++;

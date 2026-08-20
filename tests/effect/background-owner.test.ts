@@ -9,6 +9,7 @@ import {
   type BackgroundRegistration,
   makeBackgroundOwner,
   ownedLegacyPromise,
+  prepareBackgroundOwner,
 } from '../../src/daemon/app/background-owner.ts';
 import {
   BackgroundOperationalError,
@@ -38,6 +39,85 @@ function firstReason<E>(exit: Exit.Exit<unknown, E>): Cause.Reason<E> {
 }
 
 describe('P5 background service and owner', () => {
+  test('preparation exposes readiness before a cold, concurrent-idempotent start', async () => {
+    let runFactories = 0;
+    let runEffects = 0;
+
+    await runEffectSuccess(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const prepared = yield* prepareBackgroundOwner({
+            name: 'prepared',
+            run: (controller) => {
+              runFactories++;
+              return Effect.sync(() => {
+                runEffects++;
+              }).pipe(
+                Effect.andThen(controller.markReconciliationReady),
+                Effect.andThen(Effect.never),
+              );
+            },
+          });
+
+          assert.equal(runFactories, 0, 'preparation constructed the background program');
+          assert.equal(runEffects, 0, 'preparation started the background program');
+          assert.equal(prepared.service.reconciliationStatus(), 'reconciling');
+
+          const [first, second] = yield* Effect.all([prepared.start, prepared.start], {
+            concurrency: 'unbounded',
+          });
+          assert.strictEqual(second, first);
+          yield* prepared.service.awaitReady;
+          assert.equal(runFactories, 1);
+          assert.equal(runEffects, 1);
+          assert.equal(prepared.service.reconciliationStatus(), 'settled');
+
+          const third = yield* prepared.start;
+          assert.strictEqual(third, first);
+          assert.equal(runFactories, 1);
+          assert.equal(runEffects, 1);
+          assert.strictEqual(third.close(), first.close());
+          yield* Effect.promise(() => first.close());
+        }),
+      ),
+    );
+  });
+
+  test('the first start scope owns the fallback finalizer, not preparation', async () => {
+    let interruptionFinalizers = 0;
+    const owner = await runEffectSuccess(
+      Effect.gen(function* () {
+        const prepared = yield* prepareBackgroundOwner({
+          name: 'start-scope',
+          run: (controller) =>
+            controller.markReconciliationReady.pipe(
+              Effect.andThen(Effect.never),
+              Effect.onInterrupt(() =>
+                Effect.sync(() => {
+                  interruptionFinalizers++;
+                }),
+              ),
+            ),
+        });
+
+        assert.equal(prepared.service.reconciliationStatus(), 'reconciling');
+        return yield* Effect.scoped(
+          Effect.gen(function* () {
+            const started = yield* prepared.start;
+            yield* prepared.service.awaitReady;
+            assert.equal(started.state, 'running');
+            return started;
+          }),
+        );
+      }),
+    );
+
+    assert.notEqual(owner.state, 'running');
+    await owner.close();
+    assert.equal(owner.state, 'closed');
+    assert.equal(interruptionFinalizers, 1);
+  });
+
   test('TestClock drives readiness while named degraded work still settles', async () => {
     await runEffectSuccess(
       Effect.provide(

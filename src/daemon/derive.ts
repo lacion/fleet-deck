@@ -1289,82 +1289,23 @@ export function createCore(
   Object.assign(ctx, createRetention(ctx));
   const { retentionSweep: runRetentionSweep, cleanup, dismissSession, dismissRetry } = ctx;
 
-  // P1 resource owner: every sweep launched through the core surface is
-  // registered before control returns to its caller. Quiesce synchronously
-  // stops the cadence and refuses new runs; close then joins the exact set
-  // already in flight (including the boot sweep).
-  const inFlightRetentionSweeps = new Set<ReturnType<typeof runRetentionSweep>>();
-  let retentionQuiesced = false;
-  let retentionClosePromise: Promise<void> | null = null;
-
+  // P5: createCore owns the retention work, not its execution lifecycle. The
+  // Effect background schedule is the single boot/cadence owner and drives
+  // these two callbacks under the root Scope.
   function retentionSweep(now?: number): ReturnType<typeof runRetentionSweep> {
-    if (retentionQuiesced) {
-      return Promise.reject(new Error('fleetd retention cadence is quiescing'));
-    }
-    const sweep = runRetentionSweep(now);
-    inFlightRetentionSweeps.add(sweep);
-    void sweep.then(
-      () => inFlightRetentionSweeps.delete(sweep),
-      () => inFlightRetentionSweeps.delete(sweep),
-    );
-    return sweep;
+    return runRetentionSweep(now);
   }
 
-  // Run retention once at core boot, then alongside event pruning every 10m.
-  // BUG 2: retentionSweep is async now (it may probe tmux for spawned silence),
-  // but with no spawned candidate it completes SYNCHRONOUSLY before returning
-  // its already-resolved promise, so the boot sweep's DB effects still land
-  // synchronously for the common case. .catch() contains any tmux-probe
-  // rejection so a fire-and-forget sweep can never become an unhandled reject.
-  const bootRetention = retentionSweep().catch((err: unknown) => {
-    console.error('fleetd retention sweep error:', err);
-  });
-  const retentionCadence = setInterval(
-    () => {
-      if (retentionQuiesced) return;
-      try {
-        q.pruneEvents.run(Date.now() - 24 * 3600 * 1000);
-      } catch {
-        /* hygiene only */
-      }
-      retentionSweep().catch(() => {
-        /* hygiene only */
-      });
-    },
-    10 * 60 * 1000,
-  );
-  retentionCadence.unref();
-
-  function quiesceRetention(): boolean {
-    if (retentionQuiesced) return false;
-    retentionQuiesced = true;
-    clearInterval(retentionCadence);
-    return true;
+  function pruneEvents(cutoffMs: number) {
+    return q.pruneEvents.run(cutoffMs);
   }
-
-  function closeRetention(): Promise<void> {
-    if (retentionClosePromise) return retentionClosePromise;
-    quiesceRetention();
-    retentionClosePromise = (async () => {
-      while (inFlightRetentionSweeps.size > 0) {
-        await Promise.allSettled([...inFlightRetentionSweeps]);
-      }
-    })();
-    return retentionClosePromise;
-  }
-
-  const retentionLifecycle = {
-    quiesce: quiesceRetention,
-    close: closeRetention,
-  };
 
   let coreClosePromise: Promise<void> | null = null;
   function quiesceCore(): boolean {
     const mailChanged = mailLifecycle.quiesce();
     const questionsChanged = questions.quiesce();
-    const retentionChanged = quiesceRetention();
     const spawnsChanged = spawnLifecycle.quiesce();
-    return mailChanged || questionsChanged || retentionChanged || spawnsChanged;
+    return mailChanged || questionsChanged || spawnsChanged;
   }
 
   function closeCore(): Promise<void> {
@@ -1374,7 +1315,6 @@ export function createCore(
       const settled = await Promise.allSettled([
         mailLifecycle.close(),
         questions.close(),
-        closeRetention(),
         spawnLifecycle.close(),
       ]);
       const failed = settled.find(
@@ -1432,12 +1372,11 @@ export function createCore(
     spawnLivenessTick, // owned-pane liveness, rides the agents-poll cadence
     reconcileSpawns, // fleetd boot: rows ↔ tmux windows
     reconcileClearForks, // fleetd boot: heal cards split by a /clear before 0.7.1
-    // retentionSweep also runs internally (boot + the 10m interval above). It
-    // is re-exported so tests can drive the tmux-verified presume-dead path
-    // (BUG 2) deterministically; production callers keep using the interval.
+    // The Effect background schedule is the sole boot/cadence owner. These are
+    // deliberately ownerless capabilities so it can run both operations under
+    // the daemon root Scope (tests may also drive either seam deterministically).
+    pruneEvents,
     retentionSweep,
-    bootRetention, // the boot sweep's settle promise — fleetd folds it into boot readiness
-    retentionLifecycle,
     spawnLifecycle,
     lifecycle,
     cleanup,

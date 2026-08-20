@@ -43,6 +43,11 @@ export interface LegacyBootReconciliationCallbacks {
   readonly awaitBroadcastIdle: () => PromiseLike<void>;
 }
 
+export type LegacyBootReconciliationWithoutRetentionCallbacks = Omit<
+  LegacyBootReconciliationCallbacks,
+  'firstRetention'
+>;
+
 function operationalError(
   operation: BootReconciliationOperation,
   cause: unknown,
@@ -74,9 +79,21 @@ function legacyPromise<A>(
 export function legacyBootReconciliationWork(
   callbacks: LegacyBootReconciliationCallbacks,
 ): BootReconciliationWork<never> {
+  return {
+    ...legacyBootReconciliationWithoutRetentionWork(callbacks),
+    firstRetention: legacyPromise('first-retention', callbacks.firstRetention.bind(callbacks)),
+  };
+}
+
+/**
+ * P5 production adapter. Retention is supplied by the one Effect-owned schedule,
+ * so the boot workflow cannot accidentally retain a second callback for it.
+ */
+export function legacyBootReconciliationWithoutRetentionWork(
+  callbacks: LegacyBootReconciliationWithoutRetentionCallbacks,
+): Omit<BootReconciliationWork<never>, 'firstRetention'> {
   const clearForkHealing = callbacks.clearForkHealing.bind(callbacks);
   const reconcileSpawns = callbacks.reconcileSpawns.bind(callbacks);
-  const firstRetention = callbacks.firstRetention.bind(callbacks);
   const awaitBroadcastIdle = callbacks.awaitBroadcastIdle.bind(callbacks);
 
   return {
@@ -85,7 +102,6 @@ export function legacyBootReconciliationWork(
       catch: (cause) => operationalError('clear-fork-healing', cause),
     }),
     reconcileSpawns: legacyPromise('spawn-reconciliation', reconcileSpawns),
-    firstRetention: legacyPromise('first-retention', firstRetention),
     awaitBroadcastIdle: legacyPromise('broadcast-idle', awaitBroadcastIdle),
   };
 }

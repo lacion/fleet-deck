@@ -68,7 +68,8 @@ export function startNetworkWatch({
 
   if (enabled) {
     timer = setInterval(launchTick, intervalMs);
-    timer.unref();
+    // Deliberately referenced: lifecycle shutdown owns stop() and must clear
+    // the cadence before the process is allowed to exit naturally.
   }
 
   return {

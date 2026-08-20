@@ -137,7 +137,7 @@ test('P1 questions close cancels hold, rearm, and orphan callbacks before DB clo
   assert.equal(callbacks, atClose, 'no owned callback runs against the closed database');
 });
 
-test('P1 retention lifecycle stops admission and joins an in-flight boot sweep', async () => {
+test('P5 createCore exposes retention work without starting or owning its schedule', async () => {
   const db = openDb(':memory:');
   const now = Date.now();
   db.prepare(
@@ -152,9 +152,13 @@ test('P1 retention lifecycle stops admission and joins an in-flight boot sweep',
   ).run('spawn-retained', 'retained', 'otter', 'fleetdeck-4711', 'fd4711-otter', now);
 
   const windows = deferred<[]>();
+  let listCalls = 0;
   const adapter = {
     spawnOverrideCmd: () => null,
-    listScopedWindows: () => windows.promise,
+    listScopedWindows: () => {
+      listCalls++;
+      return windows.promise;
+    },
     paneCurrentCommand: () => Promise.resolve(null),
     killWindowVerified: () => Promise.resolve({ ok: true }),
     hasTmux: () => true,
@@ -172,21 +176,42 @@ test('P1 retention lifecycle stops admission and joins an in-flight boot sweep',
     typeAndEnter: () => Promise.resolve(true),
   } as unknown as CoreTmuxAdapter;
   const core = createCore(db, { port: 4711, home: '/p1-retention', tmuxAdapter: adapter });
+  assert.equal(listCalls, 0, 'createCore did not launch a legacy boot retention sweep');
+
+  db.prepare(
+    'INSERT INTO events (session_id, hook_event, tool_name, note, at) VALUES (?, ?, ?, ?, ?)',
+  ).run('retained', 'old', null, null, now - 20);
+  db.prepare(
+    'INSERT INTO events (session_id, hook_event, tool_name, note, at) VALUES (?, ?, ?, ?, ?)',
+  ).run('retained', 'new', null, null, now);
+  core.pruneEvents(now - 10);
+  assert.deepEqual(
+    db.prepare<{ hook_event: string }>('SELECT hook_event FROM events ORDER BY id').all(),
+    [{ hook_event: 'new' }],
+    'the Effect schedule can drive the public event-prune capability',
+  );
+
+  const sweep = core.retentionSweep(now);
+  assert.equal(listCalls, 1, 'the ownerless callback starts only when its caller runs it');
+  let sweepSettled = false;
+  void sweep.then(() => {
+    sweepSettled = true;
+  });
 
   const closeA = core.lifecycle.close();
   const closeB = core.lifecycle.close();
   assert.strictEqual(closeB, closeA, 'combined core close is idempotent');
-  let closed = false;
-  void closeA.then(() => {
-    closed = true;
-  });
-  await Promise.resolve();
-  assert.equal(closed, false, 'close waits for the sweep already blocked in tmux discovery');
+  await closeA;
+  assert.equal(
+    sweepSettled,
+    false,
+    'core lifecycle does not compete with the Effect owner for an admitted sweep',
+  );
 
   windows.resolve([]);
-  await closeA;
-  assert.equal(closed, true);
-  await assert.rejects(core.retentionSweep(), /retention cadence is quiescing/);
+  await sweep;
+  await core.retentionSweep(now);
+  assert.equal(listCalls, 2, 'core close does not add a second retention admission gate');
 
   db.close();
 });

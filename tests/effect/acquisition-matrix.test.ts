@@ -169,17 +169,7 @@ function expectedProgramReleases(
     case 'discovery-network':
     case 'pollers-boot':
     case 'bind-conflict':
-      return [
-        'network-watch',
-        'agents-poll',
-        'boot-reconciliation',
-        'mdns',
-        'http-owner',
-        'core',
-        'process-runtime',
-        'database',
-        'pid-claim',
-      ];
+      return ['mdns', 'http-owner', 'core', 'process-runtime', 'database', 'pid-claim'];
   }
 }
 
@@ -276,9 +266,6 @@ describe('P4.7 production acquisition checkpoint matrix', () => {
     assert.equal(observation.causeMessage, `injected acquisition failure after ${target}`);
     assert.deepEqual(observation.checkpoints, CHECKPOINTS);
     assert.deepEqual(observation.releaseEvents, [
-      'network-watch',
-      'agents-poll',
-      'boot-reconciliation',
       'mdns',
       'http-owner',
       'core',

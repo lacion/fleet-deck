@@ -3,6 +3,7 @@ import * as Cause from 'effect/Cause';
 import * as Effect from 'effect/Effect';
 import * as Exit from 'effect/Exit';
 import * as Layer from 'effect/Layer';
+import { AppConfigLive } from './app-config-live.ts';
 import { DaemonStartupRefusalError, HttpBindStartupError } from './errors.ts';
 import { DaemonHostControl } from './host-control.ts';
 import {
@@ -15,22 +16,15 @@ import {
 } from './live-layer.ts';
 import type { ShutdownTrigger } from './lifecycle-coordinator.ts';
 import { acquireDaemonResources } from './program.ts';
-import { AppConfig } from './services/app-config.ts';
+import { Background, BackgroundOperationalError } from './services/background.ts';
 import { DaemonLifecycle, type DaemonLifecycleService } from './services/daemon-lifecycle.ts';
 
 /** The 2s takeover window leaves this root 250ms to publish process exit. */
 export const DAEMON_SHUTDOWN_TIMEOUT_MS = 1_750;
 
-// P4 establishes ownership before P5 moves config resolution into the root.
-// No production workflow reads this transitional value; program.ts remains the
-// one preflight authority, preserving port-before-HOME ordering and messages.
-const TransitionalAppConfig = Layer.succeed(AppConfig, {
-  home: '',
-  port: 0,
-  version: '0.0.0',
-});
+const ProductionApplicationLayer = Layer.merge(AppConfigLive, ProcessRunnerLive);
 
-const ProductionApplicationLayer = Layer.merge(TransitionalAppConfig, ProcessRunnerLive);
+export type DaemonRootError = DaemonRootStartupError | BackgroundOperationalError;
 
 function triggerForExit(
   hostControl: DaemonHostControl,
@@ -72,7 +66,7 @@ function writeStderrLine(message: string): void {
   }
 }
 
-function reportStartupFailure(error: DaemonRootStartupError): void {
+function reportRootFailure(error: DaemonRootError): void {
   if (error instanceof DaemonStartupRefusalError) {
     writeStderrLine(error.message);
     return;
@@ -80,6 +74,10 @@ function reportStartupFailure(error: DaemonRootStartupError): void {
   if (error instanceof HttpBindStartupError) {
     if (error.reason === 'address-in-use') writeStderrLine(error.message);
     else console.error(error.cause);
+    return;
+  }
+  if (error instanceof BackgroundOperationalError) {
+    console.error(error);
     return;
   }
   console.error(error.cause);
@@ -101,10 +99,10 @@ function reportRootDefect(defect: unknown): void {
  */
 export function withDaemonRootExitPolicy<A, R>(
   hostControl: DaemonHostControl,
-  effect: Effect.Effect<A, DaemonRootStartupError, R>,
-): Effect.Effect<A, DaemonRootStartupError, R> {
+  effect: Effect.Effect<A, DaemonRootError, R>,
+): Effect.Effect<A, DaemonRootError, R> {
   const interpreted = effect.pipe(
-    Effect.tapError((error) => Effect.sync(() => reportStartupFailure(error))),
+    Effect.tapError((error) => Effect.sync(() => reportRootFailure(error))),
     // A signal during interruptible Layer acquisition has no coordinator yet.
     // If fallback finalization completed with interruption only, it is the same
     // expected clean host shutdown; any cleanup failure changes the Exit Cause
@@ -156,13 +154,14 @@ export function makeProductionDaemonRootLayer(hostControl: DaemonHostControl) {
  */
 export function makeDaemonApp(
   hostControl: DaemonHostControl,
-): Effect.Effect<never, DaemonRootStartupError> {
+): Effect.Effect<never, DaemonRootError> {
   const rootLayer = makeProductionDaemonRootLayer(hostControl);
   const operational = Effect.gen(function* () {
     const lifecycle = yield* DaemonLifecycle;
+    const background = yield* Background;
     hostControl.attachProcessExitFallback(lifecycle.acquired.releaseProcessAtHostExit);
     hostControl.attachLifecycle(lifecycle.coordinator);
-    return yield* Effect.never.pipe(
+    return yield* background.awaitFailure.pipe(
       Effect.onExit((exit) => closeLifecycle(hostControl, lifecycle, exit)),
     );
   });

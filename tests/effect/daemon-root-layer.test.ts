@@ -17,6 +17,7 @@ import {
 } from '../../src/daemon/app/live-layer.ts';
 import { DaemonLifecycle } from '../../src/daemon/app/services/daemon-lifecycle.ts';
 import { AppConfig } from '../../src/daemon/app/services/app-config.ts';
+import { Background } from '../../src/daemon/app/services/background.ts';
 import {
   IngressSupervisor,
   type RootIngressSupervisorService,
@@ -65,7 +66,7 @@ const acquisitionShutdownOptions = {
 function acquired(resources: DaemonResources): AcquiredDaemonResources {
   return {
     resources,
-    readiness: Promise.resolve(),
+    backgroundProgram: Effect.never,
     shutdownExitCode: () => 0,
     releaseProcessAtHostExit: () => undefined,
   };
@@ -157,17 +158,23 @@ describe('P4.3 aggregate daemon root Layer', () => {
       const config = yield* AppConfig;
       yield* ProcessRunner;
       const lifecycle = yield* DaemonLifecycle;
+      const background = yield* Background;
       const ingress = yield* IngressSupervisor;
       capturedIngressState = ingress.state;
       return {
         version: config.version,
+        background: background.reconciliationStatus(),
         sameResources: lifecycle.acquired.resources instanceof DaemonResources,
       };
     });
     const exit = await runEffectExit(Effect.provide(program, layer));
 
     assert.ok(Exit.isSuccess(exit));
-    assert.deepEqual(exit.value, { version: 'p4.3-test', sameResources: true });
+    assert.deepEqual(exit.value, {
+      version: 'p4.3-test',
+      background: 'reconciling',
+      sameResources: true,
+    });
     assert.equal(capturedIngressState, 'open');
     assert.deepEqual(events, [
       'process:acquire',
@@ -338,7 +345,7 @@ describe('P4.3 aggregate daemon root Layer', () => {
     controller.abort();
     resolveLate({
       resources,
-      readiness: Promise.resolve(),
+      backgroundProgram: Effect.never,
       shutdownExitCode: () => 0,
       releaseProcessAtHostExit: () => events.push('host-exit-fallback'),
     });
@@ -472,7 +479,7 @@ describe('P4.3 aggregate daemon root Layer', () => {
 
     resolveLate({
       resources,
-      readiness: Promise.resolve(),
+      backgroundProgram: Effect.never,
       shutdownExitCode: () => 0,
       releaseProcessAtHostExit: () => events.push('host-exit-fallback'),
     });
