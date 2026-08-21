@@ -60,7 +60,7 @@
     "@types/node": "22",
     "@types/ws": "^8.18.1",
     "esbuild": "^0.28.1",
-    "typescript": "5.9.3",
+    "typescript": "7.0.2",
     "ws": "^8.18.0"
   }
 }
