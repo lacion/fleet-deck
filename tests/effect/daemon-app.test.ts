@@ -112,6 +112,10 @@ describe('DaemonApp extraction', () => {
       'const acquired = yield* acquireDaemonResourcesOwned(options, ingress, processControl, {',
       'yield* Deferred.succeed(program, acquired.backgroundProgram);',
       'const owner = yield* prepared.start;',
+      // P6.3: the HttpServer fallback registers during acquire, before the
+      // acquireRelease release, so finalizer LIFO runs it after the coordinator.
+      'const httpServer = acquired.httpServer ?? makeUnboundHttpServer(ingress);',
+      'yield* Scope.addFinalizer(',
       "acquired.resources.addProducer('effect-background', { close: owner.close });",
       'coordinator: options.makeLifecycleCoordinator(acquired),',
     ]);
@@ -136,7 +140,10 @@ describe('DaemonApp extraction', () => {
       'daemonResources.setCore(',
       'http = createHttp(core, {',
       'daemonResources.setHttp(',
-      'const result = await http.bind(PORT, BIND);',
+      // P6.3: the listener is bound through the root-owned HttpServer owner;
+      // construction sits after setHttp so the coordinator seam stays first.
+      "const httpServer = makeHttpServerOwner({ name: 'http-server', ingress, transport: http });",
+      'const result = await httpServer.bind(PORT, BIND);',
       'console.log(`fleetd up on http://${boundHost}:${PORT}',
       'const boot = legacyBootReconciliationWithoutRetentionWork({',
       'const retentionWork = legacyRetentionWork({',
