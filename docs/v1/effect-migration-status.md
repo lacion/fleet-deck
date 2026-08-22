@@ -2,18 +2,22 @@
 
 - **Checkpoint date:** 2026-08-22
 - **Branch:** `fd/v1-effect-feasibility`
-- **Published branch:** `origin/fd/v1-effect-feasibility` currently at `a1a5a639`
-  (`refactor(effect): tighten P5 checkpoint`)
-- **Current implementation checkpoint:** `ca62b94f`
-  (`test(effect): make the P1 clone shim's block signal-interruptible`)
+- **Published branch:** `origin/fd/v1-effect-feasibility` currently at `3735759e`
+  (`test(effect): retarget the cache-contract tripwire to http-policy`)
+- **Current implementation HEAD:** `d5404aac`
+  (`test(effect): add the P6.8 HTTP/WS load harness`)
+- **P6.3 HttpServer owner:** `e7900bac`
+  (`feat(effect): own the Bun listener as the HttpServer root service`)
 - **P5 completion evidence:** [p5.md](./evidence/effect/p5.md)
 - **P4 root-cutover checkpoint:** `661dfe31b66843f70a1dcebbc4f340ad9c62f76f`
 - **P3 rollback anchor:** `bcf3337e48d7dd35437d2e2369d0a91fbcbfa114`
 - **Runtime floor:** Bun 1.3.14, revision `0d9b296af33f2b851fcbf4df3e9ec89751734ba4`
 
 This is the durable handoff for the executable
-[Effect migration plan](./effect-migration-plan.md). P5 is complete. The four
-commits after `a1a5a639` are local and unpushed; this documentation is also
+[Effect migration plan](./effect-migration-plan.md). P5 is complete. P6 is
+active: P6.1–P6.3 and P6.7 are done, the P6.8 harness is in tree, and the
+quiet-host baseline is still pending. The two commits after `3735759e`
+(`e7900bac`, `d5404aac`) are local and unpushed; this documentation is
 uncommitted. No pull request has been opened, and nothing has been tagged,
 released, or deployed.
 
@@ -27,7 +31,7 @@ released, or deployed.
 | P3 | Implementation complete | Bun process routing is live. Quiet-host performance evidence remains an explicit ledger item. |
 | P4 | Implemented and checkpointed | The root cutover and shutdown evidence are complete for the pre-P5 artifact. Do not relabel that evidence as measuring the current P5 tree. |
 | P5 | Complete | Prompt failure publication, the reviewed detached-owner exception, whole-slice rollback, gzip budget, and quiet global suites are recorded at `ca62b94f`. |
-| P6 | Active; read-only preflight complete | Freeze route/wire behavior, extract pure policy, then introduce one scoped Bun HTTP server adapter. |
+| P6 | Active; P6.1–P6.3 and P6.7 done; P6.8 harness landed | Convert route groups (P6.4) under the owner constraints below. P6.6 graceful stop is still open. Capture the P6.8 quiet-host baseline at the next idle slot. |
 | P7–P14 | Not started | Continue in plan order after P6. |
 
 P3's paired quiet-host performance evidence is unchanged and out of P5 scope.
@@ -178,9 +182,66 @@ Accepted P4 evidence in [p4.md](./evidence/effect/p4.md) and
 That evidence is still valid for the P4 checkpoint, but it must not be rewritten
 as if it describes the current P5 artifact.
 
+## P6 progress
+
+P6 is the active work. Sub-slices landed on 2026-08-22:
+
+- **P6.1** freeze is committed (`46e13c50` evidence, `9332d576` plan box,
+  `307fae0a` freeze tests). Matrix:
+  [p6-http-matrix.md](./evidence/effect/p6-http-matrix.md). WS send probe:
+  [p6-ws-send-probe.md](./evidence/effect/p6-ws-send-probe.md).
+- **P6.2** pure policy extract is committed at `d425cc96`; tripwire retarget
+  `3735759e` (published origin).
+- **P6.3** done at `e7900bac` (`feat(effect): own the Bun listener as the
+  HttpServer root service`). `HttpServer` Context.Service is published beside
+  Background; `makeHttpServerOwner` wraps the byte-unchanged `createHttp`
+  transport; the direct `http.bind` production entrypoint is retired for
+  `httpServer.bind`. Root-Scope retirement fallback is registered during
+  acquire (LIFO after the coordinator's release; the coordinator retires the
+  listener via the phased `beginGracefulStop`/`forceStop` and never calls
+  `http.lifecycle.close` — the fallback genuinely starts `closeHttpOnce` as a
+  safe second pass behind the transport's own latches). Sole bridge =
+  `IngressSupervisor.runPromiseExit` (readiness on first bind;
+  `HttpServer.runRequest` with `ApplicationQuiescingError` refusal).
+  Adversarial review: SHIP-WITH-NITS, zero blockers; both SHOULD-FIXes applied
+  (truthful comments; a focused test pinning coordinator-then-fallback LIFO).
+  Gates: 18 regression suites green (incl. full root/lifecycle/acquisition
+  battery, natural-exit fixtures, freeze tests), 7 focused owner tests. Bundle
+  identity at that commit: 654,290 B raw / 189,229 B gzip-9 / SHA-256
+  `0b89888b4336531fa91500833b0c16f1be4dfb01a34c47e7deea7caffa5c1d5f`,
+  deterministic. Record these as the P6.3-commit identity, not as a frozen
+  ceiling fact — a concurrent worker is recovering gzip headroom, so the
+  numbers will change again before the next global run.
+- **P6.7** decided **KEEP CUSTOM ADAPTER** (the plan's continuation rule
+  records this as success). Evidence:
+  [p6-transport-trial.md](./evidence/effect/p6-transport-trial.md). Spike
+  branch `fd/p6-7-spike` @ `3cf7aa29`; scratch worktree `/tmp/fd-wt-p6-7`.
+  Four blocking rc.110 gaps: (1) Socket surface lacks
+  `getBufferedAmount`/`terminate`/`ping`/`drain`; (2) `upgrade()` overwrites
+  custom `ws.data`; (3) shutdown cannot express
+  `stop(false)`-once-race-deadline-`stop(true)` and ends in `process.exit(130)`;
+  (4) `server.timeout(request, N)` is only a TS-private field. Also:
+  +434,628 B raw / +118,002 B gzip scratch delta (gzip delta alone exceeds the
+  gzip ceiling) and visible fiber-per-request overhead (1,174 vs 1,876 rps on
+  a `/health` smoke). Byte-drift: default 404 and failed-upgrade responses are
+  empty vs the daemon's JSON bodies.
+- **P6.8** harness merged as `d5404aac` (`scripts/effect-migration/p6-http-bench.ts`
+  + `.md`): pure-Bun load harness, workloads
+  `health`/`state`/`hook`/`hook-fail-open`/`paste`/`withheld`/`ws`/`static-shell`/`static-asset`,
+  targets `source|bundle`, p50/p95/p99 + rps JSON output, `--label=baseline`
+  implying the Bun-floor check. Smoke-validated only; the pre-conversion
+  quiet-host baseline is still to be captured at the next quiet-host slot.
+  Representative concurrency is 1/8/32. P6.8 exit criterion: `/health`+`/state`
+  p95 ≤ baseline+10%; throughput judged only with p95/p99+correctness. Do not
+  check the P6.8 plan box until that baseline exists and the post-conversion
+  comparison is in.
+
+P6.4, P6.5, and P6.6 remain open. P6.5's contract is already frozen (preserve
+as implemented).
+
 ## Exact resume order
 
-P5 exit gates are closed. The next session starts P6.
+P5 exit gates are closed. The next session continues P6 at P6.4.
 
 1. Confirm the checkpoint and runtime:
 
@@ -191,16 +252,18 @@ P5 exit gates are closed. The next session starts P6.
    bun --version
    ```
 
-   Expected HEAD is `ca62b94f`. The four commits after `a1a5a639` and the P5
-   completion documentation may still be local/unpushed and uncommitted
-   respectively; do not switch branches.
+   Expected HEAD is `d5404aac` if the P6.3 owner and P6.8 harness commits are
+   present. Origin is `3735759e`. This documentation may still be uncommitted;
+   do not switch branches.
 
-2. Begin P6 from the frozen HTTP behavior matrix, under the constraints below.
-   Do not mark P3's quiet-host performance item closed. Do not start P7–P14.
+2. Convert route application handlers (P6.4) under the constraints below. Do
+   not mark P3's quiet-host performance item closed. Do not start P7–P14. Do
+   not treat a busy-host P6.8 smoke JSON as baseline evidence.
 
 ## P6 preflight constraints
 
-P6 is now the active work. Constraints from the read-only preflight, unchanged:
+P6 is the active work. Constraints from the read-only preflight, still in
+force, plus P6.3 owner constraints that route workers inherit:
 
 - Introduce a temporary exact legacy `Core` service; do not force the SQLite/P8
   migration early.
@@ -211,19 +274,30 @@ P6 is now the active work. Constraints from the read-only preflight, unchanged:
 - Characterize Bun WebSocket `send()` return values before defining the new
   backpressure policy. **SATISFIED 2026-08-22.** Evidence:
   [p6-http-matrix.md](./evidence/effect/p6-http-matrix.md) §3 and
-  [p6-ws-send-probe.md](./evidence/effect/p6-ws-send-probe.md). The P6.1
-  behavior matrix exists (uncommitted alongside this change). Two headlines:
+  [p6-ws-send-probe.md](./evidence/effect/p6-ws-send-probe.md). Two headlines:
   `send()` returns are consulted nowhere in `http.ts`, and `GET /state` vs
   `/ws` snapshot differ intentionally (`lan` block present only in HTTP).
 - Preserve the established held-response barriers and `stop(false)`/`stop(true)`
-  ordering on Bun 1.3.14.
+  ordering on Bun 1.3.14. P6.7 confirmed the platform-bun adapter cannot
+  express that machine; keep the custom adapter.
 - One integrator should own shared edits to `http.ts`, `live-layer.ts`, and
   `program.ts`; parallel route work should stay in new workflow and test files.
+- **P6.4 (a)** request-bridged Effects must NOT `yield* HttpServer` /
+  `DaemonLifecycle` / `Background` — the ingress runtime captured the
+  pre-daemon Context (`R` must stay within
+  `AppConfig | ProcessRunner | ProcessRuntimeControl`) — use the callback-held
+  service reference instead.
+- **P6.4 (b)** consumers key off `HttpServer.state()`, never a retained
+  address value.
+- **P6.4 (c)** rollback nuance: reverting `program.ts`'s wiring alone leaves a
+  truthfully-unbound published service while the real listener still runs — a
+  full P6.3 revert must include the live-layer wiring.
 
 ## Repository handoff expectation
 
-P5 completion documentation is currently uncommitted. Implementation HEAD is
-`ca62b94f`, four commits ahead of `origin/fd/v1-effect-feasibility` (`a1a5a639`).
-No pull request has been opened. After the documentation is committed, the next
-session continues P6 from `fd/v1-effect-feasibility`. Leave untracked
-`.claude/agents/` alone.
+This documentation is currently uncommitted. Implementation HEAD is
+`d5404aac`, two commits ahead of `origin/fd/v1-effect-feasibility`
+(`3735759e`). No pull request has been opened. After the documentation is
+committed, the next session continues P6.4 from `fd/v1-effect-feasibility`.
+Leave untracked `.claude/agents/` and `/tmp/fd-wt-*` alone. Ignore concurrent
+`package.json` / generated-bundle diffs from the gzip-headroom recovery.

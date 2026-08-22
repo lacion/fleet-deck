@@ -4,7 +4,7 @@
 v1 [plan of record](./README.md). This document is intended to be handed directly to a Codex goal
 and updated as each gate lands.*
 
-**Status:** P0–P5 checkpointed; P5 complete at `ca62b94f`; P6 not started
+**Status:** P0–P5 checkpointed; P5 complete at `ca62b94f`; P6 in progress (P6.1–P6.3 and P6.7 done; P6.8 harness landed, baseline pending)
 **Working branch:** `fd/v1-effect-feasibility`
 **Starting point:** v0.23.6
 **Runtime floor:** exact Bun 1.3.14 in CI; `engines.bun >=1.3.14`
@@ -300,7 +300,7 @@ outcomes as work lands.
 | Sync CLI capability checks | `Bun.spawnSync` | **SEPARATE CLI-ONLY PARITY TRIAL** | Exit/stdout/stderr/self-path parity and latency; otherwise keep `execFileSync` |
 | Cached sync tmux probe inside the daemon | async `Bun.spawn` Effect fiber | **CHARACTERIZE SEPARATELY** | Do not promote `Bun.spawnSync`; preserve cache/readiness and avoid blocking `/health` |
 | Detached supervisor/CLI launchers | `Bun.spawn` | **KEEP INITIALLY** | Child survival, `unref`, stdio, signal, and supervisor identity tests before conversion |
-| HTTP and server WS in `http.ts` | current `Bun.serve`; optional `BunHttpServer` | **KEEP NATIVE; EFFECT-OWN IT** | Entire raw HTTP/WS regression suite and graceful close; platform-bun may replace only the adapter, never the contract |
+| HTTP and server WS in `http.ts` | current `Bun.serve`; optional `BunHttpServer` | **KEEP CUSTOM ADAPTER** (P6.3 Effect-owns `Bun.serve`; P6.7 rejected `BunHttpServer` at rc.110) | Frozen HTTP/WS suite and graceful close remain the contract. Trial evidence: [p6-transport-trial.md](./evidence/effect/p6-transport-trial.md) |
 | Static board assets | `Bun.file` Response | **BENCHMARK LATE** | Missing/traversal/MIME/cache/CSP/HEAD/range parity and useful measured gain |
 | SQLite seam | static `bun:sqlite`, `strict: true` | **MIGRATE STALE SEAM; KEEP DIRECT BY DEFAULT** | Binding, null normalization, integers, WAL/busy, migrations, permissions, durability, performance |
 | Repeated SQL statements | `db.query()` cache | **INVENTORY/BENCHMARK** | Query lifetime and close tests; do not mechanically replace `prepare()` |
@@ -723,7 +723,7 @@ rollback.
   heartbeat, terminal, and backpressure behavior.
 - [x] P6.2 Split pure parsing/security/response policy from the transport callback without changing
   bytes. Keep Request/Response/fetch Web standards where they are sufficient.
-- [ ] P6.3 Put the existing `Bun.serve` lifecycle behind the `HttpServer` service and root Scope.
+- [x] P6.3 Put the existing `Bun.serve` lifecycle behind the `HttpServer` service and root Scope.
   If callbacks require an imperative bridge, capture the root Context once and use
   `Effect.runForkWith`, `Effect.runCallbackWith`, or `Effect.runPromiseWith` through
   `IngressSupervisor`. It tracks every resulting fiber and Promise-backed request until settlement
@@ -745,15 +745,20 @@ rollback.
   release holds, close clients, and race the graceful Promise with the absolute remaining deadline.
   If it loses, call and await `server.stop(true)`; do not await graceful stop serially before the
   force decision.
-- [ ] P6.7 Independently trial `effect/unstable/http/HttpRouter` and
+- [x] P6.7 Independently trial `effect/unstable/http/HttpRouter` and
   `@effect/platform-bun/BunHttpServer`. Switch the transport only if every black-box fixture and
   shutdown budget passes. Override its default shutdown timing to Fleet Deck's budget.
+  **Verdict: KEEP CUSTOM ADAPTER** (the continuation rule records this as success). Evidence:
+  [p6-transport-trial.md](./evidence/effect/p6-transport-trial.md).
 - [ ] P6.8 Benchmark `/health`, `/state`, hook POSTs, large paste, withheld bodies, WS broadcast,
   and static assets at representative concurrency.
 
 Using Effect for all route workflows while retaining a custom scoped `Bun.serve` adapter is a
 successful full migration. The platform-bun adapter is optional because Fleet Deck's audited wire
-semantics are the requirement.
+semantics are the requirement. P6.7 decided **KEEP CUSTOM ADAPTER** at rc.110; see
+[p6-transport-trial.md](./evidence/effect/p6-transport-trial.md). The P6.8 harness exists at
+`d5404aac` (`scripts/effect-migration/p6-http-bench.ts`) but the quiet-host baseline has not been
+captured, so P6.8 stays open.
 
 **Exit gate:** no scattered runtime runners, exact HTTP/WS parity, cancellation on disconnect where
 safe, all transport resources root-owned, and performance within budget.
