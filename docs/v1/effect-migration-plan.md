@@ -731,9 +731,16 @@ rollback.
 - [ ] P6.4 Convert route application handlers in repeatable route-group sub-slices, one service and
   focused fixture set per commit. Map typed errors to the exact existing Response only in
   `http-policy.ts`; map hook failures in `hook-policy.ts`. Complete terminal ingress before P7.
-- [ ] P6.5 Preserve native WS send results (`-1` backpressure, `0` drop, positive bytes), queue
-  bounds, close codes, heartbeat, and per-viewer behavior rather than hiding them behind an
-  abstraction that cannot expose the signal.
+- [ ] P6.5 Preserve the audited WS backpressure contract as implemented: per-socket
+  `getBufferedAmount()` thresholds with eviction (snapshot peers `terminate()` past
+  `MAX_WS_BUFFER`; terminal viewers `close(1009)` past `MAX_TERM_WS_BUFFER`),
+  `send()`/`ping()` return values deliberately ignored (probed: `-1` means queued-not-rejected,
+  `0` is ambiguous between empty-payload success, closed socket, and past-cliff drop;
+  `ping()` returns `0` on a live socket), no drain-based resume, and no reliance on
+  `server.publish` return values for per-subscriber backpressure (probed: publish returns
+  payload bytes even while a subscriber sits at Bun's 16 MiB silent-drop cliff). Evidence:
+  [p6-http-matrix.md](./evidence/effect/p6-http-matrix.md) §3 and
+  [p6-ws-send-probe.md](./evidence/effect/p6-ws-send-probe.md).
 - [ ] P6.6 Implement graceful `Bun.serve` stop: initiate `server.stop(false)` once during quiesce,
   release holds, close clients, and race the graceful Promise with the absolute remaining deadline.
   If it loses, call and await `server.stop(true)`; do not await graceful stop serially before the

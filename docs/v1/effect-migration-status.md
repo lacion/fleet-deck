@@ -209,7 +209,12 @@ P6 is now the active work. Constraints from the read-only preflight, unchanged:
 - Keep hook holds/watch waiters under their P1 owners until P10 and termbridge
   behind its owned facade until P7.
 - Characterize Bun WebSocket `send()` return values before defining the new
-  backpressure policy.
+  backpressure policy. **SATISFIED 2026-08-22.** Evidence:
+  [p6-http-matrix.md](./evidence/effect/p6-http-matrix.md) §3 and
+  [p6-ws-send-probe.md](./evidence/effect/p6-ws-send-probe.md). The P6.1
+  behavior matrix exists (uncommitted alongside this change). Two headlines:
+  `send()` returns are consulted nowhere in `http.ts`, and `GET /state` vs
+  `/ws` snapshot differ intentionally (`lan` block present only in HTTP).
 - Preserve the established held-response barriers and `stop(false)`/`stop(true)`
   ordering on Bun 1.3.14.
 - One integrator should own shared edits to `http.ts`, `live-layer.ts`, and
