@@ -721,7 +721,7 @@ rollback.
 - [x] P6.1 Characterize exact route table, status/body/headers, body limit/drain, stalled FIN,
   request timeout, disconnect, auth, CSRF, loopback/LAN, static asset, WS upgrade, payload,
   heartbeat, terminal, and backpressure behavior.
-- [ ] P6.2 Split pure parsing/security/response policy from the transport callback without changing
+- [x] P6.2 Split pure parsing/security/response policy from the transport callback without changing
   bytes. Keep Request/Response/fetch Web standards where they are sufficient.
 - [ ] P6.3 Put the existing `Bun.serve` lifecycle behind the `HttpServer` service and root Scope.
   If callbacks require an imperative bridge, capture the root Context once and use

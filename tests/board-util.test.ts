@@ -828,7 +828,9 @@ test('a pane refused at the upgrade says so instead of "connection closed"', () 
 });
 
 test('the daemon makes an upgrade impossible to miss and assets free to cache', () => {
-  const src = readFileSync(path.join(HERE, '..', 'src', 'daemon', 'http.ts'), 'utf8');
+  // P6.2 moved the board-asset header policy (boardAssetHeaders) into the pure
+  // policy module; the cache contract's one home is http-policy.ts now.
+  const src = readFileSync(path.join(HERE, '..', 'src', 'daemon', 'http-policy.ts'), 'utf8');
   assert.match(
     src,
     /'cache-control': ext === '\.html' \? 'no-store' : 'public, max-age=31536000, immutable'/,
