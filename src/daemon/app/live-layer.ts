@@ -4,7 +4,9 @@ import * as Deferred from 'effect/Deferred';
 import * as Effect from 'effect/Effect';
 import * as Exit from 'effect/Exit';
 import * as Layer from 'effect/Layer';
+import * as Scope from 'effect/Scope';
 import { prepareBackgroundOwner } from './background-owner.ts';
+import { makeUnboundHttpServer } from './http-server-owner.ts';
 import {
   DaemonStartupError,
   DaemonStartupRefusalError,
@@ -18,6 +20,7 @@ import {
 } from './lifecycle-coordinator.ts';
 import { makeDaemonResourceLifecycleOwner } from './daemon-resource-lifecycle.ts';
 import { DaemonLifecycle } from './services/daemon-lifecycle.ts';
+import { HttpServer } from './services/http-server.ts';
 import { AppConfig, type AppConfigService } from './services/app-config.ts';
 import {
   IngressSupervisor,
@@ -94,6 +97,7 @@ export interface DaemonLifecycleLayerOptions {
 export type DaemonRootServices =
   | AppConfig
   | Background
+  | HttpServer
   | ProcessRunner
   | ProcessRuntimeControl
   | DaemonLifecycle
@@ -434,7 +438,7 @@ export function makeDaemonLifecycleCoordinator(
 export function makeDaemonLifecycleLayer(
   options: DaemonLifecycleLayerOptions,
 ): Layer.Layer<
-  DaemonLifecycle | Background,
+  DaemonLifecycle | Background | HttpServer,
   DaemonRootStartupError,
   AppConfig | ProcessRunner | ProcessRuntimeControl | IngressSupervisor
 > {
@@ -462,6 +466,28 @@ export function makeDaemonLifecycleLayer(
       Effect.gen(function* () {
         yield* Deferred.succeed(program, acquired.backgroundProgram);
         const owner = yield* prepared.start;
+        // Publish the scoped Bun listener under the root Scope. Production boot
+        // returns a bound owner; the injected acquisition fixtures inject no
+        // listener, so a truthful unbound owner (no-op fallback) keeps them
+        // building without perturbing the frozen finalizer sequence.
+        const httpServer = acquired.httpServer ?? makeUnboundHttpServer(ingress);
+        const scope = yield* Effect.scope;
+        // Root-Scope fallback for listener retirement, registered during acquire
+        // so finalizer LIFO runs it AFTER the acquireRelease release
+        // (coordinator.close). On the success path the coordinator retires the
+        // listener through the phased beginGracefulStop/forceStop (the
+        // closing-http phase) and never calls http.lifecycle.close(), so this
+        // fallback genuinely starts closeHttpOnce — a safe second pass only
+        // because the transport's own latches have already run (quiesce latched,
+        // holds released, memoized closeClients, bunServer === null so forceStop
+        // no-ops). The memoized closePromise makes this a true no-op only on the
+        // acquisition-failure path, where resources.close() already ran
+        // http.close first. Inverting this LIFO (fallback before
+        // coordinator.close) would collapse the frozen 8-phase shutdown.
+        yield* Scope.addFinalizer(
+          scope,
+          Effect.sync(() => httpServer.shutdownFallback()),
+        );
         let registered = false;
 
         return yield* Effect.try({
@@ -472,6 +498,7 @@ export function makeDaemonLifecycleLayer(
               acquired,
               background: prepared.service,
               coordinator: options.makeLifecycleCoordinator(acquired),
+              httpServer,
             };
           },
           catch: mapDaemonStartupError,
@@ -497,9 +524,10 @@ export function makeDaemonLifecycleLayer(
 
   return Layer.effectContext(
     scopedLifecycle.pipe(
-      Effect.map(({ acquired, background, coordinator }) =>
+      Effect.map(({ acquired, background, coordinator, httpServer }) =>
         Context.make(DaemonLifecycle, { acquired, coordinator }).pipe(
           Context.add(Background, background),
+          Context.add(HttpServer, httpServer.service),
         ),
       ),
     ),
@@ -519,7 +547,7 @@ export function composeDaemonRootLayer<ApplicationError, DaemonError, Requiremen
     Requirements
   >,
   daemonLifecycleLayer: Layer.Layer<
-    DaemonLifecycle | Background,
+    DaemonLifecycle | Background | HttpServer,
     DaemonError,
     AppConfig | ProcessRunner | ProcessRuntimeControl | IngressSupervisor
   >,

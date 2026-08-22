@@ -41,6 +41,7 @@ import type { BackgroundController } from './background-owner.ts';
 import { makeDaemonBackgroundProgram } from './background-program.ts';
 import { legacyBootReconciliationWithoutRetentionWork } from './boot-reconciliation.ts';
 import { DaemonStartupRefusalError, HttpBindStartupError } from './errors.ts';
+import { type HttpServerOwner, makeHttpServerOwner } from './http-server-owner.ts';
 import { lanRefresh } from './lan-refresh.ts';
 import { makeIngressExecFileDelegate } from './legacy-process-facade.ts';
 import { legacyRetentionWork, makeRetentionSchedule } from './retention-schedule.ts';
@@ -107,6 +108,12 @@ export interface AcquiredDaemonResources {
   readonly resources: DaemonResources;
   /** Cold until the root Background owner admits it after complete native acquisition. */
   readonly backgroundProgram: Effect.Effect<never, never, ProcessRunner>;
+  /**
+   * The scoped Bun HTTP listener owner, present once boot has created the real
+   * `createHttp` transport. Optional so the P4 acquisition fixtures — which
+   * inject no listener — build the root Layer against a truthful unbound owner.
+   */
+  readonly httpServer?: HttpServerOwner;
   readonly shutdownExitCode: () => DaemonShutdownExitCode;
   /**
    * Idempotent synchronous fallback used by the custom host teardown only.
@@ -788,6 +795,13 @@ async function bootDaemon(
   }
   const { whenBroadcastIdle, refreshLan } = http;
 
+  // Own the frozen Bun listener as a root service. Bind routes through the same
+  // takeover path as before; on the first Bound the owner exercises the sole
+  // IngressSupervisor bridge (readiness) so P6.4 route conversions inherit a
+  // blessed entry into the already-built root runtime. Shutdown stays driven by
+  // the coordinator via setHttp above; the owner only adds a root-Scope fallback.
+  const httpServer = makeHttpServerOwner({ name: 'http-server', ingress, transport: http });
+
   // Every non-internal IPv4 this host answers on. Wildcard and interface-specific
   // binds have no single portable hostname, so the board, the startup banner and
   // the mDNS advertisement all speak in terms of this set.
@@ -943,7 +957,7 @@ async function bootDaemon(
 
   try {
     signal.throwIfAborted();
-    const result = await http.bind(PORT, BIND);
+    const result = await httpServer.bind(PORT, BIND);
     if (result._tag === 'BindFailed') {
       throw new HttpBindStartupError({
         reason: result.reason,
@@ -1131,6 +1145,7 @@ async function bootDaemon(
   const acquired: AcquiredDaemonResources = {
     resources: daemonResources,
     backgroundProgram,
+    httpServer,
     shutdownExitCode: () =>
       discoveryShutdownTimedOut || daemonResources.closeErrors.length > 0 ? 1 : 0,
     releaseProcessAtHostExit: releaseHostProcessOwnership,

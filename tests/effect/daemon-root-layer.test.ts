@@ -18,6 +18,7 @@ import {
 import { DaemonLifecycle } from '../../src/daemon/app/services/daemon-lifecycle.ts';
 import { AppConfig } from '../../src/daemon/app/services/app-config.ts';
 import { Background } from '../../src/daemon/app/services/background.ts';
+import { HttpServer } from '../../src/daemon/app/services/http-server.ts';
 import {
   IngressSupervisor,
   type RootIngressSupervisorService,
@@ -159,12 +160,16 @@ describe('P4.3 aggregate daemon root Layer', () => {
       yield* ProcessRunner;
       const lifecycle = yield* DaemonLifecycle;
       const background = yield* Background;
+      const httpServer = yield* HttpServer;
       const ingress = yield* IngressSupervisor;
       capturedIngressState = ingress.state;
       return {
         version: config.version,
         background: background.reconciliationStatus(),
         sameResources: lifecycle.acquired.resources instanceof DaemonResources,
+        // The acquisition fixtures inject no listener, so the root publishes a
+        // truthful unbound HttpServer owner.
+        httpServerState: httpServer.state(),
       };
     });
     const exit = await runEffectExit(Effect.provide(program, layer));
@@ -174,6 +179,7 @@ describe('P4.3 aggregate daemon root Layer', () => {
       version: 'p4.3-test',
       background: 'reconciling',
       sameResources: true,
+      httpServerState: 'unbound',
     });
     assert.equal(capturedIngressState, 'open');
     assert.deepEqual(events, [
