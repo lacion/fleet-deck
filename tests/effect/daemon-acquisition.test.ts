@@ -42,17 +42,25 @@ const OBSERVATION_PREFIX = 'ACQUISITION_OBSERVATION ';
 async function runFixture(mode: Mode): Promise<{ observation: Observation; stderr: string }> {
   const scratch = mkdtempSync(path.join(tmpdir(), `fleetdeck-acquisition-${mode}-`));
   const home = path.join(scratch, 'home');
+  const env: Record<string, string | undefined> = {
+    ...process.env,
+    FLEETDECK_HOME: home,
+    FLEETDECK_PORT: String(randomPort()),
+    FLEETDECK_BIND: '127.0.0.1',
+    FLEETDECK_TOKEN: 'effect-acquisition-fixture-token',
+    FLEETDECK_AGENTS_CMD: 'false',
+    FLEETDECK_MDNS: 'off',
+  };
+  // Bundle-mode suites export FLEETDECK_TEST_DAEMON_SCRIPT so daemon *spawns*
+  // load the packed artifact. This fixture runs acquireDaemonResources
+  // in-process from source, so the seam changes nothing here except make the
+  // daemon announce `test seam FLEETDECK_TEST_DAEMON_SCRIPT active` on stderr —
+  // which the success case asserts is empty. Drop it from the child's env (the
+  // boot check is a truthiness test, so the var must be absent, not "").
+  delete env['FLEETDECK_TEST_DAEMON_SCRIPT'];
   const child = Bun.spawn([process.execPath, '--no-env-file', FIXTURE, mode], {
     cwd: REPO_ROOT,
-    env: {
-      ...process.env,
-      FLEETDECK_HOME: home,
-      FLEETDECK_PORT: String(randomPort()),
-      FLEETDECK_BIND: '127.0.0.1',
-      FLEETDECK_TOKEN: 'effect-acquisition-fixture-token',
-      FLEETDECK_AGENTS_CMD: 'false',
-      FLEETDECK_MDNS: 'off',
-    },
+    env,
     stdin: 'ignore',
     stdout: 'pipe',
     stderr: 'pipe',

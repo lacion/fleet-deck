@@ -656,7 +656,17 @@ async function verifyCanonicalArtifact(
     `${scriptName} must contain exactly one canonical ${outputFlag} flag`,
   );
   const rebuiltOutput = path.join(ownership.scratch, `fresh-${path.basename(trackedOutput)}`);
-  const scratchRecipe = `${parts[0]}--outfile=${shellQuote(rebuiltOutput)}${parts[1]}`;
+  // Redirect the tracked output path everywhere it appears in the recipe TAIL,
+  // not just the esbuild `--outfile=` flag. The `bundle` recipe has a PURE-strip
+  // post-step (`bun -e 'const f="src/daemon/fleetd.bundle.mjs"...'`) that reads
+  // and rewrites that same tracked path; redirecting only the flag left the
+  // post-step stripping the COMMITTED bundle (mutating it in place) while the
+  // scratch rebuild stayed unstripped — so the SHA never matched. Substituting
+  // the path in the tail points the post-step at the scratch file too, so the
+  // rebuild is byte-identical to the committed artifact and the committed file
+  // is never touched. `bundle:bin` has no post-step, so this is a no-op there.
+  const tail = (parts[1] ?? '').split(trackedOutput).join(rebuiltOutput);
+  const scratchRecipe = `${parts[0]}--outfile=${shellQuote(rebuiltOutput)}${tail}`;
   const pathValue = process.env['PATH'];
   const env = {
     ...process.env,

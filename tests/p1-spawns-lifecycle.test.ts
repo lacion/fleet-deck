@@ -97,8 +97,14 @@ test('P1 spawn lifecycle aborts and joins detached clone provisioning before DB 
       'case "$1" in',
       '  check-ref-format|ls-remote) exit 0 ;;',
       '  clone)',
-      '    printf started > "$FD_P1_CLONE_STARTED"',
+      // Arm the abort trap BEFORE announcing readiness: the test gates `close()`
+      // on the `started` file, so once it appears the shim must already catch a
+      // TERM. Writing `started` first leaves a window where a SIGTERM delivered
+      // under load (before `trap` runs) kills the shim on the default
+      // disposition and `aborted` is never written — the flake this test hit in
+      // the full suite.
       '    trap \'printf aborted > "$FD_P1_CLONE_ABORTED"; exit 143\' TERM INT',
+      '    printf started > "$FD_P1_CLONE_STARTED"',
       '    while :; do sleep 1; done',
       '    ;;',
       'esac',
