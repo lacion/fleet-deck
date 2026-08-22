@@ -105,7 +105,15 @@ test('P1 spawn lifecycle aborts and joins detached clone provisioning before DB 
       // the full suite.
       '    trap \'printf aborted > "$FD_P1_CLONE_ABORTED"; exit 143\' TERM INT',
       '    printf started > "$FD_P1_CLONE_STARTED"',
-      '    while :; do sleep 1; done',
+      // Block on `wait`, not a foreground `sleep`. POSIX guarantees `wait` is
+      // interrupted by a trapped signal and runs the handler immediately, even
+      // for a signal already pending on entry. A foreground `sleep` leaves a
+      // window right after `started` where a SIGTERM that lands before dash is
+      // parked in waitpid on the child is not serviced until the child exits —
+      // by which point the driver's SIGKILL has reaped the shim and the trap
+      // never fires. That window is what a heavy earlier test file
+      // (process-driver-reference) makes reliably lose the race.
+      '    while :; do sleep 1 & wait; done',
       '    ;;',
       'esac',
       'exit 0',
