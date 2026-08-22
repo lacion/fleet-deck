@@ -15,7 +15,6 @@
 // the import; no node:http server is ever constructed.
 import type * as http from 'node:http';
 import type { Server, ServerWebSocket, WebSocketHandler } from 'bun';
-import { timingSafeEqual } from 'node:crypto';
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -36,6 +35,30 @@ import type { createCore } from './derive.ts';
 // load (dev/test); the esbuild bundle inlines them as plain JS for ship, which
 // is what reaches end users. See docs/v1/ts-migration.md.
 import { validateHookEvent, validateSpawnRequest } from '../../contracts/index.ts';
+// P6.2: pure parsing/security/response-shaping policy split out of the transport
+// callback. The dependency points one way (http.ts → http-policy.ts); the router
+// below stays byte-for-byte, calling these leaves and owning every side effect.
+import {
+  asRecord,
+  authorityTrusted as policyAuthorityTrusted,
+  boardAssetHeaders,
+  gatewaySettingsTouched,
+  hostIsOwn,
+  isJsonContentType,
+  isLoopbackAddress,
+  isPublicShell,
+  isUnsupervisedRequest,
+  originTrusted as policyOriginTrusted,
+  parseBearer,
+  repoPreflightBodyError,
+  resolveBoardAssetPath,
+  tokenGatedRoute,
+  tokenMatches as policyTokenMatches,
+} from './http-policy.ts';
+import type { TrustedOrigin } from './http-policy.ts';
+// program.ts and the auth/origin suites import these two from the HTTP module's
+// public surface; keep re-exporting them now that they live in http-policy.ts.
+export { isLoopbackAddress, parseTrustedOrigins } from './http-policy.ts';
 
 const MAX_BODY = 1e6;
 // /api/paste-image only: a screenshot is megabytes, and base64-in-JSON (kept —
@@ -414,14 +437,6 @@ class HttpReqShim {
   }
 }
 
-// A parsed entry of FLEETDECK_TRUSTED_ORIGINS (see parseTrustedOrigins).
-interface TrustedOrigin {
-  scheme: string;
-  wildcard: boolean;
-  host: string;
-  port: string; // '' means the scheme default (80/443)
-}
-
 // The LAN share source handed in by the daemon (a plain object or a thunk that
 // re-resolves it per snapshot). All fields optional — currentLan() reads them
 // defensively so a half-populated source still renders "local only".
@@ -475,16 +490,6 @@ export interface HttpBindFailed {
 
 export type HttpBindResult = HttpBound | HttpBindFailed;
 
-// A parsed JSON POST body is any value — object, array, scalar, or null. asRecord
-// gives a typed view for the handful of fields http reads defensively WITHOUT
-// asserting object-ness: a non-object body (null / array / scalar) reads every
-// field as `undefined`, exactly matching the `body?.field` optional chains and
-// `{ ...body }` spreads this replaces. The real narrowing still happens through
-// the validate*() gates and typeof checks below; this only keeps the reads honest.
-function asRecord(v: unknown): Record<string, unknown> {
-  return v !== null && typeof v === 'object' ? (v as Record<string, unknown>) : {};
-}
-
 // CONTROL-API SEAM: the board-spawn lifecycle methods (spawn / revive /
 // spawnKill / enableRemote) are declared loosely on derive's hand-written ctx
 // surface as (...args) => unknown — only adoptSession is spelled out there,
@@ -520,20 +525,6 @@ interface TermSocketData {
 type WsData = SnapshotSocketData | TermSocketData;
 type LiveSocket = ServerWebSocket<WsData>;
 
-// LOOPBACK CONTRACT: local hooks and board traffic remain zero-config even
-// when fleetd is in LAN mode. Node reports IPv4 peers either directly or as
-// IPv4-mapped IPv6, so all three explicit forms must remain exempt. Bind-time
-// classification also accepts localhost and the complete 127/8 block.
-export function isLoopbackAddress(address: unknown) {
-  const value = (typeof address === 'string' ? address : '').trim().toLowerCase();
-  return (
-    value === 'localhost' ||
-    value === '::1' ||
-    /^127(?:\.[0-9]{1,3}){3}$/.test(value) ||
-    /^::ffff:127(?:\.[0-9]{1,3}){3}$/.test(value)
-  );
-}
-
 // ------------------------------------------------------------ board static
 // GET / and /assets/* serve the built React board from board-dist, resolved
 // relative to THIS file's directory at runtime — the esbuild bundle keeps
@@ -541,48 +532,16 @@ export function isLoopbackAddress(address: unknown) {
 // (fleetd.mjs) and the bundle run (fleetd.bundle.mjs) find the same dist.
 const BOARD_DIST = path.join(path.dirname(fileURLToPath(import.meta.url)), 'board-dist');
 
-const MIME: Record<string, string> = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.mjs': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.map': 'application/json; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.ico': 'image/x-icon',
-  '.txt': 'text/plain; charset=utf-8',
-  '.woff': 'font/woff',
-  '.woff2': 'font/woff2',
-};
-
-// CSP for the HTML shell only (the one response a browser parses as a document).
-// Verified against board-dist/index.html: it loads IBM Plex from
-// fonts.googleapis.com (a stylesheet) and fonts.gstatic.com (the font files),
-// the favicon is a data: SVG, the paste flow can mint blob: image URLs, and
-// React sets inline style ATTRIBUTES (hence 'unsafe-inline' in style-src only —
-// there are no inline <script>s, so script-src stays 'self'). connect-src covers
-// the /state|/health|/api fetches and both WebSockets, same-origin under a proxy.
-const CSP_SHELL =
-  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
-
-// Serve one file from board-dist. Traversal-safe: the decoded request path is
-// resolved against BOARD_DIST and must stay strictly inside it (any '..' —
-// raw or percent-encoded — normalizes outside and 404s).
+// Serve one file from board-dist. Path resolution + traversal safety and the
+// header policy are pure (http-policy: resolveBoardAssetPath, boardAssetHeaders);
+// only the filesystem read and the response write stay here.
 function serveBoardAsset(
   res: HttpResShim,
   pathname: string,
   notFound: () => HttpResShim,
 ): HttpResShim {
-  let decoded;
-  try {
-    decoded = decodeURIComponent(pathname);
-  } catch {
-    return notFound();
-  }
-  const rel = decoded === '/' ? 'index.html' : decoded.replace(/^\/+/, '');
-  const abs = path.resolve(BOARD_DIST, rel);
-  if (abs !== BOARD_DIST && !abs.startsWith(BOARD_DIST + path.sep)) return notFound();
+  const abs = resolveBoardAssetPath(pathname, BOARD_DIST);
+  if (abs === null) return notFound();
   let data;
   try {
     data = fs.readFileSync(abs);
@@ -590,87 +549,8 @@ function serveBoardAsset(
     return notFound();
   }
   const ext = path.extname(abs).toLowerCase();
-  // nosniff on EVERY asset (kills MIME-confusion on the hashed JS/CSS); CSP only
-  // on the HTML document — subresources inherit the document's policy.
-  const headers: http.OutgoingHttpHeaders = {
-    'content-type': MIME[ext] ?? 'application/octet-stream',
-    'content-length': data.length,
-    'x-content-type-options': 'nosniff',
-    // The board boots from a ?t=<token> URL; no subresource (notably the
-    // Google Fonts stylesheet, which fires before token.js can scrub the URL)
-    // may ever see it as a Referer.
-    'referrer-policy': 'no-referrer',
-    // UPGRADE CONTRACT. Vite fingerprints every asset, so /assets/* is safe to
-    // cache forever — but index.html is the ONLY thing that names the current
-    // fingerprints, and it shipped with no cache directives at all. A browser
-    // is then free to reuse yesterday's shell after an upgrade, which is not
-    // theoretical: it cost a user a full debugging session on 0.19.2, running
-    // the previous board while the daemon served the new one and nothing in
-    // either said so. `no-store` on the shell means an upgrade cannot be
-    // invisible; `immutable` on the fingerprinted assets means it stays cheap.
-    'cache-control': ext === '.html' ? 'no-store' : 'public, max-age=31536000, immutable',
-  };
-  if (ext === '.html') headers['content-security-policy'] = CSP_SHELL;
-  res.writeHead(200, headers);
+  res.writeHead(200, boardAssetHeaders(ext, data.length));
   return res.end(data);
-}
-
-// ------------------------------------------------------- trusted origins
-// STANDALONE/PROXY CONTRACT. Behind a reverse proxy (Coder, nginx, Traefik) the
-// browser-facing Host and Origin are the PROXY's, not ours — Coder's reverse
-// proxy never rewrites req.Host — so the same-origin walls below refuse every
-// POST, both WS upgrades and the mutating GETs. `FLEETDECK_TRUSTED_ORIGINS` is
-// how an operator says "this other origin is also me".
-//
-// Entries are full origins (scheme REQUIRED, so an operator can never widen
-// http and https at once by accident): `https://board.example.com`,
-// `https://board.example.com:8443`, or one leading wildcard LABEL:
-// `https://*.coder.example.com` — which matches `fd--main--ws--luis.coder.
-// example.com` but NOT `coder.example.com` itself and NOT `a.b.coder.example.com`.
-// A wildcard is deliberately single-label: `*.example.com` must not hand the
-// fleet to every subdomain of a shared apex.
-export function parseTrustedOrigins(spec: unknown): TrustedOrigin[] {
-  const out: TrustedOrigin[] = [];
-  for (const raw of (typeof spec === 'string' ? spec : '').split(',')) {
-    const entry = raw.trim();
-    if (!entry) continue;
-    // The wildcard label is not a legal URL host, so swap in a placeholder to
-    // parse, then remember that the first label was a star.
-    const wild = /^([a-z][a-z0-9+.-]*:\/\/)\*\./i.exec(entry);
-    const probe = wild ? entry.replace('://*.', '://wildcard-placeholder.') : entry;
-    let u;
-    try {
-      u = new URL(probe);
-    } catch {
-      throw new Error(`not a valid origin: ${entry}`);
-    }
-    if (u.protocol !== 'http:' && u.protocol !== 'https:') {
-      throw new Error(`origin must be http:// or https://: ${entry}`);
-    }
-    if (u.pathname !== '/' || u.search || u.hash || u.username || u.password) {
-      throw new Error(`origin must be scheme://host[:port] with no path or credentials: ${entry}`);
-    }
-    const host = u.hostname.toLowerCase().replace(/^\[/, '').replace(/\]$/, '');
-    out.push({
-      scheme: u.protocol.slice(0, -1),
-      // For a wildcard we keep the SUFFIX including the leading dot, so matching
-      // is a suffix test plus a "no further dots" test.
-      wildcard: Boolean(wild),
-      host: wild ? host.replace(/^wildcard-placeholder/, '') : host,
-      port: u.port, // '' means the scheme default (80/443)
-    });
-  }
-  return out;
-}
-
-// Does `host`/`port` match this entry? Scheme is checked separately, because a
-// Host header carries no scheme and an Origin does.
-function trustedHostMatch(entry: TrustedOrigin, host: string, port: string) {
-  if (entry.port !== port) return false;
-  if (!entry.wildcard) return entry.host === host;
-  if (!host.endsWith(entry.host)) return false;
-  const label = host.slice(0, -entry.host.length);
-  return label.length > 0 && !label.includes('.'); // exactly one label, non-empty
 }
 
 export function createHttp(
@@ -802,16 +682,10 @@ export function createHttp(
       });
   }
 
-  // AUTH CONTRACT: every non-loopback HTTP route and WebSocket upgrade shares
-  // this exact gate. Presented secrets are compared only after byte lengths
-  // match, because timingSafeEqual throws for unequal buffers. Never include a
-  // rejected credential in logs or response bodies.
-  function tokenMatches(candidate: unknown) {
-    if (typeof token !== 'string' || typeof candidate !== 'string') return false;
-    const expected = Buffer.from(token);
-    const presented = Buffer.from(candidate);
-    return expected.length === presented.length && timingSafeEqual(expected, presented);
-  }
+  // AUTH CONTRACT (http-policy.tokenMatches): every non-loopback HTTP route and
+  // WebSocket upgrade shares this exact gate. This binds our own token; the
+  // constant-time comparison lives in the policy leaf.
+  const tokenMatches = (candidate: unknown) => policyTokenMatches(token, candidate);
 
   // PROXY AUTH CONTRACT. A reverse proxy connects to us over loopback, so the
   // loopback exemption below would hand the entire fleet — spawn included — to
@@ -887,24 +761,8 @@ export function createHttp(
           return true;
       }
     }
-    const authorization = req.headers.authorization;
-    const bearer =
-      typeof authorization === 'string' ? /^Bearer (.+)$/.exec(authorization)?.[1] : undefined;
+    const bearer = parseBearer(req.headers.authorization);
     return tokenMatches(bearer) || tokenMatches(url.searchParams.get('t'));
-  }
-
-  // 0.16.0 LOOPBACK GATES. Default loopback stays open for ordinary routes,
-  // but these powers require the bearer unless an explicit trust mode applies:
-  // typing into a live pane (/ws/term), injecting mail into sessions, and
-  // arming an unsupervised spawn. The board, the hook shims and the fleet skill
-  // docs all present the token; a caller without it is precisely the attacker
-  // the gate names. Two gated powers need the parsed body and live at their
-  // handlers instead: gateway_* settings writes (POST /api/settings) and
-  // unsupervised spawn bodies (POST /api/spawn, adopt) — see those routes.
-  function tokenGatedRoute(method: string | undefined, pathname: string) {
-    if (pathname === '/ws/term') return true;
-    if (method !== 'POST') return false;
-    return pathname === '/mail' || pathname === '/api/spawn/arm-unsupervised';
   }
 
   // SILENT AUTH FAILURE. Sessions started before authenticated command shims
@@ -1020,44 +878,16 @@ export function createHttp(
   }
   refreshLanHosts();
 
-  // WHATWG URL keeps the brackets on an IPv6 hostname ([::1]); strip them so the
-  // value matches what isLoopbackAddress / the lanHosts set hold.
-  const normHost = (h: string) => h.toLowerCase().replace(/^\[/, '').replace(/\]$/, '');
-  // A parsed URL is ours when its hostname is loopback / an own LAN address /
-  // the .local name AND its EFFECTIVE port is our port. WHATWG URL normalizes
-  // an explicit default port away (new URL('http://x:80').port === ''), so an
-  // absent port means the scheme default 80/443 — NOT "whatever port fleetd
-  // happens to listen on". Without resolving it, an Origin of plain
-  // http://127.0.0.1 (a page served by any other local service on :80) read
-  // as same-origin with a daemon on a non-default port, and the whole CSRF
-  // wall below fell open. (BUG-030)
-  function effectivePort(u: URL) {
-    if (u.port) return u.port;
-    return u.protocol === 'https:' ? '443' : '80'; // Host-only parses under http://
-  }
+  // The DNS-rebinding / same-origin decisions are pure (http-policy: hostIsOwn,
+  // authorityTrusted, originTrusted). hostAllowed keeps the per-request LAN
+  // refresh (I/O + mutable lanHosts) here and delegates the verdict; the trusted
+  // wrappers bind the operator's trustedOrigins list to the policy leaves.
   function hostAllowed(u: URL) {
     refreshLanHosts();
-    const host = normHost(u.hostname);
-    return (isLoopbackAddress(host) || lanHosts.has(host)) && effectivePort(u) === daemonPort;
+    return hostIsOwn(u, lanHosts, daemonPort);
   }
-  // The operator-named extension of "us" (see parseTrustedOrigins). Kept separate
-  // from hostAllowed so that a deployment which configures nothing gets today's
-  // behaviour byte-for-byte: with an empty list both helpers below are false and
-  // every wall is exactly as tight as it was.
-  //
-  // authorityTrusted ignores the scheme (a Host header has none); originTrusted
-  // demands it. That asymmetry is deliberate, not an oversight: the Host wall
-  // exists to stop DNS rebinding, which a scheme cannot help with, while the
-  // Origin wall is the CSRF wall, where http-vs-https is a real distinction.
-  function authorityTrusted(u: URL) {
-    const host = normHost(u.hostname);
-    return trustedOrigins.some((e) => trustedHostMatch(e, host, u.port));
-  }
-  function originTrusted(u: URL) {
-    const host = normHost(u.hostname);
-    const scheme = u.protocol.slice(0, -1);
-    return trustedOrigins.some((e) => e.scheme === scheme && trustedHostMatch(e, host, u.port));
-  }
+  const authorityTrusted = (u: URL) => policyAuthorityTrusted(trustedOrigins, u);
+  const originTrusted = (u: URL) => policyOriginTrusted(trustedOrigins, u);
   // Host header check — the DNS-rebinding wall. A browser always sends Host, so a
   // domain that re-resolves to this box arrives as Host: evil.example and is
   // refused. A missing Host is a non-browser caller and is left alone. A proxied
@@ -1139,8 +969,6 @@ export function createHttp(
     }
     return authorityTrusted(u) && !hostAllowed(u);
   }
-  const isJsonContentType = (v: unknown) =>
-    typeof v === 'string' && /^application\/json\b/i.test(v.trim());
 
   // PROVENANCE LOG (exec-class control routes). spawn/kill/revive/adopt/rc each
   // start a process or move a live pane, so one audit line records WHERE the
@@ -1394,13 +1222,7 @@ export function createHttp(
   // board (CSRF) and get a live agent on your machine. A bearer token cannot be
   // forged that way. See tests/lan-auth.test.mjs — the browser-reachability of
   // the shell is pinned there precisely so this never regresses into a blank
-  // page again.
-  const isPublicShell = (method: string | undefined, pathname: string) =>
-    method === 'GET' &&
-    (pathname === '/' ||
-      pathname === '/index.html' ||
-      pathname === '/favicon.ico' ||
-      pathname.startsWith('/assets/'));
+  // page again. The exact predicate is http-policy.isPublicShell.
 
   // The audited router, verbatim from the node:http era. It runs synchronously
   // over the (req, res) shims; the Bun.serve `fetch` handler below constructs the
@@ -1782,12 +1604,8 @@ export function createHttp(
               // loopback caller can forge Host/Origin to look proxied, so we must
               // not waive this gate on arrivedViaTrustedProxy(). Proxy token mode,
               // proxy trust mode, and LAN never inherit the waiver here.
-              if (Object.keys(asRecord(ev)).some((k) => k.toLowerCase().startsWith('gateway_'))) {
-                const authorization = req.headers.authorization;
-                const bearer =
-                  typeof authorization === 'string'
-                    ? /^Bearer (.+)$/.exec(authorization)?.[1]
-                    : undefined;
+              if (gatewaySettingsTouched(ev)) {
+                const bearer = parseBearer(req.headers.authorization);
                 const bearerWaived =
                   trustLoopback &&
                   !arrivedViaTrustedProxy(req) &&
@@ -1835,20 +1653,15 @@ export function createHttp(
             }
             if (url.pathname === '/api/repos/preflight') {
               const body = asRecord(ev);
-              if (typeof body['repo'] !== 'string') {
-                json(res, 400, { ok: false, reason: 'repo must be a string' });
+              const preflightError = repoPreflightBodyError(body);
+              if (preflightError) {
+                json(res, 400, { ok: false, reason: preflightError });
                 return;
-              }
-              for (const key of ['repo_host', 'repo_transport', 'repo_org']) {
-                if (body[key] != null && typeof body[key] !== 'string') {
-                  json(res, 400, { ok: false, reason: `${key} must be a string` });
-                  return;
-                }
               }
               logExec(url.pathname, req);
               core
                 .preflightRepo({
-                  repo: body['repo'],
+                  repo: body['repo'] as string,
                   repo_host: (body['repo_host'] as string | undefined) ?? null,
                   repo_transport: (body['repo_transport'] as string | undefined) ?? null,
                   repo_org: (body['repo_org'] as string | undefined) ?? null,
@@ -1884,11 +1697,7 @@ export function createHttp(
               // BUG-040: plan_id on the body claims that plan's execution
               // atomically BEFORE launch (see derive.spawn).
               const spawnEv = asRecord(ev);
-              const spawnPmode = spawnEv['permission_mode'];
-              const spawnUnsupervised =
-                spawnEv['dangerously_skip_permissions'] === true ||
-                (typeof spawnPmode === 'string' &&
-                  spawnPmode.toLowerCase() === 'bypasspermissions');
+              const spawnUnsupervised = isUnsupervisedRequest(ev);
               const spawnPlanId = spawnEv['plan_id'];
               // plan_id is contractually a scalar row id; this is a cosmetic log
               // suffix only (core.spawn still receives the raw ev). Guard to a
@@ -1963,12 +1772,7 @@ export function createHttp(
               // dangerously_skip_permissions:bool or {disarm:true}. Every guard
               // (404/400/409/410) lives in derive; the CSRF/Host walls above
               // apply automatically like every other control POST.
-              const adoptEv = asRecord(ev);
-              const adoptPmode = adoptEv['permission_mode'];
-              const adoptUnsupervised =
-                adoptEv['dangerously_skip_permissions'] === true ||
-                (typeof adoptPmode === 'string' &&
-                  adoptPmode.toLowerCase() === 'bypasspermissions');
+              const adoptUnsupervised = isUnsupervisedRequest(ev);
               logExec(
                 url.pathname,
                 req,
