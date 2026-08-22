@@ -1,15 +1,17 @@
 # Effect migration checkpoint status
 
-- **Checkpoint date:** 2026-08-20
+- **Checkpoint date:** 2026-08-22
 - **Branch:** `fd/v1-effect-feasibility`
+- **Published branch:** `origin/fd/v1-effect-feasibility`
 - **Current implementation checkpoint:** `972621d` (`feat(effect): supervise daemon background schedules`)
 - **P4 root-cutover checkpoint:** `661dfe31b66843f70a1dcebbc4f340ad9c62f76f`
 - **P3 rollback anchor:** `bcf3337e48d7dd35437d2e2369d0a91fbcbfa114`
 - **Runtime floor:** Bun 1.3.14, revision `0d9b296af33f2b851fcbf4df3e9ec89751734ba4`
 
 This is the durable handoff for the executable
-[Effect migration plan](./effect-migration-plan.md). All checkpoint commits are local. Nothing has
-been pushed, published, tagged, or released.
+[Effect migration plan](./effect-migration-plan.md). The checkpoint branch is published to
+`origin` for continuation. No pull request has been opened, and nothing has been tagged, released,
+or deployed.
 
 ## Executive status
 
@@ -146,5 +148,6 @@ the current P5 artifact.
 ## Repository handoff expectation
 
 After the documentation checkpoint commit, the worktree should be clean, with no staged migration
-changes and no known fixture processes or listeners left behind. The next session should start from
-`972621d` plus the following documentation commit. Nothing has been pushed.
+changes and no known fixture processes or listeners left behind. The next session should fetch and
+continue from `origin/fd/v1-effect-feasibility`; `972621d` remains the implementation anchor beneath
+the status-only handoff commits. No pull request has been opened.
