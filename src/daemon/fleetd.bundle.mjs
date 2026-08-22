@@ -8,7 +8,7 @@ var ME = (e, t) => {
     Id(e, n, { get: t[n], enumerable: !0 });
 };
 
-// node_modules/effect/dist/Pipeable.js
+
 var Bt = r((e, t) => {
   switch (t.length) {
     case 0:
@@ -40,7 +40,7 @@ var Bt = r((e, t) => {
   }
 }, "pipeArguments");
 
-// node_modules/effect/dist/Function.js
+
 var ge = r(function(e, t) {
   if (typeof e == "function")
     return function() {
@@ -77,7 +77,7 @@ var Qe = r((e) => e, "identity");
 var Un = r((e) => () => e, "constant"), Ps = Un(!0), Nd = Un(!1);
 var As = Un(void 0), Io = As;
 
-// node_modules/effect/dist/internal/equal.js
+
 var Os = r((e) => {
   let t = new Set(Reflect.ownKeys(e));
   if (e.constructor === Object) return t;
@@ -92,7 +92,7 @@ var Os = r((e) => {
   return t.has("constructor") && typeof e.constructor == "function" && n === e.constructor.prototype && t.delete("constructor"), t;
 }, "getAllObjectKeys"), Ls = new WeakSet();
 
-// node_modules/effect/dist/Predicate.js
+
 function pc(e) {
   return typeof e == "string";
 }
@@ -115,7 +115,7 @@ function $d(e) {
 }
 r($d, "isIterable");
 
-// node_modules/effect/dist/Hash.js
+
 var bt = "~effect/interfaces/Hash", rt = r((e) => {
   switch (typeof e) {
     case "number":
@@ -186,7 +186,7 @@ function HE(e, t) {
 }
 r(HE, "withVisitedTracking");
 
-// node_modules/effect/dist/Equal.js
+
 var kt = "~effect/interfaces/Equal";
 function Pt() {
   return arguments.length === 1 ? (e) => to(e, arguments[0]) : to(arguments[0], arguments[1]);
@@ -327,7 +327,7 @@ function YE(e) {
 r(YE, "makeCompareSet");
 var JE = YE(to), qd = r((e) => Je(e, kt), "isEqual");
 
-// node_modules/effect/dist/Redactable.js
+
 var Ds = Symbol.for("~effect/Redactable"), QE = r((e) => Je(e, Ds), "isRedactable");
 function Mo(e) {
   return QE(e) ? vc(e) : e;
@@ -347,7 +347,7 @@ var Fo = "~effect/Fiber/currentFiber", Hd = new Map(), ZE = {
   }
 };
 
-// node_modules/effect/dist/Formatter.js
+
 function Ut(e, t) {
   let n = t?.space ?? 0, o = new WeakSet(), s = n ? typeof n == "number" ? " ".repeat(n) : n : "", i = r((d) => s.repeat(d), "ind"), a = r((d, w) => {
     let h = d?.constructor;
@@ -439,7 +439,7 @@ function Is(e, t) {
 }
 r(Is, "formatJson");
 
-// node_modules/effect/dist/Inspectable.js
+
 var Nr = Symbol.for("nodejs.util.inspect.custom"), qn = r((e) => {
   try {
     return e = Mo(e), Je(e, "toJSON") && mc(e.toJSON) && e.toJSON.length === 0 ? e.toJSON() : Array.isArray(e) ? e.map(qn) : e;
@@ -472,33 +472,33 @@ var Nr = Symbol.for("nodejs.util.inspect.custom"), qn = r((e) => {
   static {
     r(this, "Class");
   }
-  /**
-   * Node.js custom inspection method.
-   *
-   * **When to use**
-   *
-   * Use to expose the class JSON representation to Node.js inspection.
-   *
-   * @since 2.0.0
-   */
+  
+
+
+
+
+
+
+
+
   [Nr]() {
     return this.toJSON();
   }
-  /**
-   * Returns a formatted string representation of this object.
-   *
-   * **When to use**
-   *
-   * Use to format the class JSON representation as a string.
-   *
-   * @since 2.0.0
-   */
+  
+
+
+
+
+
+
+
+
   toString() {
     return Ut(this.toJSON());
   }
 };
 
-// node_modules/effect/dist/Utils.js
+
 var Mr = class e {
   static {
     r(this, "SingleShotGen");
@@ -508,16 +508,16 @@ var Mr = class e {
   constructor(t) {
     this.self = t;
   }
-  /**
-   * Yields the stored value once, then completes with the value sent back in.
-   *
-   * **When to use**
-   *
-   * Use to advance a `SingleShotGen` through its single yield and completion
-   * step.
-   *
-   * @since 2.0.0
-   */
+  
+
+
+
+
+
+
+
+
+
   next(t) {
     return this.called ? {
       value: t,
@@ -527,16 +527,16 @@ var Mr = class e {
       done: !1
     });
   }
-  /**
-   * Creates a fresh single-shot iterator over the stored value.
-   *
-   * **When to use**
-   *
-   * Use to iterate the wrapped value again without reusing the consumed
-   * iterator state.
-   *
-   * @since 2.0.0
-   */
+  
+
+
+
+
+
+
+
+
+
   [Symbol.iterator]() {
     return new e(this.self);
   }
@@ -549,7 +549,7 @@ var Mr = class e {
   return t[e](() => new Error().stack)?.includes(e) === !0 ? t[e] : n[e];
 }, "pickInternalCall"), qt = ry();
 
-// node_modules/effect/dist/internal/record.js
+
 function Oi(e, t, n) {
   t === "__proto__" ? Object.defineProperty(e, t, {
     value: n,
@@ -565,7 +565,7 @@ function Kd(e, t) {
 }
 r(Kd, "assignProperties");
 
-// node_modules/effect/dist/internal/core.js
+
 var cr = "~effect/Effect", ro = "~effect/Exit", oy = {
   _A: Qe,
   _E: Qe,
@@ -863,13 +863,13 @@ var Ii = class extends (ur("NoSuchElementError")) {
   value: e
 }, "Done"), cy = $r(tf), rf = r((e) => e === void 0 ? cy : $r(nf(e)), "done");
 
-// node_modules/effect/dist/Effectable.js
+
 var of = r((e) => lr({
   op: e.label,
   [wt]: e.evaluate
 }), "Prototype");
 
-// node_modules/effect/dist/internal/option.js
+
 var sf = "~effect/data/Option", af = {
   [sf]: {
     _A: r((e) => e, "_A")
@@ -925,7 +925,7 @@ var sf = "~effect/data/Option", af = {
   return t.value = e, t;
 }, "some");
 
-// node_modules/effect/dist/internal/result.js
+
 var ff = "~effect/data/Result", pf = {
   [ff]: {
     /* v8 ignore next 2 */
@@ -982,7 +982,7 @@ var ff = "~effect/data/Result", pf = {
   return t.success = e, t;
 }, "succeed");
 
-// node_modules/effect/dist/Order.js
+
 function wf(e) {
   return (t, n) => t === n ? 0 : e(t, n);
 }
@@ -991,10 +991,10 @@ var Ef = wf((e, t) => globalThis.Number.isNaN(e) && globalThis.Number.isNaN(t) ?
 var yf = ge(2, (e, t) => wf((n, o) => e(t(n), t(o))));
 var _f = r((e) => ge(2, (t, n) => e(t, n) === 1), "isGreaterThan");
 
-// node_modules/effect/dist/Option.js
+
 var Sf = r(() => uf, "none"), xf = df;
 
-// node_modules/effect/dist/Context.js
+
 var vf = "~effect/Context/Service", Lt = r(function() {
   function e() {
   }
@@ -1119,14 +1119,14 @@ var $i = ge(2, (e, t) => e.mapUnsafe.size === 0 ? t : t.mapUnsafe.size === 0 ? e
 }, "mergeAll");
 var Ht = Lt;
 
-// node_modules/effect/dist/internal/array.js
+
 var Lf = r((e) => e.length > 0, "isArrayNonEmpty");
 
-// node_modules/effect/dist/Result.js
+
 var fr = hf, On = gf;
 var on = Pc;
 
-// node_modules/effect/dist/Array.js
+
 var Fc = globalThis.Array;
 var io = r((e) => Fc.isArray(e) ? e : Fc.from(e), "fromIterable");
 var Ay = ge(2, (e, t) => io(e).concat(io(t)));
@@ -1156,7 +1156,7 @@ var Ly = r((e) => {
   return o;
 }, "dedupe");
 
-// node_modules/effect/dist/Duration.js
+
 var Ui = "~effect/time/Duration", qf = BigInt(0), Hf = BigInt(1), Iy = BigInt(2), Ny = BigInt(10);
 var My = BigInt(1e3);
 var qi = r((e) => BigInt(e < 0 ? Math.ceil(e - 0.5) : Math.floor(e + 0.5)), "roundTiesAwayFromZero"), Wf = r((e) => qi(e * 1e6), "roundMillisToNanos"), Mf = r((e, t) => {
@@ -1338,7 +1338,7 @@ var Xy = r((e, t) => zy(e, t, {
 }), "Equivalence");
 var Yy = ge(2, (e, t) => Xy(e, t));
 
-// node_modules/effect/dist/Filter.js
+
 var jf = ge(2, (e, t) => (n) => {
   let o = e(n);
   if (on(o)) return On(n);
@@ -1346,7 +1346,7 @@ var jf = ge(2, (e, t) => (n) => {
   return on(s) ? On(n) : s;
 });
 
-// node_modules/effect/dist/Scheduler.js
+
 var qc = Ht("effect/Scheduler", {
   fiberCached: !0,
   defaultValue: r(() => new Wi(), "defaultValue")
@@ -1387,29 +1387,29 @@ var qc = Ht("effect/Scheduler", {
   constructor(t = "async", n) {
     this.executionMode = t, this.setImmediate = n ?? (t === "sync" ? Zy : Gf);
   }
-  /**
-   * Returns whether the fiber has reached its operation budget and should yield.
-   *
-   * **When to use**
-   *
-   * Use to decide whether a fiber should yield after consuming its current
-   * operation budget.
-   *
-   * @since 2.0.0
-   */
+  
+
+
+
+
+
+
+
+
+
   shouldYield(t) {
     return t.currentOpCount >= t.maxOpsBeforeYield;
   }
-  /**
-   * Creates a dispatcher that schedules work through this scheduler.
-   *
-   * **When to use**
-   *
-   * Use when you need a standalone dispatcher from a scheduler instance, for
-   * example in tests that enqueue tasks and then flush them deterministically.
-   *
-   * @since 4.0.0
-   */
+  
+
+
+
+
+
+
+
+
+
   makeDispatcher() {
     return new Uc(this.setImmediate);
   }
@@ -1423,21 +1423,21 @@ var qc = Ht("effect/Scheduler", {
   constructor(t = Gf) {
     this.setImmediate = t;
   }
-  /**
-   * @since 2.0.0
-   */
+  
+
+
   scheduleTask(t, n) {
     this.tasks.scheduleTask(t, n), this.running === void 0 && (this.running = this.setImmediate(this.afterScheduled));
   }
-  /**
-   * @since 2.0.0
-   */
+  
+
+
   afterScheduled = r(() => {
     this.running = void 0, this.runTasks();
   }, "afterScheduled");
-  /**
-   * @since 2.0.0
-   */
+  
+
+
   runTasks() {
     let t = this.tasks.drain();
     for (let n = 0; n < t.length; n++) {
@@ -1446,9 +1446,9 @@ var qc = Ht("effect/Scheduler", {
         o[s]();
     }
   }
-  /**
-   * @since 2.0.0
-   */
+  
+
+
   flush() {
     for (; this.tasks.buckets.length > 0; )
       this.running !== void 0 && (this.running(), this.running = void 0), this.runTasks();
@@ -1461,17 +1461,17 @@ var qc = Ht("effect/Scheduler", {
   defaultValue: r(() => !1, "defaultValue")
 });
 
-// node_modules/effect/dist/Data.js
+
 var ut = ur;
 
-// node_modules/effect/dist/Tracer.js
+
 var zf = "effect/Tracer/ParentSpan";
 var Xf = "effect/Tracer";
 
-// node_modules/effect/dist/internal/metric.js
+
 var Yf = "effect/observability/Metric/FiberRuntimeMetricsKey";
 
-// node_modules/effect/dist/internal/references.js
+
 var Jf = Ht("effect/References/CurrentStackFrame", {
   fiberCached: !0,
   defaultValue: As
@@ -1489,7 +1489,7 @@ var ep = Ht("effect/References/CurrentLogSpans", {
   defaultValue: r(() => [], "defaultValue")
 });
 
-// node_modules/effect/dist/internal/stackTraceLimit.js
+
 var r_ = r(() => {
   let e = Object.getOwnPropertyDescriptor(Error, "stackTraceLimit");
   return e === void 0 ? Object.isExtensible(Error) : Object.hasOwn(e, "writable") ? e.writable === !0 : e.set !== void 0;
@@ -1497,7 +1497,7 @@ var r_ = r(() => {
   o_ && (Error.stackTraceLimit = e);
 }, "setStackTraceLimit");
 
-// node_modules/effect/dist/internal/effect.js
+
 var Gc = class extends $o {
   static {
     r(this, "Interrupt");
@@ -2531,7 +2531,7 @@ var U_ = am(({
   c["effect.fiberId"] = t.id, c["effect.logLevel"] = n.toUpperCase(), e.reasons.length > 0 && (c["effect.cause"] = cl(e)), a.event(Gd(Array.isArray(o) && o.length === 1 ? o[0] : o), s.currentTimeNanosUnsafe(), c);
 });
 
-// node_modules/effect/dist/Cause.js
+
 var mo = Us, zs = qo;
 var an = lp;
 var Yo = al;
@@ -2540,11 +2540,11 @@ var lm = ip;
 var um = Mi;
 var kl = rf;
 
-// node_modules/effect/dist/Exit.js
+
 var Rl = $r;
 var In = Rp, Tl = Tp;
 
-// node_modules/effect/dist/Deferred.js
+
 var H_ = "~effect/Deferred";
 var W_ = {
   [H_]: {
@@ -2575,12 +2575,12 @@ var _n = r((e, t) => {
   return !0;
 }, "doneUnsafe");
 
-// node_modules/effect/dist/Scope.js
+
 var dm = Ji, fm = jp;
 var Qo = Wp;
 var oa = Hp, Pl = hl;
 
-// node_modules/effect/dist/Layer.js
+
 var X_ = "~effect/Layer", pm = "~effect/Layer/MemoMap", Y_ = r((e, t) => (e.observers++, Vo(Xo(t, (n) => e.finalizer(n)), e.effect)), "memoMapReuse");
 var J_ = {
   [X_]: {
@@ -2651,10 +2651,10 @@ var hm = r((e, t, n) => {
 }, "mergeAllEffect"), Dl = r((...e) => Al((t, n) => hm(e, t, n)), "mergeAll"), Il = ge(2, (e, t) => Dl(e, ...Array.isArray(t) ? t : [t])), nS = r((e, t, n) => Al((o, s) => Ze(Array.isArray(t) ? hm(t, o, s) : t.build(o, s), (i) => e.build(o, s).pipe(fo(i), Yt((a) => n(a, i))))), "provideWith");
 var Nl = ge(2, (e, t) => nS(e, t, (n, o) => $i(o, n)));
 
-// node_modules/effect/dist/Clock.js
+
 var Wr = vl;
 
-// node_modules/effect/dist/Pull.js
+
 var rS = jf(cm, (e) => um(e) ? fr(e) : On(e));
 var Em = ge(2, (e, t) => Go(e, {
   onSuccess: t.onSuccess,
@@ -2664,7 +2664,7 @@ var Em = ge(2, (e, t) => Go(e, {
   }, "onFailure")
 }));
 
-// node_modules/effect/dist/Schedule.js
+
 var ym = "~effect/Schedule";
 var Ml = Ht("effect/Schedule/CurrentMetadata", {
   defaultValue: Un({
@@ -2738,10 +2738,10 @@ var aa = ge(2, (e, t) => Fl(Yt(Ul(e), (n) => {
 })));
 var xm = Hl(Hi);
 
-// node_modules/effect/dist/internal/layer.js
+
 var cS = r((e, t, n) => yl((o) => Ze(n?.local ? Ll(t, Ol(), o) : gm(t, o), (s) => fo(e, s))), "provideLayer"), vm = ge((e) => At(e[0]), (e, t, n) => Ic(t) ? fo(e, t) : cS(e, Array.isArray(t) ? Dl(...t) : t, n));
 
-// node_modules/effect/dist/internal/schedule.js
+
 var bm = ge(3, (e, t, n) => Ze(Sm(t), (o) => {
   let s = Ml.defaultValue();
   return Gs(dl(uo(Ze(Et(() => zo(e, Ml, s)), o), (i) => Ft(() => {
@@ -2771,7 +2771,7 @@ var uS = ql(xm), dS = r((e) => {
   }) => ot(n <= e.times))), t;
 }, "buildFromOptions");
 
-// node_modules/effect/dist/Effect.js
+
 var Rm = At, ca = Sl;
 var cn = Sp;
 var gt = ot;
@@ -2806,7 +2806,7 @@ var Hm = rm;
 var Wm = po;
 var jm = bl("Error");
 
-// node_modules/effect/dist/Runtime.js
+
 var Kl = r((e, t) => In(e) ? t(0) : an(e.cause) ? t(130) : t(pS(Yo(e.cause))), "defaultTeardown"), Km = r((e) => ge((t) => Rm(t[0]), (t, n) => {
   let o = n?.disableErrorReporting === !0 ? Gl(t) : Gl(Lm(t, (i) => an(i) ? Dt : mS(Yo(i)) ? jm(i) : Dt));
   try {
@@ -2837,7 +2837,7 @@ var Kl = r((e, t) => In(e) ? t(0) : an(e.cause) ? t(130) : t(pS(Yo(e.cause))), "
   return !0;
 }, "getErrorReported");
 
-// node_modules/@effect/platform-node-shared/dist/NodeRuntime.js
+
 var Vm = Km(({
   fiber: e,
   teardown: t
@@ -2854,18 +2854,18 @@ var Vm = Km(({
   r(o, "onSigint"), process.on("SIGINT", o), process.on("SIGTERM", o);
 });
 
-// node_modules/@effect/platform-bun/dist/BunRuntime.js
+
 var zm = Vm;
 
-// src/daemon/app/root-program.ts
+
 import { writeSync as hR } from "node:fs";
 
-// src/daemon/app/app-config-live.ts
+
 import yS from "node:fs";
 import zl from "node:path";
 import { fileURLToPath as _S } from "node:url";
 
-// src/daemon/config.ts
+
 import wS from "node:fs";
 import ES from "node:os";
 import da from "node:path";
@@ -2899,7 +2899,7 @@ function So({
 }
 r(So, "detectCoderWorkspaceRoot");
 
-// src/daemon/app/errors.ts
+
 var Jm = class extends ut("StartupConfigurationError") {
   static {
     r(this, "StartupConfigurationError");
@@ -2921,7 +2921,7 @@ var Jm = class extends ut("StartupConfigurationError") {
   static {
     r(this, "HttpBindStartupError");
   }
-  /** Preserve the daemon's established election-loser status; all other bind failures stay 1. */
+  
   [ti] = this.reason === "address-in-use" ? 3 : 1;
 }, Zm = class extends ut(
   "ProcessRunnerUnavailableError"
@@ -2951,7 +2951,7 @@ var Jm = class extends ut("StartupConfigurationError") {
   }
 };
 
-// src/daemon/app/services/app-config.ts
+
 var rs = class extends Lt()(
   "fleetdeck/daemon/app/AppConfig"
 ) {
@@ -2960,7 +2960,7 @@ var rs = class extends Lt()(
   }
 };
 
-// src/daemon/app/app-config-live.ts
+
 var tg = {
   resolvePort: Ym,
   resolveHome: Xm,
@@ -3036,7 +3036,7 @@ function RS(e = {}) {
 r(RS, "makeAppConfigLayer");
 var ng = RS();
 
-// src/daemon/app/host-control.ts
+
 function TS(e, t) {
   return t !== 0 || e.deadlineExpired || e.failures.length || e.forceFailures.length || e.phases.some(
     (n) => n._tag === "Failed" || n._tag === "TimedOut" || n._tag === "Skipped"
@@ -3064,7 +3064,7 @@ var ha = class {
   get signalObserved() {
     return this.observedFirstSignal !== null;
   }
-  /** Attach the one policy coordinator after aggregate acquisition completes. */
+  
   attachLifecycle(t) {
     if (this.coordinator && this.coordinator !== t)
       throw new Error("daemon host control already owns another lifecycle coordinator");
@@ -3073,21 +3073,21 @@ var ha = class {
   detachLifecycle(t) {
     this.coordinator === t && (this.coordinator = null);
   }
-  /**
-   * Retain the verified process-owner release through the exact host-exit
-   * boundary. Policy close retains the same idempotent function through every
-   * Layer fallback; teardown invokes it immediately before BunRuntime calls
-   * process.exit, with no asynchronous gap for a successor to race.
-   */
+  
+
+
+
+
+
   attachProcessExitFallback(t) {
     if (this.processExitFallback && this.processExitFallback !== t)
       throw new Error("daemon host control already owns another process-exit fallback");
     this.processExitFallback = t;
   }
-  /**
-   * Install before aggregate acquisition and retain through policy cleanup.
-   * Repeated installation on the same host returns the exact same disposer.
-   */
+  
+
+
+
   installSignalObserver(t = process) {
     if (this.removeObserver) {
       if (this.installedHost !== t)
@@ -3111,7 +3111,7 @@ var ha = class {
   recordExitCode(t) {
     this.coordinatedExitCode = this.coordinatedExitCode === 1 ? 1 : t;
   }
-  /** BunRuntime calls this only after the root Effect and its async cleanup end. */
+  
   teardown = r((t, n) => {
     let o = this.processExitFallback;
     if (this.processExitFallback = null, o)
@@ -3133,7 +3133,7 @@ var ha = class {
   }
 };
 
-// node_modules/effect/dist/MutableRef.js
+
 var rg = "~effect/MutableRef", CS = {
   [rg]: rg,
   ...An,
@@ -3149,7 +3149,7 @@ var rg = "~effect/MutableRef", CS = {
 }, "make");
 var sg = ge(2, (e, t) => (e.current = t, e));
 
-// node_modules/effect/dist/Ref.js
+
 var AS = "~effect/Ref", OS = {
   [AS]: {
     _A: Qe
@@ -3167,7 +3167,7 @@ var AS = "~effect/Ref", OS = {
 }, "makeUnsafe"), wa = r((e) => et(() => LS(e)), "make"), ig = r((e) => et(() => e.ref.current), "get"), Ea = ge(2, (e, t) => et(() => sg(e.ref, t)));
 var ag = r((e) => e.ref.current, "getUnsafe");
 
-// src/daemon/app/services/background.ts
+
 var Vr = class extends ut("BackgroundOperationalError") {
   static {
     r(this, "BackgroundOperationalError");
@@ -3192,7 +3192,7 @@ var Vr = class extends ut("BackgroundOperationalError") {
   }
 };
 
-// src/daemon/app/background-owner.ts
+
 var DS = 1e3, Xl = class extends ut("BackgroundJoinTimeoutError") {
   static {
     r(this, "BackgroundJoinTimeoutError");
@@ -3386,7 +3386,7 @@ function ug(e) {
 }
 r(ug, "prepareBackgroundOwner");
 
-// src/daemon/app/http-server-owner.ts
+
 function Ql(e) {
   let { name: t, ingress: n, transport: o } = e, s = null, i = !1, a = null;
   return { service: { state: r(() => o.lifecycle.isQuiescing() ? "quiescing" : s ? "listening" : "unbound", "state"), address: r(() => s ? { hostname: s.hostname, port: s.port } : null, "address"), runRequest: r((_, m, H) => n.runPromiseExit(_, m, H), "runRequest") }, bind: r(async (_, m) => {
@@ -3418,7 +3418,7 @@ function dg(e) {
 }
 r(dg, "makeUnboundHttpServer");
 
-// src/daemon/app/lifecycle-coordinator.ts
+
 var BS = Object.freeze([
   "quiescing",
   "stopping-producers",
@@ -3448,7 +3448,7 @@ var BS = Object.freeze([
   get signal() {
     return this.forcedSignal;
   }
-  /** Returns true only for the transition that opened the latch. */
+  
   force(t) {
     if (this.forcedSignal) return !1;
     let n = { reason: t };
@@ -3458,11 +3458,11 @@ var BS = Object.freeze([
     for (let s of o) this.notify(s, n);
     return !0;
   }
-  /**
-   * Register a synchronous escalation callback. A callback registered after
-   * force observes the same signal immediately. The returned removal is
-   * idempotent.
-   */
+  
+
+
+
+
   onForce(t) {
     let n = this.forcedSignal;
     if (n)
@@ -3474,7 +3474,7 @@ var BS = Object.freeze([
       o && (o = !1, this.listeners.delete(t));
     };
   }
-  /** One shared completion; callers do not allocate per-signal waiters. */
+  
   whenForced() {
     return this.forcePromise;
   }
@@ -3601,14 +3601,14 @@ var ba = class {
   get forced() {
     return this.forceLatch.forced;
   }
-  /** Callback-safe escalation entrypoint for the host signal observer. */
+  
   force(t) {
     return this.currentState === "closed" ? !1 : this.forceLatch.force(t);
   }
-  /**
-   * Returns the exact same cold Effect for every call. The first trigger wins;
-   * later callers participate in the same close and may escalate via `force`.
-   */
+  
+
+
+
   close(t = fg) {
     return this.closeEffect ? this.closeEffect : (this.closeRequested = !0, this.trigger = t, this.closeEffect = _o(cn(() => this.ensureCloseStarted())), this.closeEffect);
   }
@@ -3738,7 +3738,7 @@ var ba = class {
   }
 };
 
-// src/daemon/app/daemon-resource-lifecycle.ts
+
 var mg = new WeakMap();
 function nu(e, t) {
   return t.filter(
@@ -3866,7 +3866,7 @@ var tu = class {
       }
     };
   }
-  /** Publish the shared completion before invoking a re-entrant owner callback. */
+  
   runOnce(t, n) {
     let o = this.runs.get(t);
     if (o) return o;
@@ -4130,7 +4130,7 @@ function gg(e) {
 }
 r(gg, "makeDaemonResourceLifecycleOwner");
 
-// src/daemon/app/services/daemon-lifecycle.ts
+
 var ss = class extends Lt()(
   "fleetdeck/daemon/app/DaemonLifecycle"
 ) {
@@ -4139,7 +4139,7 @@ var ss = class extends Lt()(
   }
 };
 
-// src/daemon/app/services/http-server.ts
+
 var ka = class extends Lt()(
   "fleetdeck/daemon/app/HttpServer"
 ) {
@@ -4148,14 +4148,14 @@ var ka = class extends Lt()(
   }
 };
 
-// src/daemon/app/services/ingress-supervisor.ts
+
 var is = class extends Lt()("fleetdeck/daemon/app/IngressSupervisor") {
   static {
     r(this, "IngressSupervisor");
   }
 };
 
-// src/daemon/app/services/process-runner.ts
+
 var zn = class extends Lt()(
   "fleetdeck/daemon/app/ProcessRunner"
 ) {
@@ -4172,14 +4172,14 @@ function wg(e) {
 }
 r(wg, "execBoundedEffect");
 
-// src/daemon/app/services/process-runtime-control.ts
+
 var as = class extends Lt()("fleetdeck/daemon/app/ProcessRuntimeControl") {
   static {
     r(this, "ProcessRuntimeControl");
   }
 };
 
-// src/daemon/platform/bun/ingress-supervisor-live.ts
+
 var ru = class {
   static {
     r(this, "LiveIngressSupervisor");
@@ -4328,7 +4328,7 @@ function Eg() {
 }
 r(Eg, "makeIngressSupervisorLayer");
 
-// src/daemon/app/services/process-driver.ts
+
 var ou = 3e4, su = 1e3, Ra = 1024 * 1024;
 function yg(e, t) {
   let n = jr((o) => {
@@ -4389,7 +4389,7 @@ function _g(e) {
 }
 r(_g, "makeProcessRunnerServiceFromDriver");
 
-// src/daemon/platform/bun/process-driver.ts
+
 var Rg = {
   ok: !1,
   code: "ECANCELED",
@@ -4800,11 +4800,11 @@ var cu = class {
   close() {
     return this.beginClose(!1);
   }
-  /**
-   * Callback-safe root escalation. Admission closes and every active child or
-   * detached process group receives SIGKILL before this method returns. The
-   * same close Promise retains the asynchronous waitpid/stream join.
-   */
+  
+
+
+
+
   forceClose() {
     if (this.closePromise) {
       for (let t of [...this.active]) t.force();
@@ -4833,7 +4833,7 @@ function Pg() {
 }
 r(Pg, "makeBunProcessDriver");
 
-// src/daemon/platform/bun/process-runner-live.ts
+
 var lu = Qs(
   ei(
     et(Pg),
@@ -4850,7 +4850,7 @@ var lu = Qs(
   )
 );
 
-// src/daemon/app/live-layer.ts
+
 function ax(e) {
   return e instanceof Error ? e.message : String(e);
 }
@@ -5096,15 +5096,15 @@ function Lg(e, t) {
 }
 r(Lg, "composeDaemonRootLayer");
 
-// src/daemon/app/program.ts
+
 import gn from "node:fs";
 import TE from "node:crypto";
 import Pd from "node:path";
 
-// src/daemon/db.ts
+
 import { chmodSync as fx, statSync as px } from "node:fs";
 
-// src/daemon/sqlite.ts
+
 var du;
 if (process.versions.bun) {
   let { Database: e } = await import("bun:sqlite");
@@ -5152,7 +5152,7 @@ function Ig(e) {
 }
 r(Ig, "openDatabase");
 
-// src/daemon/errors.ts
+
 function tt(e) {
   if (typeof e == "object" && e !== null) {
     let t = e.code;
@@ -5182,7 +5182,7 @@ function tn(e) {
 }
 r(tn, "errStatus");
 
-// src/daemon/db.ts
+
 var mx = `
 PRAGMA busy_timeout = 5000;
 PRAGMA journal_mode = WAL;
@@ -5479,7 +5479,7 @@ function Mg(e, t = { chmodSync: fx, statSync: px }) {
 }
 r(Mg, "openDb");
 
-// src/daemon/daemon-resources.ts
+
 var Pa = class {
   static {
     r(this, "DaemonResources");
@@ -5527,7 +5527,7 @@ var Pa = class {
   get closeErrors() {
     return this.failures;
   }
-  /** Seal acquisition and expose an app-agnostic ownership snapshot exactly once. */
+  
   sealLifecycleOwnership() {
     if (this.lifecycleSnapshot) return this.lifecycleSnapshot;
     if (this.closePromise) throw new Error("daemon resources are closing");
@@ -5587,11 +5587,11 @@ var Pa = class {
   }
 };
 
-// src/daemon/derive.ts
+
 import Zu from "node:fs";
 import jb from "node:path";
 
-// src/daemon/repo-identity.ts
+
 import { execFileSync as yx } from "node:child_process";
 import cs from "node:fs";
 import ft from "node:path";
@@ -5729,7 +5729,7 @@ function jg(e, t) {
 }
 r(jg, "ledgerKey");
 
-// src/daemon/tickets.ts
+
 var Gg = "([A-Z][A-Z0-9]{1,9})-([1-9][0-9]*)", kx = new RegExp(`(?<![A-Za-z0-9])${Gg}(?![A-Za-z0-9])`), Rx = new RegExp(`^${Gg}$`);
 function Sr(e) {
   if (typeof e != "string" || !e) return null;
@@ -5750,12 +5750,12 @@ function si(e) {
 }
 r(si, "animalOf");
 
-// src/daemon/helpers.ts
+
 import ii from "node:path";
 import xn from "node:fs";
 import fu from "node:os";
 
-// src/daemon/env-scrub.ts
+
 var Vg = [
   "CLAUDECODE",
   "CLAUDE_CODE_SESSION_ID",
@@ -5778,7 +5778,7 @@ var Vg = [
   "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"
 ], Xg = ["FLEETDECK_SETUP_CMD"];
 
-// src/daemon/helpers.ts
+
 function mt(e, t, { min: n = 0 } = {}) {
   let o = Number(process.env[e]);
   return Number.isFinite(o) && o >= n ? Math.floor(o) : t;
@@ -6070,7 +6070,7 @@ function Da(e) {
 r(Da, "validateNameSuffix");
 var ds = /^(sh|bash|zsh|zsh-.*)$/;
 
-// src/daemon/questions.ts
+
 var Lx = "[FLEETDECK] Your plan was captured to the fleet plan library — do not execute it. Wrap up your turn.", ih = 6e5, Dx = 4, nh = 5e3, Ix = 8, zr = new Set(["permission", "elicitation", "choice"]), Nx = 3e3, Mx = 6e4, Fx = 2;
 function Xr(e = process.env, t = null) {
   let n = Number(e?.FLEETDECK_HOLD_MS);
@@ -6776,7 +6776,7 @@ function sh(e) {
 }
 r(sh, "clipQuestion");
 
-// src/daemon/transcript.ts
+
 import vo from "node:fs";
 function uh(e, { maxBytes: t = 262144 } = {}) {
   let n = vo.statSync(e), o = Math.max(0, n.size - t), s = Buffer.alloc(n.size - o), i = vo.openSync(e, "r"), a;
@@ -6878,7 +6878,7 @@ function fh(e, { minOffset: t = 0 } = {}) {
 }
 r(fh, "lastAssistantModel");
 
-// src/daemon/spawn.ts
+
 var Pu = {};
 ME(Pu, {
   FIELD_SEP: () => Qt,
@@ -6905,7 +6905,7 @@ ME(Pu, {
 });
 import { execFileSync as iv, spawn as av } from "node:child_process";
 
-// src/daemon/payload-capture.ts
+
 import di from "node:fs";
 import qx from "node:path";
 var Hx = 1e6, Wx = 64e3, jx = 3, Gx = r(() => {
@@ -7086,7 +7086,7 @@ function mh(e, {
 }
 r(mh, "createPayloadCapture");
 
-// src/daemon/exec.ts
+
 var fi = null;
 function gh(e) {
   if (fi) throw new Error("execFileP delegate is already bound");
@@ -7190,13 +7190,13 @@ async function fs(e) {
 }
 r(fs, "baseBranch");
 
-// src/daemon/spawn.ts
+
 import { randomUUID as Ua } from "node:crypto";
 import { constants as yh } from "node:fs";
 import { link as cv, open as bu, rename as lv, unlink as ku } from "node:fs/promises";
 import Ba from "node:path";
 
-// bin/tmux-version.ts
+
 function wh(e) {
   let t = /^tmux\s+(\d+)\.(\d+)([a-z][a-z0-9-]*)?\s*$/i.exec(String(e ?? ""));
   if (!t) return null;
@@ -7224,7 +7224,7 @@ function Eh(e) {
 }
 r(Eh, "tmuxVersionCapability");
 
-// src/daemon/spawn.ts
+
 var uv = 5e3, Qt = "~";
 async function dn(e, { noStart: t = !1 } = {}) {
   try {
@@ -7930,7 +7930,7 @@ function Lv(e, t, n = () => {
 }
 r(Lv, "launchOverride");
 
-// src/daemon/statements.ts
+
 function Dv(e) {
   let t = {
     getSession: e.prepare("SELECT * FROM sessions WHERE session_id = ?"),
@@ -8590,7 +8590,7 @@ function Ah(e) {
 }
 r(Ah, "createStatements");
 
-// src/daemon/worktrees.ts
+
 import Au from "node:fs";
 import gs from "node:path";
 function ja(e) {
@@ -8921,13 +8921,13 @@ function Lh(e) {
 }
 r(Lh, "createWorktrees");
 
-// src/daemon/repos.ts
+
 import Fn from "node:fs";
 import Du from "node:os";
 import Tt from "node:path";
 import { createHash as Nv } from "node:crypto";
 
-// src/daemon/repo-policy.ts
+
 function Ga({
   setting: e = null,
   coder: t = !1
@@ -8936,7 +8936,7 @@ function Ga({
 }
 r(Ga, "repoTransportChoice");
 
-// src/daemon/repos.ts
+
 var Mv = /[\x00-\x1f\x7f]/, Ka = /[\s\x00-\x1f\x7f]/, $h = /^[A-Za-z0-9._-]+$/, Fv = "textemma", $v = 3e4, Bv = 256;
 function Uv(e, t, n) {
   for (let [o, s] of e)
@@ -9674,7 +9674,7 @@ ${V.err}`);
 }
 r(Uh, "createRepos");
 
-// src/daemon/settings.ts
+
 import Va from "node:fs";
 import Mu from "node:os";
 import vr from "node:path";
@@ -10168,7 +10168,7 @@ function Vh(e) {
 }
 r(Vh, "createSettings");
 
-// src/daemon/files.ts
+
 import $t from "node:fs";
 import Qv from "node:os";
 import pn from "node:path";
@@ -10652,7 +10652,7 @@ function ow(e) {
 }
 r(ow, "createFiles");
 
-// src/daemon/paste.ts
+
 import Zn from "node:fs";
 import sw from "node:os";
 import yi from "node:path";
@@ -10765,7 +10765,7 @@ function cw(e) {
 }
 r(cw, "pasteImage");
 
-// src/daemon/mail.ts
+
 var $n = 4e3;
 function vb(e) {
   return e.length <= $n ? e : ui(e.slice(0, $n));
@@ -11117,7 +11117,7 @@ function dw(e) {
 }
 r(dw, "createMail");
 
-// src/daemon/ledger.ts
+
 import Wu from "node:path";
 var ju = 1800 * 1e3;
 function fw(e) {
@@ -11157,7 +11157,7 @@ function fw(e) {
 }
 r(fw, "createLedger");
 
-// src/daemon/ingest.ts
+
 function pw(e) {
   let { q: t, assignCallsign: n, updateSession: o, tick: s, onMutate: i, touchRepo: a } = e;
   function c(l) {
@@ -11231,7 +11231,7 @@ function pw(e) {
 }
 r(pw, "createIngest");
 
-// src/daemon/commands.ts
+
 function mw(e) {
   let {
     q: t,
@@ -11339,7 +11339,7 @@ function mw(e) {
 }
 r(mw, "createCommands");
 
-// src/daemon/plans.ts
+
 function gw(e) {
   let { q: t, tick: n, onMutate: o, mail: s, resolveTargets: i } = e, a = new Set([
     "proposed",
@@ -11408,19 +11408,19 @@ ${h.plan_md ?? ""}`;
 }
 r(gw, "createPlans");
 
-// src/daemon/spawns.ts
+
 import vn from "node:fs";
 import ys from "node:path";
 import { randomUUID as _s, randomBytes as Db } from "node:crypto";
 
-// src/daemon/spawn-attention.ts
+
 var Gu = "waiting on the folder-trust dialog — approve it in the terminal", Ku = "no bring-up keystroke sent — pane unreadable; check the terminal";
 function hw(e) {
   return e === Gu ? "folder-trust" : e === Ku ? "pane-unreadable" : null;
 }
 r(hw, "spawnAttentionForNote");
 
-// src/daemon/spawns.ts
+
 function ww(e) {
   return e.remote_control != null && typeof e.remote_control != "boolean" ? "remote_control must be a boolean" : e.gateway != null && typeof e.gateway != "boolean" ? "gateway must be a boolean" : e.arm_token != null && typeof e.arm_token != "string" ? "arm_token must be a string" : null;
 }
@@ -13264,7 +13264,7 @@ ${J}` : j), i();
 }
 r(_w, "createSpawns");
 
-// src/daemon/events.ts
+
 import Ss from "node:path";
 var $b = ["Edit", "Write", "MultiEdit", "NotebookEdit"], Bb = /\b(pytest|jest|vitest|go test|cargo test|npm (run )?test)\b/;
 function Ub(e, t = pu()) {
@@ -13616,7 +13616,7 @@ function Sw(e) {
 }
 r(Sw, "createEvents");
 
-// contracts/validate.ts
+
 function _i(e) {
   return { ok: !0, value: e };
 }
@@ -13634,19 +13634,19 @@ function Xu(e) {
 }
 r(Xu, "isNonEmptyString");
 
-// contracts/hooks.ts
+
 function Yu(e) {
   return Si(e) ? Xu(e.session_id) ? _i(e) : xs("hook body requires a non-empty string session_id") : xs("hook body must be a JSON object");
 }
 r(Yu, "validateHookEvent");
 
-// contracts/spawn.ts
+
 function Ju(e) {
   return Si(e) ? _i(e) : xs("spawn body must be a JSON object");
 }
 r(Ju, "validateSpawnRequest");
 
-// src/daemon/snapshot.ts
+
 function vw(e) {
   let {
     q: t,
@@ -13897,10 +13897,10 @@ function vw(e) {
 }
 r(vw, "createSnapshot");
 
-// src/daemon/retention.ts
+
 import Wb from "node:fs";
 
-// src/daemon/run-nonce.ts
+
 import Qu from "node:fs";
 import qb from "node:path";
 var Hb = r((e) => typeof e == "number" && Number.isInteger(e) && e > 0, "isPid");
@@ -13934,7 +13934,7 @@ function bw(e, { minAgeMs: t = 36e5, now: n = Date.now() } = {}) {
 }
 r(bw, "pruneRunNonces");
 
-// src/daemon/retention.ts
+
 function kw(e) {
   let {
     q: t,
@@ -14241,7 +14241,7 @@ function kw(e) {
 }
 r(kw, "createRetention");
 
-// src/daemon/derive.ts
+
 var nc = [
   "falcon",
   "otter",
@@ -14826,13 +14826,13 @@ function Rw(e, {
 }
 r(Rw, "createCore");
 
-// src/daemon/http.ts
+
 import dk from "node:os";
 import fk from "node:fs";
 import id from "node:path";
 import { fileURLToPath as pk } from "node:url";
 
-// src/daemon/os-net.ts
+
 import { readFileSync as Gb } from "node:fs";
 import Kb from "node:os";
 var Tw = null, Cw = [{ family: "IPv4", internal: !1, address: "192.0.2.77" }];
@@ -14863,7 +14863,7 @@ function xi() {
 }
 r(xi, "networkInterfaces");
 
-// src/daemon/termbridge.ts
+
 import { spawn as zb } from "node:child_process";
 import { StringDecoder as Ow } from "node:string_decoder";
 var Xb = new Set(["spawning", "stalled", "live"]), Pw = 1024, Yb = 5e3, Jb = mt("FLEETDECK_TERM_CMD_TIMEOUT_MS", 1e4, { min: 100 }), Qb = mt("FLEETDECK_TERM_CLOSE_RECHECK_MS", 1e3, { min: 50 }), Lw = mt("FLEETDECK_TERM_INPUT_MAX_BYTES", 256 * 1024, { min: 1024 }), Zb = mt("FLEETDECK_TERM_PENDING_MAX_BYTES", Lw, {
@@ -15584,7 +15584,7 @@ function Dw({
 }
 r(Dw, "createTermBridge");
 
-// src/daemon/http-policy.ts
+
 import { timingSafeEqual as ak } from "node:crypto";
 import Iw from "node:path";
 function mn(e) {
@@ -15742,7 +15742,7 @@ function Gw(e) {
 }
 r(Gw, "repoPreflightBodyError");
 
-// src/daemon/http.ts
+
 var mk = 1e6, Kw = 14e6, gk = 1e3, hk = (() => {
   let e = Number(process.env.FLEETDECK_STALL_FIN_S);
   return Number.isFinite(e) && e > 0 ? e : 120;
@@ -17212,7 +17212,7 @@ function Vw(e, {
 }
 r(Vw, "createHttp");
 
-// src/daemon/mdns.ts
+
 import bk from "node:dgram";
 var Bn = "224.0.0.251", er = 5353, Gt = { A: 1, PTR: 12, TXT: 16, AAAA: 28, SRV: 33, ANY: 255 }, Xw = Object.fromEntries(
   Object.entries(Gt).map(([e, t]) => [t, e])
@@ -17938,7 +17938,7 @@ function nE({
 }
 r(nE, "createMdns");
 
-// src/daemon/test-seam.ts
+
 import { appendFileSync as yd } from "node:fs";
 function Fk() {
   return process.env.FLEETDECK_TEST_NET_MOCK === "1";
@@ -18027,7 +18027,7 @@ function iE(e) {
 }
 r(iE, "recordRefreshLan");
 
-// src/daemon/takeover.ts
+
 import _d from "node:fs";
 import lE from "node:path";
 function cc(e) {
@@ -18169,7 +18169,7 @@ async function fE(e, {
 }
 r(fE, "terminateDaemon");
 
-// src/daemon/app/agents-poll.ts
+
 var Hk = 1e4, Wk = 6e4, jk = 100, Gk = 1e3, Kk = ["claude", "agents", "--json"], Vk = 5e3, xd = class extends ut("AgentsPollDecodeError") {
   static {
     r(this, "AgentsPollDecodeError");
@@ -18310,7 +18310,7 @@ function pE(e, t = {}) {
 }
 r(pE, "makeAgentsPollProgram");
 
-// src/daemon/app/boot-reconciliation.ts
+
 function gE(e, t) {
   return new Vr({
     operation: `boot-${e}`,
@@ -18380,7 +18380,7 @@ function wE(e, t) {
 }
 r(wE, "makeBootReconciliationProgram");
 
-// src/daemon/app/background-program.ts
+
 var Rd = class extends ut(
   "BackgroundProgramUnexpectedExitError"
 ) {
@@ -18430,7 +18430,7 @@ function EE(e, t) {
 }
 r(EE, "makeDaemonBackgroundProgram");
 
-// src/daemon/app/fixed-grid-schedule.ts
+
 function rR(e) {
   let t = ao(jn(e));
   if (!Number.isFinite(t) || t <= 0)
@@ -18460,7 +18460,7 @@ function dc(e, t) {
 }
 r(dc, "fixedGridNoCatchUp");
 
-// src/daemon/app/lan-refresh.ts
+
 function oR(e, t) {
   return e.length === t.length && [...e].sort().join(" ") === [...t].sort().join(" ");
 }
@@ -18487,7 +18487,7 @@ function yE(e) {
 }
 r(yE, "lanRefresh");
 
-// src/daemon/app/legacy-process-facade.ts
+
 var _E = {
   ok: !1,
   code: "ECANCELED",
@@ -18550,7 +18550,7 @@ function vE(e) {
 }
 r(vE, "makeIngressExecFileDelegate");
 
-// src/daemon/app/retention-schedule.ts
+
 var lR = 600 * 1e3, uR = 1440 * 60 * 1e3;
 function bE(e, t) {
   return new Vr({
@@ -18660,7 +18660,7 @@ function RE(e) {
 }
 r(RE, "makeRetentionSchedule");
 
-// src/daemon/app/program.ts
+
 function CE(e, t = null) {
   return new Vn({
     reason: e,
@@ -19187,7 +19187,7 @@ function PE(e, t, n, o) {
 }
 r(PE, "acquireDaemonResources");
 
-// src/daemon/app/root-program.ts
+
 var AE = 1750, wR = Il(ng, lu);
 function ER(e, t) {
   return e.firstSignal && Tl(t) && an(t.cause) ? { _tag: "Interruption", signal: e.firstSignal } : uu(t);
@@ -19290,7 +19290,7 @@ function bR(e) {
 r(bR, "makeDaemonApp");
 var Ad = new ha(), LE = bR(Ad);
 
-// src/daemon/fleetd.ts
+
 zm(LE, {
   disableErrorReporting: !0,
   teardown: Ad.teardown
