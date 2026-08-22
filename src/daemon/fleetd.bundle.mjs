@@ -9,7 +9,7 @@ var yE = (e, t) => {
 };
 
 // node_modules/effect/dist/Pipeable.js
-var It = /* @__PURE__ */ r((e, t) => {
+var It = r((e, t) => {
   switch (t.length) {
     case 0:
       return e;
@@ -41,7 +41,7 @@ var It = /* @__PURE__ */ r((e, t) => {
 }, "pipeArguments");
 
 // node_modules/effect/dist/Function.js
-var me = /* @__PURE__ */ r(function(e, t) {
+var me = r(function(e, t) {
   if (typeof e == "function")
     return function() {
       return e(arguments) ? t.apply(this, arguments) : (n) => t(n, ...arguments);
@@ -73,12 +73,12 @@ var me = /* @__PURE__ */ r(function(e, t) {
       };
   }
 }, "dual");
-var Ge = /* @__PURE__ */ r((e) => e, "identity");
-var Un = /* @__PURE__ */ r((e) => () => e, "constant"), xs = /* @__PURE__ */ Un(!0), Pd = /* @__PURE__ */ Un(!1);
-var vs = /* @__PURE__ */ Un(void 0), To = vs;
+var Ge = r((e) => e, "identity");
+var Un = r((e) => () => e, "constant"), xs = Un(!0), Pd = Un(!1);
+var vs = Un(void 0), To = vs;
 
 // node_modules/effect/dist/internal/equal.js
-var bs = /* @__PURE__ */ r((e) => {
+var bs = r((e) => {
   let t = new Set(Reflect.ownKeys(e));
   if (e.constructor === Object) return t;
   e instanceof Error && t.delete("stack");
@@ -90,7 +90,7 @@ var bs = /* @__PURE__ */ r((e) => {
     o = Object.getPrototypeOf(o);
   }
   return t.has("constructor") && typeof e.constructor == "function" && n === e.constructor.prototype && t.delete("constructor"), t;
-}, "getAllObjectKeys"), ks = /* @__PURE__ */ new WeakSet();
+}, "getAllObjectKeys"), ks = new WeakSet();
 
 // node_modules/effect/dist/Predicate.js
 function fc(e) {
@@ -109,14 +109,14 @@ function SE(e) {
   return typeof e == "object" && e !== null || pc(e);
 }
 r(SE, "isObjectKeyword");
-var He = /* @__PURE__ */ me(2, (e, t) => SE(e) && t in e), Od = /* @__PURE__ */ me(2, (e, t) => He(e, "_tag") && e._tag === t);
+var He = me(2, (e, t) => SE(e) && t in e), Od = me(2, (e, t) => He(e, "_tag") && e._tag === t);
 function Ld(e) {
   return He(e, Symbol.iterator) || fc(e);
 }
 r(Ld, "isIterable");
 
 // node_modules/effect/dist/Hash.js
-var vt = "~effect/interfaces/Hash", Ye = /* @__PURE__ */ r((e) => {
+var vt = "~effect/interfaces/Hash", Ye = r((e) => {
   switch (typeof e) {
     case "number":
       return Co(e);
@@ -150,7 +150,7 @@ var vt = "~effect/interfaces/Hash", Ye = /* @__PURE__ */ r((e) => {
     default:
       throw new Error(`BUG: unhandled typeof ${typeof e} - please report an issue at https://github.com/Effect-TS/effect/issues`);
   }
-}, "hash"), ki = /* @__PURE__ */ r((e) => (mc.has(e) || mc.set(e, Co(Math.floor(Math.random() * Number.MAX_SAFE_INTEGER))), mc.get(e)), "random"), Ht = /* @__PURE__ */ me(2, (e, t) => e * 53 ^ t), Ti = /* @__PURE__ */ r((e) => e & 3221225471 | e >>> 1 & 1073741824, "optimize"), xE = /* @__PURE__ */ r((e) => He(e, vt), "isHash"), Co = /* @__PURE__ */ r((e) => {
+}, "hash"), ki = r((e) => (mc.has(e) || mc.set(e, Co(Math.floor(Math.random() * Number.MAX_SAFE_INTEGER))), mc.get(e)), "random"), Ht = me(2, (e, t) => e * 53 ^ t), Ti = r((e) => e & 3221225471 | e >>> 1 & 1073741824, "optimize"), xE = r((e) => He(e, vt), "isHash"), Co = r((e) => {
   if (e !== e)
     return St("NaN");
   if (e === 1 / 0)
@@ -161,22 +161,22 @@ var vt = "~effect/interfaces/Hash", Ye = /* @__PURE__ */ r((e) => {
   for (t !== e && (t ^= e * 4294967295); e > 4294967295; )
     t ^= e /= 4294967295;
   return Ti(t);
-}, "number"), St = /* @__PURE__ */ r((e) => {
+}, "number"), St = r((e) => {
   let t = 5381, n = e.length;
   for (; n; )
     t = t * 33 ^ e.charCodeAt(--n);
   return Ti(t);
-}, "string"), wc = /* @__PURE__ */ r((e, t) => {
+}, "string"), wc = r((e, t) => {
   let n = 12289;
   for (let o of t)
     n ^= Ht(Ye(o), Ye(e[o]));
   return Ti(n);
-}, "structureKeys"), Ec = /* @__PURE__ */ r((e) => wc(e, bs(e)), "structure"), yc = /* @__PURE__ */ r((e, t) => (n) => {
+}, "structureKeys"), Ec = r((e) => wc(e, bs(e)), "structure"), yc = r((e, t) => (n) => {
   let o = e;
   for (let s of n)
     o ^= t(s);
   return Ti(o);
-}, "iterableWith"), Ri = /* @__PURE__ */ yc(6151, Ye), vE = /* @__PURE__ */ yc(/* @__PURE__ */ St("Map"), ([e, t]) => Ht(Ye(e), Ye(t))), bE = /* @__PURE__ */ yc(/* @__PURE__ */ St("Set"), Ye), mc = /* @__PURE__ */ new WeakMap(), gc = /* @__PURE__ */ new WeakMap(), hc = /* @__PURE__ */ new WeakSet();
+}, "iterableWith"), Ri = yc(6151, Ye), vE = yc(St("Map"), ([e, t]) => Ht(Ye(e), Ye(t))), bE = yc(St("Set"), Ye), mc = new WeakMap(), gc = new WeakMap(), hc = new WeakSet();
 function kE(e, t) {
   if (hc.has(e))
     return St("[Circular]");
@@ -210,7 +210,7 @@ function RE(e, t, n) {
   return _c.delete(e), Sc.delete(t), i;
 }
 r(RE, "withVisitedTracking");
-var _c = /* @__PURE__ */ new WeakSet(), Sc = /* @__PURE__ */ new WeakSet();
+var _c = new WeakSet(), Sc = new WeakSet();
 function TE(e, t) {
   if (Ye(e) !== Ye(t))
     return !1;
@@ -250,16 +250,16 @@ r(TE, "compareObjects");
 function CE(e, t, n) {
   let o = Ci.get(e);
   if (!o)
-    o = /* @__PURE__ */ new WeakMap(), Ci.set(e, o);
+    o = new WeakMap(), Ci.set(e, o);
   else if (o.has(t))
     return o.get(t);
   let s = n(e, t);
   o.set(t, s);
   let i = Ci.get(t);
-  return i || (i = /* @__PURE__ */ new WeakMap(), Ci.set(t, i)), i.set(e, s), s;
+  return i || (i = new WeakMap(), Ci.set(t, i)), i.set(e, s), s;
 }
 r(CE, "withCache");
-var Ci = /* @__PURE__ */ new WeakMap();
+var Ci = new WeakMap();
 function PE(e, t) {
   for (let n = 0; n < e.length; n++)
     if (!Yr(e[n], t[n]))
@@ -287,7 +287,7 @@ function AE(e, t) {
 }
 r(AE, "compareRecords");
 function OE(e, t) {
-  return /* @__PURE__ */ r(function(o, s) {
+  return r(function(o, s) {
     let i = Array.from(s);
     for (let [a, l] of o) {
       let u = !1;
@@ -305,9 +305,9 @@ function OE(e, t) {
   }, "compareMaps");
 }
 r(OE, "makeCompareMap");
-var LE = /* @__PURE__ */ OE(Yr, Yr);
+var LE = OE(Yr, Yr);
 function DE(e) {
-  return /* @__PURE__ */ r(function(n, o) {
+  return r(function(n, o) {
     let s = Array.from(o);
     for (let i of n) {
       let a = !1;
@@ -325,10 +325,10 @@ function DE(e) {
   }, "compareSets");
 }
 r(DE, "makeCompareSet");
-var IE = /* @__PURE__ */ DE(Yr), Nd = /* @__PURE__ */ r((e) => He(e, bt), "isEqual");
+var IE = DE(Yr), Nd = r((e) => He(e, bt), "isEqual");
 
 // node_modules/effect/dist/Redactable.js
-var Rs = /* @__PURE__ */ Symbol.for("~effect/Redactable"), NE = /* @__PURE__ */ r((e) => He(e, Rs), "isRedactable");
+var Rs = Symbol.for("~effect/Redactable"), NE = r((e) => He(e, Rs), "isRedactable");
 function Po(e) {
   return NE(e) ? xc(e) : e;
 }
@@ -337,7 +337,7 @@ function xc(e) {
   return e[Rs](globalThis[Ao]?.context ?? ME);
 }
 r(xc, "getRedacted");
-var Ao = "~effect/Fiber/currentFiber", Md = /* @__PURE__ */ new Map(), ME = {
+var Ao = "~effect/Fiber/currentFiber", Md = new Map(), ME = {
   "~effect/Context": {},
   base: Md,
   depth: 0,
@@ -349,10 +349,10 @@ var Ao = "~effect/Fiber/currentFiber", Md = /* @__PURE__ */ new Map(), ME = {
 
 // node_modules/effect/dist/Formatter.js
 function Nt(e, t) {
-  let n = t?.space ?? 0, o = /* @__PURE__ */ new WeakSet(), s = n ? typeof n == "number" ? " ".repeat(n) : n : "", i = /* @__PURE__ */ r((p) => s.repeat(p), "ind"), a = /* @__PURE__ */ r((p, E) => {
+  let n = t?.space ?? 0, o = new WeakSet(), s = n ? typeof n == "number" ? " ".repeat(n) : n : "", i = r((p) => s.repeat(p), "ind"), a = r((p, E) => {
     let w = p?.constructor;
     return w && w !== Object.prototype.constructor && w.name ? `${w.name}(${E})` : E;
-  }, "wrap"), l = /* @__PURE__ */ r((p) => {
+  }, "wrap"), l = r((p) => {
     try {
       return Reflect.ownKeys(p);
     } catch {
@@ -440,13 +440,13 @@ function Ts(e, t) {
 r(Ts, "formatJson");
 
 // node_modules/effect/dist/Inspectable.js
-var Ar = /* @__PURE__ */ Symbol.for("nodejs.util.inspect.custom"), qn = /* @__PURE__ */ r((e) => {
+var Ar = Symbol.for("nodejs.util.inspect.custom"), qn = r((e) => {
   try {
     return e = Po(e), He(e, "toJSON") && pc(e.toJSON) && e.toJSON.length === 0 ? e.toJSON() : Array.isArray(e) ? e.map(qn) : e;
   } catch {
     return "[toJSON threw]";
   }
-}, "toJson"), Bd = /* @__PURE__ */ r((e, t = 2) => {
+}, "toJson"), Bd = r((e, t = 2) => {
   if (typeof e == "string")
     return e;
   try {
@@ -540,14 +540,14 @@ var Or = class e {
   [Symbol.iterator]() {
     return new e(this.self);
   }
-}, UE = /* @__PURE__ */ r(() => {
+}, UE = r(() => {
   let e = "~effect/Utils/internal", t = {
     [e]: (s) => s()
   }, n = {
     [e]: (s) => s()
   };
   return t[e](() => new Error().stack)?.includes(e) === !0 ? t[e] : n[e];
-}, "pickInternalCall"), Mt = /* @__PURE__ */ UE();
+}, "pickInternalCall"), Mt = UE();
 
 // node_modules/effect/dist/internal/record.js
 function Pi(e, t, n) {
@@ -570,7 +570,7 @@ var cr = "~effect/Effect", Qr = "~effect/Exit", qE = {
   _A: Ge,
   _E: Ge,
   _R: Ge
-}, Hd = `${cr}/identifier`, Ne = `${cr}/args`, gt = `${cr}/evaluate`, jt = `${cr}/successCont`, mn = `${cr}/failureCont`, Lr = `${cr}/ensureCont`, Zr = /* @__PURE__ */ Symbol.for("effect/Effect/Yield"), Rn = {
+}, Hd = `${cr}/identifier`, Ne = `${cr}/args`, gt = `${cr}/evaluate`, jt = `${cr}/successCont`, mn = `${cr}/failureCont`, Lr = `${cr}/ensureCont`, Zr = Symbol.for("effect/Effect/Yield"), Rn = {
   pipe() {
     return It(this, arguments);
   },
@@ -615,7 +615,7 @@ var cr = "~effect/Effect", Qr = "~effect/Exit", qE = {
       } : void 0
     };
   }
-}, Ct = /* @__PURE__ */ r((e) => He(e, cr), "isEffect"), jd = /* @__PURE__ */ r((e) => He(e, Qr), "isExit"), Cs = "~effect/Cause", Ai = "~effect/Cause/Reason", As = /* @__PURE__ */ r((e) => He(e, Cs), "isCause");
+}, Ct = r((e) => He(e, cr), "isEffect"), jd = r((e) => He(e, Qr), "isExit"), Cs = "~effect/Cause", Ai = "~effect/Cause/Reason", As = r((e) => He(e, Cs), "isCause");
 var Wn = class {
   static {
     r(this, "CauseImpl");
@@ -646,7 +646,7 @@ var Wn = class {
   [vt]() {
     return Ri(this.reasons);
   }
-}, Wd = /* @__PURE__ */ new WeakMap(), Oo = class {
+}, Wd = new WeakMap(), Oo = class {
   static {
     r(this, "ReasonBase");
   }
@@ -678,7 +678,7 @@ var Wn = class {
   [Ar]() {
     return this.toString();
   }
-}, Os = /* @__PURE__ */ new Map(), Ps = class extends Oo {
+}, Os = new Map(), Ps = class extends Oo {
   static {
     r(this, "Fail");
   }
@@ -701,7 +701,7 @@ var Wn = class {
   [vt]() {
     return Ht(St(this._tag))(Ht(Ye(this.error))(Ye(this.annotations)));
   }
-}, Do = /* @__PURE__ */ r((e) => new Wn(e), "causeFromReasons"), bc = /* @__PURE__ */ new Wn([]), Gd = /* @__PURE__ */ r((e) => new Wn([new Ps(e)]), "causeFail"), Oi = class extends Oo {
+}, Do = r((e) => new Wn(e), "causeFromReasons"), bc = new Wn([]), Gd = r((e) => new Wn([new Ps(e)]), "causeFail"), Oi = class extends Oo {
   static {
     r(this, "Die");
   }
@@ -724,25 +724,25 @@ var Wn = class {
   [vt]() {
     return Ht(St(this._tag))(Ht(Ye(this.defect))(Ye(this.annotations)));
   }
-}, Kd = /* @__PURE__ */ r((e) => new Wn([new Oi(e)]), "causeDie"), Ls = /* @__PURE__ */ me((e) => As(e[0]), (e, t, n) => t.mapUnsafe.size === 0 ? e : new Wn(e.reasons.map((o) => o.annotate(t, n)))), Ds = /* @__PURE__ */ r((e) => e._tag === "Fail", "isFailReason"), Io = /* @__PURE__ */ r((e) => e._tag === "Die", "isDieReason"), Is = /* @__PURE__ */ r((e) => e._tag === "Interrupt", "isInterruptReason");
+}, Kd = r((e) => new Wn([new Oi(e)]), "causeDie"), Ls = me((e) => As(e[0]), (e, t, n) => t.mapUnsafe.size === 0 ? e : new Wn(e.reasons.map((o) => o.annotate(t, n)))), Ds = r((e) => e._tag === "Fail", "isFailReason"), Io = r((e) => e._tag === "Die", "isDieReason"), Is = r((e) => e._tag === "Interrupt", "isInterruptReason");
 function HE(e) {
   return Ir("Effect.evaluate: Not implemented");
 }
 r(HE, "defaultEvaluate");
-var lr = /* @__PURE__ */ r((e) => ({
+var lr = r((e) => ({
   ...WE,
   [Hd]: e.op,
   [gt]: e[gt] ?? HE,
   [jt]: e[jt],
   [mn]: e[mn],
   [Lr]: e[Lr]
-}), "makePrimitiveProto"), gn = /* @__PURE__ */ r((e) => {
+}), "makePrimitiveProto"), gn = r((e) => {
   let t = lr(e);
   return function() {
     let n = Object.create(t);
     return n[Ne] = e.single === !1 ? arguments : arguments[0], n;
   };
-}, "makePrimitive"), Vd = /* @__PURE__ */ r((e) => {
+}, "makePrimitive"), Vd = r((e) => {
   let t = {
     [Qr]: Qr,
     _tag: e.op,
@@ -771,7 +771,7 @@ var lr = /* @__PURE__ */ r((e) => ({
     let o = Object.create(t);
     return o[Ne] = n, o;
   };
-}, "makeExit"), Gt = /* @__PURE__ */ Vd({
+}, "makeExit"), Gt = Vd({
   op: "Success",
   prop: "value",
   [gt](e) {
@@ -782,39 +782,39 @@ var lr = /* @__PURE__ */ r((e) => ({
   key: "effect/Cause/StackTrace"
 }, kc = {
   key: "effect/Cause/InterruptorStackTrace"
-}, hn = /* @__PURE__ */ Vd({
+}, hn = Vd({
   op: "Failure",
   prop: "cause",
   [gt](e) {
     let t = this[Ne], n = !1;
     e.currentStackFrame && (t = Ls(t, {
-      mapUnsafe: /* @__PURE__ */ new Map([[Di.key, e.currentStackFrame]])
+      mapUnsafe: new Map([[Di.key, e.currentStackFrame]])
     }), n = !0);
     let o = e.getCont(mn);
     for (; e.interruptible && e._interruptedCause && o; )
       o = e.getCont(mn);
     return o ? o[mn](t, e, n ? void 0 : this) : e.yieldWith(n ? hn(t) : this);
   }
-}), Dr = /* @__PURE__ */ r((e) => hn(Gd(e)), "exitFail"), Ir = /* @__PURE__ */ r((e) => hn(Kd(e)), "exitDie"), Pt = /* @__PURE__ */ gn({
+}), Dr = r((e) => hn(Gd(e)), "exitFail"), Ir = r((e) => hn(Kd(e)), "exitDie"), Pt = gn({
   op: "WithFiber",
   [gt](e) {
     return this[Ne](e);
   }
-}), jE = /* @__PURE__ */ (function() {
+}), jE = (function() {
   class e extends globalThis.Error {
     static {
       r(this, "YieldableError");
     }
   }
-  let t = /* @__PURE__ */ lr({
+  let t = lr({
     op: "YieldableError",
     [gt]() {
       return Dr(this);
     }
   });
   return delete t.toString, Object.assign(e.prototype, t), e;
-})(), zd = /* @__PURE__ */ (function() {
-  let e = /* @__PURE__ */ Symbol.for("effect/Data/Error/plainArgs");
+})(), zd = (function() {
+  let e = Symbol.for("effect/Data/Error/plainArgs");
   return class extends jE {
     static {
       r(this, "Base");
@@ -834,7 +834,7 @@ var lr = /* @__PURE__ */ r((e) => ({
       };
     }
   };
-})(), ur = /* @__PURE__ */ r((e) => {
+})(), ur = r((e) => {
   class t extends zd {
     static {
       r(this, "Base");
@@ -843,7 +843,7 @@ var lr = /* @__PURE__ */ r((e) => ({
   }
   return t.prototype.name = e, t;
 }, "TaggedError"), vc = "~effect/Cause/NoSuchElementError";
-var Li = class extends (/* @__PURE__ */ ur("NoSuchElementError")) {
+var Li = class extends (ur("NoSuchElementError")) {
   static {
     r(this, "NoSuchElementError");
   }
@@ -853,18 +853,18 @@ var Li = class extends (/* @__PURE__ */ ur("NoSuchElementError")) {
       message: t
     });
   }
-}, Lo = "~effect/Cause/Done", Ii = /* @__PURE__ */ r((e) => He(e, Lo), "isDone"), Xd = {
+}, Lo = "~effect/Cause/Done", Ii = r((e) => He(e, Lo), "isDone"), Xd = {
   [Lo]: Lo,
   _tag: "Done",
   value: void 0
-}, Yd = /* @__PURE__ */ r((e) => e === void 0 ? Xd : {
+}, Yd = r((e) => e === void 0 ? Xd : {
   [Lo]: Lo,
   _tag: "Done",
   value: e
-}, "Done"), GE = /* @__PURE__ */ Dr(Xd), Jd = /* @__PURE__ */ r((e) => e === void 0 ? GE : Dr(Yd(e)), "done");
+}, "Done"), GE = Dr(Xd), Jd = r((e) => e === void 0 ? GE : Dr(Yd(e)), "done");
 
 // node_modules/effect/dist/Effectable.js
-var Qd = /* @__PURE__ */ r((e) => lr({
+var Qd = r((e) => lr({
   op: e.label,
   [gt]: e.evaluate
 }), "Prototype");
@@ -872,13 +872,13 @@ var Qd = /* @__PURE__ */ r((e) => lr({
 // node_modules/effect/dist/internal/option.js
 var Zd = "~effect/data/Option", ef = {
   [Zd]: {
-    _A: /* @__PURE__ */ r((e) => e, "_A")
+    _A: r((e) => e, "_A")
   },
   ...Rn,
   [Symbol.iterator]() {
     return new Or(this);
   }
-}, VE = /* @__PURE__ */ Object.defineProperty(/* @__PURE__ */ Object.assign(/* @__PURE__ */ Object.create(ef), {
+}, VE = Object.defineProperty(Object.assign(Object.create(ef), {
   _tag: "Some",
   _op: "Some",
   [bt](e) {
@@ -901,7 +901,7 @@ var Zd = "~effect/data/Option", ef = {
   get() {
     return this.value;
   }
-}), zE = /* @__PURE__ */ Ye("None"), XE = /* @__PURE__ */ Object.assign(/* @__PURE__ */ Object.create(ef), {
+}), zE = Ye("None"), XE = Object.assign(Object.create(ef), {
   _tag: "None",
   _op: "None",
   valueOrUndefined: void 0,
@@ -920,7 +920,7 @@ var Zd = "~effect/data/Option", ef = {
       _tag: this._tag
     };
   }
-}), Rc = /* @__PURE__ */ r((e) => He(e, Zd), "isOption"), tf = /* @__PURE__ */ r((e) => e._tag === "None", "isNone"), nf = /* @__PURE__ */ r((e) => e._tag === "Some", "isSome"), rf = /* @__PURE__ */ Object.create(XE), of = /* @__PURE__ */ r((e) => {
+}), Rc = r((e) => He(e, Zd), "isOption"), tf = r((e) => e._tag === "None", "isNone"), nf = r((e) => e._tag === "Some", "isSome"), rf = Object.create(XE), of = r((e) => {
   let t = Object.create(VE);
   return t.value = e, t;
 }, "some");
@@ -929,14 +929,14 @@ var Zd = "~effect/data/Option", ef = {
 var sf = "~effect/data/Result", af = {
   [sf]: {
     /* v8 ignore next 2 */
-    _A: /* @__PURE__ */ r((e) => e, "_A"),
-    _E: /* @__PURE__ */ r((e) => e, "_E")
+    _A: r((e) => e, "_A"),
+    _E: r((e) => e, "_E")
   },
   ...Rn,
   [Symbol.iterator]() {
     return new Or(this);
   }
-}, JE = /* @__PURE__ */ Object.assign(/* @__PURE__ */ Object.create(af), {
+}, JE = Object.assign(Object.create(af), {
   _tag: "Success",
   _op: "Success",
   [bt](e) {
@@ -955,7 +955,7 @@ var sf = "~effect/data/Result", af = {
       value: qn(this.success)
     };
   }
-}), QE = /* @__PURE__ */ Object.assign(/* @__PURE__ */ Object.create(af), {
+}), QE = Object.assign(Object.create(af), {
   _tag: "Failure",
   _op: "Failure",
   [bt](e) {
@@ -974,10 +974,10 @@ var sf = "~effect/data/Result", af = {
       failure: qn(this.failure)
     };
   }
-}), Tc = /* @__PURE__ */ r((e) => He(e, sf), "isResult"), Cc = /* @__PURE__ */ r((e) => e._tag === "Failure", "isFailure"), cf = /* @__PURE__ */ r((e) => e._tag === "Success", "isSuccess"), lf = /* @__PURE__ */ r((e) => {
+}), Tc = r((e) => He(e, sf), "isResult"), Cc = r((e) => e._tag === "Failure", "isFailure"), cf = r((e) => e._tag === "Success", "isSuccess"), lf = r((e) => {
   let t = Object.create(QE);
   return t.failure = e, t;
-}, "fail"), uf = /* @__PURE__ */ r((e) => {
+}, "fail"), uf = r((e) => {
   let t = Object.create(JE);
   return t.success = e, t;
 }, "succeed");
@@ -987,25 +987,25 @@ function df(e) {
   return (t, n) => t === n ? 0 : e(t, n);
 }
 r(df, "make");
-var ff = /* @__PURE__ */ df((e, t) => globalThis.Number.isNaN(e) && globalThis.Number.isNaN(t) ? 0 : globalThis.Number.isNaN(e) ? -1 : globalThis.Number.isNaN(t) ? 1 : e < t ? -1 : 1);
-var pf = /* @__PURE__ */ me(2, (e, t) => df((n, o) => e(t(n), t(o))));
-var mf = /* @__PURE__ */ r((e) => me(2, (t, n) => e(t, n) === 1), "isGreaterThan");
+var ff = df((e, t) => globalThis.Number.isNaN(e) && globalThis.Number.isNaN(t) ? 0 : globalThis.Number.isNaN(e) ? -1 : globalThis.Number.isNaN(t) ? 1 : e < t ? -1 : 1);
+var pf = me(2, (e, t) => df((n, o) => e(t(n), t(o))));
+var mf = r((e) => me(2, (t, n) => e(t, n) === 1), "isGreaterThan");
 
 // node_modules/effect/dist/Option.js
-var gf = /* @__PURE__ */ r(() => rf, "none"), hf = of;
+var gf = r(() => rf, "none"), hf = of;
 
 // node_modules/effect/dist/Context.js
-var wf = "~effect/Context/Service", Ft = /* @__PURE__ */ r(function() {
+var wf = "~effect/Context/Service", Ft = r(function() {
   function e() {
   }
   r(e, "KeyClass");
   let t = e;
   Object.setPrototypeOf(t, ny);
-  let n = /* @__PURE__ */ r((o, s) => (t.key = o, s?.defaultValue && (t[Ac] = Ac, t.defaultValue = s.defaultValue), s?.make && (t.make = s.make), s?.fiberCached && Ef.add(o), t), "init");
+  let n = r((o, s) => (t.key = o, s?.defaultValue && (t[Ac] = Ac, t.defaultValue = s.defaultValue), s?.make && (t.make = s.make), s?.fiberCached && Ef.add(o), t), "init");
   return arguments.length > 0 ? n(arguments[0], arguments[1]) : n;
 }, "Service"), ny = {
   [wf]: wf,
-  .../* @__PURE__ */ Qd({
+  ...Qd({
     label: "Service",
     evaluate(e) {
       return Gt(No(e.context, this));
@@ -1029,29 +1029,29 @@ var wf = "~effect/Context/Service", Ft = /* @__PURE__ */ r(function() {
   useSync(e) {
     return Pt((t) => Gt(e(No(t.context, this))));
   }
-}, Ef = /* @__PURE__ */ new Set(), Ac = "~effect/Context/Reference", yf = "~effect/Context", ry = 8, oy = 8, Oc = /* @__PURE__ */ r((e, t, n, o) => {
+}, Ef = new Set(), Ac = "~effect/Context/Reference", yf = "~effect/Context", ry = 8, oy = 8, Oc = r((e, t, n, o) => {
   let s = Object.create(iy);
   return s.cacheRoot = e ?? s, s.base = t, s.overlay = n, s.depth = o, s._flat = void 0, s.baseHits = 0, s;
-}, "makeImpl"), _f = /* @__PURE__ */ r((e, t) => {
+}, "makeImpl"), _f = r((e, t) => {
   t && (_f(e, t.parent), e.set(t.key, t.value));
-}, "applyOverlays"), Sf = /* @__PURE__ */ r((e) => {
+}, "applyOverlays"), Sf = r((e) => {
   if (e._flat) return e._flat;
   if (!e.overlay) return e._flat = e.base;
   let t = new Map(e.base);
   return _f(t, e.overlay), e._flat = t;
-}, "flatten"), sy = /* @__PURE__ */ r((e, t) => {
+}, "flatten"), sy = r((e, t) => {
   let n = new Map(e.mapUnsafe);
   return t(n), Mo(n);
-}, "withFlat"), Lc = /* @__PURE__ */ Symbol(), xf = /* @__PURE__ */ r((e, t) => {
+}, "withFlat"), Lc = Symbol(), xf = r((e, t) => {
   let n = e;
   for (let s = n.overlay; s; s = s.parent)
     if (s.key === t) return s.value;
   let o = n.base.get(t);
   return o === void 0 && !n.base.has(t) ? Lc : (n.overlay && ++n.baseHits >= oy && (n.base = Sf(n), n.overlay = void 0, n.depth = 0), o);
-}, "lookup"), Mo = /* @__PURE__ */ r((e) => Oc(void 0, e, void 0, 0), "makeUnsafe"), iy = {
+}, "lookup"), Mo = r((e) => Oc(void 0, e, void 0, 0), "makeUnsafe"), iy = {
   ...Rn,
   [yf]: {
-    _Services: /* @__PURE__ */ r((e) => e, "_Services")
+    _Services: r((e) => e, "_Services")
   },
   get mapUnsafe() {
     return Sf(this);
@@ -1076,8 +1076,8 @@ var wf = "~effect/Context/Service", Ft = /* @__PURE__ */ r(function() {
   [vt]() {
     return Co(this.mapUnsafe.size);
   }
-}, vf = /* @__PURE__ */ r((e, t) => e.cacheRoot === t.cacheRoot, "hasSameCache"), Dc = /* @__PURE__ */ r((e) => He(e, yf), "isContext");
-var ay = /* @__PURE__ */ r((e) => !!e[Ac], "isReference"), Ni = /* @__PURE__ */ r(() => cy, "empty"), cy = /* @__PURE__ */ Mo(/* @__PURE__ */ new Map()), dr = /* @__PURE__ */ r((e, t) => Mo(/* @__PURE__ */ new Map([[e.key, t]])), "make"), fr = /* @__PURE__ */ me(3, (e, t, n) => ly(e, t.key, n)), ly = /* @__PURE__ */ r((e, t, n) => {
+}, vf = r((e, t) => e.cacheRoot === t.cacheRoot, "hasSameCache"), Dc = r((e) => He(e, yf), "isContext");
+var ay = r((e) => !!e[Ac], "isReference"), Ni = r(() => cy, "empty"), cy = Mo(new Map()), dr = r((e, t) => Mo(new Map([[e.key, t]])), "make"), fr = me(3, (e, t, n) => ly(e, t.key, n)), ly = r((e, t, n) => {
   let o = e, s = Ef.has(t) ? void 0 : o.cacheRoot;
   if (o.depth >= ry) {
     let i = new Map(o.mapUnsafe);
@@ -1089,17 +1089,17 @@ var ay = /* @__PURE__ */ r((e) => !!e[Ac], "isReference"), Ni = /* @__PURE__ */ 
     parent: o.overlay
   }, o.depth + 1);
 }, "addUnsafe");
-var bf = /* @__PURE__ */ me(2, (e, t) => Ns(e, t.key)), Ns = /* @__PURE__ */ r((e, t) => {
+var bf = me(2, (e, t) => Ns(e, t.key)), Ns = r((e, t) => {
   let n = xf(e, t);
   return n === Lc ? void 0 : n;
-}, "getOrUndefinedUnsafe"), Ic = /* @__PURE__ */ me(2, (e, t) => {
+}, "getOrUndefinedUnsafe"), Ic = me(2, (e, t) => {
   let n = xf(e, t.key);
   if (n === Lc) {
     if (ay(t)) return uy(t);
     throw dy(t);
   }
   return n;
-}), No = Ic, Pc = "~effect/Context/defaultValue", uy = /* @__PURE__ */ r((e) => Pc in e ? e[Pc] : e[Pc] = e.defaultValue(), "getDefaultValue"), dy = /* @__PURE__ */ r((e) => {
+}), No = Ic, Pc = "~effect/Context/defaultValue", uy = r((e) => Pc in e ? e[Pc] : e[Pc] = e.defaultValue(), "getDefaultValue"), dy = r((e) => {
   let t = new Error(`Service not found${e.key ? `: ${String(e.key)}` : ""}`);
   if (t.stack) {
     let n = t.stack.split(`
@@ -1109,8 +1109,8 @@ var bf = /* @__PURE__ */ me(2, (e, t) => Ns(e, t.key)), Ns = /* @__PURE__ */ r((
   }
   return t;
 }, "serviceNotFoundError");
-var Mi = /* @__PURE__ */ me(2, (e, t) => e.mapUnsafe.size === 0 ? t : t.mapUnsafe.size === 0 ? e : sy(e, (n) => t.mapUnsafe.forEach((o, s) => n.set(s, o)))), kf = /* @__PURE__ */ r((...e) => {
-  let t = /* @__PURE__ */ new Map();
+var Mi = me(2, (e, t) => e.mapUnsafe.size === 0 ? t : t.mapUnsafe.size === 0 ? e : sy(e, (n) => t.mapUnsafe.forEach((o, s) => n.set(s, o)))), kf = r((...e) => {
+  let t = new Map();
   for (let n = 0; n < e.length; n++)
     e[n].mapUnsafe.forEach((o, s) => {
       t.set(s, o);
@@ -1120,7 +1120,7 @@ var Mi = /* @__PURE__ */ me(2, (e, t) => e.mapUnsafe.size === 0 ? t : t.mapUnsaf
 var $t = Ft;
 
 // node_modules/effect/dist/internal/array.js
-var Rf = /* @__PURE__ */ r((e) => e.length > 0, "isArrayNonEmpty");
+var Rf = r((e) => e.length > 0, "isArrayNonEmpty");
 
 // node_modules/effect/dist/Result.js
 var pr = uf, Tn = lf;
@@ -1128,11 +1128,11 @@ var en = Cc;
 
 // node_modules/effect/dist/Array.js
 var Mc = globalThis.Array;
-var to = /* @__PURE__ */ r((e) => Mc.isArray(e) ? e : Mc.from(e), "fromIterable");
-var py = /* @__PURE__ */ me(2, (e, t) => to(e).concat(to(t)));
+var to = r((e) => Mc.isArray(e) ? e : Mc.from(e), "fromIterable");
+var py = me(2, (e, t) => to(e).concat(to(t)));
 var y0 = Mc.isArray;
 var Tf = Rf;
-var my = /* @__PURE__ */ r((e, t) => {
+var my = r((e, t) => {
   let n = Ye(t), o = e.get(n);
   if (o === void 0)
     return e.set(n, [t]), !0;
@@ -1141,31 +1141,31 @@ var my = /* @__PURE__ */ r((e, t) => {
       return !1;
   return o.push(t), !0;
 }, "hashBucketsAdd");
-var Cf = /* @__PURE__ */ me(2, (e, t) => {
+var Cf = me(2, (e, t) => {
   let n = to(e), o = to(t);
   return Tf(n) ? Tf(o) ? gy(py(n, o)) : n : o;
 });
-var Pf = /* @__PURE__ */ r(() => [], "empty");
-var gy = /* @__PURE__ */ r((e) => {
+var Pf = r(() => [], "empty");
+var gy = r((e) => {
   let t = to(e);
   if (t.length < 2)
     return [...t];
-  let n = /* @__PURE__ */ new Map(), o = [];
+  let n = new Map(), o = [];
   for (let s of t)
     my(n, s) && o.push(s);
   return o;
 }, "dedupe");
 
 // node_modules/effect/dist/Duration.js
-var $i = "~effect/time/Duration", Nf = /* @__PURE__ */ BigInt(0), Mf = /* @__PURE__ */ BigInt(1), wy = /* @__PURE__ */ BigInt(2), Ey = /* @__PURE__ */ BigInt(10);
-var yy = /* @__PURE__ */ BigInt(1e3);
-var Bi = /* @__PURE__ */ r((e) => BigInt(e < 0 ? Math.ceil(e - 0.5) : Math.floor(e + 0.5)), "roundTiesAwayFromZero"), Ff = /* @__PURE__ */ r((e) => Bi(e * 1e6), "roundMillisToNanos"), Af = /* @__PURE__ */ r((e, t) => {
+var $i = "~effect/time/Duration", Nf = BigInt(0), Mf = BigInt(1), wy = BigInt(2), Ey = BigInt(10);
+var yy = BigInt(1e3);
+var Bi = r((e) => BigInt(e < 0 ? Math.ceil(e - 0.5) : Math.floor(e + 0.5)), "roundTiesAwayFromZero"), Ff = r((e) => Bi(e * 1e6), "roundMillisToNanos"), Af = r((e, t) => {
   let n = e.indexOf(".");
   if (n === -1) return BigInt(e) * t;
   let o = e[0] === "-", s = e.slice(n + 1), i = Ey ** BigInt(s.length), a = (BigInt(e.slice(o ? 1 : 0, n)) * i + BigInt(s)) * t, l = a / i + (a % i * wy >= i ? Mf : Nf);
   return o ? -l : l;
 }, "parseNanos");
-var _y = /^(-?\d+(?:\.\d+)?)\s+(nanos?|micros?|millis?|seconds?|minutes?|hours?|days?|weeks?)$/, Hn = /* @__PURE__ */ r((e) => {
+var _y = /^(-?\d+(?:\.\d+)?)\s+(nanos?|micros?|millis?|seconds?|minutes?|hours?|days?|weeks?)$/, Hn = r((e) => {
   switch (typeof e) {
     case "number":
       return Cn(e);
@@ -1216,7 +1216,7 @@ var _y = /^(-?\d+(?:\.\d+)?)\s+(nanos?|micros?|millis?|seconds?|minutes?|hours?|
     }
   }
   return Of(e);
-}, "fromInputUnsafe"), Of = /* @__PURE__ */ r((e) => {
+}, "fromInputUnsafe"), Of = r((e) => {
   throw new Error(`Invalid Input: ${e}`);
 }, "invalid");
 var Lf = {
@@ -1287,7 +1287,7 @@ var Lf = {
   pipe() {
     return It(this, arguments);
   }
-}, tn = /* @__PURE__ */ r((e) => {
+}, tn = r((e) => {
   let t = Object.create(vy);
   return typeof e == "number" ? isNaN(e) || e === 0 || Object.is(e, -0) ? t.value = Lf : Number.isFinite(e) ? Number.isInteger(e) ? t.value = {
     _tag: "Millis",
@@ -1299,15 +1299,15 @@ var Lf = {
     _tag: "Nanos",
     nanos: e
   }, t;
-}, "make"), by = /* @__PURE__ */ r((e) => He(e, $i), "isDuration");
-var Ui = /* @__PURE__ */ tn(0), Fc = /* @__PURE__ */ tn(1 / 0), Df = /* @__PURE__ */ tn(-1 / 0), Fi = /* @__PURE__ */ r((e) => tn(e), "nanos");
-var Cn = /* @__PURE__ */ r((e) => tn(e), "millis"), ky = /* @__PURE__ */ r((e) => tn(e * 1e3), "seconds"), Ry = /* @__PURE__ */ r((e) => tn(e * 6e4), "minutes"), Ty = /* @__PURE__ */ r((e) => tn(e * 36e5), "hours"), Cy = /* @__PURE__ */ r((e) => tn(e * 864e5), "days"), Py = /* @__PURE__ */ r((e) => tn(e * 6048e5), "weeks"), no = /* @__PURE__ */ r((e) => Ay(Hn(e), {
+}, "make"), by = r((e) => He(e, $i), "isDuration");
+var Ui = tn(0), Fc = tn(1 / 0), Df = tn(-1 / 0), Fi = r((e) => tn(e), "nanos");
+var Cn = r((e) => tn(e), "millis"), ky = r((e) => tn(e * 1e3), "seconds"), Ry = r((e) => tn(e * 6e4), "minutes"), Ty = r((e) => tn(e * 36e5), "hours"), Cy = r((e) => tn(e * 864e5), "days"), Py = r((e) => tn(e * 6048e5), "weeks"), no = r((e) => Ay(Hn(e), {
   onMillis: Ge,
-  onNanos: /* @__PURE__ */ r((t) => Number(t) / 1e6, "onNanos"),
-  onInfinity: /* @__PURE__ */ r(() => 1 / 0, "onInfinity"),
-  onNegativeInfinity: /* @__PURE__ */ r(() => -1 / 0, "onNegativeInfinity")
+  onNanos: r((t) => Number(t) / 1e6, "onNanos"),
+  onInfinity: r(() => 1 / 0, "onInfinity"),
+  onNegativeInfinity: r(() => -1 / 0, "onNegativeInfinity")
 }), "toMillis");
-var If = /* @__PURE__ */ r((e) => {
+var If = r((e) => {
   let t = Hn(e);
   switch (t.value._tag) {
     case "Infinity":
@@ -1319,7 +1319,7 @@ var If = /* @__PURE__ */ r((e) => {
       return Ff(t.value.millis);
   }
 }, "toNanosUnsafe");
-var Ay = /* @__PURE__ */ me(2, (e, t) => {
+var Ay = me(2, (e, t) => {
   switch (e.value._tag) {
     case "Millis":
       return t.onMillis(e.value.millis);
@@ -1330,16 +1330,16 @@ var Ay = /* @__PURE__ */ me(2, (e, t) => {
     case "NegativeInfinity":
       return (t.onNegativeInfinity ?? t.onInfinity)();
   }
-}), Oy = /* @__PURE__ */ me(3, (e, t, n) => e.value._tag === "Infinity" || e.value._tag === "NegativeInfinity" || t.value._tag === "Infinity" || t.value._tag === "NegativeInfinity" ? n.onInfinity(e, t) : e.value._tag === "Millis" ? t.value._tag === "Millis" ? n.onMillis(e.value.millis, t.value.millis) : n.onNanos(If(e), t.value.nanos) : n.onNanos(e.value.nanos, If(t)));
-var Ly = /* @__PURE__ */ r((e, t) => Oy(e, t, {
-  onMillis: /* @__PURE__ */ r((n, o) => n === o, "onMillis"),
-  onNanos: /* @__PURE__ */ r((n, o) => n === o, "onNanos"),
-  onInfinity: /* @__PURE__ */ r((n, o) => n.value._tag === o.value._tag, "onInfinity")
+}), Oy = me(3, (e, t, n) => e.value._tag === "Infinity" || e.value._tag === "NegativeInfinity" || t.value._tag === "Infinity" || t.value._tag === "NegativeInfinity" ? n.onInfinity(e, t) : e.value._tag === "Millis" ? t.value._tag === "Millis" ? n.onMillis(e.value.millis, t.value.millis) : n.onNanos(If(e), t.value.nanos) : n.onNanos(e.value.nanos, If(t)));
+var Ly = r((e, t) => Oy(e, t, {
+  onMillis: r((n, o) => n === o, "onMillis"),
+  onNanos: r((n, o) => n === o, "onNanos"),
+  onInfinity: r((n, o) => n.value._tag === o.value._tag, "onInfinity")
 }), "Equivalence");
-var Dy = /* @__PURE__ */ me(2, (e, t) => Ly(e, t));
+var Dy = me(2, (e, t) => Ly(e, t));
 
 // node_modules/effect/dist/Filter.js
-var $f = /* @__PURE__ */ me(2, (e, t) => (n) => {
+var $f = me(2, (e, t) => (n) => {
   let o = e(n);
   if (en(o)) return Tn(n);
   let s = t(o.success);
@@ -1347,16 +1347,16 @@ var $f = /* @__PURE__ */ me(2, (e, t) => (n) => {
 });
 
 // node_modules/effect/dist/Scheduler.js
-var Uc = /* @__PURE__ */ $t("effect/Scheduler", {
+var Uc = $t("effect/Scheduler", {
   fiberCached: !0,
-  defaultValue: /* @__PURE__ */ r(() => new qi(), "defaultValue")
+  defaultValue: r(() => new qi(), "defaultValue")
 }), Bf = "setImmediate" in globalThis ? (e) => {
   let t = globalThis.setImmediate(e);
   return () => globalThis.clearImmediate(t);
 } : (e) => {
   let t = setTimeout(e, 0);
   return () => clearTimeout(t);
-}, My = /* @__PURE__ */ r((e) => {
+}, My = r((e) => {
   let t = !1;
   return Promise.resolve().then(() => {
     t || e();
@@ -1417,7 +1417,7 @@ var Uc = /* @__PURE__ */ $t("effect/Scheduler", {
   static {
     r(this, "MixedSchedulerDispatcher");
   }
-  tasks = /* @__PURE__ */ new $c();
+  tasks = new $c();
   running = void 0;
   setImmediate;
   constructor(t = Bf) {
@@ -1432,7 +1432,7 @@ var Uc = /* @__PURE__ */ $t("effect/Scheduler", {
   /**
    * @since 2.0.0
    */
-  afterScheduled = /* @__PURE__ */ r(() => {
+  afterScheduled = r(() => {
     this.running = void 0, this.runTasks();
   }, "afterScheduled");
   /**
@@ -1453,12 +1453,12 @@ var Uc = /* @__PURE__ */ $t("effect/Scheduler", {
     for (; this.tasks.buckets.length > 0; )
       this.running !== void 0 && (this.running(), this.running = void 0), this.runTasks();
   }
-}, Uf = /* @__PURE__ */ $t("effect/Scheduler/MaxOpsBeforeYield", {
+}, Uf = $t("effect/Scheduler/MaxOpsBeforeYield", {
   fiberCached: !0,
-  defaultValue: /* @__PURE__ */ r(() => 2048, "defaultValue")
-}), qf = /* @__PURE__ */ $t("effect/Scheduler/PreventSchedulerYield", {
+  defaultValue: r(() => 2048, "defaultValue")
+}), qf = $t("effect/Scheduler/PreventSchedulerYield", {
   fiberCached: !0,
-  defaultValue: /* @__PURE__ */ r(() => !1, "defaultValue")
+  defaultValue: r(() => !1, "defaultValue")
 });
 
 // node_modules/effect/dist/Data.js
@@ -1472,28 +1472,28 @@ var Hf = "effect/Tracer";
 var jf = "effect/observability/Metric/FiberRuntimeMetricsKey";
 
 // node_modules/effect/dist/internal/references.js
-var Gf = /* @__PURE__ */ $t("effect/References/CurrentStackFrame", {
+var Gf = $t("effect/References/CurrentStackFrame", {
   fiberCached: !0,
   defaultValue: vs
 });
-var qc = /* @__PURE__ */ $t("effect/References/CurrentLogAnnotations", {
-  defaultValue: /* @__PURE__ */ r(() => ({}), "defaultValue")
-}), Kf = /* @__PURE__ */ $t("effect/References/CurrentLogLevel", {
+var qc = $t("effect/References/CurrentLogAnnotations", {
+  defaultValue: r(() => ({}), "defaultValue")
+}), Kf = $t("effect/References/CurrentLogLevel", {
   fiberCached: !0,
-  defaultValue: /* @__PURE__ */ r(() => "Info", "defaultValue")
-}), Vf = /* @__PURE__ */ $t("effect/References/MinimumLogLevel", {
+  defaultValue: r(() => "Info", "defaultValue")
+}), Vf = $t("effect/References/MinimumLogLevel", {
   fiberCached: !0,
-  defaultValue: /* @__PURE__ */ r(() => "Info", "defaultValue")
+  defaultValue: r(() => "Info", "defaultValue")
 });
-var zf = /* @__PURE__ */ $t("effect/References/CurrentLogSpans", {
-  defaultValue: /* @__PURE__ */ r(() => [], "defaultValue")
+var zf = $t("effect/References/CurrentLogSpans", {
+  defaultValue: r(() => [], "defaultValue")
 });
 
 // node_modules/effect/dist/internal/stackTraceLimit.js
-var Uy = /* @__PURE__ */ r(() => {
+var Uy = r(() => {
   let e = Object.getOwnPropertyDescriptor(Error, "stackTraceLimit");
   return e === void 0 ? Object.isExtensible(Error) : Object.hasOwn(e, "writable") ? e.writable === !0 : e.set !== void 0;
-}, "isStackTraceLimitWritable"), qy = /* @__PURE__ */ Uy(), Xf = /* @__PURE__ */ r(() => Error.stackTraceLimit, "getStackTraceLimit"), Wc = /* @__PURE__ */ r((e) => {
+}, "isStackTraceLimitWritable"), qy = Uy(), Xf = r(() => Error.stackTraceLimit, "getStackTraceLimit"), Wc = r((e) => {
   qy && (Error.stackTraceLimit = e);
 }, "setStackTraceLimit");
 
@@ -1522,8 +1522,8 @@ var jc = class extends Oo {
     return Ht(St(`${this._tag}:${this.fiberId}`))(ki(this.annotations));
   }
 };
-var Gi = /* @__PURE__ */ r((e) => new Wn([new jc(e)]), "causeInterrupt");
-var oo = /* @__PURE__ */ r((e) => {
+var Gi = r((e) => new Wn([new jc(e)]), "causeInterrupt");
+var oo = r((e) => {
   for (let t = 0; t < e.reasons.length; t++) {
     let n = e.reasons[t];
     if (n._tag === "Fail")
@@ -1531,13 +1531,13 @@ var oo = /* @__PURE__ */ r((e) => {
   }
   return Tn(e);
 }, "findError");
-var ep = /* @__PURE__ */ r((e) => e.reasons.some(Io), "hasDies");
-var tp = /* @__PURE__ */ r((e) => {
+var ep = r((e) => e.reasons.some(Io), "hasDies");
+var tp = r((e) => {
   let t = e.reasons.find(Io);
   return t ? pr(t.defect) : Tn(e);
-}, "findDefect"), np = /* @__PURE__ */ r((e) => e.reasons.some(Is), "hasInterrupts");
-var rp = /* @__PURE__ */ r((e) => e.reasons.length > 0 && e.reasons.every(Is), "hasInterruptsOnly");
-var op = /* @__PURE__ */ me(2, (e, t) => {
+}, "findDefect"), np = r((e) => e.reasons.some(Is), "hasInterrupts");
+var rp = r((e) => e.reasons.length > 0 && e.reasons.every(Is), "hasInterruptsOnly");
+var op = me(2, (e, t) => {
   if (e.reasons.length === 0)
     return t;
   if (t.reasons.length === 0)
@@ -1545,7 +1545,7 @@ var op = /* @__PURE__ */ me(2, (e, t) => {
   let n = new Wn(Cf(e.reasons, t.reasons));
   return Tt(e, n) ? e : n;
 });
-var Hy = /* @__PURE__ */ r((e) => {
+var Hy = r((e) => {
   let t = {
     Fail: [],
     Die: [],
@@ -1554,10 +1554,10 @@ var Hy = /* @__PURE__ */ r((e) => {
   for (let n = 0; n < e.reasons.length; n++)
     t[e.reasons[n]._tag].push(e.reasons[n]);
   return t;
-}, "causePartition"), il = /* @__PURE__ */ r((e) => {
+}, "causePartition"), il = r((e) => {
   let t = Hy(e);
   return t.Fail.length > 0 ? t.Fail[0].error : t.Die.length > 0 ? t.Die[0].defect : t.Interrupt.length > 0 ? new globalThis.Error("All fibers interrupted without error") : new globalThis.Error("Empty cause");
-}, "causeSquash"), sp = /* @__PURE__ */ r((e, t) => {
+}, "causeSquash"), sp = r((e, t) => {
   let n = [], o = [];
   if (e.reasons.length === 0) return n;
   let s = Xf();
@@ -1578,7 +1578,7 @@ var Hy = /* @__PURE__ */ r((e) => {
     a.name = "InterruptError", a.stack = `${a.name}: ${a.message}`, n.push(Gc(a, o[0].annotations, t));
   }
   return Wc(s), n;
-}, "causePrettyErrors"), Gc = /* @__PURE__ */ r((e, t, n) => {
+}, "causePrettyErrors"), Gc = r((e, t, n) => {
   let o = typeof e, s;
   if (e && o === "object") {
     if (s = new globalThis.Error(jy(e), {
@@ -1595,7 +1595,7 @@ var Hy = /* @__PURE__ */ r((e) => {
   } else
     s = new globalThis.Error(e ? o === "string" ? e : Ts(e) : `Unknown error: ${e}`);
   return s;
-}, "causePrettyError"), jy = /* @__PURE__ */ r((e) => {
+}, "causePrettyError"), jy = r((e) => {
   if (typeof e.message == "string")
     return e.message;
   if (typeof e.toString == "function" && e.toString !== Object.prototype.toString && e.toString !== Array.prototype.toString)
@@ -1604,7 +1604,7 @@ var Hy = /* @__PURE__ */ r((e) => {
     } catch {
     }
   return Ts(e);
-}, "causePrettyMessage"), Gy = /\((.*)\)/g, Ky = /* @__PURE__ */ r((e, t, n) => {
+}, "causePrettyMessage"), Gy = /\((.*)\)/g, Ky = r((e, t, n) => {
   let o = `${t.name}: ${t.message}`, s = (e.startsWith(o) ? e.slice(o.length) : e).split(`
 `), i = [o];
   for (let a = 1; a < s.length && !/(?:Generator\.next|~effect\/Effect)/.test(s[a]); a++)
@@ -1612,11 +1612,11 @@ var Hy = /* @__PURE__ */ r((e) => {
   return n ? ip(i.join(`
 `), n) : i.join(`
 `);
-}, "cleanErrorStack"), ip = /* @__PURE__ */ r((e, t) => {
+}, "cleanErrorStack"), ip = r((e, t) => {
   let n = t?.get(Di.key);
   return n && (e = `${e}
 ${ap(n)}`), e;
-}, "addStackAnnotations"), Vy = /* @__PURE__ */ r((e, t) => {
+}, "addStackAnnotations"), Vy = r((e, t) => {
   let n = [`${e.name}: ${e.message}`];
   for (let o of t) {
     let s = o.fiberId !== void 0 ? `#${o.fiberId}` : "unknown", i = o.annotations.get(kc.key);
@@ -1624,7 +1624,7 @@ ${ap(n)}`), e;
   }
   return n.join(`
 `);
-}, "interruptCauseStack"), ap = /* @__PURE__ */ r((e) => {
+}, "interruptCauseStack"), ap = r((e) => {
   let t = [], n = e, o = 0;
   for (; n && o < 10; ) {
     let s = n.stack();
@@ -1639,10 +1639,10 @@ ${ap(n)}`), e;
   }
   return t.join(`
 `);
-}, "currentStackTrace"), al = /* @__PURE__ */ r((e) => sp(e).map(cp).join(`
-`), "causePretty"), cp = /* @__PURE__ */ r((e) => e.cause ? `${e.stack} {
+}, "currentStackTrace"), al = r((e) => sp(e).map(cp).join(`
+`), "causePretty"), cp = r((e) => e.cause ? `${e.stack} {
 ${lp(e.cause, "  ")}
-}` : e.stack, "renderPrettyError"), lp = /* @__PURE__ */ r((e, t) => {
+}` : e.stack, "renderPrettyError"), lp = r((e, t) => {
   let n = e.stack.split(`
 `), o = `${t}[cause]: ${n[0]}`;
   for (let s = 1, i = n.length; s < i; s++)
@@ -1656,7 +1656,7 @@ ${t}}`), o;
   _E: Ge
 }, Xy = {
   id: 0
-}, up = /* @__PURE__ */ r(() => globalThis[Ao], "getCurrentFiber"), Hi = class {
+}, up = r(() => globalThis[Ao], "getCurrentFiber"), Hi = class {
   static {
     r(this, "FiberImpl");
   }
@@ -1773,7 +1773,7 @@ ${t}}`), o;
     return this._yielded = t, Zr;
   }
   children() {
-    return this._children ??= /* @__PURE__ */ new Set();
+    return this._children ??= new Set();
   }
   pipe() {
     return It(this, arguments);
@@ -1798,12 +1798,12 @@ ${t}}`), o;
   }
 }, Jf = {
   interruptChildren: void 0
-}, dp = /* @__PURE__ */ r((e) => {
+}, dp = r((e) => {
   if (!e.currentStackFrame) return;
-  let t = /* @__PURE__ */ new Map();
+  let t = new Map();
   return t.set(kc.key, e.currentStackFrame), Mo(t);
 }, "fiberStackAnnotations");
-var fp = /* @__PURE__ */ r((e) => Nr((t) => {
+var fp = r((e) => Nr((t) => {
   let n = e[Symbol.iterator](), o = [], s;
   function i() {
     let a = n.next();
@@ -1821,25 +1821,25 @@ var fp = /* @__PURE__ */ r((e) => Nr((t) => {
   }
   return r(i, "loop"), i(), Ot(() => s?.());
 }), "fiberAwaitAll");
-var Qf = /* @__PURE__ */ r((e) => Pt((t) => {
+var Qf = r((e) => Pt((t) => {
   let n = dp(t), o = Pf();
   for (let s of e)
     s.interruptUnsafe(t.id, n), o.push(s);
   return cl(fp(o));
 }), "fiberInterruptAll");
-var Je = Gt, ut = hn, Bo = Dr, Ot = /* @__PURE__ */ gn({
+var Je = Gt, ut = hn, Bo = Dr, Ot = gn({
   op: "Sync",
   [gt](e) {
     let t = this[Ne](), n = e.getCont(jt);
     return n ? n[jt](t, e) : e.yieldWith(Gt(t));
   }
-}), ht = /* @__PURE__ */ gn({
+}), ht = gn({
   op: "Suspend",
   [gt](e) {
     return this[Ne]();
   }
 });
-var pp = /* @__PURE__ */ gn({
+var pp = gn({
   op: "Yield",
   [gt](e) {
     let t = !1;
@@ -1849,10 +1849,10 @@ var pp = /* @__PURE__ */ gn({
       t = !0;
     });
   }
-}), Ki = /* @__PURE__ */ pp(0);
-var Vi = /* @__PURE__ */ r((e) => Ir(e), "die");
-var kt = /* @__PURE__ */ Je(void 0);
-var mp = /* @__PURE__ */ r((e) => {
+}), Ki = pp(0);
+var Vi = r((e) => Ir(e), "die");
+var kt = Je(void 0);
+var mp = r((e) => {
   let t = typeof e == "function" ? e : e.try, n = typeof e == "function" ? (o) => new ji(o, "An error occurred in Effect.try") : e.catch;
   return ht(() => {
     try {
@@ -1862,10 +1862,10 @@ var mp = /* @__PURE__ */ r((e) => {
     }
   });
 }, "try_");
-var gp = /* @__PURE__ */ r((e) => hp(function(t, n) {
+var gp = r((e) => hp(function(t, n) {
   Mt(() => e(n)).then((o) => t(Je(o)), (o) => t(Vi(o)));
 }, e.length !== 0), "promise");
-var hp = /* @__PURE__ */ gn({
+var hp = gn({
   op: "Async",
   single: !1,
   [gt](e) {
@@ -1876,7 +1876,7 @@ var hp = /* @__PURE__ */ gn({
       n = !0;
     }, s === void 0 && i === void 0 ? Zr : (e._stack.push(Jy(() => (n = !0, s?.abort(), i ?? gr))), Zr));
   }
-}), Jy = /* @__PURE__ */ gn({
+}), Jy = gn({
   op: "AsyncFinalizer",
   [Lr](e) {
     e.interruptible && (e.interruptible = !1, e._stack.push(Ji));
@@ -1884,7 +1884,7 @@ var hp = /* @__PURE__ */ gn({
   [mn](e, t) {
     return np(e) ? Ke(this[Ne](), () => ut(e)) : ut(e);
   }
-}), Nr = /* @__PURE__ */ r((e) => hp(e, e.length >= 2), "callback"), zi = /* @__PURE__ */ Nr(To), wp = /* @__PURE__ */ r((...e) => ht(() => Kc(e.length === 1 ? e[0]() : e[1].call(e[0].self))), "gen"), Ep = /* @__PURE__ */ r((e, ...t) => {
+}), Nr = r((e) => hp(e, e.length >= 2), "callback"), zi = Nr(To), wp = r((...e) => ht(() => Kc(e.length === 1 ? e[0]() : e[1].call(e[0].self))), "gen"), Ep = r((e, ...t) => {
   let n = t.length === 0 ? function() {
     return ht(() => Kc(e.apply(this, arguments)));
   } : function() {
@@ -1894,11 +1894,11 @@ var hp = /* @__PURE__ */ gn({
     return o;
   };
   return Qy(e.length, n);
-}, "fnUntraced"), Qy = /* @__PURE__ */ r((e, t) => Object.defineProperty(t, "length", {
+}, "fnUntraced"), Qy = r((e, t) => Object.defineProperty(t, "length", {
   value: e,
   configurable: !0
 }), "defineFunctionLength");
-var Kc = /* @__PURE__ */ gn({
+var Kc = gn({
   op: "Iterator",
   single: !1,
   [jt](e, t) {
@@ -1916,113 +1916,113 @@ var Kc = /* @__PURE__ */ gn({
   [gt](e) {
     return this[jt](this[Ne][1], e);
   }
-}), hr = /* @__PURE__ */ me(2, (e, t) => {
+}), hr = me(2, (e, t) => {
   let n = Je(t);
   return Ke(e, (o) => n);
 });
-var Uo = /* @__PURE__ */ me(2, (e, t) => Ke(e, (n) => Ct(t) ? t : Mt(() => t(n)))), so = /* @__PURE__ */ me(2, (e, t) => Ke(e, (n) => hr(Ct(t) ? t : Mt(() => t(n)), n))), cl = /* @__PURE__ */ r((e) => Ke(e, (t) => gr), "asVoid");
-var Ke = /* @__PURE__ */ me(2, (e, t) => {
+var Uo = me(2, (e, t) => Ke(e, (n) => Ct(t) ? t : Mt(() => t(n)))), so = me(2, (e, t) => Ke(e, (n) => hr(Ct(t) ? t : Mt(() => t(n)), n))), cl = r((e) => Ke(e, (t) => gr), "asVoid");
+var Ke = me(2, (e, t) => {
   let n = Object.create(Zy);
   return n[Ne] = e, n[jt] = t.length !== 1 ? (o) => t(o) : t, n;
-}), Zy = /* @__PURE__ */ lr({
+}), Zy = lr({
   op: "OnSuccess",
   [gt](e) {
     return e._stack.push(this), this[Ne];
   }
 });
-var Fo = /* @__PURE__ */ r((e) => Qr in e, "effectIsExit");
-var yp = /* @__PURE__ */ r((e) => Ke(e, Ge), "flatten"), Kt = /* @__PURE__ */ me(2, (e, t) => Ke(e, (n) => Je(Mt(() => t(n)))));
-var _p = /* @__PURE__ */ r((e) => e._tag === "Success", "exitIsSuccess");
-var Sp = /* @__PURE__ */ r((e) => e._tag === "Failure", "exitIsFailure");
-var xp = /* @__PURE__ */ r((e) => e._tag === "Failure" ? pr(e.cause) : Tn(e), "exitFilterCause");
-var gr = /* @__PURE__ */ Gt(void 0);
-var vp = /* @__PURE__ */ r((e) => {
+var Fo = r((e) => Qr in e, "effectIsExit");
+var yp = r((e) => Ke(e, Ge), "flatten"), Kt = me(2, (e, t) => Ke(e, (n) => Je(Mt(() => t(n)))));
+var _p = r((e) => e._tag === "Success", "exitIsSuccess");
+var Sp = r((e) => e._tag === "Failure", "exitIsFailure");
+var xp = r((e) => e._tag === "Failure" ? pr(e.cause) : Tn(e), "exitFilterCause");
+var gr = Gt(void 0);
+var vp = r((e) => {
   let t = [];
   for (let n of e)
     n._tag === "Failure" && t.push(...n.cause.reasons);
   return t.length === 0 ? gr : hn(Do(t));
 }, "exitAsVoidAll");
-var ll = /* @__PURE__ */ me(2, (e, t) => Pt((n) => {
+var ll = me(2, (e, t) => Pt((n) => {
   let o = n.context, s = t(o);
   return o === s ? e : (n.setContext(s), Yi(e, () => {
     n.setContext(o);
   }));
 }));
-var bp = /* @__PURE__ */ r(() => e_, "context"), e_ = /* @__PURE__ */ Pt((e) => Je(e.context)), kp = /* @__PURE__ */ r((e) => Pt((t) => e(t.context)), "contextWith");
-var io = /* @__PURE__ */ me(2, (e, t) => Fo(e) ? e : ll(e, Mi(t))), qo = /* @__PURE__ */ r(function() {
+var bp = r(() => e_, "context"), e_ = Pt((e) => Je(e.context)), kp = r((e) => Pt((t) => e(t.context)), "contextWith");
+var io = me(2, (e, t) => Fo(e) ? e : ll(e, Mi(t))), qo = r(function() {
   return arguments.length === 1 ? me(2, (e, t) => Zf(e, arguments[0], t)) : me(3, (e, t, n) => Zf(e, t, n)).apply(this, arguments);
-}, "provideService"), Zf = /* @__PURE__ */ r((e, t, n) => ll(e, fr(t, n)), "provideServiceImpl");
-var ul = /* @__PURE__ */ me((e) => Ct(e[0]), (e, t) => Zi({
+}, "provideService"), Zf = r((e, t, n) => ll(e, fr(t, n)), "provideServiceImpl");
+var ul = me((e) => Ct(e[0]), (e, t) => Zi({
   while: xs,
   body: Un(t?.disableYield ? e : Ke(e, (n) => Ki)),
   step: To
-})), wr = /* @__PURE__ */ me(2, (e, t) => {
+})), wr = me(2, (e, t) => {
   let n = Object.create(t_);
   return n[Ne] = e, n[mn] = t.length !== 1 ? (o) => t(o) : t, n;
-}), t_ = /* @__PURE__ */ lr({
+}), t_ = lr({
   op: "OnFailure",
   [gt](e) {
     return e._stack.push(this), this[Ne];
   }
 });
-var dl = /* @__PURE__ */ me(3, (e, t, n) => wr(e, (o) => {
+var dl = me(3, (e, t, n) => wr(e, (o) => {
   let s = t(o);
   return en(s) ? ut(s.failure) : Mt(() => n(s.success, o));
-})), $s = /* @__PURE__ */ me(2, (e, t) => dl(e, oo, (n) => t(n)));
-var Rp = /* @__PURE__ */ me(2, (e, t) => wr(e, (n) => Uo(Mt(() => t(n)), ut(n))));
-var fl = /* @__PURE__ */ me(3, (e, t, n) => wr(e, (o) => {
+})), $s = me(2, (e, t) => dl(e, oo, (n) => t(n)));
+var Rp = me(2, (e, t) => wr(e, (n) => Uo(Mt(() => t(n)), ut(n))));
+var fl = me(3, (e, t, n) => wr(e, (o) => {
   let s = t(o);
   return en(s) ? ut(o) : Uo(Mt(() => n(s.success, o)), ut(o));
-})), Tp = /* @__PURE__ */ me(2, (e, t) => fl(e, oo, (n) => t(n)));
-var Cp = /* @__PURE__ */ me(2, (e, t) => fl(e, tp, (n) => t(n))), Pp = /* @__PURE__ */ me((e) => Ct(e[0]), (e, t, n, o) => wr(e, (s) => {
+})), Tp = me(2, (e, t) => fl(e, oo, (n) => t(n)));
+var Cp = me(2, (e, t) => fl(e, tp, (n) => t(n))), Pp = me((e) => Ct(e[0]), (e, t, n, o) => wr(e, (s) => {
   let i = oo(s);
   return en(i) ? ut(i.failure) : t(i.success) ? Mt(() => n(i.success)) : o ? Mt(() => o(i.success)) : ut(s);
-})), Ap = /* @__PURE__ */ me((e) => Ct(e[0]), (e, t, n, o) => wr(e, (s) => {
+})), Ap = me((e) => Ct(e[0]), (e, t, n, o) => wr(e, (s) => {
   let i = oo(s);
   if (en(i)) return ut(i.failure);
   let a = t(i.success);
   return en(a) ? o ? Mt(() => o(a.failure)) : ut(s) : Mt(() => n(a.success));
-})), pl = /* @__PURE__ */ me((e) => Ct(e[0]), (e, t, n, o) => {
+})), pl = me((e) => Ct(e[0]), (e, t, n, o) => {
   let s = Array.isArray(t) ? (i) => He(i, "_tag") && t.includes(i._tag) : Od(t);
   return Pp(e, s, n, o);
-}), Op = /* @__PURE__ */ me((e) => Ct(e[0]), (e, t, n) => {
+}), Op = me((e) => Ct(e[0]), (e, t, n) => {
   let o;
   return Ap(e, (s) => (o ??= Object.keys(t), He(s, "_tag") && fc(s._tag) && o.includes(s._tag) ? pr(s) : Tn(s)), (s) => Mt(() => t[s._tag](s)), n);
 });
-var Lp = /* @__PURE__ */ me((e) => Ct(e[0]), (e, t) => {
+var Lp = me((e) => Ct(e[0]), (e, t) => {
   if (!t?.log)
     return $o(e, {
-      onFailure: /* @__PURE__ */ r((o) => kt, "onFailure"),
-      onSuccess: /* @__PURE__ */ r((o) => kt, "onSuccess")
+      onFailure: r((o) => kt, "onFailure"),
+      onSuccess: r((o) => kt, "onSuccess")
     });
   let n = vl(t.log === !0 ? void 0 : t.log);
   return $o(e, {
-    onFailure: /* @__PURE__ */ r((o) => t.message === void 0 ? n(o) : n(t.message, o), "onFailure"),
-    onSuccess: /* @__PURE__ */ r((o) => kt, "onSuccess")
+    onFailure: r((o) => t.message === void 0 ? n(o) : n(t.message, o), "onFailure"),
+    onSuccess: r((o) => kt, "onSuccess")
   });
 });
-var Wi = /* @__PURE__ */ r((e) => Np(e, {
+var Wi = r((e) => Np(e, {
   onFailure: Tn,
   onSuccess: pr
-}), "result"), $o = /* @__PURE__ */ me(2, (e, t) => {
+}), "result"), $o = me(2, (e, t) => {
   let n = Object.create(n_);
   return n[Ne] = e, n[jt] = t.onSuccess.length !== 1 ? (o) => t.onSuccess(o) : t.onSuccess, n[mn] = t.onFailure.length !== 1 ? (o) => t.onFailure(o) : t.onFailure, n;
-}), n_ = /* @__PURE__ */ lr({
+}), n_ = lr({
   op: "OnSuccessAndFailure",
   [gt](e) {
     return e._stack.push(this), this[Ne];
   }
 });
-var Dp = /* @__PURE__ */ me(2, (e, t) => $o(e, {
-  onFailure: /* @__PURE__ */ r((n) => {
+var Dp = me(2, (e, t) => $o(e, {
+  onFailure: r((n) => {
     let o = n.reasons.find(Ds);
     return o ? Mt(() => t.onFailure(o.error)) : ut(n);
   }, "onFailure"),
   onSuccess: t.onSuccess
-})), Ip = /* @__PURE__ */ me(2, (e, t) => Dp(e, {
-  onFailure: /* @__PURE__ */ r((n) => Ot(() => t.onFailure(n)), "onFailure"),
-  onSuccess: /* @__PURE__ */ r((n) => Ot(() => t.onSuccess(n)), "onSuccess")
-})), Np = /* @__PURE__ */ me(2, (e, t) => {
+})), Ip = me(2, (e, t) => Dp(e, {
+  onFailure: r((n) => Ot(() => t.onFailure(n)), "onFailure"),
+  onSuccess: r((n) => Ot(() => t.onSuccess(n)), "onSuccess")
+})), Np = me(2, (e, t) => {
   if (Fo(e)) {
     if (e._tag === "Success") return Gt(t.onSuccess(e.value));
     let n = oo(e.cause);
@@ -2030,7 +2030,7 @@ var Dp = /* @__PURE__ */ me(2, (e, t) => $o(e, {
   }
   return Ip(e, t);
 });
-var Bs = /* @__PURE__ */ r((e) => Fo(e) ? Gt(e) : r_(e), "exit"), r_ = /* @__PURE__ */ gn({
+var Bs = r((e) => Fo(e) ? Gt(e) : r_(e), "exit"), r_ = gn({
   op: "Exit",
   [gt](e) {
     return e._stack.push(this), this[Ne];
@@ -2042,7 +2042,7 @@ var Bs = /* @__PURE__ */ r((e) => Fo(e) ? Gt(e) : r_(e), "exit"), r_ = /* @__PUR
     return Je(n ?? hn(e));
   }
 });
-var Vc = "~effect/Scope", zc = "~effect/Scope/Closeable", ml = /* @__PURE__ */ Ft("effect/Scope"), gl = /* @__PURE__ */ r((e, t) => ht(() => hl(e, t) ?? kt), "scopeClose"), hl = /* @__PURE__ */ r((e, t) => {
+var Vc = "~effect/Scope", zc = "~effect/Scope/Closeable", ml = Ft("effect/Scope"), gl = r((e, t) => ht(() => hl(e, t) ?? kt), "scopeClose"), hl = r((e, t) => {
   if (e.state._tag === "Closed") return;
   let n = {
     _tag: "Closed",
@@ -2057,7 +2057,7 @@ var Vc = "~effect/Scope", zc = "~effect/Scope/Closeable", ml = /* @__PURE__ */ F
   } = e.state;
   if (e.state = n, o.size !== 0)
     return o.size === 1 ? o.values().next().value(t) : o_(e, o, t);
-}, "scopeCloseUnsafe"), o_ = /* @__PURE__ */ Ep(function* (e, t, n) {
+}, "scopeCloseUnsafe"), o_ = Ep(function* (e, t, n) {
   let o = [], s = [], i = Array.from(t.values()), a = up();
   for (let l = i.length - 1; l >= 0; l--) {
     let u = i[l];
@@ -2065,20 +2065,20 @@ var Vc = "~effect/Scope", zc = "~effect/Scope/Closeable", ml = /* @__PURE__ */ F
   }
   return s.length > 0 && (o = yield* fp(s)), yield* vp(o);
 });
-var Mp = /* @__PURE__ */ r((e, t) => {
+var Mp = r((e, t) => {
   let n = Xi(t);
   if (e.state._tag === "Closed")
     return n.state = e.state, n;
   let o = {};
   return Xc(e, o, (s) => gl(n, s)), Xc(n, o, (s) => Ot(() => s_(e, o))), n;
-}, "scopeForkUnsafe"), Wo = /* @__PURE__ */ r((e, t) => ht(() => e.state._tag === "Closed" ? t(e.state.exit) : (Xc(e, {}, t), kt)), "scopeAddFinalizerExit"), Fp = /* @__PURE__ */ r((e, t) => Wo(e, Un(t)), "scopeAddFinalizer"), Xc = /* @__PURE__ */ r((e, t, n) => {
+}, "scopeForkUnsafe"), Wo = r((e, t) => ht(() => e.state._tag === "Closed" ? t(e.state.exit) : (Xc(e, {}, t), kt)), "scopeAddFinalizerExit"), Fp = r((e, t) => Wo(e, Un(t)), "scopeAddFinalizer"), Xc = r((e, t, n) => {
   e.state._tag === "Empty" ? e.state = {
     _tag: "Open",
-    finalizers: /* @__PURE__ */ new Map([[t, n]])
+    finalizers: new Map([[t, n]])
   } : e.state._tag === "Open" && e.state.finalizers.set(t, n);
-}, "scopeAddFinalizerUnsafe"), s_ = /* @__PURE__ */ r((e, t) => {
+}, "scopeAddFinalizerUnsafe"), s_ = r((e, t) => {
   e.state._tag === "Open" && e.state.finalizers.delete(t);
-}, "scopeRemoveFinalizerUnsafe"), Xi = /* @__PURE__ */ r((e = "sequential") => ({
+}, "scopeRemoveFinalizerUnsafe"), Xi = r((e = "sequential") => ({
   [zc]: zc,
   [Vc]: Vc,
   strategy: e,
@@ -2086,12 +2086,12 @@ var Mp = /* @__PURE__ */ r((e, t) => {
 }), "scopeMakeUnsafe"), i_ = {
   _tag: "Empty"
 };
-var wl = ml, $p = /* @__PURE__ */ qo(ml);
-var El = /* @__PURE__ */ r((e) => ht(() => {
+var wl = ml, $p = qo(ml);
+var El = r((e) => ht(() => {
   let t = Xi();
   return Mr(e(t), (n) => ht(() => hl(t, n) ?? kt));
-}), "scopedWith"), Bp = /* @__PURE__ */ r((e, t, n) => kp((o) => Qi((s) => Ke(wl, (i) => so(n?.interruptible ? s(e) : e, (a) => Wo(i, (l) => io(t(a, l), o)))))), "acquireRelease");
-var Yi = /* @__PURE__ */ gn({
+}), "scopedWith"), Bp = r((e, t, n) => kp((o) => Qi((s) => Ke(wl, (i) => so(n?.interruptible ? s(e) : e, (a) => Wo(i, (l) => io(t(a, l), o)))))), "acquireRelease");
+var Yi = gn({
   op: "OnExit",
   single: !1,
   [gt](e) {
@@ -2110,22 +2110,22 @@ var Yi = /* @__PURE__ */ gn({
     let o = this[Ne][1](n);
     return o ? Ke(o, (s) => n) : n;
   }
-}), Mr = /* @__PURE__ */ me(2, Yi), Up = /* @__PURE__ */ me(2, (e, t) => Mr(e, (n) => t));
-var qp = /* @__PURE__ */ me(3, (e, t, n) => Mr(e, (o) => {
+}), Mr = me(2, Yi), Up = me(2, (e, t) => Mr(e, (n) => t));
+var qp = me(3, (e, t, n) => Mr(e, (o) => {
   let s = t(o);
   return en(s) ? kt : n(s.success, o);
-})), Wp = /* @__PURE__ */ me(2, (e, t) => qp(e, xp, t));
-var Hp = /* @__PURE__ */ r((e, t, n) => Qi((o) => Ke(e, (s) => Yi(o(t(s)), (i) => n(s, i), !0))), "acquireUseRelease");
-var jp = /* @__PURE__ */ Pt((e) => ut(Gi(e.id))), yl = /* @__PURE__ */ r((e) => Pt((t) => (t.interruptible && (t.interruptible = !1, t._stack.push(Ji)), e)), "uninterruptible"), Gp = /* @__PURE__ */ gn({
+})), Wp = me(2, (e, t) => qp(e, xp, t));
+var Hp = r((e, t, n) => Qi((o) => Ke(e, (s) => Yi(o(t(s)), (i) => n(s, i), !0))), "acquireUseRelease");
+var jp = Pt((e) => ut(Gi(e.id))), yl = r((e) => Pt((t) => (t.interruptible && (t.interruptible = !1, t._stack.push(Ji)), e)), "uninterruptible"), Gp = gn({
   op: "SetInterruptible",
   [Lr](e) {
     if (e.interruptible = this[Ne], e._interruptedCause && e.interruptible)
       return () => ut(e._interruptedCause);
   }
-}), Ji = /* @__PURE__ */ Gp(!0), a_ = /* @__PURE__ */ Gp(!1), c_ = /* @__PURE__ */ r((e) => {
+}), Ji = Gp(!0), a_ = Gp(!1), c_ = r((e) => {
   if (e.interruptible = !0, e._stack.push(a_), e._interruptedCause) return ut(e._interruptedCause);
-}, "setFiberInterruptible"), Kp = /* @__PURE__ */ r((e) => Pt((t) => t.interruptible ? e : c_(t) ?? e), "interruptible"), Qi = /* @__PURE__ */ r((e) => Pt((t) => t.interruptible ? (t.interruptible = !1, t._stack.push(Ji), e(Kp)) : e(Ge)), "uninterruptibleMask");
-var _l = /* @__PURE__ */ r((e, t) => Ld(e) ? t?.mode === "result" ? mr(e, Wi, t) : mr(e, Ge, t) : t?.discard ? t.mode === "result" ? mr(Object.values(e), Wi, t) : mr(Object.values(e), Ge, t) : ht(() => {
+}, "setFiberInterruptible"), Kp = r((e) => Pt((t) => t.interruptible ? e : c_(t) ?? e), "interruptible"), Qi = r((e) => Pt((t) => t.interruptible ? (t.interruptible = !1, t._stack.push(Ji), e(Kp)) : e(Ge)), "uninterruptibleMask");
+var _l = r((e, t) => Ld(e) ? t?.mode === "result" ? mr(e, Wi, t) : mr(e, Ge, t) : t?.discard ? t.mode === "result" ? mr(Object.values(e), Wi, t) : mr(Object.values(e), Ge, t) : ht(() => {
   let n = {};
   return hr(mr(Object.entries(e), ([o, s]) => Kt(t?.mode === "result" ? Wi(s) : s, (i) => {
     Pi(n, o, i);
@@ -2134,7 +2134,7 @@ var _l = /* @__PURE__ */ r((e, t) => Ld(e) ? t?.mode === "result" ? mr(e, Wi, t)
     concurrency: t?.concurrency
   }), n);
 }), "all");
-var Zi = /* @__PURE__ */ gn({
+var Zi = gn({
   op: "While",
   [jt](e, t) {
     return this[Ne].step(e), this[Ne].while() ? (t._stack.push(this), this[Ne].body()) : gr;
@@ -2142,7 +2142,7 @@ var Zi = /* @__PURE__ */ gn({
   [gt](e) {
     return this[Ne].while() ? (e._stack.push(this), this[Ne].body()) : gr;
   }
-}), mr = /* @__PURE__ */ me((e) => typeof e[1] == "function", (e, t, n) => ht(() => {
+}), mr = me((e) => typeof e[1] == "function", (e, t, n) => ht(() => {
   let o = n?.concurrency ?? 1, s = o === "unbounded" ? Number.POSITIVE_INFINITY : Math.max(1, o);
   if (s === 1)
     return l_(e, t, n);
@@ -2157,17 +2157,17 @@ var Zi = /* @__PURE__ */ gn({
   });
   return u ? hr(u, l) : Je(l);
 }));
-var l_ = /* @__PURE__ */ r((e, t, n) => ht(() => {
+var l_ = r((e, t, n) => ht(() => {
   let o = n?.discard ? void 0 : [], s = e[Symbol.iterator](), i = s.next(), a = 0;
   return hr(Zi({
-    while: /* @__PURE__ */ r(() => !i.done, "while"),
-    body: /* @__PURE__ */ r(() => t(i.value, a++), "body"),
-    step: /* @__PURE__ */ r((l) => {
+    while: r(() => !i.done, "while"),
+    body: r(() => t(i.value, a++), "body"),
+    step: r((l) => {
       o && o.push(l), i = s.next();
     }, "step")
   }), o);
-}), "forEachSequential"), u_ = /* @__PURE__ */ r((e) => {
-  let t = e.onItem, n = e.step, o = /* @__PURE__ */ r((s, i, a, l) => {
+}), "forEachSequential"), u_ = r((e) => {
+  let t = e.onItem, n = e.step, o = r((s, i, a, l) => {
     for (; a < l; a++) {
       let u = i[a], p = t(s, u, a);
       if (!Fo(p))
@@ -2180,10 +2180,10 @@ var l_ = /* @__PURE__ */ r((e, t, n) => ht(() => {
     let l = 0, u = a?.end ?? i.length, p = a?.concurrency ?? 1;
     if (p === 1)
       return o(s, i, 0, u);
-    let E = a?.orderedStep === !0 && p > 1, w = !1, _, S, h, j = !1, U, N, O = l, R = E ? new Array(u) : void 0, v = /* @__PURE__ */ r((Q) => {
+    let E = a?.orderedStep === !0 && p > 1, w = !1, _, S, h, j = !1, U, N, O = l, R = E ? new Array(u) : void 0, v = r((Q) => {
       let ne = Ir(Q);
       return U = ne, w = !0, j = !0, S && S.size > 0 ? Ke(yl(Qf(Array.from(S))), () => ne) : ne;
-    }, "failDefect"), ee = /* @__PURE__ */ r((Q, ne, he) => {
+    }, "failDefect"), ee = r((Q, ne, he) => {
       if (!E) return n(s, Q, ne, he);
       if (U) return U;
       for (R[he] = ne; O < u; ) {
@@ -2193,7 +2193,7 @@ var l_ = /* @__PURE__ */ r((e, t, n) => ht(() => {
         let be = O++, xe = n(s, i[be], oe, be);
         if (xe) return xe;
       }
-    }, "runStep"), fe = /* @__PURE__ */ r(() => {
+    }, "runStep"), fe = r(() => {
       let Q = !1;
       for (; !U && l < u; l++) {
         let ne = i[l], he = N ?? t(s, ne, l);
@@ -2231,7 +2231,7 @@ var l_ = /* @__PURE__ */ r((e, t, n) => ht(() => {
           return;
         } else
           return Nr((oe) => {
-            _ = up(), S = /* @__PURE__ */ new Set(), N = he, h = oe;
+            _ = up(), S = new Set(), N = he, h = oe;
             let be;
             try {
               be = fe();
@@ -2257,7 +2257,7 @@ var l_ = /* @__PURE__ */ r((e, t, n) => ht(() => {
     return fe();
   };
 }, "iterateEagerImpl");
-var d_ = /* @__PURE__ */ u_({
+var d_ = u_({
   onItem(e, t, n) {
     return e.f(t, n);
   },
@@ -2266,32 +2266,32 @@ var d_ = /* @__PURE__ */ u_({
     e.out && (e.out[o] = n.value);
   }
 });
-var Sl = /* @__PURE__ */ r((e, t, n = !1, o = !1, s = !1) => {
+var Sl = r((e, t, n = !1, o = !1, s = !1) => {
   let i = e, a = s === "inherit" ? i.interruptible : !s, l = new Hi(i.context, a);
   return n ? l.evaluate(t) : i.currentDispatcher.scheduleTask(() => l.evaluate(t), 0), !o && !l._exit && (i.children().add(l), l.addObserver(() => i._children.delete(l))), l;
-}, "forkUnsafe"), Vp = /* @__PURE__ */ me((e) => Ct(e[0]), (e, t) => Pt((n) => Je(Sl(n, e, t?.startImmediately, !0, t?.uninterruptible))));
-var Us = /* @__PURE__ */ r((e) => (t, n) => {
+}, "forkUnsafe"), Vp = me((e) => Ct(e[0]), (e, t) => Pt((n) => Je(Sl(n, e, t?.startImmediately, !0, t?.uninterruptible))));
+var Us = r((e) => (t, n) => {
   let o = new Hi(n?.scheduler ? fr(e, Uc, n.scheduler) : e, n?.uninterruptible !== !0);
   if (o.evaluate(t), o._exit) return o;
   if (n?.signal)
     if (n.signal.aborted)
       o.interruptUnsafe();
     else {
-      let s = /* @__PURE__ */ r(() => o.interruptUnsafe(), "abort");
+      let s = r(() => o.interruptUnsafe(), "abort");
       n.signal.addEventListener("abort", s, {
         once: !0
       }), o.addObserver(() => n.signal.removeEventListener("abort", s));
     }
   return n?.onFiberStart && n.onFiberStart(o), o;
 }, "runForkWith");
-var zp = /* @__PURE__ */ Us(/* @__PURE__ */ Ni()), Xp = /* @__PURE__ */ r((e) => {
+var zp = Us(Ni()), Xp = r((e) => {
   let t = Us(e);
   return (n, o) => {
     let s = t(n, o);
     return o?.onExit && s.addObserver(o.onExit), (i) => s.interruptUnsafe(i);
   };
 }, "runCallbackWith");
-var Yp = /* @__PURE__ */ r((e) => {
+var Yp = r((e) => {
   let t = Us(e);
   return (n, o) => {
     let s = t(n, o);
@@ -2300,7 +2300,7 @@ var Yp = /* @__PURE__ */ r((e) => {
     });
   };
 }, "runPromiseExitWith");
-var Jp = /* @__PURE__ */ r((e) => {
+var Jp = r((e) => {
   let t = Yp(e);
   return (n, o) => t(n, o).then((s) => {
     if (s._tag === "Failure")
@@ -2308,8 +2308,8 @@ var Jp = /* @__PURE__ */ r((e) => {
     return s.value;
   });
 }, "runPromiseWith");
-var ea = /* @__PURE__ */ $t("effect/Clock", {
-  defaultValue: /* @__PURE__ */ r(() => new Yc(), "defaultValue")
+var ea = $t("effect/Clock", {
+  defaultValue: r(() => new Yc(), "defaultValue")
 }), Hc = 2 ** 31 - 1, Yc = class {
   static {
     r(this, "ClockImpl");
@@ -2317,15 +2317,15 @@ var ea = /* @__PURE__ */ $t("effect/Clock", {
   currentTimeMillisUnsafe() {
     return Date.now();
   }
-  currentTimeMillis = /* @__PURE__ */ Ot(() => this.currentTimeMillisUnsafe());
+  currentTimeMillis = Ot(() => this.currentTimeMillisUnsafe());
   currentTimeNanosUnsafe() {
     return f_();
   }
-  currentTimeNanos = /* @__PURE__ */ Ot(() => this.currentTimeNanosUnsafe());
+  currentTimeNanos = Ot(() => this.currentTimeNanosUnsafe());
   monotonicTimeNanosUnsafe() {
     return Zp();
   }
-  monotonicTimeNanos = /* @__PURE__ */ Ot(() => this.monotonicTimeNanosUnsafe());
+  monotonicTimeNanos = Ot(() => this.monotonicTimeNanosUnsafe());
   sleep(t) {
     return this.sleepMillis(no(t));
   }
@@ -2335,19 +2335,19 @@ var ea = /* @__PURE__ */ $t("effect/Clock", {
       return Ot(() => clearTimeout(s));
     }) : zi;
   }
-}, Qp = /* @__PURE__ */ BigInt(1e6), Zp = /* @__PURE__ */ (function() {
+}, Qp = BigInt(1e6), Zp = (function() {
   let e = globalThis.process?.hrtime;
   if (typeof e?.bigint == "function")
     return () => e.bigint();
   if (typeof performance < "u" && typeof performance.now == "function")
     return () => BigInt(Math.round(performance.now() * 1e6));
-  let t = /* @__PURE__ */ BigInt(0);
+  let t = BigInt(0);
   return () => {
     let n = BigInt(Date.now()) * Qp;
     return n > t && (t = n), t;
   };
-})(), f_ = /* @__PURE__ */ (function() {
-  let e = /* @__PURE__ */ BigInt(1e9), t;
+})(), f_ = (function() {
+  let e = BigInt(1e9), t;
   return () => {
     let n = Zp(), o = BigInt(Date.now()) * Qp;
     if (t === void 0)
@@ -2358,9 +2358,9 @@ var ea = /* @__PURE__ */ $t("effect/Clock", {
     }
     return t + n;
   };
-})(), ao = /* @__PURE__ */ r((e) => Pt((t) => e(t.getRef(ea))), "clockWith"), ta = /* @__PURE__ */ r((e) => ao((t) => t.sleep(Hn(e))), "sleep"), xl = /* @__PURE__ */ ao((e) => e.currentTimeMillis);
+})(), ao = r((e) => Pt((t) => e(t.getRef(ea))), "clockWith"), ta = r((e) => ao((t) => t.sleep(Hn(e))), "sleep"), xl = ao((e) => e.currentTimeMillis);
 var Jc = "~effect/Cause/TimeoutError";
-var Qc = class extends (/* @__PURE__ */ ur("TimeoutError")) {
+var Qc = class extends (ur("TimeoutError")) {
   static {
     r(this, "TimeoutError");
   }
@@ -2371,7 +2371,7 @@ var Qc = class extends (/* @__PURE__ */ ur("TimeoutError")) {
     });
   }
 }, Zc = "~effect/Cause/IllegalArgumentError";
-var el = class extends (/* @__PURE__ */ ur("IllegalArgumentError")) {
+var el = class extends (ur("IllegalArgumentError")) {
   static {
     r(this, "IllegalArgumentError");
   }
@@ -2382,7 +2382,7 @@ var el = class extends (/* @__PURE__ */ ur("IllegalArgumentError")) {
     });
   }
 }, tl = "~effect/Cause/ExceededCapacityError";
-var nl = class extends (/* @__PURE__ */ ur("ExceededCapacityError")) {
+var nl = class extends (ur("ExceededCapacityError")) {
   static {
     r(this, "ExceededCapacityError");
   }
@@ -2393,7 +2393,7 @@ var nl = class extends (/* @__PURE__ */ ur("ExceededCapacityError")) {
     });
   }
 }, rl = "~effect/Cause/AsyncFiberError";
-var ol = class extends (/* @__PURE__ */ ur("AsyncFiberError")) {
+var ol = class extends (ur("AsyncFiberError")) {
   static {
     r(this, "AsyncFiberError");
   }
@@ -2405,7 +2405,7 @@ var ol = class extends (/* @__PURE__ */ ur("AsyncFiberError")) {
     });
   }
 }, sl = "~effect/Cause/UnknownError";
-var ji = class extends (/* @__PURE__ */ ur("UnknownError")) {
+var ji = class extends (ur("UnknownError")) {
   static {
     r(this, "UnknownError");
   }
@@ -2416,9 +2416,9 @@ var ji = class extends (/* @__PURE__ */ ur("UnknownError")) {
       cause: t
     });
   }
-}, p_ = /* @__PURE__ */ $t("effect/Console/CurrentConsole", {
-  defaultValue: /* @__PURE__ */ r(() => globalThis.console, "defaultValue")
-}), m_ = /* @__PURE__ */ r((e) => {
+}, p_ = $t("effect/Console/CurrentConsole", {
+  defaultValue: r(() => globalThis.console, "defaultValue")
+}), m_ = r((e) => {
   switch (e) {
     case "All":
       return Number.MIN_SAFE_INTEGER;
@@ -2437,9 +2437,9 @@ var ji = class extends (/* @__PURE__ */ ur("UnknownError")) {
     case "None":
       return Number.MAX_SAFE_INTEGER;
   }
-}, "logLevelToOrder"), g_ = /* @__PURE__ */ pf(ff, m_), h_ = /* @__PURE__ */ mf(g_), em = /* @__PURE__ */ $t("effect/Loggers/CurrentLoggers", {
-  defaultValue: /* @__PURE__ */ r(() => /* @__PURE__ */ new Set([v_, b_]), "defaultValue")
-}), w_ = /* @__PURE__ */ $t("effect/Logger/LogToStderr", {
+}, "logLevelToOrder"), g_ = pf(ff, m_), h_ = mf(g_), em = $t("effect/Loggers/CurrentLoggers", {
+  defaultValue: r(() => new Set([v_, b_]), "defaultValue")
+}), w_ = $t("effect/Logger/LogToStderr", {
   defaultValue: Pd
 });
 var E_ = "~effect/Logger", y_ = {
@@ -2450,11 +2450,11 @@ var E_ = "~effect/Logger", y_ = {
   pipe() {
     return It(this, arguments);
   }
-}, tm = /* @__PURE__ */ r((e) => {
+}, tm = r((e) => {
   let t = Object.create(y_);
   return t.log = e, t;
-}, "loggerMake"), __ = /* @__PURE__ */ r((e) => e.replace(/[\s="]/g, "_"), "formatLabel"), S_ = /* @__PURE__ */ r((e, t) => `${__(e[0])}=${t - e[1]}ms`, "formatLogSpan");
-var vl = /* @__PURE__ */ r((e) => (...t) => {
+}, "loggerMake"), __ = r((e) => e.replace(/[\s="]/g, "_"), "formatLabel"), S_ = r((e, t) => `${__(e[0])}=${t - e[1]}ms`, "formatLogSpan");
+var vl = r((e) => (...t) => {
   let n;
   for (let o = 0, s = t.length; o < s; o++) {
     let i = t[o];
@@ -2500,8 +2500,8 @@ var ro = {
   Error: [ro.red],
   Fatal: [ro.bgBrightRed, ro.black]
 };
-var x_ = /* @__PURE__ */ r((e) => `${e.getHours().toString().padStart(2, "0")}:${e.getMinutes().toString().padStart(2, "0")}:${e.getSeconds().toString().padStart(2, "0")}.${e.getMilliseconds().toString().padStart(3, "0")}`, "defaultDateFormat");
-var v_ = /* @__PURE__ */ tm(({
+var x_ = r((e) => `${e.getHours().toString().padStart(2, "0")}:${e.getMinutes().toString().padStart(2, "0")}:${e.getSeconds().toString().padStart(2, "0")}.${e.getMilliseconds().toString().padStart(3, "0")}`, "defaultDateFormat");
+var v_ = tm(({
   cause: e,
   date: t,
   fiber: n,
@@ -2517,7 +2517,7 @@ var v_ = /* @__PURE__ */ tm(({
   Object.keys(p).length > 0 && i.push(p);
   let E = n.getRef(p_);
   (n.getRef(w_) ? E.error : E.log)(`[${x_(t)}] ${o.toUpperCase()} (#${n.id})${u}:`, ...i);
-}), b_ = /* @__PURE__ */ tm(({
+}), b_ = tm(({
   cause: e,
   fiber: t,
   logLevel: n,
@@ -2554,18 +2554,18 @@ var R_ = {
   pipe() {
     return It(this, arguments);
   }
-}, Tl = /* @__PURE__ */ r(() => {
+}, Tl = r(() => {
   let e = Object.create(R_);
   return e.resumes = void 0, e.effect = void 0, e;
-}, "makeUnsafe"), jn = /* @__PURE__ */ r(() => Ot(() => Tl()), "make"), wn = /* @__PURE__ */ r((e) => Nr((t) => e.effect ? t(e.effect) : (e.resumes ??= [], e.resumes.push(t), Ot(() => {
+}, "makeUnsafe"), jn = r(() => Ot(() => Tl()), "make"), wn = r((e) => Nr((t) => e.effect ? t(e.effect) : (e.resumes ??= [], e.resumes.push(t), Ot(() => {
   let n = e.resumes;
   if (n === void 0) return;
   let o = n.indexOf(t);
   o >= 0 && n.splice(o, 1);
 }))), "_await");
-var T_ = /* @__PURE__ */ me(2, (e, t) => Ot(() => En(e, t))), uo = T_;
-var Fr = /* @__PURE__ */ me(2, (e, t) => uo(e, Gt(t)));
-var En = /* @__PURE__ */ r((e, t) => {
+var T_ = me(2, (e, t) => Ot(() => En(e, t))), uo = T_;
+var Fr = me(2, (e, t) => uo(e, Gt(t)));
+var En = r((e, t) => {
   if (e.effect) return !1;
   if (e.effect = t, e.resumes) {
     for (let n = 0; n < e.resumes.length; n++)
@@ -2581,7 +2581,7 @@ var na = Fp;
 var ra = Mp, Cl = gl;
 
 // node_modules/effect/dist/Layer.js
-var L_ = "~effect/Layer", am = "~effect/Layer/MemoMap", D_ = /* @__PURE__ */ r((e, t) => (e.observers++, Uo(Wo(t, (n) => e.finalizer(n)), e.effect)), "memoMapReuse");
+var L_ = "~effect/Layer", am = "~effect/Layer/MemoMap", D_ = r((e, t) => (e.observers++, Uo(Wo(t, (n) => e.finalizer(n)), e.effect)), "memoMapReuse");
 var I_ = {
   [L_]: {
     _ROut: Ge,
@@ -2591,20 +2591,20 @@ var I_ = {
   pipe() {
     return It(this, arguments);
   }
-}, N_ = /* @__PURE__ */ r((e) => {
+}, N_ = r((e) => {
   let t = Object.create(I_);
   return t.build = e, t;
-}, "fromBuildUnsafe"), Al = /* @__PURE__ */ r((e) => N_((t, n) => {
+}, "fromBuildUnsafe"), Al = r((e) => N_((t, n) => {
   let o = ra(n);
   return Mr(e(t, o), (s) => s._tag === "Failure" ? Cl(o, s) : kt);
-}), "fromBuild"), M_ = /* @__PURE__ */ r((e) => {
+}), "fromBuild"), M_ = r((e) => {
   let t = Al((n, o) => n.getOrElseMemoize(t, o, e));
   return t;
-}, "fromBuildMemo"), F_ = /* @__PURE__ */ r((e, t, n, o) => {
+}, "fromBuildMemo"), F_ = r((e, t, n, o) => {
   let s = sm(), i = Tl(), a = {
     observers: 1,
     effect: wn(i),
-    finalizer: /* @__PURE__ */ r((l) => ht(() => (a.observers--, a.observers === 0 ? (e.map.delete(t), Cl(s, l)) : kt)), "finalizer")
+    finalizer: r((l) => ht(() => (a.observers--, a.observers === 0 ? (e.map.delete(t), Cl(s, l)) : kt)), "finalizer")
   };
   return e.map.set(t, a), Wo(n, a.finalizer).pipe(Ke(() => o(e, s)), Mr((l) => (a.effect = l, uo(i, l))));
 }, "memoMapBuild"), oa = class {
@@ -2618,7 +2618,7 @@ var I_ = {
   constructor(t) {
     this.parent = t;
   }
-  map = /* @__PURE__ */ new Map();
+  map = new Map();
   get(t, n) {
     let o = this.map.get(t);
     return o ? D_(o, n) : this.parent?.get(t, n);
@@ -2629,8 +2629,8 @@ var I_ = {
       return s || F_(this, t, n, o);
     });
   }
-}, Ol = /* @__PURE__ */ r(() => new oa(), "makeMemoMapUnsafe"), $_ = /* @__PURE__ */ r((e) => new oa(e), "forkMemoMapUnsafe");
-var Hs = class e extends (/* @__PURE__ */ Ft()("effect/Layer/CurrentMemoMap")) {
+}, Ol = r(() => new oa(), "makeMemoMapUnsafe"), $_ = r((e) => new oa(e), "forkMemoMapUnsafe");
+var Hs = class e extends (Ft()("effect/Layer/CurrentMemoMap")) {
   static {
     r(this, "CurrentMemoMap");
   }
@@ -2638,27 +2638,27 @@ var Hs = class e extends (/* @__PURE__ */ Ft()("effect/Layer/CurrentMemoMap")) {
     let n = bf(t, e);
     return n ? $_(n) : Ol();
   }
-}, Ll = /* @__PURE__ */ me(3, (e, t, n) => qo(Kt(e.build(t, n), fr(Hs, t)), Hs, t));
-var lm = /* @__PURE__ */ me(2, (e, t) => Pt((n) => Ll(e, Hs.forkOrCreate(n.context), t)));
-var js = /* @__PURE__ */ r(function() {
+}, Ll = me(3, (e, t, n) => qo(Kt(e.build(t, n), fr(Hs, t)), Hs, t));
+var lm = me(2, (e, t) => Pt((n) => Ll(e, Hs.forkOrCreate(n.context), t)));
+var js = r(function() {
   return arguments.length === 1 ? (e) => cm(arguments[0], e) : cm(arguments[0], arguments[1]);
-}, "effect"), cm = /* @__PURE__ */ r((e, t) => Gs(Kt(t, (n) => dr(e, n))), "effectImpl"), Gs = /* @__PURE__ */ r((e) => M_((t, n) => im(e, n)), "effectContext");
-var um = /* @__PURE__ */ r((e, t, n) => {
+}, "effect"), cm = r((e, t) => Gs(Kt(t, (n) => dr(e, n))), "effectImpl"), Gs = r((e) => M_((t, n) => im(e, n)), "effectContext");
+var um = r((e, t, n) => {
   let o = ra(n, "parallel");
   return mr(e, (s) => s.build(t, ra(o, "sequential")), {
     concurrency: e.length
   }).pipe(Kt((s) => kf(...s)));
-}, "mergeAllEffect"), Dl = /* @__PURE__ */ r((...e) => Al((t, n) => um(e, t, n)), "mergeAll"), Il = /* @__PURE__ */ me(2, (e, t) => Dl(e, ...Array.isArray(t) ? t : [t])), B_ = /* @__PURE__ */ r((e, t, n) => Al((o, s) => Ke(Array.isArray(t) ? um(t, o, s) : t.build(o, s), (i) => e.build(o, s).pipe(io(i), Kt((a) => n(a, i))))), "provideWith");
-var Nl = /* @__PURE__ */ me(2, (e, t) => B_(e, t, (n, o) => Mi(o, n)));
+}, "mergeAllEffect"), Dl = r((...e) => Al((t, n) => um(e, t, n)), "mergeAll"), Il = me(2, (e, t) => Dl(e, ...Array.isArray(t) ? t : [t])), B_ = r((e, t, n) => Al((o, s) => Ke(Array.isArray(t) ? um(t, o, s) : t.build(o, s), (i) => e.build(o, s).pipe(io(i), Kt((a) => n(a, i))))), "provideWith");
+var Nl = me(2, (e, t) => B_(e, t, (n, o) => Mi(o, n)));
 
 // node_modules/effect/dist/Clock.js
 var $r = xl;
 
 // node_modules/effect/dist/Pull.js
-var U_ = /* @__PURE__ */ $f(nm, (e) => om(e) ? pr(e) : Tn(e));
-var fm = /* @__PURE__ */ me(2, (e, t) => $o(e, {
+var U_ = $f(nm, (e) => om(e) ? pr(e) : Tn(e));
+var fm = me(2, (e, t) => $o(e, {
   onSuccess: t.onSuccess,
-  onFailure: /* @__PURE__ */ r((n) => {
+  onFailure: r((n) => {
     let o = U_(n);
     return en(o) ? t.onFailure(o.failure) : t.onDone(o.success.value);
   }, "onFailure")
@@ -2666,8 +2666,8 @@ var fm = /* @__PURE__ */ me(2, (e, t) => $o(e, {
 
 // node_modules/effect/dist/Schedule.js
 var pm = "~effect/Schedule";
-var Ml = /* @__PURE__ */ $t("effect/Schedule/CurrentMetadata", {
-  defaultValue: /* @__PURE__ */ Un({
+var Ml = $t("effect/Schedule/CurrentMetadata", {
+  defaultValue: Un({
     input: void 0,
     output: void 0,
     duration: Ui,
@@ -2686,10 +2686,10 @@ var Ml = /* @__PURE__ */ $t("effect/Schedule/CurrentMetadata", {
   pipe() {
     return It(this, arguments);
   }
-}, mm = /* @__PURE__ */ r((e) => He(e, pm), "isSchedule"), Fl = /* @__PURE__ */ r((e) => {
+}, mm = r((e) => He(e, pm), "isSchedule"), Fl = r((e) => {
   let t = Object.create(j_);
   return t.step = e, t;
-}, "fromStep"), $l = /* @__PURE__ */ r(() => {
+}, "fromStep"), $l = r(() => {
   let e = 0, t, n;
   return (o, s) => {
     n === void 0 && (n = o);
@@ -2703,10 +2703,10 @@ var Ml = /* @__PURE__ */ $t("effect/Schedule/CurrentMetadata", {
       elapsedSincePrevious: a
     };
   };
-}, "metadataFn"), Bl = /* @__PURE__ */ r((e) => Fl(Kt(e, (t) => {
+}, "metadataFn"), Bl = r((e) => Fl(Kt(e, (t) => {
   let n = $l();
   return (o, s) => t(n(o, s));
-})), "fromStepWithMetadata"), Ul = /* @__PURE__ */ r((e) => wr(e.step, (t) => Je(() => ut(t))), "toStep"), gm = /* @__PURE__ */ r((e) => ao((t) => Kt(Ul(e), (n) => {
+})), "fromStepWithMetadata"), Ul = r((e) => wr(e.step, (t) => Je(() => ut(t))), "toStep"), gm = r((e) => ao((t) => Kt(Ul(e), (n) => {
   let o = $l();
   return (s) => ht(() => {
     let i = t.currentTimeMillisUnsafe();
@@ -2716,16 +2716,16 @@ var Ml = /* @__PURE__ */ $t("effect/Schedule/CurrentMetadata", {
     });
   });
 })), "toStepWithMetadata");
-var ql = /* @__PURE__ */ r((e) => Fl(Kt(Ul(e), (t) => (n, o) => fm(t(n, o), {
-  onSuccess: /* @__PURE__ */ r((s) => Je([o, s[1]]), "onSuccess"),
+var ql = r((e) => Fl(Kt(Ul(e), (t) => (n, o) => fm(t(n, o), {
+  onSuccess: r((s) => Je([o, s[1]]), "onSuccess"),
   onFailure: ut,
-  onDone: /* @__PURE__ */ r(() => bl(o), "onDone")
+  onDone: r(() => bl(o), "onDone")
 }))), "passthrough");
-var Wl = /* @__PURE__ */ r((e) => {
+var Wl = r((e) => {
   let t = Hn(e);
   return Bl(Je((n) => Je([n.attempt - 1, t])));
 }, "spaced");
-var sa = /* @__PURE__ */ me(2, (e, t) => Fl(Kt(Ul(e), (n) => {
+var sa = me(2, (e, t) => Fl(Kt(Ul(e), (n) => {
   let o = $l();
   return (s, i) => Ke(n(s, i), (a) => {
     let [l, u] = a, p = t({
@@ -2736,13 +2736,13 @@ var sa = /* @__PURE__ */ me(2, (e, t) => Fl(Kt(Ul(e), (n) => {
     return Ke(Ct(p) ? p : Je(p), (E) => E ? Je(a) : bl(l));
   });
 })));
-var hm = /* @__PURE__ */ Wl(Ui);
+var hm = Wl(Ui);
 
 // node_modules/effect/dist/internal/layer.js
-var G_ = /* @__PURE__ */ r((e, t, n) => El((o) => Ke(n?.local ? Ll(t, Ol(), o) : lm(t, o), (s) => io(e, s))), "provideLayer"), wm = /* @__PURE__ */ me((e) => Ct(e[0]), (e, t, n) => Dc(t) ? io(e, t) : G_(e, Array.isArray(t) ? Dl(...t) : t, n));
+var G_ = r((e, t, n) => El((o) => Ke(n?.local ? Ll(t, Ol(), o) : lm(t, o), (s) => io(e, s))), "provideLayer"), wm = me((e) => Ct(e[0]), (e, t, n) => Dc(t) ? io(e, t) : G_(e, Array.isArray(t) ? Dl(...t) : t, n));
 
 // node_modules/effect/dist/internal/schedule.js
-var Em = /* @__PURE__ */ me(3, (e, t, n) => Ke(gm(t), (o) => {
+var Em = me(3, (e, t, n) => Ke(gm(t), (o) => {
   let s = Ml.defaultValue();
   return $s(ul(so(Ke(ht(() => qo(e, Ml, s)), o), (i) => Ot(() => {
     s = i;
@@ -2750,11 +2750,11 @@ var Em = /* @__PURE__ */ me(3, (e, t, n) => Ke(gm(t), (o) => {
     disableYield: !0
   }), (i) => Ii(i) ? Je(i.value) : n(i, s.attempt === 0 ? gf() : hf(s)));
 }));
-var ym = /* @__PURE__ */ me(2, (e, t) => {
+var ym = me(2, (e, t) => {
   let n = typeof t == "function" ? t(Ge) : mm(t) ? t : z_(t);
   return Em(e, n, Bo);
 });
-var V_ = /* @__PURE__ */ ql(hm), z_ = /* @__PURE__ */ r((e) => {
+var V_ = ql(hm), z_ = r((e) => {
   let t = e.schedule ? ql(e.schedule) : V_;
   return e.while && (t = sa(t, ({
     input: n
@@ -2804,10 +2804,10 @@ var Dm = Vp;
 var Gl = zp, Im = Us, Nm = Xp;
 var Mm = Jp;
 var Fm = ao;
-var $m = /* @__PURE__ */ vl("Error");
+var $m = vl("Error");
 
 // node_modules/effect/dist/Runtime.js
-var Kl = /* @__PURE__ */ r((e, t) => An(e) ? t(0) : nn(e.cause) ? t(130) : t(Y_(Ho(e.cause))), "defaultTeardown"), Um = /* @__PURE__ */ r((e) => me((t) => _m(t[0]), (t, n) => {
+var Kl = r((e, t) => An(e) ? t(0) : nn(e.cause) ? t(130) : t(Y_(Ho(e.cause))), "defaultTeardown"), Um = r((e) => me((t) => _m(t[0]), (t, n) => {
   let o = n?.disableErrorReporting === !0 ? Gl(t) : Gl(Rm(t, (i) => nn(i) ? Bt : J_(Ho(i)) ? $m(i) : Bt));
   try {
     let i = globalThis.setInterval(To, 2147483647);
@@ -2821,14 +2821,14 @@ var Kl = /* @__PURE__ */ r((e, t) => An(e) ? t(0) : nn(e.cause) ? t(130) : t(Y_(
     fiber: o,
     teardown: s
   });
-}), "makeRunMain"), zs = "~effect/Runtime/errorExitCode", Y_ = /* @__PURE__ */ r((e) => {
+}), "makeRunMain"), zs = "~effect/Runtime/errorExitCode", Y_ = r((e) => {
   if (typeof e == "object" && e !== null && zs in e) {
     let t = e[zs];
     if (typeof t == "number")
       return t;
   }
   return 1;
-}, "getErrorExitCode"), Bm = "~effect/Runtime/errorReported", J_ = /* @__PURE__ */ r((e) => {
+}, "getErrorExitCode"), Bm = "~effect/Runtime/errorReported", J_ = r((e) => {
   if (typeof e == "object" && e !== null && Bm in e) {
     let t = e[Bm];
     if (typeof t == "boolean")
@@ -2838,7 +2838,7 @@ var Kl = /* @__PURE__ */ r((e, t) => An(e) ? t(0) : nn(e.cause) ? t(130) : t(Y_(
 }, "getErrorReported");
 
 // node_modules/@effect/platform-node-shared/dist/NodeRuntime.js
-var qm = /* @__PURE__ */ Um(({
+var qm = Um(({
   fiber: e,
   teardown: t
 }) => {
@@ -2889,7 +2889,7 @@ function ho({
   env: e = process.env,
   probeDir: t = "/workspace"
 } = {}) {
-  let n = /* @__PURE__ */ r((s) => typeof s == "string" && s !== "", "present");
+  let n = r((s) => typeof s == "string" && s !== "", "present");
   if (!(n(e.CODER) || n(e.CODER_WORKSPACE_NAME) || n(e.CODER_AGENT_URL))) return null;
   try {
     if (eS.statSync(t).isDirectory()) return t;
@@ -2964,13 +2964,13 @@ var zo = class extends Ft()(
 var Xm = {
   resolvePort: jm,
   resolveHome: Hm,
-  readEnvironment: /* @__PURE__ */ r((e) => process.env[e], "readEnvironment"),
-  moduleUrl: /* @__PURE__ */ r(() => import.meta.url, "moduleUrl"),
+  readEnvironment: r((e) => process.env[e], "readEnvironment"),
+  moduleUrl: r(() => import.meta.url, "moduleUrl"),
   fileURLToPath: rS,
   dirname: zl.dirname,
   basename: zl.basename,
-  resolvePath: /* @__PURE__ */ r((...e) => zl.resolve(...e), "resolvePath"),
-  readTextFile: /* @__PURE__ */ r((e) => nS.readFileSync(e, "utf8"), "readTextFile")
+  resolvePath: r((...e) => zl.resolve(...e), "resolvePath"),
+  readTextFile: r((e) => nS.readFileSync(e, "utf8"), "readTextFile")
 };
 function oS(e, t = Xm) {
   let n = t.dirname(t.fileURLToPath(e));
@@ -3094,13 +3094,13 @@ var ga = class {
         throw new Error("daemon signal observer already installed on another host");
       return this.removeObserver;
     }
-    let n = /* @__PURE__ */ r(() => {
+    let n = r(() => {
       this.observeSignal("SIGINT");
-    }, "onSigint"), o = /* @__PURE__ */ r(() => {
+    }, "onSigint"), o = r(() => {
       this.observeSignal("SIGTERM");
     }, "onSigterm");
     t.on("SIGINT", n), t.on("SIGTERM", o), this.installedHost = t;
-    let s = !0, i = /* @__PURE__ */ r(() => {
+    let s = !0, i = r(() => {
       s && (s = !1, t.removeListener("SIGINT", n), t.removeListener("SIGTERM", o), this.removeObserver === i && (this.removeObserver = null, this.installedHost = null));
     }, "remove");
     return this.removeObserver = i, i;
@@ -3112,7 +3112,7 @@ var ga = class {
     this.coordinatedExitCode = this.coordinatedExitCode === 1 ? 1 : t;
   }
   /** BunRuntime calls this only after the root Effect and its async cleanup end. */
-  teardown = /* @__PURE__ */ r((t, n) => {
+  teardown = r((t, n) => {
     let o = this.processExitFallback;
     if (this.processExitFallback = null, o)
       try {
@@ -3143,11 +3143,11 @@ var Jm = "~effect/MutableRef", dS = {
       current: qn(this.current)
     };
   }
-}, Qm = /* @__PURE__ */ r((e) => {
+}, Qm = r((e) => {
   let t = Object.create(dS);
   return t.current = e, t;
 }, "make");
-var Zm = /* @__PURE__ */ me(2, (e, t) => (e.current = t, e));
+var Zm = me(2, (e, t) => (e.current = t, e));
 
 // node_modules/effect/dist/Ref.js
 var pS = "~effect/Ref", mS = {
@@ -3161,11 +3161,11 @@ var pS = "~effect/Ref", mS = {
       ref: this.ref
     };
   }
-}, gS = /* @__PURE__ */ r((e) => {
+}, gS = r((e) => {
   let t = Object.create(mS);
   return t.ref = Qm(e), t;
-}, "makeUnsafe"), ha = /* @__PURE__ */ r((e) => Qe(() => gS(e)), "make"), eg = /* @__PURE__ */ r((e) => Qe(() => e.ref.current), "get"), wa = /* @__PURE__ */ me(2, (e, t) => Qe(() => Zm(e.ref, t)));
-var tg = /* @__PURE__ */ r((e) => e.ref.current, "getUnsafe");
+}, "makeUnsafe"), ha = r((e) => Qe(() => gS(e)), "make"), eg = r((e) => Qe(() => e.ref.current), "get"), wa = me(2, (e, t) => Qe(() => Zm(e.ref, t)));
+var tg = r((e) => e.ref.current, "getUnsafe");
 
 // src/daemon/app/services/background.ts
 var Wr = class extends st("BackgroundOperationalError") {
@@ -3298,7 +3298,7 @@ r(_S, "closeExitError");
 function SS(e, t, n, o, s, i) {
   return go(
     et(function* () {
-      let a = yield* la, l = "running", u = null, p = /* @__PURE__ */ r(() => {
+      let a = yield* la, l = "running", u = null, p = r(() => {
       }, "resolveCompletion"), E = new Promise((j) => {
         p = j;
       }), w = yield* Dm(
@@ -3317,22 +3317,22 @@ function SS(e, t, n, o, s, i) {
         }
         En(n, Ks(j.cause)), En(o, Ks(j.cause));
       });
-      let _ = /* @__PURE__ */ r(() => {
+      let _ = r(() => {
         i.value || l === "closed" || (i.value = !0, l = "interrupting", w.interruptUnsafe());
       }, "interrupt"), h = {
         get state() {
           return l;
         },
         interrupt: _,
-        close: /* @__PURE__ */ r(() => {
+        close: r(() => {
           if (u) return u;
-          let j = /* @__PURE__ */ r(() => {
-          }, "resolveClose"), U = /* @__PURE__ */ r(() => {
+          let j = r(() => {
+          }, "resolveClose"), U = r(() => {
           }, "rejectClose");
           u = new Promise((O, R) => {
             j = O, U = R;
           }), _();
-          let N = /* @__PURE__ */ r(() => {
+          let N = r(() => {
           }, "cancelTimeout");
           E.then((O) => {
             N();
@@ -3366,10 +3366,10 @@ function og(e) {
       let t = wS(e.joinTimeoutMs ?? hS), n = yield* ha("reconciling"), o = yield* jn(), s = yield* jn(), i = { value: !1 }, u = { markReconciliationReady: wa(n, "settled").pipe(
         Ur(Fr(o, void 0)),
         Gn
-      ), observeChildExit: /* @__PURE__ */ r((S) => Qe(() => {
+      ), observeChildExit: r((S) => Qe(() => {
         yS(e.name, i, o, s, S);
       }), "observeChildExit") }, p = {
-        reconciliationStatus: /* @__PURE__ */ r(() => tg(n), "reconciliationStatus"),
+        reconciliationStatus: r(() => tg(n), "reconciliationStatus"),
         awaitReady: wn(o),
         awaitFailure: wn(s)
       }, E = yield* jn(), w = !1, _ = yn(() => w ? wn(E) : (w = !0, SS(
@@ -3401,9 +3401,9 @@ var xS = Object.freeze([
     r(this, "ForceLatch");
   }
   forcedSignal = null;
-  listeners = /* @__PURE__ */ new Set();
+  listeners = new Set();
   forcePromise;
-  resolveForce = /* @__PURE__ */ r(() => {
+  resolveForce = r(() => {
   }, "resolveForce");
   constructor() {
     this.forcePromise = new Promise((t) => {
@@ -3497,8 +3497,8 @@ function bS(e, t, n, o, s) {
     forceLatch: o,
     startedAtMs: s,
     deadlineMs: n.deadlineMs,
-    remainingMs: /* @__PURE__ */ r(() => n.remainingMs(), "remainingMs"),
-    isForced: /* @__PURE__ */ r(() => o.forced, "isForced")
+    remainingMs: r(() => n.remainingMs(), "remainingMs"),
+    isForced: r(() => o.forced, "isForced")
   };
 }
 r(bS, "phaseContext");
@@ -3510,10 +3510,10 @@ function kS(e) {
 }
 r(kS, "settledOperation");
 function RS(e, t, n, o) {
-  let s = null, i = !1, a = !1, l = /* @__PURE__ */ r(() => {
+  let s = null, i = !1, a = !1, l = r(() => {
   }, "settle"), u = new Promise((E) => {
     l = E;
-  }), p = /* @__PURE__ */ r(() => {
+  }), p = r(() => {
     if (i) return;
     let E = e.remainingMs();
     if (E <= 0) {
@@ -3582,8 +3582,8 @@ var va = class {
   }
   ensureCloseStarted() {
     if (this.closePromise) return this.closePromise;
-    let t = /* @__PURE__ */ r(() => {
-    }, "resolveClose"), n = /* @__PURE__ */ r(() => {
+    let t = r(() => {
+    }, "resolveClose"), n = r(() => {
     }, "rejectClose");
     return this.closePromise = new Promise((o, s) => {
       t = o, n = s;
@@ -3640,7 +3640,7 @@ var va = class {
     } catch (j) {
       l = j, u = !0, a = Promise.resolve({ _tag: "Failed", error: j });
     }
-    let p = !1, E = null, w = /* @__PURE__ */ r((j) => {
+    let p = !1, E = null, w = r((j) => {
       if (!p) {
         p = !0, E = j;
         try {
@@ -3707,7 +3707,7 @@ var va = class {
 };
 
 // src/daemon/app/daemon-resource-lifecycle.ts
-var ag = /* @__PURE__ */ new WeakMap();
+var ag = new WeakMap();
 function tu(e, t) {
   return t.filter(
     (n) => typeof e[n] != "function"
@@ -3769,11 +3769,11 @@ var eu = class {
   }
   owner;
   resources;
-  runs = /* @__PURE__ */ new Map();
+  runs = new Map();
   gracefulStop = null;
   forceStop = null;
   forceRequested;
-  resolveForceRequested = /* @__PURE__ */ r(() => {
+  resolveForceRequested = r(() => {
   }, "resolveForceRequested");
   runtimeInterrupted = !1;
   runtimeInterruptFailure = null;
@@ -3786,50 +3786,50 @@ var eu = class {
     this.resources = t, this.forceRequested = new Promise((i) => {
       this.resolveForceRequested = i;
     });
-    let n = /* @__PURE__ */ r((i, a) => {
+    let n = r((i, a) => {
       this.forceIngressWork();
-    }, "interrupt"), o = /* @__PURE__ */ r((i, a) => {
+    }, "interrupt"), o = r((i, a) => {
       this.forceHttpWork();
-    }, "forceHttp"), s = /* @__PURE__ */ r((i, a) => {
+    }, "forceHttp"), s = r((i, a) => {
       this.forceClientWork();
     }, "forceClients");
     this.owner = {
       quiescing: {
-        run: /* @__PURE__ */ r((i) => this.runOnce("quiescing", () => this.quiesce(i)), "run"),
+        run: r((i) => this.runOnce("quiescing", () => this.quiesce(i)), "run"),
         force: n
       },
       "stopping-producers": {
-        run: /* @__PURE__ */ r((i) => this.runOnce(
+        run: r((i) => this.runOnce(
           "stopping-producers",
           () => this.closeGroup("stopping-producers", this.resources.producers)
         ), "run"),
         force: n
       },
       withdrawing: {
-        run: /* @__PURE__ */ r((i) => this.runOnce(
+        run: r((i) => this.runOnce(
           "withdrawing",
           () => this.closeGroup("withdrawing", this.resources.discovery)
         ), "run"),
         force: n
       },
       "releasing-holds": {
-        run: /* @__PURE__ */ r((i) => this.runOnce("releasing-holds", () => this.releaseHolds(i)), "run"),
+        run: r((i) => this.runOnce("releasing-holds", () => this.releaseHolds(i)), "run"),
         force: n
       },
       "closing-clients": {
-        run: /* @__PURE__ */ r((i) => this.runOnce("closing-clients", () => this.closeClients(i)), "run"),
+        run: r((i) => this.runOnce("closing-clients", () => this.closeClients(i)), "run"),
         force: s
       },
       "closing-http": {
-        run: /* @__PURE__ */ r((i) => this.runOnce("closing-http", () => this.closeHttp(i)), "run"),
+        run: r((i) => this.runOnce("closing-http", () => this.closeHttp(i)), "run"),
         force: o
       },
       "closing-store": {
-        run: /* @__PURE__ */ r((i) => this.runOnce("closing-store", () => this.closeStore(i)), "run"),
+        run: r((i) => this.runOnce("closing-store", () => this.closeStore(i)), "run"),
         force: n
       },
       "releasing-process": {
-        run: /* @__PURE__ */ r((i) => this.runOnce("releasing-process", () => this.releaseProcess(i)), "run"),
+        run: r((i) => this.runOnce("releasing-process", () => this.releaseProcess(i)), "run"),
         force: n
       }
     };
@@ -3838,8 +3838,8 @@ var eu = class {
   runOnce(t, n) {
     let o = this.runs.get(t);
     if (o) return o;
-    let s = /* @__PURE__ */ r(() => {
-    }, "resolveRun"), i = /* @__PURE__ */ r(() => {
+    let s = r(() => {
+    }, "resolveRun"), i = r(() => {
     }, "rejectRun"), a = new Promise((l, u) => {
       s = l, i = u;
     });
@@ -4144,11 +4144,11 @@ var nu = class {
     r(this, "LiveIngressSupervisor");
   }
   phase = "open";
-  active = /* @__PURE__ */ new Set();
-  pendingPromises = /* @__PURE__ */ new Set();
+  active = new Set();
+  pendingPromises = new Set();
   starting = 0;
   joinPromise = null;
-  resolveJoin = /* @__PURE__ */ r(() => {
+  resolveJoin = r(() => {
   }, "resolveJoin");
   closePromise = null;
   runForkWithContext;
@@ -4164,7 +4164,7 @@ var nu = class {
   get activeCount() {
     return this.active.size;
   }
-  runFork = /* @__PURE__ */ r((t, n, o) => {
+  runFork = r((t, n, o) => {
     let s = this.refusal(t);
     if (s) return this.runForkWithContext(At(s));
     this.starting++;
@@ -4178,7 +4178,7 @@ var nu = class {
       this.finishStarting();
     }
   }, "runFork");
-  runCallback = /* @__PURE__ */ r((t, n, o) => {
+  runCallback = r((t, n, o) => {
     let s = this.refusal(t);
     if (s)
       return o.onExit(kl(s)), () => {
@@ -4194,7 +4194,7 @@ var nu = class {
       this.finishStarting();
     }
   }, "runCallback");
-  runPromise = /* @__PURE__ */ r((t, n, o) => {
+  runPromise = r((t, n, o) => {
     let s = this.refusal(t);
     if (s) return Promise.reject(s);
     this.starting++;
@@ -4210,7 +4210,7 @@ var nu = class {
       this.finishStarting();
     }
   }, "runPromise");
-  runPromiseExit = /* @__PURE__ */ r((t, n, o) => {
+  runPromiseExit = r((t, n, o) => {
     let s = this.refusal(t);
     if (s) return Promise.resolve(kl(s));
     this.starting++;
@@ -4226,19 +4226,19 @@ var nu = class {
       this.finishStarting();
     }
   }, "runPromiseExit");
-  quiesce = /* @__PURE__ */ r(() => {
+  quiesce = r(() => {
     this.phase === "open" && (this.phase = "quiescing", this.maybeResolveJoin());
   }, "quiesce");
-  interrupt = /* @__PURE__ */ r(() => {
+  interrupt = r(() => {
     this.quiesce();
     for (let t of [...this.active]) t.interruptUnsafe();
   }, "interrupt");
-  join = /* @__PURE__ */ r(() => this.joinPromise ? this.joinPromise : (this.quiesce(), this.joinPromise = new Promise((t) => {
+  join = r(() => this.joinPromise ? this.joinPromise : (this.quiesce(), this.joinPromise = new Promise((t) => {
     this.resolveJoin = t;
   }), this.maybeResolveJoin(), this.joinPromise), "join");
-  close = /* @__PURE__ */ r(() => {
+  close = r(() => {
     if (this.closePromise) return this.closePromise;
-    let t = /* @__PURE__ */ r(() => {
+    let t = r(() => {
     }, "resolveClose");
     return this.closePromise = new Promise((n) => {
       t = n;
@@ -4252,14 +4252,14 @@ var nu = class {
       message: `Application is quiescing; refused ${t}`
     });
   }
-  trackFiber = /* @__PURE__ */ r((t) => {
+  trackFiber = r((t) => {
     this.active.add(t), t.addObserver(() => {
       this.active.delete(t), this.maybeResolveJoin();
     }), this.phase !== "open" && t.interruptUnsafe();
   }, "trackFiber");
   trackPromise(t) {
     this.pendingPromises.add(t);
-    let n = /* @__PURE__ */ r(() => {
+    let n = r(() => {
       this.pendingPromises.delete(t), this.maybeResolveJoin();
     }, "settled");
     t.then(n, n);
@@ -4359,7 +4359,7 @@ var yg = {
   err: `subprocess output exceeded ${String(ba)} bytes`
 }, MS = ou, FS = 200, $S = 10;
 function ka() {
-  let e = /* @__PURE__ */ r(() => {
+  let e = r(() => {
   }, "resolveValue");
   return { promise: new Promise((n) => {
     e = n;
@@ -4402,14 +4402,14 @@ var qS = {
   killGraceMs: ou,
   terminationDecisionTiming: "immediate",
   onSpawnFailure: gg,
-  onCancel: /* @__PURE__ */ r(() => yg, "onCancel"),
-  onTimeout: /* @__PURE__ */ r((e) => ({
+  onCancel: r(() => yg, "onCancel"),
+  onTimeout: r((e) => ({
     ok: !1,
     code: "ETIMEDOUT",
     err: `timed out after ${String(e)}ms`
   }), "onTimeout"),
-  onOutputLimit: /* @__PURE__ */ r(() => NS, "onOutputLimit"),
-  onExit: /* @__PURE__ */ r((e, t) => {
+  onOutputLimit: r(() => NS, "onOutputLimit"),
+  onExit: r((e, t) => {
     if (e.error) return gg(e.error);
     let n = t.stdout.toString("utf8"), o = t.stderr.toString("utf8").trim();
     return e.code === 0 ? { ok: !0, out: n } : { ok: !1, code: e.code, err: o || `process exited ${String(e.code ?? "")}` };
@@ -4489,10 +4489,10 @@ function HS(e) {
     killGraceMs: 0,
     terminationDecisionTiming: "after-cleanup",
     onSpawnFailure: wg,
-    onCancel: /* @__PURE__ */ r((t) => Ra(t, { code: null, truncated: !0, timedOut: !1 }), "onCancel"),
-    onTimeout: /* @__PURE__ */ r((t, n) => Ra(n, { code: null, truncated: !0, timedOut: !0 }), "onTimeout"),
-    onOutputLimit: /* @__PURE__ */ r((t) => Ra(t, { code: null, truncated: !0, timedOut: !1 }), "onOutputLimit"),
-    onExit: /* @__PURE__ */ r((t, n) => t.error ? wg(t.error) : Ra(n, {
+    onCancel: r((t) => Ra(t, { code: null, truncated: !0, timedOut: !1 }), "onCancel"),
+    onTimeout: r((t, n) => Ra(n, { code: null, truncated: !0, timedOut: !0 }), "onTimeout"),
+    onOutputLimit: r((t) => Ra(t, { code: null, truncated: !0, timedOut: !1 }), "onOutputLimit"),
+    onExit: r((t, n) => t.error ? wg(t.error) : Ra(n, {
       code: t.code,
       truncated: !1,
       timedOut: !1
@@ -4515,7 +4515,7 @@ var iu = class {
   policy;
   stdoutChunks = [];
   stderrChunks = [];
-  abortListener = /* @__PURE__ */ r(() => this.cancel(), "abortListener");
+  abortListener = r(() => this.cancel(), "abortListener");
   child = null;
   stdoutReader = null;
   stderrReader = null;
@@ -4560,7 +4560,7 @@ var iu = class {
         // Bun's implicit environment is a process-start snapshot. Passing the
         // live object (or a live merge) preserves runtime process.env mutations.
         env: t.env ? { ...process.env, ...t.env } : process.env,
-        onExit: /* @__PURE__ */ r((p, E, w, _) => {
+        onExit: r((p, E, w, _) => {
           this.observeExit({
             code: E,
             ..._ === void 0 ? {} : { error: _ }
@@ -4672,9 +4672,9 @@ var iu = class {
   }
   async settlesWithinCleanupBudget(t, n) {
     return new Promise((o) => {
-      let s = !1, i = null, a = /* @__PURE__ */ r((u) => {
+      let s = !1, i = null, a = r((u) => {
         s || (s = !0, i && clearTimeout(i), o(u));
-      }, "finish"), l = /* @__PURE__ */ r(() => {
+      }, "finish"), l = r(() => {
         s || (i && clearTimeout(i), i = setTimeout(() => a(!1), mg(this.effectiveCleanupDeadline(n))));
       }, "armDeadline");
       t.then(
@@ -4722,7 +4722,7 @@ var au = class {
   static {
     r(this, "BunProcessDriver");
   }
-  active = /* @__PURE__ */ new Set();
+  active = new Set();
   closed = !1;
   closePromise = null;
   start(t) {
@@ -4774,12 +4774,12 @@ var au = class {
   beginClose(t) {
     if (this.closePromise) return this.closePromise;
     this.closed = !0;
-    let n = /* @__PURE__ */ r(() => {
+    let n = r(() => {
     }, "resolveClose");
     this.closePromise = new Promise((i) => {
       n = i;
     });
-    let o = [...this.active], s = /* @__PURE__ */ r(async () => {
+    let o = [...this.active], s = r(async () => {
       for (let i of o)
         t ? i.force() : i.cancel();
       await Promise.allSettled(o.map((i) => i.cleanup)), n();
@@ -4801,8 +4801,8 @@ var cu = Gs(
     fo(
       (e) => dr(Vn, pg(e)).pipe(
         fr(Qo, {
-          force: /* @__PURE__ */ r(() => e.forceClose(), "force"),
-          close: /* @__PURE__ */ r(() => e.close(), "close")
+          force: r(() => e.forceClose(), "force"),
+          close: r(() => e.close(), "close")
         })
       )
     )
@@ -4863,9 +4863,9 @@ function zS(e, t, n, o) {
       s(At(Js(N)));
       return;
     }
-    let u = !1, p = !1, E = null, w = null, _ = !1, S = /* @__PURE__ */ r((N) => {
+    let u = !1, p = !1, E = null, w = null, _ = !1, S = r((N) => {
       _ || (_ = !0, KS(N, n));
-    }, "attachProcessDriverOnce"), h = /* @__PURE__ */ r((N) => w || (w = (async () => {
+    }, "attachProcessDriverOnce"), h = r((N) => w || (w = (async () => {
       try {
         S(N);
       } catch (O) {
@@ -4907,7 +4907,7 @@ function zS(e, t, n, o) {
         });
       }
     })(), w.catch(() => {
-    }), w), "retireLateAcquisition"), j = /* @__PURE__ */ r(() => {
+    }), w), "retireLateAcquisition"), j = r(() => {
       if (E) return E;
       p = !0;
       let R = performance.now() + a.timeoutMs - a.reserveMs;
@@ -4939,7 +4939,7 @@ function zS(e, t, n, o) {
       ), fe = Promise.all([v, ee]).then(() => {
       });
       return E = new Promise((Q) => {
-        let ne = Math.max(0, R - performance.now()), he = !1, oe = /* @__PURE__ */ r(() => {
+        let ne = Math.max(0, R - performance.now()), he = !1, oe = r(() => {
           he || (he = !0, clearTimeout(be), Q());
         }, "finish"), be = setTimeout(() => {
           he || (zn(e, {
@@ -4949,7 +4949,7 @@ function zS(e, t, n, o) {
         }, ne);
         fe.then(oe);
       }), E;
-    }, "startCancellation"), U = /* @__PURE__ */ r(() => {
+    }, "startCancellation"), U = r(() => {
       u || p || j();
     }, "onAbort");
     return i.addEventListener("abort", U, { once: !0 }), i.aborted && U(), l.then(
@@ -4996,7 +4996,7 @@ function bg(e) {
     yield* ca();
     let o = yield* zo, s = yield* Jo, i = yield* Qo, a = yield* jn(), l = yield* og({
       name: "daemon-background",
-      run: /* @__PURE__ */ r(() => wn(a).pipe(Sm), "run")
+      run: r(() => wn(a).pipe(Sm), "run")
     }), u = yield* zS(e, s, i, {
       config: o,
       background: l.service,
@@ -5007,7 +5007,7 @@ function bg(e) {
         yield* Fr(a, u.backgroundProgram);
         let p = yield* l.start, E = !1;
         return yield* On({
-          try: /* @__PURE__ */ r(() => (u.resources.addProducer("effect-background", { close: p.close }), E = !0, {
+          try: r(() => (u.resources.addProducer("effect-background", { close: p.close }), E = !0, {
             acquired: u,
             background: l.service,
             coordinator: e.makeLifecycleCoordinator(u)
@@ -5060,10 +5060,10 @@ import { chmodSync as XS, statSync as YS } from "node:fs";
 var uu;
 if (process.versions.bun) {
   let { Database: e } = await import("bun:sqlite");
-  uu = /* @__PURE__ */ r((t) => Rg(new e(t)), "makeHandle");
+  uu = r((t) => Rg(new e(t)), "makeHandle");
 } else {
   let e = process.emitWarning;
-  process.emitWarning = /* @__PURE__ */ r(function(o, s, ...i) {
+  process.emitWarning = r(function(o, s, ...i) {
     let a = o instanceof Error ? o.name : typeof s == "string" ? s : s?.type, l = o instanceof Error ? o.message : o;
     a === "ExperimentalWarning" && /^SQLite is an experimental feature\b/i.test(l) || e.call(
       this,
@@ -5078,7 +5078,7 @@ if (process.versions.bun) {
   } finally {
     process.emitWarning = e;
   }
-  uu = /* @__PURE__ */ r((n) => Rg(new t(n)), "makeHandle");
+  uu = r((n) => Rg(new t(n)), "makeHandle");
 }
 function Rg(e) {
   return {
@@ -5088,9 +5088,9 @@ function Rg(e) {
     prepare(t) {
       let n = e.prepare(t);
       return {
-        run: /* @__PURE__ */ r((...o) => n.run(...o), "run"),
-        get: /* @__PURE__ */ r((...o) => n.get(...o) ?? void 0, "get"),
-        all: /* @__PURE__ */ r((...o) => n.all(...o), "all")
+        run: r((...o) => n.run(...o), "run"),
+        get: r((...o) => n.get(...o) ?? void 0, "get"),
+        all: r((...o) => n.all(...o), "all")
       };
     },
     close() {
@@ -5370,7 +5370,7 @@ function ex(e) {
 }
 r(ex, "readUserVersion");
 function tx(e, t = Cg) {
-  let n = ex(e), o = [...t].sort((i, a) => i.version - a.version), s = /* @__PURE__ */ new Set();
+  let n = ex(e), o = [...t].sort((i, a) => i.version - a.version), s = new Set();
   for (let i of o) {
     if (!Number.isInteger(i.version) || i.version < 1 || i.version > 2147483647)
       throw new Error(`invalid migration version: ${String(i.version)}`);
@@ -5492,7 +5492,7 @@ var Ta = class {
       processDriver: this.processDriver,
       store: this.store,
       process: this.process,
-      retainFailure: /* @__PURE__ */ r((t, n) => {
+      retainFailure: r((t, n) => {
         this.retainFailure(t, n);
       }, "retainFailure")
     }, this.lifecycleSnapshot;
@@ -5547,7 +5547,7 @@ import Tb from "node:path";
 import { execFileSync as nx } from "node:child_process";
 import Zo from "node:fs";
 import lt from "node:path";
-var Ag = /* @__PURE__ */ new Map(), Og = /* @__PURE__ */ new Map(), rx = 512, ox = 5 * 6e4, Dg = 2e3, sx = 2e4;
+var Ag = new Map(), Og = new Map(), rx = 512, ox = 5 * 6e4, Dg = 2e3, sx = 2e4;
 function Ig(e, t, n = Date.now()) {
   let o = e.get(t);
   if (o) {
@@ -5770,7 +5770,7 @@ function ux(e) {
   }
 }
 r(ux, "cwdIsDirectory");
-var ei = /* @__PURE__ */ new Set([null, "presumed", "superseded"]);
+var ei = new Set([null, "presumed", "superseded"]);
 function Hg(e, t) {
   if (!e || e.ended_at == null || ei.has(e.end_reason ?? null) || t) return !1;
   let n = e.cwd;
@@ -5855,9 +5855,9 @@ function ts(e, t, {
 }
 r(ts, "claudeEnvArgvPrefix");
 function jg() {
-  let e = /* @__PURE__ */ new Map();
-  return /* @__PURE__ */ r(async function(n) {
-    let o = e.get(n) ?? Promise.resolve(), s = /* @__PURE__ */ r(() => {
+  let e = new Map();
+  return r(async function(n) {
+    let o = e.get(n) ?? Promise.resolve(), s = r(() => {
     }, "releaseNow"), i = new Promise((l) => {
       s = l;
     });
@@ -5894,7 +5894,7 @@ async function Gg(e, t, n) {
 }
 r(Gg, "mapLimit");
 function Kg(e) {
-  let t = process.getuid, n = typeof t == "function" ? t() : null, o = /* @__PURE__ */ r((s, i = 0) => {
+  let t = process.getuid, n = typeof t == "function" ? t() : null, o = r((s, i = 0) => {
     if (i > 12) return;
     let a;
     try {
@@ -5925,7 +5925,7 @@ function Kg(e) {
 }
 r(Kg, "chmodWritableWhereOwned");
 function Vg(e, t = 8) {
-  let n = process.getuid, o = typeof n == "function" ? n() : null, s = /* @__PURE__ */ new Map(), i = [], a = /* @__PURE__ */ r((u) => {
+  let n = process.getuid, o = typeof n == "function" ? n() : null, s = new Map(), i = [], a = r((u) => {
     let p = s.get(u.uid);
     if (p !== void 0) return p;
     let E = `uid ${u.uid}`;
@@ -5934,7 +5934,7 @@ function Vg(e, t = 8) {
     } catch {
     }
     return s.set(u.uid, E), E;
-  }, "ownerOf"), l = /* @__PURE__ */ r((u, p = 0) => {
+  }, "ownerOf"), l = r((u, p = 0) => {
     if (i.length >= t || p > 12) return;
     let E;
     try {
@@ -5964,7 +5964,7 @@ function Vg(e, t = 8) {
   return i;
 }
 r(Vg, "blockedPaths");
-var mu = /* @__PURE__ */ r((e) => /^[A-Za-z0-9_@%+=:,./-]+$/.test(e) ? e : `'${e.replace(/'/g, "'\\''")}'`, "shellQuote");
+var mu = r((e) => /^[A-Za-z0-9_@%+=:,./-]+$/.test(e) ? e : `'${e.replace(/'/g, "'\\''")}'`, "shellQuote");
 function dx(e) {
   if (!Number.isFinite(e) || e <= 0) return null;
   try {
@@ -5999,7 +5999,7 @@ function xt(e) {
   }
 }
 r(xt, "safeParse");
-var ni = /* @__PURE__ */ r((e) => new Promise((t) => setTimeout(t, e)), "sleep");
+var ni = r((e) => new Promise((t) => setTimeout(t, e)), "sleep");
 function ri(e) {
   let t = e.charCodeAt(e.length - 1);
   return t >= 55296 && t <= 56319 ? e.slice(0, -1) : e;
@@ -6015,7 +6015,7 @@ function zg(e) {
   return (n = /^ticket\s+(\S+)\s+(\S+)\s*$/i.exec(t)) ? { cmd: "ticket", target: n[1] ?? "", ticket: n[2] ?? "" } : /^ticket\b/i.test(t) ? { cmd: "ticket", error: "usage: ticket <callsign-or-session-id> <PROJ-123|clear>" } : (n = /^name\s+(\S+)\s+(\S+)\s*$/i.exec(t)) ? { cmd: "name", target: n[1] ?? "", suffix: n[2] ?? "" } : /^name\b/i.test(t) ? { cmd: "name", error: "usage: name <callsign-or-session-id> <new-suffix|clear>" } : { cmd: "note", text: t };
 }
 r(zg, "parseCommand");
-var px = /^[A-Za-z0-9][A-Za-z0-9-]{0,23}$/, mx = /* @__PURE__ */ new Set(["all", "everyone", "clear"]);
+var px = /^[A-Za-z0-9][A-Za-z0-9-]{0,23}$/, mx = new Set(["all", "everyone", "clear"]);
 function Oa(e) {
   return px.test(e) ? mx.has(e.toLowerCase()) || e.toLowerCase().startsWith("repo:") ? `"${e}" is reserved — mail routing needs it` : null : "a name is letters, digits and dashes only (start with a letter or digit, max 24)";
 }
@@ -6023,7 +6023,7 @@ r(Oa, "validateNameSuffix");
 var ns = /^(sh|bash|zsh|zsh-.*)$/;
 
 // src/daemon/questions.ts
-var gx = "[FLEETDECK] Your plan was captured to the fleet plan library — do not execute it. Wrap up your turn.", Zg = 6e5, hx = 4, Xg = 5e3, wx = 8, Hr = /* @__PURE__ */ new Set(["permission", "elicitation", "choice"]), Ex = 3e3, yx = 6e4, _x = 2;
+var gx = "[FLEETDECK] Your plan was captured to the fleet plan library — do not execute it. Wrap up your turn.", Zg = 6e5, hx = 4, Xg = 5e3, wx = 8, Hr = new Set(["permission", "elicitation", "choice"]), Ex = 3e3, yx = 6e4, _x = 2;
 function jr(e = process.env, t = null) {
   let n = Number(e?.FLEETDECK_HOLD_MS);
   if (Number.isFinite(n) && n > 0)
@@ -6042,24 +6042,24 @@ function La(e, t) {
 r(La, "toolCallKey");
 function eh(e, {
   holdMs: t = Zg,
-  mail: n = /* @__PURE__ */ r(() => {
+  mail: n = r(() => {
   }, "mail"),
   // The mailbox's own clamp (mail.ts MAIL_MAX_LEN). Framed answers that exceed
   // it are REJECTED before settlement — see answerMailGuard below. Injectable
   // for tests; must mirror the real mailbox clamp in production (derive.mjs).
   mailMaxLen: o = 4e3,
-  tick: s = /* @__PURE__ */ r(() => {
+  tick: s = r(() => {
   }, "tick"),
-  callsignOf: i = /* @__PURE__ */ r(() => null, "callsignOf"),
-  onChange: a = /* @__PURE__ */ r(() => {
+  callsignOf: i = r(() => null, "callsignOf"),
+  onChange: a = r(() => {
   }, "onChange"),
   // v1.3 plan library wiring (derive.mjs owns the plans table; capture-on-
   // intake happens there, synchronously with the question row insert):
   //   planIdFor(questionId)            → plan_id | null (null = not a plan question)
   //   planAnswered(questionId, behavior) → flips the linked plan proposed →
   //       approved ('allow') | captured ('capture') | rejected ('deny')
-  planIdFor: l = /* @__PURE__ */ r(() => null, "planIdFor"),
-  planAnswered: u = /* @__PURE__ */ r(() => {
+  planIdFor: l = r(() => null, "planIdFor"),
+  planAnswered: u = r(() => {
   }, "planAnswered"),
   // UX 2.1: live per-creation hold-window resolution. When set, create() calls
   // it for EVERY new hold-kind row, so a hold_ms settings write steers new
@@ -6071,7 +6071,7 @@ function eh(e, {
   // non-plan questions (derive.mjs's planRetired finds no linked plan row and
   // returns). Deliberately fired AFTER the row is expired, outside any
   // transaction — a callback throw must never un-retire the question.
-  onRetired: E = /* @__PURE__ */ r(() => {
+  onRetired: E = r(() => {
   }, "onRetired"),
   // UX 2.1 re-arm knobs. rearmGraceMs is injectable for tests; 0 (or negative)
   // DISABLES the whole re-arm machinery — an expiry then behaves exactly as it
@@ -6097,7 +6097,7 @@ function eh(e, {
     ),
     resolved: e.prepare(`SELECT * FROM questions WHERE status != 'pending'
       ORDER BY COALESCE(answered_at, expires_at, created_at) DESC, id DESC LIMIT ${wx}`)
-  }, j = /* @__PURE__ */ new Map(), U = /* @__PURE__ */ new Map(), N = /* @__PURE__ */ new Map(), O = /* @__PURE__ */ new Map(), R = /* @__PURE__ */ new Map(), v = /* @__PURE__ */ new Set(), ee = "active", fe = null, Q = /* @__PURE__ */ r(() => !1, "boardConsumerProbe"), ne = /* @__PURE__ */ r(() => ee === "active", "active"), he = /* @__PURE__ */ r(() => new Error("fleetd questions are quiescing"), "quiescingError");
+  }, j = new Map(), U = new Map(), N = new Map(), O = new Map(), R = new Map(), v = new Set(), ee = "active", fe = null, Q = r(() => !1, "boardConsumerProbe"), ne = r(() => ee === "active", "active"), he = r(() => new Error("fleetd questions are quiescing"), "quiescingError");
   function oe(g) {
     g({}, 200);
   }
@@ -6203,7 +6203,7 @@ function eh(e, {
   function I(g, B) {
     if (!ne()) return;
     let C = R.get(g);
-    C || R.set(g, C = /* @__PURE__ */ new Map()), C.set(B, (C.get(B) ?? 0) + 1);
+    C || R.set(g, C = new Map()), C.set(B, (C.get(B) ?? 0) + 1);
     let de = C, ae = setTimeout(() => {
       if (!ne() || (v.delete(ae), R.get(g) !== de)) return;
       let Oe = de.get(B);
@@ -6604,7 +6604,7 @@ function eh(e, {
   }, Te);
   Le.unref();
   function ve() {
-    return ne() ? (ee = "quiesced", Q = /* @__PURE__ */ r(() => !1, "boardConsumerProbe"), !0) : !1;
+    return ne() ? (ee = "quiesced", Q = r(() => !1, "boardConsumerProbe"), !0) : !1;
   }
   r(ve, "quiesce");
   function b() {
@@ -6677,13 +6677,13 @@ function Yg(e, t) {
   if (!o.length) return null;
   let s = xt(e.payload_json)?.tool_input?.questions;
   if (Array.isArray(s) && !th(s, o)) return null;
-  let i = /* @__PURE__ */ r((u) => (Array.isArray(u) ? u.map(Ut).join(", ") : Ut(u)).trim(), "fmt");
+  let i = r((u) => (Array.isArray(u) ? u.map(Ut).join(", ") : Ut(u)).trim(), "fmt");
   if (o.some(([, u]) => i(u) === "")) return null;
   if (o.length === 1) {
     let u = i(o[0]?.[1]);
     return u.length <= hu ? u : { over: u.length };
   }
-  let a = /* @__PURE__ */ r((u) => Array.isArray(s) ? s.find((p) => p?.question === u)?.header : void 0, "headerOf"), l = o.map(([u, p]) => `${a(u) ?? u}: ${i(p)}`).join("; ");
+  let a = r((u) => Array.isArray(s) ? s.find((p) => p?.question === u)?.header : void 0, "headerOf"), l = o.map(([u, p]) => `${a(u) ?? u}: ${i(p)}`).join("; ");
   return l.length <= hu ? l : { over: l.length };
 }
 r(Yg, "serializeChoiceAnswer");
@@ -6860,7 +6860,7 @@ import { execFileSync as Hx, spawn as jx } from "node:child_process";
 // src/daemon/payload-capture.ts
 import oi from "node:fs";
 import bx from "node:path";
-var kx = 1e6, Rx = 64e3, Tx = 3, Cx = /* @__PURE__ */ r(() => {
+var kx = 1e6, Rx = 64e3, Tx = 3, Cx = r(() => {
 }, "NOOP"), Xn = "[redacted]", Px = /(?:^|[_\-.])(token|secret|password|passwd|passphrase|api[_-]?key|apikey|auth(orization)?|bearer|cookie|credential|private[_-]?key|access[_-]?key|client[_-]?secret)s?(?:$|[_\-.])/i;
 function Ax(e) {
   let t = e.replace(/([a-z0-9])([A-Z])/g, "$1_$2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2");
@@ -6884,41 +6884,14 @@ var Ox = [
   /xox[baprs]-[A-Za-z0-9-]{10,}/g,
   /AKIA[A-Z0-9]{16}/g,
   /-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]{0,40}PRIVATE KEY-----|$)/g,
-  /Bearer\s+[A-Za-z0-9._~+/=-]{16,}/g,
-  // Forge/API prefixes the git path used to redact ONLY inside exec.mjs's
-  // redactGitText (as GIT_EXTRA_SECRET_RES) — so a bare `glpat-…` / `sk-…` /
-  // `AIza…` / `hf_…` / `dop_v1_…` relayed on a stalled spawn's pane excerpt
-  // (`remote: the provided token (glpat-…) is incorrect`) or captured in a hook
-  // payload's free-text field survived into stall_detail, the board drawer,
-  // /state, every /ws frame and the durable SpawnStalled note. They live in the
-  // SHARED list now so every consumer fails closed on the same shapes. ReDoS:
-  // each is a fixed prefix plus ONE greedy trailing run with nothing required
-  // after it (the lookbehind is zero-width and constant) — the same shape the
-  // audit above certifies linear. All match runs longer than the 10-byte
-  // `[redacted]` marker, preserving the shrink-only invariant.
-  //
-  // The `(?<![A-Za-z0-9_-])` left boundary is not decoration: without it the
-  // generic `sk-` rule fires INSIDE ordinary words, and `disk-quota-exceeded`
-  // becomes `di[redacted]` — destroying exactly the legibility these
-  // diagnostics exist to deliver. A false redaction is cheap to write and
-  // expensive to debug.
-  /(?<![A-Za-z0-9_-])gl(?:pat|rt|dt|soat|cbt|ptt|feat|agent)-[A-Za-z0-9_-]{16,}/g,
-  // GitLab PAT / runner / deploy / OAuth / CI job families
-  /(?<![A-Za-z0-9_-])AIza[A-Za-z0-9_-]{30,}/g,
-  // Google API key
-  /(?<![A-Za-z0-9_-])sk-[A-Za-z0-9_-]{20,}/g,
-  // OpenAI-style (and, harmlessly, sk-ant-* again)
-  /(?<![A-Za-z0-9_-])hf_[A-Za-z0-9]{20,}/g,
-  // Hugging Face
-  /(?<![A-Za-z0-9_-])dop_v1_[A-Za-z0-9]{32,}/g
-  // DigitalOcean
+  /Bearer\s+[A-Za-z0-9._~+/=-]{16,}/g
 ], Lx = (() => {
   let e = new Uint8Array(128);
   for (let t = 48; t <= 57; t++) e[t] = 1;
   for (let t = 65; t <= 90; t++) e[t] = 1;
   for (let t = 97; t <= 122; t++) e[t] = 1;
   return e[45] = 1, e[95] = 1, e;
-})(), yu = /* @__PURE__ */ r((e) => e < 128 && Lx[e] === 1, "isB64url");
+})(), yu = r((e) => e < 128 && Lx[e] === 1, "isB64url");
 function Dx(e) {
   let n = null, o = 0;
   for (let s = 0; (s = e.indexOf("eyJ", s)) !== -1 && s + 35 <= e.length; s++) {
@@ -6970,7 +6943,7 @@ function Yn(e) {
 }
 r(Yn, "scrubUrlCredentials");
 function Ux(e, t) {
-  let n = Math.max(0, t), o = /* @__PURE__ */ new WeakSet(), s = "[truncated]";
+  let n = Math.max(0, t), o = new WeakSet(), s = "[truncated]";
   function i(l) {
     if (n <= 0) return s;
     let u = String(l).slice(0, n);
@@ -7015,7 +6988,7 @@ function ah(e, {
   enabled: i = process.env.FLEETDECK_CAPTURE_PAYLOADS?.trim().toLowerCase() === "on"
 } = {}) {
   if (!i) return Cx;
-  let a = s.filter((p) => typeof p == "string" && p.length > 0), l = bx.join(e, "hook-payloads.jsonl"), u = /* @__PURE__ */ new Map();
+  let a = s.filter((p) => typeof p == "string" && p.length > 0), l = bx.join(e, "hook-payloads.jsonl"), u = new Map();
   try {
     oi.chmodSync(l, 384);
   } catch {
@@ -7031,7 +7004,7 @@ function ah(e, {
         }
   } catch {
   }
-  return /* @__PURE__ */ r(function(E, w) {
+  return r(function(E, w) {
     try {
       if (!E || (u.get(E) ?? 0) >= o) return;
       let _ = 0;
@@ -7219,14 +7192,14 @@ async function Vt(e) {
   return t.ok ? t.out : null;
 }
 r(Vt, "tmux");
-var xu = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i, ph = "__fleetdeck_tmux_generation__=", ai = "__fleetdeck_tmux_generation_mismatch__", Ia = /* @__PURE__ */ new Map(), hh = fh.O_RDONLY | (fh.O_NOFOLLOW ?? 0);
+var xu = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i, ph = "__fleetdeck_tmux_generation__=", ai = "__fleetdeck_tmux_generation_mismatch__", Ia = new Map(), hh = fh.O_RDONLY | (fh.O_NOFOLLOW ?? 0);
 function Ba(e) {
   let t = String(e);
   if (!/^\d+$/.test(t)) throw new Error("invalid fleet port for tmux generation identity");
   return t;
 }
 r(Ba, "generationPort");
-var ss = /* @__PURE__ */ r((e) => `@fleetdeck_generation_${Ba(e)}`, "generationOption"), ci = /* @__PURE__ */ r((e, t) => Fa.join(e, `tmux-generation-${Ba(t)}`), "generationFile"), ku = /* @__PURE__ */ r((e, t) => `${ci(e, t)}.retired`, "retiredGenerationFile");
+var ss = r((e) => `@fleetdeck_generation_${Ba(e)}`, "generationOption"), ci = r((e, t) => Fa.join(e, `tmux-generation-${Ba(t)}`), "generationFile"), ku = r((e, t) => `${ci(e, t)}.retired`, "retiredGenerationFile");
 function wh() {
   return process.env.FLEETDECK_HOME?.trim() || null;
 }
@@ -7343,7 +7316,7 @@ function ii(e) {
   }
 }
 r(ii, "pidState");
-var Jx = /* @__PURE__ */ r((e, t) => e !== null && t !== null && e.generation === t.generation && e.serverPid === t.serverPid, "sameRecord");
+var Jx = r((e, t) => e !== null && t !== null && e.generation === t.generation && e.serverPid === t.serverPid, "sameRecord");
 async function Qx(e, t, n) {
   await Ru(
     ku(e, t),
@@ -7532,7 +7505,7 @@ function ov() {
   return e?.trim() ? e : null;
 }
 r(ov, "spawnOverrideCmd");
-var Gr = /* @__PURE__ */ r((e) => `fleetdeck-${e}`, "sessionName"), _h = /* @__PURE__ */ r((e, t) => `fd${e}-${t}`, "windowName");
+var Gr = r((e) => `fleetdeck-${e}`, "sessionName"), _h = r((e, t) => `fd${e}-${t}`, "windowName");
 function li(e, t) {
   let n = Ba(e), o = String(t), s = `fd${n}-`;
   if (!o.startsWith(s) || !/^[A-Za-z0-9-]+$/.test(o.slice(s.length)))
@@ -7545,7 +7518,7 @@ function Tu(e) {
   return t?.[1] !== void 0 && t[1] === t[2] ? t[1] : null;
 }
 r(Tu, "exactTargetPort");
-var Ma = /* @__PURE__ */ r((e) => e.ok && !e.authoritativeEmpty, "sessionConfirmed");
+var Ma = r((e) => e.ok && !e.authoritativeEmpty, "sessionConfirmed");
 async function sv(e) {
   let t = Gr(e), n = await vr(e);
   if (!n.enabled) {
@@ -7647,7 +7620,7 @@ async function iv({
     ...o
   ]);
   if (w === null) throw new Error(`tmux new-window failed for ${a}`);
-  let _ = w.trim(), S = /* @__PURE__ */ r(() => Vt(["kill-window", "-t", _]), "rollback"), j = await (/* @__PURE__ */ r((O) => l.enabled ? Ln(e, O) : an(O), "inspect"))([
+  let _ = w.trim(), S = r(() => Vt(["kill-window", "-t", _]), "rollback"), j = await (r((O) => l.enabled ? Ln(e, O) : an(O), "inspect"))([
     "list-windows",
     "-t",
     "=" + i + ":",
@@ -7712,7 +7685,7 @@ async function cv(e) {
   let o = n.out.endsWith(`
 `) ? n.out.slice(0, -1) : n.out;
   if (o === "") return null;
-  let s = `fd${e}-`, i = /* @__PURE__ */ new Set(), a = /* @__PURE__ */ new Set(), l = [];
+  let s = `fd${e}-`, i = new Set(), a = new Set(), l = [];
   for (let u of o.split(`
 `)) {
     let [p, E, w, _, ...S] = u.split(zt);
@@ -7745,7 +7718,7 @@ async function lv(e, t) {
     `#{==:#{session_name},${s}}`,
     "-F",
     i
-  ], l = /* @__PURE__ */ r((R) => {
+  ], l = r((R) => {
     if (R === "") return [];
     let v = R.endsWith(`
 `) ? R.slice(0, -1) : R;
@@ -7755,8 +7728,8 @@ async function lv(e, t) {
     return ee.some(
       (fe) => fe.length !== 3 || !fe[0] || !fe[1] || !/^@\d+$/.test(fe[2] ?? "")
     ) ? null : ee;
-  }, "parse"), u = /* @__PURE__ */ r((R) => {
-    let v = /* @__PURE__ */ new Map();
+  }, "parse"), u = r((R) => {
+    let v = new Map();
     for (let ee of R)
       ee[0] === s && ee[1] === e && v.set(ee[2], ee);
     return [...v.values()];
@@ -8548,7 +8521,7 @@ function hv(e) {
     "custom_suffix",
     // Run generation (BUG-025): the active process's fleet_run nonce.
     "run_id"
-  ], o = /* @__PURE__ */ new Map(), s = new Set(n);
+  ], o = new Map(), s = new Set(n);
   function i(a, l) {
     let u = Object.keys(l).filter((w) => s.has(w));
     if (!u.length) return;
@@ -8560,7 +8533,7 @@ function hv(e) {
   return r(i, "updateSession"), { q: t, FIELDS: n, updateSession: i };
 }
 r(hv, "build");
-var xh = /* @__PURE__ */ new WeakMap();
+var xh = new WeakMap();
 function vh(e) {
   let t = xh.get(e);
   if (t) return t;
@@ -8609,7 +8582,7 @@ r(wv, "repoOwnsWorktree");
 function kh(e) {
   let { q: t, db: n, tick: o, onMutate: s, acquireWorktreePathLock: i, claimWorktreeCustody: a } = e;
   function l() {
-    let O = /* @__PURE__ */ new Set();
+    let O = new Set();
     return t.worktreeSpawns.all().filter((R) => O.has(R.worktree_path) ? !1 : (O.add(R.worktree_path), !0));
   }
   r(l, "worktreeRows");
@@ -8708,7 +8681,7 @@ function kh(e) {
     return { ok: !0, worktrees: await Gg(l(), 4, E) };
   }
   r(w, "worktrees");
-  let _ = /* @__PURE__ */ new Set(["provisioning", "spawning", "live"]);
+  let _ = new Set(["provisioning", "spawning", "live"]);
   function S(O, R) {
     let v = O.worktree_path ?? O.cwd;
     if (typeof v != "string" || !v) return !1;
@@ -8859,7 +8832,7 @@ function kh(e) {
           };
         let L = [
           ...new Set(ee.map((T) => T.session_id).filter(Boolean))
-        ], y = Date.now(), x = 0, m = 0, I = /* @__PURE__ */ r(() => {
+        ], y = Date.now(), x = 0, m = 0, I = r(() => {
           for (let T of L)
             t.expireMailForSession.run(y, T), t.expireQuestionsForSession.run(T);
           x = Number(t.deleteWorktreeSpawns.run(R).changes);
@@ -9060,7 +9033,7 @@ function Au(e) {
   return e === "~" ? Lu.homedir() : e.startsWith("~/") ? Rt.join(Lu.homedir(), e.slice(2)) : e;
 }
 r(Au, "expandHome");
-var Cv = /* @__PURE__ */ new Set(["github.com", "gitlab.com"]);
+var Cv = new Set(["github.com", "gitlab.com"]);
 function Pv(e) {
   let t = e, n, o, s, i = /^(?:https|ssh):\/\/(?:([^/?#@]*)@)?([^/?#]+)(\/[^?#]*)$/i.exec(t);
   if (i) {
@@ -9144,7 +9117,7 @@ function Dv(e) {
 }
 r(Dv, "dirtyNames");
 function Dh(e) {
-  let { q: t } = e, n = /* @__PURE__ */ new Map(), o = /* @__PURE__ */ new Map(), s = /* @__PURE__ */ new Map(), i = (() => {
+  let { q: t } = e, n = new Map(), o = new Map(), s = new Map(), i = (() => {
     let L = Number(process.env.FLEETDECK_CLONE_CONCURRENCY);
     return Number.isInteger(L) && L > 0 ? L : 3;
   })(), a = 0;
@@ -9374,7 +9347,7 @@ function Dh(e) {
       T,
       F ?? null
     ), !m)) {
-      let V = x, X = L, se = /* @__PURE__ */ r(async () => {
+      let V = x, X = L, se = r(async () => {
         let K = await Ou(V);
         K && t.setRepoOrigin.run(K, X);
       }, "backfill"), A = e.spawnMaintenance ? e.spawnMaintenance.run(se) : Promise.resolve().then(se);
@@ -9517,7 +9490,7 @@ ${X.err}`);
     clone: F = !1,
     signal: T
   }) {
-    let V = /* @__PURE__ */ r(async (re, ie = {}) => {
+    let V = r(async (re, ie = {}) => {
       let q = await De("git", re, {
         ...ie,
         signal: T,
@@ -9538,7 +9511,7 @@ ${X.err}`);
       { timeout: 5e3 }
     ), k = await rs(L);
     if (T?.aborted) throw qe(409, "spawn cancelled");
-    let P = /* @__PURE__ */ r(() => {
+    let P = r(() => {
       if (!k)
         throw qe(409, `branch ${y} cannot be created — no base branch is available`);
       return k.ref;
@@ -9715,7 +9688,7 @@ function Bh(e, t) {
   return o;
 }
 r(Bh, "validatePathSetting");
-var cn = /* @__PURE__ */ r((e) => e, "defineHandler");
+var cn = r((e) => e, "defineHandler");
 function Uh(e) {
   let {
     db: t,
@@ -9772,7 +9745,7 @@ function Uh(e) {
     if (!Array.isArray(m))
       throw Be(400, "fav_dirs must be an array of absolute directory paths or null");
     if (m.length === 0) return null;
-    let I = /* @__PURE__ */ new Set(), F = [];
+    let I = new Set(), F = [];
     for (let T of m) {
       if (typeof T != "string" || !T)
         throw Be(400, "each fav_dir must be a non-empty string");
@@ -9968,47 +9941,47 @@ function Uh(e) {
       // repos.mjs stays the SINGLE writer for the repos root; we pre-validate
       // with the shared gates so a bad repos_dir cannot slip past a valid
       // sibling key and half-apply a body.
-      prepare: /* @__PURE__ */ r((m) => (m != null && Bh(m, "repos_dir"), m), "prepare"),
-      commit: /* @__PURE__ */ r((m) => {
+      prepare: r((m) => (m != null && Bh(m, "repos_dir"), m), "prepare"),
+      commit: r((m) => {
         i(m);
       }, "commit")
     }),
     repo_transport: cn({
-      prepare: /* @__PURE__ */ r((m) => {
+      prepare: r((m) => {
         if (m != null && m !== "ssh" && m !== "https")
           throw Be(400, `repo_transport must be ssh or https — got ${JSON.stringify(m)}`);
         return m;
       }, "prepare"),
-      commit: /* @__PURE__ */ r((m) => n.setSetting.run("repo_transport", m ?? null, Date.now()), "commit")
+      commit: r((m) => n.setSetting.run("repo_transport", m ?? null, Date.now()), "commit")
     }),
     repo_default_org: cn({
-      prepare: /* @__PURE__ */ r((m) => l(m), "prepare"),
-      commit: /* @__PURE__ */ r((m) => n.setSetting.run("repo_default_org", m ?? null, Date.now()), "commit")
+      prepare: r((m) => l(m), "prepare"),
+      commit: r((m) => n.setSetting.run("repo_default_org", m ?? null, Date.now()), "commit")
     }),
     browse_root: cn({
-      prepare: /* @__PURE__ */ r((m) => (m != null && Bh(m, "browse_root"), m), "prepare"),
-      commit: /* @__PURE__ */ r((m) => n.setSetting.run("browse_root", m ?? null, Date.now()), "commit")
+      prepare: r((m) => (m != null && Bh(m, "browse_root"), m), "prepare"),
+      commit: r((m) => n.setSetting.run("browse_root", m ?? null, Date.now()), "commit")
     }),
     fav_dirs: cn({
-      prepare: /* @__PURE__ */ r((m) => _(m), "prepare"),
+      prepare: r((m) => _(m), "prepare"),
       // → normalized array | null
-      commit: /* @__PURE__ */ r((m) => n.setSetting.run(
+      commit: r((m) => n.setSetting.run(
         "fav_dirs",
         m == null ? null : JSON.stringify(m),
         Date.now()
       ), "commit")
     }),
     repo_setup: cn({
-      prepare: /* @__PURE__ */ r((m) => h(m), "prepare"),
-      commit: /* @__PURE__ */ r((m) => n.setSetting.run(
+      prepare: r((m) => h(m), "prepare"),
+      commit: r((m) => n.setSetting.run(
         "repo_setup",
         m == null ? null : JSON.stringify(m),
         Date.now()
       ), "commit")
     }),
     repo_setup_patch: cn({
-      prepare: /* @__PURE__ */ r((m) => U(m), "prepare"),
-      commit: /* @__PURE__ */ r((m) => {
+      prepare: r((m) => U(m), "prepare"),
+      commit: r((m) => {
         if (m == null || Object.keys(m).length === 0) {
           n.setSetting.run("repo_setup", null, Date.now());
           return;
@@ -10024,15 +9997,15 @@ function Uh(e) {
       }, "commit")
     }),
     hold_ms: cn({
-      prepare: /* @__PURE__ */ r((m) => N(m), "prepare"),
-      commit: /* @__PURE__ */ r((m) => n.setSetting.run("hold_ms", m ?? null, Date.now()), "commit")
+      prepare: r((m) => N(m), "prepare"),
+      commit: r((m) => n.setSetting.run("hold_ms", m ?? null, Date.now()), "commit")
     }),
     gateway_base_url: cn({
-      prepare: /* @__PURE__ */ r((m) => m == null ? null : v(m), "prepare"),
-      commit: /* @__PURE__ */ r((m) => n.setSetting.run("gateway_base_url", m ?? null, Date.now()), "commit")
+      prepare: r((m) => m == null ? null : v(m), "prepare"),
+      commit: r((m) => n.setSetting.run("gateway_base_url", m ?? null, Date.now()), "commit")
     }),
     gateway_auth_style: cn({
-      prepare: /* @__PURE__ */ r((m) => {
+      prepare: r((m) => {
         if (m != null && m !== "bearer" && m !== "api-key")
           throw Be(
             400,
@@ -10040,21 +10013,21 @@ function Uh(e) {
           );
         return m;
       }, "prepare"),
-      commit: /* @__PURE__ */ r((m) => n.setSetting.run("gateway_auth_style", m ?? null, Date.now()), "commit")
+      commit: r((m) => n.setSetting.run("gateway_auth_style", m ?? null, Date.now()), "commit")
     }),
     gateway_token: cn({
-      prepare: /* @__PURE__ */ r((m) => m == null ? null : ee(m), "prepare"),
-      commit: /* @__PURE__ */ r((m) => n.setSetting.run("gateway_token", m ?? null, Date.now()), "commit")
+      prepare: r((m) => m == null ? null : ee(m), "prepare"),
+      commit: r((m) => n.setSetting.run("gateway_token", m ?? null, Date.now()), "commit")
     }),
     gateway_model_discovery: cn({
-      prepare: /* @__PURE__ */ r((m) => m == null ? null : fe(m, "gateway_model_discovery"), "prepare"),
-      commit: /* @__PURE__ */ r((m) => n.setSetting.run("gateway_model_discovery", m ?? null, Date.now()), "commit")
+      prepare: r((m) => m == null ? null : fe(m, "gateway_model_discovery"), "prepare"),
+      commit: r((m) => n.setSetting.run("gateway_model_discovery", m ?? null, Date.now()), "commit")
     }),
     gateway_default: cn({
-      prepare: /* @__PURE__ */ r((m) => m == null ? null : fe(m, "gateway_default"), "prepare"),
-      commit: /* @__PURE__ */ r((m) => n.setSetting.run("gateway_default", m ?? null, Date.now()), "commit")
+      prepare: r((m) => m == null ? null : fe(m, "gateway_default"), "prepare"),
+      commit: r((m) => n.setSetting.run("gateway_default", m ?? null, Date.now()), "commit")
     })
-  }, be = /* @__PURE__ */ r((m) => oe[m], "handlerFor");
+  }, be = r((m) => oe[m], "handlerFor");
   function xe(m) {
     if (!m || typeof m != "object" || Array.isArray(m))
       return { status: 400, body: { ok: !1, reason: "settings body must be a JSON object" } };
@@ -10156,7 +10129,7 @@ function Qa(e, t, { min: n = 1 } = {}) {
   return Number.isInteger(o) && o >= n ? o : t;
 }
 r(Qa, "envInt");
-var Va = Qa("FLEETDECK_FS_LIST_MAX", 1e3), Fu = Qa("FLEETDECK_FS_READ_MAX", 512 * 1024), ls = Qa("FLEETDECK_FS_SEARCH_HITS", 200), qh = Qa("FLEETDECK_FS_SEARCH_TIMEOUT_MS", 5e3), Xa = 4 * 1024 * 1024, Gh = 8e3, Mv = 12, Fv = 2e4, $v = 2e3, Wh = 1024 * 1024, Kh = 5, Bv = /* @__PURE__ */ new Set([
+var Va = Qa("FLEETDECK_FS_LIST_MAX", 1e3), Fu = Qa("FLEETDECK_FS_READ_MAX", 512 * 1024), ls = Qa("FLEETDECK_FS_SEARCH_HITS", 200), qh = Qa("FLEETDECK_FS_SEARCH_TIMEOUT_MS", 5e3), Xa = 4 * 1024 * 1024, Gh = 8e3, Mv = 12, Fv = 2e4, $v = 2e3, Wh = 1024 * 1024, Kh = 5, Bv = new Set([
   ".git",
   ".next",
   ".turbo",
@@ -10195,7 +10168,7 @@ function Uu(e) {
   return e;
 }
 r(Uu, "validateRelPath");
-var Za = /* @__PURE__ */ new Set([".ssh", ".aws", ".gnupg", ".netrc", ".kube"]);
+var Za = new Set([".ssh", ".aws", ".gnupg", ".netrc", ".kube"]);
 function Vh(e) {
   return Za.has(e.toLowerCase());
 }
@@ -10333,7 +10306,7 @@ function qu(e, t) {
 }
 r(qu, "entryPath");
 async function Kv(e, t, n) {
-  if (!t.length) return /* @__PURE__ */ new Set();
+  if (!t.length) return new Set();
   let o = Buffer.from(`${t.join("\0")}\0`), s = await Ya("git", ["check-ignore", "-z", "--stdin"], {
     cwd: e,
     timeoutMs: n,
@@ -10362,7 +10335,7 @@ function Yh(e, t) {
 }
 r(Yh, "readOpenFile");
 function Vv(e, t) {
-  let n = [], o = /* @__PURE__ */ new Map(), s = !1;
+  let n = [], o = new Map(), s = !1;
   for (let i of e.toString("utf8").split(`
 `)) {
     if (!i) continue;
@@ -10381,7 +10354,7 @@ function Vv(e, t) {
 }
 r(Vv, "parseGitGrep");
 async function zv(e, t, n, o) {
-  let s = /* @__PURE__ */ r(() => Math.max(1, o - Date.now()), "remaining");
+  let s = r(() => Math.max(1, o - Date.now()), "remaining");
   if (n === "name") {
     let p = await Ya(
       "git",
@@ -10414,7 +10387,7 @@ async function zv(e, t, n, o) {
   };
 }
 r(zv, "gitSearch");
-var Xv = 512, Yv = /* @__PURE__ */ r(() => new Promise((e) => {
+var Xv = 512, Yv = r(() => new Promise((e) => {
   setImmediate(e);
 }), "yieldToLoop");
 async function Jv(e, t, n, o) {
@@ -10619,14 +10592,14 @@ function Jh(e) {
     }
   }
   r(o, "searchAt");
-  let s = /* @__PURE__ */ r((a) => () => Wv(e, a), "sessionRoot"), i = /* @__PURE__ */ r(() => Hv(e), "homeRoot");
+  let s = r((a) => () => Wv(e, a), "sessionRoot"), i = r(() => Hv(e), "homeRoot");
   return {
-    fsList: /* @__PURE__ */ r((a, l) => t(s(a), l), "fsList"),
-    fsRead: /* @__PURE__ */ r((a, l) => n(s(a), l), "fsRead"),
-    fsSearch: /* @__PURE__ */ r((a, l, u) => o(s(a), l, u), "fsSearch"),
-    fsListHome: /* @__PURE__ */ r((a) => t(i, a), "fsListHome"),
-    fsReadHome: /* @__PURE__ */ r((a) => n(i, a), "fsReadHome"),
-    fsSearchHome: /* @__PURE__ */ r((a, l) => o(i, a, l), "fsSearchHome")
+    fsList: r((a, l) => t(s(a), l), "fsList"),
+    fsRead: r((a, l) => n(s(a), l), "fsRead"),
+    fsSearch: r((a, l, u) => o(s(a), l, u), "fsSearch"),
+    fsListHome: r((a) => t(i, a), "fsListHome"),
+    fsReadHome: r((a) => n(i, a), "fsReadHome"),
+    fsSearchHome: r((a, l) => o(i, a, l), "fsSearchHome")
   };
 }
 r(Jh, "createFiles");
@@ -10755,7 +10728,7 @@ function ab(e) {
   return typeof e != "string" || e.length <= nw ? e : ri(e.slice(0, nw));
 }
 r(ab, "clampFrom");
-var cb = 100, lb = 256 * 1024, ub = 25, db = 64 * 1024, fb = /* @__PURE__ */ new Set(["orchestrator", "fleetdeck", "fleetdeck-answer", "human"]), pb = /^[\s\x00-\x1f\x7f-\x9f]*\[FLEETDECK[ \]]/i, rw = /* @__PURE__ */ r((e) => e.replace(/\p{Cf}/gu, ""), "stripFormatChars");
+var cb = 100, lb = 256 * 1024, ub = 25, db = 64 * 1024, fb = new Set(["orchestrator", "fleetdeck", "fleetdeck-answer", "human"]), pb = /^[\s\x00-\x1f\x7f-\x9f]*\[FLEETDECK[ \]]/i, rw = r((e) => e.replace(/\p{Cf}/gu, ""), "stripFormatChars");
 function mb(e) {
   return rw(Ut(e)).replace(/\r\n?|[\u2028\u2029]/g, `
 `).split(`
@@ -10782,10 +10755,10 @@ function ow(e) {
     MAIL_PENDING_MAX_BYTES: S = lb,
     MAIL_PANE_BATCH: h = ub,
     MAIL_PANE_BATCH_BYTES: j = db
-  } = e, U = /* @__PURE__ */ new Set(), N = "open", O = null, R = /* @__PURE__ */ r(() => N === "open", "isOpen");
+  } = e, U = new Set(), N = "open", O = null, R = r(() => N === "open", "isOpen");
   function v($) {
     U.add($);
-    let Y = /* @__PURE__ */ r(() => {
+    let Y = r(() => {
       U.delete($);
     }, "forget");
     return $.then(Y, Y), $;
@@ -10804,7 +10777,7 @@ function ow(e) {
     return Ee.n >= _ || Ee.bytes + q.length > S ? { refused: !0, reason: "mailbox full" } : (n.insertMail.run($, ab(Y), q, Date.now()), m($), ne($), { truncated: ie.length > In, original_length: ie.length });
   }
   r(fe, "mail");
-  let Q = /* @__PURE__ */ new Map();
+  let Q = new Map();
   function ne($) {
     if (!R() || Q.has($)) return;
     let Y = setTimeout(() => {
@@ -10850,7 +10823,7 @@ function ow(e) {
     return Le.length ? Le.map((ve) => ve.session_id) : n.aliasesMatch.all($, $).filter((ve) => ve.source !== "shell").map((ve) => ve.session_id);
   }
   r(xe, "resolveTargets");
-  let ge = /* @__PURE__ */ new Map(), L = /* @__PURE__ */ new Map();
+  let ge = new Map(), L = new Map();
   function y($, Y) {
     return typeof Y != "string" || !Y ? !1 : (L.get($) !== Y && L.set($, Y), !0);
   }
@@ -10869,7 +10842,7 @@ function ow(e) {
   r(m, "notifyWatchers");
   function I($, Y) {
     let re = ge.get($);
-    return re || (re = /* @__PURE__ */ new Set(), ge.set($, re)), re.add(Y), () => {
+    return re || (re = new Set(), ge.set($, re)), re.add(Y), () => {
       let ie = ge.get($);
       ie && (ie.delete(Y), ie.size || ge.delete($));
     };
@@ -11141,7 +11114,7 @@ function iw(e) {
   let { q: t, assignCallsign: n, updateSession: o, tick: s, onMutate: i, touchRepo: a } = e;
   function l(u) {
     if (!Array.isArray(u)) return;
-    let p = /* @__PURE__ */ r((_) => {
+    let p = r((_) => {
       if (typeof _ != "object" || _ === null) return !1;
       let S = _;
       return typeof S.sessionId == "string" && S.sessionId.length > 0 && S.kind === "interactive" && typeof S.pid == "number" && ti(S.pid, typeof S.startedAt == "number" ? S.startedAt : NaN);
@@ -11253,11 +11226,11 @@ function aw(e) {
   }
   r(w, "resolveRenameTarget");
   function _(S) {
-    let h = zg(S), j = /* @__PURE__ */ r((O) => t.insertCommand.run(
+    let h = zg(S), j = r((O) => t.insertCommand.run(
       Date.now(),
       Ut(S),
       JSON.stringify(O ? { ...h, ...O } : h)
-    ), "logCommand"), U = /* @__PURE__ */ r((O) => (j(), i(), { ok: !1, reason: O }), "rejectCommand"), N = 0;
+    ), "logCommand"), U = r((O) => (j(), i(), { ok: !1, reason: O }), "rejectCommand"), N = 0;
     if (h.cmd === "broadcast" || h.cmd === "assign_auto" || h.cmd === "assign") {
       let R = `${h.cmd === "broadcast" ? "" : "[FLEETDECK ASSIGNMENT] "}${h.text}`;
       if (R.length > In) {
@@ -11320,7 +11293,7 @@ r(aw, "createCommands");
 
 // src/daemon/plans.ts
 function cw(e) {
-  let { q: t, tick: n, onMutate: o, mail: s, resolveTargets: i } = e, a = /* @__PURE__ */ new Set([
+  let { q: t, tick: n, onMutate: o, mail: s, resolveTargets: i } = e, a = new Set([
     "proposed",
     "approved",
     "captured"
@@ -11478,7 +11451,7 @@ function pw(e) {
     acquireWorktreePathLock: T,
     claimWorktreeCustody: V
     // remove-vs-revive serialization (revive side; derive wires it)
-  } = e, X = /* @__PURE__ */ new Set(), se = /* @__PURE__ */ new Set(), A = "open", K = null;
+  } = e, X = new Set(), se = new Set(), A = "open", K = null;
   function k(c) {
     if (A !== "open") return null;
     let d;
@@ -11488,7 +11461,7 @@ function pw(e) {
       d = Promise.reject(M);
     }
     se.add(d);
-    let f = /* @__PURE__ */ r(() => {
+    let f = r(() => {
       se.delete(d);
     }, "forget");
     return d.then(f, f), d;
@@ -11499,7 +11472,7 @@ function pw(e) {
     let M, Z;
     return new Promise((le, ue) => {
       let Se = !1;
-      Z = /* @__PURE__ */ r(() => {
+      Z = r(() => {
         if (!Se) {
           Se = !0;
           try {
@@ -11534,7 +11507,7 @@ function pw(e) {
       );
       ce.unref(), M = {
         timer: ce,
-        cancel: /* @__PURE__ */ r(() => {
+        cancel: r(() => {
           clearTimeout(ce), Z();
         }, "cancel")
       }, X.add(M);
@@ -11557,10 +11530,10 @@ function pw(e) {
   }
   r(pe, "closeMaintenance");
   let J = {
-    isOpen: /* @__PURE__ */ r(() => A === "open", "isOpen"),
+    isOpen: r(() => A === "open", "isOpen"),
     run: k,
     schedule: P
-  }, Ce = 6e4, Pe = /* @__PURE__ */ new Map();
+  }, Ce = 6e4, Pe = new Map();
   function $() {
     let c = hb(24).toString("base64url");
     if (Pe.set(c, Date.now() + Ce), Pe.size > 128) {
@@ -11635,9 +11608,9 @@ function pw(e) {
     });
   }
   r(Le, "spawnFailed");
-  let ve = /do you trust the files in this folder|trust this folder|trust the files|trust this workspace|quick safety check|new mcp server|mcp server.{0,40}(approve|allow|trust)|use this and all future mcp servers/i, b = /* @__PURE__ */ new Set();
+  let ve = /do you trust the files in this folder|trust this folder|trust the files|trust this workspace|quick safety check|new mcp server|mcp server.{0,40}(approve|allow|trust)|use this and all future mcp servers/i, b = new Set();
   function g(c, d, f) {
-    let M = /* @__PURE__ */ r(async () => {
+    let M = r(async () => {
       try {
         if (b.has(c)) return;
         let D = t.getSpawn.get(c);
@@ -11672,7 +11645,7 @@ function pw(e) {
     });
   }
   r(g, "scheduleNudge");
-  let B = /https:\/\/claude\.ai\/\S+/, C = /* @__PURE__ */ new Map(), de = /* @__PURE__ */ new Set(), ae = /* @__PURE__ */ new Map(), Oe = /* @__PURE__ */ new Map(), tt = /* @__PURE__ */ new Map();
+  let B = /https:\/\/claude\.ai\/\S+/, C = new Map(), de = new Set(), ae = new Map(), Oe = new Map(), tt = new Map();
   function ze(c) {
     b.delete(c), C.delete(c), tt.delete(c);
   }
@@ -11823,7 +11796,7 @@ function pw(e) {
         boardSession: d
       }),
       ...Re
-    ], yt = /* @__PURE__ */ r((je) => nt({
+    ], yt = r((je) => nt({
       spawn_id: c,
       session_id: d,
       callsign: f,
@@ -12007,7 +11980,7 @@ function pw(e) {
     let le = c.repo != null, ue = c.cwd != null;
     if (le && ue)
       return { status: 400, body: { ok: !1, reason: "provide either cwd or repo, not both" } };
-    let Se = /* @__PURE__ */ new Set(["default", "acceptedits", "plan", "bypasspermissions"]);
+    let Se = new Set(["default", "acceptedits", "plan", "bypasspermissions"]);
     if (c.permission_mode != null) {
       let $e = c.permission_mode.toLowerCase();
       if (!Se.has($e))
@@ -12042,13 +12015,13 @@ function pw(e) {
         pt?.ok && !pt.already && o(`📚 planner hold for plan #${$e} retired — question dismissed`);
       }
     }
-    let _e = /* @__PURE__ */ r(() => {
+    let _e = r(() => {
       Ae && (t.releasePlanExecution.run(Ae.restoreStatus, Ae.plan_id, Ae.via), o(
         `📚 plan #${Ae.plan_id} execution claim released (spawn failed) — back to ${Ae.restoreStatus}`
       ), i(), Ae = null);
-    }, "releasePlanClaim"), W = /* @__PURE__ */ r(($e) => {
+    }, "releasePlanClaim"), W = r(($e) => {
       Ae && (t.setPlanExecuted.run(`spawn:${$e}`, Ae.plan_id), Ae = null, i());
-    }, "completePlanClaim"), H = /* @__PURE__ */ r(($e) => async (...Xe) => {
+    }, "completePlanClaim"), H = r(($e) => async (...Xe) => {
       try {
         return await $e(...Xe);
       } catch (z) {
@@ -12114,7 +12087,7 @@ function pw(e) {
             }
           };
       }
-      let mt = /* @__PURE__ */ r(() => {
+      let mt = r(() => {
       }, "releaseCloneSlot");
       if (z.mode === "clone")
         try {
@@ -12169,7 +12142,7 @@ function pw(e) {
           }
         };
       }
-      let kd = /* @__PURE__ */ r(async (Ie, ir) => {
+      let kd = r(async (Ie, ir) => {
         let ar = Xe === "worktree" ? Ie.runCwd : null;
         ar && t.setSpawnWorktree.run(ar, Ie.created.worktree ? 1 : 0, ot);
         let ct = Zt(Ie.runCwd);
@@ -12382,7 +12355,7 @@ function pw(e) {
     );
     let je = null;
     if (c.worktree === !0) {
-      let Xe = Ze.ticket && rt.endsWith(`-${Ze.ticket}`) ? `${Ze.ticket}-${Qs(rt)}` : rt, z = /* @__PURE__ */ r((ot) => us.join(us.dirname(G), `${us.basename(G)}--fd-${ot}`), "pathFor"), Ue = `${Xe}-${ke.slice(0, 4)}`, pt = Sn.existsSync(z(Xe)) ? [Ue] : [Xe, Ue], mt = "", Bn = { ok: !1, err: "" };
+      let Xe = Ze.ticket && rt.endsWith(`-${Ze.ticket}`) ? `${Ze.ticket}-${Qs(rt)}` : rt, z = r((ot) => us.join(us.dirname(G), `${us.basename(G)}--fd-${ot}`), "pathFor"), Ue = `${Xe}-${ke.slice(0, 4)}`, pt = Sn.existsSync(z(Xe)) ? [Ue] : [Xe, Ue], mt = "", Bn = { ok: !1, err: "" };
       for (let ot of pt)
         if (mt = z(ot), Bn = await De("git", [
           "-C",
@@ -12627,7 +12600,7 @@ function pw(e) {
       "claude",
       null
     );
-    let Ze = /* @__PURE__ */ r((yt) => nt({
+    let Ze = r((yt) => nt({
       spawn_id: G,
       session_id: c,
       callsign: d,
@@ -12816,7 +12789,7 @@ function pw(e) {
     }
   }
   r(hs, "adoptSession");
-  let tr = /* @__PURE__ */ new Map();
+  let tr = new Map();
   function bn(c) {
     let d = tr.get(c);
     if (d) return d;
@@ -12861,7 +12834,7 @@ function pw(e) {
         status: 409,
         body: { ok: !1, reason: `session is ${Z?.col ?? "missing"}, not queued or idle` }
       };
-    let D = E(M), le = /* @__PURE__ */ r((G) => G && ["queued", "idle"].includes(G.col), "idleNow"), ue = /* @__PURE__ */ r(async () => {
+    let D = E(M), le = r((G) => G && ["queued", "idle"].includes(G.col), "idleNow"), ue = r(async () => {
       let G = t.getSession.get(d.session_id);
       return le(G) ? await w.typeAndEnter(
         D,
@@ -13219,17 +13192,17 @@ ${H}` : W), i();
   let Ro = {
     quiesce: rr,
     close: or
-  }, Fn = /* @__PURE__ */ r(() => ({
+  }, Fn = r(() => ({
     status: 503,
     body: { ok: !1, reason: "daemon is shutting down; spawn maintenance is quiescing" }
   }), "shuttingDown");
   return {
-    spawn: /* @__PURE__ */ r((c) => J.run(() => fn(c)) ?? Promise.resolve(Fn()), "ownedSpawn"),
-    revive: /* @__PURE__ */ r((c, d = {}) => J.run(() => So(c, d)) ?? Promise.resolve(Fn()), "ownedRevive"),
-    adoptSession: /* @__PURE__ */ r((c, d = {}, f = {}) => J.run(() => hs(c, d, f)) ?? Promise.resolve(Fn()), "ownedAdoptSession"),
-    enableRemote: /* @__PURE__ */ r((c) => J.run(() => bn(c)) ?? Promise.resolve(Fn()), "ownedEnableRemote"),
-    spawnKill: /* @__PURE__ */ r((c, d) => J.run(() => xo(c, d)) ?? Promise.resolve(Fn()), "ownedSpawnKill"),
-    spawnCapability: /* @__PURE__ */ r(() => J.isOpen() ? Ee() : { available: !1, reason: "daemon is shutting down", active: 0 }, "spawnCapability"),
+    spawn: r((c) => J.run(() => fn(c)) ?? Promise.resolve(Fn()), "ownedSpawn"),
+    revive: r((c, d = {}) => J.run(() => So(c, d)) ?? Promise.resolve(Fn()), "ownedRevive"),
+    adoptSession: r((c, d = {}, f = {}) => J.run(() => hs(c, d, f)) ?? Promise.resolve(Fn()), "ownedAdoptSession"),
+    enableRemote: r((c) => J.run(() => bn(c)) ?? Promise.resolve(Fn()), "ownedEnableRemote"),
+    spawnKill: r((c, d) => J.run(() => xo(c, d)) ?? Promise.resolve(Fn()), "ownedSpawnKill"),
+    spawnCapability: r(() => J.isOpen() ? Ee() : { available: !1, reason: "daemon is shutting down", active: 0 }, "spawnCapability"),
     spawnLivenessTick: ws,
     reconcileSpawns: bo,
     reconcileClearForks: ko,
@@ -13292,7 +13265,7 @@ function mw(e) {
     // none of those proves the human decided anything in the terminal.
     settleTerminalPlans: be,
     spawnMaintenance: xe
-  } = e, ge = (process.env.FLEETDECK_HOLD_SCOPE ?? "spawned").trim().toLowerCase(), L = ge === "all" || ge === "off" ? ge : "spawned", y = /* @__PURE__ */ r((k) => E.boardConsumerAvailable() && (L === "all" || L === "spawned" && t.activeSpawnBySession.get(k) != null), "shouldRelayQuestion");
+  } = e, ge = (process.env.FLEETDECK_HOLD_SCOPE ?? "spawned").trim().toLowerCase(), L = ge === "all" || ge === "off" ? ge : "spawned", y = r((k) => E.boardConsumerAvailable() && (L === "all" || L === "spawned" && t.activeSpawnBySession.get(k) != null), "shouldRelayQuestion");
   function x(k) {
     let P = typeof k.session_id == "string" && k.session_id ? k.session_id : null;
     if (!P) return { card: null, conflict: null };
@@ -13543,7 +13516,7 @@ function mw(e) {
       return he(P, k.cwd), N(P), {};
     let pe = t.getSession.get(P);
     if (pe?.adopt_armed_until != null && pe.adopt_armed_until > Date.now()) {
-      let Ce = !!pe.adopt_armed_skip, Pe = /* @__PURE__ */ r(async () => {
+      let Ce = !!pe.adopt_armed_skip, Pe = r(async () => {
         try {
           let $ = await ee(
             P,
@@ -13642,25 +13615,25 @@ function hw(e) {
     resolveSettings: _
   } = e;
   function S() {
-    let U = Date.now(), N = /* @__PURE__ */ new Map();
+    let U = Date.now(), N = new Map();
     for (let y of t.filesBySession.all(U - i, a)) {
       let x = N.get(y.session_id);
       x || (x = [], N.set(y.session_id, x)), x.length < a && x.push(y.abs_path);
     }
-    let O = /* @__PURE__ */ new Map(), R = Math.floor(U / 6e4);
+    let O = new Map(), R = Math.floor(U / 6e4);
     for (let y of t.sparkline.all(U - 30 * 6e4)) {
       let x = O.get(y.session_id);
       x || (x = new Array(30).fill(0), O.set(y.session_id, x));
       let m = 29 - (R - y.minute);
       m >= 0 && m < 30 && (x[m] = y.n);
     }
-    let v = t.visibleSessions.all(), ee = /* @__PURE__ */ new Map();
+    let v = t.visibleSessions.all(), ee = new Map();
     for (let y of t.spawnByVisibleSession.all()) ee.set(y.session_id, y);
     let fe = new Map(
       t.pendingCounts.all(Date.now()).map((y) => [y.to_session, y])
     ), Q = new Map(
       t.conflictCallsigns.all().map((y) => [y.session_id, y.callsign])
-    ), ne = /* @__PURE__ */ new Map(), he = /* @__PURE__ */ new Map();
+    ), ne = new Map(), he = new Map();
     for (let y of v)
       ne.set(y.session_id, u(y.session_id)), he.set(y.session_id, !!p(y.session_id));
     let oe = v.map((y) => {
@@ -13758,7 +13731,7 @@ function hw(e) {
         // live non-hooks card). armed reflects a live, unexpired arm.
         adopt: I
       };
-    }), be = /* @__PURE__ */ new Map();
+    }), be = new Map();
     for (let y of oe) {
       let x = y.repo_id ?? "(none)", m = be.get(x);
       m || (m = { repo_id: y.repo_id, repo_name: y.repo_name, active: 0, total: 0 }, be.set(x, m)), m.total++, y.endedAt || m.active++, y.repo_name && (m.repo_name = y.repo_name);
@@ -13882,7 +13855,7 @@ import Rb from "node:fs";
 // src/daemon/run-nonce.ts
 import Ju from "node:fs";
 import bb from "node:path";
-var kb = /* @__PURE__ */ r((e) => typeof e == "number" && Number.isInteger(e) && e > 0, "isPid");
+var kb = r((e) => typeof e == "number" && Number.isInteger(e) && e > 0, "isPid");
 function ww(e, { minAgeMs: t = 36e5, now: n = Date.now() } = {}) {
   if (!e) return 0;
   let o = 0, s;
@@ -13963,7 +13936,7 @@ function Ew(e) {
       let L = await l.listScopedWindows(u);
       if (L !== null)
         for (let { s: y, sp: x } of he) {
-          let m = /* @__PURE__ */ r(() => {
+          let m = r(() => {
             if (t.activeSpawnBySession.get(y.session_id)?.spawn_id !== x.spawn_id) return !1;
             let se = t.currentWindowOwner.get(x.tmux_window);
             return !se || se.spawn_id === x.spawn_id;
@@ -13998,7 +13971,7 @@ function Ew(e) {
           continue;
         }
         if (L.ended_at != null && !ei.has(L.end_reason)) {
-          let y = /* @__PURE__ */ r(async () => {
+          let y = r(async () => {
             try {
               let m = await w(
                 L.session_id,
@@ -14036,7 +14009,7 @@ function Ew(e) {
   async function v() {
     let Q = Date.now(), ne = t.archiveCandidates.all(Q + 1).map((V) => V.session_id), he = new Map(t.allSpawns.all().map((V) => [V.tmux_window, V])), oe = [...he.values()].filter(
       (V) => V.tmux_window && ["killed", "pane-dead", "gone"].includes(V.status)
-    ), be = 0, xe = /* @__PURE__ */ new Set();
+    ), be = 0, xe = new Set();
     if (oe.length) {
       let V = await l.listScopedWindows(u);
       if (V === null)
@@ -14050,7 +14023,7 @@ function Ew(e) {
         if (!se.pane_dead || !A || !["killed", "pane-dead", "gone"].includes(A.status)) continue;
         let K = await l.killWindowVerified(se.window, {
           expectWindowId: se.window_id,
-          expect: /* @__PURE__ */ r(() => {
+          expect: r(() => {
             let k = t.currentWindowOwner.get(se.window);
             return !(k && (k.session_id !== A.session_id || k.status !== "pane-dead"));
           }, "expect")
@@ -14115,9 +14088,9 @@ function Ew(e) {
       return { status: 409, body: { ok: !1, reason: "already dismissed" } };
     let be = Number(t.expireMailForSession.run(ne, Q).changes), xe = E.expireAllForSession(Q, { includeFreeform: !0 });
     t.goneSessionSpawns.run(Q), t.deleteTouchesForSession.run(Q);
-    let ge = /* @__PURE__ */ r(() => t.getSession.get(Q)?.archived_at == null, "alive"), L = new Set(
+    let ge = r(() => t.getSession.get(Q)?.archived_at == null, "alive"), L = new Set(
       t.spawnsForSession.all(Q).map((F) => F.tmux_window).filter(Boolean)
-    ), y = 0, x = !1, m = [], I = /* @__PURE__ */ r((F) => ({
+    ), y = 0, x = !1, m = [], I = r((F) => ({
       status: 409,
       body: {
         ok: !1,
@@ -14145,7 +14118,7 @@ function Ew(e) {
           if (V && (V.session_id !== Q || V.status !== "pane-dead")) continue;
           let X = await l.killWindowVerified(T.window, {
             expectWindowId: T.window_id,
-            expect: /* @__PURE__ */ r(() => {
+            expect: r(() => {
               let se = t.currentWindowOwner.get(T.window);
               return se && (se.session_id !== Q || se.status !== "pane-dead") ? !1 : !ge();
             }, "expect")
@@ -14253,8 +14226,8 @@ function yw(e, {
   MAIL_PANE_BATCH: u,
   MAIL_PANE_BATCH_BYTES: p
 } = {}) {
-  let E = Date.now(), w = /* @__PURE__ */ r(() => {
-  }, "onMutateImpl"), _ = /* @__PURE__ */ r(() => {
+  let E = Date.now(), w = r(() => {
+  }, "onMutateImpl"), _ = r(() => {
     w();
   }, "onMutate"), S = dt("FLEETDECK_STALE_MS", 6e5, { min: 1 }), h = dt("FLEETDECK_NUDGE_MS", 8e3, { min: 1 }), j = dt("FLEETDECK_SPAWN_REGISTER_MS", 9e4, { min: 1 }), U = dt("FLEETDECK_SETUP_REGISTER_MS", 6e5, { min: 1 }), N = dt("FLEETDECK_PANE_MAIL_GRACE_MS", 1500, { min: 0 }), O = dt("FLEETDECK_MAIL_CLAIM_LEASE_MS", 3e4, { min: 1 }), R = dt("FLEETDECK_PRESUME_DEAD_MS", 108e5, { min: 1 }), v = dt("FLEETDECK_PRESUME_DEAD_WORKING_MS", R * 3, {
     min: 1
@@ -14292,21 +14265,21 @@ function yw(e, {
     // live (settings.mjs's resolveHoldMsRaw, threaded through ctx below — the
     // arrow defers the lookup until the first hold, by which time createSettings
     // has run).
-    resolveHoldWindow: /* @__PURE__ */ r(() => jr(process.env, () => q.resolveHoldMsRaw() ?? null), "resolveHoldWindow"),
+    resolveHoldWindow: r(() => jr(process.env, () => q.resolveHoldMsRaw() ?? null), "resolveHoldWindow"),
     // UX 2.1 re-arm: how long after a hold expiry with NO session activity the
     // question re-raises as a mail-delivered card (0 disables — some existing
     // test suites would otherwise meet an unexpected second card).
     rearmGraceMs: dt("FLEETDECK_REARM_GRACE_MS", 3e3, { min: 0 }),
-    mail: /* @__PURE__ */ r((W, H, G) => q.mail(W, H, G), "mail"),
+    mail: r((W, H, G) => q.mail(W, H, G), "mail"),
     // BUG-137: the questions relay rejects framed answers that would exceed
     // the mailbox clamp (reject-before-settle instead of silent truncation).
     // Threaded from mail.ts so the two can never drift apart.
     mailMaxLen: In,
-    tick: /* @__PURE__ */ r((W) => {
+    tick: r((W) => {
       Y(W);
     }, "tick"),
-    callsignOf: /* @__PURE__ */ r((W) => x.getSession.get(W)?.callsign ?? null, "callsignOf"),
-    onChange: /* @__PURE__ */ r(() => {
+    callsignOf: r((W) => x.getSession.get(W)?.callsign ?? null, "callsignOf"),
+    onChange: r(() => {
       _();
     }, "onChange"),
     // v1.3 plan library: the plans table lives here; questions.mjs only needs
@@ -14314,8 +14287,8 @@ function yw(e, {
     // flip is guarded to 'proposed' — the answer paths describe the freshly
     // captured plan, and a plan the human already archived/marked from the
     // library keeps that verdict.
-    planIdFor: /* @__PURE__ */ r((W) => x.planByQuestion.get(W)?.plan_id ?? null, "planIdFor"),
-    planAnswered: /* @__PURE__ */ r((W, H) => {
+    planIdFor: r((W) => x.planByQuestion.get(W)?.plan_id ?? null, "planIdFor"),
+    planAnswered: r((W, H) => {
       let G = x.planByQuestion.get(W);
       if (G?.status !== "proposed") return;
       let we = H === "allow" ? "approved" : H === "capture" ? "captured" : "rejected";
@@ -14324,10 +14297,10 @@ function yw(e, {
     // UX 2.2: the retirement seam — every unanswered retirement of a
     // plan-linked question flows through planRetired (defined above; same-tick
     // settle only when the retire itself was session activity).
-    onRetired: /* @__PURE__ */ r((W, H) => {
+    onRetired: r((W, H) => {
       I(W, H);
     }, "onRetired")
-  }), V = /* @__PURE__ */ new Map();
+  }), V = new Map();
   function X(W, H) {
     let G = 0;
     try {
@@ -14402,7 +14375,7 @@ function yw(e, {
       return { ok: !1, reason: "session has a custom name — auto-detect does not override it" };
     let ke = `${Qs(we.callsign)}-${H}`, Re = x.callsignTaken.get(ke, ke, W) ? K(W, H) : ke;
     return Re.endsWith("-" + H) ? Re === we.callsign ? (m(W, { ticket: H, ticket_source: G }), _(), { ok: !0, renamed: !1, callsign: we.callsign, ticket: H }) : { ...P(W, we, Re, {
-      tickMsg: /* @__PURE__ */ r((rt, yt) => `🎫 ${rt} is now ${yt} (ticket ${H})`, "tickMsg"),
+      tickMsg: r((rt, yt) => `🎫 ${rt} is now ${yt} (ticket ${H})`, "tickMsg"),
       extra: { ticket: H, ticket_source: G, custom_suffix: null }
     }), ticket: H } : (m(W, { ticket: H, ticket_source: G }), Y(`🎫 ${we.callsign} stays on ticket ${H} — every callsign for it is taken`), _(), { ok: !0, renamed: !1, callsign: we.callsign, ticket: H });
   }
@@ -14416,12 +14389,12 @@ function yw(e, {
       return { ok: !0, renamed: !1, callsign: G.callsign };
     let ke = G.ticket ? `${we}-${G.ticket}` : G.prev_callsign && !x.callsignTaken.get(G.prev_callsign, G.prev_callsign, W) ? G.prev_callsign : G.callsign, Re = H == null ? ke : `${we}-${H}`;
     return Re === G.callsign ? ((G.custom_suffix ?? null) !== (H ?? null) && (m(W, { custom_suffix: H ?? null }), _()), { ok: !0, renamed: !1, callsign: G.callsign }) : x.callsignTaken.get(Re, Re, W) ? { ok: !1, reason: `${Re} is already taken by another session` } : P(W, G, Re, {
-      tickMsg: /* @__PURE__ */ r((Ze, rt) => H == null ? `✎ ${Ze} is now ${rt} (custom name cleared)` : `✎ ${Ze} is now ${rt}`, "tickMsg"),
+      tickMsg: r((Ze, rt) => H == null ? `✎ ${Ze} is now ${rt} (custom name cleared)` : `✎ ${Ze} is now ${rt}`, "tickMsg"),
       extra: { custom_suffix: H ?? null }
     });
   }
   r(pe, "applyCustomName");
-  let J = /* @__PURE__ */ r((W) => {
+  let J = r((W) => {
     let H = x.spawnBySession.get(W);
     return !!H && ["provisioning", "spawning", "stalled", "live"].includes(H.status);
   }, "hasLivePane");
@@ -14613,7 +14586,7 @@ function yw(e, {
   Object.assign(q, aw(q));
   let { command: dn } = q;
   Object.assign(q, cw(q));
-  let { planMark: fn, assignPlan: So } = q, er = /* @__PURE__ */ new Map(), hs = /* @__PURE__ */ r((W) => {
+  let { planMark: fn, assignPlan: So } = q, er = new Map(), hs = r((W) => {
     try {
       return Qu.realpathSync(W);
     } catch {
@@ -14846,7 +14819,7 @@ r(gi, "networkInterfaces");
 // src/daemon/termbridge.ts
 import { spawn as Ob } from "node:child_process";
 import { StringDecoder as bw } from "node:string_decoder";
-var Lb = /* @__PURE__ */ new Set(["spawning", "stalled", "live"]), xw = 1024, Db = 5e3, Ib = dt("FLEETDECK_TERM_CMD_TIMEOUT_MS", 1e4, { min: 100 }), Nb = dt("FLEETDECK_TERM_CLOSE_RECHECK_MS", 1e3, { min: 50 }), kw = dt("FLEETDECK_TERM_INPUT_MAX_BYTES", 256 * 1024, { min: 1024 }), Mb = dt("FLEETDECK_TERM_PENDING_MAX_BYTES", kw, {
+var Lb = new Set(["spawning", "stalled", "live"]), xw = 1024, Db = 5e3, Ib = dt("FLEETDECK_TERM_CMD_TIMEOUT_MS", 1e4, { min: 100 }), Nb = dt("FLEETDECK_TERM_CLOSE_RECHECK_MS", 1e3, { min: 50 }), kw = dt("FLEETDECK_TERM_INPUT_MAX_BYTES", 256 * 1024, { min: 1024 }), Mb = dt("FLEETDECK_TERM_PENDING_MAX_BYTES", kw, {
   min: 1024
 }), Fb = "\x1B[H\x1B[2J", $b = "\x1B[?2004h", Bb = "\x1B[200~", Ub = "\x1B[201~", qb = dt("FLEETDECK_TERM_REPAINT_MS", 80), Wb = dt("FLEETDECK_TERM_DEAD_POLL_MS", 5e3, { min: 100 });
 function vw(e, t) {
@@ -14940,18 +14913,18 @@ var Zu = class {
 function Rw({
   port: e,
   resolveSpawn: t,
-  log: n = /* @__PURE__ */ r(() => {
+  log: n = r(() => {
   }, "log"),
   closeGraceMs: o = 1e3,
   forceJoinGraceMs: s = 125
 }) {
-  let i = Gr(e), a = /* @__PURE__ */ new Set(), l = /* @__PURE__ */ new Set(), u = /* @__PURE__ */ new Set(), p = /* @__PURE__ */ new Set(), E = /* @__PURE__ */ new Set(), w = Number.isFinite(o) && o >= 1 ? Math.floor(o) : 1e3, _ = Number.isFinite(s) && s >= 1 ? Math.floor(s) : 125, S = null, h = "open", j = null, U = !1, N = /* @__PURE__ */ r(() => {
+  let i = Gr(e), a = new Set(), l = new Set(), u = new Set(), p = new Set(), E = new Set(), w = Number.isFinite(o) && o >= 1 ? Math.floor(o) : 1e3, _ = Number.isFinite(s) && s >= 1 ? Math.floor(s) : 125, S = null, h = "open", j = null, U = !1, N = r(() => {
   }, "resolveForceRequested"), O = new Promise((A) => {
     N = A;
-  }), R = /* @__PURE__ */ r(() => new xn("terminal bridge is closed"), "bridgeClosedError");
+  }), R = r(() => new xn("terminal bridge is closed"), "bridgeClosedError");
   function v(A) {
     return new Promise((K) => {
-      let k = null, P = /* @__PURE__ */ r(() => {
+      let k = null, P = r(() => {
         E.delete(P) && (k && clearTimeout(k), k = null, K());
       }, "settle");
       E.add(P), k = setTimeout(P, A), k.unref();
@@ -14959,12 +14932,12 @@ function Rw({
   }
   r(v, "delay");
   function ee() {
-    let A = /* @__PURE__ */ r(() => {
-    }, "readyResolve"), K = /* @__PURE__ */ r(() => {
+    let A = r(() => {
+    }, "readyResolve"), K = r(() => {
     }, "readyReject"), k = new Promise((b, g) => {
-      A = /* @__PURE__ */ r(() => {
+      A = r(() => {
         b();
-      }, "readyResolve"), K = /* @__PURE__ */ r((B) => {
+      }, "readyResolve"), K = r((B) => {
         g(B);
       }, "readyReject");
     });
@@ -14978,14 +14951,14 @@ function Rw({
       // pane id -> { decoder, subs:Set<viewer> }. The decoder is PER PANE, not
       // per viewer: it is the pane's byte stream that gets split mid-character,
       // and two tiles watching one pane must not each hold half a glyph.
-      panes: /* @__PURE__ */ new Map(),
-      manualSizing: /* @__PURE__ */ new Set(),
+      panes: new Map(),
+      manualSizing: new Set(),
       // windows we have switched to manual sizing
       closed: !1,
       ready: k,
       readyResolve: A,
       readyReject: K,
-      command: /* @__PURE__ */ r((b) => new Promise((g, B) => {
+      command: r((b) => new Promise((g, B) => {
         if (P.closed || !P.child?.stdin?.writable) {
           B(new Error("control client is closed"));
           return;
@@ -14995,10 +14968,10 @@ function Rw({
         }, Ib);
         C.unref();
         let de = {
-          resolve: /* @__PURE__ */ r((ae) => {
+          resolve: r((ae) => {
             clearTimeout(C), g(ae);
           }, "resolve"),
-          reject: /* @__PURE__ */ r((ae) => {
+          reject: r((ae) => {
             clearTimeout(C), B(ae);
           }, "reject")
         };
@@ -15019,7 +14992,7 @@ function Rw({
       deadTimer: setInterval(() => {
         P.closed || !P.panes.size || P.command("list-panes -a -F '#{pane_id} #{pane_dead}'").then((b) => {
           if (!b.ok || P.closed) return;
-          let g = /* @__PURE__ */ new Map();
+          let g = new Map();
           for (let B of b.lines) {
             let C = /^(%\d+)\s+([01])$/.exec(B.trim());
             C && g.set(C[1] ?? "", C[2] ?? "");
@@ -15031,13 +15004,13 @@ function Rw({
         });
       }, Wb),
       exited: Promise.resolve(),
-      detachDataListeners: /* @__PURE__ */ r(() => {
+      detachDataListeners: r(() => {
       }, "detachDataListeners"),
-      detachAllListeners: /* @__PURE__ */ r(() => {
+      detachAllListeners: r(() => {
       }, "detachAllListeners")
     };
     P.deadTimer.unref();
-    let te = /* @__PURE__ */ r((b) => {
+    let te = r((b) => {
       if (!(P.closed || h !== "open")) {
         if (b.type === "response")
           P.waiters.shift()?.resolve(b);
@@ -15077,14 +15050,14 @@ function Rw({
       env: process.env
     });
     P.child = $, P.processGroupId = Pe && $.pid ? $.pid : null, l.add(P);
-    let Y = /* @__PURE__ */ r(() => {
+    let Y = r(() => {
     }, "exitedResolve");
     P.exited = new Promise((b) => {
       Y = b;
     });
-    let re = /* @__PURE__ */ r((b) => {
+    let re = r((b) => {
       if (P.closed || h !== "open") return;
-      let g = /* @__PURE__ */ new Map(), B = /* @__PURE__ */ r(() => {
+      let g = new Map(), B = r(() => {
         if (!(P.closed || h !== "open")) {
           for (let [C, de] of g) {
             let ae = P.panes.get(C);
@@ -15103,13 +15076,13 @@ function Rw({
         } else
           B(), te(C);
       B();
-    }, "onStdout"), ie = /* @__PURE__ */ r((b) => {
+    }, "onStdout"), ie = r((b) => {
       P.closed || h !== "open" || n(`terminal control stderr: ${String(b).trim()}`);
-    }, "onStderr"), q = /* @__PURE__ */ r((b) => {
+    }, "onStderr"), q = r((b) => {
       !P.closed && h === "open" && fe(`terminal control client failed: ${b.message}`);
-    }, "onError"), Ee = /* @__PURE__ */ r(() => {
+    }, "onError"), Ee = r(() => {
       Y(), P.closed || fe("terminal control client exited");
-    }, "onExit"), Te = /* @__PURE__ */ r(() => {
+    }, "onExit"), Te = r(() => {
       Y(), y(P) && (l.delete(P), P.detachAllListeners());
     }, "onClose"), Le = !1, ve = !1;
     return P.detachDataListeners = () => {
@@ -15176,7 +15149,7 @@ function Rw({
   r(he, "sizeWindow");
   function oe(A, K, k) {
     let P = A.panes.get(K);
-    P || (P = { decoder: new bw("utf8"), subs: /* @__PURE__ */ new Set() }, A.panes.set(K, P)), P.subs.add(k);
+    P || (P = { decoder: new bw("utf8"), subs: new Set() }, A.panes.set(K, P)), P.subs.add(k);
   }
   r(oe, "subscribe");
   function be(A, K, k) {
@@ -15189,16 +15162,16 @@ function Rw({
     cols: K,
     rows: k,
     send: P,
-    onClose: te = /* @__PURE__ */ r(() => {
+    onClose: te = r(() => {
     }, "onClose"),
-    isAborted: pe = /* @__PURE__ */ r(() => !1, "isAborted")
+    isAborted: pe = r(() => !1, "isAborted")
   }) {
     if (h !== "open") throw R();
     if (process.env.FLEETDECK_TERM?.trim().toLowerCase() === "off")
       throw new xn("live terminal disabled");
     let J = vw(K, k);
     if (!J) throw new xn("invalid terminal dimensions");
-    let Ce = /* @__PURE__ */ r(() => {
+    let Ce = r(() => {
       if (h !== "open") throw R();
       if (pe()) throw new Error("terminal viewer closed during open");
     }, "abortIfClosed"), Pe = await t(A);
@@ -15331,7 +15304,7 @@ function Rw({
       let Ee = q instanceof Error && q.message ? q.message : "terminal open failed";
       throw Y.finish(Ee, !1), q instanceof xn ? q : new xn(Ee);
     }
-    let re = /* @__PURE__ */ r((q, Ee) => {
+    let re = r((q, Ee) => {
       if (Y.finished || q.length === 0) return;
       let Te = S;
       if (!Te) return;
@@ -15359,7 +15332,7 @@ function Rw({
           }
         });
       }
-    }, "queueInput"), ie = /* @__PURE__ */ r((q) => {
+    }, "queueInput"), ie = r((q) => {
       if (!Y.finished)
         try {
           P({ t: "paste-refused", reason: q });
@@ -15440,12 +15413,12 @@ function Rw({
   }
   r(x, "signalClientProcessTree");
   function m(A, K) {
-    let k = Date.now() + K, P, te = !1, pe = /* @__PURE__ */ r(() => {
+    let k = Date.now() + K, P, te = !1, pe = r(() => {
     }, "resolveResult"), J = new Promise(($) => {
       pe = $;
-    }), Ce = /* @__PURE__ */ r(($) => {
+    }), Ce = r(($) => {
       te || (te = !0, P && clearTimeout(P), pe($));
-    }, "settle"), Pe = /* @__PURE__ */ r(() => {
+    }, "settle"), Pe = r(() => {
       if (y(A)) {
         Ce(!0);
         return;
@@ -15459,7 +15432,7 @@ function Rw({
     }, "poll");
     return Pe(), {
       completion: J,
-      cancel: /* @__PURE__ */ r(() => {
+      cancel: r(() => {
         te || (te = !0, P && clearTimeout(P));
       }, "cancel")
     };
@@ -15901,7 +15874,7 @@ r(Cw, "trustedHostMatch");
 function Aw(e, {
   port: t,
   version: n = "0.0.0",
-  capture: o = /* @__PURE__ */ r(() => {
+  capture: o = r(() => {
   }, "capture"),
   token: s,
   lan: i = null,
@@ -15912,7 +15885,7 @@ function Aw(e, {
   trustLoopback: E = !1,
   startup: w = null
 }) {
-  let _ = { term_token: !(l === "trust" || E) }, S = !1, h = /* @__PURE__ */ new Set(), j = /* @__PURE__ */ new Set(), U = /* @__PURE__ */ new Set();
+  let _ = { term_token: !(l === "trust" || E) }, S = !1, h = new Set(), j = new Set(), U = new Set();
   function N(c) {
     !S || c.response.writableEnded || c.drained && !c.drainFaulted && !c.request.destroyed && !c.response.destroyed || (c.request.destroy(), c.response.forceEnd(
       c.hook ? 200 : 503,
@@ -15971,7 +15944,7 @@ function Aw(e, {
     return d === "/ws/term" ? !0 : c !== "POST" ? !1 : d === "/mail" || d === "/api/spawn/arm-unsupervised";
   }
   r(ne, "tokenGatedRoute");
-  let he = /* @__PURE__ */ new Set(), oe = /* @__PURE__ */ new Set();
+  let he = new Set(), oe = new Set();
   function be(c) {
     typeof c != "string" || !c || c === "unknown" || oe.has(c) || he.has(c) || (he.add(c), ae());
   }
@@ -15990,7 +15963,7 @@ function Aw(e, {
     be(typeof f == "string" ? f : null), v(c, 200, {});
   }
   r(L, "silentHookRefusal");
-  let y = String(t), x = /* @__PURE__ */ new Set(), m = Gb.getAddresses, I = typeof m == "function" ? () => m() : () => Object.values(gi()).flat(), F = null;
+  let y = String(t), x = new Set(), m = Gb.getAddresses, I = typeof m == "function" ? () => m() : () => Object.values(gi()).flat(), F = null;
   try {
     let c = typeof i == "function" ? i() : i;
     c?.mdns && (F = new URL(c.mdns).hostname.toLowerCase());
@@ -16011,7 +15984,7 @@ function Aw(e, {
     }
   }
   r(T, "refreshLanHosts"), T();
-  let V = /* @__PURE__ */ r((c) => c.toLowerCase().replace(/^\[/, "").replace(/\]$/, ""), "normHost");
+  let V = r((c) => c.toLowerCase().replace(/^\[/, "").replace(/\]$/, ""), "normHost");
   function X(c) {
     return c.port ? c.port : c.protocol === "https:" ? "443" : "80";
   }
@@ -16085,7 +16058,7 @@ function Aw(e, {
     return A(f) && !se(f);
   }
   r(pe, "arrivedViaTrustedProxy");
-  let J = /* @__PURE__ */ r((c) => typeof c == "string" && /^application\/json\b/i.test(c.trim()), "isJsonContentType");
+  let J = r((c) => typeof c == "string" && /^application\/json\b/i.test(c.trim()), "isJsonContentType");
   function Ce(c, d, f = "") {
     let M = d.socket.remoteAddress ?? "unknown";
     console.error(
@@ -16097,30 +16070,30 @@ function Aw(e, {
     // 0.16.0: the hook that may have just performed the version takeover gets
     // the upgrade lines appended — the human who started THAT session hears
     // about every other session still needing a restart (see fleet-sessionstart).
-    SessionStart: /* @__PURE__ */ r((c) => {
+    SessionStart: r((c) => {
       let d = e.hookSessionStart(c), f = vn(c).fleet_takeover;
       return f && typeof d == "object" && (d.upgrade_lines = e.takeoverBriefLines(
         f,
         ge()
       )), d;
     }, "SessionStart"),
-    UserPromptSubmit: /* @__PURE__ */ r((c) => e.hookUserPromptSubmit(c), "UserPromptSubmit"),
-    PostToolUse: /* @__PURE__ */ r((c) => e.hookPostToolUse(c), "PostToolUse"),
-    PreToolUse: /* @__PURE__ */ r((c) => e.hookPostToolUse(c), "PreToolUse"),
+    UserPromptSubmit: r((c) => e.hookUserPromptSubmit(c), "UserPromptSubmit"),
+    PostToolUse: r((c) => e.hookPostToolUse(c), "PostToolUse"),
+    PreToolUse: r((c) => e.hookPostToolUse(c), "PreToolUse"),
     // same derivation branch as the spike
     // BUG-102: a FAILED tool call is still a completed tool call — route it
     // through the same correlated expiry so its permission hold retires now
     // instead of after the full hold window. hookPostToolUse keeps the event's
     // own name (PostToolUseFailure) in applyEvent and any whisper.
-    PostToolUseFailure: /* @__PURE__ */ r((c) => e.hookPostToolUse(c), "PostToolUseFailure"),
-    Stop: /* @__PURE__ */ r((c) => e.hookStop(c), "Stop"),
-    SessionEnd: /* @__PURE__ */ r((c) => e.hookSessionEnd(c), "SessionEnd"),
-    Notification: /* @__PURE__ */ r((c) => (e.applyEvent({ ...c, hook_event_name: "Notification" }), {}), "Notification"),
+    PostToolUseFailure: r((c) => e.hookPostToolUse(c), "PostToolUseFailure"),
+    Stop: r((c) => e.hookStop(c), "Stop"),
+    SessionEnd: r((c) => e.hookSessionEnd(c), "SessionEnd"),
+    Notification: r((c) => (e.applyEvent({ ...c, hook_event_name: "Notification" }), {}), "Notification"),
     // Older cached plugin hooks can keep emitting FileChanged after an upgrade.
     // Acknowledge them without touching session state or the conflict ledger.
-    FileChanged: /* @__PURE__ */ r(() => ({}), "FileChanged"),
+    FileChanged: r(() => ({}), "FileChanged"),
     // CwdChanged remains pure telemetry for the session event log.
-    CwdChanged: /* @__PURE__ */ r((c) => (e.applyEvent({ ...c, hook_event_name: "CwdChanged" }), {}), "CwdChanged")
+    CwdChanged: r((c) => (e.applyEvent({ ...c, hook_event_name: "CwdChanged" }), {}), "CwdChanged")
   };
   function $(c, d, f) {
     if (S) {
@@ -16159,7 +16132,7 @@ function Aw(e, {
     }
     let Z = Number(f.searchParams.get("hold_ms")), D = Number.isFinite(Z) ? Math.max(0, Math.min(Z, 25e3)) : 25e3, le = f.searchParams.get("wg"), ue = le === "" ? null : le;
     ue && e.registerWatchGen(M, ue);
-    let Se = /* @__PURE__ */ r(() => {
+    let Se = r(() => {
       let G = e.watchInfo(M);
       if (!G.session_alive) return { status: "idle", ...G };
       let we = e.claimMail(M, ue);
@@ -16169,8 +16142,8 @@ function Aw(e, {
       v(d, 200, ce);
       return;
     }
-    let ye = !1, Ae = /* @__PURE__ */ r(() => {
-    }, "unregister"), _e = null, W = /* @__PURE__ */ r((G) => {
+    let ye = !1, Ae = r(() => {
+    }, "unregister"), _e = null, W = r((G) => {
       if (!ye) {
         ye = !0, _e && clearTimeout(_e), Ae(), j.delete(H);
         try {
@@ -16178,7 +16151,7 @@ function Aw(e, {
         } catch {
         }
       }
-    }, "finish"), H = /* @__PURE__ */ r(() => {
+    }, "finish"), H = r(() => {
       W({ status: "idle", session_alive: !1, pending: 0 });
     }, "closeForShutdown");
     j.add(H), _e = setTimeout(() => {
@@ -16192,7 +16165,7 @@ function Aw(e, {
     });
   }
   r(Y, "watchHook");
-  let re = /* @__PURE__ */ r((c, d) => c === "GET" && (d === "/" || d === "/index.html" || d === "/favicon.ico" || d.startsWith("/assets/")), "isPublicShell");
+  let re = r((c, d) => c === "GET" && (d === "/" || d === "/index.html" || d === "/favicon.ico" || d.startsWith("/assets/")), "isPublicShell");
   function ie(c, d) {
     try {
       let f = new URL(c.url ?? "/", `http://127.0.0.1:${t}`), M = re(c.method, f.pathname), Z = f.pathname.startsWith("/hook/");
@@ -16301,7 +16274,7 @@ function Aw(e, {
           v(d, 415, { ok: !1, reason: "expected application/json" });
           return;
         }
-        let ue = [], Se = 0, ce = !1, ye = f.pathname === "/api/paste-image" ? Tw : zb, Ae = /* @__PURE__ */ r(() => {
+        let ue = [], Se = 0, ce = !1, ye = f.pathname === "/api/paste-image" ? Tw : zb, Ae = r(() => {
           d.shouldKeepAlive = !1, le ? v(d, 200, {}) : v(d, 413, { ok: !1, reason: "payload too large" });
         }, "refuseOversize"), _e = Number(c.headers["content-length"]);
         if (Number.isFinite(_e) && _e > ye) {
@@ -16600,12 +16573,12 @@ function Aw(e, {
     }
   }
   r(ie, "routeRequest");
-  let q = /* @__PURE__ */ new Set(), Ee = /* @__PURE__ */ new Set(), Te = /* @__PURE__ */ new Set();
+  let q = new Set(), Ee = new Set(), Te = new Set();
   e.questions.setBoardConsumerProbe(() => q.size > 0);
   let Le = Rw({
     port: t,
-    resolveSpawn: /* @__PURE__ */ r((c) => e.terminalSpawn(c), "resolveSpawn"),
-    log: /* @__PURE__ */ r((c) => {
+    resolveSpawn: r((c) => e.terminalSpawn(c), "resolveSpawn"),
+    log: r((c) => {
       console.error(`fleetd ${c}`);
     }, "log")
   }), ve = !1, b = null, g = [];
@@ -16725,7 +16698,7 @@ function Aw(e, {
       return;
     }
     let f = (async () => {
-      let M = /* @__PURE__ */ r((Z) => {
+      let M = r((Z) => {
         S || tt(c, Z);
       }, "send");
       try {
@@ -16736,7 +16709,7 @@ function Aw(e, {
           cols: D,
           rows: le,
           send: M,
-          isAborted: /* @__PURE__ */ r(() => d.abort.closed, "isAborted"),
+          isAborted: r(() => d.abort.closed, "isAborted"),
           onClose(ue) {
             M({ t: "exit", reason: ue });
             try {
@@ -16785,7 +16758,7 @@ function Aw(e, {
   We.unref();
   function it(c, d, f) {
     if (S) return new Response(null, { status: 503 });
-    let M = new tc(c, d), Z = /* @__PURE__ */ r((D) => {
+    let M = new tc(c, d), Z = r((D) => {
       try {
         d.timeout(c, td);
       } catch {
@@ -16869,7 +16842,7 @@ function Aw(e, {
   r(Fe, "fetchHandler");
   function Et(c, d, f) {
     return new Promise((M) => {
-      let Z = !1, D = /* @__PURE__ */ r(() => {
+      let Z = !1, D = r(() => {
         Z || (Z = !0, clearTimeout(le), M(f.done));
       }, "finish"), le = setTimeout(() => {
         f.boundStalledDrain(), D();
@@ -16880,7 +16853,7 @@ function Aw(e, {
     });
   }
   r(Et, "drainThenRespond");
-  let nt = null, dn = null, fn = null, So = Promise.resolve(), er = /* @__PURE__ */ r(() => {
+  let nt = null, dn = null, fn = null, So = Promise.resolve(), er = r(() => {
   }, "resolveHoldsReleased"), hs = new Promise((c) => {
     er = c;
   }), tr = !1, bn = null, Xt = null, xo = null, Vr, Rr = [];
@@ -16985,7 +16958,7 @@ function Aw(e, {
   }
   r(ys, "resolveBroadcastWaiters");
   function Mn() {
-    let c = /* @__PURE__ */ new Set([...Te, ...q, ...Ee]);
+    let c = new Set([...Te, ...q, ...Ee]);
     for (let d of c) {
       d.data.kind === "term" && (d.data.abort.closed = !0, d.data.handle?.close());
       try {
@@ -17114,7 +17087,7 @@ function Aw(e, {
     }
     Mn(), Rr.length = 0;
   }
-  return r(bi, "closeHttpOnce"), Vr = /* @__PURE__ */ r(() => (bo ??= bi(), bo), "closeHttp"), {
+  return r(bi, "closeHttpOnce"), Vr = r(() => (bo ??= bi(), bo), "closeHttp"), {
     server: Es,
     bind: nr,
     lifecycle: {
@@ -17125,8 +17098,8 @@ function Aw(e, {
       closeClients: _s,
       forceClients: xi,
       close: Vr,
-      isQuiescing: /* @__PURE__ */ r(() => S, "isQuiescing"),
-      ownedCounts: /* @__PURE__ */ r(() => ({
+      isQuiescing: r(() => S, "isQuiescing"),
+      ownedCounts: r(() => ({
         listener: nt ? 1 : 0,
         snapshotClients: q.size,
         terminalClients: Ee.size,
@@ -17142,7 +17115,7 @@ function Aw(e, {
     // without tripping @typescript-eslint/unbound-method: the body closes over
     // refreshLanHosts/lan and never touches `this`, so an arrow is behaviorally
     // identical while typing the field as a property rather than a method.
-    refreshLan: /* @__PURE__ */ r((c) => {
+    refreshLan: r((c) => {
       S || (T(), i = c);
     }, "refreshLan")
   };
@@ -17453,7 +17426,7 @@ function ms(e = {}, { ttl: t } = {}) {
       cd(n, a, t, o),
       ld(n, a, t, o)
     );
-  let i = /* @__PURE__ */ new Set();
+  let i = new Set();
   return s.filter((a) => {
     let l = yo(a);
     return i.has(l) ? !1 : (i.add(l), !0);
@@ -17461,7 +17434,7 @@ function ms(e = {}, { ttl: t } = {}) {
 }
 r(ms, "buildAnnouncement");
 function od(e, t = {}, { ttl: n, flush: o = !0 } = {}) {
-  let s = _o(t), i = [], a = [], l = /* @__PURE__ */ r((_, S) => _.type === Wt.ANY || _.type === Wt[S], "wants");
+  let s = _o(t), i = [], a = [], l = r((_, S) => _.type === Wt.ANY || _.type === Wt[S], "wants");
   for (let _ of e) {
     if (_.class && _.class !== yi && _.class !== ik) continue;
     let S = _.name.replace(/\.$/, "").toLowerCase();
@@ -17473,10 +17446,10 @@ function od(e, t = {}, { ttl: n, flush: o = !0 } = {}) {
         ...nc(s, n, o)
       )), S === h.name.toLowerCase() && (l(_, "SRV") && (i.push(cd(s, h, n, o)), a.push(...nc(s, n, o))), l(_, "TXT") && i.push(ld(s, h, n, o)));
   }
-  let u = /* @__PURE__ */ new Set(), p = i.filter((_) => {
+  let u = new Set(), p = i.filter((_) => {
     let S = yo(_);
     return u.has(S) ? !1 : (u.add(S), !0);
-  }), E = /* @__PURE__ */ new Set(), w = a.filter((_) => {
+  }), E = new Set(), w = a.filter((_) => {
     let S = yo(_);
     return u.has(S) || E.has(S) ? !1 : (E.add(S), !0);
   });
@@ -17499,11 +17472,11 @@ function hk(e = {}) {
 }
 r(hk, "buildProbeQuestions");
 function wk(e, t = {}, { phase: n } = {}) {
-  let o = _o(t), s = /* @__PURE__ */ new Set([o.host.toLowerCase()]), i = new Set(o.services.map((u) => u.name.toLowerCase())), a = /* @__PURE__ */ new Map();
+  let o = _o(t), s = new Set([o.host.toLowerCase()]), i = new Set(o.services.map((u) => u.name.toLowerCase())), a = new Map();
   for (let u of ms(t))
     if (u.type === "A" || u.type === "SRV") {
       let p = `${u.name.toLowerCase()}|${oc(u.type)}`, E = a.get(p);
-      E || (E = /* @__PURE__ */ new Set(), a.set(p, E)), E.add(yo(u));
+      E || (E = new Set(), a.set(p, E)), E.add(yo(u));
     }
   let l = mk(e);
   if (!l) return !1;
@@ -17529,17 +17502,17 @@ function Bw({
   instance: n = "Fleet Deck",
   addresses: o = [],
   txt: s,
-  log: i = /* @__PURE__ */ r(() => {
+  log: i = r(() => {
   }, "log"),
   onDown: a = null,
   inject: l
 } = {}) {
-  let u = { port: e, name: t, instance: n, addresses: o, txt: s }, p = l?.dgram ?? sk, E = _o(u), w = /* @__PURE__ */ r((I) => {
+  let u = { port: e, name: t, instance: n, addresses: o, txt: s }, p = l?.dgram ?? sk, E = _o(u), w = r((I) => {
     try {
       i(I);
     } catch {
     }
-  }, "note"), _ = !1, S = null, h = !1, j = !1, U = !1, N = [], O = /* @__PURE__ */ new Set(), R = !1, v = null;
+  }, "note"), _ = !1, S = null, h = !1, j = !1, U = !1, N = [], O = new Set(), R = !1, v = null;
   function ee(I, F) {
     if (h) return;
     h = !0;
@@ -17581,7 +17554,7 @@ function Bw({
       F?.();
       return;
     }
-    let T = v, V = N.length, X = /* @__PURE__ */ r(() => {
+    let T = v, V = N.length, X = r(() => {
       V -= 1, V <= 0 && F?.();
     }, "settled");
     for (let se of N) {
@@ -17623,7 +17596,7 @@ function Bw({
   }
   r(be, "announce");
   function xe(I) {
-    let F = !1, T = /* @__PURE__ */ r(() => {
+    let F = !1, T = r(() => {
       F || (F = !0, ee(I));
     }, "finish");
     try {
@@ -17840,7 +17813,7 @@ function Bw({
     }
     for (let I of O) clearTimeout(I);
     return O.clear(), S = new Promise((I) => {
-      let F = /* @__PURE__ */ r(() => {
+      let F = r(() => {
         let T = v;
         v = null, h = !0, U = !0;
         try {
@@ -17852,7 +17825,7 @@ function Bw({
       try {
         let T = setTimeout(F, 250);
         T.unref();
-        let V = /* @__PURE__ */ r(() => {
+        let V = r(() => {
           clearTimeout(T), F();
         }, "done");
         if (N.length)
@@ -17871,7 +17844,7 @@ function Bw({
       }
     }), S;
   }
-  return r(m, "stop"), { start: y, stop: m, update: x, alive: /* @__PURE__ */ r(() => _ && !h && v !== null, "alive") };
+  return r(m, "stop"), { start: y, stop: m, update: x, alive: r(() => _ && !h && v !== null, "alive") };
 }
 r(Bw, "createMdns");
 
@@ -17934,7 +17907,7 @@ var yk = 0, fd = class {
   }
 };
 function qw() {
-  return Ek() ? { dgram: { createSocket: /* @__PURE__ */ r(() => new fd(), "createSocket") } } : void 0;
+  return Ek() ? { dgram: { createSocket: r(() => new fd(), "createSocket") } } : void 0;
 }
 r(qw, "mdnsDgramInject");
 var Uw = !1;
@@ -18087,9 +18060,9 @@ async function Xw(e, {
   let s = 100, i = Math.max(1, Math.ceil(t / s));
   for (let a = 0; a < i; a += 1)
     if (o ? await new Promise((l, u) => {
-      let p = !1, E = /* @__PURE__ */ r((_) => {
+      let p = !1, E = r((_) => {
         p || (p = !0, o.removeEventListener("abort", w), _ === void 0 ? l() : u(_));
-      }, "finish"), w = /* @__PURE__ */ r(() => {
+      }, "finish"), w = r(() => {
         try {
           o.throwIfAborted();
         } catch (_) {
@@ -18165,8 +18138,8 @@ function Lk(e, t = ti) {
 r(Lk, "hasLiveInteractiveAgent");
 function Dk(e) {
   return On({
-    try: /* @__PURE__ */ r(() => ({ _tag: "ValidPoll", records: JSON.parse(e) }), "try"),
-    catch: /* @__PURE__ */ r((t) => new hd({ cause: t }), "catch")
+    try: r(() => ({ _tag: "ValidPoll", records: JSON.parse(e) }), "try"),
+    catch: r((t) => new hd({ cause: t }), "catch")
   });
 }
 r(Dk, "decodePoll");
@@ -18174,19 +18147,19 @@ function Ik(e, t) {
   return e.run({ argv: t, timeoutMs: Ck }).pipe(
     yr(({ out: n }) => Dk(n)),
     bm({
-      AgentsPollDecodeError: /* @__PURE__ */ r(() => ft(Si), "AgentsPollDecodeError"),
-      ProcessNonZeroExitError: /* @__PURE__ */ r(() => ft(Si), "ProcessNonZeroExitError"),
-      ProcessOutputLimitError: /* @__PURE__ */ r(() => ft(Si), "ProcessOutputLimitError"),
-      ProcessSpawnError: /* @__PURE__ */ r(() => ft(Si), "ProcessSpawnError"),
-      ProcessTimeoutError: /* @__PURE__ */ r(() => ft(Si), "ProcessTimeoutError")
+      AgentsPollDecodeError: r(() => ft(Si), "AgentsPollDecodeError"),
+      ProcessNonZeroExitError: r(() => ft(Si), "ProcessNonZeroExitError"),
+      ProcessOutputLimitError: r(() => ft(Si), "ProcessOutputLimitError"),
+      ProcessSpawnError: r(() => ft(Si), "ProcessSpawnError"),
+      ProcessTimeoutError: r(() => ft(Si), "ProcessTimeoutError")
     })
   );
 }
 r(Ik, "runPoll");
 function Nk(e, t) {
   return On({
-    try: /* @__PURE__ */ r(() => e.ingestAgentsPoll(t), "try"),
-    catch: /* @__PURE__ */ r((n) => new wd({ cause: n }), "catch")
+    try: r(() => e.ingestAgentsPoll(t), "try"),
+    catch: r((n) => new wd({ cause: n }), "catch")
   }).pipe(po("AgentsPollIngestError", () => Bt));
 }
 r(Nk, "ingestPoll");
@@ -18259,7 +18232,7 @@ r(Qw, "operationalError");
 function Jw(e, t) {
   return Sa({
     try: t,
-    catch: /* @__PURE__ */ r((n) => Qw(e, n), "catch")
+    catch: r((n) => Qw(e, n), "catch")
   });
 }
 r(Jw, "legacyPromise");
@@ -18268,7 +18241,7 @@ function Zw(e) {
   return {
     clearForkHealing: On({
       try: t,
-      catch: /* @__PURE__ */ r((s) => Qw("clear-fork-healing", s), "catch")
+      catch: r((s) => Qw("clear-fork-healing", s), "catch")
     }),
     reconcileSpawns: Jw("spawn-reconciliation", n),
     awaitBroadcastIdle: Jw("broadcast-idle", o)
@@ -18353,7 +18326,7 @@ function tE(e, t) {
     ), a = eE(e, {
       ...n.boot,
       firstRetention: i
-    }), l = /* @__PURE__ */ r((u) => u.pipe(_r((p) => e.observeChildExit(p))), "observe");
+    }), l = r((u) => u.pipe(_r((p) => e.observeChildExit(p))), "observe");
     return yield* ia(
       [
         l(yd("agents-poll", n.agentsPoll)),
@@ -18475,11 +18448,11 @@ function Hk(e) {
 }
 r(Hk, "boundedExitResult");
 function iE(e) {
-  return { run: /* @__PURE__ */ r((o) => sE(
+  return { run: r((o) => sE(
     e,
     "legacy-process.run",
     lg(o)
-  ).then(Wk), "run"), runBounded: /* @__PURE__ */ r((o) => sE(
+  ).then(Wk), "run"), runBounded: r((o) => sE(
     e,
     "legacy-process.run-bounded",
     ug(o)
@@ -18500,13 +18473,13 @@ r(aE, "operationalError");
 function cE(e) {
   let t = e.pruneEvents.bind(e), n = e.retentionSweep.bind(e);
   return {
-    pruneEvents: /* @__PURE__ */ r((o) => On({
-      try: /* @__PURE__ */ r(() => t(o), "try"),
-      catch: /* @__PURE__ */ r((s) => aE("prune-events", s), "catch")
+    pruneEvents: r((o) => On({
+      try: r(() => t(o), "try"),
+      catch: r((s) => aE("prune-events", s), "catch")
     }), "pruneEvents"),
-    retentionSweep: /* @__PURE__ */ r((o) => Sa({
-      try: /* @__PURE__ */ r(() => n(o), "try"),
-      catch: /* @__PURE__ */ r((s) => aE("retention-sweep", s), "catch")
+    retentionSweep: r((o) => Sa({
+      try: r(() => n(o), "try"),
+      catch: r((s) => aE("retention-sweep", s), "catch")
     }), "retentionSweep")
   };
 }
@@ -18608,11 +18581,11 @@ function dE(e, t = null) {
 r(dE, "startupRefusal");
 async function Yk(e, t, n, o) {
   e.throwIfAborted();
-  let s = /* @__PURE__ */ r(async (b) => {
+  let s = r(async (b) => {
     await o?.afterAcquire?.(b), e.throwIfAborted();
-  }, "acquisitionCheckpoint"), i = /* @__PURE__ */ r((b, g) => o?.afterRelease ? {
+  }, "acquisitionCheckpoint"), i = r((b, g) => o?.afterRelease ? {
     ...g,
-    close: /* @__PURE__ */ r(async () => {
+    close: r(async () => {
       try {
         await g.close.call(g);
       } finally {
@@ -18631,11 +18604,11 @@ async function Yk(e, t, n, o) {
     );
   let l = (process.env.FLEETDECK_BIND ?? "").trim() || "127.0.0.1", u = !wi(l), p = n.config.home, E = n.config.version, w = vd.join(p, "fleetd.pid"), _ = !1;
   process.env.FLEETDECK_HOME = p;
-  let S = process.env.FLEETDECK_MANAGED === "1", h = /* @__PURE__ */ r((b) => {
+  let S = process.env.FLEETDECK_MANAGED === "1", h = r((b) => {
     console.error("fleetd unhandled rejection (daemon kept alive):", b);
   }, "onUnhandledRejection");
   process.on("unhandledRejection", h);
-  let j = !0, U = /* @__PURE__ */ r(() => {
+  let j = !0, U = r(() => {
     j && (j = !1, process.removeListener("unhandledRejection", h));
   }, "removeUnhandledRejectionListener");
   function N(b) {
@@ -18689,12 +18662,12 @@ async function Yk(e, t, n, o) {
     onCloseError(b, g) {
       console.error(`fleetd ${b} shutdown error:`, g);
     }
-  }), v = !1, ee = /* @__PURE__ */ r(() => {
+  }), v = !1, ee = r(() => {
     try {
       fe();
     } catch {
     }
-  }, "releaseHostProcessOwnershipAtExit"), fe = /* @__PURE__ */ r(() => {
+  }, "releaseHostProcessOwnershipAtExit"), fe = r(() => {
     let b = v;
     b && (v = !1, process.removeListener("exit", ee));
     try {
@@ -18871,7 +18844,7 @@ async function Yk(e, t, n, o) {
           quiesce: t.quiesce,
           interrupt: t.interrupt,
           join: t.join,
-          close: /* @__PURE__ */ r(async () => {
+          close: r(async () => {
             try {
               await t.close();
             } finally {
@@ -18883,7 +18856,7 @@ async function Yk(e, t, n, o) {
     } catch (g) {
       throw b(), g;
     }
-    o ? await s("process-runtime") : e.throwIfAborted(), V = Pg(T), R.setStore("sqlite", i("database", { close: /* @__PURE__ */ r(() => V.close(), "close") })), o ? await s("database") : e.throwIfAborted(), X = yw(V, { port: a, version: E }), R.setCore(i("core", X.lifecycle)), o ? await s("core") : e.throwIfAborted();
+    o ? await s("process-runtime") : e.throwIfAborted(), V = Pg(T), R.setStore("sqlite", i("database", { close: r(() => V.close(), "close") })), o ? await s("database") : e.throwIfAborted(), X = yw(V, { port: a, version: E }), R.setCore(i("core", X.lifecycle)), o ? await s("core") : e.throwIfAborted();
   } catch (b) {
     throw await R.close(), b;
   }
@@ -18904,7 +18877,7 @@ async function Yk(e, t, n, o) {
       // lan.mdns reflects the responder's LIVE state, not the boot snapshot: if the
       // responder disables itself after start() (no multicast membership, a socket
       // error), the share panel stops offering a URL that cannot resolve.
-      lan: /* @__PURE__ */ r(() => K.mdns && J && !J.alive() ? { ...K, mdns: null } : K, "lan"),
+      lan: r(() => K.mdns && J && !J.alive() ? { ...K, mdns: null } : K, "lan"),
       version: E,
       trustedOrigins: he,
       proxyAuth: oe,
@@ -18923,7 +18896,7 @@ async function Yk(e, t, n, o) {
   }
   let { whenBroadcastIdle: P, refreshLan: te } = k;
   function pe() {
-    let b = /* @__PURE__ */ new Set();
+    let b = new Set();
     try {
       for (let g of Object.values(gi()))
         for (let B of g ?? []) {
@@ -18949,7 +18922,7 @@ async function Yk(e, t, n, o) {
       // random discriminator avoids collisions without disclosing its OS name.
       instance: F(),
       addresses: b,
-      log: /* @__PURE__ */ r((B) => {
+      log: r((B) => {
         console.error(`fleetd mdns: ${B}`);
       }, "log"),
       // exactOptionalPropertyTypes: add `inject` only when present — never as `undefined`.
@@ -19058,10 +19031,10 @@ async function Yk(e, t, n, o) {
     throw await R.close(), b;
   }
   let Ee = Zw({
-    clearForkHealing: /* @__PURE__ */ r(() => {
+    clearForkHealing: r(() => {
       X.reconcileClearForks();
     }, "clearForkHealing"),
-    reconcileSpawns: /* @__PURE__ */ r(() => Promise.resolve(X.reconcileSpawns()), "reconcileSpawns"),
+    reconcileSpawns: r(() => Promise.resolve(X.reconcileSpawns()), "reconcileSpawns"),
     awaitBroadcastIdle: P
   }), Te = cE({
     pruneEvents: X.pruneEvents,
@@ -19069,7 +19042,7 @@ async function Yk(e, t, n, o) {
   }), Le = et(function* () {
     let b = yield* lE({
       ...Te,
-      onOperationalFailure: /* @__PURE__ */ r(({ phase: g, error: B }) => g === "boot" ? Qe(() => {
+      onOperationalFailure: r(({ phase: g, error: B }) => g === "boot" ? Qe(() => {
         console.error("fleetd retention sweep error:", B.cause);
       }) : Bt, "onOperationalFailure")
     });
@@ -19078,10 +19051,10 @@ async function Yk(e, t, n, o) {
       lanRefresh: nE({
         enabled: u,
         interval: Ce,
-        readAddresses: /* @__PURE__ */ r(() => Qe(pe), "readAddresses"),
-        previousAddresses: /* @__PURE__ */ r(() => Qe(() => re), "previousAddresses"),
-        onChange: /* @__PURE__ */ r((g, B) => On({
-          try: /* @__PURE__ */ r(() => {
+        readAddresses: r(() => Qe(pe), "readAddresses"),
+        previousAddresses: r(() => Qe(() => re), "previousAddresses"),
+        onChange: r((g, B) => On({
+          try: r(() => {
             let C = [...g], de = B.filter((ae) => !g.includes(ae));
             Y(C), C.length ? console.log(
               `fleetd LAN addresses now ${C.join(", ")}${de.length ? ` (was ${de.join(", ")})` : ""}`
@@ -19095,16 +19068,16 @@ async function Yk(e, t, n, o) {
             } catch {
             }
           }, "try"),
-          catch: /* @__PURE__ */ r((C) => C, "catch")
+          catch: r((C) => C, "catch")
         }), "onChange"),
-        onError: /* @__PURE__ */ r((g) => Qe(() => {
+        onError: r((g) => Qe(() => {
           console.error("fleetd network watcher error:", g);
         }), "onError")
       }),
       retention: b,
       boot: {
         ...Ee,
-        onOperationalFailure: /* @__PURE__ */ r(({ operation: g, error: B }) => Qe(() => {
+        onOperationalFailure: r(({ operation: g, error: B }) => Qe(() => {
           console.error(g === "clear-fork-healing" ? "fleetd /clear fork heal error:" : g === "spawn-reconciliation" ? "fleetd spawn reconciliation error:" : "fleetd broadcast idle error:", B.cause);
         }), "onOperationalFailure")
       }
@@ -19113,7 +19086,7 @@ async function Yk(e, t, n, o) {
   return {
     resources: R,
     backgroundProgram: Le,
-    shutdownExitCode: /* @__PURE__ */ r(() => ie || R.closeErrors.length > 0 ? 1 : 0, "shutdownExitCode"),
+    shutdownExitCode: r(() => ie || R.closeErrors.length > 0 ? 1 : 0, "shutdownExitCode"),
     releaseProcessAtHostExit: fe
   };
 }
@@ -19205,8 +19178,8 @@ function oR(e) {
     acquireDaemonResources: fE,
     acquisitionShutdownTimeoutMs: pE,
     acquisitionShutdownReserveMs: 250,
-    onAcquisitionShutdownFailure: /* @__PURE__ */ r(() => e.recordExitCode(1), "onAcquisitionShutdownFailure"),
-    makeLifecycleCoordinator: /* @__PURE__ */ r((n) => vg(n, {
+    onAcquisitionShutdownFailure: r(() => e.recordExitCode(1), "onAcquisitionShutdownFailure"),
+    makeLifecycleCoordinator: r((n) => vg(n, {
       timeoutMs: pE,
       forceReserveMs: 250
     }), "makeLifecycleCoordinator")
