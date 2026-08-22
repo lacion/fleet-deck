@@ -718,7 +718,7 @@ rollback.
 
 **Purpose:** make route workflows Effects without losing the hardened `Bun.serve` behavior.
 
-- [ ] P6.1 Characterize exact route table, status/body/headers, body limit/drain, stalled FIN,
+- [x] P6.1 Characterize exact route table, status/body/headers, body limit/drain, stalled FIN,
   request timeout, disconnect, auth, CSRF, loopback/LAN, static asset, WS upgrade, payload,
   heartbeat, terminal, and backpressure behavior.
 - [ ] P6.2 Split pure parsing/security/response policy from the transport callback without changing
