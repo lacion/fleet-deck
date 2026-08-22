@@ -42,6 +42,16 @@ export class BackgroundDefectExitError extends Data.TaggedError('BackgroundDefec
 export interface BackgroundController {
   /** Idempotent; publishes the synchronous status before waking awaitReady. */
   readonly markReconciliationReady: Effect.Effect<void>;
+  /**
+   * Publish one top-level child's non-success exit to the readiness and failure
+   * latches as soon as that child settles — before the aggregate interrupts and
+   * joins its (possibly stuck) siblings. Success is suppressed (the boot child
+   * completing normally) and a requested-shutdown interruption is suppressed
+   * (the owner asked every child to stop); every other exit is root-observable.
+   */
+  readonly observeChildExit: (
+    exit: Exit.Exit<unknown, BackgroundOperationalError>,
+  ) => Effect.Effect<void>;
 }
 
 export interface BackgroundOwner {
@@ -156,6 +166,38 @@ function unexpectedInterruption(owner: string): BackgroundUnexpectedInterruption
   });
 }
 
+/**
+ * Resolve the readiness and failure latches from one top-level child's exit,
+ * as soon as that child settles — before the aggregate reacts by interrupting
+ * and joining its siblings. A sibling stuck in an owned legacy Promise can
+ * therefore never delay the root's observation of a defecting child.
+ *
+ * A successful child is the boot workflow completing normally, and a
+ * requested-shutdown interruption is the owner asking every child to stop;
+ * neither trips the latches. Every other exit — a defect, a named operational
+ * failure, or an unrequested self-interruption — is a root-observable failure.
+ * Deferred completion is first-wins, so the later whole-fiber observation of
+ * the same exit (or a cascading sibling interruption) is a harmless no-op.
+ */
+function publishChildExit(
+  owner: string,
+  shutdownRequested: { readonly value: boolean },
+  ready: Deferred.Deferred<void, BackgroundOperationalError>,
+  failure: Deferred.Deferred<never, BackgroundOperationalError>,
+  exit: Exit.Exit<unknown, BackgroundOperationalError>,
+): void {
+  if (Exit.isSuccess(exit)) return;
+  if (Cause.hasInterruptsOnly(exit.cause)) {
+    if (shutdownRequested.value) return;
+    const defect = unexpectedInterruption(owner);
+    Deferred.doneUnsafe(ready, Effect.die(defect));
+    Deferred.doneUnsafe(failure, Effect.die(defect));
+    return;
+  }
+  Deferred.doneUnsafe(ready, Effect.failCause(exit.cause));
+  Deferred.doneUnsafe(failure, Effect.failCause(exit.cause));
+}
+
 function closeExitError(
   owner: string,
   interruptionRequested: boolean,
@@ -207,13 +249,13 @@ function startBackgroundOwner<R>(
   ready: Deferred.Deferred<void, BackgroundOperationalError>,
   failure: Deferred.Deferred<never, BackgroundOperationalError>,
   joinTimeoutMs: number,
+  shutdownRequested: { value: boolean },
 ): Effect.Effect<BackgroundOwner, never, R | Scope.Scope> {
   return Effect.uninterruptible(
     Effect.gen(function* () {
       const scope = yield* Effect.scope;
 
       let phase: 'running' | 'interrupting' | 'closed' = 'running';
-      let interruptionRequested = false;
       let closePromise: Promise<void> | null = null;
       let resolveCompletion: (exit: Exit.Exit<unknown, BackgroundOperationalError>) => void = () =>
         undefined;
@@ -234,7 +276,7 @@ function startBackgroundOwner<R>(
           Deferred.doneUnsafe(failure, Effect.die(defect));
           return;
         }
-        if (Cause.hasInterruptsOnly(exit.cause) && !interruptionRequested) {
+        if (Cause.hasInterruptsOnly(exit.cause) && !shutdownRequested.value) {
           const defect = unexpectedInterruption(options.name);
           Deferred.doneUnsafe(ready, Effect.die(defect));
           Deferred.doneUnsafe(failure, Effect.die(defect));
@@ -245,8 +287,8 @@ function startBackgroundOwner<R>(
       });
 
       const interrupt = (): void => {
-        if (interruptionRequested || phase === 'closed') return;
-        interruptionRequested = true;
+        if (shutdownRequested.value || phase === 'closed') return;
+        shutdownRequested.value = true;
         phase = 'interrupting';
         fiber.interruptUnsafe();
       };
@@ -267,7 +309,7 @@ function startBackgroundOwner<R>(
         let cancelTimeout: () => void = () => undefined;
         void completion.then((exit) => {
           cancelTimeout();
-          const error = closeExitError(options.name, interruptionRequested, exit);
+          const error = closeExitError(options.name, shutdownRequested.value, exit);
           if (error) rejectClose(error);
           else resolveClose();
         });
@@ -320,12 +362,21 @@ export function prepareBackgroundOwner<R>(
       const status = yield* Ref.make<ReconciliationStatus>('reconciling');
       const ready = yield* Deferred.make<void, BackgroundOperationalError>();
       const failure = yield* Deferred.make<never, BackgroundOperationalError>();
+      // Shared with the owner's interrupt() so a requested shutdown is observed
+      // identically by prompt per-child publication and the whole-fiber observer.
+      const shutdownRequested = { value: false };
 
       const markReconciliationReady = Ref.set(status, 'settled').pipe(
         Effect.andThen(Deferred.succeed(ready, undefined)),
         Effect.asVoid,
       );
-      const controller: BackgroundController = { markReconciliationReady };
+      const observeChildExit = (
+        exit: Exit.Exit<unknown, BackgroundOperationalError>,
+      ): Effect.Effect<void> =>
+        Effect.sync(() => {
+          publishChildExit(options.name, shutdownRequested, ready, failure, exit);
+        });
+      const controller: BackgroundController = { markReconciliationReady, observeChildExit };
       const service: BackgroundService = {
         reconciliationStatus: () => Ref.getUnsafe(status),
         awaitReady: Deferred.await(ready),
@@ -336,9 +387,14 @@ export function prepareBackgroundOwner<R>(
       const start = Effect.suspend(() => {
         if (startClaimed) return Deferred.await(startResult);
         startClaimed = true;
-        return startBackgroundOwner(options, controller, ready, failure, joinTimeoutMs).pipe(
-          Effect.onExit((exit) => Deferred.done(startResult, exit).pipe(Effect.asVoid)),
-        );
+        return startBackgroundOwner(
+          options,
+          controller,
+          ready,
+          failure,
+          joinTimeoutMs,
+          shutdownRequested,
+        ).pipe(Effect.onExit((exit) => Deferred.done(startResult, exit).pipe(Effect.asVoid)));
       });
 
       return { service, controller, start };

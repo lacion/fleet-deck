@@ -76,12 +76,21 @@ export function makeDaemonBackgroundProgram<Environment>(
       firstRetention,
     });
 
+    // Publish each child's exit to the Background latches as it settles. The
+    // finalizer runs before Effect.all reacts to that child, so a defecting
+    // child reaches the root even while a sibling is stuck joining an owned
+    // legacy Promise during interruption.
+    const observe = <A>(
+      child: Effect.Effect<A, never, Environment>,
+    ): Effect.Effect<A, never, Environment> =>
+      child.pipe(Effect.onExit((exit) => controller.observeChildExit(exit)));
+
     yield* Effect.all(
       [
-        daemonLong('agents-poll', resolved.agentsPoll),
-        daemonLong('lan-refresh', resolved.lanRefresh),
-        daemonLong('retention', retentionProgram),
-        bootProgram,
+        observe(daemonLong('agents-poll', resolved.agentsPoll)),
+        observe(daemonLong('lan-refresh', resolved.lanRefresh)),
+        observe(daemonLong('retention', retentionProgram)),
+        observe(bootProgram),
       ],
       { concurrency: 'unbounded', discard: true },
     );

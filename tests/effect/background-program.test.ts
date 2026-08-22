@@ -38,6 +38,7 @@ describe('P5 aggregate Background program', () => {
         markReconciliationReady: Effect.sync(() => {
           bootEvents.push('ready');
         }).pipe(Effect.andThen(Deferred.succeed(ready, undefined)), Effect.asVoid),
+        observeChildExit: () => Effect.void,
       };
       const retention = yield* makeRetentionSchedule({
         interval: '100 millis',
@@ -153,7 +154,7 @@ describe('P5 aggregate Background program', () => {
     const exit = await runEffectExit(
       Effect.scoped(
         makeDaemonBackgroundProgram(
-          { markReconciliationReady: Effect.void },
+          { markReconciliationReady: Effect.void, observeChildExit: () => Effect.void },
           {
             agentsPoll: impossibleSuccess,
             lanRefresh: sibling,
