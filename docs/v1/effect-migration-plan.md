@@ -4,7 +4,7 @@
 v1 [plan of record](./README.md). This document is intended to be handed directly to a Codex goal
 and updated as each gate lands.*
 
-**Status:** P0–P4 checkpointed; P5 isolated schedulers prepared but not integrated
+**Status:** P0–P5 checkpointed; P5 complete at `ca62b94f`; P6 not started
 **Working branch:** `fd/v1-effect-feasibility`
 **Starting point:** v0.23.6
 **Runtime floor:** exact Bun 1.3.14 in CI; `engines.bun >=1.3.14`
@@ -688,18 +688,18 @@ schema or wire change makes rollback unsafe.
 **Purpose:** replace detached work and manual timer flags with supervised fibers and explicit
 policies.
 
-- [ ] P5.1 Replace boot reconciliation's manually settled Promise/chain with scoped fork/join and
+- [x] P5.1 Replace boot reconciliation's manually settled Promise/chain with scoped fork/join and
   a `Deferred`/`Ref` readiness model. Readiness still waits for spawn reconciliation, boot
   retention, and the coalesced broadcast flush, including degraded completion.
-- [ ] P5.2 Convert agents polling to a scoped fiber. Preserve no overlap, active/idle cadence,
+- [x] P5.2 Convert agents polling to a scoped fiber. Preserve no overlap, active/idle cadence,
   named fail-open skips, and cancellation of an in-flight process.
-- [ ] P5.3 Convert LAN refresh to a scoped fiber with current initial-run/cadence/failure behavior.
-- [ ] P5.4 Move retention scheduling out of `createCore`; keep the retention function itself plain.
-- [ ] P5.5 Move the question orphan sweep only after P10's fixtures, or keep it on the explicit P1
+- [x] P5.3 Convert LAN refresh to a scoped fiber with current initial-run/cadence/failure behavior.
+- [x] P5.4 Move retention scheduling out of `createCore`; keep the retention function itself plain.
+- [x] P5.5 Move the question orphan sweep only after P10's fixtures, or keep it on the explicit P1
   handle until then.
-- [ ] P5.6 Use `Schedule` for policy and `TestClock` for deterministic units, plus real Bun-clock
+- [x] P5.6 Use `Schedule` for policy and `TestClock` for deterministic units, plus real Bun-clock
   integration tests for process exit and finalization.
-- [ ] P5.7 Remove each corresponding `unref()` only after the root-exit fixture proves that the
+- [x] P5.7 Remove each corresponding `unref()` only after the root-exit fixture proves that the
   scoped replacement terminates naturally.
 
 Encode retry semantics explicitly: `Effect.repeat` stops on failure, so an optional poll that must
@@ -709,7 +709,10 @@ blanket-catch defects.
 **Exit gate:** startup/readiness is deterministic; pollers are single-flight; closing the root
 interrupts and joins every scheduled fiber/poller; no post-close callback or keep-alive remains.
 
-**Rollback:** one scheduler at a time can return to its P1 stop handle.
+**Rollback:** whole-slice only. Reverting the P5 slice commits `972621d5` through `ca62b94f`
+(listed in [p5.md](./evidence/effect/p5.md)) returns to the P4 root-cutover anchor `661dfe31`.
+`createCore` no longer owns the retention scheduler, so there is no selectable per-scheduler
+rollback.
 
 ### P6 — Effect application HTTP with Bun-native transport
 
@@ -1187,7 +1190,7 @@ Update this table only when a work package's exit gate has actually passed:
 | P2 exact Effect kernel | Not started | — | — |
 | P3 Bun subprocess service | Not started | — | — |
 | P4 root runtime/shutdown | Not started | — | — |
-| P5 boot and schedules | Not started | — | — |
+| P5 boot and schedules | Complete | [p5.md](./evidence/effect/p5.md) | `ca62b94f`; whole-slice revert of `972621d5`–`ca62b94f` restores `661dfe31` |
 | P6 HTTP/WS workflows | Not started | — | — |
 | P7 terminal stream | Not started | — | — |
 | P8 store/SQLite | Not started | — | — |
