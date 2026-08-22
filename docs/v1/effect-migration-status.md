@@ -22,12 +22,13 @@ or deployed.
 | P2 | Complete | The exact Effect RC cohort, kernel, boundaries, and Bun conformance are recorded. |
 | P3 | Implementation complete | Bun process routing is live. Quiet-host performance evidence remains an explicit ledger item. |
 | P4 | Implemented and checkpointed | The root cutover and shutdown evidence are complete for the pre-P5 artifact. Do not relabel that evidence as measuring the current P5 tree. |
-| P5 | Production-integrated checkpoint; exit gate open | Resolve the current gzip budget miss, run the two quiet global suites, then record P5 evidence and ledger completion. |
+| P5 | Production-integrated checkpoint; correctness and exit gates open | Fix prompt defect propagation when a sibling cannot finish interruption, reconcile the detached-owner and rollback records, resolve the gzip budget miss, run the two quiet global suites, then record P5 evidence and ledger completion. |
 | P6 | Read-only preflight complete | Freeze route/wire behavior, extract pure policy, then introduce one scoped Bun HTTP server adapter. |
 | P7–P14 | Not started | Continue in plan order after the P5 exit gate. |
 
 P5 is deliberately not marked complete in the plan or migration ledger. Its production wiring is
-present, but its bundle-size and final global-suite gates are still open.
+present, but one audited failure-propagation case plus its conformance, bundle-size, evidence, and
+final global-suite gates are still open.
 
 ## What `972621d` implements
 
@@ -61,6 +62,11 @@ The same checkpoint also stabilizes two previously failing test fixtures:
 The generated daemon was rebuilt with identifier and syntax minification while preserving names and
 line-oriented diagnostics. The package recipe intentionally does not use whitespace minification.
 
+The latest checkpoint also replaces the sole `Effect.cached` startup wrapper with a cold,
+single-assignment `Deferred` gate. The focused tests preserve concurrent/repeated owner identity,
+full `Exit` publication, and first-start Scope ownership while avoiding the unused cache TTL/latch
+machinery. The generated daemon and its ownership-order characterization test were updated with it.
+
 ## Verification at this checkpoint
 
 Completed against `972621d` on Bun 1.3.14:
@@ -83,19 +89,53 @@ The full `bun run test` and `bun run test:bundle` suites have **not** been rerun
 integration. The earlier full-source failures are now understood and fixed as fixture defects, but a
 quiet global rerun is still required before closing P5.
 
+Fresh exact-floor checkpoint validation on Bun 1.3.14 revision
+`0d9b296af33f2b851fcbf4df3e9ec89751734ba4`:
+
+- Background owner/program, production ownership order, natural exit, root Layer, and AppConfig:
+  36 pass, 0 fail.
+- `bun run typecheck`: pass.
+- Biome on the two hand-edited TypeScript files: pass.
+- `git diff --check`: pass.
+- Two daemon rebuilds: byte-identical at SHA-256
+  `529a1612068705c2e3deccce8574f340bfc6c565307cbe2aece60bc27da6223a`.
+- Bundle policy: recipe/diagnostic assertions pass; gzip ceiling assertion remains red as documented
+  below.
+
+## Open P5 correctness and conformance gates
+
+The next implementation pass must start here, before bundle tuning or global suites:
+
+1. A defecting top-level background child is observed only after the aggregate `Effect.all` fiber
+   finishes interrupting and joining its siblings. If another child is stuck in an
+   `ownedLegacyPromise`, `Background.awaitFailure` can therefore remain pending until shutdown
+   reaches its bounded close timeout. Publish every unexpected/non-success top-level child exit to
+   the Background failure latch before the aggregate sibling join, while suppressing the expected
+   interruption caused by requested shutdown. Add a regression with one defecting child and one
+   never-settling owned Promise; it must prove prompt root failure observation and bounded shutdown.
+2. `background-owner.ts` deliberately uses one `Effect.forkDetach` so a stuck legacy Promise cannot
+   make root Scope closure exceed the P4 hard deadline. The owner is manually registered,
+   interrupted, and bounded-joined, but the migration ledger currently says detached work is “None
+   permitted.” Either make every legacy bridge cancellation-bounded and move to a scoped fork, or
+   record this exact reviewed deadline exception in P5 evidence and the ledger.
+3. Whole-slice rollback remains possible by reverting the P5 integration commit, and the legacy
+   agents/network implementations remain present. The old retention scheduler was removed from
+   `createCore`, however, so the ledger must not claim a selectable per-scheduler rollback until a
+   concrete single-owner rollback procedure is documented and tested.
+
 ## Open bundle-size gate
 
-The current generated daemon is deterministic and below the raw ceiling, but it exceeds the gzip-9
-ceiling:
+The current generated daemon is deterministic and below the raw ceiling, but it still exceeds the
+zlib gzip-9 ceiling:
 
-- Raw: 668,967 B, below the 768,000 B ceiling.
-- gzip-9 zlib: 190,303 B, which is 863 B above the 189,440 B ceiling.
-- SHA-256: `8d17c569e5b8600b38134b41e9391a656ced7dfed2d25daf4ed471754a75d5b4`.
+- Raw: 666,615 B, below the 768,000 B ceiling.
+- gzip-9 zlib: 189,773 B, which is 333 B above the 189,440 B ceiling.
+- SHA-256: `529a1612068705c2e3deccce8574f340bfc6c565307cbe2aece60bc27da6223a`.
 - `tests/effect/daemon-bundle-policy.test.ts`: one pass and one intentional failure on the gzip
   ceiling only.
 
 Do not silently raise the ceiling or add `--minify-whitespace`. The next session should either
-remove at least 863 compressed bytes while preserving diagnostic quality, or obtain explicit
+remove at least 333 compressed bytes while preserving diagnostic quality, or obtain explicit
 maintainer acceptance and record the exception in evidence.
 
 ## P4 evidence remains historical
@@ -123,15 +163,19 @@ the current P5 artifact.
    bun --version
    ```
 
-2. Resolve the 863 B gzip overage without whitespace minification or obtain and document explicit
+2. Fix and test prompt top-level background failure publication when a sibling is stuck during
+   interruption.
+3. Reconcile the one deadline-bounded detached owner and the incomplete retention rollback statement
+   in the migration ledger/evidence.
+4. Resolve the 333 B gzip overage without whitespace minification or obtain and document explicit
    acceptance.
-3. Rebuild daemon/bin/hooks twice and verify deterministic build and pack identities.
-4. Run the bundle policy, import-boundary, P5 aggregate, and real natural-exit gates.
-5. Keep the host otherwise idle; run `bun run test`, then `bun run test:bundle` against the same
+5. Rebuild daemon/bin/hooks twice and verify deterministic build and pack identities.
+6. Run the bundle policy, import-boundary, P5 aggregate, and real natural-exit gates.
+7. Keep the host otherwise idle; run `bun run test`, then `bun run test:bundle` against the same
    tree.
-6. Record P5 evidence, update the migration ledger, and check the applicable P5 plan boxes only
+8. Record P5 evidence, update the migration ledger, and check the applicable P5 plan boxes only
    after every exit gate is green.
-7. Begin P6 from the frozen HTTP behavior matrix.
+9. Begin P6 from the frozen HTTP behavior matrix.
 
 ## P6 preflight constraints
 

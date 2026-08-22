@@ -6,6 +6,7 @@ import { describe, test } from 'bun:test';
 import { randomPort, REPO_ROOT, spawnRaw, startDaemon } from '../helpers/daemon.ts';
 
 const PROGRAM = path.join(REPO_ROOT, 'src/daemon/app/program.ts');
+const LIVE_LAYER = path.join(REPO_ROOT, 'src/daemon/app/live-layer.ts');
 const ROOT_PROGRAM = path.join(REPO_ROOT, 'src/daemon/app/root-program.ts');
 const ENTRYPOINT = path.join(REPO_ROOT, 'src/daemon/fleetd.ts');
 const IMPORT_FIXTURE = path.join(REPO_ROOT, 'tests/effect/fixtures/daemon-app-import.ts');
@@ -83,6 +84,7 @@ describe('DaemonApp extraction', () => {
   test('thin root entrypoint and program retain the exact acquisition order', () => {
     const entrypoint = readFileSync(ENTRYPOINT, 'utf8');
     const program = readFileSync(PROGRAM, 'utf8');
+    const liveLayer = readFileSync(LIVE_LAYER, 'utf8');
     const rootProgram = readFileSync(ROOT_PROGRAM, 'utf8');
 
     assert.match(
@@ -97,10 +99,30 @@ describe('DaemonApp extraction', () => {
     assert.match(rootProgram, /import \{ acquireDaemonResources \} from '\.\/program\.ts';/);
     assert.doesNotMatch(program, /createBootstrapProcessRuntimeBridge|bootstrap-process-runtime/);
 
+    // AppConfig and Background preparation belong to the root Layer now. Pin
+    // the P5 ownership transition: publish readiness before native acquisition,
+    // start the one cold program only after acquisition succeeds, register its
+    // producer before lifecycle sealing, and only then construct the coordinator.
+    assertSourceOrder(liveLayer, [
+      'const config = yield* AppConfig;',
+      'const ingress = yield* IngressSupervisor;',
+      'const processControl = yield* ProcessRuntimeControl;',
+      'const program = yield* Deferred.make<Effect.Effect<never, never, ProcessRunner>>();',
+      'const prepared = yield* prepareBackgroundOwner<ProcessRunner>({',
+      'const acquired = yield* acquireDaemonResourcesOwned(options, ingress, processControl, {',
+      'yield* Deferred.succeed(program, acquired.backgroundProgram);',
+      'const owner = yield* prepared.start;',
+      "acquired.resources.addProducer('effect-background', { close: owner.close });",
+      'coordinator: options.makeLifecycleCoordinator(acquired),',
+    ]);
+
+    // The native acquisition order remains byte-for-byte observable, while the
+    // final boot/scheduler Effect stays cold for the Layer-owned start above.
     assertSourceOrder(program, [
       'installConsoleRecorder();',
-      'PORT = resolvePort();',
-      'const HOME = resolveHome();',
+      'const PORT = inputs.config.port;',
+      'const HOME = inputs.config.home;',
+      'const version = inputs.config.version;',
       "process.on('unhandledRejection'",
       'const daemonResources = new DaemonResources(',
       'daemonResources.setProcess(',
@@ -114,10 +136,13 @@ describe('DaemonApp extraction', () => {
       'daemonResources.setCore(',
       'http = createHttp(core, {',
       'daemonResources.setHttp(',
-      "observeRelease('boot-reconciliation'",
       'const result = await http.bind(PORT, BIND);',
       'console.log(`fleetd up on http://${boundHost}:${PORT}',
-      'bootWork = (core.reconcileSpawns() as Promise<unknown>)',
+      'const boot = legacyBootReconciliationWithoutRetentionWork({',
+      'const retentionWork = legacyRetentionWork({',
+      'const backgroundProgram: Effect.Effect<never, never, ProcessRunner> = Effect.gen(',
+      'return yield* makeDaemonBackgroundProgram(inputs.backgroundController, {',
+      'backgroundProgram,',
     ]);
   });
 

@@ -331,9 +331,15 @@ export function prepareBackgroundOwner<R>(
         awaitReady: Deferred.await(ready),
         awaitFailure: Deferred.await(failure),
       };
-      const start = yield* Effect.cached(
-        startBackgroundOwner(options, controller, ready, failure, joinTimeoutMs),
-      );
+      const startResult = yield* Deferred.make<BackgroundOwner>();
+      let startClaimed = false;
+      const start = Effect.suspend(() => {
+        if (startClaimed) return Deferred.await(startResult);
+        startClaimed = true;
+        return startBackgroundOwner(options, controller, ready, failure, joinTimeoutMs).pipe(
+          Effect.onExit((exit) => Deferred.done(startResult, exit).pipe(Effect.asVoid)),
+        );
+      });
 
       return { service, controller, start };
     }),
