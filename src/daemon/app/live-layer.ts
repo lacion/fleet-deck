@@ -7,6 +7,7 @@ import * as Layer from 'effect/Layer';
 import * as Scope from 'effect/Scope';
 import { prepareBackgroundOwner } from './background-owner.ts';
 import { makeUnboundHttpServer } from './http-server-owner.ts';
+import { makeUnboundStore } from './store-owner.ts';
 import {
   DaemonStartupError,
   DaemonStartupRefusalError,
@@ -21,6 +22,7 @@ import {
 import { makeDaemonResourceLifecycleOwner } from './daemon-resource-lifecycle.ts';
 import { DaemonLifecycle } from './services/daemon-lifecycle.ts';
 import { HttpServer } from './services/http-server.ts';
+import { Store } from './services/store.ts';
 import { AppConfig, type AppConfigService } from './services/app-config.ts';
 import {
   IngressSupervisor,
@@ -98,6 +100,7 @@ export type DaemonRootServices =
   | AppConfig
   | Background
   | HttpServer
+  | Store
   | ProcessRunner
   | ProcessRuntimeControl
   | DaemonLifecycle
@@ -438,7 +441,7 @@ export function makeDaemonLifecycleCoordinator(
 export function makeDaemonLifecycleLayer(
   options: DaemonLifecycleLayerOptions,
 ): Layer.Layer<
-  DaemonLifecycle | Background | HttpServer,
+  DaemonLifecycle | Background | HttpServer | Store,
   DaemonRootStartupError,
   AppConfig | ProcessRunner | ProcessRuntimeControl | IngressSupervisor
 > {
@@ -471,7 +474,27 @@ export function makeDaemonLifecycleLayer(
         // listener, so a truthful unbound owner (no-op fallback) keeps them
         // building without perturbing the frozen finalizer sequence.
         const httpServer = acquired.httpServer ?? makeUnboundHttpServer(ingress);
+        // Own the SQLite handle under the root Scope, mirroring the listener.
+        // Production boot returns a bound owner; the injected acquisition
+        // fixtures inject no store, so a truthful unbound owner (no-op fallback)
+        // keeps them building without perturbing the frozen finalizer sequence.
+        const store = acquired.store ?? makeUnboundStore();
         const scope = yield* Effect.scope;
+        // Root-Scope fallback for store retirement, registered BEFORE the
+        // listener fallback below so finalizer LIFO runs the listener fallback
+        // first and this one second — the frozen reverse-finalization order
+        // (closeOnce retires http.close before the store; the listener reads the
+        // store, so the dependent is retired ahead of its dependency). It still
+        // runs AFTER the acquireRelease release (coordinator.close). Unlike the
+        // listener, the coordinator retires the store through this SAME owner's
+        // `close` (via DaemonResources.setStore, under closeOnce's storeSafe
+        // gate), so this fallback only COMPLETES that authorized close and is a
+        // no-op when closeOnce deliberately left the handle open (storeSafe=false).
+        // See store-owner.ts's shutdownFallback for the full mechanism.
+        yield* Scope.addFinalizer(
+          scope,
+          Effect.sync(() => store.shutdownFallback()),
+        );
         // Root-Scope fallback for listener retirement, registered during acquire
         // so finalizer LIFO runs it AFTER the acquireRelease release
         // (coordinator.close). On the success path the coordinator retires the
@@ -499,6 +522,7 @@ export function makeDaemonLifecycleLayer(
               background: prepared.service,
               coordinator: options.makeLifecycleCoordinator(acquired),
               httpServer,
+              store,
             };
           },
           catch: mapDaemonStartupError,
@@ -524,10 +548,11 @@ export function makeDaemonLifecycleLayer(
 
   return Layer.effectContext(
     scopedLifecycle.pipe(
-      Effect.map(({ acquired, background, coordinator, httpServer }) =>
+      Effect.map(({ acquired, background, coordinator, httpServer, store }) =>
         Context.make(DaemonLifecycle, { acquired, coordinator }).pipe(
           Context.add(Background, background),
           Context.add(HttpServer, httpServer.service),
+          Context.add(Store, store.service),
         ),
       ),
     ),
@@ -547,7 +572,7 @@ export function composeDaemonRootLayer<ApplicationError, DaemonError, Requiremen
     Requirements
   >,
   daemonLifecycleLayer: Layer.Layer<
-    DaemonLifecycle | Background | HttpServer,
+    DaemonLifecycle | Background | HttpServer | Store,
     DaemonError,
     AppConfig | ProcessRunner | ProcessRuntimeControl | IngressSupervisor
   >,

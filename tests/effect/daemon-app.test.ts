@@ -112,10 +112,15 @@ describe('DaemonApp extraction', () => {
       'const acquired = yield* acquireDaemonResourcesOwned(options, ingress, processControl, {',
       'yield* Deferred.succeed(program, acquired.backgroundProgram);',
       'const owner = yield* prepared.start;',
-      // P6.3: the HttpServer fallback registers during acquire, before the
-      // acquireRelease release, so finalizer LIFO runs it after the coordinator.
+      // P8.3: BOTH root-Scope fallbacks register during acquire, before the
+      // acquireRelease release, so finalizer LIFO runs them after the coordinator.
+      // The store fallback registers FIRST and the HttpServer fallback SECOND, so
+      // LIFO retires the HttpServer (dependent) fallback ahead of the store
+      // (dependency). Pin the source order of the two distinct registrations.
       'const httpServer = acquired.httpServer ?? makeUnboundHttpServer(ingress);',
-      'yield* Scope.addFinalizer(',
+      'const store = acquired.store ?? makeUnboundStore();',
+      'Effect.sync(() => store.shutdownFallback())',
+      'Effect.sync(() => httpServer.shutdownFallback())',
       "acquired.resources.addProducer('effect-background', { close: owner.close });",
       'coordinator: options.makeLifecycleCoordinator(acquired),',
     ]);

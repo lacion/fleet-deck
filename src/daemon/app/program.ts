@@ -64,6 +64,7 @@ import type { AppConfigService } from './services/app-config.ts';
 import type { BackgroundService } from './services/background.ts';
 import type { RootIngressSupervisorService } from './services/ingress-supervisor.ts';
 import type { ProcessRunner } from './services/process-runner.ts';
+import { type StoreOwner, makeStoreOwner } from './store-owner.ts';
 
 // takeover.ts exports the pidRecord PARSER but not its result interface, so
 // derive the record shape from the parser's return type rather than reaching
@@ -129,6 +130,12 @@ export interface AcquiredDaemonResources {
    * inject no listener — build the root Layer against a truthful unbound owner.
    */
   readonly httpServer?: HttpServerOwner;
+  /**
+   * The root-owned SQLite store, present once boot has opened the handle.
+   * Optional (mirrors `httpServer`) so the P4 acquisition fixtures — which
+   * inject no store — build the root Layer against a truthful unbound owner.
+   */
+  readonly store?: StoreOwner;
   readonly shutdownExitCode: () => DaemonShutdownExitCode;
   /**
    * Idempotent synchronous fallback used by the custom host teardown only.
@@ -710,6 +717,7 @@ async function bootDaemon(
   const DB_FILE = path.join(HOME, 'fleetd.db');
 
   let db: ReturnType<typeof openDb>;
+  let store: StoreOwner;
   let core: ReturnType<typeof createCore>;
   try {
     // Bind the temporary Promise facade synchronously to the already-built root
@@ -741,7 +749,15 @@ async function bootDaemon(
     if (testHooks) await acquisitionCheckpoint('process-runtime');
     else signal.throwIfAborted();
     db = openDb(DB_FILE);
-    daemonResources.setStore('sqlite', observeRelease('database', { close: () => db.close() }));
+    // Own the SQLite handle as a root service, the way the listener is owned.
+    // openDb() above opened it exactly as before (PRAGMAs, migrate(), 0600
+    // chmod, sidecars); the owner only wraps that handle. Retirement stays
+    // coordinator-driven through setStore below — the owner's `close` finalizes
+    // every prepared statement before an immediate close(true), closing the P8.4
+    // sqlite3_close_v2 deferral gap; the root-Scope fallback in live-layer.ts
+    // only COMPLETES that authorized close, never initiates one.
+    store = makeStoreOwner({ name: 'sqlite', handle: db });
+    daemonResources.setStore('sqlite', observeRelease('database', { close: () => store.close() }));
     if (testHooks) await acquisitionCheckpoint('database');
     else signal.throwIfAborted();
     core = createCore(db, { port: PORT, version }); // holdMs resolves from FLEETDECK_HOLD_MS inside
@@ -1189,6 +1205,7 @@ async function bootDaemon(
     resources: daemonResources,
     backgroundProgram,
     httpServer,
+    store,
     shutdownExitCode: () =>
       discoveryShutdownTimedOut || daemonResources.closeErrors.length > 0 ? 1 : 0,
     releaseProcessAtHostExit: releaseHostProcessOwnership,

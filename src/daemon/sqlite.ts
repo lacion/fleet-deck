@@ -43,13 +43,34 @@ export interface SqliteStatement<R = SqlRow> {
   run(...params: SqlValue[]): SqlRunResult;
   get(...params: SqlValue[]): R | undefined;
   all(...params: SqlValue[]): R[];
+  // Release this one statement's compiled sqlite3_stmt (sqlite3_finalize),
+  // idempotent. The only correct way to free an EPHEMERAL prepare: a one-shot
+  // `db.prepare(sql).run(...)` site must finalize() after its single use so the
+  // handle's statement set does not retain it for the connection's whole life.
+  // Every other prepare in fleetd is compiled once and lives for the handle
+  // (statements.ts's `q`, questions.ts's `q`), freed collectively by the
+  // handle's finalizeStatements() at close.
+  finalize(): void;
 }
 
 // The wrapped, driver-uniform handle every other module threads through `ctx`.
 export interface SqliteHandle {
   exec(sql: string): void;
   prepare<R = SqlRow>(sql: string): SqliteStatement<R>;
-  close(): void;
+  // Finalize every prepared statement this handle still owns (sqlite3_finalize
+  // each), then forget them. The store owner calls this immediately before
+  // close(true) so sqlite3_close cannot fail on — or defer the real close
+  // behind — a still-live statement. Idempotent: a second call finalizes the
+  // now-empty set.
+  finalizeStatements(): void;
+  // Close the underlying connection. `throwOnError` selects bun:sqlite's close
+  // mode: the default (false / omitted) is sqlite3_close_v2, which DEFERS the
+  // actual close behind any still-open statement; `true` is sqlite3_close,
+  // which closes IMMEDIATELY and throws if a statement is still live. Every
+  // legacy caller passes no argument (unchanged sqlite3_close_v2 behavior);
+  // only the store owner passes true, after finalizeStatements() has freed the
+  // set (P8.4: the close then completes in the finalizer, not deferred past it).
+  close(throwOnError?: boolean): void;
 }
 
 // The subset of bun:sqlite's Database/Statement that wrap() actually touches.
@@ -60,11 +81,15 @@ interface DriverStatement {
   run(...params: SqlValue[]): SqlRunResult;
   get(...params: SqlValue[]): unknown;
   all(...params: SqlValue[]): unknown[];
+  // bun:sqlite's Statement.finalize() — sqlite3_finalize, idempotent.
+  finalize(): void;
 }
 interface DriverHandle {
   exec(sql: string): void;
   prepare(sql: string): DriverStatement;
-  close(): void;
+  // bun:sqlite's Database.close(throwOnError?) — the arg selects
+  // sqlite3_close_v2 (default) vs sqlite3_close (true). See SqliteHandle.close.
+  close(throwOnError?: boolean): void;
 }
 
 // fleetd's single SQLite driver is bun:sqlite's Database. makeHandle opens one
@@ -79,12 +104,18 @@ function makeHandle(file: string): SqliteHandle {
 // the rest of fleetd threads through `ctx` presents a stable, driver-independent
 // surface.
 function wrap(handle: DriverHandle): SqliteHandle {
+  // Every prepared statement this handle hands out, tracked so the store owner
+  // can finalize the whole set before an immediate close(true). Compile-once
+  // statements (statements.ts's `q`, questions.ts's `q`) live here for the
+  // connection's life; an ephemeral one-shot removes itself via its finalize().
+  const statements = new Set<DriverStatement>();
   return {
     exec(sql) {
       handle.exec(sql);
     },
     prepare<R = SqlRow>(sql: string): SqliteStatement<R> {
       const stmt = handle.prepare(sql);
+      statements.add(stmt);
       return {
         run: (...params) => stmt.run(...params),
         get: (...params) => {
@@ -95,10 +126,18 @@ function wrap(handle: DriverHandle): SqliteHandle {
           return (row ?? undefined) as R | undefined;
         },
         all: (...params) => stmt.all(...params) as R[],
+        finalize: () => {
+          stmt.finalize();
+          statements.delete(stmt);
+        },
       };
     },
-    close() {
-      handle.close();
+    finalizeStatements() {
+      for (const stmt of statements) stmt.finalize();
+      statements.clear();
+    },
+    close(throwOnError) {
+      handle.close(throwOnError);
     },
   };
 }

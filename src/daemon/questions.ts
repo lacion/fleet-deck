@@ -666,13 +666,19 @@ export function createQuestions(
     // window), and listForState extends expires_at to the grace deadline so
     // the board reads hold+grace as one continuous window instead of a
     // "expired" lie followed by a surprise card.
-    db.prepare(`UPDATE questions SET payload_json = ? WHERE id = ? AND status = 'expired'`).run(
+    const rearmPending = db.prepare(
+      `UPDATE questions SET payload_json = ? WHERE id = ? AND status = 'expired'`,
+    );
+    rearmPending.run(
       JSON.stringify({
         ...(safeParse<QuestionPayload>(row.payload_json) ?? {}),
         rearm_pending: true,
       }),
       row.id,
     );
+    // Ephemeral one-shot: finalize now so the handle's statement set does not
+    // retain a fresh sqlite3_stmt per expiry for the connection's whole life.
+    rearmPending.finalize();
     const timer = setTimeout(() => {
       if (!active()) return;
       try {
@@ -1246,7 +1252,10 @@ export function createQuestions(
   // here — Clear tidies the past, it does not silence the present.
   function purgeResolved(): number {
     if (!active()) return 0;
-    const out = db.prepare("DELETE FROM questions WHERE status != 'pending'").run();
+    const purge = db.prepare("DELETE FROM questions WHERE status != 'pending'");
+    const out = purge.run();
+    // Ephemeral one-shot: finalize so a Clear does not leak a statement.
+    purge.finalize();
     if (out.changes) onChange();
     return Number(out.changes);
   }
