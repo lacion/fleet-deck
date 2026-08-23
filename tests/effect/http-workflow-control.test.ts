@@ -38,6 +38,7 @@ import * as Scope from 'effect/Scope';
 
 import { openDb } from '../../src/daemon/db.ts';
 import { createCore } from '../../src/daemon/derive.ts';
+import { runControlDetached } from '../../src/daemon/platform/bun/ingress-supervisor-live.ts';
 import { createHttp } from '../../src/daemon/http.ts';
 import { mapEffectRouteExit } from '../../src/daemon/http-policy.ts';
 import { ApplicationQuiescingError } from '../../src/daemon/app/errors.ts';
@@ -481,7 +482,7 @@ type BoardHandle = ReturnType<typeof createHttp> & { port: number };
 // must carry `Authorization: Bearer <token>` to reach the handler.
 function startBoard(t: TestContext, token: string | null = null): Promise<BoardHandle> {
   const db = openDb(':memory:');
-  const core = createCore(db, { port: 0, home: '/daemon-home' });
+  const core = createCore(db, { port: 0, home: '/daemon-home', runControlDetached });
   const probe = http.createServer();
   return new Promise<BoardHandle>((resolve, reject) => {
     probe.once('error', reject);
@@ -872,7 +873,7 @@ interface LiveBoard {
 // token:null keeps every control POST loopback-open, as in startBoard.
 function startLiveBoard(t: TestContext): Promise<LiveBoard> {
   const db = openDb(':memory:');
-  const core = createCore(db, { port: 0, home: '/daemon-home' });
+  const core = createCore(db, { port: 0, home: '/daemon-home', runControlDetached });
   const rootScope = Scope.makeUnsafe('sequential');
   const probe = http.createServer();
   return new Promise<LiveBoard>((resolve, reject) => {

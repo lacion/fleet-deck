@@ -9,7 +9,7 @@ var Ty = (e, t) => {
 };
 
 
-var en = r((e, t) => {
+var Jt = r((e, t) => {
   switch (t.length) {
     case 0:
       return e;
@@ -73,12 +73,12 @@ var we = r(function(e, t) {
       };
   }
 }, "dual");
-var lt = r((e) => e, "identity");
-var dr = r((e) => () => e, "constant"), qs = dr(!0), cf = dr(!1);
-var js = dr(void 0), Xo = js;
+var ct = r((e) => e, "identity");
+var lr = r((e) => () => e, "constant"), Vs = lr(!0), cf = lr(!1);
+var zs = lr(void 0), Qo = zs;
 
 
-var Gs = r((e) => {
+var Xs = r((e) => {
   let t = new Set(Reflect.ownKeys(e));
   if (e.constructor === Object) return t;
   e instanceof Error && t.delete("stack");
@@ -90,7 +90,7 @@ var Gs = r((e) => {
     o = Object.getPrototypeOf(o);
   }
   return t.has("constructor") && typeof e.constructor == "function" && n === e.constructor.prototype && t.delete("constructor"), t;
-}, "getAllObjectKeys"), Ks = new WeakSet();
+}, "getAllObjectKeys"), Ys = new WeakSet();
 
 
 function Uc(e) {
@@ -109,77 +109,77 @@ function Py(e) {
   return typeof e == "object" && e !== null || Wc(e);
 }
 r(Py, "isObjectKeyword");
-var ct = we(2, (e, t) => Py(e) && t in e), uf = we(2, (e, t) => ct(e, "_tag") && e._tag === t);
+var at = we(2, (e, t) => Py(e) && t in e), uf = we(2, (e, t) => at(e, "_tag") && e._tag === t);
 function df(e) {
-  return ct(e, Symbol.iterator) || Uc(e);
+  return at(e, Symbol.iterator) || Uc(e);
 }
 r(df, "isIterable");
 
 
-var Ut = "~effect/interfaces/Hash", wt = r((e) => {
+var It = "~effect/interfaces/Hash", mt = r((e) => {
   switch (typeof e) {
     case "number":
-      return Yo(e);
+      return Zo(e);
     case "bigint":
-      return Mt(e.toString(10));
+      return At(e.toString(10));
     case "boolean":
-      return Mt(String(e));
+      return At(String(e));
     case "symbol":
-      return Mt(String(e));
+      return At(String(e));
     case "string":
-      return Mt(e);
+      return At(e);
     case "undefined":
-      return Mt("undefined");
+      return At("undefined");
     case "function":
     case "object": {
       if (e === null)
-        return Mt("null");
+        return At("null");
       if (e instanceof Date)
-        return Number.isNaN(e.getTime()) ? Mt("Invalid Date") : Mt(e.toISOString());
+        return Number.isNaN(e.getTime()) ? At("Invalid Date") : At(e.toISOString());
       if (e instanceof RegExp)
-        return Mt(e.toString());
+        return At(e.toString());
       {
-        if (Ks.has(e))
-          return Gi(e);
+        if (Ys.has(e))
+          return Vi(e);
         if (qc.has(e))
           return qc.get(e);
-        let t = Dy(e, () => Ay(e) ? e[Ut]() : typeof e == "function" ? Gi(e) : e instanceof DataView ? Ki(new Uint8Array(e.buffer, e.byteOffset, e.byteLength)) : Array.isArray(e) || ArrayBuffer.isView(e) ? Ki(e) : e instanceof Map ? Oy(e) : e instanceof Set ? Ly(e) : Kc(e));
+        let t = Dy(e, () => Ay(e) ? e[It]() : typeof e == "function" ? Vi(e) : e instanceof DataView ? zi(new Uint8Array(e.buffer, e.byteOffset, e.byteLength)) : Array.isArray(e) || ArrayBuffer.isView(e) ? zi(e) : e instanceof Map ? Oy(e) : e instanceof Set ? Ly(e) : Kc(e));
         return qc.set(e, t), t;
       }
     }
     default:
       throw new Error(`BUG: unhandled typeof ${typeof e} - please report an issue at https://github.com/Effect-TS/effect/issues`);
   }
-}, "hash"), Gi = r((e) => (Hc.has(e) || Hc.set(e, Yo(Math.floor(Math.random() * Number.MAX_SAFE_INTEGER))), Hc.get(e)), "random"), mn = we(2, (e, t) => e * 53 ^ t), Vi = r((e) => e & 3221225471 | e >>> 1 & 1073741824, "optimize"), Ay = r((e) => ct(e, Ut), "isHash"), Yo = r((e) => {
+}, "hash"), Vi = r((e) => (Hc.has(e) || Hc.set(e, Zo(Math.floor(Math.random() * Number.MAX_SAFE_INTEGER))), Hc.get(e)), "random"), pn = we(2, (e, t) => e * 53 ^ t), Xi = r((e) => e & 3221225471 | e >>> 1 & 1073741824, "optimize"), Ay = r((e) => at(e, It), "isHash"), Zo = r((e) => {
   if (e !== e)
-    return Mt("NaN");
+    return At("NaN");
   if (e === 1 / 0)
-    return Mt("Infinity");
+    return At("Infinity");
   if (e === -1 / 0)
-    return Mt("-Infinity");
+    return At("-Infinity");
   let t = e | 0;
   for (t !== e && (t ^= e * 4294967295); e > 4294967295; )
     t ^= e /= 4294967295;
-  return Vi(t);
-}, "number"), Mt = r((e) => {
+  return Xi(t);
+}, "number"), At = r((e) => {
   let t = 5381, n = e.length;
   for (; n; )
     t = t * 33 ^ e.charCodeAt(--n);
-  return Vi(t);
+  return Xi(t);
 }, "string"), Gc = r((e, t) => {
   let n = 12289;
   for (let o of t)
-    n ^= mn(wt(o), wt(e[o]));
-  return Vi(n);
-}, "structureKeys"), Kc = r((e) => Gc(e, Gs(e)), "structure"), Vc = r((e, t) => (n) => {
+    n ^= pn(mt(o), mt(e[o]));
+  return Xi(n);
+}, "structureKeys"), Kc = r((e) => Gc(e, Xs(e)), "structure"), Vc = r((e, t) => (n) => {
   let o = e;
   for (let s of n)
     o ^= t(s);
-  return Vi(o);
-}, "iterableWith"), Ki = Vc(6151, wt), Oy = Vc(Mt("Map"), ([e, t]) => mn(wt(e), wt(t))), Ly = Vc(Mt("Set"), wt), Hc = new WeakMap(), qc = new WeakMap(), jc = new WeakSet();
+  return Xi(o);
+}, "iterableWith"), zi = Vc(6151, mt), Oy = Vc(At("Map"), ([e, t]) => pn(mt(e), mt(t))), Ly = Vc(At("Set"), mt), Hc = new WeakMap(), qc = new WeakMap(), jc = new WeakSet();
 function Dy(e, t) {
   if (jc.has(e))
-    return Mt("[Circular]");
+    return At("[Circular]");
   jc.add(e);
   let n = t();
   return jc.delete(e), n;
@@ -187,16 +187,16 @@ function Dy(e, t) {
 r(Dy, "withVisitedTracking");
 
 
-var Wt = "~effect/interfaces/Equal";
-function Kt() {
+var Nt = "~effect/interfaces/Equal";
+function Wt() {
   return arguments.length === 1 ? (e) => So(e, arguments[0]) : So(arguments[0], arguments[1]);
 }
-r(Kt, "equals");
+r(Wt, "equals");
 function So(e, t) {
   if (e === t) return !0;
   if (e == null || t == null) return !1;
   let n = typeof e;
-  return n !== typeof t ? !1 : n === "number" && e !== e && t !== t ? !0 : n !== "object" && n !== "function" || Ks.has(e) || Ks.has(t) ? !1 : My(e, t, Ny);
+  return n !== typeof t ? !1 : n === "number" && e !== e && t !== t ? !0 : n !== "object" && n !== "function" || Ys.has(e) || Ys.has(t) ? !1 : My(e, t, Ny);
 }
 r(So, "compareBoth");
 function Iy(e, t, n) {
@@ -212,7 +212,7 @@ function Iy(e, t, n) {
 r(Iy, "withVisitedTracking");
 var zc = new WeakSet(), Xc = new WeakSet();
 function Ny(e, t) {
-  if (wt(e) !== wt(t))
+  if (mt(e) !== mt(t))
     return !1;
   if (e instanceof Date) {
     if (!(t instanceof Date)) return !1;
@@ -225,7 +225,7 @@ function Ny(e, t) {
   let s = n && o;
   return typeof e == "function" && !s ? !1 : Iy(e, t, () => {
     if (s)
-      return e[Wt](t);
+      return e[Nt](t);
     if (Array.isArray(e))
       return !Array.isArray(t) || e.length !== t.length ? !1 : Fy(e, t);
     if (ArrayBuffer.isView(e)) {
@@ -248,18 +248,18 @@ function Ny(e, t) {
 }
 r(Ny, "compareObjects");
 function My(e, t, n) {
-  let o = zi.get(e);
+  let o = Yi.get(e);
   if (!o)
-    o = new WeakMap(), zi.set(e, o);
+    o = new WeakMap(), Yi.set(e, o);
   else if (o.has(t))
     return o.get(t);
   let s = n(e, t);
   o.set(t, s);
-  let i = zi.get(t);
-  return i || (i = new WeakMap(), zi.set(t, i)), i.set(e, s), s;
+  let i = Yi.get(t);
+  return i || (i = new WeakMap(), Yi.set(t, i)), i.set(e, s), s;
 }
 r(My, "withCache");
-var zi = new WeakMap();
+var Yi = new WeakMap();
 function Fy(e, t) {
   for (let n = 0; n < e.length; n++)
     if (!So(e[n], t[n]))
@@ -277,7 +277,7 @@ function pf(e, t) {
 }
 r(pf, "compareTypedArrays");
 function By(e, t) {
-  let n = Gs(e), o = Gs(t);
+  let n = Xs(e), o = Xs(t);
   if (n.size !== o.size)
     return !1;
   for (let s of n)
@@ -292,8 +292,8 @@ function $y(e, t) {
     for (let [a, c] of o) {
       let l = !1;
       for (let f = 0; f < i.length; f++) {
-        let [w, g] = i[f];
-        if (e(a, w) && t(c, g)) {
+        let [w, h] = i[f];
+        if (e(a, w) && t(c, h)) {
           i[f] = i[i.length - 1], i.pop(), l = !0;
           break;
         }
@@ -325,33 +325,33 @@ function Wy(e) {
   }, "compareSets");
 }
 r(Wy, "makeCompareSet");
-var Hy = Wy(So), mf = r((e) => ct(e, Wt), "isEqual");
+var Hy = Wy(So), mf = r((e) => at(e, Nt), "isEqual");
 
 
-var Vs = Symbol.for("~effect/Redactable"), qy = r((e) => ct(e, Vs), "isRedactable");
-function Jo(e) {
+var Js = Symbol.for("~effect/Redactable"), qy = r((e) => at(e, Js), "isRedactable");
+function es(e) {
   return qy(e) ? Yc(e) : e;
 }
-r(Jo, "redact");
+r(es, "redact");
 function Yc(e) {
-  return e[Vs](globalThis[Qo]?.context ?? jy);
+  return e[Js](globalThis[ts]?.context ?? jy);
 }
 r(Yc, "getRedacted");
-var Qo = "~effect/Fiber/currentFiber", gf = new Map(), jy = {
+var ts = "~effect/Fiber/currentFiber", gf = new Map(), jy = {
   "~effect/Context": {},
   base: gf,
   depth: 0,
   mapUnsafe: gf,
   pipe() {
-    return en(this, arguments);
+    return Jt(this, arguments);
   }
 };
 
 
-function tn(e, t) {
+function Qt(e, t) {
   let n = t?.space ?? 0, o = new WeakSet(), s = n ? typeof n == "number" ? " ".repeat(n) : n : "", i = r((f) => s.repeat(f), "ind"), a = r((f, w) => {
-    let g = f?.constructor;
-    return g && g !== Object.prototype.constructor && g.name ? `${g.name}(${w})` : w;
+    let h = f?.constructor;
+    return h && h !== Object.prototype.constructor && h.name ? `${h.name}(${w})` : w;
   }, "wrap"), c = r((f) => {
     try {
       return Reflect.ownKeys(f);
@@ -366,41 +366,41 @@ function tn(e, t) {
     if (typeof f == "object" || typeof f == "function") {
       if (o.has(f)) return Gy;
       o.add(f);
-      let g;
-      if (Vs in f)
-        g = l(Yc(f), w);
+      let h;
+      if (Js in f)
+        h = l(Yc(f), w);
       else if (Array.isArray(f))
-        g = !s || f.length <= 1 ? `[${f.map((_) => l(_, w)).join(",")}]` : `[
+        h = !s || f.length <= 1 ? `[${f.map((_) => l(_, w)).join(",")}]` : `[
 ${i(w + 1)}${f.map((_) => l(_, w + 1)).join(`,
 ` + i(w + 1))}
 ${i(w)}]`;
       else if (f instanceof Date)
-        g = Ky(f);
-      else if (!t?.ignoreToString && ct(f, "toString") && typeof f.toString == "function" && f.toString !== Object.prototype.toString && f.toString !== Array.prototype.toString) {
+        h = Ky(f);
+      else if (!t?.ignoreToString && at(f, "toString") && typeof f.toString == "function" && f.toString !== Object.prototype.toString && f.toString !== Array.prototype.toString) {
         let _ = Vy(f);
-        g = f instanceof Error && f.cause ? `${_} (cause: ${l(f.cause, w)})` : _;
+        h = f instanceof Error && f.cause ? `${_} (cause: ${l(f.cause, w)})` : _;
       } else if (Symbol.iterator in f)
-        g = `${f.constructor.name}(${l(Array.from(f), w)})`;
+        h = `${f.constructor.name}(${l(Array.from(f), w)})`;
       else {
         let _ = c(f);
         if (!s || _.length <= 1) {
           let E = `{${_.map((m) => `${hf(m)}:${l(f[m], w)}`).join(",")}}`;
-          g = a(f, E);
+          h = a(f, E);
         } else {
           let E = `{
 ${_.map((m) => `${i(w + 1)}${hf(m)}: ${l(f[m], w + 1)}`).join(`,
 `)}
 ${i(w)}}`;
-          g = a(f, E);
+          h = a(f, E);
         }
       }
-      return o.delete(f), g;
+      return o.delete(f), h;
     }
     return String(f);
   }
   return r(l, "recur"), l(e, 0);
 }
-r(tn, "format");
+r(Qt, "format");
 var Gy = "[Circular]";
 function hf(e) {
   return typeof e == "string" ? JSON.stringify(e) : String(e);
@@ -423,12 +423,12 @@ function Vy(e) {
   }
 }
 r(Vy, "safeToString");
-function zs(e, t) {
+function Qs(e, t) {
   let n = [];
   return JSON.stringify(e, function(o, s) {
-    let i = Object.getOwnPropertyDescriptor(this, o)?.value, a = ct(i, Vs) ? Jo(i) : Jo(s);
+    let i = Object.getOwnPropertyDescriptor(this, o)?.value, a = at(i, Js) ? es(i) : es(s);
     if (typeof a == "bigint")
-      return tn(a);
+      return Qt(a);
     if (typeof a != "object" || a === null)
       return a;
     for (; n.length > 0 && n[n.length - 1] !== this; )
@@ -437,12 +437,12 @@ function zs(e, t) {
       return n.push(a), a;
   }, t?.space) ?? "null";
 }
-r(zs, "formatJson");
+r(Qs, "formatJson");
 
 
-var Yr = Symbol.for("nodejs.util.inspect.custom"), fr = r((e) => {
+var Yr = Symbol.for("nodejs.util.inspect.custom"), ur = r((e) => {
   try {
-    return e = Jo(e), ct(e, "toJSON") && Wc(e.toJSON) && e.toJSON.length === 0 ? e.toJSON() : Array.isArray(e) ? e.map(fr) : e;
+    return e = es(e), at(e, "toJSON") && Wc(e.toJSON) && e.toJSON.length === 0 ? e.toJSON() : Array.isArray(e) ? e.map(ur) : e;
   } catch {
     return "[toJSON threw]";
   }
@@ -450,23 +450,23 @@ var Yr = Symbol.for("nodejs.util.inspect.custom"), fr = r((e) => {
   if (typeof e == "string")
     return e;
   try {
-    return typeof e == "object" ? zs(e, {
+    return typeof e == "object" ? Qs(e, {
       space: t
-    }) : tn(e, {
+    }) : Qt(e, {
       space: t
     });
   } catch {
     return String(e);
   }
-}, "toStringUnknown"), V0 = {
+}, "toStringUnknown"), z0 = {
   toJSON() {
-    return fr(this);
+    return ur(this);
   },
   [Yr]() {
     return this.toJSON();
   },
   toString() {
-    return tn(this.toJSON());
+    return Qt(this.toJSON());
   }
 }, wf = class {
   static {
@@ -494,7 +494,7 @@ var Yr = Symbol.for("nodejs.util.inspect.custom"), fr = r((e) => {
 
 
   toString() {
-    return tn(this.toJSON());
+    return Qt(this.toJSON());
   }
 };
 
@@ -547,10 +547,10 @@ var Jr = class e {
     [e]: (s) => s()
   };
   return t[e](() => new Error().stack)?.includes(e) === !0 ? t[e] : n[e];
-}, "pickInternalCall"), nn = zy();
+}, "pickInternalCall"), Zt = zy();
 
 
-function Xi(e, t, n) {
+function Ji(e, t, n) {
   t === "__proto__" ? Object.defineProperty(e, t, {
     value: n,
     writable: !0,
@@ -558,21 +558,21 @@ function Xi(e, t, n) {
     configurable: !0
   }) : e[t] = n;
 }
-r(Xi, "assignProperty");
+r(Ji, "assignProperty");
 function yf(e, t) {
   for (let n of Reflect.ownKeys(t))
-    Object.prototype.propertyIsEnumerable.call(t, n) && Xi(e, n, t[n]);
+    Object.prototype.propertyIsEnumerable.call(t, n) && Ji(e, n, t[n]);
 }
 r(yf, "assignProperties");
 
 
-var Pr = "~effect/Effect", xo = "~effect/Exit", Xy = {
-  _A: lt,
-  _E: lt,
-  _R: lt
-}, vf = `${Pr}/identifier`, Ye = `${Pr}/args`, Ct = `${Pr}/evaluate`, gn = `${Pr}/successCont`, Wn = `${Pr}/failureCont`, Qr = `${Pr}/ensureCont`, bo = Symbol.for("effect/Effect/Yield"), Zn = {
+var Cr = "~effect/Effect", xo = "~effect/Exit", Xy = {
+  _A: ct,
+  _E: ct,
+  _R: ct
+}, vf = `${Cr}/identifier`, Je = `${Cr}/args`, Rt = `${Cr}/evaluate`, mn = `${Cr}/successCont`, Un = `${Cr}/failureCont`, Qr = `${Cr}/ensureCont`, bo = Symbol.for("effect/Effect/Yield"), Jn = {
   pipe() {
-    return en(this, arguments);
+    return Jt(this, arguments);
   },
   toJSON() {
     return {
@@ -580,7 +580,7 @@ var Pr = "~effect/Effect", xo = "~effect/Exit", Xy = {
     };
   },
   toString() {
-    return tn(this.toJSON(), {
+    return Qt(this.toJSON(), {
       ignoreToString: !0,
       space: 2
     });
@@ -588,21 +588,21 @@ var Pr = "~effect/Effect", xo = "~effect/Exit", Xy = {
   [Yr]() {
     return this.toJSON();
   }
-}, sT = {
-  [Ut]() {
+}, iT = {
+  [It]() {
     return Gc(this, Object.keys(this));
   },
-  [Wt](e) {
+  [Nt](e) {
     let t = Object.keys(this), n = Object.keys(e);
     if (t.length !== n.length) return !1;
     for (let o = 0; o < t.length; o++)
-      if (t[o] !== n[o] || !Kt(this[t[o]], e[t[o]]))
+      if (t[o] !== n[o] || !Wt(this[t[o]], e[t[o]]))
         return !1;
     return !0;
   }
 }, Yy = {
-  [Pr]: Xy,
-  ...Zn,
+  [Cr]: Xy,
+  ...Jn,
   [Symbol.iterator]() {
     return new Jr(this);
   },
@@ -610,23 +610,23 @@ var Pr = "~effect/Effect", xo = "~effect/Exit", Xy = {
     return {
       _id: "Effect",
       op: this[vf],
-      ...Ye in this ? {
-        args: this[Ye]
+      ...Je in this ? {
+        args: this[Je]
       } : void 0
     };
   }
-}, Vt = r((e) => ct(e, Pr), "isEffect"), xf = r((e) => ct(e, xo), "isExit"), Xs = "~effect/Cause", Yi = "~effect/Cause/Reason", Js = r((e) => ct(e, Xs), "isCause");
-var pr = class {
+}, Ht = r((e) => at(e, Cr), "isEffect"), xf = r((e) => at(e, xo), "isExit"), Zs = "~effect/Cause", Qi = "~effect/Cause/Reason", ti = r((e) => at(e, Zs), "isCause");
+var dr = class {
   static {
     r(this, "CauseImpl");
   }
-  [Xs];
+  [Zs];
   reasons;
   constructor(t) {
-    this[Xs] = Xs, this.reasons = t;
+    this[Zs] = Zs, this.reasons = t;
   }
   pipe() {
-    return en(this, arguments);
+    return Jt(this, arguments);
   }
   toJSON() {
     return {
@@ -635,26 +635,26 @@ var pr = class {
     };
   }
   toString() {
-    return `Cause(${tn(this.reasons)})`;
+    return `Cause(${Qt(this.reasons)})`;
   }
   [Yr]() {
     return this.toJSON();
   }
-  [Wt](t) {
-    return Js(t) && this.reasons.length === t.reasons.length && this.reasons.every((n, o) => Kt(n, t.reasons[o]));
+  [Nt](t) {
+    return ti(t) && this.reasons.length === t.reasons.length && this.reasons.every((n, o) => Wt(n, t.reasons[o]));
   }
-  [Ut]() {
-    return Ki(this.reasons);
+  [It]() {
+    return zi(this.reasons);
   }
-}, Sf = new WeakMap(), Zo = class {
+}, Sf = new WeakMap(), ns = class {
   static {
     r(this, "ReasonBase");
   }
-  [Yi];
+  [Qi];
   annotations;
   _tag;
   constructor(t, n, o) {
-    if (this[Yi] = Yi, this._tag = t, n !== Qs && typeof o == "object" && o !== null && n.size > 0) {
+    if (this[Qi] = Qi, this._tag = t, n !== ni && typeof o == "object" && o !== null && n.size > 0) {
       let s = Sf.get(o);
       s && (n = new Map([...s, ...n])), Sf.set(o, n);
     }
@@ -670,24 +670,24 @@ var pr = class {
     return s.annotations = o, s;
   }
   pipe() {
-    return en(this, arguments);
+    return Jt(this, arguments);
   }
   toString() {
-    return tn(this);
+    return Qt(this);
   }
   [Yr]() {
     return this.toString();
   }
-}, Qs = new Map(), Ys = class extends Zo {
+}, ni = new Map(), ei = class extends ns {
   static {
     r(this, "Fail");
   }
   error;
-  constructor(t, n = Qs) {
+  constructor(t, n = ni) {
     super("Fail", n, t), this.error = t;
   }
   toString() {
-    return `Fail(${tn(this.error)})`;
+    return `Fail(${Qt(this.error)})`;
   }
   toJSON() {
     return {
@@ -695,22 +695,22 @@ var pr = class {
       error: this.error
     };
   }
-  [Wt](t) {
-    return ei(t) && Kt(this.error, t.error) && Kt(this.annotations, t.annotations);
+  [Nt](t) {
+    return oi(t) && Wt(this.error, t.error) && Wt(this.annotations, t.annotations);
   }
-  [Ut]() {
-    return mn(Mt(this._tag))(mn(wt(this.error))(wt(this.annotations)));
+  [It]() {
+    return pn(At(this._tag))(pn(mt(this.error))(mt(this.annotations)));
   }
-}, ts = r((e) => new pr(e), "causeFromReasons"), Qc = new pr([]), bf = r((e) => new pr([new Ys(e)]), "causeFail"), Ji = class extends Zo {
+}, os = r((e) => new dr(e), "causeFromReasons"), Qc = new dr([]), bf = r((e) => new dr([new ei(e)]), "causeFail"), Zi = class extends ns {
   static {
     r(this, "Die");
   }
   defect;
-  constructor(t, n = Qs) {
+  constructor(t, n = ni) {
     super("Die", n, t), this.defect = t;
   }
   toString() {
-    return `Die(${tn(this.defect)})`;
+    return `Die(${Qt(this.defect)})`;
   }
   toJSON() {
     return {
@@ -718,87 +718,87 @@ var pr = class {
       defect: this.defect
     };
   }
-  [Wt](t) {
-    return ns(t) && Kt(this.defect, t.defect) && Kt(this.annotations, t.annotations);
+  [Nt](t) {
+    return ss(t) && Wt(this.defect, t.defect) && Wt(this.annotations, t.annotations);
   }
-  [Ut]() {
-    return mn(Mt(this._tag))(mn(wt(this.defect))(wt(this.annotations)));
+  [It]() {
+    return pn(At(this._tag))(pn(mt(this.defect))(mt(this.annotations)));
   }
-}, kf = r((e) => new pr([new Ji(e)]), "causeDie"), Zs = we((e) => Js(e[0]), (e, t, n) => t.mapUnsafe.size === 0 ? e : new pr(e.reasons.map((o) => o.annotate(t, n)))), ei = r((e) => e._tag === "Fail", "isFailReason"), ns = r((e) => e._tag === "Die", "isDieReason"), ti = r((e) => e._tag === "Interrupt", "isInterruptReason");
+}, kf = r((e) => new dr([new Zi(e)]), "causeDie"), ri = we((e) => ti(e[0]), (e, t, n) => t.mapUnsafe.size === 0 ? e : new dr(e.reasons.map((o) => o.annotate(t, n)))), oi = r((e) => e._tag === "Fail", "isFailReason"), ss = r((e) => e._tag === "Die", "isDieReason"), si = r((e) => e._tag === "Interrupt", "isInterruptReason");
 function Jy(e) {
   return eo("Effect.evaluate: Not implemented");
 }
 r(Jy, "defaultEvaluate");
-var Ar = r((e) => ({
+var Pr = r((e) => ({
   ...Yy,
   [vf]: e.op,
-  [Ct]: e[Ct] ?? Jy,
-  [gn]: e[gn],
-  [Wn]: e[Wn],
+  [Rt]: e[Rt] ?? Jy,
+  [mn]: e[mn],
+  [Un]: e[Un],
   [Qr]: e[Qr]
-}), "makePrimitiveProto"), Hn = r((e) => {
-  let t = Ar(e);
+}), "makePrimitiveProto"), Wn = r((e) => {
+  let t = Pr(e);
   return function() {
     let n = Object.create(t);
-    return n[Ye] = e.single === !1 ? arguments : arguments[0], n;
+    return n[Je] = e.single === !1 ? arguments : arguments[0], n;
   };
 }, "makePrimitive"), Rf = r((e) => {
   let t = {
     [xo]: xo,
     _tag: e.op,
     get [e.prop]() {
-      return this[Ye];
+      return this[Je];
     },
-    ...Ar(e),
+    ...Pr(e),
     toString() {
-      return `${e.op}(${tn(this[Ye])})`;
+      return `${e.op}(${Qt(this[Je])})`;
     },
     toJSON() {
       return {
         _id: "Exit",
         _tag: e.op,
-        [e.prop]: this[Ye]
+        [e.prop]: this[Je]
       };
     },
-    [Wt](n) {
-      return xf(n) && n._tag === this._tag && Kt(this[Ye], n[Ye]);
+    [Nt](n) {
+      return xf(n) && n._tag === this._tag && Wt(this[Je], n[Je]);
     },
-    [Ut]() {
-      return mn(Mt(e.op), wt(this[Ye]));
+    [It]() {
+      return pn(At(e.op), mt(this[Je]));
     }
   };
   return function(n) {
     let o = Object.create(t);
-    return o[Ye] = n, o;
+    return o[Je] = n, o;
   };
-}, "makeExit"), hn = Rf({
+}, "makeExit"), gn = Rf({
   op: "Success",
   prop: "value",
-  [Ct](e) {
-    let t = e.getCont(gn);
-    return t ? t[gn](this[Ye], e, this) : e.yieldWith(this);
+  [Rt](e) {
+    let t = e.getCont(mn);
+    return t ? t[mn](this[Je], e, this) : e.yieldWith(this);
   }
-}), Zi = {
+}), ta = {
   key: "effect/Cause/StackTrace"
 }, Zc = {
   key: "effect/Cause/InterruptorStackTrace"
-}, qn = Rf({
+}, Hn = Rf({
   op: "Failure",
   prop: "cause",
-  [Ct](e) {
-    let t = this[Ye], n = !1;
-    e.currentStackFrame && (t = Zs(t, {
-      mapUnsafe: new Map([[Zi.key, e.currentStackFrame]])
+  [Rt](e) {
+    let t = this[Je], n = !1;
+    e.currentStackFrame && (t = ri(t, {
+      mapUnsafe: new Map([[ta.key, e.currentStackFrame]])
     }), n = !0);
-    let o = e.getCont(Wn);
+    let o = e.getCont(Un);
     for (; e.interruptible && e._interruptedCause && o; )
-      o = e.getCont(Wn);
-    return o ? o[Wn](t, e, n ? void 0 : this) : e.yieldWith(n ? qn(t) : this);
+      o = e.getCont(Un);
+    return o ? o[Un](t, e, n ? void 0 : this) : e.yieldWith(n ? Hn(t) : this);
   }
-}), Zr = r((e) => qn(bf(e)), "exitFail"), eo = r((e) => qn(kf(e)), "exitDie"), zt = Hn({
+}), Zr = r((e) => Hn(bf(e)), "exitFail"), eo = r((e) => Hn(kf(e)), "exitDie"), qt = Wn({
   op: "WithFiber",
-  [Ct](e) {
-    return this[Ye](e);
+  [Rt](e) {
+    return this[Je](e);
   }
 }), Qy = (function() {
   class e extends globalThis.Error {
@@ -806,9 +806,9 @@ var Ar = r((e) => ({
       r(this, "YieldableError");
     }
   }
-  let t = Ar({
+  let t = Pr({
     op: "YieldableError",
-    [Ct]() {
+    [Rt]() {
       return Zr(this);
     }
   });
@@ -834,7 +834,7 @@ var Ar = r((e) => ({
       };
     }
   };
-})(), Or = r((e) => {
+})(), Ar = r((e) => {
   class t extends Tf {
     static {
       r(this, "Base");
@@ -843,7 +843,7 @@ var Ar = r((e) => ({
   }
   return t.prototype.name = e, t;
 }, "TaggedError"), Jc = "~effect/Cause/NoSuchElementError";
-var Qi = class extends (Or("NoSuchElementError")) {
+var ea = class extends (Ar("NoSuchElementError")) {
   static {
     r(this, "NoSuchElementError");
   }
@@ -853,20 +853,20 @@ var Qi = class extends (Or("NoSuchElementError")) {
       message: t
     });
   }
-}, es = "~effect/Cause/Done", ea = r((e) => ct(e, es), "isDone"), Cf = {
-  [es]: es,
+}, rs = "~effect/Cause/Done", na = r((e) => at(e, rs), "isDone"), Cf = {
+  [rs]: rs,
   _tag: "Done",
   value: void 0
 }, Pf = r((e) => e === void 0 ? Cf : {
-  [es]: es,
+  [rs]: rs,
   _tag: "Done",
   value: e
 }, "Done"), Zy = Zr(Cf), Af = r((e) => e === void 0 ? Zy : Zr(Pf(e)), "done");
 
 
-var Of = r((e) => Ar({
+var Of = r((e) => Pr({
   op: e.label,
-  [Ct]: e.evaluate
+  [Rt]: e.evaluate
 }), "Prototype");
 
 
@@ -874,41 +874,41 @@ var Lf = "~effect/data/Option", Df = {
   [Lf]: {
     _A: r((e) => e, "_A")
   },
-  ...Zn,
+  ...Jn,
   [Symbol.iterator]() {
     return new Jr(this);
   }
 }, t_ = Object.defineProperty(Object.assign(Object.create(Df), {
   _tag: "Some",
   _op: "Some",
-  [Wt](e) {
-    return el(e) && Nf(e) && Kt(this.value, e.value);
+  [Nt](e) {
+    return el(e) && Nf(e) && Wt(this.value, e.value);
   },
-  [Ut]() {
-    return mn(wt(this._tag))(wt(this.value));
+  [It]() {
+    return pn(mt(this._tag))(mt(this.value));
   },
   toString() {
-    return `some(${tn(this.value)})`;
+    return `some(${Qt(this.value)})`;
   },
   toJSON() {
     return {
       _id: "Option",
       _tag: this._tag,
-      value: fr(this.value)
+      value: ur(this.value)
     };
   }
 }), "valueOrUndefined", {
   get() {
     return this.value;
   }
-}), n_ = wt("None"), r_ = Object.assign(Object.create(Df), {
+}), n_ = mt("None"), r_ = Object.assign(Object.create(Df), {
   _tag: "None",
   _op: "None",
   valueOrUndefined: void 0,
-  [Wt](e) {
+  [Nt](e) {
     return el(e) && If(e);
   },
-  [Ut]() {
+  [It]() {
     return n_;
   },
   toString() {
@@ -920,7 +920,7 @@ var Lf = "~effect/data/Option", Df = {
       _tag: this._tag
     };
   }
-}), el = r((e) => ct(e, Lf), "isOption"), If = r((e) => e._tag === "None", "isNone"), Nf = r((e) => e._tag === "Some", "isSome"), Mf = Object.create(r_), Ff = r((e) => {
+}), el = r((e) => at(e, Lf), "isOption"), If = r((e) => e._tag === "None", "isNone"), Nf = r((e) => e._tag === "Some", "isSome"), Mf = Object.create(r_), Ff = r((e) => {
   let t = Object.create(t_);
   return t.value = e, t;
 }, "some");
@@ -932,49 +932,49 @@ var Bf = "~effect/data/Result", $f = {
     _A: r((e) => e, "_A"),
     _E: r((e) => e, "_E")
   },
-  ...Zn,
+  ...Jn,
   [Symbol.iterator]() {
     return new Jr(this);
   }
 }, s_ = Object.assign(Object.create($f), {
   _tag: "Success",
   _op: "Success",
-  [Wt](e) {
-    return tl(e) && Uf(e) && Kt(this.success, e.success);
+  [Nt](e) {
+    return tl(e) && Uf(e) && Wt(this.success, e.success);
   },
-  [Ut]() {
-    return mn(wt(this._tag))(wt(this.success));
+  [It]() {
+    return pn(mt(this._tag))(mt(this.success));
   },
   toString() {
-    return `success(${tn(this.success)})`;
+    return `success(${Qt(this.success)})`;
   },
   toJSON() {
     return {
       _id: "Result",
       _tag: this._tag,
-      value: fr(this.success)
+      value: ur(this.success)
     };
   }
 }), i_ = Object.assign(Object.create($f), {
   _tag: "Failure",
   _op: "Failure",
-  [Wt](e) {
-    return tl(e) && nl(e) && Kt(this.failure, e.failure);
+  [Nt](e) {
+    return tl(e) && nl(e) && Wt(this.failure, e.failure);
   },
-  [Ut]() {
-    return mn(wt(this._tag))(wt(this.failure));
+  [It]() {
+    return pn(mt(this._tag))(mt(this.failure));
   },
   toString() {
-    return `failure(${tn(this.failure)})`;
+    return `failure(${Qt(this.failure)})`;
   },
   toJSON() {
     return {
       _id: "Result",
       _tag: this._tag,
-      failure: fr(this.failure)
+      failure: ur(this.failure)
     };
   }
-}), tl = r((e) => ct(e, Bf), "isResult"), nl = r((e) => e._tag === "Failure", "isFailure"), Uf = r((e) => e._tag === "Success", "isSuccess"), Wf = r((e) => {
+}), tl = r((e) => at(e, Bf), "isResult"), nl = r((e) => e._tag === "Failure", "isFailure"), Uf = r((e) => e._tag === "Success", "isSuccess"), Wf = r((e) => {
   let t = Object.create(i_);
   return t.failure = e, t;
 }, "fail"), Hf = r((e) => {
@@ -995,7 +995,7 @@ var Kf = r((e) => we(2, (t, n) => e(t, n) === 1), "isGreaterThan");
 var Vf = r(() => Mf, "none"), zf = Ff;
 
 
-var Xf = "~effect/Context/Service", Ft = r(function() {
+var Xf = "~effect/Context/Service", Ot = r(function() {
   function e() {
   }
   r(e, "KeyClass");
@@ -1008,7 +1008,7 @@ var Xf = "~effect/Context/Service", Ft = r(function() {
   ...Of({
     label: "Service",
     evaluate(e) {
-      return hn(rs(e.context, this));
+      return gn(is(e.context, this));
     }
   }),
   toJSON() {
@@ -1021,13 +1021,13 @@ var Xf = "~effect/Context/Service", Ft = r(function() {
     return e;
   },
   context(e) {
-    return Lr(this, e);
+    return Or(this, e);
   },
   use(e) {
-    return zt((t) => e(rs(t.context, this)));
+    return qt((t) => e(is(t.context, this)));
   },
   useSync(e) {
-    return zt((t) => hn(e(rs(t.context, this))));
+    return qt((t) => gn(e(is(t.context, this))));
   }
 }, Yf = new Set(), ol = "~effect/Context/Reference", Jf = "~effect/Context", d_ = 8, f_ = 8, sl = r((e, t, n, o) => {
   let s = Object.create(m_);
@@ -1041,15 +1041,15 @@ var Xf = "~effect/Context/Service", Ft = r(function() {
   return Qf(t, e.overlay), e._flat = t;
 }, "flatten"), p_ = r((e, t) => {
   let n = new Map(e.mapUnsafe);
-  return t(n), os(n);
+  return t(n), as(n);
 }, "withFlat"), il = Symbol(), ep = r((e, t) => {
   let n = e;
   for (let s = n.overlay; s; s = s.parent)
     if (s.key === t) return s.value;
   let o = n.base.get(t);
   return o === void 0 && !n.base.has(t) ? il : (n.overlay && ++n.baseHits >= f_ && (n.base = Zf(n), n.overlay = void 0, n.depth = 0), o);
-}, "lookup"), os = r((e) => sl(void 0, e, void 0, 0), "makeUnsafe"), m_ = {
-  ...Zn,
+}, "lookup"), as = r((e) => sl(void 0, e, void 0, 0), "makeUnsafe"), m_ = {
+  ...Jn,
   [Jf]: {
     _Services: r((e) => e, "_Services")
   },
@@ -1065,19 +1065,19 @@ var Xf = "~effect/Context/Service", Ft = r(function() {
       }))
     };
   },
-  [Wt](e) {
+  [Nt](e) {
     if (!al(e)) return !1;
     let t = this.mapUnsafe, n = e.mapUnsafe;
     if (t.size !== n.size) return !1;
     for (let [o, s] of t)
-      if (!n.has(o) || !Kt(s, n.get(o))) return !1;
+      if (!n.has(o) || !Wt(s, n.get(o))) return !1;
     return !0;
   },
-  [Ut]() {
-    return Yo(this.mapUnsafe.size);
+  [It]() {
+    return Zo(this.mapUnsafe.size);
   }
-}, tp = r((e, t) => e.cacheRoot === t.cacheRoot, "hasSameCache"), al = r((e) => ct(e, Jf), "isContext");
-var g_ = r((e) => !!e[ol], "isReference"), ss = r(() => h_, "empty"), h_ = os(new Map()), Lr = r((e, t) => os(new Map([[e.key, t]])), "make"), er = we(3, (e, t, n) => w_(e, t.key, n)), w_ = r((e, t, n) => {
+}, tp = r((e, t) => e.cacheRoot === t.cacheRoot, "hasSameCache"), al = r((e) => at(e, Jf), "isContext");
+var g_ = r((e) => !!e[ol], "isReference"), cs = r(() => h_, "empty"), h_ = as(new Map()), Or = r((e, t) => as(new Map([[e.key, t]])), "make"), Qn = we(3, (e, t, n) => w_(e, t.key, n)), w_ = r((e, t, n) => {
   let o = e, s = Yf.has(t) ? void 0 : o.cacheRoot;
   if (o.depth >= d_) {
     let i = new Map(o.mapUnsafe);
@@ -1089,7 +1089,7 @@ var g_ = r((e) => !!e[ol], "isReference"), ss = r(() => h_, "empty"), h_ = os(ne
     parent: o.overlay
   }, o.depth + 1);
 }, "addUnsafe");
-var np = we(2, (e, t) => ni(e, t.key)), ni = r((e, t) => {
+var np = we(2, (e, t) => ii(e, t.key)), ii = r((e, t) => {
   let n = ep(e, t);
   return n === il ? void 0 : n;
 }, "getOrUndefinedUnsafe"), cl = we(2, (e, t) => {
@@ -1099,7 +1099,7 @@ var np = we(2, (e, t) => ni(e, t.key)), ni = r((e, t) => {
     throw y_(t);
   }
   return n;
-}), rs = cl, rl = "~effect/Context/defaultValue", E_ = r((e) => rl in e ? e[rl] : e[rl] = e.defaultValue(), "getDefaultValue"), y_ = r((e) => {
+}), is = cl, rl = "~effect/Context/defaultValue", E_ = r((e) => rl in e ? e[rl] : e[rl] = e.defaultValue(), "getDefaultValue"), y_ = r((e) => {
   let t = new Error(`Service not found${e.key ? `: ${String(e.key)}` : ""}`);
   if (t.stack) {
     let n = t.stack.split(`
@@ -1109,35 +1109,35 @@ var np = we(2, (e, t) => ni(e, t.key)), ni = r((e, t) => {
   }
   return t;
 }, "serviceNotFoundError");
-var ta = we(2, (e, t) => e.mapUnsafe.size === 0 ? t : t.mapUnsafe.size === 0 ? e : p_(e, (n) => t.mapUnsafe.forEach((o, s) => n.set(s, o)))), rp = r((...e) => {
+var ra = we(2, (e, t) => e.mapUnsafe.size === 0 ? t : t.mapUnsafe.size === 0 ? e : p_(e, (n) => t.mapUnsafe.forEach((o, s) => n.set(s, o)))), rp = r((...e) => {
   let t = new Map();
   for (let n = 0; n < e.length; n++)
     e[n].mapUnsafe.forEach((o, s) => {
       t.set(s, o);
     });
-  return os(t);
+  return as(t);
 }, "mergeAll");
-var rn = Ft;
+var en = Ot;
 
 
 var op = r((e) => e.length > 0, "isArrayNonEmpty");
 
 
-var Dr = Hf, tr = Wf;
-var An = nl;
+var Lr = Hf, Zn = Wf;
+var Tn = nl;
 
 
 var ul = globalThis.Array;
 var Ro = r((e) => ul.isArray(e) ? e : ul.from(e), "fromIterable");
 var S_ = we(2, (e, t) => Ro(e).concat(Ro(t)));
-var MT = ul.isArray;
+var FT = ul.isArray;
 var sp = op;
 var v_ = r((e, t) => {
-  let n = wt(t), o = e.get(n);
+  let n = mt(t), o = e.get(n);
   if (o === void 0)
     return e.set(n, [t]), !0;
   for (let s of o)
-    if (Kt(s, t))
+    if (Wt(s, t))
       return !1;
   return o.push(t), !0;
 }, "hashBucketsAdd");
@@ -1157,20 +1157,20 @@ var x_ = r((e) => {
 }, "dedupe");
 
 
-var ra = "~effect/time/Duration", pp = BigInt(0), mp = BigInt(1), k_ = BigInt(2), R_ = BigInt(10);
+var sa = "~effect/time/Duration", pp = BigInt(0), mp = BigInt(1), k_ = BigInt(2), R_ = BigInt(10);
 var T_ = BigInt(1e3);
-var oa = r((e) => BigInt(e < 0 ? Math.ceil(e - 0.5) : Math.floor(e + 0.5)), "roundTiesAwayFromZero"), gp = r((e) => oa(e * 1e6), "roundMillisToNanos"), cp = r((e, t) => {
+var ia = r((e) => BigInt(e < 0 ? Math.ceil(e - 0.5) : Math.floor(e + 0.5)), "roundTiesAwayFromZero"), gp = r((e) => ia(e * 1e6), "roundMillisToNanos"), cp = r((e, t) => {
   let n = e.indexOf(".");
   if (n === -1) return BigInt(e) * t;
   let o = e[0] === "-", s = e.slice(n + 1), i = R_ ** BigInt(s.length), a = (BigInt(e.slice(o ? 1 : 0, n)) * i + BigInt(s)) * t, c = a / i + (a % i * k_ >= i ? mp : pp);
   return o ? -c : c;
 }, "parseNanos");
-var C_ = /^(-?\d+(?:\.\d+)?)\s+(nanos?|micros?|millis?|seconds?|minutes?|hours?|days?|weeks?)$/, mr = r((e) => {
+var C_ = /^(-?\d+(?:\.\d+)?)\s+(nanos?|micros?|millis?|seconds?|minutes?|hours?|days?|weeks?)$/, fr = r((e) => {
   switch (typeof e) {
     case "number":
-      return nr(e);
+      return er(e);
     case "bigint":
-      return na(e);
+      return oa(e);
     case "string": {
       if (e === "Infinity")
         return dl;
@@ -1180,14 +1180,14 @@ var C_ = /^(-?\d+(?:\.\d+)?)\s+(nanos?|micros?|millis?|seconds?|minutes?|hours?|
       if (!t) break;
       let [n, o, s] = t;
       if (s === "nano" || s === "nanos")
-        return na(cp(o, mp));
+        return oa(cp(o, mp));
       if (s === "micro" || s === "micros")
-        return na(cp(o, T_));
+        return oa(cp(o, T_));
       let i = Number(o);
       switch (s) {
         case "milli":
         case "millis":
-          return nr(i);
+          return er(i);
         case "second":
         case "seconds":
           return D_(i);
@@ -1208,11 +1208,11 @@ var C_ = /^(-?\d+(?:\.\d+)?)\s+(nanos?|micros?|millis?|seconds?|minutes?|hours?|
     }
     case "object": {
       if (e === null) break;
-      if (ra in e) return e;
+      if (sa in e) return e;
       if (Array.isArray(e))
-        return e.length !== 2 || !e.every(lf) ? lp(e) : Number.isNaN(e[0]) || Number.isNaN(e[1]) ? sa : e[0] === -1 / 0 || e[1] === -1 / 0 ? dp : e[0] === 1 / 0 || e[1] === 1 / 0 ? dl : On(oa(e[0] * 1e9 + e[1]));
+        return e.length !== 2 || !e.every(lf) ? lp(e) : Number.isNaN(e[0]) || Number.isNaN(e[1]) ? aa : e[0] === -1 / 0 || e[1] === -1 / 0 ? dp : e[0] === 1 / 0 || e[1] === 1 / 0 ? dl : Cn(ia(e[0] * 1e9 + e[1]));
       let t = e, n = 0;
-      return t.weeks && (n += t.weeks * 6048e5), t.days && (n += t.days * 864e5), t.hours && (n += t.hours * 36e5), t.minutes && (n += t.minutes * 6e4), t.seconds && (n += t.seconds * 1e3), t.milliseconds && (n += t.milliseconds), !t.microseconds && !t.nanoseconds ? On(n) : On(oa(n * 1e6 + (t.microseconds ?? 0) * 1e3 + (t.nanoseconds ?? 0)));
+      return t.weeks && (n += t.weeks * 6048e5), t.days && (n += t.days * 864e5), t.hours && (n += t.hours * 36e5), t.minutes && (n += t.minutes * 6e4), t.seconds && (n += t.seconds * 1e3), t.milliseconds && (n += t.milliseconds), !t.microseconds && !t.nanoseconds ? Cn(n) : Cn(ia(n * 1e6 + (t.microseconds ?? 0) * 1e3 + (t.nanoseconds ?? 0)));
     }
   }
   return lp(e);
@@ -1227,20 +1227,20 @@ var up = {
 }, A_ = {
   _tag: "NegativeInfinity"
 }, O_ = {
-  [ra]: ra,
-  [Ut]() {
+  [sa]: sa,
+  [It]() {
     switch (this.value._tag) {
       case "Millis": {
         let e = this.value.millis * 1e6;
-        return Number.isFinite(e) ? wt(oa(e)) : Yo(this.value.millis);
+        return Number.isFinite(e) ? mt(ia(e)) : Zo(this.value.millis);
       }
       case "Nanos":
-        return wt(this.value.nanos);
+        return mt(this.value.nanos);
       default:
         return Kc(this.value);
     }
   },
-  [Wt](e) {
+  [Nt](e) {
     return L_(e) && W_(this, e);
   },
   toString() {
@@ -1285,9 +1285,9 @@ var up = {
     return this.toJSON();
   },
   pipe() {
-    return en(this, arguments);
+    return Jt(this, arguments);
   }
-}, On = r((e) => {
+}, Cn = r((e) => {
   let t = Object.create(O_);
   return typeof e == "number" ? isNaN(e) || e === 0 || Object.is(e, -0) ? t.value = up : Number.isFinite(e) ? Number.isInteger(e) ? t.value = {
     _tag: "Millis",
@@ -1299,16 +1299,16 @@ var up = {
     _tag: "Nanos",
     nanos: e
   }, t;
-}, "make"), L_ = r((e) => ct(e, ra), "isDuration");
-var sa = On(0), dl = On(1 / 0), dp = On(-1 / 0), na = r((e) => On(e), "nanos");
-var nr = r((e) => On(e), "millis"), D_ = r((e) => On(e * 1e3), "seconds"), I_ = r((e) => On(e * 6e4), "minutes"), N_ = r((e) => On(e * 36e5), "hours"), M_ = r((e) => On(e * 864e5), "days"), F_ = r((e) => On(e * 6048e5), "weeks"), To = r((e) => B_(mr(e), {
-  onMillis: lt,
+}, "make"), L_ = r((e) => at(e, sa), "isDuration");
+var aa = Cn(0), dl = Cn(1 / 0), dp = Cn(-1 / 0), oa = r((e) => Cn(e), "nanos");
+var er = r((e) => Cn(e), "millis"), D_ = r((e) => Cn(e * 1e3), "seconds"), I_ = r((e) => Cn(e * 6e4), "minutes"), N_ = r((e) => Cn(e * 36e5), "hours"), M_ = r((e) => Cn(e * 864e5), "days"), F_ = r((e) => Cn(e * 6048e5), "weeks"), To = r((e) => B_(fr(e), {
+  onMillis: ct,
   onNanos: r((t) => Number(t) / 1e6, "onNanos"),
   onInfinity: r(() => 1 / 0, "onInfinity"),
   onNegativeInfinity: r(() => -1 / 0, "onNegativeInfinity")
 }), "toMillis");
 var fp = r((e) => {
-  let t = mr(e);
+  let t = fr(e);
   switch (t.value._tag) {
     case "Infinity":
     case "NegativeInfinity":
@@ -1341,15 +1341,15 @@ var W_ = we(2, (e, t) => U_(e, t));
 
 var hp = we(2, (e, t) => (n) => {
   let o = e(n);
-  if (An(o)) return tr(n);
+  if (Tn(o)) return Zn(n);
   let s = t(o.success);
-  return An(s) ? tr(n) : s;
+  return Tn(s) ? Zn(n) : s;
 });
 
 
-var ml = rn("effect/Scheduler", {
+var ml = en("effect/Scheduler", {
   fiberCached: !0,
-  defaultValue: r(() => new ia(), "defaultValue")
+  defaultValue: r(() => new ca(), "defaultValue")
 }), wp = "setImmediate" in globalThis ? (e) => {
   let t = globalThis.setImmediate(e);
   return () => globalThis.clearImmediate(t);
@@ -1378,7 +1378,7 @@ var ml = rn("effect/Scheduler", {
     let t = this.buckets;
     return this.buckets = [], t;
   }
-}, ia = class {
+}, ca = class {
   static {
     r(this, "MixedScheduler");
   }
@@ -1453,16 +1453,16 @@ var ml = rn("effect/Scheduler", {
     for (; this.tasks.buckets.length > 0; )
       this.running !== void 0 && (this.running(), this.running = void 0), this.runTasks();
   }
-}, Ep = rn("effect/Scheduler/MaxOpsBeforeYield", {
+}, Ep = en("effect/Scheduler/MaxOpsBeforeYield", {
   fiberCached: !0,
   defaultValue: r(() => 2048, "defaultValue")
-}), yp = rn("effect/Scheduler/PreventSchedulerYield", {
+}), yp = en("effect/Scheduler/PreventSchedulerYield", {
   fiberCached: !0,
   defaultValue: r(() => !1, "defaultValue")
 });
 
 
-var yt = Or;
+var ht = Ar;
 
 
 var _p = "effect/Tracer/ParentSpan";
@@ -1472,20 +1472,20 @@ var Sp = "effect/Tracer";
 var vp = "effect/observability/Metric/FiberRuntimeMetricsKey";
 
 
-var xp = rn("effect/References/CurrentStackFrame", {
+var xp = en("effect/References/CurrentStackFrame", {
   fiberCached: !0,
-  defaultValue: js
+  defaultValue: zs
 });
-var gl = rn("effect/References/CurrentLogAnnotations", {
+var gl = en("effect/References/CurrentLogAnnotations", {
   defaultValue: r(() => ({}), "defaultValue")
-}), bp = rn("effect/References/CurrentLogLevel", {
+}), bp = en("effect/References/CurrentLogLevel", {
   fiberCached: !0,
   defaultValue: r(() => "Info", "defaultValue")
-}), kp = rn("effect/References/MinimumLogLevel", {
+}), kp = en("effect/References/MinimumLogLevel", {
   fiberCached: !0,
   defaultValue: r(() => "Info", "defaultValue")
 });
-var Rp = rn("effect/References/CurrentLogSpans", {
+var Rp = en("effect/References/CurrentLogSpans", {
   defaultValue: r(() => [], "defaultValue")
 });
 
@@ -1498,12 +1498,12 @@ var z_ = r(() => {
 }, "setStackTraceLimit");
 
 
-var El = class extends Zo {
+var El = class extends ns {
   static {
     r(this, "Interrupt");
   }
   fiberId;
-  constructor(t, n = Qs) {
+  constructor(t, n = ni) {
     super("Interrupt", n, "Interrupted"), this.fiberId = t;
   }
   toString() {
@@ -1515,35 +1515,35 @@ var El = class extends Zo {
       fiberId: this.fiberId
     };
   }
-  [Wt](t) {
-    return ti(t) && this.fiberId === t.fiberId && this.annotations === t.annotations;
+  [Nt](t) {
+    return si(t) && this.fiberId === t.fiberId && this.annotations === t.annotations;
   }
-  [Ut]() {
-    return mn(Mt(`${this._tag}:${this.fiberId}`))(Gi(this.annotations));
+  [It]() {
+    return pn(At(`${this._tag}:${this.fiberId}`))(Vi(this.annotations));
   }
 };
-var ua = r((e) => new pr([new El(e)]), "causeInterrupt");
+var fa = r((e) => new dr([new El(e)]), "causeInterrupt");
 var Po = r((e) => {
   for (let t = 0; t < e.reasons.length; t++) {
     let n = e.reasons[t];
     if (n._tag === "Fail")
-      return Dr(n.error);
+      return Lr(n.error);
   }
-  return tr(e);
+  return Zn(e);
 }, "findError");
-var Lp = r((e) => e.reasons.some(ns), "hasDies");
+var Lp = r((e) => e.reasons.some(ss), "hasDies");
 var Dp = r((e) => {
-  let t = e.reasons.find(ns);
-  return t ? Dr(t.defect) : tr(e);
-}, "findDefect"), Ip = r((e) => e.reasons.some(ti), "hasInterrupts");
-var Np = r((e) => e.reasons.length > 0 && e.reasons.every(ti), "hasInterruptsOnly");
+  let t = e.reasons.find(ss);
+  return t ? Lr(t.defect) : Zn(e);
+}, "findDefect"), Ip = r((e) => e.reasons.some(si), "hasInterrupts");
+var Np = r((e) => e.reasons.length > 0 && e.reasons.every(si), "hasInterruptsOnly");
 var Mp = we(2, (e, t) => {
   if (e.reasons.length === 0)
     return t;
   if (t.reasons.length === 0)
     return e;
-  let n = new pr(ip(e.reasons, t.reasons));
-  return Kt(e, n) ? e : n;
+  let n = new dr(ip(e.reasons, t.reasons));
+  return Wt(e, n) ? e : n;
 });
 var J_ = r((e) => {
   let t = {
@@ -1593,7 +1593,7 @@ var J_ = r((e) => {
     for (let i of Object.keys(e))
       i in s || (s[i] = e[i]);
   } else
-    s = new globalThis.Error(e ? o === "string" ? e : zs(e) : `Unknown error: ${e}`);
+    s = new globalThis.Error(e ? o === "string" ? e : Qs(e) : `Unknown error: ${e}`);
   return s;
 }, "causePrettyError"), Q_ = r((e) => {
   if (typeof e.message == "string")
@@ -1603,7 +1603,7 @@ var J_ = r((e) => {
       return e.toString();
     } catch {
     }
-  return zs(e);
+  return Qs(e);
 }, "causePrettyMessage"), Z_ = /\((.*)\)/g, eS = r((e, t, n) => {
   let o = `${t.name}: ${t.message}`, s = (e.startsWith(o) ? e.slice(o.length) : e).split(`
 `), i = [o];
@@ -1613,7 +1613,7 @@ var J_ = r((e) => {
 `), n) : i.join(`
 `);
 }, "cleanErrorStack"), Bp = r((e, t) => {
-  let n = t?.get(Zi.key);
+  let n = t?.get(ta.key);
   return n && (e = `${e}
 ${$p(n)}`), e;
 }, "addStackAnnotations"), tS = r((e, t) => {
@@ -1652,11 +1652,11 @@ ${t}${n[s]}`;
 ${Wp(e.cause, `${t}  `)}
 ${t}}`), o;
 }, "renderErrorCause"), Cp = "~effect/Fiber", nS = {
-  _A: lt,
-  _E: lt
+  _A: ct,
+  _E: ct
 }, rS = {
   id: 0
-}, Hp = r(() => globalThis[Qo], "getCurrentFiber"), ca = class {
+}, Hp = r(() => globalThis[ts], "getCurrentFiber"), ua = class {
   static {
     r(this, "FiberImpl");
   }
@@ -1691,10 +1691,10 @@ ${t}}`), o;
     return this._dispatcher ??= this.currentScheduler.makeDispatcher();
   }
   getRef(t) {
-    return rs(this.context, t);
+    return is(this.context, t);
   }
   addObserver(t) {
-    return this._exit ? (t(this._exit), Xo) : (this._observers.push(t), () => {
+    return this._exit ? (t(this._exit), Qo) : (this._observers.push(t), () => {
       let n = this._observers.indexOf(t);
       n >= 0 && this._observers.splice(n, 1);
     });
@@ -1702,8 +1702,8 @@ ${t}}`), o;
   interruptUnsafe(t, n) {
     if (this._exit)
       return;
-    let o = ua(t);
-    this.currentStackFrame && (o = Zs(o, Lr(Zi, this.currentStackFrame))), n && (o = Zs(o, n)), this._interruptedCause = this._interruptedCause ? Mp(this._interruptedCause, o) : o, this.interruptible && (this._running ? this._deferredInterrupt = !0 : this.evaluate(bt(this._interruptedCause)));
+    let o = fa(t);
+    this.currentStackFrame && (o = ri(o, Or(ta, this.currentStackFrame))), n && (o = ri(o, n)), this._interruptedCause = this._interruptedCause ? Mp(this._interruptedCause, o) : o, this.interruptible && (this._running ? this._deferredInterrupt = !0 : this.evaluate(St(this._interruptedCause)));
   }
   pollUnsafe() {
     return this._exit;
@@ -1720,27 +1720,27 @@ ${t}}`), o;
       return;
     let o = Pp.interruptChildren && Pp.interruptChildren(this);
     if (o !== void 0)
-      return this.evaluate(ut(o, () => n));
+      return this.evaluate(lt(o, () => n));
     this._exit = n, this.runtimeMetrics?.recordFiberEnd(this.context, this._exit);
     for (let s = 0; s < this._observers.length; s++)
       this._observers[s](n);
-    this._observers.length = 0, this._stack.length = 0, this._children = void 0, this.context = ss();
+    this._observers.length = 0, this._stack.length = 0, this._children = void 0, this.context = cs();
   }
   runLoop(t) {
-    let n = globalThis[Qo];
-    globalThis[Qo] = this;
+    let n = globalThis[ts];
+    globalThis[ts] = this;
     let o = this._running;
     this._running = !0;
     let s = !1, i = t;
     this.currentOpCount = 0;
     try {
       for (; ; ) {
-        if (this._deferredInterrupt && (this._deferredInterrupt = !1, i = bt(this._interruptedCause)), this.currentOpCount++, !s && !this.currentPreventYield && this.currentScheduler.shouldYield(this)) {
+        if (this._deferredInterrupt && (this._deferredInterrupt = !1, i = St(this._interruptedCause)), this.currentOpCount++, !s && !this.currentPreventYield && this.currentScheduler.shouldYield(this)) {
           s = !0;
           let a = i;
-          i = ut(da, () => a);
+          i = lt(pa, () => a);
         }
-        if (i = this.currentTracerContext ? this.currentTracerContext(i, this) : i[Ct](this), i === bo) {
+        if (i = this.currentTracerContext ? this.currentTracerContext(i, this) : i[Rt](this), i === bo) {
           let a = this._yielded;
           if (xo in a)
             return this._deferredInterrupt = !1, this._yielded = void 0, a;
@@ -1752,9 +1752,9 @@ ${t}}`), o;
         }
       }
     } catch (a) {
-      return ct(i, Ct) ? this.runLoop(eo(a)) : eo(`Fiber.runLoop: Not a valid effect: ${String(i)}`);
+      return at(i, Rt) ? this.runLoop(eo(a)) : eo(`Fiber.runLoop: Not a valid effect: ${String(i)}`);
     } finally {
-      this._running = o, globalThis[Qo] = n;
+      this._running = o, globalThis[ts] = n;
     }
   }
   getCont(t) {
@@ -1776,32 +1776,32 @@ ${t}}`), o;
     return this._children ??= new Set();
   }
   pipe() {
-    return en(this, arguments);
+    return Jt(this, arguments);
   }
   setContext(t) {
     let n = this.context;
     if (this.context = t, n !== void 0 && tp(n, t)) return;
     let o = this.getRef(ml);
-    o !== this.currentScheduler && (this.currentScheduler = o, this._dispatcher = void 0), this.currentSpan = ni(t, _p), this.currentLogLevel = this.getRef(bp), this.minimumLogLevel = this.getRef(kp), this.currentStackFrame = this.getRef(xp), this.maxOpsBeforeYield = this.getRef(Ep), this.currentPreventYield = this.getRef(yp), this.runtimeMetrics = ni(t, vp);
-    let s = ni(t, Sp);
+    o !== this.currentScheduler && (this.currentScheduler = o, this._dispatcher = void 0), this.currentSpan = ii(t, _p), this.currentLogLevel = this.getRef(bp), this.minimumLogLevel = this.getRef(kp), this.currentStackFrame = this.getRef(xp), this.maxOpsBeforeYield = this.getRef(Ep), this.currentPreventYield = this.getRef(yp), this.runtimeMetrics = ii(t, vp);
+    let s = ii(t, Sp);
     this.currentTracerContext = s ? s.context : void 0;
   }
   get currentSpanLocal() {
     return this.currentSpan?._tag === "Span" ? this.currentSpan : void 0;
   }
 }, oS = {
-  [gn](e, t) {
-    return bt(t._interruptedCause);
+  [mn](e, t) {
+    return St(t._interruptedCause);
   },
-  [Wn](e, t) {
-    return bt(t._interruptedCause);
+  [Un](e, t) {
+    return St(t._interruptedCause);
   }
 }, Pp = {
   interruptChildren: void 0
 }, qp = r((e) => {
   if (!e.currentStackFrame) return;
   let t = new Map();
-  return t.set(Zc.key, e.currentStackFrame), os(t);
+  return t.set(Zc.key, e.currentStackFrame), as(t);
 }, "fiberStackAnnotations");
 var jp = r((e) => to((t) => {
   let n = e[Symbol.iterator](), o = [], s;
@@ -1817,78 +1817,78 @@ var jp = r((e) => to((t) => {
       });
       return;
     }
-    t(Et(o));
+    t(gt(o));
   }
-  return r(i, "loop"), i(), Qt(() => s?.());
+  return r(i, "loop"), i(), Kt(() => s?.());
 }), "fiberAwaitAll");
-var Ap = r((e) => zt((t) => {
+var Ap = r((e) => qt((t) => {
   let n = qp(t), o = ap();
   for (let s of e)
     s.interruptUnsafe(t.id, n), o.push(s);
   return Ml(jp(o));
 }), "fiberInterruptAll");
-var Et = hn, bt = qn, ls = Zr, Qt = Hn({
+var gt = gn, St = Hn, fs = Zr, Kt = Wn({
   op: "Sync",
-  [Ct](e) {
-    let t = this[Ye](), n = e.getCont(gn);
-    return n ? n[gn](t, e) : e.yieldWith(hn(t));
+  [Rt](e) {
+    let t = this[Je](), n = e.getCont(mn);
+    return n ? n[mn](t, e) : e.yieldWith(gn(t));
   }
-}), Pt = Hn({
+}), Tt = Wn({
   op: "Suspend",
-  [Ct](e) {
-    return this[Ye]();
+  [Rt](e) {
+    return this[Je]();
   }
 });
-var Gp = Hn({
+var Gp = Wn({
   op: "Yield",
-  [Ct](e) {
+  [Rt](e) {
     let t = !1;
     return e.currentDispatcher.scheduleTask(() => {
-      t || e.evaluate(Nr);
-    }, this[Ye] ?? 0), e.yieldWith(() => {
+      t || e.evaluate(Ir);
+    }, this[Je] ?? 0), e.yieldWith(() => {
       t = !0;
     });
   }
-}), da = Gp(0);
-var fa = r((e) => eo(e), "die");
-var Ht = Et(void 0);
+}), pa = Gp(0);
+var ma = r((e) => eo(e), "die");
+var Mt = gt(void 0);
 var Kp = r((e) => {
-  let t = typeof e == "function" ? e : e.try, n = typeof e == "function" ? (o) => new la(o, "An error occurred in Effect.try") : e.catch;
-  return Pt(() => {
+  let t = typeof e == "function" ? e : e.try, n = typeof e == "function" ? (o) => new da(o, "An error occurred in Effect.try") : e.catch;
+  return Tt(() => {
     try {
-      return Et(nn(t));
+      return gt(Zt(t));
     } catch (o) {
-      return ls(nn(() => n(o)));
+      return fs(Zt(() => n(o)));
     }
   });
 }, "try_");
 var Vp = r((e) => zp(function(t, n) {
-  nn(() => e(n)).then((o) => t(Et(o)), (o) => t(fa(o)));
+  Zt(() => e(n)).then((o) => t(gt(o)), (o) => t(ma(o)));
 }, e.length !== 0), "promise");
-var zp = Hn({
+var zp = Wn({
   op: "Async",
   single: !1,
-  [Ct](e) {
-    let t = nn(() => this[Ye][0].bind(e.currentScheduler)), n = !1, o = !1, s = this[Ye][1] ? new AbortController() : void 0, i = t((a) => {
+  [Rt](e) {
+    let t = Zt(() => this[Je][0].bind(e.currentScheduler)), n = !1, o = !1, s = this[Je][1] ? new AbortController() : void 0, i = t((a) => {
       n || (n = !0, o ? e.evaluate(a) : o = a);
     }, s?.signal);
     return o !== !1 ? o : (o = !0, e._yielded = () => {
       n = !0;
-    }, s === void 0 && i === void 0 ? bo : (e._stack.push(sS(() => (n = !0, s?.abort(), i ?? Nr))), bo));
+    }, s === void 0 && i === void 0 ? bo : (e._stack.push(sS(() => (n = !0, s?.abort(), i ?? Ir))), bo));
   }
-}), sS = Hn({
+}), sS = Wn({
   op: "AsyncFinalizer",
   [Qr](e) {
-    e.interruptible && (e.interruptible = !1, e._stack.push(wa));
+    e.interruptible && (e.interruptible = !1, e._stack.push(ya));
   },
-  [Wn](e, t) {
-    return Ip(e) ? ut(this[Ye](), () => bt(e)) : bt(e);
+  [Un](e, t) {
+    return Ip(e) ? lt(this[Je](), () => St(e)) : St(e);
   }
-}), to = r((e) => zp(e, e.length >= 2), "callback"), pa = to(Xo), Xp = r((...e) => Pt(() => _l(e.length === 1 ? e[0]() : e[1].call(e[0].self))), "gen"), Yp = r((e, ...t) => {
+}), to = r((e) => zp(e, e.length >= 2), "callback"), ga = to(Qo), Xp = r((...e) => Tt(() => _l(e.length === 1 ? e[0]() : e[1].call(e[0].self))), "gen"), Yp = r((e, ...t) => {
   let n = t.length === 0 ? function() {
-    return Pt(() => _l(e.apply(this, arguments)));
+    return Tt(() => _l(e.apply(this, arguments)));
   } : function() {
-    let o = Pt(() => _l(e.apply(this, arguments)));
+    let o = Tt(() => _l(e.apply(this, arguments)));
     for (let s = 0; s < t.length; s++)
       o = t[s](o, ...arguments);
     return o;
@@ -1898,151 +1898,151 @@ var zp = Hn({
   value: e,
   configurable: !0
 }), "defineFunctionLength");
-var _l = Hn({
+var _l = Wn({
   op: "Iterator",
   single: !1,
-  [gn](e, t) {
-    let n = this[Ye][0];
+  [mn](e, t) {
+    let n = this[Je][0];
     for (; ; ) {
       let o = n.next(e);
-      if (o.done) return Et(o.value);
-      if (as(o.value)) {
+      if (o.done) return gt(o.value);
+      if (us(o.value)) {
         if (o.value._tag === "Failure")
           return o.value;
       } else return t._stack.push(this), o.value;
       e = o.value.value;
     }
   },
-  [Ct](e) {
-    return this[gn](this[Ye][1], e);
+  [Rt](e) {
+    return this[mn](this[Je][1], e);
   }
-}), Mr = we(2, (e, t) => {
-  let n = Et(t);
-  return ut(e, (o) => n);
+}), Nr = we(2, (e, t) => {
+  let n = gt(t);
+  return lt(e, (o) => n);
 });
-var us = we(2, (e, t) => ut(e, (n) => Vt(t) ? t : nn(() => t(n)))), Ao = we(2, (e, t) => ut(e, (n) => Mr(Vt(t) ? t : nn(() => t(n)), n))), Ml = r((e) => ut(e, (t) => Nr), "asVoid");
-var ut = we(2, (e, t) => {
+var ps = we(2, (e, t) => lt(e, (n) => Ht(t) ? t : Zt(() => t(n)))), Ao = we(2, (e, t) => lt(e, (n) => Nr(Ht(t) ? t : Zt(() => t(n)), n))), Ml = r((e) => lt(e, (t) => Ir), "asVoid");
+var lt = we(2, (e, t) => {
   let n = Object.create(aS);
-  return n[Ye] = e, n[gn] = t.length !== 1 ? (o) => t(o) : t, n;
-}), aS = Ar({
+  return n[Je] = e, n[mn] = t.length !== 1 ? (o) => t(o) : t, n;
+}), aS = Pr({
   op: "OnSuccess",
-  [Ct](e) {
-    return e._stack.push(this), this[Ye];
+  [Rt](e) {
+    return e._stack.push(this), this[Je];
   }
 });
-var as = r((e) => xo in e, "effectIsExit");
-var Jp = r((e) => ut(e, lt), "flatten"), wn = we(2, (e, t) => ut(e, (n) => Et(nn(() => t(n)))));
+var us = r((e) => xo in e, "effectIsExit");
+var Jp = r((e) => lt(e, ct), "flatten"), hn = we(2, (e, t) => lt(e, (n) => gt(Zt(() => t(n)))));
 var Qp = r((e) => e._tag === "Success", "exitIsSuccess");
 var Zp = r((e) => e._tag === "Failure", "exitIsFailure");
-var em = r((e) => e._tag === "Failure" ? Dr(e.cause) : tr(e), "exitFilterCause");
-var Nr = hn(void 0);
+var em = r((e) => e._tag === "Failure" ? Lr(e.cause) : Zn(e), "exitFilterCause");
+var Ir = gn(void 0);
 var tm = r((e) => {
   let t = [];
   for (let n of e)
     n._tag === "Failure" && t.push(...n.cause.reasons);
-  return t.length === 0 ? Nr : qn(ts(t));
+  return t.length === 0 ? Ir : Hn(os(t));
 }, "exitAsVoidAll");
-var Fl = we(2, (e, t) => zt((n) => {
+var Fl = we(2, (e, t) => qt((n) => {
   let o = n.context, s = t(o);
-  return o === s ? e : (n.setContext(s), ha(e, () => {
+  return o === s ? e : (n.setContext(s), Ea(e, () => {
     n.setContext(o);
   }));
 }));
-var nm = r(() => cS, "context"), cS = zt((e) => Et(e.context)), rm = r((e) => zt((t) => e(t.context)), "contextWith");
-var Oo = we(2, (e, t) => as(e) ? e : Fl(e, ta(t))), Lo = r(function() {
+var nm = r(() => cS, "context"), cS = qt((e) => gt(e.context)), rm = r((e) => qt((t) => e(t.context)), "contextWith");
+var Oo = we(2, (e, t) => us(e) ? e : Fl(e, ra(t))), Lo = r(function() {
   return arguments.length === 1 ? we(2, (e, t) => Op(e, arguments[0], t)) : we(3, (e, t, n) => Op(e, t, n)).apply(this, arguments);
-}, "provideService"), Op = r((e, t, n) => Fl(e, er(t, n)), "provideServiceImpl");
-var Bl = we((e) => Vt(e[0]), (e, t) => ya({
-  while: qs,
-  body: dr(t?.disableYield ? e : ut(e, (n) => da)),
-  step: Xo
-})), Fr = we(2, (e, t) => {
+}, "provideService"), Op = r((e, t, n) => Fl(e, Qn(t, n)), "provideServiceImpl");
+var Bl = we((e) => Ht(e[0]), (e, t) => Sa({
+  while: Vs,
+  body: lr(t?.disableYield ? e : lt(e, (n) => pa)),
+  step: Qo
+})), Mr = we(2, (e, t) => {
   let n = Object.create(lS);
-  return n[Ye] = e, n[Wn] = t.length !== 1 ? (o) => t(o) : t, n;
-}), lS = Ar({
+  return n[Je] = e, n[Un] = t.length !== 1 ? (o) => t(o) : t, n;
+}), lS = Pr({
   op: "OnFailure",
-  [Ct](e) {
-    return e._stack.push(this), this[Ye];
+  [Rt](e) {
+    return e._stack.push(this), this[Je];
   }
 });
-var $l = we(3, (e, t, n) => Fr(e, (o) => {
+var $l = we(3, (e, t, n) => Mr(e, (o) => {
   let s = t(o);
-  return An(s) ? bt(s.failure) : nn(() => n(s.success, o));
-})), oi = we(2, (e, t) => $l(e, Po, (n) => t(n)));
-var om = we(2, (e, t) => Fr(e, (n) => us(nn(() => t(n)), bt(n))));
-var Ul = we(3, (e, t, n) => Fr(e, (o) => {
+  return Tn(s) ? St(s.failure) : Zt(() => n(s.success, o));
+})), ci = we(2, (e, t) => $l(e, Po, (n) => t(n)));
+var om = we(2, (e, t) => Mr(e, (n) => ps(Zt(() => t(n)), St(n))));
+var Ul = we(3, (e, t, n) => Mr(e, (o) => {
   let s = t(o);
-  return An(s) ? bt(o) : us(nn(() => n(s.success, o)), bt(o));
+  return Tn(s) ? St(o) : ps(Zt(() => n(s.success, o)), St(o));
 })), sm = we(2, (e, t) => Ul(e, Po, (n) => t(n)));
-var im = we(2, (e, t) => Ul(e, Dp, (n) => t(n))), am = we((e) => Vt(e[0]), (e, t, n, o) => Fr(e, (s) => {
+var im = we(2, (e, t) => Ul(e, Dp, (n) => t(n))), am = we((e) => Ht(e[0]), (e, t, n, o) => Mr(e, (s) => {
   let i = Po(s);
-  return An(i) ? bt(i.failure) : t(i.success) ? nn(() => n(i.success)) : o ? nn(() => o(i.success)) : bt(s);
-})), cm = we((e) => Vt(e[0]), (e, t, n, o) => Fr(e, (s) => {
+  return Tn(i) ? St(i.failure) : t(i.success) ? Zt(() => n(i.success)) : o ? Zt(() => o(i.success)) : St(s);
+})), cm = we((e) => Ht(e[0]), (e, t, n, o) => Mr(e, (s) => {
   let i = Po(s);
-  if (An(i)) return bt(i.failure);
+  if (Tn(i)) return St(i.failure);
   let a = t(i.success);
-  return An(a) ? o ? nn(() => o(a.failure)) : bt(s) : nn(() => n(a.success));
-})), Wl = we((e) => Vt(e[0]), (e, t, n, o) => {
-  let s = Array.isArray(t) ? (i) => ct(i, "_tag") && t.includes(i._tag) : uf(t);
+  return Tn(a) ? o ? Zt(() => o(a.failure)) : St(s) : Zt(() => n(a.success));
+})), Wl = we((e) => Ht(e[0]), (e, t, n, o) => {
+  let s = Array.isArray(t) ? (i) => at(i, "_tag") && t.includes(i._tag) : uf(t);
   return am(e, s, n, o);
-}), lm = we((e) => Vt(e[0]), (e, t, n) => {
+}), lm = we((e) => Ht(e[0]), (e, t, n) => {
   let o;
-  return cm(e, (s) => (o ??= Object.keys(t), ct(s, "_tag") && Uc(s._tag) && o.includes(s._tag) ? Dr(s) : tr(s)), (s) => nn(() => t[s._tag](s)), n);
+  return cm(e, (s) => (o ??= Object.keys(t), at(s, "_tag") && Uc(s._tag) && o.includes(s._tag) ? Lr(s) : Zn(s)), (s) => Zt(() => t[s._tag](s)), n);
 });
-var um = we((e) => Vt(e[0]), (e, t) => {
+var um = we((e) => Ht(e[0]), (e, t) => {
   if (!t?.log)
-    return cs(e, {
-      onFailure: r((o) => Ht, "onFailure"),
-      onSuccess: r((o) => Ht, "onSuccess")
+    return ds(e, {
+      onFailure: r((o) => Mt, "onFailure"),
+      onSuccess: r((o) => Mt, "onSuccess")
     });
   let n = Ql(t.log === !0 ? void 0 : t.log);
-  return cs(e, {
+  return ds(e, {
     onFailure: r((o) => t.message === void 0 ? n(o) : n(t.message, o), "onFailure"),
-    onSuccess: r((o) => Ht, "onSuccess")
+    onSuccess: r((o) => Mt, "onSuccess")
   });
 });
-var aa = r((e) => pm(e, {
-  onFailure: tr,
-  onSuccess: Dr
-}), "result"), cs = we(2, (e, t) => {
+var la = r((e) => pm(e, {
+  onFailure: Zn,
+  onSuccess: Lr
+}), "result"), ds = we(2, (e, t) => {
   let n = Object.create(uS);
-  return n[Ye] = e, n[gn] = t.onSuccess.length !== 1 ? (o) => t.onSuccess(o) : t.onSuccess, n[Wn] = t.onFailure.length !== 1 ? (o) => t.onFailure(o) : t.onFailure, n;
-}), uS = Ar({
+  return n[Je] = e, n[mn] = t.onSuccess.length !== 1 ? (o) => t.onSuccess(o) : t.onSuccess, n[Un] = t.onFailure.length !== 1 ? (o) => t.onFailure(o) : t.onFailure, n;
+}), uS = Pr({
   op: "OnSuccessAndFailure",
-  [Ct](e) {
-    return e._stack.push(this), this[Ye];
+  [Rt](e) {
+    return e._stack.push(this), this[Je];
   }
 });
-var dm = we(2, (e, t) => cs(e, {
+var dm = we(2, (e, t) => ds(e, {
   onFailure: r((n) => {
-    let o = n.reasons.find(ei);
-    return o ? nn(() => t.onFailure(o.error)) : bt(n);
+    let o = n.reasons.find(oi);
+    return o ? Zt(() => t.onFailure(o.error)) : St(n);
   }, "onFailure"),
   onSuccess: t.onSuccess
 })), fm = we(2, (e, t) => dm(e, {
-  onFailure: r((n) => Qt(() => t.onFailure(n)), "onFailure"),
-  onSuccess: r((n) => Qt(() => t.onSuccess(n)), "onSuccess")
+  onFailure: r((n) => Kt(() => t.onFailure(n)), "onFailure"),
+  onSuccess: r((n) => Kt(() => t.onSuccess(n)), "onSuccess")
 })), pm = we(2, (e, t) => {
-  if (as(e)) {
-    if (e._tag === "Success") return hn(t.onSuccess(e.value));
+  if (us(e)) {
+    if (e._tag === "Success") return gn(t.onSuccess(e.value));
     let n = Po(e.cause);
-    return An(n) ? e : hn(t.onFailure(n.success));
+    return Tn(n) ? e : gn(t.onFailure(n.success));
   }
   return fm(e, t);
 });
-var ma = r((e) => as(e) ? hn(e) : dS(e), "exit"), dS = Hn({
+var ha = r((e) => us(e) ? gn(e) : dS(e), "exit"), dS = Wn({
   op: "Exit",
-  [Ct](e) {
-    return e._stack.push(this), this[Ye];
+  [Rt](e) {
+    return e._stack.push(this), this[Je];
   },
-  [gn](e, t, n) {
-    return Et(n ?? hn(e));
+  [mn](e, t, n) {
+    return gt(n ?? gn(e));
   },
-  [Wn](e, t, n) {
-    return Et(n ?? qn(e));
+  [Un](e, t, n) {
+    return gt(n ?? Hn(e));
   }
 });
-var Sl = "~effect/Scope", vl = "~effect/Scope/Closeable", Hl = Ft("effect/Scope"), ql = r((e, t) => Pt(() => jl(e, t) ?? Ht), "scopeClose"), jl = r((e, t) => {
+var Sl = "~effect/Scope", vl = "~effect/Scope/Closeable", Hl = Ot("effect/Scope"), ql = r((e, t) => Tt(() => jl(e, t) ?? Mt), "scopeClose"), jl = r((e, t) => {
   if (e.state._tag === "Closed") return;
   let n = {
     _tag: "Closed",
@@ -2061,24 +2061,24 @@ var Sl = "~effect/Scope", vl = "~effect/Scope/Closeable", Hl = Ft("effect/Scope"
   let o = [], s = [], i = Array.from(t.values()), a = Hp();
   for (let c = i.length - 1; c >= 0; c--) {
     let l = i[c];
-    e.strategy === "sequential" ? o.push(yield* ma(l(n))) : s.push(Xl(a, l(n), !0, !0, "inherit"));
+    e.strategy === "sequential" ? o.push(yield* ha(l(n))) : s.push(Xl(a, l(n), !0, !0, "inherit"));
   }
   return s.length > 0 && (o = yield* jp(s)), yield* tm(o);
 });
 var mm = r((e, t) => {
-  let n = ga(t);
+  let n = wa(t);
   if (e.state._tag === "Closed")
     return n.state = e.state, n;
   let o = {};
-  return xl(e, o, (s) => ql(n, s)), xl(n, o, (s) => Qt(() => pS(e, o))), n;
-}, "scopeForkUnsafe"), ds = r((e, t) => Pt(() => e.state._tag === "Closed" ? t(e.state.exit) : (xl(e, {}, t), Ht)), "scopeAddFinalizerExit"), gm = r((e, t) => ds(e, dr(t)), "scopeAddFinalizer"), xl = r((e, t, n) => {
+  return xl(e, o, (s) => ql(n, s)), xl(n, o, (s) => Kt(() => pS(e, o))), n;
+}, "scopeForkUnsafe"), ms = r((e, t) => Tt(() => e.state._tag === "Closed" ? t(e.state.exit) : (xl(e, {}, t), Mt)), "scopeAddFinalizerExit"), gm = r((e, t) => ms(e, lr(t)), "scopeAddFinalizer"), xl = r((e, t, n) => {
   e.state._tag === "Empty" ? e.state = {
     _tag: "Open",
     finalizers: new Map([[t, n]])
   } : e.state._tag === "Open" && e.state.finalizers.set(t, n);
 }, "scopeAddFinalizerUnsafe"), pS = r((e, t) => {
   e.state._tag === "Open" && e.state.finalizers.delete(t);
-}, "scopeRemoveFinalizerUnsafe"), ga = r((e = "sequential") => ({
+}, "scopeRemoveFinalizerUnsafe"), wa = r((e = "sequential") => ({
   [vl]: vl,
   [Sl]: Sl,
   strategy: e,
@@ -2087,79 +2087,79 @@ var mm = r((e, t) => {
   _tag: "Empty"
 };
 var Gl = Hl, hm = Lo(Hl);
-var Kl = r((e) => Pt(() => {
-  let t = ga();
-  return no(e(t), (n) => Pt(() => jl(t, n) ?? Ht));
-}), "scopedWith"), wm = r((e, t, n) => rm((o) => Ea((s) => ut(Gl, (i) => Ao(n?.interruptible ? s(e) : e, (a) => ds(i, (c) => Oo(t(a, c), o)))))), "acquireRelease");
-var ha = Hn({
+var Kl = r((e) => Tt(() => {
+  let t = wa();
+  return no(e(t), (n) => Tt(() => jl(t, n) ?? Mt));
+}), "scopedWith"), wm = r((e, t, n) => rm((o) => _a((s) => lt(Gl, (i) => Ao(n?.interruptible ? s(e) : e, (a) => ms(i, (c) => Oo(t(a, c), o)))))), "acquireRelease");
+var Ea = Wn({
   op: "OnExit",
   single: !1,
-  [Ct](e) {
-    return e._stack.push(this), this[Ye][0];
+  [Rt](e) {
+    return e._stack.push(this), this[Je][0];
   },
   [Qr](e) {
-    e.interruptible && this[Ye][2] !== !0 && (e._stack.push(wa), e.interruptible = !1);
+    e.interruptible && this[Je][2] !== !0 && (e._stack.push(ya), e.interruptible = !1);
   },
-  [gn](e, t, n) {
-    n ??= hn(e);
-    let o = this[Ye][1](n);
-    return o ? ut(o, (s) => n) : n;
+  [mn](e, t, n) {
+    n ??= gn(e);
+    let o = this[Je][1](n);
+    return o ? lt(o, (s) => n) : n;
   },
-  [Wn](e, t, n) {
-    n ??= qn(e);
-    let o = this[Ye][1](n);
-    return o ? ut(o, (s) => n) : n;
+  [Un](e, t, n) {
+    n ??= Hn(e);
+    let o = this[Je][1](n);
+    return o ? lt(o, (s) => n) : n;
   }
-}), no = we(2, ha), Em = we(2, (e, t) => no(e, (n) => t));
+}), no = we(2, Ea), Em = we(2, (e, t) => no(e, (n) => t));
 var ym = we(3, (e, t, n) => no(e, (o) => {
   let s = t(o);
-  return An(s) ? Ht : n(s.success, o);
+  return Tn(s) ? Mt : n(s.success, o);
 })), _m = we(2, (e, t) => ym(e, em, t));
-var Sm = r((e, t, n) => Ea((o) => ut(e, (s) => ha(o(t(s)), (i) => n(s, i), !0))), "acquireUseRelease");
-var vm = zt((e) => bt(ua(e.id))), Vl = r((e) => zt((t) => (t.interruptible && (t.interruptible = !1, t._stack.push(wa)), e)), "uninterruptible"), xm = Hn({
+var Sm = r((e, t, n) => _a((o) => lt(e, (s) => Ea(o(t(s)), (i) => n(s, i), !0))), "acquireUseRelease");
+var vm = qt((e) => St(fa(e.id))), Vl = r((e) => qt((t) => (t.interruptible && (t.interruptible = !1, t._stack.push(ya)), e)), "uninterruptible"), xm = Wn({
   op: "SetInterruptible",
   [Qr](e) {
-    if (e.interruptible = this[Ye], e._interruptedCause && e.interruptible)
-      return () => bt(e._interruptedCause);
+    if (e.interruptible = this[Je], e._interruptedCause && e.interruptible)
+      return () => St(e._interruptedCause);
   }
-}), wa = xm(!0), gS = xm(!1), hS = r((e) => {
-  if (e.interruptible = !0, e._stack.push(gS), e._interruptedCause) return bt(e._interruptedCause);
-}, "setFiberInterruptible"), bm = r((e) => zt((t) => t.interruptible ? e : hS(t) ?? e), "interruptible"), Ea = r((e) => zt((t) => t.interruptible ? (t.interruptible = !1, t._stack.push(wa), e(bm)) : e(lt)), "uninterruptibleMask");
-var zl = r((e, t) => df(e) ? t?.mode === "result" ? Ir(e, aa, t) : Ir(e, lt, t) : t?.discard ? t.mode === "result" ? Ir(Object.values(e), aa, t) : Ir(Object.values(e), lt, t) : Pt(() => {
+}), ya = xm(!0), gS = xm(!1), hS = r((e) => {
+  if (e.interruptible = !0, e._stack.push(gS), e._interruptedCause) return St(e._interruptedCause);
+}, "setFiberInterruptible"), bm = r((e) => qt((t) => t.interruptible ? e : hS(t) ?? e), "interruptible"), _a = r((e) => qt((t) => t.interruptible ? (t.interruptible = !1, t._stack.push(ya), e(bm)) : e(ct)), "uninterruptibleMask");
+var zl = r((e, t) => df(e) ? t?.mode === "result" ? Dr(e, la, t) : Dr(e, ct, t) : t?.discard ? t.mode === "result" ? Dr(Object.values(e), la, t) : Dr(Object.values(e), ct, t) : Tt(() => {
   let n = {};
-  return Mr(Ir(Object.entries(e), ([o, s]) => wn(t?.mode === "result" ? aa(s) : s, (i) => {
-    Xi(n, o, i);
+  return Nr(Dr(Object.entries(e), ([o, s]) => hn(t?.mode === "result" ? la(s) : s, (i) => {
+    Ji(n, o, i);
   }), {
     discard: !0,
     concurrency: t?.concurrency
   }), n);
 }), "all");
-var ya = Hn({
+var Sa = Wn({
   op: "While",
-  [gn](e, t) {
-    return this[Ye].step(e), this[Ye].while() ? (t._stack.push(this), this[Ye].body()) : Nr;
+  [mn](e, t) {
+    return this[Je].step(e), this[Je].while() ? (t._stack.push(this), this[Je].body()) : Ir;
   },
-  [Ct](e) {
-    return this[Ye].while() ? (e._stack.push(this), this[Ye].body()) : Nr;
+  [Rt](e) {
+    return this[Je].while() ? (e._stack.push(this), this[Je].body()) : Ir;
   }
-}), Ir = we((e) => typeof e[1] == "function", (e, t, n) => Pt(() => {
+}), Dr = we((e) => typeof e[1] == "function", (e, t, n) => Tt(() => {
   let o = n?.concurrency ?? 1, s = o === "unbounded" ? Number.POSITIVE_INFINITY : Math.max(1, o);
   if (s === 1)
     return wS(e, t, n);
   let i = Ro(e), a = i.length;
   if (a === 0)
-    return n?.discard ? Ht : Et([]);
+    return n?.discard ? Mt : gt([]);
   let c = n?.discard ? void 0 : new Array(a), l = yS({
     f: t,
     out: c
   }, i, {
     concurrency: s
   });
-  return l ? Mr(l, c) : Et(c);
+  return l ? Nr(l, c) : gt(c);
 }));
-var wS = r((e, t, n) => Pt(() => {
+var wS = r((e, t, n) => Tt(() => {
   let o = n?.discard ? void 0 : [], s = e[Symbol.iterator](), i = s.next(), a = 0;
-  return Mr(ya({
+  return Nr(Sa({
     while: r(() => !i.done, "while"),
     body: r(() => t(i.value, a++), "body"),
     step: r((c) => {
@@ -2170,8 +2170,8 @@ var wS = r((e, t, n) => Pt(() => {
   let t = e.onItem, n = e.step, o = r((s, i, a, c) => {
     for (; a < c; a++) {
       let l = i[a], f = t(s, l, a);
-      if (!as(f))
-        return ut(ma(f), (g) => n(s, l, g, a) ?? o(s, i, a + 1, c) ?? Ht);
+      if (!us(f))
+        return lt(ha(f), (h) => n(s, l, h, a) ?? o(s, i, a + 1, c) ?? Mt);
       let w = n(s, l, f, a);
       if (w) return w._tag === "Failure" ? w : void 0;
     }
@@ -2180,81 +2180,81 @@ var wS = r((e, t, n) => Pt(() => {
     let c = 0, l = a?.end ?? i.length, f = a?.concurrency ?? 1;
     if (f === 1)
       return o(s, i, 0, l);
-    let w = a?.orderedStep === !0 && f > 1, g = !1, _, E, m, U = !1, M, D, O = c, P = w ? new Array(l) : void 0, v = r((Ee) => {
+    let w = a?.orderedStep === !0 && f > 1, h = !1, _, E, m, $ = !1, F, I, O = c, P = w ? new Array(l) : void 0, x = r((Ee) => {
       let ye = eo(Ee);
-      return M = ye, g = !0, U = !0, E && E.size > 0 ? ut(Vl(Ap(Array.from(E))), () => ye) : ye;
-    }, "failDefect"), Q = r((Ee, ye, Ie) => {
-      if (!w) return n(s, Ee, ye, Ie);
-      if (M) return M;
-      for (P[Ie] = ye; O < l; ) {
-        let Se = P[O];
-        if (Se === void 0) return;
+      return F = ye, h = !0, $ = !0, E && E.size > 0 ? lt(Vl(Ap(Array.from(E))), () => ye) : ye;
+    }, "failDefect"), Q = r((Ee, ye, De) => {
+      if (!w) return n(s, Ee, ye, De);
+      if (F) return F;
+      for (P[De] = ye; O < l; ) {
+        let ve = P[O];
+        if (ve === void 0) return;
         P[O] = void 0;
-        let $e = O++, Z = n(s, i[$e], Se, $e);
+        let $e = O++, Z = n(s, i[$e], ve, $e);
         if (Z) return Z;
       }
-    }, "runStep"), G = r(() => {
+    }, "runStep"), z = r(() => {
       let Ee = !1;
-      for (; !M && c < l; c++) {
-        let ye = i[c], Ie = D ?? t(s, ye, c);
-        if (as(Ie)) {
-          if (M = Q(ye, Ie, c), M) break;
+      for (; !F && c < l; c++) {
+        let ye = i[c], De = I ?? t(s, ye, c);
+        if (us(De)) {
+          if (F = Q(ye, De, c), F) break;
         } else if (_) {
-          D = void 0;
-          let Se = Xl(_, Ie, !0, !0, "inherit");
-          if (Se._exit) {
-            if (M = Q(ye, Se._exit, c), M) break;
+          I = void 0;
+          let ve = Xl(_, De, !0, !0, "inherit");
+          if (ve._exit) {
+            if (F = Q(ye, ve._exit, c), F) break;
             continue;
           }
-          E.add(Se);
+          E.add(ve);
           let $e = c;
-          if (Se.addObserver((Z) => {
-            E.delete(Se);
+          if (ve.addObserver((Z) => {
+            E.delete(ve);
             try {
-              if (M) {
-                if (!U && Z._tag === "Failure")
-                  for (let ae of Z.cause.reasons)
-                    ae._tag !== "Interrupt" && (M._tag === "Failure" ? M.cause.reasons.push(ae) : M = qn(ts([ae])));
+              if (F) {
+                if (!$ && Z._tag === "Failure")
+                  for (let ie of Z.cause.reasons)
+                    ie._tag !== "Interrupt" && (F._tag === "Failure" ? F.cause.reasons.push(ie) : F = Hn(os([ie])));
               } else {
-                let ae = Q(ye, Z, $e);
-                ae && (M = ae._tag === "Failure" ? qn(ts(ae.cause.reasons.slice())) : ae, G());
+                let ie = Q(ye, Z, $e);
+                ie && (F = ie._tag === "Failure" ? Hn(os(ie.cause.reasons.slice())) : ie, z());
               }
               if (Ee) {
-                let ae = G();
-                ae && m(ae);
-              } else g && E.size === 0 && m(M ?? Ht);
-            } catch (ae) {
-              m(v(ae));
+                let ie = z();
+                ie && m(ie);
+              } else h && E.size === 0 && m(F ?? Mt);
+            } catch (ie) {
+              m(x(ie));
             }
           }), E.size < f) continue;
           Ee = !0, c++;
           return;
         } else
-          return to((Se) => {
-            _ = Hp(), E = new Set(), D = Ie, m = Se;
+          return to((ve) => {
+            _ = Hp(), E = new Set(), I = De, m = ve;
             let $e;
             try {
-              $e = G();
+              $e = z();
             } catch (Z) {
-              return Se(v(Z));
+              return ve(x(Z));
             }
-            return $e ? Se($e) : Pt(() => (M = Nr, U = !0, E ? Ap(E) : Ht));
+            return $e ? ve($e) : Tt(() => (F = Ir, $ = !0, E ? Ap(E) : Mt));
           });
       }
-      if (g = !0, M) {
+      if (h = !0, F) {
         if (E && E.size > 0) {
           let ye = qp(_);
-          E.forEach((Ie) => Ie.interruptUnsafe(_.id, ye));
+          E.forEach((De) => De.interruptUnsafe(_.id, ye));
           return;
         }
-        if (m || M._tag === "Failure")
-          return M;
+        if (m || F._tag === "Failure")
+          return F;
       } else if (m)
         if (E)
-          E.size === 0 && m(Ht);
-        else return Nr;
+          E.size === 0 && m(Mt);
+        else return Ir;
     }, "go");
-    return G();
+    return z();
   };
 }, "iterateEagerImpl");
 var yS = ES({
@@ -2267,11 +2267,11 @@ var yS = ES({
   }
 });
 var Xl = r((e, t, n = !1, o = !1, s = !1) => {
-  let i = e, a = s === "inherit" ? i.interruptible : !s, c = new ca(i.context, a);
+  let i = e, a = s === "inherit" ? i.interruptible : !s, c = new ua(i.context, a);
   return n ? c.evaluate(t) : i.currentDispatcher.scheduleTask(() => c.evaluate(t), 0), !o && !c._exit && (i.children().add(c), c.addObserver(() => i._children.delete(c))), c;
-}, "forkUnsafe"), km = we((e) => Vt(e[0]), (e, t) => zt((n) => Et(Xl(n, e, t?.startImmediately, !0, t?.uninterruptible))));
-var si = r((e) => (t, n) => {
-  let o = new ca(n?.scheduler ? er(e, ml, n.scheduler) : e, n?.uninterruptible !== !0);
+}, "forkUnsafe"), km = we((e) => Ht(e[0]), (e, t) => qt((n) => gt(Xl(n, e, t?.startImmediately, !0, t?.uninterruptible))));
+var li = r((e) => (t, n) => {
+  let o = new ua(n?.scheduler ? Qn(e, ml, n.scheduler) : e, n?.uninterruptible !== !0);
   if (o.evaluate(t), o._exit) return o;
   if (n?.signal)
     if (n.signal.aborted)
@@ -2284,15 +2284,15 @@ var si = r((e) => (t, n) => {
     }
   return n?.onFiberStart && n.onFiberStart(o), o;
 }, "runForkWith");
-var Rm = si(ss()), Tm = r((e) => {
-  let t = si(e);
+var Rm = li(cs()), Tm = r((e) => {
+  let t = li(e);
   return (n, o) => {
     let s = t(n, o);
     return o?.onExit && s.addObserver(o.onExit), (i) => s.interruptUnsafe(i);
   };
 }, "runCallbackWith");
 var Yl = r((e) => {
-  let t = si(e);
+  let t = li(e);
   return (n, o) => {
     let s = t(n, o);
     return new Promise((i) => {
@@ -2308,7 +2308,7 @@ var Cm = r((e) => {
     return s.value;
   });
 }, "runPromiseWith");
-var _a = rn("effect/Clock", {
+var va = en("effect/Clock", {
   defaultValue: r(() => new bl(), "defaultValue")
 }), wl = 2 ** 31 - 1, bl = class {
   static {
@@ -2317,23 +2317,23 @@ var _a = rn("effect/Clock", {
   currentTimeMillisUnsafe() {
     return Date.now();
   }
-  currentTimeMillis = Qt(() => this.currentTimeMillisUnsafe());
+  currentTimeMillis = Kt(() => this.currentTimeMillisUnsafe());
   currentTimeNanosUnsafe() {
     return _S();
   }
-  currentTimeNanos = Qt(() => this.currentTimeNanosUnsafe());
+  currentTimeNanos = Kt(() => this.currentTimeNanosUnsafe());
   monotonicTimeNanosUnsafe() {
     return Am();
   }
-  monotonicTimeNanos = Qt(() => this.monotonicTimeNanosUnsafe());
+  monotonicTimeNanos = Kt(() => this.monotonicTimeNanosUnsafe());
   sleep(t) {
     return this.sleepMillis(To(t));
   }
   sleepMillis(t) {
-    return t <= 0 ? da : Number.isFinite(t) ? to((n) => {
-      let o = t > wl ? this.sleepMillis(t - wl) : Ht, s = setTimeout(() => n(o), Math.min(t, wl));
-      return Qt(() => clearTimeout(s));
-    }) : pa;
+    return t <= 0 ? pa : Number.isFinite(t) ? to((n) => {
+      let o = t > wl ? this.sleepMillis(t - wl) : Mt, s = setTimeout(() => n(o), Math.min(t, wl));
+      return Kt(() => clearTimeout(s));
+    }) : ga;
   }
 }, Pm = BigInt(1e6), Am = (function() {
   let e = globalThis.process?.hrtime;
@@ -2358,9 +2358,9 @@ var _a = rn("effect/Clock", {
     }
     return t + n;
   };
-})(), Do = r((e) => zt((t) => e(t.getRef(_a))), "clockWith"), Sa = r((e) => Do((t) => t.sleep(mr(e))), "sleep"), Jl = Do((e) => e.currentTimeMillis);
+})(), Do = r((e) => qt((t) => e(t.getRef(va))), "clockWith"), xa = r((e) => Do((t) => t.sleep(fr(e))), "sleep"), Jl = Do((e) => e.currentTimeMillis);
 var kl = "~effect/Cause/TimeoutError";
-var Rl = class extends (Or("TimeoutError")) {
+var Rl = class extends (Ar("TimeoutError")) {
   static {
     r(this, "TimeoutError");
   }
@@ -2371,7 +2371,7 @@ var Rl = class extends (Or("TimeoutError")) {
     });
   }
 }, Tl = "~effect/Cause/IllegalArgumentError";
-var Cl = class extends (Or("IllegalArgumentError")) {
+var Cl = class extends (Ar("IllegalArgumentError")) {
   static {
     r(this, "IllegalArgumentError");
   }
@@ -2382,7 +2382,7 @@ var Cl = class extends (Or("IllegalArgumentError")) {
     });
   }
 }, Pl = "~effect/Cause/ExceededCapacityError";
-var Al = class extends (Or("ExceededCapacityError")) {
+var Al = class extends (Ar("ExceededCapacityError")) {
   static {
     r(this, "ExceededCapacityError");
   }
@@ -2393,7 +2393,7 @@ var Al = class extends (Or("ExceededCapacityError")) {
     });
   }
 }, Ol = "~effect/Cause/AsyncFiberError";
-var Ll = class extends (Or("AsyncFiberError")) {
+var Ll = class extends (Ar("AsyncFiberError")) {
   static {
     r(this, "AsyncFiberError");
   }
@@ -2405,7 +2405,7 @@ var Ll = class extends (Or("AsyncFiberError")) {
     });
   }
 }, Dl = "~effect/Cause/UnknownError";
-var la = class extends (Or("UnknownError")) {
+var da = class extends (Ar("UnknownError")) {
   static {
     r(this, "UnknownError");
   }
@@ -2416,7 +2416,7 @@ var la = class extends (Or("UnknownError")) {
       cause: t
     });
   }
-}, SS = rn("effect/Console/CurrentConsole", {
+}, SS = en("effect/Console/CurrentConsole", {
   defaultValue: r(() => globalThis.console, "defaultValue")
 }), vS = r((e) => {
   switch (e) {
@@ -2437,18 +2437,18 @@ var la = class extends (Or("UnknownError")) {
     case "None":
       return Number.MAX_SAFE_INTEGER;
   }
-}, "logLevelToOrder"), xS = Gf(jf, vS), bS = Kf(xS), Om = rn("effect/Loggers/CurrentLoggers", {
+}, "logLevelToOrder"), xS = Gf(jf, vS), bS = Kf(xS), Om = en("effect/Loggers/CurrentLoggers", {
   defaultValue: r(() => new Set([OS, LS]), "defaultValue")
-}), kS = rn("effect/Logger/LogToStderr", {
+}), kS = en("effect/Logger/LogToStderr", {
   defaultValue: cf
 });
 var RS = "~effect/Logger", TS = {
   [RS]: {
-    _Message: lt,
-    _Output: lt
+    _Message: ct,
+    _Output: ct
   },
   pipe() {
-    return en(this, arguments);
+    return Jt(this, arguments);
   }
 }, Lm = r((e) => {
   let t = Object.create(TS);
@@ -2458,13 +2458,13 @@ var Ql = r((e) => (...t) => {
   let n;
   for (let o = 0, s = t.length; o < s; o++) {
     let i = t[o];
-    Js(i) && (n ? t.splice(o, 1) : t = t.slice(0, o).concat(t.slice(o + 1)), n = n ? ts(n.reasons.concat(i.reasons)) : i, o--);
+    ti(i) && (n ? t.splice(o, 1) : t = t.slice(0, o).concat(t.slice(o + 1)), n = n ? os(n.reasons.concat(i.reasons)) : i, o--);
   }
-  return n === void 0 && (n = Qc), zt((o) => {
+  return n === void 0 && (n = Qc), qt((o) => {
     let s = e ?? o.currentLogLevel;
     if (bS(o.minimumLogLevel, s))
-      return Ht;
-    let i = o.getRef(_a), a = o.getRef(Om);
+      return Mt;
+    let i = o.getRef(va), a = o.getRef(Om);
     if (a.size > 0) {
       let c = new Date(i.currentTimeMillisUnsafe());
       for (let l of a)
@@ -2476,7 +2476,7 @@ var Ql = r((e) => (...t) => {
           message: t
         });
     }
-    return Ht;
+    return Mt;
   });
 }, "logWithLevel");
 var Co = {
@@ -2490,7 +2490,7 @@ var Co = {
   gray: "90",
   black: "30",
   bgBrightRed: "101"
-}, bC = {
+}, kC = {
   None: [],
   All: [],
   Trace: [Co.gray],
@@ -2523,49 +2523,49 @@ var OS = Lm(({
   logLevel: n,
   message: o
 }) => {
-  let s = t.getRef(_a), i = t.getRef(gl), a = t.currentSpan;
+  let s = t.getRef(va), i = t.getRef(gl), a = t.currentSpan;
   if (a === void 0 || a._tag === "ExternalSpan") return;
   let c = {};
   for (let [l, f] of Object.entries(i))
-    Xi(c, l, f);
+    Ji(c, l, f);
   c["effect.fiberId"] = t.id, c["effect.logLevel"] = n.toUpperCase(), e.reasons.length > 0 && (c["effect.cause"] = Nl(e)), a.event(Ef(Array.isArray(o) && o.length === 1 ? o[0] : o), s.currentTimeNanosUnsafe(), c);
 });
 
 
-var Br = ei, Io = ns;
-var En = Np;
-var fs = Il;
+var Fr = oi, Io = ss;
+var wn = Np;
+var gs = Il;
 var Dm = Po;
 var Im = Lp;
-var Nm = ea;
+var Nm = na;
 var Zl = Af;
 
 
 var eu = Zr;
-var yn = Qp, tu = Zp;
+var En = Qp, tu = Zp;
 
 
 var DS = "~effect/Deferred";
 var IS = {
   [DS]: {
-    _A: lt,
-    _E: lt
+    _A: ct,
+    _E: ct
   },
   pipe() {
-    return en(this, arguments);
+    return Jt(this, arguments);
   }
 }, nu = r(() => {
   let e = Object.create(IS);
   return e.resumes = void 0, e.effect = void 0, e;
-}, "makeUnsafe"), gr = r(() => Qt(() => nu()), "make"), jn = r((e) => to((t) => e.effect ? t(e.effect) : (e.resumes ??= [], e.resumes.push(t), Qt(() => {
+}, "makeUnsafe"), pr = r(() => Kt(() => nu()), "make"), qn = r((e) => to((t) => e.effect ? t(e.effect) : (e.resumes ??= [], e.resumes.push(t), Kt(() => {
   let n = e.resumes;
   if (n === void 0) return;
   let o = n.indexOf(t);
   o >= 0 && n.splice(o, 1);
 }))), "_await");
-var NS = we(2, (e, t) => Qt(() => Gn(e, t))), No = NS;
-var so = we(2, (e, t) => No(e, hn(t)));
-var Gn = r((e, t) => {
+var NS = we(2, (e, t) => Kt(() => jn(e, t))), No = NS;
+var so = we(2, (e, t) => No(e, gn(t)));
+var jn = r((e, t) => {
   if (e.effect) return !1;
   if (e.effect = t, e.resumes) {
     for (let n = 0; n < e.resumes.length; n++)
@@ -2576,38 +2576,38 @@ var Gn = r((e, t) => {
 }, "doneUnsafe");
 
 
-var Mm = ga, Fm = hm;
+var Mm = wa, Fm = hm;
 var Mo = gm;
-var va = mm, ru = ql;
+var ba = mm, ru = ql;
 
 
-var US = "~effect/Layer", Bm = "~effect/Layer/MemoMap", WS = r((e, t) => (e.observers++, us(ds(t, (n) => e.finalizer(n)), e.effect)), "memoMapReuse");
+var US = "~effect/Layer", Bm = "~effect/Layer/MemoMap", WS = r((e, t) => (e.observers++, ps(ms(t, (n) => e.finalizer(n)), e.effect)), "memoMapReuse");
 var HS = {
   [US]: {
-    _ROut: lt,
-    _E: lt,
-    _RIn: lt
+    _ROut: ct,
+    _E: ct,
+    _RIn: ct
   },
   pipe() {
-    return en(this, arguments);
+    return Jt(this, arguments);
   }
 }, qS = r((e) => {
   let t = Object.create(HS);
   return t.build = e, t;
 }, "fromBuildUnsafe"), ou = r((e) => qS((t, n) => {
-  let o = va(n);
-  return no(e(t, o), (s) => s._tag === "Failure" ? ru(o, s) : Ht);
+  let o = ba(n);
+  return no(e(t, o), (s) => s._tag === "Failure" ? ru(o, s) : Mt);
 }), "fromBuild"), jS = r((e) => {
   let t = ou((n, o) => n.getOrElseMemoize(t, o, e));
   return t;
 }, "fromBuildMemo"), GS = r((e, t, n, o) => {
   let s = Mm(), i = nu(), a = {
     observers: 1,
-    effect: jn(i),
-    finalizer: r((c) => Pt(() => (a.observers--, a.observers === 0 ? (e.map.delete(t), ru(s, c)) : Ht)), "finalizer")
+    effect: qn(i),
+    finalizer: r((c) => Tt(() => (a.observers--, a.observers === 0 ? (e.map.delete(t), ru(s, c)) : Mt)), "finalizer")
   };
-  return e.map.set(t, a), ds(n, a.finalizer).pipe(ut(() => o(e, s)), no((c) => (a.effect = c, No(i, c))));
-}, "memoMapBuild"), ba = class {
+  return e.map.set(t, a), ms(n, a.finalizer).pipe(lt(() => o(e, s)), no((c) => (a.effect = c, No(i, c))));
+}, "memoMapBuild"), Ra = class {
   static {
     r(this, "MemoMapImpl");
   }
@@ -2624,13 +2624,13 @@ var HS = {
     return o ? WS(o, n) : this.parent?.get(t, n);
   }
   getOrElseMemoize(t, n, o) {
-    return Pt(() => {
+    return Tt(() => {
       let s = this.get(t, n);
       return s || GS(this, t, n, o);
     });
   }
-}, su = r(() => new ba(), "makeMemoMapUnsafe"), KS = r((e) => new ba(e), "forkMemoMapUnsafe");
-var ai = class e extends (Ft()("effect/Layer/CurrentMemoMap")) {
+}, su = r(() => new Ra(), "makeMemoMapUnsafe"), KS = r((e) => new Ra(e), "forkMemoMapUnsafe");
+var di = class e extends (Ot()("effect/Layer/CurrentMemoMap")) {
   static {
     r(this, "CurrentMemoMap");
   }
@@ -2638,39 +2638,39 @@ var ai = class e extends (Ft()("effect/Layer/CurrentMemoMap")) {
     let n = np(t, e);
     return n ? KS(n) : su();
   }
-}, iu = we(3, (e, t, n) => Lo(wn(e.build(t, n), er(ai, t)), ai, t));
-var Um = we(2, (e, t) => zt((n) => iu(e, ai.forkOrCreate(n.context), t)));
-var ci = r(function() {
+}, iu = we(3, (e, t, n) => Lo(hn(e.build(t, n), Qn(di, t)), di, t));
+var Um = we(2, (e, t) => qt((n) => iu(e, di.forkOrCreate(n.context), t)));
+var fi = r(function() {
   return arguments.length === 1 ? (e) => $m(arguments[0], e) : $m(arguments[0], arguments[1]);
-}, "effect"), $m = r((e, t) => li(wn(t, (n) => Lr(e, n))), "effectImpl"), li = r((e) => jS((t, n) => Fm(e, n)), "effectContext");
+}, "effect"), $m = r((e, t) => pi(hn(t, (n) => Or(e, n))), "effectImpl"), pi = r((e) => jS((t, n) => Fm(e, n)), "effectContext");
 var Wm = r((e, t, n) => {
-  let o = va(n, "parallel");
-  return Ir(e, (s) => s.build(t, va(o, "sequential")), {
+  let o = ba(n, "parallel");
+  return Dr(e, (s) => s.build(t, ba(o, "sequential")), {
     concurrency: e.length
-  }).pipe(wn((s) => rp(...s)));
-}, "mergeAllEffect"), au = r((...e) => ou((t, n) => Wm(e, t, n)), "mergeAll"), cu = we(2, (e, t) => au(e, ...Array.isArray(t) ? t : [t])), VS = r((e, t, n) => ou((o, s) => ut(Array.isArray(t) ? Wm(t, o, s) : t.build(o, s), (i) => e.build(o, s).pipe(Oo(i), wn((a) => n(a, i))))), "provideWith");
-var lu = we(2, (e, t) => VS(e, t, (n, o) => ta(o, n)));
+  }).pipe(hn((s) => rp(...s)));
+}, "mergeAllEffect"), au = r((...e) => ou((t, n) => Wm(e, t, n)), "mergeAll"), cu = we(2, (e, t) => au(e, ...Array.isArray(t) ? t : [t])), VS = r((e, t, n) => ou((o, s) => lt(Array.isArray(t) ? Wm(t, o, s) : t.build(o, s), (i) => e.build(o, s).pipe(Oo(i), hn((a) => n(a, i))))), "provideWith");
+var lu = we(2, (e, t) => VS(e, t, (n, o) => ra(o, n)));
 
 
 var io = Jl;
 
 
-var zS = hp(Dm, (e) => Nm(e) ? Dr(e) : tr(e));
-var qm = we(2, (e, t) => cs(e, {
+var zS = hp(Dm, (e) => Nm(e) ? Lr(e) : Zn(e));
+var qm = we(2, (e, t) => ds(e, {
   onSuccess: t.onSuccess,
   onFailure: r((n) => {
     let o = zS(n);
-    return An(o) ? t.onFailure(o.failure) : t.onDone(o.success.value);
+    return Tn(o) ? t.onFailure(o.failure) : t.onDone(o.success.value);
   }, "onFailure")
 }));
 
 
 var jm = "~effect/Schedule";
-var uu = rn("effect/Schedule/CurrentMetadata", {
-  defaultValue: dr({
+var uu = en("effect/Schedule/CurrentMetadata", {
+  defaultValue: lr({
     input: void 0,
     output: void 0,
-    duration: sa,
+    duration: aa,
     attempt: 0,
     start: 0,
     now: 0,
@@ -2679,14 +2679,14 @@ var uu = rn("effect/Schedule/CurrentMetadata", {
   })
 }), QS = {
   [jm]: {
-    _Out: lt,
-    _In: lt,
-    _Env: lt
+    _Out: ct,
+    _In: ct,
+    _Env: ct
   },
   pipe() {
-    return en(this, arguments);
+    return Jt(this, arguments);
   }
-}, Gm = r((e) => ct(e, jm), "isSchedule"), du = r((e) => {
+}, Gm = r((e) => at(e, jm), "isSchedule"), du = r((e) => {
   let t = Object.create(QS);
   return t.step = e, t;
 }, "fromStep"), fu = r(() => {
@@ -2703,116 +2703,116 @@ var uu = rn("effect/Schedule/CurrentMetadata", {
       elapsedSincePrevious: a
     };
   };
-}, "metadataFn"), pu = r((e) => du(wn(e, (t) => {
+}, "metadataFn"), pu = r((e) => du(hn(e, (t) => {
   let n = fu();
   return (o, s) => t(n(o, s));
-})), "fromStepWithMetadata"), mu = r((e) => Fr(e.step, (t) => Et(() => bt(t))), "toStep"), Km = r((e) => Do((t) => wn(mu(e), (n) => {
+})), "fromStepWithMetadata"), mu = r((e) => Mr(e.step, (t) => gt(() => St(t))), "toStep"), Km = r((e) => Do((t) => hn(mu(e), (n) => {
   let o = fu();
-  return (s) => Pt(() => {
+  return (s) => Tt(() => {
     let i = t.currentTimeMillisUnsafe();
-    return ut(n(i, s), ([a, c]) => {
+    return lt(n(i, s), ([a, c]) => {
       let l = o(i, s);
-      return l.output = a, l.duration = c, Mr(Sa(c), l);
+      return l.output = a, l.duration = c, Nr(xa(c), l);
     });
   });
 })), "toStepWithMetadata");
-var gu = r((e) => du(wn(mu(e), (t) => (n, o) => qm(t(n, o), {
-  onSuccess: r((s) => Et([o, s[1]]), "onSuccess"),
-  onFailure: bt,
+var gu = r((e) => du(hn(mu(e), (t) => (n, o) => qm(t(n, o), {
+  onSuccess: r((s) => gt([o, s[1]]), "onSuccess"),
+  onFailure: St,
   onDone: r(() => Zl(o), "onDone")
 }))), "passthrough");
 var hu = r((e) => {
-  let t = mr(e);
-  return pu(Et((n) => Et([n.attempt - 1, t])));
+  let t = fr(e);
+  return pu(gt((n) => gt([n.attempt - 1, t])));
 }, "spaced");
-var ka = we(2, (e, t) => du(wn(mu(e), (n) => {
+var Ta = we(2, (e, t) => du(hn(mu(e), (n) => {
   let o = fu();
-  return (s, i) => ut(n(s, i), (a) => {
+  return (s, i) => lt(n(s, i), (a) => {
     let [c, l] = a, f = t({
       ...o(s, i),
       output: c,
       duration: l
     });
-    return ut(Vt(f) ? f : Et(f), (w) => w ? Et(a) : Zl(c));
+    return lt(Ht(f) ? f : gt(f), (w) => w ? gt(a) : Zl(c));
   });
 })));
-var Vm = hu(sa);
+var Vm = hu(aa);
 
 
-var ZS = r((e, t, n) => Kl((o) => ut(n?.local ? iu(t, su(), o) : Um(t, o), (s) => Oo(e, s))), "provideLayer"), zm = we((e) => Vt(e[0]), (e, t, n) => al(t) ? Oo(e, t) : ZS(e, Array.isArray(t) ? au(...t) : t, n));
+var ZS = r((e, t, n) => Kl((o) => lt(n?.local ? iu(t, su(), o) : Um(t, o), (s) => Oo(e, s))), "provideLayer"), zm = we((e) => Ht(e[0]), (e, t, n) => al(t) ? Oo(e, t) : ZS(e, Array.isArray(t) ? au(...t) : t, n));
 
 
-var Xm = we(3, (e, t, n) => ut(Km(t), (o) => {
+var Xm = we(3, (e, t, n) => lt(Km(t), (o) => {
   let s = uu.defaultValue();
-  return oi(Bl(Ao(ut(Pt(() => Lo(e, uu, s)), o), (i) => Qt(() => {
+  return ci(Bl(Ao(lt(Tt(() => Lo(e, uu, s)), o), (i) => Kt(() => {
     s = i;
   })), {
     disableYield: !0
-  }), (i) => ea(i) ? Et(i.value) : n(i, s.attempt === 0 ? Vf() : zf(s)));
+  }), (i) => na(i) ? gt(i.value) : n(i, s.attempt === 0 ? Vf() : zf(s)));
 }));
 var Ym = we(2, (e, t) => {
-  let n = typeof t == "function" ? t(lt) : Gm(t) ? t : nv(t);
-  return Xm(e, n, ls);
+  let n = typeof t == "function" ? t(ct) : Gm(t) ? t : nv(t);
+  return Xm(e, n, fs);
 });
 var tv = gu(Vm), nv = r((e) => {
   let t = e.schedule ? gu(e.schedule) : tv;
-  return e.while && (t = ka(t, ({
+  return e.while && (t = Ta(t, ({
     input: n
   }) => {
     let o = e.while(n);
-    return Vt(o) ? o : Et(o);
-  })), e.until && (t = ka(t, ({
+    return Ht(o) ? o : gt(o);
+  })), e.until && (t = Ta(t, ({
     input: n
   }) => {
     let o = e.until(n);
-    return Vt(o) ? wn(o, (s) => !s) : Et(!o);
-  })), e.times !== void 0 && (t = ka(t, ({
+    return Ht(o) ? hn(o, (s) => !s) : gt(!o);
+  })), e.times !== void 0 && (t = Ta(t, ({
     attempt: n
-  }) => Et(n <= e.times))), t;
+  }) => gt(n <= e.times))), t;
 }, "buildFromOptions");
 
 
-var Jm = Vt, Ra = zl;
-var Bt = Vp;
-var vt = Et;
-var Kn = Pt, Ue = Qt, At = Ht;
-var ao = to, $r = pa;
-var ze = Xp, Xt = ls;
-var ui = bt;
-var Ln = fa, qt = Kp;
-var kn = ut, Qm = Jp, co = us, Zm = Ao;
-var hr = wn, Ta = Mr;
-var wr = Ml;
-var Eu = oi;
-var Ur = Wl, eg = lm;
+var Jm = Ht, Ca = zl;
+var bt = Vp;
+var wt = gt;
+var Gn = Tt, Be = Kt, Ct = Mt;
+var ao = to, Br = ga;
+var ze = Xp, jt = fs;
+var mi = St;
+var Pn = ma, Ft = Kp;
+var an = lt, Qm = Jp, co = ps, Zm = Ao;
+var mr = hn, Pa = Nr;
+var gr = Ml;
+var Eu = ci;
+var $r = Wl, eg = lm;
 var tg = sm;
 var ng = om;
 var rg = im;
 var og = um;
-var ms = Sa;
-var Ca = nm;
+var ws = xa;
+var Aa = nm;
 var sg = zm;
 var ig = Lo;
-var gs = Gl;
-var di = wm;
+var Es = Gl;
+var gi = wm;
 var ag = Sm;
 var cg = Em, lg = _m;
-var Wr = no;
+var Ur = no;
 var Fo = vm;
 var Bo = Vl;
-var hs = Ym;
+var ys = Ym;
 var ug = km;
-var yu = Rm, dg = si, fg = Tm;
+var yu = Rm, dg = li, fg = Tm;
 var _u = Cm;
 var pg = Yl;
 var mg = Do;
 var gg = Ql("Error");
 
 
-var Su = r((e, t) => yn(e) ? t(0) : En(e.cause) ? t(130) : t(ov(fs(e.cause))), "defaultTeardown"), wg = r((e) => we((t) => Jm(t[0]), (t, n) => {
-  let o = n?.disableErrorReporting === !0 ? yu(t) : yu(ng(t, (i) => En(i) ? At : sv(fs(i)) ? gg(i) : At));
+var Su = r((e, t) => En(e) ? t(0) : wn(e.cause) ? t(130) : t(ov(gs(e.cause))), "defaultTeardown"), wg = r((e) => we((t) => Jm(t[0]), (t, n) => {
+  let o = n?.disableErrorReporting === !0 ? yu(t) : yu(ng(t, (i) => wn(i) ? Ct : sv(gs(i)) ? gg(i) : Ct));
   try {
-    let i = globalThis.setInterval(Xo, 2147483647);
+    let i = globalThis.setInterval(Qo, 2147483647);
     o.addObserver(() => {
       clearInterval(i);
     });
@@ -2823,9 +2823,9 @@ var Su = r((e, t) => yn(e) ? t(0) : En(e.cause) ? t(130) : t(ov(fs(e.cause))), "
     fiber: o,
     teardown: s
   });
-}), "makeRunMain"), fi = "~effect/Runtime/errorExitCode", ov = r((e) => {
-  if (typeof e == "object" && e !== null && fi in e) {
-    let t = e[fi];
+}), "makeRunMain"), hi = "~effect/Runtime/errorExitCode", ov = r((e) => {
+  if (typeof e == "object" && e !== null && hi in e) {
+    let t = e[hi];
     if (typeof t == "number")
       return t;
   }
@@ -2860,7 +2860,7 @@ var Eg = wg(({
 var yg = Eg;
 
 
-import { writeSync as m0 } from "node:fs";
+import { writeSync as g0 } from "node:fs";
 
 
 import uv from "node:fs";
@@ -2870,10 +2870,10 @@ import { fileURLToPath as dv } from "node:url";
 
 import cv from "node:fs";
 import lv from "node:os";
-import Pa from "node:path";
+import Oa from "node:path";
 function _g() {
   let e = lv.homedir() || "/tmp", t = process.env.FLEETDECK_HOME?.trim();
-  return t ? Pa.isAbsolute(t) ? Pa.normalize(t) : Pa.resolve(e, t) : Pa.join(e, ".fleetdeck");
+  return t ? Oa.isAbsolute(t) ? Oa.normalize(t) : Oa.resolve(e, t) : Oa.join(e, ".fleetdeck");
 }
 r(_g, "resolveHome");
 function Sg() {
@@ -2902,59 +2902,59 @@ function $o({
 r($o, "detectCoderWorkspaceRoot");
 
 
-var vg = class extends yt("StartupConfigurationError") {
+var vg = class extends ht("StartupConfigurationError") {
   static {
     r(this, "StartupConfigurationError");
   }
-}, xg = class extends yt("ProcessRunnerStartupError") {
+}, xg = class extends ht("ProcessRunnerStartupError") {
   static {
     r(this, "ProcessRunnerStartupError");
   }
-}, Er = class extends yt("DaemonStartupRefusalError") {
+}, hr = class extends ht("DaemonStartupRefusalError") {
   static {
     r(this, "DaemonStartupRefusalError");
   }
-  [fi] = 1;
-}, pi = class extends yt("DaemonStartupError") {
+  [hi] = 1;
+}, wi = class extends ht("DaemonStartupError") {
   static {
     r(this, "DaemonStartupError");
   }
-}, lo = class extends yt("HttpBindStartupError") {
+}, lo = class extends ht("HttpBindStartupError") {
   static {
     r(this, "HttpBindStartupError");
   }
   
-  [fi] = this.reason === "address-in-use" ? 3 : 1;
-}, bg = class extends yt(
+  [hi] = this.reason === "address-in-use" ? 3 : 1;
+}, bg = class extends ht(
   "ProcessRunnerUnavailableError"
 ) {
   static {
     r(this, "ProcessRunnerUnavailableError");
   }
-}, Aa = class extends yt("ProcessSpawnError") {
+}, La = class extends ht("ProcessSpawnError") {
   static {
     r(this, "ProcessSpawnError");
   }
-}, Oa = class extends yt("ProcessNonZeroExitError") {
+}, Da = class extends ht("ProcessNonZeroExitError") {
   static {
     r(this, "ProcessNonZeroExitError");
   }
-}, La = class extends yt("ProcessTimeoutError") {
+}, Ia = class extends ht("ProcessTimeoutError") {
   static {
     r(this, "ProcessTimeoutError");
   }
-}, Da = class extends yt("ProcessOutputLimitError") {
+}, Na = class extends ht("ProcessOutputLimitError") {
   static {
     r(this, "ProcessOutputLimitError");
   }
-}, Uo = class extends yt("ApplicationQuiescingError") {
+}, Uo = class extends ht("ApplicationQuiescingError") {
   static {
     r(this, "ApplicationQuiescingError");
   }
 };
 
 
-var ws = class extends Ft()(
+var _s = class extends Ot()(
   "fleetdeck/daemon/app/AppConfig"
 ) {
   static {
@@ -2980,7 +2980,7 @@ function fv(e, t = Rg) {
 }
 r(fv, "resolveDaemonDirectory");
 function kg(e) {
-  return new Er({
+  return new hr({
     reason: e,
     message: `fleetd refused to start: ${e}`,
     cleanupCause: null
@@ -2992,22 +2992,22 @@ function pv(e) {
 }
 r(pv, "errorMessage");
 function mv(e) {
-  return Kn(() => {
+  return Gn(() => {
     let t;
     try {
       t = e.resolvePort();
     } catch (n) {
-      return Xt(kg(pv(n)));
+      return jt(kg(pv(n)));
     }
     if (!Number.isInteger(t) || t < 0 || t > 65535) {
       let n = e.readEnvironment("FLEETDECK_PORT");
-      return Xt(
+      return jt(
         kg(
           `FLEETDECK_PORT must be an integer between 0 and 65535 (got '${String(n)}')`
         )
       );
     }
-    return vt(t);
+    return wt(t);
   });
 }
 r(mv, "resolveValidatedPort");
@@ -3023,9 +3023,9 @@ function gv(e) {
 }
 r(gv, "resolveVersion");
 function hv(e = {}) {
-  return Kn(() => {
+  return Gn(() => {
     let t = { ...Rg, ...e };
-    return hr(mv(t), (n) => {
+    return mr(mv(t), (n) => {
       let o = t.resolveHome(), s = gv(t);
       return { home: o, port: n, version: s };
     });
@@ -3033,7 +3033,7 @@ function hv(e = {}) {
 }
 r(hv, "makeAppConfigEffect");
 function wv(e = {}) {
-  return ci(ws, hv(e));
+  return fi(_s, hv(e));
 }
 r(wv, "makeAppConfigLayer");
 var Tg = wv();
@@ -3045,7 +3045,7 @@ function Ev(e, t) {
   ) ? 1 : 0;
 }
 r(Ev, "coordinatedShutdownExitCode");
-var Ia = class {
+var Ma = class {
   static {
     r(this, "DaemonHostControl");
   }
@@ -3138,11 +3138,11 @@ var Ia = class {
 
 var Cg = "~effect/MutableRef", yv = {
   [Cg]: Cg,
-  ...Zn,
+  ...Jn,
   toJSON() {
     return {
       _id: "MutableRef",
-      current: fr(this.current)
+      current: ur(this.current)
     };
   }
 }, Pg = r((e) => {
@@ -3154,9 +3154,9 @@ var Ag = we(2, (e, t) => (e.current = t, e));
 
 var Sv = "~effect/Ref", vv = {
   [Sv]: {
-    _A: lt
+    _A: ct
   },
-  ...Zn,
+  ...Jn,
   toJSON() {
     return {
       _id: "Ref",
@@ -3166,27 +3166,27 @@ var Sv = "~effect/Ref", vv = {
 }, xv = r((e) => {
   let t = Object.create(vv);
   return t.ref = Pg(e), t;
-}, "makeUnsafe"), Na = r((e) => Ue(() => xv(e)), "make"), Og = r((e) => Ue(() => e.ref.current), "get"), Ma = we(2, (e, t) => Ue(() => Ag(e.ref, t)));
+}, "makeUnsafe"), Fa = r((e) => Be(() => xv(e)), "make"), Og = r((e) => Be(() => e.ref.current), "get"), Ba = we(2, (e, t) => Be(() => Ag(e.ref, t)));
 var Lg = r((e) => e.ref.current, "getUnsafe");
 
 
-var uo = class extends yt("BackgroundOperationalError") {
+var uo = class extends ht("BackgroundOperationalError") {
   static {
     r(this, "BackgroundOperationalError");
   }
-}, Fa = class extends yt(
+}, $a = class extends ht(
   "BackgroundUnexpectedExitError"
 ) {
   static {
     r(this, "BackgroundUnexpectedExitError");
   }
-}, Ba = class extends yt(
+}, Ua = class extends ht(
   "BackgroundUnexpectedInterruptionError"
 ) {
   static {
     r(this, "BackgroundUnexpectedInterruptionError");
   }
-}, Es = class extends Ft()(
+}, Ss = class extends Ot()(
   "fleetdeck/daemon/app/Background"
 ) {
   static {
@@ -3195,46 +3195,46 @@ var uo = class extends yt("BackgroundOperationalError") {
 };
 
 
-var bv = 1e3, bu = class extends yt("BackgroundJoinTimeoutError") {
+var bv = 1e3, bu = class extends ht("BackgroundJoinTimeoutError") {
   static {
     r(this, "BackgroundJoinTimeoutError");
   }
-}, ku = class extends yt(
+}, ku = class extends ht(
   "BackgroundOperationalExitError"
 ) {
   static {
     r(this, "BackgroundOperationalExitError");
   }
-}, $a = class extends yt("BackgroundDefectExitError") {
+}, Wa = class extends ht("BackgroundDefectExitError") {
   static {
     r(this, "BackgroundDefectExitError");
   }
 };
-function Hr(e) {
+function Wr(e) {
   return ao((t) => {
     let n;
     try {
       n = e.try();
     } catch (s) {
-      t(Ln(s));
+      t(Pn(s));
       return;
     }
     let o = Promise.resolve(n).then(
       (s) => {
-        t(vt(s));
+        t(wt(s));
       },
       (s) => {
         try {
-          t(Xt(e.catch(s)));
+          t(jt(e.catch(s)));
         } catch (i) {
-          t(Ln(i));
+          t(Pn(i));
         }
       }
     );
-    return Bt(() => o);
+    return bt(() => o);
   });
 }
-r(Hr, "ownedLegacyPromise");
+r(Wr, "ownedLegacyPromise");
 function kv(e) {
   if (!Number.isFinite(e) || e <= 0)
     throw new RangeError("background join timeout must be a finite positive number");
@@ -3249,48 +3249,48 @@ function Rv(e, t) {
 }
 r(Rv, "armLiveJoinTimeout");
 function Ig(e) {
-  return new Fa({
+  return new $a({
     owner: e,
     message: `background owner ${e} returned unexpectedly`
   });
 }
 r(Ig, "unexpectedExit");
 function Ru(e) {
-  return new Ba({
+  return new Ua({
     owner: e,
     message: `background owner ${e} interrupted without a stop request`
   });
 }
 r(Ru, "unexpectedInterruption");
 function Tv(e, t, n, o, s) {
-  if (!yn(s)) {
-    if (En(s.cause)) {
+  if (!En(s)) {
+    if (wn(s.cause)) {
       if (t.value) return;
       let i = Ru(e);
-      Gn(n, Ln(i)), Gn(o, Ln(i));
+      jn(n, Pn(i)), jn(o, Pn(i));
       return;
     }
-    Gn(n, ui(s.cause)), Gn(o, ui(s.cause));
+    jn(n, mi(s.cause)), jn(o, mi(s.cause));
   }
 }
 r(Tv, "publishChildExit");
 function Cv(e, t, n) {
-  if (yn(n)) return Ig(e);
-  if (En(n.cause))
+  if (En(n)) return Ig(e);
+  if (wn(n.cause))
     return t ? null : Ru(e);
   if (Im(n.cause))
-    return new $a({
+    return new Wa({
       owner: e,
       cause: n.cause,
       message: `background owner ${e} exited with a defect`
     });
-  let o = n.cause.reasons.filter(Br).map((s) => s.error);
+  let o = n.cause.reasons.filter(Fr).map((s) => s.error);
   return o.length > 0 ? new ku({
     owner: e,
     errors: o,
     cause: n.cause,
     message: `background owner ${e} exited with an operational failure`
-  }) : new $a({
+  }) : new Wa({
     owner: e,
     cause: n.cause,
     message: `background owner ${e} exited with an unknown cause`
@@ -3300,27 +3300,27 @@ r(Cv, "closeExitError");
 function Pv(e, t, n, o, s, i) {
   return Bo(
     ze(function* () {
-      let a = yield* gs, c = "running", l = null, f = r(() => {
-      }, "resolveCompletion"), w = new Promise((U) => {
-        f = U;
-      }), g = yield* ug(
-        Kn(() => e.run(t))
+      let a = yield* Es, c = "running", l = null, f = r(() => {
+      }, "resolveCompletion"), w = new Promise(($) => {
+        f = $;
+      }), h = yield* ug(
+        Gn(() => e.run(t))
       );
-      g.addObserver((U) => {
-        if (c = "closed", f(U), yn(U)) {
-          let M = Ig(e.name);
-          Gn(n, Ln(M)), Gn(o, Ln(M));
+      h.addObserver(($) => {
+        if (c = "closed", f($), En($)) {
+          let F = Ig(e.name);
+          jn(n, Pn(F)), jn(o, Pn(F));
           return;
         }
-        if (En(U.cause) && !i.value) {
-          let M = Ru(e.name);
-          Gn(n, Ln(M)), Gn(o, Ln(M));
+        if (wn($.cause) && !i.value) {
+          let F = Ru(e.name);
+          jn(n, Pn(F)), jn(o, Pn(F));
           return;
         }
-        Gn(n, ui(U.cause)), Gn(o, ui(U.cause));
+        jn(n, mi($.cause)), jn(o, mi($.cause));
       });
       let _ = r(() => {
-        i.value || c === "closed" || (i.value = !0, c = "interrupting", g.interruptUnsafe());
+        i.value || c === "closed" || (i.value = !0, c = "interrupting", h.interruptUnsafe());
       }, "interrupt"), m = {
         get state() {
           return c;
@@ -3328,22 +3328,22 @@ function Pv(e, t, n, o, s, i) {
         interrupt: _,
         close: r(() => {
           if (l) return l;
-          let U = r(() => {
-          }, "resolveClose"), M = r(() => {
+          let $ = r(() => {
+          }, "resolveClose"), F = r(() => {
           }, "rejectClose");
           l = new Promise((O, P) => {
-            U = O, M = P;
+            $ = O, F = P;
           }), _();
-          let D = r(() => {
+          let I = r(() => {
           }, "cancelTimeout");
           w.then((O) => {
-            D();
+            I();
             let P = Cv(e.name, i.value, O);
-            P ? M(P) : U();
+            P ? F(P) : $();
           });
           try {
-            D = (e.armJoinTimeout ?? Rv)(() => {
-              M(
+            I = (e.armJoinTimeout ?? Rv)(() => {
+              F(
                 new bu({
                   owner: e.name,
                   timeoutMs: s,
@@ -3352,12 +3352,12 @@ function Pv(e, t, n, o, s, i) {
               );
             }, s);
           } catch (O) {
-            M(O);
+            F(O);
           }
           return l;
         }, "close")
       };
-      return yield* Mo(a, Ue(_)), m;
+      return yield* Mo(a, Be(_)), m;
     })
   );
 }
@@ -3365,23 +3365,23 @@ r(Pv, "startBackgroundOwner");
 function Ng(e) {
   return Bo(
     ze(function* () {
-      let t = kv(e.joinTimeoutMs ?? bv), n = yield* Na("reconciling"), o = yield* gr(), s = yield* gr(), i = { value: !1 }, l = { markReconciliationReady: Ma(n, "settled").pipe(
+      let t = kv(e.joinTimeoutMs ?? bv), n = yield* Fa("reconciling"), o = yield* pr(), s = yield* pr(), i = { value: !1 }, l = { markReconciliationReady: Ba(n, "settled").pipe(
         co(so(o, void 0)),
-        wr
-      ), observeChildExit: r((E) => Ue(() => {
+        gr
+      ), observeChildExit: r((E) => Be(() => {
         Tv(e.name, i, o, s, E);
       }), "observeChildExit") }, f = {
         reconciliationStatus: r(() => Lg(n), "reconciliationStatus"),
-        awaitReady: jn(o),
-        awaitFailure: jn(s)
-      }, w = yield* gr(), g = !1, _ = Kn(() => g ? jn(w) : (g = !0, Pv(
+        awaitReady: qn(o),
+        awaitFailure: qn(s)
+      }, w = yield* pr(), h = !1, _ = Gn(() => h ? qn(w) : (h = !0, Pv(
         e,
         l,
         o,
         s,
         t,
         i
-      ).pipe(Wr((E) => No(w, E).pipe(wr)))));
+      ).pipe(Ur((E) => No(w, E).pipe(gr)))));
       return { service: f, controller: l, start: _ };
     })
   );
@@ -3391,9 +3391,9 @@ r(Ng, "prepareBackgroundOwner");
 
 function Tu(e) {
   let { name: t, ingress: n, transport: o } = e, s = null, i = !1, a = null;
-  return { service: { state: r(() => o.lifecycle.isQuiescing() ? "quiescing" : s ? "listening" : "unbound", "state"), address: r(() => s ? { hostname: s.hostname, port: s.port } : null, "address"), runRequest: r((E, m, U) => n.runPromiseExit(E, m, U), "runRequest") }, bind: r(async (E, m) => {
-    let U = await o.bind(E, m);
-    return U._tag === "Bound" && (s = U, i || (i = !0, a = await n.runPromiseExit(`${t}-ready`, At))), U;
+  return { service: { state: r(() => o.lifecycle.isQuiescing() ? "quiescing" : s ? "listening" : "unbound", "state"), address: r(() => s ? { hostname: s.hostname, port: s.port } : null, "address"), runRequest: r((E, m, $) => n.runPromiseExit(E, m, $), "runRequest") }, bind: r(async (E, m) => {
+    let $ = await o.bind(E, m);
+    return $._tag === "Bound" && (s = $, i || (i = !0, a = await n.runPromiseExit(`${t}-ready`, Ct))), $;
   }, "bind"), shutdownFallback: r(() => {
     o.lifecycle.close();
   }, "shutdownFallback"), readyExit: r(() => a, "readyExit") };
@@ -3519,11 +3519,11 @@ function Ug() {
   return globalThis.performance.now();
 }
 r(Ug, "liveMonotonicNow");
-function Ua(e, t) {
+function Ha(e, t) {
   if (!Number.isFinite(e)) throw new RangeError(`${t} must be finite`);
   return e;
 }
-r(Ua, "finiteMilliseconds");
+r(Ha, "finiteMilliseconds");
 var Pu = class e {
   static {
     r(this, "ShutdownBudget");
@@ -3534,14 +3534,14 @@ var Pu = class e {
   monotonicNow;
   constructor(t, n) {
     if (t < 0) throw new RangeError("shutdown timeout must be non-negative");
-    let o = Ua(n(), "monotonic clock reading"), s = Ua(o + t, "shutdown deadline");
+    let o = Ha(n(), "monotonic clock reading"), s = Ha(o + t, "shutdown deadline");
     this.monotonicNow = n, this.startedAtMs = o, this.deadlineMs = s, this.lastObservedMs = o;
   }
   static start(t, n = Ug) {
-    return new e(Ua(t, "shutdown timeout"), n);
+    return new e(Ha(t, "shutdown timeout"), n);
   }
   nowMs() {
-    let t = Ua(this.monotonicNow(), "monotonic clock reading");
+    let t = Ha(this.monotonicNow(), "monotonic clock reading");
     return this.lastObservedMs = Math.max(this.lastObservedMs, t), this.lastObservedMs;
   }
   remainingMs() {
@@ -3583,10 +3583,10 @@ function Iv(e, t, n, o) {
       return;
     }
     !a && t > 0 && w <= t && (a = !0, n());
-    let g = !a && t > 0 ? Math.max(0, w - t) : w;
+    let h = !a && t > 0 ? Math.max(0, w - t) : w;
     s = setTimeout(
       f,
-      Math.max(1, Math.ceil(Math.min(g, w, Ov)))
+      Math.max(1, Math.ceil(Math.min(h, w, Ov)))
     ), s.unref?.();
   }, "arm");
   return f(), {
@@ -3597,7 +3597,7 @@ function Iv(e, t, n, o) {
   };
 }
 r(Iv, "deadlineWait");
-var Wa = class {
+var qa = class {
   static {
     r(this, "LifecycleCoordinator");
   }
@@ -3640,7 +3640,7 @@ var Wa = class {
 
 
   close(t = $g) {
-    return this.closeEffect ? this.closeEffect : (this.closeRequested = !0, this.trigger = t, this.closeEffect = Bo(Bt(() => this.ensureCloseStarted())), this.closeEffect);
+    return this.closeEffect ? this.closeEffect : (this.closeRequested = !0, this.trigger = t, this.closeEffect = Bo(bt(() => this.ensureCloseStarted())), this.closeEffect);
   }
   ensureCloseStarted() {
     if (this.closePromise) return this.closePromise;
@@ -3699,19 +3699,19 @@ var Wa = class {
     let o = n.nowMs(), s = Lv(t, this.trigger, n, this.forceLatch, o), i = this.owner[t], a, c, l = !1;
     try {
       a = Dv(i.run(s));
-    } catch (U) {
-      c = U, l = !0, a = Promise.resolve({ _tag: "Failed", error: U });
+    } catch ($) {
+      c = $, l = !0, a = Promise.resolve({ _tag: "Failed", error: $ });
     }
-    let f = !1, w = null, g = r((U) => {
+    let f = !1, w = null, h = r(($) => {
       if (!f) {
-        f = !0, w = U;
+        f = !0, w = $;
         try {
-          i.force?.(s, U);
-        } catch (M) {
-          this.forceFailures.push({ phase: t, error: M });
+          i.force?.(s, $);
+        } catch (F) {
+          this.forceFailures.push({ phase: t, error: F });
         }
       }
-    }, "invokeForce"), _ = this.forceLatch.onForce(g);
+    }, "invokeForce"), _ = this.forceLatch.onForce(h);
     if (n.remainingMs() <= 0)
       return this.forceLatch.force({ _tag: "DeadlineExceeded" }), _(), l ? this.finishPhase(
         { _tag: "Failed", error: c },
@@ -4161,7 +4161,7 @@ function Hg(e) {
 r(Hg, "makeDaemonResourceLifecycleOwner");
 
 
-var ys = class extends Ft()(
+var vs = class extends Ot()(
   "fleetdeck/daemon/app/DaemonLifecycle"
 ) {
   static {
@@ -4170,7 +4170,7 @@ var ys = class extends Ft()(
 };
 
 
-var Ha = class extends Ft()(
+var ja = class extends Ot()(
   "fleetdeck/daemon/app/HttpServer"
 ) {
   static {
@@ -4179,21 +4179,21 @@ var Ha = class extends Ft()(
 };
 
 
-var Yt = class extends Ft()("fleetdeck/daemon/app/Store") {
+var Gt = class extends Ot()("fleetdeck/daemon/app/Store") {
   static {
     r(this, "Store");
   }
 };
 
 
-var _s = class extends Ft()("fleetdeck/daemon/app/IngressSupervisor") {
+var xs = class extends Ot()("fleetdeck/daemon/app/IngressSupervisor") {
   static {
     r(this, "IngressSupervisor");
   }
 };
 
 
-var yr = class extends Ft()(
+var wr = class extends Ot()(
   "fleetdeck/daemon/app/ProcessRunner"
 ) {
   static {
@@ -4201,23 +4201,23 @@ var yr = class extends Ft()(
   }
 };
 function qg(e) {
-  return kn(yr, (t) => t.run(e));
+  return an(wr, (t) => t.run(e));
 }
 r(qg, "execEffect");
 function jg(e) {
-  return kn(yr, (t) => t.runBounded(e));
+  return an(wr, (t) => t.runBounded(e));
 }
 r(jg, "execBoundedEffect");
 
 
-var Ss = class extends Ft()("fleetdeck/daemon/app/ProcessRuntimeControl") {
+var bs = class extends Ot()("fleetdeck/daemon/app/ProcessRuntimeControl") {
   static {
     r(this, "ProcessRuntimeControl");
   }
 };
 
 
-var Uv = _u(ss()), Lu = class {
+var Uv = _u(cs()), Lu = class {
   static {
     r(this, "LiveIngressSupervisor");
   }
@@ -4249,7 +4249,7 @@ var Uv = _u(ss()), Lu = class {
   }
   runFork = r((t, n, o) => {
     let s = this.refusal(t);
-    if (s) return this.runForkWithContext(Xt(s));
+    if (s) return this.runForkWithContext(jt(s));
     this.starting++;
     try {
       let i = o?.signal?.aborted === !0 ? Fo : n;
@@ -4356,31 +4356,31 @@ var Uv = _u(ss()), Lu = class {
 };
 function Wv(e, t) {
   let n = new Lu(e, t);
-  return Mo(t, Ue(n.interrupt)).pipe(
-    Ta(n)
+  return Mo(t, Be(n.interrupt)).pipe(
+    Pa(n)
   );
 }
 r(Wv, "makeIngressSupervisor");
 function Gg() {
   let e = ze(function* () {
-    let t = yield* Ca(), n = yield* gs;
+    let t = yield* Aa(), n = yield* Es;
     return yield* Wv(t, n);
   });
-  return ci(_s, e);
+  return fi(xs, e);
 }
 r(Gg, "makeIngressSupervisorLayer");
 
 
-var Du = 3e4, Iu = 1e3, qa = 1024 * 1024;
+var Du = 3e4, Iu = 1e3, Ga = 1024 * 1024;
 function Kg(e, t) {
   let n = ao((o) => {
     let s = e();
     return s.decision.then(
-      (i) => o(vt(i)),
-      (i) => o(Ln(i))
-    ), Bt(() => (s.cancel(), s.cleanup));
+      (i) => o(wt(i)),
+      (i) => o(Pn(i))
+    ), bt(() => (s.cancel(), s.cleanup));
   });
-  return kn(n, t);
+  return an(n, t);
 }
 r(Kg, "effectFromExecution");
 function Hv(e, t) {
@@ -4389,28 +4389,28 @@ function Hv(e, t) {
     case "ECANCELED":
       return Fo;
     case "ETIMEDOUT":
-      return Xt(
-        new La({
+      return jt(
+        new Ia({
           ...n,
           timeoutMs: e.timeoutMs ?? Du
         })
       );
     case "ERR_CHILD_PROCESS_STDIO_MAXBUFFER":
-      return Xt(
-        new Da({
+      return jt(
+        new Na({
           ...n,
-          maxOutputBytes: qa
+          maxOutputBytes: Ga
         })
       );
     default:
-      return Xt(
-        typeof t.code == "number" || t.code === null ? new Oa({ ...n, exitCode: t.code }) : new Aa(n)
+      return jt(
+        typeof t.code == "number" || t.code === null ? new Da({ ...n, exitCode: t.code }) : new La(n)
       );
   }
 }
 r(Hv, "processFailureEffect");
 function qv(e, t) {
-  return t.ok ? vt(t) : Hv(e, t);
+  return t.ok ? wt(t) : Hv(e, t);
 }
 r(qv, "interpretProcessResult");
 function Vg(e) {
@@ -4424,7 +4424,7 @@ function Vg(e) {
     runBounded(t) {
       return Kg(
         () => e.startBounded(t),
-        (n) => vt(n)
+        (n) => wt(n)
       );
     }
   };
@@ -4439,16 +4439,16 @@ var Zg = {
 }, jv = {
   ok: !1,
   code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
-  err: `subprocess output exceeded ${String(qa)} bytes`
+  err: `subprocess output exceeded ${String(Ga)} bytes`
 }, Gv = Iu, Kv = 200, Vv = 10;
-function ja() {
+function Ka() {
   let e = r(() => {
   }, "resolveValue");
   return { promise: new Promise((n) => {
     e = n;
   }), resolve: e };
 }
-r(ja, "deferred");
+r(Ka, "deferred");
 function zv(e, t) {
   let n = setTimeout(e, t);
   return n.unref(), n;
@@ -4480,7 +4480,7 @@ function Xg(e) {
 }
 r(Xg, "spawnFailure");
 var Yv = {
-  maxOutputBytes: qa,
+  maxOutputBytes: Ga,
   retainPartialOutput: !1,
   killGraceMs: Iu,
   terminationDecisionTiming: "immediate",
@@ -4516,42 +4516,42 @@ function Nu(e) {
   };
 }
 r(Nu, "completedDecision");
-function mi(e) {
+function Ei(e) {
   return e.includes("'") ? `"${e.replaceAll('"', '\\"')}"` : `'${e}'`;
 }
-r(mi, "formatInvalidReceived");
+r(Ei, "formatInvalidReceived");
 function Yg(e) {
   let [t, ...n] = e.argv;
   if (t.length === 0) return "The argument 'file' cannot be empty. Received ''";
   if (t.includes("\0"))
-    return `The argument 'file' must be a string without null bytes. Received ${mi(t)}`;
+    return `The argument 'file' must be a string without null bytes. Received ${Ei(t)}`;
   for (let o = 0; o < n.length; o += 1) {
     let s = n[o];
     if (!(s === void 0 || !s.includes("\0")))
-      return `The argument 'args[${String(o)}]' must be a string without null bytes. Received ${mi(s)}`;
+      return `The argument 'args[${String(o)}]' must be a string without null bytes. Received ${Ei(s)}`;
   }
   if (e.cwd?.includes("\0"))
-    return `The property 'options.cwd' must be a string or Uint8Array without null bytes. Received ${mi(e.cwd)}`;
+    return `The property 'options.cwd' must be a string or Uint8Array without null bytes. Received ${Ei(e.cwd)}`;
   if (e.env) {
     let o = { ...process.env, ...e.env };
     for (let [s, i] of Object.entries(o)) {
       if (s.includes("\0"))
-        return `The property 'options.env['${s}']' must be a string without null bytes. Received ${mi(s)}`;
+        return `The property 'options.env['${s}']' must be a string without null bytes. Received ${Ei(s)}`;
       if (typeof i == "string" && i.includes("\0"))
-        return `The property 'options.env['${s}']' must be a string without null bytes. Received ${mi(i)}`;
+        return `The property 'options.env['${s}']' must be a string without null bytes. Received ${Ei(i)}`;
     }
   }
   return null;
 }
 r(Yg, "legacySpawnValidationMessage");
-function Ga(e, t) {
+function Va(e, t) {
   return {
     ...t,
     stdout: e.stdout,
     stderr: e.stderr.toString("utf8")
   };
 }
-r(Ga, "boundedOutput");
+r(Va, "boundedOutput");
 function Jg(e) {
   let t = th(e), n = typeof e == "object" && e !== null && "errno" in e && typeof e.errno == "number" ? e.errno : null;
   return {
@@ -4572,10 +4572,10 @@ function Qv(e) {
     killGraceMs: 0,
     terminationDecisionTiming: "after-cleanup",
     onSpawnFailure: Jg,
-    onCancel: r((t) => Ga(t, { code: null, truncated: !0, timedOut: !1 }), "onCancel"),
-    onTimeout: r((t, n) => Ga(n, { code: null, truncated: !0, timedOut: !0 }), "onTimeout"),
-    onOutputLimit: r((t) => Ga(t, { code: null, truncated: !0, timedOut: !1 }), "onOutputLimit"),
-    onExit: r((t, n) => t.error ? Jg(t.error) : Ga(n, {
+    onCancel: r((t) => Va(t, { code: null, truncated: !0, timedOut: !1 }), "onCancel"),
+    onTimeout: r((t, n) => Va(n, { code: null, truncated: !0, timedOut: !0 }), "onTimeout"),
+    onOutputLimit: r((t) => Va(t, { code: null, truncated: !0, timedOut: !1 }), "onOutputLimit"),
+    onExit: r((t, n) => t.error ? Jg(t.error) : Va(n, {
       code: t.code,
       truncated: !1,
       timedOut: !1
@@ -4591,8 +4591,8 @@ var Mu = class {
   cleanup;
   resolveDecision;
   resolveCleanup;
-  exited = ja();
-  forceRequested = ja();
+  exited = Ka();
+  forceRequested = Ka();
   signal;
   killTree;
   policy;
@@ -4618,7 +4618,7 @@ var Mu = class {
   forceDeadline = null;
   pendingDecision = null;
   constructor(t, n) {
-    let o = ja(), s = ja();
+    let o = Ka(), s = Ka();
     this.decision = o.promise, this.cleanup = s.promise, this.resolveDecision = o.resolve, this.resolveCleanup = s.resolve, this.signal = t.signal, this.killTree = t.killTree === !0 && process.platform !== "win32", this.policy = n, this.spawn(t);
   }
   cancel() {
@@ -4643,7 +4643,7 @@ var Mu = class {
 
 
         env: t.env ? { ...process.env, ...t.env } : process.env,
-        onExit: r((f, w, g, _) => {
+        onExit: r((f, w, h, _) => {
           this.observeExit({
             code: w,
             ..._ === void 0 ? {} : { error: _ }
@@ -4876,14 +4876,14 @@ function nh() {
 r(nh, "makeBunProcessDriver");
 
 
-var Bu = li(
-  di(
-    Ue(nh),
-    (e) => Bt(() => e.close())
+var Bu = pi(
+  gi(
+    Be(nh),
+    (e) => bt(() => e.close())
   ).pipe(
-    hr(
-      (e) => Lr(yr, Vg(e)).pipe(
-        er(Ss, {
+    mr(
+      (e) => Or(wr, Vg(e)).pipe(
+        Qn(bs, {
           force: r(() => e.forceClose(), "force"),
           close: r(() => e.close(), "close")
         })
@@ -4897,24 +4897,24 @@ function Zv(e) {
   return e instanceof Error ? e.message : String(e);
 }
 r(Zv, "errorMessage");
-function gi(e) {
-  return e instanceof pi || e instanceof Er || e instanceof lo ? e : new pi({
+function yi(e) {
+  return e instanceof wi || e instanceof hr || e instanceof lo ? e : new wi({
     message: `daemon resource acquisition failed: ${Zv(e)}`,
     cause: e
   });
 }
-r(gi, "mapDaemonStartupError");
+r(yi, "mapDaemonStartupError");
 function ex(e, t) {
   return e === t.reason ? !0 : typeof e == "object" && e !== null && "name" in e && e.name === "AbortError";
 }
 r(ex, "isAbortFailure");
-function _r(e, t) {
+function Er(e, t) {
   try {
     e.onAcquisitionShutdownFailure(t);
   } catch {
   }
 }
-r(_r, "reportAcquisitionShutdownFailure");
+r(Er, "reportAcquisitionShutdownFailure");
 function tx(e, t) {
   e.resources.setProcessDriver("bun-process-driver", t);
 }
@@ -4935,151 +4935,151 @@ function rx(e, t, n, o) {
     let a;
     try {
       a = nx(e);
-    } catch (D) {
-      s(Xt(gi(D)));
+    } catch (I) {
+      s(jt(yi(I)));
       return;
     }
     let c;
     try {
       c = Promise.resolve(e.acquireDaemonResources(i, t, o));
-    } catch (D) {
-      s(Xt(gi(D)));
+    } catch (I) {
+      s(jt(yi(I)));
       return;
     }
-    let l = !1, f = !1, w = null, g = null, _ = !1, E = r((D) => {
-      _ || (_ = !0, tx(D, n));
-    }, "attachProcessDriverOnce"), m = r((D) => g || (g = (async () => {
+    let l = !1, f = !1, w = null, h = null, _ = !1, E = r((I) => {
+      _ || (_ = !0, tx(I, n));
+    }, "attachProcessDriverOnce"), m = r((I) => h || (h = (async () => {
       try {
-        E(D);
+        E(I);
       } catch (O) {
-        _r(e, {
+        Er(e, {
           _tag: "LateRetirementFailed",
           operation: "attach-process-driver",
           cause: O
         });
       }
       try {
-        await D.resources.close();
+        await I.resources.close();
       } catch (O) {
-        _r(e, {
+        Er(e, {
           _tag: "LateRetirementFailed",
           operation: "resources.close",
           cause: O
         });
       }
       try {
-        D.shutdownExitCode() !== 0 && _r(e, {
+        I.shutdownExitCode() !== 0 && Er(e, {
           _tag: "LateRetirementFailed",
           operation: "shutdown-exit-code",
           cause: new Error("late daemon resource retirement reported a cleanup failure")
         });
       } catch (O) {
-        _r(e, {
+        Er(e, {
           _tag: "LateRetirementFailed",
           operation: "shutdown-exit-code",
           cause: O
         });
       }
       try {
-        D.releaseProcessAtHostExit();
+        I.releaseProcessAtHostExit();
       } catch (O) {
-        _r(e, {
+        Er(e, {
           _tag: "LateRetirementFailed",
           operation: "release-process",
           cause: O
         });
       }
-    })(), g.catch(() => {
-    }), g), "retireLateAcquisition"), U = r(() => {
+    })(), h.catch(() => {
+    }), h), "retireLateAcquisition"), $ = r(() => {
       if (w) return w;
       f = !0;
       let P = performance.now() + a.timeoutMs - a.reserveMs;
       try {
         n.force();
       } catch (Ee) {
-        _r(e, { _tag: "ProcessForceFailed", cause: Ee });
+        Er(e, { _tag: "ProcessForceFailed", cause: Ee });
       }
-      let v;
+      let x;
       try {
-        v = Promise.resolve(n.close()).then(
+        x = Promise.resolve(n.close()).then(
           () => {
           },
           (Ee) => {
-            _r(e, { _tag: "ProcessCloseFailed", cause: Ee });
+            Er(e, { _tag: "ProcessCloseFailed", cause: Ee });
           }
         );
       } catch (Ee) {
-        _r(e, { _tag: "ProcessCloseFailed", cause: Ee }), v = Promise.resolve();
+        Er(e, { _tag: "ProcessCloseFailed", cause: Ee }), x = Promise.resolve();
       }
       let Q = c.then(
         (Ee) => m(Ee),
         (Ee) => {
-          ex(Ee, i) || _r(e, {
+          ex(Ee, i) || Er(e, {
             _tag: "AcquisitionCleanupFailed",
             cause: Ee
           });
         }
-      ), G = Promise.all([v, Q]).then(() => {
+      ), z = Promise.all([x, Q]).then(() => {
       });
       return w = new Promise((Ee) => {
-        let ye = Math.max(0, P - performance.now()), Ie = !1, Se = r(() => {
-          Ie || (Ie = !0, clearTimeout($e), Ee());
+        let ye = Math.max(0, P - performance.now()), De = !1, ve = r(() => {
+          De || (De = !0, clearTimeout($e), Ee());
         }, "finish"), $e = setTimeout(() => {
-          Ie || (_r(e, {
+          De || (Er(e, {
             _tag: "TimedOut",
             timeoutMs: a.timeoutMs
-          }), Se());
+          }), ve());
         }, ye);
-        G.then(Se);
+        z.then(ve);
       }), w;
-    }, "startCancellation"), M = r(() => {
-      l || f || U();
+    }, "startCancellation"), F = r(() => {
+      l || f || $();
     }, "onAbort");
-    return i.addEventListener("abort", M, { once: !0 }), i.aborted && M(), c.then(
-      (D) => {
+    return i.addEventListener("abort", F, { once: !0 }), i.aborted && F(), c.then(
+      (I) => {
         if (f || i.aborted) {
-          U(), m(D);
+          $(), m(I);
           return;
         }
         try {
-          E(D);
+          E(I);
         } catch (O) {
-          m(D).then(() => {
-            f || i.aborted || (l = !0, i.removeEventListener("abort", M), s(Xt(gi(O))));
+          m(I).then(() => {
+            f || i.aborted || (l = !0, i.removeEventListener("abort", F), s(jt(yi(O))));
           });
           return;
         }
-        l = !0, i.removeEventListener("abort", M), s(vt(D));
+        l = !0, i.removeEventListener("abort", F), s(wt(I));
       },
-      (D) => {
+      (I) => {
         if (f || i.aborted) {
-          U();
+          $();
           return;
         }
-        l = !0, i.removeEventListener("abort", M), s(Xt(gi(D)));
+        l = !0, i.removeEventListener("abort", F), s(jt(yi(I)));
       }
-    ), Bt(() => U());
+    ), bt(() => $());
   });
 }
 r(rx, "acquireDaemonResourcesOwned");
 function $u(e) {
-  if (yn(e)) return { _tag: "Success" };
-  let t = e.cause.reasons.find(Br);
+  if (En(e)) return { _tag: "Success" };
+  let t = e.cause.reasons.find(Fr);
   if (t) return { _tag: "Failure", error: t.error };
   let n = e.cause.reasons.find(Io);
   return n ? { _tag: "Defect", defect: n.defect } : { _tag: "Interruption" };
 }
 r($u, "shutdownTriggerFromExit");
 function rh(e, t) {
-  return new Wa(Hg(e.resources), t);
+  return new qa(Hg(e.resources), t);
 }
 r(rh, "makeDaemonLifecycleCoordinator");
 function oh(e) {
   let t = ze(function* () {
-    yield* Ca();
-    let o = yield* ws, s = yield* _s, i = yield* Ss, a = yield* gr(), c = yield* Ng({
+    yield* Aa();
+    let o = yield* _s, s = yield* xs, i = yield* bs, a = yield* pr(), c = yield* Ng({
       name: "daemon-background",
-      run: r(() => jn(a).pipe(Qm), "run")
+      run: r(() => qn(a).pipe(Qm), "run")
     }), l = yield* rx(e, s, i, {
       config: o,
       background: c.service,
@@ -5088,27 +5088,27 @@ function oh(e) {
     return yield* Bo(
       ze(function* () {
         yield* so(a, l.backgroundProgram);
-        let f = yield* c.start, w = l.httpServer ?? Mg(s), g = l.store ?? Bg(), _ = yield* gs;
+        let f = yield* c.start, w = l.httpServer ?? Mg(s), h = l.store ?? Bg(), _ = yield* Es;
         yield* Mo(
           _,
-          Ue(() => g.shutdownFallback())
+          Be(() => h.shutdownFallback())
         ), yield* Mo(
           _,
-          Ue(() => w.shutdownFallback())
+          Be(() => w.shutdownFallback())
         );
         let E = !1;
-        return yield* qt({
+        return yield* Ft({
           try: r(() => (l.resources.addProducer("effect-background", { close: f.close }), E = !0, {
             acquired: l,
             background: c.service,
             coordinator: e.makeLifecycleCoordinator(l),
             httpServer: w,
-            store: g
+            store: h
           }), "try"),
-          catch: gi
+          catch: yi
         }).pipe(
           lg(
-            () => Bt(
+            () => bt(
               () => Promise.allSettled([
                 ...E ? [] : [f.close()],
                 l.resources.close()
@@ -5119,18 +5119,18 @@ function oh(e) {
         );
       })
     );
-  }), n = di(
+  }), n = gi(
     t,
-    (o, s) => o.coordinator.close($u(s)).pipe(wr),
+    (o, s) => o.coordinator.close($u(s)).pipe(gr),
     { interruptible: !0 }
   );
-  return li(
+  return pi(
     n.pipe(
-      hr(
-        ({ acquired: o, background: s, coordinator: i, httpServer: a, store: c }) => Lr(ys, { acquired: o, coordinator: i }).pipe(
-          er(Es, s),
-          er(Ha, a.service),
-          er(Yt, c.service)
+      mr(
+        ({ acquired: o, background: s, coordinator: i, httpServer: a, store: c }) => Or(vs, { acquired: o, coordinator: i }).pipe(
+          Qn(Ss, s),
+          Qn(ja, a.service),
+          Qn(Gt, c.service)
         )
       )
     )
@@ -5144,7 +5144,7 @@ function sh(e, t) {
 r(sh, "composeDaemonRootLayer");
 
 
-import Fn from "node:fs";
+import In from "node:fs";
 import Sy from "node:crypto";
 import of from "node:path";
 
@@ -5190,15 +5190,15 @@ function ih(e) {
 r(ih, "openDatabase");
 
 
-function mt(e) {
+function dt(e) {
   if (typeof e == "object" && e !== null) {
     let t = e.code;
     if (typeof t == "string") return t;
   }
 }
-r(mt, "errCode");
-function Ot(e, t) {
-  let n = mt(e);
+r(dt, "errCode");
+function Pt(e, t) {
+  let n = dt(e);
   if (n) return n;
   if (typeof e == "object" && e !== null) {
     let o = e.message;
@@ -5206,18 +5206,18 @@ function Ot(e, t) {
   }
   return t ?? String(e);
 }
-r(Ot, "errText");
+r(Pt, "errText");
 function Ze(e) {
   return e instanceof Error && e.message ? e.message : String(e);
 }
 r(Ze, "errMessage");
-function Rn(e) {
+function bn(e) {
   if (typeof e == "object" && e !== null && "status" in e) {
     let t = e.status;
     if (typeof t == "number") return t;
   }
 }
-r(Rn, "errStatus");
+r(bn, "errStatus");
 
 
 var lx = `
@@ -5448,7 +5448,7 @@ var ah = [
       e.exec(ux), dx(e);
     }
   }
-], $D = ah.reduce((e, t) => Math.max(e, t.version), 0);
+], UD = ah.reduce((e, t) => Math.max(e, t.version), 0);
 function fx(e) {
   let t = e.prepare("PRAGMA user_version").get();
   return t ? Number(t.user_version) : 0;
@@ -5494,7 +5494,7 @@ function ch(e, t = { chmodSync: ax, statSync: cx }) {
         });
     } catch (o) {
       throw n.close(), new Error(
-        `fleetd.db owner-only confidentiality could not be established (${Ot(o, "unknown error")}); refusing to start with the state database readable by other users`,
+        `fleetd.db owner-only confidentiality could not be established (${Pt(o, "unknown error")}); refusing to start with the state database readable by other users`,
         { cause: o }
       );
     }
@@ -5505,9 +5505,9 @@ function ch(e, t = { chmodSync: ax, statSync: cx }) {
             code: "EMODE"
           });
       } catch (s) {
-        if (mt(s) === "ENOENT") continue;
+        if (dt(s) === "ENOENT") continue;
         throw n.close(), new Error(
-          `fleetd.db sidecar owner-only confidentiality could not be established (${Ot(s, "unknown error")}); refusing to start with the state database readable by other users`,
+          `fleetd.db sidecar owner-only confidentiality could not be established (${Pt(s, "unknown error")}); refusing to start with the state database readable by other users`,
           { cause: s }
         );
       }
@@ -5517,7 +5517,7 @@ function ch(e, t = { chmodSync: ax, statSync: cx }) {
 r(ch, "openDb");
 
 
-var Ka = class {
+var za = class {
   static {
     r(this, "DaemonResources");
   }
@@ -5626,12 +5626,12 @@ var Ka = class {
 
 
 import Rd from "node:fs";
-import Uk from "node:path";
+import Wk from "node:path";
 
 
 import { execFileSync as mx } from "node:child_process";
-import vs from "node:fs";
-import xt from "node:path";
+import ks from "node:fs";
+import yt from "node:path";
 var lh = new Map(), uh = new Map(), gx = 512, hx = 5 * 6e4, fh = 2e3, wx = 2e4;
 function ph(e, t, n = Date.now()) {
   let o = e.get(t);
@@ -5654,13 +5654,13 @@ function mh(e, t, n, o, s = Date.now()) {
 r(mh, "cacheSet");
 function gh(e) {
   try {
-    return vs.statSync(e).isDirectory();
+    return ks.statSync(e).isDirectory();
   } catch {
     return !1;
   }
 }
 r(gh, "isDirectory");
-function Va(e, t) {
+function Xa(e, t) {
   try {
     return mx("git", e, {
       cwd: t,
@@ -5675,90 +5675,90 @@ function Va(e, t) {
     return null;
   }
 }
-r(Va, "git");
-function qr(e) {
+r(Xa, "git");
+function Hr(e) {
   try {
-    return vs.realpathSync(e);
+    return ks.realpathSync(e);
   } catch {
-    return xt.resolve(e);
+    return yt.resolve(e);
   }
 }
-r(qr, "canon");
+r(Hr, "canon");
 function Ex(e) {
   try {
-    return vs.existsSync(xt.join(e, "HEAD")) && vs.statSync(xt.join(e, "objects")).isDirectory() && vs.statSync(xt.join(e, "refs")).isDirectory();
+    return ks.existsSync(yt.join(e, "HEAD")) && ks.statSync(yt.join(e, "objects")).isDirectory() && ks.statSync(yt.join(e, "refs")).isDirectory();
   } catch {
     return !1;
   }
 }
 r(Ex, "isBareGitDir");
-function Tn(e) {
+function kn(e) {
   if (!e)
     return { repo_id: null, repo_name: null, worktree: null, main_tree: null, is_git: !1 };
   if (!gh(e)) {
-    let s = qr(e);
-    return { repo_id: s, repo_name: xt.basename(s), worktree: s, main_tree: s, is_git: !1 };
+    let s = Hr(e);
+    return { repo_id: s, repo_name: yt.basename(s), worktree: s, main_tree: s, is_git: !1 };
   }
   let t = ph(lh, e);
   if (t !== void 0) return t;
-  let n, o = Va(["rev-parse", "--git-common-dir"], e);
+  let n, o = Xa(["rev-parse", "--git-common-dir"], e);
   if (o) {
-    let s = qr(xt.isAbsolute(o) ? o : xt.resolve(e, o)), i = Va(["rev-parse", "--show-toplevel"], e), c = (xt.basename(s) === ".git" ? [] : (Va(["worktree", "list", "--porcelain"], e) ?? "").split(`
+    let s = Hr(yt.isAbsolute(o) ? o : yt.resolve(e, o)), i = Xa(["rev-parse", "--show-toplevel"], e), c = (yt.basename(s) === ".git" ? [] : (Xa(["worktree", "list", "--porcelain"], e) ?? "").split(`
 `).filter((f) => f.startsWith("worktree ")).map((f) => f.slice(9))).find(
-      (f) => xt.basename(qr(f)) !== ".git" && !Ex(qr(f))
-    ), l = xt.basename(s) === ".git" ? xt.dirname(s) : qr(c ?? i ?? e);
+      (f) => yt.basename(Hr(f)) !== ".git" && !Ex(Hr(f))
+    ), l = yt.basename(s) === ".git" ? yt.dirname(s) : Hr(c ?? i ?? e);
     n = {
       repo_id: s,
-      repo_name: xt.basename(l).replace(/\.git$/, "") || xt.basename(l),
-      worktree: qr(i || e),
-      main_tree: qr(l),
+      repo_name: yt.basename(l).replace(/\.git$/, "") || yt.basename(l),
+      worktree: Hr(i || e),
+      main_tree: Hr(l),
       is_git: !0
     };
   } else {
-    let s = qr(e);
-    n = { repo_id: s, repo_name: xt.basename(s), worktree: s, main_tree: s, is_git: !1 };
+    let s = Hr(e);
+    n = { repo_id: s, repo_name: yt.basename(s), worktree: s, main_tree: s, is_git: !1 };
   }
   return mh(lh, e, n, n.is_git ? hx : fh), n;
 }
-r(Tn, "deriveRepo");
-function Dn(e, { fresh: t = !1 } = {}) {
+r(kn, "deriveRepo");
+function An(e, { fresh: t = !1 } = {}) {
   if (!e || !gh(e)) return null;
   let n = Date.now();
   if (!t) {
     let s = ph(uh, e, n);
     if (s !== void 0) return s;
   }
-  let o = Va(["rev-parse", "--abbrev-ref", "HEAD"], e);
+  let o = Xa(["rev-parse", "--abbrev-ref", "HEAD"], e);
   return mh(uh, e, o, o == null ? fh : wx, n), o;
 }
-r(Dn, "branchOf");
+r(An, "branchOf");
 function yx(e) {
-  let t = xt.resolve(e), n = [];
+  let t = yt.resolve(e), n = [];
   for (let o = 0; o < 64; o++) {
     try {
-      return xt.join(vs.realpathSync(t), ...n.reverse());
+      return yt.join(ks.realpathSync(t), ...n.reverse());
     } catch {
     }
-    let s = xt.dirname(t);
-    if (s === t) return xt.resolve(e);
-    n.push(xt.basename(t)), t = s;
+    let s = yt.dirname(t);
+    if (s === t) return yt.resolve(e);
+    n.push(yt.basename(t)), t = s;
   }
-  return xt.resolve(e);
+  return yt.resolve(e);
 }
 r(yx, "canonFile");
 function dh(e) {
-  return e !== "" && e !== ".." && !e.startsWith(".." + xt.sep) && !xt.isAbsolute(e);
+  return e !== "" && e !== ".." && !e.startsWith(".." + yt.sep) && !yt.isAbsolute(e);
 }
 r(dh, "insideTree");
 function hh(e, t) {
-  if (e = yx(e), t?.worktree && t.repo_id && Tn(t.cwd).is_git) {
-    let o = xt.relative(t.worktree, e);
+  if (e = yx(e), t?.worktree && t.repo_id && kn(t.cwd).is_git) {
+    let o = yt.relative(t.worktree, e);
     if (dh(o))
       return { repo_id: t.repo_id, rel_path: o, worktree: t.worktree };
   }
-  let n = Tn(xt.dirname(e));
+  let n = kn(yt.dirname(e));
   if (n.is_git) {
-    let o = xt.relative(n.worktree, e);
+    let o = yt.relative(n.worktree, e);
     if (dh(o))
       return { repo_id: n.repo_id, rel_path: o, worktree: n.worktree };
   }
@@ -5768,28 +5768,28 @@ r(hh, "ledgerKey");
 
 
 var wh = "([A-Z][A-Z0-9]{1,9})-([1-9][0-9]*)", _x = new RegExp(`(?<![A-Za-z0-9])${wh}(?![A-Za-z0-9])`), Sx = new RegExp(`^${wh}$`);
-function jr(e) {
+function qr(e) {
   if (typeof e != "string" || !e) return null;
   let t = _x.exec(e);
   if (!t) return null;
   let [, n, o] = t;
   return n !== void 0 && o !== void 0 ? `${n}-${o}` : null;
 }
-r(jr, "ticketFromBranch");
+r(qr, "ticketFromBranch");
 function Eh(e) {
   let t = (e ?? "").trim().toUpperCase();
   return Sx.test(t) ? t : null;
 }
 r(Eh, "normalizeTicket");
-function hi(e) {
+function _i(e) {
   let [t = ""] = e.split("-");
   return t;
 }
-r(hi, "animalOf");
+r(_i, "animalOf");
 
 
-import wi from "node:path";
-import Vn from "node:fs";
+import Si from "node:path";
+import Kn from "node:fs";
 import Uu from "node:os";
 
 
@@ -5816,53 +5816,53 @@ var yh = [
 ], Sh = ["FLEETDECK_SETUP_CMD"];
 
 
-function kt(e, t, { min: n = 0 } = {}) {
+function vt(e, t, { min: n = 0 } = {}) {
   let o = Number(process.env[e]);
   return Number.isFinite(o) && o >= n ? Math.floor(o) : t;
 }
-r(kt, "envInt");
-function za(e) {
-  return wi.resolve(e).replace(/[/.]/g, "-");
+r(vt, "envInt");
+function Ya(e) {
+  return Si.resolve(e).replace(/[/.]/g, "-");
 }
-r(za, "mungeClaudeProjectCwd");
+r(Ya, "mungeClaudeProjectCwd");
 function Wu() {
   return process.env.HOME || Uu.homedir();
 }
 r(Wu, "userHomeDir");
-function xs(e, t, n = Wu()) {
-  return wi.join(
+function Rs(e, t, n = Wu()) {
+  return Si.join(
     n,
     ".claude",
     "projects",
-    za(e),
+    Ya(e),
     `${t}.jsonl`
   );
 }
-r(xs, "claudeTranscriptPath");
+r(Rs, "claudeTranscriptPath");
 function Hu(e) {
   let t = e?.worktree_path ?? e?.cwd;
   return !!t &&
 
-  e != null && ["pane-dead", "killed", "gone"].includes(e.status) && Vn.existsSync(t) && Vn.existsSync(xs(t, e.session_id));
+  e != null && ["pane-dead", "killed", "gone"].includes(e.status) && Kn.existsSync(t) && Kn.existsSync(Rs(t, e.session_id));
 }
 r(Hu, "spawnRowRevivable");
 function vx(e) {
   if (!e) return !1;
   try {
-    return Vn.statSync(e).isDirectory();
+    return Kn.statSync(e).isDirectory();
   } catch {
     return !1;
   }
 }
 r(vx, "cwdIsDirectory");
-var Ei = new Set([null, "presumed", "superseded"]);
+var vi = new Set([null, "presumed", "superseded"]);
 function vh(e, t) {
-  if (!e || e.ended_at == null || Ei.has(e.end_reason ?? null) || t) return !1;
+  if (!e || e.ended_at == null || vi.has(e.end_reason ?? null) || t) return !1;
   let n = e.cwd;
-  return vx(n) && Vn.existsSync(xs(n, e.session_id));
+  return vx(n) && Kn.existsSync(Rs(n, e.session_id));
 }
 r(vh, "sessionAdoptableNow");
-function bs(e, t, {
+function Ts(e, t, {
   keep: n = [],
   boardSession: o = null
 } = {}) {
@@ -5938,7 +5938,7 @@ function bs(e, t, {
     `FLEETDECK_HOME=${t}`
   ];
 }
-r(bs, "claudeEnvArgvPrefix");
+r(Ts, "claudeEnvArgvPrefix");
 function xh() {
   let e = new Map();
   return r(async function(n) {
@@ -5957,14 +5957,14 @@ function xh() {
   }, "acquire");
 }
 r(xh, "createKeyedMutex");
-function Xa(e) {
+function Ja(e) {
   try {
-    return Vn.realpathSync(e);
+    return Kn.realpathSync(e);
   } catch {
-    return wi.resolve(e);
+    return Si.resolve(e);
   }
 }
-r(Xa, "canonicalPathKey");
+r(Ja, "canonicalPathKey");
 async function bh(e, t, n) {
   let o = new Array(e.length), s = 0;
   async function i() {
@@ -5983,20 +5983,20 @@ function kh(e) {
     if (i > 12) return;
     let a;
     try {
-      a = Vn.readdirSync(s, { withFileTypes: !0 });
+      a = Kn.readdirSync(s, { withFileTypes: !0 });
     } catch {
       return;
     }
     for (let c of a) {
-      let l = wi.join(s, c.name), f;
+      let l = Si.join(s, c.name), f;
       try {
-        f = Vn.lstatSync(l);
+        f = Kn.lstatSync(l);
       } catch {
         continue;
       }
       if (!(n != null && f.uid !== n) && !c.isSymbolicLink()) {
         try {
-          Vn.chmodSync(l, f.mode | 128);
+          Kn.chmodSync(l, f.mode | 128);
         } catch {
         }
         c.isDirectory() && o(l, i + 1);
@@ -6023,15 +6023,15 @@ function Rh(e, t = 8) {
     if (i.length >= t || f > 12) return;
     let w;
     try {
-      w = Vn.readdirSync(l, { withFileTypes: !0 });
+      w = Kn.readdirSync(l, { withFileTypes: !0 });
     } catch {
       return;
     }
-    for (let g of w) {
+    for (let h of w) {
       if (i.length >= t) return;
-      let _ = wi.join(l, g.name), E;
+      let _ = Si.join(l, h.name), E;
       try {
-        E = Vn.lstatSync(_);
+        E = Kn.lstatSync(_);
       } catch {
         continue;
       }
@@ -6039,7 +6039,7 @@ function Rh(e, t = 8) {
         i.push({ path: _, owner: a(E) });
         continue;
       }
-      g.isDirectory() && !g.isSymbolicLink() && c(_, f + 1);
+      h.isDirectory() && !h.isSymbolicLink() && c(_, f + 1);
     }
   }, "walk");
   try {
@@ -6053,7 +6053,7 @@ var qu = r((e) => /^[A-Za-z0-9_@%+=:,./-]+$/.test(e) ? e : `'${e.replace(/'/g, "
 function xx(e) {
   if (!Number.isFinite(e) || e <= 0) return null;
   try {
-    let t = Vn.readFileSync(`/proc/${e}/stat`, "utf8"), n = t.slice(t.lastIndexOf(")") + 2), o = Number(n.split(" ")[19]), s = Number(Vn.readFileSync("/proc/uptime", "utf8").split(" ")[0]);
+    let t = Kn.readFileSync(`/proc/${e}/stat`, "utf8"), n = t.slice(t.lastIndexOf(")") + 2), o = Number(n.split(" ")[19]), s = Number(Kn.readFileSync("/proc/uptime", "utf8").split(" ")[0]);
     return !Number.isFinite(o) || !Number.isFinite(s) ? null : Date.now() - (s - o / 100) * 1e3;
   } catch {
     return null;
@@ -6061,37 +6061,37 @@ function xx(e) {
 }
 r(xx, "processStartMs");
 var bx = 15e3;
-function yi(e, t) {
+function xi(e, t) {
   if (!Number.isFinite(t) || t <= 0) return !1;
   let n = xx(e);
   return n == null ? !1 : Math.abs(n - t) <= bx;
 }
-r(yi, "pidOwnedBy");
+r(xi, "pidOwnedBy");
 function ju(e, t) {
   let n = String(e ?? "").toLowerCase();
   return n === "busy" || n === "running" ? "working" : n === "blocked" || n === "waiting" ? "needsyou" : n === "idle" ? "idle" : t ? "queued" : "idle";
 }
 r(ju, "colFromAgentState");
-function sn(e) {
+function nn(e) {
   return e == null ? "" : typeof e == "string" ? e : String(e);
 }
-r(sn, "asText");
-function $t(e) {
+r(nn, "asText");
+function Lt(e) {
   try {
     return JSON.parse(e ?? "null");
   } catch {
     return null;
   }
 }
-r($t, "safeParse");
-var _i = r((e) => new Promise((t) => setTimeout(t, e)), "sleep");
-function Si(e) {
+r(Lt, "safeParse");
+var bi = r((e) => new Promise((t) => setTimeout(t, e)), "sleep");
+function ki(e) {
   let t = e.charCodeAt(e.length - 1);
   return t >= 55296 && t <= 56319 ? e.slice(0, -1) : e;
 }
-r(Si, "dropOrphanSurrogate");
+r(ki, "dropOrphanSurrogate");
 function Th(e) {
-  let t = sn(e).trim(), n;
+  let t = nn(e).trim(), n;
   if (n = /^broadcast\s+(.+)$/is.exec(t)) return { cmd: "broadcast", text: (n[1] ?? "").trim() };
   if (n = /^assign\s+(\S+)\s+(.+)$/is.exec(t)) {
     let o = n[1] ?? "";
@@ -6101,11 +6101,11 @@ function Th(e) {
 }
 r(Th, "parseCommand");
 var kx = /^[A-Za-z0-9][A-Za-z0-9-]{0,23}$/, Rx = new Set(["all", "everyone", "clear"]);
-function vi(e) {
+function Ri(e) {
   return kx.test(e) ? Rx.has(e.toLowerCase()) || e.toLowerCase().startsWith("repo:") ? `"${e}" is reserved — mail routing needs it` : null : "a name is letters, digits and dashes only (start with a letter or digit, max 24)";
 }
-r(vi, "validateNameSuffix");
-var ks = /^(sh|bash|zsh|zsh-.*)$/;
+r(Ri, "validateNameSuffix");
+var Cs = /^(sh|bash|zsh|zsh-.*)$/;
 
 
 var Tx = "[FLEETDECK] Your plan was captured to the fleet plan library — do not execute it. Wrap up your turn.", Lh = 6e5, Cx = 4, Ch = 5e3, Px = 8, fo = new Set(["permission", "elicitation", "choice"]), Ax = 3e3, Ox = 6e4, Lx = 2;
@@ -6121,10 +6121,10 @@ function Ku(e) {
   return e === null || typeof e != "object" ? JSON.stringify(e ?? null) : Array.isArray(e) ? "[" + e.map(Ku).join(",") + "]" : "{" + Object.keys(e).sort().map((t) => JSON.stringify(t) + ":" + Ku(e[t])).join(",") + "}";
 }
 r(Ku, "stableStringify");
-function Ya(e, t) {
-  return sn(e) + "\0" + Ku(t ?? null);
+function Qa(e, t) {
+  return nn(e) + "\0" + Ku(t ?? null);
 }
-r(Ya, "toolCallKey");
+r(Qa, "toolCallKey");
 function Dh(e, {
   holdMs: t = Lh,
   mail: n = r(() => {
@@ -6161,7 +6161,7 @@ function Dh(e, {
 
 
 
-  rearmGraceMs: g = Ax,
+  rearmGraceMs: h = Ax,
   rearmMax: _ = Lx,
   sweepMs: E = Ch
 } = {}) {
@@ -6182,13 +6182,13 @@ function Dh(e, {
     ),
     resolved: e.prepare(`SELECT * FROM questions WHERE status != 'pending'
       ORDER BY COALESCE(answered_at, expires_at, created_at) DESC, id DESC LIMIT ${Px}`)
-  }, U = new Map(), M = new Map(), D = new Map(), O = new Map(), P = new Map(), v = new Set(), Q = "active", G = null, Ee = r(() => !1, "boardConsumerProbe"), ye = r(() => Q === "active", "active"), Ie = r(() => new Error("fleetd questions are quiescing"), "quiescingError");
-  function Se(k) {
-    k({}, 200);
+  }, $ = new Map(), F = new Map(), I = new Map(), O = new Map(), P = new Map(), x = new Set(), Q = "active", z = null, Ee = r(() => !1, "boardConsumerProbe"), ye = r(() => Q === "active", "active"), De = r(() => new Error("fleetd questions are quiescing"), "quiescingError");
+  function ve(R) {
+    R({}, 200);
   }
-  r(Se, "respondFailOpen");
-  function $e(k) {
-    ye() && (Ee = k);
+  r(ve, "respondFailOpen");
+  function $e(R) {
+    ye() && (Ee = R);
   }
   r($e, "setBoardConsumerProbe");
   function Z() {
@@ -6200,232 +6200,232 @@ function Dh(e, {
     }
   }
   r(Z, "boardConsumerAvailable");
-  function ae(k, z, F) {
-    if (!ye()) throw Ie();
-    let he = Date.now(), ce = t;
-    if (fo.has(k) && f)
+  function ie(R, X, B) {
+    if (!ye()) throw De();
+    let xe = Date.now(), le = t;
+    if (fo.has(R) && f)
       try {
-        ce = f() ?? t;
+        le = f() ?? t;
       } catch {
-        ce = t;
+        le = t;
       }
-    let Me = typeof F == "object" && F !== null && "rearmed" in F && F.rearmed === !0, dt = fo.has(k) && !Me ? he + ce : null, ft = m.insert.run(
-      z ?? "unknown",
-      k,
-      JSON.stringify(F ?? {}),
-      he,
-      dt
-    ), et = m.get.get(Number(ft.lastInsertRowid));
-    if (!et) throw new Error("fleetd: question row vanished immediately after insert");
-    return et;
+    let Le = typeof B == "object" && B !== null && "rearmed" in B && B.rearmed === !0, ft = fo.has(R) && !Le ? xe + le : null, Et = m.insert.run(
+      X ?? "unknown",
+      R,
+      JSON.stringify(B ?? {}),
+      xe,
+      ft
+    ), We = m.get.get(Number(Et.lastInsertRowid));
+    if (!We) throw new Error("fleetd: question row vanished immediately after insert");
+    return We;
   }
-  r(ae, "create");
-  function L(k, z) {
+  r(ie, "create");
+  function D(R, X) {
     if (!ye()) {
       try {
-        Se(z);
+        ve(X);
       } catch {
       }
       return !1;
     }
-    let F = [...U.keys()].filter((ce) => U.get(ce)?.session_id === k.session_id).sort((ce, Me) => ce - Me);
-    if (F.length >= Cx) {
-      let ce = F[0];
-      ce !== void 0 && b(ce);
+    let B = [...$.keys()].filter((le) => $.get(le)?.session_id === R.session_id).sort((le, Le) => le - Le);
+    if (B.length >= Cx) {
+      let le = B[0];
+      le !== void 0 && k(le);
     }
-    let he = setTimeout(
+    let xe = setTimeout(
       () => {
         if (ye())
           try {
-            b(k.id);
-          } catch (ce) {
-            let Me = S(k.id);
-            if (Me)
+            k(R.id);
+          } catch (le) {
+            let Le = S(R.id);
+            if (Le)
               try {
-                Se(Me.respond);
+                ve(Le.respond);
               } catch {
               }
-            console.error(`fleetd question #${k.id} expiry persistence error:`, ce);
+            console.error(`fleetd question #${R.id} expiry persistence error:`, le);
           }
       },
-      Math.max(0, (k.expires_at ?? Date.now()) - Date.now())
+      Math.max(0, (R.expires_at ?? Date.now()) - Date.now())
     );
-    return he.unref(), U.set(k.id, { session_id: k.session_id, respond: z, timer: he }), !0;
+    return xe.unref(), $.set(R.id, { session_id: R.session_id, respond: X, timer: xe }), !0;
   }
-  r(L, "attachHold");
-  function S(k) {
-    let z = U.get(k);
-    return z ? (clearTimeout(z.timer), U.delete(k), z) : null;
+  r(D, "attachHold");
+  function S(R) {
+    let X = $.get(R);
+    return X ? (clearTimeout(X.timer), $.delete(R), X) : null;
   }
   r(S, "releaseHold");
-  function I() {
-    let k = [...U.entries()];
-    if (k.length === 0) return 0;
-    for (let [F] of k) U.delete(F);
-    for (let [, F] of k)
+  function N() {
+    let R = [...$.entries()];
+    if (R.length === 0) return 0;
+    for (let [B] of R) $.delete(B);
+    for (let [, B] of R)
       try {
-        Se(F.respond);
+        ve(B.respond);
       } catch {
       }
-    let z = [];
-    for (let [F, he] of k) {
-      clearTimeout(he.timer), C(F);
+    let X = [];
+    for (let [B, xe] of R) {
+      clearTimeout(xe.timer), C(B);
       try {
-        m.markExpired.run(F).changes && z.push(F);
-      } catch (ce) {
-        console.error(`fleetd question #${F} board-disconnect persistence error:`, ce);
+        m.markExpired.run(B).changes && X.push(B);
+      } catch (le) {
+        console.error(`fleetd question #${B} board-disconnect persistence error:`, le);
       }
     }
-    for (let F of z)
+    for (let B of X)
       try {
-        w(m.get.get(F));
+        w(m.get.get(B));
       } catch {
       }
-    return a(), k.length;
+    return a(), R.length;
   }
-  r(I, "releaseAll");
-  let d = I;
-  function T(k, z) {
+  r(N, "releaseAll");
+  let d = N;
+  function T(R, X) {
     if (!ye()) return;
-    let F = P.get(k);
-    F || P.set(k, F = new Map()), F.set(z, (F.get(z) ?? 0) + 1);
-    let he = F, ce = setTimeout(() => {
-      if (!ye() || (v.delete(ce), P.get(k) !== he)) return;
-      let Me = he.get(z);
-      Me != null && (Me <= 1 ? he.delete(z) : he.set(z, Me - 1), he.size === 0 && P.delete(k));
+    let B = P.get(R);
+    B || P.set(R, B = new Map()), B.set(X, (B.get(X) ?? 0) + 1);
+    let xe = B, le = setTimeout(() => {
+      if (!ye() || (x.delete(le), P.get(R) !== xe)) return;
+      let Le = xe.get(X);
+      Le != null && (Le <= 1 ? xe.delete(X) : xe.set(X, Le - 1), xe.size === 0 && P.delete(R));
     }, Ox);
-    v.add(ce), ce.unref();
+    x.add(le), le.unref();
   }
   r(T, "noteCompleted");
-  function A(k, z) {
+  function A(R, X) {
     if (!ye()) return !1;
-    let F = P.get(k);
-    if (!F) return !1;
-    let he = F.get(z);
-    return he ? (he <= 1 ? F.delete(z) : F.set(z, he - 1), F.size === 0 && P.delete(k), !0) : !1;
+    let B = P.get(R);
+    if (!B) return !1;
+    let xe = B.get(X);
+    return xe ? (xe <= 1 ? B.delete(X) : B.set(X, xe - 1), B.size === 0 && P.delete(R), !0) : !1;
   }
   r(A, "consumeCompleted");
-  function b(k) {
+  function k(R) {
     if (!ye()) return;
-    let z = S(k);
-    if (z)
+    let X = S(R);
+    if (X)
       try {
-        Se(z.respond);
+        ve(X.respond);
       } catch {
       }
-    m.markExpired.run(k).changes && (s(`⌛ question #${k} expired unanswered — decide in the terminal`), a(), X(m.get.get(k)), w(m.get.get(k)));
+    m.markExpired.run(R).changes && (s(`⌛ question #${R} expired unanswered — decide in the terminal`), a(), Y(m.get.get(R)), w(m.get.get(R)));
   }
-  r(b, "settleExpired");
-  function X(k) {
-    if (!ye() || !(g > 0) || !k || !fo.has(k.kind)) return !1;
-    let z = $t(k.payload_json)?.chain_root ?? k.id;
-    if ((O.get(z) ?? 0) >= _) return !1;
-    let he = e.prepare(
+  r(k, "settleExpired");
+  function Y(R) {
+    if (!ye() || !(h > 0) || !R || !fo.has(R.kind)) return !1;
+    let X = Lt(R.payload_json)?.chain_root ?? R.id;
+    if ((O.get(X) ?? 0) >= _) return !1;
+    let xe = e.prepare(
       "UPDATE questions SET payload_json = ? WHERE id = ? AND status = 'expired'"
     );
-    he.run(
+    xe.run(
       JSON.stringify({
-        ...$t(k.payload_json) ?? {},
+        ...Lt(R.payload_json) ?? {},
         rearm_pending: !0
       }),
-      k.id
-    ), he.finalize();
-    let ce = setTimeout(() => {
+      R.id
+    ), xe.finalize();
+    let le = setTimeout(() => {
       if (ye())
         try {
-          H(k.id, z);
+          V(R.id, X);
         } catch {
         }
-    }, g);
-    return ce.unref(), M.set(k.id, {
-      session_id: k.session_id,
-      timer: ce,
-      chainRoot: z,
+    }, h);
+    return le.unref(), F.set(R.id, {
+      session_id: R.session_id,
+      timer: le,
+      chainRoot: X,
       armedAt: Date.now()
     }), !0;
   }
-  r(X, "scheduleRearm");
-  function H(k, z) {
-    if (!ye() || !M.delete(k)) return;
-    let F = m.get.get(k);
-    if (F?.status !== "expired" || m.pendingBySession.all(F.session_id).length > 0) return;
-    let he = {
-      ...$t(F.payload_json) ?? {},
+  r(Y, "scheduleRearm");
+  function V(R, X) {
+    if (!ye() || !F.delete(R)) return;
+    let B = m.get.get(R);
+    if (B?.status !== "expired" || m.pendingBySession.all(B.session_id).length > 0) return;
+    let xe = {
+      ...Lt(B.payload_json) ?? {},
       rearmed: !0,
-      chain_root: z
+      chain_root: X
     };
-    delete he.rearm_pending;
-    let ce = ae(F.kind, F.session_id, he);
-    O.set(z, (O.get(z) ?? 0) + 1), D.set(ce.id, { sourceId: k }), M.set(F.id, {
-      session_id: F.session_id,
+    delete xe.rearm_pending;
+    let le = ie(B.kind, B.session_id, xe);
+    O.set(X, (O.get(X) ?? 0) + 1), I.set(le.id, { sourceId: R }), F.set(B.id, {
+      session_id: B.session_id,
       timer: null,
-      chainRoot: z,
-      successor: ce.id
+      chainRoot: X,
+      successor: le.id
     }), s(
-      `🔁 question #${ce.id} re-armed (was #${F.id}) — answering sends it as a message at the next turn boundary`
+      `🔁 question #${le.id} re-armed (was #${B.id}) — answering sends it as a message at the next turn boundary`
     ), a();
   }
-  r(H, "fireRearm");
-  function ee(k) {
+  r(V, "fireRearm");
+  function te(R) {
     if (!ye()) return !1;
-    let z = D.get(k);
-    if (D.delete(k), !z) return !1;
-    let F = m.get.get(k);
-    if (F?.status !== "pending" || Number(m.markExpired.run(k).changes) === 0) return !1;
-    let he = $t(F.payload_json)?.chain_root ?? k;
-    if ((O.get(he) ?? 0) >= _) return !0;
-    M.delete(z.sourceId);
-    let ce = setTimeout(() => {
+    let X = I.get(R);
+    if (I.delete(R), !X) return !1;
+    let B = m.get.get(R);
+    if (B?.status !== "pending" || Number(m.markExpired.run(R).changes) === 0) return !1;
+    let xe = Lt(B.payload_json)?.chain_root ?? R;
+    if ((O.get(xe) ?? 0) >= _) return !0;
+    F.delete(X.sourceId);
+    let le = setTimeout(() => {
       if (ye())
         try {
-          H(k, he);
+          V(R, xe);
         } catch {
         }
-    }, g);
-    return ce.unref(), M.set(k, { session_id: F.session_id, timer: ce, chainRoot: he }), !0;
+    }, h);
+    return le.unref(), F.set(R, { session_id: B.session_id, timer: le, chainRoot: xe }), !0;
   }
-  r(ee, "recycleRearm");
-  function C(k) {
-    let z = D.get(k)?.sourceId, F = M.get(k) ?? (z !== void 0 ? M.get(z) : void 0);
-    F?.timer && clearTimeout(F.timer), F && M.delete(z ?? k), F?.successor != null && D.delete(F.successor), D.delete(k);
+  r(te, "recycleRearm");
+  function C(R) {
+    let X = I.get(R)?.sourceId, B = F.get(R) ?? (X !== void 0 ? F.get(X) : void 0);
+    B?.timer && clearTimeout(B.timer), B && F.delete(X ?? R), B?.successor != null && I.delete(B.successor), I.delete(R);
   }
   r(C, "cancelRearm");
-  function W(k) {
+  function q(R) {
     if (!ye()) return !1;
-    for (let [F, he] of [...M])
-      he.session_id === k && (he.timer && clearTimeout(he.timer), M.delete(F), he.successor != null && D.delete(he.successor));
-    let z = [];
-    for (let F of m.pendingBySession.all(k))
-      fo.has(F.kind) && $t(F.payload_json)?.rearmed === !0 && m.markExpired.run(F.id).changes && z.push(F.id);
-    for (let F of z) w(m.get.get(F), { activity: !0 });
-    return z.length > 0;
+    for (let [B, xe] of [...F])
+      xe.session_id === R && (xe.timer && clearTimeout(xe.timer), F.delete(B), xe.successor != null && I.delete(xe.successor));
+    let X = [];
+    for (let B of m.pendingBySession.all(R))
+      fo.has(B.kind) && Lt(B.payload_json)?.rearmed === !0 && m.markExpired.run(B.id).changes && X.push(B.id);
+    for (let B of X) w(m.get.get(B), { activity: !0 });
+    return X.length > 0;
   }
-  r(W, "disarmRearmsForSession");
-  function y(k) {
-    ye() && U.has(k) && (S(k), m.markExpired.run(k).changes && (a(), w(m.get.get(k))));
+  r(q, "disarmRearmsForSession");
+  function y(R) {
+    ye() && $.has(R) && (S(R), m.markExpired.run(R).changes && (a(), w(m.get.get(R))));
   }
   r(y, "socketClosed");
-  function x(k) {
-    return !ye() || U.has(k) || !m.markExpired.run(k).changes ? !1 : (w(m.get.get(k)), a(), !0);
+  function v(R) {
+    return !ye() || $.has(R) || !m.markExpired.run(R).changes ? !1 : (w(m.get.get(R)), a(), !0);
   }
-  r(x, "expireUnheld");
-  let q = "answer too long — the mail pipeline would truncate it. Shorten it (or dismiss and answer in the terminal); the question is still pending.";
-  function fe(k) {
-    return k.length <= o ? null : { status: 413, body: { ok: !1, err: q } };
+  r(v, "expireUnheld");
+  let K = "answer too long — the mail pipeline would truncate it. Shorten it (or dismiss and answer in the terminal); the question is still pending.";
+  function me(R) {
+    return R.length <= o ? null : { status: 413, body: { ok: !1, err: K } };
   }
-  r(fe, "answerMailGuard");
-  function V(k, z) {
+  r(me, "answerMailGuard");
+  function ee(R, X) {
     if (!ye())
       return { status: 503, body: { ok: !1, err: "questions are quiescing" } };
-    let F = m.get.get(Number(k));
-    if (!F) return { status: 404, body: { ok: !1, err: "no such question" } };
-    if (F.status !== "pending")
-      return { status: 409, body: { ok: !1, err: `question already ${F.status}` } };
-    let he = Date.now(), ce = i(F.session_id) ?? F.session_id;
-    if (fo.has(F.kind)) {
-      let Me = $t(F.payload_json);
-      if (Me?.rearmed === !0) {
-        let Ve = F.kind === "permission" ? z?.behavior : F.kind === "choice" ? Ph(F, z) : z?.action === "accept" || z?.action === "decline" ? z.action : null;
+    let B = m.get.get(Number(R));
+    if (!B) return { status: 404, body: { ok: !1, err: "no such question" } };
+    if (B.status !== "pending")
+      return { status: 409, body: { ok: !1, err: `question already ${B.status}` } };
+    let xe = Date.now(), le = i(B.session_id) ?? B.session_id;
+    if (fo.has(B.kind)) {
+      let Le = Lt(B.payload_json);
+      if (Le?.rearmed === !0) {
+        let Ve = B.kind === "permission" ? X?.behavior : B.kind === "choice" ? Ph(B, X) : X?.action === "accept" || X?.action === "decline" ? X.action : null;
         if (Ve && typeof Ve == "object")
           return {
             status: 400,
@@ -6434,8 +6434,8 @@ function Dh(e, {
               err: `answer too long — ${Ve.over} code units exceeds the 2000-unit answer limit; shorten the answer or answer at the terminal`
             }
           };
-        let Rt = Ve;
-        if (Rt == null)
+        let _t = Ve;
+        if (_t == null)
           return {
             status: 400,
             body: {
@@ -6443,7 +6443,7 @@ function Dh(e, {
               err: "body must match the question kind (behavior / answers|text / action)"
             }
           };
-        if (Rt === "capture")
+        if (_t === "capture")
           return {
             status: 400,
             body: {
@@ -6451,11 +6451,11 @@ function Dh(e, {
               err: '"capture" needs the live hold — the window for it has closed'
             }
           };
-        let Lt = sn(
-          Me.tool_input?.questions?.[0]?.question ?? Me.text
-        ).slice(0, 80), Cn = `[FLEETDECK ANSWER] ${F.kind} (answered after the hold expired) Q: ${Lt} — A: ${Rt}`, Bn = fe(Cn);
-        return Bn || (c(F.id) != null && l(F.id, Rt), n(F.session_id, "fleetdeck-answer", Cn), C(F.id), m.markAnswered.run(JSON.stringify(z ?? {}), he, F.id), s(
-          `💬 ${ce}: re-armed ${F.kind} answered (${Rt}) — queued for the next turn boundary`
+        let cn = nn(
+          Le.tool_input?.questions?.[0]?.question ?? Le.text
+        ).slice(0, 80), zt = `[FLEETDECK ANSWER] ${B.kind} (answered after the hold expired) Q: ${cn} — A: ${_t}`, vn = me(zt);
+        return vn || (c(B.id) != null && l(B.id, _t), n(B.session_id, "fleetdeck-answer", zt), C(B.id), m.markAnswered.run(JSON.stringify(X ?? {}), xe, B.id), s(
+          `💬 ${le}: re-armed ${B.kind} answered (${_t}) — queued for the next turn boundary`
         ), a(), {
           status: 200,
           body: {
@@ -6465,10 +6465,10 @@ function Dh(e, {
           }
         });
       }
-      let dt, ft, et = null;
-      if (F.kind === "permission") {
-        let Ve = z?.behavior, Rt = c(F.id);
-        if (Ve === "capture" && Rt == null)
+      let ft, Et, We = null;
+      if (B.kind === "permission") {
+        let Ve = X?.behavior, _t = c(B.id);
+        if (Ve === "capture" && _t == null)
           return {
             status: 400,
             body: { ok: !1, err: '"capture" is only valid for an ExitPlanMode plan question' }
@@ -6478,14 +6478,14 @@ function Dh(e, {
             status: 400,
             body: {
               ok: !1,
-              err: Rt != null ? 'body must be {"behavior":"allow"|"capture"|"deny"}' : 'body must be {"behavior":"allow"|"deny"}'
+              err: _t != null ? 'body must be {"behavior":"allow"|"capture"|"deny"}' : 'body must be {"behavior":"allow"|"deny"}'
             }
           };
-        dt = {
+        ft = {
           hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: Ve === "capture" ? "deny" : Ve } }
-        }, ft = Ve, Rt != null && (et = Ve);
-      } else if (F.kind === "choice") {
-        let Ve = Ph(F, z);
+        }, Et = Ve, _t != null && (We = Ve);
+      } else if (B.kind === "choice") {
+        let Ve = Ph(B, X);
         if (Ve && typeof Ve == "object")
           return {
             status: 400,
@@ -6502,21 +6502,21 @@ function Dh(e, {
               err: 'body must be {"answers":{"<question text>":"<label>"}} or {"text":"..."}'
             }
           };
-        let Rt = Dx(F, z);
-        if (!Rt)
+        let _t = Dx(B, X);
+        if (!_t)
           return {
             status: 400,
             body: { ok: !1, err: "choice payload has no usable questions to answer" }
           };
-        dt = {
+        ft = {
           hookSpecificOutput: {
             hookEventName: "PreToolUse",
             permissionDecision: "allow",
-            updatedInput: Rt
+            updatedInput: _t
           }
-        }, ft = Ve.length > 60 ? Ve.slice(0, 57) + "…" : Ve;
+        }, Et = Ve.length > 60 ? Ve.slice(0, 57) + "…" : Ve;
       } else {
-        let Ve = z?.action;
+        let Ve = X?.action;
         if (Ve !== "accept" && Ve !== "decline")
           return {
             status: 400,
@@ -6525,31 +6525,31 @@ function Dh(e, {
               err: 'body must be {"action":"accept","content":{...}} or {"action":"decline"}'
             }
           };
-        dt = {
+        ft = {
           hookSpecificOutput: {
             hookEventName: "Elicitation",
             action: Ve,
-            ...Ve === "accept" ? { content: z?.content ?? {} } : {}
+            ...Ve === "accept" ? { content: X?.content ?? {} } : {}
           }
-        }, ft = Ve;
+        }, Et = Ve;
       }
-      let gt = S(F.id);
-      if (!gt)
-        return m.markExpired.run(F.id).changes && (a(), w(m.get.get(F.id))), {
+      let pt = S(B.id);
+      if (!pt)
+        return m.markExpired.run(B.id).changes && (a(), w(m.get.get(B.id))), {
           status: 409,
           body: { ok: !1, err: "hold expired — the terminal prompt owns this decision now" }
         };
       try {
-        gt.respond(dt, 200);
+        pt.respond(ft, 200);
       } catch {
       }
-      return Me?.tool_name != null && T(F.session_id, Ya(Me.tool_name, Me.tool_input)), m.markAnswered.run(JSON.stringify(z ?? {}), he, F.id), et && (l(F.id, et), et === "capture" && n(F.session_id, "fleetdeck", Tx)), s(`✅ ${ce}: ${F.kind} answered from the board (${ft})`), a(), { status: 200, body: { ok: !0, delivered: !0 } };
+      return Le?.tool_name != null && T(B.session_id, Qa(Le.tool_name, Le.tool_input)), m.markAnswered.run(JSON.stringify(X ?? {}), xe, B.id), We && (l(B.id, We), We === "capture" && n(B.session_id, "fleetdeck", Tx)), s(`✅ ${le}: ${B.kind} answered from the board (${Et})`), a(), { status: 200, body: { ok: !0, delivered: !0 } };
     }
-    if (F.kind === "freeform") {
-      let Me = sn(z?.text).trim();
-      if (!Me) return { status: 400, body: { ok: !1, err: 'body must be {"text":"..."}' } };
-      let ft = `[FLEETDECK ANSWER] Q: ${sn($t(F.payload_json)?.text).slice(0, 80)} — A: ${Me}`, et = fe(ft);
-      return et || (n(F.session_id, "fleetdeck-answer", ft), m.markAnswered.run(JSON.stringify({ text: Me }), he, F.id), s(`💬 answer for ${ce} queued — lands at next turn boundary`), a(), {
+    if (B.kind === "freeform") {
+      let Le = nn(X?.text).trim();
+      if (!Le) return { status: 400, body: { ok: !1, err: 'body must be {"text":"..."}' } };
+      let Et = `[FLEETDECK ANSWER] Q: ${nn(Lt(B.payload_json)?.text).slice(0, 80)} — A: ${Le}`, We = me(Et);
+      return We || (n(B.session_id, "fleetdeck-answer", Et), m.markAnswered.run(JSON.stringify({ text: Le }), xe, B.id), s(`💬 answer for ${le} queued — lands at next turn boundary`), a(), {
         status: 200,
         body: {
           ok: !0,
@@ -6558,183 +6558,183 @@ function Dh(e, {
         }
       });
     }
-    return { status: 400, body: { ok: !1, err: `unknown question kind ${F.kind}` } };
+    return { status: 400, body: { ok: !1, err: `unknown question kind ${B.kind}` } };
   }
-  r(V, "answer");
-  function Fe(k, { toolName: z, toolInput: F } = {}) {
+  r(ee, "answer");
+  function Ce(R, { toolName: X, toolInput: B } = {}) {
     if (!ye()) return !1;
-    let he = typeof z == "string" && z !== "" ? Ya(z, F) : null, ce = he !== null, Me = m.pendingBySession.all(k).filter((et) => {
-      if (!ce) return !0;
-      if (!fo.has(et.kind)) return !1;
-      let gt = $t(et.payload_json);
-      return gt?.rearmed === !0 || gt?.tool_name == null ? !1 : Ya(gt.tool_name, gt.tool_input) === he;
+    let xe = typeof X == "string" && X !== "" ? Qa(X, B) : null, le = xe !== null, Le = m.pendingBySession.all(R).filter((We) => {
+      if (!le) return !0;
+      if (!fo.has(We.kind)) return !1;
+      let pt = Lt(We.payload_json);
+      return pt?.rearmed === !0 || pt?.tool_name == null ? !1 : Qa(pt.tool_name, pt.tool_input) === xe;
     });
-    if (ce) {
-      let et = [];
-      for (let [gt, Ve] of [...M]) {
+    if (le) {
+      let We = [];
+      for (let [pt, Ve] of [...F]) {
         if (!Ve.timer) continue;
-        let Rt = m.get.get(gt);
-        if (Rt?.session_id !== k) continue;
-        let Lt = $t(Rt.payload_json);
-        Lt?.tool_name != null && Ya(Lt.tool_name, Lt.tool_input) === he && (C(gt), et.push(gt));
+        let _t = m.get.get(pt);
+        if (_t?.session_id !== R) continue;
+        let cn = Lt(_t.payload_json);
+        cn?.tool_name != null && Qa(cn.tool_name, cn.tool_input) === xe && (C(pt), We.push(pt));
       }
-      for (let gt of et) w(m.get.get(gt), { activity: !0 });
+      for (let pt of We) w(m.get.get(pt), { activity: !0 });
     }
-    let dt = W(k);
-    if (he !== null && A(k, he))
-      return dt && a(), dt;
-    if (ce && Me.length > 1) {
-      let et = Me[0];
-      et && (Me = [Me.find((gt) => U.has(gt.id)) ?? et]);
+    let ft = q(R);
+    if (xe !== null && A(R, xe))
+      return ft && a(), ft;
+    if (le && Le.length > 1) {
+      let We = Le[0];
+      We && (Le = [Le.find((pt) => $.has(pt.id)) ?? We]);
     }
-    let ft = [];
-    for (let et of Me) {
-      let gt = S(et.id);
-      if (gt)
+    let Et = [];
+    for (let We of Le) {
+      let pt = S(We.id);
+      if (pt)
         try {
-          Se(gt.respond);
+          ve(pt.respond);
         } catch {
         }
-      m.markExpired.run(et.id).changes && ft.push(et.id);
+      m.markExpired.run(We.id).changes && Et.push(We.id);
     }
-    for (let et of ft) w(m.get.get(et), { activity: !0 });
-    return (ft.length || dt) && a(), ft.length > 0 || dt;
+    for (let We of Et) w(m.get.get(We), { activity: !0 });
+    return (Et.length || ft) && a(), Et.length > 0 || ft;
   }
-  r(Fe, "expireOnActivity");
-  function De() {
+  r(Ce, "expireOnActivity");
+  function Fe() {
     if (!ye()) return 0;
-    let k = e.prepare("DELETE FROM questions WHERE status != 'pending'"), z = k.run();
-    return k.finalize(), z.changes && a(), Number(z.changes);
+    let R = e.prepare("DELETE FROM questions WHERE status != 'pending'"), X = R.run();
+    return R.finalize(), X.changes && a(), Number(X.changes);
   }
-  r(De, "purgeResolved");
-  function N(k, { activity: z = !1 } = {}) {
+  r(Fe, "purgeResolved");
+  function M(R, { activity: X = !1 } = {}) {
     if (!ye()) return { ok: !1, reason: "questions are quiescing" };
-    let F = m.get.get(k);
-    if (!F) return { ok: !1, reason: "no such question" };
-    if (C(F.id), F.status !== "pending") return { ok: !0, already: !0 };
-    let he = S(F.id);
-    if (he)
+    let B = m.get.get(R);
+    if (!B) return { ok: !1, reason: "no such question" };
+    if (C(B.id), B.status !== "pending") return { ok: !0, already: !0 };
+    let xe = S(B.id);
+    if (xe)
       try {
-        Se(he.respond);
+        ve(xe.respond);
       } catch {
       }
-    return Number(m.markExpired.run(F.id).changes) > 0 && (a(), w(m.get.get(F.id), { activity: z })), { ok: !0, callsign: i(F.session_id) ?? null };
+    return Number(m.markExpired.run(B.id).changes) > 0 && (a(), w(m.get.get(B.id), { activity: X })), { ok: !0, callsign: i(B.session_id) ?? null };
   }
-  r(N, "dismiss");
+  r(M, "dismiss");
   function J() {
     if (!ye()) return !1;
-    let k = !1;
-    for (let z of m.pending.all())
-      if (!(!fo.has(z.kind) || U.has(z.id))) {
-        if ($t(z.payload_json)?.rearmed === !0) {
-          Date.now() - z.created_at >= g && ee(z.id) && (k = !0);
+    let R = !1;
+    for (let X of m.pending.all())
+      if (!(!fo.has(X.kind) || $.has(X.id))) {
+        if (Lt(X.payload_json)?.rearmed === !0) {
+          Date.now() - X.created_at >= h && te(X.id) && (R = !0);
           continue;
         }
-        m.markExpired.run(z.id).changes && (k = !0, w(m.get.get(z.id)));
+        m.markExpired.run(X.id).changes && (R = !0, w(m.get.get(X.id)));
       }
-    return k && a(), k;
+    return R && a(), R;
   }
   r(J, "expireOrphans");
-  function se(k, { includeFreeform: z = !1 } = {}) {
+  function se(R, { includeFreeform: X = !1 } = {}) {
     if (!ye()) return 0;
-    let F = 0, he = [];
-    for (let ce of m.pendingBySession.all(k)) {
-      if (!z && !fo.has(ce.kind)) continue;
-      let Me = S(ce.id);
-      if (Me)
+    let B = 0, xe = [];
+    for (let le of m.pendingBySession.all(R)) {
+      if (!X && !fo.has(le.kind)) continue;
+      let Le = S(le.id);
+      if (Le)
         try {
-          Se(Me.respond);
+          ve(Le.respond);
         } catch {
         }
-      C(ce.id), m.markExpired.run(ce.id).changes && (F++, he.push(ce.id));
+      C(le.id), m.markExpired.run(le.id).changes && (B++, xe.push(le.id));
     }
-    for (let [ce, Me] of [...M])
-      Me.timer && m.get.get(ce)?.session_id === k && C(ce);
-    P.delete(k);
-    for (let ce of he) w(m.get.get(ce));
-    return F && a(), F;
+    for (let [le, Le] of [...F])
+      Le.timer && m.get.get(le)?.session_id === R && C(le);
+    P.delete(R);
+    for (let le of xe) w(m.get.get(le));
+    return B && a(), B;
   }
   r(se, "expireAllForSession");
-  function de(k) {
-    return m.pendingBySession.all(k);
+  function de(R) {
+    return m.pendingBySession.all(R);
   }
   r(de, "pendingOf");
-  function ne(k) {
-    return U.has(k);
+  function ne(R) {
+    return $.has(R);
   }
   r(ne, "isHeld");
-  function te() {
-    return [...m.pending.all(), ...m.resolved.all()].map((k) => {
-      let z = c(k.id), F = $t(k.payload_json), he = F?.rearm_pending === !0 ? M.get(k.id)?.armedAt : void 0;
+  function re() {
+    return [...m.pending.all(), ...m.resolved.all()].map((R) => {
+      let X = c(R.id), B = Lt(R.payload_json), xe = B?.rearm_pending === !0 ? F.get(R.id)?.armedAt : void 0;
       return {
-        id: k.id,
-        kind: k.kind,
-        session_id: k.session_id,
-        callsign: i(k.session_id),
-        payload: F,
-        status: k.status,
-        created_at: k.created_at,
-        expires_at: he != null ? he + g : k.expires_at,
-        answered_at: k.answered_at,
-        answer: $t(k.answer_json),
-        held: U.has(k.id),
-        ...z != null ? { plan_id: z } : {}
+        id: R.id,
+        kind: R.kind,
+        session_id: R.session_id,
+        callsign: i(R.session_id),
+        payload: B,
+        status: R.status,
+        created_at: R.created_at,
+        expires_at: xe != null ? xe + h : R.expires_at,
+        answered_at: R.answered_at,
+        answer: Lt(R.answer_json),
+        held: $.has(R.id),
+        ...X != null ? { plan_id: X } : {}
       };
     });
   }
-  r(te, "listForState");
-  let Ne = Number.isFinite(E) && E > 0 ? Math.max(1, Math.floor(E)) : Ch, je = setInterval(() => {
+  r(re, "listForState");
+  let Ie = Number.isFinite(E) && E > 0 ? Math.max(1, Math.floor(E)) : Ch, qe = setInterval(() => {
     if (ye())
       try {
         J();
       } catch {
       }
-  }, Ne);
-  je.unref();
-  function Te() {
+  }, Ie);
+  qe.unref();
+  function Pe() {
     return ye() ? (Q = "quiesced", Ee = r(() => !1, "boardConsumerProbe"), !0) : !1;
   }
-  r(Te, "quiesce");
-  function ue() {
-    return G || (Te(), G = Promise.resolve().then(() => {
+  r(Pe, "quiesce");
+  function pe() {
+    return z || (Pe(), z = Promise.resolve().then(() => {
       try {
-        I();
+        N();
       } finally {
-        clearInterval(je);
-        for (let k of M.values())
-          k.timer && clearTimeout(k.timer);
-        M.clear(), D.clear(), O.clear();
-        for (let k of v) clearTimeout(k);
-        v.clear(), P.clear(), Q = "closed";
+        clearInterval(qe);
+        for (let R of F.values())
+          R.timer && clearTimeout(R.timer);
+        F.clear(), I.clear(), O.clear();
+        for (let R of x) clearTimeout(R);
+        x.clear(), P.clear(), Q = "closed";
       }
-    }), G);
+    }), z);
   }
-  return r(ue, "close"), {
-    create: ae,
-    attachHold: L,
-    quiesce: Te,
-    releaseAll: I,
-    close: ue,
+  return r(pe, "close"), {
+    create: ie,
+    attachHold: D,
+    quiesce: Pe,
+    releaseAll: N,
+    close: pe,
     setBoardConsumerProbe: $e,
     boardConsumerAvailable: Z,
     failOpenAllHolds: d,
     socketClosed: y,
-    expireUnheld: x,
-    answer: V,
-    dismiss: N,
-    purgeResolved: De,
-    expireOnActivity: Fe,
+    expireUnheld: v,
+    answer: ee,
+    dismiss: M,
+    purgeResolved: Fe,
+    expireOnActivity: Ce,
     expireOrphans: J,
     expireAllForSession: se,
     pendingOf: de,
     isHeld: ne,
-    listForState: te
+    listForState: re
   };
 }
 r(Dh, "createQuestions");
 var Gu = 2e3;
 function Dx(e, t) {
-  let n = $t(e.payload_json)?.tool_input, o = n?.questions;
+  let n = Lt(e.payload_json)?.tool_input, o = n?.questions;
   if (!n || !Array.isArray(o) || o.length === 0) return null;
   let s;
   if (typeof t?.text == "string" && t.text.trim()) {
@@ -6748,7 +6748,7 @@ function Dx(e, t) {
   let i = Object.fromEntries(
     s.map(([a, c]) => [
       a,
-      Array.isArray(c) ? c.map((l) => sn(l).trim()).join(", ") : sn(c).trim()
+      Array.isArray(c) ? c.map((l) => nn(l).trim()).join(", ") : nn(c).trim()
     ])
   );
   return Object.values(i).some((a) => !a) ? null : { ...n, answers: i };
@@ -6763,9 +6763,9 @@ function Ph(e, t) {
   if (!n || typeof n != "object" || Array.isArray(n)) return null;
   let o = Object.entries(n);
   if (!o.length) return null;
-  let s = $t(e.payload_json)?.tool_input?.questions;
+  let s = Lt(e.payload_json)?.tool_input?.questions;
   if (Array.isArray(s) && !Ih(s, o)) return null;
-  let i = r((l) => (Array.isArray(l) ? l.map(sn).join(", ") : sn(l)).trim(), "fmt");
+  let i = r((l) => (Array.isArray(l) ? l.map(nn).join(", ") : nn(l)).trim(), "fmt");
   if (o.some(([, l]) => i(l) === "")) return null;
   if (o.length === 1) {
     let l = i(o[0]?.[1]);
@@ -6788,7 +6788,7 @@ function Ih(e, t) {
 r(Ih, "validChoiceAnswers");
 var Ix = /\b(should I|do you want|would you like|which|prefer|option [AB1-9]|let me know)\b/i;
 function Nh(e) {
-  let t = sn(e).trim();
+  let t = nn(e).trim();
   if (!t) return null;
   let n = t.split(/\n[ \t]*\n/), o = (n[n.length - 1] ?? "").trim(), s = o.split(`
 `).map((c) => c.trim()).filter(Boolean), i = s[s.length - 1] ?? "";
@@ -6843,10 +6843,10 @@ function Mh(e, { maxBytes: t = 262144 } = {}) {
     for (let E = f.length - 1; E >= 0; E--) {
       let m = f[E];
       if (m === void 0) continue;
-      let U = Buffer.byteLength(m, "utf8"), M = _ - U;
-      _ = M - 1;
-      let D = m.trim();
-      D && (yield { line: D, offset: M });
+      let $ = Buffer.byteLength(m, "utf8"), F = _ - $;
+      _ = F - 1;
+      let I = m.trim();
+      I && (yield { line: I, offset: F });
     }
   })();
   return Object.assign(w, { truncated: o > 0 });
@@ -6921,10 +6921,10 @@ r(Bh, "lastAssistantModel");
 
 var rd = {};
 Ty(rd, {
-  FIELD_SEP: () => Sn,
+  FIELD_SEP: () => _n,
   capturePane: () => kb,
   ensureSession: () => wb,
-  exactWindowTarget: () => Ci,
+  exactWindowTarget: () => Li,
   fleetServerAbsent: () => pb,
   hasTmux: () => gb,
   killWindowVerified: () => Sb,
@@ -6933,7 +6933,7 @@ Ty(rd, {
   newWindow: () => Eb,
   paneCurrentCommand: () => yb,
   pasteText: () => vb,
-  sanitizePaneText: () => sc,
+  sanitizePaneText: () => ac,
   sendBringupEnter: () => Rb,
   sendEnter: () => ew,
   sessionName: () => mo,
@@ -6946,10 +6946,10 @@ Ty(rd, {
 import { execFileSync as tb, spawn as nb } from "node:child_process";
 
 
-import xi from "node:fs";
+import Ti from "node:fs";
 import Mx from "node:path";
 var Fx = 1e6, Bx = 64e3, $x = 3, Ux = r(() => {
-}, "NOOP"), Sr = "[redacted]", Wx = /(?:^|[_\-.])(token|secret|password|passwd|passphrase|api[_-]?key|apikey|auth(orization)?|bearer|cookie|credential|private[_-]?key|access[_-]?key|client[_-]?secret)s?(?:$|[_\-.])/i;
+}, "NOOP"), yr = "[redacted]", Wx = /(?:^|[_\-.])(token|secret|password|passwd|passphrase|api[_-]?key|apikey|auth(orization)?|bearer|cookie|credential|private[_-]?key|access[_-]?key|client[_-]?secret)s?(?:$|[_\-.])/i;
 function Hx(e) {
   let t = e.replace(/([a-z0-9])([A-Z])/g, "$1_$2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2");
   return Wx.test(t);
@@ -7007,29 +7007,29 @@ function Gx(e) {
       s = l - 1;
       continue;
     }
-    n = (n ?? "") + e.slice(o, s) + Sr, o = i, s = i - 1;
+    n = (n ?? "") + e.slice(o, s) + yr, o = i, s = i - 1;
   }
   return n === null ? e : n + e.slice(o);
 }
 r(Gx, "maskCompactTokens");
 function $h(e) {
   let t = e;
-  for (let n of qx) t = t.replace(n, Sr);
+  for (let n of qx) t = t.replace(n, yr);
   return Gx(t);
 }
 r($h, "redactValue");
-function Ja(e) {
+function Za(e) {
   return $h(e ?? "");
 }
-r(Ja, "redactDiagnosticText");
+r(Za, "redactDiagnosticText");
 var Kx = /([a-z][a-z0-9+.-]{0,32}:\/\/)([^/?#\s]{0,512}@)/gi, Vx = /([a-z][a-z0-9+.-]{0,32}:\/\/)([^/?#\s]{0,256}:[^/?#\r\n]{0,4096}@)/gi, zx = /([a-z][a-z0-9+.-]{0,32}:\/\/)[^/?#\s]{512,}/gi, Xx = /(^|[\s'"<([])([^\s:/@'"<>]{1,256}:[^\s/@'"<>]{1,512})@/g, Yx = /([?&#][A-Za-z0-9_.-]{1,128}=)([^&\s'"<>]+)/g, Jx = /token|key|secret|password|passwd|passphrase|auth|credential|sig(?:nature)?|session/i;
-function vr(e) {
-  return (e ?? "").replace(Kx, `$1${Sr}@`).replace(Vx, `$1${Sr}@`).replace(zx, `$1${Sr}`).replace(Xx, `$1${Sr}@`).replace(
+function _r(e) {
+  return (e ?? "").replace(Kx, `$1${yr}@`).replace(Vx, `$1${yr}@`).replace(zx, `$1${yr}`).replace(Xx, `$1${yr}@`).replace(
     Yx,
-    (t, n) => Jx.test(n) ? `${n}${Sr}` : t
+    (t, n) => Jx.test(n) ? `${n}${yr}` : t
   );
 }
-r(vr, "scrubUrlCredentials");
+r(_r, "scrubUrlCredentials");
 function Qx(e, t) {
   let n = Math.max(0, t), o = new WeakSet(), s = "[truncated]";
   function i(c) {
@@ -7039,7 +7039,7 @@ function Qx(e, t) {
       l = l.slice(0, Math.floor(l.length * 0.75));
     n -= Buffer.byteLength(l);
     let f = l.length < String(c).length;
-    return l = vr($h(l)), f ? `${l}${s}` : l;
+    return l = _r($h(l)), f ? `${l}${s}` : l;
   }
   r(i, "textWithinBudget");
   function a(c, l = 0) {
@@ -7050,18 +7050,18 @@ function Qx(e, t) {
     if (l >= 12) return "[max-depth]";
     if (o.has(c)) return "[circular]";
     if (o.add(c), Array.isArray(c)) {
-      let g = c, _ = [];
-      for (let E = 0; E < g.length && n > 0; E++) _.push(a(g[E], l + 1));
-      return _.length < g.length && _.push(s), _;
+      let h = c, _ = [];
+      for (let E = 0; E < h.length && n > 0; E++) _.push(a(h[E], l + 1));
+      return _.length < h.length && _.push(s), _;
     }
     let f = c, w = {};
-    for (let g in f)
-      if (!(!Object.hasOwn(f, g) || n <= 0)) {
-        if (n -= Math.min(n, Buffer.byteLength(g) + 4), Hx(g)) {
-          w[g] = Sr;
+    for (let h in f)
+      if (!(!Object.hasOwn(f, h) || n <= 0)) {
+        if (n -= Math.min(n, Buffer.byteLength(h) + 4), Hx(h)) {
+          w[h] = yr;
           continue;
         }
-        w[g] = a(f[g], l + 1);
+        w[h] = a(f[h], l + 1);
       }
     return w;
   }
@@ -7078,45 +7078,45 @@ function Uh(e, {
   if (!i) return Ux;
   let a = s.filter((f) => typeof f == "string" && f.length > 0), c = Mx.join(e, "hook-payloads.jsonl"), l = new Map();
   try {
-    xi.chmodSync(c, 384);
+    Ti.chmodSync(c, 384);
   } catch {
   }
   try {
-    for (let f of xi.readFileSync(c, "utf8").split(`
+    for (let f of Ti.readFileSync(c, "utf8").split(`
 `))
       if (f.trim())
         try {
-          let w = JSON.parse(f), g = w && typeof w == "object" ? w.event : void 0;
-          typeof g == "string" && g && l.set(g, (l.get(g) ?? 0) + 1);
+          let w = JSON.parse(f), h = w && typeof w == "object" ? w.event : void 0;
+          typeof h == "string" && h && l.set(h, (l.get(h) ?? 0) + 1);
         } catch {
         }
   } catch {
   }
-  return r(function(w, g) {
+  return r(function(w, h) {
     try {
       if (!w || (l.get(w) ?? 0) >= o) return;
       let _ = 0;
       try {
-        _ = xi.statSync(c).size;
+        _ = Ti.statSync(c).size;
       } catch {
         _ = 0;
       }
-      let E = Qx(g, n), m = JSON.stringify({
+      let E = Qx(h, n), m = JSON.stringify({
         at: Date.now(),
         event: w,
         keys: E && typeof E == "object" && !Array.isArray(E) ? Object.keys(E) : [],
         payload: E
       }) + `
 `;
-      for (let U of a) {
-        m = m.split(U).join(Sr);
-        let M = JSON.stringify(U).slice(1, -1);
-        M && M !== U && (m = m.split(M).join(Sr));
+      for (let $ of a) {
+        m = m.split($).join(yr);
+        let F = JSON.stringify($).slice(1, -1);
+        F && F !== $ && (m = m.split(F).join(yr));
       }
       if (_ + Buffer.byteLength(m) > t) return;
-      xi.appendFileSync(c, m, { encoding: "utf8", mode: 384 });
+      Ti.appendFileSync(c, m, { encoding: "utf8", mode: 384 });
       try {
-        xi.chmodSync(c, 384);
+        Ti.chmodSync(c, 384);
       } catch {
       }
       l.set(w, (l.get(w) ?? 0) + 1);
@@ -7127,21 +7127,21 @@ function Uh(e, {
 r(Uh, "createPayloadCapture");
 
 
-var bi = null;
+var Ci = null;
 function Wh(e) {
-  if (bi) throw new Error("execFileP delegate is already bound");
-  bi = e;
+  if (Ci) throw new Error("execFileP delegate is already bound");
+  Ci = e;
   let t = !0;
   return () => {
-    t && (t = !1, bi === e && (bi = null));
+    t && (t = !1, Ci === e && (Ci = null));
   };
 }
 r(Wh, "bindExecFileDelegate");
 function Ke(e, t, n = {}) {
-  let o = bi;
+  let o = Ci;
   if (!o) return Promise.reject(new Error("execFileP process runtime is not bound"));
   if ("maxBytes" in n) {
-    let g = {
+    let h = {
       argv: [e, ...t],
       timeoutMs: n.timeout,
       maxBytes: n.maxBytes,
@@ -7149,7 +7149,7 @@ function Ke(e, t, n = {}) {
       ...n.cwd === void 0 ? {} : { cwd: n.cwd },
       ...n.stdin === void 0 ? {} : { stdin: n.stdin }
     };
-    return Promise.resolve().then(() => o.runBounded(g));
+    return Promise.resolve().then(() => o.runBounded(h));
   }
   let { timeout: s = 3e4, env: i, signal: a, killTree: c = !1, cwd: l, stdin: f } = n, w = {
     argv: [e, ...t],
@@ -7173,16 +7173,16 @@ function Hh(e) {
 }
 r(Hh, "distillGitStderr");
 var Zx = 20, Xu = 2e3;
-function xr(e, t = []) {
-  let n = Ja(vr(e));
+function Sr(e, t = []) {
+  let n = Za(_r(e));
   for (let o of t)
     typeof o == "string" && o && (n = n.split(o).join("[redacted]"));
   return n;
 }
-r(xr, "redactGitText");
+r(Sr, "redactGitText");
 function Yu(e, { secrets: t = [] } = {}) {
   if (typeof e != "string" || !e) return null;
-  let o = xr(
+  let o = Sr(
 
     e.replace(/\r/g, "").replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f\u2028\u2029]/g, ""),
     t
@@ -7198,7 +7198,7 @@ function Yu(e, { secrets: t = [] } = {}) {
   return s || null;
 }
 r(Yu, "gitStderrDetail");
-async function Rs(e) {
+async function Ps(e) {
   let t = await Ke(
     "git",
     ["-C", e, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
@@ -7228,13 +7228,13 @@ async function Rs(e) {
     )).ok) return { ref: o, local: !0 };
   return null;
 }
-r(Rs, "baseBranch");
+r(Ps, "baseBranch");
 
 
-import { randomUUID as nc } from "node:crypto";
+import { randomUUID as oc } from "node:crypto";
 import { constants as Gh } from "node:fs";
 import { link as rb, open as Qu, rename as ob, unlink as Zu } from "node:fs/promises";
-import tc from "node:path";
+import rc from "node:path";
 
 
 function qh(e) {
@@ -7265,8 +7265,8 @@ function jh(e) {
 r(jh, "tmuxVersionCapability");
 
 
-var sb = 5e3, Sn = "~";
-async function In(e, { noStart: t = !1 } = {}) {
+var sb = 5e3, _n = "~";
+async function On(e, { noStart: t = !1 } = {}) {
   try {
     let n = process.env.FLEETDECK_TMUX_SOCKET?.trim(), o = [...n ? ["-L", n] : [], ...t ? ["-N"] : [], ...e], s = await Ke("tmux", o, { timeout: sb });
     return s.ok ? { ok: !0, out: s.out } : { ok: !1, code: s.code, error: s.err };
@@ -7274,31 +7274,31 @@ async function In(e, { noStart: t = !1 } = {}) {
     return { ok: !1, error: Ze(n) };
   }
 }
-r(In, "tmuxResult");
-async function _n(e) {
-  let t = await In(e);
+r(On, "tmuxResult");
+async function yn(e) {
+  let t = await On(e);
   return t.ok ? t.out : null;
 }
-r(_n, "tmux");
-var Ju = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i, Kh = "__fleetdeck_tmux_generation__=", Ri = "__fleetdeck_tmux_generation_mismatch__", Qa = new Map(), Xh = Gh.O_RDONLY | (Gh.O_NOFOLLOW ?? 0);
-function rc(e) {
+r(yn, "tmux");
+var Ju = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i, Kh = "__fleetdeck_tmux_generation__=", Ai = "__fleetdeck_tmux_generation_mismatch__", ec = new Map(), Xh = Gh.O_RDONLY | (Gh.O_NOFOLLOW ?? 0);
+function sc(e) {
   let t = String(e);
   if (!/^\d+$/.test(t)) throw new Error("invalid fleet port for tmux generation identity");
   return t;
 }
-r(rc, "generationPort");
-var Cs = r((e) => `@fleetdeck_generation_${rc(e)}`, "generationOption"), Ti = r((e, t) => tc.join(e, `tmux-generation-${rc(t)}`), "generationFile"), ed = r((e, t) => `${Ti(e, t)}.retired`, "retiredGenerationFile");
+r(sc, "generationPort");
+var Os = r((e) => `@fleetdeck_generation_${sc(e)}`, "generationOption"), Oi = r((e, t) => rc.join(e, `tmux-generation-${sc(t)}`), "generationFile"), ed = r((e, t) => `${Oi(e, t)}.retired`, "retiredGenerationFile");
 function Yh() {
   return process.env.FLEETDECK_HOME?.trim() || null;
 }
 r(Yh, "generationHome");
-async function oc(e, t) {
-  let n = Ti(e, t), o;
+async function ic(e, t) {
+  let n = Oi(e, t), o;
   try {
     o = await Qu(n, Xh);
   } catch (s) {
-    if (mt(s) === "ENOENT") return null;
-    throw new Error(`cannot read persisted tmux generation (${Ot(s)})`, { cause: s });
+    if (dt(s) === "ENOENT") return null;
+    throw new Error(`cannot read persisted tmux generation (${Pt(s)})`, { cause: s });
   }
   try {
     if (!(await o.stat()).isFile()) throw new Error("persisted tmux generation is not a regular file");
@@ -7314,19 +7314,19 @@ async function oc(e, t) {
     }
     if (c === null || typeof c != "object" || Array.isArray(c))
       throw new Error("persisted tmux generation is malformed");
-    let l = Object.keys(c).sort(), f = c, w = f.generation, g = f.serverPid;
-    if (l.length !== 2 || l[0] !== "generation" || l[1] !== "serverPid" || typeof w != "string" || !Ju.test(w) || typeof g != "number" || !Number.isSafeInteger(g) || g <= 1)
+    let l = Object.keys(c).sort(), f = c, w = f.generation, h = f.serverPid;
+    if (l.length !== 2 || l[0] !== "generation" || l[1] !== "serverPid" || typeof w != "string" || !Ju.test(w) || typeof h != "number" || !Number.isSafeInteger(h) || h <= 1)
       throw new Error("persisted tmux generation is malformed");
-    return { generation: w.toLowerCase(), serverPid: g, legacy: !1 };
+    return { generation: w.toLowerCase(), serverPid: h, legacy: !1 };
   } finally {
     await o.close();
   }
 }
-r(oc, "readPersistedGeneration");
+r(ic, "readPersistedGeneration");
 async function td(e, t, n, o) {
-  let s = tc.join(
-    tc.dirname(e),
-    `.${tc.basename(e)}.${process.pid}.${nc()}.tmp`
+  let s = rc.join(
+    rc.dirname(e),
+    `.${rc.basename(e)}.${process.pid}.${oc()}.tmp`
   ), i = null;
   try {
     if (i = await Qu(s, "wx", 384), await i.writeFile(`${JSON.stringify(t)}
@@ -7336,10 +7336,10 @@ async function td(e, t, n, o) {
       try {
         await rb(s, e);
       } catch (a) {
-        if (mt(a) !== "EEXIST") throw a;
+        if (dt(a) !== "EEXIST") throw a;
       }
   } catch (a) {
-    throw new Error(`cannot ${n} (${Ot(a)})`, { cause: a });
+    throw new Error(`cannot ${n} (${Pt(a)})`, { cause: a });
   } finally {
     try {
       await i?.close();
@@ -7348,34 +7348,34 @@ async function td(e, t, n, o) {
     try {
       await Zu(s);
     } catch (a) {
-      mt(a);
+      dt(a);
     }
   }
 }
 r(td, "publishSecureJson");
 async function ib(e, t, n) {
   return await td(
-    Ti(e, t),
+    Oi(e, t),
     { generation: n.generation, serverPid: n.serverPid },
     "persist tmux generation",
     "if-absent"
-  ), oc(e, t);
+  ), ic(e, t);
 }
 r(ib, "persistGeneration");
 async function ab(e, t, n) {
   return await td(
-    Ti(e, t),
+    Oi(e, t),
     { generation: n.generation, serverPid: n.serverPid },
     "replace persisted tmux generation",
     "replace"
 
-  ), oc(e, t);
+  ), ic(e, t);
 }
 r(ab, "replacePersistedGeneration");
 var cb = /(?:^|\n)(?:no server running on |error connecting to .*\(No such file or directory\))/i;
-async function Ts(e) {
-  let t = await In(
-    ["display-message", "-p", `#{${Cs(e)}}${Sn}#{pid}`],
+async function As(e) {
+  let t = await On(
+    ["display-message", "-p", `#{${Os(e)}}${_n}#{pid}`],
     { noStart: !0 }
   );
   if (!t.ok)
@@ -7386,7 +7386,7 @@ async function Ts(e) {
       serverPid: null
     };
   let n = t.out.endsWith(`
-`) ? t.out.slice(0, -1) : t.out, [o, s, ...i] = n.split(Sn), a = Number(s);
+`) ? t.out.slice(0, -1) : t.out, [o, s, ...i] = n.split(_n), a = Number(s);
   return {
     reachable: !0,
     absent: !1,
@@ -7394,16 +7394,16 @@ async function Ts(e) {
     serverPid: i.length === 0 && Number.isSafeInteger(a) && a > 1 ? a : null
   };
 }
-r(Ts, "readServerGeneration");
-function ki(e) {
+r(As, "readServerGeneration");
+function Pi(e) {
   if (e === null || !Number.isSafeInteger(e) || e <= 1) return "unknown";
   try {
     return process.kill(e, 0), "alive";
   } catch (t) {
-    return mt(t) === "ESRCH" ? "dead" : "unknown";
+    return dt(t) === "ESRCH" ? "dead" : "unknown";
   }
 }
-r(ki, "pidState");
+r(Pi, "pidState");
 var lb = r((e, t) => e !== null && t !== null && e.generation === t.generation && e.serverPid === t.serverPid, "sameRecord");
 async function ub(e, t, n) {
   await td(
@@ -7440,25 +7440,25 @@ async function Jh(e, t) {
   try {
     await Zu(ed(e, t));
   } catch (n) {
-    mt(n);
+    dt(n);
   }
 }
 r(Jh, "clearRetiredGeneration");
 async function db(e, t, n) {
-  if (n.serverPid === null || ki(n.serverPid) !== "dead") return !1;
-  let o = await oc(e, t);
-  if (!lb(o, n) || ki(n.serverPid) !== "dead") return !1;
+  if (n.serverPid === null || Pi(n.serverPid) !== "dead") return !1;
+  let o = await ic(e, t);
+  if (!lb(o, n) || Pi(n.serverPid) !== "dead") return !1;
   await ub(e, t, n);
   try {
-    return await Zu(Ti(e, t)), !0;
+    return await Zu(Oi(e, t)), !0;
   } catch (s) {
-    if (mt(s) === "ENOENT") return !1;
-    throw new Error(`cannot retire persisted tmux generation (${Ot(s)})`, { cause: s });
+    if (dt(s) === "ENOENT") return !1;
+    throw new Error(`cannot retire persisted tmux generation (${Pt(s)})`, { cause: s });
   }
 }
 r(db, "retireDeadGeneration");
 async function fb(e, t) {
-  let n = await oc(e, t), o = await Ts(t);
+  let n = await ic(e, t), o = await As(t);
   if (n !== null) {
     if (o.reachable && o.generation === n.generation && (n.serverPid === null || o.serverPid === n.serverPid)) {
       if (n.serverPid === null) {
@@ -7467,7 +7467,7 @@ async function fb(e, t) {
           generation: n.generation,
           serverPid: o.serverPid
         }), n === null) return { enabled: !0, expected: null, verified: !1 };
-        o = await Ts(t);
+        o = await As(t);
       }
       return {
         enabled: !0,
@@ -7494,52 +7494,52 @@ async function fb(e, t) {
       authoritativeEmpty: !0
     };
   if (o.generation === null) {
-    let s = nc();
-    if (!(await In(["set-option", "-g", Cs(t), s], {
+    let s = oc();
+    if (!(await On(["set-option", "-g", Os(t), s], {
       noStart: !0
     })).ok) return { enabled: !0, expected: null, verified: !1 };
-    if (o = await Ts(t), !o.reachable || o.generation === null)
+    if (o = await As(t), !o.reachable || o.generation === null)
       return { enabled: !0, expected: null, verified: !1 };
   }
   return o.serverPid === null ? { enabled: !0, expected: null, verified: !1 } : (n = await ib(e, t, {
     generation: o.generation,
     serverPid: o.serverPid
-  }), n === null ? { enabled: !0, expected: null, verified: !1 } : (await Jh(e, t), o = await Ts(t), {
+  }), n === null ? { enabled: !0, expected: null, verified: !1 } : (await Jh(e, t), o = await As(t), {
     enabled: !0,
     expected: n,
     verified: o.reachable && o.generation === n.generation && o.serverPid === n.serverPid
   }));
 }
 r(fb, "prepareServerGenerationUnlocked");
-async function Gr(e) {
+async function jr(e) {
   let t = Yh();
   if (t === null) return { enabled: !1, expected: null, verified: !0 };
-  let n = `${t}\0${rc(e)}`, s = (Qa.get(n) ?? Promise.resolve()).catch(() => {
+  let n = `${t}\0${sc(e)}`, s = (ec.get(n) ?? Promise.resolve()).catch(() => {
   }).then(() => fb(t, e));
-  Qa.set(n, s);
+  ec.set(n, s);
   try {
     return await s;
   } finally {
-    Qa.get(n) === s && Qa.delete(n);
+    ec.get(n) === s && ec.delete(n);
   }
 }
-r(Gr, "prepareServerGeneration");
-async function or(e, t) {
+r(jr, "prepareServerGeneration");
+async function nr(e, t) {
   let n;
   try {
-    n = await Gr(e);
+    n = await jr(e);
   } catch (i) {
     return { ok: !1, generationError: Ze(i) };
   }
-  if (!n.enabled) return In(t);
+  if (!n.enabled) return On(t);
   if (n.authoritativeEmpty === !0) return { ok: !0, out: "", authoritativeEmpty: !0 };
   if (!n.verified || n.expected === null)
     return { ok: !1, generationError: "tmux server generation unavailable or changed" };
-  let o = await In(
+  let o = await On(
     [
       "display-message",
       "-p",
-      `${Kh}#{${Cs(e)}}${Sn}#{pid}`,
+      `${Kh}#{${Os(e)}}${_n}#{pid}`,
       ";",
       ...t
     ],
@@ -7548,26 +7548,26 @@ async function or(e, t) {
   if (!o.ok) return o;
   let s = o.out.indexOf(`
 `);
-  return s === -1 || o.out.slice(0, s) !== `${Kh}${n.expected.generation}${Sn}${String(n.expected.serverPid)}` ? { ok: !1, generationError: "tmux server generation unavailable or changed" } : { ok: !0, out: o.out.slice(s + 1), generation: n.expected.generation };
+  return s === -1 || o.out.slice(0, s) !== `${Kh}${n.expected.generation}${_n}${String(n.expected.serverPid)}` ? { ok: !1, generationError: "tmux server generation unavailable or changed" } : { ok: !0, out: o.out.slice(s + 1), generation: n.expected.generation };
 }
-r(or, "generationVerifiedResult");
+r(nr, "generationVerifiedResult");
 async function pb(e) {
   try {
-    let t = await Gr(e);
+    let t = await jr(e);
     return t.enabled && (t.authoritativeEmpty === !0 || t.oldGenerationLost === !0);
   } catch {
     return !1;
   }
 }
 r(pb, "fleetServerAbsent");
-var Za = { available: !1, reason: `tmux ${"3.4"}+ required`, at: 0 }, mb = 6e4;
+var tc = { available: !1, reason: `tmux ${"3.4"}+ required`, at: 0 }, mb = 6e4;
 function gb() {
   return Qh().available;
 }
 r(gb, "hasTmux");
 function Qh() {
   let e = Date.now();
-  if (e - Za.at < mb) return { ...Za };
+  if (e - tc.at < mb) return { ...tc };
   let t = {
     available: !1,
     reason: `tmux ${"3.4"}+ not found on PATH`
@@ -7585,7 +7585,7 @@ function Qh() {
     t = jh(n);
   } catch {
   }
-  return Za = { ...t, at: e }, { ...Za };
+  return tc = { ...t, at: e }, { ...tc };
 }
 r(Qh, "tmuxCapability");
 function hb() {
@@ -7594,81 +7594,81 @@ function hb() {
 }
 r(hb, "spawnOverrideCmd");
 var mo = r((e) => `fleetdeck-${e}`, "sessionName"), Zh = r((e, t) => `fd${e}-${t}`, "windowName");
-function Ci(e, t) {
-  let n = rc(e), o = String(t), s = `fd${n}-`;
+function Li(e, t) {
+  let n = sc(e), o = String(t), s = `fd${n}-`;
   if (!o.startsWith(s) || !/^[A-Za-z0-9-]+$/.test(o.slice(s.length)))
     throw new Error("invalid scoped tmux window name");
   return `=${mo(n)}:=${o}`;
 }
-r(Ci, "exactWindowTarget");
+r(Li, "exactWindowTarget");
 function nd(e) {
   let t = /^=fleetdeck-(\d+):=fd(\d+)-[A-Za-z0-9-]+$/.exec(e);
   return t?.[1] !== void 0 && t[1] === t[2] ? t[1] : null;
 }
 r(nd, "exactTargetPort");
-var ec = r((e) => e.ok && !e.authoritativeEmpty, "sessionConfirmed");
+var nc = r((e) => e.ok && !e.authoritativeEmpty, "sessionConfirmed");
 async function wb(e) {
-  let t = mo(e), n = await Gr(e);
+  let t = mo(e), n = await jr(e);
   if (!n.enabled) {
-    if (await _n(["has-session", "-t", "=" + t]) !== null || await _n(["new-session", "-d", "-s", t]) !== null || await _n(["has-session", "-t", "=" + t]) !== null) return t;
+    if (await yn(["has-session", "-t", "=" + t]) !== null || await yn(["new-session", "-d", "-s", t]) !== null || await yn(["has-session", "-t", "=" + t]) !== null) return t;
     throw new Error(`tmux could not create session ${t}`);
   }
   if (n.expected === null) {
     if (n.blockedByCertificate === !0) {
-      let l = await Ts(e);
+      let l = await As(e);
       if (l.reachable && l.serverPid !== null) {
-        if (ki(l.serverPid) === "alive") {
+        if (Pi(l.serverPid) === "alive") {
           try {
             process.kill(l.serverPid, "SIGTERM");
           } catch {
           }
-          for (let f = 0; f < 50 && ki(l.serverPid) === "alive"; f += 1)
-            await _i(20);
-          if (ki(l.serverPid) === "alive")
+          for (let f = 0; f < 50 && Pi(l.serverPid) === "alive"; f += 1)
+            await bi(20);
+          if (Pi(l.serverPid) === "alive")
             try {
               process.kill(l.serverPid, "SIGKILL");
             } catch {
             }
         }
-        for (let f = 0; f < 50 && (await Ts(e)).reachable; f += 1)
-          await _i(20);
+        for (let f = 0; f < 50 && (await As(e)).reachable; f += 1)
+          await bi(20);
       }
     }
-    if ((await In(["new-session", "-d", "-s", t])).ok) {
-      let l = await Gr(e);
+    if ((await On(["new-session", "-d", "-s", t])).ok) {
+      let l = await jr(e);
       if (!l.verified && l.blockedByCertificate === !0) {
         let f = Yh();
-        f !== null && await Jh(f, e), l = await Gr(e);
+        f !== null && await Jh(f, e), l = await jr(e);
       }
       if (l.verified) {
-        let f = await or(e, ["has-session", "-t", "=" + t]);
-        if (ec(f)) return t;
+        let f = await nr(e, ["has-session", "-t", "=" + t]);
+        if (nc(f)) return t;
       }
       throw new Error(`tmux server generation could not be claimed for ${t}`);
     }
   } else if (!n.verified)
     throw new Error(`tmux server generation unavailable or changed for ${t}`);
-  let o = await or(e, ["has-session", "-t", "=" + t]);
-  if (ec(o)) return t;
-  let s = await Gr(e);
+  let o = await nr(e, ["has-session", "-t", "=" + t]);
+  if (nc(o)) return t;
+  let s = await jr(e);
   if (!s.verified || s.expected === null)
     throw new Error(`tmux server generation unavailable or changed for ${t}`);
-  let i = await In(
+  let i = await On(
     [
       "if-shell",
       "-F",
-      `#{&&:#{==:#{${Cs(e)}},${s.expected.generation}},#{==:#{pid},${String(s.expected.serverPid)}}}`,
+      `#{&&:#{==:#{${Os(e)}},${s.expected.generation}},#{==:#{pid},${String(s.expected.serverPid)}}}`,
       `new-session -d -s ${t}`,
-      `display-message -p ${Ri}`
+      `display-message -p ${Ai}`
     ],
     { noStart: !0 }
   );
   if (i.ok && i.out === "") {
-    let c = await or(e, ["has-session", "-t", "=" + t]);
-    if (ec(c)) return t;
+    let c = await nr(e, ["has-session", "-t", "=" + t]);
+    if (nc(c)) return t;
   }
-  let a = await or(e, ["has-session", "-t", "=" + t]);
-  if (ec(a)) return t;
+  let a = await nr(e, ["has-session", "-t", "=" + t]);
+  if (nc(a)) return t;
   throw new Error(`tmux could not create session ${t}`);
 }
 r(wb, "ensureSession");
@@ -7679,18 +7679,18 @@ async function Eb({
   argv: o,
   env: s = null
 }) {
-  let i = mo(e), a = Zh(e, t), c = await Gr(e);
+  let i = mo(e), a = Zh(e, t), c = await jr(e);
   if (c.enabled && (!c.verified || c.expected === null))
     throw new Error(`tmux server generation unavailable or changed for ${a}`);
-  let l = s ? Object.entries(s).flatMap(([O, P]) => ["-e", `${O}=${P}`]) : [], f = Ci(e, a);
-  await _n([
+  let l = s ? Object.entries(s).flatMap(([O, P]) => ["-e", `${O}=${P}`]) : [], f = Li(e, a);
+  await yn([
     "set-hook",
     "-t",
     "=" + i + ":",
     "after-new-window",
     "set-option -w remain-on-exit on"
   ]);
-  let w = `${a}~${nc()}`, g = await _n([
+  let w = `${a}~${oc()}`, h = await yn([
     "new-window",
     "-d",
     "-P",
@@ -7707,37 +7707,37 @@ async function Eb({
     "--",
     ...o
   ]);
-  if (g === null) throw new Error(`tmux new-window failed for ${a}`);
-  let _ = g.trim(), E = r(() => _n(["kill-window", "-t", _]), "rollback"), U = await (r((O) => c.enabled ? or(e, O) : In(O), "inspect"))([
+  if (h === null) throw new Error(`tmux new-window failed for ${a}`);
+  let _ = h.trim(), E = r(() => yn(["kill-window", "-t", _]), "rollback"), $ = await (r((O) => c.enabled ? nr(e, O) : On(O), "inspect"))([
     "list-windows",
     "-t",
     "=" + i + ":",
     "-F",
     "#{window_name}"
   ]);
-  if (!U.ok)
+  if (!$.ok)
     throw await E(), new Error(
       c.enabled ? `tmux new-window generation postcondition failed for ${a}` : `tmux new-window occupancy check failed for ${a}`
     );
-  if ((U.out.endsWith(`
-`) ? U.out.slice(0, -1) : U.out).split(`
+  if (($.out.endsWith(`
+`) ? $.out.slice(0, -1) : $.out).split(`
 `).some((O) => O === a))
     throw await E(), new Error(`tmux new-window refused: ${a} already exists`);
-  if (!(await In(["rename-window", "-t", _, a])).ok)
+  if (!(await On(["rename-window", "-t", _, a])).ok)
     throw await E(), new Error(`tmux new-window could not claim the scoped name ${a}`);
   if (c.enabled) {
-    let O = await or(e, [
+    let O = await nr(e, [
       "display-message",
       "-p",
       "-t",
       f,
-      ["#{session_name}", "#{window_name}", "#{window_id}"].join(Sn)
-    ]), P = [i, a, _].join(Sn) + `
+      ["#{session_name}", "#{window_name}", "#{window_id}"].join(_n)
+    ]), P = [i, a, _].join(_n) + `
 `;
     if (!O.ok || O.out !== P)
       throw await E(), new Error(`tmux new-window generation postcondition failed for ${a}`);
   }
-  return await _n(["set-option", "-w", "-t", f, "remain-on-exit", "on"]), { session: i, window: a, window_id: _ };
+  return await yn(["set-option", "-w", "-t", f, "remain-on-exit", "on"]), { session: i, window: a, window_id: _ };
 }
 r(Eb, "newWindow");
 async function yb(e) {
@@ -7746,15 +7746,15 @@ async function yb(e) {
     "-p",
     "-t",
     e,
-    `#{pane_dead}${Sn}#{pane_current_command}`
-  ], n = nd(e), o = n === null ? await In(t) : await or(n, t);
+    `#{pane_dead}${_n}#{pane_current_command}`
+  ], n = nd(e), o = n === null ? await On(t) : await nr(n, t);
   if (!o.ok) return null;
-  let s = o.out, [i, ...a] = s.replace(/\n$/, "").split(Sn);
-  return i !== "0" && i !== "1" ? null : { dead: i === "1", cmd: a.join(Sn) };
+  let s = o.out, [i, ...a] = s.replace(/\n$/, "").split(_n);
+  return i !== "0" && i !== "1" ? null : { dead: i === "1", cmd: a.join(_n) };
 }
 r(yb, "paneCurrentCommand");
 async function _b(e) {
-  let t = mo(e), n = await or(e, [
+  let t = mo(e), n = await nr(e, [
     "list-panes",
     "-a",
     "-f",
@@ -7766,7 +7766,7 @@ async function _b(e) {
       "#{window_id}",
       "#{pane_dead}",
       "#{pane_current_command}"
-    ].join(Sn)
+    ].join(_n)
   ]);
   if (!n.ok) return null;
   if (n.out === "") return [];
@@ -7776,17 +7776,17 @@ async function _b(e) {
   let s = `fd${e}-`, i = new Set(), a = new Set(), c = [];
   for (let l of o.split(`
 `)) {
-    let [f, w, g, _, ...E] = l.split(Sn);
-    if (!f || !w || g === void 0 || !/^@\d+$/.test(g) || _ !== "0" && _ !== "1" || E.length === 0)
+    let [f, w, h, _, ...E] = l.split(_n);
+    if (!f || !w || h === void 0 || !/^@\d+$/.test(h) || _ !== "0" && _ !== "1" || E.length === 0)
       return null;
-    if (!(f !== t || !w.startsWith(s)) && !i.has(g)) {
+    if (!(f !== t || !w.startsWith(s)) && !i.has(h)) {
       if (a.has(w)) return null;
-      i.add(g), a.add(w), c.push({
+      i.add(h), a.add(w), c.push({
         session: f,
         window: w,
-        window_id: g,
+        window_id: h,
         pane_dead: _ === "1",
-        pane_cmd: E.join(Sn)
+        pane_cmd: E.join(_n)
       });
     }
   }
@@ -7799,7 +7799,7 @@ async function Sb(e, t) {
   if (/[=;:.]/.test(e)) return { ok: !1, error: "invalid scoped tmux window name" };
   let o = n[1];
   if (o === void 0) return { ok: !1, error: "invalid scoped tmux window name" };
-  let s = mo(o), i = ["#{session_name}", "#{window_name}", "#{window_id}"].join(Sn), a = [
+  let s = mo(o), i = ["#{session_name}", "#{window_name}", "#{window_id}"].join(_n), a = [
     "list-panes",
     "-a",
     "-f",
@@ -7808,27 +7808,27 @@ async function Sb(e, t) {
     i
   ], c = r((P) => {
     if (P === "") return [];
-    let v = P.endsWith(`
+    let x = P.endsWith(`
 `) ? P.slice(0, -1) : P;
-    if (v === "") return null;
-    let Q = v.split(`
-`).map((G) => G.split(Sn));
+    if (x === "") return null;
+    let Q = x.split(`
+`).map((z) => z.split(_n));
     return Q.some(
-      (G) => G.length !== 3 || !G[0] || !G[1] || !/^@\d+$/.test(G[2] ?? "")
+      (z) => z.length !== 3 || !z[0] || !z[1] || !/^@\d+$/.test(z[2] ?? "")
     ) ? null : Q;
   }, "parse"), l = r((P) => {
-    let v = new Map();
+    let x = new Map();
     for (let Q of P)
-      Q[0] === s && Q[1] === e && v.set(Q[2], Q);
-    return [...v.values()];
-  }, "exactMatches"), f = await or(o, a);
+      Q[0] === s && Q[1] === e && x.set(Q[2], Q);
+    return [...x.values()];
+  }, "exactMatches"), f = await nr(o, a);
   if (!f.ok)
     return { ok: !1, error: f.generationError ?? "tmux window lookup failed" };
   let w = c(f.out);
   if (w === null) return { ok: !1, error: "malformed tmux window listing" };
-  let g = l(w);
-  if (g.length > 1) return { ok: !1, error: "ambiguous scoped tmux window name" };
-  let _ = g[0];
+  let h = l(w);
+  if (h.length > 1) return { ok: !1, error: "ambiguous scoped tmux window name" };
+  let _ = h[0];
   if (_ === void 0) return { ok: !1, gone: !0 };
   if (t?.expectWindowId !== void 0 && _[2] !== t.expectWindowId)
     return { ok: !1, stale: !0, error: "window id changed — the scoped name was recycled" };
@@ -7836,44 +7836,44 @@ async function Sb(e, t) {
     return { ok: !1, stale: !0, error: "stale window owner" };
   let E = `=${s}:=${e}`, m;
   try {
-    m = await Gr(o);
+    m = await jr(o);
   } catch (P) {
     return { ok: !1, error: `tmux server generation verification failed: ${Ze(P)}` };
   }
   if (t?.expect && !t.expect())
     return { ok: !1, stale: !0, error: "stale window owner" };
-  let U;
+  let $;
   if (!m.enabled)
-    U = await In(["kill-window", "-t", E]);
+    $ = await On(["kill-window", "-t", E]);
   else {
     if (!m.verified || m.expected === null)
       return { ok: !1, error: "tmux server generation unavailable or changed" };
-    if (U = await In(
+    if ($ = await On(
       [
         "if-shell",
         "-F",
-        `#{&&:#{==:#{${Cs(o)}},${m.expected.generation}},#{==:#{pid},${String(m.expected.serverPid)}}}`,
+        `#{&&:#{==:#{${Os(o)}},${m.expected.generation}},#{==:#{pid},${String(m.expected.serverPid)}}}`,
         `kill-window -t ${E}`,
-        `display-message -p ${Ri}`
+        `display-message -p ${Ai}`
       ],
       { noStart: !0 }
-    ), U.ok && U.out.trim() === Ri)
+    ), $.ok && $.out.trim() === Ai)
       return { ok: !1, error: "tmux server generation unavailable or changed" };
   }
-  if (U.ok) return { ok: !0, window_id: _[2] };
-  let M = await or(o, a);
-  if (!M.ok)
+  if ($.ok) return { ok: !0, window_id: _[2] };
+  let F = await nr(o, a);
+  if (!F.ok)
     return {
       ok: !1,
-      error: M.generationError ?? "tmux window recheck failed after kill error"
+      error: F.generationError ?? "tmux window recheck failed after kill error"
     };
-  let D = c(M.out);
-  if (D === null) return { ok: !1, error: "malformed tmux window recheck after kill error" };
-  let O = l(D);
+  let I = c(F.out);
+  if (I === null) return { ok: !1, error: "malformed tmux window recheck after kill error" };
+  let O = l(I);
   return O.length > 1 ? { ok: !1, error: "ambiguous scoped tmux window name after kill error" } : O.length === 0 ? { ok: !1, gone: !0 } : { ok: !1, error: "tmux kill-window failed" };
 }
 r(Sb, "killWindowVerified");
-function sc(e) {
+function ac(e) {
   let t = String(e).replace(/\r\n?/g, `
 `), n;
   do
@@ -7881,47 +7881,47 @@ function sc(e) {
   while (t !== n);
   return t.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "");
 }
-r(sc, "sanitizePaneText");
+r(ac, "sanitizePaneText");
 async function vb(e, t) {
-  let n = sc(t), o = `fdmail-${nc()}`;
-  if (await _n(["set-buffer", "-b", o, "--", n]) === null) return !1;
+  let n = ac(t), o = `fdmail-${oc()}`;
+  if (await yn(["set-buffer", "-b", o, "--", n]) === null) return !1;
   try {
-    return await _n(["paste-buffer", "-p", "-d", "-b", o, "-t", e]) !== null;
+    return await yn(["paste-buffer", "-p", "-d", "-b", o, "-t", e]) !== null;
   } finally {
-    await _n(["delete-buffer", "-b", o]);
+    await yn(["delete-buffer", "-b", o]);
   }
 }
 r(vb, "pasteText");
 async function ew(e) {
   let t = nd(e);
-  if (t === null) return await _n(["send-keys", "-t", e, "Enter"]) !== null;
+  if (t === null) return await yn(["send-keys", "-t", e, "Enter"]) !== null;
   let n;
   try {
-    n = await Gr(t);
+    n = await jr(t);
   } catch {
     return !1;
   }
-  if (!n.enabled) return await _n(["send-keys", "-t", e, "Enter"]) !== null;
+  if (!n.enabled) return await yn(["send-keys", "-t", e, "Enter"]) !== null;
   if (!n.verified || n.expected === null) return !1;
-  let o = await In(
+  let o = await On(
     [
       "if-shell",
       "-F",
-      `#{&&:#{==:#{${Cs(t)}},${n.expected.generation}},#{==:#{pid},${String(n.expected.serverPid)}}}`,
+      `#{&&:#{==:#{${Os(t)}},${n.expected.generation}},#{==:#{pid},${String(n.expected.serverPid)}}}`,
       `send-keys -t ${e} Enter`,
-      `display-message -p ${Ri}`
+      `display-message -p ${Ai}`
     ],
     { noStart: !0 }
   );
-  return o.ok && o.out.trim() !== Ri;
+  return o.ok && o.out.trim() !== Ai;
 }
 r(ew, "sendEnter");
 async function xb(e, t) {
-  return await _n(["send-keys", "-t", e, "-l", "--", t]) !== null;
+  return await yn(["send-keys", "-t", e, "-l", "--", t]) !== null;
 }
 r(xb, "typeKeys");
 async function bb(e, t) {
-  return await _n([
+  return await yn([
     "send-keys",
     "-t",
     e,
@@ -7938,8 +7938,8 @@ async function bb(e, t) {
 r(bb, "typeAndEnter");
 async function kb(e) {
   let t = ["capture-pane", "-p", "-t", e], n = nd(e);
-  if (n === null) return _n(t);
-  let o = await or(n, t);
+  if (n === null) return yn(t);
+  let o = await nr(n, t);
   return o.ok ? o.out : null;
 }
 r(kb, "capturePane");
@@ -8611,12 +8611,12 @@ function Cb(e) {
     "run_id"
   ], o = new Map(), s = new Set(n);
   function i(a, c) {
-    let l = Object.keys(c).filter((g) => s.has(g));
+    let l = Object.keys(c).filter((h) => s.has(h));
     if (!l.length) return;
     let f = l.join(","), w = o.get(f);
     w || (w = e.prepare(
-      `UPDATE sessions SET ${l.map((g) => `${g} = ?`).join(", ")} WHERE session_id = ?`
-    ), o.set(f, w)), w.run(...l.map((g) => c[g] ?? null), a);
+      `UPDATE sessions SET ${l.map((h) => `${h} = ?`).join(", ")} WHERE session_id = ?`
+    ), o.set(f, w)), w.run(...l.map((h) => c[h] ?? null), a);
   }
   return r(i, "updateSession"), { q: t, FIELDS: n, updateSession: i };
 }
@@ -8632,22 +8632,22 @@ r(nw, "createStatements");
 
 
 import od from "node:fs";
-import Ps from "node:path";
-function ic(e) {
+import Ls from "node:path";
+function cc(e) {
   try {
     return od.realpathSync(e);
   } catch {
-    return Ps.resolve(e);
+    return Ls.resolve(e);
   }
 }
-r(ic, "canonical");
+r(cc, "canonical");
 async function rw(e) {
   let t = await Ke("git", ["-C", e, "rev-parse", "--git-common-dir"], {
     timeout: 5e3
   });
   if (!t.ok) return null;
   let n = t.out.trim();
-  return n ? ic(Ps.isAbsolute(n) ? n : Ps.resolve(e, n)) : null;
+  return n ? cc(Ls.isAbsolute(n) ? n : Ls.resolve(e, n)) : null;
 }
 r(rw, "gitCommonDir");
 async function Pb(e, t, n) {
@@ -8662,9 +8662,9 @@ async function Pb(e, t, n) {
     timeout: 5e3
   });
   if (!o.ok) return !1;
-  let s = ic(t);
+  let s = cc(t);
   return o.out.split(`
-`).some((i) => i.startsWith("worktree ") && ic(i.slice(9).trim()) === s);
+`).some((i) => i.startsWith("worktree ") && cc(i.slice(9).trim()) === s);
 }
 r(Pb, "repoOwnsWorktree");
 function ow(e) {
@@ -8700,28 +8700,28 @@ function ow(e) {
   async function f(O) {
     let P = await Ke("git", ["-C", O, "remote"], { timeout: 5e3 });
     if (!P.ok) return { ok: !1, err: P.err };
-    let v = P.out.split(/\r?\n/).map((Q) => Q.trim()).filter(Boolean);
-    if (!v.length) return { ok: !1, err: "no remote is configured to refresh against" };
-    for (let Q of v) {
-      let G = await Ke("git", ["-C", O, "fetch", "--prune", Q], {
+    let x = P.out.split(/\r?\n/).map((Q) => Q.trim()).filter(Boolean);
+    if (!x.length) return { ok: !1, err: "no remote is configured to refresh against" };
+    for (let Q of x) {
+      let z = await Ke("git", ["-C", O, "fetch", "--prune", Q], {
         timeout: 3e4,
         env: { GIT_TERMINAL_PROMPT: "0" }
       });
-      if (!G.ok) return { ok: !1, err: G.err };
+      if (!z.ok) return { ok: !1, err: z.err };
     }
     return { ok: !0 };
   }
   r(f, "refreshRemoteKnowledge");
   async function w(O) {
-    let P = O.worktree_path, v = !1;
+    let P = O.worktree_path, x = !1;
     if (P != null)
       try {
-        v = od.existsSync(P);
+        x = od.existsSync(P);
       } catch {
       }
-    let Q = l(O, v);
-    if (P == null || !v) return Q;
-    let [G, Ee, ye, Ie, Se] = await Promise.all([
+    let Q = l(O, x);
+    if (P == null || !x) return Q;
+    let [z, Ee, ye, De, ve] = await Promise.all([
       Ke("git", ["-C", P, "rev-parse", "--abbrev-ref", "HEAD"], {
         timeout: 5e3
       }),
@@ -8732,20 +8732,20 @@ function ow(e) {
       Ke("git", ["-C", P, "log", "-1", "--format=%h%x00%s%x00%ct"], {
         timeout: 5e3
       }),
-      Rs(P)
+      Ps(P)
     ]);
-    if (!G.ok || !Ee.ok || !Se)
-      return Q.note = G.ok ? "git could not read this worktree." : "git no longer recognises this directory as a worktree — a previous removal was interrupted. Whatever is inside cannot be checked from here; removal will report exactly what blocks it.", Q;
-    Q.branch = G.out.trim() || null;
+    if (!z.ok || !Ee.ok || !ve)
+      return Q.note = z.ok ? "git could not read this worktree." : "git no longer recognises this directory as a worktree — a previous removal was interrupted. Whatever is inside cannot be checked from here; removal will report exactly what blocks it.", Q;
+    Q.branch = z.out.trim() || null;
     let $e = Ee.out.split(/\r?\n/).filter(Boolean);
-    if (Q.dirty = $e.length, Q.dirty_files = $e.slice(0, 10).map((S) => S.slice(3).trim()), Q.base = Se.ref, Q.base_is_local = Se.local, Q.upstream = ye.ok && ye.out.trim() || null, Ie.ok && Ie.out.trim()) {
-      let [S = "", I = "", d] = Ie.out.trimEnd().split("\0");
-      Q.last_commit = { sha: S, subject: I, at: Number(d) };
+    if (Q.dirty = $e.length, Q.dirty_files = $e.slice(0, 10).map((S) => S.slice(3).trim()), Q.base = ve.ref, Q.base_is_local = ve.local, Q.upstream = ye.ok && ye.out.trim() || null, De.ok && De.out.trim()) {
+      let [S = "", N = "", d] = De.out.trimEnd().split("\0");
+      Q.last_commit = { sha: S, subject: N, at: Number(d) };
     }
-    if (!Se.local && !(await f(P)).ok)
+    if (!ve.local && !(await f(P)).ok)
       return Q.note = "could not refresh the remote before judging this worktree — its remote knowledge may be stale, so nothing here can be certified as safe. Check the remote and refresh again.", Q;
-    let [Z, ae, L] = await Promise.all([
-      Ke("git", ["-C", P, "rev-list", "--count", `${Se.ref}..HEAD`], {
+    let [Z, ie, D] = await Promise.all([
+      Ke("git", ["-C", P, "rev-list", "--count", `${ve.ref}..HEAD`], {
         timeout: 5e3
       }),
 
@@ -8758,42 +8758,42 @@ function ow(e) {
       Ke("git", ["-C", P, "rev-list", "--count", "HEAD", "--not", "--remotes"], {
         timeout: 5e3
       }),
-      Ke("git", ["-C", P, "merge-base", "--is-ancestor", "HEAD", Se.ref], {
+      Ke("git", ["-C", P, "merge-base", "--is-ancestor", "HEAD", ve.ref], {
         timeout: 5e3
       })
     ]);
-    return !Z.ok || !ae.ok || !L.ok && L.code !== 1 || (Q.ahead = Number(Z.out.trim()), Q.unpushed = Number(ae.out.trim()), Q.merged = L.ok, Se.local && (Q.unpushed = Q.merged ? 0 : Q.ahead), Q.verdict = Q.dirty > 0 || Q.unpushed > 0 ? "has-work" : "safe"), Q;
+    return !Z.ok || !ie.ok || !D.ok && D.code !== 1 || (Q.ahead = Number(Z.out.trim()), Q.unpushed = Number(ie.out.trim()), Q.merged = D.ok, ve.local && (Q.unpushed = Q.merged ? 0 : Q.ahead), Q.verdict = Q.dirty > 0 || Q.unpushed > 0 ? "has-work" : "safe"), Q;
   }
   r(w, "inspectWorktree");
-  async function g() {
+  async function h() {
     return { ok: !0, worktrees: await bh(c(), 4, w) };
   }
-  r(g, "worktrees");
+  r(h, "worktrees");
   let _ = new Set(["provisioning", "spawning", "live"]);
   function E(O, P) {
-    let v = O.worktree_path ?? O.cwd;
-    if (typeof v != "string" || !v) return !1;
-    let Q = Ps.resolve(v);
-    return Q === P || Q.startsWith(P + Ps.sep);
+    let x = O.worktree_path ?? O.cwd;
+    if (typeof x != "string" || !x) return !1;
+    let Q = Ls.resolve(x);
+    return Q === P || Q.startsWith(P + Ls.sep);
   }
   r(E, "claimsPath");
   function m(O) {
-    let P = Ps.resolve(O);
+    let P = Ls.resolve(O);
     return t.worktreeSpawns.all().some(
-      (v) => v.worktree_path === O && (_.has(v.status) || v.session_ended_at == null && t.getSession.get(v.session_id) != null)
-    ) || t.liveWorktreeClaims.all().some((v) => E(v, P));
+      (x) => x.worktree_path === O && (_.has(x.status) || x.session_ended_at == null && t.getSession.get(x.session_id) != null)
+    ) || t.liveWorktreeClaims.all().some((x) => E(x, P));
   }
   r(m, "worktreePathIsLive");
-  async function U(O, P) {
-    let v = await Ke(
+  async function $(O, P) {
+    let x = await Ke(
       "git",
       ["-C", O, "rev-parse", "--verify", `refs/heads/${P}`],
       { timeout: 5e3 }
     );
-    return v.ok ? v.out.trim() : null;
+    return x.ok ? x.out.trim() : null;
   }
-  r(U, "branchTipOid");
-  async function M(O) {
+  r($, "branchTipOid");
+  async function F(O) {
     let P = await Ke("git", ["-C", O, "worktree", "prune"], {
       timeout: 3e4
     });
@@ -8801,22 +8801,22 @@ function ow(e) {
       status: 409,
       body: {
         ok: !1,
-        reason: `git worktree prune failed: ${vr(P.err)}`.slice(0, 300)
+        reason: `git worktree prune failed: ${_r(P.err)}`.slice(0, 300)
       }
     };
   }
-  r(M, "pruneWorktreeMetadata");
-  async function D(O = {}) {
+  r(F, "pruneWorktreeMetadata");
+  async function I(O = {}) {
     if (typeof O?.path != "string")
       return { status: 400, body: { ok: !1, reason: "not a fleet worktree" } };
-    let P = O.path, v = i ? await i(Xa(P)) : () => {
+    let P = O.path, x = i ? await i(Ja(P)) : () => {
     };
     try {
-      let Q = t.worktreeSpawns.all().filter((Z) => Z.worktree_path === P), G = Q[0];
-      if (!G) return { status: 400, body: { ok: !1, reason: "not a fleet worktree" } };
+      let Q = t.worktreeSpawns.all().filter((Z) => Z.worktree_path === P), z = Q[0];
+      if (!z) return { status: 400, body: { ok: !1, reason: "not a fleet worktree" } };
       if (m(P))
         return { status: 409, body: { ok: !1, reason: "session is still alive" } };
-      let Ee = await w(G), ye = Ee.exists && Ee.branch ? await U(P, Ee.branch) : null;
+      let Ee = await w(z), ye = Ee.exists && Ee.branch ? await $(P, Ee.branch) : null;
       if ((Ee.verdict === "has-work" || Ee.verdict === "unknown") && O.force !== !0)
         return {
           status: 409,
@@ -8828,21 +8828,21 @@ function ow(e) {
             unpushed: Ee.unpushed
           }
         };
-      if (G.cwd == null)
+      if (z.cwd == null)
         return { status: 409, body: { ok: !1, reason: "main repository unavailable" } };
-      let Ie = await Ke("git", ["-C", G.cwd, "rev-parse", "--show-toplevel"], {
+      let De = await Ke("git", ["-C", z.cwd, "rev-parse", "--show-toplevel"], {
         timeout: 5e3
       });
-      if (!Ie.ok)
+      if (!De.ok)
         return { status: 409, body: { ok: !1, reason: "main repository unavailable" } };
-      let Se = Ie.out.trim();
-      if (!await Pb(Se, P, Ee.exists))
+      let ve = De.out.trim();
+      if (!await Pb(ve, P, Ee.exists))
         return {
           status: 409,
           body: {
             ok: !1,
             reason: "recorded cwd now resolves to a different repository than this worktree belongs to — refusing to remove or delete branches in it",
-            repo: ic(Se)
+            repo: cc(ve)
           }
         };
       if (m(P))
@@ -8853,58 +8853,58 @@ function ow(e) {
       try {
         if (Ee.exists) {
           kh(P);
-          let b = ["-C", Se, "worktree", "remove"];
-          if (O.force === !0 && b.push("--force"), b.push(P), !(await Ke("git", b, { timeout: 3e4 })).ok) {
-            let H = Rh(P), ee = H[0];
-            if (ee)
+          let k = ["-C", ve, "worktree", "remove"];
+          if (O.force === !0 && k.push("--force"), k.push(P), !(await Ke("git", k, { timeout: 3e4 })).ok) {
+            let V = Rh(P), te = V[0];
+            if (te)
               return {
                 status: 409,
                 body: {
                   ok: !1,
-                  reason: `blocked by ${H.length} path(s) this daemon may not delete — owned by ${[...new Set(H.map((W) => W.owner))].join(", ")}. Fleet Deck runs as you and never escalates to root.`,
-                  blocked_paths: H.map((W) => W.path),
-                  blocked_owner: ee.owner,
-                  fix_command: `sudo rm -rf ${H.map((W) => qu(W.path)).join(" ")} && git -C ${qu(Se)} worktree prune`
+                  reason: `blocked by ${V.length} path(s) this daemon may not delete — owned by ${[...new Set(V.map((q) => q.owner))].join(", ")}. Fleet Deck runs as you and never escalates to root.`,
+                  blocked_paths: V.map((q) => q.path),
+                  blocked_owner: te.owner,
+                  fix_command: `sudo rm -rf ${V.map((q) => qu(q.path)).join(" ")} && git -C ${qu(ve)} worktree prune`
                 }
               };
             if (O.force !== !0) {
-              let W = await Ke(
+              let q = await Ke(
                 "git",
                 ["-C", P, "status", "--porcelain"],
                 { timeout: 5e3 }
               );
-              if (W.ok && W.out.trim() !== "")
+              if (q.ok && q.out.trim() !== "")
                 return {
                   status: 409,
                   body: {
                     ok: !1,
                     reason: "git refused to remove this worktree and it still has uncommitted changes — pass force to delete",
                     verdict: "has-work",
-                    dirty: W.out.split(/\r?\n/).filter(Boolean).length
+                    dirty: q.out.split(/\r?\n/).filter(Boolean).length
                   }
                 };
             }
             try {
               od.rmSync(P, { recursive: !0, force: !0 });
-            } catch (W) {
+            } catch (q) {
               return {
                 status: 409,
-                body: { ok: !1, reason: `could not remove worktree: ${W instanceof Error ? W.code ?? W.message : String(W)}` }
+                body: { ok: !1, reason: `could not remove worktree: ${q instanceof Error ? q.code ?? q.message : String(q)}` }
               };
             }
-            let C = await M(Se);
+            let C = await F(ve);
             if (C) return C;
           }
         } else {
-          let b = await M(Se);
-          if (b) return b;
+          let k = await F(ve);
+          if (k) return k;
         }
-        let Z = !1, ae = Ee.branch ?? t.getSession.get(G.session_id)?.branch ?? null;
-        if (O.delete_branch === !0 && ae && (ye == null ? Z = (await Ke("git", ["-C", Se, "branch", "-D", ae], {
+        let Z = !1, ie = Ee.branch ?? t.getSession.get(z.session_id)?.branch ?? null;
+        if (O.delete_branch === !0 && ie && (ye == null ? Z = (await Ke("git", ["-C", ve, "branch", "-D", ie], {
           timeout: 3e4
-        })).ok : await U(Se, ae) === ye && (Z = (await Ke(
+        })).ok : await $(ve, ie) === ye && (Z = (await Ke(
           "git",
-          ["-C", Se, "update-ref", "-d", `refs/heads/${ae}`, ye],
+          ["-C", ve, "update-ref", "-d", `refs/heads/${ie}`, ye],
           { timeout: 3e4 }
         )).ok)), m(P))
           return s(), {
@@ -8918,34 +8918,34 @@ function ow(e) {
               path: P
             }
           };
-        let L = [
-          ...new Set(Q.map((b) => b.session_id).filter(Boolean))
-        ], S = Date.now(), I = 0, d = 0, T = r(() => {
-          for (let b of L)
-            t.expireMailForSession.run(S, b), t.expireQuestionsForSession.run(b);
-          I = Number(t.deleteWorktreeSpawns.run(P).changes);
-          for (let b of L)
-            d += Number(t.deleteEndedSession.run(b).changes);
+        let D = [
+          ...new Set(Q.map((k) => k.session_id).filter(Boolean))
+        ], S = Date.now(), N = 0, d = 0, T = r(() => {
+          for (let k of D)
+            t.expireMailForSession.run(S, k), t.expireQuestionsForSession.run(k);
+          N = Number(t.deleteWorktreeSpawns.run(P).changes);
+          for (let k of D)
+            d += Number(t.deleteEndedSession.run(k).changes);
         }, "purgeRows");
         if (n) {
           n.exec("BEGIN IMMEDIATE");
           try {
             T(), n.exec("COMMIT");
-          } catch (b) {
+          } catch (k) {
             try {
               n.exec("ROLLBACK");
             } catch {
             }
             return {
               status: 500,
-              body: { ok: !1, reason: `could not purge worktree rows: ${b instanceof Error ? b.message : String(b)}` }
+              body: { ok: !1, reason: `could not purge worktree rows: ${k instanceof Error ? k.message : String(k)}` }
             };
           }
         } else
           T();
-        let A = I + d;
+        let A = N + d;
         return o(
-          `⌫ removed worktree ${P}${Z && ae ? ` and branch ${ae}` : ""}`
+          `⌫ removed worktree ${P}${Z && ie ? ` and branch ${ie}` : ""}`
         ), s(), {
           status: 200,
           body: { ok: !0, removed: !0, branch_deleted: Z, rows_purged: A, path: P }
@@ -8954,30 +8954,30 @@ function ow(e) {
         $e?.();
       }
     } finally {
-      v();
+      x();
     }
   }
-  return r(D, "removeWorktree"), { worktrees: g, removeWorktree: D };
+  return r(I, "removeWorktree"), { worktrees: h, removeWorktree: I };
 }
 r(ow, "createWorktrees");
 
 
-import sr from "node:fs";
+import rr from "node:fs";
 import ad from "node:os";
-import jt from "node:path";
+import Bt from "node:path";
 import { createHash as Ab } from "node:crypto";
 
 
-function ac({
+function lc({
   setting: e = null,
   coder: t = !1
 } = {}) {
   return e === "ssh" || e === "https" ? { value: e, source: "override" } : t ? { value: "https", source: "coder" } : { value: "ssh", source: "default" };
 }
-r(ac, "repoTransportChoice");
+r(lc, "repoTransportChoice");
 
 
-var Ob = /[\x00-\x1f\x7f]/, cc = /[\s\x00-\x1f\x7f]/, uw = /^[A-Za-z0-9._-]+$/, Lb = "textemma", Db = 3e4, Ib = 256;
+var Ob = /[\x00-\x1f\x7f]/, uc = /[\s\x00-\x1f\x7f]/, uw = /^[A-Za-z0-9._-]+$/, Lb = "textemma", Db = 3e4, Ib = 256;
 function Nb(e, t, n) {
   for (let [o, s] of e)
     s <= n && e.delete(o);
@@ -8998,10 +8998,10 @@ var cd = class extends Error {
     super(n), this.status = t;
   }
 };
-function ot(e, t) {
+function nt(e, t) {
   return new cd(e, t);
 }
-r(ot, "namedError");
+r(nt, "namedError");
 var Mb = /^[a-z][a-z0-9+.-]{0,32}:\/\/([^/?#\s]{0,512})@/i, Fb = /[?&#][^=&\s]{1,128}=([^&\s]{1,512})/g;
 function dw(e) {
   let t = e ?? "", n = Mb.exec(t)?.[1] ?? "", o = n ? [n, ...n.split(":")] : [];
@@ -9010,15 +9010,15 @@ function dw(e) {
 }
 r(dw, "originSecrets");
 function sw(e, t = null) {
-  let n = dw(t), o = xr(e, n);
+  let n = dw(t), o = Sr(e, n);
   return { note: Hh(o), detail: Yu(o, { secrets: n }) };
 }
 r(sw, "gitFailureText");
-function As(e) {
+function Ds(e) {
   let t = e.replace(/[\\/]+$/, "");
-  return jt.basename(t).replace(/\.git$/i, "");
+  return Bt.basename(t).replace(/\.git$/i, "");
 }
-r(As, "repoNameOf");
+r(Ds, "repoNameOf");
 function ld(e) {
   return e.split(/[/:@]/).some((t) => t.startsWith("-"));
 }
@@ -9035,7 +9035,7 @@ function iw(e) {
   if (typeof e != "string" || !e)
     return "default org must be a non-empty owner or group path";
   if (e.length > 200) return "default org must be 200 characters or fewer";
-  if (cc.test(e))
+  if (uc.test(e))
     return "default org must not contain whitespace or control characters";
   if (e.startsWith("-") || ld(e))
     return "default org must not contain a segment beginning with -";
@@ -9049,7 +9049,7 @@ function aw(e, t = "github", n = "https") {
   if (n !== "ssh" && n !== "https")
     return { error: `repo_transport must be ssh or https — got "${n}"` };
   if (typeof e != "string" || !e) return { error: "repo must be a non-empty string" };
-  if (cc.test(e))
+  if (uc.test(e))
     return { error: "repo must not contain whitespace or control characters" };
   if (e.startsWith("-") || ld(e))
     return { error: "repo must not contain a path or argument segment beginning with -" };
@@ -9060,7 +9060,7 @@ function aw(e, t = "github", n = "https") {
     } catch {
       return { error: "repo is not a valid HTTPS URL" };
     }
-    let c = As(a.pathname);
+    let c = Ds(a.pathname);
     return c ? { kind: "url", origin_url: e, repo_name: c } : { error: "repository URL must name a repository" };
   }
   if (/^ssh:\/\//i.test(e)) {
@@ -9070,18 +9070,18 @@ function aw(e, t = "github", n = "https") {
     } catch {
       return { error: "repo is not a valid SSH URL" };
     }
-    let c = As(a.pathname);
+    let c = Ds(a.pathname);
     return c ? { kind: "url", origin_url: e, repo_name: c } : { error: "repository URL must name a repository" };
   }
   if (/^[^/@:]+@[^/:]+:.+$/.test(e)) {
-    let a = As(e.slice(e.indexOf(":") + 1));
+    let a = Ds(e.slice(e.indexOf(":") + 1));
     return a ? { kind: "url", origin_url: e, repo_name: a } : { error: "scp-style repository URL must name a repository" };
   }
   let o = /^([A-Za-z][A-Za-z0-9+.-]*):/.exec(e)?.[1]?.toLowerCase();
   if (o)
     return o === "http" ? { error: "plain http repository URLs are refused — use https or ssh" } : { error: `repository URL scheme "${o}" is refused — use https or ssh` };
-  if (jt.isAbsolute(e)) {
-    let a = As(e);
+  if (Bt.isAbsolute(e)) {
+    let a = Ds(e);
     return a ? { kind: "path", origin_url: null, repo_name: a } : { error: "absolute repository path must name a repository" };
   }
   let s = e.split("/"), i = s.every(Boolean) && !s.some((a) => a === "." || a === "..");
@@ -9090,7 +9090,7 @@ function aw(e, t = "github", n = "https") {
       error: "shorthand path segments may contain only letters, numbers, dots, underscores, and hyphens"
     };
   if (i && s.length >= 2) {
-    let a = As(s[s.length - 1] ?? "");
+    let a = Ds(s[s.length - 1] ?? "");
     if (!a) return { error: "shorthand must end in a repository name" };
     if (t === "gitlab") {
       let c = e.replace(/\.git$/i, "");
@@ -9110,15 +9110,15 @@ function aw(e, t = "github", n = "https") {
     }
     return { error: "group/subgroup paths need the gitlab host or a full repository URL" };
   }
-  return s.length > 1 || e === "." || e === ".." || e.startsWith("." + jt.sep) ? { error: "relative repository paths are refused — use an absolute path" } : { kind: "name", origin_url: null, repo_name: As(e) };
+  return s.length > 1 || e === "." || e === ".." || e.startsWith("." + Bt.sep) ? { error: "relative repository paths are refused — use an absolute path" } : { kind: "name", origin_url: null, repo_name: Ds(e) };
 }
 r(aw, "parseRepoInput");
 function $b(e) {
-  return typeof e != "string" || !e ? "branch must be a non-empty string" : e.length > 200 ? "branch must be 200 characters or fewer" : e.startsWith("-") ? "branch must not begin with -" : cc.test(e) ? "branch must not contain whitespace or control characters" : e.includes("..") ? "branch must not contain .." : e.includes("@{") ? "branch must not contain @{" : e.endsWith(".lock") ? "branch must not end with .lock" : e.startsWith("/") || e.endsWith("/") ? "branch must not begin or end with /" : null;
+  return typeof e != "string" || !e ? "branch must be a non-empty string" : e.length > 200 ? "branch must be 200 characters or fewer" : e.startsWith("-") ? "branch must not begin with -" : uc.test(e) ? "branch must not contain whitespace or control characters" : e.includes("..") ? "branch must not contain .." : e.includes("@{") ? "branch must not contain @{" : e.endsWith(".lock") ? "branch must not end with .lock" : e.startsWith("/") || e.endsWith("/") ? "branch must not begin or end with /" : null;
 }
 r($b, "quickBranchCheck");
 function sd(e) {
-  return e === "~" ? ad.homedir() : e.startsWith("~/") ? jt.join(ad.homedir(), e.slice(2)) : e;
+  return e === "~" ? ad.homedir() : e.startsWith("~/") ? Bt.join(ad.homedir(), e.slice(2)) : e;
 }
 r(sd, "expandHome");
 var Ub = new Set(["github.com", "gitlab.com"]);
@@ -9151,26 +9151,26 @@ function Hb(e) {
 r(Hb, "foldOriginCaseInsensitivePrefix");
 function cw(e) {
   if (!e) return null;
-  if (jt.isAbsolute(e))
+  if (Bt.isAbsolute(e))
     try {
-      return sr.realpathSync(e);
+      return rr.realpathSync(e);
     } catch {
-      return jt.resolve(e);
+      return Bt.resolve(e);
     }
   return Wb(e) ?? Hb(e.replace(/[\\/]+$/, "").replace(/\.git$/i, ""));
 }
 r(cw, "comparableOrigin");
-function Pi(e) {
+function Di(e) {
   try {
-    return sr.existsSync(e);
+    return rr.existsSync(e);
   } catch {
     return !1;
   }
 }
-r(Pi, "exists");
+r(Di, "exists");
 function qb(e) {
   try {
-    return sr.statSync(e).isDirectory();
+    return rr.statSync(e).isDirectory();
   } catch {
     return !1;
   }
@@ -9206,173 +9206,173 @@ function Gb(e) {
 r(Gb, "dirtyNames");
 function fw(e) {
   let { q: t } = e, n = new Map(), o = new Map(), s = new Map(), i = (() => {
-    let L = Number(process.env.FLEETDECK_CLONE_CONCURRENCY);
-    return Number.isInteger(L) && L > 0 ? L : 3;
+    let D = Number(process.env.FLEETDECK_CLONE_CONCURRENCY);
+    return Number.isInteger(D) && D > 0 ? D : 3;
   })(), a = 0;
   function c() {
     if (a >= i)
-      throw ot(
+      throw nt(
         429,
         `too many repositories are cloning right now (${a}/${i}) — retry in a moment`
       );
     a += 1;
-    let L = !1;
+    let D = !1;
     return () => {
-      L || (L = !0, a -= 1);
+      D || (D = !0, a -= 1);
     };
   }
   r(c, "reserveCloneSlot");
-  function l(L) {
-    let S = /^https:\/\/([^/@:]+@)?([^/:?#]+)/i.exec(L)?.[2] ?? /^ssh:\/\/([^/@:]+@)?([^/:?#]+)/i.exec(L)?.[2] ?? /^[^/@:]+@([^/:]+):/.exec(L)?.[1] ?? "";
+  function l(D) {
+    let S = /^https:\/\/([^/@:]+@)?([^/:?#]+)/i.exec(D)?.[2] ?? /^ssh:\/\/([^/@:]+@)?([^/:?#]+)/i.exec(D)?.[2] ?? /^[^/@:]+@([^/:]+):/.exec(D)?.[1] ?? "";
     return {
       provider: S.toLowerCase() === "github.com" ? "github" : S.toLowerCase() === "gitlab.com" ? "gitlab" : "other",
-      transport: /^https:\/\//i.test(L) ? "https" : "ssh"
+      transport: /^https:\/\//i.test(D) ? "https" : "ssh"
     };
   }
   r(l, "originKind");
   function f() {
-    let L = process.env.CODER_AGENT_URL;
-    if (!L) return null;
+    let D = process.env.CODER_AGENT_URL;
+    if (!D) return null;
     try {
-      let S = new URL(L);
+      let S = new URL(D);
       return S.protocol !== "https:" && S.protocol !== "http:" ? null : new URL("/settings/external-auth", S.origin).toString();
     } catch {
       return null;
     }
   }
   r(f, "coderExternalAuthUrl");
-  function w(L) {
-    return L === "github" ? "https://github.com/settings/ssh/new" : L === "gitlab" ? "https://gitlab.com/-/profile/keys" : null;
+  function w(D) {
+    return D === "github" ? "https://github.com/settings/ssh/new" : D === "gitlab" ? "https://gitlab.com/-/profile/keys" : null;
   }
   r(w, "sshKeySettingsUrl");
-  function g(L) {
-    return L.match(
+  function h(D) {
+    return D.match(
       /(?:^|\n)(ssh-(?:ed25519|rsa)|ecdsa-sha2-nistp(?:256|384|521)) [A-Za-z0-9+/=]{20,8192}(?: [^\r\n]{0,256})?(?=\r?$|\n)/m
     )?.[0]?.trim() ?? null;
   }
-  r(g, "coderPublicKey");
-  function _(L, S) {
-    let { provider: I, transport: d } = l(L), T = S.err ?? "", A = T.toLowerCase(), b = f(), X = I === "github" ? "GitHub" : I === "gitlab" ? "GitLab" : "the Git server", H = Yu(xr(T, dw(L)));
+  r(h, "coderPublicKey");
+  function _(D, S) {
+    let { provider: N, transport: d } = l(D), T = S.err ?? "", A = T.toLowerCase(), k = f(), Y = N === "github" ? "GitHub" : N === "gitlab" ? "GitLab" : "the Git server", V = Yu(Sr(T, dw(D)));
     if (S.code === "ETIMEDOUT") {
-      let fe = b != null && d === "https";
+      let me = k != null && d === "https";
       return {
         ok: !1,
         status: 504,
-        reason: `Git access check timed out before ${X} answered`,
+        reason: `Git access check timed out before ${Y} answered`,
         git_access: {
-          provider: I,
+          provider: N,
           transport: d,
           code: "timeout",
           title: "Git authentication did not finish",
-          detail: H,
-          action: fe ? "Reconnect the Git provider in Coder, then check access again." : d === "ssh" ? "The SSH check did not finish. Verify the host/key in a terminal, or switch this spawn to HTTPS." : "Finish any Git credential login in a terminal, then check access again.",
-          auth_url: fe ? b : null,
-          auth_label: fe ? "Open Coder authentication" : null,
+          detail: V,
+          action: me ? "Reconnect the Git provider in Coder, then check access again." : d === "ssh" ? "The SSH check did not finish. Verify the host/key in a terminal, or switch this spawn to HTTPS." : "Finish any Git credential login in a terminal, then check access again.",
+          auth_url: me ? k : null,
+          auth_label: me ? "Open Coder authentication" : null,
           cli_command: null,
           ssh_public_key: null,
           suggested_transport: null
         }
       };
     }
-    let ee = /host key verification failed|authenticity of host .* can't be established/.test(A), C = b != null && d === "ssh" && /coder gitssh|coder publickey|coder authenticates with git|coder-generated.*ssh|add to github and gitlab/.test(
+    let te = /host key verification failed|authenticity of host .* can't be established/.test(A), C = k != null && d === "ssh" && /coder gitssh|coder publickey|coder authenticates with git|coder-generated.*ssh|add to github and gitlab/.test(
       A
-    ), W = b != null && d === "https" && (/coder gitssh|coder publickey|external.auth|authenticate with (github|gitlab)/.test(A) || /could not read from remote repository|authentication failed|could not read username/.test(
+    ), q = k != null && d === "https" && (/coder gitssh|coder publickey|external.auth|authenticate with (github|gitlab)/.test(A) || /could not read from remote repository|authentication failed|could not read username/.test(
       A
-    )), y = C ? "coder_ssh_key" : W ? "coder_external_auth" : ee ? "host_key" : /authentication failed|permission denied|publickey|could not read username|http basic|access rights|repository not found/.test(
+    )), y = C ? "coder_ssh_key" : q ? "coder_external_auth" : te ? "host_key" : /authentication failed|permission denied|publickey|could not read username|http basic|access rights|repository not found/.test(
       A
-    ) ? "credentials" : "unreachable", x = C ? "coder publickey" : b != null ? null : I === "github" ? "gh auth login --hostname github.com --git-protocol https" : I === "gitlab" ? "glab auth login --hostname gitlab.com" : null, q = C ? `Coder login covers HTTPS, not SSH. Switch this spawn to HTTPS, or add the Coder SSH key below to ${X}.` : W ? `Connect ${X} in Coder, then return here and check access again.` : ee ? `Trust ${X}'s SSH host key in a terminal, or switch this spawn to HTTPS.` : x ? `Authenticate with ${X} in a terminal (${x}), then check access again.` : "Authenticate Git in this developer environment, then check access again.";
+    ) ? "credentials" : "unreachable", v = C ? "coder publickey" : k != null ? null : N === "github" ? "gh auth login --hostname github.com --git-protocol https" : N === "gitlab" ? "glab auth login --hostname gitlab.com" : null, K = C ? `Coder login covers HTTPS, not SSH. Switch this spawn to HTTPS, or add the Coder SSH key below to ${Y}.` : q ? `Connect ${Y} in Coder, then return here and check access again.` : te ? `Trust ${Y}'s SSH host key in a terminal, or switch this spawn to HTTPS.` : v ? `Authenticate with ${Y} in a terminal (${v}), then check access again.` : "Authenticate Git in this developer environment, then check access again.";
     return {
       ok: !1,
       status: 409,
       reason: `Git cannot read this repository with the workspace's current ${d.toUpperCase()} credentials`,
       git_access: {
-        provider: I,
+        provider: N,
         transport: d,
         code: y,
-        title: C ? `${X} does not recognize this Coder SSH key` : W ? `${X} is not connected to this Coder workspace` : ee ? `${X} SSH host trust is not ready` : `${X} repository access is not ready`,
-        detail: H,
-        action: q,
-        auth_url: C ? w(I) : W ? b : null,
-        auth_label: C ? `Add SSH key to ${X}` : W ? "Open Coder authentication" : null,
-        cli_command: x,
-        ssh_public_key: C ? g(T) : null,
+        title: C ? `${Y} does not recognize this Coder SSH key` : q ? `${Y} is not connected to this Coder workspace` : te ? `${Y} SSH host trust is not ready` : `${Y} repository access is not ready`,
+        detail: V,
+        action: K,
+        auth_url: C ? w(N) : q ? k : null,
+        auth_label: C ? `Add SSH key to ${Y}` : q ? "Open Coder authentication" : null,
+        cli_command: v,
+        ssh_public_key: C ? h(T) : null,
         suggested_transport: C ? "https" : null
       }
     };
   }
   r(_, "accessFailure");
-  async function E(L, S) {
-    let I = l(L), d = Ab("sha256").update(L).digest("base64url");
-    if ((s.get(d) ?? 0) > Date.now()) return { ok: !0, ...I };
+  async function E(D, S) {
+    let N = l(D), d = Ab("sha256").update(D).digest("base64url");
+    if ((s.get(d) ?? 0) > Date.now()) return { ok: !0, ...N };
     s.delete(d);
-    let A = Number(process.env.FLEETDECK_GIT_PREFLIGHT_TIMEOUT_MS), b = Number.isFinite(A) && A >= 1e3 && A <= 6e4 ? A : 15e3, X = await Ke("git", ["ls-remote", "--", L, "HEAD"], {
-      timeout: b,
+    let A = Number(process.env.FLEETDECK_GIT_PREFLIGHT_TIMEOUT_MS), k = Number.isFinite(A) && A >= 1e3 && A <= 6e4 ? A : 15e3, Y = await Ke("git", ["ls-remote", "--", D, "HEAD"], {
+      timeout: k,
       signal: S,
       killTree: !0,
       env: { GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "Never" }
     });
-    return X.ok ? (Nb(s, d, Date.now()), { ok: !0, ...I }) : _(L, X);
+    return Y.ok ? (Nb(s, d, Date.now()), { ok: !0, ...N }) : _(D, Y);
   }
   r(E, "probeRepoAccess");
-  async function m(L) {
+  async function m(D) {
     let S;
     try {
-      S = await Ee(L);
+      S = await Ee(D);
     } catch (d) {
       return {
-        status: Rn(d) ?? 400,
+        status: bn(d) ?? 400,
         body: { ok: !1, reason: Ze(d) }
       };
     }
     if (S.mode === "local")
       return { status: 200, body: { ok: !0, mode: "local" } };
-    let I = await E(S.origin_url);
-    return I.ok ? {
+    let N = await E(S.origin_url);
+    return N.ok ? {
       status: 200,
       body: {
         ok: !0,
         mode: "clone",
-        provider: I.provider,
-        transport: I.transport
+        provider: N.provider,
+        transport: N.transport
       }
     } : {
-      status: I.status,
-      body: { ok: !1, reason: I.reason, git_access: I.git_access }
+      status: N.status,
+      body: { ok: !1, reason: N.reason, git_access: N.git_access }
     };
   }
   r(m, "preflightRepo");
-  function U(L, S) {
-    if (L)
+  function $(D, S) {
+    if (D)
       try {
-        t.setSpawnFailDetail.run(S, L);
-      } catch (I) {
-        console.error(`fleetd could not record fail_detail for ${L}: ${Ze(I)}`);
+        t.setSpawnFailDetail.run(S, D);
+      } catch (N) {
+        console.error(`fleetd could not record fail_detail for ${D}: ${Ze(N)}`);
       }
   }
-  r(U, "recordFailDetail");
-  async function M(L) {
-    let S = $b(L);
-    if (S) throw ot(400, S);
-    let I = await Ke("git", ["check-ref-format", "--branch", L], {
+  r($, "recordFailDetail");
+  async function F(D) {
+    let S = $b(D);
+    if (S) throw nt(400, S);
+    let N = await Ke("git", ["check-ref-format", "--branch", D], {
       timeout: 5e3
     });
-    if (!I.ok) throw ot(400, I.err || "branch is not a valid git branch name");
-    return L;
+    if (!N.ok) throw nt(400, N.err || "branch is not a valid git branch name");
+    return D;
   }
-  r(M, "validateBranch");
-  function D() {
-    let L = t.getSetting.get("repos_dir")?.value;
-    if (L != null)
-      return { value: L, source: "override", resolved: jt.resolve(sd(L)) };
+  r(F, "validateBranch");
+  function I() {
+    let D = t.getSetting.get("repos_dir")?.value;
+    if (D != null)
+      return { value: D, source: "override", resolved: Bt.resolve(sd(D)) };
     let S = process.env.FLEETDECK_REPOS_DIR;
     if (S)
-      return { value: S, source: "env", resolved: jt.resolve(sd(S)) };
-    let I = $o() ?? jt.join(ad.homedir(), "projects");
-    return { value: I, source: "default", resolved: I };
+      return { value: S, source: "env", resolved: Bt.resolve(sd(S)) };
+    let N = $o() ?? Bt.join(ad.homedir(), "projects");
+    return { value: N, source: "default", resolved: N };
   }
-  r(D, "resolveReposDir");
+  r(I, "resolveReposDir");
   function O() {
-    return ac({
+    return lc({
       setting: t.getSetting.get("repo_transport")?.value ?? null,
       coder: !!$o()
     }).value;
@@ -9386,339 +9386,339 @@ function fw(e) {
     });
   }
   r(P, "resolveRepoDefaultOrg");
-  function v(L) {
-    if (L == null) return null;
-    let S = iw(L);
-    if (S) throw ot(400, S);
-    return typeof L == "string" ? L : null;
+  function x(D) {
+    if (D == null) return null;
+    let S = iw(D);
+    if (S) throw nt(400, S);
+    return typeof D == "string" ? D : null;
   }
-  r(v, "validateRepoDefaultOrg");
-  function Q(L) {
-    if (L === null)
-      return t.setSetting.run("repos_dir", null, Date.now()), D();
-    if (typeof L != "string" || !L)
-      throw ot(400, "repos_dir must be an absolute path or null");
-    if (Ob.test(L))
-      throw ot(400, "repos_dir must not contain NUL or control characters");
-    let S = sd(L);
-    if (!jt.isAbsolute(S))
-      throw ot(400, "repos_dir must be an absolute path (or begin with ~/)");
-    let I = jt.resolve(S);
-    if (jt.dirname(I) === I)
-      throw ot(400, "repos_dir must not be the filesystem root");
+  r(x, "validateRepoDefaultOrg");
+  function Q(D) {
+    if (D === null)
+      return t.setSetting.run("repos_dir", null, Date.now()), I();
+    if (typeof D != "string" || !D)
+      throw nt(400, "repos_dir must be an absolute path or null");
+    if (Ob.test(D))
+      throw nt(400, "repos_dir must not contain NUL or control characters");
+    let S = sd(D);
+    if (!Bt.isAbsolute(S))
+      throw nt(400, "repos_dir must be an absolute path (or begin with ~/)");
+    let N = Bt.resolve(S);
+    if (Bt.dirname(N) === N)
+      throw nt(400, "repos_dir must not be the filesystem root");
     try {
-      if (sr.existsSync(I) && !sr.statSync(I).isDirectory())
-        throw ot(400, "repos_dir points to an existing file");
+      if (rr.existsSync(N) && !rr.statSync(N).isDirectory())
+        throw nt(400, "repos_dir points to an existing file");
     } catch (d) {
-      throw Rn(d) !== void 0 ? d : ot(400, `cannot inspect repos_dir: ${Ze(d)}`);
+      throw bn(d) !== void 0 ? d : nt(400, `cannot inspect repos_dir: ${Ze(d)}`);
     }
-    return t.setSetting.run("repos_dir", L, Date.now()), D();
+    return t.setSetting.run("repos_dir", D, Date.now()), I();
   }
   r(Q, "setReposDir");
-  function G({
-    repo_id: L,
+  function z({
+    repo_id: D,
     repo_name: S,
-    root: I,
+    root: N,
     origin_url: d = null,
     default_branch: T = null,
     source: A
   }) {
-    if (!L || !S || !I) return;
-    let b = Date.now();
-    if (!(b - (n.get(L) ?? 0) < 6e4) && (n.set(L, b), t.upsertRepo.run(
-      L,
+    if (!D || !S || !N) return;
+    let k = Date.now();
+    if (!(k - (n.get(D) ?? 0) < 6e4) && (n.set(D, k), t.upsertRepo.run(
+      D,
       S,
-      I,
+      N,
       d,
       T,
-      b,
-      b,
+      k,
+      k,
       A ?? null
     ), !d)) {
-      let X = I, H = L, ee = r(async () => {
-        let W = await id(X);
-        W && t.setRepoOrigin.run(W, H);
-      }, "backfill"), C = e.spawnMaintenance ? e.spawnMaintenance.run(ee) : Promise.resolve().then(ee);
-      C && C.catch((W) => {
-        console.error("fleetd repo origin backfill error:", W);
+      let Y = N, V = D, te = r(async () => {
+        let q = await id(Y);
+        q && t.setRepoOrigin.run(q, V);
+      }, "backfill"), C = e.spawnMaintenance ? e.spawnMaintenance.run(te) : Promise.resolve().then(te);
+      C && C.catch((q) => {
+        console.error("fleetd repo origin backfill error:", q);
       });
     }
   }
-  r(G, "touchRepo");
-  async function Ee(L) {
-    let S = L.repo_transport ?? O(), I = L.repo_host ?? void 0, d = aw(L.repo, I, S);
-    if ("error" in d) throw ot(400, d.error);
-    if (L.repo_org != null && d.kind !== "name")
-      throw ot(400, "repo_org applies only to a bare repo name");
-    let T = d.origin_url, A = t.repoByName.all(d.repo_name), b;
+  r(z, "touchRepo");
+  async function Ee(D) {
+    let S = D.repo_transport ?? O(), N = D.repo_host ?? void 0, d = aw(D.repo, N, S);
+    if ("error" in d) throw nt(400, d.error);
+    if (D.repo_org != null && d.kind !== "name")
+      throw nt(400, "repo_org applies only to a bare repo name");
+    let T = d.origin_url, A = t.repoByName.all(d.repo_name), k;
     if (d.kind === "name") {
-      let H = [
+      let V = [
         ...new Set(
           A.map((C) => C.root).filter((C) => !!C)
         )
       ];
-      if (H.length > 1)
-        throw ot(
+      if (V.length > 1)
+        throw nt(
           409,
-          `more than one known repo named "${d.repo_name}": ${H.join(", ")}`
+          `more than one known repo named "${d.repo_name}": ${V.join(", ")}`
         );
-      let ee = H[0];
-      if (ee !== void 0) {
-        let C = A.find((W) => W.root === ee);
-        b = ee, T = C?.origin_url ?? null;
+      let te = V[0];
+      if (te !== void 0) {
+        let C = A.find((q) => q.root === te);
+        k = te, T = C?.origin_url ?? null;
       } else {
-        let C = L.repo_org != null ? { value: v(L.repo_org), source: "request" } : P();
+        let C = D.repo_org != null ? { value: x(D.repo_org), source: "request" } : P();
         if (!C.value)
-          throw ot(
+          throw nt(
             404,
             `no known repo named "${d.repo_name}" — paste owner/repo, a URL, or set a default org`
           );
-        let W = iw(C.value);
-        if (W)
-          throw ot(400, `configured ${C.source} default org is invalid — ${W}`);
-        let y = I ?? (C.value.includes("/") ? "gitlab" : void 0), x = aw(
+        let q = iw(C.value);
+        if (q)
+          throw nt(400, `configured ${C.source} default org is invalid — ${q}`);
+        let y = N ?? (C.value.includes("/") ? "gitlab" : void 0), v = aw(
           `${C.value}/${d.repo_name}`,
           y,
           S
         );
-        if ("error" in x)
-          throw ot(
+        if ("error" in v)
+          throw nt(
             400,
-            `default org "${C.value}" cannot resolve this repo — ${x.error}`
+            `default org "${C.value}" cannot resolve this repo — ${v.error}`
           );
-        d = x, T = d.origin_url, b = jt.join(D().resolved, d.repo_name);
+        d = v, T = d.origin_url, k = Bt.join(I().resolved, d.repo_name);
       }
-    } else d.kind === "path" ? b = jt.resolve(L.repo) : b = jt.join(D().resolved, d.repo_name);
+    } else d.kind === "path" ? k = Bt.resolve(D.repo) : k = Bt.join(I().resolved, d.repo_name);
     if (d.kind === "path") {
-      let H = await lw(b);
-      if (H === "worktree")
+      let V = await lw(k);
+      if (V === "worktree")
         return {
           mode: "local",
-          root: b,
-          dest: b,
-          origin_url: await id(b),
+          root: k,
+          dest: k,
+          origin_url: await id(k),
           repo_name: d.repo_name,
           kind: d.kind
         };
-      if (Pi(b) && H !== "bare")
-        throw ot(409, `${b} exists and is not ${L.repo}`);
-      T = b, b = jt.join(D().resolved, d.repo_name);
+      if (Di(k) && V !== "bare")
+        throw nt(409, `${k} exists and is not ${D.repo}`);
+      T = k, k = Bt.join(I().resolved, d.repo_name);
     }
-    let X = [b];
+    let Y = [k];
     if (d.kind !== "path")
-      for (let H of A)
-        H.root && !X.includes(H.root) && X.push(H.root);
-    for (let H of X) {
-      if (!Pi(H)) continue;
-      if (await lw(H) !== "worktree") {
-        if (H === b)
-          throw ot(409, `${H} exists and is not ${L.repo}`);
+      for (let V of A)
+        V.root && !Y.includes(V.root) && Y.push(V.root);
+    for (let V of Y) {
+      if (!Di(V)) continue;
+      if (await lw(V) !== "worktree") {
+        if (V === k)
+          throw nt(409, `${V} exists and is not ${D.repo}`);
         continue;
       }
-      let C = await id(H);
+      let C = await id(V);
       if (T && !(C && cw(T) === cw(C))) {
-        if (H === b) throw ot(409, `${b} exists and is not ${L.repo}`);
+        if (V === k) throw nt(409, `${k} exists and is not ${D.repo}`);
         continue;
       }
       return {
         mode: "local",
-        root: H,
-        dest: H,
+        root: V,
+        dest: V,
         origin_url: T ?? C,
         repo_name: d.repo_name,
         kind: d.kind
       };
     }
-    if (!T) throw ot(404, `no usable checkout is known for "${d.repo_name}"`);
-    return { mode: "clone", origin_url: T, dest: b, repo_name: d.repo_name, kind: d.kind };
+    if (!T) throw nt(404, `no usable checkout is known for "${d.repo_name}"`);
+    return { mode: "clone", origin_url: T, dest: k, repo_name: d.repo_name, kind: d.kind };
   }
   r(Ee, "resolveTarget");
   async function ye({
-    origin_url: L,
+    origin_url: D,
     dest: S,
-    spawn_id: I,
+    spawn_id: N,
     signal: d
   }) {
-    if (typeof L != "string" || !L || cc.test(L) || L.startsWith("-") || ld(L))
-      throw ot(409, "refusing to clone an unsafe origin URL");
-    let T = D().resolved;
-    sr.mkdirSync(T, { recursive: !0 });
-    let A = `${S}.fd-cloning-${I.slice(0, 8)}`;
+    if (typeof D != "string" || !D || uc.test(D) || D.startsWith("-") || ld(D))
+      throw nt(409, "refusing to clone an unsafe origin URL");
+    let T = I().resolved;
+    rr.mkdirSync(T, { recursive: !0 });
+    let A = `${S}.fd-cloning-${N.slice(0, 8)}`;
     try {
-      sr.rmSync(A, { recursive: !0, force: !0 });
-      let b = Number(process.env.FLEETDECK_CLONE_TIMEOUT_MS), X = Number.isFinite(b) && b > 0 ? b : 6e5, H = await Ke("git", ["clone", "--", L, A], {
-        timeout: X,
+      rr.rmSync(A, { recursive: !0, force: !0 });
+      let k = Number(process.env.FLEETDECK_CLONE_TIMEOUT_MS), Y = Number.isFinite(k) && k > 0 ? k : 6e5, V = await Ke("git", ["clone", "--", D, A], {
+        timeout: Y,
         env: { GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "Never" },
         signal: d,
         killTree: !0
       });
-      if (!H.ok) {
-        if (H.code === "ECANCELED") throw ot(409, "spawn cancelled");
-        H.err && console.error(`fleetd clone failed — ${L}
-${H.err}`);
-        let { note: ee, detail: C } = sw(H.err, L);
-        throw U(I, C), ot(409, ee || "git clone failed");
+      if (!V.ok) {
+        if (V.code === "ECANCELED") throw nt(409, "spawn cancelled");
+        V.err && console.error(`fleetd clone failed — ${D}
+${V.err}`);
+        let { note: te, detail: C } = sw(V.err, D);
+        throw $(N, C), nt(409, te || "git clone failed");
       }
-      return sr.renameSync(A, S), S;
-    } catch (b) {
+      return rr.renameSync(A, S), S;
+    } catch (k) {
       try {
-        sr.rmSync(A, { recursive: !0, force: !0 });
+        rr.rmSync(A, { recursive: !0, force: !0 });
       } catch {
       }
-      throw Rn(b) !== void 0 ? b : ot(409, Ze(b));
+      throw bn(k) !== void 0 ? k : nt(409, Ze(k));
     }
   }
   r(ye, "cloneRepo");
-  async function Ie({
-    root: L,
+  async function De({
+    root: D,
     branch: S,
-    mode: I,
+    mode: N,
     spawn_id: d = "",
     sid: T = d,
     clone: A = !1,
-    signal: b
+    signal: k
   }) {
-    let X = r(async (se, de = {}) => {
+    let Y = r(async (se, de = {}) => {
       let ne = await Ke("git", se, {
         ...de,
-        signal: b,
+        signal: k,
         killTree: !0
       });
-      if (!ne.ok && ne.code === "ECANCELED") throw ot(409, "spawn cancelled");
+      if (!ne.ok && ne.code === "ECANCELED") throw nt(409, "spawn cancelled");
       return ne;
-    }, "git"), H = await X(
-      ["-C", L, "show-ref", "--verify", "--quiet", `refs/heads/${S}`],
+    }, "git"), V = await Y(
+      ["-C", D, "show-ref", "--verify", "--quiet", `refs/heads/${S}`],
       { timeout: 5e3 }
-    ), ee = await X(["-C", L, "fetch", "origin", "--prune"], {
+    ), te = await Y(["-C", D, "fetch", "origin", "--prune"], {
       timeout: 12e4,
       env: { GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "Never" }
-    }), C = H.ok ? H : await X(["-C", L, "show-ref", "--verify", "--quiet", `refs/heads/${S}`], {
+    }), C = V.ok ? V : await Y(["-C", D, "show-ref", "--verify", "--quiet", `refs/heads/${S}`], {
       timeout: 5e3
-    }), W = await X(
-      ["-C", L, "show-ref", "--verify", "--quiet", `refs/remotes/origin/${S}`],
+    }), q = await Y(
+      ["-C", D, "show-ref", "--verify", "--quiet", `refs/remotes/origin/${S}`],
       { timeout: 5e3 }
-    ), y = await Rs(L);
-    if (b?.aborted) throw ot(409, "spawn cancelled");
-    let x = r(() => {
+    ), y = await Ps(D);
+    if (k?.aborted) throw nt(409, "spawn cancelled");
+    let v = r(() => {
       if (!y)
-        throw ot(409, `branch ${S} cannot be created — no base branch is available`);
+        throw nt(409, `branch ${S} cannot be created — no base branch is available`);
       return y.ref;
     }, "requireBaseRef");
-    if (!C.ok && !W.ok && !y) {
-      if (ee.ok)
-        throw ot(
+    if (!C.ok && !q.ok && !y) {
+      if (te.ok)
+        throw nt(
           409,
           `branch ${S} does not exist and no base branch is available to create it from`
         );
-      let se = await X(["-C", L, "remote", "get-url", "origin"], {
+      let se = await Y(["-C", D, "remote", "get-url", "origin"], {
         timeout: 5e3
       }), { note: de, detail: ne } = sw(
-        ee.err,
+        te.err,
         se.ok ? se.out.trim() : null
       );
-      throw U(d, ne), ot(
+      throw $(d, ne), nt(
         409,
         `branch ${S} not found locally and fetch failed: ${de || "git fetch failed"}`
       );
     }
-    if (I === "in-place") {
-      let se = await X(["-C", L, "status", "--porcelain"], {
+    if (N === "in-place") {
+      let se = await Y(["-C", D, "status", "--porcelain"], {
         timeout: 3e4
       });
-      if (!se.ok) throw ot(409, xr(se.err) || "git status failed");
+      if (!se.ok) throw nt(409, Sr(se.err) || "git status failed");
       let de = Gb(se.out);
       if (de.length) {
-        let Ne = de.slice(0, 3).join(", ");
-        throw ot(
+        let Ie = de.slice(0, 3).join(", ");
+        throw nt(
           409,
-          `checkout is dirty (${de.length} files: ${Ne}${de.length > 3 ? "…" : ""}) — use worktree mode or commit`
+          `checkout is dirty (${de.length} files: ${Ie}${de.length > 3 ? "…" : ""}) — use worktree mode or commit`
         );
       }
-      let ne = C.ok ? ["-C", L, "switch", S] : W.ok ? ["-C", L, "switch", "--track", `origin/${S}`] : ["-C", L, "switch", "-c", S, x()], te = await X(ne, { timeout: 3e4 });
-      if (!te.ok) throw ot(409, xr(te.err) || "git switch failed");
-      return { runCwd: L, created: { clone: A, worktree: !1 }, reused: !1 };
+      let ne = C.ok ? ["-C", D, "switch", S] : q.ok ? ["-C", D, "switch", "--track", `origin/${S}`] : ["-C", D, "switch", "-c", S, v()], re = await Y(ne, { timeout: 3e4 });
+      if (!re.ok) throw nt(409, Sr(re.err) || "git switch failed");
+      return { runCwd: D, created: { clone: A, worktree: !1 }, reused: !1 };
     }
-    let q = await X(["-C", L, "worktree", "list", "--porcelain"], {
+    let K = await Y(["-C", D, "worktree", "list", "--porcelain"], {
       timeout: 1e4
     });
-    if (!q.ok) throw ot(409, xr(q.err) || "git worktree list failed");
-    let fe = jb(q.out).find((se) => se.branch === S);
-    if (fe)
-      return { runCwd: fe.path, created: { clone: A, worktree: !1 }, reused: !0 };
-    let V = S.replaceAll("/", "-"), Fe = jt.join(jt.dirname(L), `${jt.basename(L)}--fd-${V}`), De = `${Fe}-${T.slice(0, 4) || "repo"}`, N = Pi(Fe) ? [De] : [Fe, De], J = null;
-    for (let se of N) {
-      let de = Pi(se), ne = C.ok ? ["-C", L, "worktree", "add", se, S] : W.ok ? ["-C", L, "worktree", "add", "--track", "-b", S, se, `origin/${S}`] : ["-C", L, "worktree", "add", "-b", S, se, x()];
-      if (J = await X(ne, { timeout: 3e4 }), J.ok) return { runCwd: se, created: { clone: A, worktree: !0 }, reused: !1 };
-      if (!de && Pi(se)) {
-        await Ke("git", ["-C", L, "worktree", "remove", "--force", se], {
+    if (!K.ok) throw nt(409, Sr(K.err) || "git worktree list failed");
+    let me = jb(K.out).find((se) => se.branch === S);
+    if (me)
+      return { runCwd: me.path, created: { clone: A, worktree: !1 }, reused: !0 };
+    let ee = S.replaceAll("/", "-"), Ce = Bt.join(Bt.dirname(D), `${Bt.basename(D)}--fd-${ee}`), Fe = `${Ce}-${T.slice(0, 4) || "repo"}`, M = Di(Ce) ? [Fe] : [Ce, Fe], J = null;
+    for (let se of M) {
+      let de = Di(se), ne = C.ok ? ["-C", D, "worktree", "add", se, S] : q.ok ? ["-C", D, "worktree", "add", "--track", "-b", S, se, `origin/${S}`] : ["-C", D, "worktree", "add", "-b", S, se, v()];
+      if (J = await Y(ne, { timeout: 3e4 }), J.ok) return { runCwd: se, created: { clone: A, worktree: !0 }, reused: !1 };
+      if (!de && Di(se)) {
+        await Ke("git", ["-C", D, "worktree", "remove", "--force", se], {
           timeout: 3e4
         });
         try {
-          sr.rmSync(se, { recursive: !0, force: !0 });
+          rr.rmSync(se, { recursive: !0, force: !0 });
         } catch {
         }
-        await Ke("git", ["-C", L, "worktree", "prune"], { timeout: 3e4 });
+        await Ke("git", ["-C", D, "worktree", "prune"], { timeout: 3e4 });
       }
     }
-    throw ot(
+    throw nt(
       409,
 
 
 
-      xr(J ? J.err : null) || "git worktree add failed"
+      Sr(J ? J.err : null) || "git worktree add failed"
     );
   }
-  r(Ie, "materializeBranch");
-  function Se(L) {
+  r(De, "materializeBranch");
+  function ve(D) {
     try {
-      return sr.realpathSync(L);
+      return rr.realpathSync(D);
     } catch {
-      return jt.resolve(L);
+      return Bt.resolve(D);
     }
   }
-  r(Se, "canonicalTarget");
-  function $e(L, S) {
-    let I = Se(L), d = o.get(I);
-    if (d) throw ot(409, `${I} is already being provisioned by ${d.owner}`);
-    let T = Symbol(I);
-    return o.set(I, { id: T, owner: S }), () => {
-      o.get(I)?.id === T && o.delete(I);
+  r(ve, "canonicalTarget");
+  function $e(D, S) {
+    let N = ve(D), d = o.get(N);
+    if (d) throw nt(409, `${N} is already being provisioned by ${d.owner}`);
+    let T = Symbol(N);
+    return o.set(N, { id: T, owner: S }), () => {
+      o.get(N)?.id === T && o.delete(N);
     };
   }
   r($e, "claimTarget");
-  function Z(L, S, I) {
-    let d = o.get(Se(L));
-    return !d || d.owner !== S ? !1 : (d.owner = I, !0);
+  function Z(D, S, N) {
+    let d = o.get(ve(D));
+    return !d || d.owner !== S ? !1 : (d.owner = N, !0);
   }
   r(Z, "relabelTarget");
-  function ae(L) {
-    return o.get(Se(L))?.owner ?? null;
+  function ie(D) {
+    return o.get(ve(D))?.owner ?? null;
   }
-  return r(ae, "targetOwner"), {
-    validateBranch: M,
-    resolveReposDir: D,
+  return r(ie, "targetOwner"), {
+    validateBranch: F,
+    resolveReposDir: I,
     setReposDir: Q,
-    touchRepo: G,
+    touchRepo: z,
     resolveRepoDefaultOrg: P,
-    validateRepoDefaultOrg: v,
+    validateRepoDefaultOrg: x,
     resolveTarget: Ee,
     probeRepoAccess: E,
     preflightRepo: m,
     cloneRepo: ye,
-    materializeBranch: Ie,
+    materializeBranch: De,
     claimTarget: $e,
     relabelTarget: Z,
-    targetOwner: ae,
+    targetOwner: ie,
     reserveCloneSlot: c
   };
 }
 r(fw, "createRepos");
 
 
-import lc from "node:fs";
+import dc from "node:fs";
 import ud from "node:os";
-import Kr from "node:path";
-var Os = /[\x00-\x1f\x7f]/, Kb = /[\x00-\x09\x0b-\x1f\x7f]/, pw = 20, mw = 50, gw = 2e3, hw = [
+import Gr from "node:path";
+var Is = /[\x00-\x1f\x7f]/, Kb = /[\x00-\x09\x0b-\x1f\x7f]/, pw = 20, mw = 50, gw = 2e3, hw = [
   "repos_dir",
   "repo_transport",
   "repo_default_org",
@@ -9741,42 +9741,42 @@ var Os = /[\x00-\x1f\x7f]/, Kb = /[\x00-\x09\x0b-\x1f\x7f]/, pw = 20, mw = 50, g
     super(n), this.status = t;
   }
 };
-function nt(e, t) {
+function tt(e, t) {
   return new dd(e, t);
 }
-r(nt, "namedError");
-function uc(e) {
-  return e === "~" ? ud.homedir() : e.startsWith("~/") ? Kr.join(ud.homedir(), e.slice(2)) : e;
+r(tt, "namedError");
+function fc(e) {
+  return e === "~" ? ud.homedir() : e.startsWith("~/") ? Gr.join(ud.homedir(), e.slice(2)) : e;
 }
-r(uc, "expandHome");
+r(fc, "expandHome");
 function Ew(e, t) {
   if (typeof e != "string" || !e)
-    throw nt(400, `${t} must be an absolute path or null`);
-  if (Os.test(e))
-    throw nt(400, `${t} must not contain NUL or control characters`);
-  let n = uc(e);
-  if (!Kr.isAbsolute(n))
-    throw nt(400, `${t} must be an absolute path (or begin with ~/)`);
-  let o = Kr.resolve(n);
-  if (Kr.dirname(o) === o)
-    throw nt(400, `${t} must not be the filesystem root`);
+    throw tt(400, `${t} must be an absolute path or null`);
+  if (Is.test(e))
+    throw tt(400, `${t} must not contain NUL or control characters`);
+  let n = fc(e);
+  if (!Gr.isAbsolute(n))
+    throw tt(400, `${t} must be an absolute path (or begin with ~/)`);
+  let o = Gr.resolve(n);
+  if (Gr.dirname(o) === o)
+    throw tt(400, `${t} must not be the filesystem root`);
   try {
-    if (lc.existsSync(o) && !lc.statSync(o).isDirectory())
-      throw nt(400, `${t} points to an existing file`);
+    if (dc.existsSync(o) && !dc.statSync(o).isDirectory())
+      throw tt(400, `${t} points to an existing file`);
   } catch (s) {
-    throw Rn(s) ? s : nt(400, `cannot inspect ${t}: ${Ze(s)}`);
+    throw bn(s) ? s : tt(400, `cannot inspect ${t}: ${Ze(s)}`);
   }
   try {
-    let s = lc.realpathSync(o);
-    if (Kr.dirname(s) === s)
-      throw nt(400, `${t} must not be the filesystem root`);
+    let s = dc.realpathSync(o);
+    if (Gr.dirname(s) === s)
+      throw tt(400, `${t} must not be the filesystem root`);
   } catch (s) {
-    if (Rn(s)) throw s;
+    if (bn(s)) throw s;
   }
   return o;
 }
 r(Ew, "validatePathSetting");
-var Nn = r((e) => e, "defineHandler");
+var Ln = r((e) => e, "defineHandler");
 function yw(e) {
   let {
     db: t,
@@ -9792,7 +9792,7 @@ function yw(e) {
   }
   r(l, "readSetting");
   function f() {
-    return ac({
+    return lc({
       setting: l("repo_transport"),
       coder: !!$o()
     });
@@ -9801,22 +9801,22 @@ function yw(e) {
   function w() {
     let d = l("browse_root");
     if (d != null)
-      return { value: d, source: "override", resolved: Kr.resolve(uc(d)) };
+      return { value: d, source: "override", resolved: Gr.resolve(fc(d)) };
     let T = process.env.FLEETDECK_BROWSE_ROOT;
     if (T)
-      return { value: T, source: "env", resolved: Kr.resolve(uc(T)) };
+      return { value: T, source: "env", resolved: Gr.resolve(fc(T)) };
     let A = $o();
     if (A)
       return { value: A, source: "detected", resolved: A };
-    let b = null;
+    let k = null;
     try {
-      b = ud.homedir();
+      k = ud.homedir();
     } catch {
     }
-    return { value: b, source: "default", resolved: b };
+    return { value: k, source: "default", resolved: k };
   }
   r(w, "browseRootChoice");
-  function g() {
+  function h() {
     let d = l("fav_dirs");
     if (d == null) return [];
     let T;
@@ -9827,31 +9827,31 @@ function yw(e) {
     }
     return Array.isArray(T) ? T.filter((A) => typeof A == "string") : [];
   }
-  r(g, "resolveFavDirs");
+  r(h, "resolveFavDirs");
   function _(d) {
     if (d == null) return null;
     if (!Array.isArray(d))
-      throw nt(400, "fav_dirs must be an array of absolute directory paths or null");
+      throw tt(400, "fav_dirs must be an array of absolute directory paths or null");
     if (d.length === 0) return null;
     let T = new Set(), A = [];
-    for (let b of d) {
-      if (typeof b != "string" || !b)
-        throw nt(400, "each fav_dir must be a non-empty string");
-      if (Os.test(b))
-        throw nt(400, "a fav_dir must not contain NUL or control characters");
-      let X = uc(b);
-      if (!Kr.isAbsolute(X))
-        throw nt(400, "a fav_dir must be an absolute path (or begin with ~/)");
-      let H = Kr.resolve(X), ee = !1;
+    for (let k of d) {
+      if (typeof k != "string" || !k)
+        throw tt(400, "each fav_dir must be a non-empty string");
+      if (Is.test(k))
+        throw tt(400, "a fav_dir must not contain NUL or control characters");
+      let Y = fc(k);
+      if (!Gr.isAbsolute(Y))
+        throw tt(400, "a fav_dir must be an absolute path (or begin with ~/)");
+      let V = Gr.resolve(Y), te = !1;
       try {
-        ee = lc.statSync(H).isDirectory();
+        te = dc.statSync(V).isDirectory();
       } catch {
       }
-      if (!ee) throw nt(400, `a fav_dir is not an existing directory — ${H}`);
-      T.has(H) || (T.add(H), A.push(H));
+      if (!te) throw tt(400, `a fav_dir is not an existing directory — ${V}`);
+      T.has(V) || (T.add(V), A.push(V));
     }
     if (A.length > pw)
-      throw nt(
+      throw tt(
         400,
         `fav_dirs must list ${pw} directories or fewer — got ${A.length}`
       );
@@ -9876,70 +9876,70 @@ function yw(e) {
   function m(d) {
     if (d == null) return null;
     if (typeof d != "object" || Array.isArray(d))
-      throw nt(400, "repo_setup must be an object mapping repo names to commands or null");
-    return U(Object.entries(d));
+      throw tt(400, "repo_setup must be an object mapping repo names to commands or null");
+    return $(Object.entries(d));
   }
   r(m, "validateRepoSetup");
-  function U(d) {
+  function $(d) {
     if (d.length > mw)
-      throw nt(
+      throw tt(
         400,
         `repo_setup must contain ${mw} entries or fewer — got ${d.length}`
       );
     let T = [];
-    for (let [A, b] of d) {
-      if (!A || Os.test(A))
-        throw nt(
+    for (let [A, k] of d) {
+      if (!A || Is.test(A))
+        throw tt(
           400,
           "repo_setup keys must be non-empty repo names without control characters"
         );
-      if (typeof b != "string")
-        throw nt(400, `repo_setup command for "${A}" must be a string`);
-      if (b.length > gw)
-        throw nt(
+      if (typeof k != "string")
+        throw tt(400, `repo_setup command for "${A}" must be a string`);
+      if (k.length > gw)
+        throw tt(
           400,
-          `repo_setup command for "${A}" must be ${gw} characters or fewer — got ${b.length}`
+          `repo_setup command for "${A}" must be ${gw} characters or fewer — got ${k.length}`
         );
-      if (Kb.test(b))
-        throw nt(
+      if (Kb.test(k))
+        throw tt(
           400,
           `repo_setup command for "${A}" must not contain NUL or control characters other than newline`
         );
-      T.push([A, b]);
+      T.push([A, k]);
     }
     return Object.fromEntries(T);
   }
-  r(U, "validateRepoSetupEntries");
-  function M(d) {
+  r($, "validateRepoSetupEntries");
+  function F(d) {
     if (d == null) return null;
     if (typeof d != "object" || Array.isArray(d))
-      throw nt(
+      throw tt(
         400,
         'repo_setup_patch must be an object mapping repo names to commands, "__delete" entries, or null'
       );
     let T = {};
-    for (let [A, b] of Object.entries(d)) {
-      if (b === "__delete") {
-        if (!A || Os.test(A))
-          throw nt(
+    for (let [A, k] of Object.entries(d)) {
+      if (k === "__delete") {
+        if (!A || Is.test(A))
+          throw tt(
             400,
             "repo_setup_patch keys must be non-empty repo names without control characters"
           );
-        T[A] = b;
+        T[A] = k;
         continue;
       }
-      Object.assign(T, U([[A, b]]));
+      Object.assign(T, $([[A, k]]));
     }
     return T;
   }
-  r(M, "validateRepoSetupPatch");
-  function D(d) {
+  r(F, "validateRepoSetupPatch");
+  function I(d) {
     if (d == null) return null;
     if (typeof d != "number" || !Number.isFinite(d))
-      throw nt(400, "hold_ms must be a number of milliseconds or null");
+      throw tt(400, "hold_ms must be a number of milliseconds or null");
     return String(Math.trunc(d));
   }
-  r(D, "validateHoldMs");
+  r(I, "validateHoldMs");
   function O() {
     return l("hold_ms");
   }
@@ -9949,51 +9949,51 @@ function yw(e) {
     return Number.isFinite(Number(d)) && Number(d) > 0 ? { value: po(), source: "env" } : l("hold_ms") != null ? { value: po({}, O), source: "override" } : { value: po({}), source: "default" };
   }
   r(P, "resolveHoldMsSetting");
-  function v(d) {
+  function x(d) {
     if (typeof d != "string" || !d)
-      throw nt(400, "gateway_base_url must be a URL or null");
-    if (Os.test(d))
-      throw nt(400, "gateway_base_url must not contain NUL or control characters");
+      throw tt(400, "gateway_base_url must be a URL or null");
+    if (Is.test(d))
+      throw tt(400, "gateway_base_url must not contain NUL or control characters");
     let T;
     try {
       T = new URL(d);
     } catch {
-      throw nt(400, "gateway_base_url is not a valid URL");
+      throw tt(400, "gateway_base_url is not a valid URL");
     }
     if (T.protocol !== "http:" && T.protocol !== "https:")
-      throw nt(400, `gateway_base_url must be http:// or https:// — got ${T.protocol}//`);
+      throw tt(400, `gateway_base_url must be http:// or https:// — got ${T.protocol}//`);
     if (T.username || T.password)
-      throw nt(
+      throw tt(
         400,
         "gateway_base_url must not embed credentials (user:password@) — put the credential in gateway_token, which is never served back to a client"
       );
     if (T.search)
-      throw nt(
+      throw tt(
         400,
         "gateway_base_url must not carry a query string — it would be broadcast to every board; put a credential in gateway_token instead"
       );
-    if (T.hash) throw nt(400, "gateway_base_url must not carry a fragment");
+    if (T.hash) throw tt(400, "gateway_base_url must not carry a fragment");
     return T.href.replace(/\/+$/, "");
   }
-  r(v, "validateGatewayBaseUrl");
+  r(x, "validateGatewayBaseUrl");
   function Q(d) {
     if (typeof d != "string" || !d)
-      throw nt(400, "gateway_token must be a non-empty string or null");
-    if (Os.test(d))
-      throw nt(400, "gateway_token must not contain NUL or control characters");
+      throw tt(400, "gateway_token must be a non-empty string or null");
+    if (Is.test(d))
+      throw tt(400, "gateway_token must not contain NUL or control characters");
     if (d.length > ww)
-      throw nt(
+      throw tt(
         400,
         `gateway_token must be ${ww} characters or fewer — got ${d.length}`
       );
     return d;
   }
   r(Q, "validateGatewayToken");
-  function G(d, T) {
-    if (typeof d != "boolean") throw nt(400, `${T} must be a boolean or null`);
+  function z(d, T) {
+    if (typeof d != "boolean") throw tt(400, `${T} must be a boolean or null`);
     return d ? "1" : "0";
   }
-  r(G, "validateGatewayBool");
+  r(z, "validateGatewayBool");
   function Ee(d, T) {
     let A = l(d);
     return A == null ? T : A === "1";
@@ -10017,15 +10017,15 @@ function yw(e) {
     };
   }
   r(ye, "resolveGateway");
-  function Ie() {
+  function De() {
     let d = l("gateway_base_url"), T = l("gateway_token");
     if (!d || !T) return null;
-    let A = l("gateway_auth_style") === "api-key" ? "api-key" : "bearer", b = { ANTHROPIC_BASE_URL: d };
-    return b[A === "api-key" ? "ANTHROPIC_API_KEY" : "ANTHROPIC_AUTH_TOKEN"] = T, Ee("gateway_model_discovery", !0) && (b.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY = "1"), b;
+    let A = l("gateway_auth_style") === "api-key" ? "api-key" : "bearer", k = { ANTHROPIC_BASE_URL: d };
+    return k[A === "api-key" ? "ANTHROPIC_API_KEY" : "ANTHROPIC_AUTH_TOKEN"] = T, Ee("gateway_model_discovery", !0) && (k.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY = "1"), k;
   }
-  r(Ie, "resolveGatewayEnv");
-  let Se = {
-    repos_dir: Nn({
+  r(De, "resolveGatewayEnv");
+  let ve = {
+    repos_dir: Ln({
 
 
 
@@ -10034,23 +10034,23 @@ function yw(e) {
         i(d);
       }, "commit")
     }),
-    repo_transport: Nn({
+    repo_transport: Ln({
       prepare: r((d) => {
         if (d != null && d !== "ssh" && d !== "https")
-          throw nt(400, `repo_transport must be ssh or https — got ${JSON.stringify(d)}`);
+          throw tt(400, `repo_transport must be ssh or https — got ${JSON.stringify(d)}`);
         return d;
       }, "prepare"),
       commit: r((d) => n.setSetting.run("repo_transport", d ?? null, Date.now()), "commit")
     }),
-    repo_default_org: Nn({
+    repo_default_org: Ln({
       prepare: r((d) => c(d), "prepare"),
       commit: r((d) => n.setSetting.run("repo_default_org", d ?? null, Date.now()), "commit")
     }),
-    browse_root: Nn({
+    browse_root: Ln({
       prepare: r((d) => (d != null && Ew(d, "browse_root"), d), "prepare"),
       commit: r((d) => n.setSetting.run("browse_root", d ?? null, Date.now()), "commit")
     }),
-    fav_dirs: Nn({
+    fav_dirs: Ln({
       prepare: r((d) => _(d), "prepare"),
 
       commit: r((d) => n.setSetting.run(
@@ -10059,7 +10059,7 @@ function yw(e) {
         Date.now()
       ), "commit")
     }),
-    repo_setup: Nn({
+    repo_setup: Ln({
       prepare: r((d) => m(d), "prepare"),
       commit: r((d) => n.setSetting.run(
         "repo_setup",
@@ -10067,16 +10067,16 @@ function yw(e) {
         Date.now()
       ), "commit")
     }),
-    repo_setup_patch: Nn({
-      prepare: r((d) => M(d), "prepare"),
+    repo_setup_patch: Ln({
+      prepare: r((d) => F(d), "prepare"),
       commit: r((d) => {
         if (d == null || Object.keys(d).length === 0) {
           n.setSetting.run("repo_setup", null, Date.now());
           return;
         }
         let T = E();
-        for (let [A, b] of Object.entries(d))
-          b === "__delete" ? delete T[A] : T[A] = b;
+        for (let [A, k] of Object.entries(d))
+          k === "__delete" ? delete T[A] : T[A] = k;
         n.setSetting.run(
           "repo_setup",
           Object.keys(T).length === 0 ? null : JSON.stringify(T),
@@ -10084,18 +10084,18 @@ function yw(e) {
         );
       }, "commit")
     }),
-    hold_ms: Nn({
-      prepare: r((d) => D(d), "prepare"),
+    hold_ms: Ln({
+      prepare: r((d) => I(d), "prepare"),
       commit: r((d) => n.setSetting.run("hold_ms", d ?? null, Date.now()), "commit")
     }),
-    gateway_base_url: Nn({
-      prepare: r((d) => d == null ? null : v(d), "prepare"),
+    gateway_base_url: Ln({
+      prepare: r((d) => d == null ? null : x(d), "prepare"),
       commit: r((d) => n.setSetting.run("gateway_base_url", d ?? null, Date.now()), "commit")
     }),
-    gateway_auth_style: Nn({
+    gateway_auth_style: Ln({
       prepare: r((d) => {
         if (d != null && d !== "bearer" && d !== "api-key")
-          throw nt(
+          throw tt(
             400,
             `gateway_auth_style must be bearer or api-key — got ${JSON.stringify(d)}`
           );
@@ -10103,63 +10103,63 @@ function yw(e) {
       }, "prepare"),
       commit: r((d) => n.setSetting.run("gateway_auth_style", d ?? null, Date.now()), "commit")
     }),
-    gateway_token: Nn({
+    gateway_token: Ln({
       prepare: r((d) => d == null ? null : Q(d), "prepare"),
       commit: r((d) => n.setSetting.run("gateway_token", d ?? null, Date.now()), "commit")
     }),
-    gateway_model_discovery: Nn({
-      prepare: r((d) => d == null ? null : G(d, "gateway_model_discovery"), "prepare"),
+    gateway_model_discovery: Ln({
+      prepare: r((d) => d == null ? null : z(d, "gateway_model_discovery"), "prepare"),
       commit: r((d) => n.setSetting.run("gateway_model_discovery", d ?? null, Date.now()), "commit")
     }),
-    gateway_default: Nn({
-      prepare: r((d) => d == null ? null : G(d, "gateway_default"), "prepare"),
+    gateway_default: Ln({
+      prepare: r((d) => d == null ? null : z(d, "gateway_default"), "prepare"),
       commit: r((d) => n.setSetting.run("gateway_default", d ?? null, Date.now()), "commit")
     })
-  }, $e = r((d) => Se[d], "handlerFor");
+  }, $e = r((d) => ve[d], "handlerFor");
   function Z(d) {
     if (!d || typeof d != "object" || Array.isArray(d))
       return { status: 400, body: { ok: !1, reason: "settings body must be a JSON object" } };
-    let T = d, A = Object.keys(T), b = A.find((X) => !hw.includes(X));
-    if (b)
+    let T = d, A = Object.keys(T), k = A.find((Y) => !hw.includes(Y));
+    if (k)
       return {
         status: 400,
         body: {
           ok: !1,
-          reason: `unknown setting "${b}" — allowed: ${hw.join(", ")}`
+          reason: `unknown setting "${k}" — allowed: ${hw.join(", ")}`
         }
       };
     try {
-      let X = A.map((H) => {
-        let ee = $e(H);
-        if (!ee) throw nt(400, `unknown setting "${H}"`);
-        return { handler: ee, value: ee.prepare(T[H]) };
+      let Y = A.map((V) => {
+        let te = $e(V);
+        if (!te) throw tt(400, `unknown setting "${V}"`);
+        return { handler: te, value: te.prepare(T[V]) };
       });
       if (!t) {
-        for (let { handler: H, value: ee } of X) H.commit(ee);
-        return o(), { status: 200, body: { ok: !0, settings: I() } };
+        for (let { handler: V, value: te } of Y) V.commit(te);
+        return o(), { status: 200, body: { ok: !0, settings: N() } };
       }
       t.exec("BEGIN IMMEDIATE");
       try {
-        for (let { handler: H, value: ee } of X) H.commit(ee);
+        for (let { handler: V, value: te } of Y) V.commit(te);
         o(), t.exec("COMMIT");
-      } catch (H) {
+      } catch (V) {
         try {
           t.exec("ROLLBACK");
         } catch {
         }
-        throw H;
+        throw V;
       }
-      return { status: 200, body: { ok: !0, settings: I() } };
-    } catch (X) {
-      return { status: Rn(X) ?? 500, body: { ok: !1, reason: Ze(X) } };
+      return { status: 200, body: { ok: !0, settings: N() } };
+    } catch (Y) {
+      return { status: bn(Y) ?? 500, body: { ok: !1, reason: Ze(Y) } };
     }
   }
   r(Z, "setSettings");
-  function ae(d) {
+  function ie(d) {
     d !== "ssh" && d !== "https" || n.setSetting.run("repo_transport", d, Date.now());
   }
-  r(ae, "persistRepoTransport");
-  function L(d) {
+  r(ie, "persistRepoTransport");
+  function D(d) {
     if (d == null) return;
     let T;
     try {
@@ -10169,24 +10169,24 @@ function yw(e) {
     }
     n.setSetting.run("repo_default_org", T, Date.now());
   }
-  r(L, "persistRepoDefaultOrg");
+  r(D, "persistRepoDefaultOrg");
   function S(d, T) {
     let A;
     try {
-      A = M({ [d]: T ?? "__delete" });
+      A = F({ [d]: T ?? "__delete" });
     } catch {
       return;
     }
-    Se.repo_setup_patch.commit(A);
+    ve.repo_setup_patch.commit(A);
   }
   r(S, "setRepoSetupEntry");
-  function I() {
+  function N() {
     return {
       repos_dir: s(),
       repo_transport: f(),
       repo_default_org: a(),
       browse_root: w(),
-      fav_dirs: g(),
+      fav_dirs: h(),
       repo_setup: E(),
       hold_ms: P(),
 
@@ -10194,14 +10194,14 @@ function yw(e) {
       gateway: ye()
     };
   }
-  return r(I, "resolveSettings"), {
+  return r(N, "resolveSettings"), {
     setSettings: Z,
-    resolveSettings: I,
+    resolveSettings: N,
     browseRootChoice: w,
-    persistRepoTransport: ae,
-    persistRepoDefaultOrg: L,
+    persistRepoTransport: ie,
+    persistRepoDefaultOrg: D,
     resolveGateway: ye,
-    resolveGatewayEnv: Ie,
+    resolveGatewayEnv: De,
     resolveHoldMsRaw: O,
     setRepoSetupEntry: S
   };
@@ -10209,15 +10209,15 @@ function yw(e) {
 r(yw, "createSettings");
 
 
-import Zt from "node:fs";
+import Vt from "node:fs";
 import Vb from "node:os";
-import Mn from "node:path";
-function hc(e, t, { min: n = 1 } = {}) {
+import Dn from "node:path";
+function Ec(e, t, { min: n = 1 } = {}) {
   let o = Number(process.env[e]);
   return Number.isInteger(o) && o >= n ? o : t;
 }
-r(hc, "envInt");
-var dc = hc("FLEETDECK_FS_LIST_MAX", 1e3), fd = hc("FLEETDECK_FS_READ_MAX", 512 * 1024), Ls = hc("FLEETDECK_FS_SEARCH_HITS", 200), _w = hc("FLEETDECK_FS_SEARCH_TIMEOUT_MS", 5e3), pc = 4 * 1024 * 1024, bw = 8e3, zb = 12, Xb = 2e4, Yb = 2e3, Sw = 1024 * 1024, kw = 5, Jb = new Set([
+r(Ec, "envInt");
+var pc = Ec("FLEETDECK_FS_LIST_MAX", 1e3), fd = Ec("FLEETDECK_FS_READ_MAX", 512 * 1024), Ns = Ec("FLEETDECK_FS_SEARCH_HITS", 200), _w = Ec("FLEETDECK_FS_SEARCH_TIMEOUT_MS", 5e3), gc = 4 * 1024 * 1024, bw = 8e3, zb = 12, Xb = 2e4, Yb = 2e3, Sw = 1024 * 1024, kw = 5, Jb = new Set([
   ".git",
   ".next",
   ".turbo",
@@ -10230,7 +10230,7 @@ function Qb(e) {
   return Jb.has(e.toLocaleLowerCase());
 }
 r(Qb, "defaultSearchPrunesDir");
-var pd = 0, an = class extends Error {
+var pd = 0, rn = class extends Error {
   static {
     r(this, "PathError");
   }
@@ -10241,36 +10241,36 @@ var pd = 0, an = class extends Error {
   }
 };
 function md(e, t) {
-  return t === e || t.startsWith(e + Mn.sep);
+  return t === e || t.startsWith(e + Dn.sep);
 }
 r(md, "within");
 function gd(e) {
-  if (typeof e != "string" || e.length > 4096 || e.includes("\0") || Mn.isAbsolute(e) || e.split(/[\\/]/).includes(".."))
-    throw new an(400, "invalid path");
+  if (typeof e != "string" || e.length > 4096 || e.includes("\0") || Dn.isAbsolute(e) || e.split(/[\\/]/).includes(".."))
+    throw new rn(400, "invalid path");
   let t = e.toLowerCase().split(/[\\/]/);
-  if (t.includes(".git")) throw new an(404, "not found");
-  if (t.some((o) => wc.has(o))) throw new an(404, "not found");
+  if (t.includes(".git")) throw new rn(404, "not found");
+  if (t.some((o) => yc.has(o))) throw new rn(404, "not found");
   let n = t.indexOf(".docker");
   if (n !== -1 && t[n + 1] === "config.json")
-    throw new an(404, "not found");
+    throw new rn(404, "not found");
   return e;
 }
 r(gd, "validateRelPath");
-var wc = new Set([".ssh", ".aws", ".gnupg", ".netrc", ".kube"]);
+var yc = new Set([".ssh", ".aws", ".gnupg", ".netrc", ".kube"]);
 function Rw(e) {
-  return wc.has(e.toLowerCase());
+  return yc.has(e.toLowerCase());
 }
 r(Rw, "deniedName");
-function gc(e) {
+function wc(e) {
   let t = e.toLowerCase().split(/[\\/]/);
-  if (t.some((o) => wc.has(o))) return !0;
+  if (t.some((o) => yc.has(o))) return !0;
   let n = t.indexOf(".docker");
   return n !== -1 && t[n + 1] === "config.json";
 }
-r(gc, "deniedRelPath");
+r(wc, "deniedRelPath");
 function vw(e, t) {
-  let n = gd(t), o = Mn.resolve(e, n || ".");
-  if (!md(e, o)) throw new an(400, "invalid path");
+  let n = gd(t), o = Dn.resolve(e, n || ".");
+  if (!md(e, o)) throw new rn(400, "invalid path");
   return o;
 }
 r(vw, "safeJoin");
@@ -10285,49 +10285,49 @@ function Zb(e) {
 }
 r(Zb, "fileType");
 function Cw(e, t = 400) {
-  return e.length <= t ? e : Si(e.slice(0, t));
+  return e.length <= t ? e : ki(e.slice(0, t));
 }
 r(Cw, "clipText");
-function fc(e, t = "not found") {
-  return e instanceof an ? { status: e.status, body: { ok: !1, reason: e.reason } } : { status: 404, body: { ok: !1, reason: t } };
+function mc(e, t = "not found") {
+  return e instanceof rn ? { status: e.status, body: { ok: !1, reason: e.reason } } : { status: 404, body: { ok: !1, reason: t } };
 }
-r(fc, "failure");
+r(mc, "failure");
 function xw(e, t) {
   let n;
   try {
-    n = Zt.realpathSync(t);
+    n = Vt.realpathSync(t);
   } catch {
-    throw new an(404, "not found");
+    throw new rn(404, "not found");
   }
-  if (!md(e, n)) throw new an(404, "not found");
-  if (Ai === void 0)
+  if (!md(e, n)) throw new rn(404, "not found");
+  if (Ii === void 0)
     try {
-      Ai = Zt.realpathSync(
+      Ii = Vt.realpathSync(
 
 
 
 
-        process.env.FLEETDECK_HOME || Mn.join(Vb.homedir() || "/tmp", ".fleetdeck")
+        process.env.FLEETDECK_HOME || Dn.join(Vb.homedir() || "/tmp", ".fleetdeck")
       );
     } catch {
-      Ai = null;
+      Ii = null;
     }
-  if (Ai && md(Ai, n)) throw new an(404, "not found");
-  let o = n.toLowerCase().split(Mn.sep);
-  if (o.some((s) => wc.has(s)) || o.includes(".docker") && o[o.length - 1] === "config.json")
-    throw new an(404, "not found");
+  if (Ii && md(Ii, n)) throw new rn(404, "not found");
+  let o = n.toLowerCase().split(Dn.sep);
+  if (o.some((s) => yc.has(s)) || o.includes(".docker") && o[o.length - 1] === "config.json")
+    throw new rn(404, "not found");
   return n;
 }
 r(xw, "realpathInside");
-var Ai;
+var Ii;
 function ek(e, t) {
   let n = e.q.getSession.get(t);
   if (!n) return { error: { status: 404, body: { ok: !1, reason: "unknown session" } } };
   let s = e.q.spawnBySession.get(t)?.worktree_path ?? n.worktree ?? n.cwd;
   try {
-    if (!s || !Zt.statSync(s).isDirectory()) throw new Error("not a directory");
-    let i = Zt.realpathSync(s);
-    return { root: i, git: Tn(i).is_git };
+    if (!s || !Vt.statSync(s).isDirectory()) throw new Error("not a directory");
+    let i = Vt.realpathSync(s);
+    return { root: i, git: kn(i).is_git };
   } catch {
     return { error: { status: 410, body: { ok: !1, reason: "working tree no longer exists" } } };
   }
@@ -10336,14 +10336,14 @@ r(ek, "resolveRoot");
 function tk(e) {
   let { source: t, resolved: n } = e.browseRootChoice(), o;
   try {
-    if (!n || !Zt.statSync(n).isDirectory()) throw new Error("missing");
-    o = Zt.realpathSync(n);
+    if (!n || !Vt.statSync(n).isDirectory()) throw new Error("missing");
+    o = Vt.realpathSync(n);
   } catch {
     return {
       error: { status: 410, body: { ok: !1, reason: rk(t, n) } }
     };
   }
-  return Mn.dirname(o) === o ? {
+  return Dn.dirname(o) === o ? {
     error: {
       status: 410,
       body: {
@@ -10351,7 +10351,7 @@ function tk(e) {
         reason: `${nk(t)} must not be the filesystem root`
       }
     }
-  } : { root: o, git: Tn(o).is_git };
+  } : { root: o, git: kn(o).is_git };
 }
 r(tk, "resolveBrowseRoot");
 function nk(e) {
@@ -10380,7 +10380,7 @@ function rk(e, t) {
   }
 }
 r(rk, "browseRootGoneReason");
-function mc(e, t, { cwd: n, timeoutMs: o, maxBytes: s, input: i = null }) {
+function hc(e, t, { cwd: n, timeoutMs: o, maxBytes: s, input: i = null }) {
   return Ke(e, t, {
     timeout: o,
     maxBytes: s,
@@ -10388,17 +10388,17 @@ function mc(e, t, { cwd: n, timeoutMs: o, maxBytes: s, input: i = null }) {
     ...i === null ? {} : { stdin: i }
   });
 }
-r(mc, "runBounded");
+r(hc, "runBounded");
 function hd(e, t) {
-  return e ? Mn.posix.join(e.split(Mn.sep).join("/"), t) : t;
+  return e ? Dn.posix.join(e.split(Dn.sep).join("/"), t) : t;
 }
 r(hd, "entryPath");
 async function ok(e, t, n) {
   if (!t.length) return new Set();
-  let o = Buffer.from(`${t.join("\0")}\0`), s = await mc("git", ["check-ignore", "-z", "--stdin"], {
+  let o = Buffer.from(`${t.join("\0")}\0`), s = await hc("git", ["check-ignore", "-z", "--stdin"], {
     cwd: e,
     timeoutMs: n,
-    maxBytes: pc,
+    maxBytes: gc,
     input: o
   });
   return new Set(s.stdout.toString("utf8").split("\0").filter(Boolean));
@@ -10407,18 +10407,18 @@ r(ok, "ignoredPaths");
 function Pw(e, t) {
   let n;
   try {
-    n = Zt.openSync(e, Zt.constants.O_RDONLY | (Zt.constants.O_NOFOLLOW || 0));
-    let o = Zt.fstatSync(n);
+    n = Vt.openSync(e, Vt.constants.O_RDONLY | (Vt.constants.O_NOFOLLOW || 0));
+    let o = Vt.fstatSync(n);
     if (!o.isFile()) return { st: o, notFile: !0 };
     let s = Math.min(o.size, Math.max(bw, t)), i = Buffer.alloc(s), a = 0;
     for (; a < s; ) {
-      let c = Zt.readSync(n, i, a, s - a, a);
+      let c = Vt.readSync(n, i, a, s - a, a);
       if (!c) break;
       a += c;
     }
     return { st: o, buf: i.subarray(0, a) };
   } finally {
-    n != null && Zt.closeSync(n);
+    n != null && Vt.closeSync(n);
   }
 }
 r(Pw, "readOpenFile");
@@ -10444,32 +10444,32 @@ r(sk, "parseGitGrep");
 async function ik(e, t, n, o) {
   let s = r(() => Math.max(1, o - Date.now()), "remaining");
   if (n === "name") {
-    let f = await mc(
+    let f = await hc(
       "git",
       ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
       {
         cwd: e,
         timeoutMs: s(),
-        maxBytes: pc
+        maxBytes: gc
       }
-    ), w = t.toLocaleLowerCase(), g = f.stdout.toString("utf8").split("\0").filter(Boolean).filter((_) => _.toLocaleLowerCase().includes(w)).filter((_) => !gc(_));
+    ), w = t.toLocaleLowerCase(), h = f.stdout.toString("utf8").split("\0").filter(Boolean).filter((_) => _.toLocaleLowerCase().includes(w)).filter((_) => !wc(_));
     return {
-      hits: g.slice(0, Ls).map((_) => ({ path: _ })),
-      truncated: f.truncated || f.code !== 0 || g.length > Ls
+      hits: h.slice(0, Ns).map((_) => ({ path: _ })),
+      truncated: f.truncated || f.code !== 0 || h.length > Ns
     };
   }
-  let i = ["grep", "-I", "-n", "-i", "-F", "--no-color", "--untracked"], a = await mc("git", [...i, "--max-count=5", "-e", t, "--"], {
+  let i = ["grep", "-I", "-n", "-i", "-F", "--no-color", "--untracked"], a = await hc("git", [...i, "--max-count=5", "-e", t, "--"], {
     cwd: e,
     timeoutMs: s(),
-    maxBytes: pc
+    maxBytes: gc
   });
-  a.code !== 0 && a.code !== 1 && /max-count|unknown option|unrecognized option/i.test(a.stderr) && Date.now() < o && (a = await mc("git", [...i, "-e", t, "--"], {
+  a.code !== 0 && a.code !== 1 && /max-count|unknown option|unrecognized option/i.test(a.stderr) && Date.now() < o && (a = await hc("git", [...i, "-e", t, "--"], {
     cwd: e,
     timeoutMs: s(),
-    maxBytes: pc
+    maxBytes: gc
   }));
-  let l = sk(a.stdout, Ls);
-  return l.hits = l.hits.filter((f) => !gc(f.path)), {
+  let l = sk(a.stdout, Ns);
+  return l.hits = l.hits.filter((f) => !wc(f.path)), {
     hits: l.hits,
     truncated: a.truncated || a.code !== 0 && a.code !== 1 || l.overflow
   };
@@ -10485,66 +10485,66 @@ async function lk(e, t, n, o) {
       f = !0;
       break;
     }
-    let g = a.pop();
-    if (!g) break;
+    let h = a.pop();
+    if (!h) break;
     let _;
     try {
-      _ = Zt.readdirSync(g.dir).sort((E, m) => E.localeCompare(m));
+      _ = Vt.readdirSync(h.dir).sort((E, m) => E.localeCompare(m));
     } catch {
       continue;
     }
     for (let E = _.length - 1; E >= 0; E -= 1) {
       let m = _[E];
-      if (m === void 0 || m.toLowerCase() === ".git" || Rw(m) || gc(hd(g.rel, m))) continue;
+      if (m === void 0 || m.toLowerCase() === ".git" || Rw(m) || wc(hd(h.rel, m))) continue;
       if (++c > Xb || Date.now() >= o) {
         f = !0, w = !0;
         break;
       }
       c % ak === 0 && await ck();
-      let U = Mn.join(g.dir, m), M = hd(g.rel, m);
-      if (gc(M)) continue;
-      let D;
+      let $ = Dn.join(h.dir, m), F = hd(h.rel, m);
+      if (wc(F)) continue;
+      let I;
       try {
-        D = Zt.lstatSync(U);
+        I = Vt.lstatSync($);
       } catch {
         continue;
       }
-      if (!D.isSymbolicLink()) {
-        if (D.isDirectory()) {
+      if (!I.isSymbolicLink()) {
+        if (I.isDirectory()) {
           if (Qb(m)) continue;
-          g.depth < zb ? a.push({ dir: U, rel: M, depth: g.depth + 1 }) : f = !0;
+          h.depth < zb ? a.push({ dir: $, rel: F, depth: h.depth + 1 }) : f = !0;
           continue;
         }
-        if (D.isFile()) {
+        if (I.isFile()) {
           if (n === "name")
-            M.toLocaleLowerCase().includes(i) && s.push({ path: M });
+            F.toLocaleLowerCase().includes(i) && s.push({ path: F });
           else {
             if (l >= Yb) {
               f = !0, w = !0;
               break;
             }
-            if (l += 1, D.size > Sw) {
+            if (l += 1, I.size > Sw) {
               f = !0;
               continue;
             }
             let O;
             try {
-              O = Pw(U, Sw);
+              O = Pw($, Sw);
             } catch {
               continue;
             }
             if (O.notFile || Tw(O.buf)) continue;
-            let P = 0, v = O.buf.toString("utf8").split(`
+            let P = 0, x = O.buf.toString("utf8").split(`
 `);
-            for (let Q = 0; Q < v.length && P < kw; Q += 1) {
-              let G = v[Q];
-              if (G?.toLocaleLowerCase().includes(i) && (s.push({ path: M, line: Q + 1, text: Cw(G.replace(/\r$/, "")) }), P += 1, s.length >= Ls)) {
+            for (let Q = 0; Q < x.length && P < kw; Q += 1) {
+              let z = x[Q];
+              if (z?.toLocaleLowerCase().includes(i) && (s.push({ path: F, line: Q + 1, text: Cw(z.replace(/\r$/, "")) }), P += 1, s.length >= Ns)) {
                 f = !0, w = !0;
                 break;
               }
             }
           }
-          if (s.length >= Ls) {
+          if (s.length >= Ns) {
             f = !0, w = !0;
             break;
           }
@@ -10552,7 +10552,7 @@ async function lk(e, t, n, o) {
       }
     }
   }
-  return { hits: s.slice(0, Ls), truncated: f };
+  return { hits: s.slice(0, Ns), truncated: f };
 }
 r(lk, "walkSearch");
 function Aw(e) {
@@ -10561,44 +10561,44 @@ function Aw(e) {
     try {
       l = gd(c);
     } catch (_) {
-      return fc(_);
+      return mc(_);
     }
     let f = a();
     if (f.error) return f.error;
-    let { root: w, git: g } = f;
+    let { root: w, git: h } = f;
     try {
-      let _ = vw(w, l), E = xw(w, _), m = Zt.lstatSync(_);
-      if (!m.isDirectory() || m.isSymbolicLink()) throw new an(404, "not found");
-      let U = Zt.readdirSync(E).filter((v) => v.toLowerCase() !== ".git" && !Rw(v)), M = U.length > dc, D = U.slice().sort((v, Q) => v.localeCompare(Q)), O = [], P = 0;
-      for (let v of D) {
-        if (O.length >= dc || P >= dc + O.length) break;
+      let _ = vw(w, l), E = xw(w, _), m = Vt.lstatSync(_);
+      if (!m.isDirectory() || m.isSymbolicLink()) throw new rn(404, "not found");
+      let $ = Vt.readdirSync(E).filter((x) => x.toLowerCase() !== ".git" && !Rw(x)), F = $.length > pc, I = $.slice().sort((x, Q) => x.localeCompare(Q)), O = [], P = 0;
+      for (let x of I) {
+        if (O.length >= pc || P >= pc + O.length) break;
         P += 1;
         let Q;
         try {
-          Q = Zt.lstatSync(Mn.join(E, v));
+          Q = Vt.lstatSync(Dn.join(E, x));
         } catch {
           continue;
         }
         O.push({
-          name: v,
+          name: x,
           type: Zb(Q),
           size: Q.size,
           mtime: Q.mtimeMs,
           ignored: !1
         });
       }
-      if (O.sort((v, Q) => {
-        let G = v.type === "dir" ? 0 : 1, Ee = Q.type === "dir" ? 0 : 1;
-        return G - Ee || v.name.localeCompare(Q.name);
-      }), O.splice(dc), g) {
-        let v = O.map((G) => hd(l, G.name)), Q = await ok(w, v, _w);
-        O.forEach((G, Ee) => {
-          G.ignored = Q.has(v[Ee] ?? "");
+      if (O.sort((x, Q) => {
+        let z = x.type === "dir" ? 0 : 1, Ee = Q.type === "dir" ? 0 : 1;
+        return z - Ee || x.name.localeCompare(Q.name);
+      }), O.splice(pc), h) {
+        let x = O.map((z) => hd(l, z.name)), Q = await ok(w, x, _w);
+        O.forEach((z, Ee) => {
+          z.ignored = Q.has(x[Ee] ?? "");
         });
       }
-      return { status: 200, body: { ok: !0, path: l, git: g, entries: O, truncated: M } };
+      return { status: 200, body: { ok: !0, path: l, git: h, entries: O, truncated: F } };
     } catch (_) {
-      return fc(_);
+      return mc(_);
     }
   }
   r(t, "listAt");
@@ -10606,47 +10606,47 @@ function Aw(e) {
     let l;
     try {
       l = gd(c);
-    } catch (g) {
-      return fc(g);
+    } catch (h) {
+      return mc(h);
     }
     let f = a();
     if (f.error) return f.error;
     let { root: w } = f;
     try {
-      let g = vw(w, l);
-      if (g === w) return { status: 404, body: { ok: !1, reason: "is a directory" } };
-      let _ = xw(w, Mn.dirname(g));
-      if (Mn.basename(g).toLowerCase() === "config.json" && _.toLowerCase().split(Mn.sep).includes(".docker"))
-        throw new an(404, "not found");
+      let h = vw(w, l);
+      if (h === w) return { status: 404, body: { ok: !1, reason: "is a directory" } };
+      let _ = xw(w, Dn.dirname(h));
+      if (Dn.basename(h).toLowerCase() === "config.json" && _.toLowerCase().split(Dn.sep).includes(".docker"))
+        throw new rn(404, "not found");
       let E;
       try {
-        E = Zt.lstatSync(g);
+        E = Vt.lstatSync(h);
       } catch {
-        throw new an(404, "not found");
+        throw new rn(404, "not found");
       }
       if (E.isDirectory()) return { status: 404, body: { ok: !1, reason: "is a directory" } };
-      if (!E.isFile() || E.isSymbolicLink()) throw new an(404, "not found");
-      let m = Pw(g, fd);
-      if (m.notFile) throw new an(404, "not found");
-      let U = Tw(m.buf), M = m.st.size > fd, D = {
+      if (!E.isFile() || E.isSymbolicLink()) throw new rn(404, "not found");
+      let m = Pw(h, fd);
+      if (m.notFile) throw new rn(404, "not found");
+      let $ = Tw(m.buf), F = m.st.size > fd, I = {
         ok: !0,
         path: l,
         size: m.st.size,
         mtime: m.st.mtimeMs,
-        binary: U,
-        truncated: M
+        binary: $,
+        truncated: F
       };
-      if (!U) {
+      if (!$) {
         let O = m.buf.subarray(0, Math.min(m.buf.length, fd));
-        if (M) {
+        if (F) {
           let P = O.lastIndexOf(10);
           O = P < 0 ? Buffer.alloc(0) : O.subarray(0, P + 1);
         }
-        D.content = O.toString("utf8");
+        I.content = O.toString("utf8");
       }
-      return { status: 200, body: D };
-    } catch (g) {
-      return fc(g);
+      return { status: 200, body: I };
+    } catch (h) {
+      return mc(h);
     }
   }
   r(n, "readAt");
@@ -10662,7 +10662,7 @@ function Aw(e) {
     pd += 1;
     let w = Date.now();
     try {
-      let g = w + _w, _ = f.git ? await ik(f.root, c, l, g) : await lk(f.root, c, l, g);
+      let h = w + _w, _ = f.git ? await ik(f.root, c, l, h) : await lk(f.root, c, l, h);
       return {
         status: 200,
         body: {
@@ -10693,14 +10693,14 @@ function Aw(e) {
 r(Aw, "createFiles");
 
 
-import br from "node:fs";
+import vr from "node:fs";
 import Ow from "node:os";
-import Oi from "node:path";
+import Ni from "node:path";
 import uk from "node:crypto";
 var Lw = 10 * 1024 * 1024, dk = 1440 * 60 * 1e3, Dw = 50, fk = "png, jpeg, gif, webp";
 function pk() {
-  let e = process.env.FLEETDECK_HOME, t = e != null && e !== "" ? e : Oi.join(Ow.homedir() || Ow.tmpdir(), ".fleetdeck");
-  return Oi.join(t, "pastes");
+  let e = process.env.FLEETDECK_HOME, t = e != null && e !== "" ? e : Ni.join(Ow.homedir() || Ow.tmpdir(), ".fleetdeck");
+  return Ni.join(t, "pastes");
 }
 r(pk, "pasteDir");
 function mk(e) {
@@ -10715,15 +10715,15 @@ r(gk, "looksBase64");
 function hk() {
   let e = pk();
   try {
-    br.mkdirSync(Oi.dirname(e), { recursive: !0 });
+    vr.mkdirSync(Ni.dirname(e), { recursive: !0 });
   } catch {
   }
   try {
-    br.mkdirSync(e, { mode: 448 });
+    vr.mkdirSync(e, { mode: 448 });
   } catch (o) {
-    if (mt(o) !== "EEXIST") throw o;
+    if (dt(o) !== "EEXIST") throw o;
   }
-  let t = br.lstatSync(e);
+  let t = vr.lstatSync(e);
   if (t.isSymbolicLink() || !t.isDirectory())
     throw new Error(`${e} is not a real directory; refusing to write pastes there`);
   let n = process.getuid;
@@ -10735,24 +10735,24 @@ r(hk, "ensurePasteDir");
 function wk(e, t = Date.now(), n = null) {
   let o;
   try {
-    o = br.readdirSync(e);
+    o = vr.readdirSync(e);
   } catch {
     return;
   }
   let s = [];
   for (let a of o) {
-    let c = Oi.join(e, a);
+    let c = Ni.join(e, a);
     if (n && c === n) continue;
     let l;
     try {
-      l = br.lstatSync(c);
+      l = vr.lstatSync(c);
     } catch {
       continue;
     }
     if (l.isFile())
       if (t - l.mtimeMs > dk)
         try {
-          br.unlinkSync(c);
+          vr.unlinkSync(c);
         } catch {
         }
       else
@@ -10763,7 +10763,7 @@ function wk(e, t = Date.now(), n = null) {
     s.sort((a, c) => a.mtime - c.mtime);
     for (let { p: a } of s.slice(0, s.length - i))
       try {
-        br.unlinkSync(a);
+        vr.unlinkSync(a);
       } catch {
       }
   }
@@ -10791,12 +10791,12 @@ function Iw(e) {
   } catch (f) {
     return console.error("fleetd paste: cannot prepare paste dir:", f), { status: 500, body: { ok: !1, reason: "cannot prepare paste dir" } };
   }
-  let a = `paste-${uk.randomUUID()}.${s}`, c = Oi.join(i, a), l = `${c}.tmp`;
+  let a = `paste-${uk.randomUUID()}.${s}`, c = Ni.join(i, a), l = `${c}.tmp`;
   try {
-    br.writeFileSync(l, o, { mode: 384, flag: "wx" }), br.renameSync(l, c);
+    vr.writeFileSync(l, o, { mode: 384, flag: "wx" }), vr.renameSync(l, c);
   } catch (f) {
     try {
-      br.unlinkSync(l);
+      vr.unlinkSync(l);
     } catch {
     }
     return console.error("fleetd paste: write failed:", f), { status: 500, body: { ok: !1, reason: "write failed" } };
@@ -10806,19 +10806,19 @@ function Iw(e) {
 r(Iw, "pasteImage");
 
 
-var ir = 4e3;
+var or = 4e3;
 function Ek(e) {
-  return e.length <= ir ? e : Si(e.slice(0, ir));
+  return e.length <= or ? e : ki(e.slice(0, or));
 }
 r(Ek, "clampMail");
 var Nw = 200;
 function yk(e) {
-  return typeof e != "string" || e.length <= Nw ? e : Si(e.slice(0, Nw));
+  return typeof e != "string" || e.length <= Nw ? e : ki(e.slice(0, Nw));
 }
 r(yk, "clampFrom");
 var _k = 100, Sk = 256 * 1024, vk = 25, xk = 64 * 1024, bk = new Set(["orchestrator", "fleetdeck", "fleetdeck-answer", "human"]), kk = /^[\s\x00-\x1f\x7f-\x9f]*\[FLEETDECK[ \]]/i, Mw = r((e) => e.replace(/\p{Cf}/gu, ""), "stripFormatChars");
 function Rk(e) {
-  return Mw(sn(e)).replace(/\r\n?|[\u2028\u2029]/g, `
+  return Mw(nn(e)).replace(/\r\n?|[\u2028\u2029]/g, `
 `).split(`
 `).some((t) => kk.test(t));
 }
@@ -10836,22 +10836,22 @@ function Fw(e) {
     findScopedWindow: l,
     scopedPaneTarget: f,
     PANE_MAIL_GRACE_MS: w,
-    MAIL_CLAIM_LEASE_MS: g,
+    MAIL_CLAIM_LEASE_MS: h,
 
 
     MAIL_PENDING_MAX: _ = _k,
     MAIL_PENDING_MAX_BYTES: E = Sk,
     MAIL_PANE_BATCH: m = vk,
-    MAIL_PANE_BATCH_BYTES: U = xk
-  } = e, M = new Set(), D = "open", O = null, P = r(() => D === "open", "isOpen");
-  function v(N) {
-    M.add(N);
+    MAIL_PANE_BATCH_BYTES: $ = xk
+  } = e, F = new Set(), I = "open", O = null, P = r(() => I === "open", "isOpen");
+  function x(M) {
+    F.add(M);
     let J = r(() => {
-      M.delete(N);
+      F.delete(M);
     }, "forget");
-    return N.then(J, J), N;
+    return M.then(J, J), M;
   }
-  r(v, "own");
+  r(x, "own");
   function Q() {
     return {
       status: 503,
@@ -10859,97 +10859,97 @@ function Fw(e) {
     };
   }
   r(Q, "quiescingPostMailResult");
-  function G(N, J, se) {
+  function z(M, J, se) {
     if (!P()) return { refused: !0, reason: "mail lifecycle is quiescing" };
-    let de = sn(se), ne = Ek(de), te = n.pendingMailStats.get(N) ?? { n: 0, bytes: 0 };
-    return te.n >= _ || te.bytes + ne.length > E ? { refused: !0, reason: "mailbox full" } : (n.insertMail.run(N, yk(J), ne, Date.now()), d(N), ye(N), { truncated: de.length > ir, original_length: de.length });
+    let de = nn(se), ne = Ek(de), re = n.pendingMailStats.get(M) ?? { n: 0, bytes: 0 };
+    return re.n >= _ || re.bytes + ne.length > E ? { refused: !0, reason: "mailbox full" } : (n.insertMail.run(M, yk(J), ne, Date.now()), d(M), ye(M), { truncated: de.length > or, original_length: de.length });
   }
-  r(G, "mail");
+  r(z, "mail");
   let Ee = new Map();
-  function ye(N) {
-    if (!P() || Ee.has(N)) return;
+  function ye(M) {
+    if (!P() || Ee.has(M)) return;
     let J = setTimeout(() => {
-      Ee.delete(N), P() && C(N).catch(() => {
+      Ee.delete(M), P() && C(M).catch(() => {
       });
     }, w);
-    J.unref(), Ee.set(N, J);
+    J.unref(), Ee.set(M, J);
   }
   r(ye, "armPaneMailTimer");
-  function Ie(N) {
-    Ee.delete(N), P() && ye(N);
+  function De(M) {
+    Ee.delete(M), P() && ye(M);
   }
-  r(Ie, "rearmPaneMailTimer");
-  function Se(N, { lease: J = !1 } = {}) {
-    let se = Date.now(), de = n.pendingMail.all(N, se);
+  r(De, "rearmPaneMailTimer");
+  function ve(M, { lease: J = !1 } = {}) {
+    let se = Date.now(), de = n.pendingMail.all(M, se);
     if (J) {
-      let ne = se + g;
-      for (let te of de) n.claimMail.run(ne, te.id);
+      let ne = se + h;
+      for (let re of de) n.claimMail.run(ne, re.id);
     } else
       for (let ne of de) n.markDelivered.run(se, ne.id);
     return de.map((ne) => ({ id: ne.id, from: ne.from_id, text: ne.text, at: ne.at }));
   }
-  r(Se, "drainMail");
-  function $e(N) {
-    if (!Array.isArray(N)) return { acked: 0 };
+  r(ve, "drainMail");
+  function $e(M) {
+    if (!Array.isArray(M)) return { acked: 0 };
     let J = Date.now(), se = 0;
-    for (let de of N)
+    for (let de of M)
       typeof de == "number" && Number.isSafeInteger(de) && (se += Number(n.ackMail.run(J, de).changes));
     return { acked: se };
   }
   r($e, "ackMail");
-  function Z(N) {
-    let J = n.visibleSessions.all(), de = J.filter((Te) => Te.ended_at == null).filter((Te) => Te.source !== "shell");
-    if (N === "all") return de.map((Te) => Te.session_id);
-    let ne = /^repo:(.+)$/.exec(N);
+  function Z(M) {
+    let J = n.visibleSessions.all(), de = J.filter((Pe) => Pe.ended_at == null).filter((Pe) => Pe.source !== "shell");
+    if (M === "all") return de.map((Pe) => Pe.session_id);
+    let ne = /^repo:(.+)$/.exec(M);
     if (ne) {
-      let Te = ne[1];
-      return de.filter((ue) => ue.repo_id === Te || ue.repo_name === Te).map((ue) => ue.session_id);
+      let Pe = ne[1];
+      return de.filter((pe) => pe.repo_id === Pe || pe.repo_name === Pe).map((pe) => pe.session_id);
     }
-    let te = J.filter((Te) => Te.source !== "shell"), Ne = te.filter((Te) => Te.session_id === N || Te.callsign === N);
-    if (Ne.length) return Ne.map((Te) => Te.session_id);
-    let je = te.filter((Te) => Te.prev_callsign === N);
-    return je.length ? je.map((Te) => Te.session_id) : n.aliasesMatch.all(N, N).filter((Te) => Te.source !== "shell").map((Te) => Te.session_id);
+    let re = J.filter((Pe) => Pe.source !== "shell"), Ie = re.filter((Pe) => Pe.session_id === M || Pe.callsign === M);
+    if (Ie.length) return Ie.map((Pe) => Pe.session_id);
+    let qe = re.filter((Pe) => Pe.prev_callsign === M);
+    return qe.length ? qe.map((Pe) => Pe.session_id) : n.aliasesMatch.all(M, M).filter((Pe) => Pe.source !== "shell").map((Pe) => Pe.session_id);
   }
   r(Z, "resolveTargets");
-  let ae = new Map(), L = new Map();
-  function S(N, J) {
-    return typeof J != "string" || !J ? !1 : (L.get(N) !== J && L.set(N, J), !0);
+  let ie = new Map(), D = new Map();
+  function S(M, J) {
+    return typeof J != "string" || !J ? !1 : (D.get(M) !== J && D.set(M, J), !0);
   }
   r(S, "registerWatchGen");
-  function I(N, J) {
-    return typeof J == "string" && J !== "" && L.get(N) === J;
+  function N(M, J) {
+    return typeof J == "string" && J !== "" && D.get(M) === J;
   }
-  r(I, "isWatchGen");
-  function d(N) {
-    for (let J of [...ae.get(N) ?? []])
+  r(N, "isWatchGen");
+  function d(M) {
+    for (let J of [...ie.get(M) ?? []])
       try {
         J();
       } catch {
       }
   }
   r(d, "notifyWatchers");
-  function T(N, J) {
-    let se = ae.get(N);
-    return se || (se = new Set(), ae.set(N, se)), se.add(J), () => {
-      let de = ae.get(N);
-      de && (de.delete(J), de.size || ae.delete(N));
+  function T(M, J) {
+    let se = ie.get(M);
+    return se || (se = new Set(), ie.set(M, se)), se.add(J), () => {
+      let de = ie.get(M);
+      de && (de.delete(J), de.size || ie.delete(M));
     };
   }
   r(T, "addWatchWaiter");
-  function A(N) {
-    return (ae.get(N)?.size ?? 0) > 0;
+  function A(M) {
+    return (ie.get(M)?.size ?? 0) > 0;
   }
   r(A, "hasWatchWaiter");
-  function b(N) {
-    let J = n.getSession.get(N);
+  function k(M) {
+    let J = n.getSession.get(M);
     if (!J || J.source === "shell" || J.ended_at != null || !["queued", "idle"].includes(J.col))
       return null;
-    let se = n.spawnBySession.get(N);
+    let se = n.spawnBySession.get(M);
     return !se || !["spawning", "stalled", "live"].includes(se.status) ? null : { c: J, sp: se };
   }
-  r(b, "ownedPaneRow");
-  async function X(N, { probe: J = !0 } = {}) {
-    let se = b(N);
+  r(k, "ownedPaneRow");
+  async function Y(M, { probe: J = !0 } = {}) {
+    let se = k(M);
     if (!se) return !1;
     if (!J) return !0;
     let de = await l(se.sp.tmux_window);
@@ -10957,18 +10957,18 @@ function Fw(e) {
     let ne = await c.paneCurrentCommand(f(de));
     return !!ne && !ne.dead && ne.cmd === "claude";
   }
-  r(X, "ownedPaneDeliverable");
-  function H(N) {
+  r(Y, "ownedPaneDeliverable");
+  function V(M) {
     t.exec("BEGIN IMMEDIATE");
     try {
-      let J = Date.now(), se = n.pendingMailPage.all(N, J, m + 1), de = [], ne = 0;
-      for (let Ne of se) {
-        if (de.length >= m || de.length && ne + Ne.text.length > U)
+      let J = Date.now(), se = n.pendingMailPage.all(M, J, m + 1), de = [], ne = 0;
+      for (let Ie of se) {
+        if (de.length >= m || de.length && ne + Ie.text.length > $)
           break;
-        de.push(Ne), ne += Ne.text.length;
+        de.push(Ie), ne += Ie.text.length;
       }
-      let te = J + g;
-      for (let Ne of de) n.claimMail.run(te, Ne.id);
+      let re = J + h;
+      for (let Ie of de) n.claimMail.run(re, Ie.id);
       return t.exec("COMMIT"), { batch: de, remaining: se.length > de.length };
     } catch (J) {
       try {
@@ -10978,67 +10978,67 @@ function Fw(e) {
       throw J;
     }
   }
-  r(H, "claimAllMail");
-  async function ee(N) {
-    let J = b(N);
-    if (!J || A(N)) return !1;
+  r(V, "claimAllMail");
+  async function te(M) {
+    let J = k(M);
+    if (!J || A(M)) return !1;
     let se = await l(J.sp.tmux_window);
     if (!P() || se === null || !se || se.pane_dead) return !1;
     let de = f(se), ne = await c.paneCurrentCommand(de);
-    if (!P() || !ne || ne.dead || ne.cmd !== "claude" || A(N) || !b(N)) return !1;
-    let { batch: te, remaining: Ne } = H(N);
-    if (!te.length) return !1;
-    Ne && Ie(N);
-    let je = te.map((k) => `[FLEETDECK MAIL from ${k.from_id}] ${k.text}`).join(`
-`), Te = await c.pasteText(de, je);
+    if (!P() || !ne || ne.dead || ne.cmd !== "claude" || A(M) || !k(M)) return !1;
+    let { batch: re, remaining: Ie } = V(M);
+    if (!re.length) return !1;
+    Ie && De(M);
+    let qe = re.map((R) => `[FLEETDECK MAIL from ${R.from_id}] ${R.text}`).join(`
+`), Pe = await c.pasteText(de, qe);
     if (!P()) return !1;
-    if (!Te) {
-      for (let k of te) n.releaseClaim.run(k.id);
+    if (!Pe) {
+      for (let R of re) n.releaseClaim.run(R.id);
       return i(), !1;
     }
-    if (!b(N)) {
-      let k = Date.now();
-      for (let z of te) n.ackMail.run(k, z.id);
+    if (!k(M)) {
+      let R = Date.now();
+      for (let X of re) n.ackMail.run(R, X.id);
       return i(), !0;
     }
-    let ue = await c.sendEnter(de);
+    let pe = await c.sendEnter(de);
     if (!P()) return !1;
-    if (!ue) {
-      let k = Date.now();
-      for (let z of te) n.ackMail.run(k, z.id);
+    if (!pe) {
+      let R = Date.now();
+      for (let X of re) n.ackMail.run(R, X.id);
       return s(
-        N,
+        M,
         "MailPaneEnterFailed",
         null,
-        `pasted ${te.length} mail into ${J.sp.tmux_window ?? "?"} but Enter failed — left un-entered, NOT requeued (text already in pane)`
+        `pasted ${re.length} mail into ${J.sp.tmux_window ?? "?"} but Enter failed — left un-entered, NOT requeued (text already in pane)`
       ), i(), !1;
     }
     {
-      let k = Date.now();
-      for (let z of te) n.ackMail.run(k, z.id);
+      let R = Date.now();
+      for (let X of re) n.ackMail.run(R, X.id);
     }
     return o(
-      `✉ delivered ${te.length} mail to ${J.c.callsign ?? J.c.session_id} (typed into pane)`
+      `✉ delivered ${re.length} mail to ${J.c.callsign ?? J.c.session_id} (typed into pane)`
     ), s(
-      N,
+      M,
       "MailPaneDelivery",
       null,
-      `typed ${te.length} mail into ${J.sp.tmux_window ?? "?"}`
+      `typed ${re.length} mail into ${J.sp.tmux_window ?? "?"}`
     ), i(), !0;
   }
-  r(ee, "tryOwnedPaneDeliveryImpl");
-  function C(N) {
-    return P() ? v(ee(N)) : Promise.resolve(!1);
+  r(te, "tryOwnedPaneDeliveryImpl");
+  function C(M) {
+    return P() ? x(te(M)) : Promise.resolve(!1);
   }
   r(C, "tryOwnedPaneDelivery");
-  function W(N, J = null) {
-    if (J !== null && !I(N, J)) return null;
-    let se = Date.now(), de = n.nextMail.get(N, se);
-    return de ? (n.claimMail.run(se + g, de.id), i(), { mail_id: de.id, at: de.at, from: de.from_id, text: de.text }) : null;
+  function q(M, J = null) {
+    if (J !== null && !N(M, J)) return null;
+    let se = Date.now(), de = n.nextMail.get(M, se);
+    return de ? (n.claimMail.run(se + h, de.id), i(), { mail_id: de.id, at: de.at, from: de.from_id, text: de.text }) : null;
   }
-  r(W, "claimMail");
-  function y(N) {
-    let J = n.getSession.get(N);
+  r(q, "claimMail");
+  function y(M) {
+    let J = n.getSession.get(M);
     return {
       session_alive: !!J && J.ended_at == null,
 
@@ -11047,11 +11047,11 @@ function Fw(e) {
 
 
 
-      pending: a.pendingOf(N).filter((se) => se.kind === "freeform").length
+      pending: a.pendingOf(M).filter((se) => se.kind === "freeform").length
     };
   }
   r(y, "watchInfo");
-  async function x({ to: N, from: J, text: se }) {
+  async function v({ to: M, from: J, text: se }) {
     let de = J ?? "board";
     if (typeof de != "string" || de.length === 0)
       return { status: 422, body: { ok: !1, reason: "sender name must be a non-empty string" } };
@@ -11076,21 +11076,21 @@ function Fw(e) {
           reason: "mail text may not open any line with a [FLEETDECK ...] frame — those are reserved for the daemon"
         }
       };
-    let ne = n.visibleSessions.all(), te = ne.filter((ce) => ce.session_id === N || ce.callsign === N), Ne = te.length ? te : ne.filter((ce) => ce.prev_callsign === N), je = Ne.length ? Ne : n.aliasesMatch.all(N, N);
-    if (je.length && je.every((ce) => ce.source === "shell"))
+    let ne = n.visibleSessions.all(), re = ne.filter((le) => le.session_id === M || le.callsign === M), Ie = re.length ? re : ne.filter((le) => le.prev_callsign === M), qe = Ie.length ? Ie : n.aliasesMatch.all(M, M);
+    if (qe.length && qe.every((le) => le.source === "shell"))
       return {
         status: 409,
         body: {
           ok: !1,
-          reason: `${je[0]?.callsign ?? je[0]?.session_id ?? "session"} is a shell pane — mail would be typed into a shell`
+          reason: `${qe[0]?.callsign ?? qe[0]?.session_id ?? "session"} is a shell pane — mail would be typed into a shell`
         }
       };
-    let Te = Z(N), ue = await Promise.all(
-      Te.map(async (ce) => A(ce) ? "watcher" : await X(ce) ? "pane" : n.getSession.get(ce)?.ended_at != null ? "offline-queued" : "turn-boundary")
+    let Pe = Z(M), pe = await Promise.all(
+      Pe.map(async (le) => A(le) ? "watcher" : await Y(le) ? "pane" : n.getSession.get(le)?.ended_at != null ? "offline-queued" : "turn-boundary")
     );
     if (!P()) return Q();
-    let k = Te.map((ce) => G(ce, de, se));
-    if (Te.length > 0 && k.every((ce) => ce.refused))
+    let R = Pe.map((le) => z(le, de, se));
+    if (Pe.length > 0 && R.every((le) => le.refused))
       return {
         status: 429,
         body: {
@@ -11100,59 +11100,59 @@ function Fw(e) {
           pending_max_bytes: E
         }
       };
-    o(`✉ mail from ${de} → ${N}`), i();
-    let F = sn(se), he = F.length > ir;
+    o(`✉ mail from ${de} → ${M}`), i();
+    let B = nn(se), xe = B.length > or;
     return {
       ok: !0,
-      delivered: k.filter((ce) => !ce.refused).length,
-      targets: Te.map((ce, Me) => {
-        let dt = k[Me];
+      delivered: R.filter((le) => !le.refused).length,
+      targets: Pe.map((le, Le) => {
+        let ft = R[Le];
         return {
-          session_id: ce,
-          callsign: n.getSession.get(ce)?.callsign ?? null,
-          route: dt?.refused ? "refused" : ue[Me] ?? "turn-boundary"
+          session_id: le,
+          callsign: n.getSession.get(le)?.callsign ?? null,
+          route: ft?.refused ? "refused" : pe[Le] ?? "turn-boundary"
         };
       }),
-      ...he ? { truncated: !0, original_length: F.length, max_length: ir } : {}
+      ...xe ? { truncated: !0, original_length: B.length, max_length: or } : {}
     };
   }
-  r(x, "postMailImpl");
-  function q(N) {
-    return P() ? v(x(N)) : Promise.resolve(Q());
+  r(v, "postMailImpl");
+  function K(M) {
+    return P() ? x(v(M)) : Promise.resolve(Q());
   }
-  r(q, "postMail");
-  function fe() {
+  r(K, "postMail");
+  function me() {
     if (!P()) return !1;
-    D = "quiescing";
-    for (let N of Ee.values()) clearTimeout(N);
+    I = "quiescing";
+    for (let M of Ee.values()) clearTimeout(M);
     return Ee.clear(), !0;
   }
-  r(fe, "quiesce");
-  async function V() {
-    for (; M.size > 0; )
-      await Promise.allSettled([...M]);
-    D = "closed";
+  r(me, "quiesce");
+  async function ee() {
+    for (; F.size > 0; )
+      await Promise.allSettled([...F]);
+    I = "closed";
   }
-  r(V, "closeImpl");
-  function Fe() {
-    return O || (fe(), O = Promise.resolve().then(V), O);
+  r(ee, "closeImpl");
+  function Ce() {
+    return O || (me(), O = Promise.resolve().then(ee), O);
   }
-  return r(Fe, "close"), {
-    mail: G,
-    drainMail: Se,
+  return r(Ce, "close"), {
+    mail: z,
+    drainMail: ve,
     ackMail: $e,
     resolveTargets: Z,
     notifyWatchers: d,
     addWatchWaiter: T,
     hasWatchWaiter: A,
-    ownedPaneRow: b,
-    ownedPaneDeliverable: X,
+    ownedPaneRow: k,
+    ownedPaneDeliverable: Y,
     tryOwnedPaneDelivery: C,
-    claimMail: W,
+    claimMail: q,
     watchInfo: y,
-    postMail: q,
+    postMail: K,
     registerWatchGen: S,
-    mailLifecycle: { quiesce: fe, close: Fe }
+    mailLifecycle: { quiesce: me, close: Ce }
   };
 }
 r(Fw, "createMail");
@@ -11164,29 +11164,29 @@ function Bw(e) {
   let { q: t, card: n, mail: o, tick: s } = e;
   function i(c, l, f) {
     if (!l) return null;
-    let w = Date.now(), g = wd.isAbsolute(l) ? l : wd.resolve(f.cwd ?? "/", l), _ = hh(g, f), m = t.recentTouches.all(_.repo_id, _.rel_path, w - Ed).filter((P) => {
+    let w = Date.now(), h = wd.isAbsolute(l) ? l : wd.resolve(f.cwd ?? "/", l), _ = hh(h, f), m = t.recentTouches.all(_.repo_id, _.rel_path, w - Ed).filter((P) => {
       if (P.session_id === c) return !1;
-      let v = t.getSession.get(P.session_id);
-      return !!v && v.archived_at == null;
-    }), U = [...new Set(m.map((P) => P.session_id))];
-    if (t.insertTouch.run(_.repo_id, _.rel_path, g, c, _.worktree, w), !U.length) return null;
-    let D = m.some((P) => P.worktree === _.worktree) ? "warning" : "info", O = U.map((P) => n(P).callsign).join(", ");
+      let x = t.getSession.get(P.session_id);
+      return !!x && x.archived_at == null;
+    }), $ = [...new Set(m.map((P) => P.session_id))];
+    if (t.insertTouch.run(_.repo_id, _.rel_path, h, c, _.worktree, w), !$.length) return null;
+    let I = m.some((P) => P.worktree === _.worktree) ? "warning" : "info", O = $.map((P) => n(P).callsign).join(", ");
     t.insertConflict.run(
       w,
       _.repo_id,
       _.rel_path,
-      D,
-      JSON.stringify([c, ...U])
+      I,
+      JSON.stringify([c, ...$])
     ), s(
       `⚠ conflict: ${f.callsign ?? c} and ${O} both touching ${wd.basename(_.rel_path)}`
     );
-    for (let P of U)
+    for (let P of $)
       o(
         P,
         "fleetdeck",
-        D === "warning" ? `Heads up: ${f.callsign ?? c} is also editing ${_.rel_path}. Coordinate before you overwrite each other.` : `Heads up: ${f.callsign ?? c} is editing ${_.rel_path} in another worktree of this repo — a future merge conflict announcing itself early.`
+        I === "warning" ? `Heads up: ${f.callsign ?? c} is also editing ${_.rel_path}. Coordinate before you overwrite each other.` : `Heads up: ${f.callsign ?? c} is editing ${_.rel_path} in another worktree of this repo — a future merge conflict announcing itself early.`
       );
-    return { file: _.rel_path, abs: g, rivals: O, severity: D };
+    return { file: _.rel_path, abs: h, rivals: O, severity: I };
   }
   r(i, "recordFile");
   function a(c) {
@@ -11205,13 +11205,13 @@ function $w(e) {
     let f = r((_) => {
       if (typeof _ != "object" || _ === null) return !1;
       let E = _;
-      return typeof E.sessionId == "string" && E.sessionId.length > 0 && E.kind === "interactive" && typeof E.pid == "number" && yi(E.pid, typeof E.startedAt == "number" ? E.startedAt : NaN);
+      return typeof E.sessionId == "string" && E.sessionId.length > 0 && E.kind === "interactive" && typeof E.pid == "number" && xi(E.pid, typeof E.startedAt == "number" ? E.startedAt : NaN);
     }, "isFleetRecord"), w = l.filter(f);
     for (let _ of w) {
-      let E = _.sessionId, m = _.state ?? _.status, U = t.getSession.get(E), M = _.cwd || null, D = M ? Tn(M) : { repo_id: null, repo_name: null, worktree: null, main_tree: null, is_git: !1 };
-      if (U) {
-        if (U.source === "agents-cli") {
-          let O = D.is_git && D.repo_id !== U.repo_id, P = !!M && M !== U.cwd, v = !!M && D.worktree !== U.worktree, Q = M ? Dn(M) : U.branch, G = {
+      let E = _.sessionId, m = _.state ?? _.status, $ = t.getSession.get(E), F = _.cwd || null, I = F ? kn(F) : { repo_id: null, repo_name: null, worktree: null, main_tree: null, is_git: !1 };
+      if ($) {
+        if ($.source === "agents-cli") {
+          let O = I.is_git && I.repo_id !== $.repo_id, P = !!F && F !== $.cwd, x = !!F && I.worktree !== $.worktree, Q = F ? An(F) : $.branch, z = {
             col: ju(m, !1),
             note: "seen via agents CLI",
             last_seen: Date.now(),
@@ -11219,44 +11219,44 @@ function $w(e) {
 
             end_reason: null,
 
-            ...O || P ? { cwd: M } : {},
-            ...O ? { repo_id: D.repo_id, repo_name: D.repo_name } : {},
-            ...O || v ? { worktree: D.worktree } : {},
-            ...Q !== U.branch ? { branch: Q } : {}
+            ...O || P ? { cwd: F } : {},
+            ...O ? { repo_id: I.repo_id, repo_name: I.repo_name } : {},
+            ...O || x ? { worktree: I.worktree } : {},
+            ...Q !== $.branch ? { branch: Q } : {}
           };
-          o(E, G), O && a({
-            repo_id: D.repo_id,
-            repo_name: D.repo_name,
-            root: D.main_tree,
+          o(E, z), O && a({
+            repo_id: I.repo_id,
+            repo_name: I.repo_name,
+            root: I.main_tree,
             source: "hooks"
           }), i();
         }
       } else {
-        let O = M ? Dn(M, { fresh: !0 }) : null, P = jr(O), v = n(E, P), Q = Date.now(), G = Number.isFinite(_.startedAt) ? _.startedAt : Q;
+        let O = F ? An(F, { fresh: !0 }) : null, P = qr(O), x = n(E, P), Q = Date.now(), z = Number.isFinite(_.startedAt) ? _.startedAt : Q;
         t.insertAgentSession.run(
           E,
-          v,
-          M,
-          D.repo_id ?? null,
-          D.repo_name ?? null,
+          x,
+          F,
+          I.repo_id ?? null,
+          I.repo_name ?? null,
           O ?? null,
-          D.worktree ?? null,
+          I.worktree ?? null,
           ju(m, !0),
           "seen via agents CLI",
           _.name ?? null,
-          G,
+          z,
           Q
-        ), D.is_git && a({
-          repo_id: D.repo_id,
-          repo_name: D.repo_name,
-          root: D.main_tree,
+        ), I.is_git && a({
+          repo_id: I.repo_id,
+          repo_name: I.repo_name,
+          root: I.main_tree,
           source: "hooks"
-        }), P && o(E, { ticket: P, ticket_source: "branch" }), s(`${v} joined the fleet (agents CLI)`), i();
+        }), P && o(E, { ticket: P, ticket_source: "branch" }), s(`${x} joined the fleet (agents CLI)`), i();
       }
     }
-    let g = new Set(w.map((_) => _.sessionId));
+    let h = new Set(w.map((_) => _.sessionId));
     for (let _ of t.allSessions.all())
-      _.source !== "agents-cli" || _.ended_at != null || g.has(_.session_id) || (o(_.session_id, {
+      _.source !== "agents-cli" || _.ended_at != null || h.has(_.session_id) || (o(_.session_id, {
         col: "offline",
         note: "no longer reported by agents CLI",
         ended_at: Date.now(),
@@ -11287,93 +11287,93 @@ function Uw(e) {
   function f(E) {
     let m = t.getSession.get(E);
     if (!m || m.ended_at != null) return { ok: !1, reason: "no live session for that target" };
-    let U = { ticket: null, ticket_source: "manual" }, M = { ok: !0, renamed: !1, callsign: m.callsign, ticket: null };
-    return m.prev_callsign && !t.callsignTaken.get(m.prev_callsign, m.prev_callsign, E) ? (U.callsign = m.prev_callsign, U.prev_callsign = null, t.rememberAlias.run(E, m.callsign, Date.now()), s(`🎫 ${m.callsign} reverted to ${m.prev_callsign} (ticket cleared)`), M = {
+    let $ = { ticket: null, ticket_source: "manual" }, F = { ok: !0, renamed: !1, callsign: m.callsign, ticket: null };
+    return m.prev_callsign && !t.callsignTaken.get(m.prev_callsign, m.prev_callsign, E) ? ($.callsign = m.prev_callsign, $.prev_callsign = null, t.rememberAlias.run(E, m.callsign, Date.now()), s(`🎫 ${m.callsign} reverted to ${m.prev_callsign} (ticket cleared)`), F = {
       ok: !0,
       renamed: !0,
       callsign: m.prev_callsign,
       ticket: null,
       previous: m.callsign
-    }) : s(`🎫 ${m.callsign} ticket cleared`), c(E, U), M;
+    }) : s(`🎫 ${m.callsign} ticket cleared`), c(E, $), F;
   }
   r(f, "clearTicket");
   function w(E) {
     let m = t.visibleSessions.all().filter(
-      (D) => D.ended_at == null && (D.session_id === E || D.callsign === E || D.prev_callsign === E)
+      (I) => I.ended_at == null && (I.session_id === E || I.callsign === E || I.prev_callsign === E)
     );
     if (m.length > 1) return { error: `"${E}" is ambiguous — use the session id` };
-    let U = m.length ? m : t.aliasesMatch.all(E, E).filter((D) => D.ended_at == null);
-    if (U.length === 0) return { error: `no live session matching "${E}"` };
-    if (U.length > 1) return { error: `"${E}" is ambiguous — use the session id` };
-    let M = U[0];
-    return M ? { sid: M.session_id } : { error: `no live session matching "${E}"` };
+    let $ = m.length ? m : t.aliasesMatch.all(E, E).filter((I) => I.ended_at == null);
+    if ($.length === 0) return { error: `no live session matching "${E}"` };
+    if ($.length > 1) return { error: `"${E}" is ambiguous — use the session id` };
+    let F = $[0];
+    return F ? { sid: F.session_id } : { error: `no live session matching "${E}"` };
   }
   r(w, "resolveTicketTarget");
-  function g(E, m) {
+  function h(E, m) {
     return m === "all" || m.startsWith("repo:") ? { error: `${E} targets one session — not all/repo:*` } : w(m);
   }
-  r(g, "resolveRenameTarget");
+  r(h, "resolveRenameTarget");
   function _(E) {
-    let m = Th(E), U = r((O) => t.insertCommand.run(
+    let m = Th(E), $ = r((O) => t.insertCommand.run(
       Date.now(),
-      sn(E),
+      nn(E),
       JSON.stringify(O ? { ...m, ...O } : m)
-    ), "logCommand"), M = r((O) => (U(), i(), { ok: !1, reason: O }), "rejectCommand"), D = 0;
+    ), "logCommand"), F = r((O) => ($(), i(), { ok: !1, reason: O }), "rejectCommand"), I = 0;
     if (m.cmd === "broadcast" || m.cmd === "assign_auto" || m.cmd === "assign") {
       let P = `${m.cmd === "broadcast" ? "" : "[FLEETDECK ASSIGNMENT] "}${m.text}`;
-      if (P.length > ir) {
-        let v = `message too long (${P.length} > ${ir} code units) — shorten it or split it into multiple commands`;
-        return U({ rejected: !0, reason: v }), s(`⚠ command rejected: ${v}`), i(), { ok: !1, reason: v, max_length: ir, original_length: P.length };
+      if (P.length > or) {
+        let x = `message too long (${P.length} > ${or} code units) — shorten it or split it into multiple commands`;
+        return $({ rejected: !0, reason: x }), s(`⚠ command rejected: ${x}`), i(), { ok: !1, reason: x, max_length: or, original_length: P.length };
       }
     }
     if (m.cmd === "broadcast") {
       let O = o("all");
-      O.forEach((P) => n(P, "orchestrator", m.text)), D = O.length, s(`📣 orchestrator broadcast → ${D} session(s)`);
+      O.forEach((P) => n(P, "orchestrator", m.text)), I = O.length, s(`📣 orchestrator broadcast → ${I} session(s)`);
     } else if (m.cmd === "assign_auto") {
       let O = m.repo, P = t.autoCandidate.get(O, O, O);
       if (!P)
-        return U({ unrouted: !0 }), s("⚠ assign auto: no available session — task logged"), i(), { ok: !1, unrouted: !0, text: m.text };
-      let v = { session_id: P.session_id, callsign: P.callsign };
-      return n(P.session_id, "orchestrator", `[FLEETDECK ASSIGNMENT] ${m.text}`), s(`⚡ orchestrator → ${P.callsign}: ${m.text.slice(0, 60)}`), U({ assigned_to: v }), i(), { ok: !0, assigned_to: v };
+        return $({ unrouted: !0 }), s("⚠ assign auto: no available session — task logged"), i(), { ok: !1, unrouted: !0, text: m.text };
+      let x = { session_id: P.session_id, callsign: P.callsign };
+      return n(P.session_id, "orchestrator", `[FLEETDECK ASSIGNMENT] ${m.text}`), s(`⚡ orchestrator → ${P.callsign}: ${m.text.slice(0, 60)}`), $({ assigned_to: x }), i(), { ok: !0, assigned_to: x };
     } else if (m.cmd === "assign") {
       let O = o(m.target);
       if (m.target !== "all" && !m.target.startsWith("repo:") && O.length > 1)
-        return U({ refused: "ambiguous" }), i(), {
+        return $({ refused: "ambiguous" }), i(), {
           ok: !1,
           reason: `"${m.target}" matches ${O.length} sessions — use the session id`
         };
-      O.forEach((P) => n(P, "orchestrator", `[FLEETDECK ASSIGNMENT] ${m.text}`)), D = O.length, s(`📌 orchestrator assign → ${m.target}${D ? "" : " (no such session)"}`);
+      O.forEach((P) => n(P, "orchestrator", `[FLEETDECK ASSIGNMENT] ${m.text}`)), I = O.length, s(`📌 orchestrator assign → ${m.target}${I ? "" : " (no such session)"}`);
     } else if (m.cmd === "ticket") {
-      if ("error" in m) return M(m.error);
-      let O = g(m.cmd, m.target);
-      if ("error" in O) return M(O.error);
+      if ("error" in m) return F(m.error);
+      let O = h(m.cmd, m.target);
+      if ("error" in O) return F(O.error);
       let P;
       if (/^clear$/i.test(m.ticket))
         P = f(O.sid);
       else {
-        let v = Eh(m.ticket);
-        if (!v)
-          return M(
+        let x = Eh(m.ticket);
+        if (!x)
+          return F(
             `invalid ticket key "${m.ticket}" — expected e.g. PROJ-123 or clear`
           );
-        P = a(O.sid, v, "manual");
+        P = a(O.sid, x, "manual");
       }
-      return U({ result: P }), i(), { session_id: O.sid, ...P };
+      return $({ result: P }), i(), { session_id: O.sid, ...P };
     } else if (m.cmd === "name") {
-      if ("error" in m) return M(m.error);
-      let O = g(m.cmd, m.target);
-      if ("error" in O) return M(O.error);
+      if ("error" in m) return F(m.error);
+      let O = h(m.cmd, m.target);
+      if ("error" in O) return F(O.error);
       let P = /^clear$/i.test(m.suffix);
       if (!P) {
-        let Q = vi(m.suffix);
+        let Q = Ri(m.suffix);
         if (Q)
-          return M(Q);
+          return F(Q);
       }
-      let v = l(O.sid, P ? null : m.suffix);
-      return U({ result: v }), i(), { session_id: O.sid, ...v };
+      let x = l(O.sid, P ? null : m.suffix);
+      return $({ result: x }), i(), { session_id: O.sid, ...x };
     } else
       s(`📝 orchestrator note: ${m.text.slice(0, 60)}`);
-    return U(), i(), { ok: !0, parsed: m, delivered: D };
+    return $(), i(), { ok: !0, parsed: m, delivered: I };
   }
   return r(_, "command"), { command: _ };
 }
@@ -11387,8 +11387,8 @@ function Ww(e) {
     "captured"
   ]);
   function c(f, w) {
-    let g = t.getPlan.get(Number(f));
-    if (!g) return { status: 404, body: { ok: !1, err: "no such plan" } };
+    let h = t.getPlan.get(Number(f));
+    if (!h) return { status: 404, body: { ok: !1, err: "no such plan" } };
     let _ = w?.status;
     if (_ !== "executed" && _ !== "archived")
       return { status: 400, body: { ok: !1, err: 'status must be "executed" or "archived"' } };
@@ -11396,48 +11396,48 @@ function Ww(e) {
     if (E != null && typeof E != "string")
       return { status: 400, body: { ok: !1, err: "via must be a string" } };
     if (_ === "executed") {
-      if (!a.has(g.status))
-        return { status: 409, body: { ok: !1, err: `cannot mark a ${g.status} plan executed` } };
+      if (!a.has(h.status))
+        return { status: 409, body: { ok: !1, err: `cannot mark a ${h.status} plan executed` } };
       let m = typeof E == "string" && E.trim() ? E.trim().slice(0, 200) : null;
-      if (t.setPlanExecuted.run(m, g.plan_id), n(
-        `📚 plan #${g.plan_id} (${g.callsign ?? g.session_id}) marked executed${m ? ` via ${m}` : ""}`
-      ), g.question_id != null) {
-        let U = e.questions?.dismiss?.(g.question_id, { activity: !0 });
-        U?.ok && !U.already && n(`📚 planner hold for plan #${g.plan_id} retired — question dismissed`);
+      if (t.setPlanExecuted.run(m, h.plan_id), n(
+        `📚 plan #${h.plan_id} (${h.callsign ?? h.session_id}) marked executed${m ? ` via ${m}` : ""}`
+      ), h.question_id != null) {
+        let $ = e.questions?.dismiss?.(h.question_id, { activity: !0 });
+        $?.ok && !$.already && n(`📚 planner hold for plan #${h.plan_id} retired — question dismissed`);
       }
     } else {
-      if (g.status === "archived")
+      if (h.status === "archived")
         return { status: 409, body: { ok: !1, err: "plan is already archived" } };
-      t.setPlanStatus.run("archived", g.plan_id), n(`📚 plan #${g.plan_id} (${g.callsign ?? g.session_id}) archived`);
+      t.setPlanStatus.run("archived", h.plan_id), n(`📚 plan #${h.plan_id} (${h.callsign ?? h.session_id}) archived`);
     }
-    return o(), { status: 200, body: { ok: !0, plan_id: g.plan_id, status: _ } };
+    return o(), { status: 200, body: { ok: !0, plan_id: h.plan_id, status: _ } };
   }
   r(c, "planMark");
   function l(f, w) {
-    let g = t.getPlan.get(Number(f));
-    if (!g) return { status: 404, body: { ok: !1, err: "no such plan" } };
+    let h = t.getPlan.get(Number(f));
+    if (!h) return { status: 404, body: { ok: !1, err: "no such plan" } };
     let _ = typeof w?.to == "string" ? w.to.trim() : "";
     if (!_)
       return { status: 400, body: { ok: !1, err: "to must be a session id or callsign" } };
     let E = w?.instructions;
     if (E != null && typeof E != "string")
       return { status: 400, body: { ok: !1, err: "instructions must be a string" } };
-    if (!a.has(g.status))
-      return { status: 409, body: { ok: !1, err: `cannot assign a ${g.status} plan` } };
+    if (!a.has(h.status))
+      return { status: 409, body: { ok: !1, err: `cannot assign a ${h.status} plan` } };
     let m = i(_).map((O) => t.getSession.get(O)).find((O) => O && O.ended_at == null);
     if (!m)
       return { status: 404, body: { ok: !1, err: `no live session matching "${_}"` } };
-    let U = c(g.plan_id, { status: "executed", via: `assign:${m.session_id}` });
-    if (!U.body.ok) return U;
-    let D = `[FLEETDECK ASSIGNMENT] Execute this approved plan exactly. Custom instructions: ${typeof E == "string" ? E.trim() : ""}
+    let $ = c(h.plan_id, { status: "executed", via: `assign:${m.session_id}` });
+    if (!$.body.ok) return $;
+    let I = `[FLEETDECK ASSIGNMENT] Execute this approved plan exactly. Custom instructions: ${typeof E == "string" ? E.trim() : ""}
 
 ---
-${g.plan_md ?? ""}`;
-    return s(m.session_id, "orchestrator", D), n(`📚 plan #${g.plan_id} assigned to ${m.callsign ?? m.session_id}`), o(), {
+${h.plan_md ?? ""}`;
+    return s(m.session_id, "orchestrator", I), n(`📚 plan #${h.plan_id} assigned to ${m.callsign ?? m.session_id}`), o(), {
       status: 200,
       body: {
         ok: !0,
-        plan_id: g.plan_id,
+        plan_id: h.plan_id,
         status: "executed",
         session_id: m.session_id,
         callsign: m.callsign ?? null
@@ -11449,9 +11449,9 @@ ${g.plan_md ?? ""}`;
 r(Ww, "createPlans");
 
 
-import zn from "node:fs";
-import Ds from "node:path";
-import { randomUUID as Is, randomBytes as Ck } from "node:crypto";
+import Vn from "node:fs";
+import Ms from "node:path";
+import { randomUUID as Fs, randomBytes as Ok } from "node:crypto";
 
 
 var yd = "waiting on the folder-trust dialog — approve it in the terminal", _d = "no bring-up keystroke sent — pane unreadable; check the terminal";
@@ -11461,11 +11461,518 @@ function Hw(e) {
 r(Hw, "spawnAttentionForNote");
 
 
-function qw(e) {
+import Ak from "node:fs";
+
+
+import Sd from "node:fs";
+import Ck from "node:path";
+var Pk = r((e) => typeof e == "number" && Number.isInteger(e) && e > 0, "isPid");
+function qw(e, { minAgeMs: t = 36e5, now: n = Date.now() } = {}) {
+  if (!e) return 0;
+  let o = 0, s;
+  try {
+    s = Sd.readdirSync(e);
+  } catch {
+    return 0;
+  }
+  for (let i of s) {
+    let a = /^run-(\d+)$/.exec(i);
+    if (!a) continue;
+    let c = Number(a[1]);
+    if (!Pk(c)) continue;
+    let l = Ck.join(e, i);
+    try {
+      if (n - Sd.statSync(l).mtimeMs < t) continue;
+      try {
+        process.kill(c, 0);
+        continue;
+      } catch (f) {
+        if (dt(f) !== "ESRCH") continue;
+      }
+      Sd.unlinkSync(l), o += 1;
+    } catch {
+    }
+  }
+  return o;
+}
+r(qw, "pruneRunNonces");
+
+
+var jw = !0;
+function Gw(e) {
+  let {
+    q: t,
+    updateSession: n,
+    tick: o,
+    onMutate: s,
+    tombstoneCard: i,
+    forgetSpawn: a,
+    tmuxAdapter: c,
+    port: l,
+    home: f,
+    questions: w,
+    adoptSession: h,
+    scopedPaneTarget: _,
+    PRESUME_DEAD_MS: E,
+    PRESUME_DEAD_WORKING_MS: m,
+    RETAIN_OFFLINE_MS: $,
+    RETAIN_LEDGER_MS: F,
+    spawnMaintenance: I,
+    runControlDetached: O
+  } = e;
+  function P(Z, ie) {
+    let D = Math.max(0, (ie - Z.last_seen) / 36e5), S = Number.isInteger(D) ? String(D) : D.toFixed(1).replace(/\.0$/, "");
+    i(Z.session_id, {
+
+      note: `presumed ended (silent ${S}h)`,
+      at: ie,
+      tickMsg: `⌛ ${Z.callsign} presumed ended after ${S}h silent`,
+      forgetModel: !0
+
+    }), n(Z.session_id, { end_reason: "presumed" });
+  }
+  r(P, "presumeDeadSilent");
+  async function x(Z = Date.now()) {
+    let ie = !1, D = [], S = !!c.spawnOverrideCmd?.(), N = [
+      ...t.presumeDeadSessions.all(Z - E),
+      ...t.presumeDeadWorkingSessions.all(Z - m)
+    ];
+    for (let A of N) {
+      let k = t.activeSpawnBySession.get(A.session_id);
+      if (k && !S) {
+        D.push({ s: A, sp: k });
+        continue;
+      }
+      P(A, Z), k && (t.setSpawnStatus.run("pane-dead", k.spawn_id), a(k.spawn_id)), ie = !0;
+    }
+    if (D.length) {
+      let A = await c.listScopedWindows(l);
+      if (A !== null)
+        for (let { s: k, sp: Y } of D) {
+          let V = r(() => {
+            if (t.activeSpawnBySession.get(k.session_id)?.spawn_id !== Y.spawn_id) return !1;
+            let K = t.currentWindowOwner.get(Y.tmux_window);
+            return !K || K.spawn_id === Y.spawn_id;
+          }, "stillOurs");
+          if (!V()) continue;
+          let te = A.find((v) => v.window === Y.tmux_window), C = !1, q = Y.kind === "shell", y = !!Y.setup_cmd && (Y.status === "spawning" || Y.status === "stalled");
+          if (te && !te.pane_dead) {
+            let v = await c.paneCurrentCommand(_(te));
+            C = !!v && !v.dead && (q || y || v.cmd === "claude");
+          }
+          if (C) {
+            if (!V()) continue;
+            n(k.session_id, { last_seen: Z }), ie = !0;
+            continue;
+          }
+          if (te && (te.pane_dead || !q && !y && Cs.test(te.pane_cmd))) {
+            if (!V()) continue;
+            t.setSpawnStatus.run("pane-dead", Y.spawn_id), a(Y.spawn_id), i(k.session_id, {
+
+              note: y ? "pane exited during setup/bring-up — open the terminal for the error" : `pane confirmed dead — resume with claude --resume ${k.session_id}`,
+              at: Z,
+              tickMsg: `💀 ${k.callsign} pane confirmed dead after long silence — window kept for scrollback`,
+              forgetModel: !0
+            }), ie = !0;
+          }
+        }
+    }
+    for (let A of t.allSessions.all())
+      if (!(A.adopt_armed_until == null && A.adopt_armed_skip == null)) {
+        if (A.adopt_armed_until == null || A.adopt_armed_until <= Z) {
+          n(A.session_id, { adopt_armed_until: null, adopt_armed_skip: null }), ie = !0;
+          continue;
+        }
+        if (A.ended_at != null && !vi.has(A.end_reason)) {
+          let k = r(async () => {
+            try {
+              let V = await h(
+                A.session_id,
+                { dangerously_skip_permissions: !!A.adopt_armed_skip },
+                { deferred: !0 }
+              );
+              (!V || V.status >= 400 && V.status !== 409) && o(
+                `✗ move-to-tmux failed for ${A.callsign}: ${V?.body?.reason ?? "unknown"}`.slice(
+                  0,
+                  100
+                )
+              );
+            } catch (V) {
+              o(
+                `✗ move-to-tmux failed for ${A.callsign}: ${V instanceof Error ? V.message : String(V)}`.slice(
+                  0,
+                  100
+                )
+              );
+            }
+          }, "runDeferredAdopt"), Y = I ? I.run(k) : Promise.resolve().then(k);
+          Y && Y.catch(() => {
+          }), ie = !0;
+        }
+      }
+    for (let A of t.archiveCandidates.all(Z - $))
+      t.setArchived.run(Z, A.session_id), ie = !0;
+    t.expireRetainedMail.run(Z, Z - $).changes && (ie = !0), t.goneArchivedSpawns.run().changes && (ie = !0);
+    let d = Z - Math.max(F, Ed);
+    t.pruneTouches.run(d).changes && (ie = !0), qw(f, { now: Z });
+    let T = Z - F;
+    return t.pruneCommands.run(T).changes && (ie = !0), t.pruneConflicts.run(T).changes && (ie = !0), t.pruneSettledMail.run(T).changes && (ie = !0), t.expireStalledClaims.run(Z).changes && (ie = !0), ie && s(), { changed: ie };
+  }
+  r(x, "retentionSweep");
+  async function Q() {
+    let Z = Date.now(), ie = t.archiveCandidates.all(Z + 1).map((y) => y.session_id), D = new Map(t.allSpawns.all().map((y) => [y.tmux_window, y])), S = [...D.values()].filter(
+      (y) => y.tmux_window && ["killed", "pane-dead", "gone"].includes(y.status)
+    ), N = 0, d = new Set();
+    if (S.length) {
+      let y = await c.listScopedWindows(l);
+      if (y === null)
+        return {
+          ok: !1,
+          reason: "tmux window listing unavailable — nothing was cleared; retry Clear"
+        };
+      let v = [];
+      for (let K of y) {
+        let me = D.get(K.window);
+        if (!K.pane_dead || !me || !["killed", "pane-dead", "gone"].includes(me.status)) continue;
+        let ee = await c.killWindowVerified(K.window, {
+          expectWindowId: K.window_id,
+          expect: r(() => {
+            let Ce = t.currentWindowOwner.get(K.window);
+            return !(Ce && (Ce.session_id !== me.session_id || Ce.status !== "pane-dead"));
+          }, "expect")
+        });
+        ee.ok || ee.gone ? N++ : ee.stale ? d.add(K.window) : v.push(`${K.window}: ${ee.error ?? "kill failed"}`);
+      }
+      if (v.length)
+        return {
+          ok: !1,
+          reason: `${v.length} window(s) could not be killed — ${v.join("; ").slice(0, 200)} — nothing was cleared; retry Clear`
+        };
+    }
+    let T = Number(t.archiveAllOffline.run(Z).changes), A = Number(t.expireArchivedMail.run(Z).changes), k = 0;
+    for (let y of ie)
+      k += w.expireAllForSession(y, { includeFreeform: !0 });
+    if (d.size)
+      for (let y of t.sweepableArchivedSpawns.all())
+        y.tmux_window && d.has(y.tmux_window) || t.setSpawnStatus.run("gone", y.spawn_id);
+    else
+      t.goneArchivedSpawns.run();
+    let Y = new Set(t.aliveSessionIds.all().map((y) => y.session_id)), V = 0;
+    for (let y of t.allConflicts.all()) {
+      let v = Lt(y.sessions_json), K = Array.isArray(v) ? v : [];
+      K.length && K.every((me) => Y.has(me)) || (V += Number(t.deleteConflict.run(y.id).changes));
+    }
+    t.deleteDeadTouches.run();
+    let te = w.purgeResolved();
+    t.deleteArchivedMail.run();
+    let C = Number(t.clearTicker.run().changes), q = t.orphanWorktrees.all().map((y) => y.worktree_path).filter((y) => {
+      try {
+        return Ak.existsSync(y);
+      } catch {
+        return !1;
+      }
+    });
+    return o(
+      `⌫ cleared — ${T} card(s), ${V} conflict(s), ${te} answered question(s), the feed`
+    ), s(), {
+      ok: !0,
+      archived: T,
+      mail_expired: A,
+      questions_expired: k,
+      questions_purged: te,
+      conflicts_cleared: V,
+      feed_cleared: C,
+      windows_killed: N,
+      orphan_worktrees: q
+    };
+  }
+  r(Q, "cleanup");
+  function z(Z) {
+    return Be(() => {
+      let ie = Date.now(), D = t.getSession.get(Z);
+      if (!D)
+        return {
+          done: !0,
+          wire: { status: 404, body: { ok: !1, reason: "no such session" } }
+        };
+      if (D.col !== "offline")
+        return {
+          done: !0,
+          wire: { status: 409, body: { ok: !1, reason: `session is ${D.col}, not offline` } }
+        };
+      if (D.archived_at != null)
+        return {
+          done: !0,
+          wire: { status: 409, body: { ok: !1, reason: "already dismissed" } }
+        };
+      let S = t.activeSpawnBySession.get(Z);
+      if (S)
+        return { done: !0, wire: { status: 409, body: { ok: !1, reason: S.status === "stalled" ? "session has a stalled spawn — resolve it first" : `session still owns a ${S.status} spawn — kill it before dismissing` } } };
+      if (!t.setArchived.run(ie, Z).changes)
+        return {
+          done: !0,
+          wire: { status: 409, body: { ok: !1, reason: "already dismissed" } }
+        };
+      let N = Number(t.expireMailForSession.run(ie, Z).changes), d = w.expireAllForSession(Z, { includeFreeform: !0 });
+      t.goneSessionSpawns.run(Z), t.deleteTouchesForSession.run(Z);
+      let T = r(() => t.getSession.get(Z)?.archived_at == null, "alive"), A = new Set(
+        t.spawnsForSession.all(Z).map((y) => y.tmux_window).filter(Boolean)
+      ), k = 0, Y = !1, V = [], te = r((y) => ({
+        status: 409,
+        body: {
+          ok: !1,
+          archived: 1,
+          mail_expired: N,
+          questions_expired: d,
+          windows_killed: k,
+          retry: !0,
+          reason: y,
+          ...Y ? { resurrected: !0 } : {}
+        }
+      }), "incomplete"), C = r(() => (o(
+        `⌫ dismissed ${D.callsign} — card, ${N} mail, ${d} question(s)${k ? `, ${k} window(s)` : ""}`
+      ), s(), {
+        status: 200,
+
+
+
+        body: {
+          ok: !0,
+          archived: 1,
+          mail_expired: N,
+          questions_expired: d,
+          windows_killed: k,
+          ...Y ? { resurrected: !0 } : {}
+        }
+      }), "success");
+      return A.size ? { done: !1, runKill: r(async () => {
+        let y = await c.listScopedWindows(l);
+        if (T())
+          Y = !0;
+        else {
+          if (y === null)
+            return te(
+              "tmux window listing unavailable — card archived, dead window(s) not killed; dismiss again to retry"
+            );
+          for (let v of y) {
+            if (!A.has(v.window) || !v.pane_dead) continue;
+            let K = t.currentWindowOwner.get(v.window);
+            if (K && (K.session_id !== Z || K.status !== "pane-dead")) continue;
+            let me = await c.killWindowVerified(v.window, {
+              expectWindowId: v.window_id,
+              expect: r(() => {
+                let ee = t.currentWindowOwner.get(v.window);
+                return ee && (ee.session_id !== Z || ee.status !== "pane-dead") ? !1 : !T();
+              }, "expect")
+            });
+            if (me.ok || me.gone ? k++ : me.stale || V.push(`${v.window}: ${me.error ?? "kill failed"}`), T()) {
+              Y = !0;
+              break;
+            }
+          }
+          if (V.length)
+            return te(
+              `${V.length} window(s) could not be killed — ${V.join("; ").slice(0, 200)} — card archived; dismiss again to retry`
+            );
+        }
+        return C();
+      }, "runKill") } : { done: !0, wire: C() };
+    }).pipe(
+      an(
+        (ie) => ie.done ? wt(ie.wire) : bt(ie.runKill)
+      )
+    );
+  }
+  r(z, "dismissSessionEffect");
+  function Ee(Z) {
+    return Be(() => {
+      let ie = t.getSession.get(Z);
+      if (!ie)
+        return {
+          done: !0,
+          wire: { status: 404, body: { ok: !1, reason: "no such session" } }
+        };
+      if (ie.archived_at == null)
+        return {
+          done: !0,
+          wire: {
+            status: 409,
+            body: { ok: !1, reason: "session is not dismissed — nothing to retry" }
+          }
+        };
+      let D = new Set(
+        t.spawnsForSession.all(Z).map((N) => N.tmux_window).filter(Boolean)
+      );
+      return D.size ? { done: !1, runKill: r(async () => {
+        let N = await c.listScopedWindows(l);
+        if (N === null)
+          return {
+            status: 409,
+            body: {
+              ok: !1,
+              retry: !0,
+              reason: "tmux window listing unavailable — retry again"
+            }
+          };
+        let d = 0, T = [];
+        for (let A of N) {
+          if (!D.has(A.window) || !A.pane_dead) continue;
+          let k = t.currentWindowOwner.get(A.window);
+          if (k && (k.session_id !== Z || k.status !== "pane-dead")) continue;
+          let Y = await c.killWindowVerified(A.window);
+          Y.ok || Y.gone ? d++ : Y.stale || T.push(`${A.window}: ${Y.error ?? "kill failed"}`);
+        }
+        return T.length ? {
+          status: 409,
+          body: {
+            ok: !1,
+            retry: !0,
+            windows_killed: d,
+            reason: `${T.length} window(s) could not be killed — ${T.join("; ").slice(0, 200)} — retry again`
+          }
+        } : { status: 200, body: { ok: !0, windows_killed: d } };
+      }, "runKill") } : { done: !0, wire: { status: 200, body: { ok: !0, windows_killed: 0 } } };
+    }).pipe(
+      an(
+        (ie) => ie.done ? wt(ie.wire) : bt(ie.runKill)
+      )
+    );
+  }
+  r(Ee, "dismissRetryEffect");
+  async function ye(Z) {
+    let ie = Date.now(), D = t.getSession.get(Z);
+    if (!D) return { status: 404, body: { ok: !1, reason: "no such session" } };
+    if (D.col !== "offline")
+      return { status: 409, body: { ok: !1, reason: `session is ${D.col}, not offline` } };
+    if (D.archived_at != null)
+      return { status: 409, body: { ok: !1, reason: "already dismissed" } };
+    let S = t.activeSpawnBySession.get(Z);
+    if (S)
+      return { status: 409, body: { ok: !1, reason: S.status === "stalled" ? "session has a stalled spawn — resolve it first" : `session still owns a ${S.status} spawn — kill it before dismissing` } };
+    if (!t.setArchived.run(ie, Z).changes)
+      return { status: 409, body: { ok: !1, reason: "already dismissed" } };
+    let N = Number(t.expireMailForSession.run(ie, Z).changes), d = w.expireAllForSession(Z, { includeFreeform: !0 });
+    t.goneSessionSpawns.run(Z), t.deleteTouchesForSession.run(Z);
+    let T = r(() => t.getSession.get(Z)?.archived_at == null, "alive"), A = new Set(
+      t.spawnsForSession.all(Z).map((C) => C.tmux_window).filter(Boolean)
+    ), k = 0, Y = !1, V = [], te = r((C) => ({
+      status: 409,
+      body: {
+        ok: !1,
+        archived: 1,
+        mail_expired: N,
+        questions_expired: d,
+        windows_killed: k,
+        retry: !0,
+        reason: C,
+        ...Y ? { resurrected: !0 } : {}
+      }
+    }), "incomplete");
+    if (A.size) {
+      let C = await c.listScopedWindows(l);
+      if (T())
+        Y = !0;
+      else {
+        if (C === null)
+          return te(
+            "tmux window listing unavailable — card archived, dead window(s) not killed; dismiss again to retry"
+          );
+        for (let q of C) {
+          if (!A.has(q.window) || !q.pane_dead) continue;
+          let y = t.currentWindowOwner.get(q.window);
+          if (y && (y.session_id !== Z || y.status !== "pane-dead")) continue;
+          let v = await c.killWindowVerified(q.window, {
+            expectWindowId: q.window_id,
+            expect: r(() => {
+              let K = t.currentWindowOwner.get(q.window);
+              return K && (K.session_id !== Z || K.status !== "pane-dead") ? !1 : !T();
+            }, "expect")
+          });
+          if (v.ok || v.gone ? k++ : v.stale || V.push(`${q.window}: ${v.error ?? "kill failed"}`), T()) {
+            Y = !0;
+            break;
+          }
+        }
+        if (V.length)
+          return te(
+            `${V.length} window(s) could not be killed — ${V.join("; ").slice(0, 200)} — card archived; dismiss again to retry`
+          );
+      }
+    }
+    return o(
+      `⌫ dismissed ${D.callsign} — card, ${N} mail, ${d} question(s)${k ? `, ${k} window(s)` : ""}`
+    ), s(), {
+      status: 200,
+
+
+
+      body: {
+        ok: !0,
+        archived: 1,
+        mail_expired: N,
+        questions_expired: d,
+        windows_killed: k,
+        ...Y ? { resurrected: !0 } : {}
+      }
+    };
+  }
+  r(ye, "dismissSessionLegacy");
+  async function De(Z) {
+    let ie = t.getSession.get(Z);
+    if (!ie) return { status: 404, body: { ok: !1, reason: "no such session" } };
+    if (ie.archived_at == null)
+      return {
+        status: 409,
+        body: { ok: !1, reason: "session is not dismissed — nothing to retry" }
+      };
+    let D = new Set(
+      t.spawnsForSession.all(Z).map((T) => T.tmux_window).filter(Boolean)
+    );
+    if (!D.size)
+      return { status: 200, body: { ok: !0, windows_killed: 0 } };
+    let S = await c.listScopedWindows(l);
+    if (S === null)
+      return {
+        status: 409,
+        body: { ok: !1, retry: !0, reason: "tmux window listing unavailable — retry again" }
+      };
+    let N = 0, d = [];
+    for (let T of S) {
+      if (!D.has(T.window) || !T.pane_dead) continue;
+      let A = t.currentWindowOwner.get(T.window);
+      if (A && (A.session_id !== Z || A.status !== "pane-dead")) continue;
+      let k = await c.killWindowVerified(T.window);
+      k.ok || k.gone ? N++ : k.stale || d.push(`${T.window}: ${k.error ?? "kill failed"}`);
+    }
+    return d.length ? {
+      status: 409,
+      body: {
+        ok: !1,
+        retry: !0,
+        windows_killed: N,
+        reason: `${d.length} window(s) could not be killed — ${d.join("; ").slice(0, 200)} — retry again`
+      }
+    } : { status: 200, body: { ok: !0, windows_killed: N } };
+  }
+  r(De, "dismissRetryLegacy");
+  function ve(Z) {
+    return jw && O ? O(z(Z)) : ye(Z);
+  }
+  r(ve, "dismissSession");
+  function $e(Z) {
+    return jw && O ? O(Ee(Z)) : De(Z);
+  }
+  return r($e, "dismissRetry"), { retentionSweep: x, cleanup: Q, dismissSession: ve, dismissRetry: $e };
+}
+r(Gw, "createRetention");
+
+
+var Lk = !0;
+function Kw(e) {
   return e.remote_control != null && typeof e.remote_control != "boolean" ? "remote_control must be a boolean" : e.gateway != null && typeof e.gateway != "boolean" ? "gateway must be a boolean" : e.arm_token != null && typeof e.arm_token != "string" ? "arm_token must be a string" : null;
 }
-r(qw, "runtimeOverrideRefusal");
-function Pk(e, t) {
+r(Kw, "runtimeOverrideRefusal");
+function Dk(e, t) {
   let n = e, o = !1, s = r(() => {
     n && (t.releasePlanExecution.run(n.restoreStatus, n.plan_id, n.via), t.tick(
       `📚 plan #${n.plan_id} execution claim released (spawn failed) — back to ${n.restoreStatus}`
@@ -11491,40 +11998,40 @@ function Pk(e, t) {
     }, "settle")
   };
 }
-r(Pk, "makePlanClaimGuard");
-var Ak = [
+r(Dk, "makePlanClaimGuard");
+var Ik = [
   "cmd=$FLEETDECK_SETUP_CMD; unset FLEETDECK_SETUP_CMD",
   `printf '▶ fleetdeck setup: %s\\n' "$cmd"`,
   'sh -c "$cmd"; rc=$?',
   `if [ "$rc" -ne 0 ]; then printf '✗ setup failed (exit %s) — claude not started\\n' "$rc"; exit "$rc"; fi`,
   'exec "$@"'
 ].join(`
-`), jw = 2e3, Ok = /[\x00-\x09\x0b-\x1f\x7f]/, Sd = 2e3, Lk = 18, Gw = 300;
-function vd(e, t = "internal error") {
+`), Vw = 2e3, Nk = /[\x00-\x09\x0b-\x1f\x7f]/, vd = 2e3, Mk = 18, zw = 300;
+function xd(e, t = "internal error") {
   let n = e?.message ?? e ?? "", o = String(n).trim();
   if (!o) return t;
-  let s = xr(o.replace(/\r/g, "")).replace(/\n+/g, " ").trim();
-  return s.length > Gw ? s.slice(0, Gw) : s;
+  let s = Sr(o.replace(/\r/g, "")).replace(/\n+/g, " ").trim();
+  return s.length > zw ? s.slice(0, zw) : s;
 }
-r(vd, "spawnFailureReason");
-function Dk(e, { secrets: t = [] } = {}) {
+r(xd, "spawnFailureReason");
+function Fk(e, { secrets: t = [] } = {}) {
   if (typeof e != "string" || !e) return null;
   let n = e.replace(/\r/g, "").replace(/[\x00-\x09\x0b-\x1f\x7f]/g, "").split(`
 `).map((i) => i.replace(/\s+$/g, ""));
   for (; n.length && !n[0]; ) n.shift();
   for (; n.length && !n[n.length - 1]; ) n.pop();
   if (!n.length) return null;
-  let o = Ja(vr(n.slice(-Lk).join(`
+  let o = Za(_r(n.slice(-Mk).join(`
 `)));
   for (let i of t)
     typeof i == "string" && i && (o = o.split(i).join("[redacted]"));
   let s = Buffer.from(o);
-  if (s.length > Sd)
-    for (o = s.subarray(s.length - Sd).toString("utf8").replace(/^�+/, ""); Buffer.byteLength(o) > Sd; ) o = o.slice(1);
+  if (s.length > vd)
+    for (o = s.subarray(s.length - vd).toString("utf8").replace(/^�+/, ""); Buffer.byteLength(o) > vd; ) o = o.slice(1);
   return o || null;
 }
-r(Dk, "stallDiagnosticExcerpt");
-function Kw(e) {
+r(Fk, "stallDiagnosticExcerpt");
+function Xw(e) {
   let {
     q: t,
     updateSession: n,
@@ -11536,241 +12043,243 @@ function Kw(e) {
     tombstoneCard: l,
     findScopedWindow: f,
     scopedPaneTarget: w,
-    tmuxAdapter: g,
+    tmuxAdapter: h,
     port: _,
     home: E,
     NUDGE_MS: m,
-    SPAWN_REGISTER_MS: U,
-    SETUP_REGISTER_MS: M,
-    RC_HARVEST_MS: D,
+    SPAWN_REGISTER_MS: $,
+    SETUP_REGISTER_MS: F,
+    RC_HARVEST_MS: I,
     ADOPT_ARM_MS: O,
 
 
     succeedSession: P,
-    CLEAR_SUCCESSION_MS: v,
+    CLEAR_SUCCESSION_MS: x,
     hasLivePane: Q,
-    validateBranch: G,
+    validateBranch: z,
     resolveTarget: Ee,
     probeRepoAccess: ye,
-    cloneRepo: Ie,
-    materializeBranch: Se,
+    cloneRepo: De,
+    materializeBranch: ve,
     touchRepo: $e,
     claimTarget: Z,
-    relabelTarget: ae,
-    reserveCloneSlot: L,
+    relabelTarget: ie,
+    reserveCloneSlot: D,
     persistRepoTransport: S,
-    persistRepoDefaultOrg: I,
+    persistRepoDefaultOrg: N,
     validateRepoDefaultOrg: d,
     resolveGateway: T,
     resolveGatewayEnv: A,
-    acquireWorktreePathLock: b,
-    claimWorktreeCustody: X
+    acquireWorktreePathLock: k,
+    claimWorktreeCustody: Y,
 
-  } = e, H = new Set(), ee = new Set(), C = "open", W = null;
-  function y(h) {
-    if (C !== "open") return null;
-    let j;
+    runControlDetached: V
+
+  } = e, te = new Set(), C = new Set(), q = "open", y = null;
+  function v(g) {
+    if (q !== "open") return null;
+    let G;
     try {
-      j = Promise.resolve(h());
-    } catch (le) {
-      j = Promise.reject(le);
+      G = Promise.resolve(g());
+    } catch (ae) {
+      G = Promise.reject(ae);
     }
-    ee.add(j);
-    let B = r(() => {
-      ee.delete(j);
+    C.add(G);
+    let L = r(() => {
+      C.delete(G);
     }, "forget");
-    return j.then(B, B), j;
+    return G.then(L, L), G;
   }
-  r(y, "runMaintenance");
-  function x(h, j, B) {
-    if (C !== "open") return null;
-    let le, _e;
-    return new Promise((xe, pe) => {
-      let We = !1;
-      _e = r(() => {
-        if (!We) {
-          We = !0;
+  r(v, "runMaintenance");
+  function K(g, G, L) {
+    if (q !== "open") return null;
+    let ae, fe;
+    return new Promise((be, ge) => {
+      let Ae = !1;
+      fe = r(() => {
+        if (!Ae) {
+          Ae = !0;
           try {
-            xe(B());
-          } catch (Ae) {
-            pe(Ae);
+            be(L());
+          } catch (Oe) {
+            ge(Oe);
           }
         }
       }, "settleCancelled");
-      let be = setTimeout(
+      let ke = setTimeout(
         () => {
-          if (H.delete(le), We) return;
-          if (C !== "open") {
-            _e();
+          if (te.delete(ae), Ae) return;
+          if (q !== "open") {
+            fe();
             return;
           }
-          let Ae = y(j);
-          if (!Ae) {
-            _e();
+          let Oe = v(G);
+          if (!Oe) {
+            fe();
             return;
           }
-          Ae.then(
-            (Je) => {
-              We || (We = !0, xe(Je));
+          Oe.then(
+            (U) => {
+              Ae || (Ae = !0, be(U));
             },
-            (Je) => {
-              We || (We = !0, pe(Je));
+            (U) => {
+              Ae || (Ae = !0, ge(U));
             }
           );
         },
-        Math.max(0, h)
+        Math.max(0, g)
       );
-      be.unref(), le = {
-        timer: be,
+      ke.unref(), ae = {
+        timer: ke,
         cancel: r(() => {
-          clearTimeout(be), _e();
+          clearTimeout(ke), fe();
         }, "cancel")
-      }, H.add(le);
+      }, te.add(ae);
     });
   }
-  r(x, "scheduleMaintenance");
-  function q() {
-    if (C !== "open") return !1;
-    C = "quiescing";
-    for (let h of H) h.cancel();
-    return H.clear(), !0;
+  r(K, "scheduleMaintenance");
+  function me() {
+    if (q !== "open") return !1;
+    q = "quiescing";
+    for (let g of te) g.cancel();
+    return te.clear(), !0;
   }
-  r(q, "quiesceMaintenance");
-  function fe() {
-    return W || (q(), W = (async () => {
-      for (; ee.size > 0; )
-        await Promise.allSettled([...ee]);
-      C = "closed";
-    })(), W);
+  r(me, "quiesceMaintenance");
+  function ee() {
+    return y || (me(), y = (async () => {
+      for (; C.size > 0; )
+        await Promise.allSettled([...C]);
+      q = "closed";
+    })(), y);
   }
-  r(fe, "closeMaintenance");
-  let V = {
-    isOpen: r(() => C === "open", "isOpen"),
-    run: y,
-    schedule: x
-  }, Fe = 6e4, De = new Map();
-  function N() {
-    let h = Ck(24).toString("base64url");
-    if (De.set(h, Date.now() + Fe), De.size > 128) {
-      let j = Date.now();
-      for (let [B, le] of De)
-        le <= j && De.delete(B);
+  r(ee, "closeMaintenance");
+  let Ce = {
+    isOpen: r(() => q === "open", "isOpen"),
+    run: v,
+    schedule: K
+  }, Fe = 6e4, M = new Map();
+  function J() {
+    let g = Ok(24).toString("base64url");
+    if (M.set(g, Date.now() + Fe), M.size > 128) {
+      let G = Date.now();
+      for (let [L, ae] of M)
+        ae <= G && M.delete(L);
     }
-    return h;
+    return g;
   }
-  r(N, "armUnsupervised");
-  function J(h) {
-    if (typeof h != "string" || !De.has(h)) return !1;
-    let j = De.get(h);
-    return De.delete(h), (j ?? 0) > Date.now();
+  r(J, "armUnsupervised");
+  function se(g) {
+    if (typeof g != "string" || !M.has(g)) return !1;
+    let G = M.get(g);
+    return M.delete(g), (G ?? 0) > Date.now();
   }
-  r(J, "consumeArm");
-  function se(h, j) {
-    return !h || J(j.arm_token) ? null : "unsupervised spawns require a fresh arm token from POST /api/spawn/arm-unsupervised — the API half of the board's two-step confirmation";
+  r(se, "consumeArm");
+  function de(g, G) {
+    return !g || se(G.arm_token) ? null : "unsupervised spawns require a fresh arm token from POST /api/spawn/arm-unsupervised — the API half of the board's two-step confirmation";
   }
-  r(se, "unsupervisedGate");
-  function de(h, j = "request") {
-    let B = T();
-    if (!(h === !0 || h == null && B.default)) return { use: !1, env: null };
-    if (!B.ready) {
-      let _e = B.base_url ? "gateway_token is not set" : "gateway_base_url is not set";
-      return { use: !1, env: null, error: j === "inherited" ? `this session was spawned through the gateway, but the gateway is no longer configured — ${_e}. Restore it, or revive with {"gateway":false} to resume this conversation against Anthropic instead` : h === !0 ? `gateway:true was requested but the gateway is not configured — ${_e}` : `gateway_default is on but the gateway is not configured — ${_e}` };
+  r(de, "unsupervisedGate");
+  function ne(g, G = "request") {
+    let L = T();
+    if (!(g === !0 || g == null && L.default)) return { use: !1, env: null };
+    if (!L.ready) {
+      let fe = L.base_url ? "gateway_token is not set" : "gateway_base_url is not set";
+      return { use: !1, env: null, error: G === "inherited" ? `this session was spawned through the gateway, but the gateway is no longer configured — ${fe}. Restore it, or revive with {"gateway":false} to resume this conversation against Anthropic instead` : g === !0 ? `gateway:true was requested but the gateway is not configured — ${fe}` : `gateway_default is on but the gateway is not configured — ${fe}` };
     }
     return { use: !0, env: A() };
   }
-  r(de, "gatewayDecision");
-  function ne(h, j) {
-    return !h || !j ? null : "remote control is unavailable on a gateway-routed session — Claude Code disables it whenever ANTHROPIC_BASE_URL points at a non-Anthropic host. Spawn with gateway:false to use remote control, or remote_control:false to use the gateway.";
+  r(ne, "gatewayDecision");
+  function re(g, G) {
+    return !g || !G ? null : "remote control is unavailable on a gateway-routed session — Claude Code disables it whenever ANTHROPIC_BASE_URL points at a non-Anthropic host. Spawn with gateway:false to use remote control, or remote_control:false to use the gateway.";
   }
-  r(ne, "gatewayRemoteConflict");
-  function te() {
-    let h = { active: t.countActiveSpawns.get()?.n ?? 0 };
-    return (process.env.FLEETDECK_SPAWN ?? "").toLowerCase() === "off" ? { available: !1, reason: "disabled (FLEETDECK_SPAWN=off)", ...h } : g.spawnOverrideCmd?.() ? { available: !0, reason: "test-override", ...h } : g.hasTmux() ? { available: !0, ...h } : { available: !1, reason: g.tmuxCapability?.().reason ?? "tmux 3.4+ unavailable", ...h };
+  r(re, "gatewayRemoteConflict");
+  function Ie() {
+    let g = { active: t.countActiveSpawns.get()?.n ?? 0 };
+    return (process.env.FLEETDECK_SPAWN ?? "").toLowerCase() === "off" ? { available: !1, reason: "disabled (FLEETDECK_SPAWN=off)", ...g } : h.spawnOverrideCmd?.() ? { available: !0, reason: "test-override", ...g } : h.hasTmux() ? { available: !0, ...g } : { available: !1, reason: h.tmuxCapability?.().reason ?? "tmux 3.4+ unavailable", ...g };
   }
-  r(te, "spawnCapability");
-  function Ne(h, j, B, le = null) {
-    let _e = !le || le.deriveRepo === !0 ? Tn(j) : {}, K = {
-      repo_id: le?.repo_id ?? _e.repo_id ?? null,
-      repo_name: le?.repo_name ?? _e.repo_name ?? null,
-      worktree: le?.worktree ?? _e.worktree ?? null
-    }, xe = le?.branch ?? (j ? Dn(j, { fresh: !0 }) : null), pe = jr(xe), We = a(h, pe), be = Date.now(), Ae = le?.col ?? "queued", Je = le?.note ?? "spawning…", Le = le?.source ?? "spawned";
+  r(Ie, "spawnCapability");
+  function qe(g, G, L, ae = null) {
+    let fe = !ae || ae.deriveRepo === !0 ? kn(G) : {}, j = {
+      repo_id: ae?.repo_id ?? fe.repo_id ?? null,
+      repo_name: ae?.repo_name ?? fe.repo_name ?? null,
+      worktree: ae?.worktree ?? fe.worktree ?? null
+    }, be = ae?.branch ?? (G ? An(G, { fresh: !0 }) : null), ge = qr(be), Ae = a(g, ge), ke = Date.now(), Oe = ae?.col ?? "queued", U = ae?.note ?? "spawning…", W = ae?.source ?? "spawned";
     t.insertSpawnedSession.run(
-      h,
-      We,
-      j,
-      K.repo_id ?? null,
-      K.repo_name ?? null,
-      xe ?? null,
-      K.worktree ?? null,
+      g,
       Ae,
-      Je,
-      B ? B.slice(0, 80) : null,
-      be,
-      be,
-      Le
-    ), pe && n(h, { ticket: pe, ticket_source: "branch" });
-    let Ce = t.getSession.get(h);
-    if (!Ce) throw new Error("spawned session vanished immediately after insert");
-    return Ce;
+      G,
+      j.repo_id ?? null,
+      j.repo_name ?? null,
+      be ?? null,
+      j.worktree ?? null,
+      Oe,
+      U,
+      L ? L.slice(0, 80) : null,
+      ke,
+      ke,
+      W
+    ), ge && n(g, { ticket: ge, ticket_source: "branch" });
+    let H = t.getSession.get(g);
+    if (!H) throw new Error("spawned session vanished immediately after insert");
+    return H;
   }
-  r(Ne, "createSpawnedCard");
-  function je(h, j, B) {
-    s(h, "SpawnFailed", null, B.slice(0, 2e3)), l(h, {
-      note: `spawn failed: ${B}`.slice(0, 200),
-      tickMsg: `✗ spawn failed for ${j}: ${B.slice(0, 120)}`,
+  r(qe, "createSpawnedCard");
+  function Pe(g, G, L) {
+    s(g, "SpawnFailed", null, L.slice(0, 2e3)), l(g, {
+      note: `spawn failed: ${L}`.slice(0, 200),
+      tickMsg: `✗ spawn failed for ${G}: ${L.slice(0, 120)}`,
       forgetModel: !0,
       mutate: !0
     });
   }
-  r(je, "spawnFailed");
-  let Te = /do you trust the files in this folder|trust this folder|trust the files|trust this workspace|quick safety check|new mcp server|mcp server.{0,40}(approve|allow|trust)|use this and all future mcp servers/i, ue = new Set();
-  function k(h, j, B) {
-    let le = r(async () => {
+  r(Pe, "spawnFailed");
+  let pe = /do you trust the files in this folder|trust this folder|trust the files|trust this workspace|quick safety check|new mcp server|mcp server.{0,40}(approve|allow|trust)|use this and all future mcp servers/i, R = new Set();
+  function X(g, G, L) {
+    let ae = r(async () => {
       try {
-        if (ue.has(h)) return;
-        let K = t.getSpawn.get(h);
-        if (K?.status !== "spawning") return;
-        let xe = await f(j);
-        if (xe === null || !xe || xe.pane_dead) return;
-        ue.add(h);
-        let pe = null, We = w(xe);
+        if (R.has(g)) return;
+        let j = t.getSpawn.get(g);
+        if (j?.status !== "spawning") return;
+        let be = await f(G);
+        if (be === null || !be || be.pane_dead) return;
+        R.add(g);
+        let ge = null, Ae = w(be);
         try {
-          pe = await g.capturePane(We);
+          ge = await h.capturePane(Ae);
         } catch {
         }
-        if (typeof pe != "string" || pe.trim() === "") {
-          s(K.session_id, "SpawnNudge", null, "pane unreadable — bring-up Enter held"), n(K.session_id, {
+        if (typeof ge != "string" || ge.trim() === "") {
+          s(j.session_id, "SpawnNudge", null, "pane unreadable — bring-up Enter held"), n(j.session_id, {
             note: _d
-          }), o(`🔒 ${B} needs a look — no bring-up keystroke sent`), i();
+          }), o(`🔒 ${L} needs a look — no bring-up keystroke sent`), i();
           return;
         }
-        let be = pe.replace(/\s+/g, " ");
-        if (Te.test(be)) {
-          s(K.session_id, "SpawnNudge", null, "trust/MCP dialog held for human approval"), n(K.session_id, {
+        let ke = ge.replace(/\s+/g, " ");
+        if (pe.test(ke)) {
+          s(j.session_id, "SpawnNudge", null, "trust/MCP dialog held for human approval"), n(j.session_id, {
             note: yd
-          }), o(`🔒 ${B} waits on a trust dialog — approve it in the terminal`), i();
+          }), o(`🔒 ${L} waits on a trust dialog — approve it in the terminal`), i();
           return;
         }
-        await g.sendBringupEnter(We), s(K.session_id, "SpawnNudge", null, "bring-up Enter sent"), o(`⏎ nudged ${B} through bring-up`), i();
+        await h.sendBringupEnter(Ae), s(j.session_id, "SpawnNudge", null, "bring-up Enter sent"), o(`⏎ nudged ${L} through bring-up`), i();
       } catch {
       }
-    }, "nudge"), _e = V.schedule(m, le, () => {
+    }, "nudge"), fe = Ce.schedule(m, ae, () => {
     });
-    _e && _e.catch(() => {
+    fe && fe.catch(() => {
     });
   }
-  r(k, "scheduleNudge");
-  let z = /https:\/\/claude\.ai\/\S+/, F = new Map(), he = new Set(), ce = new Map(), Me = new Map(), dt = new Map();
-  function ft(h) {
-    ue.delete(h), F.delete(h), dt.delete(h);
+  r(X, "scheduleNudge");
+  let B = /https:\/\/claude\.ai\/\S+/, xe = new Map(), le = new Set(), Le = new Map(), ft = new Map(), Et = new Map();
+  function We(g) {
+    R.delete(g), xe.delete(g), Et.delete(g);
   }
-  r(ft, "forgetSpawn");
-  function et(h) {
-    if (!t.setSpawnResurrected.run(h.spawn_id).changes) return !1;
-    let j = h.kind === "shell";
-    h.fail_detail && t.setSpawnFailDetail.run(null, h.spawn_id);
-    let B = t.getSession.get(h.session_id);
-    return n(h.session_id, {
+  r(We, "forgetSpawn");
+  function pt(g) {
+    if (!t.setSpawnResurrected.run(g.spawn_id).changes) return !1;
+    let G = g.kind === "shell";
+    g.fail_detail && t.setSpawnFailDetail.run(null, g.spawn_id);
+    let L = t.getSession.get(g.session_id);
+    return n(g.session_id, {
       col: "idle",
       ended_at: null,
       archived_at: null,
@@ -11782,163 +12291,163 @@ function Kw(e) {
 
       notification_type: null,
       last_seen: Date.now(),
-      note: j ? "shell" : "pane is a live claude — restored to the board"
-    }), ft(h.spawn_id), o(`✨ ${B?.callsign ?? h.callsign} restored — its pane was live all along`), c(h.session_id), i(), !0;
+      note: G ? "shell" : "pane is a live claude — restored to the board"
+    }), We(g.spawn_id), o(`✨ ${L?.callsign ?? g.callsign} restored — its pane was live all along`), c(g.session_id), i(), !0;
   }
-  r(et, "resurrectSpawn");
-  async function gt(h) {
-    let j = t.getSpawn.get(h);
-    if (!j) return { url: null };
-    let B = await f(j.tmux_window);
-    if (!B || B.pane_dead) return { url: null };
-    let le = null;
+  r(pt, "resurrectSpawn");
+  async function Ve(g) {
+    let G = t.getSpawn.get(g);
+    if (!G) return { url: null };
+    let L = await f(G.tmux_window);
+    if (!L || L.pane_dead) return { url: null };
+    let ae = null;
     try {
-      le = await g.capturePane(w(B));
+      ae = await h.capturePane(w(L));
     } catch {
     }
-    let _e = typeof le == "string" ? z.exec(le)?.[0]?.replace(/[)\]}"'`.,;:]+$/, "") ?? null : null;
+    let fe = typeof ae == "string" ? B.exec(ae)?.[0]?.replace(/[)\]}"'`.,;:]+$/, "") ?? null : null;
     try {
-      t.setSpawnRemote.run(_e, h);
-      let K = t.getSession.get(j.session_id);
+      t.setSpawnRemote.run(fe, g);
+      let j = t.getSession.get(G.session_id);
       o(
-        `📱 ${K?.callsign ?? j.callsign} remote control enabled${_e ? "" : " (URL not found)"}`
+        `📱 ${j?.callsign ?? G.callsign} remote control enabled${fe ? "" : " (URL not found)"}`
       ), i();
-    } catch (K) {
-      console.error("fleetd remote harvest persist error:", K);
+    } catch (j) {
+      console.error("fleetd remote harvest persist error:", j);
     }
-    return { url: _e };
+    return { url: fe };
   }
-  r(gt, "harvestRemote");
-  function Ve(h) {
-    return D === 0 ? V.run(() => gt(h))?.catch(() => ({ url: null })) ?? Promise.resolve({ url: null }) : V.schedule(
-      D,
-      () => gt(h).catch(() => ({ url: null })),
+  r(Ve, "harvestRemote");
+  function _t(g) {
+    return I === 0 ? Ce.run(() => Ve(g))?.catch(() => ({ url: null })) ?? Promise.resolve({ url: null }) : Ce.schedule(
+      I,
+      () => Ve(g).catch(() => ({ url: null })),
       () => ({ url: null })
     ) ?? Promise.resolve({ url: null });
   }
-  r(Ve, "delayedRemoteHarvest");
-  function Rt(h) {
-    if (F.has(h)) return F.get(h);
-    let j = Ve(h);
-    return F.set(h, j), j;
+  r(_t, "delayedRemoteHarvest");
+  function cn(g) {
+    if (xe.has(g)) return xe.get(g);
+    let G = _t(g);
+    return xe.set(g, G), G;
   }
-  r(Rt, "scheduleRegistrationRemoteHarvest");
-  async function Lt({
-    spawn_id: h,
-    session_id: j,
-    callsign: B,
-    cwd: le,
-    worktree_path: _e,
-    tmux_window: K,
-    reason: xe,
-    created: pe = { clone: !1, worktree: !!_e },
-    cancelled: We = !1
+  r(cn, "scheduleRegistrationRemoteHarvest");
+  async function zt({
+    spawn_id: g,
+    session_id: G,
+    callsign: L,
+    cwd: ae,
+    worktree_path: fe,
+    tmux_window: j,
+    reason: be,
+    created: ge = { clone: !1, worktree: !!fe },
+    cancelled: Ae = !1
   }) {
-    if (K) {
-      let be;
+    if (j) {
+      let ke;
       try {
-        be = await g.killWindowVerified(K);
-      } catch (Ae) {
-        be = { ok: !1, error: Ze(Ae) };
+        ke = await h.killWindowVerified(j);
+      } catch (Oe) {
+        ke = { ok: !1, error: Ze(Oe) };
       }
-      if (!be.ok && !be.gone) {
-        let Ae = be.error ?? "tmux pane cleanup could not be verified";
-        return t.setSpawnStatus.run("stalled", h), je(j, B, `${xe}; cleanup unresolved: ${Ae}`), { resolved: !1, error: Ae };
+      if (!ke.ok && !ke.gone) {
+        let Oe = ke.error ?? "tmux pane cleanup could not be verified";
+        return t.setSpawnStatus.run("stalled", g), Pe(G, L, `${be}; cleanup unresolved: ${Oe}`), { resolved: !1, error: Oe };
       }
     }
-    if (_e && pe.worktree)
+    if (fe && ge.worktree)
       try {
         if (!(await Ke(
           "git",
-          ["-C", le, "worktree", "remove", "--force", _e],
+          ["-C", ae, "worktree", "remove", "--force", fe],
           { timeout: 3e4 }
         )).ok)
           try {
-            zn.rmSync(_e, { recursive: !0, force: !0 });
+            Vn.rmSync(fe, { recursive: !0, force: !0 });
           } catch {
           }
-        await Ke("git", ["-C", le, "worktree", "prune"], { timeout: 3e4 });
+        await Ke("git", ["-C", ae, "worktree", "prune"], { timeout: 3e4 });
       } catch {
       }
-    if (le && pe.clone)
+    if (ae && ge.clone)
       try {
-        zn.rmSync(le, { recursive: !0, force: !0 });
+        Vn.rmSync(ae, { recursive: !0, force: !0 });
       } catch {
       }
-    return t.setSpawnStatus.run("gone", h), ft(h), We ? (s(j, "SpawnCancelled", null, "cancelled during repository provisioning"), l(j, {
+    return t.setSpawnStatus.run("gone", g), We(g), Ae ? (s(G, "SpawnCancelled", null, "cancelled during repository provisioning"), l(G, {
       note: "spawn cancelled",
-      tickMsg: `○ cancelled repository provisioning for ${B}`,
+      tickMsg: `○ cancelled repository provisioning for ${L}`,
       forgetModel: !0,
       mutate: !0
-    })) : je(j, B, xe), { resolved: !0 };
+    })) : Pe(G, L, be), { resolved: !0 };
   }
-  r(Lt, "spawnCompensate");
-  async function Cn({
-    spawn_id: h,
-    session_id: j,
-    callsign: B,
-    tmux_session: le,
-    tmux_window: _e,
-    requestedCwd: K,
-    runCwd: xe,
-    cleanupRoot: pe,
-    worktree_path: We,
-    body: be,
-    skipPermissions: Ae,
-    gatewayEnv: Je = null,
-    created: Le = { clone: !1, worktree: !!We },
-    signal: Ce
+  r(zt, "spawnCompensate");
+  async function vn({
+    spawn_id: g,
+    session_id: G,
+    callsign: L,
+    tmux_session: ae,
+    tmux_window: fe,
+    requestedCwd: j,
+    runCwd: be,
+    cleanupRoot: ge,
+    worktree_path: Ae,
+    body: ke,
+    skipPermissions: Oe,
+    gatewayEnv: U = null,
+    created: W = { clone: !1, worktree: !!Ae },
+    signal: H
   }) {
-    if (Ce?.aborted) throw new Error("spawn cancelled");
-    let $ = be.kind ?? "claude", Y = be.setup_cmd ?? null, re = {
-      ...Je ?? {},
-      ...Y ? { FLEETDECK_SETUP_CMD: Y } : {}
-    }, ve = Object.keys(re).length ? re : null, ke = ["claude", "--session-id", j];
-    be.model && ke.push("--model", be.model), be.permission_mode && ke.push("--permission-mode", be.permission_mode), be.dangerously_skip_permissions === !0 && ke.push("--dangerously-skip-permissions"), be.remote_control === !0 && ke.push("--remote-control", B), be.prompt && ke.push("--", be.prompt);
-    let Ge = (process.env.SHELL ?? "").trim() || (zn.existsSync("/bin/bash") ? "bash" : "sh"), St = $ === "shell" ? [...bs(_, E), Ge] : Y ? [
-      ...bs(_, E, {
-        keep: Object.keys(re),
-        boardSession: j
+    if (H?.aborted) throw new Error("spawn cancelled");
+    let ue = ke.kind ?? "claude", _e = ke.setup_cmd ?? null, Me = {
+      ...U ?? {},
+      ..._e ? { FLEETDECK_SETUP_CMD: _e } : {}
+    }, rt = Object.keys(Me).length ? Me : null, Ye = ["claude", "--session-id", G];
+    ke.model && Ye.push("--model", ke.model), ke.permission_mode && Ye.push("--permission-mode", ke.permission_mode), ke.dangerously_skip_permissions === !0 && Ye.push("--dangerously-skip-permissions"), ke.remote_control === !0 && Ye.push("--remote-control", L), ke.prompt && Ye.push("--", ke.prompt);
+    let Ut = (process.env.SHELL ?? "").trim() || (Vn.existsSync("/bin/bash") ? "bash" : "sh"), Yt = ue === "shell" ? [...Ts(_, E), Ut] : _e ? [
+      ...Ts(_, E, {
+        keep: Object.keys(Me),
+        boardSession: G
       }),
       "sh",
       "-c",
-      Ak,
+      Ik,
       "fleetdeck-setup",
-      ...ke
+      ...Ye
     ] : [
-      ...bs(_, E, {
-        keep: Je ? Object.keys(Je) : [],
-        boardSession: j
+      ...Ts(_, E, {
+        keep: U ? Object.keys(U) : [],
+        boardSession: G
       }),
-      ...ke
-    ], ht = r((Tt) => Lt({
-      spawn_id: h,
-      session_id: j,
-      callsign: B,
-      cwd: pe,
-      worktree_path: We,
-      tmux_window: _e,
-      reason: Tt,
-      created: Le
-    }), "compensate"), Dt = g.spawnOverrideCmd?.();
-    if (Dt) {
-      let Tt = {
-        spawn_id: h,
-        session_id: j,
-        callsign: B,
+      ...Ye
+    ], st = r((sn) => zt({
+      spawn_id: g,
+      session_id: G,
+      callsign: L,
+      cwd: ge,
+      worktree_path: Ae,
+      tmux_window: fe,
+      reason: sn,
+      created: W
+    }), "compensate"), dn = h.spawnOverrideCmd?.();
+    if (dn) {
+      let sn = {
+        spawn_id: g,
+        session_id: G,
+        callsign: L,
         port: _,
-        cwd: xe,
-        requested_cwd: K,
-        prompt: be.prompt ?? null,
-        model: be.model ?? null,
-        permission_mode: be.permission_mode ?? null,
-        worktree_path: We,
-        kind: $,
-        setup_cmd: Y,
-        dangerously_skip_permissions: be.dangerously_skip_permissions === !0,
-        skip_permissions: Ae,
-        remote_control: be.remote_control === !0,
-        gateway: !!Je,
+        cwd: be,
+        requested_cwd: j,
+        prompt: ke.prompt ?? null,
+        model: ke.model ?? null,
+        permission_mode: ke.permission_mode ?? null,
+        worktree_path: Ae,
+        kind: ue,
+        setup_cmd: _e,
+        dangerously_skip_permissions: ke.dangerously_skip_permissions === !0,
+        skip_permissions: Oe,
+        remote_control: ke.remote_control === !0,
+        gateway: !!U,
 
 
 
@@ -11947,53 +12456,53 @@ function Kw(e) {
 
 
 
-        gateway_env: Je,
-        env: ve,
-        tmux: { session: le, window: _e },
-        argv: St
+        gateway_env: U,
+        env: rt,
+        tmux: { session: ae, window: fe },
+        argv: Yt
       };
-      g.launchOverride(Dt, Tt, (at) => {
-        let qe = V.run(() => ht(`spawn override: ${Ze(at)}`));
-        qe && qe.catch(() => {
+      h.launchOverride(dn, sn, (Dt) => {
+        let Ge = Ce.run(() => st(`spawn override: ${Ze(Dt)}`));
+        Ge && Ge.catch(() => {
         });
       });
     } else
       try {
-        if (await g.ensureSession(_), Ce?.aborted) throw new Error("spawn cancelled");
-        if (await g.newWindow({ port: _, callsign: B, cwd: xe, argv: St, env: ve }), Ce?.aborted) throw new Error("spawn cancelled");
-      } catch (Tt) {
-        if (Ce?.aborted) throw Tt;
-        let at = await ht(Ze(Tt)), qe = at.resolved ? "" : `; cleanup unresolved: ${at.error}`;
+        if (await h.ensureSession(_), H?.aborted) throw new Error("spawn cancelled");
+        if (await h.newWindow({ port: _, callsign: L, cwd: be, argv: Yt, env: rt }), H?.aborted) throw new Error("spawn cancelled");
+      } catch (sn) {
+        if (H?.aborted) throw sn;
+        let Dt = await st(Ze(sn)), Ge = Dt.resolved ? "" : `; cleanup unresolved: ${Dt.error}`;
         return {
           status: 500,
-          body: { ok: !1, reason: `tmux spawn failed: ${Ze(Tt)}${qe}` }
+          body: { ok: !1, reason: `tmux spawn failed: ${Ze(sn)}${Ge}` }
         };
       }
-    return t.setSpawnStatus.run($ === "shell" ? "live" : "spawning", h), n(
-      j,
-      $ === "shell" ? { col: "idle", note: "shell" } : { note: "spawning…" }
+    return t.setSpawnStatus.run(ue === "shell" ? "live" : "spawning", g), n(
+      G,
+      ue === "shell" ? { col: "idle", note: "shell" } : { note: "spawning…" }
     ), o(
-      `${$ === "shell" ? "⌨" : "🚀"} spawned ${B} — tmux window ${_e}${Ae ? " (unsupervised)" : ""}${Je ? " (gateway)" : ""}`
-    ), $ !== "shell" && k(h, _e, B), i(), {
+      `${ue === "shell" ? "⌨" : "🚀"} spawned ${L} — tmux window ${fe}${Oe ? " (unsupervised)" : ""}${U ? " (gateway)" : ""}`
+    ), ue !== "shell" && X(g, fe, L), i(), {
       status: 200,
       body: {
         ok: !0,
-        spawn_id: h,
-        session_id: j,
-        callsign: B,
-        tmux: { session: le, window: _e }
+        spawn_id: g,
+        session_id: G,
+        callsign: L,
+        tmux: { session: ae, window: fe }
       }
     };
   }
-  r(Cn, "launchPane");
-  async function Bn(h) {
-    let j = te();
-    if (!j.available)
-      return { status: 400, body: { ok: !1, reason: `spawning unavailable: ${j.reason}` } };
-    let B = h.kind ?? "claude";
-    if (B !== "claude" && B !== "shell")
+  r(vn, "launchPane");
+  async function Go(g) {
+    let G = Ie();
+    if (!G.available)
+      return { status: 400, body: { ok: !1, reason: `spawning unavailable: ${G.reason}` } };
+    let L = g.kind ?? "claude";
+    if (L !== "claude" && L !== "shell")
       return { status: 400, body: { ok: !1, reason: "kind must be 'claude' or 'shell'" } };
-    for (let Ce of [
+    for (let H of [
       "cwd",
       "repo",
       "branch",
@@ -12005,54 +12514,54 @@ function Kw(e) {
       "repo_transport",
       "repo_org"
     ])
-      if (h[Ce] != null && typeof h[Ce] != "string")
-        return { status: 400, body: { ok: !1, reason: `${Ce} must be a string` } };
-    if (h.repo_host != null) {
-      if (h.repo_host !== "github" && h.repo_host !== "gitlab")
+      if (g[H] != null && typeof g[H] != "string")
+        return { status: 400, body: { ok: !1, reason: `${H} must be a string` } };
+    if (g.repo_host != null) {
+      if (g.repo_host !== "github" && g.repo_host !== "gitlab")
         return { status: 400, body: { ok: !1, reason: "repo_host must be github or gitlab" } };
-      if (h.repo == null)
+      if (g.repo == null)
         return { status: 400, body: { ok: !1, reason: "repo_host requires repo" } };
     }
-    if (h.repo_transport != null) {
-      if (h.repo_transport !== "ssh" && h.repo_transport !== "https")
+    if (g.repo_transport != null) {
+      if (g.repo_transport !== "ssh" && g.repo_transport !== "https")
         return { status: 400, body: { ok: !1, reason: "repo_transport must be ssh or https" } };
-      if (h.repo == null)
+      if (g.repo == null)
         return { status: 400, body: { ok: !1, reason: "repo_transport requires repo" } };
     }
-    if (h.repo_org != null) {
-      if (h.repo == null)
+    if (g.repo_org != null) {
+      if (g.repo == null)
         return { status: 400, body: { ok: !1, reason: "repo_org requires repo" } };
       try {
-        d(h.repo_org);
-      } catch (Ce) {
+        d(g.repo_org);
+      } catch (H) {
         return {
-          status: Rn(Ce) ?? 400,
-          body: { ok: !1, reason: Ze(Ce) }
+          status: bn(H) ?? 400,
+          body: { ok: !1, reason: Ze(H) }
         };
       }
     }
-    if (h.worktree != null && typeof h.worktree != "boolean")
+    if (g.worktree != null && typeof g.worktree != "boolean")
       return { status: 400, body: { ok: !1, reason: "worktree must be a boolean" } };
-    if (h.dangerously_skip_permissions != null && typeof h.dangerously_skip_permissions != "boolean")
+    if (g.dangerously_skip_permissions != null && typeof g.dangerously_skip_permissions != "boolean")
       return {
         status: 400,
         body: { ok: !1, reason: "dangerously_skip_permissions must be a boolean" }
       };
-    let le = qw(h);
-    if (le)
-      return { status: 400, body: { ok: !1, reason: le } };
-    if (h.setup_cmd != null) {
-      if (typeof h.setup_cmd != "string")
+    let ae = Kw(g);
+    if (ae)
+      return { status: 400, body: { ok: !1, reason: ae } };
+    if (g.setup_cmd != null) {
+      if (typeof g.setup_cmd != "string")
         return { status: 400, body: { ok: !1, reason: "setup_cmd must be a string" } };
-      if (h.setup_cmd.length > jw)
+      if (g.setup_cmd.length > Vw)
         return {
           status: 400,
           body: {
             ok: !1,
-            reason: `setup_cmd must be ${jw} characters or fewer — got ${h.setup_cmd.length}`
+            reason: `setup_cmd must be ${Vw} characters or fewer — got ${g.setup_cmd.length}`
           }
         };
-      if (Ok.test(h.setup_cmd))
+      if (Nk.test(g.setup_cmd))
         return {
           status: 400,
           body: {
@@ -12061,8 +12570,8 @@ function Kw(e) {
           }
         };
     }
-    if (B === "shell") {
-      let Ce = [
+    if (L === "shell") {
+      let H = [
         "repo",
         "branch",
         "branch_mode",
@@ -12078,492 +12587,492 @@ function Kw(e) {
         "arm_token",
         "setup_cmd",
         "plan_id"
-      ].find(($) => h[$] != null);
-      if (Ce || h.worktree === !0)
+      ].find((ue) => g[ue] != null);
+      if (H || g.worktree === !0)
         return {
           status: 400,
           body: {
             ok: !1,
-            reason: `shell sessions are cwd-only; ${Ce ?? "worktree"} is a Claude-only field`
+            reason: `shell sessions are cwd-only; ${H ?? "worktree"} is a Claude-only field`
           }
         };
     }
-    let _e = B === "shell" ? { use: !1, env: null } : de(h.gateway);
-    if (_e.error) return { status: 400, body: { ok: !1, reason: _e.error } };
-    let K = ne(_e.use, h.remote_control === !0);
-    if (K) return { status: 400, body: { ok: !1, reason: K } };
-    let xe = h.repo != null, pe = h.cwd != null;
-    if (xe && pe)
+    let fe = L === "shell" ? { use: !1, env: null } : ne(g.gateway);
+    if (fe.error) return { status: 400, body: { ok: !1, reason: fe.error } };
+    let j = re(fe.use, g.remote_control === !0);
+    if (j) return { status: 400, body: { ok: !1, reason: j } };
+    let be = g.repo != null, ge = g.cwd != null;
+    if (be && ge)
       return { status: 400, body: { ok: !1, reason: "provide either cwd or repo, not both" } };
-    let We = new Set(["default", "acceptedits", "plan", "bypasspermissions"]);
-    if (h.permission_mode != null) {
-      let Ce = h.permission_mode.toLowerCase();
-      if (!We.has(Ce))
+    let Ae = new Set(["default", "acceptedits", "plan", "bypasspermissions"]);
+    if (g.permission_mode != null) {
+      let H = g.permission_mode.toLowerCase();
+      if (!Ae.has(H))
         return {
           status: 400,
-          body: { ok: !1, reason: `unknown permission_mode '${h.permission_mode}'` }
+          body: { ok: !1, reason: `unknown permission_mode '${g.permission_mode}'` }
         };
-      Ce === "bypasspermissions" && h.permission_mode !== "bypassPermissions" && (h = { ...h, permission_mode: "bypassPermissions" });
+      H === "bypasspermissions" && g.permission_mode !== "bypassPermissions" && (g = { ...g, permission_mode: "bypassPermissions" });
     }
-    let be = h.dangerously_skip_permissions === !0 || typeof h.permission_mode == "string" && h.permission_mode.toLowerCase() === "bypasspermissions", Ae = se(be, h);
-    if (Ae) return { status: 403, body: { ok: !1, reason: Ae } };
-    let Je = null;
-    if (h.plan_id != null) {
-      let Ce = Number(h.plan_id);
-      if (!Number.isInteger(Ce) || Ce < 1)
+    let ke = g.dangerously_skip_permissions === !0 || typeof g.permission_mode == "string" && g.permission_mode.toLowerCase() === "bypasspermissions", Oe = de(ke, g);
+    if (Oe) return { status: 403, body: { ok: !1, reason: Oe } };
+    let U = null;
+    if (g.plan_id != null) {
+      let H = Number(g.plan_id);
+      if (!Number.isInteger(H) || H < 1)
         return { status: 400, body: { ok: !1, reason: "plan_id must be a positive integer" } };
-      let $ = t.getPlan.get(Ce);
-      if (!$) return { status: 404, body: { ok: !1, reason: "no such plan" } };
-      let Y = `spawn:${Is().slice(0, 8)}`;
-      if (t.claimPlanExecution.run(Y, Ce).changes !== 1)
+      let ue = t.getPlan.get(H);
+      if (!ue) return { status: 404, body: { ok: !1, reason: "no such plan" } };
+      let _e = `spawn:${Fs().slice(0, 8)}`;
+      if (t.claimPlanExecution.run(_e, H).changes !== 1)
         return {
           status: 409,
           body: {
             ok: !1,
-            reason: `plan #${Ce} is ${$.status} — already executed or not executable`
+            reason: `plan #${H} is ${ue.status} — already executed or not executable`
           }
         };
-      if (Je = { plan_id: Ce, restoreStatus: $.status, via: Y }, o(
-        `📚 plan #${Ce} execution claimed by spawn${$.callsign ? ` (planned by ${$.callsign})` : ""}`
-      ), $.question_id != null) {
-        let ve = e.questions?.dismiss?.($.question_id, { activity: !0 });
-        ve?.ok && !ve.already && o(`📚 planner hold for plan #${Ce} retired — question dismissed`);
+      if (U = { plan_id: H, restoreStatus: ue.status, via: _e }, o(
+        `📚 plan #${H} execution claimed by spawn${ue.callsign ? ` (planned by ${ue.callsign})` : ""}`
+      ), ue.question_id != null) {
+        let rt = e.questions?.dismiss?.(ue.question_id, { activity: !0 });
+        rt?.ok && !rt.already && o(`📚 planner hold for plan #${H} retired — question dismissed`);
       }
     }
-    let Le = Pk(Je, {
+    let W = Dk(U, {
       releasePlanExecution: t.releasePlanExecution,
       setPlanExecuted: t.setPlanExecuted,
       tick: o,
       onMutate: i
     });
     try {
-      if (xe) {
-        if (h.worktree === !0)
+      if (be) {
+        if (g.worktree === !0)
           return {
             status: 400,
             body: { ok: !1, reason: "branch_mode replaces worktree in repo mode" }
           };
-        if (!h.branch)
+        if (!g.branch)
           return { status: 400, body: { ok: !1, reason: "branch is required in repo mode" } };
-        let Tt = h.branch, at = h.branch_mode ?? "worktree";
-        if (!["worktree", "in-place"].includes(at))
+        let sn = g.branch, Dt = g.branch_mode ?? "worktree";
+        if (!["worktree", "in-place"].includes(Dt))
           return {
             status: 400,
             body: { ok: !1, reason: "branch_mode must be worktree or in-place" }
           };
         try {
-          await G(h.branch);
-        } catch (Pe) {
-          return { status: 400, body: { ok: !1, reason: Ze(Pe) } };
+          await z(g.branch);
+        } catch (Ue) {
+          return { status: 400, body: { ok: !1, reason: Ze(Ue) } };
         }
-        if (h.repo == null)
+        if (g.repo == null)
           return { status: 400, body: { ok: !1, reason: "repo is required in repo mode" } };
-        let qe;
+        let Ge;
         try {
-          qe = await Ee({
-            repo: h.repo,
-            repo_host: h.repo_host ?? null,
-            repo_transport: h.repo_transport ?? null,
-            repo_org: h.repo_org ?? null
+          Ge = await Ee({
+            repo: g.repo,
+            repo_host: g.repo_host ?? null,
+            repo_transport: g.repo_transport ?? null,
+            repo_org: g.repo_org ?? null
           });
-        } catch (Pe) {
+        } catch (Ue) {
           return {
-            status: Rn(Pe) ?? 400,
-            body: { ok: !1, reason: Ze(Pe) }
+            status: bn(Ue) ?? 400,
+            body: { ok: !1, reason: Ze(Ue) }
           };
         }
-        let ur = qe.mode === "clone" ? qe.dest : qe.root, Un;
+        let ar = Ge.mode === "clone" ? Ge.dest : Ge.root, Fn;
         try {
-          Un = Z(ur, "repository access check");
-        } catch (Pe) {
+          Fn = Z(ar, "repository access check");
+        } catch (Ue) {
           return {
             status: 409,
             body: {
               ok: !1,
-              reason: Ze(Pe)
+              reason: Ze(Ue)
             }
           };
         }
-        if (qe.mode === "clone") {
-          let Pe = await ye(qe.origin_url);
-          if (!Pe.ok)
-            return Un(), {
-              status: Pe.status,
+        if (Ge.mode === "clone") {
+          let Ue = await ye(Ge.origin_url);
+          if (!Ue.ok)
+            return Fn(), {
+              status: Ue.status,
               body: {
                 ok: !1,
-                reason: Pe.reason,
-                git_access: Pe.git_access
+                reason: Ue.reason,
+                git_access: Ue.git_access
               }
             };
         }
-        let Yn = r(() => {
+        let cr = r(() => {
         }, "releaseCloneSlot");
-        if (qe.mode === "clone")
+        if (Ge.mode === "clone")
           try {
-            Yn = L();
-          } catch (Pe) {
-            return Un(), {
-              status: Rn(Pe) ?? 429,
-              body: { ok: !1, reason: Ze(Pe) }
+            cr = D();
+          } catch (Ue) {
+            return Fn(), {
+              status: bn(Ue) ?? 429,
+              body: { ok: !1, reason: Ze(Ue) }
             };
           }
-        let Jn = !1;
-        h.repo_transport != null && qe.kind === "shorthand" && (S(h.repo_transport), Jn = !0), h.repo_org != null && qe.kind === "shorthand" && (I(h.repo_org), Jn = !0), Jn && i();
-        let It = Is(), _t = Is(), u = qe.mode === "clone" ? `cloning ${qe.repo_name}…` : `preparing ${h.branch}…`, p, R, oe;
+        let u = !1;
+        g.repo_transport != null && Ge.kind === "shorthand" && (S(g.repo_transport), u = !0), g.repo_org != null && Ge.kind === "shorthand" && (N(g.repo_org), u = !0), u && i();
+        let p = Fs(), b = Fs(), ce = Ge.mode === "clone" ? `cloning ${Ge.repo_name}…` : `preparing ${g.branch}…`, Re, Se, Ne;
         try {
-          let Pe = Ne(It, ur, h.prompt, {
-            repo_name: qe.repo_name,
-            branch: h.branch,
-            note: u
+          let Ue = qe(p, ar, g.prompt, {
+            repo_name: Ge.repo_name,
+            branch: g.branch,
+            note: ce
           });
-          if (Pe.callsign == null) throw new Error("spawned card is missing its callsign");
-          if (p = Pe.callsign, R = g.sessionName(_), oe = g.windowName(_, p), !ae(ur, "repository access check", p))
+          if (Ue.callsign == null) throw new Error("spawned card is missing its callsign");
+          if (Re = Ue.callsign, Se = h.sessionName(_), Ne = h.windowName(_, Re), !ie(ar, "repository access check", Re))
             throw new Error("repository destination claim vanished before provisioning");
           t.insertProvisionalSpawn.run(
-            _t,
-            It,
+            b,
             p,
-            R,
-            oe,
-            ur,
+            Re,
+            Se,
+            Ne,
+            ar,
             null,
             Date.now(),
-            be ? 1 : 0,
-            h.remote_control === !0 ? 1 : 0,
-            qe.origin_url ?? null,
-            h.branch,
-            at,
-            _e.use ? 1 : 0,
-            B,
-            h.setup_cmd ?? null
+            ke ? 1 : 0,
+            g.remote_control === !0 ? 1 : 0,
+            Ge.origin_url ?? null,
+            g.branch,
+            Dt,
+            fe.use ? 1 : 0,
+            L,
+            g.setup_cmd ?? null
           );
-        } catch (Pe) {
-          Yn(), Un(), Le.release();
+        } catch (Ue) {
+          cr(), Fn(), W.release();
           try {
-            t.getSession.get(It) && l(It, { note: "spawn setup failed", mutate: !0 });
+            t.getSession.get(p) && l(p, { note: "spawn setup failed", mutate: !0 });
           } catch {
           }
           return {
             status: 500,
             body: {
               ok: !1,
-              reason: `could not create the spawn card: ${vd(Pe)}`
+              reason: `could not create the spawn card: ${xd(Ue)}`
             }
           };
         }
-        let Oe = r(async (Pe, Nt) => {
-          let Gt = at === "worktree" ? Pe.runCwd : null;
-          Gt && t.setSpawnWorktree.run(Gt, Pe.created.worktree ? 1 : 0, _t);
-          let st = Tn(Pe.runCwd);
-          n(It, {
-            cwd: Pe.runCwd,
-            repo_id: st.repo_id,
-            repo_name: st.repo_name,
-            worktree: st.worktree,
+        let et = r(async (Ue, He) => {
+          let kt = Dt === "worktree" ? Ue.runCwd : null;
+          kt && t.setSpawnWorktree.run(kt, Ue.created.worktree ? 1 : 0, b);
+          let it = kn(Ue.runCwd);
+          n(p, {
+            cwd: Ue.runCwd,
+            repo_id: it.repo_id,
+            repo_name: it.repo_name,
+            worktree: it.worktree,
 
 
 
-            branch: Dn(Pe.runCwd, { fresh: !0 }) ?? h.branch ?? null
+            branch: An(Ue.runCwd, { fresh: !0 }) ?? g.branch ?? null
           });
-          let He = await Rs(qe.mode === "clone" ? qe.dest : qe.root);
+          let $n = await Ps(Ge.mode === "clone" ? Ge.dest : Ge.root);
           return $e({
-            repo_id: st.repo_id,
-            repo_name: st.repo_name,
-            root: st.main_tree,
-            origin_url: qe.origin_url ?? null,
-            default_branch: He?.ref.replace(/^origin\//, "") ?? null,
-            source: Nt
-          }), Gt;
+            repo_id: it.repo_id,
+            repo_name: it.repo_name,
+            root: it.main_tree,
+            origin_url: Ge.origin_url ?? null,
+            default_branch: $n?.ref.replace(/^origin\//, "") ?? null,
+            source: He
+          }), kt;
         }, "finishMaterialization");
-        if (qe.mode === "local")
+        if (Ge.mode === "local")
           try {
-            let Pe, Nt = null, Gt = !1;
+            let Ue, He = null, kt = !1;
             try {
-              Pe = await Se({
-                root: qe.root,
-                branch: h.branch,
-                mode: at,
-                spawn_id: _t,
-                sid: It
+              Ue = await ve({
+                root: Ge.root,
+                branch: g.branch,
+                mode: Dt,
+                spawn_id: b,
+                sid: p
               });
-            } catch (st) {
-              return await Lt({
-                spawn_id: _t,
-                session_id: It,
-                callsign: p,
-                cwd: qe.root,
+            } catch (it) {
+              return await zt({
+                spawn_id: b,
+                session_id: p,
+                callsign: Re,
+                cwd: Ge.root,
                 worktree_path: null,
                 tmux_window: null,
-                reason: Ze(st),
+                reason: Ze(it),
                 created: { clone: !1, worktree: !1 }
-              }), Le.release(), {
-                status: Rn(st) ?? 409,
-                body: { ok: !1, reason: Ze(st) }
+              }), W.release(), {
+                status: bn(it) ?? 409,
+                body: { ok: !1, reason: Ze(it) }
               };
             }
-            Nt = at === "worktree" ? Pe.runCwd : null;
+            He = Dt === "worktree" ? Ue.runCwd : null;
             try {
-              await Oe(Pe, "spawn"), Gt = !0;
-              let st = await Le.releaseOnThrow(Cn)({
-                spawn_id: _t,
-                session_id: It,
-                callsign: p,
-                tmux_session: R,
-                tmux_window: oe,
-                requestedCwd: qe.root,
-                runCwd: Pe.runCwd,
-                cleanupRoot: qe.root,
-                worktree_path: Nt,
-                body: h,
-                skipPermissions: be,
-                gatewayEnv: _e.env,
-                created: Pe.created
+              await et(Ue, "spawn"), kt = !0;
+              let it = await W.releaseOnThrow(vn)({
+                spawn_id: b,
+                session_id: p,
+                callsign: Re,
+                tmux_session: Se,
+                tmux_window: Ne,
+                requestedCwd: Ge.root,
+                runCwd: Ue.runCwd,
+                cleanupRoot: Ge.root,
+                worktree_path: He,
+                body: g,
+                skipPermissions: ke,
+                gatewayEnv: fe.env,
+                created: Ue.created
               });
-              return st.status >= 400 ? Le.release() : Le.complete(_t), st;
-            } catch (st) {
-              let He = at === "in-place" ? `${Ze(st)} — ${Ds.basename(qe.root)} was left switched to ${h.branch}` : Ze(st);
-              return await Lt({
-                spawn_id: _t,
-                session_id: It,
-                callsign: p,
-                cwd: qe.root,
-                worktree_path: Nt,
-                tmux_window: Gt ? oe : null,
-                reason: He,
-                created: Pe.created
-              }), Le.release(), { status: Rn(st) ?? 409, body: { ok: !1, reason: He } };
+              return it.status >= 400 ? W.release() : W.complete(b), it;
+            } catch (it) {
+              let $n = Dt === "in-place" ? `${Ze(it)} — ${Ms.basename(Ge.root)} was left switched to ${g.branch}` : Ze(it);
+              return await zt({
+                spawn_id: b,
+                session_id: p,
+                callsign: Re,
+                cwd: Ge.root,
+                worktree_path: He,
+                tmux_window: kt ? Ne : null,
+                reason: $n,
+                created: Ue.created
+              }), W.release(), { status: bn(it) ?? 409, body: { ok: !1, reason: $n } };
             }
           } finally {
-            Un();
+            Fn();
           }
-        if (!V.isOpen())
-          return await Lt({
-            spawn_id: _t,
-            session_id: It,
-            callsign: p,
-            cwd: qe.dest,
+        if (!Ce.isOpen())
+          return await zt({
+            spawn_id: b,
+            session_id: p,
+            callsign: Re,
+            cwd: Ge.dest,
             worktree_path: null,
             tmux_window: null,
             reason: "spawn cancelled",
             created: { clone: !1, worktree: !1 },
             cancelled: !0
-          }), Yn(), Un(), {
+          }), cr(), Fn(), {
             status: 503,
             body: { ok: !1, reason: "daemon is shutting down; spawn was cancelled" }
           };
-        let ge = new AbortController(), Be, rt = new Promise((Pe) => {
-          Be = Pe;
-        }), Qe = { controller: ge, done: rt };
-        ce.set(_t, Qe);
-        let tt = V.run(async () => {
-          let Pe = { clone: !1, worktree: !1 }, Nt = null, Gt = !1;
+        let je = new AbortController(), Qe, xt = new Promise((Ue) => {
+          Qe = Ue;
+        }), xn = { controller: je, done: xt };
+        Le.set(b, xn);
+        let Bn = Ce.run(async () => {
+          let Ue = { clone: !1, worktree: !1 }, He = null, kt = !1;
           try {
-            if (await Ie({
-              origin_url: qe.origin_url,
-              dest: qe.dest,
-              spawn_id: _t,
-              signal: ge.signal
-            }), Pe.clone = !0, ge.signal.aborted) throw new Error("spawn cancelled");
-            n(It, { note: `preparing ${h.branch}…` }), i();
-            let st = await Se({
-              root: qe.dest,
-              branch: Tt,
-              mode: at,
-              spawn_id: _t,
-              sid: It,
+            if (await De({
+              origin_url: Ge.origin_url,
+              dest: Ge.dest,
+              spawn_id: b,
+              signal: je.signal
+            }), Ue.clone = !0, je.signal.aborted) throw new Error("spawn cancelled");
+            n(p, { note: `preparing ${g.branch}…` }), i();
+            let it = await ve({
+              root: Ge.dest,
+              branch: sn,
+              mode: Dt,
+              spawn_id: b,
+              sid: p,
               clone: !0,
-              signal: ge.signal
+              signal: je.signal
             });
-            if (Pe = st.created, Nt = at === "worktree" ? st.runCwd : null, ge.signal.aborted) throw new Error("spawn cancelled");
-            if (await Oe(st, "clone"), ge.signal.aborted) throw new Error("spawn cancelled");
-            Gt = !0, (await Cn({
-              spawn_id: _t,
-              session_id: It,
-              callsign: p,
-              tmux_session: R,
-              tmux_window: oe,
-              requestedCwd: qe.dest,
-              runCwd: st.runCwd,
-              cleanupRoot: qe.dest,
-              worktree_path: Nt,
-              body: h,
-              skipPermissions: be,
-              created: Pe,
-              gatewayEnv: _e.env,
-              signal: ge.signal
-            })).status >= 400 ? Le.release() : Le.complete(_t);
-          } catch (st) {
-            let He = ge.signal.aborted, bn = He ? "spawn cancelled" : at === "in-place" && Pe.clone ? `${Ze(st)} — ${Ds.basename(qe.dest)} was left switched to ${h.branch}` : Ze(st);
-            await Lt({
-              spawn_id: _t,
-              session_id: It,
-              callsign: p,
-              cwd: qe.dest,
-              worktree_path: Nt,
-              tmux_window: Gt ? oe : null,
-              reason: bn,
-              created: Pe,
-              cancelled: He
-            }), Le.release();
+            if (Ue = it.created, He = Dt === "worktree" ? it.runCwd : null, je.signal.aborted) throw new Error("spawn cancelled");
+            if (await et(it, "clone"), je.signal.aborted) throw new Error("spawn cancelled");
+            kt = !0, (await vn({
+              spawn_id: b,
+              session_id: p,
+              callsign: Re,
+              tmux_session: Se,
+              tmux_window: Ne,
+              requestedCwd: Ge.dest,
+              runCwd: it.runCwd,
+              cleanupRoot: Ge.dest,
+              worktree_path: He,
+              body: g,
+              skipPermissions: ke,
+              created: Ue,
+              gatewayEnv: fe.env,
+              signal: je.signal
+            })).status >= 400 ? W.release() : W.complete(b);
+          } catch (it) {
+            let $n = je.signal.aborted, Gs = $n ? "spawn cancelled" : Dt === "in-place" && Ue.clone ? `${Ze(it)} — ${Ms.basename(Ge.dest)} was left switched to ${g.branch}` : Ze(it);
+            await zt({
+              spawn_id: b,
+              session_id: p,
+              callsign: Re,
+              cwd: Ge.dest,
+              worktree_path: He,
+              tmux_window: kt ? Ne : null,
+              reason: Gs,
+              created: Ue,
+              cancelled: $n
+            }), W.release();
           } finally {
-            Yn(), Un(), ce.get(_t) === Qe && ce.delete(_t), Be();
+            cr(), Fn(), Le.get(b) === xn && Le.delete(b), Qe();
           }
         });
-        return tt ? (Le.handOff(), tt.catch((Pe) => {
-          console.error("fleetd detached repo provisioning error:", Pe);
-        })) : (ge.abort(), ce.delete(_t), Yn(), Un(), Le.release(), Be()), {
+        return Bn ? (W.handOff(), Bn.catch((Ue) => {
+          console.error("fleetd detached repo provisioning error:", Ue);
+        })) : (je.abort(), Le.delete(b), cr(), Fn(), W.release(), Qe()), {
           status: 202,
           body: {
             ok: !0,
             provisioning: !0,
-            spawn_id: _t,
-            session_id: It,
-            callsign: p,
-            clone: { origin_url: qe.origin_url, dest: qe.dest },
-            tmux: { session: R, window: oe }
+            spawn_id: b,
+            session_id: p,
+            callsign: Re,
+            clone: { origin_url: Ge.origin_url, dest: Ge.dest },
+            tmux: { session: Se, window: Ne }
           }
         };
       }
-      let Ce = h.cwd ?? "", $ = null;
+      let H = g.cwd ?? "", ue = null;
       try {
-        $ = zn.statSync(Ce);
+        ue = Vn.statSync(H);
       } catch {
       }
-      if (!Ce || !$?.isDirectory())
+      if (!H || !ue?.isDirectory())
         return { status: 400, body: { ok: !1, reason: "cwd missing or not a directory" } };
-      if (h.worktree === !0 && !Tn(Ce).is_git)
+      if (g.worktree === !0 && !kn(H).is_git)
         return {
           status: 409,
           body: { ok: !1, reason: "cwd is not a git repository — cannot spawn into a worktree" }
         };
-      let Y = Is(), re = Is(), ve = B === "shell" ? Ne(Y, Ce, null, {
+      let _e = Fs(), Me = Fs(), rt = L === "shell" ? qe(_e, H, null, {
         deriveRepo: !0,
         source: "shell",
         col: "idle",
         note: "shell"
-      }) : Ne(Y, Ce, h.prompt), ke = ve.callsign;
-      if (ke == null) throw new Error("spawned card is missing its callsign");
-      let Ge = g.sessionName(_), St = g.windowName(_, ke);
+      }) : qe(_e, H, g.prompt), Ye = rt.callsign;
+      if (Ye == null) throw new Error("spawned card is missing its callsign");
+      let Ut = h.sessionName(_), Yt = h.windowName(_, Ye);
       t.insertProvisionalSpawn.run(
-        re,
-        Y,
-        ke,
-        Ge,
-        St,
-        Ce,
+        Me,
+        _e,
+        Ye,
+        Ut,
+        Yt,
+        H,
         null,
         Date.now(),
-        be ? 1 : 0,
-        h.remote_control === !0 ? 1 : 0,
+        ke ? 1 : 0,
+        g.remote_control === !0 ? 1 : 0,
         null,
         null,
         null,
-        _e.use ? 1 : 0,
-        B,
-        h.setup_cmd ?? null
+        fe.use ? 1 : 0,
+        L,
+        g.setup_cmd ?? null
       );
-      let ht = null;
-      if (h.worktree === !0) {
-        let at = ve.ticket && ke.endsWith(`-${ve.ticket}`) ? `${ve.ticket}-${hi(ke)}` : ke, qe = r((_t) => Ds.join(Ds.dirname(Ce), `${Ds.basename(Ce)}--fd-${_t}`), "pathFor"), ur = `${at}-${Y.slice(0, 4)}`, Un = zn.existsSync(qe(at)) ? [ur] : [at, ur], Yn = "", Jn = { ok: !1, err: "" };
-        for (let _t of Un)
-          if (Yn = qe(_t), Jn = await Ke("git", [
+      let st = null;
+      if (g.worktree === !0) {
+        let Dt = rt.ticket && Ye.endsWith(`-${rt.ticket}`) ? `${rt.ticket}-${_i(Ye)}` : Ye, Ge = r((b) => Ms.join(Ms.dirname(H), `${Ms.basename(H)}--fd-${b}`), "pathFor"), ar = `${Dt}-${_e.slice(0, 4)}`, Fn = Vn.existsSync(Ge(Dt)) ? [ar] : [Dt, ar], cr = "", u = { ok: !1, err: "" };
+        for (let b of Fn)
+          if (cr = Ge(b), u = await Ke("git", [
             "-C",
-            Ce,
+            H,
             "worktree",
             "add",
             "-b",
-            `fd/${_t}`,
-            Yn
-          ]), Jn.ok) break;
-        if (ht = Yn, !Jn.ok) {
-          let _t = vr(Jn.err);
-          return await Lt({
-            spawn_id: re,
-            session_id: Y,
-            callsign: ke,
-            cwd: Ce,
-            worktree_path: ht,
+            `fd/${b}`,
+            cr
+          ]), u.ok) break;
+        if (st = cr, !u.ok) {
+          let b = _r(u.err);
+          return await zt({
+            spawn_id: Me,
+            session_id: _e,
+            callsign: Ye,
+            cwd: H,
+            worktree_path: st,
             tmux_window: null,
-            reason: `git worktree add: ${_t}`
+            reason: `git worktree add: ${b}`
           }), {
             status: 409,
-            body: { ok: !1, reason: `git worktree add failed: ${_t}`.slice(0, 300) }
+            body: { ok: !1, reason: `git worktree add failed: ${b}`.slice(0, 300) }
           };
         }
-        t.setSpawnWorktree.run(ht, 1, re);
-        let It = Tn(ht);
-        n(Y, {
-          cwd: ht,
-          repo_id: It.repo_id,
-          repo_name: It.repo_name,
-          worktree: It.worktree,
-          branch: Dn(ht)
+        t.setSpawnWorktree.run(st, 1, Me);
+        let p = kn(st);
+        n(_e, {
+          cwd: st,
+          repo_id: p.repo_id,
+          repo_name: p.repo_name,
+          worktree: p.worktree,
+          branch: An(st)
         });
       }
-      let Dt = await Cn({
-        spawn_id: re,
-        session_id: Y,
-        callsign: ke,
-        tmux_session: Ge,
-        tmux_window: St,
-        requestedCwd: Ce,
-        runCwd: ht ?? Ce,
-        cleanupRoot: Ce,
-        worktree_path: ht,
-        body: h,
-        skipPermissions: be,
-        gatewayEnv: _e.env
+      let dn = await vn({
+        spawn_id: Me,
+        session_id: _e,
+        callsign: Ye,
+        tmux_session: Ut,
+        tmux_window: Yt,
+        requestedCwd: H,
+        runCwd: st ?? H,
+        cleanupRoot: H,
+        worktree_path: st,
+        body: g,
+        skipPermissions: ke,
+        gatewayEnv: fe.env
       });
-      return Dt.status < 400 && Le.complete(re), Dt;
+      return dn.status < 400 && W.complete(Me), dn;
     } finally {
-      Le.settle();
+      W.settle();
     }
   }
-  r(Bn, "spawn");
-  async function Go(h, j = {}) {
-    let B = t.getSpawn.get(h);
-    if (!B) return { status: 404, body: { ok: !1, reason: "no such spawn" } };
-    if (B.kind === "shell")
+  r(Go, "spawn");
+  async function br(g, G = {}) {
+    let L = t.getSpawn.get(g);
+    if (!L) return { status: 404, body: { ok: !1, reason: "no such spawn" } };
+    if (L.kind === "shell")
       return {
         status: 410,
         body: { ok: !1, reason: "shell sessions have no conversation to resume" }
       };
-    if (!["pane-dead", "killed", "gone"].includes(B.status))
-      return { status: 409, body: { ok: !1, reason: `spawn is ${B.status}, not revivable` } };
-    if (B.tmux_window == null) throw new Error("revivable spawn is missing its tmux window");
-    let le = qw(j);
-    if (le)
-      return { status: 400, body: { ok: !1, reason: le } };
-    if (B.skip_permissions) {
-      let Ae = se(!0, j);
-      if (Ae) return { status: 403, body: { ok: !1, reason: Ae } };
+    if (!["pane-dead", "killed", "gone"].includes(L.status))
+      return { status: 409, body: { ok: !1, reason: `spawn is ${L.status}, not revivable` } };
+    if (L.tmux_window == null) throw new Error("revivable spawn is missing its tmux window");
+    let ae = Kw(G);
+    if (ae)
+      return { status: 400, body: { ok: !1, reason: ae } };
+    if (L.skip_permissions) {
+      let Oe = de(!0, G);
+      if (Oe) return { status: 403, body: { ok: !1, reason: Oe } };
     }
-    let _e = j.remote_control ?? !!B.remote_control, K = de(
-      j.gateway ?? !!B.gateway,
-      j.gateway == null ? "inherited" : "request"
+    let fe = G.remote_control ?? !!L.remote_control, j = ne(
+      G.gateway ?? !!L.gateway,
+      G.gateway == null ? "inherited" : "request"
     );
-    if (K.error) return { status: 400, body: { ok: !1, reason: K.error } };
-    let xe = ne(K.use, _e);
-    if (xe) return { status: 400, body: { ok: !1, reason: xe } };
-    let pe = t.activeSpawnBySession.get(B.session_id) ?? t.provisioningSpawnBySession.get(B.session_id);
-    if (pe)
+    if (j.error) return { status: 400, body: { ok: !1, reason: j.error } };
+    let be = re(j.use, fe);
+    if (be) return { status: 400, body: { ok: !1, reason: be } };
+    let ge = t.activeSpawnBySession.get(L.session_id) ?? t.provisioningSpawnBySession.get(L.session_id);
+    if (ge)
       return {
         status: 409,
-        body: { ok: !1, reason: `session already has active spawn ${pe.spawn_id}` }
+        body: { ok: !1, reason: `session already has active spawn ${ge.spawn_id}` }
       };
-    if (he.has(B.session_id))
+    if (le.has(L.session_id))
       return {
         status: 409,
         body: {
           ok: !1,
-          reason: `session ${B.session_id.slice(0, 8)} is already being revived`
+          reason: `session ${L.session_id.slice(0, 8)} is already being revived`
         }
       };
-    he.add(B.session_id);
-    let We = B.worktree_path && b ? await b(Xa(B.worktree_path)) : () => {
-    }, be = null;
-    if (B.worktree_path && X && (be = X(B.worktree_path, "revive"), !be))
-      return he.delete(B.session_id), We(), {
+    le.add(L.session_id);
+    let Ae = L.worktree_path && k ? await k(Ja(L.worktree_path)) : () => {
+    }, ke = null;
+    if (L.worktree_path && Y && (ke = Y(L.worktree_path, "revive"), !ke))
+      return le.delete(L.session_id), Ae(), {
         status: 409,
         body: {
           ok: !1,
@@ -12571,17 +13080,17 @@ function Kw(e) {
         }
       };
     try {
-      let Ae = B.worktree_path ?? B.cwd, Je = null;
+      let Oe = L.worktree_path ?? L.cwd, U = null;
       try {
-        Ae && (Je = zn.statSync(Ae));
+        Oe && (U = Vn.statSync(Oe));
       } catch {
       }
-      if (!Ae || !Je?.isDirectory())
+      if (!Oe || !U?.isDirectory())
         return { status: 410, body: { ok: !1, reason: "revive cwd no longer exists" } };
-      if (!zn.existsSync(xs(Ae, B.session_id)))
+      if (!Vn.existsSync(Rs(Oe, L.session_id)))
         return { status: 410, body: { ok: !1, reason: "resume transcript no longer exists" } };
-      let Le = await f(B.tmux_window);
-      if (Le === null)
+      let W = await f(L.tmux_window);
+      if (W === null)
         return {
           status: 503,
           body: {
@@ -12589,267 +13098,267 @@ function Kw(e) {
             reason: "tmux window lookup failed; revive held to avoid a duplicate session"
           }
         };
-      if (Le && !Le.pane_dead && Le.pane_cmd === "claude") {
-        if (B.status !== "pane-dead" && B.status !== "gone")
+      if (W && !W.pane_dead && W.pane_cmd === "claude") {
+        if (L.status !== "pane-dead" && L.status !== "gone")
           return {
             status: 409,
             body: {
               ok: !1,
-              reason: `spawn ${h} was killed — its window hosts a live claude, but a killed spawn is never resurrected by adoption`
+              reason: `spawn ${g} was killed — its window hosts a live claude, but a killed spawn is never resurrected by adoption`
             }
           };
-        let Ce = t.currentWindowOwner.get(B.tmux_window);
-        return Ce && Ce.spawn_id !== B.spawn_id ? {
+        let H = t.currentWindowOwner.get(L.tmux_window);
+        return H && H.spawn_id !== L.spawn_id ? {
           status: 409,
           body: {
             ok: !1,
-            reason: `window ${B.tmux_window} is owned by spawn ${Ce.spawn_id} — revive that one`,
-            current_spawn_id: Ce.spawn_id
+            reason: `window ${L.tmux_window} is owned by spawn ${H.spawn_id} — revive that one`,
+            current_spawn_id: H.spawn_id
           }
-        } : (et(B), {
+        } : (pt(L), {
           status: 200,
           body: {
             ok: !0,
             adopted: !0,
-            spawn_id: B.spawn_id,
-            session_id: B.session_id,
-            callsign: B.callsign,
-            tmux: { session: g.sessionName(_), window: B.tmux_window }
+            spawn_id: L.spawn_id,
+            session_id: L.session_id,
+            callsign: L.callsign,
+            tmux: { session: h.sessionName(_), window: L.tmux_window }
           }
         });
       }
-      if (Le && !Le.pane_dead && !ks.test(Le.pane_cmd))
+      if (W && !W.pane_dead && !Cs.test(W.pane_cmd))
         return {
           status: 409,
           body: {
             ok: !1,
-            reason: `window ${B.tmux_window} hosts a live '${Le.pane_cmd}' pane — not a dead remnant; refusing to kill it`
+            reason: `window ${L.tmux_window} hosts a live '${W.pane_cmd}' pane — not a dead remnant; refusing to kill it`
           }
         };
-      if (Le) {
-        let Ce = await g.killWindowVerified(B.tmux_window);
-        if (!Ce.ok && !Ce.gone)
+      if (W) {
+        let H = await h.killWindowVerified(L.tmux_window);
+        if (!H.ok && !H.gone)
           return {
             status: 500,
-            body: { ok: !1, reason: Ce.error ?? "tmux kill-window failed" }
+            body: { ok: !1, reason: H.error ?? "tmux kill-window failed" }
           };
       }
-      return await cr({
-        session_id: B.session_id,
-        callsign: B.callsign,
-        tmux_window: B.tmux_window,
-        runCwd: Ae,
-        requested_cwd: B.cwd,
-        worktree_path: B.worktree_path,
-        skip_permissions: !!B.skip_permissions,
-        remoteWanted: _e,
-        gatewayEnv: K.env,
-        excludeSpawnId: h,
-        overrideExtra: { revive_of: h },
+      return await $t({
+        session_id: L.session_id,
+        callsign: L.callsign,
+        tmux_window: L.tmux_window,
+        runCwd: Oe,
+        requested_cwd: L.cwd,
+        worktree_path: L.worktree_path,
+        skip_permissions: !!L.skip_permissions,
+        remoteWanted: fe,
+        gatewayEnv: j.env,
+        excludeSpawnId: g,
+        overrideExtra: { revive_of: g },
         note: "reviving…",
-        tickMsg: `⟲ reviving ${B.callsign} (resume ${B.session_id.slice(0, 8)})`,
+        tickMsg: `⟲ reviving ${L.callsign} (resume ${L.session_id.slice(0, 8)})`,
         failReason: "tmux revive failed"
       });
     } finally {
-      he.delete(B.session_id), We(), be?.();
+      le.delete(L.session_id), Ae(), ke?.();
     }
   }
-  r(Go, "revive");
-  async function cr({
-    session_id: h,
-    callsign: j,
-    tmux_window: B,
-    runCwd: le,
-    requested_cwd: _e,
-    worktree_path: K,
-    skip_permissions: xe,
-    remoteWanted: pe,
-    excludeSpawnId: We,
-    overrideExtra: be = {},
-    note: Ae,
-    tickMsg: Je,
-    failReason: Le,
-    bodyExtra: Ce = {},
-    gatewayEnv: $ = null
+  r(br, "revive");
+  async function $t({
+    session_id: g,
+    callsign: G,
+    tmux_window: L,
+    runCwd: ae,
+    requested_cwd: fe,
+    worktree_path: j,
+    skip_permissions: be,
+    remoteWanted: ge,
+    excludeSpawnId: Ae,
+    overrideExtra: ke = {},
+    note: Oe,
+    tickMsg: U,
+    failReason: W,
+    bodyExtra: H = {},
+    gatewayEnv: ue = null
   }) {
-    if (j == null || B == null)
+    if (G == null || L == null)
       throw new Error("launchResume requires a callsign and a scoped window name");
-    let Y = Is(), re = [
-      ...bs(_, E, {
-        keep: $ ? Object.keys($) : [],
-        boardSession: h
+    let _e = Fs(), Me = [
+      ...Ts(_, E, {
+        keep: ue ? Object.keys(ue) : [],
+        boardSession: g
       }),
       "claude",
       "--resume",
-      h
+      g
     ];
-    xe && re.push("--dangerously-skip-permissions"), pe && re.push("--remote-control", j);
-    let ve = g.sessionName(_), ke = t.currentWindowOwner.get(B);
-    if (ke && ke.spawn_id !== We && ["provisioning", "spawning", "stalled", "live"].includes(ke.status))
+    be && Me.push("--dangerously-skip-permissions"), ge && Me.push("--remote-control", G);
+    let rt = h.sessionName(_), Ye = t.currentWindowOwner.get(L);
+    if (Ye && Ye.spawn_id !== Ae && ["provisioning", "spawning", "stalled", "live"].includes(Ye.status))
       return {
         status: 409,
         body: {
           ok: !1,
-          reason: `window ${B} is now owned by active spawn ${ke.spawn_id}`,
-          current_spawn_id: ke.spawn_id
+          reason: `window ${L} is now owned by active spawn ${Ye.spawn_id}`,
+          current_spawn_id: Ye.spawn_id
         }
       };
     t.insertProvisionalSpawn.run(
-      Y,
-      h,
-      j,
-      ve,
-      B,
       _e,
-      K ?? null,
+      g,
+      G,
+      rt,
+      L,
+      fe,
+      j ?? null,
       Date.now(),
-      xe ? 1 : 0,
-      pe ? 1 : 0,
+      be ? 1 : 0,
+      ge ? 1 : 0,
       null,
       null,
       null,
-      $ ? 1 : 0,
+      ue ? 1 : 0,
       "claude",
       null
     );
-    let Ge = r((ht) => Lt({
-      spawn_id: Y,
-      session_id: h,
-      callsign: j,
-      cwd: le,
-      worktree_path: K,
-      tmux_window: B,
-      reason: ht,
+    let Ut = r((st) => zt({
+      spawn_id: _e,
+      session_id: g,
+      callsign: G,
+      cwd: ae,
+      worktree_path: j,
+      tmux_window: L,
+      reason: st,
       created: { clone: !1, worktree: !1 }
-    }), "compensateResume"), St = g.spawnOverrideCmd?.();
-    if (St)
-      g.launchOverride(
-        St,
+    }), "compensateResume"), Yt = h.spawnOverrideCmd?.();
+    if (Yt)
+      h.launchOverride(
+        Yt,
         {
-          spawn_id: Y,
-          ...be,
-          session_id: h,
-          callsign: j,
+          spawn_id: _e,
+          ...ke,
+          session_id: g,
+          callsign: G,
           port: _,
-          cwd: le,
-          requested_cwd: _e,
+          cwd: ae,
+          requested_cwd: fe,
           prompt: null,
           model: null,
           permission_mode: null,
-          worktree_path: K,
-          dangerously_skip_permissions: xe,
-          skip_permissions: xe,
-          remote_control: pe,
-          gateway: !!$,
-          gateway_env: $,
+          worktree_path: j,
+          dangerously_skip_permissions: be,
+          skip_permissions: be,
+          remote_control: ge,
+          gateway: !!ue,
+          gateway_env: ue,
 
-          tmux: { session: ve, window: B },
-          argv: re
+          tmux: { session: rt, window: L },
+          argv: Me
         },
-        (ht) => {
-          let Dt = V.run(
-            () => Ge(`spawn override: ${Ze(ht)}`)
+        (st) => {
+          let dn = Ce.run(
+            () => Ut(`spawn override: ${Ze(st)}`)
           );
-          Dt && Dt.catch(() => {
+          dn && dn.catch(() => {
           });
         }
       );
     else
       try {
-        await g.ensureSession(_), await g.newWindow({ port: _, callsign: j, cwd: le, argv: re, env: $ });
-      } catch (ht) {
-        let Dt = `${Le}: ${Ze(ht)}`, Tt = await Ge(Dt);
+        await h.ensureSession(_), await h.newWindow({ port: _, callsign: G, cwd: ae, argv: Me, env: ue });
+      } catch (st) {
+        let dn = `${W}: ${Ze(st)}`, sn = await Ut(dn);
         return {
           status: 500,
           body: {
             ok: !1,
-            reason: Tt.resolved ? Dt : `${Dt}; cleanup unresolved: ${Tt.error}`
+            reason: sn.resolved ? dn : `${dn}; cleanup unresolved: ${sn.error}`
           }
         };
       }
-    return t.setSpawnStatus.run("spawning", Y), n(h, { archived_at: null, col: "queued", note: Ae }), o(Je), k(Y, B, j), i(), {
+    return t.setSpawnStatus.run("spawning", _e), n(g, { archived_at: null, col: "queued", note: Oe }), o(U), X(_e, L, G), i(), {
       status: 200,
       body: {
         ok: !0,
-        ...Ce,
-        spawn_id: Y,
-        session_id: h,
-        callsign: j,
-        tmux: { session: ve, window: B }
+        ...H,
+        spawn_id: _e,
+        session_id: g,
+        callsign: G,
+        tmux: { session: rt, window: L }
       }
     };
   }
-  r(cr, "launchResume");
-  async function Jt(h, j = {}, { deferred: B = !1 } = {}) {
-    let le = t.getSession.get(h);
-    if (!le) return { status: 404, body: { ok: !1, reason: "no such session" } };
-    if (le.callsign == null) throw new Error("adoptable session is missing its callsign");
-    if (j.dangerously_skip_permissions != null && typeof j.dangerously_skip_permissions != "boolean")
+  r($t, "launchResume");
+  async function ho(g, G = {}, { deferred: L = !1 } = {}) {
+    let ae = t.getSession.get(g);
+    if (!ae) return { status: 404, body: { ok: !1, reason: "no such session" } };
+    if (ae.callsign == null) throw new Error("adoptable session is missing its callsign");
+    if (G.dangerously_skip_permissions != null && typeof G.dangerously_skip_permissions != "boolean")
       return {
         status: 400,
         body: { ok: !1, reason: "dangerously_skip_permissions must be a boolean" }
       };
-    if (j.disarm != null && typeof j.disarm != "boolean")
+    if (G.disarm != null && typeof G.disarm != "boolean")
       return { status: 400, body: { ok: !1, reason: "disarm must be a boolean" } };
-    if (j.arm_token != null && typeof j.arm_token != "string")
+    if (G.arm_token != null && typeof G.arm_token != "string")
       return { status: 400, body: { ok: !1, reason: "arm_token must be a string" } };
-    let _e = j.dangerously_skip_permissions === !0, K = B ? null : se(_e, j);
-    if (K) return { status: 403, body: { ok: !1, reason: K } };
-    if (j.disarm === !0)
-      return n(h, { adopt_armed_until: null, adopt_armed_skip: null }), o(`⇥ ${le.callsign} move-to-tmux disarmed`), i(), { status: 200, body: { ok: !0, armed: !1, disarmed: !0 } };
-    let xe = t.spawnBySession.get(h);
-    if (xe)
+    let fe = G.dangerously_skip_permissions === !0, j = L ? null : de(fe, G);
+    if (j) return { status: 403, body: { ok: !1, reason: j } };
+    if (G.disarm === !0)
+      return n(g, { adopt_armed_until: null, adopt_armed_skip: null }), o(`⇥ ${ae.callsign} move-to-tmux disarmed`), i(), { status: 200, body: { ok: !0, armed: !1, disarmed: !0 } };
+    let be = t.spawnBySession.get(g);
+    if (be)
       return {
         status: 409,
         body: {
           ok: !1,
-          reason: `session is board-owned (spawn ${xe.spawn_id}, ${xe.status}) — revive owns its pane story`
+          reason: `session is board-owned (spawn ${be.spawn_id}, ${be.status}) — revive owns its pane story`
         }
       };
-    if (le.ended_at == null) {
-      if (B)
-        return n(h, { adopt_armed_until: null, adopt_armed_skip: null }), o(`↷ move-to-tmux canceled for ${le.callsign} — session came back live before the move`), i(), { status: 200, body: { ok: !0, canceled: !0 } };
-      let pe = Date.now() + O;
-      return n(h, { adopt_armed_until: pe, adopt_armed_skip: _e ? 1 : 0 }), o(
-        `⧗ ${le.callsign} armed for move-to-tmux — exit the CLI to move it${_e ? " (unsupervised)" : ""}`
-      ), i(), { status: 200, body: { ok: !0, armed: !0, expires_at: pe } };
+    if (ae.ended_at == null) {
+      if (L)
+        return n(g, { adopt_armed_until: null, adopt_armed_skip: null }), o(`↷ move-to-tmux canceled for ${ae.callsign} — session came back live before the move`), i(), { status: 200, body: { ok: !0, canceled: !0 } };
+      let ge = Date.now() + O;
+      return n(g, { adopt_armed_until: ge, adopt_armed_skip: fe ? 1 : 0 }), o(
+        `⧗ ${ae.callsign} armed for move-to-tmux — exit the CLI to move it${fe ? " (unsupervised)" : ""}`
+      ), i(), { status: 200, body: { ok: !0, armed: !0, expires_at: ge } };
     }
-    if (B && le.adopt_armed_until == null)
+    if (L && ae.adopt_armed_until == null)
       return { status: 200, body: { ok: !0, canceled: !0 } };
-    if (B && le.adopt_armed_until != null && le.adopt_armed_until <= Date.now())
-      return n(h, { adopt_armed_until: null, adopt_armed_skip: null }), o(
-        `↷ move-to-tmux canceled for ${le.callsign} — the arm deadline expired before the move fired`
+    if (L && ae.adopt_armed_until != null && ae.adopt_armed_until <= Date.now())
+      return n(g, { adopt_armed_until: null, adopt_armed_skip: null }), o(
+        `↷ move-to-tmux canceled for ${ae.callsign} — the arm deadline expired before the move fired`
       ), i(), { status: 200, body: { ok: !0, canceled: !0, expired: !0 } };
-    if (Ei.has(le.end_reason ?? null))
+    if (vi.has(ae.end_reason ?? null))
       return {
         status: 409,
         body: {
           ok: !1,
-          reason: le.end_reason === "superseded" ? "session was superseded by a /clear — its heir owns the card now" : "session has no hook-proven end (presumed/unstamped) — arm it instead"
+          reason: ae.end_reason === "superseded" ? "session was superseded by a /clear — its heir owns the card now" : "session has no hook-proven end (presumed/unstamped) — arm it instead"
         }
       };
-    if (he.has(h))
+    if (le.has(g))
       return {
         status: 409,
         body: {
           ok: !1,
-          reason: `session ${h.slice(0, 8)} is already being moved/revived`
+          reason: `session ${g.slice(0, 8)} is already being moved/revived`
         }
       };
-    he.add(h);
+    le.add(g);
     try {
-      (le.adopt_armed_until != null || le.adopt_armed_skip != null) && n(h, { adopt_armed_until: null, adopt_armed_skip: null });
-      let pe = le.cwd, We = null;
+      (ae.adopt_armed_until != null || ae.adopt_armed_skip != null) && n(g, { adopt_armed_until: null, adopt_armed_skip: null });
+      let ge = ae.cwd, Ae = null;
       try {
-        pe && (We = zn.statSync(pe));
+        ge && (Ae = Vn.statSync(ge));
       } catch {
       }
-      if (!pe || !We?.isDirectory())
+      if (!ge || !Ae?.isDirectory())
         return { status: 410, body: { ok: !1, reason: "session cwd no longer exists" } };
-      if (!zn.existsSync(xs(pe, h)))
+      if (!Vn.existsSync(Rs(ge, g)))
         return { status: 410, body: { ok: !1, reason: "resume transcript no longer exists" } };
-      let be = g.windowName(_, le.callsign), Ae = await f(be);
-      if (Ae === null)
+      let ke = h.windowName(_, ae.callsign), Oe = await f(ke);
+      if (Oe === null)
         return {
           status: 503,
           body: {
@@ -12857,100 +13366,100 @@ function Kw(e) {
             reason: "tmux window lookup failed; adopt held to avoid a duplicate session"
           }
         };
-      if (Ae && !Ae.pane_dead && Ae.pane_cmd === "claude")
+      if (Oe && !Oe.pane_dead && Oe.pane_cmd === "claude")
         return {
           status: 409,
-          body: { ok: !1, reason: `window ${be} already hosts a live claude pane` }
+          body: { ok: !1, reason: `window ${ke} already hosts a live claude pane` }
         };
-      if (Ae && !Ae.pane_dead && !ks.test(Ae.pane_cmd))
+      if (Oe && !Oe.pane_dead && !Cs.test(Oe.pane_cmd))
         return {
           status: 409,
           body: {
             ok: !1,
-            reason: `window ${be} hosts a live '${Ae.pane_cmd}' pane — not a dead remnant; refusing to kill it`
+            reason: `window ${ke} hosts a live '${Oe.pane_cmd}' pane — not a dead remnant; refusing to kill it`
           }
         };
-      if (Ae) {
-        let Le = await g.killWindowVerified(be);
-        if (!Le.ok && !Le.gone)
+      if (Oe) {
+        let W = await h.killWindowVerified(ke);
+        if (!W.ok && !W.gone)
           return {
             status: 500,
-            body: { ok: !1, reason: Le.error ?? "tmux kill-window failed" }
+            body: { ok: !1, reason: W.error ?? "tmux kill-window failed" }
           };
       }
-      let Je = de(null);
-      return await cr({
-        session_id: h,
-        callsign: le.callsign,
-        tmux_window: be,
-        runCwd: pe,
-        requested_cwd: pe,
+      let U = ne(null);
+      return await $t({
+        session_id: g,
+        callsign: ae.callsign,
+        tmux_window: ke,
+        runCwd: ge,
+        requested_cwd: ge,
         worktree_path: null,
-        skip_permissions: _e,
+        skip_permissions: fe,
         remoteWanted: !1,
-        gatewayEnv: Je.env,
+        gatewayEnv: U.env,
         excludeSpawnId: null,
-        overrideExtra: { adopt_of: h },
+        overrideExtra: { adopt_of: g },
         note: "moving to tmux…",
-        tickMsg: `⇥ moving ${le.callsign} to tmux (resume ${h.slice(0, 8)})${_e ? " (unsupervised)" : ""}`,
+        tickMsg: `⇥ moving ${ae.callsign} to tmux (resume ${g.slice(0, 8)})${fe ? " (unsupervised)" : ""}`,
         failReason: "tmux adopt failed",
         bodyExtra: { adopted: !0 }
       });
     } finally {
-      he.delete(h);
+      le.delete(g);
     }
   }
-  r(Jt, "adoptSession");
-  let lr = new Map();
-  function ie(h) {
-    let j = lr.get(h);
-    if (j) return j;
-    let B = me(h).finally(() => {
-      lr.get(h) === B && lr.delete(h);
+  r(ho, "adoptSession");
+  let oe = new Map();
+  function he(g) {
+    let G = oe.get(g);
+    if (G) return G;
+    let L = Xe(g).finally(() => {
+      oe.get(g) === L && oe.delete(g);
     });
-    return lr.set(h, B), B;
+    return oe.set(g, L), L;
   }
-  r(ie, "enableRemote");
-  async function me(h) {
-    let j = t.getSpawn.get(h);
-    if (!j) return { status: 404, body: { ok: !1, reason: "no such spawn" } };
-    if (j.kind === "shell")
+  r(he, "enableRemote");
+  async function Xe(g) {
+    let G = t.getSpawn.get(g);
+    if (!G) return { status: 404, body: { ok: !1, reason: "no such spawn" } };
+    if (G.kind === "shell")
       return {
         status: 409,
         body: { ok: !1, reason: "remote control is unavailable for shell sessions" }
       };
-    if (j.status !== "live")
-      return { status: 409, body: { ok: !1, reason: `spawn is ${j.status}, not live` } };
-    if (j.remote_control && j.remote_url)
+    if (G.status !== "live")
+      return { status: 409, body: { ok: !1, reason: `spawn is ${G.status}, not live` } };
+    if (G.remote_control && G.remote_url)
       return {
         status: 200,
-        body: { ok: !0, enabled: !0, url: j.remote_url, pending: !1 }
+        body: { ok: !0, enabled: !0, url: G.remote_url, pending: !1 }
       };
-    let B = t.getSession.get(j.session_id);
-    if (!B || !["queued", "idle"].includes(B.col))
+    let L = t.getSession.get(G.session_id);
+    if (!L || !["queued", "idle"].includes(L.col))
       return {
         status: 409,
-        body: { ok: !1, reason: `session is ${B?.col ?? "missing"}, not queued or idle` }
+        body: { ok: !1, reason: `session is ${L?.col ?? "missing"}, not queued or idle` }
       };
-    let le = await f(j.tmux_window);
-    if (le === null)
+    let ae = await f(G.tmux_window);
+    if (ae === null)
       return {
         status: 503,
         body: { ok: !1, reason: "tmux window lookup failed; remote control was not sent" }
       };
-    if (!le || le.pane_dead || le.pane_cmd !== "claude")
-      return { status: 409, body: { ok: !1, reason: `claude pane is not alive (${le ? le.pane_dead ? "dead" : `running ${le.pane_cmd || "unknown"}` : "missing"})` } };
-    let _e = t.getSession.get(j.session_id);
-    if (!_e || !["queued", "idle"].includes(_e.col))
+    if (!ae || ae.pane_dead || ae.pane_cmd !== "claude")
+      return { status: 409, body: { ok: !1, reason: `claude pane is not alive (${ae ? ae.pane_dead ? "dead" : `running ${ae.pane_cmd || "unknown"}` : "missing"})` } };
+    let fe = t.getSession.get(G.session_id);
+    if (!fe || !["queued", "idle"].includes(fe.col))
       return {
         status: 409,
-        body: { ok: !1, reason: `session is ${_e?.col ?? "missing"}, not queued or idle` }
+        body: { ok: !1, reason: `session is ${fe?.col ?? "missing"}, not queued or idle` }
       };
-    let K = w(le), xe = r((Y) => Y && ["queued", "idle"].includes(Y.col), "idleNow"), pe = r(async () => {
-      let Y = t.getSession.get(j.session_id);
-      return xe(Y) ? await g.typeAndEnter(
-        K,
-        `/rc ${Y?.callsign ?? j.callsign}`
+    let j = w(ae), be = r((_e) => _e && ["queued", "idle"].includes(_e.col), "idleNow"), ge = r(async () => {
+      let _e = t.getSession.get(G.session_id);
+      return be(_e) ? await h.typeAndEnter(
+        j,
+        `/rc ${_e?.callsign ?? G.callsign}`
       ) ? null : {
         status: 500,
         body: { ok: !1, reason: "failed to type remote-control command into pane" }
@@ -12958,384 +13467,470 @@ function Kw(e) {
         status: 409,
         body: {
           ok: !1,
-          reason: `session is ${Y?.col ?? "missing"}, not queued or idle`
+          reason: `session is ${_e?.col ?? "missing"}, not queued or idle`
         }
       };
-    }, "attempt"), be = (Me.get(K) ?? Promise.resolve()).catch(() => {
-    }).then(pe);
-    Me.set(K, be);
-    let Ae;
+    }, "attempt"), ke = (ft.get(j) ?? Promise.resolve()).catch(() => {
+    }).then(ge);
+    ft.set(j, ke);
+    let Oe;
     try {
-      Ae = await be;
+      Oe = await ke;
     } finally {
-      Me.get(K) === be && Me.delete(K);
+      ft.get(j) === ke && ft.delete(j);
     }
-    if (Ae) return Ae;
-    let Je = Ve(h), Le, Ce = new Promise((Y) => {
-      Le = setTimeout(() => {
-        Y({ pending: !0, url: null });
-      }, 6e3), Le.unref();
-    }), $ = await Promise.race([
-      Je.then(({ url: Y }) => ({ pending: !1, url: Y })),
-      Ce
+    if (Oe) return Oe;
+    let U = _t(g), W, H = new Promise((_e) => {
+      W = setTimeout(() => {
+        _e({ pending: !0, url: null });
+      }, 6e3), W.unref();
+    }), ue = await Promise.race([
+      U.then(({ url: _e }) => ({ pending: !1, url: _e })),
+      H
     ]);
-    return clearTimeout(Le), {
+    return clearTimeout(W), {
       status: 200,
-      body: { ok: !0, enabled: !0, url: $.url, pending: $.pending }
+      body: { ok: !0, enabled: !0, url: ue.url, pending: ue.pending }
     };
   }
-  r(me, "enableRemoteOnce");
-  async function Xe(h, j) {
-    let B = t.getSpawn.get(h);
-    if (!B) return { status: 404, body: { ok: !1, reason: "no such spawn" } };
-    if (B.tmux_window == null) throw new Error("spawn is missing its tmux window");
-    if (B.status === "provisioning") {
-      let xe = ce.get(h);
-      if (xe) {
-        xe.controller.abort();
-        let pe = null, We = new Promise((Je) => {
-          pe = setTimeout(() => Je("pending"), 5e3), pe.unref();
-        }), be = await Promise.race([xe.done.then(() => "done"), We]);
-        if (pe && clearTimeout(pe), be === "pending")
+  r(Xe, "enableRemoteOnce");
+  function ot(g, G) {
+    return Be(() => {
+      let L = t.getSpawn.get(g);
+      return L ? { done: !1, runKill: r(async () => {
+        if (L.tmux_window == null) throw new Error("spawn is missing its tmux window");
+        if (L.status === "provisioning") {
+          let ge = Le.get(g);
+          if (ge) {
+            ge.controller.abort();
+            let Ae = null, ke = new Promise((W) => {
+              Ae = setTimeout(() => W("pending"), 5e3), Ae.unref();
+            }), Oe = await Promise.race([ge.done.then(() => "done"), ke]);
+            if (Ae && clearTimeout(Ae), Oe === "pending")
+              return {
+                status: 202,
+                body: { ok: !0, spawn_id: g, status: "cancelling" }
+              };
+            let U = t.getSpawn.get(g);
+            if (U?.status === "gone" || U?.status === "killed")
+              return {
+                status: 200,
+                body: { ok: !0, spawn_id: g, status: "cancelled" }
+              };
+          } else {
+            let Ae = await h.killWindowVerified(L.tmux_window);
+            if (Ae.ok || Ae.gone) {
+              t.setSpawnStatus.run(Ae.ok ? "killed" : "gone", g), We(g);
+              let ke = t.getSession.get(L.session_id);
+              return ke && ke.ended_at == null && l(L.session_id, {
+                note: "spawn cancelled",
+                tickMsg: `○ cancelled repository provisioning for ${ke.callsign ?? L.callsign}`,
+                forgetModel: !0,
+                mutate: !0
+              }), {
+                status: 200,
+                body: { ok: !0, spawn_id: g, status: "cancelled" }
+              };
+            }
+            return {
+              status: 500,
+              body: {
+                ok: !1,
+                reason: Ae.error ?? "provisioning cancellation could not be verified"
+              }
+            };
+          }
+        }
+        let fe = t.currentWindowOwner.get(L.tmux_window);
+        if (fe && fe.spawn_id !== g)
+          return {
+            status: 409,
+            body: {
+              ok: !1,
+              reason: `spawn ${g} is a historical row; tmux window ${L.tmux_window} is now owned by spawn ${fe.spawn_id} — kill that one`,
+              current_spawn_id: fe.spawn_id
+            }
+          };
+        let j = t.getSession.get(L.session_id);
+        if (L.kind !== "shell" && j && j.col !== "offline" && G !== !0)
+          return {
+            status: 409,
+            body: {
+              ok: !1,
+              reason: `session ${j.callsign} is ${j.col}, not offline — pass force:true to kill anyway`
+            }
+          };
+        let be = await h.killWindowVerified(L.tmux_window);
+        return !be.ok && be.gone ? (["provisioning", "spawning", "stalled", "live", "pane-dead"].includes(L.status) && (t.setSpawnStatus.run("gone", g), We(g), j && j.ended_at == null && l(L.session_id, { note: "spawned pane window gone" }), i()), { status: 410, body: { ok: !1, reason: "window already gone" } }) : be.ok ? (t.setSpawnStatus.run("killed", g), We(g), j && j.ended_at == null && l(L.session_id, { note: "pane killed from the board" }), o(`🗡 killed pane ${L.tmux_window}${G === !0 ? " (forced)" : ""}`), i(), { status: 200, body: { ok: !0, spawn_id: g, status: "killed" } }) : {
+          status: 500,
+          body: { ok: !1, reason: be.error ?? "tmux kill-window failed" }
+        };
+      }, "runKill") } : {
+        done: !0,
+        wire: { status: 404, body: { ok: !1, reason: "no such spawn" } }
+      };
+    }).pipe(
+      an(
+        (L) => L.done ? wt(L.wire) : bt(L.runKill)
+      )
+    );
+  }
+  r(ot, "spawnKillEffect");
+  async function ln(g, G) {
+    let L = t.getSpawn.get(g);
+    if (!L) return { status: 404, body: { ok: !1, reason: "no such spawn" } };
+    if (L.tmux_window == null) throw new Error("spawn is missing its tmux window");
+    if (L.status === "provisioning") {
+      let be = Le.get(g);
+      if (be) {
+        be.controller.abort();
+        let ge = null, Ae = new Promise((U) => {
+          ge = setTimeout(() => U("pending"), 5e3), ge.unref();
+        }), ke = await Promise.race([be.done.then(() => "done"), Ae]);
+        if (ge && clearTimeout(ge), ke === "pending")
           return {
             status: 202,
-            body: { ok: !0, spawn_id: h, status: "cancelling" }
+            body: { ok: !0, spawn_id: g, status: "cancelling" }
           };
-        let Ae = t.getSpawn.get(h);
-        if (Ae?.status === "gone" || Ae?.status === "killed")
+        let Oe = t.getSpawn.get(g);
+        if (Oe?.status === "gone" || Oe?.status === "killed")
           return {
             status: 200,
-            body: { ok: !0, spawn_id: h, status: "cancelled" }
+            body: { ok: !0, spawn_id: g, status: "cancelled" }
           };
       } else {
-        let pe = await g.killWindowVerified(B.tmux_window);
-        if (pe.ok || pe.gone) {
-          t.setSpawnStatus.run(pe.ok ? "killed" : "gone", h), ft(h);
-          let We = t.getSession.get(B.session_id);
-          return We && We.ended_at == null && l(B.session_id, {
+        let ge = await h.killWindowVerified(L.tmux_window);
+        if (ge.ok || ge.gone) {
+          t.setSpawnStatus.run(ge.ok ? "killed" : "gone", g), We(g);
+          let Ae = t.getSession.get(L.session_id);
+          return Ae && Ae.ended_at == null && l(L.session_id, {
             note: "spawn cancelled",
-            tickMsg: `○ cancelled repository provisioning for ${We.callsign ?? B.callsign}`,
+            tickMsg: `○ cancelled repository provisioning for ${Ae.callsign ?? L.callsign}`,
             forgetModel: !0,
             mutate: !0
           }), {
             status: 200,
-            body: { ok: !0, spawn_id: h, status: "cancelled" }
+            body: { ok: !0, spawn_id: g, status: "cancelled" }
           };
         }
         return {
           status: 500,
           body: {
             ok: !1,
-            reason: pe.error ?? "provisioning cancellation could not be verified"
+            reason: ge.error ?? "provisioning cancellation could not be verified"
           }
         };
       }
     }
-    let le = t.currentWindowOwner.get(B.tmux_window);
-    if (le && le.spawn_id !== h)
+    let ae = t.currentWindowOwner.get(L.tmux_window);
+    if (ae && ae.spawn_id !== g)
       return {
         status: 409,
         body: {
           ok: !1,
-          reason: `spawn ${h} is a historical row; tmux window ${B.tmux_window} is now owned by spawn ${le.spawn_id} — kill that one`,
-          current_spawn_id: le.spawn_id
+          reason: `spawn ${g} is a historical row; tmux window ${L.tmux_window} is now owned by spawn ${ae.spawn_id} — kill that one`,
+          current_spawn_id: ae.spawn_id
         }
       };
-    let _e = t.getSession.get(B.session_id);
-    if (B.kind !== "shell" && _e && _e.col !== "offline" && j !== !0)
+    let fe = t.getSession.get(L.session_id);
+    if (L.kind !== "shell" && fe && fe.col !== "offline" && G !== !0)
       return {
         status: 409,
         body: {
           ok: !1,
-          reason: `session ${_e.callsign} is ${_e.col}, not offline — pass force:true to kill anyway`
+          reason: `session ${fe.callsign} is ${fe.col}, not offline — pass force:true to kill anyway`
         }
       };
-    let K = await g.killWindowVerified(B.tmux_window);
-    return !K.ok && K.gone ? (["provisioning", "spawning", "stalled", "live", "pane-dead"].includes(B.status) && (t.setSpawnStatus.run("gone", h), ft(h), _e && _e.ended_at == null && l(B.session_id, { note: "spawned pane window gone" }), i()), { status: 410, body: { ok: !1, reason: "window already gone" } }) : K.ok ? (t.setSpawnStatus.run("killed", h), ft(h), _e && _e.ended_at == null && l(B.session_id, { note: "pane killed from the board" }), o(`🗡 killed pane ${B.tmux_window}${j === !0 ? " (forced)" : ""}`), i(), { status: 200, body: { ok: !0, spawn_id: h, status: "killed" } }) : { status: 500, body: { ok: !1, reason: K.error ?? "tmux kill-window failed" } };
+    let j = await h.killWindowVerified(L.tmux_window);
+    return !j.ok && j.gone ? (["provisioning", "spawning", "stalled", "live", "pane-dead"].includes(L.status) && (t.setSpawnStatus.run("gone", g), We(g), fe && fe.ended_at == null && l(L.session_id, { note: "spawned pane window gone" }), i()), { status: 410, body: { ok: !1, reason: "window already gone" } }) : j.ok ? (t.setSpawnStatus.run("killed", g), We(g), fe && fe.ended_at == null && l(L.session_id, { note: "pane killed from the board" }), o(`🗡 killed pane ${L.tmux_window}${G === !0 ? " (forced)" : ""}`), i(), { status: 200, body: { ok: !0, spawn_id: g, status: "killed" } }) : { status: 500, body: { ok: !1, reason: j.error ?? "tmux kill-window failed" } };
   }
-  r(Xe, "spawnKill");
-  let it = 2, un = 3, ln = { unreachableStreak: 0, announcedUnreachable: !1 };
-  function ho() {
-    g.spawnOverrideCmd?.() || !g.hasTmux() || (ln.unreachableStreak += 1, !ln.announcedUnreachable && (ln.unreachableStreak < un || (ln.announcedUnreachable = !0, o("⚠ tmux is not answering — holding every card as-is until it does"))));
+  r(ln, "spawnKillLegacy");
+  function ir(g, G) {
+    return Lk && V ? V(ot(g, G)) : ln(g, G);
   }
-  r(ho, "noteTmuxUnreachable");
-  async function dn(h) {
+  r(ir, "spawnKill");
+  let wo = 2, un = 3, Xt = { unreachableStreak: 0, announcedUnreachable: !1 };
+  function Eo() {
+    h.spawnOverrideCmd?.() || !h.hasTmux() || (Xt.unreachableStreak += 1, !Xt.announcedUnreachable && (Xt.unreachableStreak < un || (Xt.announcedUnreachable = !0, o("⚠ tmux is not answering — holding every card as-is until it does"))));
+  }
+  r(Eo, "noteTmuxUnreachable");
+  async function yo(g) {
     o(
-      `💀 the tmux server died — ${h.length} spawn(s) went with it; ⟲ revive brings them back`
+      `💀 the tmux server died — ${g.length} spawn(s) went with it; ⟲ revive brings them back`
     );
-    for (let j of h) {
-      t.setSpawnStatus.run("gone", j.spawn_id), ft(j.spawn_id);
-      let B = t.getSession.get(j.session_id);
-      B && B.ended_at == null && l(j.session_id, {
-        note: `tmux server died — resume with claude --resume ${j.session_id}`
-      }), s(j.session_id, "SpawnGone", null, "tmux server died");
+    for (let G of g) {
+      t.setSpawnStatus.run("gone", G.spawn_id), We(G.spawn_id);
+      let L = t.getSession.get(G.session_id);
+      L && L.ended_at == null && l(G.session_id, {
+        note: `tmux server died — resume with claude --resume ${G.session_id}`
+      }), s(G.session_id, "SpawnGone", null, "tmux server died");
     }
     i();
     try {
-      await g.ensureSession(_), o("⟲ tmux server restarted — the fleet is ready to revive");
-    } catch (j) {
-      o(`⚠ could not restart the tmux server (${Ze(j).slice(0, 80)})`);
+      await h.ensureSession(_), o("⟲ tmux server restarted — the fleet is ready to revive");
+    } catch (G) {
+      o(`⚠ could not restart the tmux server (${Ze(G).slice(0, 80)})`);
     }
   }
-  r(dn, "mournFleetServer");
-  let fn = null;
-  function wo() {
-    if (fn) return fn;
-    let h = V.run(Eo);
-    return h ? (fn = h.finally(() => {
-      fn = null;
-    }), fn) : Promise.resolve();
+  r(yo, "mournFleetServer");
+  let Nn = null;
+  function Rn() {
+    if (Nn) return Nn;
+    let g = Ce.run(kr);
+    return g ? (Nn = g.finally(() => {
+      Nn = null;
+    }), Nn) : Promise.resolve();
   }
-  r(wo, "spawnLivenessTick");
-  async function Eo() {
-    yo();
-    let h = t.activeSpawns.all(), j = t.resurrectableSpawns.all();
-    if (!h.length && !j.length && !xn.orphans.length) return;
-    let B = await g.listScopedWindows(_);
-    if (B === null) {
-      ho();
+  r(Rn, "spawnLivenessTick");
+  async function kr() {
+    Rr();
+    let g = t.activeSpawns.all(), G = t.resurrectableSpawns.all();
+    if (!g.length && !G.length && !Xn.orphans.length) return;
+    let L = await h.listScopedWindows(_);
+    if (L === null) {
+      Eo();
       return;
     }
-    if (ln.unreachableStreak = 0, ln.announcedUnreachable && (ln.announcedUnreachable = !1, o("✓ tmux is answering again")), !B.length && h.length && await g.fleetServerAbsent?.(_)) {
-      await dn(h);
+    if (Xt.unreachableStreak = 0, Xt.announcedUnreachable && (Xt.announcedUnreachable = !1, o("✓ tmux is answering again")), !L.length && g.length && await h.fleetServerAbsent?.(_)) {
+      await yo(g);
       return;
     }
-    for (let K of h) {
-      let xe = B.find((Le) => Le.window === K.tmux_window);
-      if (!xe) continue;
-      let pe, We = !1, be = K.kind === "shell", Ae = !!K.setup_cmd && (K.status === "spawning" || K.status === "stalled");
-      if (xe.pane_dead)
-        pe = !0, We = Ae;
-      else if (be)
-        pe = !1;
-      else if (xe.pane_cmd === "claude")
-        pe = !1;
+    for (let j of g) {
+      let be = L.find((W) => W.window === j.tmux_window);
+      if (!be) continue;
+      let ge, Ae = !1, ke = j.kind === "shell", Oe = !!j.setup_cmd && (j.status === "spawning" || j.status === "stalled");
+      if (be.pane_dead)
+        ge = !0, Ae = Oe;
+      else if (ke)
+        ge = !1;
+      else if (be.pane_cmd === "claude")
+        ge = !1;
       else {
-        let Le = await g.paneCurrentCommand(w(xe));
-        Le && !Le.dead && Le.cmd === "claude" ? pe = !1 : Le?.dead ? (pe = !0, We = Ae) : Ae && Le ? pe = !1 : Le && ks.test(Le.cmd) ? pe = !0 : pe = null;
+        let W = await h.paneCurrentCommand(w(be));
+        W && !W.dead && W.cmd === "claude" ? ge = !1 : W?.dead ? (ge = !0, Ae = Oe) : Oe && W ? ge = !1 : W && Cs.test(W.cmd) ? ge = !0 : ge = null;
       }
-      if (pe === !1) {
-        dt.delete(K.spawn_id);
-        let Le = K.setup_cmd ? M : U;
-        if (K.status === "spawning" && Date.now() - K.requested_at > Le) {
-          let Ce = K.setup_cmd ? `pane up but never registered — setup may still be running; check window ${K.tmux_window}` : `pane up but never registered — open diagnostics or terminal; window ${K.tmux_window}`, $ = null;
+      if (ge === !1) {
+        Et.delete(j.spawn_id);
+        let W = j.setup_cmd ? F : $;
+        if (j.status === "spawning" && Date.now() - j.requested_at > W) {
+          let H = j.setup_cmd ? `pane up but never registered — setup may still be running; check window ${j.tmux_window}` : `pane up but never registered — open diagnostics or terminal; window ${j.tmux_window}`, ue = null;
           try {
-            let re = [];
+            let Me = [];
             try {
-              let ke = zn.readFileSync(Ds.join(E, "token"), "utf8").trim();
-              ke && re.push(ke);
+              let Ye = Vn.readFileSync(Ms.join(E, "token"), "utf8").trim();
+              Ye && Me.push(Ye);
             } catch {
             }
-            let ve = A() ?? {};
-            for (let [ke, Ge] of Object.entries(ve))
-              /(TOKEN|KEY|SECRET|PASSWORD)/i.test(ke) && Ge && re.push(Ge);
-            $ = Dk(await g.capturePane(w(xe)), {
-              secrets: re
+            let rt = A() ?? {};
+            for (let [Ye, Ut] of Object.entries(rt))
+              /(TOKEN|KEY|SECRET|PASSWORD)/i.test(Ye) && Ut && Me.push(Ut);
+            ue = Fk(await h.capturePane(w(be)), {
+              secrets: Me
             });
           } catch {
           }
-          if (!t.setSpawnStalled.run($, K.spawn_id).changes) continue;
-          n(K.session_id, {
+          if (!t.setSpawnStalled.run(ue, j.spawn_id).changes) continue;
+          n(j.session_id, {
             col: "needsyou",
             notification_type: "spawn_stalled",
-            note: Ce
+            note: H
           });
-          let Y = t.getSession.get(K.session_id);
+          let _e = t.getSession.get(j.session_id);
           o(
-            `⚠ ${Y?.callsign ?? K.callsign} pane is up but never phoned home${$ ? " — diagnostics captured" : ""}`
-          ), s(K.session_id, "SpawnStalled", null, $ ? `${Ce}
-${$}` : Ce), i();
+            `⚠ ${_e?.callsign ?? j.callsign} pane is up but never phoned home${ue ? " — diagnostics captured" : ""}`
+          ), s(j.session_id, "SpawnStalled", null, ue ? `${H}
+${ue}` : H), i();
         }
         continue;
       }
-      if (pe === null) {
-        dt.delete(K.spawn_id);
+      if (ge === null) {
+        Et.delete(j.spawn_id);
         continue;
       }
-      if (!We) {
-        let Le = (dt.get(K.spawn_id) ?? 0) + 1;
-        if (Le < it) {
-          dt.set(K.spawn_id, Le);
+      if (!Ae) {
+        let W = (Et.get(j.spawn_id) ?? 0) + 1;
+        if (W < wo) {
+          Et.set(j.spawn_id, W);
           continue;
         }
       }
-      t.setSpawnStatus.run("pane-dead", K.spawn_id), ft(K.spawn_id);
-      let Je = t.getSession.get(K.session_id);
-      if (Je && Je.ended_at == null) {
-        let Le = Ae ? "pane exited during setup/bring-up — open the terminal for the error" : be ? "shell pane exited — window kept for scrollback" : `pane idle — resume with claude --resume ${K.session_id}`;
-        l(K.session_id, {
+      t.setSpawnStatus.run("pane-dead", j.spawn_id), We(j.spawn_id);
+      let U = t.getSession.get(j.session_id);
+      if (U && U.ended_at == null) {
+        let W = Oe ? "pane exited during setup/bring-up — open the terminal for the error" : ke ? "shell pane exited — window kept for scrollback" : `pane idle — resume with claude --resume ${j.session_id}`;
+        l(j.session_id, {
 
-          note: Le,
-          tickMsg: `💀 ${Je.callsign} pane died — window kept for scrollback`
+          note: W,
+          tickMsg: `💀 ${U.callsign} pane died — window kept for scrollback`
         });
       }
       i();
     }
-    for (let K of j) {
-      let xe = B.find((Je) => Je.window === K.tmux_window);
-      if (!xe || xe.pane_dead) continue;
-      let pe = t.currentWindowOwner.get(K.tmux_window);
-      if (pe && pe.spawn_id !== K.spawn_id) continue;
-      let We = await g.paneCurrentCommand(w(xe));
-      if (!We || We.dead || K.kind !== "shell" && We.cmd !== "claude") continue;
-      let be = t.getSpawn.get(K.spawn_id);
-      if (!be || be.status !== "pane-dead" && be.status !== "gone") continue;
-      let Ae = t.currentWindowOwner.get(K.tmux_window);
-      Ae && Ae.spawn_id !== K.spawn_id || et(be);
+    for (let j of G) {
+      let be = L.find((U) => U.window === j.tmux_window);
+      if (!be || be.pane_dead) continue;
+      let ge = t.currentWindowOwner.get(j.tmux_window);
+      if (ge && ge.spawn_id !== j.spawn_id) continue;
+      let Ae = await h.paneCurrentCommand(w(be));
+      if (!Ae || Ae.dead || j.kind !== "shell" && Ae.cmd !== "claude") continue;
+      let ke = t.getSpawn.get(j.spawn_id);
+      if (!ke || ke.status !== "pane-dead" && ke.status !== "gone") continue;
+      let Oe = t.currentWindowOwner.get(j.tmux_window);
+      Oe && Oe.spawn_id !== j.spawn_id || pt(ke);
     }
-    let le = new Set(t.allSpawns.all().map((K) => K.tmux_window)), _e = B.filter((K) => !le.has(K.window)).map((K) => ({ window: K.window }));
-    JSON.stringify(_e) !== JSON.stringify(xn.orphans) && (xn.orphans = _e, i());
+    let ae = new Set(t.allSpawns.all().map((j) => j.tmux_window)), fe = L.filter((j) => !ae.has(j.window)).map((j) => ({ window: j.window }));
+    JSON.stringify(fe) !== JSON.stringify(Xn.orphans) && (Xn.orphans = fe, i());
   }
-  r(Eo, "runSpawnLivenessTick");
-  let xn = { orphans: [] };
-  function Pn() {
-    return V.run(Rr) ?? Promise.resolve();
+  r(kr, "runSpawnLivenessTick");
+  let Xn = { orphans: [] };
+  function Ko() {
+    return Ce.run(Vo) ?? Promise.resolve();
   }
-  r(Pn, "reconcileSpawns");
-  async function Rr() {
-    let h = t.activeSpawns.all(), j = t.staleProvisioningSpawns.all(), B = await g.listScopedWindows(_);
-    if (B === null) {
-      let K = h.length + j.length;
-      K > 0 && o(
-        `⚠ tmux window lookup failed at restart — leaving ${K} spawn row(s) as-is (unknown, not gone)`
-      ), yo(), i();
+  r(Ko, "reconcileSpawns");
+  async function Vo() {
+    let g = t.activeSpawns.all(), G = t.staleProvisioningSpawns.all(), L = await h.listScopedWindows(_);
+    if (L === null) {
+      let j = g.length + G.length;
+      j > 0 && o(
+        `⚠ tmux window lookup failed at restart — leaving ${j} spawn row(s) as-is (unknown, not gone)`
+      ), Rr(), i();
       return;
     }
-    let le = new Set(B.map((K) => K.window));
-    for (let K of h) {
-      if (le.has(String(K.tmux_window))) continue;
-      t.setSpawnStatus.run("gone", K.spawn_id), ft(K.spawn_id);
-      let xe = t.getSession.get(K.session_id);
-      xe && xe.ended_at == null && l(K.session_id, {
+    let ae = new Set(L.map((j) => j.window));
+    for (let j of g) {
+      if (ae.has(String(j.tmux_window))) continue;
+      t.setSpawnStatus.run("gone", j.spawn_id), We(j.spawn_id);
+      let be = t.getSession.get(j.session_id);
+      be && be.ended_at == null && l(j.session_id, {
 
         note: "spawned pane gone (daemon restart reconciliation)",
-        tickMsg: `${xe.callsign} pane gone — noticed at daemon restart`,
+        tickMsg: `${be.callsign} pane gone — noticed at daemon restart`,
         notify: !1
       }), i();
     }
-    for (let K of j) {
+    for (let j of G) {
       try {
-        zn.rmSync(`${K.cwd}.fd-cloning-${K.spawn_id.slice(0, 8)}`, {
+        Vn.rmSync(`${j.cwd}.fd-cloning-${j.spawn_id.slice(0, 8)}`, {
           recursive: !0,
           force: !0
         });
       } catch {
       }
-      if (K.worktree_path && K.worktree_owned === 1)
+      if (j.worktree_path && j.worktree_owned === 1)
         try {
-          let pe = Dn(K.worktree_path, { fresh: !0 });
+          let ge = An(j.worktree_path, { fresh: !0 });
           if (!(await Ke(
             "git",
-            ["-C", String(K.cwd), "worktree", "remove", "--force", K.worktree_path],
+            ["-C", String(j.cwd), "worktree", "remove", "--force", j.worktree_path],
             { timeout: 3e4 }
           )).ok)
             try {
-              zn.rmSync(K.worktree_path, { recursive: !0, force: !0 });
+              Vn.rmSync(j.worktree_path, { recursive: !0, force: !0 });
             } catch {
             }
-          await Ke("git", ["-C", String(K.cwd), "worktree", "prune"], { timeout: 3e4 }), pe && await Ke("git", ["-C", String(K.cwd), "branch", "-D", pe], {
+          await Ke("git", ["-C", String(j.cwd), "worktree", "prune"], { timeout: 3e4 }), ge && await Ke("git", ["-C", String(j.cwd), "branch", "-D", ge], {
             timeout: 3e4
           }), o(
-            `🧹 removed stranded worktree ${K.worktree_path} — spawn ${K.callsign} was interrupted before launch`
+            `🧹 removed stranded worktree ${j.worktree_path} — spawn ${j.callsign} was interrupted before launch`
           );
         } catch {
         }
-      t.setSpawnStatus.run("gone", K.spawn_id), ft(K.spawn_id);
-      let xe = t.getSession.get(K.session_id);
-      xe && xe.ended_at == null && l(K.session_id, {
+      t.setSpawnStatus.run("gone", j.spawn_id), We(j.spawn_id);
+      let be = t.getSession.get(j.session_id);
+      be && be.ended_at == null && l(j.session_id, {
 
         note: "spawn interrupted before launch (daemon restart)",
-        tickMsg: `${xe.callsign} spawn was interrupted before launch — cleaned up at restart`,
+        tickMsg: `${be.callsign} spawn was interrupted before launch — cleaned up at restart`,
         notify: !1
       }), i();
     }
-    let _e = new Set(t.allSpawns.all().map((K) => K.tmux_window));
-    xn.orphans = B.filter((K) => !_e.has(K.window)).map((K) => ({ window: K.window })), xn.orphans.length && (o(
-      `⚠ ${xn.orphans.length} unadopted fleetdeck window(s) in tmux (fd${_}-* with no spawn row)`
-    ), i()), yo();
+    let fe = new Set(t.allSpawns.all().map((j) => j.tmux_window));
+    Xn.orphans = L.filter((j) => !fe.has(j.window)).map((j) => ({ window: j.window })), Xn.orphans.length && (o(
+      `⚠ ${Xn.orphans.length} unadopted fleetdeck window(s) in tmux (fd${_}-* with no spawn row)`
+    ), i()), Rr();
   }
-  r(Rr, "runReconcileSpawns");
-  function yo() {
-    let h = t.staleRevivingSessions.all();
-    for (let j of h)
-      n(j.session_id, {
+  r(Vo, "runReconcileSpawns");
+  function Rr() {
+    let g = t.staleRevivingSessions.all();
+    for (let G of g)
+      n(G.session_id, {
         col: "offline",
         note: "revive was interrupted before the pane registered — revive again"
-      }), o(`⟲ ${j.callsign} revive was interrupted — the card is revivable again`);
-    return h.length && i(), h.length;
+      }), o(`⟲ ${G.callsign} revive was interrupted — the card is revivable again`);
+    return g.length && i(), g.length;
   }
-  r(yo, "healInterruptedRevives");
-  function Ko() {
-    if (!V.isOpen()) return { healed: 0 };
-    let h = 0, j = t.clearBornSessionsSince.all(Date.now() - 24 * 3600 * 1e3, Date.now());
-    for (let B of j) {
-      let le = t.getSession.get(B.session_id);
-      if (!le || le.archived_at != null || le.ended_at != null || le.succeeded_by != null || t.successorClaimed.get(le.session_id) || t.spawnBySession.get(le.session_id) || !le.cwd) continue;
-      let _e = [];
-      for (let xe of t.visibleSessions.all()) {
-        if (xe.session_id === le.session_id || xe.ended_at != null || xe.succeeded_by != null || xe.cwd !== le.cwd) continue;
-        let pe = t.lastEventOf.get(xe.session_id);
-        pe?.hook_event === "SessionEnd" && (pe.note ?? "").startsWith("context cleared") && (pe.at < B.at - v || pe.at > B.at + 2e3 || _e.push({ row: xe, at: pe.at }));
-      }
-      if (!_e.length) continue;
-      let K = null;
-      if (_e.length === 1)
-        K = _e[0]?.row ?? null;
-      else {
-        let xe = _e.filter((pe) => Q(pe.row.session_id));
-        xe.length === 1 && (K = xe[0]?.row ?? null);
-      }
-      K && P(K, le.session_id, { rename: !0 }) && (h += 1);
-    }
-    return h && (o(`🧹 healed ${h} card${h === 1 ? "" : "s"} split by a /clear before 0.7.1`), i()), { healed: h };
-  }
-  r(Ko, "reconcileClearForks");
-  let Tr = null;
-  function zr() {
-    let h = q();
-    for (let j of ce.values()) j.controller.abort();
-    return h;
-  }
-  r(zr, "quiesceSpawns");
+  r(Rr, "healInterruptedRevives");
   function _o() {
-    return Tr || (zr(), Tr = fe(), Tr);
+    if (!Ce.isOpen()) return { healed: 0 };
+    let g = 0, G = t.clearBornSessionsSince.all(Date.now() - 24 * 3600 * 1e3, Date.now());
+    for (let L of G) {
+      let ae = t.getSession.get(L.session_id);
+      if (!ae || ae.archived_at != null || ae.ended_at != null || ae.succeeded_by != null || t.successorClaimed.get(ae.session_id) || t.spawnBySession.get(ae.session_id) || !ae.cwd) continue;
+      let fe = [];
+      for (let be of t.visibleSessions.all()) {
+        if (be.session_id === ae.session_id || be.ended_at != null || be.succeeded_by != null || be.cwd !== ae.cwd) continue;
+        let ge = t.lastEventOf.get(be.session_id);
+        ge?.hook_event === "SessionEnd" && (ge.note ?? "").startsWith("context cleared") && (ge.at < L.at - x || ge.at > L.at + 2e3 || fe.push({ row: be, at: ge.at }));
+      }
+      if (!fe.length) continue;
+      let j = null;
+      if (fe.length === 1)
+        j = fe[0]?.row ?? null;
+      else {
+        let be = fe.filter((ge) => Q(ge.row.session_id));
+        be.length === 1 && (j = be[0]?.row ?? null);
+      }
+      j && P(j, ae.session_id, { rename: !0 }) && (g += 1);
+    }
+    return g && (o(`🧹 healed ${g} card${g === 1 ? "" : "s"} split by a /clear before 0.7.1`), i()), { healed: g };
   }
-  r(_o, "closeSpawns");
-  let Us = {
-    quiesce: zr,
-    close: _o
-  }, Cr = r(() => ({
+  r(_o, "reconcileClearForks");
+  let Vr = null;
+  function zo() {
+    let g = me();
+    for (let G of Le.values()) G.controller.abort();
+    return g;
+  }
+  r(zo, "quiesceSpawns");
+  function Xo() {
+    return Vr || (zo(), Vr = ee(), Vr);
+  }
+  r(Xo, "closeSpawns");
+  let qs = {
+    quiesce: zo,
+    close: Xo
+  }, Tr = r(() => ({
     status: 503,
     body: { ok: !1, reason: "daemon is shutting down; spawn maintenance is quiescing" }
   }), "shuttingDown");
   return {
-    spawn: r((h) => V.run(() => Bn(h)) ?? Promise.resolve(Cr()), "ownedSpawn"),
-    revive: r((h, j = {}) => V.run(() => Go(h, j)) ?? Promise.resolve(Cr()), "ownedRevive"),
-    adoptSession: r((h, j = {}, B = {}) => V.run(() => Jt(h, j, B)) ?? Promise.resolve(Cr()), "ownedAdoptSession"),
-    enableRemote: r((h) => V.run(() => ie(h)) ?? Promise.resolve(Cr()), "ownedEnableRemote"),
-    spawnKill: r((h, j) => V.run(() => Xe(h, j)) ?? Promise.resolve(Cr()), "ownedSpawnKill"),
-    spawnCapability: r(() => V.isOpen() ? te() : { available: !1, reason: "daemon is shutting down", active: 0 }, "spawnCapability"),
-    spawnLivenessTick: wo,
-    reconcileSpawns: Pn,
-    reconcileClearForks: Ko,
-    scheduleRegistrationRemoteHarvest: Rt,
-    forgetSpawn: ft,
-    spawnState: xn,
-    armUnsupervised: N,
-    spawnMaintenance: V,
-    spawnLifecycle: Us
+    spawn: r((g) => Ce.run(() => Go(g)) ?? Promise.resolve(Tr()), "ownedSpawn"),
+    revive: r((g, G = {}) => Ce.run(() => br(g, G)) ?? Promise.resolve(Tr()), "ownedRevive"),
+    adoptSession: r((g, G = {}, L = {}) => Ce.run(() => ho(g, G, L)) ?? Promise.resolve(Tr()), "ownedAdoptSession"),
+    enableRemote: r((g) => Ce.run(() => he(g)) ?? Promise.resolve(Tr()), "ownedEnableRemote"),
+    spawnKill: r((g, G) => Ce.run(() => ir(g, G)) ?? Promise.resolve(Tr()), "ownedSpawnKill"),
+    spawnCapability: r(() => Ce.isOpen() ? Ie() : { available: !1, reason: "daemon is shutting down", active: 0 }, "spawnCapability"),
+    spawnLivenessTick: Rn,
+    reconcileSpawns: Ko,
+    reconcileClearForks: _o,
+    scheduleRegistrationRemoteHarvest: cn,
+    forgetSpawn: We,
+    spawnState: Xn,
+    armUnsupervised: J,
+    spawnMaintenance: Ce,
+    spawnLifecycle: qs
   };
 }
-r(Kw, "createSpawns");
+r(Xw, "createSpawns");
 
 
-import Ns from "node:path";
-var Ik = ["Edit", "Write", "MultiEdit", "NotebookEdit"], Nk = /\b(pytest|jest|vitest|go test|cargo test|npm (run )?test)\b/;
-function Mk(e, t = Wu()) {
-  return Ns.join(t, ".claude", "projects", za(e ?? ""));
+import Bs from "node:path";
+var Bk = ["Edit", "Write", "MultiEdit", "NotebookEdit"], $k = /\b(pytest|jest|vitest|go test|cargo test|npm (run )?test)\b/;
+function Uk(e, t = Wu()) {
+  return Bs.join(t, ".claude", "projects", Ya(e ?? ""));
 }
-r(Mk, "expectedTranscriptDir");
-function Vw(e) {
+r(Uk, "expectedTranscriptDir");
+function Yw(e) {
   let {
     q: t,
     db: n,
@@ -13347,28 +13942,28 @@ function Vw(e) {
     port: l,
     home: f,
     questions: w,
-    scheduleRegistrationRemoteHarvest: g,
+    scheduleRegistrationRemoteHarvest: h,
     stampTranscriptFloor: _,
     readTranscriptModel: E,
     recordFile: m,
-    whisperText: U,
-    drainMail: M,
-    notifyWatchers: D,
+    whisperText: $,
+    drainMail: F,
+    notifyWatchers: I,
     modelMemo: O,
     forgetSpawn: P,
-    applyTicket: v,
+    applyTicket: x,
 
 
 
     adoptSession: Q,
-    ADOPT_DELAY_MS: G,
+    ADOPT_DELAY_MS: z,
 
 
 
     findClearedPredecessor: Ee,
     succeedSession: ye,
-    succeedForwardFromClear: Ie,
-    touchRepo: Se,
+    succeedForwardFromClear: De,
+    touchRepo: ve,
 
 
 
@@ -13377,237 +13972,237 @@ function Vw(e) {
 
     settleTerminalPlans: $e,
     spawnMaintenance: Z
-  } = e, ae = (process.env.FLEETDECK_HOLD_SCOPE ?? "spawned").trim().toLowerCase(), L = ae === "all" || ae === "off" ? ae : "spawned", S = r((y) => w.boardConsumerAvailable() && (L === "all" || L === "spawned" && t.activeSpawnBySession.get(y) != null), "shouldRelayQuestion");
-  function I(y) {
-    let x = typeof y.session_id == "string" && y.session_id ? y.session_id : null;
-    if (!x) return { card: null, conflict: null };
-    let q = o(x, y.cwd), fe = y.hook_event_name === "SessionEnd" ? t.spawnBySession.get(x) : null, V = !!fe && ["killed", "gone", "pane-dead"].includes(fe.status), Fe = y.hook_event_name === "SessionEnd" && y.fleet_run != null && q.run_id != null && q.run_id !== y.fleet_run && !V, De = q.succeeded_by != null, J = q.end_reason == null || q.end_reason === "presumed" || y.hook_event_name === "SessionStart";
-    !De && J && (q.ended_at != null || q.archived_at != null) && (s(x, { ended_at: null, archived_at: null, col: "queued", end_reason: null }), q = { ...q, ended_at: null, archived_at: null, col: "queued", end_reason: null }), q.source !== "hooks" && (s(x, { source: "hooks" }), q = { ...q, source: "hooks" });
-    let se = t.spawnBySession.get(x);
-    se && (se.status === "spawning" || se.status === "stalled") && (t.setSpawnStatus.run("live", se.spawn_id), se.fail_detail && t.setSpawnFailDetail.run(null, se.spawn_id), i(`🛰 ${q.callsign} pane is live (first hook event)`), se.remote_control && g(se.spawn_id));
-    let de = { last_seen: Date.now(), events: q.events + 1 }, ne = null, te = null;
+  } = e, ie = (process.env.FLEETDECK_HOLD_SCOPE ?? "spawned").trim().toLowerCase(), D = ie === "all" || ie === "off" ? ie : "spawned", S = r((y) => w.boardConsumerAvailable() && (D === "all" || D === "spawned" && t.activeSpawnBySession.get(y) != null), "shouldRelayQuestion");
+  function N(y) {
+    let v = typeof y.session_id == "string" && y.session_id ? y.session_id : null;
+    if (!v) return { card: null, conflict: null };
+    let K = o(v, y.cwd), me = y.hook_event_name === "SessionEnd" ? t.spawnBySession.get(v) : null, ee = !!me && ["killed", "gone", "pane-dead"].includes(me.status), Ce = y.hook_event_name === "SessionEnd" && y.fleet_run != null && K.run_id != null && K.run_id !== y.fleet_run && !ee, Fe = K.succeeded_by != null, J = K.end_reason == null || K.end_reason === "presumed" || y.hook_event_name === "SessionStart";
+    !Fe && J && (K.ended_at != null || K.archived_at != null) && (s(v, { ended_at: null, archived_at: null, col: "queued", end_reason: null }), K = { ...K, ended_at: null, archived_at: null, col: "queued", end_reason: null }), K.source !== "hooks" && (s(v, { source: "hooks" }), K = { ...K, source: "hooks" });
+    let se = t.spawnBySession.get(v);
+    se && (se.status === "spawning" || se.status === "stalled") && (t.setSpawnStatus.run("live", se.spawn_id), se.fail_detail && t.setSpawnFailDetail.run(null, se.spawn_id), i(`🛰 ${K.callsign} pane is live (first hook event)`), se.remote_control && h(se.spawn_id));
+    let de = { last_seen: Date.now(), events: K.events + 1 }, ne = null, re = null;
     if (y.cwd) {
       de.cwd = y.cwd;
-      let k = Tn(y.cwd);
-      de.repo_id = k.repo_id, de.repo_name = k.repo_name, de.worktree = k.worktree, ne = Dn(y.cwd);
-      let z = ne ?? y.git_branch ?? null;
-      z && (de.branch = z), k.is_git && k.repo_id !== q.repo_id && (te = k);
+      let R = kn(y.cwd);
+      de.repo_id = R.repo_id, de.repo_name = R.repo_name, de.worktree = R.worktree, ne = An(y.cwd);
+      let X = ne ?? y.git_branch ?? null;
+      X && (de.branch = X), R.is_git && R.repo_id !== K.repo_id && (re = R);
     }
-    let Ne = y.model, je = null;
-    if (Ne && typeof Ne == "object" ? je = Ne.display_name ?? Ne.id ?? null : typeof Ne == "string" && Ne && (je = Ne), y.hook_event_name === "SessionStart")
-      _(x, y.transcript_path), je && (de.model = je), de.run_id = y.fleet_run ?? null;
-    else if (je)
-      de.model = je;
+    let Ie = y.model, qe = null;
+    if (Ie && typeof Ie == "object" ? qe = Ie.display_name ?? Ie.id ?? null : typeof Ie == "string" && Ie && (qe = Ie), y.hook_event_name === "SessionStart")
+      _(v, y.transcript_path), qe && (de.model = qe), de.run_id = y.fleet_run ?? null;
+    else if (qe)
+      de.model = qe;
     else if (y.transcript_path) {
-      let k = E(x, y.transcript_path);
-      k && k !== q.model && (de.model = k, q.model && i(`🔀 ${q.callsign} switched model → ${k}`));
+      let R = E(v, y.transcript_path);
+      R && R !== K.model && (de.model = R, K.model && i(`🔀 ${K.callsign} switched model → ${R}`));
     }
-    if (s(x, de), te && Se({
-      repo_id: te.repo_id,
-      repo_name: te.repo_name,
-      root: te.main_tree,
+    if (s(v, de), re && ve({
+      repo_id: re.repo_id,
+      repo_name: re.repo_name,
+      root: re.main_tree,
       source: "hooks"
-    }), q = { ...q, ...de }, de.branch && q.ticket == null && q.ticket_source == null && q.custom_suffix == null) {
-      let k = jr(ne);
-      k && (k = jr(Dn(y.cwd, { fresh: !0 }))), k && v(x, k, "branch").ok && (q = t.getSession.get(x) ?? q);
+    }), K = { ...K, ...de }, de.branch && K.ticket == null && K.ticket_source == null && K.custom_suffix == null) {
+      let R = qr(ne);
+      R && (R = qr(An(y.cwd, { fresh: !0 }))), R && x(v, R, "branch").ok && (K = t.getSession.get(v) ?? K);
     }
-    let Te = null, ue = {};
+    let Pe = null, pe = {};
     switch (y.hook_event_name) {
       case "SessionStart":
-        ue.col = "queued", ue.note = `session ${y.source ?? "startup"}`;
+        pe.col = "queued", pe.note = `session ${y.source ?? "startup"}`;
         break;
       case "UserPromptSubmit":
-        ue.col = "working", ue.task = q.task || (y.prompt ?? "").slice(0, 80), ue.note = "prompt: " + (y.prompt ?? "").slice(0, 60), ue.notification_type = null, i(`${q.callsign} got a prompt`);
+        pe.col = "working", pe.task = K.task || (y.prompt ?? "").slice(0, 80), pe.note = "prompt: " + (y.prompt ?? "").slice(0, 60), pe.notification_type = null, i(`${K.callsign} got a prompt`);
         break;
       case "PreToolUse":
       case "PostToolUse":
       case "PostToolUseFailure": {
-        ue.col = q.col === "needsyou" || q.col === "queued" ? "working" : q.col, ue.notification_type = null, ue.last_tool = y.tool_name ?? null;
-        let k = y.tool_input ?? {}, z = k.file_path ?? k.notebook_path;
-        if (Ik.includes(y.tool_name ?? "") && z)
-          Te = m(x, z, q), ue.note = `editing ${Ns.basename(z)}`;
-        else if (y.tool_name === "Bash" && k.command) {
-          let F = String(k.command);
-          Nk.test(F) ? (ue.col = "verifying", ue.note = "running tests") : ue.note = "sh: " + F.slice(0, 50);
+        pe.col = K.col === "needsyou" || K.col === "queued" ? "working" : K.col, pe.notification_type = null, pe.last_tool = y.tool_name ?? null;
+        let R = y.tool_input ?? {}, X = R.file_path ?? R.notebook_path;
+        if (Bk.includes(y.tool_name ?? "") && X)
+          Pe = m(v, X, K), pe.note = `editing ${Bs.basename(X)}`;
+        else if (y.tool_name === "Bash" && R.command) {
+          let B = String(R.command);
+          $k.test(B) ? (pe.col = "verifying", pe.note = "running tests") : pe.note = "sh: " + B.slice(0, 50);
         } else
-          ue.note = y.tool_name ?? null;
+          pe.note = y.tool_name ?? null;
         break;
       }
       case "FileChanged": {
-        let k = y.file_path ?? y.tool_input?.file_path ?? y.path ?? null;
-        k && (Te = m(x, k, q), ue.note = `changed ${Ns.basename(k)}`);
+        let R = y.file_path ?? y.tool_input?.file_path ?? y.path ?? null;
+        R && (Pe = m(v, R, K), pe.note = `changed ${Bs.basename(R)}`);
         break;
       }
       case "CwdChanged":
-        ue.note = `cwd → ${Ns.basename(y.cwd ?? "") || "cwd changed"}`;
+        pe.note = `cwd → ${Bs.basename(y.cwd ?? "") || "cwd changed"}`;
         break;
       case "Notification": {
-        let k = y.notification_type ?? null, z = [
+        let R = y.notification_type ?? null, X = [
           "auth_success",
           "elicitation_complete",
           "elicitation_response",
           "agent_completed"
         ];
-        ue.notification_type = k, ue.note = (y.message ?? k ?? "needs attention").slice(0, 80), z.includes(k ?? "") || (ue.col = "needsyou", i(
-          `🖐 ${q.callsign} needs you${k ? ` (${k})` : ""}: ${(y.message ?? "").slice(0, 50)}`
+        pe.notification_type = R, pe.note = (y.message ?? R ?? "needs attention").slice(0, 80), X.includes(R ?? "") || (pe.col = "needsyou", i(
+          `🖐 ${K.callsign} needs you${R ? ` (${R})` : ""}: ${(y.message ?? "").slice(0, 50)}`
         ));
         break;
       }
       case "PermissionRequest":
-        ue.col = "needsyou", y.tool_name === "AskUserQuestion" ? (ue.note = "question open in the terminal", i(`🖐 ${q.callsign} has a question open in the terminal`)) : (ue.note = `permission: ${y.tool_name ?? "tool"}`, i(`🖐 ${q.callsign} awaits permission: ${y.tool_name ?? "tool"}`));
+        pe.col = "needsyou", y.tool_name === "AskUserQuestion" ? (pe.note = "question open in the terminal", i(`🖐 ${K.callsign} has a question open in the terminal`)) : (pe.note = `permission: ${y.tool_name ?? "tool"}`, i(`🖐 ${K.callsign} awaits permission: ${y.tool_name ?? "tool"}`));
         break;
       case "AskUserQuestion": {
-        let k = y.tool_input?.questions, z = Array.isArray(k) && k[0]?.question || "structured question";
-        ue.col = "needsyou", ue.note = ("choice: " + z).slice(0, 80), i(`🖐 ${q.callsign} asks: ${String(z).slice(0, 50)}`);
+        let R = y.tool_input?.questions, X = Array.isArray(R) && R[0]?.question || "structured question";
+        pe.col = "needsyou", pe.note = ("choice: " + X).slice(0, 80), i(`🖐 ${K.callsign} asks: ${String(X).slice(0, 50)}`);
         break;
       }
       case "Elicitation":
-        ue.col = "needsyou", ue.note = `elicitation: ${y.message ?? y.matcher ?? "MCP input requested"}`.slice(0, 80), i(`🖐 ${q.callsign} awaits input (elicitation)`);
+        pe.col = "needsyou", pe.note = `elicitation: ${y.message ?? y.matcher ?? "MCP input requested"}`.slice(0, 80), i(`🖐 ${K.callsign} awaits input (elicitation)`);
         break;
       case "Stop":
-        ue.col = "idle", ue.note = "turn finished, waiting", i(`${q.callsign} finished a turn`);
+        pe.col = "idle", pe.note = "turn finished, waiting", i(`${K.callsign} finished a turn`);
         break;
       case "SessionEnd":
-        y.reason === "clear" ? (ue.note = "context cleared (/clear) — still live", ue.cleared_at = Date.now(), i(`🧹 ${q.callsign} ran /clear — context reset, session still live`)) : Fe ? (ue.note = "session ended (stale async end from a previous run — ignored)", i(`⏭ ${q.callsign} ignored a delayed SessionEnd from a previous run`)) : (ue.col = "offline", ue.ended_at = Date.now(), ue.end_reason = y.reason ?? "end", ue.note = "session ended" + (y.reason ? ` (${y.reason})` : ""), i(`${q.callsign} left the fleet`));
+        y.reason === "clear" ? (pe.note = "context cleared (/clear) — still live", pe.cleared_at = Date.now(), i(`🧹 ${K.callsign} ran /clear — context reset, session still live`)) : Ce ? (pe.note = "session ended (stale async end from a previous run — ignored)", i(`⏭ ${K.callsign} ignored a delayed SessionEnd from a previous run`)) : (pe.col = "offline", pe.ended_at = Date.now(), pe.end_reason = y.reason ?? "end", pe.note = "session ended" + (y.reason ? ` (${y.reason})` : ""), i(`${K.callsign} left the fleet`));
         break;
       default:
-        ue.note = y.hook_event_name ?? null;
+        pe.note = y.hook_event_name ?? null;
     }
-    return s(x, ue), q = { ...q, ...ue }, a(x, y.hook_event_name ?? "", y.tool_name, q.note), c(), { card: q, conflict: Te, staleRunEnd: Fe };
+    return s(v, pe), K = { ...K, ...pe }, a(v, y.hook_event_name ?? "", y.tool_name, K.note), c(), { card: K, conflict: Pe, staleRunEnd: Ce };
   }
-  r(I, "applyEvent");
+  r(N, "applyEvent");
   function d(y) {
-    let x = y.session_id ?? "";
+    let v = y.session_id ?? "";
     if (y.source === "clear" || y.source === "compact") {
-      let fe = t.getSession.get(x), V = fe?.events === 0 && fe.succeeded_by == null && !t.successorClaimed.get(x) && !t.spawnBySession.get(x);
-      if (!fe || V) {
-        let Fe = Ee(x, y.cwd, Date.now());
-        Fe && y.transcript_path && Ns.dirname(y.transcript_path) !== Mk(y.cwd) ? a(
-          x,
+      let me = t.getSession.get(v), ee = me?.events === 0 && me.succeeded_by == null && !t.successorClaimed.get(v) && !t.spawnBySession.get(v);
+      if (!me || ee) {
+        let Ce = Ee(v, y.cwd, Date.now());
+        Ce && y.transcript_path && Bs.dirname(y.transcript_path) !== Uk(y.cwd) ? a(
+          v,
           "ClearSuccessionRefused",
           null,
           `transcript ${y.transcript_path.slice(0, 160)} does not match cwd ${String(y.cwd).slice(0, 160)}`
-        ) : Fe && ye(Fe, x, { rename: !!fe });
+        ) : Ce && ye(Ce, v, { rename: !!me });
       }
     }
-    let { card: q } = I({ ...y, hook_event_name: "SessionStart" });
-    return q ? { ok: !0, callsign: q.callsign, brief: A(q) } : { ok: !1 };
+    let { card: K } = N({ ...y, hook_event_name: "SessionStart" });
+    return K ? { ok: !0, callsign: K.callsign, brief: A(K) } : { ok: !1 };
   }
   r(d, "hookSessionStart");
-  function T(y, x) {
-    let q = [
+  function T(y, v) {
+    let K = [
       `[FLEETDECK] The fleet daemon was just upgraded (replacing v${y}).`
-    ], fe = x?.sessions ?? [], V = fe.length;
-    if (V > 0) {
-      let Fe = fe.slice(0, 8).map((De) => String(De).slice(0, 8)).join(", ");
-      q.push(
-        `[FLEETDECK] ${V} session(s) are still running pre-0.16.0 hooks (${Fe}${V > 8 ? ", …" : ""}) — they are dark on the board until restarted. Tell the human: restart those sessions when convenient; the board tracks which are left.`
+    ], me = v?.sessions ?? [], ee = me.length;
+    if (ee > 0) {
+      let Ce = me.slice(0, 8).map((Fe) => String(Fe).slice(0, 8)).join(", ");
+      K.push(
+        `[FLEETDECK] ${ee} session(s) are still running pre-0.16.0 hooks (${Ce}${ee > 8 ? ", …" : ""}) — they are dark on the board until restarted. Tell the human: restart those sessions when convenient; the board tracks which are left.`
       );
     }
-    return q;
+    return K;
   }
   r(T, "takeoverBriefLines");
   function A(y) {
-    let x = t.allSessions.all().filter((N) => N.session_id !== y.session_id && N.ended_at == null), q = x.filter((N) => (N.repo_id ?? null) === (y.repo_id ?? null)), fe = x.filter((N) => (N.repo_id ?? null) !== (y.repo_id ?? null)), V = new Set(fe.map((N) => N.repo_id ?? "(none)")).size, Fe = y.repo_name ? ` in ${y.repo_name}` : "", De = [
+    let v = t.allSessions.all().filter((M) => M.session_id !== y.session_id && M.ended_at == null), K = v.filter((M) => (M.repo_id ?? null) === (y.repo_id ?? null)), me = v.filter((M) => (M.repo_id ?? null) !== (y.repo_id ?? null)), ee = new Set(me.map((M) => M.repo_id ?? "(none)")).size, Ce = y.repo_name ? ` in ${y.repo_name}` : "", Fe = [
 
 
 
 
-      `[FLEETDECK] You are on the fleet board as "${y.callsign}"${y.ticket ? ` (ticket ${y.ticket})` : ""} — live at http://127.0.0.1:${l} (board key, if asked: \`fleetdeck token\` or ${f ? Ns.join(f, "token") : "$FLEETDECK_HOME/token"})`,
-      q.length ? `Other active sessions${Fe} (${q.length}):` : `No other sessions active${Fe} right now.`,
-      ...q.map(
-        (N) => `  - ${N.callsign} [${N.col}] ${N.note}${N.branch ? " — " + N.branch : ""}${N.worktree && N.worktree !== y.worktree ? " @ " + N.worktree : ""}`
+      `[FLEETDECK] You are on the fleet board as "${y.callsign}"${y.ticket ? ` (ticket ${y.ticket})` : ""} — live at http://127.0.0.1:${l} (board key, if asked: \`fleetdeck token\` or ${f ? Bs.join(f, "token") : "$FLEETDECK_HOME/token"})`,
+      K.length ? `Other active sessions${Ce} (${K.length}):` : `No other sessions active${Ce} right now.`,
+      ...K.map(
+        (M) => `  - ${M.callsign} [${M.col}] ${M.note}${M.branch ? " — " + M.branch : ""}${M.worktree && M.worktree !== y.worktree ? " @ " + M.worktree : ""}`
       )
     ];
-    return fe.length && De.push(
-      `${fe.length} more session${fe.length === 1 ? "" : "s"} across ${V} other repo${V === 1 ? "" : "s"}.`
-    ), De.push(
+    return me.length && Fe.push(
+      `${me.length} more session${me.length === 1 ? "" : "s"} across ${ee} other repo${ee === 1 ? "" : "s"}.`
+    ), Fe.push(
       "Fleetdeck will warn you in-context if you touch files another session is editing. Take those warnings seriously: coordinate, don’t clobber."
-    ), De.join(`
+    ), Fe.join(`
 `);
   }
   r(A, "composeBrief");
-  function b(y) {
-    let x = y.session_id ?? "";
-    I({ ...y, hook_event_name: "UserPromptSubmit" }), t.setBlocked.run(0, x), e.questions.expireOnActivity(x), $e(x);
-    let q = M(x);
-    return q.length ? (c(), {
+  function k(y) {
+    let v = y.session_id ?? "";
+    N({ ...y, hook_event_name: "UserPromptSubmit" }), t.setBlocked.run(0, v), e.questions.expireOnActivity(v), $e(v);
+    let K = F(v);
+    return K.length ? (c(), {
       hookSpecificOutput: {
         hookEventName: "UserPromptSubmit",
         additionalContext: `[FLEETDECK]
-` + q.map((fe) => `✉ from ${fe.from}: ${fe.text}`).join(`
+` + K.map((me) => `✉ from ${me.from}: ${me.text}`).join(`
 `)
       }
     }) : {};
   }
-  r(b, "hookUserPromptSubmit");
-  function X(y) {
-    let x = y.hook_event_name ?? "PostToolUse", { conflict: q } = I({ ...y, hook_event_name: x });
+  r(k, "hookUserPromptSubmit");
+  function Y(y) {
+    let v = y.hook_event_name ?? "PostToolUse", { conflict: K } = N({ ...y, hook_event_name: v });
     return w.expireOnActivity(y.session_id ?? "", {
       toolName: y.tool_name,
       toolInput: y.tool_input
-    }), $e(y.session_id ?? ""), q ? {
+    }), $e(y.session_id ?? ""), K ? {
       hookSpecificOutput: {
-        hookEventName: x,
-        additionalContext: U(q)
+        hookEventName: v,
+        additionalContext: $(K)
       }
     } : {};
   }
-  r(X, "hookPostToolUse");
-  function H(y) {
-    let x = y.session_id ?? "", q = o(x);
-    if (!q.blocked_this_turn) {
-      let V = M(x);
-      if (V.length)
-        return t.setBlocked.run(1, x), s(x, {
+  r(Y, "hookPostToolUse");
+  function V(y) {
+    let v = y.session_id ?? "", K = o(v);
+    if (!K.blocked_this_turn) {
+      let ee = F(v);
+      if (ee.length)
+        return t.setBlocked.run(1, v), s(v, {
           last_seen: Date.now(),
-          events: q.events + 1,
+          events: K.events + 1,
           col: "working",
           note: "processing fleet mail"
-        }), a(x, "Stop", null, "mail delivered via block"), i(`✉ ${q.callsign} got fleet mail at the turn boundary`), c(), {
+        }), a(v, "Stop", null, "mail delivered via block"), i(`✉ ${K.callsign} got fleet mail at the turn boundary`), c(), {
           decision: "block",
-          reason: `[FLEETDECK MAIL] ${V.map((De) => `from ${De.from}: ${De.text}`).join(" | ")} — Act on this if it affects your work (briefly), then finish your turn. Do not start unrelated work.`
+          reason: `[FLEETDECK MAIL] ${ee.map((Fe) => `from ${Fe.from}: ${Fe.text}`).join(" | ")} — Act on this if it affects your work (briefly), then finish your turn. Do not start unrelated work.`
         };
     }
-    return I({ ...y, hook_event_name: "Stop" }), t.pendingMail.all(x, Date.now()).length > 0 || t.setBlocked.run(0, x), ee(y), {};
+    return N({ ...y, hook_event_name: "Stop" }), t.pendingMail.all(v, Date.now()).length > 0 || t.setBlocked.run(0, v), te(y), {};
   }
-  r(H, "hookStop");
-  function ee(y) {
-    let x = y.session_id ?? "";
+  r(V, "hookStop");
+  function te(y) {
+    let v = y.session_id ?? "";
     try {
-      let fe = (typeof y.last_assistant_message == "string" && y.last_assistant_message.trim() ? y.last_assistant_message : null) ?? (y.transcript_path ? Fh(y.transcript_path) : null), V = Nh(fe);
-      if (!V || w.pendingOf(x).some((N) => N.kind !== "freeform" ? !1 : $t(N.payload_json)?.text === V)) return;
-      w.create("freeform", x, { text: V });
-      let De = o(x);
-      s(x, { col: "needsyou", note: ("Q: " + V).slice(0, 80) }), a(x, "Stop", null, "trailing question → needsyou"), i(`❓ ${De.callsign} asked: ${V.slice(0, 60)}`), c();
+      let me = (typeof y.last_assistant_message == "string" && y.last_assistant_message.trim() ? y.last_assistant_message : null) ?? (y.transcript_path ? Fh(y.transcript_path) : null), ee = Nh(me);
+      if (!ee || w.pendingOf(v).some((M) => M.kind !== "freeform" ? !1 : Lt(M.payload_json)?.text === ee)) return;
+      w.create("freeform", v, { text: ee });
+      let Fe = o(v);
+      s(v, { col: "needsyou", note: ("Q: " + ee).slice(0, 80) }), a(v, "Stop", null, "trailing question → needsyou"), i(`❓ ${Fe.callsign} asked: ${ee.slice(0, 60)}`), c();
     } catch {
     }
   }
-  r(ee, "detectFreeform");
-  function C(y, x) {
-    let q = x === "Elicitation" ? "elicitation" : x === "AskUserQuestion" ? "choice" : "permission", fe = y.session_id ?? "", V = x === "PermissionRequest" && y.tool_name === "ExitPlanMode", Fe = S(fe);
-    if (!V) {
-      if (I({ ...y, hook_event_name: x }), !Fe) return null;
-      let se = w.create(q, fe, y);
+  r(te, "detectFreeform");
+  function C(y, v) {
+    let K = v === "Elicitation" ? "elicitation" : v === "AskUserQuestion" ? "choice" : "permission", me = y.session_id ?? "", ee = v === "PermissionRequest" && y.tool_name === "ExitPlanMode", Ce = S(me);
+    if (!ee) {
+      if (N({ ...y, hook_event_name: v }), !Ce) return null;
+      let se = w.create(K, me, y);
       return c(), se;
     }
-    let De, N, J;
+    let Fe, M, J;
     n.exec("BEGIN IMMEDIATE");
     try {
-      if (o(fe, y.cwd), De = w.create(q, fe, y), process.env.FLEETDECK_TEST_FAIL_PLAN_INSERT)
+      if (o(me, y.cwd), Fe = w.create(K, me, y), process.env.FLEETDECK_TEST_FAIL_PLAN_INSERT)
         throw new Error("injected plan-insert failure (FLEETDECK_TEST_FAIL_PLAN_INSERT)");
-      let se = t.getSession.get(fe);
-      J = se?.callsign ?? fe;
-      let de = y.tool_input?.plan, ne = typeof de == "string" ? de : "", te = t.insertPlan.run(
-        fe,
+      let se = t.getSession.get(me);
+      J = se?.callsign ?? me;
+      let de = y.tool_input?.plan, ne = typeof de == "string" ? de : "", re = t.insertPlan.run(
+        me,
         se?.callsign ?? null,
         se?.repo_id ?? null,
         se?.repo_name ?? null,
-        De.id,
+        Fe.id,
         ne,
         Date.now()
       );
-      N = Number(te.lastInsertRowid), n.exec("COMMIT");
+      M = Number(re.lastInsertRowid), n.exec("COMMIT");
     } catch (se) {
       try {
         n.exec("ROLLBACK");
@@ -13618,100 +14213,100 @@ function Vw(e) {
         se
       ), c(), null;
     }
-    return I({ ...y, hook_event_name: x }), i(`📋 ${J} proposed a plan — captured to the library (#${N})`), Fe ? (c(), De) : (w.expireUnheld(De.id), null);
+    return N({ ...y, hook_event_name: v }), i(`📋 ${J} proposed a plan — captured to the library (#${M})`), Ce ? (c(), Fe) : (w.expireUnheld(Fe.id), null);
   }
   r(C, "hookHoldQuestion");
-  function W(y) {
-    let x = y.session_id ?? "", { staleRunEnd: q } = I({ ...y, hook_event_name: "SessionEnd" });
-    if (q) return {};
-    if (w.expireAllForSession(x), y.reason === "clear")
-      return Ie(x, y.cwd), D(x), {};
-    let fe = t.getSession.get(x);
-    if (fe?.adopt_armed_until != null && fe.adopt_armed_until > Date.now()) {
-      let Fe = !!fe.adopt_armed_skip, De = r(async () => {
+  function q(y) {
+    let v = y.session_id ?? "", { staleRunEnd: K } = N({ ...y, hook_event_name: "SessionEnd" });
+    if (K) return {};
+    if (w.expireAllForSession(v), y.reason === "clear")
+      return De(v, y.cwd), I(v), {};
+    let me = t.getSession.get(v);
+    if (me?.adopt_armed_until != null && me.adopt_armed_until > Date.now()) {
+      let Ce = !!me.adopt_armed_skip, Fe = r(async () => {
         try {
-          let N = await Q(
-            x,
-            { dangerously_skip_permissions: Fe },
+          let M = await Q(
+            v,
+            { dangerously_skip_permissions: Ce },
             { deferred: !0 }
           );
-          if (!N || N.status >= 400 && N.status !== 409) {
-            let J = t.getSession.get(x);
+          if (!M || M.status >= 400 && M.status !== 409) {
+            let J = t.getSession.get(v);
             i(
-              `✗ move-to-tmux failed for ${J?.callsign ?? x}: ${N?.body?.reason ?? "unknown"}`.slice(
+              `✗ move-to-tmux failed for ${J?.callsign ?? v}: ${M?.body?.reason ?? "unknown"}`.slice(
                 0,
                 100
               )
             );
           }
-        } catch (N) {
-          let J = t.getSession.get(x);
-          i(`✗ move-to-tmux failed for ${J?.callsign ?? x}: ${Ze(N)}`.slice(0, 100));
+        } catch (M) {
+          let J = t.getSession.get(v);
+          i(`✗ move-to-tmux failed for ${J?.callsign ?? v}: ${Ze(M)}`.slice(0, 100));
         }
       }, "runDeferredAdopt");
       if (Z) {
-        let N = Z.schedule(
-          G,
-          De,
+        let M = Z.schedule(
+          z,
+          Fe,
           () => {
           }
         );
-        N && N.catch(() => {
+        M && M.catch(() => {
         });
       } else
         setTimeout(() => {
-          De();
-        }, G).unref();
+          Fe();
+        }, z).unref();
     }
-    O.delete(x);
-    let V = t.spawnBySession.get(x);
-    return V && (V.status === "spawning" || V.status === "stalled" || V.status === "live") && (t.setSpawnStatus.run("pane-dead", V.spawn_id), P(V.spawn_id)), D(x), {};
+    O.delete(v);
+    let ee = t.spawnBySession.get(v);
+    return ee && (ee.status === "spawning" || ee.status === "stalled" || ee.status === "live") && (t.setSpawnStatus.run("pane-dead", ee.spawn_id), P(ee.spawn_id)), I(v), {};
   }
-  return r(W, "hookSessionEnd"), {
-    applyEvent: I,
+  return r(q, "hookSessionEnd"), {
+    applyEvent: N,
     hookSessionStart: d,
-    hookUserPromptSubmit: b,
-    hookPostToolUse: X,
-    hookStop: H,
-    hookSessionEnd: W,
+    hookUserPromptSubmit: k,
+    hookPostToolUse: Y,
+    hookStop: V,
+    hookSessionEnd: q,
     hookHoldQuestion: C,
     takeoverBriefLines: T
   };
 }
-r(Vw, "createEvents");
+r(Yw, "createEvents");
 
 
-function Li(e) {
+function Mi(e) {
   return { ok: !0, value: e };
 }
-r(Li, "ok");
-function Ms(e) {
+r(Mi, "ok");
+function $s(e) {
   return { ok: !1, error: e };
 }
-r(Ms, "fail");
-function Di(e) {
+r($s, "fail");
+function Fi(e) {
   return typeof e == "object" && e !== null && !Array.isArray(e);
 }
-r(Di, "isRecord");
-function xd(e) {
+r(Fi, "isRecord");
+function bd(e) {
   return typeof e == "string" && e.length > 0;
 }
-r(xd, "isNonEmptyString");
+r(bd, "isNonEmptyString");
 
 
-function Ec(e) {
-  return Di(e) ? xd(e.session_id) ? Li(e) : Ms("hook body requires a non-empty string session_id") : Ms("hook body must be a JSON object");
+function _c(e) {
+  return Fi(e) ? bd(e.session_id) ? Mi(e) : $s("hook body requires a non-empty string session_id") : $s("hook body must be a JSON object");
 }
-r(Ec, "validateHookEvent");
+r(_c, "validateHookEvent");
 
 
-function bd(e) {
-  return Di(e) ? Li(e) : Ms("spawn body must be a JSON object");
+function kd(e) {
+  return Fi(e) ? Mi(e) : $s("spawn body must be a JSON object");
 }
-r(bd, "validateSpawnRequest");
+r(kd, "validateSpawnRequest");
 
 
-function Xw(e) {
+function Qw(e) {
   let {
     q: t,
     t0: n,
@@ -13723,35 +14318,35 @@ function Xw(e) {
     hasWatchWaiter: l,
     ownedPaneRow: f,
     spawnCapability: w,
-    spawnState: g,
+    spawnState: h,
     resolveSettings: _
   } = e;
   function E() {
-    let M = Date.now(), D = new Map();
-    for (let S of t.filesBySession.all(M - i, a)) {
-      let I = D.get(S.session_id);
-      I || (I = [], D.set(S.session_id, I)), I.length < a && I.push(S.abs_path);
+    let F = Date.now(), I = new Map();
+    for (let S of t.filesBySession.all(F - i, a)) {
+      let N = I.get(S.session_id);
+      N || (N = [], I.set(S.session_id, N)), N.length < a && N.push(S.abs_path);
     }
-    let O = new Map(), P = Math.floor(M / 6e4);
-    for (let S of t.sparkline.all(M - 30 * 6e4)) {
-      let I = O.get(S.session_id);
-      I || (I = new Array(30).fill(0), O.set(S.session_id, I));
+    let O = new Map(), P = Math.floor(F / 6e4);
+    for (let S of t.sparkline.all(F - 30 * 6e4)) {
+      let N = O.get(S.session_id);
+      N || (N = new Array(30).fill(0), O.set(S.session_id, N));
       let d = 29 - (P - S.minute);
-      d >= 0 && d < 30 && (I[d] = S.n);
+      d >= 0 && d < 30 && (N[d] = S.n);
     }
-    let v = t.visibleSessions.all(), Q = new Map();
+    let x = t.visibleSessions.all(), Q = new Map();
     for (let S of t.spawnByVisibleSession.all()) Q.set(S.session_id, S);
-    let G = new Map(
+    let z = new Map(
       t.pendingCounts.all(Date.now()).map((S) => [S.to_session, S])
     ), Ee = new Map(
       t.conflictCallsigns.all().map((S) => [S.session_id, S.callsign])
-    ), ye = new Map(), Ie = new Map();
-    for (let S of v)
-      ye.set(S.session_id, l(S.session_id)), Ie.set(S.session_id, !!f(S.session_id));
-    let Se = v.map((S) => {
-      let I = Q.get(S.session_id), T = {
-        eligible: S.ended_at != null ? vh(S, !!I) ? "now" : null : S.source === "hooks" && !I ? "arm" : null,
-        armed: S.adopt_armed_until != null && S.adopt_armed_until > M,
+    ), ye = new Map(), De = new Map();
+    for (let S of x)
+      ye.set(S.session_id, l(S.session_id)), De.set(S.session_id, !!f(S.session_id));
+    let ve = x.map((S) => {
+      let N = Q.get(S.session_id), T = {
+        eligible: S.ended_at != null ? vh(S, !!N) ? "now" : null : S.source === "hooks" && !N ? "arm" : null,
+        armed: S.adopt_armed_until != null && S.adopt_armed_until > F,
         armed_until: S.adopt_armed_until ?? null,
         armed_skip: !!S.adopt_armed_skip
       };
@@ -13769,7 +14364,7 @@ function Xw(e) {
         col: S.col,
         note: S.note,
         task: S.task,
-        files: D.get(S.session_id) ?? [],
+        files: I.get(S.session_id) ?? [],
         lastTool: S.last_tool,
         events: S.events,
         startedAt: S.started_at,
@@ -13791,20 +14386,18 @@ function Xw(e) {
 
 
 
-        stale: (S.col === "working" || S.col === "verifying") && M - S.last_seen > s,
-        ...I ? {
+        stale: (S.col === "working" || S.col === "verifying") && F - S.last_seen > s,
+        ...N ? {
           spawn: {
-            spawn_id: I.spawn_id,
-            tmux_window: I.tmux_window,
-            status: I.status,
-            kind: I.kind ?? "claude",
+            spawn_id: N.spawn_id,
+            tmux_window: N.tmux_window,
+            status: N.status,
+            kind: N.kind ?? "claude",
             attention: Hw(S.note),
-            setup_cmd: I.setup_cmd ?? null,
-            stalled: I.status === "stalled",
+            setup_cmd: N.setup_cmd ?? null,
+            stalled: N.status === "stalled",
 
-            stall_detail: I.status === "stalled" ? I.stall_detail ?? null : null,
-
-
+            stall_detail: N.status === "stalled" ? N.stall_detail ?? null : null,
 
 
 
@@ -13817,23 +14410,25 @@ function Xw(e) {
 
 
 
-            fail_detail: I.status === "gone" || I.status === "stalled" ? I.fail_detail ?? null : null,
-            skip_permissions: !!I.skip_permissions,
-
-            remote: { enabled: !!I.remote_control, url: I.remote_url ?? null },
 
 
+            fail_detail: N.status === "gone" || N.status === "stalled" ? N.fail_detail ?? null : null,
+            skip_permissions: !!N.skip_permissions,
 
-            gateway: !!I.gateway,
-            requested_branch: I.requested_branch ?? null,
-            branch_mode: I.branch_mode ?? null,
+            remote: { enabled: !!N.remote_control, url: N.remote_url ?? null },
 
 
 
+            gateway: !!N.gateway,
+            requested_branch: N.requested_branch ?? null,
+            branch_mode: N.branch_mode ?? null,
 
 
 
-            revivable: I.kind === "shell" ? !1 : Hu(I)
+
+
+
+            revivable: N.kind === "shell" ? !1 : Hu(N)
           }
         } : {},
 
@@ -13844,34 +14439,34 @@ function Xw(e) {
         adopt: T
       };
     }), $e = new Map();
-    for (let S of Se) {
-      let I = S.repo_id ?? "(none)", d = $e.get(I);
-      d || (d = { repo_id: S.repo_id, repo_name: S.repo_name, active: 0, total: 0 }, $e.set(I, d)), d.total++, S.endedAt || d.active++, S.repo_name && (d.repo_name = S.repo_name);
+    for (let S of ve) {
+      let N = S.repo_id ?? "(none)", d = $e.get(N);
+      d || (d = { repo_id: S.repo_id, repo_name: S.repo_name, active: 0, total: 0 }, $e.set(N, d)), d.total++, S.endedAt || d.active++, S.repo_name && (d.repo_name = S.repo_name);
     }
     let Z = {};
-    for (let S of G.values()) Z[S.to_session] = S.n;
-    for (let S of Se) S.session_id in Z || (Z[S.session_id] = 0);
-    let ae = {};
-    for (let S of Se) {
-      let I = G.get(S.session_id);
-      ae[S.session_id] = {
-        queued: I?.n ?? 0,
-        oldest_at: I?.oldest_at ?? null,
-        route: ye.get(S.session_id) ? "watcher" : Ie.get(S.session_id) ? "pane" : S.endedAt != null ? "offline-queued" : "turn-boundary"
+    for (let S of z.values()) Z[S.to_session] = S.n;
+    for (let S of ve) S.session_id in Z || (Z[S.session_id] = 0);
+    let ie = {};
+    for (let S of ve) {
+      let N = z.get(S.session_id);
+      ie[S.session_id] = {
+        queued: N?.n ?? 0,
+        oldest_at: N?.oldest_at ?? null,
+        route: ye.get(S.session_id) ? "watcher" : De.get(S.session_id) ? "pane" : S.endedAt != null ? "offline-queued" : "turn-boundary"
       };
     }
-    let L = _();
+    let D = _();
     return {
       schema_version: 1,
 
-      up_ms: M - n,
+      up_ms: F - n,
 
-      uptime_ms: M - n,
+      uptime_ms: F - n,
 
 
 
       version: o,
-      sessions: Se,
+      sessions: ve,
       repos: [...$e.values()],
       repo_catalog: t.catalogRepos.all().map((S) => ({
         repo_id: S.repo_id,
@@ -13885,11 +14480,11 @@ function Xw(e) {
 
 
 
-        origin_url: S.origin_url == null ? null : vr(S.origin_url),
+        origin_url: S.origin_url == null ? null : _r(S.origin_url),
         default_branch: S.default_branch ?? null,
         last_used_at: S.last_used_at
       })),
-      settings: L,
+      settings: D,
 
 
 
@@ -13899,15 +14494,15 @@ function Xw(e) {
 
 
 
-      home_dir: L.browse_root.resolved,
+      home_dir: D.browse_root.resolved,
       ticker: t.recentTicker.all(),
 
 
 
       conflicts: t.recentConflicts.all().flatMap((S) => {
-        let I = $t(S.sessions_json);
-        if (!Array.isArray(I)) return [];
-        let d = I;
+        let N = Lt(S.sessions_json);
+        if (!Array.isArray(N)) return [];
+        let d = N;
         return [
           {
             at: S.at,
@@ -13924,13 +14519,13 @@ function Xw(e) {
         ];
       }),
       mail_pending: Z,
-      mail_meta: ae,
+      mail_meta: ie,
 
       questions: c.listForState(),
 
       spawn: w(),
 
-      spawn_orphans: g.orphans,
+      spawn_orphans: h.orphans,
 
 
 
@@ -13954,521 +14549,15 @@ function Xw(e) {
     return t.countVisibleSessions.get()?.n ?? 0;
   }
   r(m, "fleetSize");
-  function U(M) {
-    return t.getSpawn.get(M) ?? null;
+  function $(F) {
+    return t.getSpawn.get(F) ?? null;
   }
-  return r(U, "terminalSpawn"), { snapshot: E, fleetSize: m, terminalSpawn: U };
+  return r($, "terminalSpawn"), { snapshot: E, fleetSize: m, terminalSpawn: $ };
 }
-r(Xw, "createSnapshot");
+r(Qw, "createSnapshot");
 
 
-import $k from "node:fs";
-
-
-import kd from "node:fs";
-import Fk from "node:path";
-var Bk = r((e) => typeof e == "number" && Number.isInteger(e) && e > 0, "isPid");
-function Yw(e, { minAgeMs: t = 36e5, now: n = Date.now() } = {}) {
-  if (!e) return 0;
-  let o = 0, s;
-  try {
-    s = kd.readdirSync(e);
-  } catch {
-    return 0;
-  }
-  for (let i of s) {
-    let a = /^run-(\d+)$/.exec(i);
-    if (!a) continue;
-    let c = Number(a[1]);
-    if (!Bk(c)) continue;
-    let l = Fk.join(e, i);
-    try {
-      if (n - kd.statSync(l).mtimeMs < t) continue;
-      try {
-        process.kill(c, 0);
-        continue;
-      } catch (f) {
-        if (mt(f) !== "ESRCH") continue;
-      }
-      kd.unlinkSync(l), o += 1;
-    } catch {
-    }
-  }
-  return o;
-}
-r(Yw, "pruneRunNonces");
-
-
-var Jw = !0;
-function Qw(e) {
-  let {
-    q: t,
-    updateSession: n,
-    tick: o,
-    onMutate: s,
-    tombstoneCard: i,
-    forgetSpawn: a,
-    tmuxAdapter: c,
-    port: l,
-    home: f,
-    questions: w,
-    adoptSession: g,
-    scopedPaneTarget: _,
-    PRESUME_DEAD_MS: E,
-    PRESUME_DEAD_WORKING_MS: m,
-    RETAIN_OFFLINE_MS: U,
-    RETAIN_LEDGER_MS: M,
-    spawnMaintenance: D,
-    runControlDetached: O
-  } = e;
-  function P(Z, ae) {
-    let L = Math.max(0, (ae - Z.last_seen) / 36e5), S = Number.isInteger(L) ? String(L) : L.toFixed(1).replace(/\.0$/, "");
-    i(Z.session_id, {
-
-      note: `presumed ended (silent ${S}h)`,
-      at: ae,
-      tickMsg: `⌛ ${Z.callsign} presumed ended after ${S}h silent`,
-      forgetModel: !0
-
-    }), n(Z.session_id, { end_reason: "presumed" });
-  }
-  r(P, "presumeDeadSilent");
-  async function v(Z = Date.now()) {
-    let ae = !1, L = [], S = !!c.spawnOverrideCmd?.(), I = [
-      ...t.presumeDeadSessions.all(Z - E),
-      ...t.presumeDeadWorkingSessions.all(Z - m)
-    ];
-    for (let A of I) {
-      let b = t.activeSpawnBySession.get(A.session_id);
-      if (b && !S) {
-        L.push({ s: A, sp: b });
-        continue;
-      }
-      P(A, Z), b && (t.setSpawnStatus.run("pane-dead", b.spawn_id), a(b.spawn_id)), ae = !0;
-    }
-    if (L.length) {
-      let A = await c.listScopedWindows(l);
-      if (A !== null)
-        for (let { s: b, sp: X } of L) {
-          let H = r(() => {
-            if (t.activeSpawnBySession.get(b.session_id)?.spawn_id !== X.spawn_id) return !1;
-            let q = t.currentWindowOwner.get(X.tmux_window);
-            return !q || q.spawn_id === X.spawn_id;
-          }, "stillOurs");
-          if (!H()) continue;
-          let ee = A.find((x) => x.window === X.tmux_window), C = !1, W = X.kind === "shell", y = !!X.setup_cmd && (X.status === "spawning" || X.status === "stalled");
-          if (ee && !ee.pane_dead) {
-            let x = await c.paneCurrentCommand(_(ee));
-            C = !!x && !x.dead && (W || y || x.cmd === "claude");
-          }
-          if (C) {
-            if (!H()) continue;
-            n(b.session_id, { last_seen: Z }), ae = !0;
-            continue;
-          }
-          if (ee && (ee.pane_dead || !W && !y && ks.test(ee.pane_cmd))) {
-            if (!H()) continue;
-            t.setSpawnStatus.run("pane-dead", X.spawn_id), a(X.spawn_id), i(b.session_id, {
-
-              note: y ? "pane exited during setup/bring-up — open the terminal for the error" : `pane confirmed dead — resume with claude --resume ${b.session_id}`,
-              at: Z,
-              tickMsg: `💀 ${b.callsign} pane confirmed dead after long silence — window kept for scrollback`,
-              forgetModel: !0
-            }), ae = !0;
-          }
-        }
-    }
-    for (let A of t.allSessions.all())
-      if (!(A.adopt_armed_until == null && A.adopt_armed_skip == null)) {
-        if (A.adopt_armed_until == null || A.adopt_armed_until <= Z) {
-          n(A.session_id, { adopt_armed_until: null, adopt_armed_skip: null }), ae = !0;
-          continue;
-        }
-        if (A.ended_at != null && !Ei.has(A.end_reason)) {
-          let b = r(async () => {
-            try {
-              let H = await g(
-                A.session_id,
-                { dangerously_skip_permissions: !!A.adopt_armed_skip },
-                { deferred: !0 }
-              );
-              (!H || H.status >= 400 && H.status !== 409) && o(
-                `✗ move-to-tmux failed for ${A.callsign}: ${H?.body?.reason ?? "unknown"}`.slice(
-                  0,
-                  100
-                )
-              );
-            } catch (H) {
-              o(
-                `✗ move-to-tmux failed for ${A.callsign}: ${H instanceof Error ? H.message : String(H)}`.slice(
-                  0,
-                  100
-                )
-              );
-            }
-          }, "runDeferredAdopt"), X = D ? D.run(b) : Promise.resolve().then(b);
-          X && X.catch(() => {
-          }), ae = !0;
-        }
-      }
-    for (let A of t.archiveCandidates.all(Z - U))
-      t.setArchived.run(Z, A.session_id), ae = !0;
-    t.expireRetainedMail.run(Z, Z - U).changes && (ae = !0), t.goneArchivedSpawns.run().changes && (ae = !0);
-    let d = Z - Math.max(M, Ed);
-    t.pruneTouches.run(d).changes && (ae = !0), Yw(f, { now: Z });
-    let T = Z - M;
-    return t.pruneCommands.run(T).changes && (ae = !0), t.pruneConflicts.run(T).changes && (ae = !0), t.pruneSettledMail.run(T).changes && (ae = !0), t.expireStalledClaims.run(Z).changes && (ae = !0), ae && s(), { changed: ae };
-  }
-  r(v, "retentionSweep");
-  async function Q() {
-    let Z = Date.now(), ae = t.archiveCandidates.all(Z + 1).map((y) => y.session_id), L = new Map(t.allSpawns.all().map((y) => [y.tmux_window, y])), S = [...L.values()].filter(
-      (y) => y.tmux_window && ["killed", "pane-dead", "gone"].includes(y.status)
-    ), I = 0, d = new Set();
-    if (S.length) {
-      let y = await c.listScopedWindows(l);
-      if (y === null)
-        return {
-          ok: !1,
-          reason: "tmux window listing unavailable — nothing was cleared; retry Clear"
-        };
-      let x = [];
-      for (let q of y) {
-        let fe = L.get(q.window);
-        if (!q.pane_dead || !fe || !["killed", "pane-dead", "gone"].includes(fe.status)) continue;
-        let V = await c.killWindowVerified(q.window, {
-          expectWindowId: q.window_id,
-          expect: r(() => {
-            let Fe = t.currentWindowOwner.get(q.window);
-            return !(Fe && (Fe.session_id !== fe.session_id || Fe.status !== "pane-dead"));
-          }, "expect")
-        });
-        V.ok || V.gone ? I++ : V.stale ? d.add(q.window) : x.push(`${q.window}: ${V.error ?? "kill failed"}`);
-      }
-      if (x.length)
-        return {
-          ok: !1,
-          reason: `${x.length} window(s) could not be killed — ${x.join("; ").slice(0, 200)} — nothing was cleared; retry Clear`
-        };
-    }
-    let T = Number(t.archiveAllOffline.run(Z).changes), A = Number(t.expireArchivedMail.run(Z).changes), b = 0;
-    for (let y of ae)
-      b += w.expireAllForSession(y, { includeFreeform: !0 });
-    if (d.size)
-      for (let y of t.sweepableArchivedSpawns.all())
-        y.tmux_window && d.has(y.tmux_window) || t.setSpawnStatus.run("gone", y.spawn_id);
-    else
-      t.goneArchivedSpawns.run();
-    let X = new Set(t.aliveSessionIds.all().map((y) => y.session_id)), H = 0;
-    for (let y of t.allConflicts.all()) {
-      let x = $t(y.sessions_json), q = Array.isArray(x) ? x : [];
-      q.length && q.every((fe) => X.has(fe)) || (H += Number(t.deleteConflict.run(y.id).changes));
-    }
-    t.deleteDeadTouches.run();
-    let ee = w.purgeResolved();
-    t.deleteArchivedMail.run();
-    let C = Number(t.clearTicker.run().changes), W = t.orphanWorktrees.all().map((y) => y.worktree_path).filter((y) => {
-      try {
-        return $k.existsSync(y);
-      } catch {
-        return !1;
-      }
-    });
-    return o(
-      `⌫ cleared — ${T} card(s), ${H} conflict(s), ${ee} answered question(s), the feed`
-    ), s(), {
-      ok: !0,
-      archived: T,
-      mail_expired: A,
-      questions_expired: b,
-      questions_purged: ee,
-      conflicts_cleared: H,
-      feed_cleared: C,
-      windows_killed: I,
-      orphan_worktrees: W
-    };
-  }
-  r(Q, "cleanup");
-  function G(Z) {
-    return Ue(() => {
-      let ae = Date.now(), L = t.getSession.get(Z);
-      if (!L)
-        return {
-          done: !0,
-          wire: { status: 404, body: { ok: !1, reason: "no such session" } }
-        };
-      if (L.col !== "offline")
-        return {
-          done: !0,
-          wire: { status: 409, body: { ok: !1, reason: `session is ${L.col}, not offline` } }
-        };
-      if (L.archived_at != null)
-        return {
-          done: !0,
-          wire: { status: 409, body: { ok: !1, reason: "already dismissed" } }
-        };
-      let S = t.activeSpawnBySession.get(Z);
-      if (S)
-        return { done: !0, wire: { status: 409, body: { ok: !1, reason: S.status === "stalled" ? "session has a stalled spawn — resolve it first" : `session still owns a ${S.status} spawn — kill it before dismissing` } } };
-      if (!t.setArchived.run(ae, Z).changes)
-        return {
-          done: !0,
-          wire: { status: 409, body: { ok: !1, reason: "already dismissed" } }
-        };
-      let I = Number(t.expireMailForSession.run(ae, Z).changes), d = w.expireAllForSession(Z, { includeFreeform: !0 });
-      t.goneSessionSpawns.run(Z), t.deleteTouchesForSession.run(Z);
-      let T = r(() => t.getSession.get(Z)?.archived_at == null, "alive"), A = new Set(
-        t.spawnsForSession.all(Z).map((y) => y.tmux_window).filter(Boolean)
-      ), b = 0, X = !1, H = [], ee = r((y) => ({
-        status: 409,
-        body: {
-          ok: !1,
-          archived: 1,
-          mail_expired: I,
-          questions_expired: d,
-          windows_killed: b,
-          retry: !0,
-          reason: y,
-          ...X ? { resurrected: !0 } : {}
-        }
-      }), "incomplete"), C = r(() => (o(
-        `⌫ dismissed ${L.callsign} — card, ${I} mail, ${d} question(s)${b ? `, ${b} window(s)` : ""}`
-      ), s(), {
-        status: 200,
-
-
-
-        body: {
-          ok: !0,
-          archived: 1,
-          mail_expired: I,
-          questions_expired: d,
-          windows_killed: b,
-          ...X ? { resurrected: !0 } : {}
-        }
-      }), "success");
-      return A.size ? { done: !1, runKill: r(async () => {
-        let y = await c.listScopedWindows(l);
-        if (T())
-          X = !0;
-        else {
-          if (y === null)
-            return ee(
-              "tmux window listing unavailable — card archived, dead window(s) not killed; dismiss again to retry"
-            );
-          for (let x of y) {
-            if (!A.has(x.window) || !x.pane_dead) continue;
-            let q = t.currentWindowOwner.get(x.window);
-            if (q && (q.session_id !== Z || q.status !== "pane-dead")) continue;
-            let fe = await c.killWindowVerified(x.window, {
-              expectWindowId: x.window_id,
-              expect: r(() => {
-                let V = t.currentWindowOwner.get(x.window);
-                return V && (V.session_id !== Z || V.status !== "pane-dead") ? !1 : !T();
-              }, "expect")
-            });
-            if (fe.ok || fe.gone ? b++ : fe.stale || H.push(`${x.window}: ${fe.error ?? "kill failed"}`), T()) {
-              X = !0;
-              break;
-            }
-          }
-          if (H.length)
-            return ee(
-              `${H.length} window(s) could not be killed — ${H.join("; ").slice(0, 200)} — card archived; dismiss again to retry`
-            );
-        }
-        return C();
-      }, "runKill") } : { done: !0, wire: C() };
-    }).pipe(
-      kn(
-        (ae) => ae.done ? vt(ae.wire) : Bt(ae.runKill)
-      )
-    );
-  }
-  r(G, "dismissSessionEffect");
-  function Ee(Z) {
-    return Ue(() => {
-      let ae = t.getSession.get(Z);
-      if (!ae)
-        return {
-          done: !0,
-          wire: { status: 404, body: { ok: !1, reason: "no such session" } }
-        };
-      if (ae.archived_at == null)
-        return {
-          done: !0,
-          wire: {
-            status: 409,
-            body: { ok: !1, reason: "session is not dismissed — nothing to retry" }
-          }
-        };
-      let L = new Set(
-        t.spawnsForSession.all(Z).map((I) => I.tmux_window).filter(Boolean)
-      );
-      return L.size ? { done: !1, runKill: r(async () => {
-        let I = await c.listScopedWindows(l);
-        if (I === null)
-          return {
-            status: 409,
-            body: {
-              ok: !1,
-              retry: !0,
-              reason: "tmux window listing unavailable — retry again"
-            }
-          };
-        let d = 0, T = [];
-        for (let A of I) {
-          if (!L.has(A.window) || !A.pane_dead) continue;
-          let b = t.currentWindowOwner.get(A.window);
-          if (b && (b.session_id !== Z || b.status !== "pane-dead")) continue;
-          let X = await c.killWindowVerified(A.window);
-          X.ok || X.gone ? d++ : X.stale || T.push(`${A.window}: ${X.error ?? "kill failed"}`);
-        }
-        return T.length ? {
-          status: 409,
-          body: {
-            ok: !1,
-            retry: !0,
-            windows_killed: d,
-            reason: `${T.length} window(s) could not be killed — ${T.join("; ").slice(0, 200)} — retry again`
-          }
-        } : { status: 200, body: { ok: !0, windows_killed: d } };
-      }, "runKill") } : { done: !0, wire: { status: 200, body: { ok: !0, windows_killed: 0 } } };
-    }).pipe(
-      kn(
-        (ae) => ae.done ? vt(ae.wire) : Bt(ae.runKill)
-      )
-    );
-  }
-  r(Ee, "dismissRetryEffect");
-  async function ye(Z) {
-    let ae = Date.now(), L = t.getSession.get(Z);
-    if (!L) return { status: 404, body: { ok: !1, reason: "no such session" } };
-    if (L.col !== "offline")
-      return { status: 409, body: { ok: !1, reason: `session is ${L.col}, not offline` } };
-    if (L.archived_at != null)
-      return { status: 409, body: { ok: !1, reason: "already dismissed" } };
-    let S = t.activeSpawnBySession.get(Z);
-    if (S)
-      return { status: 409, body: { ok: !1, reason: S.status === "stalled" ? "session has a stalled spawn — resolve it first" : `session still owns a ${S.status} spawn — kill it before dismissing` } };
-    if (!t.setArchived.run(ae, Z).changes)
-      return { status: 409, body: { ok: !1, reason: "already dismissed" } };
-    let I = Number(t.expireMailForSession.run(ae, Z).changes), d = w.expireAllForSession(Z, { includeFreeform: !0 });
-    t.goneSessionSpawns.run(Z), t.deleteTouchesForSession.run(Z);
-    let T = r(() => t.getSession.get(Z)?.archived_at == null, "alive"), A = new Set(
-      t.spawnsForSession.all(Z).map((C) => C.tmux_window).filter(Boolean)
-    ), b = 0, X = !1, H = [], ee = r((C) => ({
-      status: 409,
-      body: {
-        ok: !1,
-        archived: 1,
-        mail_expired: I,
-        questions_expired: d,
-        windows_killed: b,
-        retry: !0,
-        reason: C,
-        ...X ? { resurrected: !0 } : {}
-      }
-    }), "incomplete");
-    if (A.size) {
-      let C = await c.listScopedWindows(l);
-      if (T())
-        X = !0;
-      else {
-        if (C === null)
-          return ee(
-            "tmux window listing unavailable — card archived, dead window(s) not killed; dismiss again to retry"
-          );
-        for (let W of C) {
-          if (!A.has(W.window) || !W.pane_dead) continue;
-          let y = t.currentWindowOwner.get(W.window);
-          if (y && (y.session_id !== Z || y.status !== "pane-dead")) continue;
-          let x = await c.killWindowVerified(W.window, {
-            expectWindowId: W.window_id,
-            expect: r(() => {
-              let q = t.currentWindowOwner.get(W.window);
-              return q && (q.session_id !== Z || q.status !== "pane-dead") ? !1 : !T();
-            }, "expect")
-          });
-          if (x.ok || x.gone ? b++ : x.stale || H.push(`${W.window}: ${x.error ?? "kill failed"}`), T()) {
-            X = !0;
-            break;
-          }
-        }
-        if (H.length)
-          return ee(
-            `${H.length} window(s) could not be killed — ${H.join("; ").slice(0, 200)} — card archived; dismiss again to retry`
-          );
-      }
-    }
-    return o(
-      `⌫ dismissed ${L.callsign} — card, ${I} mail, ${d} question(s)${b ? `, ${b} window(s)` : ""}`
-    ), s(), {
-      status: 200,
-
-
-
-      body: {
-        ok: !0,
-        archived: 1,
-        mail_expired: I,
-        questions_expired: d,
-        windows_killed: b,
-        ...X ? { resurrected: !0 } : {}
-      }
-    };
-  }
-  r(ye, "dismissSessionLegacy");
-  async function Ie(Z) {
-    let ae = t.getSession.get(Z);
-    if (!ae) return { status: 404, body: { ok: !1, reason: "no such session" } };
-    if (ae.archived_at == null)
-      return {
-        status: 409,
-        body: { ok: !1, reason: "session is not dismissed — nothing to retry" }
-      };
-    let L = new Set(
-      t.spawnsForSession.all(Z).map((T) => T.tmux_window).filter(Boolean)
-    );
-    if (!L.size)
-      return { status: 200, body: { ok: !0, windows_killed: 0 } };
-    let S = await c.listScopedWindows(l);
-    if (S === null)
-      return {
-        status: 409,
-        body: { ok: !1, retry: !0, reason: "tmux window listing unavailable — retry again" }
-      };
-    let I = 0, d = [];
-    for (let T of S) {
-      if (!L.has(T.window) || !T.pane_dead) continue;
-      let A = t.currentWindowOwner.get(T.window);
-      if (A && (A.session_id !== Z || A.status !== "pane-dead")) continue;
-      let b = await c.killWindowVerified(T.window);
-      b.ok || b.gone ? I++ : b.stale || d.push(`${T.window}: ${b.error ?? "kill failed"}`);
-    }
-    return d.length ? {
-      status: 409,
-      body: {
-        ok: !1,
-        retry: !0,
-        windows_killed: I,
-        reason: `${d.length} window(s) could not be killed — ${d.join("; ").slice(0, 200)} — retry again`
-      }
-    } : { status: 200, body: { ok: !0, windows_killed: I } };
-  }
-  r(Ie, "dismissRetryLegacy");
-  function Se(Z) {
-    return Jw && O ? O(G(Z)) : ye(Z);
-  }
-  r(Se, "dismissSession");
-  function $e(Z) {
-    return Jw && O ? O(Ee(Z)) : Ie(Z);
-  }
-  return r($e, "dismissRetry"), { retentionSweep: v, cleanup: Q, dismissSession: Se, dismissRetry: $e };
-}
-r(Qw, "createRetention");
-
-
-var yc = [
+var Sc = [
   "falcon",
   "otter",
   "raven",
@@ -14501,37 +14590,37 @@ function Zw(e, {
   MAIL_PANE_BATCH_BYTES: f,
   runControlDetached: w
 } = {}) {
-  let g = Date.now(), _ = r(() => {
+  let h = Date.now(), _ = r(() => {
   }, "onMutateImpl"), E = r(() => {
     _();
-  }, "onMutate"), m = kt("FLEETDECK_STALE_MS", 6e5, { min: 1 }), U = kt("FLEETDECK_NUDGE_MS", 8e3, { min: 1 }), M = kt("FLEETDECK_SPAWN_REGISTER_MS", 9e4, { min: 1 }), D = kt("FLEETDECK_SETUP_REGISTER_MS", 6e5, { min: 1 }), O = kt("FLEETDECK_PANE_MAIL_GRACE_MS", 1500, { min: 0 }), P = kt("FLEETDECK_MAIL_CLAIM_LEASE_MS", 3e4, { min: 1 }), v = kt("FLEETDECK_PRESUME_DEAD_MS", 108e5, { min: 1 }), Q = kt("FLEETDECK_PRESUME_DEAD_WORKING_MS", v * 3, {
+  }, "onMutate"), m = vt("FLEETDECK_STALE_MS", 6e5, { min: 1 }), $ = vt("FLEETDECK_NUDGE_MS", 8e3, { min: 1 }), F = vt("FLEETDECK_SPAWN_REGISTER_MS", 9e4, { min: 1 }), I = vt("FLEETDECK_SETUP_REGISTER_MS", 6e5, { min: 1 }), O = vt("FLEETDECK_PANE_MAIL_GRACE_MS", 1500, { min: 0 }), P = vt("FLEETDECK_MAIL_CLAIM_LEASE_MS", 3e4, { min: 1 }), x = vt("FLEETDECK_PRESUME_DEAD_MS", 108e5, { min: 1 }), Q = vt("FLEETDECK_PRESUME_DEAD_WORKING_MS", x * 3, {
     min: 1
-  }), G = kt("FLEETDECK_RETAIN_OFFLINE_MS", 864e5, { min: 1 }), Ee = kt("FLEETDECK_RC_HARVEST_MS", 2500, { min: 0 }), ye = kt("FLEETDECK_ADOPT_ARM_MS", 18e5, { min: 1 }), Ie = kt("FLEETDECK_ADOPT_DELAY_MS", 750, { min: 0 }), Se = kt("FLEETDECK_RETAIN_LEDGER_MS", 864e5, { min: 6e4 }), $e = kt("FLEETDECK_CLEAR_SUCCESSION_MS", 3e4, { min: 0 }), Z = 1e3, ae = kt("FLEETDECK_CLEAR_SETTLE_MS", 250, { min: 0 }), L = 50;
-  async function S($) {
-    let Y = await s.listScopedWindows(t);
-    if (!(Y === null && s.spawnOverrideCmd?.()))
-      return Y === null ? null : Y.find((re) => re.window === $);
+  }), z = vt("FLEETDECK_RETAIN_OFFLINE_MS", 864e5, { min: 1 }), Ee = vt("FLEETDECK_RC_HARVEST_MS", 2500, { min: 0 }), ye = vt("FLEETDECK_ADOPT_ARM_MS", 18e5, { min: 1 }), De = vt("FLEETDECK_ADOPT_DELAY_MS", 750, { min: 0 }), ve = vt("FLEETDECK_RETAIN_LEDGER_MS", 864e5, { min: 6e4 }), $e = vt("FLEETDECK_CLEAR_SUCCESSION_MS", 3e4, { min: 0 }), Z = 1e3, ie = vt("FLEETDECK_CLEAR_SETTLE_MS", 250, { min: 0 }), D = 50;
+  async function S(U) {
+    let W = await s.listScopedWindows(t);
+    if (!(W === null && s.spawnOverrideCmd?.()))
+      return W === null ? null : W.find((H) => H.window === U);
   }
   r(S, "findScopedWindow");
-  function I($) {
-    return s.exactWindowTarget ? s.exactWindowTarget(t, $.window) : $.window_id;
+  function N(U) {
+    return s.exactWindowTarget ? s.exactWindowTarget(t, U.window) : U.window_id;
   }
-  r(I, "scopedPaneTarget");
+  r(N, "scopedPaneTarget");
   let { q: d, updateSession: T } = nw(e);
-  function A($, { activity: Y = !1 } = {}) {
-    if (!$ || !Y) return;
-    let re = d.planByQuestion.get($.id);
-    !re || X.isHeld($.id) || d.settleTerminalPlan.run(re.plan_id).changes && (se(`📚 plan #${re.plan_id} (${re.callsign ?? re.session_id}) handled in terminal`), E());
+  function A(U, { activity: W = !1 } = {}) {
+    if (!U || !W) return;
+    let H = d.planByQuestion.get(U.id);
+    !H || Y.isHeld(U.id) || d.settleTerminalPlan.run(H.plan_id).changes && (se(`📚 plan #${H.plan_id} (${H.callsign ?? H.session_id}) handled in terminal`), E());
   }
   r(A, "planRetired");
-  function b($) {
-    let Y = !1;
-    for (let re of d.pendingTerminalPlans.all($))
-      re.question_id != null && X.isHeld(re.question_id) || d.settleTerminalPlan.run(re.plan_id).changes && (Y = !0, se(`📚 plan #${re.plan_id} (${re.callsign ?? re.session_id}) handled in terminal`));
-    Y && E();
+  function k(U) {
+    let W = !1;
+    for (let H of d.pendingTerminalPlans.all(U))
+      H.question_id != null && Y.isHeld(H.question_id) || d.settleTerminalPlan.run(H.plan_id).changes && (W = !0, se(`📚 plan #${H.plan_id} (${H.callsign ?? H.session_id}) handled in terminal`));
+    W && E();
   }
-  r(b, "settleTerminalPlans");
-  let X = Dh(e, {
+  r(k, "settleTerminalPlans");
+  let Y = Dh(e, {
 
 
     holdMs: o ?? po(process.env, () => d.getSetting.get("hold_ms")?.value ?? null),
@@ -14540,20 +14629,20 @@ function Zw(e, {
 
 
 
-    resolveHoldWindow: r(() => po(process.env, () => te.resolveHoldMsRaw() ?? null), "resolveHoldWindow"),
+    resolveHoldWindow: r(() => po(process.env, () => re.resolveHoldMsRaw() ?? null), "resolveHoldWindow"),
 
 
 
-    rearmGraceMs: kt("FLEETDECK_REARM_GRACE_MS", 3e3, { min: 0 }),
-    mail: r(($, Y, re) => te.mail($, Y, re), "mail"),
+    rearmGraceMs: vt("FLEETDECK_REARM_GRACE_MS", 3e3, { min: 0 }),
+    mail: r((U, W, H) => re.mail(U, W, H), "mail"),
 
 
 
-    mailMaxLen: ir,
-    tick: r(($) => {
-      se($);
+    mailMaxLen: or,
+    tick: r((U) => {
+      se(U);
     }, "tick"),
-    callsignOf: r(($) => d.getSession.get($)?.callsign ?? null, "callsignOf"),
+    callsignOf: r((U) => d.getSession.get(U)?.callsign ?? null, "callsignOf"),
     onChange: r(() => {
       E();
     }, "onChange"),
@@ -14562,231 +14651,231 @@ function Zw(e, {
 
 
 
-    planIdFor: r(($) => d.planByQuestion.get($)?.plan_id ?? null, "planIdFor"),
-    planAnswered: r(($, Y) => {
-      let re = d.planByQuestion.get($);
-      if (re?.status !== "proposed") return;
-      let ve = Y === "allow" ? "approved" : Y === "capture" ? "captured" : "rejected";
-      d.setPlanStatus.run(ve, re.plan_id), se(`📚 plan #${re.plan_id} (${re.callsign ?? re.session_id}) ${ve}`);
+    planIdFor: r((U) => d.planByQuestion.get(U)?.plan_id ?? null, "planIdFor"),
+    planAnswered: r((U, W) => {
+      let H = d.planByQuestion.get(U);
+      if (H?.status !== "proposed") return;
+      let ue = W === "allow" ? "approved" : W === "capture" ? "captured" : "rejected";
+      d.setPlanStatus.run(ue, H.plan_id), se(`📚 plan #${H.plan_id} (${H.callsign ?? H.session_id}) ${ue}`);
     }, "planAnswered"),
 
 
 
-    onRetired: r(($, Y) => {
-      A($, Y);
+    onRetired: r((U, W) => {
+      A(U, W);
     }, "onRetired")
-  }), H = new Map();
-  function ee($, Y) {
-    let re = 0;
+  }), V = new Map();
+  function te(U, W) {
+    let H = 0;
     try {
-      Y && (re = Rd.statSync(Y).size);
+      W && (H = Rd.statSync(W).size);
     } catch {
     }
-    H.set($, { floor: re, size: -1, model: null });
+    V.set(U, { floor: H, size: -1, model: null });
   }
-  r(ee, "stampTranscriptFloor");
-  function C($, Y) {
-    let re = H.get($) ?? { floor: 0, size: -1, model: null }, ve;
+  r(te, "stampTranscriptFloor");
+  function C(U, W) {
+    let H = V.get(U) ?? { floor: 0, size: -1, model: null }, ue;
     try {
-      ve = Rd.statSync(Y).size;
+      ue = Rd.statSync(W).size;
     } catch {
       return null;
     }
-    if (ve === re.size) return re.model;
-    let ke = Bh(Y, { minOffset: re.floor });
-    return H.set($, { ...re, size: ve, model: ke ?? re.model }), ke;
+    if (ue === H.size) return H.model;
+    let _e = Bh(W, { minOffset: H.floor });
+    return V.set(U, { ...H, size: ue, model: _e ?? H.model }), _e;
   }
   r(C, "readTranscriptModel");
-  function W($) {
-    let Y = yc[$ % yc.length];
-    if (Y === void 0) throw new Error("fleetd: callsign rotation index out of range");
-    return Y;
+  function q(U) {
+    let W = Sc[U % Sc.length];
+    if (W === void 0) throw new Error("fleetd: callsign rotation index out of range");
+    return W;
   }
-  r(W, "callsignAt");
-  function y($, Y = null) {
-    let re = (d.countSessions.get()?.n ?? 0) % yc.length;
-    if (Y)
-      for (let ve = 0; ve < yc.length; ve++) {
-        let ke = W(re + ve) + "-" + Y;
-        if (!d.callsignTaken.get(ke, ke, $)) return ke;
+  r(q, "callsignAt");
+  function y(U, W = null) {
+    let H = (d.countSessions.get()?.n ?? 0) % Sc.length;
+    if (W)
+      for (let ue = 0; ue < Sc.length; ue++) {
+        let _e = q(H + ue) + "-" + W;
+        if (!d.callsignTaken.get(_e, _e, U)) return _e;
       }
-    return W(re) + "-" + $.slice(0, 4);
+    return q(H) + "-" + U.slice(0, 4);
   }
   r(y, "assignCallsign");
-  function x($, Y = null) {
-    let re = d.getSession.get($);
-    if (!re) {
-      let ve = jr(Y ? Dn(Y, { fresh: !0 }) : null), ke = y($, ve), Ge = Date.now();
-      d.insertSession.run($, ke, Ge, Ge), d.rememberAlias.run($, ke, Ge), ve && T($, { ticket: ve, ticket_source: "branch" }), re = d.getSession.get($), se(`${ke} joined the fleet`);
+  function v(U, W = null) {
+    let H = d.getSession.get(U);
+    if (!H) {
+      let ue = qr(W ? An(W, { fresh: !0 }) : null), _e = y(U, ue), Me = Date.now();
+      d.insertSession.run(U, _e, Me, Me), d.rememberAlias.run(U, _e, Me), ue && T(U, { ticket: ue, ticket_source: "branch" }), H = d.getSession.get(U), se(`${_e} joined the fleet`);
     }
-    if (!re) throw new Error("fleetd: session row vanished immediately after insert");
-    return re;
+    if (!H) throw new Error("fleetd: session row vanished immediately after insert");
+    return H;
   }
-  r(x, "card");
-  function q($, Y, re, {
-    tickMsg: ve,
-    extra: ke = {}
+  r(v, "card");
+  function K(U, W, H, {
+    tickMsg: ue,
+    extra: _e = {}
   }) {
-    let Ge = Y.callsign;
-    return Ge == null ? { ok: !1, reason: "target session has no callsign to rename" } : (d.rememberAlias.run($, Ge, Date.now()), T($, {
-      callsign: re,
+    let Me = W.callsign;
+    return Me == null ? { ok: !1, reason: "target session has no callsign to rename" } : (d.rememberAlias.run(U, Me, Date.now()), T(U, {
+      callsign: H,
 
 
 
 
 
-      prev_callsign: Y.prev_callsign ?? Y.callsign,
-      ...ke
-    }), se(ve(Ge, re)), E(), { ok: !0, renamed: !0, callsign: re, previous: Ge });
+      prev_callsign: W.prev_callsign ?? W.callsign,
+      ..._e
+    }), se(ue(Me, H)), E(), { ok: !0, renamed: !0, callsign: H, previous: Me });
   }
-  r(q, "renameCallsign");
-  function fe($, Y, re) {
-    let ve = d.getSession.get($);
-    if (!ve || ve.ended_at != null || ve.callsign == null)
+  r(K, "renameCallsign");
+  function me(U, W, H) {
+    let ue = d.getSession.get(U);
+    if (!ue || ue.ended_at != null || ue.callsign == null)
       return { ok: !1, reason: "no live session for that target" };
-    if (re === "branch" && (ve.ticket != null || ve.ticket_source != null))
+    if (H === "branch" && (ue.ticket != null || ue.ticket_source != null))
       return { ok: !1, reason: "ticket already set — auto-detect fires once" };
-    if (re === "branch" && ve.custom_suffix != null)
+    if (H === "branch" && ue.custom_suffix != null)
       return { ok: !1, reason: "session has a custom name — auto-detect does not override it" };
-    let ke = `${hi(ve.callsign)}-${Y}`, Ge = d.callsignTaken.get(ke, ke, $) ? y($, Y) : ke;
-    return Ge.endsWith("-" + Y) ? Ge === ve.callsign ? (T($, { ticket: Y, ticket_source: re }), E(), { ok: !0, renamed: !1, callsign: ve.callsign, ticket: Y }) : { ...q($, ve, Ge, {
-      tickMsg: r((ht, Dt) => `🎫 ${ht} is now ${Dt} (ticket ${Y})`, "tickMsg"),
-      extra: { ticket: Y, ticket_source: re, custom_suffix: null }
-    }), ticket: Y } : (T($, { ticket: Y, ticket_source: re }), se(`🎫 ${ve.callsign} stays on ticket ${Y} — every callsign for it is taken`), E(), { ok: !0, renamed: !1, callsign: ve.callsign, ticket: Y });
+    let _e = `${_i(ue.callsign)}-${W}`, Me = d.callsignTaken.get(_e, _e, U) ? y(U, W) : _e;
+    return Me.endsWith("-" + W) ? Me === ue.callsign ? (T(U, { ticket: W, ticket_source: H }), E(), { ok: !0, renamed: !1, callsign: ue.callsign, ticket: W }) : { ...K(U, ue, Me, {
+      tickMsg: r((Ye, Ut) => `🎫 ${Ye} is now ${Ut} (ticket ${W})`, "tickMsg"),
+      extra: { ticket: W, ticket_source: H, custom_suffix: null }
+    }), ticket: W } : (T(U, { ticket: W, ticket_source: H }), se(`🎫 ${ue.callsign} stays on ticket ${W} — every callsign for it is taken`), E(), { ok: !0, renamed: !1, callsign: ue.callsign, ticket: W });
   }
-  r(fe, "applyTicket");
-  function V($, Y) {
-    let re = d.getSession.get($);
-    if (!re || re.ended_at != null || re.callsign == null)
+  r(me, "applyTicket");
+  function ee(U, W) {
+    let H = d.getSession.get(U);
+    if (!H || H.ended_at != null || H.callsign == null)
       return { ok: !1, reason: "no live session for that target" };
-    let ve = hi(re.callsign);
-    if (Y == null && re.custom_suffix == null)
-      return { ok: !0, renamed: !1, callsign: re.callsign };
-    let ke = re.ticket ? `${ve}-${re.ticket}` : re.prev_callsign && !d.callsignTaken.get(re.prev_callsign, re.prev_callsign, $) ? re.prev_callsign : re.callsign, Ge = Y == null ? ke : `${ve}-${Y}`;
-    return Ge === re.callsign ? ((re.custom_suffix ?? null) !== (Y ?? null) && (T($, { custom_suffix: Y ?? null }), E()), { ok: !0, renamed: !1, callsign: re.callsign }) : d.callsignTaken.get(Ge, Ge, $) ? { ok: !1, reason: `${Ge} is already taken by another session` } : q($, re, Ge, {
-      tickMsg: r((St, ht) => Y == null ? `✎ ${St} is now ${ht} (custom name cleared)` : `✎ ${St} is now ${ht}`, "tickMsg"),
-      extra: { custom_suffix: Y ?? null }
+    let ue = _i(H.callsign);
+    if (W == null && H.custom_suffix == null)
+      return { ok: !0, renamed: !1, callsign: H.callsign };
+    let _e = H.ticket ? `${ue}-${H.ticket}` : H.prev_callsign && !d.callsignTaken.get(H.prev_callsign, H.prev_callsign, U) ? H.prev_callsign : H.callsign, Me = W == null ? _e : `${ue}-${W}`;
+    return Me === H.callsign ? ((H.custom_suffix ?? null) !== (W ?? null) && (T(U, { custom_suffix: W ?? null }), E()), { ok: !0, renamed: !1, callsign: H.callsign }) : d.callsignTaken.get(Me, Me, U) ? { ok: !1, reason: `${Me} is already taken by another session` } : K(U, H, Me, {
+      tickMsg: r((rt, Ye) => W == null ? `✎ ${rt} is now ${Ye} (custom name cleared)` : `✎ ${rt} is now ${Ye}`, "tickMsg"),
+      extra: { custom_suffix: W ?? null }
     });
   }
-  r(V, "applyCustomName");
-  let Fe = r(($) => {
-    let Y = d.spawnBySession.get($);
-    return !!Y && ["provisioning", "spawning", "stalled", "live"].includes(Y.status);
+  r(ee, "applyCustomName");
+  let Ce = r((U) => {
+    let W = d.spawnBySession.get(U);
+    return !!W && ["provisioning", "spawning", "stalled", "live"].includes(W.status);
   }, "hasLivePane");
-  function De($, Y, re) {
-    if (!Y) return null;
-    let ve = d.clearedPredecessors.all(Y, re - $e, $);
-    if (!ve.length) return null;
-    let [ke, Ge] = ve;
-    if (ke === void 0) return null;
-    if (ve.length === 1 || Ge !== void 0 && ke.cleared_at != null && Ge.cleared_at != null && ke.cleared_at - Ge.cleared_at > Z)
-      return ke;
-    let St = ve.filter((Dt) => Fe(Dt.session_id)), [ht] = St;
-    return St.length === 1 && ht !== void 0 ? ht : null;
+  function Fe(U, W, H) {
+    if (!W) return null;
+    let ue = d.clearedPredecessors.all(W, H - $e, U);
+    if (!ue.length) return null;
+    let [_e, Me] = ue;
+    if (_e === void 0) return null;
+    if (ue.length === 1 || Me !== void 0 && _e.cleared_at != null && Me.cleared_at != null && _e.cleared_at - Me.cleared_at > Z)
+      return _e;
+    let rt = ue.filter((Ut) => Ce(Ut.session_id)), [Ye] = rt;
+    return rt.length === 1 && Ye !== void 0 ? Ye : null;
   }
-  r(De, "findClearedPredecessor");
-  function N($, Y, { settled: re = !1 } = {}) {
-    let ve = d.getSession.get($);
-    if (!ve || ve.succeeded_by != null || !Y) return null;
-    let ke = Date.now(), Ge = d.clearBornSessionsSince.all(ke - $e, ke + 1e3), St = [];
-    for (let Tt of Ge) {
-      if (Tt.session_id === $) continue;
-      let at = d.getSession.get(Tt.session_id);
-      !at || at.archived_at != null || at.ended_at != null || at.cwd !== Y || at.succeeded_by != null || d.successorClaimed.get(at.session_id) || d.spawnBySession.get(at.session_id) || St.push(at);
+  r(Fe, "findClearedPredecessor");
+  function M(U, W, { settled: H = !1 } = {}) {
+    let ue = d.getSession.get(U);
+    if (!ue || ue.succeeded_by != null || !W) return null;
+    let _e = Date.now(), Me = d.clearBornSessionsSince.all(_e - $e, _e + 1e3), rt = [];
+    for (let Yt of Me) {
+      if (Yt.session_id === U) continue;
+      let st = d.getSession.get(Yt.session_id);
+      !st || st.archived_at != null || st.ended_at != null || st.cwd !== W || st.succeeded_by != null || d.successorClaimed.get(st.session_id) || d.spawnBySession.get(st.session_id) || rt.push(st);
     }
-    if (St.length !== 1 || d.clearedPredecessors.all(Y, ke - $e, $).length) return null;
-    if (!re && ae > 0) {
-      let Tt = te.spawnMaintenance.schedule(
-        ae,
+    if (rt.length !== 1 || d.clearedPredecessors.all(W, _e - $e, U).length) return null;
+    if (!H && ie > 0) {
+      let Yt = re.spawnMaintenance.schedule(
+        ie,
         () => {
           try {
-            N($, Y, { settled: !0 });
+            M(U, W, { settled: !0 });
           } catch {
           }
         },
         () => {
         }
       );
-      return Tt && Tt.catch(() => {
+      return Yt && Yt.catch(() => {
       }), null;
     }
-    let [Dt] = St;
-    return Dt === void 0 ? null : J(ve, Dt.session_id, { rename: !0 });
+    let [Ut] = rt;
+    return Ut === void 0 ? null : J(ue, Ut.session_id, { rename: !0 });
   }
-  r(N, "succeedForwardFromClear");
-  function J($, Y, { rename: re = !1 } = {}) {
-    let ve = Date.now();
-    if ($.callsign == null) return null;
-    let ke = $.callsign;
+  r(M, "succeedForwardFromClear");
+  function J(U, W, { rename: H = !1 } = {}) {
+    let ue = Date.now();
+    if (U.callsign == null) return null;
+    let _e = U.callsign;
     e.exec("BEGIN IMMEDIATE");
     try {
-      if (T($.session_id, {
+      if (T(U.session_id, {
         col: "offline",
-        ended_at: ve,
+        ended_at: ue,
         end_reason: "superseded",
-        succeeded_by: Y,
-        archived_at: ve,
+        succeeded_by: W,
+        archived_at: ue,
         cleared_at: null,
-        note: `context cleared → continued as ${ke}`,
+        note: `context cleared → continued as ${_e}`,
         adopt_armed_until: null,
         adopt_armed_skip: null
-      }), re) {
-        let Ge = d.getSession.get(Y);
-        Ge && Ge.callsign !== ke && T(Y, { callsign: ke }), T(Y, {
-          prev_callsign: $.prev_callsign ?? ($.callsign === ke ? null : $.callsign),
-          ticket: $.ticket ?? null,
-          ticket_source: $.ticket_source ?? null,
-          custom_suffix: $.custom_suffix ?? null,
-          adopt_armed_until: $.adopt_armed_until ?? null,
-          adopt_armed_skip: $.adopt_armed_skip ?? null
+      }), H) {
+        let Me = d.getSession.get(W);
+        Me && Me.callsign !== _e && T(W, { callsign: _e }), T(W, {
+          prev_callsign: U.prev_callsign ?? (U.callsign === _e ? null : U.callsign),
+          ticket: U.ticket ?? null,
+          ticket_source: U.ticket_source ?? null,
+          custom_suffix: U.custom_suffix ?? null,
+          adopt_armed_until: U.adopt_armed_until ?? null,
+          adopt_armed_skip: U.adopt_armed_skip ?? null
         });
       } else
-        d.insertSession.run(Y, ke, ve, ve), T(Y, {
-          ticket: $.ticket ?? null,
-          ticket_source: $.ticket_source ?? null,
-          prev_callsign: $.prev_callsign ?? ($.callsign === ke ? null : $.callsign),
-          custom_suffix: $.custom_suffix ?? null,
-          adopt_armed_until: $.adopt_armed_until ?? null,
-          adopt_armed_skip: $.adopt_armed_skip ?? null
+        d.insertSession.run(W, _e, ue, ue), T(W, {
+          ticket: U.ticket ?? null,
+          ticket_source: U.ticket_source ?? null,
+          prev_callsign: U.prev_callsign ?? (U.callsign === _e ? null : U.callsign),
+          custom_suffix: U.custom_suffix ?? null,
+          adopt_armed_until: U.adopt_armed_until ?? null,
+          adopt_armed_skip: U.adopt_armed_skip ?? null
         });
-      d.reassignActiveSpawns.run(Y, $.session_id), d.reassignPendingMail.run(Y, $.session_id), d.reassignPendingQuestions.run(Y, $.session_id), d.reassignTouches.run(Y, $.session_id), d.reassignAliases.run(Y, $.session_id), e.exec("COMMIT");
-    } catch (Ge) {
+      d.reassignActiveSpawns.run(W, U.session_id), d.reassignPendingMail.run(W, U.session_id), d.reassignPendingQuestions.run(W, U.session_id), d.reassignTouches.run(W, U.session_id), d.reassignAliases.run(W, U.session_id), e.exec("COMMIT");
+    } catch (Me) {
       try {
         e.exec("ROLLBACK");
       } catch {
       }
-      return console.error("fleetd /clear succession error:", Ge), null;
+      return console.error("fleetd /clear succession error:", Me), null;
     }
-    return H.delete($.session_id), ue($.session_id), se(`🧹 ${ke} cleared its context — same card, new session id (${Y.slice(0, 8)})`), E(), ke;
+    return V.delete(U.session_id), pe(U.session_id), se(`🧹 ${_e} cleared its context — same card, new session id (${W.slice(0, 8)})`), E(), _e;
   }
   r(J, "succeedSession");
-  function se($) {
-    d.insertTicker.run(Date.now(), $), d.trimTicker.run();
+  function se(U) {
+    d.insertTicker.run(Date.now(), U), d.trimTicker.run();
   }
   r(se, "tick");
-  function de($, Y, re, ve) {
+  function de(U, W, H, ue) {
     d.insertEvent.run(
-      $,
-      Y,
-      re ?? null,
-      ve ?? null,
+      U,
+      W,
+      H ?? null,
+      ue ?? null,
       Date.now()
     );
   }
   r(de, "logEvent");
-  let ne = xh(), te = {
+  let ne = xh(), re = {
 
 
     db: e,
     port: t,
     home: n,
     holdMs: o ?? po(process.env, () => d.getSetting.get("hold_ms")?.value ?? null),
-    t0: g,
+    t0: h,
     version: i,
     STALE_MS: m,
-    NUDGE_MS: U,
-    SPAWN_REGISTER_MS: M,
-    SETUP_REGISTER_MS: D,
+    NUDGE_MS: $,
+    SPAWN_REGISTER_MS: F,
+    SETUP_REGISTER_MS: I,
     PANE_MAIL_GRACE_MS: O,
     MAIL_PENDING_MAX: a,
     MAIL_PENDING_MAX_BYTES: c,
@@ -14794,15 +14883,15 @@ function Zw(e, {
     MAIL_PANE_BATCH_BYTES: f,
 
     MAIL_CLAIM_LEASE_MS: P,
-    PRESUME_DEAD_MS: v,
+    PRESUME_DEAD_MS: x,
     PRESUME_DEAD_WORKING_MS: Q,
-    RETAIN_OFFLINE_MS: G,
+    RETAIN_OFFLINE_MS: z,
     RC_HARVEST_MS: Ee,
-    RETAIN_LEDGER_MS: Se,
+    RETAIN_LEDGER_MS: ve,
     ADOPT_ARM_MS: ye,
-    ADOPT_DELAY_MS: Ie,
+    ADOPT_DELAY_MS: De,
 
-    SNAPSHOT_FILES_PER_SESSION: L,
+    SNAPSHOT_FILES_PER_SESSION: D,
     q: d,
     updateSession: T,
     onMutate: E,
@@ -14810,268 +14899,268 @@ function Zw(e, {
 
 
     runControlDetached: w,
-    questions: X,
-    settleTerminalPlans: b,
+    questions: Y,
+    settleTerminalPlans: k,
     findScopedWindow: S,
-    scopedPaneTarget: I,
+    scopedPaneTarget: N,
     tick: se,
     logEvent: de,
-    card: x,
+    card: v,
     assignCallsign: y,
-    applyTicket: fe,
-    modelMemo: H,
-    stampTranscriptFloor: ee,
+    applyTicket: me,
+    modelMemo: V,
+    stampTranscriptFloor: te,
     readTranscriptModel: C,
 
 
 
     CLEAR_SUCCESSION_MS: $e,
-    applyCustomName: V,
-    hasLivePane: Fe,
-    findClearedPredecessor: De,
+    applyCustomName: ee,
+    hasLivePane: Ce,
+    findClearedPredecessor: Fe,
     succeedSession: J,
-    succeedForwardFromClear: N,
+    succeedForwardFromClear: M,
     acquireWorktreePathLock: ne
   };
-  Object.assign(te, Fw(te));
+  Object.assign(re, Fw(re));
   let {
-    mail: Ne,
-    drainMail: je,
-    ackMail: Te,
-    notifyWatchers: ue,
-    addWatchWaiter: k,
-    tryOwnedPaneDelivery: z,
-    claimMail: F,
-    watchInfo: he,
-    postMail: ce,
-    registerWatchGen: Me,
-    mailLifecycle: dt
-  } = te;
-  function ft($, {
-    note: Y,
-    at: re = Date.now(),
-    tickMsg: ve = null,
-    notify: ke = !0,
-    forgetModel: Ge = !1,
-    mutate: St = !1
+    mail: Ie,
+    drainMail: qe,
+    ackMail: Pe,
+    notifyWatchers: pe,
+    addWatchWaiter: R,
+    tryOwnedPaneDelivery: X,
+    claimMail: B,
+    watchInfo: xe,
+    postMail: le,
+    registerWatchGen: Le,
+    mailLifecycle: ft
+  } = re;
+  function Et(U, {
+    note: W,
+    at: H = Date.now(),
+    tickMsg: ue = null,
+    notify: _e = !0,
+    forgetModel: Me = !1,
+    mutate: rt = !1
   }) {
-    T($, { col: "offline", ended_at: re, note: Y }), Ge && H.delete($), ve && se(ve), ke && ue($), St && E();
+    T(U, { col: "offline", ended_at: H, note: W }), Me && V.delete(U), ue && se(ue), _e && pe(U), rt && E();
   }
-  r(ft, "tombstoneCard"), te.tombstoneCard = ft, Object.assign(te, fw(te)), Object.assign(te, yw(te));
-  let { resolveReposDir: et, preflightRepo: gt, setSettings: Ve, resolveSettings: Rt, setRepoSetupEntry: Lt } = te;
-  Object.assign(te, Bw(te)), Object.assign(te, $w(te));
-  let { ingestAgentsPoll: Cn } = te;
-  Object.assign(te, Uw(te));
-  let { command: Bn } = te;
-  Object.assign(te, Ww(te));
-  let { planMark: Go, assignPlan: cr } = te, Jt = new Map(), lr = r(($) => {
+  r(Et, "tombstoneCard"), re.tombstoneCard = Et, Object.assign(re, fw(re)), Object.assign(re, yw(re));
+  let { resolveReposDir: We, preflightRepo: pt, setSettings: Ve, resolveSettings: _t, setRepoSetupEntry: cn } = re;
+  Object.assign(re, Bw(re)), Object.assign(re, $w(re));
+  let { ingestAgentsPoll: zt } = re;
+  Object.assign(re, Uw(re));
+  let { command: vn } = re;
+  Object.assign(re, Ww(re));
+  let { planMark: Go, assignPlan: br } = re, $t = new Map(), ho = r((U) => {
     try {
-      return Rd.realpathSync($);
+      return Rd.realpathSync(U);
     } catch {
-      return Uk.resolve($);
+      return Wk.resolve(U);
     }
   }, "canonicalWorktreePath");
-  te.claimWorktreeCustody = ($, Y) => {
-    let re = lr($);
-    if (Jt.has(re)) return null;
-    Jt.set(re, Y);
-    let ve = !1;
+  re.claimWorktreeCustody = (U, W) => {
+    let H = ho(U);
+    if ($t.has(H)) return null;
+    $t.set(H, W);
+    let ue = !1;
     return () => {
-      ve || (ve = !0, Jt.delete(re));
+      ue || (ue = !0, $t.delete(H));
     };
-  }, Object.assign(te, ow(te));
-  let { worktrees: ie, removeWorktree: me } = te;
-  Object.assign(te, Aw(te));
-  let { fsList: Xe, fsRead: it, fsSearch: un, fsListHome: ln, fsReadHome: ho, fsSearchHome: dn } = te;
-  Object.assign(te, Kw(te));
+  }, Object.assign(re, ow(re));
+  let { worktrees: oe, removeWorktree: he } = re;
+  Object.assign(re, Aw(re));
+  let { fsList: Xe, fsRead: ot, fsSearch: ln, fsListHome: ir, fsReadHome: wo, fsSearchHome: un } = re;
+  Object.assign(re, Xw(re));
   let {
-    spawn: fn,
-    revive: wo,
-    adoptSession: Eo,
-    enableRemote: xn,
-    spawnKill: Pn,
-    spawnCapability: Rr,
-    spawnLivenessTick: yo,
+    spawn: Xt,
+    revive: Eo,
+    adoptSession: yo,
+    enableRemote: Nn,
+    spawnKill: Rn,
+    spawnCapability: kr,
+    spawnLivenessTick: Xn,
     reconcileSpawns: Ko,
-    reconcileClearForks: Tr,
-    armUnsupervised: zr,
+    reconcileClearForks: Vo,
+    armUnsupervised: Rr,
     spawnLifecycle: _o
-  } = te;
-  Object.assign(te, Vw(te));
+  } = re;
+  Object.assign(re, Yw(re));
   let {
-    applyEvent: Us,
-    hookSessionStart: Cr,
-    hookUserPromptSubmit: Ws,
-    hookPostToolUse: Hi,
-    hookStop: qi,
-    hookSessionEnd: ji,
-    hookHoldQuestion: $n,
-    takeoverBriefLines: h
-  } = te;
-  Object.assign(te, Xw(te));
-  let { snapshot: j, fleetSize: B, terminalSpawn: le } = te;
-  Object.assign(te, Qw(te));
-  let { retentionSweep: _e, cleanup: K, dismissSession: xe, dismissRetry: pe } = te;
-  function We($) {
-    return _e($);
+    applyEvent: Vr,
+    hookSessionStart: zo,
+    hookUserPromptSubmit: Xo,
+    hookPostToolUse: qs,
+    hookStop: Tr,
+    hookSessionEnd: Ki,
+    hookHoldQuestion: Mn,
+    takeoverBriefLines: Yo
+  } = re;
+  Object.assign(re, Qw(re));
+  let { snapshot: zr, fleetSize: js, terminalSpawn: g } = re;
+  Object.assign(re, Gw(re));
+  let { retentionSweep: G, cleanup: L, dismissSession: ae, dismissRetry: fe } = re;
+  function j(U) {
+    return G(U);
   }
-  r(We, "retentionSweep");
-  function be($) {
-    return d.pruneEvents.run($);
+  r(j, "retentionSweep");
+  function be(U) {
+    return d.pruneEvents.run(U);
   }
   r(be, "pruneEvents");
-  let Ae = null;
-  function Je() {
-    let $ = dt.quiesce(), Y = X.quiesce(), re = _o.quiesce();
-    return $ || Y || re;
+  let ge = null;
+  function Ae() {
+    let U = ft.quiesce(), W = Y.quiesce(), H = _o.quiesce();
+    return U || W || H;
   }
-  r(Je, "quiesceCore");
-  function Le() {
-    return Ae || (Je(), Ae = Promise.resolve().then(async () => {
-      let Y = (await Promise.allSettled([
-        dt.close(),
-        X.close(),
+  r(Ae, "quiesceCore");
+  function ke() {
+    return ge || (Ae(), ge = Promise.resolve().then(async () => {
+      let W = (await Promise.allSettled([
+        ft.close(),
+        Y.close(),
         _o.close()
       ])).find(
-        (re) => re.status === "rejected"
+        (H) => H.status === "rejected"
       );
-      if (Y) throw Y.reason;
-    }), Ae);
+      if (W) throw W.reason;
+    }), ge);
   }
-  return r(Le, "closeCore"), {
-    applyEvent: Us,
-    hookSessionStart: Cr,
-    hookUserPromptSubmit: Ws,
-    hookPostToolUse: Hi,
-    hookStop: qi,
-    hookSessionEnd: ji,
-    hookHoldQuestion: $n,
-    takeoverBriefLines: h,
+  return r(ke, "closeCore"), {
+    applyEvent: Vr,
+    hookSessionStart: zo,
+    hookUserPromptSubmit: Xo,
+    hookPostToolUse: qs,
+    hookStop: Tr,
+    hookSessionEnd: Ki,
+    hookHoldQuestion: Mn,
+    takeoverBriefLines: Yo,
 
-    questions: X,
+    questions: Y,
 
-    addWatchWaiter: k,
-
-
-
-    claimMail: F,
-
-    watchInfo: he,
-
-    registerWatchGen: Me,
-
-    drainMail: je,
-    ackMail: Te,
+    addWatchWaiter: R,
 
 
 
+    claimMail: B,
 
-    mail: Ne,
-    postMail: ce,
-    tryOwnedPaneDelivery: z,
-    command: Bn,
-    snapshot: j,
-    fleetSize: B,
-    terminalSpawn: le,
+    watchInfo: xe,
+
+    registerWatchGen: Le,
+
+    drainMail: qe,
+    ackMail: Pe,
+
+
+
+
+    mail: Ie,
+    postMail: le,
+    tryOwnedPaneDelivery: X,
+    command: vn,
+    snapshot: zr,
+    fleetSize: js,
+    terminalSpawn: g,
     pasteImage: Iw,
 
-    ingestAgentsPoll: Cn,
+    ingestAgentsPoll: zt,
 
-    spawn: fn,
+    spawn: Xt,
 
-    preflightRepo: gt,
+    preflightRepo: pt,
 
-    revive: wo,
+    revive: Eo,
 
-    adoptSession: Eo,
+    adoptSession: yo,
 
-    enableRemote: xn,
+    enableRemote: Nn,
 
-    spawnKill: Pn,
+    spawnKill: Rn,
 
-    spawnCapability: Rr,
+    spawnCapability: kr,
 
-    armUnsupervised: zr,
+    armUnsupervised: Rr,
 
-    spawnLivenessTick: yo,
+    spawnLivenessTick: Xn,
 
     reconcileSpawns: Ko,
 
-    reconcileClearForks: Tr,
+    reconcileClearForks: Vo,
 
 
 
 
     pruneEvents: be,
-    retentionSweep: We,
+    retentionSweep: j,
     spawnLifecycle: _o,
     lifecycle: {
-      quiesce: Je,
-      close: Le
+      quiesce: Ae,
+      close: ke
     },
-    cleanup: K,
-    dismissSession: xe,
+    cleanup: L,
+    dismissSession: ae,
 
-    dismissRetry: pe,
+    dismissRetry: fe,
 
-    worktrees: ie,
+    worktrees: oe,
 
-    removeWorktree: me,
+    removeWorktree: he,
 
-    resolveReposDir: et,
+    resolveReposDir: We,
 
-    resolveSettings: Rt,
+    resolveSettings: _t,
 
     setSettings: Ve,
 
-    setRepoSetupEntry: Lt,
+    setRepoSetupEntry: cn,
 
     fsList: Xe,
 
-    fsRead: it,
+    fsRead: ot,
 
-    fsSearch: un,
+    fsSearch: ln,
 
-    fsListHome: ln,
+    fsListHome: ir,
 
-    fsReadHome: ho,
+    fsReadHome: wo,
 
-    fsSearchHome: dn,
+    fsSearchHome: un,
 
 
     planMark: Go,
 
-    assignPlan: cr,
+    assignPlan: br,
 
 
 
-    applyCustomName: V,
+    applyCustomName: ee,
 
 
     tick: se,
-    set onMutate($) {
-      _ = $;
+    set onMutate(U) {
+      _ = U;
     }
   };
 }
 r(Zw, "createCore");
 
 
-import cR from "node:os";
-import lR from "node:fs";
+import lR from "node:os";
+import uR from "node:fs";
 import Dd from "node:path";
-import { fileURLToPath as uR } from "node:url";
+import { fileURLToPath as dR } from "node:url";
 
 
-import { readFileSync as Wk } from "node:fs";
-import Hk from "node:os";
+import { readFileSync as Hk } from "node:fs";
+import qk from "node:os";
 var eE = null, tE = [{ family: "IPv4", internal: !1, address: "192.0.2.77" }];
-function qk() {
+function jk() {
   if (process.env.FLEETDECK_TEST_NET_MOCK !== "1") return null;
   let e = process.env.FLEETDECK_TEST_NET_FILE;
   if (e) {
     try {
-      let n = JSON.parse(Wk(e, "utf8"));
+      let n = JSON.parse(Hk(e, "utf8"));
       if (Array.isArray(n) && n.length > 0) return { ethernet: n };
     } catch {
     }
@@ -15085,26 +15174,26 @@ function qk() {
     }
   return { ethernet: tE };
 }
-r(qk, "envInterfaces");
-function Ii() {
+r(jk, "envInterfaces");
+function Bi() {
   if (eE) return { test: eE };
-  let e = qk();
-  return e || Hk.networkInterfaces();
+  let e = jk();
+  return e || qk.networkInterfaces();
 }
-r(Ii, "networkInterfaces");
+r(Bi, "networkInterfaces");
 
 
-import { spawn as jk } from "node:child_process";
+import { spawn as Gk } from "node:child_process";
 import { StringDecoder as oE } from "node:string_decoder";
-var Gk = new Set(["spawning", "stalled", "live"]), nE = 1024, Kk = 5e3, Vk = kt("FLEETDECK_TERM_CMD_TIMEOUT_MS", 1e4, { min: 100 }), zk = kt("FLEETDECK_TERM_CLOSE_RECHECK_MS", 1e3, { min: 50 }), sE = kt("FLEETDECK_TERM_INPUT_MAX_BYTES", 256 * 1024, { min: 1024 }), Xk = kt("FLEETDECK_TERM_PENDING_MAX_BYTES", sE, {
+var Kk = new Set(["spawning", "stalled", "live"]), nE = 1024, Vk = 5e3, zk = vt("FLEETDECK_TERM_CMD_TIMEOUT_MS", 1e4, { min: 100 }), Xk = vt("FLEETDECK_TERM_CLOSE_RECHECK_MS", 1e3, { min: 50 }), sE = vt("FLEETDECK_TERM_INPUT_MAX_BYTES", 256 * 1024, { min: 1024 }), Yk = vt("FLEETDECK_TERM_PENDING_MAX_BYTES", sE, {
   min: 1024
-}), Yk = "\x1B[H\x1B[2J", Jk = "\x1B[?2004h", Qk = "\x1B[200~", Zk = "\x1B[201~", eR = kt("FLEETDECK_TERM_REPAINT_MS", 80), tR = kt("FLEETDECK_TERM_DEAD_POLL_MS", 5e3, { min: 100 });
+}), Jk = "\x1B[H\x1B[2J", Qk = "\x1B[?2004h", Zk = "\x1B[200~", eR = "\x1B[201~", tR = vt("FLEETDECK_TERM_REPAINT_MS", 80), nR = vt("FLEETDECK_TERM_DEAD_POLL_MS", 5e3, { min: 100 });
 function rE(e, t) {
   let n = Number(e), o = Number(t);
   return !Number.isInteger(n) || !Number.isInteger(o) || n < 1 || o < 1 || n > 1e3 || o > 1e3 ? null : { cols: n, rows: o };
 }
 r(rE, "dimensions");
-function nR(e) {
+function rR(e) {
   let t = e, n = [];
   for (let o = 0; o < t.length; ) {
     if (t[o] === "\\" && /^[0-7]{3}$/.test(t.slice(o + 1, o + 4))) {
@@ -15115,7 +15204,7 @@ function nR(e) {
   }
   return Buffer.from(n);
 }
-r(nR, "unescapeControlData");
+r(rR, "unescapeControlData");
 var Td = class {
   static {
     r(this, "ControlModeParser");
@@ -15160,7 +15249,7 @@ var Td = class {
       n.push({
         type: "output",
         pane: s[1] ?? "",
-        data: nR(s[2] ?? "")
+        data: rR(s[2] ?? "")
       });
       return;
     }
@@ -15177,7 +15266,7 @@ var Td = class {
     let c = /^%session-changed\s+(\S+)(?:\s+(.*))?$/.exec(t);
     c && n.push({ type: "session-changed", session: c[1] ?? "", name: c[2] ?? "" });
   }
-}, Xn = class extends Error {
+}, zn = class extends Error {
   static {
     r(this, "TermBridgeError");
   }
@@ -15195,32 +15284,32 @@ function iE({
   closeGraceMs: o = 1e3,
   forceJoinGraceMs: s = 125
 }) {
-  let i = mo(e), a = new Set(), c = new Set(), l = new Set(), f = new Set(), w = new Set(), g = Number.isFinite(o) && o >= 1 ? Math.floor(o) : 1e3, _ = Number.isFinite(s) && s >= 1 ? Math.floor(s) : 125, E = null, m = "open", U = null, M = !1, D = r(() => {
+  let i = mo(e), a = new Set(), c = new Set(), l = new Set(), f = new Set(), w = new Set(), h = Number.isFinite(o) && o >= 1 ? Math.floor(o) : 1e3, _ = Number.isFinite(s) && s >= 1 ? Math.floor(s) : 125, E = null, m = "open", $ = null, F = !1, I = r(() => {
   }, "resolveForceRequested"), O = new Promise((C) => {
-    D = C;
-  }), P = r(() => new Xn("terminal bridge is closed"), "bridgeClosedError");
-  function v(C) {
-    return new Promise((W) => {
-      let y = null, x = r(() => {
-        w.delete(x) && (y && clearTimeout(y), y = null, W());
+    I = C;
+  }), P = r(() => new zn("terminal bridge is closed"), "bridgeClosedError");
+  function x(C) {
+    return new Promise((q) => {
+      let y = null, v = r(() => {
+        w.delete(v) && (y && clearTimeout(y), y = null, q());
       }, "settle");
-      w.add(x), y = setTimeout(x, C), y.unref();
+      w.add(v), y = setTimeout(v, C), y.unref();
     });
   }
-  r(v, "delay");
+  r(x, "delay");
   function Q() {
     let C = r(() => {
-    }, "readyResolve"), W = r(() => {
-    }, "readyReject"), y = new Promise((ue, k) => {
+    }, "readyResolve"), q = r(() => {
+    }, "readyReject"), y = new Promise((pe, R) => {
       C = r(() => {
-        ue();
-      }, "readyResolve"), W = r((z) => {
-        k(z);
+        pe();
+      }, "readyResolve"), q = r((X) => {
+        R(X);
       }, "readyReject");
     });
     y.catch(() => {
     });
-    let x = {
+    let v = {
       child: null,
       processGroupId: null,
       parser: new Td(),
@@ -15234,29 +15323,29 @@ function iE({
       closed: !1,
       ready: y,
       readyResolve: C,
-      readyReject: W,
-      command: r((ue) => new Promise((k, z) => {
-        if (x.closed || !x.child?.stdin?.writable) {
-          z(new Error("control client is closed"));
+      readyReject: q,
+      command: r((pe) => new Promise((R, X) => {
+        if (v.closed || !v.child?.stdin?.writable) {
+          X(new Error("control client is closed"));
           return;
         }
-        let F = setTimeout(() => {
-          G("terminal control command timed out");
-        }, Vk);
-        F.unref();
-        let he = {
-          resolve: r((ce) => {
-            clearTimeout(F), k(ce);
+        let B = setTimeout(() => {
+          z("terminal control command timed out");
+        }, zk);
+        B.unref();
+        let xe = {
+          resolve: r((le) => {
+            clearTimeout(B), R(le);
           }, "resolve"),
-          reject: r((ce) => {
-            clearTimeout(F), z(ce);
+          reject: r((le) => {
+            clearTimeout(B), X(le);
           }, "reject")
         };
-        x.waiters.push(he), x.child.stdin.write(ue + `
-`, (ce) => {
-          if (!ce) return;
-          let Me = x.waiters.indexOf(he);
-          Me >= 0 && x.waiters.splice(Me, 1), he.reject(ce);
+        v.waiters.push(xe), v.child.stdin.write(pe + `
+`, (le) => {
+          if (!le) return;
+          let Le = v.waiters.indexOf(xe);
+          Le >= 0 && v.waiters.splice(Le, 1), xe.reject(le);
         });
       }), "command"),
 
@@ -15267,52 +15356,52 @@ function iE({
 
 
       deadTimer: setInterval(() => {
-        x.closed || !x.panes.size || x.command("list-panes -a -F '#{pane_id} #{pane_dead}'").then((ue) => {
-          if (!ue.ok || x.closed) return;
-          let k = new Map();
-          for (let z of ue.lines) {
-            let F = /^(%\d+)\s+([01])$/.exec(z.trim());
-            F && k.set(F[1] ?? "", F[2] ?? "");
+        v.closed || !v.panes.size || v.command("list-panes -a -F '#{pane_id} #{pane_dead}'").then((pe) => {
+          if (!pe.ok || v.closed) return;
+          let R = new Map();
+          for (let X of pe.lines) {
+            let B = /^(%\d+)\s+([01])$/.exec(X.trim());
+            B && R.set(B[1] ?? "", B[2] ?? "");
           }
-          for (let [z, F] of [...x.panes])
-            if (k.get(z) === "1")
-              for (let he of [...F.subs]) he.end("terminal pane closed");
+          for (let [X, B] of [...v.panes])
+            if (R.get(X) === "1")
+              for (let xe of [...B.subs]) xe.end("terminal pane closed");
         }).catch(() => {
         });
-      }, tR),
+      }, nR),
       exited: Promise.resolve(),
       detachDataListeners: r(() => {
       }, "detachDataListeners"),
       detachAllListeners: r(() => {
       }, "detachAllListeners")
     };
-    x.deadTimer.unref();
-    let q = r((ue) => {
-      if (!(x.closed || m !== "open")) {
-        if (ue.type === "response")
-          x.waiters.shift()?.resolve(ue);
-        else if (ue.type === "session-changed")
-          x.readyResolve();
-        else if (ue.type === "exit")
-          G(ue.reason || "tmux session ended");
-        else if (ue.type === "window-close") {
-          if (!x.panes.size) return;
-          x.command("list-panes -a -F '#{pane_id}'").then((k) => {
-            if (x.closed || m !== "open") return;
-            if (!k.ok) {
+    v.deadTimer.unref();
+    let K = r((pe) => {
+      if (!(v.closed || m !== "open")) {
+        if (pe.type === "response")
+          v.waiters.shift()?.resolve(pe);
+        else if (pe.type === "session-changed")
+          v.readyResolve();
+        else if (pe.type === "exit")
+          z(pe.reason || "tmux session ended");
+        else if (pe.type === "window-close") {
+          if (!v.panes.size) return;
+          v.command("list-panes -a -F '#{pane_id}'").then((R) => {
+            if (v.closed || m !== "open") return;
+            if (!R.ok) {
               Ee();
               return;
             }
-            let z = new Set(k.lines.map((F) => F.trim()));
-            for (let [F, he] of [...x.panes])
-              if (!z.has(F))
-                for (let ce of [...he.subs]) ce.end("terminal pane closed");
+            let X = new Set(R.lines.map((B) => B.trim()));
+            for (let [B, xe] of [...v.panes])
+              if (!X.has(B))
+                for (let le of [...xe.subs]) le.end("terminal pane closed");
           }).catch(() => {
             Ee();
           });
         }
       }
-    }, "onEvent"), fe = process.env.FLEETDECK_TERM_CMD?.trim(), V = process.env.FLEETDECK_TMUX_SOCKET?.trim(), Fe = V ? ["-L", V, "-C", "attach-session", "-t", "=" + i] : ["-C", "attach-session", "-t", "=" + i], De = process.platform !== "win32", N = jk(fe || "tmux", fe ? [] : Fe, {
+    }, "onEvent"), me = process.env.FLEETDECK_TERM_CMD?.trim(), ee = process.env.FLEETDECK_TMUX_SOCKET?.trim(), Ce = ee ? ["-L", ee, "-C", "attach-session", "-t", "=" + i] : ["-C", "attach-session", "-t", "=" + i], Fe = process.platform !== "win32", M = Gk(me || "tmux", me ? [] : Ce, {
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: !0,
 
@@ -15320,146 +15409,146 @@ function iE({
 
 
 
-      detached: De,
+      detached: Fe,
 
 
 
       env: process.env
     });
-    x.child = N, x.processGroupId = De && N.pid ? N.pid : null, c.add(x);
+    v.child = M, v.processGroupId = Fe && M.pid ? M.pid : null, c.add(v);
     let J = r(() => {
     }, "exitedResolve");
-    x.exited = new Promise((ue) => {
-      J = ue;
+    v.exited = new Promise((pe) => {
+      J = pe;
     });
-    let se = r((ue) => {
-      if (x.closed || m !== "open") return;
-      let k = new Map(), z = r(() => {
-        if (!(x.closed || m !== "open")) {
-          for (let [F, he] of k) {
-            let ce = x.panes.get(F);
-            if (!ce) continue;
-            let Me = ce.decoder.write(Buffer.concat(he));
-            if (Me) for (let dt of ce.subs) dt.emit(Me);
+    let se = r((pe) => {
+      if (v.closed || m !== "open") return;
+      let R = new Map(), X = r(() => {
+        if (!(v.closed || m !== "open")) {
+          for (let [B, xe] of R) {
+            let le = v.panes.get(B);
+            if (!le) continue;
+            let Le = le.decoder.write(Buffer.concat(xe));
+            if (Le) for (let ft of le.subs) ft.emit(Le);
           }
-          k.clear();
+          R.clear();
         }
       }, "flush");
-      for (let F of x.parser.feed(ue))
-        if (F.type === "output") {
-          if (!x.panes.has(F.pane)) continue;
-          let he = k.get(F.pane);
-          he || k.set(F.pane, he = []), he.push(F.data);
+      for (let B of v.parser.feed(pe))
+        if (B.type === "output") {
+          if (!v.panes.has(B.pane)) continue;
+          let xe = R.get(B.pane);
+          xe || R.set(B.pane, xe = []), xe.push(B.data);
         } else
-          z(), q(F);
-      z();
-    }, "onStdout"), de = r((ue) => {
-      x.closed || m !== "open" || n(`terminal control stderr: ${String(ue).trim()}`);
-    }, "onStderr"), ne = r((ue) => {
-      !x.closed && m === "open" && G(`terminal control client failed: ${ue.message}`);
-    }, "onError"), te = r(() => {
-      J(), x.closed || G("terminal control client exited");
-    }, "onExit"), Ne = r(() => {
-      J(), S(x) && (c.delete(x), x.detachAllListeners());
-    }, "onClose"), je = !1, Te = !1;
-    return x.detachDataListeners = () => {
-      je || (je = !0, N.stdout.off("data", se), N.stderr.off("data", de));
-    }, x.detachAllListeners = () => {
-      Te || (Te = !0, x.detachDataListeners(), N.off("error", ne), N.off("exit", te), N.off("close", Ne));
-    }, N.stdout.on("data", se), N.stderr.on("data", de), N.on("error", ne), N.on("exit", te), N.on("close", Ne), x;
+          X(), K(B);
+      X();
+    }, "onStdout"), de = r((pe) => {
+      v.closed || m !== "open" || n(`terminal control stderr: ${String(pe).trim()}`);
+    }, "onStderr"), ne = r((pe) => {
+      !v.closed && m === "open" && z(`terminal control client failed: ${pe.message}`);
+    }, "onError"), re = r(() => {
+      J(), v.closed || z("terminal control client exited");
+    }, "onExit"), Ie = r(() => {
+      J(), S(v) && (c.delete(v), v.detachAllListeners());
+    }, "onClose"), qe = !1, Pe = !1;
+    return v.detachDataListeners = () => {
+      qe || (qe = !0, M.stdout.off("data", se), M.stderr.off("data", de));
+    }, v.detachAllListeners = () => {
+      Pe || (Pe = !0, v.detachDataListeners(), M.off("error", ne), M.off("exit", re), M.off("close", Ie));
+    }, M.stdout.on("data", se), M.stderr.on("data", de), M.on("error", ne), M.on("exit", re), M.on("close", Ie), v;
   }
   r(Q, "createClient");
-  function G(C) {
-    let W = E;
-    if (!(!W || W.closed)) {
-      W.closed = !0, E = null, clearInterval(W.deadTimer), W.readyReject(new Error(C));
-      for (let y of W.waiters.splice(0)) y.reject(new Error(C));
+  function z(C) {
+    let q = E;
+    if (!(!q || q.closed)) {
+      q.closed = !0, E = null, clearInterval(q.deadTimer), q.readyReject(new Error(C));
+      for (let y of q.waiters.splice(0)) y.reject(new Error(C));
       for (let y of [...a]) y.finish(C);
-      I(W, "SIGTERM");
+      N(q, "SIGTERM");
     }
   }
-  r(G, "teardown");
+  r(z, "teardown");
   function Ee() {
     let C = E;
     if (!C || C.closed || m !== "open" || !C.panes.size) return;
-    let W = setTimeout(() => {
-      l.delete(W), !(m !== "open" || E !== C || C.closed || !C.panes.size) && C.command("list-panes -a -F '#{pane_id}'").then((y) => {
+    let q = setTimeout(() => {
+      l.delete(q), !(m !== "open" || E !== C || C.closed || !C.panes.size) && C.command("list-panes -a -F '#{pane_id}'").then((y) => {
         if (m !== "open" || C.closed || !y.ok) return;
-        let x = new Set(y.lines.map((q) => q.trim()));
-        for (let [q, fe] of [...C.panes])
-          if (!x.has(q))
-            for (let V of [...fe.subs]) V.end("terminal pane closed");
+        let v = new Set(y.lines.map((K) => K.trim()));
+        for (let [K, me] of [...C.panes])
+          if (!v.has(K))
+            for (let ee of [...me.subs]) ee.end("terminal pane closed");
       }).catch(() => {
       });
-    }, zk);
-    l.add(W), W.unref();
+    }, Xk);
+    l.add(q), q.unref();
   }
   r(Ee, "scheduleCloseRecheck");
   async function ye() {
     if (m !== "open") throw P();
     E ??= Q();
-    let C = E, W;
+    let C = E, q;
     try {
       await Promise.race([
         C.ready,
-        new Promise((y, x) => {
-          W = setTimeout(() => {
-            W && f.delete(W), x(new Error("terminal control attach timed out"));
-          }, Kk), f.add(W);
+        new Promise((y, v) => {
+          q = setTimeout(() => {
+            q && f.delete(q), v(new Error("terminal control attach timed out"));
+          }, Vk), f.add(q);
         })
       ]);
     } finally {
-      clearTimeout(W), W && f.delete(W);
+      clearTimeout(q), q && f.delete(q);
     }
     if (m !== "open") throw P();
     if (C.closed) throw new Error("terminal control client exited");
     return C;
   }
   r(ye, "ensureClient");
-  async function Ie(C, W, y, x) {
-    let q = Ci(e, W);
-    if (C.manualSizing.has(W) || (await C.command(`set-option -w -t ${q} window-size manual`).catch(() => ({ ok: !1 }))).ok && C.manualSizing.add(W), C.manualSizing.has(W))
-      return await C.command(`resize-window -t ${q} -x ${y} -y ${x}`);
-    let fe = await C.command(`refresh-client -C ${y},${x}`);
-    return fe.ok || (fe = await C.command(`refresh-client -C ${y}x${x}`)), fe;
+  async function De(C, q, y, v) {
+    let K = Li(e, q);
+    if (C.manualSizing.has(q) || (await C.command(`set-option -w -t ${K} window-size manual`).catch(() => ({ ok: !1 }))).ok && C.manualSizing.add(q), C.manualSizing.has(q))
+      return await C.command(`resize-window -t ${K} -x ${y} -y ${v}`);
+    let me = await C.command(`refresh-client -C ${y},${v}`);
+    return me.ok || (me = await C.command(`refresh-client -C ${y}x${v}`)), me;
   }
-  r(Ie, "sizeWindow");
-  function Se(C, W, y) {
-    let x = C.panes.get(W);
-    x || (x = { decoder: new oE("utf8"), subs: new Set() }, C.panes.set(W, x)), x.subs.add(y);
+  r(De, "sizeWindow");
+  function ve(C, q, y) {
+    let v = C.panes.get(q);
+    v || (v = { decoder: new oE("utf8"), subs: new Set() }, C.panes.set(q, v)), v.subs.add(y);
   }
-  r(Se, "subscribe");
-  function $e(C, W, y) {
-    let x = C?.panes.get(W);
-    !C || !x || (x.subs.delete(y), x.subs.size || C.panes.delete(W));
+  r(ve, "subscribe");
+  function $e(C, q, y) {
+    let v = C?.panes.get(q);
+    !C || !v || (v.subs.delete(y), v.subs.size || C.panes.delete(q));
   }
   r($e, "unsubscribe");
   async function Z({
     spawn_id: C,
-    cols: W,
+    cols: q,
     rows: y,
-    send: x,
-    onClose: q = r(() => {
+    send: v,
+    onClose: K = r(() => {
     }, "onClose"),
-    isAborted: fe = r(() => !1, "isAborted")
+    isAborted: me = r(() => !1, "isAborted")
   }) {
     if (m !== "open") throw P();
     if (process.env.FLEETDECK_TERM?.trim().toLowerCase() === "off")
-      throw new Xn("live terminal disabled");
-    let V = rE(W, y);
-    if (!V) throw new Xn("invalid terminal dimensions");
-    let Fe = r(() => {
+      throw new zn("live terminal disabled");
+    let ee = rE(q, y);
+    if (!ee) throw new zn("invalid terminal dimensions");
+    let Ce = r(() => {
       if (m !== "open") throw P();
-      if (fe()) throw new Error("terminal viewer closed during open");
-    }, "abortIfClosed"), De = await t(C);
-    if (Fe(), !De) throw new Xn("no such spawn");
-    if (!Gk.has(De.status)) throw new Xn("spawn is not live");
-    let N = De.tmux_window;
-    if (De.tmux_session !== i || !N?.startsWith(`fd${e}-`))
-      throw new Xn("spawn is outside this fleet");
+      if (me()) throw new Error("terminal viewer closed during open");
+    }, "abortIfClosed"), Fe = await t(C);
+    if (Ce(), !Fe) throw new zn("no such spawn");
+    if (!Kk.has(Fe.status)) throw new zn("spawn is not live");
+    let M = Fe.tmux_window;
+    if (Fe.tmux_session !== i || !M?.startsWith(`fd${e}-`))
+      throw new zn("spawn is outside this fleet");
     let J = {
       pane: null,
-      window: N,
+      window: M,
       established: !1,
       initialized: !1,
       finished: !1,
@@ -15476,16 +15565,16 @@ function iE({
       emit(ne) {
         if (!this.finished) {
           if (!this.initialized) {
-            let te = Buffer.byteLength(ne, "utf8");
-            if (this.pendingBytes + te > Xk) {
+            let re = Buffer.byteLength(ne, "utf8");
+            if (this.pendingBytes + re > Yk) {
               this.established = !0, this.finish("terminal output overflow before init");
               return;
             }
-            this.pendingBytes += te, this.pending.push(ne);
+            this.pendingBytes += re, this.pending.push(ne);
             return;
           }
           try {
-            x({ t: "out", data: ne });
+            v({ t: "out", data: ne });
           } catch {
             this.finish("terminal socket closed", !1);
           }
@@ -15497,10 +15586,10 @@ function iE({
       flushPending() {
         let ne = this.pending;
         this.pending = [], this.pendingBytes = 0;
-        for (let te of ne) {
+        for (let re of ne) {
           if (this.finished) return;
           try {
-            x({ t: "out", data: te });
+            v({ t: "out", data: re });
           } catch {
             this.finish("terminal socket closed", !1);
           }
@@ -15520,84 +15609,84 @@ function iE({
           this.finish(ne);
         }
       },
-      finish(ne, te = !0) {
+      finish(ne, re = !0) {
         if (!this.finished) {
-          if (this.finished = !0, a.delete(this), this.pane && $e(E, this.pane, this), te && this.established)
+          if (this.finished = !0, a.delete(this), this.pane && $e(E, this.pane, this), re && this.established)
             try {
-              q(ne);
+              K(ne);
             } catch {
             }
-          a.size || G("no viewers left");
+          a.size || z("no viewers left");
         }
       }
     };
     a.add(J);
     try {
       let ne = await ye();
-      Fe();
-      let te = await ne.command(
-        `list-panes -t ${Ci(e, N)} -F '#{pane_id}'`
+      Ce();
+      let re = await ne.command(
+        `list-panes -t ${Li(e, M)} -F '#{pane_id}'`
       );
-      if (!te.ok)
-        throw new Xn("terminal pane is gone — the agent has ended", { gone: !0 });
-      let Ne = te.lines.map((z) => z.trim()).find((z) => /^%\d+$/.test(z));
-      if (!Ne)
-        throw new Xn("terminal pane is gone — the agent has ended", { gone: !0 });
-      if (J.pane = Ne, !(await Ie(ne, N, V.cols, V.rows)).ok)
+      if (!re.ok)
+        throw new zn("terminal pane is gone — the agent has ended", { gone: !0 });
+      let Ie = re.lines.map((X) => X.trim()).find((X) => /^%\d+$/.test(X));
+      if (!Ie)
+        throw new zn("terminal pane is gone — the agent has ended", { gone: !0 });
+      if (J.pane = Ie, !(await De(ne, M, ee.cols, ee.rows)).ok)
         throw new Error("terminal resize failed");
-      if (!(await Ie(ne, N, V.cols, Math.max(1, V.rows - 1))).ok)
-        throw await Ie(ne, N, V.cols, V.rows), new Error("terminal resize failed");
-      if (!(await Ie(ne, N, V.cols, V.rows)).ok)
-        throw await Ie(ne, N, V.cols, V.rows), new Error("terminal resize failed");
-      await v(eR), Fe(), Se(ne, Ne, J);
-      let je = await ne.command(`capture-pane -p -e -t ${Ne}`);
-      if (!je.ok) throw new Error("terminal pane capture failed");
-      let Te = await ne.command(
-        `display-message -p -t ${Ne} '#{cursor_x} #{cursor_y} #{bracket_paste_flag}'`
+      if (!(await De(ne, M, ee.cols, Math.max(1, ee.rows - 1))).ok)
+        throw await De(ne, M, ee.cols, ee.rows), new Error("terminal resize failed");
+      if (!(await De(ne, M, ee.cols, ee.rows)).ok)
+        throw await De(ne, M, ee.cols, ee.rows), new Error("terminal resize failed");
+      await x(tR), Ce(), ve(ne, Ie, J);
+      let qe = await ne.command(`capture-pane -p -e -t ${Ie}`);
+      if (!qe.ok) throw new Error("terminal pane capture failed");
+      let Pe = await ne.command(
+        `display-message -p -t ${Ie} '#{cursor_x} #{cursor_y} #{bracket_paste_flag}'`
       );
-      if (!Te.ok) throw new Error("terminal cursor lookup failed");
-      let ue = /^(\d+)\s+(\d+)(?:\s+(\d+))?\s*$/.exec(Te.lines.at(-1)?.trim() ?? "");
-      if (!ue) throw new Error("terminal cursor lookup returned invalid data");
-      let k = ue[3] === "1";
-      if (J.established = !0, x({
+      if (!Pe.ok) throw new Error("terminal cursor lookup failed");
+      let pe = /^(\d+)\s+(\d+)(?:\s+(\d+))?\s*$/.exec(Pe.lines.at(-1)?.trim() ?? "");
+      if (!pe) throw new Error("terminal cursor lookup returned invalid data");
+      let R = pe[3] === "1";
+      if (J.established = !0, v({
         t: "init",
-        cols: V.cols,
-        rows: V.rows,
+        cols: ee.cols,
+        rows: ee.rows,
 
 
-        screen: Yk + Buffer.from(je.lines.join(`\r
-`), "latin1").toString("utf8") + `\x1B[${Number(ue[2]) + 1};${Number(ue[1]) + 1}H` +
+        screen: Jk + Buffer.from(qe.lines.join(`\r
+`), "latin1").toString("utf8") + `\x1B[${Number(pe[2]) + 1};${Number(pe[1]) + 1}H` +
 
 
 
 
-        (k ? Jk : "")
+        (R ? Qk : "")
       }), J.initialized = !0, J.pendingExit) {
-        let z = J.pendingExit;
-        J.pendingExit = null, J.finish(z);
+        let X = J.pendingExit;
+        J.pendingExit = null, J.finish(X);
       } else
         J.flushPending();
     } catch (ne) {
-      let te = ne instanceof Error && ne.message ? ne.message : "terminal open failed";
-      throw J.finish(te, !1), ne instanceof Xn ? ne : new Xn(te);
+      let re = ne instanceof Error && ne.message ? ne.message : "terminal open failed";
+      throw J.finish(re, !1), ne instanceof zn ? ne : new zn(re);
     }
-    let se = r((ne, te) => {
+    let se = r((ne, re) => {
       if (J.finished || ne.length === 0) return;
-      let Ne = E;
-      if (!Ne) return;
-      let je = J.pane;
-      if (je) {
+      let Ie = E;
+      if (!Ie) return;
+      let qe = J.pane;
+      if (qe) {
         if (J.queuedInput + ne.length > sE) {
           J.finish("terminal input overflow");
           return;
         }
         J.queuedInput += ne.length, J.inputChain = J.inputChain.then(async () => {
           try {
-            if (te && !await te()) return;
-            for (let Te = 0; Te < ne.length; Te += nE) {
-              if (J.finished || E !== Ne) return;
-              let ue = [...ne.subarray(Te, Te + nE)].map((z) => z.toString(16).padStart(2, "0")).join(" ");
-              if (!(await Ne.command(`send-keys -t ${je} -H ${ue}`)).ok) {
+            if (re && !await re()) return;
+            for (let Pe = 0; Pe < ne.length; Pe += nE) {
+              if (J.finished || E !== Ie) return;
+              let pe = [...ne.subarray(Pe, Pe + nE)].map((X) => X.toString(16).padStart(2, "0")).join(" ");
+              if (!(await Ie.command(`send-keys -t ${qe} -H ${pe}`)).ok) {
                 J.finish("terminal pane closed");
                 return;
               }
@@ -15612,7 +15701,7 @@ function iE({
     }, "queueInput"), de = r((ne) => {
       if (!J.finished)
         try {
-          x({ t: "paste-refused", reason: ne });
+          v({ t: "paste-refused", reason: ne });
         } catch {
           J.finish("terminal socket closed", !1);
         }
@@ -15623,24 +15712,24 @@ function iE({
       },
       paste(ne) {
         if (typeof ne != "string" || !ne) return;
-        let te = sc(ne).replace(/\n/g, "\r");
-        if (!te) return;
-        let Ne = Buffer.from(Qk + te + Zk, "utf8"), je = De.kind !== "shell" ? void 0 : async () => {
-          let Te = E, ue = J.pane;
-          if (!Te || !ue || J.finished) return !1;
-          let k = await Te.command(
-            `display-message -p -t ${ue} '#{bracket_paste_flag}'`
+        let re = ac(ne).replace(/\n/g, "\r");
+        if (!re) return;
+        let Ie = Buffer.from(Zk + re + eR, "utf8"), qe = Fe.kind !== "shell" ? void 0 : async () => {
+          let Pe = E, pe = J.pane;
+          if (!Pe || !pe || J.finished) return !1;
+          let R = await Pe.command(
+            `display-message -p -t ${pe} '#{bracket_paste_flag}'`
           );
-          return k.ok && k.lines.at(-1)?.trim() === "1" ? !0 : (de(
+          return R.ok && R.lines.at(-1)?.trim() === "1" ? !0 : (de(
             "multiline paste needs bracketed-paste support — this shell did not request it"
           ), !1);
         };
-        se(Ne, je);
+        se(Ie, qe);
       },
-      resize(ne, te) {
-        let Ne = rE(ne, te), je = E;
-        J.finished || !Ne || !je || Ie(je, J.window, Ne.cols, Ne.rows).then((Te) => {
-          Te.ok || J.finish("terminal resize failed");
+      resize(ne, re) {
+        let Ie = rE(ne, re), qe = E;
+        J.finished || !Ie || !qe || De(qe, J.window, Ie.cols, Ie.rows).then((Pe) => {
+          Pe.ok || J.finish("terminal resize failed");
         }).catch(() => {
           J.finish("terminal resize failed");
         });
@@ -15651,76 +15740,76 @@ function iE({
     };
   }
   r(Z, "openViewer");
-  function ae(C) {
-    let W = C.child;
-    return !!(W?.pid && W.exitCode === null && W.signalCode === null);
+  function ie(C) {
+    let q = C.child;
+    return !!(q?.pid && q.exitCode === null && q.signalCode === null);
   }
-  r(ae, "directChildAlive");
-  function L(C) {
-    let W = C.processGroupId;
-    if (W === null) return !1;
+  r(ie, "directChildAlive");
+  function D(C) {
+    let q = C.processGroupId;
+    if (q === null) return !1;
     try {
-      return process.kill(-W, 0), !0;
+      return process.kill(-q, 0), !0;
     } catch (y) {
-      let x = mt(y);
-      return x === "ESRCH" ? !1 : x === "EINVAL" || x === "ENOSYS" || x === "ENOTSUP" ? (C.processGroupId = null, !1) : !0;
+      let v = dt(y);
+      return v === "ESRCH" ? !1 : v === "EINVAL" || v === "ENOSYS" || v === "ENOTSUP" ? (C.processGroupId = null, !1) : !0;
     }
   }
-  r(L, "processGroupAlive");
+  r(D, "processGroupAlive");
   function S(C) {
-    return !L(C) && !ae(C);
+    return !D(C) && !ie(C);
   }
   r(S, "clientProcessTreeGone");
-  function I(C, W) {
+  function N(C, q) {
     let y = C.processGroupId;
     if (y !== null)
       try {
-        process.kill(-y, W);
+        process.kill(-y, q);
         return;
-      } catch (q) {
-        let fe = mt(q);
-        (fe === "EINVAL" || fe === "ENOSYS" || fe === "ENOTSUP") && (C.processGroupId = null);
+      } catch (K) {
+        let me = dt(K);
+        (me === "EINVAL" || me === "ENOSYS" || me === "ENOTSUP") && (C.processGroupId = null);
       }
-    let x = C.child;
-    if (!(!ae(C) || !x))
+    let v = C.child;
+    if (!(!ie(C) || !v))
       try {
-        x.kill(W);
+        v.kill(q);
       } catch {
       }
   }
-  r(I, "signalClientProcessTree");
-  function d(C, W) {
-    let y = Date.now() + W, x, q = !1, fe = r(() => {
-    }, "resolveResult"), V = new Promise((N) => {
-      fe = N;
-    }), Fe = r((N) => {
-      q || (q = !0, x && clearTimeout(x), fe(N));
-    }, "settle"), De = r(() => {
+  r(N, "signalClientProcessTree");
+  function d(C, q) {
+    let y = Date.now() + q, v, K = !1, me = r(() => {
+    }, "resolveResult"), ee = new Promise((M) => {
+      me = M;
+    }), Ce = r((M) => {
+      K || (K = !0, v && clearTimeout(v), me(M));
+    }, "settle"), Fe = r(() => {
       if (S(C)) {
-        Fe(!0);
+        Ce(!0);
         return;
       }
-      let N = y - Date.now();
-      if (N <= 0) {
-        Fe(!1);
+      let M = y - Date.now();
+      if (M <= 0) {
+        Ce(!1);
         return;
       }
-      x = setTimeout(De, Math.min(10, N));
+      v = setTimeout(Fe, Math.min(10, M));
     }, "poll");
-    return De(), {
-      completion: V,
+    return Fe(), {
+      completion: ee,
       cancel: r(() => {
-        q || (q = !0, x && clearTimeout(x));
+        K || (K = !0, v && clearTimeout(v));
       }, "cancel")
     };
   }
   r(d, "waitForClientProcessTree");
-  async function T(C, W) {
-    if (M) return "forced";
-    let y = d(C, W);
+  async function T(C, q) {
+    if (F) return "forced";
+    let y = d(C, q);
     try {
       return await Promise.race([
-        y.completion.then((x) => x ? "settled" : "timed-out"),
+        y.completion.then((v) => v ? "settled" : "timed-out"),
         O.then(() => "forced")
       ]);
     } finally {
@@ -15728,105 +15817,105 @@ function iE({
     }
   }
   r(T, "waitForClientTreeBeforeForce");
-  function A(C, W) {
+  function A(C, q) {
     C.detachAllListeners();
     try {
-      W.stdin?.destroy();
+      q.stdin?.destroy();
     } catch {
     }
     try {
-      W.stdout?.destroy();
+      q.stdout?.destroy();
     } catch {
     }
     try {
-      W.stderr?.destroy();
+      q.stderr?.destroy();
     } catch {
     }
     c.delete(C);
   }
   r(A, "releaseClientProcessHandles");
-  async function b(C) {
-    let W = C.child;
-    if (!W) return;
+  async function k(C) {
+    let q = C.child;
+    if (!q) return;
     let y = S(C);
     try {
-      if (!y && !M && (I(C, "SIGTERM"), y = await T(C, g) === "settled"), !y)
-        if (I(C, "SIGKILL"), M)
+      if (!y && !F && (N(C, "SIGTERM"), y = await T(C, h) === "settled"), !y)
+        if (N(C, "SIGKILL"), F)
           y = await d(C, _).completion;
         else {
-          let x = await T(C, g);
-          y = x === "settled", x === "forced" && (I(C, "SIGKILL"), y = await d(C, _).completion);
+          let v = await T(C, h);
+          y = v === "settled", v === "forced" && (N(C, "SIGKILL"), y = await d(C, _).completion);
         }
       if (!y) {
-        W.unref();
-        let x = C.processGroupId ? `terminal control process group ${C.processGroupId}` : `terminal control child ${W.pid ?? "unknown"}`;
-        throw new Error(`${x} remained alive after the bounded SIGKILL join`);
+        q.unref();
+        let v = C.processGroupId ? `terminal control process group ${C.processGroupId}` : `terminal control child ${q.pid ?? "unknown"}`;
+        throw new Error(`${v} remained alive after the bounded SIGKILL join`);
       }
     } finally {
-      A(C, W);
+      A(C, q);
     }
   }
-  r(b, "terminateClient");
-  async function X() {
+  r(k, "terminateClient");
+  async function Y() {
     m = "closing";
-    let C = "terminal bridge is closed", W = [...c], y = [...a];
+    let C = "terminal bridge is closed", q = [...c], y = [...a];
     E = null;
-    for (let V of l) clearTimeout(V);
+    for (let ee of l) clearTimeout(ee);
     l.clear();
-    for (let V of f) clearTimeout(V);
+    for (let ee of f) clearTimeout(ee);
     f.clear();
-    for (let V of [...w]) V();
-    let x = y.map((V) => V.inputChain);
-    for (let V of W) {
-      V.closed = !0, clearInterval(V.deadTimer), V.readyReject(new Error(C));
-      for (let Fe of V.waiters.splice(0)) Fe.reject(new Error(C));
-      V.detachDataListeners();
+    for (let ee of [...w]) ee();
+    let v = y.map((ee) => ee.inputChain);
+    for (let ee of q) {
+      ee.closed = !0, clearInterval(ee.deadTimer), ee.readyReject(new Error(C));
+      for (let Ce of ee.waiters.splice(0)) Ce.reject(new Error(C));
+      ee.detachDataListeners();
     }
-    for (let V of y)
-      V.finish(C), V.pending = [], V.pendingBytes = 0, V.pendingExit = null;
-    for (let V of W)
-      V.panes.clear(), V.manualSizing.clear();
-    let q = await Promise.allSettled([
-      ...x.map((V) => V.catch(() => {
+    for (let ee of y)
+      ee.finish(C), ee.pending = [], ee.pendingBytes = 0, ee.pendingExit = null;
+    for (let ee of q)
+      ee.panes.clear(), ee.manualSizing.clear();
+    let K = await Promise.allSettled([
+      ...v.map((ee) => ee.catch(() => {
       })),
-      ...W.map((V) => b(V))
+      ...q.map((ee) => k(ee))
     ]);
-    for (let V of y)
-      V.queuedInput = 0, V.inputChain = Promise.resolve();
+    for (let ee of y)
+      ee.queuedInput = 0, ee.inputChain = Promise.resolve();
     c.clear(), m = "closed";
-    let fe = q.filter((V) => V.status === "rejected").map((V) => V.reason);
-    if (fe.length === 1) throw fe[0];
-    if (fe.length > 1)
-      throw new AggregateError(fe, "terminal bridge process trees failed to close");
+    let me = K.filter((ee) => ee.status === "rejected").map((ee) => ee.reason);
+    if (me.length === 1) throw me[0];
+    if (me.length > 1)
+      throw new AggregateError(me, "terminal bridge process trees failed to close");
   }
-  r(X, "closeImpl");
-  function H() {
-    return U || (m = "closing", U = Promise.resolve().then(X), U);
+  r(Y, "closeImpl");
+  function V() {
+    return $ || (m = "closing", $ = Promise.resolve().then(Y), $);
   }
-  r(H, "close");
-  function ee() {
-    let C = H(), W = !M;
-    M = !0;
-    for (let y of c) I(y, "SIGKILL");
-    return W && D(), C;
+  r(V, "close");
+  function te() {
+    let C = V(), q = !F;
+    F = !0;
+    for (let y of c) N(y, "SIGKILL");
+    return q && I(), C;
   }
-  return r(ee, "force"), { openViewer: Z, close: H, force: ee };
+  return r(te, "force"), { openViewer: Z, close: V, force: te };
 }
 r(iE, "createTermBridge");
 
 
-import { timingSafeEqual as rR } from "node:crypto";
+import { timingSafeEqual as oR } from "node:crypto";
 import aE from "node:path";
-function vn(e) {
+function Sn(e) {
   return e !== null && typeof e == "object" ? e : {};
 }
-r(vn, "asRecord");
+r(Sn, "asRecord");
 function Ho(e) {
   let t = (typeof e == "string" ? e : "").trim().toLowerCase();
   return t === "localhost" || t === "::1" || /^127(?:\.[0-9]{1,3}){3}$/.test(t) || /^::ffff:127(?:\.[0-9]{1,3}){3}$/.test(t);
 }
 r(Ho, "isLoopbackAddress");
-var oR = {
+var sR = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".mjs": "text/javascript; charset=utf-8",
@@ -15839,7 +15928,7 @@ var oR = {
   ".txt": "text/plain; charset=utf-8",
   ".woff": "font/woff",
   ".woff2": "font/woff2"
-}, sR = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
+}, iR = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
 function cE(e, t) {
   let n;
   try {
@@ -15853,7 +15942,7 @@ function cE(e, t) {
 r(cE, "resolveBoardAssetPath");
 function lE(e, t) {
   let n = {
-    "content-type": oR[e] ?? "application/octet-stream",
+    "content-type": sR[e] ?? "application/octet-stream",
     "content-length": t,
     "x-content-type-options": "nosniff",
 
@@ -15870,7 +15959,7 @@ function lE(e, t) {
 
     "cache-control": e === ".html" ? "no-store" : "public, max-age=31536000, immutable"
   };
-  return e === ".html" && (n["content-security-policy"] = sR), n;
+  return e === ".html" && (n["content-security-policy"] = iR), n;
 }
 r(lE, "boardAssetHeaders");
 function Cd(e) {
@@ -15913,7 +16002,7 @@ r(uE, "trustedHostMatch");
 function dE(e, t) {
   if (typeof e != "string" || typeof t != "string") return !1;
   let n = Buffer.from(e), o = Buffer.from(t);
-  return n.length === o.length && rR(n, o);
+  return n.length === o.length && oR(n, o);
 }
 r(dE, "tokenMatches");
 function Pd(e) {
@@ -15936,13 +16025,13 @@ function Od(e) {
   return e.toLowerCase().replace(/^\[/, "").replace(/\]$/, "");
 }
 r(Od, "normHost");
-function iR(e) {
+function aR(e) {
   return e.port ? e.port : e.protocol === "https:" ? "443" : "80";
 }
-r(iR, "effectivePort");
+r(aR, "effectivePort");
 function mE(e, t, n) {
   let o = Od(e.hostname);
-  return (Ho(o) || t.has(o)) && iR(e) === n;
+  return (Ho(o) || t.has(o)) && aR(e) === n;
 }
 r(mE, "hostIsOwn");
 function gE(e, t) {
@@ -15956,12 +16045,12 @@ function hE(e, t) {
 }
 r(hE, "originTrusted");
 function Ld(e) {
-  let t = vn(e), n = t.permission_mode;
+  let t = Sn(e), n = t.permission_mode;
   return t.dangerously_skip_permissions === !0 || typeof n == "string" && n.toLowerCase() === "bypasspermissions";
 }
 r(Ld, "isUnsupervisedRequest");
 function wE(e) {
-  return Object.keys(vn(e)).some((t) => t.toLowerCase().startsWith("gateway_"));
+  return Object.keys(Sn(e)).some((t) => t.toLowerCase().startsWith("gateway_"));
 }
 r(wE, "gatewaySettingsTouched");
 function EE(e) {
@@ -15983,37 +16072,37 @@ function SE(e, t) {
   return { type: "snapshot", ...e, legacy_upgrade: t };
 }
 r(SE, "assembleSnapshotFrame");
-function aR(e) {
+function cR(e) {
   return typeof e == "object" && e !== null && e._tag === "ApplicationQuiescingError";
 }
-r(aR, "isApplicationQuiescing");
-function Ni(e) {
-  if (yn(e)) return { kind: "success", value: e.value };
-  let t = e.cause.reasons.find(Br);
-  if (t && aR(t.error)) return { kind: "quiesce" };
-  if (En(e.cause)) return { kind: "quiesce" };
+r(cR, "isApplicationQuiescing");
+function $i(e) {
+  if (En(e)) return { kind: "success", value: e.value };
+  let t = e.cause.reasons.find(Fr);
+  if (t && cR(t.error)) return { kind: "quiesce" };
+  if (wn(e.cause)) return { kind: "quiesce" };
   let n = e.cause.reasons.find(Io);
   return n ? { kind: "defect", defect: n.defect } : { kind: "defect", defect: t ? t.error : e.cause };
 }
-r(Ni, "mapEffectRouteExit");
+r($i, "mapEffectRouteExit");
 
 
 function vE(e) {
-  return yn(e) ? { body: e.value } : { body: {} };
+  return En(e) ? { body: e.value } : { body: {} };
 }
 r(vE, "mapHookExit");
 
 
-var dR = 1e6, xE = 14e6, fR = 1e3, pR = (() => {
+var fR = 1e6, xE = 14e6, pR = 1e3, mR = (() => {
   let e = Number(process.env.FLEETDECK_STALL_FIN_S);
   return Number.isFinite(e) && e > 0 ? e : 120;
 })(), Id = (() => {
   let e = Number(process.env.FLEETDECK_KEEPALIVE_FIN_S);
   return Number.isFinite(e) && e > 0 ? Math.min(e, 255) : 120;
-})(), mR = (() => {
+})(), gR = (() => {
   let e = Number(process.env.FLEETDECK_WS_BUFFER_MAX);
   return Number.isFinite(e) ? e : 1 << 20;
-})(), gR = 3e4, hR = 60, wR = 1 << 20, ER = 4 << 20, Nd = class {
+})(), hR = 3e4, wR = 60, ER = 1 << 20, yR = 4 << 20, Nd = class {
   static {
     r(this, "HttpResShim");
   }
@@ -16117,7 +16206,7 @@ var dR = 1e6, xE = 14e6, fR = 1e3, pR = (() => {
     if (this._finKind === "none") {
       this._finKind = "stall";
       try {
-        this._server.timeout(this._request, pR);
+        this._server.timeout(this._request, mR);
       } catch {
       }
     }
@@ -16145,7 +16234,7 @@ var dR = 1e6, xE = 14e6, fR = 1e3, pR = (() => {
   get destroyed() {
     return this._destroyed;
   }
-}, _c = class {
+}, vc = class {
   static {
     r(this, "HttpReqShim");
   }
@@ -16240,20 +16329,20 @@ var dR = 1e6, xE = 14e6, fR = 1e3, pR = (() => {
     if (!this._destroyed)
       for (let t of this._endListeners) t();
   }
-}, yR = Dd.join(Dd.dirname(uR(import.meta.url)), "board-dist");
-function _R(e, t, n) {
-  let o = cE(t, yR);
+}, _R = Dd.join(Dd.dirname(dR(import.meta.url)), "board-dist");
+function SR(e, t, n) {
+  let o = cE(t, _R);
   if (o === null) return n();
   let s;
   try {
-    s = lR.readFileSync(o);
+    s = uR.readFileSync(o);
   } catch {
     return n();
   }
   let i = Dd.extname(o).toLowerCase();
   return e.writeHead(200, lE(i, s.length)), e.end(s);
 }
-r(_R, "serveBoardAsset");
+r(SR, "serveBoardAsset");
 function bE(e, {
   port: t,
   version: n = "0.0.0",
@@ -16266,45 +16355,45 @@ function bE(e, {
   managed: l = !1,
   requireToken: f = !1,
   trustLoopback: w = !1,
-  startup: g = null
+  startup: h = null
 }) {
-  let _ = { term_token: !(c === "trust" || w) }, E = !1, m = new Set(), U = new Set(), M = new Set();
-  function D(u) {
+  let _ = { term_token: !(c === "trust" || w) }, E = !1, m = new Set(), $ = new Set(), F = new Set();
+  function I(u) {
     !E || u.response.writableEnded || u.drained && !u.drainFaulted && !u.request.destroyed && !u.response.destroyed || (u.request.destroy(), u.response.forceEnd(
       u.hook ? 200 : 503,
       u.hook ? "{}" : '{"ok":false,"reason":"shutting-down"}'
     ));
   }
-  r(D, "forceFaultedResponseDuringShutdown");
+  r(I, "forceFaultedResponseDuringShutdown");
   function O() {
     let u = typeof i == "function" ? i() : i;
     return u?.enabled ? { enabled: !0, urls: u.urls ?? [], mdns: u.mdns ?? null } : { enabled: !1, urls: [] };
   }
   r(O, "currentLan");
   function P() {
-    return { ...e.snapshot(), lan: O(), legacy_upgrade: F() };
+    return { ...e.snapshot(), lan: O(), legacy_upgrade: B() };
   }
   r(P, "snapshotWithLan");
-  function v(u, p, R) {
-    let oe = JSON.stringify(R);
+  function x(u, p, b) {
+    let ce = JSON.stringify(b);
     return u.writeHead(p, {
       "content-type": "application/json",
-      "content-length": Buffer.byteLength(oe),
+      "content-length": Buffer.byteLength(ce),
       "x-content-type-options": "nosniff"
-    }), u.end(oe);
+    }), u.end(ce);
   }
-  r(v, "json");
-  function Q(u, p, R) {
-    R.then(({ status: oe, body: Oe }) => {
-      v(u, oe, Oe);
-    }).catch((oe) => {
-      console.error(`fleetd ${p} filesystem error:`, oe), v(u, 500, { ok: !1, reason: "internal" });
+  r(x, "json");
+  function Q(u, p, b) {
+    b.then(({ status: ce, body: Re }) => {
+      x(u, ce, Re);
+    }).catch((ce) => {
+      console.error(`fleetd ${p} filesystem error:`, ce), x(u, 500, { ok: !1, reason: "internal" });
     });
   }
   r(Q, "settleFilesystemOperation");
-  let G = null;
+  let z = null;
   function Ee(u) {
-    v(u, 200, {
+    x(u, 200, {
       ok: !0,
       fleet: e.fleetSize(),
       pid: process.pid,
@@ -16312,15 +16401,15 @@ function bE(e, {
       managed: l,
       spawn: e.spawnCapability(),
       auth: _,
-      startup: g?.reconciliationStatus?.() ?? null
+      startup: h?.reconciliationStatus?.() ?? null
     });
   }
   r(Ee, "legacyHealthResponse");
   function ye(u) {
-    v(u, 200, P());
+    x(u, 200, P());
   }
   r(ye, "legacyStateResponse");
-  function Ie() {
+  function De() {
     return {
       fleet: r(() => e.fleetSize(), "fleet"),
       pid: process.pid,
@@ -16328,14 +16417,14 @@ function bE(e, {
       managed: l,
       spawn: r(() => e.spawnCapability(), "spawn"),
       auth: _,
-      startup: r(() => g?.reconciliationStatus?.() ?? null, "startup")
+      startup: r(() => h?.reconciliationStatus?.() ?? null, "startup")
     };
   }
-  r(Ie, "healthCapabilities");
-  function Se() {
+  r(De, "healthCapabilities");
+  function ve() {
     return { snapshotWithLan: r(() => P(), "snapshotWithLan") };
   }
-  r(Se, "stateCapabilities");
+  r(ve, "stateCapabilities");
   function $e(u) {
     return { setSettings: r(() => e.setSettings(u), "setSettings") };
   }
@@ -16344,66 +16433,66 @@ function bE(e, {
     return { command: r(() => e.command(u.text), "command") };
   }
   r(Z, "commandCapabilities");
-  function ae(u) {
+  function ie(u) {
     return { postMail: r(() => e.postMail(u), "postMail") };
   }
-  r(ae, "mailCapabilities");
-  function L() {
+  r(ie, "mailCapabilities");
+  function D() {
     return { cleanup: r(() => e.cleanup(), "cleanup") };
   }
-  r(L, "cleanupCapabilities");
-  function S(u, p, R, oe, Oe) {
-    u.runRequest(p, R).then((ge) => {
-      let Be = Ni(ge);
-      if (Be.kind === "success") {
-        v(oe, 200, Be.value);
+  r(D, "cleanupCapabilities");
+  function S(u, p, b, ce, Re) {
+    u.runRequest(p, b).then((Se) => {
+      let Ne = $i(Se);
+      if (Ne.kind === "success") {
+        x(ce, 200, Ne.value);
         return;
       }
-      if (Be.kind === "quiesce") {
-        Oe(oe);
+      if (Ne.kind === "quiesce") {
+        Re(ce);
         return;
       }
-      throw Be.defect;
-    }).catch((ge) => {
-      console.error("fleetd request error:", ge);
+      throw Ne.defect;
+    }).catch((Se) => {
+      console.error("fleetd request error:", Se);
       try {
-        v(oe, 500, {});
+        x(ce, 500, {});
       } catch {
       }
     });
   }
   r(S, "settleEffectSnapshotRoute");
-  function I(u) {
-    if (!G) {
+  function N(u) {
+    if (!z) {
       Ee(u);
       return;
     }
     S(
-      G,
+      z,
       "GET /health",
-      G.health(Ie()),
+      z.health(De()),
       u,
       Ee
     );
   }
-  r(I, "dispatchHealth");
+  r(N, "dispatchHealth");
   function d(u) {
-    if (!G) {
+    if (!z) {
       ye(u);
       return;
     }
     S(
-      G,
+      z,
       "GET /state",
-      G.state(Se()),
+      z.state(ve()),
       u,
       ye
     );
   }
   r(d, "dispatchState");
   function T(u, p) {
-    let R = e.pasteImage(p);
-    v(u, R.status, R.body);
+    let b = e.pasteImage(p);
+    x(u, b.status, b.body);
   }
   r(T, "legacyPasteImageResponse");
   function A(u) {
@@ -16412,217 +16501,217 @@ function bE(e, {
     };
   }
   r(A, "pasteImageCapabilities");
-  let b = { ok: !1, reason: "shutting-down" };
-  function X(u, p, R, oe) {
-    u.runRequest(p, R).then((Oe) => {
-      let ge = Ni(Oe);
-      if (ge.kind === "success") {
-        let Be = ge.value;
-        v(oe, Be.status, Be.body);
+  let k = { ok: !1, reason: "shutting-down" };
+  function Y(u, p, b, ce) {
+    u.runRequest(p, b).then((Re) => {
+      let Se = $i(Re);
+      if (Se.kind === "success") {
+        let Ne = Se.value;
+        x(ce, Ne.status, Ne.body);
         return;
       }
-      if (ge.kind === "quiesce") {
-        v(oe, 503, b);
+      if (Se.kind === "quiesce") {
+        x(ce, 503, k);
         return;
       }
-      throw ge.defect;
-    }).catch((Oe) => {
-      console.error("fleetd handler error:", Oe);
+      throw Se.defect;
+    }).catch((Re) => {
+      console.error("fleetd handler error:", Re);
       try {
-        v(oe, 500, { err: "internal" });
+        x(ce, 500, { err: "internal" });
       } catch {
       }
     });
   }
-  r(X, "settleEffectPasteImageRoute");
-  function H(u, p) {
-    if (!G) {
+  r(Y, "settleEffectPasteImageRoute");
+  function V(u, p) {
+    if (!z) {
       T(u, p);
       return;
     }
-    X(
-      G,
+    Y(
+      z,
       "POST /api/paste-image",
-      G.pasteImage(A(p)),
+      z.pasteImage(A(p)),
       u
     );
   }
-  r(H, "dispatchPasteImage");
-  function ee(u, p, R, oe, Oe) {
-    u.runRequest(p, R).then((ge) => {
-      let Be = Ni(ge);
-      if (Be.kind === "success") {
-        let rt = Be.value;
-        v(oe, rt.status, rt.body);
+  r(V, "dispatchPasteImage");
+  function te(u, p, b, ce, Re) {
+    u.runRequest(p, b).then((Se) => {
+      let Ne = $i(Se);
+      if (Ne.kind === "success") {
+        let et = Ne.value;
+        x(ce, et.status, et.body);
         return;
       }
-      if (Be.kind === "quiesce") {
-        v(oe, 503, { ok: !1, reason: "shutting-down" });
+      if (Ne.kind === "quiesce") {
+        x(ce, 503, { ok: !1, reason: "shutting-down" });
         return;
       }
-      throw Be.defect;
-    }).catch((ge) => {
-      console.error(Oe.log, ge);
+      throw Ne.defect;
+    }).catch((Se) => {
+      console.error(Re.log, Se);
       try {
-        v(oe, 500, Oe.body);
+        x(ce, 500, Re.body);
       } catch {
       }
     });
   }
-  r(ee, "settleEffectMutatingRoute");
-  let C = { log: "fleetd handler error:", body: { err: "internal" } }, W = { log: "fleetd mail error:", body: { ok: !1, err: "internal" } }, y = { log: "fleetd cleanup error:", body: { ok: !1, err: "internal" } }, x = { log: "fleetd handler error:", body: { err: "internal" } };
-  function q(u) {
+  r(te, "settleEffectMutatingRoute");
+  let C = { log: "fleetd handler error:", body: { err: "internal" } }, q = { log: "fleetd mail error:", body: { ok: !1, err: "internal" } }, y = { log: "fleetd cleanup error:", body: { ok: !1, err: "internal" } }, v = { log: "fleetd handler error:", body: { err: "internal" } };
+  function K(u) {
     let p = null;
     return {
       invoke: r(() => p ??= u(), "invoke"),
       started: r(() => p, "started")
     };
   }
-  r(q, "startOnce");
-  function fe(u, p, R, oe, Oe, ge) {
-    let Be = r((Qe) => {
-      console.error(ge.defect.log, Qe);
+  r(K, "startOnce");
+  function me(u, p, b, ce, Re, Se) {
+    let Ne = r((je) => {
+      console.error(Se.defect.log, je);
       try {
-        v(oe, 500, ge.defect.body);
+        x(ce, 500, Se.defect.body);
       } catch {
       }
-    }, "emitDefect"), rt = r((Qe) => Qe.then(
-      (tt) => ge.onFulfilled(oe, tt),
-      (tt) => ge.onRejected ? ge.onRejected(oe, tt) : Be(tt)
+    }, "emitDefect"), et = r((je) => je.then(
+      (Qe) => Se.onFulfilled(ce, Qe),
+      (Qe) => Se.onRejected ? Se.onRejected(ce, Qe) : Ne(Qe)
     ), "joinNative");
-    u.runRequest(p, R).then((Qe) => {
-      let tt = Ni(Qe);
-      if (tt.kind === "success") {
-        let Nt = tt.value;
-        v(oe, Nt.status, Nt.body);
+    u.runRequest(p, b).then((je) => {
+      let Qe = $i(je);
+      if (Qe.kind === "success") {
+        let xn = Qe.value;
+        x(ce, xn.status, xn.body);
         return;
       }
-      let Pe = Oe.started();
-      if (tt.kind === "quiesce") {
-        if (Pe === null) {
-          v(oe, 503, { ok: !1, reason: "shutting-down" });
+      let xt = Re.started();
+      if (Qe.kind === "quiesce") {
+        if (xt === null) {
+          x(ce, 503, { ok: !1, reason: "shutting-down" });
           return;
         }
-        return rt(Pe);
+        return et(xt);
       }
-      if (Pe !== null) return rt(Pe);
-      throw tt.defect;
-    }).catch((Qe) => {
-      Be(Qe);
+      if (xt !== null) return et(xt);
+      throw Qe.defect;
+    }).catch((je) => {
+      Ne(je);
     });
   }
-  r(fe, "settleEffectAsyncMutatingRoute");
-  function V(u, p, R, oe, Oe) {
-    let ge = r((rt) => {
-      console.error(Oe, rt);
-    }, "onError"), Be = q(oe);
-    fe(
+  r(me, "settleEffectAsyncMutatingRoute");
+  function ee(u, p, b, ce, Re) {
+    let Se = r((et) => {
+      console.error(Re, et);
+    }, "onError"), Ne = K(ce);
+    me(
       u,
       p,
-      u.controlAsync({ run: Be.invoke, onError: ge }),
-      R,
-      Be,
+      u.controlAsync({ run: Ne.invoke, onError: Se }),
+      b,
+      Ne,
       {
-        defect: x,
-        onFulfilled: r((rt, Qe) => {
-          v(rt, Qe.status, Qe.body);
+        defect: v,
+        onFulfilled: r((et, je) => {
+          x(et, je.status, je.body);
         }, "onFulfilled"),
-        onRejected: r((rt, Qe) => {
-          ge(Qe), v(rt, 500, { ok: !1, reason: "internal" });
+        onRejected: r((et, je) => {
+          Se(je), x(et, 500, { ok: !1, reason: "internal" });
         }, "onRejected")
       }
     );
   }
-  r(V, "settleControlAsyncRoute");
+  r(ee, "settleControlAsyncRoute");
+  function Ce(u, p) {
+    let b = e.setSettings(p);
+    x(u, b.status, b.body);
+  }
+  r(Ce, "legacySettingsResponse");
   function Fe(u, p) {
-    let R = e.setSettings(p);
-    v(u, R.status, R.body);
+    x(u, 200, e.command(p.text));
   }
-  r(Fe, "legacySettingsResponse");
-  function De(u, p) {
-    v(u, 200, e.command(p.text));
-  }
-  r(De, "legacyCommandResponse");
-  function N(u, p) {
-    e.postMail(p).then((R) => {
-      v(u, R.status ?? 200, R.body ?? R);
-    }).catch((R) => {
-      console.error("fleetd mail error:", R), v(u, 500, { ok: !1, err: "internal" });
+  r(Fe, "legacyCommandResponse");
+  function M(u, p) {
+    e.postMail(p).then((b) => {
+      x(u, b.status ?? 200, b.body ?? b);
+    }).catch((b) => {
+      console.error("fleetd mail error:", b), x(u, 500, { ok: !1, err: "internal" });
     });
   }
-  r(N, "legacyMailResponse");
+  r(M, "legacyMailResponse");
   function J(u) {
     e.cleanup().then((p) => {
-      v(u, p.ok ? 200 : 409, p);
+      x(u, p.ok ? 200 : 409, p);
     }).catch((p) => {
-      console.error("fleetd cleanup error:", p), v(u, 500, { ok: !1, err: "internal" });
+      console.error("fleetd cleanup error:", p), x(u, 500, { ok: !1, err: "internal" });
     });
   }
   r(J, "legacyCleanupResponse");
   function se(u, p) {
-    if (!G) {
-      Fe(u, p);
+    if (!z) {
+      Ce(u, p);
       return;
     }
-    ee(
-      G,
+    te(
+      z,
       "POST /api/settings",
-      G.settings($e(p)),
+      z.settings($e(p)),
       u,
       C
     );
   }
   r(se, "dispatchSettings");
   function de(u, p) {
-    if (!G) {
-      De(u, p);
+    if (!z) {
+      Fe(u, p);
       return;
     }
-    ee(
-      G,
+    te(
+      z,
       "POST /command",
-      G.command(Z(p)),
+      z.command(Z(p)),
       u,
       C
     );
   }
   r(de, "dispatchCommand");
   function ne(u, p) {
-    if (!G) {
-      N(u, p);
+    if (!z) {
+      M(u, p);
       return;
     }
-    let R = q(ae(p).postMail);
-    fe(
-      G,
+    let b = K(ie(p).postMail);
+    me(
+      z,
       "POST /mail",
-      G.mail({ postMail: R.invoke }),
+      z.mail({ postMail: b.invoke }),
       u,
-      R,
+      b,
       {
 
-        defect: W,
+        defect: q,
 
 
 
-        onFulfilled: r((oe, Oe) => {
-          let ge = Oe;
-          v(oe, ge.status ?? 200, ge.body ?? Oe);
+        onFulfilled: r((ce, Re) => {
+          let Se = Re;
+          x(ce, Se.status ?? 200, Se.body ?? Re);
         }, "onFulfilled")
       }
     );
   }
   r(ne, "dispatchMail");
-  function te(u) {
-    if (!G) {
+  function re(u) {
+    if (!z) {
       J(u);
       return;
     }
-    let p = q(L().cleanup);
-    fe(
-      G,
+    let p = K(D().cleanup);
+    me(
+      z,
       "POST /api/cleanup",
-      G.cleanup({ cleanup: p.invoke }),
+      z.cleanup({ cleanup: p.invoke }),
       u,
       p,
       {
@@ -16630,143 +16719,143 @@ function bE(e, {
         defect: y,
 
 
-        onFulfilled: r((R, oe) => {
-          v(R, oe.ok ? 200 : 409, oe);
+        onFulfilled: r((b, ce) => {
+          x(b, ce.ok ? 200 : 409, ce);
         }, "onFulfilled")
       }
     );
   }
-  r(te, "dispatchCleanup");
-  let Ne = r((u) => dE(s, u), "tokenMatches");
-  function je(u, p) {
-    let R = p.pathname.startsWith("/hook/");
-    if (Ho(u.socket.remoteAddress) && !R) {
-      let Oe = cr(u);
-      if (!(c === "token" && Oe)) {
-        if (c === "trust" && Oe)
+  r(re, "dispatchCleanup");
+  let Ie = r((u) => dE(s, u), "tokenMatches");
+  function qe(u, p) {
+    let b = p.pathname.startsWith("/hook/");
+    if (Ho(u.socket.remoteAddress) && !b) {
+      let Re = br(u);
+      if (!(c === "token" && Re)) {
+        if (c === "trust" && Re)
           return !0;
         if (p.pathname === "/health" || Ad(u.method, p.pathname) || !f && (w || !fE(u.method, p.pathname)))
           return !0;
       }
     }
-    let oe = Pd(u.headers.authorization);
-    return Ne(oe) || Ne(p.searchParams.get("t"));
+    let ce = Pd(u.headers.authorization);
+    return Ie(ce) || Ie(p.searchParams.get("t"));
   }
-  r(je, "authorized");
-  let Te = new Set(), ue = new Set();
-  function k(u) {
-    typeof u != "string" || !u || u === "unknown" || ue.has(u) || Te.has(u) || (Te.add(u), zr());
+  r(qe, "authorized");
+  let Pe = new Set(), pe = new Set();
+  function R(u) {
+    typeof u != "string" || !u || u === "unknown" || pe.has(u) || Pe.has(u) || (Pe.add(u), Rr());
   }
-  r(k, "noteLegacySession");
-  function z(u) {
-    if (typeof u != "string" || !u || u === "unknown" || ue.has(u)) return;
-    ue.add(u), Te.delete(u) && zr();
+  r(R, "noteLegacySession");
+  function X(u) {
+    if (typeof u != "string" || !u || u === "unknown" || pe.has(u)) return;
+    pe.add(u), Pe.delete(u) && Rr();
   }
-  r(z, "noteUpgradedSession");
-  function F() {
-    return { sessions: [...Te], upgraded: ue.size };
+  r(X, "noteUpgradedSession");
+  function B() {
+    return { sessions: [...Pe], upgraded: pe.size };
   }
-  r(F, "legacyBanner");
-  function he(u, p) {
-    let R = vn(p).session_id;
-    k(typeof R == "string" ? R : null), v(u, 200, {});
+  r(B, "legacyBanner");
+  function xe(u, p) {
+    let b = Sn(p).session_id;
+    R(typeof b == "string" ? b : null), x(u, 200, {});
   }
-  r(he, "silentHookRefusal");
-  let ce = String(t), Me = new Set(), dt = cR.getAddresses, ft = typeof dt == "function" ? () => dt() : () => Object.values(Ii()).flat(), et = null;
+  r(xe, "silentHookRefusal");
+  let le = String(t), Le = new Set(), ft = lR.getAddresses, Et = typeof ft == "function" ? () => ft() : () => Object.values(Bi()).flat(), We = null;
   try {
     let u = typeof i == "function" ? i() : i;
-    u?.mdns && (et = new URL(u.mdns).hostname.toLowerCase());
+    u?.mdns && (We = new URL(u.mdns).hostname.toLowerCase());
   } catch {
   }
-  function gt() {
+  function pt() {
     try {
-      Me.clear();
-      for (let u of ft())
-        u?.address && Me.add(u.address.toLowerCase());
+      Le.clear();
+      for (let u of Et())
+        u?.address && Le.add(u.address.toLowerCase());
       try {
         let u = typeof i == "function" ? i() : i;
-        u?.mdns && (et = new URL(u.mdns).hostname.toLowerCase());
+        u?.mdns && (We = new URL(u.mdns).hostname.toLowerCase());
       } catch {
       }
-      et && Me.add(et);
+      We && Le.add(We);
     } catch {
     }
   }
-  r(gt, "refreshLanHosts"), gt();
+  r(pt, "refreshLanHosts"), pt();
   function Ve(u) {
-    return gt(), mE(u, Me, ce);
+    return pt(), mE(u, Le, le);
   }
   r(Ve, "hostAllowed");
-  let Rt = r((u) => gE(a, u), "authorityTrusted"), Lt = r((u) => hE(a, u), "originTrusted");
-  function Cn(u) {
+  let _t = r((u) => gE(a, u), "authorityTrusted"), cn = r((u) => hE(a, u), "originTrusted");
+  function zt(u) {
     let p = u.headers.host;
     if (typeof p != "string" || !p) return !0;
-    let R;
+    let b;
     try {
-      R = new URL("http://" + p);
+      b = new URL("http://" + p);
     } catch {
       return !1;
     }
-    return Ve(R) || Rt(R);
+    return Ve(b) || _t(b);
   }
-  r(Cn, "hostHeaderOk");
-  function Bn(u) {
+  r(zt, "hostHeaderOk");
+  function vn(u) {
     let p = u.headers["sec-fetch-site"];
     if (p === "cross-site" || p === "cross-origin") return "cross-site";
-    let R = u.headers.origin;
-    if (typeof R == "string" && R) {
-      let oe;
+    let b = u.headers.origin;
+    if (typeof b == "string" && b) {
+      let ce;
       try {
-        oe = new URL(R);
+        ce = new URL(b);
       } catch {
         return "bad-origin";
       }
-      if (!Ve(oe) && !Lt(oe)) return "cross-origin";
+      if (!Ve(ce) && !cn(ce)) return "cross-origin";
     }
     return null;
   }
-  r(Bn, "crossSiteReason");
+  r(vn, "crossSiteReason");
   function Go(u) {
     let p = u.headers.origin;
     if (typeof p != "string" || !p) return !1;
-    let R;
+    let b;
     try {
-      R = new URL(p);
+      b = new URL(p);
     } catch {
       return !1;
     }
-    return !Ve(R) && Lt(R);
+    return !Ve(b) && cn(b);
   }
   r(Go, "viaTrustedProxy");
-  function cr(u) {
+  function br(u) {
     if (Go(u)) return !0;
     let p = u.headers.host;
     if (typeof p != "string" || !p) return !1;
-    let R;
+    let b;
     try {
-      R = new URL("http://" + p);
+      b = new URL("http://" + p);
     } catch {
       return !1;
     }
-    return Rt(R) && !Ve(R);
+    return _t(b) && !Ve(b);
   }
-  r(cr, "arrivedViaTrustedProxy");
-  function Jt(u, p, R = "") {
-    let oe = p.socket.remoteAddress ?? "unknown";
+  r(br, "arrivedViaTrustedProxy");
+  function $t(u, p, b = "") {
+    let ce = p.socket.remoteAddress ?? "unknown";
     console.error(
-      `fleetd exec ${u} from ${oe} proxied=${cr(p)}${R}`
+      `fleetd exec ${u} from ${ce} proxied=${br(p)}${b}`
     );
   }
-  r(Jt, "logExec");
-  let lr = {
+  r($t, "logExec");
+  let ho = {
 
 
 
     SessionStart: r((u) => {
-      let p = e.hookSessionStart(u), R = vn(u).fleet_takeover;
-      return R && typeof p == "object" && (p.upgrade_lines = e.takeoverBriefLines(
-        R,
-        F()
+      let p = e.hookSessionStart(u), b = Sn(u).fleet_takeover;
+      return b && typeof p == "object" && (p.upgrade_lines = e.takeoverBriefLines(
+        b,
+        B()
       )), p;
     }, "SessionStart"),
     UserPromptSubmit: r((u) => e.hookUserPromptSubmit(u), "UserPromptSubmit"),
@@ -16787,477 +16876,477 @@ function bE(e, {
 
     CwdChanged: r((u) => (e.applyEvent({ ...u, hook_event_name: "CwdChanged" }), {}), "CwdChanged")
   };
-  function ie(u, p, R) {
+  function oe(u, p, b) {
     if (E) {
-      v(u, 200, {});
+      x(u, 200, {});
       return;
     }
-    let oe = null;
+    let ce = null;
     try {
-      oe = e.hookHoldQuestion(p, R);
-    } catch (ge) {
-      console.error("fleetd hold intake error:", ge);
+      ce = e.hookHoldQuestion(p, b);
+    } catch (Se) {
+      console.error("fleetd hold intake error:", Se);
     }
-    if (!oe) {
-      v(u, 200, {});
+    if (!ce) {
+      x(u, 200, {});
       return;
     }
-    let Oe = oe;
+    let Re = ce;
     e.questions.attachHold(
-      Oe,
-      (ge) => {
-        v(u, 200, ge);
+      Re,
+      (Se) => {
+        x(u, 200, Se);
       }
     ), u.on("close", () => {
       try {
-        e.questions.socketClosed(Oe.id);
+        e.questions.socketClosed(Re.id);
       } catch {
       }
     });
   }
-  r(ie, "holdHook");
-  let me = (() => {
+  r(oe, "holdHook");
+  let he = (() => {
     let u = Number(process.env.FLEETDECK_HOOK_REPLY_FLOOR_MS);
     return Number.isFinite(u) && u > 0 ? u : 5e3;
   })();
-  function Xe(u, p, R, oe) {
-    let Oe = !1, ge = null, Be = r((rt) => {
-      if (!Oe) {
+  function Xe(u, p, b, ce) {
+    let Re = !1, Se = null, Ne = r((et) => {
+      if (!Re) {
         try {
-          v(oe, 200, rt);
+          x(ce, 200, et);
         } catch {
           try {
-            v(oe, 200, {});
+            x(ce, 200, {});
           } catch {
             return;
           }
         }
-        Oe = !0, ge && clearTimeout(ge);
+        Re = !0, Se && clearTimeout(Se);
       }
     }, "failOpen");
-    ge = setTimeout(() => Be({}), me), ge.unref(), u.runRequest(p, R).then((rt) => {
-      Be(vE(rt).body);
+    Se = setTimeout(() => Ne({}), he), Se.unref(), u.runRequest(p, b).then((et) => {
+      Ne(vE(et).body);
     }).catch(() => {
-      Be({});
+      Ne({});
     });
   }
   r(Xe, "settleEffectHookRoute");
-  function it(u, p) {
-    let R = lr[u];
+  function ot(u, p) {
+    let b = ho[u];
     return {
-      handler: R ? () => R(p) : null,
-      valid: r(() => Ec(p).ok, "valid"),
+      handler: b ? () => b(p) : null,
+      valid: r(() => _c(p).ok, "valid"),
       ingestUnknown: r(() => {
-        e.applyEvent({ hook_event_name: u, ...vn(p) });
+        e.applyEvent({ hook_event_name: u, ...Sn(p) });
       }, "ingestUnknown")
     };
   }
-  r(it, "hookDispatchCapabilities");
-  function un(u, p, R) {
-    if (!G) {
-      let oe = lr[p];
-      if (!oe) {
-        e.applyEvent({ hook_event_name: p, ...vn(R) }), v(u, 200, {});
+  r(ot, "hookDispatchCapabilities");
+  function ln(u, p, b) {
+    if (!z) {
+      let ce = ho[p];
+      if (!ce) {
+        e.applyEvent({ hook_event_name: p, ...Sn(b) }), x(u, 200, {});
         return;
       }
-      if (!Ec(R).ok) {
-        v(u, 200, {});
+      if (!_c(b).ok) {
+        x(u, 200, {});
         return;
       }
-      v(u, 200, oe(R) ?? {});
+      x(u, 200, ce(b) ?? {});
       return;
     }
     Xe(
-      G,
+      z,
       `POST /hook/${p}`,
-      G.hookDispatch(it(p, R)),
+      z.hookDispatch(ot(p, b)),
       u
     );
   }
-  r(un, "dispatchHook");
-  function ln(u, p, R) {
-    let oe = R.searchParams.get("session") ?? "";
+  r(ln, "dispatchHook");
+  function ir(u, p, b) {
+    let ce = b.searchParams.get("session") ?? "";
     if (E) {
-      v(p, 200, { status: "idle", session_alive: !1, pending: 0 });
+      x(p, 200, { status: "idle", session_alive: !1, pending: 0 });
       return;
     }
-    let Oe = Number(R.searchParams.get("hold_ms")), ge = Number.isFinite(Oe) ? Math.max(0, Math.min(Oe, 25e3)) : 25e3, Be = R.searchParams.get("wg"), rt = Be === "" ? null : Be;
-    rt && e.registerWatchGen(oe, rt);
-    let Qe = r(() => {
-      let bn = e.watchInfo(oe);
-      if (!bn.session_alive) return { status: "idle", ...bn };
-      let Vo = e.claimMail(oe, rt);
-      return Vo ? { status: "mail", ...Vo } : null;
-    }, "attempt"), tt = Qe();
-    if (tt) {
-      v(p, 200, tt);
+    let Re = Number(b.searchParams.get("hold_ms")), Se = Number.isFinite(Re) ? Math.max(0, Math.min(Re, 25e3)) : 25e3, Ne = b.searchParams.get("wg"), et = Ne === "" ? null : Ne;
+    et && e.registerWatchGen(ce, et);
+    let je = r(() => {
+      let kt = e.watchInfo(ce);
+      if (!kt.session_alive) return { status: "idle", ...kt };
+      let it = e.claimMail(ce, et);
+      return it ? { status: "mail", ...it } : null;
+    }, "attempt"), Qe = je();
+    if (Qe) {
+      x(p, 200, Qe);
       return;
     }
-    let Pe = !1, Nt = r(() => {
-    }, "unregister"), Gt = null, st = r((bn) => {
-      if (!Pe) {
-        Pe = !0, Gt && clearTimeout(Gt), Nt(), U.delete(He);
+    let xt = !1, xn = r(() => {
+    }, "unregister"), Bn = null, Ue = r((kt) => {
+      if (!xt) {
+        xt = !0, Bn && clearTimeout(Bn), xn(), $.delete(He);
         try {
-          v(p, 200, bn);
+          x(p, 200, kt);
         } catch {
         }
       }
     }, "finish"), He = r(() => {
-      st({ status: "idle", session_alive: !1, pending: 0 });
+      Ue({ status: "idle", session_alive: !1, pending: 0 });
     }, "closeForShutdown");
-    U.add(He), Gt = setTimeout(() => {
-      st({ status: "idle", ...e.watchInfo(oe) });
-    }, ge), Gt.unref(), Nt = e.addWatchWaiter(oe, () => {
-      if (Pe || p.writableEnded || p.destroyed) return;
-      let bn = Qe();
-      bn && st(bn);
+    $.add(He), Bn = setTimeout(() => {
+      Ue({ status: "idle", ...e.watchInfo(ce) });
+    }, Se), Bn.unref(), xn = e.addWatchWaiter(ce, () => {
+      if (xt || p.writableEnded || p.destroyed) return;
+      let kt = je();
+      kt && Ue(kt);
     }), p.on("close", () => {
-      Pe = !0, Gt && clearTimeout(Gt), Nt(), U.delete(He);
+      xt = !0, Bn && clearTimeout(Bn), xn(), $.delete(He);
     });
   }
-  r(ln, "watchHook");
-  function ho(u, p) {
+  r(ir, "watchHook");
+  function wo(u, p) {
     try {
-      let R = new URL(u.url ?? "/", `http://127.0.0.1:${t}`), oe = Ad(u.method, R.pathname), Oe = R.pathname.startsWith("/hook/");
-      if (!oe && !Oe && !je(u, R)) {
-        v(p, 401, { ok: !1, reason: "unauthorized" });
+      let b = new URL(u.url ?? "/", `http://127.0.0.1:${t}`), ce = Ad(u.method, b.pathname), Re = b.pathname.startsWith("/hook/");
+      if (!ce && !Re && !qe(u, b)) {
+        x(p, 401, { ok: !1, reason: "unauthorized" });
         return;
       }
-      let ge = Oe ? je(u, R) : !0;
-      if (!oe && !Cn(u)) {
-        R.pathname.startsWith("/hook/") ? v(p, 200, {}) : v(p, 403, { ok: !1, reason: "forbidden" });
+      let Se = Re ? qe(u, b) : !0;
+      if (!ce && !zt(u)) {
+        b.pathname.startsWith("/hook/") ? x(p, 200, {}) : x(p, 403, { ok: !1, reason: "forbidden" });
         return;
       }
       if (u.method === "GET") {
-        if ((R.pathname === "/mail" || R.pathname === "/api/watch") && Bn(u)) {
-          v(p, 403, { ok: !1, reason: "forbidden" });
+        if ((b.pathname === "/mail" || b.pathname === "/api/watch") && vn(u)) {
+          x(p, 403, { ok: !1, reason: "forbidden" });
           return;
         }
-        if (R.pathname === "/health") {
-          I(p);
+        if (b.pathname === "/health") {
+          N(p);
           return;
         }
-        if (R.pathname === "/state") {
+        if (b.pathname === "/state") {
           d(p);
           return;
         }
-        if (R.pathname === "/api/settings") {
-          v(p, 200, { ok: !0, settings: e.resolveSettings() });
+        if (b.pathname === "/api/settings") {
+          x(p, 200, { ok: !0, settings: e.resolveSettings() });
           return;
         }
-        if (R.pathname === "/api/worktrees") {
-          e.worktrees().then((Qe) => {
-            v(p, 200, Qe);
-          }).catch((Qe) => {
-            console.error("fleetd worktree inspector error:", Qe), v(p, 200, { ok: !0, worktrees: [] });
+        if (b.pathname === "/api/worktrees") {
+          e.worktrees().then((je) => {
+            x(p, 200, je);
+          }).catch((je) => {
+            console.error("fleetd worktree inspector error:", je), x(p, 200, { ok: !0, worktrees: [] });
           });
           return;
         }
-        let Be = /^\/api\/sessions\/([^/]+)\/fs\/(list|read|search)$/.exec(
-          R.pathname
+        let Ne = /^\/api\/sessions\/([^/]+)\/fs\/(list|read|search)$/.exec(
+          b.pathname
         );
-        if (Be) {
-          let Qe = decodeURIComponent(Be[1] ?? ""), tt = Be[2], Pe = tt === "list" ? e.fsList(Qe, R.searchParams.get("path") ?? "") : tt === "read" ? e.fsRead(Qe, R.searchParams.get("path") ?? "") : e.fsSearch(Qe, R.searchParams.get("q") ?? "", {
-            mode: R.searchParams.get("mode") ?? "content"
+        if (Ne) {
+          let je = decodeURIComponent(Ne[1] ?? ""), Qe = Ne[2], xt = Qe === "list" ? e.fsList(je, b.searchParams.get("path") ?? "") : Qe === "read" ? e.fsRead(je, b.searchParams.get("path") ?? "") : e.fsSearch(je, b.searchParams.get("q") ?? "", {
+            mode: b.searchParams.get("mode") ?? "content"
           });
-          Q(p, "session", Pe);
+          Q(p, "session", xt);
           return;
         }
-        let rt = /^\/api\/fs\/(list|read|search)$/.exec(R.pathname);
-        if (rt) {
-          let Qe = rt[1], tt = Qe === "list" ? e.fsListHome(R.searchParams.get("path") ?? "") : Qe === "read" ? e.fsReadHome(R.searchParams.get("path") ?? "") : e.fsSearchHome(R.searchParams.get("q") ?? "", {
-            mode: R.searchParams.get("mode") ?? "content"
+        let et = /^\/api\/fs\/(list|read|search)$/.exec(b.pathname);
+        if (et) {
+          let je = et[1], Qe = je === "list" ? e.fsListHome(b.searchParams.get("path") ?? "") : je === "read" ? e.fsReadHome(b.searchParams.get("path") ?? "") : e.fsSearchHome(b.searchParams.get("q") ?? "", {
+            mode: b.searchParams.get("mode") ?? "content"
           });
-          Q(p, "home", tt);
+          Q(p, "home", Qe);
           return;
         }
-        if (R.pathname === "/mail") {
-          let Qe = R.searchParams.get("session") ?? "", tt = R.searchParams.get("ack") ?? "";
-          tt && e.ackMail(tt.split(",").map(Number));
-          let Pe = e.drainMail(Qe, { lease: !0 });
-          Pe.length && Tr(), v(p, 200, { mail: Pe, ack_mail_ids: Pe.map((Nt) => Nt.id) });
+        if (b.pathname === "/mail") {
+          let je = b.searchParams.get("session") ?? "", Qe = b.searchParams.get("ack") ?? "";
+          Qe && e.ackMail(Qe.split(",").map(Number));
+          let xt = e.drainMail(je, { lease: !0 });
+          xt.length && Vo(), x(p, 200, { mail: xt, ack_mail_ids: xt.map((xn) => xn.id) });
           return;
         }
-        if (R.pathname === "/api/watch") {
-          ln(u, p, R);
+        if (b.pathname === "/api/watch") {
+          ir(u, p, b);
           return;
         }
-        if (R.pathname === "/favicon.ico") {
+        if (b.pathname === "/favicon.ico") {
           p.writeHead(204, { "cache-control": "no-store" }), p.end();
           return;
         }
-        if (oe) {
-          _R(p, R.pathname, () => v(p, 404, { err: "nope" }));
+        if (ce) {
+          SR(p, b.pathname, () => x(p, 404, { err: "nope" }));
           return;
         }
-        v(p, 404, { err: "nope" });
+        x(p, 404, { err: "nope" });
         return;
       }
       if (u.method === "POST") {
-        let Be = R.pathname.startsWith("/hook/");
-        if (Bn(u)) {
-          Be ? v(p, 200, {}) : v(p, 403, { ok: !1, reason: "forbidden" });
+        let Ne = b.pathname.startsWith("/hook/");
+        if (vn(u)) {
+          Ne ? x(p, 200, {}) : x(p, 403, { ok: !1, reason: "forbidden" });
           return;
         }
-        if (!Be && !pE(u.headers["content-type"])) {
-          v(p, 415, { ok: !1, reason: "expected application/json" });
+        if (!Ne && !pE(u.headers["content-type"])) {
+          x(p, 415, { ok: !1, reason: "expected application/json" });
           return;
         }
-        let rt = [], Qe = 0, tt = !1, Pe = R.pathname === "/api/paste-image" ? xE : dR, Nt = r(() => {
-          p.shouldKeepAlive = !1, Be ? v(p, 200, {}) : v(p, 413, { ok: !1, reason: "payload too large" });
-        }, "refuseOversize"), Gt = Number(u.headers["content-length"]);
-        if (Number.isFinite(Gt) && Gt > Pe) {
-          Nt();
+        let et = [], je = 0, Qe = !1, xt = b.pathname === "/api/paste-image" ? xE : fR, xn = r(() => {
+          p.shouldKeepAlive = !1, Ne ? x(p, 200, {}) : x(p, 413, { ok: !1, reason: "payload too large" });
+        }, "refuseOversize"), Bn = Number(u.headers["content-length"]);
+        if (Number.isFinite(Bn) && Bn > xt) {
+          xn();
           return;
         }
-        u.on("data", (st) => {
-          if (!tt) {
-            if (Qe += st.length, Qe > Pe) {
-              tt = !0, Nt();
+        u.on("data", (Ue) => {
+          if (!Qe) {
+            if (je += Ue.length, je > xt) {
+              Qe = !0, xn();
               return;
             }
-            rt.push(st);
+            et.push(Ue);
           }
         }), u.on("end", () => {
-          if (tt) return;
-          let st = Buffer.concat(rt).toString("utf8"), He;
+          if (Qe) return;
+          let Ue = Buffer.concat(et).toString("utf8"), He;
           try {
-            He = JSON.parse(st || "{}");
+            He = JSON.parse(Ue || "{}");
           } catch {
-            Be ? v(p, 200, {}) : v(p, 400, { err: "bad json" });
+            Ne ? x(p, 200, {}) : x(p, 400, { err: "bad json" });
             return;
           }
           try {
-            let bn = /^\/hook\/([A-Za-z]+)$/.exec(R.pathname);
-            if (bn) {
-              let Re = bn[1] ?? "";
-              if (!ge) {
-                he(p, He);
+            let kt = /^\/hook\/([A-Za-z]+)$/.exec(b.pathname);
+            if (kt) {
+              let Te = kt[1] ?? "";
+              if (!Se) {
+                xe(p, He);
                 return;
               }
-              z(vn(He).session_id);
+              X(Sn(He).session_id);
               try {
-                o(Re, He);
+                o(Te, He);
               } catch {
               }
-              if (Re === "PermissionRequest" && vn(He).tool_name === "AskUserQuestion") {
+              if (Te === "PermissionRequest" && Sn(He).tool_name === "AskUserQuestion") {
                 e.applyEvent({
-                  ...vn(He),
+                  ...Sn(He),
                   hook_event_name: "PermissionRequest"
-                }), v(p, 200, {});
+                }), x(p, 200, {});
                 return;
               }
-              if (Re === "PermissionRequest" || Re === "Elicitation" || Re === "AskUserQuestion") {
-                ie(p, He, Re);
+              if (Te === "PermissionRequest" || Te === "Elicitation" || Te === "AskUserQuestion") {
+                oe(p, He, Te);
                 return;
               }
-              un(p, Re, He);
+              ln(p, Te, He);
               return;
             }
-            if (R.pathname === "/mail/ack") {
-              let Re = e.ackMail([He.mail_id]);
-              v(p, 200, { ok: !0, ...Re });
+            if (b.pathname === "/mail/ack") {
+              let Te = e.ackMail([He.mail_id]);
+              x(p, 200, { ok: !0, ...Te });
               return;
             }
-            if (R.pathname === "/mail") {
+            if (b.pathname === "/mail") {
               ne(p, He);
               return;
             }
-            if (R.pathname === "/api/cleanup") {
-              te(p);
+            if (b.pathname === "/api/cleanup") {
+              re(p);
               return;
             }
-            if (R.pathname === "/api/worktrees/remove") {
-              e.removeWorktree(He).then((Re) => {
-                v(p, Re.status, Re.body);
-              }).catch((Re) => {
-                console.error("fleetd worktree removal error:", Re), v(p, 500, { ok: !1, reason: "internal" });
+            if (b.pathname === "/api/worktrees/remove") {
+              e.removeWorktree(He).then((Te) => {
+                x(p, Te.status, Te.body);
+              }).catch((Te) => {
+                console.error("fleetd worktree removal error:", Te), x(p, 500, { ok: !1, reason: "internal" });
               });
               return;
             }
-            if (R.pathname === "/api/settings") {
+            if (b.pathname === "/api/settings") {
               if (wE(He)) {
-                let Re = Pd(u.headers.authorization);
-                if (!(w && !cr(u) && Ho(u.socket.remoteAddress)) && !Ne(Re) && !Ne(R.searchParams.get("t"))) {
-                  v(p, 401, {
+                let Te = Pd(u.headers.authorization);
+                if (!(w && !br(u) && Ho(u.socket.remoteAddress)) && !Ie(Te) && !Ie(b.searchParams.get("t"))) {
+                  x(p, 401, {
                     ok: !1,
                     reason: "gateway settings require the bearer token"
                   });
                   return;
                 }
-                Jt(R.pathname, u, " gateway=true");
+                $t(b.pathname, u, " gateway=true");
               }
               se(p, He);
               return;
             }
-            if (R.pathname === "/command") {
+            if (b.pathname === "/command") {
               de(p, He);
               return;
             }
-            if (R.pathname === "/api/paste-image") {
-              H(p, He);
+            if (b.pathname === "/api/paste-image") {
+              V(p, He);
               return;
             }
-            if (R.pathname === "/api/spawn/arm-unsupervised") {
-              if (Jt(R.pathname, u), G) {
-                ee(
-                  G,
+            if (b.pathname === "/api/spawn/arm-unsupervised") {
+              if ($t(b.pathname, u), z) {
+                te(
+                  z,
                   "POST /api/spawn/arm-unsupervised",
-                  G.armUnsupervised({
+                  z.armUnsupervised({
                     run: r(() => e.armUnsupervised(), "run")
                   }),
                   p,
-                  x
+                  v
                 );
                 return;
               }
-              v(p, 200, { ok: !0, arm_token: e.armUnsupervised() });
+              x(p, 200, { ok: !0, arm_token: e.armUnsupervised() });
               return;
             }
-            if (R.pathname === "/api/repos/preflight") {
-              let Re = vn(He), pn = EE(Re);
-              if (pn) {
-                v(p, 400, { ok: !1, reason: pn });
+            if (b.pathname === "/api/repos/preflight") {
+              let Te = Sn(He), fn = EE(Te);
+              if (fn) {
+                x(p, 400, { ok: !1, reason: fn });
                 return;
               }
-              Jt(R.pathname, u), e.preflightRepo({
-                repo: Re.repo,
-                repo_host: Re.repo_host ?? null,
-                repo_transport: Re.repo_transport ?? null,
-                repo_org: Re.repo_org ?? null
-              }).then((Qn) => {
-                v(p, Qn.status, Qn.body);
-              }).catch((Qn) => {
-                console.error("fleetd repo preflight error:", Qn), v(p, 500, { ok: !1, reason: "Git access check failed internally" });
+              $t(b.pathname, u), e.preflightRepo({
+                repo: Te.repo,
+                repo_host: Te.repo_host ?? null,
+                repo_transport: Te.repo_transport ?? null,
+                repo_org: Te.repo_org ?? null
+              }).then((Yn) => {
+                x(p, Yn.status, Yn.body);
+              }).catch((Yn) => {
+                console.error("fleetd repo preflight error:", Yn), x(p, 500, { ok: !1, reason: "Git access check failed internally" });
               });
               return;
             }
-            if (R.pathname === "/api/spawn") {
-              if (!bd(He).ok) {
-                v(p, 400, { ok: !1, reason: "spawn body must be a JSON object" });
+            if (b.pathname === "/api/spawn") {
+              if (!kd(He).ok) {
+                x(p, 400, { ok: !1, reason: "spawn body must be a JSON object" });
                 return;
               }
-              let Re = vn(He), pn = Ld(He), Qn = Re.plan_id, zo = typeof Qn == "string" || typeof Qn == "number" ? ` plan=${Qn}` : "";
-              Jt(
-                R.pathname,
+              let Te = Sn(He), fn = Ld(He), Yn = Te.plan_id, Jo = typeof Yn == "string" || typeof Yn == "number" ? ` plan=${Yn}` : "";
+              $t(
+                b.pathname,
                 u,
-                `${pn ? " unsupervised=true" : " unsupervised=false"}${zo}`
-              ), e.spawn(He).then((Hs) => {
-                v(p, Hs.status, Hs.body);
-              }).catch((Hs) => {
-                console.error("fleetd spawn error:", Hs), v(p, 500, { ok: !1, reason: vd(Hs) });
+                `${fn ? " unsupervised=true" : " unsupervised=false"}${Jo}`
+              ), e.spawn(He).then((Ks) => {
+                x(p, Ks.status, Ks.body);
+              }).catch((Ks) => {
+                console.error("fleetd spawn error:", Ks), x(p, 500, { ok: !1, reason: xd(Ks) });
               });
               return;
             }
-            let Vo = /^\/api\/spawn\/([A-Za-z0-9-]+)\/kill$/.exec(R.pathname);
-            if (Vo) {
-              if (Jt(R.pathname, u), G) {
-                V(
-                  G,
+            let it = /^\/api\/spawn\/([A-Za-z0-9-]+)\/kill$/.exec(b.pathname);
+            if (it) {
+              if ($t(b.pathname, u), z) {
+                ee(
+                  z,
                   "POST /api/spawn/:id/kill",
                   p,
                   () => e.spawnKill(
-                    Vo[1] ?? "",
-                    vn(He).force === !0
+                    it[1] ?? "",
+                    Sn(He).force === !0
                   ),
                   "fleetd spawn kill error:"
                 );
                 return;
               }
-              e.spawnKill(Vo[1] ?? "", vn(He).force === !0).then((Re) => {
-                v(p, Re.status, Re.body);
-              }).catch((Re) => {
-                console.error("fleetd spawn kill error:", Re), v(p, 500, { ok: !1, reason: "internal" });
+              e.spawnKill(it[1] ?? "", Sn(He).force === !0).then((Te) => {
+                x(p, Te.status, Te.body);
+              }).catch((Te) => {
+                console.error("fleetd spawn kill error:", Te), x(p, 500, { ok: !1, reason: "internal" });
               });
               return;
             }
-            let Ac = /^\/api\/spawn\/([A-Za-z0-9-]+)\/revive$/.exec(R.pathname);
-            if (Ac) {
-              if (Jt(R.pathname, u), G) {
-                V(
-                  G,
+            let $n = /^\/api\/spawn\/([A-Za-z0-9-]+)\/revive$/.exec(b.pathname);
+            if ($n) {
+              if ($t(b.pathname, u), z) {
+                ee(
+                  z,
                   "POST /api/spawn/:id/revive",
                   p,
-                  () => e.revive(Ac[1] ?? "", He ?? {}),
+                  () => e.revive($n[1] ?? "", He ?? {}),
                   "fleetd spawn revive error:"
                 );
                 return;
               }
-              e.revive(Ac[1] ?? "", He ?? {}).then((Re) => {
-                v(p, Re.status, Re.body);
-              }).catch((Re) => {
-                console.error("fleetd spawn revive error:", Re), v(p, 500, { ok: !1, reason: "internal" });
+              e.revive($n[1] ?? "", He ?? {}).then((Te) => {
+                x(p, Te.status, Te.body);
+              }).catch((Te) => {
+                console.error("fleetd spawn revive error:", Te), x(p, 500, { ok: !1, reason: "internal" });
               });
               return;
             }
-            let Oc = /^\/api\/sessions\/([^/]+)\/adopt$/.exec(R.pathname);
-            if (Oc) {
-              let Re = Ld(He);
-              if (Jt(
-                R.pathname,
+            let Gs = /^\/api\/sessions\/([^/]+)\/adopt$/.exec(b.pathname);
+            if (Gs) {
+              let Te = Ld(He);
+              if ($t(
+                b.pathname,
                 u,
-                Re ? " unsupervised=true" : " unsupervised=false"
-              ), G) {
-                V(
-                  G,
+                Te ? " unsupervised=true" : " unsupervised=false"
+              ), z) {
+                ee(
+                  z,
                   "POST /api/sessions/:sid/adopt",
                   p,
-                  () => e.adoptSession(Oc[1] ?? "", He ?? {}),
+                  () => e.adoptSession(Gs[1] ?? "", He ?? {}),
                   "fleetd adopt error:"
                 );
                 return;
               }
-              e.adoptSession(Oc[1] ?? "", He ?? {}).then((pn) => {
-                v(p, pn.status, pn.body);
-              }).catch((pn) => {
-                console.error("fleetd adopt error:", pn), v(p, 500, { ok: !1, reason: "internal" });
+              e.adoptSession(Gs[1] ?? "", He ?? {}).then((fn) => {
+                x(p, fn.status, fn.body);
+              }).catch((fn) => {
+                console.error("fleetd adopt error:", fn), x(p, 500, { ok: !1, reason: "internal" });
               });
               return;
             }
-            let Lc = /^\/api\/sessions\/([^/]+)\/name$/.exec(R.pathname);
+            let Lc = /^\/api\/sessions\/([^/]+)\/name$/.exec(b.pathname);
             if (Lc) {
-              let Re = vn(He), pn = Re.clear === !0;
-              if (G) {
-                ee(
-                  G,
+              let Te = Sn(He), fn = Te.clear === !0;
+              if (z) {
+                te(
+                  z,
                   "POST /api/sessions/:sid/name",
-                  G.nameControl({
-                    clearing: pn,
-                    suffix: Re.suffix,
-                    validateSuffix: vi,
-                    applyName: r((zo) => e.applyCustomName(Lc[1] ?? "", zo), "applyName")
+                  z.nameControl({
+                    clearing: fn,
+                    suffix: Te.suffix,
+                    validateSuffix: Ri,
+                    applyName: r((Jo) => e.applyCustomName(Lc[1] ?? "", Jo), "applyName")
                   }),
                   p,
-                  x
+                  v
                 );
                 return;
               }
-              if (!pn && typeof Re.suffix != "string") {
-                v(p, 400, {
+              if (!fn && typeof Te.suffix != "string") {
+                x(p, 400, {
                   ok: !1,
                   reason: "suffix must be a string (or pass {clear:true})"
                 });
                 return;
               }
-              if (!pn) {
-                let zo = vi(Re.suffix);
-                if (zo) {
-                  v(p, 400, { ok: !1, reason: zo });
+              if (!fn) {
+                let Jo = Ri(Te.suffix);
+                if (Jo) {
+                  x(p, 400, { ok: !1, reason: Jo });
                   return;
                 }
               }
-              let Qn = e.applyCustomName(
+              let Yn = e.applyCustomName(
                 Lc[1] ?? "",
-                pn ? null : Re.suffix
+                fn ? null : Te.suffix
               );
-              v(p, Qn.ok ? 200 : 409, Qn);
+              x(p, Yn.ok ? 200 : 409, Yn);
               return;
             }
-            let Dc = /^\/api\/sessions\/([^/]+)\/dismiss$/.exec(R.pathname);
+            let Dc = /^\/api\/sessions\/([^/]+)\/dismiss$/.exec(b.pathname);
             if (Dc) {
-              if (Jt(R.pathname, u), G) {
-                V(
-                  G,
+              if ($t(b.pathname, u), z) {
+                ee(
+                  z,
                   "POST /api/sessions/:sid/dismiss",
                   p,
                   () => e.dismissSession(Dc[1] ?? ""),
@@ -17265,20 +17354,20 @@ function bE(e, {
                 );
                 return;
               }
-              e.dismissSession(Dc[1] ?? "").then((Re) => {
-                v(p, Re.status, Re.body);
-              }).catch((Re) => {
-                console.error("fleetd dismiss error:", Re), v(p, 500, { ok: !1, reason: "internal" });
+              e.dismissSession(Dc[1] ?? "").then((Te) => {
+                x(p, Te.status, Te.body);
+              }).catch((Te) => {
+                console.error("fleetd dismiss error:", Te), x(p, 500, { ok: !1, reason: "internal" });
               });
               return;
             }
             let Ic = /^\/api\/sessions\/([^/]+)\/dismiss\/retry$/.exec(
-              R.pathname
+              b.pathname
             );
             if (Ic) {
-              if (Jt(R.pathname, u), G) {
-                V(
-                  G,
+              if ($t(b.pathname, u), z) {
+                ee(
+                  z,
                   "POST /api/sessions/:sid/dismiss/retry",
                   p,
                   () => e.dismissRetry(Ic[1] ?? ""),
@@ -17286,18 +17375,18 @@ function bE(e, {
                 );
                 return;
               }
-              e.dismissRetry(Ic[1] ?? "").then((Re) => {
-                v(p, Re.status, Re.body);
-              }).catch((Re) => {
-                console.error("fleetd dismiss-retry error:", Re), v(p, 500, { ok: !1, reason: "internal" });
+              e.dismissRetry(Ic[1] ?? "").then((Te) => {
+                x(p, Te.status, Te.body);
+              }).catch((Te) => {
+                console.error("fleetd dismiss-retry error:", Te), x(p, 500, { ok: !1, reason: "internal" });
               });
               return;
             }
-            let Nc = /^\/api\/spawn\/([A-Za-z0-9-]+)\/rc$/.exec(R.pathname);
+            let Nc = /^\/api\/spawn\/([A-Za-z0-9-]+)\/rc$/.exec(b.pathname);
             if (Nc) {
-              if (Jt(R.pathname, u), G) {
-                V(
-                  G,
+              if ($t(b.pathname, u), z) {
+                ee(
+                  z,
                   "POST /api/spawn/:id/rc",
                   p,
                   () => e.enableRemote(Nc[1] ?? ""),
@@ -17305,149 +17394,149 @@ function bE(e, {
                 );
                 return;
               }
-              e.enableRemote(Nc[1] ?? "").then((Re) => {
-                v(p, Re.status, Re.body);
-              }).catch((Re) => {
-                console.error("fleetd remote-control error:", Re), v(p, 500, { ok: !1, reason: "internal" });
+              e.enableRemote(Nc[1] ?? "").then((Te) => {
+                x(p, Te.status, Te.body);
+              }).catch((Te) => {
+                console.error("fleetd remote-control error:", Te), x(p, 500, { ok: !1, reason: "internal" });
               });
               return;
             }
-            let Mc = /^\/api\/questions\/(\d+)\/answer$/.exec(R.pathname);
+            let Mc = /^\/api\/questions\/(\d+)\/answer$/.exec(b.pathname);
             if (Mc) {
-              if (G) {
-                ee(
-                  G,
+              if (z) {
+                te(
+                  z,
                   "POST /api/questions/:id/answer",
-                  G.controlSync({
+                  z.controlSync({
                     run: r(() => e.questions.answer(
                       Number(Mc[1] ?? ""),
                       He
                     ), "run")
                   }),
                   p,
-                  x
+                  v
                 );
                 return;
               }
-              let Re = e.questions.answer(
+              let Te = e.questions.answer(
                 Number(Mc[1] ?? ""),
                 He
               );
-              v(p, Re.status, Re.body);
+              x(p, Te.status, Te.body);
               return;
             }
-            let Fc = /^\/api\/questions\/(\d+)\/dismiss$/.exec(R.pathname);
+            let Fc = /^\/api\/questions\/(\d+)\/dismiss$/.exec(b.pathname);
             if (Fc) {
-              if (G) {
-                ee(
-                  G,
+              if (z) {
+                te(
+                  z,
                   "POST /api/questions/:id/dismiss",
-                  G.questionsDismiss({
+                  z.questionsDismiss({
                     run: r(() => e.questions.dismiss(Number(Fc[1])), "run")
                   }),
                   p,
-                  x
+                  v
                 );
                 return;
               }
-              let Re = e.questions.dismiss(Number(Fc[1]));
-              v(p, Re.ok ? 200 : 404, Re);
+              let Te = e.questions.dismiss(Number(Fc[1]));
+              x(p, Te.ok ? 200 : 404, Te);
               return;
             }
-            let Bc = /^\/api\/plans\/(\d+)\/mark$/.exec(R.pathname);
+            let Bc = /^\/api\/plans\/(\d+)\/mark$/.exec(b.pathname);
             if (Bc) {
-              if (G) {
-                ee(
-                  G,
+              if (z) {
+                te(
+                  z,
                   "POST /api/plans/:id/mark",
-                  G.controlSync({
+                  z.controlSync({
                     run: r(() => e.planMark(
                       Number(Bc[1] ?? ""),
                       He
                     ), "run")
                   }),
                   p,
-                  x
+                  v
                 );
                 return;
               }
-              let Re = e.planMark(
+              let Te = e.planMark(
                 Number(Bc[1] ?? ""),
                 He
               );
-              v(p, Re.status, Re.body);
+              x(p, Te.status, Te.body);
               return;
             }
-            let $c = /^\/api\/plans\/(\d+)\/assign$/.exec(R.pathname);
+            let $c = /^\/api\/plans\/(\d+)\/assign$/.exec(b.pathname);
             if ($c) {
-              if (G) {
-                ee(
-                  G,
+              if (z) {
+                te(
+                  z,
                   "POST /api/plans/:id/assign",
-                  G.controlSync({
+                  z.controlSync({
                     run: r(() => e.assignPlan(
                       Number($c[1] ?? ""),
                       He
                     ), "run")
                   }),
                   p,
-                  x
+                  v
                 );
                 return;
               }
-              let Re = e.assignPlan(
+              let Te = e.assignPlan(
                 Number($c[1] ?? ""),
                 He
               );
-              v(p, Re.status, Re.body);
+              x(p, Te.status, Te.body);
               return;
             }
-            v(p, 404, { err: "nope" });
+            x(p, 404, { err: "nope" });
             return;
-          } catch (bn) {
-            if (console.error("fleetd handler error:", bn), R.pathname.startsWith("/hook/")) {
-              v(p, 200, {});
+          } catch (kt) {
+            if (console.error("fleetd handler error:", kt), b.pathname.startsWith("/hook/")) {
+              x(p, 200, {});
               return;
             }
-            v(p, 500, { err: "internal" });
+            x(p, 500, { err: "internal" });
             return;
           }
         });
         return;
       }
-      v(p, 404, { err: "nope" });
-    } catch (R) {
-      console.error("fleetd request error:", R);
+      x(p, 404, { err: "nope" });
+    } catch (b) {
+      console.error("fleetd request error:", b);
       try {
-        v(p, (u.url ?? "").startsWith("/hook/") ? 200 : 500, {});
+        x(p, (u.url ?? "").startsWith("/hook/") ? 200 : 500, {});
       } catch {
       }
     }
   }
-  r(ho, "routeRequest");
-  let dn = new Set(), fn = new Set(), wo = new Set();
-  e.questions.setBoardConsumerProbe(() => dn.size > 0);
-  let Eo = iE({
+  r(wo, "routeRequest");
+  let un = new Set(), Xt = new Set(), Eo = new Set();
+  e.questions.setBoardConsumerProbe(() => un.size > 0);
+  let yo = iE({
     port: t,
     resolveSpawn: r((u) => e.terminalSpawn(u), "resolveSpawn"),
     log: r((u) => {
       console.error(`fleetd ${u}`);
     }, "log")
-  }), xn = !1, Pn = null, Rr = [];
-  function yo() {
-    return E || !Pn ? Promise.resolve() : new Promise((u) => Rr.push(u));
+  }), Nn = !1, Rn = null, kr = [];
+  function Xn() {
+    return E || !Rn ? Promise.resolve() : new Promise((u) => kr.push(u));
   }
-  r(yo, "whenBroadcastIdle");
+  r(Xn, "whenBroadcastIdle");
   function Ko() {
-    return SE(e.snapshot(), F());
+    return SE(e.snapshot(), B());
   }
   r(Ko, "wsSnapshot");
-  function Tr() {
-    if (xn = !1, E || !dn.size) return;
+  function Vo() {
+    if (Nn = !1, E || !un.size) return;
     let u = JSON.stringify(Ko());
-    for (let p of dn)
+    for (let p of un)
       if (p.readyState === 1) {
-        if (yE(p.getBufferedAmount(), mR) === "evict") {
+        if (yE(p.getBufferedAmount(), gR) === "evict") {
           try {
             p.terminate();
           } catch {
@@ -17457,16 +17546,16 @@ function bE(e, {
         p.send(u);
       }
   }
-  r(Tr, "broadcast");
-  function zr() {
-    E || (xn = !0, !Pn && (Pn = setTimeout(() => {
-      Pn = null, xn && Tr();
-      let u = Rr;
-      Rr = [];
+  r(Vo, "broadcast");
+  function Rr() {
+    E || (Nn = !0, !Rn && (Rn = setTimeout(() => {
+      Rn = null, Nn && Vo();
+      let u = kr;
+      kr = [];
       for (let p of u) p();
-    }, hR), Pn.unref()));
+    }, wR), Rn.unref()));
   }
-  r(zr, "scheduleBroadcast");
+  r(Rr, "scheduleBroadcast");
   let _o = {
     open(u) {
       if (E) {
@@ -17478,56 +17567,56 @@ function bE(e, {
         return;
       }
       if (u.data.isAlive = !0, u.data.kind === "snapshot") {
-        dn.add(u);
+        un.add(u);
         try {
           u.send(JSON.stringify(Ko()));
         } catch {
         }
         return;
       }
-      fn.add(u), Cr(u);
+      Xt.add(u), zo(u);
     },
     message(u, p) {
       if (E || u.data.kind !== "term") return;
-      let R = u.data;
-      if (!R.handle) return;
-      let oe = typeof p == "string" ? p : p.toString("utf8");
-      if (Buffer.byteLength(oe, "utf8") > wR) {
+      let b = u.data;
+      if (!b.handle) return;
+      let ce = typeof p == "string" ? p : p.toString("utf8");
+      if (Buffer.byteLength(ce, "utf8") > ER) {
         try {
           u.close(1009, "input frame too large");
         } catch {
         }
         return;
       }
-      let Oe;
+      let Re;
       try {
-        Oe = JSON.parse(oe);
+        Re = JSON.parse(ce);
       } catch {
         return;
       }
-      if (!Oe || typeof Oe != "object") return;
-      let ge = Oe;
-      ge.t === "in" && typeof ge.data == "string" ? R.handle.input(ge.data) : ge.t === "paste" && typeof ge.data == "string" ? R.handle.paste(ge.data) : ge.t === "resize" && R.handle.resize(ge.cols, ge.rows);
+      if (!Re || typeof Re != "object") return;
+      let Se = Re;
+      Se.t === "in" && typeof Se.data == "string" ? b.handle.input(Se.data) : Se.t === "paste" && typeof Se.data == "string" ? b.handle.paste(Se.data) : Se.t === "resize" && b.handle.resize(Se.cols, Se.rows);
     },
     close(u) {
       if (u.data.kind === "snapshot") {
-        if (dn.delete(u) && dn.size === 0)
+        if (un.delete(u) && un.size === 0)
           try {
             e.questions.failOpenAllHolds();
-          } catch (R) {
-            console.error("fleetd board disconnect hold-release error:", R);
+          } catch (b) {
+            console.error("fleetd board disconnect hold-release error:", b);
           }
         return;
       }
-      fn.delete(u), u.data.abort.closed = !0, u.data.handle?.close();
+      Xt.delete(u), u.data.abort.closed = !0, u.data.handle?.close();
     },
     pong(u) {
       u.data.isAlive = !0;
     }
   };
-  function Us(u, p) {
+  function Vr(u, p) {
     if (!E && u.readyState === 1) {
-      if (u.getBufferedAmount() > ER) {
+      if (u.getBufferedAmount() > yR) {
         try {
           u.close(1009, "terminal viewer too far behind");
         } catch {
@@ -17537,8 +17626,8 @@ function bE(e, {
       u.send(JSON.stringify(p));
     }
   }
-  r(Us, "sendTermFrame");
-  function Cr(u) {
+  r(Vr, "sendTermFrame");
+  function zo(u) {
     if (u.data.kind !== "term") return;
     let p = u.data;
     if (E) {
@@ -17549,36 +17638,36 @@ function bE(e, {
       }
       return;
     }
-    let R = (async () => {
-      let oe = r((Oe) => {
-        E || Us(u, Oe);
+    let b = (async () => {
+      let ce = r((Re) => {
+        E || Vr(u, Re);
       }, "send");
       try {
-        let { spawn_id: Oe, cols: ge, rows: Be } = p;
-        if (!Oe) throw new Error("missing spawn id");
-        p.handle = await Eo.openViewer({
-          spawn_id: Oe,
-          cols: ge,
-          rows: Be,
-          send: oe,
+        let { spawn_id: Re, cols: Se, rows: Ne } = p;
+        if (!Re) throw new Error("missing spawn id");
+        p.handle = await yo.openViewer({
+          spawn_id: Re,
+          cols: Se,
+          rows: Ne,
+          send: ce,
           isAborted: r(() => p.abort.closed, "isAborted"),
-          onClose(rt) {
-            oe({ t: "exit", reason: rt });
+          onClose(et) {
+            ce({ t: "exit", reason: et });
             try {
               u.close();
             } catch {
             }
           }
         }), (p.abort.closed || E) && p.handle.close();
-      } catch (Oe) {
+      } catch (Re) {
         if (E) return;
-        let ge = Oe;
-        if (ge?.gone)
-          oe({ t: "exit", reason: ge.reason }), e.spawnLivenessTick()?.catch(() => {
+        let Se = Re;
+        if (Se?.gone)
+          ce({ t: "exit", reason: Se.reason }), e.spawnLivenessTick()?.catch(() => {
           });
         else {
-          let Be = typeof ge?.reason == "string" ? ge.reason : "", rt = typeof ge?.message == "string" ? ge.message : "";
-          oe({ t: "err", reason: Be || rt || "terminal unavailable" });
+          let Ne = typeof Se?.reason == "string" ? Se.reason : "", et = typeof Se?.message == "string" ? Se.message : "";
+          ce({ t: "err", reason: Ne || et || "terminal unavailable" });
         }
         try {
           u.close();
@@ -17586,15 +17675,15 @@ function bE(e, {
         }
       }
     })();
-    M.add(R), R.then(
-      () => M.delete(R),
-      () => M.delete(R)
+    F.add(b), b.then(
+      () => F.delete(b),
+      () => F.delete(b)
     );
   }
-  r(Cr, "openTerm");
-  let Ws = setInterval(() => {
+  r(zo, "openTerm");
+  let Xo = setInterval(() => {
     if (!E)
-      for (let u of [dn, fn])
+      for (let u of [un, Xt])
         for (let p of u) {
           if (_E(p.data.isAlive) === "terminate") {
             p.terminate();
@@ -17606,42 +17695,42 @@ function bE(e, {
           } catch {
           }
         }
-  }, gR);
-  Ws.unref();
-  function Hi(u, p, R) {
+  }, hR);
+  Xo.unref();
+  function qs(u, p, b) {
     if (E) return new Response(null, { status: 503 });
-    let oe = new _c(u, p), Oe = r((ge) => {
+    let ce = new vc(u, p), Re = r((Se) => {
       try {
         p.timeout(u, Id);
       } catch {
       }
-      return new Response(null, { status: ge });
+      return new Response(null, { status: Se });
     }, "refuse");
-    if (!je(oe, R) || !Cn(oe) || Bn(oe))
-      return Oe(401);
-    if (R.pathname === "/ws") {
-      let ge = { kind: "snapshot", isAlive: !0 };
-      return p.upgrade(u, { data: ge }) ? void 0 : Oe(400);
+    if (!qe(ce, b) || !zt(ce) || vn(ce))
+      return Re(401);
+    if (b.pathname === "/ws") {
+      let Se = { kind: "snapshot", isAlive: !0 };
+      return p.upgrade(u, { data: Se }) ? void 0 : Re(400);
     }
-    if (R.pathname === "/ws/term") {
-      let ge = {
+    if (b.pathname === "/ws/term") {
+      let Se = {
         kind: "term",
         isAlive: !0,
-        spawn_id: R.searchParams.get("spawn") ?? "",
-        cols: Number(R.searchParams.get("cols")),
-        rows: Number(R.searchParams.get("rows")),
+        spawn_id: b.searchParams.get("spawn") ?? "",
+        cols: Number(b.searchParams.get("cols")),
+        rows: Number(b.searchParams.get("rows")),
         abort: { closed: !1 },
         handle: null
       };
-      return p.upgrade(u, { data: ge }) ? void 0 : Oe(400);
+      return p.upgrade(u, { data: Se }) ? void 0 : Re(400);
     }
-    return Oe(404);
+    return Re(404);
   }
-  r(Hi, "handleUpgrade");
-  function qi(u, p) {
-    let R;
+  r(qs, "handleUpgrade");
+  function Tr(u, p) {
+    let b;
     try {
-      R = new URL(u.url);
+      b = new URL(u.url);
     } catch {
       try {
         p.timeout(u, Id);
@@ -17650,91 +17739,91 @@ function bE(e, {
       return new Response(null, { status: 400 });
     }
     if (E) {
-      let Pe = R.pathname.startsWith("/hook/");
-      return new Response(Pe ? "{}" : '{"ok":false,"reason":"shutting-down"}', {
-        status: Pe ? 200 : 503,
+      let xt = b.pathname.startsWith("/hook/");
+      return new Response(xt ? "{}" : '{"ok":false,"reason":"shutting-down"}', {
+        status: xt ? 200 : 503,
         headers: {
           "content-type": "application/json",
           "x-content-type-options": "nosniff"
         }
       });
     }
-    let oe = (u.headers.get("upgrade") ?? "").toLowerCase(), Oe = (u.headers.get("connection") ?? "").toLowerCase();
-    if (oe === "websocket" && Oe.includes("upgrade"))
-      return Hi(u, p, R);
+    let ce = (u.headers.get("upgrade") ?? "").toLowerCase(), Re = (u.headers.get("connection") ?? "").toLowerCase();
+    if (ce === "websocket" && Re.includes("upgrade"))
+      return qs(u, p, b);
     try {
       p.timeout(u, 0);
     } catch {
     }
-    let ge = new _c(u, p), Be = new Nd(u, p);
-    ho(ge, Be);
-    let rt = ge._pump(), Qe = ji(ge, rt, Be), tt = {
-      request: ge,
-      response: Be,
-      drain: rt,
-      promise: Qe,
-      hook: R.pathname.startsWith("/hook/"),
+    let Se = new vc(u, p), Ne = new Nd(u, p);
+    wo(Se, Ne);
+    let et = Se._pump(), je = Ki(Se, et, Ne), Qe = {
+      request: Se,
+      response: Ne,
+      drain: et,
+      promise: je,
+      hook: b.pathname.startsWith("/hook/"),
       drained: !1,
       drainFaulted: !1
     };
-    return m.add(tt), Be.on("close", () => {
-      E && queueMicrotask(() => D(tt));
-    }), rt.then(
+    return m.add(Qe), Ne.on("close", () => {
+      E && queueMicrotask(() => I(Qe));
+    }), et.then(
       () => {
-        tt.drained = !0, D(tt);
+        Qe.drained = !0, I(Qe);
       },
       () => {
-        tt.drainFaulted = !0, tt.drained = !0, D(tt);
+        Qe.drainFaulted = !0, Qe.drained = !0, I(Qe);
       }
-    ), Qe.then(
-      () => m.delete(tt),
-      () => m.delete(tt)
-    ), Qe;
+    ), je.then(
+      () => m.delete(Qe),
+      () => m.delete(Qe)
+    ), je;
   }
-  r(qi, "fetchHandler");
-  function ji(u, p, R) {
-    return new Promise((oe) => {
-      let Oe = !1, ge = r(() => {
-        Oe || (Oe = !0, clearTimeout(Be), oe(R.done));
-      }, "finish"), Be = setTimeout(() => {
-        R.boundStalledDrain(), ge();
-      }, fR);
-      Be.unref(), p.then(() => {
-        u.destroyed || R.clearStalledFin(), ge();
-      }, ge);
+  r(Tr, "fetchHandler");
+  function Ki(u, p, b) {
+    return new Promise((ce) => {
+      let Re = !1, Se = r(() => {
+        Re || (Re = !0, clearTimeout(Ne), ce(b.done));
+      }, "finish"), Ne = setTimeout(() => {
+        b.boundStalledDrain(), Se();
+      }, pR);
+      Ne.unref(), p.then(() => {
+        u.destroyed || b.clearStalledFin(), Se();
+      }, Se);
     });
   }
-  r(ji, "drainThenRespond");
-  let $n = null, h = null, j = null, B = Promise.resolve(), le = r(() => {
-  }, "resolveHoldsReleased"), _e = new Promise((u) => {
-    le = u;
-  }), K = !1, xe = null, pe = null, We = null, be, Ae = [];
-  function Je() {
+  r(Ki, "drainThenRespond");
+  let Mn = null, Yo = null, zr = null, js = Promise.resolve(), g = r(() => {
+  }, "resolveHoldsReleased"), G = new Promise((u) => {
+    g = u;
+  }), L = !1, ae = null, fe = null, j = null, be, ge = [];
+  function Ae() {
     return Object.assign(new Error("fleetd HTTP lifecycle is closed"), {
       code: "ERR_SERVER_CLOSED"
     });
   }
-  r(Je, "lifecycleClosedError");
-  function Le(u, p) {
-    let R = u !== null && typeof u == "object" ? u : null, oe = typeof R?.code == "string" ? R.code : null, Oe = R?.errno, ge = typeof Oe == "string" || typeof Oe == "number" ? Oe : null, Be = u instanceof Error ? u.message : String(u);
+  r(Ae, "lifecycleClosedError");
+  function ke(u, p) {
+    let b = u !== null && typeof u == "object" ? u : null, ce = typeof b?.code == "string" ? b.code : null, Re = b?.errno, Se = typeof Re == "string" || typeof Re == "number" ? Re : null, Ne = u instanceof Error ? u.message : String(u);
     return {
       _tag: "BindFailed",
-      reason: oe === "EADDRINUSE" ? "address-in-use" : oe === "ERR_SERVER_CLOSED" ? "closed" : "other",
+      reason: ce === "EADDRINUSE" ? "address-in-use" : ce === "ERR_SERVER_CLOSED" ? "closed" : "other",
       origin: p,
       legacyDelivery: "error-callback-microtask",
       error: u,
-      code: oe,
-      errno: ge,
-      message: Be
+      code: ce,
+      errno: Se,
+      message: Ne
     };
   }
-  r(Le, "bindFailure");
-  function Ce(u, p) {
-    if (E) return Le(Je(), "lifecycle-guard");
-    if (h) return h;
-    let R;
+  r(ke, "bindFailure");
+  function Oe(u, p) {
+    if (E) return ke(Ae(), "lifecycle-guard");
+    if (Yo) return Yo;
+    let b;
     try {
-      R = Bun.serve({
+      b = Bun.serve({
         port: u,
         hostname: p,
 
@@ -17754,45 +17843,45 @@ function bE(e, {
 
         idleTimeout: 0,
         maxRequestBodySize: xE,
-        fetch: qi,
+        fetch: Tr,
         websocket: _o
       });
-    } catch (Oe) {
-      return Le(Oe, "bun-serve-throw");
+    } catch (Re) {
+      return ke(Re, "bun-serve-throw");
     }
-    $n = R;
-    let oe = {
+    Mn = b;
+    let ce = {
       _tag: "Bound",
-      hostname: R.hostname ?? p,
-      port: R.port ?? u
+      hostname: b.hostname ?? p,
+      port: b.port ?? u
     };
-    return h = oe, j = Promise.resolve(oe), oe;
+    return Yo = ce, zr = Promise.resolve(ce), ce;
   }
-  r(Ce, "attemptBind");
-  function $(u, p) {
-    if (E) return Promise.resolve(Le(Je(), "lifecycle-guard"));
-    if (j) return j;
-    let R = Ce(u, p);
-    return R._tag === "Bound" && j ? j : Promise.resolve(R);
+  r(Oe, "attemptBind");
+  function U(u, p) {
+    if (E) return Promise.resolve(ke(Ae(), "lifecycle-guard"));
+    if (zr) return zr;
+    let b = Oe(u, p);
+    return b._tag === "Bound" && zr ? zr : Promise.resolve(b);
   }
-  r($, "bindHttp");
-  function Y(u) {
+  r(U, "bindHttp");
+  function W(u) {
     let p = u.error instanceof Error ? u.error : new Error(u.message);
     u.code !== null && (p.code = u.code), typeof u.errno == "number" && (p.errno = u.errno), queueMicrotask(() => {
-      for (let R of Ae) R(p);
+      for (let b of ge) b(p);
     });
   }
-  r(Y, "emitLegacyBindFailure");
-  let re = {
+  r(W, "emitLegacyBindFailure");
+  let H = {
     on(u, p) {
-      u === "error" && Ae.push(p);
+      u === "error" && ge.push(p);
     },
     once(u, p) {
-      u === "error" && Ae.push(p);
+      u === "error" && ge.push(p);
     },
-    listen(u, p, R) {
-      let oe = Ce(u, p);
-      oe._tag === "BindFailed" ? Y(oe) : R?.();
+    listen(u, p, b) {
+      let ce = Oe(u, p);
+      ce._tag === "BindFailed" ? W(ce) : b?.();
     },
     close(u) {
       be().then(
@@ -17801,16 +17890,16 @@ function bE(e, {
       );
     }
   };
-  e.onMutate = zr;
-  let ve = e.questions, ke = null;
-  function Ge() {
-    let u = Rr;
-    Rr = [];
+  e.onMutate = Rr;
+  let ue = e.questions, _e = null;
+  function Me() {
+    let u = kr;
+    kr = [];
     for (let p of u) p();
   }
-  r(Ge, "resolveBroadcastWaiters");
-  function St() {
-    let u = new Set([...wo, ...dn, ...fn]);
+  r(Me, "resolveBroadcastWaiters");
+  function rt() {
+    let u = new Set([...Eo, ...un, ...Xt]);
     for (let p of u) {
       p.data.kind === "term" && (p.data.abort.closed = !0, p.data.handle?.close());
       try {
@@ -17818,151 +17907,151 @@ function bE(e, {
       } catch {
       }
     }
-    wo.clear(), dn.clear(), fn.clear();
+    Eo.clear(), un.clear(), Xt.clear();
   }
-  r(St, "finalizeNativeClients");
-  function ht() {
-    if (xe) return xe;
-    let u = $n;
-    return u ? (xe = Promise.all([B, _e]).then(() => Bun.sleep(0)).then(async () => {
-      if (pe) {
-        await pe;
+  r(rt, "finalizeNativeClients");
+  function Ye() {
+    if (ae) return ae;
+    let u = Mn;
+    return u ? (ae = Promise.all([js, G]).then(() => Bun.sleep(0)).then(async () => {
+      if (fe) {
+        await fe;
         return;
       }
-      $n === u && (await u.stop(!1), $n === u && ($n = null), St());
-    }), xe.catch(() => {
-    }), xe) : (xe = Promise.resolve(), xe);
+      Mn === u && (await u.stop(!1), Mn === u && (Mn = null), rt());
+    }), ae.catch(() => {
+    }), ae) : (ae = Promise.resolve(), ae);
   }
-  r(ht, "startGracefulStop");
-  function Dt() {
-    return at(), ht();
+  r(Ye, "startGracefulStop");
+  function Ut() {
+    return st(), Ye();
   }
-  r(Dt, "beginGracefulStopHttp");
-  function Tt() {
-    if (pe) return pe;
-    let u = $n;
+  r(Ut, "beginGracefulStopHttp");
+  function Yt() {
+    if (fe) return fe;
+    let u = Mn;
     if (!u)
-      return St(), pe = Promise.resolve(), pe;
+      return rt(), fe = Promise.resolve(), fe;
     try {
-      pe = Promise.resolve(u.stop(!0)).then(
+      fe = Promise.resolve(u.stop(!0)).then(
         () => {
-          $n === u && ($n = null), St();
+          Mn === u && (Mn = null), rt();
         },
         (p) => {
           throw p;
         }
       );
     } catch (p) {
-      pe = Promise.reject(p);
+      fe = Promise.reject(p);
     }
-    return pe.catch(() => {
-    }), pe;
+    return fe.catch(() => {
+    }), fe;
   }
-  r(Tt, "forceStopHttp");
-  function at() {
+  r(Yt, "forceStopHttp");
+  function st() {
     if (E) return;
     E = !0, e.onMutate = () => {
-    }, ve.setBoardConsumerProbe(() => !1), ve.quiesce?.(), clearInterval(Ws), Pn && (clearTimeout(Pn), Pn = null), xn = !1, Ge();
+    }, ue.setBoardConsumerProbe(() => !1), ue.quiesce?.(), clearInterval(Xo), Rn && (clearTimeout(Rn), Rn = null), Nn = !1, Me();
     let u = [];
     for (let p of m) {
-      let R = !p.drained || p.drainFaulted || p.request.destroyed || p.response.destroyed;
-      D(p), R && u.push(p.drain, p.promise);
+      let b = !p.drained || p.drainFaulted || p.request.destroyed || p.response.destroyed;
+      I(p), b && u.push(p.drain, p.promise);
     }
-    B = Promise.allSettled(u).then(() => {
-    }), ht();
+    js = Promise.allSettled(u).then(() => {
+    }), Ye();
   }
-  r(at, "quiesceHttp");
-  function qe() {
+  r(st, "quiesceHttp");
+  function dn() {
     try {
-      return ve.releaseAll?.() ?? ve.failOpenAllHolds();
+      return ue.releaseAll?.() ?? ue.failOpenAllHolds();
     } finally {
-      if (!K) {
-        K = !0;
+      if (!L) {
+        L = !0;
         let u = [...m].filter((p) => p.hook).map((p) => p.promise);
-        Promise.allSettled(u).then(le);
+        Promise.allSettled(u).then(g);
       }
     }
   }
-  r(qe, "releaseHeldResponses");
-  function ur() {
-    for (let u of [...dn, ...fn])
-      wo.add(u), u.data.kind === "term" && (u.data.abort.closed = !0, u.data.handle?.close());
+  r(dn, "releaseHeldResponses");
+  function sn() {
+    for (let u of [...un, ...Xt])
+      Eo.add(u), u.data.kind === "term" && (u.data.abort.closed = !0, u.data.handle?.close());
   }
-  r(ur, "beginNativeClientClose");
-  function Un() {
-    at(), ur(), Eo.force().catch((u) => {
+  r(sn, "beginNativeClientClose");
+  function Dt() {
+    st(), sn(), yo.force().catch((u) => {
       console.error("fleetd terminal bridge force error:", u);
     });
   }
-  r(Un, "forceClientsHttp");
-  async function Yn() {
-    at();
-    for (let oe of [...U])
+  r(Dt, "forceClientsHttp");
+  async function Ge() {
+    st();
+    for (let ce of [...$])
       try {
-        oe();
+        ce();
       } catch {
-        U.delete(oe);
+        $.delete(ce);
       }
-    let u = [...m], p = [...M];
-    for (let oe of u) D(oe);
-    ur();
-    let R;
+    let u = [...m], p = [...F];
+    for (let ce of u) I(ce);
+    sn();
+    let b;
     try {
-      R = Eo.close().catch((oe) => {
-        console.error("fleetd terminal bridge close error:", oe);
+      b = yo.close().catch((ce) => {
+        console.error("fleetd terminal bridge close error:", ce);
       });
-    } catch (oe) {
-      console.error("fleetd terminal bridge close error:", oe), R = Promise.resolve();
+    } catch (ce) {
+      console.error("fleetd terminal bridge close error:", ce), b = Promise.resolve();
     }
     await Promise.all([
-      Promise.allSettled(u.map((oe) => oe.promise)),
+      Promise.allSettled(u.map((ce) => ce.promise)),
       Promise.allSettled(p),
-      R
-    ]), m.clear(), M.clear();
+      b
+    ]), m.clear(), F.clear();
   }
-  r(Yn, "closeClientsOnce");
-  function Jn() {
-    return We ??= Yn(), We;
+  r(Ge, "closeClientsOnce");
+  function ar() {
+    return j ??= Ge(), j;
   }
-  r(Jn, "closeClientsHttp");
-  async function It() {
-    at();
+  r(ar, "closeClientsHttp");
+  async function Fn() {
+    st();
     try {
-      qe();
+      dn();
     } catch (u) {
       console.error("fleetd shutdown hold-release error:", u);
     }
-    await Jn();
+    await ar();
     try {
-      await Tt();
+      await Yt();
     } catch {
     }
-    St(), Ae.length = 0;
+    rt(), ge.length = 0;
   }
-  return r(It, "closeHttpOnce"), be = r(() => (ke ??= It(), ke), "closeHttp"), {
-    server: re,
-    bind: $,
+  return r(Fn, "closeHttpOnce"), be = r(() => (_e ??= Fn(), _e), "closeHttp"), {
+    server: H,
+    bind: U,
     lifecycle: {
-      quiesce: at,
-      beginGracefulStop: Dt,
-      forceStop: Tt,
-      releaseHolds: qe,
-      closeClients: Jn,
-      forceClients: Un,
+      quiesce: st,
+      beginGracefulStop: Ut,
+      forceStop: Yt,
+      releaseHolds: dn,
+      closeClients: ar,
+      forceClients: Dt,
       close: be,
       isQuiescing: r(() => E, "isQuiescing"),
       ownedCounts: r(() => ({
-        listener: $n ? 1 : 0,
-        snapshotClients: dn.size,
-        terminalClients: fn.size,
+        listener: Mn ? 1 : 0,
+        snapshotClients: un.size,
+        terminalClients: Xt.size,
         activeResponses: m.size,
-        watchWaiters: U.size,
-        terminalOpens: M.size,
-        broadcastTimers: Pn ? 1 : 0,
+        watchWaiters: $.size,
+        terminalOpens: F.size,
+        broadcastTimers: Rn ? 1 : 0,
         keepaliveTimers: E ? 0 : 1
       }), "ownedCounts")
     },
-    whenBroadcastIdle: yo,
+    whenBroadcastIdle: Xn,
 
 
 
@@ -17970,25 +18059,25 @@ function bE(e, {
 
 
     installEffectRoutes: r((u) => {
-      G = u;
+      z = u;
     }, "installEffectRoutes"),
 
 
 
 
     refreshLan: r((u) => {
-      E || (gt(), i = u);
+      E || (pt(), i = u);
     }, "refreshLan")
   };
 }
 r(bE, "createHttp");
 
 
-import SR from "node:dgram";
-var ar = "224.0.0.251", kr = 5353, cn = { A: 1, PTR: 12, TXT: 16, AAAA: 28, SRV: 33, ANY: 255 }, RE = Object.fromEntries(
-  Object.entries(cn).map(([e, t]) => [t, e])
-), Fi = 1, vR = 255, Bd = 32768, $d = 32768, Ud = 32768, Vr = 33792, xR = { A: 120, SRV: 120, PTR: 4500, TXT: 4500 }, bR = 10, kR = ["_fleetdeck._tcp.local", "_http._tcp.local"], TE = "_services._dns-sd._udp.local", kE = [0, 1e3, 2e3];
-function vc(e) {
+import vR from "node:dgram";
+var sr = "224.0.0.251", xr = 5353, on = { A: 1, PTR: 12, TXT: 16, AAAA: 28, SRV: 33, ANY: 255 }, RE = Object.fromEntries(
+  Object.entries(on).map(([e, t]) => [t, e])
+), Wi = 1, xR = 255, Bd = 32768, $d = 32768, Ud = 32768, Kr = 33792, bR = { A: 120, SRV: 120, PTR: 4500, TXT: 4500 }, kR = 10, RR = ["_fleetdeck._tcp.local", "_http._tcp.local"], TE = "_services._dns-sd._udp.local", kE = [0, 1e3, 2e3];
+function bc(e) {
   let t = e.replace(/\.$/, "").split(".").filter(Boolean), n = [];
   for (let o of t) {
     let s = Buffer.from(o, "utf8");
@@ -17997,8 +18086,8 @@ function vc(e) {
   }
   return n.push(Buffer.from([0])), Buffer.concat(n);
 }
-r(vc, "encodeName");
-function Mi(e, t = 0) {
+r(bc, "encodeName");
+function Ui(e, t = 0) {
   let n = [], o = t, s = t, i = !1, a = 0;
   for (; ; ) {
     let c = e[o];
@@ -18022,22 +18111,22 @@ function Mi(e, t = 0) {
   }
   return { name: n.join("."), offset: s };
 }
-r(Mi, "decodeName");
-function xc(e) {
+r(Ui, "decodeName");
+function kc(e) {
   if (typeof e == "number") return e;
-  let t = cn[e.toUpperCase()];
+  let t = on[e.toUpperCase()];
   if (t === void 0) throw new TypeError(`mdns: unknown record type ${e}`);
   return t;
 }
-r(xc, "typeNumber");
-function RR(e) {
+r(kc, "typeNumber");
+function TR(e) {
   let t = e.split(".").map(Number);
   if (t.length !== 4 || t.some((n) => !Number.isInteger(n) || n < 0 || n > 255))
     throw new TypeError(`mdns: not an IPv4 address: ${e}`);
   return Buffer.from(t);
 }
-r(RR, "encodeIPv4");
-function TR(e) {
+r(TR, "encodeIPv4");
+function CR(e) {
   let t = Array.isArray(e) ? e : Object.entries(e).map(([o, s]) => `${o}=${s}`);
   if (!t.length) return Buffer.from([0]);
   let n = [];
@@ -18047,31 +18136,31 @@ function TR(e) {
   }
   return Buffer.concat(n);
 }
-r(TR, "encodeTxt");
-function CR(e, t) {
+r(CR, "encodeTxt");
+function PR(e, t) {
   switch (e) {
-    case cn.A:
-      return RR(t);
-    case cn.PTR:
-      return vc(t);
-    case cn.TXT:
+    case on.A:
       return TR(t);
-    case cn.SRV: {
+    case on.PTR:
+      return bc(t);
+    case on.TXT:
+      return CR(t);
+    case on.SRV: {
       let n = t, o = Buffer.alloc(6);
-      return o.writeUInt16BE(n.priority, 0), o.writeUInt16BE(n.weight, 2), o.writeUInt16BE(n.port, 4), Buffer.concat([o, vc(n.target)]);
+      return o.writeUInt16BE(n.priority, 0), o.writeUInt16BE(n.weight, 2), o.writeUInt16BE(n.port, 4), Buffer.concat([o, bc(n.target)]);
     }
     default:
       throw new TypeError(`mdns: cannot encode rdata for type ${e}`);
   }
 }
-r(CR, "encodeRdata");
-function PR(e) {
-  let t = xc(e.type), n = vc(e.name), o = CR(t, e.data), s = Buffer.alloc(8);
-  s.writeUInt16BE(t, 0), s.writeUInt16BE(Fi | (e.flush ? Bd : 0), 2), s.writeUInt32BE(Math.max(0, Number(e.ttl) || 0), 4);
+r(PR, "encodeRdata");
+function AR(e) {
+  let t = kc(e.type), n = bc(e.name), o = PR(t, e.data), s = Buffer.alloc(8);
+  s.writeUInt16BE(t, 0), s.writeUInt16BE(Wi | (e.flush ? Bd : 0), 2), s.writeUInt32BE(Math.max(0, Number(e.ttl) || 0), 4);
   let i = Buffer.alloc(2);
   return i.writeUInt16BE(o.length, 0), Buffer.concat([n, s, i, o]);
 }
-r(PR, "encodeRecord");
+r(AR, "encodeRecord");
 function qd(e) {
   return e.length < 12 ? null : {
     id: e.readUInt16BE(0),
@@ -18090,7 +18179,7 @@ function CE(e) {
   for (let s = 0; s < t.qdcount; s += 1) {
     let i;
     try {
-      i = Mi(e, o);
+      i = Ui(e, o);
     } catch {
       break;
     }
@@ -18110,7 +18199,7 @@ function CE(e) {
 r(CE, "parseQuestions");
 function go({
   id: e = 0,
-  flags: t = Vr,
+  flags: t = Kr,
   questions: n = [],
   answers: o = [],
   authorities: s = [],
@@ -18121,10 +18210,10 @@ function go({
   let c = [a];
   for (let l of n) {
     let f = Buffer.alloc(4);
-    f.writeUInt16BE(xc(l.type ?? cn.ANY), 0), f.writeUInt16BE((l.class || Fi) | (l.unicast ? $d : 0), 2), c.push(vc(l.name), f);
+    f.writeUInt16BE(kc(l.type ?? on.ANY), 0), f.writeUInt16BE((l.class || Wi) | (l.unicast ? $d : 0), 2), c.push(bc(l.name), f);
   }
   for (let l of [...o, ...s, ...i])
-    c.push(PR(l));
+    c.push(AR(l));
   return Buffer.concat(c);
 }
 r(go, "encodeMessage");
@@ -18133,44 +18222,44 @@ function Md(e, t, n) {
   for (let i = 0; i < n; i += 1) {
     let a;
     try {
-      a = Mi(e, s);
+      a = Ui(e, s);
     } catch {
       break;
     }
     if (s = a.offset, s + 10 > e.length) break;
     let c = e.readUInt16BE(s), l = e.readUInt16BE(s + 2), f = e.readUInt32BE(s + 4), w = e.readUInt16BE(s + 8);
     if (s += 10, s + w > e.length) break;
-    let g;
+    let h;
     try {
       switch (c) {
-        case cn.A:
-          g = Array.from(e.subarray(s, s + 4)).join(".");
+        case on.A:
+          h = Array.from(e.subarray(s, s + 4)).join(".");
           break;
-        case cn.PTR:
-          g = Mi(e, s).name;
+        case on.PTR:
+          h = Ui(e, s).name;
           break;
-        case cn.SRV:
-          g = {
+        case on.SRV:
+          h = {
             priority: e.readUInt16BE(s),
             weight: e.readUInt16BE(s + 2),
             port: e.readUInt16BE(s + 4),
-            target: Mi(e, s + 6).name
+            target: Ui(e, s + 6).name
           };
           break;
-        case cn.TXT: {
+        case on.TXT: {
           let _ = [];
           for (let E = s; E < s + w; ) {
             let m = e[E] ?? 0;
             _.push(e.toString("utf8", E + 1, E + 1 + m)), E += 1 + m;
           }
-          g = _;
+          h = _;
           break;
         }
         default:
-          g = Buffer.from(e.subarray(s, s + w));
+          h = Buffer.from(e.subarray(s, s + w));
       }
     } catch {
-      g = Buffer.from(e.subarray(s, s + w));
+      h = Buffer.from(e.subarray(s, s + w));
     }
     o.push({
       name: a.name,
@@ -18180,19 +18269,19 @@ function Md(e, t, n) {
       class: l & ~Bd,
       flush: (l & Bd) !== 0,
       ttl: f,
-      data: g
+      data: h
     }), s += w;
   }
   return { records: o, offset: s };
 }
 r(Md, "decodeRecords");
-function AR(e) {
+function OR(e) {
   let t = qd(e);
   if (!t) return null;
   let n = CE(e), o = 12;
   for (let c = 0; c < t.qdcount; c += 1)
     try {
-      o = Mi(e, o).offset + 4;
+      o = Ui(e, o).offset + 4;
     } catch {
       break;
     }
@@ -18207,10 +18296,10 @@ function AR(e) {
     additionals: a.records
   };
 }
-r(AR, "decodeMessage");
-var OR = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
+r(OR, "decodeMessage");
+var LR = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
 function PE(e) {
-  return OR.test(e) ? e.split(".").every((t) => Number(t) <= 255) : !1;
+  return LR.test(e) ? e.split(".").every((t) => Number(t) <= 255) : !1;
 }
 r(PE, "isIPv4");
 function AE(e, t) {
@@ -18223,29 +18312,29 @@ function jd(e, t = "fleetdeck") {
 }
 r(jd, "hostLabel");
 function jo(e = {}) {
-  let t = e.host || `${jd(e.name, "fleetdeck")}.local`, n = AE(e.instance || "Fleet Deck", "Fleet Deck"), o = Number(e.port) || 0, s = (Array.isArray(e.addresses) ? e.addresses : []).filter(PE), i = { path: "/", board: "fleetdeck", ...e.txt ?? {} }, a = kR.map((c) => ({ type: c, name: `${n}.${c}` }));
+  let t = e.host || `${jd(e.name, "fleetdeck")}.local`, n = AE(e.instance || "Fleet Deck", "Fleet Deck"), o = Number(e.port) || 0, s = (Array.isArray(e.addresses) ? e.addresses : []).filter(PE), i = { path: "/", board: "fleetdeck", ...e.txt ?? {} }, a = RR.map((c) => ({ type: c, name: `${n}.${c}` }));
   return { host: t, instance: n, port: o, addresses: s, txt: i, services: a };
 }
 r(jo, "normalize");
-function Bi(e, t) {
-  return t ?? xR[e];
+function Hi(e, t) {
+  return t ?? bR[e];
 }
-r(Bi, "ttlFor");
-function Sc(e, t, n) {
+r(Hi, "ttlFor");
+function xc(e, t, n) {
   return e.addresses.map((o) => ({
     name: e.host,
     type: "A",
-    ttl: Bi("A", t),
+    ttl: Hi("A", t),
     flush: n,
     data: o
   }));
 }
-r(Sc, "aRecords");
+r(xc, "aRecords");
 function OE(e, t, n) {
   return {
     name: t.type,
     type: "PTR",
-    ttl: Bi("PTR", n),
+    ttl: Hi("PTR", n),
     flush: !1,
     data: t.name
   };
@@ -18255,32 +18344,32 @@ function Wd(e, t, n, o) {
   return {
     name: t.name,
     type: "SRV",
-    ttl: Bi("SRV", n),
+    ttl: Hi("SRV", n),
     flush: o,
     data: { priority: 0, weight: 0, port: e.port, target: e.host }
   };
 }
 r(Wd, "srvRecord");
 function Hd(e, t, n, o) {
-  return { name: t.name, type: "TXT", ttl: Bi("TXT", n), flush: o, data: e.txt };
+  return { name: t.name, type: "TXT", ttl: Hi("TXT", n), flush: o, data: e.txt };
 }
 r(Hd, "txtRecord");
 function LE(e, t) {
   return e.services.map((n) => ({
     name: TE,
     type: "PTR",
-    ttl: Bi("PTR", t),
+    ttl: Hi("PTR", t),
     flush: !1,
     data: n.type
   }));
 }
 r(LE, "metaRecords");
 function qo(e) {
-  return `${e.name.toLowerCase()}|${xc(e.type)}|${JSON.stringify(e.data)}`;
+  return `${e.name.toLowerCase()}|${kc(e.type)}|${JSON.stringify(e.data)}`;
 }
 r(qo, "keyOf");
-function Fs(e = {}, { ttl: t } = {}) {
-  let n = jo(e), o = t !== 0, s = [...Sc(n, t, o), ...LE(n, t)];
+function Us(e = {}, { ttl: t } = {}) {
+  let n = jo(e), o = t !== 0, s = [...xc(n, t, o), ...LE(n, t)];
   for (let a of n.services)
     s.push(
       OE(n, a, t),
@@ -18293,53 +18382,53 @@ function Fs(e = {}, { ttl: t } = {}) {
     return i.has(c) ? !1 : (i.add(c), !0);
   });
 }
-r(Fs, "buildAnnouncement");
+r(Us, "buildAnnouncement");
 function Fd(e, t = {}, { ttl: n, flush: o = !0 } = {}) {
-  let s = jo(t), i = [], a = [], c = r((_, E) => _.type === cn.ANY || _.type === cn[E], "wants");
+  let s = jo(t), i = [], a = [], c = r((_, E) => _.type === on.ANY || _.type === on[E], "wants");
   for (let _ of e) {
-    if (_.class && _.class !== Fi && _.class !== vR) continue;
+    if (_.class && _.class !== Wi && _.class !== xR) continue;
     let E = _.name.replace(/\.$/, "").toLowerCase();
-    E === s.host.toLowerCase() && c(_, "A") && i.push(...Sc(s, n, o)), E === TE && c(_, "PTR") && i.push(...LE(s, n));
+    E === s.host.toLowerCase() && c(_, "A") && i.push(...xc(s, n, o)), E === TE && c(_, "PTR") && i.push(...LE(s, n));
     for (let m of s.services)
       E === m.type.toLowerCase() && c(_, "PTR") && (i.push(OE(s, m, n)), a.push(
         Wd(s, m, n, o),
         Hd(s, m, n, o),
-        ...Sc(s, n, o)
-      )), E === m.name.toLowerCase() && (c(_, "SRV") && (i.push(Wd(s, m, n, o)), a.push(...Sc(s, n, o))), c(_, "TXT") && i.push(Hd(s, m, n, o)));
+        ...xc(s, n, o)
+      )), E === m.name.toLowerCase() && (c(_, "SRV") && (i.push(Wd(s, m, n, o)), a.push(...xc(s, n, o))), c(_, "TXT") && i.push(Hd(s, m, n, o)));
   }
   let l = new Set(), f = i.filter((_) => {
     let E = qo(_);
     return l.has(E) ? !1 : (l.add(E), !0);
-  }), w = new Set(), g = a.filter((_) => {
+  }), w = new Set(), h = a.filter((_) => {
     let E = qo(_);
     return l.has(E) || w.has(E) ? !1 : (w.add(E), !0);
   });
-  return { answers: f, additionals: g };
+  return { answers: f, additionals: h };
 }
 r(Fd, "buildResponse");
-function LR(e = {}) {
+function DR(e = {}) {
   let t = jo(e), n = [
-    { name: t.host, type: cn.A, class: Fi, unicast: !0 },
+    { name: t.host, type: on.A, class: Wi, unicast: !0 },
     ...t.services.map((s) => ({
       name: s.name,
-      type: cn.SRV,
-      class: Fi,
+      type: on.SRV,
+      class: Wi,
       unicast: !0
     }))
-  ], o = Fs(e, { ttl: 0 }).filter(
+  ], o = Us(e, { ttl: 0 }).filter(
     (s) => s.type === "A" || s.type === "SRV"
   );
   return { questions: n, authorities: o };
 }
-r(LR, "buildProbeQuestions");
-function DR(e, t = {}, { phase: n } = {}) {
+r(DR, "buildProbeQuestions");
+function IR(e, t = {}, { phase: n } = {}) {
   let o = jo(t), s = new Set([o.host.toLowerCase()]), i = new Set(o.services.map((l) => l.name.toLowerCase())), a = new Map();
-  for (let l of Fs(t))
+  for (let l of Us(t))
     if (l.type === "A" || l.type === "SRV") {
-      let f = `${l.name.toLowerCase()}|${xc(l.type)}`, w = a.get(f);
+      let f = `${l.name.toLowerCase()}|${kc(l.type)}`, w = a.get(f);
       w || (w = new Set(), a.set(f, w)), w.add(qo(l));
     }
-  let c = AR(e);
+  let c = OR(e);
   if (!c) return !1;
   for (let l of [...c.answers, ...c.additionals]) {
     if (l.ttl === 0) continue;
@@ -18347,16 +18436,16 @@ function DR(e, t = {}, { phase: n } = {}) {
     if (f && !f.has(qo(l))) return !0;
   }
   if (n === "probing") {
-    let l = LR(t).authorities, f = new Set(l.map(qo)), w = new Set(c.authorities.map(qo));
+    let l = DR(t).authorities, f = new Set(l.map(qo)), w = new Set(c.authorities.map(qo));
     if (!(w.size === f.size && [...w].every((E) => f.has(E))) && c.authorities.length > 0 && (c.authorities.length > l.length || c.authorities.length === l.length && [...w].sort().join("") > [...f].sort().join("")))
       for (let E of c.questions) {
         let m = E.name.replace(/\.$/, "").toLowerCase();
-        if ((E.type === cn.A || E.type === cn.ANY ? s : i).has(m)) return !0;
+        if ((E.type === on.A || E.type === on.ANY ? s : i).has(m)) return !0;
       }
   }
   return !1;
 }
-r(DR, "uniqueConflict");
+r(IR, "uniqueConflict");
 function DE({
   port: e,
   name: t = "fleetdeck",
@@ -18368,23 +18457,23 @@ function DE({
   onDown: a = null,
   inject: c
 } = {}) {
-  let l = { port: e, name: t, instance: n, addresses: o, txt: s }, f = c?.dgram ?? SR, w = jo(l), g = r((T) => {
+  let l = { port: e, name: t, instance: n, addresses: o, txt: s }, f = c?.dgram ?? vR, w = jo(l), h = r((T) => {
     try {
       i(T);
     } catch {
     }
-  }, "note"), _ = !1, E = null, m = !1, U = !1, M = !1, D = [], O = new Set(), P = !1, v = null;
+  }, "note"), _ = !1, E = null, m = !1, $ = !1, F = !1, I = [], O = new Set(), P = !1, x = null;
   function Q(T, A) {
     if (m) return;
     m = !0;
-    let b = A instanceof Error && A.message ? `: ${A.message}` : "";
-    g(`mdns disabled (${T})${b} — the board still works over its IP`);
-    for (let H of O) clearTimeout(H);
+    let k = A instanceof Error && A.message ? `: ${A.message}` : "";
+    h(`mdns disabled (${T})${k} — the board still works over its IP`);
+    for (let V of O) clearTimeout(V);
     O.clear();
-    let X = v;
-    v = null;
+    let Y = x;
+    x = null;
     try {
-      X?.close();
+      Y?.close();
     } catch {
     }
     if (a)
@@ -18394,172 +18483,172 @@ function DE({
       }
   }
   r(Q, "die");
-  function G(T, A, b, X) {
-    if (!v || m) return;
-    let H = v;
+  function z(T, A, k, Y) {
+    if (!x || m) return;
+    let V = x;
     try {
-      H.send(T, A, b, (ee) => {
-        ee && ee.code !== "ENETUNREACH" && ee.code !== "EHOSTUNREACH" && g(`mdns send failed: ${ee.message}`), X?.();
+      V.send(T, A, k, (te) => {
+        te && te.code !== "ENETUNREACH" && te.code !== "EHOSTUNREACH" && h(`mdns send failed: ${te.message}`), Y?.();
       });
-    } catch (ee) {
-      g(`mdns send failed: ${Ze(ee)}`), X?.();
+    } catch (te) {
+      h(`mdns send failed: ${Ze(te)}`), Y?.();
     }
   }
-  r(G, "sendRaw");
-  function Ee(T, A, b) {
-    G(T, A, b);
+  r(z, "sendRaw");
+  function Ee(T, A, k) {
+    z(T, A, k);
   }
   r(Ee, "send");
   function ye(T, A) {
-    if (!v || m || !D.length) {
+    if (!x || m || !I.length) {
       A?.();
       return;
     }
-    let b = v, X = D.length, H = r(() => {
-      X -= 1, X <= 0 && A?.();
+    let k = x, Y = I.length, V = r(() => {
+      Y -= 1, Y <= 0 && A?.();
     }, "settled");
-    for (let ee of D) {
+    for (let te of I) {
       try {
-        b.setMulticastInterface(ee);
+        k.setMulticastInterface(te);
       } catch {
       }
-      let C = T(ee);
-      C ? G(C, kr, ar, H) : H();
+      let C = T(te);
+      C ? z(C, xr, sr, V) : V();
     }
   }
   r(ye, "sendMulticastAll");
-  function Ie(T, A) {
-    let b = Fs(
+  function De(T, A) {
+    let k = Us(
       { ...l, addresses: [T] },
       A === void 0 ? {} : { ttl: A }
     );
-    return b.length ? go({ id: 0, flags: Vr, answers: b }) : null;
+    return k.length ? go({ id: 0, flags: Kr, answers: k }) : null;
   }
-  r(Ie, "announcementFor");
-  function Se(T, A) {
-    let b = setTimeout(() => {
-      O.delete(b), T();
+  r(De, "announcementFor");
+  function ve(T, A) {
+    let k = setTimeout(() => {
+      O.delete(k), T();
     }, A);
-    b.unref(), O.add(b);
+    k.unref(), O.add(k);
   }
-  r(Se, "schedule");
+  r(ve, "schedule");
   function $e(T) {
     try {
-      if (D.length)
-        ye((A) => Ie(A, T));
+      if (I.length)
+        ye((A) => De(A, T));
       else {
-        let A = Fs(l, T === void 0 ? {} : { ttl: T });
-        A.length && Ee(go({ id: 0, flags: Vr, answers: A }), kr, ar);
+        let A = Us(l, T === void 0 ? {} : { ttl: T });
+        A.length && Ee(go({ id: 0, flags: Kr, answers: A }), xr, sr);
       }
     } catch (A) {
-      g(`mdns announce failed: ${Ze(A)}`);
+      h(`mdns announce failed: ${Ze(A)}`);
     }
   }
   r($e, "announce");
   function Z(T) {
-    let A = !1, b = r(() => {
+    let A = !1, k = r(() => {
       A || (A = !0, Q(T));
     }, "finish");
     try {
-      let X = setTimeout(b, 250);
-      if (X.unref(), D.length)
+      let Y = setTimeout(k, 250);
+      if (Y.unref(), I.length)
         ye(
-          (H) => Ie(H, 0),
+          (V) => De(V, 0),
           () => {
-            clearTimeout(X), b();
+            clearTimeout(Y), k();
           }
         );
-      else if (v) {
-        let H = v, ee = Fs(l, { ttl: 0 });
-        H.send(
-          go({ id: 0, flags: Vr, answers: ee }),
-          kr,
-          ar,
+      else if (x) {
+        let V = x, te = Us(l, { ttl: 0 });
+        V.send(
+          go({ id: 0, flags: Kr, answers: te }),
+          xr,
+          sr,
           () => {
-            clearTimeout(X), b();
+            clearTimeout(Y), k();
           }
         );
       } else
-        clearTimeout(X), b();
+        clearTimeout(Y), k();
     } catch {
-      b();
+      k();
     }
   }
   r(Z, "withdrawAndDie");
-  function ae(T, A) {
+  function ie(T, A) {
     try {
-      let b = qd(T);
-      if (!b) return;
-      if (v && A.port === kr && !E && P && (b.flags & Ud) !== 0 && DR(T, l, { phase: "announced" })) {
+      let k = qd(T);
+      if (!k) return;
+      if (x && A.port === xr && !E && P && (k.flags & Ud) !== 0 && IR(T, l, { phase: "announced" })) {
         Z(`name conflict for ${w.host} — another device owns this name`);
         return;
       }
-      if (b.qdcount === 0 || (b.flags & Ud) !== 0) return;
-      let X = CE(T);
-      if (!X.length) return;
-      let H = A.port !== kr, ee = H ? Fd(X, l, { ttl: bR, flush: !1 }) : Fd(X, l);
-      if (!ee.answers.length) return;
-      H || X.some((C) => C.unicast) ? Ee(
+      if (k.qdcount === 0 || (k.flags & Ud) !== 0) return;
+      let Y = CE(T);
+      if (!Y.length) return;
+      let V = A.port !== xr, te = V ? Fd(Y, l, { ttl: kR, flush: !1 }) : Fd(Y, l);
+      if (!te.answers.length) return;
+      V || Y.some((C) => C.unicast) ? Ee(
         go({
-          id: H ? b.id : 0,
-          flags: Vr,
-          questions: H ? X : [],
+          id: V ? k.id : 0,
+          flags: Kr,
+          questions: V ? Y : [],
 
-          answers: ee.answers,
-          additionals: ee.additionals
+          answers: te.answers,
+          additionals: te.additionals
         }),
         A.port,
         A.address
-      ) : D.length ? ye((C) => {
-        let { answers: W, additionals: y } = Fd(X, {
+      ) : I.length ? ye((C) => {
+        let { answers: q, additionals: y } = Fd(Y, {
           ...l,
           addresses: [C]
         });
-        return W.length ? go({ id: 0, flags: Vr, questions: [], answers: W, additionals: y }) : null;
+        return q.length ? go({ id: 0, flags: Kr, questions: [], answers: q, additionals: y }) : null;
       }) : Ee(
         go({
           id: 0,
-          flags: Vr,
+          flags: Kr,
           questions: [],
-          answers: ee.answers,
-          additionals: ee.additionals
+          answers: te.answers,
+          additionals: te.additionals
         }),
-        kr,
-        ar
+        xr,
+        sr
       );
-    } catch (b) {
-      g(`mdns query handling error: ${Ze(b)}`);
+    } catch (k) {
+      h(`mdns query handling error: ${Ze(k)}`);
     }
   }
-  r(ae, "onMessage");
-  function L() {
-    let T = v;
+  r(ie, "onMessage");
+  function D() {
+    let T = x;
     if (!T) return;
     try {
       T.setTTL?.(255);
-    } catch (b) {
-      Q("cannot set unicast TTL 255", b);
+    } catch (k) {
+      Q("cannot set unicast TTL 255", k);
       return;
     }
     try {
       T.setMulticastTTL(255);
-    } catch (b) {
-      Q("cannot set multicast TTL 255", b);
+    } catch (k) {
+      Q("cannot set multicast TTL 255", k);
       return;
     }
     try {
       T.setMulticastLoopback(!0);
     } catch {
     }
-    D = [];
+    I = [];
     let A = 0;
     try {
-      T.addMembership(ar), A += 1;
+      T.addMembership(sr), A += 1;
     } catch {
     }
-    for (let b of w.addresses)
+    for (let k of w.addresses)
       try {
-        T.addMembership(ar, b), D.push(b), A += 1;
+        T.addMembership(sr, k), I.push(k), A += 1;
       } catch {
       }
     if (A === 0) {
@@ -18567,28 +18656,28 @@ function DE({
       return;
     }
     P = !0;
-    for (let b of kE)
-      Se(() => {
+    for (let k of kE)
+      ve(() => {
         $e();
-      }, b);
-    g(
+      }, k);
+    h(
       `mdns responding for ${w.host}:${w.port}${w.addresses.length ? ` (${w.addresses.join(", ")})` : " (no LAN address to advertise)"}`
     );
   }
-  r(L, "onBound");
+  r(D, "onBound");
   function S() {
-    if (_ || M) return;
+    if (_ || F) return;
     if (_ = !0, !w.port) {
       Q("no port to advertise");
       return;
     }
     if (!w.addresses.length) {
-      if (!U && (g("mdns disabled (no non-internal IPv4 address) — the board still works over its IP"), a))
+      if (!$ && (h("mdns disabled (no non-internal IPv4 address) — the board still works over its IP"), a))
         try {
           a("no non-internal IPv4 address");
         } catch {
         }
-      _ = !1, U = !0;
+      _ = !1, $ = !0;
       return;
     }
     let T;
@@ -18598,16 +18687,16 @@ function DE({
       Q("socket create failed", A);
       return;
     }
-    v = T, T.on("error", (A) => {
+    x = T, T.on("error", (A) => {
       Q(
         A.code === "EADDRINUSE" ? "port 5353 already owned by another responder" : A.code ?? "socket error",
         A
       );
-    }), T.on("message", ae);
+    }), T.on("message", ie);
     try {
-      T.bind({ port: kr }, () => {
+      T.bind({ port: xr }, () => {
         try {
-          L();
+          D();
         } catch (A) {
           Q("bind setup failed", A);
         }
@@ -18617,137 +18706,137 @@ function DE({
     }
   }
   r(S, "start");
-  function I(T) {
-    if (m || M || E) return !1;
+  function N(T) {
+    if (m || F || E) return !1;
     try {
-      let A = Array.isArray(T) ? T : T?.addresses, b = (Array.isArray(A) ? A : []).filter(PE);
-      if (U)
-        return b.length ? (l.addresses = b, w = jo(l), U = !1, S(), !m) : !1;
-      if (!_ || !v) return !1;
-      let X = v;
-      if (!b.length || b.length === w.addresses.length && b.every((C) => w.addresses.includes(C)))
+      let A = Array.isArray(T) ? T : T?.addresses, k = (Array.isArray(A) ? A : []).filter(PE);
+      if ($)
+        return k.length ? (l.addresses = k, w = jo(l), $ = !1, S(), !m) : !1;
+      if (!_ || !x) return !1;
+      let Y = x;
+      if (!k.length || k.length === w.addresses.length && k.every((C) => w.addresses.includes(C)))
         return !1;
-      let H = w.addresses.filter((C) => !b.includes(C)), ee = b.filter((C) => !w.addresses.includes(C));
-      l.addresses = b, w = jo(l);
-      for (let C of H) {
-        let W = go({
+      let V = w.addresses.filter((C) => !k.includes(C)), te = k.filter((C) => !w.addresses.includes(C));
+      l.addresses = k, w = jo(l);
+      for (let C of V) {
+        let q = go({
           id: 0,
-          flags: Vr,
+          flags: Kr,
           answers: [{ name: w.host, type: "A", ttl: 0, flush: !1, data: C }]
         });
-        if (D.includes(C)) {
+        if (I.includes(C)) {
           try {
-            X.setMulticastInterface(C);
+            Y.setMulticastInterface(C);
           } catch {
           }
-          G(W, kr, ar);
+          z(q, xr, sr);
         } else
-          Ee(W, kr, ar);
+          Ee(q, xr, sr);
       }
-      for (let C of H)
+      for (let C of V)
         try {
-          X.dropMembership(ar, C);
+          Y.dropMembership(sr, C);
         } catch {
         }
-      D = D.filter((C) => !H.includes(C));
-      for (let C of ee)
+      I = I.filter((C) => !V.includes(C));
+      for (let C of te)
         try {
-          X.addMembership(ar, C), D.includes(C) || D.push(C);
+          Y.addMembership(sr, C), I.includes(C) || I.push(C);
         } catch {
         }
       for (let C of kE)
-        Se(() => {
+        ve(() => {
           $e();
         }, C);
-      return g(`mdns addresses updated (${w.addresses.join(", ")})`), !0;
+      return h(`mdns addresses updated (${w.addresses.join(", ")})`), !0;
     } catch (A) {
-      return g(`mdns address update failed: ${Ze(A)}`), !1;
+      return h(`mdns address update failed: ${Ze(A)}`), !1;
     }
   }
-  r(I, "update");
+  r(N, "update");
   function d() {
     if (E) return E;
-    if (!_ || m || !v) {
-      m = !0, M = !0;
+    if (!_ || m || !x) {
+      m = !0, F = !0;
       for (let T of O) clearTimeout(T);
       return O.clear(), E = Promise.resolve(), E;
     }
     for (let T of O) clearTimeout(T);
     return O.clear(), E = new Promise((T) => {
       let A = r(() => {
-        let b = v;
-        v = null, m = !0, M = !0;
+        let k = x;
+        x = null, m = !0, F = !0;
         try {
-          b?.close(T);
+          k?.close(T);
         } catch {
           T();
         }
       }, "finish");
       try {
-        let b = setTimeout(A, 250);
-        b.unref();
-        let X = r(() => {
-          clearTimeout(b), A();
+        let k = setTimeout(A, 250);
+        k.unref();
+        let Y = r(() => {
+          clearTimeout(k), A();
         }, "done");
-        if (D.length)
-          ye((H) => Ie(H, 0), X);
+        if (I.length)
+          ye((V) => De(V, 0), Y);
         else {
-          let H = v, ee = Fs(l, { ttl: 0 });
-          H ? H.send(
-            go({ id: 0, flags: Vr, answers: ee }),
-            kr,
-            ar,
-            X
-          ) : X();
+          let V = x, te = Us(l, { ttl: 0 });
+          V ? V.send(
+            go({ id: 0, flags: Kr, answers: te }),
+            xr,
+            sr,
+            Y
+          ) : Y();
         }
       } catch {
         A();
       }
     }), E;
   }
-  return r(d, "stop"), { start: S, stop: d, update: I, alive: r(() => _ && !m && v !== null, "alive") };
+  return r(d, "stop"), { start: S, stop: d, update: N, alive: r(() => _ && !m && x !== null, "alive") };
 }
 r(DE, "createMdns");
 
 
 import { appendFileSync as Kd } from "node:fs";
-function IR() {
+function NR() {
   return process.env.FLEETDECK_TEST_NET_MOCK === "1";
 }
-r(IR, "testNetMock");
-function Bs(e) {
+r(NR, "testNetMock");
+function Ws(e) {
   let t = process.env.FLEETDECK_MDNS_RECORD;
   t && Kd(t, `${JSON.stringify({ ...e, at: Date.now() })}
 `);
 }
-r(Bs, "recordMdns");
-var NR = 0, Gd = class {
+r(Ws, "recordMdns");
+var MR = 0, Gd = class {
   static {
     r(this, "MockSocket");
   }
-  id = NR++;
+  id = MR++;
   on() {
     return this;
   }
 
 
   setTTL(t) {
-    if (Bs({ type: "setTTL", value: t }), process.env.FLEETDECK_MDNS_FAIL_TTL === "unicast")
+    if (Ws({ type: "setTTL", value: t }), process.env.FLEETDECK_MDNS_FAIL_TTL === "unicast")
       throw new Error("mock: IP_TTL refused");
   }
   setMulticastTTL(t) {
-    if (Bs({ type: "setMulticastTTL", value: t }), process.env.FLEETDECK_MDNS_FAIL_TTL === "multicast")
+    if (Ws({ type: "setMulticastTTL", value: t }), process.env.FLEETDECK_MDNS_FAIL_TTL === "multicast")
       throw new Error("mock: IP_MULTICAST_TTL refused");
   }
   setMulticastLoopback() {
   }
   setMulticastInterface(t) {
-    Bs({ type: "setiface", id: this.id, address: t });
+    Ws({ type: "setiface", id: this.id, address: t });
   }
 
 
   addMembership(t, n) {
-    if (Bs({ type: "join", id: this.id, address: n ?? null }), process.env.FLEETDECK_MDNS_JOIN_FAILS) throw new Error("no multicast route");
+    if (Ws({ type: "join", id: this.id, address: n ?? null }), process.env.FLEETDECK_MDNS_JOIN_FAILS) throw new Error("no multicast route");
   }
   dropMembership() {
   }
@@ -18757,10 +18846,10 @@ var NR = 0, Gd = class {
   send(t, n, o, s = () => {
   }) {
     let i = Buffer.from(t).toString("base64");
-    Bs({ type: "send", id: this.id, wire: i, address: o });
+    Ws({ type: "send", id: this.id, wire: i, address: o });
     let a = Number(process.env.FLEETDECK_MDNS_SEND_DELAY_MS ?? 150);
     setTimeout(() => {
-      Bs({ type: "callback", id: this.id, wire: i }), s();
+      Ws({ type: "callback", id: this.id, wire: i }), s();
     }, a).unref?.();
   }
   close(t) {
@@ -18768,7 +18857,7 @@ var NR = 0, Gd = class {
   }
 };
 function NE() {
-  return IR() ? { dgram: { createSocket: r(() => new Gd(), "createSocket") } } : void 0;
+  return NR() ? { dgram: { createSocket: r(() => new Gd(), "createSocket") } } : void 0;
 }
 r(NE, "mdnsDgramInject");
 var IE = !1;
@@ -18801,7 +18890,7 @@ r(FE, "recordRefreshLan");
 
 import Vd from "node:fs";
 import UE from "node:path";
-function kc(e) {
+function Tc(e) {
   try {
     let n = JSON.parse(e);
     if (typeof n == "object" && n !== null) {
@@ -18817,29 +18906,29 @@ function kc(e) {
   let t = Number(e.trim());
   return Number.isInteger(t) && t > 0 ? { pid: t, port: null } : null;
 }
-r(kc, "pidRecord");
-function bc(e) {
+r(Tc, "pidRecord");
+function Rc(e) {
   try {
     return process.kill(e, 0), !0;
   } catch (t) {
-    return mt(t) !== "ESRCH";
+    return dt(t) !== "ESRCH";
   }
 }
-r(bc, "pidIsLive");
-function MR(e, t) {
+r(Rc, "pidIsLive");
+function FR(e, t) {
   let n = /^(?:node|nodejs|bun(?:\.exe)?|fleetd)$/i.test(e), o = t.some((i) => /(?:^|[/\\])fleetd(?:\.bundle)?\.(?:mjs|ts)$/.test(i)), s = t.some(
     (i, a) => /(?:^|[/\\])fleetdeck\.(?:mjs|ts)$/.test(i) && t[a + 1] === "serve"
   );
   return n && (o || s);
 }
-r(MR, "fleetdProcessIdentity");
+r(FR, "fleetdProcessIdentity");
 function zd(e) {
   if (process.platform !== "linux") return !0;
   try {
     let t = UE.basename(Vd.readlinkSync(`/proc/${e}/exe`)).replace(/ \(deleted\)$/, ""), n = Vd.readFileSync(`/proc/${e}/cmdline`).toString("utf8").split("\0").filter(Boolean);
-    return MR(t, n);
+    return FR(t, n);
   } catch (t) {
-    return mt(t) !== "ENOENT";
+    return dt(t) !== "ENOENT";
   }
 }
 r(zd, "livePidLooksLikeFleetd");
@@ -18868,7 +18957,7 @@ function $E(e) {
   return e.every((t) => t === 0);
 }
 r($E, "isZeroVersion");
-function FR(e, t) {
+function BR(e, t) {
   for (let o = 0; o < e.core.length; o += 1) {
     let s = e.core[o], i = t.core[o];
     if (s === void 0 || i === void 0) break;
@@ -18888,10 +18977,10 @@ function FR(e, t) {
   }
   return e.pre.length === t.pre.length ? 0 : e.pre.length > t.pre.length ? 1 : -1;
 }
-r(FR, "compareSemver");
+r(BR, "compareSemver");
 function WE(e, t) {
   let n = BE(e), o = BE(t);
-  return !n || !o || $E(n.core) || $E(o.core) ? !1 : FR(n, o) > 0;
+  return !n || !o || $E(n.core) || $E(o.core) ? !1 : BR(n, o) > 0;
 }
 r(WE, "shouldTakeOver");
 function HE(e, t, n) {
@@ -18899,94 +18988,94 @@ function HE(e, t, n) {
     return !1;
   let o;
   try {
-    o = kc(Vd.readFileSync(UE.join(t, "fleetd.pid"), "utf8"));
+    o = Tc(Vd.readFileSync(UE.join(t, "fleetd.pid"), "utf8"));
   } catch {
     return !1;
   }
   return o?.pid !== e || n !== void 0 && o.port !== n ? !1 : zd(e);
 }
 r(HE, "verifyDaemonPid");
-var BR = _i;
+var $R = bi;
 async function qE(e, {
   timeoutMs: t = 2e3,
-  sleep: n = BR,
+  sleep: n = $R,
   signal: o
 } = {}) {
   o?.throwIfAborted();
   try {
     process.kill(e, "SIGTERM");
   } catch (a) {
-    return mt(a) === "ESRCH";
+    return dt(a) === "ESRCH";
   }
   let s = 100, i = Math.max(1, Math.ceil(t / s));
   for (let a = 0; a < i; a += 1)
     if (o ? await new Promise((c, l) => {
       let f = !1, w = r((_) => {
-        f || (f = !0, o.removeEventListener("abort", g), _ === void 0 ? c() : l(_));
-      }, "finish"), g = r(() => {
+        f || (f = !0, o.removeEventListener("abort", h), _ === void 0 ? c() : l(_));
+      }, "finish"), h = r(() => {
         try {
           o.throwIfAborted();
         } catch (_) {
           w(_);
         }
       }, "onAbort");
-      if (o.addEventListener("abort", g, { once: !0 }), o.aborted) {
-        g();
+      if (o.addEventListener("abort", h, { once: !0 }), o.aborted) {
+        h();
         return;
       }
       n(s).then(() => w(), w);
-    }) : await n(s), !bc(e)) return !0;
-  return !bc(e);
+    }) : await n(s), !Rc(e)) return !0;
+  return !Rc(e);
 }
 r(qE, "terminateDaemon");
 
 
-var $R = 1e4, UR = 6e4, WR = 100, HR = 1e3, qR = ["claude", "agents", "--json"], jR = 5e3, Xd = class extends yt("AgentsPollDecodeError") {
+var UR = 1e4, WR = 6e4, HR = 100, qR = 1e3, jR = ["claude", "agents", "--json"], GR = 5e3, Xd = class extends ht("AgentsPollDecodeError") {
   static {
     r(this, "AgentsPollDecodeError");
   }
-}, Ui = class extends yt("AgentsPollIngestError") {
+}, ji = class extends ht("AgentsPollIngestError") {
   static {
     r(this, "AgentsPollIngestError");
   }
-}, Rc = class extends yt("AgentsPollLivenessError") {
+}, Cc = class extends ht("AgentsPollLivenessError") {
   static {
     r(this, "AgentsPollLivenessError");
   }
-}, $i = { _tag: "SkippedPoll" };
-function GR(e) {
+}, qi = { _tag: "SkippedPoll" };
+function KR(e) {
   let t = e.FLEETDECK_AGENTS_CMD;
-  if (t === void 0) return qR;
+  if (t === void 0) return jR;
   let n = t.trim();
   if (n === "" || n === "false") return null;
   let [o, ...s] = n.split(/\s+/);
   return o === void 0 ? null : [o, ...s];
 }
-r(GR, "resolveEnvArgv");
-function KR(e) {
+r(KR, "resolveEnvArgv");
+function VR(e) {
   if (e === null) return null;
   let [t, ...n] = e;
   return t === void 0 ? null : [t, ...n];
 }
-r(KR, "copyArgv");
-function VR(e = {}) {
+r(VR, "copyArgv");
+function zR(e = {}) {
   let t = e.env ?? process.env, n = Math.max(
-    WR,
-    Number(t.FLEETDECK_AGENTS_POLL_MS) || $R
+    HR,
+    Number(t.FLEETDECK_AGENTS_POLL_MS) || UR
   ), o = Math.max(
     n,
-    Number(t.FLEETDECK_AGENTS_IDLE_POLL_MS) || (t.FLEETDECK_AGENTS_POLL_MS ? n : UR)
-  ), s = Math.min(HR, n);
+    Number(t.FLEETDECK_AGENTS_IDLE_POLL_MS) || (t.FLEETDECK_AGENTS_POLL_MS ? n : WR)
+  ), s = Math.min(qR, n);
   return {
-    argv: e.argv === void 0 ? GR(t) : KR(e.argv),
+    argv: e.argv === void 0 ? KR(t) : VR(e.argv),
     firstRunDelayMs: e.firstRunDelayMs ?? s,
     idlePollIntervalMs: e.idlePollIntervalMs ?? o,
     pollIntervalMs: e.pollIntervalMs ?? n,
-    processOwnedBy: e.processOwnedBy ?? yi
+    processOwnedBy: e.processOwnedBy ?? xi
   };
 }
-r(VR, "resolveAgentsPollOptions");
-function zR(e, t = yi) {
+r(zR, "resolveAgentsPollOptions");
+function XR(e, t = xi) {
   return Array.isArray(e) ? e.some((n) => {
     if (typeof n != "object" || n === null) return !1;
     let o = n;
@@ -18996,39 +19085,39 @@ function zR(e, t = yi) {
     );
   }) : !1;
 }
-r(zR, "hasLiveInteractiveAgent");
-function XR(e) {
-  return qt({
+r(XR, "hasLiveInteractiveAgent");
+function YR(e) {
+  return Ft({
     try: r(() => ({ _tag: "ValidPoll", records: JSON.parse(e) }), "try"),
     catch: r((t) => new Xd({ cause: t }), "catch")
   });
 }
-r(XR, "decodePoll");
-function YR(e, t) {
-  return e.run({ argv: t, timeoutMs: jR }).pipe(
-    kn(({ out: n }) => XR(n)),
+r(YR, "decodePoll");
+function JR(e, t) {
+  return e.run({ argv: t, timeoutMs: GR }).pipe(
+    an(({ out: n }) => YR(n)),
     eg({
-      AgentsPollDecodeError: r(() => vt($i), "AgentsPollDecodeError"),
-      ProcessNonZeroExitError: r(() => vt($i), "ProcessNonZeroExitError"),
-      ProcessOutputLimitError: r(() => vt($i), "ProcessOutputLimitError"),
-      ProcessSpawnError: r(() => vt($i), "ProcessSpawnError"),
-      ProcessTimeoutError: r(() => vt($i), "ProcessTimeoutError")
+      AgentsPollDecodeError: r(() => wt(qi), "AgentsPollDecodeError"),
+      ProcessNonZeroExitError: r(() => wt(qi), "ProcessNonZeroExitError"),
+      ProcessOutputLimitError: r(() => wt(qi), "ProcessOutputLimitError"),
+      ProcessSpawnError: r(() => wt(qi), "ProcessSpawnError"),
+      ProcessTimeoutError: r(() => wt(qi), "ProcessTimeoutError")
     })
   );
 }
-r(YR, "runPoll");
+r(JR, "runPoll");
 function Yd(e) {
   let t = e.ingestAgentsPoll.bind(e);
-  return (n) => qt({
+  return (n) => Ft({
     try: r(() => t(n), "try"),
-    catch: r((o) => new Ui({ cause: o }), "catch")
+    catch: r((o) => new ji({ cause: o }), "catch")
   });
 }
 r(Yd, "legacyAgentsIngestWork");
-function JR(e, t) {
-  return e(t).pipe(Ur("AgentsPollIngestError", () => At));
+function QR(e, t) {
+  return e(t).pipe($r("AgentsPollIngestError", () => Ct));
 }
-r(JR, "ingestPoll");
+r(QR, "ingestPoll");
 function Jd(e) {
   return ao((t) => {
     let n;
@@ -19036,103 +19125,103 @@ function Jd(e) {
       n = Promise.resolve(e()).then(() => {
       });
     } catch (s) {
-      t(Xt(new Rc({ cause: s })));
+      t(jt(new Cc({ cause: s })));
       return;
     }
     let o = n.then(
       () => {
-        t(At);
+        t(Ct);
       },
       (s) => {
-        t(Xt(new Rc({ cause: s })));
+        t(jt(new Cc({ cause: s })));
       }
     );
-    return Bt(() => o);
+    return bt(() => o);
   });
 }
 r(Jd, "ownedLivenessTick");
 function Qd(e) {
   let t = e.spawnLivenessTick?.bind(e);
-  return t === void 0 ? At : Jd(t);
+  return t === void 0 ? Ct : Jd(t);
 }
 r(Qd, "legacyLivenessWork");
-function QR(e) {
-  return e.pipe(Ur("AgentsPollLivenessError", () => At));
+function ZR(e) {
+  return e.pipe($r("AgentsPollLivenessError", () => Ct));
 }
-r(QR, "runLiveness");
-function ZR(e, t, n, o, s) {
+r(ZR, "runLiveness");
+function e0(e, t, n, o, s) {
   return ze(function* () {
     if (n.argv !== null && o !== null) {
       let i = yield* Og(s);
       if ((yield* io) >= i.nextAgentsPollAt) {
-        let c = yield* YR(o, n.argv), l = i.agentsWereActive;
-        c._tag === "ValidPoll" && (yield* JR(e, c.records), l = yield* Ue(
-          () => zR(c.records, n.processOwnedBy)
+        let c = yield* JR(o, n.argv), l = i.agentsWereActive;
+        c._tag === "ValidPoll" && (yield* QR(e, c.records), l = yield* Be(
+          () => XR(c.records, n.processOwnedBy)
         ));
         let f = yield* io;
-        yield* Ma(s, {
+        yield* Ba(s, {
           agentsWereActive: l,
           nextAgentsPollAt: f + (l ? n.pollIntervalMs : n.idlePollIntervalMs)
         });
       }
     }
-    yield* QR(t);
+    yield* ZR(t);
   });
 }
-r(ZR, "makeTick");
+r(e0, "makeTick");
 function jE(e, t = {}, n = Yd(e), o = Qd(e)) {
-  let s = VR(t);
+  let s = zR(t);
   return ze(function* () {
     let i = null;
-    s.argv !== null && (i = yield* yr);
-    let a = yield* Na({
+    s.argv !== null && (i = yield* wr);
+    let a = yield* Fa({
       agentsWereActive: !1,
       nextAgentsPollAt: 0
-    }), c = ZR(n, o, s, i, a);
-    return yield* ms(nr(s.firstRunDelayMs)), yield* hs(c, hu(nr(s.pollIntervalMs))), yield* $r;
+    }), c = e0(n, o, s, i, a);
+    return yield* ws(er(s.firstRunDelayMs)), yield* ys(c, hu(er(s.pollIntervalMs))), yield* Br;
   });
 }
 r(jE, "makeAgentsPollProgram");
 
 
-function $s(e, t) {
+function Hs(e, t) {
   return new uo({
     operation: `boot-${e}`,
     cause: t,
     message: `fleetd boot ${e} failed`
   });
 }
-r($s, "operationalError");
+r(Hs, "operationalError");
 function GE(e, t) {
-  return Hr({
+  return Wr({
     try: t,
-    catch: r((n) => $s(e, n), "catch")
+    catch: r((n) => Hs(e, n), "catch")
   });
 }
 r(GE, "legacyPromise");
 function KE(e) {
   let t = e.clearForkHealing.bind(e), n = e.reconcileSpawns.bind(e), o = e.awaitBroadcastIdle.bind(e);
   return {
-    clearForkHealing: qt({
+    clearForkHealing: Ft({
       try: t,
-      catch: r((s) => $s("clear-fork-healing", s), "catch")
+      catch: r((s) => Hs("clear-fork-healing", s), "catch")
     }),
     reconcileSpawns: GE("spawn-reconciliation", n),
     awaitBroadcastIdle: GE("broadcast-idle", o)
   };
 }
 r(KE, "legacyBootReconciliationWithoutRetentionWork");
-function Tc(e, t) {
-  return Kn(() => t).pipe(
-    Ta(null),
-    Ur("BackgroundOperationalError", (n) => vt({ operation: e, error: n }))
+function Pc(e, t) {
+  return Gn(() => t).pipe(
+    Pa(null),
+    $r("BackgroundOperationalError", (n) => wt({ operation: e, error: n }))
   );
 }
-r(Tc, "attempt");
+r(Pc, "attempt");
 function Zd(e, t, n) {
-  return t ? Ue(() => {
+  return t ? Be(() => {
     e.push(t);
-  }).pipe(co(n ? Kn(() => n(t)) : At)) : At;
+  }).pipe(co(n ? Gn(() => n(t)) : Ct)) : Ct;
 }
 r(Zd, "recordFailure");
 function VE(e, t) {
@@ -19144,18 +19233,18 @@ function VE(e, t) {
     onOperationalFailure: t.onOperationalFailure
   };
   return ze(function* () {
-    let o = [], s = yield* Tc("clear-fork-healing", n.clearForkHealing);
+    let o = [], s = yield* Pc("clear-fork-healing", n.clearForkHealing);
     yield* Zd(o, s, n.onOperationalFailure);
-    let i = yield* Ra(
+    let i = yield* Ca(
       [
-        Tc("spawn-reconciliation", n.reconcileSpawns),
-        Tc("first-retention", n.firstRetention)
+        Pc("spawn-reconciliation", n.reconcileSpawns),
+        Pc("first-retention", n.firstRetention)
       ],
       { concurrency: "unbounded" }
     );
     for (let c of i)
       yield* Zd(o, c, n.onOperationalFailure);
-    let a = yield* Tc("broadcast-idle", n.awaitBroadcastIdle);
+    let a = yield* Pc("broadcast-idle", n.awaitBroadcastIdle);
     return yield* Zd(o, a, n.onOperationalFailure), yield* e.markReconciliationReady, {
       degraded: o.length > 0,
       failures: Object.freeze([...o])
@@ -19165,7 +19254,7 @@ function VE(e, t) {
 r(VE, "makeBootReconciliationProgram");
 
 
-var tf = class extends yt(
+var tf = class extends ht(
   "BackgroundProgramUnexpectedExitError"
 ) {
   static {
@@ -19175,7 +19264,7 @@ var tf = class extends yt(
 function ef(e, t) {
   return t.pipe(
     co(
-      Ln(
+      Pn(
         new tf({
           program: e,
           message: `background program ${e} returned unexpectedly`
@@ -19193,15 +19282,15 @@ function zE(e, t) {
     boot: t.boot
   };
   return ze(function* () {
-    let o = yield* gr(), s = jn(o).pipe(
+    let o = yield* pr(), s = qn(o).pipe(
       co(n.retention.program)
     ), i = so(o, void 0).pipe(
       co(n.retention.awaitFirstRun)
     ), a = VE(e, {
       ...n.boot,
       firstRetention: i
-    }), c = r((l) => l.pipe(Wr((f) => e.observeChildExit(f))), "observe");
-    return yield* Ra(
+    }), c = r((l) => l.pipe(Ur((f) => e.observeChildExit(f))), "observe");
+    return yield* Ca(
       [
         c(ef("agents-poll", n.agentsPoll)),
         c(ef("lan-refresh", n.lanRefresh)),
@@ -19209,7 +19298,7 @@ function zE(e, t) {
         c(a)
       ],
       { concurrency: "unbounded", discard: !0 }
-    ), yield* $r;
+    ), yield* Br;
   });
 }
 r(zE, "makeDaemonBackgroundProgram");
@@ -19218,9 +19307,9 @@ r(zE, "makeDaemonBackgroundProgram");
 function XE(e) {
   let t = e.ingestAgentsPoll.bind(e);
   return (n) => ze(function* () {
-    return yield* Yt, yield* qt({
+    return yield* Gt, yield* Ft({
       try: r(() => t(n), "try"),
-      catch: r((o) => new Ui({ cause: o }), "catch")
+      catch: r((o) => new ji({ cause: o }), "catch")
     });
   });
 }
@@ -19231,21 +19320,21 @@ function YE(e) {
   let t = e.clearForkHealing.bind(e), n = e.reconcileSpawns.bind(e), o = e.awaitBroadcastIdle.bind(e);
   return {
     clearForkHealing: ze(function* () {
-      return yield* Yt, yield* qt({
+      return yield* Gt, yield* Ft({
         try: t,
-        catch: r((s) => $s("clear-fork-healing", s), "catch")
+        catch: r((s) => Hs("clear-fork-healing", s), "catch")
       });
     }),
     reconcileSpawns: ze(function* () {
-      return yield* Yt, yield* Hr({
+      return yield* Gt, yield* Wr({
         try: n,
-        catch: r((s) => $s("spawn-reconciliation", s), "catch")
+        catch: r((s) => Hs("spawn-reconciliation", s), "catch")
       });
     }),
     awaitBroadcastIdle: ze(function* () {
-      return yield* Yt, yield* Hr({
+      return yield* Gt, yield* Wr({
         try: o,
-        catch: r((s) => $s("broadcast-idle", s), "catch")
+        catch: r((s) => Hs("broadcast-idle", s), "catch")
       });
     })
   };
@@ -19253,38 +19342,38 @@ function YE(e) {
 r(YE, "makeStoreBootReconciliationWork");
 
 
-var Cc = class extends yt("LanTickError") {
+var Ac = class extends ht("LanTickError") {
   static {
     r(this, "LanTickError");
   }
 };
 function JE(e) {
   let t = e.tick.bind(e);
-  return (n) => qt({
+  return (n) => Ft({
     try: r(() => t(n), "try"),
-    catch: r((o) => new Cc({ cause: o }), "catch")
+    catch: r((o) => new Ac({ cause: o }), "catch")
   });
 }
 r(JE, "legacyLanTickWork");
 function QE(e) {
   let t = e.tick.bind(e);
   return (n) => ze(function* () {
-    return yield* Yt, yield* qt({
+    return yield* Gt, yield* Ft({
       try: r(() => t(n), "try"),
-      catch: r((o) => new Cc({ cause: o }), "catch")
+      catch: r((o) => new Ac({ cause: o }), "catch")
     });
   });
 }
 r(QE, "makeStoreLanTickWork");
 
 
-function e0(e) {
-  let t = To(mr(e));
+function t0(e) {
+  let t = To(fr(e));
   if (!Number.isFinite(t) || t <= 0)
     throw new RangeError("fixed-grid interval must be a positive finite duration");
   return t;
 }
-r(e0, "positiveFiniteMilliseconds");
+r(t0, "positiveFiniteMilliseconds");
 function nf(e, t, n) {
   if (!Number.isFinite(e) || !Number.isFinite(t))
     throw new RangeError("fixed-grid clock readings must be finite");
@@ -19294,50 +19383,50 @@ function nf(e, t, n) {
   return Math.max(0, e + (s + 1) * n - t);
 }
 r(nf, "nextFixedGridDelayMs");
-function Pc(e, t) {
-  let n = e0(e);
+function Oc(e, t) {
+  let n = t0(e);
   return pu(
-    vt(
-      (o) => vt([
+    wt(
+      (o) => wt([
         o.attempt - 1,
-        nr(nf(t, o.now, n))
+        er(nf(t, o.now, n))
       ])
     )
   );
 }
-r(Pc, "fixedGridNoCatchUp");
+r(Oc, "fixedGridNoCatchUp");
 
 
-var t0 = 600 * 1e3, n0 = 1440 * 60 * 1e3;
-function Wi(e, t) {
+var n0 = 600 * 1e3, r0 = 1440 * 60 * 1e3;
+function Gi(e, t) {
   return new uo({
     operation: `retention-${e}`,
     cause: t,
     message: `fleetd retention ${e} failed`
   });
 }
-r(Wi, "operationalError");
+r(Gi, "operationalError");
 function ZE(e) {
   let t = e.pruneEvents.bind(e), n = e.retentionSweep.bind(e);
   return {
-    pruneEvents: r((o) => qt({
+    pruneEvents: r((o) => Ft({
       try: r(() => t(o), "try"),
-      catch: r((s) => Wi("prune-events", s), "catch")
+      catch: r((s) => Gi("prune-events", s), "catch")
     }), "pruneEvents"),
-    retentionSweep: r((o) => Hr({
+    retentionSweep: r((o) => Wr({
       try: r(() => n(o), "try"),
-      catch: r((s) => Wi("retention-sweep", s), "catch")
+      catch: r((s) => Gi("retention-sweep", s), "catch")
     }), "retentionSweep")
   };
 }
 r(ZE, "legacyRetentionWork");
-function r0(e) {
-  let t = mr(
-    e.interval ?? nr(t0)
+function o0(e) {
+  let t = fr(
+    e.interval ?? er(n0)
   ), n = To(t);
   if (!Number.isFinite(n) || n <= 0)
     throw new RangeError("retention interval must be a positive finite duration");
-  let o = e.eventWindowMs ?? n0;
+  let o = e.eventWindowMs ?? r0;
   if (!Number.isFinite(o) || o <= 0)
     throw new RangeError("retention event window must be a positive finite number");
   return {
@@ -19349,30 +19438,30 @@ function r0(e) {
     onOperationalFailure: e.onOperationalFailure
   };
 }
-r(r0, "resolveOptions");
-function o0(e, t, n, o) {
+r(o0, "resolveOptions");
+function s0(e, t, n, o) {
   let s = e.onOperationalFailure;
-  return s ? Kn(() => s({ phase: t, operation: n, error: o })) : At;
+  return s ? Gn(() => s({ phase: t, operation: n, error: o })) : Ct;
 }
-r(o0, "reportOperationalFailure");
+r(s0, "reportOperationalFailure");
 function rf(e, t, n, o) {
-  return Kn(o).pipe(
-    wr,
-    Ur(
+  return Gn(o).pipe(
+    gr,
+    $r(
       "BackgroundOperationalError",
-      (s) => o0(e, t, n, s)
+      (s) => s0(e, t, n, s)
     )
   );
 }
 r(rf, "runOperation");
-function s0(e) {
-  return kn(
+function i0(e) {
+  return an(
     io,
     (t) => rf(e, "boot", "retention-sweep", () => e.retentionSweep(t))
   );
 }
-r(s0, "bootAttempt");
-function i0(e) {
+r(i0, "bootAttempt");
+function a0(e) {
   return ze(function* () {
     let t = yield* io;
     yield* rf(
@@ -19388,29 +19477,29 @@ function i0(e) {
     );
   });
 }
-r(i0, "periodicAttempt");
+r(a0, "periodicAttempt");
 function ey(e) {
-  let t = r0(e);
+  let t = o0(e);
   return ze(function* () {
-    let n = yield* gr(), o = ze(function* () {
+    let n = yield* pr(), o = ze(function* () {
       let s = yield* io;
-      yield* s0(t), yield* so(n, void 0);
+      yield* i0(t), yield* so(n, void 0);
       let i = yield* io, a = nf(
         s,
         i,
         t.intervalMs
       );
-      return yield* ms(nr(a)), yield* hs(
-        i0(t),
-        Pc(t.interval, s)
-      ), yield* $r;
+      return yield* ws(er(a)), yield* ys(
+        a0(t),
+        Oc(t.interval, s)
+      ), yield* Br;
     }).pipe(
 
 
-      Wr((s) => No(n, s).pipe(wr))
+      Ur((s) => No(n, s).pipe(gr))
     );
     return {
-      awaitFirstRun: jn(n),
+      awaitFirstRun: qn(n),
       program: o
     };
   });
@@ -19422,15 +19511,15 @@ function ty(e) {
   let t = e.pruneEvents.bind(e), n = e.retentionSweep.bind(e);
   return {
     pruneEvents: r((o) => ze(function* () {
-      return yield* Yt, yield* qt({
+      return yield* Gt, yield* Ft({
         try: r(() => t(o), "try"),
-        catch: r((s) => Wi("prune-events", s), "catch")
+        catch: r((s) => Gi("prune-events", s), "catch")
       });
     }), "pruneEvents"),
     retentionSweep: r((o) => ze(function* () {
-      return yield* Yt, yield* Hr({
+      return yield* Gt, yield* Wr({
         try: r(() => n(o), "try"),
-        catch: r((s) => Wi("retention-sweep", s), "catch")
+        catch: r((s) => Gi("retention-sweep", s), "catch")
       });
     }), "retentionSweep")
   };
@@ -19440,26 +19529,26 @@ r(ty, "makeStoreRetentionWork");
 
 function ny(e) {
   let t = e.spawnLivenessTick?.bind(e);
-  return t === void 0 ? At : ze(function* () {
-    return yield* Yt, yield* Jd(t);
+  return t === void 0 ? Ct : ze(function* () {
+    return yield* Gt, yield* Jd(t);
   });
 }
 r(ny, "makeStoreLivenessWork");
 
 
-var ry = r((e) => Ue(() => e.run()).pipe(
-  kn(
-    (t) => Bt(
+var ry = r((e) => Be(() => e.run()).pipe(
+  an(
+    (t) => bt(
       () => t.then(
         (n) => n,
         (n) => (e.onError(n), { status: 500, body: { ok: !1, reason: "internal" } })
       )
     )
   )
-), "controlAsyncWorkflow"), oy = r((e) => Ue(() => e.run()), "controlSyncWorkflow"), sy = r((e) => Ue(() => {
+), "controlAsyncWorkflow"), oy = r((e) => Be(() => e.run()), "controlSyncWorkflow"), sy = r((e) => Be(() => {
   let t = e.run();
   return { status: t.ok ? 200 : 404, body: t };
-}), "questionsDismissWorkflow"), iy = r((e) => Ue(() => {
+}), "questionsDismissWorkflow"), iy = r((e) => Be(() => {
   if (!e.clearing && typeof e.suffix != "string")
     return {
       status: 400,
@@ -19471,10 +19560,10 @@ var ry = r((e) => Ue(() => e.run()).pipe(
   }
   let t = e.applyName(e.clearing ? null : e.suffix);
   return { status: t.ok ? 200 : 409, body: t };
-}), "nameControlWorkflow"), ay = r((e) => Ue(() => ({ status: 200, body: { ok: !0, arm_token: e.run() } })), "armUnsupervisedWorkflow");
+}), "nameControlWorkflow"), ay = r((e) => Be(() => ({ status: 200, body: { ok: !0, arm_token: e.run() } })), "armUnsupervisedWorkflow");
 
 
-var cy = r((e) => Ue(() => ({
+var cy = r((e) => Be(() => ({
   ok: !0,
   fleet: e.fleet(),
   pid: e.pid,
@@ -19483,29 +19572,29 @@ var cy = r((e) => Ue(() => ({
   spawn: e.spawn(),
   auth: e.auth,
   startup: e.startup()
-})), "healthWorkflow"), ly = r((e) => Ue(() => e.snapshotWithLan()), "stateWorkflow");
+})), "healthWorkflow"), ly = r((e) => Be(() => e.snapshotWithLan()), "stateWorkflow");
 
 
-var uy = r((e) => Ue(() => e.handler === null ? (e.ingestUnknown(), {}) : e.valid() ? e.handler() ?? {} : {}), "hookDispatchWorkflow");
+var uy = r((e) => Be(() => e.handler === null ? (e.ingestUnknown(), {}) : e.valid() ? e.handler() ?? {} : {}), "hookDispatchWorkflow");
 
 
-var dy = r((e) => Ue(() => e.pasteImage()), "pasteImageWorkflow");
+var dy = r((e) => Be(() => e.pasteImage()), "pasteImageWorkflow");
 
 
-var fy = r((e) => Ue(() => {
+var fy = r((e) => Be(() => {
   let t = e.setSettings();
   return { status: t.status, body: t.body };
-}), "settingsWorkflow"), py = r((e) => Ue(() => ({ status: 200, body: e.command() })), "commandWorkflow");
-function a0(e) {
+}), "settingsWorkflow"), py = r((e) => Be(() => ({ status: 200, body: e.command() })), "commandWorkflow");
+function c0(e) {
   let t = e;
   return { status: t.status ?? 200, body: t.body ?? e };
 }
-r(a0, "adaptMailResult");
-var my = r((e) => hr(
-  Bt(() => e.postMail()),
-  a0
-), "mailWorkflow"), gy = r((e) => hr(
-  Bt(() => e.cleanup()),
+r(c0, "adaptMailResult");
+var my = r((e) => mr(
+  bt(() => e.postMail()),
+  c0
+), "mailWorkflow"), gy = r((e) => mr(
+  bt(() => e.cleanup()),
   (t) => ({
     status: t.ok ? 200 : 409,
     body: t
@@ -19513,28 +19602,28 @@ var my = r((e) => hr(
 ), "cleanupWorkflow");
 
 
-function c0(e, t) {
+function l0(e, t) {
   return e.length === t.length && [...e].sort().join(" ") === [...t].sort().join(" ");
 }
-r(c0, "sameLanAddressSet");
-function l0(e, t) {
-  return t ? t(e).pipe(og) : At;
+r(l0, "sameLanAddressSet");
+function u0(e, t) {
+  return t ? t(e).pipe(og) : Ct;
 }
-r(l0, "reportRefreshError");
-function u0(e) {
+r(u0, "reportRefreshError");
+function d0(e) {
   return ze(function* () {
-    let t = yield* e.readAddresses().pipe(Eu(() => vt(null)));
+    let t = yield* e.readAddresses().pipe(Eu(() => wt(null)));
     t !== null && (yield* ze(function* () {
       let n = yield* e.previousAddresses();
-      n === null || c0(t, n) || (yield* e.onChange([...t], [...n]));
-    }).pipe(Eu((n) => l0(n, e.onError))));
+      n === null || l0(t, n) || (yield* e.onChange([...t], [...n]));
+    }).pipe(Eu((n) => u0(n, e.onError))));
   });
 }
-r(u0, "refreshOnce");
+r(d0, "refreshOnce");
 function hy(e) {
-  return e.enabled === !1 ? $r : ze(function* () {
+  return e.enabled === !1 ? Br : ze(function* () {
     let t = yield* mg((n) => n.currentTimeMillis);
-    return yield* ms(e.interval), yield* hs(u0(e), Pc(e.interval, t)), yield* $r;
+    return yield* ws(e.interval), yield* ys(d0(e), Oc(e.interval, t)), yield* Br;
   });
 }
 r(hy, "lanRefresh");
@@ -19561,22 +19650,22 @@ function yy(e, t, n) {
   });
 }
 r(yy, "submitExit");
-function d0(e) {
-  if (yn(e)) return e.value;
+function f0(e) {
+  if (En(e)) return e.value;
   let t = e.cause.reasons.find(Io);
   if (t) throw t.defect;
-  let n = e.cause.reasons.find(Br);
+  let n = e.cause.reasons.find(Fr);
   if (n)
     return n.error instanceof Uo ? wy : n.error.result;
-  if (En(e.cause)) return wy;
-  throw fs(e.cause);
+  if (wn(e.cause)) return wy;
+  throw gs(e.cause);
 }
-r(d0, "processExitResult");
-function f0(e) {
-  if (yn(e)) return e.value;
+r(f0, "processExitResult");
+function p0(e) {
+  if (En(e)) return e.value;
   let t = e.cause.reasons.find(Io);
   if (t) throw t.defect;
-  let n = e.cause.reasons.find(Br);
+  let n = e.cause.reasons.find(Fr);
   if (n)
     return n.error instanceof Uo ? Ey : {
       code: null,
@@ -19585,270 +19674,270 @@ function f0(e) {
       truncated: !1,
       timedOut: !1
     };
-  if (En(e.cause)) return Ey;
-  throw fs(e.cause);
+  if (wn(e.cause)) return Ey;
+  throw gs(e.cause);
 }
-r(f0, "boundedExitResult");
+r(p0, "boundedExitResult");
 function _y(e) {
   return { run: r((o) => yy(
     e,
     "legacy-process.run",
     qg(o)
-  ).then(d0), "run"), runBounded: r((o) => yy(
+  ).then(f0), "run"), runBounded: r((o) => yy(
     e,
     "legacy-process.run-bounded",
     jg(o)
-  ).then(f0), "runBounded") };
+  ).then(p0), "runBounded") };
 }
 r(_y, "makeIngressExecFileDelegate");
 
 
 function vy(e, t = null) {
-  return new Er({
+  return new hr({
     reason: e,
     message: `fleetd refused to start: ${e}`,
     cleanupCause: t
   });
 }
 r(vy, "startupRefusal");
-async function p0(e, t, n, o) {
+async function m0(e, t, n, o) {
   e.throwIfAborted();
-  let s = r(async (ie) => {
-    await o?.afterAcquire?.(ie), e.throwIfAborted();
-  }, "acquisitionCheckpoint"), i = r((ie, me) => o?.afterRelease ? {
-    ...me,
+  let s = r(async (oe) => {
+    await o?.afterAcquire?.(oe), e.throwIfAborted();
+  }, "acquisitionCheckpoint"), i = r((oe, he) => o?.afterRelease ? {
+    ...he,
     close: r(async () => {
       try {
-        await me.close.call(me);
+        await he.close.call(he);
       } finally {
         try {
-          o.afterRelease?.(ie);
+          o.afterRelease?.(oe);
         } catch {
         }
       }
     }, "close")
-  } : me, "observeRelease");
+  } : he, "observeRelease");
   ME();
   let a = n.config.port;
   if (!Number.isInteger(a) || a < 0 || a > 65535)
     throw vy(
       `FLEETDECK_PORT must be an integer between 0 and 65535 (got '${String(process.env.FLEETDECK_PORT)}')`
     );
-  let c = (process.env.FLEETDECK_BIND ?? "").trim() || "127.0.0.1", l = !Ho(c), f = n.config.home, w = n.config.version, g = of.join(f, "fleetd.pid"), _ = !1;
+  let c = (process.env.FLEETDECK_BIND ?? "").trim() || "127.0.0.1", l = !Ho(c), f = n.config.home, w = n.config.version, h = of.join(f, "fleetd.pid"), _ = !1;
   process.env.FLEETDECK_HOME = f;
-  let E = process.env.FLEETDECK_MANAGED === "1", m = r((ie) => {
-    console.error("fleetd unhandled rejection (daemon kept alive):", ie);
+  let E = process.env.FLEETDECK_MANAGED === "1", m = r((oe) => {
+    console.error("fleetd unhandled rejection (daemon kept alive):", oe);
   }, "onUnhandledRejection");
   process.on("unhandledRejection", m);
-  let U = !0, M = r(() => {
-    U && (U = !1, process.removeListener("unhandledRejection", m));
+  let $ = !0, F = r(() => {
+    $ && ($ = !1, process.removeListener("unhandledRejection", m));
   }, "removeUnhandledRejectionListener");
-  function D(ie) {
-    let me = null;
+  function I(oe) {
+    let he = null;
     try {
       O();
     } catch (Xe) {
-      me = Xe;
+      he = Xe;
     }
-    throw M(), vy(ie, me);
+    throw F(), vy(oe, he);
   }
-  r(D, "startupFatal");
+  r(I, "startupFatal");
   try {
-    Fn.mkdirSync(f, { recursive: !0 });
-  } catch (ie) {
-    D(`cannot create FLEETDECK_HOME (${Ot(ie, "unknown error")})`);
+    In.mkdirSync(f, { recursive: !0 });
+  } catch (oe) {
+    I(`cannot create FLEETDECK_HOME (${Pt(oe, "unknown error")})`);
   }
   try {
-    Fn.chmodSync(f, 448);
+    In.chmodSync(f, 448);
   } catch {
   }
   function O() {
     if (!_) return;
-    let ie;
+    let oe;
     try {
-      ie = kc(Fn.readFileSync(g, "utf8"));
-    } catch (me) {
-      if (mt(me) === "ENOENT") {
+      oe = Tc(In.readFileSync(h, "utf8"));
+    } catch (he) {
+      if (dt(he) === "ENOENT") {
         _ = !1;
         return;
       }
-      throw me;
+      throw he;
     }
-    if (ie?.pid !== process.pid) {
+    if (oe?.pid !== process.pid) {
       _ = !1;
       return;
     }
     try {
-      Fn.unlinkSync(g);
-    } catch (me) {
-      if (mt(me) === "ENOENT") {
+      In.unlinkSync(h);
+    } catch (he) {
+      if (dt(he) === "ENOENT") {
         _ = !1;
         return;
       }
-      throw me;
+      throw he;
     }
     _ = !1;
   }
   r(O, "removeOwnedPidFile");
-  let P = new Ka({
-    onCloseError(ie, me) {
-      console.error(`fleetd ${ie} shutdown error:`, me);
+  let P = new za({
+    onCloseError(oe, he) {
+      console.error(`fleetd ${oe} shutdown error:`, he);
     }
-  }), v = !1, Q = r(() => {
+  }), x = !1, Q = r(() => {
     try {
-      G();
+      z();
     } catch {
     }
-  }, "releaseHostProcessOwnershipAtExit"), G = r(() => {
-    let ie = v;
-    ie && (v = !1, process.removeListener("exit", Q));
+  }, "releaseHostProcessOwnershipAtExit"), z = r(() => {
+    let oe = x;
+    oe && (x = !1, process.removeListener("exit", Q));
     try {
-      M(), O();
-    } catch (me) {
-      throw ie && !v && (process.once("exit", Q), v = !0), me;
+      F(), O();
+    } catch (he) {
+      throw oe && !x && (process.once("exit", Q), x = !0), he;
     }
   }, "releaseHostProcessOwnership");
-  process.once("exit", Q), v = !0, P.setProcess(
+  process.once("exit", Q), x = !0, P.setProcess(
     "host-process",
-    i("pid-claim", { close: G })
+    i("pid-claim", { close: z })
   );
-  async function Ee(ie) {
+  async function Ee(oe) {
     if (E) return !1;
-    let me;
+    let he;
     try {
-      if (ie.port === null || !Number.isInteger(ie.port)) return !1;
-      me = await (await fetch(`http://127.0.0.1:${ie.port}/health`, {
+      if (oe.port === null || !Number.isInteger(oe.port)) return !1;
+      he = await (await fetch(`http://127.0.0.1:${oe.port}/health`, {
         signal: AbortSignal.any([e, AbortSignal.timeout(1500)])
       })).json();
     } catch {
       return e.throwIfAborted(), !1;
     }
-    return e.throwIfAborted(), !me || me.managed || !WE(w, me.version) || me.pid !== ie.pid || !HE(ie.pid, f, ie.port) || !await qE(ie.pid, { signal: e }) ? !1 : (e.throwIfAborted(), console.log(
-      `fleetd v${w} superseded v${String(me.version)}: a strictly newer build claimed FLEETDECK_HOME`
+    return e.throwIfAborted(), !he || he.managed || !WE(w, he.version) || he.pid !== oe.pid || !HE(oe.pid, f, oe.port) || !await qE(oe.pid, { signal: e }) ? !1 : (e.throwIfAborted(), console.log(
+      `fleetd v${w} superseded v${String(he.version)}: a strictly newer build claimed FLEETDECK_HOME`
     ), !0);
   }
   r(Ee, "supersedeIfNewer");
   async function ye() {
-    for (let ie = 0; ie < 3; ie += 1) {
+    for (let oe = 0; oe < 3; oe += 1) {
       try {
-        Fn.writeFileSync(g, JSON.stringify({ pid: process.pid, port: a }), {
+        In.writeFileSync(h, JSON.stringify({ pid: process.pid, port: a }), {
           encoding: "utf8",
           mode: 384,
           flag: "wx"
         }), _ = !0;
         return;
-      } catch (it) {
-        mt(it) !== "EEXIST" && D(`cannot claim FLEETDECK_HOME pidfile (${Ot(it, "unknown error")})`);
+      } catch (ot) {
+        dt(ot) !== "EEXIST" && I(`cannot claim FLEETDECK_HOME pidfile (${Pt(ot, "unknown error")})`);
       }
-      let me = null, Xe = null;
+      let he = null, Xe = null;
       try {
-        me = Fn.readFileSync(g, "utf8"), Xe = kc(me);
-      } catch (it) {
-        if (mt(it) === "ENOENT") continue;
-        D(`cannot read FLEETDECK_HOME pidfile (${Ot(it, "unknown error")})`);
+        he = In.readFileSync(h, "utf8"), Xe = Tc(he);
+      } catch (ot) {
+        if (dt(ot) === "ENOENT") continue;
+        I(`cannot read FLEETDECK_HOME pidfile (${Pt(ot, "unknown error")})`);
       }
-      if (Xe && bc(Xe.pid) && (Xe.port === null || zd(Xe.pid))) {
-        let it = await Ee(Xe);
-        if (e.throwIfAborted(), it) continue;
-        let un = Xe.port === null ? "an unknown port (legacy pidfile)" : `port ${Xe.port}`;
-        D(
-          `FLEETDECK_HOME is already used by live fleetd pid ${Xe.pid} on ${un}; use a separate FLEETDECK_HOME for another daemon (if that PID was recycled, remove stale pidfile ${g})`
+      if (Xe && Rc(Xe.pid) && (Xe.port === null || zd(Xe.pid))) {
+        let ot = await Ee(Xe);
+        if (e.throwIfAborted(), ot) continue;
+        let ln = Xe.port === null ? "an unknown port (legacy pidfile)" : `port ${Xe.port}`;
+        I(
+          `FLEETDECK_HOME is already used by live fleetd pid ${Xe.pid} on ${ln}; use a separate FLEETDECK_HOME for another daemon (if that PID was recycled, remove stale pidfile ${h})`
         );
       }
       try {
-        if (Fn.readFileSync(g, "utf8") !== me) continue;
-      } catch (it) {
-        if (mt(it) === "ENOENT") continue;
-        D(
-          `cannot re-read stale FLEETDECK_HOME pidfile (${Ot(it, "unknown error")})`
+        if (In.readFileSync(h, "utf8") !== he) continue;
+      } catch (ot) {
+        if (dt(ot) === "ENOENT") continue;
+        I(
+          `cannot re-read stale FLEETDECK_HOME pidfile (${Pt(ot, "unknown error")})`
         );
       }
       try {
-        Fn.unlinkSync(g);
-      } catch (it) {
-        mt(it) !== "ENOENT" && D(
-          `cannot clear stale FLEETDECK_HOME pidfile (${Ot(it, "unknown error")})`
+        In.unlinkSync(h);
+      } catch (ot) {
+        dt(ot) !== "ENOENT" && I(
+          `cannot clear stale FLEETDECK_HOME pidfile (${Pt(ot, "unknown error")})`
         );
       }
     }
-    D("could not claim FLEETDECK_HOME pidfile after concurrent startup attempts");
+    I("could not claim FLEETDECK_HOME pidfile after concurrent startup attempts");
   }
   r(ye, "claimHome");
   try {
     await ye(), o ? await s("pid-claim") : e.throwIfAborted();
-  } catch (ie) {
-    throw await P.close(), ie;
+  } catch (oe) {
+    throw await P.close(), oe;
   }
-  let Ie = [];
+  let De = [];
   try {
-    Ie = Cd(process.env.FLEETDECK_TRUSTED_ORIGINS);
-  } catch (ie) {
-    D(
-      `FLEETDECK_TRUSTED_ORIGINS — ${ie instanceof Error && ie.message ? ie.message : "unparseable"}`
+    De = Cd(process.env.FLEETDECK_TRUSTED_ORIGINS);
+  } catch (oe) {
+    I(
+      `FLEETDECK_TRUSTED_ORIGINS — ${oe instanceof Error && oe.message ? oe.message : "unparseable"}`
     );
   }
-  let Se = (process.env.FLEETDECK_PROXY_AUTH ?? "").trim().toLowerCase() || "token";
-  Se !== "token" && Se !== "trust" && D(`FLEETDECK_PROXY_AUTH must be 'token' or 'trust' (got '${Se}')`), Se === "trust" && !Ie.length && D(
+  let ve = (process.env.FLEETDECK_PROXY_AUTH ?? "").trim().toLowerCase() || "token";
+  ve !== "token" && ve !== "trust" && I(`FLEETDECK_PROXY_AUTH must be 'token' or 'trust' (got '${ve}')`), ve === "trust" && !De.length && I(
     "FLEETDECK_PROXY_AUTH=trust requires FLEETDECK_TRUSTED_ORIGINS — there is nothing to trust"
   );
   let $e = (process.env.FLEETDECK_REQUIRE_TOKEN ?? "").trim().toLowerCase() === "on", Z = (process.env.FLEETDECK_TRUST_LOOPBACK ?? "").trim().toLowerCase();
-  Z !== "" && Z !== "on" && Z !== "off" && D(`FLEETDECK_TRUST_LOOPBACK must be 'on' or 'off' (got '${Z}')`);
-  let ae = Z === "on";
-  ae && $e && D("FLEETDECK_TRUST_LOOPBACK=on conflicts with FLEETDECK_REQUIRE_TOKEN=on"), ae && l && D("FLEETDECK_TRUST_LOOPBACK=on requires a loopback FLEETDECK_BIND");
-  let L = l || $e || Ie.length > 0 && Se === "token", S = of.join(f, "token"), I;
+  Z !== "" && Z !== "on" && Z !== "off" && I(`FLEETDECK_TRUST_LOOPBACK must be 'on' or 'off' (got '${Z}')`);
+  let ie = Z === "on";
+  ie && $e && I("FLEETDECK_TRUST_LOOPBACK=on conflicts with FLEETDECK_REQUIRE_TOKEN=on"), ie && l && I("FLEETDECK_TRUST_LOOPBACK=on requires a loopback FLEETDECK_BIND");
+  let D = l || $e || De.length > 0 && ve === "token", S = of.join(f, "token"), N;
   if (Object.hasOwn(process.env, "FLEETDECK_TOKEN"))
-    I = String(process.env.FLEETDECK_TOKEN).trim(), I.length < 16 && D("FLEETDECK_TOKEN must be at least 16 characters after trimming"), /^[A-Za-z0-9_+\-/=]{16,}$/.test(I) || D(
+    N = String(process.env.FLEETDECK_TOKEN).trim(), N.length < 16 && I("FLEETDECK_TOKEN must be at least 16 characters after trimming"), /^[A-Za-z0-9_+\-/=]{16,}$/.test(N) || I(
       "FLEETDECK_TOKEN must be 16+ characters from [A-Za-z0-9_+-/=] (no whitespace, control characters, or URL delimiters like & and #)"
     );
   else {
-    let ie = null;
+    let oe = null;
     try {
-      ie = Fn.readFileSync(S, "utf8").trim();
-    } catch (me) {
-      mt(me) !== "ENOENT" && L && D(`cannot read FLEETDECK_HOME/token (${Ot(me, "unknown error")})`);
+      oe = In.readFileSync(S, "utf8").trim();
+    } catch (he) {
+      dt(he) !== "ENOENT" && D && I(`cannot read FLEETDECK_HOME/token (${Pt(he, "unknown error")})`);
     }
-    ie !== null && (ie.length >= 16 ? I = ie : L && D("FLEETDECK_HOME/token must contain at least 16 characters"));
+    oe !== null && (oe.length >= 16 ? N = oe : D && I("FLEETDECK_HOME/token must contain at least 16 characters"));
   }
-  if (!I) {
+  if (!N) {
     try {
-      I = Sy.randomBytes(32).toString("hex");
-    } catch (ie) {
-      D(`cannot generate access token (${Ot(ie, "unknown error")})`);
+      N = Sy.randomBytes(32).toString("hex");
+    } catch (oe) {
+      I(`cannot generate access token (${Pt(oe, "unknown error")})`);
     }
     try {
-      Fn.writeFileSync(S, I, { encoding: "utf8", mode: 384, flag: "wx" });
-    } catch (ie) {
-      L && D(`cannot persist FLEETDECK_HOME/token (${Ot(ie, "unknown error")})`), console.error(
-        `fleetd: WARNING: cannot persist FLEETDECK_HOME/token (${Ot(ie, "unknown error")}) — hook shims and the gated loopback routes will not authenticate this boot`
+      In.writeFileSync(S, N, { encoding: "utf8", mode: 384, flag: "wx" });
+    } catch (oe) {
+      D && I(`cannot persist FLEETDECK_HOME/token (${Pt(oe, "unknown error")})`), console.error(
+        `fleetd: WARNING: cannot persist FLEETDECK_HOME/token (${Pt(oe, "unknown error")}) — hook shims and the gated loopback routes will not authenticate this boot`
       );
     }
   }
-  if (I) {
-    let ie = null;
+  if (N) {
+    let oe = null;
     try {
-      ie = Fn.readFileSync(S, "utf8");
-    } catch (me) {
-      mt(me) !== "ENOENT" && D(`cannot read FLEETDECK_HOME/token (${Ot(me, "unknown error")})`);
+      oe = In.readFileSync(S, "utf8");
+    } catch (he) {
+      dt(he) !== "ENOENT" && I(`cannot read FLEETDECK_HOME/token (${Pt(he, "unknown error")})`);
     }
-    if (ie?.trim() !== I)
+    if (oe?.trim() !== N)
       try {
-        Fn.writeFileSync(S, I, { encoding: "utf8", mode: 384 });
-      } catch (me) {
-        L && D(`cannot persist FLEETDECK_HOME/token (${Ot(me, "unknown error")})`), console.error(
-          `fleetd: WARNING: cannot persist FLEETDECK_HOME/token (${Ot(me, "unknown error")}) — hook shims and the gated loopback routes will not authenticate this boot`
+        In.writeFileSync(S, N, { encoding: "utf8", mode: 384 });
+      } catch (he) {
+        D && I(`cannot persist FLEETDECK_HOME/token (${Pt(he, "unknown error")})`), console.error(
+          `fleetd: WARNING: cannot persist FLEETDECK_HOME/token (${Pt(he, "unknown error")}) — hook shims and the gated loopback routes will not authenticate this boot`
         );
       }
-    if (ie !== null)
+    if (oe !== null)
       try {
-        Fn.chmodSync(S, 384);
-      } catch (me) {
-        let Xe = Ot(me, "unknown error");
-        L && D(`cannot tighten FLEETDECK_HOME/token to owner-only 0600 (${Xe})`), console.error(
+        In.chmodSync(S, 384);
+      } catch (he) {
+        let Xe = Pt(he, "unknown error");
+        D && I(`cannot tighten FLEETDECK_HOME/token to owner-only 0600 (${Xe})`), console.error(
           `fleetd: WARNING: cannot tighten FLEETDECK_HOME/token to owner-only 0600 (${Xe}) — the token stays readable by other local accounts this boot`
         );
       }
   }
-  let d = I, T = jd(
+  let d = N, T = jd(
     (process.env.FLEETDECK_MDNS_NAME ?? "").trim() || "fleetdeck",
     "fleetdeck"
   );
@@ -19862,13 +19951,13 @@ async function p0(e, t, n, o) {
   r(A, "mdnsInstanceName");
   try {
     o && await s("durable-config");
-  } catch (ie) {
-    throw await P.close(), ie;
+  } catch (oe) {
+    throw await P.close(), oe;
   }
-  let b = of.join(f, "fleetd.db"), X, H, ee;
+  let k = of.join(f, "fleetd.db"), Y, V, te;
   try {
     e.throwIfAborted();
-    let ie = Wh(_y(t));
+    let oe = Wh(_y(t));
     try {
       P.setProcessRuntime(
         "root-ingress",
@@ -19880,59 +19969,59 @@ async function p0(e, t, n, o) {
             try {
               await t.close();
             } finally {
-              ie();
+              oe();
             }
           }, "close")
         })
       );
-    } catch (me) {
-      throw ie(), me;
+    } catch (he) {
+      throw oe(), he;
     }
-    o ? await s("process-runtime") : e.throwIfAborted(), X = ch(b), H = Fg({ name: "sqlite", handle: X }), P.setStore("sqlite", i("database", { close: r(() => H.close(), "close") })), o ? await s("database") : e.throwIfAborted(), ee = Zw(X, {
+    o ? await s("process-runtime") : e.throwIfAborted(), Y = ch(k), V = Fg({ name: "sqlite", handle: Y }), P.setStore("sqlite", i("database", { close: r(() => V.close(), "close") })), o ? await s("database") : e.throwIfAborted(), te = Zw(Y, {
       port: a,
       version: w,
       runControlDetached: t.runControlDetached
-    }), P.setCore(i("core", ee.lifecycle)), o ? await s("core") : e.throwIfAborted();
-  } catch (ie) {
-    throw await P.close(), ie;
+    }), P.setCore(i("core", te.lifecycle)), o ? await s("core") : e.throwIfAborted();
+  } catch (oe) {
+    throw await P.close(), oe;
   }
   let C = l && process.env.FLEETDECK_MDNS?.trim().toLowerCase() !== "off";
-  function W(ie) {
+  function q(oe) {
     return l ? {
       enabled: !0,
-      urls: ie.map((me) => `http://${me}:${a}/?t=${encodeURIComponent(d)}`),
+      urls: oe.map((he) => `http://${he}:${a}/?t=${encodeURIComponent(d)}`),
       mdns: C ? `http://${T}.local:${a}/?t=${encodeURIComponent(d)}` : null
     } : { enabled: !1, urls: [] };
   }
-  r(W, "lanInfoFor");
-  let y = W(Fe()), x;
+  r(q, "lanInfoFor");
+  let y = q(Ce()), v;
   try {
-    e.throwIfAborted(), x = bE(ee, {
+    e.throwIfAborted(), v = bE(te, {
       port: a,
       token: d,
 
 
 
-      lan: r(() => y.mdns && De && !De.alive() ? { ...y, mdns: null } : y, "lan"),
+      lan: r(() => y.mdns && Fe && !Fe.alive() ? { ...y, mdns: null } : y, "lan"),
       version: w,
-      trustedOrigins: Ie,
-      proxyAuth: Se,
+      trustedOrigins: De,
+      proxyAuth: ve,
       managed: E,
       requireToken: $e,
-      trustLoopback: ae,
+      trustLoopback: ie,
 
 
 
       startup: n.background,
 
       capture: Uh(f, { secrets: d ? [d] : [] })
-    }), P.setHttp(i("http-owner", x.lifecycle)), o ? await s("http-owner") : e.throwIfAborted();
-  } catch (ie) {
-    throw await P.close(), ie;
+    }), P.setHttp(i("http-owner", v.lifecycle)), o ? await s("http-owner") : e.throwIfAborted();
+  } catch (oe) {
+    throw await P.close(), oe;
   }
-  let { whenBroadcastIdle: q, refreshLan: fe } = x, V = Tu({ name: "http-server", ingress: t, transport: x });
-  x.installEffectRoutes({
-    runRequest: r((ie, me) => V.service.runRequest(ie, me), "runRequest"),
+  let { whenBroadcastIdle: K, refreshLan: me } = v, ee = Tu({ name: "http-server", ingress: t, transport: v });
+  v.installEffectRoutes({
+    runRequest: r((oe, he) => ee.service.runRequest(oe, he), "runRequest"),
     health: cy,
     state: ly,
 
@@ -19953,113 +20042,113 @@ async function p0(e, t, n, o) {
 
     hookDispatch: uy
   });
-  function Fe() {
-    let ie = new Set();
+  function Ce() {
+    let oe = new Set();
     try {
-      for (let me of Object.values(Ii()))
-        for (let Xe of me ?? []) {
-          let it = Xe.family;
-          (it === "IPv4" || it === 4) && !Xe.internal && ie.add(Xe.address);
+      for (let he of Object.values(Bi()))
+        for (let Xe of he ?? []) {
+          let ot = Xe.family;
+          (ot === "IPv4" || ot === 4) && !Xe.internal && oe.add(Xe.address);
         }
-    } catch (me) {
-      console.error(`fleetd could not enumerate LAN addresses (${Ot(me, "unknown error")})`);
+    } catch (he) {
+      console.error(`fleetd could not enumerate LAN addresses (${Pt(he, "unknown error")})`);
     }
-    return [...ie];
+    return [...oe];
   }
-  r(Fe, "lanAddresses");
-  let De = null, N = (() => {
-    let ie = Number(process.env.FLEETDECK_LAN_REFRESH_MS);
-    return Number.isFinite(ie) && ie > 0 ? ie : 3e4;
+  r(Ce, "lanAddresses");
+  let Fe = null, M = (() => {
+    let oe = Number(process.env.FLEETDECK_LAN_REFRESH_MS);
+    return Number.isFinite(oe) && oe > 0 ? oe : 3e4;
   })();
-  function J(ie) {
-    let me = NE();
-    De = DE({
+  function J(oe) {
+    let he = NE();
+    Fe = DE({
       port: a,
       name: T,
 
 
       instance: A(),
-      addresses: ie,
+      addresses: oe,
       log: r((Xe) => {
         console.error(`fleetd mdns: ${Xe}`);
       }, "log"),
 
-      ...me ? { inject: me } : {}
-    }), De.start(), setImmediate(() => {
-      De?.alive() && console.log(
+      ...he ? { inject: he } : {}
+    }), Fe.start(), setImmediate(() => {
+      Fe?.alive() && console.log(
         `fleetd LAN http://${T}.local:${a}/?t=<hidden> (mDNS; credential available in share panel)`
       );
     });
   }
   r(J, "startMdns");
-  function se(ie) {
-    for (let me of ie)
+  function se(oe) {
+    for (let he of oe)
       console.log(
-        `fleetd LAN http://${me}:${a}/?t=<hidden> (credential available in share panel)`
+        `fleetd LAN http://${he}:${a}/?t=<hidden> (credential available in share panel)`
       );
   }
   r(se, "announceLanUrls");
-  function de(ie) {
-    ne = ie;
+  function de(oe) {
+    ne = oe;
     try {
-      let me = W(ie);
-      fe(me), FE(me);
-    } catch (me) {
-      console.error("fleetd share-URL refresh error:", me);
+      let he = q(oe);
+      me(he), FE(he);
+    } catch (he) {
+      console.error("fleetd share-URL refresh error:", he);
     }
     try {
-      De?.update({ addresses: ie });
+      Fe?.update({ addresses: oe });
     } catch {
     }
   }
   r(de, "refreshNetwork");
-  let ne = null, te = !1;
-  async function Ne() {
-    let ie = De?.stop();
-    if (!ie) return;
-    let me = null, Xe = new Promise((it) => {
-      me = setTimeout(() => {
-        te = !0, console.error("fleetd shutdown timed out waiting for discovery; continuing cleanup"), it();
-      }, 1e3), me.unref();
+  let ne = null, re = !1;
+  async function Ie() {
+    let oe = Fe?.stop();
+    if (!oe) return;
+    let he = null, Xe = new Promise((ot) => {
+      he = setTimeout(() => {
+        re = !0, console.error("fleetd shutdown timed out waiting for discovery; continuing cleanup"), ot();
+      }, 1e3), he.unref();
     });
     try {
-      await Promise.race([ie, Xe]);
+      await Promise.race([oe, Xe]);
     } catch {
     } finally {
-      me && clearTimeout(me);
+      he && clearTimeout(he);
     }
   }
-  r(Ne, "stopMdnsOwned");
+  r(Ie, "stopMdnsOwned");
   try {
     P.addDiscovery(
       "mdns",
       i("mdns", {
-        close: Ne
+        close: Ie
       })
     ), o && await s("background-owners");
-  } catch (ie) {
-    throw await P.close(), ie;
+  } catch (oe) {
+    throw await P.close(), oe;
   }
   try {
     e.throwIfAborted();
-    let ie = await V.bind(a, c);
-    if (ie._tag === "BindFailed")
+    let oe = await ee.bind(a, c);
+    if (oe._tag === "BindFailed")
       throw new lo({
-        reason: ie.reason,
-        origin: ie.origin,
-        code: ie.code,
-        errno: ie.errno,
-        message: ie.reason === "address-in-use" ? "fleetd already running (port bind lost the election)" : ie.message,
-        cause: ie.error
+        reason: oe.reason,
+        origin: oe.origin,
+        code: oe.code,
+        errno: oe.errno,
+        message: oe.reason === "address-in-use" ? "fleetd already running (port bind lost the election)" : oe.message,
+        cause: oe.error
       });
     o ? await s("listener") : e.throwIfAborted();
-  } catch (ie) {
-    throw await P.close(), ie;
+  } catch (oe) {
+    throw await P.close(), oe;
   }
   try {
-    let ie = c.includes(":") && !c.startsWith("[") ? `[${c}]` : c;
-    console.log(`fleetd up on http://${ie}:${a} (pid ${process.pid}, db ${b})`), l || console.log(`fleetd board http://127.0.0.1:${a}/?t=${encodeURIComponent(d)}`);
-    for (let it of [
+    let oe = c.includes(":") && !c.startsWith("[") ? `[${c}]` : c;
+    console.log(`fleetd up on http://${oe}:${a} (pid ${process.pid}, db ${k})`), l || console.log(`fleetd board http://127.0.0.1:${a}/?t=${encodeURIComponent(d)}`);
+    for (let ot of [
       "FLEETDECK_SPAWN_CMD",
       "FLEETDECK_TERM_CMD",
       "FLEETDECK_TEST_DAEMON_SCRIPT",
@@ -20070,130 +20159,130 @@ async function p0(e, t, n, o) {
       "FLEETDECK_TEST_NET_MOCK",
       "FLEETDECK_TEST_CONSOLE_RECORD"
     ])
-      process.env[it] && console.error(`fleetd WARNING: test seam ${it} active`);
-    let me = process.env.FLEETDECK_AGENTS_CMD;
-    if (me !== void 0) {
-      let it = me.trim();
-      it !== "" && it !== "false" && console.error("fleetd WARNING: test seam FLEETDECK_AGENTS_CMD active");
+      process.env[ot] && console.error(`fleetd WARNING: test seam ${ot} active`);
+    let he = process.env.FLEETDECK_AGENTS_CMD;
+    if (he !== void 0) {
+      let ot = he.trim();
+      ot !== "" && ot !== "false" && console.error("fleetd WARNING: test seam FLEETDECK_AGENTS_CMD active");
     }
     let Xe = process.env.FLEETDECK_REPLACED;
     if (Xe) {
       console.log(`fleetd v${w} replaced v${Xe} (plugin upgrade takeover)`);
       try {
-        ee.tick(`⬆️ fleetd v${w} replaced v${Xe}`);
+        te.tick(`⬆️ fleetd v${w} replaced v${Xe}`);
       } catch {
       }
     }
-    l && (ne = Fe(), se(ne), C && ne.length && J(ne)), o && await s("discovery-network"), o && await s("pollers-boot");
-  } catch (ie) {
-    throw await P.close(), ie;
+    l && (ne = Ce(), se(ne), C && ne.length && J(ne)), o && await s("discovery-network"), o && await s("pollers-boot");
+  } catch (oe) {
+    throw await P.close(), oe;
   }
-  let je = KE({
+  let qe = KE({
     clearForkHealing: r(() => {
-      ee.reconcileClearForks();
+      te.reconcileClearForks();
     }, "clearForkHealing"),
-    reconcileSpawns: r(() => Promise.resolve(ee.reconcileSpawns()), "reconcileSpawns"),
-    awaitBroadcastIdle: q
-  }), Te = YE({
+    reconcileSpawns: r(() => Promise.resolve(te.reconcileSpawns()), "reconcileSpawns"),
+    awaitBroadcastIdle: K
+  }), Pe = YE({
     clearForkHealing: r(() => {
-      ee.reconcileClearForks();
+      te.reconcileClearForks();
     }, "clearForkHealing"),
-    reconcileSpawns: r(() => Promise.resolve(ee.reconcileSpawns()), "reconcileSpawns"),
-    awaitBroadcastIdle: q
-  }), k = !0 ? Te : je, z = ZE({
-    pruneEvents: ee.pruneEvents,
-    retentionSweep: ee.retentionSweep
-  }), F = ty({
-    pruneEvents: ee.pruneEvents,
-    retentionSweep: ee.retentionSweep
-  }), ce = !0 ? F : z, Me = Yd(ee), dt = XE(ee), et = !0 ? dt : Me, gt = JE(ee), Ve = QE(ee), Lt = !0 ? Ve : gt, Cn = Qd(ee), Bn = ny(ee), cr = !0 ? Bn : Cn, Jt = ze(function* () {
-    let ie = yield* ey({
-      ...ce,
-      onOperationalFailure: r(({ phase: me, error: Xe }) => me === "boot" ? Ue(() => {
+    reconcileSpawns: r(() => Promise.resolve(te.reconcileSpawns()), "reconcileSpawns"),
+    awaitBroadcastIdle: K
+  }), R = !0 ? Pe : qe, X = ZE({
+    pruneEvents: te.pruneEvents,
+    retentionSweep: te.retentionSweep
+  }), B = ty({
+    pruneEvents: te.pruneEvents,
+    retentionSweep: te.retentionSweep
+  }), le = !0 ? B : X, Le = Yd(te), ft = XE(te), We = !0 ? ft : Le, pt = JE(te), Ve = QE(te), cn = !0 ? Ve : pt, zt = Qd(te), vn = ny(te), br = !0 ? vn : zt, $t = ze(function* () {
+    let oe = yield* ey({
+      ...le,
+      onOperationalFailure: r(({ phase: he, error: Xe }) => he === "boot" ? Be(() => {
         console.error("fleetd retention sweep error:", Xe.cause);
-      }) : At, "onOperationalFailure")
+      }) : Ct, "onOperationalFailure")
     });
     return yield* zE(n.backgroundController, {
-      agentsPoll: jE(ee, {}, et, cr),
+      agentsPoll: jE(te, {}, We, br),
       lanRefresh: hy({
         enabled: l,
-        interval: N,
-        readAddresses: r(() => Ue(Fe), "readAddresses"),
-        previousAddresses: r(() => Ue(() => ne), "previousAddresses"),
-        onChange: r((me, Xe) => ze(function* () {
-          let it = yield* qt({
+        interval: M,
+        readAddresses: r(() => Be(Ce), "readAddresses"),
+        previousAddresses: r(() => Be(() => ne), "previousAddresses"),
+        onChange: r((he, Xe) => ze(function* () {
+          let ot = yield* Ft({
             try: r(() => {
-              let un = [...me], ln = Xe.filter((ho) => !me.includes(ho));
-              return de(un), un.length ? console.log(
-                `fleetd LAN addresses now ${un.join(", ")}${ln.length ? ` (was ${ln.join(", ")})` : ""}`
+              let ln = [...he], ir = Xe.filter((wo) => !he.includes(wo));
+              return de(ln), ln.length ? console.log(
+                `fleetd LAN addresses now ${ln.join(", ")}${ir.length ? ` (was ${ir.join(", ")})` : ""}`
               ) : console.log(
                 "fleetd LAN interface lost; board still reachable at its last addresses only until the link returns"
-              ), !De && C && un.length && J(un), `🌐 LAN address changed — share panel updated${ln.length ? ` (was ${ln.join(", ")})` : ""}`;
+              ), !Fe && C && ln.length && J(ln), `🌐 LAN address changed — share panel updated${ir.length ? ` (was ${ir.join(", ")})` : ""}`;
             }, "try"),
-            catch: r((un) => un, "catch")
+            catch: r((ln) => ln, "catch")
           });
-          yield* Lt(it).pipe(Ur("LanTickError", () => At));
+          yield* cn(ot).pipe($r("LanTickError", () => Ct));
         }), "onChange"),
-        onError: r((me) => Ue(() => {
-          console.error("fleetd network watcher error:", me);
+        onError: r((he) => Be(() => {
+          console.error("fleetd network watcher error:", he);
         }), "onError")
       }),
-      retention: ie,
+      retention: oe,
       boot: {
-        ...k,
-        onOperationalFailure: r(({ operation: me, error: Xe }) => Ue(() => {
-          console.error(me === "clear-fork-healing" ? "fleetd /clear fork heal error:" : me === "spawn-reconciliation" ? "fleetd spawn reconciliation error:" : "fleetd broadcast idle error:", Xe.cause);
+        ...R,
+        onOperationalFailure: r(({ operation: he, error: Xe }) => Be(() => {
+          console.error(he === "clear-fork-healing" ? "fleetd /clear fork heal error:" : he === "spawn-reconciliation" ? "fleetd spawn reconciliation error:" : "fleetd broadcast idle error:", Xe.cause);
         }), "onOperationalFailure")
       }
     });
-  }).pipe(ig(Yt, H.service));
+  }).pipe(ig(Gt, V.service));
   return {
     resources: P,
-    backgroundProgram: Jt,
-    httpServer: V,
-    store: H,
-    shutdownExitCode: r(() => te || P.closeErrors.length > 0 ? 1 : 0, "shutdownExitCode"),
-    releaseProcessAtHostExit: G
+    backgroundProgram: $t,
+    httpServer: ee,
+    store: V,
+    shutdownExitCode: r(() => re || P.closeErrors.length > 0 ? 1 : 0, "shutdownExitCode"),
+    releaseProcessAtHostExit: z
   };
 }
-r(p0, "bootDaemon");
+r(m0, "bootDaemon");
 function xy(e, t, n, o) {
-  return p0(e, t, n, o);
+  return m0(e, t, n, o);
 }
 r(xy, "acquireDaemonResources");
 
 
-var by = 1750, g0 = cu(Tg, Bu);
-function h0(e, t) {
-  return e.firstSignal && tu(t) && En(t.cause) ? { _tag: "Interruption", signal: e.firstSignal } : $u(t);
+var by = 1750, h0 = cu(Tg, Bu);
+function w0(e, t) {
+  return e.firstSignal && tu(t) && wn(t.cause) ? { _tag: "Interruption", signal: e.firstSignal } : $u(t);
 }
-r(h0, "triggerForExit");
-function w0(e, t, n) {
-  return t.coordinator.close(h0(e, n)).pipe(
+r(w0, "triggerForExit");
+function E0(e, t, n) {
+  return t.coordinator.close(w0(e, n)).pipe(
     Zm(
-      (o) => Ue(() => {
+      (o) => Be(() => {
         e.recordLifecycleOutcome(o, t.acquired.shutdownExitCode());
       })
     ),
     cg(
-      Ue(() => {
+      Be(() => {
         e.detachLifecycle(t.coordinator);
       })
     ),
-    wr
+    gr
   );
 }
-r(w0, "closeLifecycle");
+r(E0, "closeLifecycle");
 function ky(e) {
   try {
-    m0(2, `${e}
+    g0(2, `${e}
 `);
   } catch {
   }
 }
 r(ky, "writeStderrLine");
-function E0(e) {
-  if (e instanceof Er) {
+function y0(e) {
+  if (e instanceof hr) {
     ky(e.message);
     return;
   }
@@ -20207,39 +20296,39 @@ function E0(e) {
   }
   console.error(e.cause);
 }
-r(E0, "reportRootFailure");
-function y0(e) {
+r(y0, "reportRootFailure");
+function _0(e) {
   try {
     console.error(e);
   } catch {
   }
 }
-r(y0, "reportRootDefect");
-function _0(e, t) {
+r(_0, "reportRootDefect");
+function S0(e, t) {
   let n = t.pipe(
-    tg((o) => Ue(() => E0(o))),
+    tg((o) => Be(() => y0(o))),
 
 
 
 
-    Wr(
-      (o) => Ue(() => {
-        e.signalObserved && tu(o) && En(o.cause) && e.recordExitCode(0);
+    Ur(
+      (o) => Be(() => {
+        e.signalObserved && tu(o) && wn(o.cause) && e.recordExitCode(0);
       })
     )
   );
   return ag(
-    Ue(() => e.installSignalObserver()),
+    Be(() => e.installSignalObserver()),
     () => n,
-    (o) => Ue(o)
+    (o) => Be(o)
   ).pipe(
 
 
-    rg((o) => Ue(() => y0(o)))
+    rg((o) => Be(() => _0(o)))
   );
 }
-r(_0, "withDaemonRootExitPolicy");
-function S0(e) {
+r(S0, "withDaemonRootExitPolicy");
+function v0(e) {
   let t = oh({
     acquireDaemonResources: xy,
     acquisitionShutdownTimeoutMs: by,
@@ -20250,20 +20339,20 @@ function S0(e) {
       forceReserveMs: 250
     }), "makeLifecycleCoordinator")
   });
-  return sh(g0, t);
+  return sh(h0, t);
 }
-r(S0, "makeProductionDaemonRootLayer");
-function v0(e) {
-  let t = S0(e), n = ze(function* () {
-    let o = yield* ys, s = yield* Es;
+r(v0, "makeProductionDaemonRootLayer");
+function x0(e) {
+  let t = v0(e), n = ze(function* () {
+    let o = yield* vs, s = yield* Ss;
     return e.attachProcessExitFallback(o.acquired.releaseProcessAtHostExit), e.attachLifecycle(o.coordinator), yield* s.awaitFailure.pipe(
-      Wr((i) => w0(e, o, i))
+      Ur((i) => E0(e, o, i))
     );
   });
-  return _0(e, n.pipe(sg(t)));
+  return S0(e, n.pipe(sg(t)));
 }
-r(v0, "makeDaemonApp");
-var sf = new Ia(), Ry = v0(sf);
+r(x0, "makeDaemonApp");
+var sf = new Ma(), Ry = x0(sf);
 
 
 yg(Ry, {

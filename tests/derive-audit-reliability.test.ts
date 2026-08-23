@@ -31,6 +31,7 @@ import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { openDb } from '../src/daemon/db.ts';
+import { runControlDetached } from '../src/daemon/platform/bun/ingress-supervisor-live.ts';
 import { createStatements } from '../src/daemon/statements.ts';
 import { claudeTranscriptPath, createCore } from '../src/daemon/derive.ts';
 
@@ -288,6 +289,9 @@ function memoryCore(
     port: tmux.port,
     home,
     tmuxAdapter: tmux.adapter as unknown as CoreTmuxAdapter,
+    // Production always injects the runner, so H-R5 (and every kill path here)
+    // must exercise the Effect core, not the legacy fallback (slice-3 review).
+    runControlDetached,
   });
   if (boardConnected) core.questions.setBoardConsumerProbe(() => true);
   return { db, core, ...tmux, home };

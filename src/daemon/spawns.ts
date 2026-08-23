@@ -10,6 +10,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID, randomBytes } from 'node:crypto';
+import * as Effect from 'effect/Effect';
 import { deriveRepo, branchOf } from './repo-identity.ts';
 import { ticketFromBranch, animalOf } from './tickets.ts';
 import {
@@ -26,6 +27,10 @@ import { redactGitText } from './exec.ts';
 import type { ExecResult } from './exec.ts';
 import type { Statements, SessionRow, SpawnRow } from './statements.ts';
 import { SPAWN_FOLDER_TRUST_NOTE, SPAWN_PANE_UNREADABLE_NOTE } from './spawn-attention.ts';
+// P9.1 Slice 3: the type of the ingress-owned unsupervised runner spawnKill's
+// Effect core is discharged through. Type-only (erased under
+// verbatimModuleSyntax), so the spawns↔retention type-cycle stays runtime-free.
+import { type RunControlDetached } from './retention.ts';
 
 // ---------------------------------------------------------- strict-typing seam
 // Sibling module surfaces obtained as type queries: erased under
@@ -71,6 +76,35 @@ interface SpawnsTmuxAdapter {
   listScopedWindows: SpawnModule['listScopedWindows'];
   paneCurrentCommand: SpawnModule['paneCurrentCommand'];
 }
+
+// P9.1 Slice 3: the uniform success value of the spawnKill Effect core — the
+// (status, body) control-result pair the transport hands straight to json(). It
+// mirrors app/http-workflows/control.ts's ControlWire structurally; spawns is
+// DOMAIN and must not relative-import the app zone, so it is spelled locally
+// (exactly as retention's DismissWire is).
+interface SpawnKillWire {
+  readonly status: number;
+  readonly body?: unknown;
+}
+
+// spawnKill's two-phase shape (mirrors retention's DismissStep): the synchronous
+// prefix — the row lookup and its 404 — resolves EITHER to a terminal wire (the
+// 404) OR to the coarse kill-phase thunk (`runKill`, which carries the tmux_window
+// invariant, the provisioning-cancel race, and the verified kill — i.e. every
+// await). The sync region CONSTRUCTS runKill (harmless, synchronous) but never
+// runs it; the flatMap below discharges it as one Effect.promise. Keeping the
+// whole awaiting tail inside runKill preserves legacy timing byte-for-byte: the
+// runtime executes Effect.sync → flatMap → Effect.promise synchronously up to
+// runKill's FIRST await, so the tmux_window throw and `controller.abort()` still
+// fire on the request turn, exactly as the legacy async body did.
+type SpawnKillStep =
+  | { readonly done: true; readonly wire: SpawnKillWire }
+  | { readonly done: false; readonly runKill: () => Promise<SpawnKillWire> };
+
+// P9.1 Slice 3 rollback seam: false → the spawnKill dispatcher bypasses the Effect
+// core and answers through the legacy async body (also reached whenever no
+// runControlDetached runner was injected).
+const EFFECT_CORE_SPAWN_KILL = true;
 
 // The consumer view of the threaded closure state. derive assembles the literal
 // and casts it `as unknown as CoreCtx`, so the ONLY assignability check is
@@ -149,6 +183,11 @@ interface SpawnsCtx {
       opts?: { activity?: boolean },
     ): { ok?: boolean; already?: boolean } | null | undefined;
   };
+  // P9.1 Q1: the ingress-owned unsupervised runner the spawnKill Effect core is
+  // discharged through. Optional — absent in standalone spawns-factory tests,
+  // where the legacy spawnKill body answers directly (EFFECT_CORE_SPAWN_KILL
+  // rollback seam). derive's real CoreCtx wires it before createSpawns.
+  runControlDetached?: RunControlDetached;
 }
 
 // The POST /api/spawn body: every field optional and validated at the top of
@@ -515,6 +554,7 @@ export function createSpawns(ctx: SpawnsCtx) {
     resolveGatewayEnv,
     acquireWorktreePathLock,
     claimWorktreeCustody, // remove-vs-revive serialization (revive side; derive wires it)
+    runControlDetached, // P9.1 Q1: ingress-owned runner for the spawnKill Effect core
   } = ctx;
 
   // ------------------------------------------------ P1 maintenance ownership
@@ -3074,7 +3114,161 @@ export function createSpawns(ctx: SpawnsCtx) {
   // POST /api/spawn/:id/kill — name-verified tmux kill-window (404 unknown
   // id, 409 card not offline without force, 410 window already gone).
   // "Stop" needs no endpoint: the board mails the session instead.
-  async function spawnKill(spawn_id: string, force: unknown) {
+  //
+  // P9.1 Slice 3: spawnKill is now an Effect core (spawnKillEffect) — R = never,
+  // E = never, expected outcomes are DATA (SpawnKillWire). The sync prefix (row
+  // lookup + 404) is one Effect.sync; the whole awaiting tail — the tmux_window
+  // invariant, the provisioning-cancel race (AbortController FROZEN, danger note
+  // D3), the H-R5 stale-id owner re-check, and the verified kill — is one
+  // Effect.promise (runKill) that preserves legacy timing byte-for-byte: the
+  // runtime runs Effect.sync → flatMap → Effect.promise synchronously up to
+  // runKill's first await, so op.controller.abort() and the sync guards still
+  // fire on the request turn exactly as the legacy async body did. Discharged to
+  // a native Promise<SpawnKillWire> by the injected runControlDetached runner
+  // (the ingress-owned Effect.runPromiseWith runner — Q1). The legacy async body
+  // (spawnKillLegacy) is retained UNCHANGED as the per-path rollback seam.
+  function spawnKillEffect(
+    spawn_id: string,
+    force: unknown,
+  ): Effect.Effect<SpawnKillWire, never, never> {
+    return Effect.sync((): SpawnKillStep => {
+      const row = q.getSpawn.get(spawn_id);
+      if (!row)
+        return {
+          done: true,
+          wire: { status: 404, body: { ok: false, reason: 'no such spawn' } },
+        };
+      // Every spawn is inserted with its deterministic window name; this proves it
+      // to the type system for the owner check and verified kill-window below
+      // without altering behavior. Kept as runKill's FIRST line (before any await)
+      // so it re-narrows row.tmux_window inside this closure and still throws on
+      // the request turn — the throw → Effect.promise die → 500, as it did before.
+      const runKill = async (): Promise<SpawnKillWire> => {
+        if (row.tmux_window == null) throw new Error('spawn is missing its tmux window');
+        if (row.status === 'provisioning') {
+          const op = provisioningOps.get(spawn_id);
+          if (op) {
+            op.controller.abort();
+            let timer: NodeJS.Timeout | null = null;
+            const bounded = new Promise<'pending'>((resolve) => {
+              timer = setTimeout(() => resolve('pending'), 5_000);
+              timer.unref();
+            });
+            const settled = await Promise.race([op.done.then(() => 'done' as const), bounded]);
+            if (timer) clearTimeout(timer);
+            if (settled === 'pending') {
+              return {
+                status: 202,
+                body: { ok: true, spawn_id, status: 'cancelling' },
+              };
+            }
+            const after = q.getSpawn.get(spawn_id);
+            if (after?.status === 'gone' || after?.status === 'killed') {
+              return {
+                status: 200,
+                body: { ok: true, spawn_id, status: 'cancelled' },
+              };
+            }
+            // The operation finished but a verified tmux cleanup could not settle
+            // it. Fall through to the ordinary exact-window path so the refusal is
+            // honest and the user can retry.
+          } else {
+            // A provisioning row with no in-memory operation is residue from a
+            // daemon restart. No detached chain in THIS process can later launch a
+            // pane, so exact absence is safe to settle as a successful cancel.
+            const stale = await tmuxAdapter.killWindowVerified(row.tmux_window);
+            if (stale.ok || stale.gone) {
+              q.setSpawnStatus.run(stale.ok ? 'killed' : 'gone', spawn_id);
+              forgetSpawn(spawn_id);
+              const c = q.getSession.get(row.session_id);
+              if (c && c.ended_at == null) {
+                tombstoneCard(row.session_id, {
+                  note: 'spawn cancelled',
+                  tickMsg: `○ cancelled repository provisioning for ${c.callsign ?? row.callsign}`,
+                  forgetModel: true,
+                  mutate: true,
+                });
+              }
+              return {
+                status: 200,
+                body: { ok: true, spawn_id, status: 'cancelled' },
+              };
+            }
+            return {
+              status: 500,
+              body: {
+                ok: false,
+                reason: stale.error ?? 'provisioning cancellation could not be verified',
+              },
+            };
+          }
+        }
+        // H-R5: a revive reuses the dead row's tmux_window, so one physical window
+        // can be named by several rows across a session's lifetime. Killing by a
+        // STALE id would kill the window the NEWEST (revived) row now owns while
+        // marking only the old row 'killed' — liveness then disagrees with reality
+        // (the new row still says 'live', its pane is dead). Refuse a historical
+        // id even under force: the window belongs to whichever non-terminal row
+        // most recently claimed it, and that is the only id allowed to kill it.
+        const owner = q.currentWindowOwner.get(row.tmux_window);
+        if (owner && owner.spawn_id !== spawn_id) {
+          return {
+            status: 409,
+            body: {
+              ok: false,
+              reason: `spawn ${spawn_id} is a historical row; tmux window ${row.tmux_window} is now owned by spawn ${owner.spawn_id} — kill that one`,
+              current_spawn_id: owner.spawn_id,
+            },
+          };
+        }
+        const c = q.getSession.get(row.session_id);
+        if (row.kind !== 'shell' && c && c.col !== 'offline' && force !== true) {
+          return {
+            status: 409,
+            body: {
+              ok: false,
+              reason: `session ${c.callsign} is ${c.col}, not offline — pass force:true to kill anyway`,
+            },
+          };
+        }
+        const res = await tmuxAdapter.killWindowVerified(row.tmux_window);
+        if (!res.ok && res.gone) {
+          // Discovery: the pane is already gone — settle the row AND the card
+          // (same tombstone every terminal row state applies; only reachable for
+          // a non-offline card via an explicit force:true).
+          if (['provisioning', 'spawning', 'stalled', 'live', 'pane-dead'].includes(row.status)) {
+            q.setSpawnStatus.run('gone', spawn_id);
+            forgetSpawn(spawn_id); // M-G2
+            if (c && c.ended_at == null) {
+              tombstoneCard(row.session_id, { note: 'spawned pane window gone' }); // D8
+            }
+            onMutate();
+          }
+          return { status: 410, body: { ok: false, reason: 'window already gone' } };
+        }
+        if (!res.ok)
+          return {
+            status: 500,
+            body: { ok: false, reason: res.error ?? 'tmux kill-window failed' },
+          };
+        q.setSpawnStatus.run('killed', spawn_id);
+        forgetSpawn(spawn_id); // M-G2
+        if (c && c.ended_at == null) {
+          tombstoneCard(row.session_id, { note: 'pane killed from the board' }); // D8
+        }
+        tick(`🗡 killed pane ${row.tmux_window}${force === true ? ' (forced)' : ''}`);
+        onMutate();
+        return { status: 200, body: { ok: true, spawn_id, status: 'killed' } };
+      };
+      return { done: false, runKill };
+    }).pipe(
+      Effect.flatMap((step) =>
+        step.done ? Effect.succeed(step.wire) : Effect.promise(step.runKill),
+      ),
+    );
+  }
+
+  async function spawnKillLegacy(spawn_id: string, force: unknown): Promise<SpawnKillWire> {
     const row = q.getSpawn.get(spawn_id);
     if (!row) return { status: 404, body: { ok: false, reason: 'no such spawn' } };
     // Every spawn is inserted with its deterministic window name; this proves it
@@ -3192,6 +3386,19 @@ export function createSpawns(ctx: SpawnsCtx) {
     tick(`🗡 killed pane ${row.tmux_window}${force === true ? ' (forced)' : ''}`);
     onMutate();
     return { status: 200, body: { ok: true, spawn_id, status: 'killed' } };
+  }
+
+  // P9.1 Slice 3 dispatcher: discharge the Effect core through the injected
+  // ingress runner (runControlDetached), or fall back to the legacy async body
+  // when the Effect path is disabled (EFFECT_CORE_SPAWN_KILL=false) or no runner
+  // was wired (a standalone spawns factory with no ingress supervisor). Either
+  // branch returns exactly ONE native Promise<SpawnKillWire> — the object
+  // ownedSpawnKill hands to the transport's start-once recorder, byte-for-byte
+  // with the legacy contract.
+  function spawnKill(spawn_id: string, force: unknown): Promise<SpawnKillWire> {
+    return EFFECT_CORE_SPAWN_KILL && runControlDetached
+      ? runControlDetached(spawnKillEffect(spawn_id, force))
+      : spawnKillLegacy(spawn_id, force);
   }
 
   // Owned-pane liveness (CONTRACT) — rides the agents-poll tick (~10 s), for
