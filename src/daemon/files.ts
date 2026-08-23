@@ -11,9 +11,11 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import * as Effect from 'effect/Effect';
 import { deriveRepo } from './repo-identity.ts';
 import { execFileP } from './exec.ts';
 import { dropOrphanSurrogate } from './helpers.ts';
+import { type RunControlDetached } from './retention.ts';
 import type { Statements } from './statements.ts';
 
 // settings.mjs owns the browse-root precedence and returns a superset
@@ -29,6 +31,12 @@ interface BrowseRootChoice {
 interface FilesCtx {
   q: Statements['q'];
   browseRootChoice: () => BrowseRootChoice;
+  // P9.3 Q1/Q2: the ingress-owned UNSUPERVISED runner (Effect.runPromiseWith(
+  // Context.empty()), injected as a plain function) that the fs Effect cores are
+  // discharged through. Optional — absent in the standalone createFiles factory
+  // tests, where the *Legacy bodies answer directly (EFFECT_CORE_FILES rollback
+  // seam, mirrors retention's RetentionCtx.runControlDetached).
+  runControlDetached?: RunControlDetached;
 }
 
 // Every endpoint answers with an HTTP status and a JSON body; bodies vary by
@@ -616,11 +624,29 @@ async function walkSearch(
   return { hits: hits.slice(0, SEARCH_HITS), truncated };
 }
 
+// P9.3 rollback seam (mirrors retention's EFFECT_CORE_DISMISS): false → the fs
+// dispatchers bypass the Effect cores and answer through the legacy async bodies
+// (also reached whenever no runControlDetached runner was injected). One flag for
+// the whole family (§6 Q3); each op migrates only when its dispatcher is rewired.
+const EFFECT_CORE_FILES = true;
+
+// listAt's two-phase shape (Leg A, danger note D6): the synchronous entries-build
+// prefix resolves EITHER to a terminal wire (non-git, or any guard throw mapped
+// through the SAME try/catch → failure the legacy body uses) OR to the coarse
+// git-ignore thunk (`runIgnore`, the only await). The sync prefix NEVER dies.
+type ListStep =
+  | { readonly done: true; readonly wire: FsResult }
+  | { readonly done: false; readonly runIgnore: () => Promise<FsResult> };
+
 export function createFiles(ctx: FilesCtx) {
+  // P9.3 Q1: the ingress-owned unsupervised runner the fs Effect cores are
+  // discharged through (Effect.runPromiseWith(Context.empty()), injected as a
+  // plain function). Absent in standalone factory tests → legacy fallback.
+  const runFs = ctx.runControlDetached;
   // Each operation takes a resolver thunk so the SAME containment/caps logic
   // serves both a per-session root (resolveRoot) and the global browse root
   // (resolveBrowseRoot). The browser never supplies a root either way.
-  async function listAt(resolve: RootResolver, relPath: unknown): Promise<FsResult> {
+  async function listAtLegacy(resolve: RootResolver, relPath: unknown): Promise<FsResult> {
     let rel: string;
     try {
       rel = validateRelPath(relPath);
@@ -689,13 +715,113 @@ export function createFiles(ctx: FilesCtx) {
     }
   }
 
-  // readAt does only synchronous fs work, but the three fs operations MUST
-  // share one Promise-returning contract: http.mjs dispatches them uniformly as
-  // `operation.then(...).catch(...)`, so a bare object here would crash on
-  // `.then`. Keep it async and suppress require-await rather than break the
-  // caller.
-  // eslint-disable-next-line @typescript-eslint/require-await
-  async function readAt(resolve: RootResolver, relPath: unknown): Promise<FsResult> {
+  // listAtEffect: the two-phase Effect core (Leg A). The sync prefix builds the
+  // bounded entries page (BUG-114 lstat window) and returns a terminal wire for
+  // the non-git case or any guard throw; the git case defers to runIgnore, whose
+  // check-ignore await keeps its OWN try/catch → failure so a rejection maps to
+  // the SAME 404 the legacy single try/catch produced (D6). The prefix never dies.
+  function listAtEffect(
+    resolve: RootResolver,
+    relPath: unknown,
+  ): Effect.Effect<FsResult, never, never> {
+    return Effect.sync((): ListStep => {
+      let rel: string;
+      try {
+        rel = validateRelPath(relPath);
+      } catch (err) {
+        return { done: true, wire: failure(err) };
+      }
+      const resolved = resolve();
+      if (resolved.error) return { done: true, wire: resolved.error };
+      const { root, git } = resolved;
+      try {
+        const abs = safeJoin(root, rel);
+        const real = realpathInside(root, abs);
+        const own = fs.lstatSync(abs);
+        if (!own.isDirectory() || own.isSymbolicLink()) throw new PathError(404, 'not found');
+        const names = fs
+          .readdirSync(real)
+          .filter((name) => name.toLowerCase() !== '.git' && !deniedName(name));
+        const truncated = names.length > LIST_MAX;
+        // 0.21.x (BUG-114): LIST_MAX must bound the WORK, not just the response —
+        // an lstat per name on a huge directory (node_modules dump, mail spool)
+        // stalls the daemon's single thread long after the response was already
+        // decided. Sort the cheap NAMES first, then lstat only a bounded window
+        // of candidates: dirs then files in name order, stopping once the
+        // surviving entries could fill the page. Anything past the window cannot
+        // make the cut, so its stat was wasted work.
+        const candidates = names.slice().sort((a, b) => a.localeCompare(b));
+        const entries: DirEntry[] = [];
+        let scanned = 0;
+        for (const name of candidates) {
+          if (entries.length >= LIST_MAX || scanned >= LIST_MAX + entries.length) break;
+          scanned += 1;
+          let st: fs.Stats;
+          try {
+            st = fs.lstatSync(path.join(real, name));
+          } catch {
+            continue;
+          }
+          entries.push({
+            name,
+            type: fileType(st),
+            size: st.size,
+            mtime: st.mtimeMs,
+            ignored: false,
+          });
+        }
+        entries.sort((a, b) => {
+          const ad = a.type === 'dir' ? 0 : 1;
+          const bd = b.type === 'dir' ? 0 : 1;
+          return ad - bd || a.name.localeCompare(b.name);
+        });
+        entries.splice(LIST_MAX);
+        // check-ignore runs on the spliced page (bounded by LIST_MAX) even when
+        // truncated — truncation is a pagination signal, not a reason to drop
+        // ignore metadata for every returned entry: the annotation must not
+        // vanish exactly when the listing is large.
+        if (!git) {
+          return {
+            done: true,
+            wire: { status: 200, body: { ok: true, path: rel, git, entries, truncated } },
+          };
+        }
+        const runIgnore = async (): Promise<FsResult> => {
+          try {
+            const rels = entries.map((entry) => entryPath(rel, entry.name));
+            const ignored = await ignoredPaths(root, rels, SEARCH_TIMEOUT_MS);
+            entries.forEach((entry, i) => {
+              entry.ignored = ignored.has(rels[i] ?? '');
+            });
+            return { status: 200, body: { ok: true, path: rel, git, entries, truncated } };
+          } catch (err) {
+            return failure(err);
+          }
+        };
+        return { done: false, runIgnore };
+      } catch (err) {
+        return { done: true, wire: failure(err) };
+      }
+    }).pipe(
+      Effect.flatMap((step) =>
+        step.done ? Effect.succeed(step.wire) : Effect.promise(step.runIgnore),
+      ),
+    );
+  }
+
+  // dispatchList: per-op seam. Effect core when enabled AND a runner is injected;
+  // otherwise the verbatim legacy Promise (rollback / standalone factory tests).
+  function dispatchList(resolve: RootResolver, relPath: unknown): Promise<FsResult> {
+    return EFFECT_CORE_FILES && runFs
+      ? runFs(listAtEffect(resolve, relPath))
+      : listAtLegacy(resolve, relPath);
+  }
+
+  // readAtBody: the pure-synchronous read core (Leg F), extracted VERBATIM from
+  // the pre-P9.3 async readAt body. readAt does only synchronous fs work, so this
+  // is shared by BOTH the Effect core (Effect.sync) and the legacy async twin —
+  // the two paths execute the identical bytes and cannot drift (§6 Q2).
+  function readAtBody(resolve: RootResolver, relPath: unknown): FsResult {
     let rel: string;
     try {
       rel = validateRelPath(relPath);
@@ -762,6 +888,31 @@ export function createFiles(ctx: FilesCtx) {
     }
   }
 
+  // readAtEffect: pure-sync Effect core — no flatMap/promise tail (readAt has no
+  // real await). Discharged via runFs it resolves on a microtask, exactly as the
+  // async legacy body does today (§6 Q2 uniformity).
+  function readAtEffect(
+    resolve: RootResolver,
+    relPath: unknown,
+  ): Effect.Effect<FsResult, never, never> {
+    return Effect.sync((): FsResult => readAtBody(resolve, relPath));
+  }
+
+  // readAtLegacy: the async twin preserving the Promise-returning contract the
+  // three fs operations share (http dispatches them uniformly as
+  // `operation.then(...).catch(...)`). No real await — suppress require-await.
+  // eslint-disable-next-line @typescript-eslint/require-await
+  async function readAtLegacy(resolve: RootResolver, relPath: unknown): Promise<FsResult> {
+    return readAtBody(resolve, relPath);
+  }
+
+  // dispatchRead: per-op seam (mirrors dispatchList).
+  function dispatchRead(resolve: RootResolver, relPath: unknown): Promise<FsResult> {
+    return EFFECT_CORE_FILES && runFs
+      ? runFs(readAtEffect(resolve, relPath))
+      : readAtLegacy(resolve, relPath);
+  }
+
   async function searchAt(
     resolve: RootResolver,
     q: unknown,
@@ -810,12 +961,12 @@ export function createFiles(ctx: FilesCtx) {
       resolveRoot(ctx, sid);
   const homeRoot: RootResolver = () => resolveBrowseRoot(ctx);
   return {
-    fsList: (sid: string, p: unknown) => listAt(sessionRoot(sid), p),
-    fsRead: (sid: string, p: unknown) => readAt(sessionRoot(sid), p),
+    fsList: (sid: string, p: unknown) => dispatchList(sessionRoot(sid), p),
+    fsRead: (sid: string, p: unknown) => dispatchRead(sessionRoot(sid), p),
     fsSearch: (sid: string, q: unknown, opts?: { mode?: string }) =>
       searchAt(sessionRoot(sid), q, opts),
-    fsListHome: (p: unknown) => listAt(homeRoot, p),
-    fsReadHome: (p: unknown) => readAt(homeRoot, p),
+    fsListHome: (p: unknown) => dispatchList(homeRoot, p),
+    fsReadHome: (p: unknown) => dispatchRead(homeRoot, p),
     fsSearchHome: (q: unknown, opts?: { mode?: string }) => searchAt(homeRoot, q, opts),
   };
 }
