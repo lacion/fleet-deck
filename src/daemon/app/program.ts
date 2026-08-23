@@ -36,14 +36,24 @@ import {
   terminateDaemon,
 } from '../takeover.ts';
 import { errText, errCode } from '../errors.ts';
-import { makeAgentsPollProgram } from './agents-poll.ts';
+import {
+  type AgentsIngestWork,
+  legacyAgentsIngestWork,
+  makeAgentsPollProgram,
+} from './agents-poll.ts';
 import type { BackgroundController } from './background-owner.ts';
 import { makeDaemonBackgroundProgram } from './background-program.ts';
 import {
   type BootReconciliationWork,
   legacyBootReconciliationWithoutRetentionWork,
 } from './boot-reconciliation.ts';
+import { makeStoreAgentsIngestWork } from './db-workflows/agents-ingest.ts';
 import { makeStoreBootReconciliationWork } from './db-workflows/boot.ts';
+import {
+  type LanTickWork,
+  legacyLanTickWork,
+  makeStoreLanTickWork,
+} from './db-workflows/lan-tick.ts';
 import { makeStoreRetentionWork } from './db-workflows/retention.ts';
 import { DaemonStartupRefusalError, HttpBindStartupError } from './errors.ts';
 import { type HttpServerOwner, makeHttpServerOwner } from './http-server-owner.ts';
@@ -1179,6 +1189,32 @@ async function bootDaemon(
   const wiredRetentionWork: RetentionWork<Store> = STORE_BACKED_RETENTION
     ? storeBackedRetentionWork
     : retentionWork;
+  // P8.6 slice 3: the agents-poll ingest leg now yields the root-owned Store
+  // service (db-workflows/agents-ingest.ts). storeBackedAgentsIngest is the wired
+  // default; legacyAgentsIngest is retained as the one-flag rollback seam — flip
+  // STORE_BACKED_AGENTS_INGEST to false to restore the legacy capability-free
+  // path. Both translate a synchronous ingest throw through the same
+  // AgentsPollIngestError, so the poller's fail-open ingest boundary skips the
+  // tick byte-identically either way.
+  const legacyAgentsIngest = legacyAgentsIngestWork(core);
+  const storeBackedAgentsIngest = makeStoreAgentsIngestWork(core);
+  const STORE_BACKED_AGENTS_INGEST = true;
+  const wiredAgentsIngest: AgentsIngestWork<Store> = STORE_BACKED_AGENTS_INGEST
+    ? storeBackedAgentsIngest
+    : legacyAgentsIngest;
+  // P8.6 slice 4: the LAN-refresh feed tick now yields the root-owned Store
+  // service (db-workflows/lan-tick.ts). storeBackedLanTick is the wired default;
+  // legacyLanTick is retained as the one-flag rollback seam — flip
+  // STORE_BACKED_LAN_TICK to false to restore the legacy capability-free path.
+  // Both translate a synchronous tick throw through the same LanTickError, which
+  // the onChange swallow below drops by tag — byte-identical to the prior inline
+  // `try { core.tick(...) } catch {}`.
+  const legacyLanTick = legacyLanTickWork(core);
+  const storeBackedLanTick = makeStoreLanTickWork(core);
+  const STORE_BACKED_LAN_TICK = true;
+  const wiredLanTick: LanTickWork<Store> = STORE_BACKED_LAN_TICK
+    ? storeBackedLanTick
+    : legacyLanTick;
   const backgroundProgram: Effect.Effect<never, never, ProcessRunner> = Effect.gen(function* () {
     // Upcast retention to the background program's unified environment. The work
     // itself requires only Store, but it joins siblings that require ProcessRunner;
@@ -1196,37 +1232,41 @@ async function bootDaemon(
           : Effect.void,
     });
     return yield* makeDaemonBackgroundProgram(inputs.backgroundController, {
-      agentsPoll: makeAgentsPollProgram(core),
+      agentsPoll: makeAgentsPollProgram(core, {}, wiredAgentsIngest),
       lanRefresh: lanRefresh({
         enabled: LAN_MODE,
         interval: LAN_REFRESH_MS,
         readAddresses: () => Effect.sync(lanAddresses),
         previousAddresses: () => Effect.sync(() => lastLanAddresses),
         onChange: (addresses, previous) =>
-          Effect.try({
-            try: () => {
-              const next = [...addresses];
-              const gone = previous.filter((address) => !addresses.includes(address));
-              refreshNetwork(next);
-              if (next.length) {
-                console.log(
-                  `fleetd LAN addresses now ${next.join(', ')}${gone.length ? ` (was ${gone.join(', ')})` : ''}`,
-                );
-              } else {
-                console.log(
-                  'fleetd LAN interface lost; board still reachable at its last addresses only until the link returns',
-                );
-              }
-              if (!mdns && MDNS_ENABLED && next.length) startMdns(next);
-              try {
-                core.tick(
-                  `🌐 LAN address changed — share panel updated${gone.length ? ` (was ${gone.join(', ')})` : ''}`,
-                );
-              } catch {
-                /* feed line is non-essential */
-              }
-            },
-            catch: (error) => error,
+          Effect.gen(function* () {
+            // The non-tick side effects (network refresh, log line, mDNS start)
+            // keep their prior failure semantics: a throw here becomes the
+            // RefreshError the onError handler logs. This step returns the
+            // feed-tick message, which the Store-backed tick below applies.
+            const message = yield* Effect.try({
+              try: () => {
+                const next = [...addresses];
+                const gone = previous.filter((address) => !addresses.includes(address));
+                refreshNetwork(next);
+                if (next.length) {
+                  console.log(
+                    `fleetd LAN addresses now ${next.join(', ')}${gone.length ? ` (was ${gone.join(', ')})` : ''}`,
+                  );
+                } else {
+                  console.log(
+                    'fleetd LAN interface lost; board still reachable at its last addresses only until the link returns',
+                  );
+                }
+                if (!mdns && MDNS_ENABLED && next.length) startMdns(next);
+                return `🌐 LAN address changed — share panel updated${gone.length ? ` (was ${gone.join(', ')})` : ''}`;
+              },
+              catch: (error) => error,
+            });
+            // P8.6 slice 4: the feed tick is non-essential, so its failure is
+            // swallowed exactly as the prior inline `try { core.tick(...) } catch {}`
+            // did — the LanTickError tag is dropped, never logged, never propagated.
+            yield* wiredLanTick(message).pipe(Effect.catchTag('LanTickError', () => Effect.void));
           }),
         onError: (error) =>
           Effect.sync(() => {

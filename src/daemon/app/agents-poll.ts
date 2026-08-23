@@ -169,11 +169,45 @@ function runPoll(
   );
 }
 
-function ingestPoll(core: AgentsPollCore, records: unknown): Effect.Effect<void, never> {
-  return Effect.try({
-    try: () => core.ingestAgentsPoll(records),
-    catch: (cause) => new AgentsPollIngestError({ cause }),
-  }).pipe(Effect.catchTag('AgentsPollIngestError', () => Effect.void));
+/** The single DB-touching leg of an agents poll: hand the decoded records to core. */
+export interface AgentsIngestCallbacks {
+  readonly ingestAgentsPoll: (records: unknown) => void;
+}
+
+/**
+ * The coarse ingest operation, parameterized over its Effect environment. The
+ * legacy adapter requires nothing (`never`); the P8.6 store-backed adapter
+ * (db-workflows/agents-ingest.ts) yields the root-owned Store first, so its
+ * requirement is `Store`. Both translate a synchronous ingest throw into the
+ * identical AgentsPollIngestError, so the scheduler's fail-open boundary
+ * (ingestPoll) catches that tag either way.
+ */
+export type AgentsIngestWork<Environment> = (
+  records: unknown,
+) => Effect.Effect<void, AgentsPollIngestError, Environment>;
+
+/**
+ * Capability-parameterized ingest work (R = never): the existing synchronous
+ * core.ingestAgentsPoll wrapped in the one coarse Effect.try. This is the wired
+ * default and the P8.6 rollback path for the store-backed adapter.
+ */
+export function legacyAgentsIngestWork(callbacks: AgentsIngestCallbacks): AgentsIngestWork<never> {
+  const ingestAgentsPoll = callbacks.ingestAgentsPoll.bind(callbacks);
+  return (records) =>
+    Effect.try({
+      try: () => ingestAgentsPoll(records),
+      catch: (cause) => new AgentsPollIngestError({ cause }),
+    });
+}
+
+function ingestPoll<Environment>(
+  ingest: AgentsIngestWork<Environment>,
+  records: unknown,
+): Effect.Effect<void, never, Environment> {
+  // Named fail-open skip (P5): a translated ingest failure is swallowed so the
+  // scheduler keeps polling. A missing-Store defect is not this tagged failure
+  // and deliberately survives the boundary.
+  return ingest(records).pipe(Effect.catchTag('AgentsPollIngestError', () => Effect.void));
 }
 
 /**
@@ -208,12 +242,13 @@ function runLiveness(core: AgentsPollCore): Effect.Effect<void, never> {
   return owned.pipe(Effect.catchTag('AgentsPollLivenessError', () => Effect.void));
 }
 
-function makeTick(
+function makeTick<Environment>(
   core: AgentsPollCore,
+  ingest: AgentsIngestWork<Environment>,
   settings: ResolvedAgentsPollOptions,
   runner: ProcessRunnerService | null,
   state: Ref.Ref<AgentsPollState>,
-): Effect.Effect<void> {
+): Effect.Effect<void, never, Environment> {
   return Effect.gen(function* () {
     if (settings.argv !== null && runner !== null) {
       const current = yield* Ref.get(state);
@@ -222,7 +257,7 @@ function makeTick(
         const result = yield* runPoll(runner, settings.argv);
         let agentsWereActive = current.agentsWereActive;
         if (result._tag === 'ValidPoll') {
-          yield* ingestPoll(core, result.records);
+          yield* ingestPoll(ingest, result.records);
           // A verifier exception is an unexpected defect, not an operational polling error.
           agentsWereActive = yield* Effect.sync(() =>
             hasLiveInteractiveAgent(result.records, settings.processOwnedBy),
@@ -246,10 +281,11 @@ function makeTick(
  * Infinite, scoped agents scheduler. It starts after the legacy first-run delay, polls serially,
  * then spaces every next liveness tick from completion of the prior tick.
  */
-export function makeAgentsPollProgram(
+export function makeAgentsPollProgram<Environment = never>(
   core: AgentsPollCore,
   options: AgentsPollOptions = {},
-): AgentsPollProgram {
+  ingest: AgentsIngestWork<Environment> = legacyAgentsIngestWork(core),
+): Effect.Effect<never, never, ProcessRunner | Environment> {
   const settings = resolveAgentsPollOptions(options);
 
   return Effect.gen(function* () {
@@ -259,7 +295,7 @@ export function makeAgentsPollProgram(
       agentsWereActive: false,
       nextAgentsPollAt: 0,
     });
-    const tick = makeTick(core, settings, runner, state);
+    const tick = makeTick(core, ingest, settings, runner, state);
 
     yield* Effect.sleep(Duration.millis(settings.firstRunDelayMs));
     yield* Effect.repeat(tick, Schedule.spaced(Duration.millis(settings.pollIntervalMs)));
