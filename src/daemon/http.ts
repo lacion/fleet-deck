@@ -67,6 +67,10 @@ import {
   wsKeepaliveAction,
 } from './http-policy.ts';
 import type { TrustedOrigin } from './http-policy.ts';
+// P6.4 hook route group: the DEDICATED Exit→hook-response mapper. Deliberately
+// NOT mapEffectRouteExit — hooks fail OPEN (every non-success Exit → 200 {}),
+// never 503/500/legacy-replay. See hook-policy.ts and settleEffectHookRoute.
+import { mapHookExit } from './hook-policy.ts';
 // program.ts and the auth/origin suites import these two from the HTTP module's
 // public surface; keep re-exporting them now that they live in http-policy.ts.
 export { isLoopbackAddress, parseTrustedOrigins } from './http-policy.ts';
@@ -587,6 +591,18 @@ export interface NameControlRouteCapabilities {
   readonly validateSuffix: (suffix: string) => string | null;
   readonly applyName: (suffix: string | null) => { readonly ok: boolean };
 }
+// P6.4 HOOK ROUTE GROUP (POST /hook/:name) — STRUCTURAL MIRROR of
+// HookDispatchCapabilities in app/http-workflows/hooks.ts. All three fields are
+// thunks the workflow calls inside the Effect, so building the capability object
+// has no side effect. E stays `never`: an unknown name and a malformed payload
+// are expected OUTCOMES carried as the DATA value `{}`, not Effect errors. tsc
+// checks this mirror against the real interface at program.ts's
+// installEffectRoutes() site.
+export interface HookDispatchRouteCapabilities {
+  readonly handler: (() => unknown) | null;
+  readonly valid: () => boolean;
+  readonly ingestUnknown: () => void;
+}
 export interface HttpEffectRoutes {
   // runRequest routes the workflow Effect through the ingress bridge and settles
   // to an Exit whose error channel is exactly HttpQuiescingFailure: a quiescing
@@ -611,6 +627,8 @@ export interface HttpEffectRoutes {
   readonly controlSync: (caps: ControlSyncRouteCapabilities) => HttpWorkflowEffect;
   readonly questionsDismiss: (caps: QuestionsDismissRouteCapabilities) => HttpWorkflowEffect;
   readonly nameControl: (caps: NameControlRouteCapabilities) => HttpWorkflowEffect;
+  // P6.4 HOOK ROUTE GROUP builder (see the mirror interface above).
+  readonly hookDispatch: (caps: HookDispatchRouteCapabilities) => HttpWorkflowEffect;
 }
 
 // CONTROL-API SEAM: the board-spawn lifecycle methods (spawn / revive /
@@ -1727,6 +1745,131 @@ export function createHttp(
     // response intentionally left open
   }
 
+  // P6.4 HOOK ROUTE GROUP transport. The hook dispatch decision (unknown name /
+  // malformed payload / known handler) is now the E=never workflow in
+  // app/http-workflows/hooks.ts; this block wires it through the P6.3 bridge and
+  // settles it FAIL-OPEN. It sits next to hookHandlers/holdHook rather than with
+  // the other settlers because hookDispatchCapabilities closes over hookHandlers.
+
+  // B2 reply floor. A wedged Effect runtime whose bridge Promise never settles
+  // would otherwise strand a hook forever: an active request runs with idleTimeout
+  // 0 (immortal), the keep-alive FINs close the socket without writing a body, and
+  // boundStalledDrain never arms (the body is already drained). So a single
+  // unref'd, idempotent timer synthesizes the canonical 200 {} after this many ms.
+  // Read at createHttp construction time (default 5000ms) so a test can shorten it
+  // via FLEETDECK_HOOK_REPLY_FLOOR_MS before the server binds. It never fires under
+  // load — the sync hook workflow settles on a microtask — and never truncates a
+  // HOLD (holds answer through legacy holdHook and never reach this settler).
+  const HOOK_REPLY_FLOOR_MS = (() => {
+    const raw = Number(process.env['FLEETDECK_HOOK_REPLY_FLOOR_MS']);
+    return Number.isFinite(raw) && raw > 0 ? raw : 5000;
+  })();
+
+  // HOOK-ROUTE SETTLER — the FOURTH settle shape, and the only one that fails
+  // OPEN. No Exit shape can produce a non-200: mapHookExit (hook-policy.ts, NOT
+  // mapEffectRouteExit) folds success→its body and EVERY failure — an
+  // ApplicationQuiescingError refusal, an interrupts-only interruption, a die, a
+  // handler that threw — to {}. There is no quiesce branch, no defect rethrow, no
+  // 503/500: the fail-open contract (tests/p6-hook-failopen-contract.test.ts)
+  // forbids every one of them, and no Cause/stack/token/path is ever read.
+  //   B1 (the reply survives interruption): the reply is emitted from the bridge
+  //   Promise's terminal arms, not an in-Effect finalizer. The P6.3 bridge ALWAYS
+  //   resolves — success, a quiesce refusal, and an interrupts-only Exit all
+  //   resolve (only a synchronous submission throw rejects) — so .then runs
+  //   mapHookExit on every settled Exit and .catch covers the submission throw. An
+  //   interruption cannot skip the reply; it resolves an Exit that becomes {}.
+  //   B2 (the floor above) covers the wedged-runtime case where the Promise never
+  //   settles at all.
+  // One idempotent emitter (failOpen) is shared by all three arms; whichever fires
+  // first wins and the rest no-op (res.end is itself idempotent — belt and braces).
+  function settleEffectHookRoute(
+    routes: HttpEffectRoutes,
+    operation: string,
+    effect: HttpWorkflowEffect,
+    res: HttpResShim,
+  ): void {
+    let settled = false;
+    let floor: ReturnType<typeof setTimeout> | null = null;
+    const failOpen = (body: unknown): void => {
+      if (settled) return;
+      // Emit FIRST; commit (settled + clear the floor) only AFTER json() returns.
+      // A Success whose value is unserializable — JSON.stringify turns it into
+      // undefined, or it is circular — makes json() throw BEFORE it writes a byte.
+      // Had we already flipped settled and cleared the floor, that request would be
+      // answered-never. So on a throw, emit the canonical fail-open 200 {} right
+      // here rather than stranding it until the floor; only if THAT also throws (the
+      // socket is genuinely gone) do we swallow and leave settled=false, so the
+      // unref'd floor timer stays armed as the last-resort emitter.
+      try {
+        json(res, 200, body);
+      } catch {
+        try {
+          json(res, 200, {});
+        } catch {
+          /* socket gone — leave settled=false; the floor stays armed */
+          return;
+        }
+      }
+      settled = true;
+      if (floor) clearTimeout(floor);
+    };
+    floor = setTimeout(() => failOpen({}), HOOK_REPLY_FLOOR_MS);
+    floor.unref();
+    routes
+      .runRequest(operation, effect)
+      .then((exit) => {
+        failOpen(mapHookExit(exit).body);
+      })
+      .catch(() => {
+        // A synchronous submission throw is the ONLY bridge rejection; still 200 {}.
+        failOpen({});
+      });
+  }
+
+  // Build the hook workflow's capabilities over the already-parsed event body.
+  // The three thunks are called INSIDE the Effect, so constructing this object has
+  // no side effect — only running the workflow dispatches. `handler` is null for an
+  // unknown event name (the workflow then ingests via ingestUnknown and answers
+  // {}); ingestUnknown reproduces the legacy unknown-event telemetry byte-for-byte
+  // (hook_event_name first, then the spread raw body).
+  function hookDispatchCapabilities(name: string, ev: unknown): HookDispatchRouteCapabilities {
+    const handler = hookHandlers[name];
+    return {
+      handler: handler ? () => handler(ev as HookBody) : null,
+      valid: () => validateHookEvent(ev).ok,
+      ingestUnknown: () => {
+        core.applyEvent({ hook_event_name: name, ...asRecord(ev) });
+      },
+    };
+  }
+
+  // POST /hook/:name dispatch: legacy when the bridge is unwired, else the
+  // workflow settled fail-open. The rollback path reproduces the former inline
+  // dispatch (unknown → ingest + {}; invalid → {}; known+valid → handler ?? {})
+  // byte-for-byte, so removing installEffectRoutes restores the exact prior bytes.
+  function dispatchHook(res: HttpResShim, name: string, ev: unknown): void {
+    if (!effectRoutes) {
+      const handler = hookHandlers[name];
+      if (!handler) {
+        core.applyEvent({ hook_event_name: name, ...asRecord(ev) });
+        json(res, 200, {});
+        return;
+      }
+      if (!validateHookEvent(ev).ok) {
+        json(res, 200, {});
+        return;
+      }
+      json(res, 200, handler(ev as HookBody) ?? {});
+      return;
+    }
+    settleEffectHookRoute(
+      effectRoutes,
+      `POST /hook/${name}`,
+      effectRoutes.hookDispatch(hookDispatchCapabilities(name, ev)),
+      res,
+    );
+  }
+
   // GET /api/watch v2 — long-poll consumed by scripts/fleet-watch.mjs (the
   // asyncRewake watcher). v2 (orchestrator routing + mail-wake): claims mail
   // from ANY sender, not just board answers, and the watcher stays alive on
@@ -2155,28 +2298,18 @@ export function createHttp(
                 holdHook(res, ev, name);
                 return; // Phase 3/4 hold-open relay
               }
-              const handler = hookHandlers[name];
-              if (!handler) {
-                // unknown hook event: ingest telemetry anyway, respond no-op
-                core.applyEvent({ hook_event_name: name, ...asRecord(ev) });
-                json(res, 200, {});
-                return;
-              }
-              // A hook payload without a usable session_id must never reach
-              // the state machine: the events.mjs sid fallback would key the
-              // card on the literal string 'unknown', collapsing EVERY
-              // malformed payload into one shared phantom card that each
-              // subsequent ID-less event then mutates. Fail open like every
-              // hook path — 200 {} with no dispatch — so a broken payload
-              // no-ops instead of corrupting the board. This guard is now the
-              // shared runtime validator (contracts/hooks.ts); its predicate
-              // (non-object body, or a missing/blank session_id) is identical
-              // to the hand check it replaces, so no dispatch outcome moves.
-              if (!validateHookEvent(ev).ok) {
-                json(res, 200, {});
-                return;
-              }
-              json(res, 200, handler(ev as HookBody) ?? {});
+              // P6.4: the unknown / malformed-payload / dispatch decision now
+              // lives in the hook workflow (app/http-workflows/hooks.ts), run
+              // through the P6.3 bridge and settled FAIL-OPEN by
+              // settleEffectHookRoute (mapHookExit: every non-success Exit → 200
+              // {}). The malformed-payload guard that formerly stood here — a
+              // missing/blank session_id would key the events.mjs card on the
+              // literal 'unknown', collapsing every malformed payload into one
+              // shared phantom card — is now caps.valid() (the shared
+              // contracts/hooks.ts validator), applied inside the workflow with the
+              // identical predicate, so no dispatch outcome moves. dispatchHook's
+              // rollback path reproduces the former inline branches byte-for-byte.
+              dispatchHook(res, name, ev);
               return;
             }
             // BUG-034: explicit acknowledgement for a leased /api/watch claim.

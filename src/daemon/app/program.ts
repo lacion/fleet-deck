@@ -49,6 +49,7 @@ import {
   questionsDismissWorkflow,
 } from './http-workflows/control.ts';
 import { healthWorkflow, stateWorkflow } from './http-workflows/health-state.ts';
+import { hookDispatchWorkflow } from './http-workflows/hooks.ts';
 import { pasteImageWorkflow } from './http-workflows/paste.ts';
 import {
   cleanupWorkflow,
@@ -839,6 +840,9 @@ async function bootDaemon(
     controlSync: controlSyncWorkflow,
     questionsDismiss: questionsDismissWorkflow,
     nameControl: nameControlWorkflow,
+    // P6.4 HOOK ROUTE GROUP: POST /hook/:name (the final route slice). Fails open
+    // on every non-success Exit via mapHookExit (see http-workflows/hooks.ts).
+    hookDispatch: hookDispatchWorkflow,
   });
 
   // Every non-internal IPv4 this host answers on. Wildcard and interface-specific

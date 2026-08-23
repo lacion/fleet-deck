@@ -50,6 +50,7 @@ import {
   questionsDismissWorkflow,
 } from '../../src/daemon/app/http-workflows/control.ts';
 import { healthWorkflow, stateWorkflow } from '../../src/daemon/app/http-workflows/health-state.ts';
+import { hookDispatchWorkflow } from '../../src/daemon/app/http-workflows/hooks.ts';
 import { pasteImageWorkflow } from '../../src/daemon/app/http-workflows/paste.ts';
 import {
   cleanupWorkflow,
@@ -78,6 +79,7 @@ const ALL_ROUTE_BUILDERS = {
   controlSync: controlSyncWorkflow,
   questionsDismiss: questionsDismissWorkflow,
   nameControl: nameControlWorkflow,
+  hookDispatch: hookDispatchWorkflow,
 } as const;
 
 // ============================ A. ISOLATION ============================
