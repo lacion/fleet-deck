@@ -580,7 +580,16 @@ describe('IngressSupervisor', () => {
 
     assert.equal(source.match(/Effect\.runForkWith\(/g)?.length, 1);
     assert.equal(source.match(/Effect\.runCallbackWith\(/g)?.length, 1);
-    assert.equal(source.match(/Effect\.runPromiseWith\(/g)?.length, 1);
+    // Two runPromiseWith runners: the supervisor's context-bound one, and the
+    // P9.1 runControlDetached export — deliberately UNSUPERVISED (Context.empty,
+    // no onFiberStart) so control-core Promises are joined by the transport's
+    // res.done, never interrupted by the supervisor sweep. Pin both properties.
+    assert.equal(source.match(/Effect\.runPromiseWith\(/g)?.length, 2);
+    assert.match(
+      source,
+      /export const runControlDetached[\s\S]{0,120}=\s*Effect\.runPromiseWith\(Context\.empty\(\)\);/,
+    );
+    assert.doesNotMatch(source, /runControlDetached[\s\S]{0,200}onFiberStart/);
     // runPromiseExit resolves the Exit at the fiber boundary (external interrupt →
     // resolved interrupts-only Exit, never a rejection). Exactly one such runner.
     assert.equal(source.match(/Effect\.runPromiseExitWith\(/g)?.length, 1);

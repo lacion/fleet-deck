@@ -60,6 +60,16 @@ export interface IngressSupervisorService<Services> {
     options?: IngressRunOptions,
   ) => Promise<Exit.Exit<A, E | ApplicationQuiescingError>>;
 
+  /**
+   * P9.1 Q1: an UNSUPERVISED, context-free runner for R = never / E = never
+   * control cores (dismiss et al.). It is deliberately NOT tracked by the
+   * supervisor — the transport's start-once recorder owns the returned Promise's
+   * shutdown-join (danger note D7). It lives on the service so app/domain code
+   * can discharge a control Effect to a native Promise without an
+   * `Effect.run*With` call escaping the platform impl (import-boundaries).
+   */
+  readonly runControlDetached: <A>(effect: Effect.Effect<A, never, never>) => Promise<A>;
+
   /** Synchronously close admission without interrupting already-admitted work. */
   readonly quiesce: () => void;
   /** Quiesce and synchronously request interruption without awaiting cleanup. */

@@ -12,6 +12,11 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { openDb } from '../src/daemon/db.ts';
 import { createCore } from '../src/daemon/derive.ts';
+// P9.1 Slice 2: the in-memory core injects the SAME unsupervised runner
+// production wires from the ingress supervisor (ingress.runControlDetached), so
+// these tests exercise the dismiss EFFECT cores, not the legacy fallback. Tests
+// are not import-boundary-scanned, so importing the platform runner here is fine.
+import { runControlDetached } from '../src/daemon/platform/bun/ingress-supervisor-live.ts';
 import { startDaemon } from './helpers/daemon.ts';
 import { postHook, postJson } from './helpers/http.ts';
 import { getState } from './helpers/state.ts';
@@ -166,6 +171,7 @@ function memoryCore(
     // liveness exercise) bridged to the full production adapter type through the
     // seam derive.ts documents as untyped for exactly these test adapters.
     tmuxAdapter: tmux.adapter as unknown as CoreTmuxAdapter,
+    runControlDetached,
   });
   t.after(() => {
     db.close();
@@ -423,6 +429,69 @@ test('dismiss bails out of killing when a hook resurrects the card mid-await', a
   assert.equal(out.body.resurrected, true, 'the mid-dismiss resurrection is surfaced');
   assert.equal(out.body.windows_killed, 0, 'a resurrected card’s window is not killed');
   assert.deepEqual(state.killed, [], 'nothing was killed');
+});
+
+test('dismiss bails BETWEEN two window kills when a hook resurrects the card (the in-loop alive() re-read)', async (t) => {
+  // Companion to the mid-await test above, pinning the OTHER resurrection-bail:
+  // the alive() re-read at the BOTTOM of the kill loop (the in-loop bail after
+  // each killWindowVerified), not the one guarding the listScopedWindows await
+  // (the listing guard). A card owns
+  // TWO dead windows. listScopedWindows returns both while the card is still
+  // archived (so the loop is entered), window 1 is killed, and a hook clears
+  // archived_at BETWEEN that kill and inspecting window 2. The post-kill re-read
+  // must fire: window 2 is left standing and the result surfaces
+  // resurrected:true with exactly one window killed.
+  //
+  // P9.1 Slice 2 GAP (design §3): an Effect suspension point inserted mid-loop
+  // would change WHEN alive() is consulted and break this race, so it is pinned
+  // against the legacy path FIRST and re-run unchanged after the conversion.
+  const tmux = fakeTmux();
+  const { db, core, state } = memoryCore(t, { tmux });
+  const now = Date.now();
+  const sid = 'off-tween';
+  seedOffline(db, sid, { now });
+  for (const [n, wid] of [
+    ['a', '@7'],
+    ['b', '@8'],
+  ] as const) {
+    db.prepare(
+      `INSERT INTO spawns
+      (spawn_id, session_id, callsign, tmux_session, tmux_window, requested_at, status)
+      VALUES (?, ?, 'off-tween-1', 'fleetdeck-4711', ?, ?, 'pane-dead')`,
+    ).run(`sp-tween-${n}`, sid, `fd4711-off-tween-${n}`, now);
+    state.windows.push({
+      session: 'fleetdeck-4711',
+      window: `fd4711-off-tween-${n}`,
+      window_id: wid,
+      pane_dead: true,
+      pane_cmd: 'claude',
+    });
+  }
+  // The kill of window 1 succeeds; its side effect is the resurrection landing
+  // after that kill but before window 2 is inspected — exactly the between-kills
+  // window the in-loop re-read guards.
+  let kills = 0;
+  tmux.adapter.killWindowVerified = (name) => {
+    kills += 1;
+    state.killed.push(name);
+    if (kills === 1) {
+      db.prepare('UPDATE sessions SET archived_at = NULL WHERE session_id = ?').run(sid);
+    }
+    return Promise.resolve({
+      ok: true,
+      window_id: state.windows.find((w) => w.window === name)?.window_id ?? '@1',
+    });
+  };
+
+  const out = (await core.dismissSession(sid)) as DismissResult;
+  assert.equal(out.status, 200, JSON.stringify(out.body));
+  assert.equal(out.body.resurrected, true, 'the between-kills resurrection is surfaced');
+  assert.equal(out.body.windows_killed, 1, 'only the first window was killed before the bail');
+  assert.deepEqual(
+    state.killed,
+    ['fd4711-off-tween-a'],
+    'the loop broke after the first kill — window 2 was spared',
+  );
 });
 
 test('dismiss does not kill a same-name replacement pane a revive stood up mid-kill (BUG-046)', async (t) => {

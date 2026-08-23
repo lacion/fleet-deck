@@ -41,6 +41,17 @@ type ContextPromiseExitRunner<Services> = <A, E>(
   options?: Effect.RunOptions,
 ) => Promise<Exit.Exit<A, E>>;
 
+// P9.1 Q1: the UNSUPERVISED per-path runner for R = never / E = never control
+// cores (dismiss et al.). Deliberately context-free (Context.empty()) and NOT
+// tracked by the supervisor registry — the transport's start-once recorder owns
+// the returned Promise's shutdown-join (danger note D7). It lives HERE because
+// import-boundaries forbids an `Effect.run*With` call outside this platform file;
+// app/domain code (retention.ts) receives it as the plain `runControlDetached`
+// function via the ingress service, so no run*With call appears in a domain zone.
+// bare `Effect.runPromise` is deny-listed; this is the repo-sanctioned form.
+export const runControlDetached: <A>(effect: Effect.Effect<A, never, never>) => Promise<A> =
+  Effect.runPromiseWith(Context.empty());
+
 class LiveIngressSupervisor<Services> implements IngressSupervisorService<Services> {
   private phase: IngressSupervisorState = 'open';
   private readonly active = new Set<Fiber.Fiber<unknown, unknown>>();
@@ -54,6 +65,10 @@ class LiveIngressSupervisor<Services> implements IngressSupervisorService<Servic
   private readonly runPromiseWithContext: ContextPromiseRunner<Services>;
   private readonly runPromiseExitWithContext: ContextPromiseExitRunner<Services>;
   private readonly rootScope: Scope.Scope;
+  // P9.1 Q1: expose the module-level detached runner as a service field so
+  // app/domain code reaches it without importing this platform module (the
+  // run*With call itself stays put — see the export above).
+  readonly runControlDetached = runControlDetached;
 
   constructor(context: Context.Context<Services>, rootScope: Scope.Scope) {
     // Capture one already-built Context exactly once. These runners neither

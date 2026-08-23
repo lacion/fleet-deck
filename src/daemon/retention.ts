@@ -8,6 +8,7 @@
 // SHELL_RE is a pure helper.
 
 import fs from 'node:fs';
+import * as Effect from 'effect/Effect';
 import { SHELL_RE, NOT_RESUMABLE_END, safeParse } from './helpers.ts';
 import { CONFLICT_WINDOW_MS } from './ledger.ts';
 import { pruneRunNonces } from './run-nonce.ts';
@@ -75,6 +76,38 @@ interface TombstoneOpts {
   forgetModel?: boolean;
 }
 
+// P9.1 Slice 2: the uniform success value of the dismiss Effect cores — the
+// (status, body) control-result pair the transport hands straight to json(). It
+// mirrors app/http-workflows/control.ts's ControlWire structurally; retention is
+// DOMAIN and must not relative-import the app zone, so it is spelled locally.
+interface DismissWire {
+  status: number;
+  body?: unknown;
+}
+
+/**
+ * The UNSUPERVISED per-path Effect runner (P9.1 Q1), injected from the app. It is
+ * Effect.runPromiseWith(Context.empty()) — the repo-sanctioned detached runner —
+ * but it PHYSICALLY lives in the ingress supervisor (the only import-boundaries-
+ * sanctioned home for a run*With call); retention receives it as a plain function
+ * so no run*With call appears in domain code.
+ */
+export type RunControlDetached = <A>(effect: Effect.Effect<A, never, never>) => Promise<A>;
+
+// dismiss's two-phase shape (danger note D2): the synchronous guard + atomic-DB +
+// kill-setup region resolves EITHER to a terminal wire (done) OR to the coarse
+// kill-phase thunk (`runKill`, the only awaits). This keeps the atomic DB block a
+// single synchronous Effect.sync while the kill phase becomes one Effect.promise;
+// the sync region CONSTRUCTS runKill (harmless, synchronous) but never runs it.
+type DismissStep =
+  | { readonly done: true; readonly wire: DismissWire }
+  | { readonly done: false; readonly runKill: () => Promise<DismissWire> };
+
+// P9.1 Slice 2 rollback seam: false → the dismiss dispatchers bypass the Effect
+// cores and answer through the legacy async bodies (also reached whenever no
+// runControlDetached runner was injected).
+const EFFECT_CORE_DISMISS = true;
+
 interface RetentionCtx {
   q: Statements['q'];
   updateSession: Statements['updateSession'];
@@ -99,6 +132,10 @@ interface RetentionCtx {
   // Optional for standalone retention factory tests; createCore always wires
   // it before createRetention.
   spawnMaintenance?: SpawnMaintenance;
+  // P9.1 Q1: the ingress-owned unsupervised runner the dismiss Effect cores are
+  // discharged through. Optional — absent in standalone factory tests, where the
+  // legacy dismiss bodies answer directly (EFFECT_CORE_DISMISS rollback seam).
+  runControlDetached?: RunControlDetached;
 }
 
 export function createRetention(ctx: RetentionCtx) {
@@ -120,6 +157,7 @@ export function createRetention(ctx: RetentionCtx) {
     RETAIN_OFFLINE_MS,
     RETAIN_LEDGER_MS,
     spawnMaintenance,
+    runControlDetached,
   } = ctx;
 
   // Silence → presumed-ended tombstone. Pane-less hook sessions have no window
@@ -522,7 +560,295 @@ export function createRetention(ctx: RetentionCtx) {
   // archive, expire the card's mail + questions, gone its non-terminal spawn
   // rows, kill a dead remain-on-exit window — just scoped by session_id, and
   // returns a control-API {status, body} so the route can speak real codes.
-  async function dismissSession(sid: string) {
+  //
+  // P9.1 Slice 2: dismiss is now an Effect core (dismissSessionEffect) — R =
+  // never, E = never, expected outcomes are DATA (DismissWire). The atomic DB
+  // block below stays ONE Effect.sync with no yield inside (danger note D2); the
+  // window-kill phase is a single Effect.promise that preserves the alive()
+  // resurrection re-read between awaits byte-for-byte. The core is discharged to a
+  // native Promise<DismissWire> by the injected runControlDetached runner (the
+  // ingress-owned Effect.runPromiseWith(Context.empty()) bridge — Q1); that
+  // Promise is the object the transport's start-once recorder tracks and joins
+  // (danger note D7). The legacy async body (dismissSessionLegacy) is retained
+  // UNCHANGED as the per-path rollback seam.
+  function dismissSessionEffect(sid: string): Effect.Effect<DismissWire, never, never> {
+    return Effect.sync((): DismissStep => {
+      const now = Date.now();
+      const s = q.getSession.get(sid);
+      if (!s)
+        return {
+          done: true,
+          wire: { status: 404, body: { ok: false, reason: 'no such session' } },
+        };
+      // A card is dismissible only once it is offline (a live/working card is the
+      // human's to keep) and not already dismissed.
+      if (s.col !== 'offline')
+        return {
+          done: true,
+          wire: { status: 409, body: { ok: false, reason: `session is ${s.col}, not offline` } },
+        };
+      if (s.archived_at != null)
+        return {
+          done: true,
+          wire: { status: 409, body: { ok: false, reason: 'already dismissed' } },
+        };
+      // Refuse while the session still owns a live-eligible spawn row (R4-review):
+      //   • 'stalled'          — a fail-loud human problem bulk cleanup also refuses
+      //                          to sweep (archiveCandidates excludes it).
+      //   • 'spawning'/'live'   — an ACTIVE row. Dismissing it would flip it 'gone',
+      //                          and the very next liveness tick's resurrectSpawn
+      //                          would clear archived_at and re-float the card as a
+      //                          zombie the human can't re-dismiss until it dies.
+      //                          Kill it first (☠), then dismiss the corpse.
+      // (A genuinely-live claude sitting behind an ALREADY-'gone' row still gets
+      // resurrected by design — the board must never hide a live billed agent —
+      // exactly the same semantics as bulk Clear; dismiss simply refuses to CREATE
+      // that situation from a still-active row.)
+      const active = q.activeSpawnBySession.get(sid);
+      if (active) {
+        const reason =
+          active.status === 'stalled'
+            ? 'session has a stalled spawn — resolve it first'
+            : `session still owns a ${active.status} spawn — kill it before dismissing`;
+        return { done: true, wire: { status: 409, body: { ok: false, reason } } };
+      }
+
+      // --- atomic DB block (R1-review): NO awaits, so it completes in one JS turn
+      // and no hook event (applyEvent resurrection, /clear succession) can
+      // interleave and leave the card half-dismissed. setArchived carries
+      // `AND archived_at IS NULL`, so .changes===0 means a concurrent dismiss
+      // claimed it a beat ago — report it already dismissed and touch nothing else.
+      if (!q.setArchived.run(now, sid).changes) {
+        return {
+          done: true,
+          wire: { status: 409, body: { ok: false, reason: 'already dismissed' } },
+        };
+      }
+      const mail_expired = Number(q.expireMailForSession.run(now, sid).changes);
+      const questions_expired = questions.expireAllForSession(sid, { includeFreeform: true });
+      // Any residual non-terminal spawn row (only a rare pre-pane 'provisioning'
+      // survives the active-guard above) goes 'gone' so it stops counting active.
+      q.goneSessionSpawns.run(sid);
+      // Drop just this card's file ledger so the conflict radar can't keep arguing
+      // on behalf of a corpse. In the sync block WITH the rest of the DB story, so
+      // a mid-await resurrection can never observe a torn state. The worktree on
+      // disk is deliberately LEFT in place (still listed in the Worktrees modal).
+      q.deleteTouchesForSession.run(sid);
+
+      // --- window-kill phase: the only awaits. A hook can resurrect the card
+      // DURING an await (UserPromptSubmit → applyEvent clears archived_at); the
+      // window is then a live session's again and NOT ours to kill, so re-read the
+      // session after every await and bail the instant it is un-archived.
+      const alive = () => q.getSession.get(sid)?.archived_at == null;
+      const myWindows = new Set(
+        q.spawnsForSession
+          .all(sid)
+          .map((r) => r.tmux_window)
+          .filter(Boolean),
+      );
+      let windows_killed = 0;
+      let resurrected = false;
+      // BUG-145: the archive must NOT be reported as a plain success when the
+      // card's dead windows could not be killed — that hid a stale window AND
+      // burned the retry path (a second dismiss 409s 'already dismissed'). The
+      // DB story already landed above, so the partial truth is surfaced as an
+      // explicit incomplete result: ok:false, a reason naming every failed
+      // window, and retry:true (the idempotent call below re-attempts the kill
+      // for an already-archived card).
+      const window_errors: string[] = [];
+      const incomplete = (reason: string): DismissWire => ({
+        status: 409,
+        body: {
+          ok: false,
+          archived: 1,
+          mail_expired,
+          questions_expired,
+          windows_killed,
+          retry: true,
+          reason,
+          ...(resurrected ? { resurrected: true } : {}),
+        },
+      });
+      // The success tail (tick + onMutate + 200). Reached with NO windows here in
+      // the sync region (byte-for-byte with the legacy async fn, which never hit an
+      // await when myWindows was empty) and after the kill loop inside runKill.
+      const success = (): DismissWire => {
+        tick(
+          `⌫ dismissed ${s.callsign} — card, ${mail_expired} mail, ${questions_expired} question(s)${windows_killed ? `, ${windows_killed} window(s)` : ''}`,
+        );
+        onMutate();
+        return {
+          status: 200,
+          // `resurrected` is surfaced only when it happened — a hook re-floated the
+          // card mid-dismiss, so the DB story already landed but the pane was left
+          // alone. The normal path omits it (the route's key set stays stable).
+          body: {
+            ok: true,
+            archived: 1,
+            mail_expired,
+            questions_expired,
+            windows_killed,
+            ...(resurrected ? { resurrected: true } : {}),
+          },
+        };
+      };
+      if (!myWindows.size) return { done: true, wire: success() };
+      const runKill = async (): Promise<DismissWire> => {
+        const wins = await tmuxAdapter.listScopedWindows(port);
+        if (alive()) {
+          resurrected = true;
+        } else if (wins === null) {
+          // UNKNOWN listing — none of this card's windows can even be inspected.
+          return incomplete(
+            'tmux window listing unavailable — card archived, dead window(s) not killed; dismiss again to retry',
+          );
+        } else {
+          for (const win of wins) {
+            if (!myWindows.has(win.window) || !win.pane_dead) continue;
+            // R2-review (stale window-owner): a concurrent revive() can insert a
+            // NEWER row owning this reused window name and stand a fresh live pane
+            // up on it; killWindowVerified re-resolves BY NAME, so it would kill
+            // the replacement. Kill only when the window is still owned by a
+            // pane-dead row of THIS session (or by no live-eligible row at all —
+            // currentWindowOwner excludes 'gone'/'killed', so null means a corpse
+            // no revive has reclaimed). Anything else (an active owner, or another
+            // session's row) means a live pane now lives there: skip it.
+            const owner = q.currentWindowOwner.get(win.window);
+            if (owner && (owner.session_id !== sid || owner.status !== 'pane-dead')) continue;
+            // BUG-046: the check above still predates the kill's own awaits — a
+            // revive can land DURING them, after the owner check passed. Move the
+            // verdict to kill time: the kill primitive re-runs `expect` after its
+            // final name re-resolve, so a window/pane generation swap (revive
+            // killed the remnant and recreated the name), an owner flip to a
+            // live-eligible row, or a hook resurrection mid-kill all degrade to a
+            // stale no-op instead of destroying the replacement pane.
+            const out = await tmuxAdapter.killWindowVerified(win.window, {
+              expectWindowId: win.window_id,
+              expect: () => {
+                const owner2 = q.currentWindowOwner.get(win.window);
+                if (owner2 && (owner2.session_id !== sid || owner2.status !== 'pane-dead'))
+                  return false;
+                return !alive();
+              },
+            });
+            // BUG-145: {ok:false, gone:true} is fresh proof of absence — that
+            // counts as cleared. A kill that comes back {ok:false} without proof
+            // of absence leaves the window standing, holding its reusable name —
+            // never report success; surface it for the retry path below.
+            if (out.ok || out.gone) windows_killed++;
+            // BUG-046: {ok:false, stale:true} means the kill's own re-check caught
+            // a revive reclaiming this window name mid-kill (generation/owner
+            // swap). The pane standing there now is LIVE work, not the corpse we
+            // set out to kill — a correct no-op, NOT an unkilled dead window. It
+            // must NOT become a window_error: doing so would 409 the dismiss and
+            // falsely imply a dead window still stands, and (worse) the retry would
+            // then chase a name that rightly belongs to the replacement. Composes
+            // with BUG-145: only a genuine {ok:false} (no gone, no stale) is a
+            // failure that keeps the retry path open.
+            else if (out.stale) {
+              /* revive reclaimed the name mid-kill — leave it */
+            } else window_errors.push(`${win.window}: ${out.error ?? 'kill failed'}`);
+            if (alive()) {
+              resurrected = true;
+              break;
+            }
+          }
+          if (window_errors.length) {
+            return incomplete(
+              `${window_errors.length} window(s) could not be killed — ${window_errors.join('; ').slice(0, 200)} — card archived; dismiss again to retry`,
+            );
+          }
+        }
+        return success();
+      };
+      return { done: false, runKill };
+    }).pipe(
+      Effect.flatMap((step) =>
+        step.done ? Effect.succeed(step.wire) : Effect.promise(step.runKill),
+      ),
+    );
+  }
+
+  // BUG-145 retry path (P9.1 Slice 2: dismissRetryEffect). Idempotent: it skips
+  // every guard and DB mutation (the card is already archived) and ONLY
+  // re-attempts killing the card's dead remain-on-exit windows, with the same
+  // ownership re-checks. Same shape as dismissSessionEffect — sync guards + setup,
+  // then one Effect.promise kill phase. 200 when every eligible pane is now killed
+  // or freshly verified absent, 409 with retry:true again while any kill is still
+  // unverifiable.
+  function dismissRetryEffect(sid: string): Effect.Effect<DismissWire, never, never> {
+    return Effect.sync((): DismissStep => {
+      const s = q.getSession.get(sid);
+      if (!s)
+        return {
+          done: true,
+          wire: { status: 404, body: { ok: false, reason: 'no such session' } },
+        };
+      if (s.archived_at == null)
+        return {
+          done: true,
+          wire: {
+            status: 409,
+            body: { ok: false, reason: 'session is not dismissed — nothing to retry' },
+          },
+        };
+      const myWindows = new Set(
+        q.spawnsForSession
+          .all(sid)
+          .map((r) => r.tmux_window)
+          .filter(Boolean),
+      );
+      if (!myWindows.size) {
+        return { done: true, wire: { status: 200, body: { ok: true, windows_killed: 0 } } };
+      }
+      const runKill = async (): Promise<DismissWire> => {
+        const wins = await tmuxAdapter.listScopedWindows(port);
+        if (wins === null) {
+          return {
+            status: 409,
+            body: {
+              ok: false,
+              retry: true,
+              reason: 'tmux window listing unavailable — retry again',
+            },
+          };
+        }
+        let windows_killed = 0;
+        const window_errors: string[] = [];
+        for (const win of wins) {
+          if (!myWindows.has(win.window) || !win.pane_dead) continue;
+          const owner = q.currentWindowOwner.get(win.window);
+          if (owner && (owner.session_id !== sid || owner.status !== 'pane-dead')) continue;
+          const out = await tmuxAdapter.killWindowVerified(win.window);
+          if (out.ok || out.gone) windows_killed++;
+          // BUG-046: a stale verdict (a revive reclaimed the name) is a no-op here
+          // too, never a retry-worthy failure.
+          else if (out.stale) {
+            /* revive reclaimed the name — leave it */
+          } else window_errors.push(`${win.window}: ${out.error ?? 'kill failed'}`);
+        }
+        if (window_errors.length) {
+          return {
+            status: 409,
+            body: {
+              ok: false,
+              retry: true,
+              windows_killed,
+              reason: `${window_errors.length} window(s) could not be killed — ${window_errors.join('; ').slice(0, 200)} — retry again`,
+            },
+          };
+        }
+        return { status: 200, body: { ok: true, windows_killed } };
+      };
+      return { done: false, runKill };
+    }).pipe(
+      Effect.flatMap((step) =>
+        step.done ? Effect.succeed(step.wire) : Effect.promise(step.runKill),
+      ),
+    );
+  }
+
+  async function dismissSessionLegacy(sid: string): Promise<DismissWire> {
     const now = Date.now();
     const s = q.getSession.get(sid);
     if (!s) return { status: 404, body: { ok: false, reason: 'no such session' } };
@@ -700,7 +1026,7 @@ export function createRetention(ctx: RetentionCtx) {
   // card's dead remain-on-exit windows, with the same ownership re-checks.
   // 200 when every eligible pane is now killed or freshly verified absent,
   // 409 with retry:true again while any kill is still unverifiable.
-  async function dismissRetry(sid: string) {
+  async function dismissRetryLegacy(sid: string): Promise<DismissWire> {
     const s = q.getSession.get(sid);
     if (!s) return { status: 404, body: { ok: false, reason: 'no such session' } };
     if (s.archived_at == null)
@@ -750,6 +1076,23 @@ export function createRetention(ctx: RetentionCtx) {
       };
     }
     return { status: 200, body: { ok: true, windows_killed } };
+  }
+
+  // P9.1 Slice 2 dispatchers: discharge the Effect core through the injected
+  // ingress runner (runControlDetached), or fall back to the legacy async body
+  // when the Effect path is disabled (EFFECT_CORE_DISMISS=false) or no runner was
+  // wired (standalone retention-factory tests). Either branch returns exactly ONE
+  // native Promise<DismissWire> — the object the transport's start-once recorder
+  // tracks and joins (danger note D7), byte-for-byte with the legacy contract.
+  function dismissSession(sid: string): Promise<DismissWire> {
+    return EFFECT_CORE_DISMISS && runControlDetached
+      ? runControlDetached(dismissSessionEffect(sid))
+      : dismissSessionLegacy(sid);
+  }
+  function dismissRetry(sid: string): Promise<DismissWire> {
+    return EFFECT_CORE_DISMISS && runControlDetached
+      ? runControlDetached(dismissRetryEffect(sid))
+      : dismissRetryLegacy(sid);
   }
 
   return { retentionSweep, cleanup, dismissSession, dismissRetry };

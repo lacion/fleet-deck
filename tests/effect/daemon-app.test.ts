@@ -141,7 +141,11 @@ describe('DaemonApp extraction', () => {
       'daemonResources.setProcessRuntime(',
       'db = openDb(DB_FILE);',
       "daemonResources.setStore('sqlite'",
-      'core = createCore(db, { port: PORT, version });',
+      // P9.1 Slice 2: createCore now also receives the ingress-owned detached
+      // runner for the dismiss Effect cores. Pin both the step and, ordered
+      // within it, the runner injection.
+      'core = createCore(db, {',
+      'runControlDetached: ingress.runControlDetached,',
       'daemonResources.setCore(',
       'http = createHttp(core, {',
       'daemonResources.setHttp(',

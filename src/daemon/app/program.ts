@@ -785,7 +785,13 @@ async function bootDaemon(
     daemonResources.setStore('sqlite', observeRelease('database', { close: () => store.close() }));
     if (testHooks) await acquisitionCheckpoint('database');
     else signal.throwIfAborted();
-    core = createCore(db, { port: PORT, version }); // holdMs resolves from FLEETDECK_HOLD_MS inside
+    // runControlDetached (P9.1 Q1): the ingress-owned unsupervised runner that
+    // discharges the dismiss Effect cores to native Promises the transport joins.
+    core = createCore(db, {
+      port: PORT,
+      version,
+      runControlDetached: ingress.runControlDetached,
+    }); // holdMs resolves from FLEETDECK_HOLD_MS inside
     daemonResources.setCore(observeRelease('core', core.lifecycle));
     if (testHooks) await acquisitionCheckpoint('core');
     else signal.throwIfAborted();

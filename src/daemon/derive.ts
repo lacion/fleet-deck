@@ -28,7 +28,7 @@ import { createPlans } from './plans.ts';
 import { createSpawns, type SpawnLifecycle, type SpawnMaintenance } from './spawns.ts';
 import { createEvents } from './events.ts';
 import { createSnapshot } from './snapshot.ts';
-import { createRetention } from './retention.ts';
+import { createRetention, type RunControlDetached } from './retention.ts';
 import { createKeyedMutex, envInt } from './helpers.ts';
 
 // Public re-exports: these helpers moved to helpers.mjs, but tests and other
@@ -247,6 +247,10 @@ interface CreateCoreOptions {
   MAIL_PENDING_MAX_BYTES?: number;
   MAIL_PANE_BATCH?: number;
   MAIL_PANE_BATCH_BYTES?: number;
+  // P9.1 Q1: the ingress-owned unsupervised runner that discharges the dismiss
+  // Effect cores. Optional — when absent (standalone factory tests, pre-P9.1
+  // callers) retention falls back to its legacy async dismiss bodies.
+  runControlDetached?: RunControlDetached;
 }
 
 const CALLSIGNS = [
@@ -305,6 +309,7 @@ export function createCore(
     MAIL_PENDING_MAX_BYTES,
     MAIL_PANE_BATCH,
     MAIL_PANE_BATCH_BYTES,
+    runControlDetached,
   }: CreateCoreOptions = {},
 ) {
   const t0 = Date.now();
@@ -1114,6 +1119,9 @@ export function createCore(
     updateSession,
     onMutate,
     tmuxAdapter,
+    // P9.1 Q1: threaded to retention so dismiss discharges through the ingress
+    // runner (undefined in standalone factory tests → legacy dismiss fallback).
+    runControlDetached,
     questions,
     settleTerminalPlans,
     findScopedWindow,
