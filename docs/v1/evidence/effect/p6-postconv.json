@@ -1,0 +1,1975 @@
+{
+  "schema": 1,
+  "kind": "fleetdeck-effect-p6-http-bench",
+  "ok": true,
+  "label": "baseline",
+  "recordedAt": "2026-08-23T07:31:57.517Z",
+  "runtimeFloor": {
+    "expected": {
+      "bun": "1.3.14",
+      "revision": "0d9b296af33f2b851fcbf4df3e9ec89751734ba4"
+    },
+    "actual": {
+      "bun": "1.3.14",
+      "revision": "0d9b296af33f2b851fcbf4df3e9ec89751734ba4"
+    },
+    "exactMatch": true
+  },
+  "runtime": {
+    "bun": "1.3.14",
+    "revision": "0d9b296af33f2b851fcbf4df3e9ec89751734ba4"
+  },
+  "machine": {
+    "platform": "linux",
+    "release": "6.6.87.2-microsoft-standard-WSL2",
+    "arch": "x64",
+    "cpu": "AMD Ryzen 9 9950X3D 16-Core Processor",
+    "logicalCpuCount": 32
+  },
+  "config": {
+    "targets": [
+      "source",
+      "bundle"
+    ],
+    "workloads": [
+      "health",
+      "state",
+      "hook",
+      "hook-fail-open",
+      "paste",
+      "withheld",
+      "ws",
+      "static-shell",
+      "static-asset"
+    ],
+    "concurrency": [
+      1,
+      8,
+      32
+    ],
+    "durationMs": 15000,
+    "warmupMs": 2000,
+    "label": "baseline",
+    "pasteBytes": 2097152,
+    "probeConcurrency": 8,
+    "requestTimeoutMs": 15000,
+    "smoke": false
+  },
+  "comparison": {
+    "key": "d9db9228b668b8e379377930d87f4575ba4b186bd84c3504f43cbc93938d60da",
+    "requirement": "compare only reports with identical key on the same idle machine; never treat label=smoke as a P6.8 baseline"
+  },
+  "designChoices": [
+    "Paste uses a few MB decoded (default 2 MiB, same as P0), under the 10 MiB image cap and 14e6 transport cap — not near 14e6.",
+    "Valid hook is POST /hook/Notification with session_id (known handler still returns 200 {}).",
+    "Fail-open is authenticated POST /hook/Stop with no session_id (validateHookEvent), not the tokenless silentHookRefusal site.",
+    "Withheld body is a raw POST /hook/Stop with Content-Length and a partial JSON body; the measured signal is GET /health on other connections after BODY_DRAIN_GRACE_MS.",
+    "WS clients subscribe to /ws snapshots (core.snapshot, no lan tokens). Mutations are serial because BROADCAST_COALESCE_MS=60 would merge overlapped POSTs.",
+    "Hashed /assets/* path is discovered from the served GET / HTML so the harness does not hard-code Vite fingerprints.",
+    "Representative concurrency is 1/8/32 (serial floor, typical board+hooks, burst). P0 characterization used 1/10/100 iteration-based samples; this harness is duration-based."
+  ],
+  "daemons": [
+    {
+      "target": "source",
+      "path": "src/daemon/fleetd.ts",
+      "pid": 86644,
+      "healthMs": 146.526,
+      "reconciliationReadyMs": 225.075,
+      "assetPath": "/assets/index-D05vGQV1.js"
+    },
+    {
+      "target": "bundle",
+      "path": "src/daemon/fleetd.bundle.mjs",
+      "pid": 87932,
+      "healthMs": 103.094,
+      "reconciliationReadyMs": 172.451,
+      "assetPath": "/assets/index-D05vGQV1.js"
+    }
+  ],
+  "rows": [
+    {
+      "workload": "health",
+      "target": "source",
+      "concurrency": 1,
+      "durationMs": 15004.286,
+      "warmupMs": 2000,
+      "count": 1482,
+      "ok": 1482,
+      "errors": 0,
+      "operationsPerSecond": 98.772,
+      "responseBytes": 226746,
+      "latencyMs": {
+        "count": 1482,
+        "min": 6.321,
+        "p50": 10.093,
+        "p95": 10.687,
+        "p99": 11.892,
+        "max": 20.326,
+        "mean": 10.122
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "G1 loopback-open GET /health",
+      "extras": {}
+    },
+    {
+      "workload": "state",
+      "target": "source",
+      "concurrency": 1,
+      "durationMs": 15002.693,
+      "warmupMs": 2000,
+      "count": 1473,
+      "ok": 1473,
+      "errors": 0,
+      "operationsPerSecond": 98.182,
+      "responseBytes": 13528032,
+      "latencyMs": {
+        "count": 1473,
+        "min": 5.051,
+        "p50": 10.097,
+        "p95": 10.714,
+        "p99": 14.855,
+        "max": 20.525,
+        "mean": 10.183
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "G2 GET /state snapshotWithLan() — heavier than the /ws snapshot (matrix §9.2)",
+      "extras": {}
+    },
+    {
+      "workload": "hook",
+      "target": "source",
+      "concurrency": 1,
+      "durationMs": 15009.065,
+      "warmupMs": 2000,
+      "count": 1430,
+      "ok": 1430,
+      "errors": 0,
+      "operationsPerSecond": 95.276,
+      "responseBytes": 2860,
+      "latencyMs": {
+        "count": 1430,
+        "min": 7.58,
+        "p50": 10.369,
+        "p95": 12.444,
+        "p99": 19.132,
+        "max": 33.276,
+        "mean": 10.493
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "P1 valid Notification — known handler, still 200 {}",
+      "extras": {}
+    },
+    {
+      "workload": "hook-fail-open",
+      "target": "source",
+      "concurrency": 1,
+      "durationMs": 15000.649,
+      "warmupMs": 2000,
+      "count": 1481,
+      "ok": 1481,
+      "errors": 0,
+      "operationsPerSecond": 98.729,
+      "responseBytes": 2962,
+      "latencyMs": {
+        "count": 1481,
+        "min": 5.508,
+        "p50": 10.093,
+        "p95": 10.612,
+        "p99": 13.127,
+        "max": 20.729,
+        "mean": 10.127
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "P1 fail-open: authenticated /hook/Stop missing session_id → validateHookEvent 200 {}",
+      "extras": {}
+    },
+    {
+      "workload": "paste",
+      "target": "source",
+      "concurrency": 1,
+      "durationMs": 15009.909,
+      "warmupMs": 2000,
+      "count": 535,
+      "ok": 535,
+      "errors": 0,
+      "operationsPerSecond": 35.643,
+      "responseBytes": 71155,
+      "latencyMs": {
+        "count": 535,
+        "min": 21.755,
+        "p50": 24.559,
+        "p95": 43.226,
+        "p99": 45.061,
+        "max": 46.059,
+        "mean": 28.051
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "P8 /api/paste-image 2097152 decoded bytes (under 10 MiB image / 14e6 transport)",
+      "extras": {
+        "decodedBytes": 2097152,
+        "requestBytes": 2796215,
+        "sha256": "324e6fa7b9eb28b00d12d6fd211a1b761b9e172987933cc75f9682d9014cd4d5",
+        "persistedExact": true
+      }
+    },
+    {
+      "workload": "static-shell",
+      "target": "source",
+      "concurrency": 1,
+      "durationMs": 15002.023,
+      "warmupMs": 2000,
+      "count": 15022,
+      "ok": 15022,
+      "errors": 0,
+      "operationsPerSecond": 1001.332,
+      "responseBytes": 15352484,
+      "latencyMs": {
+        "count": 15022,
+        "min": 0.354,
+        "p50": 0.802,
+        "p95": 1.975,
+        "p99": 3.586,
+        "max": 7.118,
+        "mean": 0.998
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "G10 public shell GET / (no-store HTML)",
+      "extras": {}
+    },
+    {
+      "workload": "static-asset",
+      "target": "source",
+      "concurrency": 1,
+      "durationMs": 15000.813,
+      "warmupMs": 2000,
+      "count": 3929,
+      "ok": 3929,
+      "errors": 0,
+      "operationsPerSecond": 261.919,
+      "responseBytes": 1365956140,
+      "latencyMs": {
+        "count": 3929,
+        "min": 2.433,
+        "p50": 3.303,
+        "p95": 5.861,
+        "p99": 7.302,
+        "max": 10.318,
+        "mean": 3.816
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "G10 public hashed asset GET /assets/index-D05vGQV1.js",
+      "extras": {
+        "assetPath": "/assets/index-D05vGQV1.js"
+      }
+    },
+    {
+      "workload": "withheld",
+      "target": "source",
+      "concurrency": 1,
+      "durationMs": 15077.769,
+      "warmupMs": 0,
+      "count": 1490,
+      "ok": 1490,
+      "errors": 0,
+      "operationsPerSecond": 98.821,
+      "responseBytes": 227970,
+      "latencyMs": {
+        "count": 1490,
+        "min": 4.903,
+        "p50": 70.726,
+        "p95": 141.431,
+        "p99": 151.446,
+        "max": 161.617,
+        "mean": 80.765
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "N=1 withheld POST /hook/Stop partial bodies; probe GET /health conc=8; prematureBytes=0",
+      "extras": {
+        "withheldCount": 1,
+        "probeConcurrency": 8,
+        "drainGraceMs": 1000,
+        "prematureResponseBytes": 0,
+        "heldPastDrainGrace": true
+      }
+    },
+    {
+      "workload": "ws",
+      "target": "source",
+      "concurrency": 1,
+      "durationMs": 15060.32,
+      "warmupMs": 2000,
+      "count": 182,
+      "ok": 182,
+      "errors": 0,
+      "operationsPerSecond": 12.085,
+      "responseBytes": 18023945,
+      "latencyMs": {
+        "count": 182,
+        "min": 79.293,
+        "p50": 82.487,
+        "p95": 85.655,
+        "p99": 91.513,
+        "max": 97.115,
+        "mean": 82.742
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "N=1 /ws snapshot clients; serial Notification mutations; coalesce 60ms",
+      "extras": {
+        "clients": 1,
+        "broadcasts": 182,
+        "coalesceMs": 60
+      }
+    },
+    {
+      "workload": "health",
+      "target": "source",
+      "concurrency": 8,
+      "durationMs": 15074.42,
+      "warmupMs": 2000,
+      "count": 1490,
+      "ok": 1490,
+      "errors": 0,
+      "operationsPerSecond": 98.843,
+      "responseBytes": 230950,
+      "latencyMs": {
+        "count": 1490,
+        "min": 10.007,
+        "p50": 80.541,
+        "p95": 151.285,
+        "p99": 151.629,
+        "max": 171.443,
+        "mean": 80.745
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "G1 loopback-open GET /health",
+      "extras": {}
+    },
+    {
+      "workload": "state",
+      "target": "source",
+      "concurrency": 8,
+      "durationMs": 15088.998,
+      "warmupMs": 2000,
+      "count": 1488,
+      "ok": 1488,
+      "errors": 0,
+      "operationsPerSecond": 98.615,
+      "responseBytes": 273774144,
+      "latencyMs": {
+        "count": 1488,
+        "min": 9.658,
+        "p50": 70.943,
+        "p95": 141.652,
+        "p99": 151.711,
+        "max": 171.818,
+        "mean": 80.935
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "G2 GET /state snapshotWithLan() — heavier than the /ws snapshot (matrix §9.2)",
+      "extras": {}
+    },
+    {
+      "workload": "hook",
+      "target": "source",
+      "concurrency": 8,
+      "durationMs": 15081.187,
+      "warmupMs": 2000,
+      "count": 1458,
+      "ok": 1458,
+      "errors": 0,
+      "operationsPerSecond": 96.677,
+      "responseBytes": 2916,
+      "latencyMs": {
+        "count": 1458,
+        "min": 11.165,
+        "p50": 80.504,
+        "p95": 150.199,
+        "p99": 158.851,
+        "max": 212.778,
+        "mean": 82.549
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "P1 valid Notification — known handler, still 200 {}",
+      "extras": {}
+    },
+    {
+      "workload": "hook-fail-open",
+      "target": "source",
+      "concurrency": 8,
+      "durationMs": 15074.222,
+      "warmupMs": 2000,
+      "count": 1483,
+      "ok": 1483,
+      "errors": 0,
+      "operationsPerSecond": 98.38,
+      "responseBytes": 2966,
+      "latencyMs": {
+        "count": 1483,
+        "min": 10.337,
+        "p50": 80.579,
+        "p95": 150.992,
+        "p99": 151.833,
+        "max": 191.764,
+        "mean": 81.126
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "P1 fail-open: authenticated /hook/Stop missing session_id → validateHookEvent 200 {}",
+      "extras": {}
+    },
+    {
+      "workload": "paste",
+      "target": "source",
+      "concurrency": 8,
+      "durationMs": 15136.969,
+      "warmupMs": 2000,
+      "count": 1084,
+      "ok": 1084,
+      "errors": 0,
+      "operationsPerSecond": 71.613,
+      "responseBytes": 144172,
+      "latencyMs": {
+        "count": 1084,
+        "min": 44.12,
+        "p50": 93.659,
+        "p95": 184.943,
+        "p99": 231.862,
+        "max": 258.328,
+        "mean": 111.46
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "P8 /api/paste-image 2097152 decoded bytes (under 10 MiB image / 14e6 transport)",
+      "extras": {
+        "decodedBytes": 2097152,
+        "requestBytes": 2796215,
+        "sha256": "324e6fa7b9eb28b00d12d6fd211a1b761b9e172987933cc75f9682d9014cd4d5",
+        "persistedExact": true
+      }
+    },
+    {
+      "workload": "static-shell",
+      "target": "source",
+      "concurrency": 8,
+      "durationMs": 15002.358,
+      "warmupMs": 2000,
+      "count": 126471,
+      "ok": 126471,
+      "errors": 0,
+      "operationsPerSecond": 8430.075,
+      "responseBytes": 129253362,
+      "latencyMs": {
+        "count": 126471,
+        "min": 0.229,
+        "p50": 0.734,
+        "p95": 2.473,
+        "p99": 4.194,
+        "max": 9.9,
+        "mean": 0.948
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "G10 public shell GET / (no-store HTML)",
+      "extras": {}
+    },
+    {
+      "workload": "static-asset",
+      "target": "source",
+      "concurrency": 8,
+      "durationMs": 15004.049,
+      "warmupMs": 2000,
+      "count": 15068,
+      "ok": 15068,
+      "errors": 0,
+      "operationsPerSecond": 1004.262,
+      "responseBytes": 5238540880,
+      "latencyMs": {
+        "count": 15068,
+        "min": 2.664,
+        "p50": 6.533,
+        "p95": 19.222,
+        "p99": 29.2,
+        "max": 52.665,
+        "mean": 7.964
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "G10 public hashed asset GET /assets/index-D05vGQV1.js",
+      "extras": {
+        "assetPath": "/assets/index-D05vGQV1.js"
+      }
+    },
+    {
+      "workload": "withheld",
+      "target": "source",
+      "concurrency": 8,
+      "durationMs": 15075.116,
+      "warmupMs": 0,
+      "count": 1490,
+      "ok": 1490,
+      "errors": 0,
+      "operationsPerSecond": 98.838,
+      "responseBytes": 230950,
+      "latencyMs": {
+        "count": 1490,
+        "min": 5.769,
+        "p50": 80.487,
+        "p95": 151.237,
+        "p99": 151.84,
+        "max": 171.968,
+        "mean": 80.75
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "N=8 withheld POST /hook/Stop partial bodies; probe GET /health conc=8; prematureBytes=0",
+      "extras": {
+        "withheldCount": 8,
+        "probeConcurrency": 8,
+        "drainGraceMs": 1000,
+        "prematureResponseBytes": 0,
+        "heldPastDrainGrace": true
+      }
+    },
+    {
+      "workload": "ws",
+      "target": "source",
+      "concurrency": 8,
+      "durationMs": 15073.43,
+      "warmupMs": 2000,
+      "count": 154,
+      "ok": 154,
+      "errors": 0,
+      "operationsPerSecond": 10.217,
+      "responseBytes": 318545608,
+      "latencyMs": {
+        "count": 154,
+        "min": 89.049,
+        "p50": 96.04,
+        "p95": 110.348,
+        "p99": 114.013,
+        "max": 117.352,
+        "mean": 97.871
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "N=8 /ws snapshot clients; serial Notification mutations; coalesce 60ms",
+      "extras": {
+        "clients": 8,
+        "broadcasts": 154,
+        "coalesceMs": 60
+      }
+    },
+    {
+      "workload": "health",
+      "target": "source",
+      "concurrency": 32,
+      "durationMs": 15315.234,
+      "warmupMs": 2000,
+      "count": 1507,
+      "ok": 1507,
+      "errors": 0,
+      "operationsPerSecond": 98.399,
+      "responseBytes": 233585,
+      "latencyMs": {
+        "count": 1507,
+        "min": 9.888,
+        "p50": 313.223,
+        "p95": 324.377,
+        "p99": 634.802,
+        "max": 726.285,
+        "mean": 321.886
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "G1 loopback-open GET /health",
+      "extras": {}
+    },
+    {
+      "workload": "state",
+      "target": "source",
+      "concurrency": 32,
+      "durationMs": 15321.516,
+      "warmupMs": 2000,
+      "count": 1500,
+      "ok": 1500,
+      "errors": 0,
+      "operationsPerSecond": 97.902,
+      "responseBytes": 495544500,
+      "latencyMs": {
+        "count": 1500,
+        "min": 8.904,
+        "p50": 313.352,
+        "p95": 387.85,
+        "p99": 627.588,
+        "max": 751.277,
+        "mean": 323.512
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "G2 GET /state snapshotWithLan() — heavier than the /ws snapshot (matrix §9.2)",
+      "extras": {}
+    },
+    {
+      "workload": "hook",
+      "target": "source",
+      "concurrency": 32,
+      "durationMs": 15331.63,
+      "warmupMs": 2000,
+      "count": 1483,
+      "ok": 1483,
+      "errors": 0,
+      "operationsPerSecond": 96.728,
+      "responseBytes": 2966,
+      "latencyMs": {
+        "count": 1483,
+        "min": 11.945,
+        "p50": 324.561,
+        "p95": 343.602,
+        "p99": 633.759,
+        "max": 737.472,
+        "mean": 327.342
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "P1 valid Notification — known handler, still 200 {}",
+      "extras": {}
+    },
+    {
+      "workload": "hook-fail-open",
+      "target": "source",
+      "concurrency": 32,
+      "durationMs": 15316.587,
+      "warmupMs": 2000,
+      "count": 1514,
+      "ok": 1514,
+      "errors": 0,
+      "operationsPerSecond": 98.847,
+      "responseBytes": 3028,
+      "latencyMs": {
+        "count": 1514,
+        "min": 10.675,
+        "p50": 322.919,
+        "p95": 333.038,
+        "p99": 635.457,
+        "max": 667.371,
+        "mean": 320.426
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "P1 fail-open: authenticated /hook/Stop missing session_id → validateHookEvent 200 {}",
+      "extras": {}
+    },
+    {
+      "workload": "paste",
+      "target": "source",
+      "concurrency": 32,
+      "durationMs": 15250.33,
+      "warmupMs": 2000,
+      "count": 961,
+      "ok": 961,
+      "errors": 0,
+      "operationsPerSecond": 63.015,
+      "responseBytes": 127813,
+      "latencyMs": {
+        "count": 961,
+        "min": 239.56,
+        "p50": 484.598,
+        "p95": 650.368,
+        "p99": 816.804,
+        "max": 1316.832,
+        "mean": 504.276
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "P8 /api/paste-image 2097152 decoded bytes (under 10 MiB image / 14e6 transport)",
+      "extras": {
+        "decodedBytes": 2097152,
+        "requestBytes": 2796215,
+        "sha256": "324e6fa7b9eb28b00d12d6fd211a1b761b9e172987933cc75f9682d9014cd4d5",
+        "persistedExact": true
+      }
+    },
+    {
+      "workload": "static-shell",
+      "target": "source",
+      "concurrency": 32,
+      "durationMs": 15001.452,
+      "warmupMs": 2000,
+      "count": 294708,
+      "ok": 294708,
+      "errors": 0,
+      "operationsPerSecond": 19645.299,
+      "responseBytes": 301191576,
+      "latencyMs": {
+        "count": 294708,
+        "min": 0.253,
+        "p50": 1.23,
+        "p95": 4.388,
+        "p99": 6.213,
+        "max": 12.507,
+        "mean": 1.628
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "G10 public shell GET / (no-store HTML)",
+      "extras": {}
+    },
+    {
+      "workload": "static-asset",
+      "target": "source",
+      "concurrency": 32,
+      "durationMs": 15021.924,
+      "warmupMs": 2000,
+      "count": 18306,
+      "ok": 18306,
+      "errors": 0,
+      "operationsPerSecond": 1218.619,
+      "responseBytes": 6364263960,
+      "latencyMs": {
+        "count": 18306,
+        "min": 3.743,
+        "p50": 19.67,
+        "p95": 76.092,
+        "p99": 122.128,
+        "max": 280.62,
+        "mean": 26.238
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "G10 public hashed asset GET /assets/index-D05vGQV1.js",
+      "extras": {
+        "assetPath": "/assets/index-D05vGQV1.js"
+      }
+    },
+    {
+      "workload": "withheld",
+      "target": "source",
+      "concurrency": 32,
+      "durationMs": 15072.756,
+      "warmupMs": 0,
+      "count": 1482,
+      "ok": 1482,
+      "errors": 0,
+      "operationsPerSecond": 98.323,
+      "responseBytes": 229710,
+      "latencyMs": {
+        "count": 1482,
+        "min": 4.491,
+        "p50": 80.471,
+        "p95": 151.25,
+        "p99": 151.772,
+        "max": 262.465,
+        "mean": 81.172
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "N=32 withheld POST /hook/Stop partial bodies; probe GET /health conc=8; prematureBytes=0",
+      "extras": {
+        "withheldCount": 32,
+        "probeConcurrency": 8,
+        "drainGraceMs": 1000,
+        "prematureResponseBytes": 0,
+        "heldPastDrainGrace": true
+      }
+    },
+    {
+      "workload": "ws",
+      "target": "source",
+      "concurrency": 32,
+      "durationMs": 15064.746,
+      "warmupMs": 2000,
+      "count": 94,
+      "ok": 94,
+      "errors": 0,
+      "operationsPerSecond": 6.24,
+      "responseBytes": 1133376704,
+      "latencyMs": {
+        "count": 94,
+        "min": 131.466,
+        "p50": 143.379,
+        "p95": 217.849,
+        "p99": 403.824,
+        "max": 403.824,
+        "mean": 160.252
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "N=32 /ws snapshot clients; serial Notification mutations; coalesce 60ms",
+      "extras": {
+        "clients": 32,
+        "broadcasts": 94,
+        "coalesceMs": 60
+      }
+    },
+    {
+      "workload": "health",
+      "target": "bundle",
+      "concurrency": 1,
+      "durationMs": 15010.127,
+      "warmupMs": 2000,
+      "count": 1477,
+      "ok": 1477,
+      "errors": 0,
+      "operationsPerSecond": 98.4,
+      "responseBytes": 225981,
+      "latencyMs": {
+        "count": 1477,
+        "min": 2.516,
+        "p50": 10.09,
+        "p95": 10.663,
+        "p99": 12.334,
+        "max": 31.011,
+        "mean": 10.16
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "G1 loopback-open GET /health",
+      "extras": {}
+    },
+    {
+      "workload": "state",
+      "target": "bundle",
+      "concurrency": 1,
+      "durationMs": 15007.824,
+      "warmupMs": 2000,
+      "count": 1480,
+      "ok": 1480,
+      "errors": 0,
+      "operationsPerSecond": 98.615,
+      "responseBytes": 13592320,
+      "latencyMs": {
+        "count": 1480,
+        "min": 6.497,
+        "p50": 10.095,
+        "p95": 10.68,
+        "p99": 11.905,
+        "max": 20.765,
+        "mean": 10.138
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "G2 GET /state snapshotWithLan() — heavier than the /ws snapshot (matrix §9.2)",
+      "extras": {}
+    },
+    {
+      "workload": "hook",
+      "target": "bundle",
+      "concurrency": 1,
+      "durationMs": 15004.214,
+      "warmupMs": 2000,
+      "count": 1439,
+      "ok": 1439,
+      "errors": 0,
+      "operationsPerSecond": 95.906,
+      "responseBytes": 2878,
+      "latencyMs": {
+        "count": 1439,
+        "min": 7.601,
+        "p50": 10.292,
+        "p95": 12.216,
+        "p99": 16.786,
+        "max": 32.004,
+        "mean": 10.424
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "P1 valid Notification — known handler, still 200 {}",
+      "extras": {}
+    },
+    {
+      "workload": "hook-fail-open",
+      "target": "bundle",
+      "concurrency": 1,
+      "durationMs": 15008.04,
+      "warmupMs": 2000,
+      "count": 1470,
+      "ok": 1470,
+      "errors": 0,
+      "operationsPerSecond": 97.948,
+      "responseBytes": 2940,
+      "latencyMs": {
+        "count": 1470,
+        "min": 4.219,
+        "p50": 10.095,
+        "p95": 11.088,
+        "p99": 15.888,
+        "max": 30.274,
+        "mean": 10.207
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "P1 fail-open: authenticated /hook/Stop missing session_id → validateHookEvent 200 {}",
+      "extras": {}
+    },
+    {
+      "workload": "paste",
+      "target": "bundle",
+      "concurrency": 1,
+      "durationMs": 15038.354,
+      "warmupMs": 2000,
+      "count": 513,
+      "ok": 513,
+      "errors": 0,
+      "operationsPerSecond": 34.113,
+      "responseBytes": 68229,
+      "latencyMs": {
+        "count": 513,
+        "min": 21.655,
+        "p50": 25.207,
+        "p95": 43.07,
+        "p99": 44.311,
+        "max": 46.132,
+        "mean": 29.31
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "P8 /api/paste-image 2097152 decoded bytes (under 10 MiB image / 14e6 transport)",
+      "extras": {
+        "decodedBytes": 2097152,
+        "requestBytes": 2796215,
+        "sha256": "324e6fa7b9eb28b00d12d6fd211a1b761b9e172987933cc75f9682d9014cd4d5",
+        "persistedExact": true
+      }
+    },
+    {
+      "workload": "static-shell",
+      "target": "bundle",
+      "concurrency": 1,
+      "durationMs": 15000.386,
+      "warmupMs": 2000,
+      "count": 15214,
+      "ok": 15214,
+      "errors": 0,
+      "operationsPerSecond": 1014.241,
+      "responseBytes": 15548708,
+      "latencyMs": {
+        "count": 15214,
+        "min": 0.402,
+        "p50": 0.797,
+        "p95": 1.909,
+        "p99": 3.321,
+        "max": 8.42,
+        "mean": 0.985
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "G10 public shell GET / (no-store HTML)",
+      "extras": {}
+    },
+    {
+      "workload": "static-asset",
+      "target": "bundle",
+      "concurrency": 1,
+      "durationMs": 15003.418,
+      "warmupMs": 2000,
+      "count": 3935,
+      "ok": 3935,
+      "errors": 0,
+      "operationsPerSecond": 262.274,
+      "responseBytes": 1368042100,
+      "latencyMs": {
+        "count": 3935,
+        "min": 2.365,
+        "p50": 3.094,
+        "p95": 6,
+        "p99": 7.524,
+        "max": 9.978,
+        "mean": 3.811
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "G10 public hashed asset GET /assets/index-D05vGQV1.js",
+      "extras": {
+        "assetPath": "/assets/index-D05vGQV1.js"
+      }
+    },
+    {
+      "workload": "withheld",
+      "target": "bundle",
+      "concurrency": 1,
+      "durationMs": 15078.421,
+      "warmupMs": 0,
+      "count": 1484,
+      "ok": 1484,
+      "errors": 0,
+      "operationsPerSecond": 98.419,
+      "responseBytes": 227052,
+      "latencyMs": {
+        "count": 1484,
+        "min": 5.548,
+        "p50": 70.733,
+        "p95": 141.452,
+        "p99": 151.479,
+        "max": 232.147,
+        "mean": 81.093
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "N=1 withheld POST /hook/Stop partial bodies; probe GET /health conc=8; prematureBytes=0",
+      "extras": {
+        "withheldCount": 1,
+        "probeConcurrency": 8,
+        "drainGraceMs": 1000,
+        "prematureResponseBytes": 0,
+        "heldPastDrainGrace": true
+      }
+    },
+    {
+      "workload": "ws",
+      "target": "bundle",
+      "concurrency": 1,
+      "durationMs": 15010.144,
+      "warmupMs": 2000,
+      "count": 182,
+      "ok": 182,
+      "errors": 0,
+      "operationsPerSecond": 12.125,
+      "responseBytes": 18025401,
+      "latencyMs": {
+        "count": 182,
+        "min": 78.731,
+        "p50": 82.282,
+        "p95": 85.235,
+        "p99": 88.836,
+        "max": 89.489,
+        "mean": 82.466
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "N=1 /ws snapshot clients; serial Notification mutations; coalesce 60ms",
+      "extras": {
+        "clients": 1,
+        "broadcasts": 182,
+        "coalesceMs": 60
+      }
+    },
+    {
+      "workload": "health",
+      "target": "bundle",
+      "concurrency": 8,
+      "durationMs": 15072.897,
+      "warmupMs": 2000,
+      "count": 1481,
+      "ok": 1481,
+      "errors": 0,
+      "operationsPerSecond": 98.256,
+      "responseBytes": 229555,
+      "latencyMs": {
+        "count": 1481,
+        "min": 9.972,
+        "p50": 80.486,
+        "p95": 151.27,
+        "p99": 151.838,
+        "max": 232.539,
+        "mean": 81.227
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "G1 loopback-open GET /health",
+      "extras": {}
+    },
+    {
+      "workload": "state",
+      "target": "bundle",
+      "concurrency": 8,
+      "durationMs": 15076.191,
+      "warmupMs": 2000,
+      "count": 1479,
+      "ok": 1479,
+      "errors": 0,
+      "operationsPerSecond": 98.102,
+      "responseBytes": 272130084,
+      "latencyMs": {
+        "count": 1479,
+        "min": 10.047,
+        "p50": 70.917,
+        "p95": 141.712,
+        "p99": 151.982,
+        "max": 242.253,
+        "mean": 81.358
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "G2 GET /state snapshotWithLan() — heavier than the /ws snapshot (matrix §9.2)",
+      "extras": {}
+    },
+    {
+      "workload": "hook",
+      "target": "bundle",
+      "concurrency": 8,
+      "durationMs": 15073.008,
+      "warmupMs": 2000,
+      "count": 1453,
+      "ok": 1453,
+      "errors": 0,
+      "operationsPerSecond": 96.397,
+      "responseBytes": 2906,
+      "latencyMs": {
+        "count": 1453,
+        "min": 11.77,
+        "p50": 80.416,
+        "p95": 151.044,
+        "p99": 159.47,
+        "max": 232.714,
+        "mean": 82.794
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "P1 valid Notification — known handler, still 200 {}",
+      "extras": {}
+    },
+    {
+      "workload": "hook-fail-open",
+      "target": "bundle",
+      "concurrency": 8,
+      "durationMs": 15072.281,
+      "warmupMs": 2000,
+      "count": 1489,
+      "ok": 1489,
+      "errors": 0,
+      "operationsPerSecond": 98.791,
+      "responseBytes": 2978,
+      "latencyMs": {
+        "count": 1489,
+        "min": 9.824,
+        "p50": 80.568,
+        "p95": 151.055,
+        "p99": 151.661,
+        "max": 171.963,
+        "mean": 80.789
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "P1 fail-open: authenticated /hook/Stop missing session_id → validateHookEvent 200 {}",
+      "extras": {}
+    },
+    {
+      "workload": "paste",
+      "target": "bundle",
+      "concurrency": 8,
+      "durationMs": 15074.078,
+      "warmupMs": 2000,
+      "count": 1162,
+      "ok": 1162,
+      "errors": 0,
+      "operationsPerSecond": 77.086,
+      "responseBytes": 154546,
+      "latencyMs": {
+        "count": 1162,
+        "min": 35.336,
+        "p50": 86.775,
+        "p95": 181.332,
+        "p99": 264.491,
+        "max": 324.493,
+        "mean": 103.527
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "P8 /api/paste-image 2097152 decoded bytes (under 10 MiB image / 14e6 transport)",
+      "extras": {
+        "decodedBytes": 2097152,
+        "requestBytes": 2796215,
+        "sha256": "324e6fa7b9eb28b00d12d6fd211a1b761b9e172987933cc75f9682d9014cd4d5",
+        "persistedExact": true
+      }
+    },
+    {
+      "workload": "static-shell",
+      "target": "bundle",
+      "concurrency": 8,
+      "durationMs": 15001.222,
+      "warmupMs": 2000,
+      "count": 119920,
+      "ok": 119920,
+      "errors": 0,
+      "operationsPerSecond": 7994.016,
+      "responseBytes": 122558240,
+      "latencyMs": {
+        "count": 119920,
+        "min": 0.24,
+        "p50": 0.77,
+        "p95": 2.659,
+        "p99": 4.23,
+        "max": 10.712,
+        "mean": 1
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "G10 public shell GET / (no-store HTML)",
+      "extras": {}
+    },
+    {
+      "workload": "static-asset",
+      "target": "bundle",
+      "concurrency": 8,
+      "durationMs": 15018.866,
+      "warmupMs": 2000,
+      "count": 12416,
+      "ok": 12416,
+      "errors": 0,
+      "operationsPerSecond": 826.694,
+      "responseBytes": 4316546560,
+      "latencyMs": {
+        "count": 12416,
+        "min": 2.78,
+        "p50": 6.861,
+        "p95": 24.268,
+        "p99": 33.091,
+        "max": 48.501,
+        "mean": 9.671
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "G10 public hashed asset GET /assets/index-D05vGQV1.js",
+      "extras": {
+        "assetPath": "/assets/index-D05vGQV1.js"
+      }
+    },
+    {
+      "workload": "withheld",
+      "target": "bundle",
+      "concurrency": 8,
+      "durationMs": 15073.953,
+      "warmupMs": 0,
+      "count": 1480,
+      "ok": 1480,
+      "errors": 0,
+      "operationsPerSecond": 98.183,
+      "responseBytes": 229400,
+      "latencyMs": {
+        "count": 1480,
+        "min": 8.976,
+        "p50": 80.533,
+        "p95": 151.305,
+        "p99": 151.755,
+        "max": 231.92,
+        "mean": 81.289
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "N=8 withheld POST /hook/Stop partial bodies; probe GET /health conc=8; prematureBytes=0",
+      "extras": {
+        "withheldCount": 8,
+        "probeConcurrency": 8,
+        "drainGraceMs": 1000,
+        "prematureResponseBytes": 0,
+        "heldPastDrainGrace": true
+      }
+    },
+    {
+      "workload": "ws",
+      "target": "bundle",
+      "concurrency": 8,
+      "durationMs": 15075.985,
+      "warmupMs": 2000,
+      "count": 152,
+      "ok": 152,
+      "errors": 0,
+      "operationsPerSecond": 10.082,
+      "responseBytes": 313267616,
+      "latencyMs": {
+        "count": 152,
+        "min": 89.564,
+        "p50": 98.2,
+        "p95": 108.001,
+        "p99": 112.173,
+        "max": 112.462,
+        "mean": 99.178
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "N=8 /ws snapshot clients; serial Notification mutations; coalesce 60ms",
+      "extras": {
+        "clients": 8,
+        "broadcasts": 152,
+        "coalesceMs": 60
+      }
+    },
+    {
+      "workload": "health",
+      "target": "bundle",
+      "concurrency": 32,
+      "durationMs": 15342.143,
+      "warmupMs": 2000,
+      "count": 1505,
+      "ok": 1505,
+      "errors": 0,
+      "operationsPerSecond": 98.096,
+      "responseBytes": 233275,
+      "latencyMs": {
+        "count": 1505,
+        "min": 10.212,
+        "p50": 322.836,
+        "p95": 343.085,
+        "p99": 635.011,
+        "max": 656.056,
+        "mean": 322.81
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "G1 loopback-open GET /health",
+      "extras": {}
+    },
+    {
+      "workload": "state",
+      "target": "bundle",
+      "concurrency": 32,
+      "durationMs": 15310.121,
+      "warmupMs": 2000,
+      "count": 1501,
+      "ok": 1501,
+      "errors": 0,
+      "operationsPerSecond": 98.04,
+      "responseBytes": 493052983,
+      "latencyMs": {
+        "count": 1501,
+        "min": 13.063,
+        "p50": 313.506,
+        "p95": 372.217,
+        "p99": 627.732,
+        "max": 731.07,
+        "mean": 323.106
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "G2 GET /state snapshotWithLan() — heavier than the /ws snapshot (matrix §9.2)",
+      "extras": {}
+    },
+    {
+      "workload": "hook",
+      "target": "bundle",
+      "concurrency": 32,
+      "durationMs": 15320.644,
+      "warmupMs": 2000,
+      "count": 1479,
+      "ok": 1479,
+      "errors": 0,
+      "operationsPerSecond": 96.536,
+      "responseBytes": 2958,
+      "latencyMs": {
+        "count": 1479,
+        "min": 14.558,
+        "p50": 326.302,
+        "p95": 348.246,
+        "p99": 429.642,
+        "max": 749.762,
+        "mean": 328.071
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "P1 valid Notification — known handler, still 200 {}",
+      "extras": {}
+    },
+    {
+      "workload": "hook-fail-open",
+      "target": "bundle",
+      "concurrency": 32,
+      "durationMs": 15334.194,
+      "warmupMs": 2000,
+      "count": 1507,
+      "ok": 1507,
+      "errors": 0,
+      "operationsPerSecond": 98.277,
+      "responseBytes": 3014,
+      "latencyMs": {
+        "count": 1507,
+        "min": 9.722,
+        "p50": 322.992,
+        "p95": 333.324,
+        "p99": 414.168,
+        "max": 644.737,
+        "mean": 322.203
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "P1 fail-open: authenticated /hook/Stop missing session_id → validateHookEvent 200 {}",
+      "extras": {}
+    },
+    {
+      "workload": "paste",
+      "target": "bundle",
+      "concurrency": 32,
+      "durationMs": 15193.925,
+      "warmupMs": 2000,
+      "count": 1025,
+      "ok": 1025,
+      "errors": 0,
+      "operationsPerSecond": 67.461,
+      "responseBytes": 136325,
+      "latencyMs": {
+        "count": 1025,
+        "min": 205.934,
+        "p50": 450.113,
+        "p95": 660.093,
+        "p99": 848.319,
+        "max": 988.07,
+        "mean": 471.397
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "P8 /api/paste-image 2097152 decoded bytes (under 10 MiB image / 14e6 transport)",
+      "extras": {
+        "decodedBytes": 2097152,
+        "requestBytes": 2796215,
+        "sha256": "324e6fa7b9eb28b00d12d6fd211a1b761b9e172987933cc75f9682d9014cd4d5",
+        "persistedExact": true
+      }
+    },
+    {
+      "workload": "static-shell",
+      "target": "bundle",
+      "concurrency": 32,
+      "durationMs": 15001.801,
+      "warmupMs": 2000,
+      "count": 298432,
+      "ok": 298432,
+      "errors": 0,
+      "operationsPerSecond": 19893.078,
+      "responseBytes": 304997504,
+      "latencyMs": {
+        "count": 298432,
+        "min": 0.213,
+        "p50": 1.218,
+        "p95": 4.362,
+        "p99": 6.161,
+        "max": 13.516,
+        "mean": 1.608
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "G10 public shell GET / (no-store HTML)",
+      "extras": {}
+    },
+    {
+      "workload": "static-asset",
+      "target": "bundle",
+      "concurrency": 32,
+      "durationMs": 15015.568,
+      "warmupMs": 2000,
+      "count": 22453,
+      "ok": 22453,
+      "errors": 0,
+      "operationsPerSecond": 1495.315,
+      "responseBytes": 7806009980,
+      "latencyMs": {
+        "count": 22453,
+        "min": 3.801,
+        "p50": 18.077,
+        "p95": 44.212,
+        "p99": 98.177,
+        "max": 209.331,
+        "mean": 21.389
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "G10 public hashed asset GET /assets/index-D05vGQV1.js",
+      "extras": {
+        "assetPath": "/assets/index-D05vGQV1.js"
+      }
+    },
+    {
+      "workload": "withheld",
+      "target": "bundle",
+      "concurrency": 32,
+      "durationMs": 15072.574,
+      "warmupMs": 0,
+      "count": 1479,
+      "ok": 1479,
+      "errors": 0,
+      "operationsPerSecond": 98.125,
+      "responseBytes": 229245,
+      "latencyMs": {
+        "count": 1479,
+        "min": 7.509,
+        "p50": 80.467,
+        "p95": 151.214,
+        "p99": 151.798,
+        "max": 222.48,
+        "mean": 81.336
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "N=32 withheld POST /hook/Stop partial bodies; probe GET /health conc=8; prematureBytes=0",
+      "extras": {
+        "withheldCount": 32,
+        "probeConcurrency": 8,
+        "drainGraceMs": 1000,
+        "prematureResponseBytes": 0,
+        "heldPastDrainGrace": true
+      }
+    },
+    {
+      "workload": "ws",
+      "target": "bundle",
+      "concurrency": 32,
+      "durationMs": 15042.188,
+      "warmupMs": 2000,
+      "count": 93,
+      "ok": 93,
+      "errors": 0,
+      "operationsPerSecond": 6.183,
+      "responseBytes": 1114361888,
+      "latencyMs": {
+        "count": 93,
+        "min": 135.339,
+        "p50": 146.485,
+        "p95": 215.083,
+        "p99": 265.94,
+        "max": 265.94,
+        "mean": 161.734
+      },
+      "errorLatencyMs": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "errorBuckets": [],
+      "notes": "N=32 /ws snapshot clients; serial Notification mutations; coalesce 60ms",
+      "extras": {
+        "clients": 32,
+        "broadcasts": 93,
+        "coalesceMs": 60
+      }
+    }
+  ]
+}

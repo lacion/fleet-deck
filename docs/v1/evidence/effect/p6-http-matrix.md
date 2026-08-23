@@ -14,16 +14,22 @@ covering test file (or an explicit COVERAGE GAP).
   at both. All `src/daemon/http.ts:N` anchors are valid at `67758ba9` unless a
   converted-row overlay below retargets them.
 - **All line anchors** below point at `src/daemon/http.ts` unless another file is
-  named. `http.ts` is 3138 lines at the freeze; **3709 lines at HEAD `e2518a63`**.
-- **P6.4 overlay (HEAD `e2518a63`, 2026-08-23).** 18 application routes now
-  dispatch through the Effect bridge (G1, G2, P3, P4, P6–P8, P12–P22). Freeze-era
-  anchors elsewhere in this file remain the P6.1 snapshot — do not treat them as
-  current dispatch sites except where a converted row was retargeted (P8, paste
-  review N2). Settler classes: snapshot = legacy fallback on quiesce/interrupt
+  named. `http.ts` is 3138 lines at the freeze; **3709 lines at the wave
+  checkpoint `e2518a63`**; **3851 lines at HEAD `b2d11d84`**.
+- **P6.4 overlay (HEAD `b2d11d84`, 2026-08-23).** 18 HTTP routes + hooks now
+  dispatch through the Effect bridge (G1, G2, P1, P3, P4, P6–P8, P12–P22).
+  Freeze-era anchors elsewhere in this file remain the P6.1 snapshot — do not
+  treat them as current dispatch sites except where a converted row was
+  retargeted. Settler classes: snapshot = legacy fallback on quiesce/interrupt
   (G1/G2); sync mutating = frozen `503 shutting-down`, never replay the write
   (P6, P7, P8, P15, P19–P22); async mutating = `startOnce` + **join-on-interrupt**
   (P3, P4, P12–P14, P16–P18) so `res.done` still ties `closeClients` to the
-  write. Rollback remains `effectRoutes=null`. Wave record:
+  write; **fail-open (fourth shape, P1)** = `mapHookExit` total, every
+  non-success Exit → `200 {}`, no 503/500/replay (`b2d11d84`). `/ws` snapshot is
+  converted-by-ownership + pure leaves (`a1ea6020`: `wsBufferEviction` /
+  `wsKeepaliveAction` / `assembleSnapshotFrame` in `http-policy.ts`); broadcast
+  trigger + send loop stay transport machinery; `/ws/term` stays behind the
+  termbridge facade until P7. Rollback remains `effectRoutes=null`. Wave record:
   [p6-route-wave.md](./p6-route-wave.md). Do not renumber G1–G11 / P1–P23.
 - **Empirical Bun 1.3.14 facts are CITED, not re-probed.** The authority is
   `memory/bun-serve-runtime-limits.md` (referenced in-code as
@@ -106,7 +112,7 @@ Pre-route walls for every POST: CSRF → hook `200 {}` else `403 {ok:false,reaso
 
 | # | Path | Auth | Sync/async | Success | Error(s) | Anchor | Covering test |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| P1 | `/hook/:Name` | hook (unconditional) | mixed (dispatch table sync; holds async) | see §5 | fail-open `200 {}` for every refusal | `1658`–`1722` | `hook-auth.test.ts`, `hook-compat-silence.test.ts`, `hook-output.test.ts`, `hook-missing-session-id.test.ts` |
+| P1 | `/hook/:Name` | hook (unconditional) | **async** through the Effect bridge (`hookDispatchWorkflow` + `settleEffectHookRoute`); **fail-open settler (fourth shape)** — `mapHookExit` (total, NOT `mapEffectRouteExit`) folds every non-success Exit to `{body:{}}`; B1 replies from the bridge Promise terminal arms (`.then` maps every settled Exit, `.catch` covers a submission throw); B2 unref'd `HOOK_REPLY_FLOOR_MS` floor timer (default 5000, emit-first/commit-after) synthesizes `200 {}` if the Promise never settles and never truncates a HOLD. Holds (`PermissionRequest`/`Elicitation`/`AskUserQuestion`) stay legacy `holdHook` until P10 and never reach the settler. AUTH GOTCHA: `/hook/*` authed unconditionally — `token:null` hits `silentHookRefusal` BEFORE the settler. Rollback: `effectRoutes=null` | see §5 | fail-open `200 {}` for every refusal; no 503/500/replay | `1658`–`1722` (freeze); live `dispatchHook` ~`1850`–`1870`, POST `/hook/:name` ~`2260`–`2312`, settler `settleEffectHookRoute` ~`1785`–`1827` | `hook-auth.test.ts`, `hook-compat-silence.test.ts`, `hook-output.test.ts`, `hook-missing-session-id.test.ts`, `p6-hook-failopen-contract.test.ts`, `http-workflow-hooks.test.ts` |
 | P2 | `/mail/ack` | loopback-open; bearer on LAN | sync | `200 {ok:true, ...core.ackMail([mail_id])}` | walls | `1727`–`1731` | `mail-delivery-lease.test.ts` |
 | P3 | `POST /mail` | **token-gated** (bearer even on loopback unless `trustLoopback`) | **async** through the Effect bridge (`mailWorkflow` + `settleEffectAsyncMutatingRoute` + `startOnce`); **join-on-interrupt** — 503 shutting-down ONLY when the native Promise never started, else JOIN and emit true legacy `.then/.catch` bytes so `res.done` still ties `closeClients` to the write. Rollback: `effectRoutes=null` | `200`/`out.status` + `out.body` (adapter: bare success shape) | `.catch` → `500 {ok:false, err:'internal'}`; refusal `{status,body}` from core; intra-quiesce-before-start `503 {"ok":false,"reason":"shutting-down"}` | `1732`–`1746`, `904`–`908` (freeze); live `dispatchMail` ~`2188`–`2189` | `mail-delivery-lease.test.ts`, `mail-and-blocking.test.ts`, `loopback-gates.test.ts`, `http-workflow-settings-command-mail-cleanup.test.ts`, `ingress-supervisor.test.ts` (live join) |
 | P4 | `/api/cleanup` | loopback-open; bearer on LAN | **async** through the Effect bridge (`cleanupWorkflow` + `settleEffectAsyncMutatingRoute` + `startOnce`); **join-on-interrupt** (same witness as P3). Rollback: `effectRoutes=null` | `200 <out>` | `!out.ok` → `409 <out>`; `.catch` → `500 {ok:false, err:'internal'}` (BUG-145); intra-quiesce-before-start `503 {"ok":false,"reason":"shutting-down"}` | `1747`–`1761` (freeze); live `dispatchCleanup` ~`2192`–`2193` | `cleanup-api.test.ts`, `audit-cleanup.test.ts`, `http-workflow-settings-command-mail-cleanup.test.ts`, `ingress-supervisor.test.ts` (live join) |
@@ -130,8 +136,8 @@ Pre-route walls for every POST: CSRF → hook `200 {}` else `403 {ok:false,reaso
 | P22 | `/api/plans/:n/assign` | loopback-open; bearer on LAN | **async** as of the P6.4 control slice (`settleEffectMutatingRoute` / `controlSync`); `Effect.sync`, interrupt-after-start is a no-op. **Sync mutating:** intra-quiesce 503, never replay. Rollback: `effectRoutes=null` | `<out.status> <out.body>` (derive: 404/409) | (derive-owned); intra-quiesce 503 | `2116`–`2129` (freeze); live ~`2663` | `plans.test.ts` (domain), `http-workflow-control.test.ts` |
 | P23 | any other POST | (walls apply) | sync | — | `404 {err:'nope'}` | `2130` | — |
 
-**POST inner catch** (`2132`–`2141`): any thrown error → hook path `200 {}`, else `500 {err:'internal'}`.
-**Whole-handler outer catch** (`2147`–`2154`): thrown error → `/hook/*` `200 {}` else `500 {}`.
+**POST inner catch** (`2132`–`2141` freeze; live `2831`–`2838`): any thrown error → hook path `200 {}`, else `500 {err:'internal'}`. Hook-path analog now inducible via `http-workflow-hooks.test.ts` (die); non-hook 500 remains OPEN (§7.10).
+**Whole-handler outer catch** (`2147`–`2154` freeze; live `2846`–`2852`): thrown error → `/hook/*` `200 {}` else `500 {}`. Hook-path analog now inducible via `http-workflow-hooks.test.ts` (submission-throw); non-hook 500 remains OPEN (§7.10).
 
 ### 1c. WebSocket upgrade (`handleUpgrade`, `2473`–`2517`; entered from `fetchHandler` on `Upgrade: websocket`, `2550`–`2554`)
 
@@ -206,7 +212,7 @@ Pre-route walls for every POST: CSRF → hook `200 {}` else `403 {ok:false,reaso
 
 ## 3. WebSocket
 
-**Two logical servers on one Bun `websocket` handler**, dispatched on `ws.data.kind` (`snapshot` = `/ws`, `term` = `/ws/term`) — `2252`–`2341`.
+**Two logical servers on one Bun `websocket` handler**, dispatched on `ws.data.kind` (`snapshot` = `/ws`, `term` = `/ws/term`) — `2252`–`2341` (freeze-era anchors). **P6.4 overlay (`a1ea6020`):** `/ws` snapshot is converted-by-ownership + pure leaves — `wsBufferEviction`, `wsKeepaliveAction`, `assembleSnapshotFrame` live in `http-policy.ts` and are wired byte-identically into `http.ts` (`assembleSnapshotFrame` ~`2908`, `wsBufferEviction` ~`2926`, `wsKeepaliveAction` ~`3157`). The broadcast trigger + send loop remain transport machinery. `/ws/term` is untouched and stays behind the termbridge facade until P7. Freeze-era §3 line anchors are not retargeted; the three decisions moved, the wire contract did not.
 
 ### 3a. Upgrade
 See §1c. Auth/CSRF/Host at upgrade time (`2493`–`2515`); subprotocols: **none negotiated** (`srv.upgrade(request,{data})` passes no `protocol`). `/ws/term` query params `spawn`, `cols`, `rows` parsed at upgrade and stashed on `ws.data` (`2504`–`2513`).
@@ -305,7 +311,20 @@ Covering: `security-headers.test.ts` (CSP/nosniff/cache-control/referrer-policy,
 | Outer handler catch on `/hook/*` | `json(res,200,{})` | `2150` |
 | `fetchHandler` quiescing, hook path | `Response('{}', {status:200, ...json headers})` | `2538`–`2548` |
 
-Covering: `hook-auth.test.ts` (fail-open dialect, forgery refusal, `fleet-hook.mjs` shim), `hook-compat-silence.test.ts`, `hook-missing-session-id.test.ts`, `hook-output.test.ts`, `filechanged-watch.test.ts`.
+Covering: `hook-auth.test.ts` (fail-open dialect, forgery refusal, `fleet-hook.mjs` shim), `hook-compat-silence.test.ts`, `hook-missing-session-id.test.ts`, `hook-output.test.ts`, `filechanged-watch.test.ts`, `p6-hook-failopen-contract.test.ts` (frozen UNCHANGED; 3 pass + 6 skip), `http-workflow-hooks.test.ts` (14 tests: isolation + in-process equivalence + injected-Exit fail-open + B2 floor + unserializable-Success).
+
+**P6.4 hooks overlay — previously SKIP rows made inducible.** The fail-open contract (`tests/p6-hook-failopen-contract.test.ts`) stays frozen; its four source-fault SKIPs are now inducible at the P6.3 bridge seam. `holdHook` sub-edges stay SKIP until P10. B2 floor is additional coverage, not a freeze row. Live catch anchors: inner `2831`–`2838`, outer `2846`–`2852`, `fetchHandler` quiesce `3243`–`3254`, `holdHook` `1709`–`1724`.
+
+| Freeze SKIP (contract) | Analog at HEAD `b2d11d84` | Covering test | Status |
+| --- | --- | --- | --- |
+| `§5 POST inner catch on /hook/*` | workflow defect (`die`) folded by `mapHookExit` | `http-workflow-hooks.test.ts` ("a workflow DEFECT (die) fails open to 200 {}") | **INDUCIBLE** |
+| `§5 outer handler catch on /hook/*` | bridge submission-throw (`.catch` arm) | `http-workflow-hooks.test.ts` ("a submission-throw REJECTION fails open to 200 {}") | **INDUCIBLE** |
+| `§5 fetchHandler quiescing hook path` | `ApplicationQuiescingError` refusal folded to `{}` (not 503) | `http-workflow-hooks.test.ts` ("a quiescing ingress (ApplicationQuiescingError) fails open to 200 {}") | **INDUCIBLE** |
+| (no freeze SKIP; extra) | interrupts-only Exit folded to `{}` (not 503) | `http-workflow-hooks.test.ts` ("an interrupts-only INTERRUPTION fails open to 200 {}") | **INDUCIBLE** |
+| `§5 holdHook quiescing sub-edge` | still `holdHook` (`1709`–`1715`); holds never reach the settler | contract skip remains | **SKIP / P10** |
+| `§5 holdHook intake-error sub-edge` | still `holdHook` (`1718`–`1724`) | contract skip remains | **SKIP / P10** |
+| `§1b contrast sentinel 500` (non-hook) | non-hook inner/outer catch | — | **OPEN** (unchanged; §7.10) |
+| (not a freeze row) | B2 unref'd `HOOK_REPLY_FLOOR_MS` floor | `http-workflow-hooks.test.ts` ("a bridge Promise that NEVER settles still answers 200 {}") | extra coverage |
 
 ---
 
@@ -338,7 +357,9 @@ Covering: `hook-auth.test.ts` (fail-open dialect, forgery refusal, `fleet-hook.m
 The ten items below are the original P6.1 coverage-gap list, preserved
 verbatim. Each now carries a **Disposition** folded back from
 `tests/p6-http-freeze.test.ts` (gaps 1, 3, 4, 6, 7), from an existing pin
-(gap 5), or left OPEN (gaps 2, 8, 10). Gap 9 remains the recorded meta-note.
+(gap 5), or left OPEN (gaps 2, 8; gap 10 non-hook 500s). Gap 9 remains the
+recorded meta-note. **P6.4 overlay:** gap 10's *hook-path* inner/outer catch is
+now pinned by `http-workflow-hooks.test.ts`; the non-hook 500s stay OPEN.
 
 1. **Derive-owned control-route error status enums not confirmed at the transport layer.** For P5, P10–P18, P19, P21, P22 the http layer relays `core.*` `{status,body}` (verified). The specific status codes quoted in route comments (kill 404/409/410; adopt 404/400/409/410; plan 404/409; etc.) are **derive** contracts; I did not read `spawn.test.ts`/`adopt.test.ts`/`revive.test.ts`/`dismiss.test.ts`/`rename.test.ts`/`plans.test.ts`/`repos.test.ts`/`worktrees.test.ts`/`settings-transaction.test.ts` in this pass, so which exact transport statuses each asserts is **UNCONFIRMED**. The relay behavior itself (http hands `out.status`/`out.body` through, `.catch`→500) is verified from source. **Disposition: COVERED** by `tests/p6-http-freeze.test.ts` (unknown-id statuses recorded in §8).
 2. **`.catch` → 500 branches** on every async control route (P3–P5, P10–P14, P16–P18, and G4–G6) — the internal-error path (`500 {ok:false, reason:'internal'}` / route-specific message) has **no confirmed dedicated test**; these fire only when a `core.*` Promise rejects, which the domain tests may not force. **Disposition: OPEN** as a fault-injection-only path (unreachable from well-formed requests; deliberately not faked).
@@ -349,7 +370,7 @@ verbatim. Each now carries a **Disposition** folded back from
 7. **`refuse(404)`/`refuse(400)` WS upgrade paths** (`2503`, `2514`, `2516`) — the failed-`srv.upgrade` (400) and unknown-path (404) upgrade refusals; `http-stall.test.ts` covers a *refused* WS upgrade FIN (401 class) but the 400/404 upgrade-refuse rows specifically are not confirmed. **Disposition: COVERED** by `tests/p6-http-freeze.test.ts` (observed statuses recorded in §8).
 8. **`WS idleTimeout` behavior** — `bun-serve-runtime-limits` records the WS idleTimeout probe as **INCONCLUSIVE**; app-level liveness (30 s ping / `isAlive`) is the only bound and is covered, but native WS idle behavior remains uncharacterized. **Disposition: OPEN/INCONCLUSIVE** (WS idleTimeout).
 9. **`raw-request-timeout.test.ts` is NOT daemon coverage** — it tests the `rawRequest` *helper* against a synthetic `node:http` hanging server; it does not exercise any daemon request-timeout policy. Daemon FIN policy is covered by `http-stall.test.ts` only. (Recorded here so the gap is not masked by the file's name.) **Disposition:** recorded meta-note (unchanged).
-10. **Outer/inner handler `catch` 500 branches** (`2132`–`2141`, `2147`–`2154`) — the non-hook thrown-error `500 {err:'internal'}` / `500 {}` fallbacks have no confirmed test. **Disposition: OPEN** as a fault-injection-only path (unreachable from well-formed requests; deliberately not faked).
+10. **Outer/inner handler `catch` 500 branches** (`2132`–`2141`, `2147`–`2154`) — the non-hook thrown-error `500 {err:'internal'}` / `500 {}` fallbacks have no confirmed test. **Disposition: OPEN** as a fault-injection-only path (unreachable from well-formed requests; deliberately not faked). **P6.4 overlay:** the *hook-path* inner/outer catch fail-open (`200 {}`) is now pinned by `tests/effect/http-workflow-hooks.test.ts` (die → inner-catch analog; submission-throw → outer-catch analog; `ApplicationQuiescingError` → `fetchHandler` quiescing analog). The non-hook 500s remain OPEN. Live catch anchors: inner `2831`–`2838`, outer `2846`–`2852`.
 
 ---
 
@@ -368,7 +389,7 @@ rows are unchanged.
 | WS-upgrade refusals (`handleUpgrade`) | Was §7.7; not pinned from source alone | **VERIFIED** by `tests/p6-http-freeze.test.ts`: unknown path 404, failed `/ws` and `/ws/term` upgrade 400, tokenless `/ws/term` 401 |
 | `Bun.serve` pre-request (header-phase) ~12 s reaper | Empirical, out of daemon reach | CITED `bun-serve-runtime-limits` |
 
-Everything in §1–§6 not listed here is **verified from `src/daemon/http.ts` source** at HEAD `67758ba9`.
+Everything in §1–§6 not listed here is **verified from `src/daemon/http.ts` source** at freeze HEAD `67758ba9`. Converted-row overlays (G1/G2, P1, P3, P4, P6–P8, P12–P22, §3 leaves, §5 SKIP overlay) are verified at HEAD `b2d11d84` (`http.ts` 3851 lines).
 
 ---
 
@@ -376,10 +397,14 @@ Everything in §1–§6 not listed here is **verified from `src/daemon/http.ts` 
 
 ### 9.1 PRIMARY — WS `send()` return values are assumed load-bearing; they are not.
 
-`effect-migration-status.md` §"P6 preflight constraints" (`211`): *"Characterize Bun
-WebSocket `send()` return values before defining the new backpressure policy."* The
-migration plan's P6.5 similarly frames preserving native `send()` results
-(`-1` backpressure / `0` drop / positive bytes) as a requirement.
+The freeze-era status preflight *"Characterize Bun WebSocket `send()` return
+values before defining the new backpressure policy"* (then
+`effect-migration-status.md` §"P6 preflight constraints") and the plan's original
+P6.5 framing of native `send()` results (`-1` backpressure / `0` drop / positive
+bytes) as a requirement **are a freeze finding, not an open P6 item**. P6.5 as
+closed preserved the `getBufferedAmount()` + eviction contract as implemented
+(probe + this §3); the current status no longer lists send-return
+characterization as an open preflight.
 
 **Reality:** `http.ts` consults `send()`'s return value **nowhere**. All three send
 sites discard it (`2235`, `2272`, `2358`); backpressure is decided *only* by
@@ -411,15 +436,18 @@ P6 reader does not treat the FIN machinery as absent.
 ### 9.4 Confirmations (no contradiction) worth stating for P6.
 
 - **"Adapt and join every legacy async route Promise before enabling request
-  interruption"** (`status:207`) is consistent with the code: 12 GET/POST routes are
-  async Promises the transport joins via `res.done` + `activeResponses` (§1); the
-  rest are synchronous through the `json()` helper. The async set is exactly:
-  `GET /api/worktrees`, `GET fs` (session+home), `POST /mail`, `/api/cleanup`,
-  `/api/worktrees/remove`, `/api/repos/preflight`, `/api/spawn`, `/api/spawn/:id/kill`,
-  `/api/spawn/:id/revive`, `/api/sessions/:sid/adopt`, `/api/sessions/:sid/dismiss`,
+  interruption"** remains consistent with the code and is now the reviewed P6
+  exit-gate disposition (cancellation-on-disconnect is deliberately none-yet;
+  admitted requests JOIN). Converted async routes join via `res.done` +
+  `activeResponses` / `startOnce`; leftover legacy async handlers are still:
+  `GET /api/worktrees`, `GET fs` (session+home), `/api/worktrees/remove`,
+  `/api/repos/preflight`, `/api/spawn`. Converted async-mutating: `POST /mail`,
+  `/api/cleanup`, `/api/spawn/:id/kill`, `/api/spawn/:id/revive`,
+  `/api/sessions/:sid/adopt`, `/api/sessions/:sid/dismiss`,
   `/api/sessions/:sid/dismiss/retry`, `/api/spawn/:id/rc`.
-- **Held-response barriers + `stop(false)`/`stop(true)` ordering** (`status:213`)
-  match §6 exactly.
+- **Held-response barriers + `stop(false)`/`stop(true)` ordering** match §6
+  exactly; P6.6 verification pins all seven clauses
+  ([p6-graceful-stop-verification.md](./p6-graceful-stop-verification.md)).
 
 ---
 
@@ -430,4 +458,4 @@ P6 reader does not treat the FIN machinery as absent.
 - **WebSocket upgrade:** 2 endpoints (`/ws`, `/ws/term`) + refusal paths.
 - **Total distinct HTTP endpoints:** ~33 (11 GET + 22 POST) plus 2 WS.
 
-*End of frozen matrix. Freeze-era anchors valid at HEAD `67758ba9` (`src/daemon/http.ts`, 3138 lines) except converted-row overlays and the retargeted P8/`bodyCap` sites, which are valid at HEAD `e2518a63` (`http.ts` 3709 lines). Wave record: [p6-route-wave.md](./p6-route-wave.md).*
+*End of frozen matrix. Freeze-era anchors valid at HEAD `67758ba9` (`src/daemon/http.ts`, 3138 lines) except converted-row overlays (G1/G2, P1, P3, P4, P6–P8, P12–P22, §3 leaves, §5 SKIP overlay) and the retargeted P8/`bodyCap` sites, which are valid at HEAD `b2d11d84` (`http.ts` 3851 lines). Wave record: [p6-route-wave.md](./p6-route-wave.md).*

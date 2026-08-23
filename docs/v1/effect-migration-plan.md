@@ -4,7 +4,7 @@
 v1 [plan of record](./README.md). This document is intended to be handed directly to a Codex goal
 and updated as each gate lands.*
 
-**Status:** P0–P5 checkpointed; P5 complete at `ca62b94f`; P6 in progress (P6.1–P6.3 and P6.7 done; P6.4 wave 18 routes at `e2518a63`, box open; P6.8 harness landed, quiet-host baseline captured, comparison pending)
+**Status:** P0–P6 checkpointed; P6 complete at `b2d11d84`; P7 next (terminal bridge under Effect ownership; P7.0 is the §7 platform authorization checkpoint)
 **Working branch:** `fd/v1-effect-feasibility`
 **Starting point:** v0.23.6
 **Runtime floor:** exact Bun 1.3.14 in CI; `engines.bun >=1.3.14`
@@ -728,17 +728,19 @@ rollback.
   `Effect.runForkWith`, `Effect.runCallbackWith`, or `Effect.runPromiseWith` through
   `IngressSupervisor`. It tracks every resulting fiber and Promise-backed request until settlement
   or interruption; no callback constructs another runtime or provides `LiveLayer`.
-- [ ] P6.4 Convert route application handlers in repeatable route-group sub-slices, one service and
+- [x] P6.4 Convert route application handlers in repeatable route-group sub-slices, one service and
   focused fixture set per commit. Map typed errors to the exact existing Response only in
   `http-policy.ts`; map hook failures in `hook-policy.ts`. Complete terminal ingress before P7.
-  **Progress at `e2518a63` (2026-08-23):** 18 routes converted across five commits
-  (`56a15e8a` health/state, `cffb9dea` paste-image, `c7eeb641`
-  settings/command/mail/cleanup, `62ef3c0f` control, `e2518a63` join-on-interrupt).
-  Box stays open: WS-snapshot ingress is next, then the exhaustive fail-open
-  contract test, then the hooks slice (LAST). GET `/mail` and GET `/api/watch`
-  stay under their P1 owners until P10; static assets stay legacy until P13.
-  Evidence: [p6-route-wave.md](./evidence/effect/p6-route-wave.md).
-- [ ] P6.5 Preserve the audited WS backpressure contract as implemented: per-socket
+  **Complete at `b2d11d84` (2026-08-23).** Four-slice wave (`56a15e8a` health/state, `cffb9dea`
+  paste-image, `c7eeb641` settings/command/mail/cleanup, `62ef3c0f` control) + join-on-interrupt
+  `e2518a63` + WS-snapshot `a1ea6020` (converted-by-ownership + pure leaves in `http-policy.ts`;
+  `/ws/term` stays behind the termbridge facade until P7) + fail-open contract `3eeb2641` + hooks
+  `b2d11d84` (LAST; unique fourth settle shape: every non-success Exit → `200 {}` via total
+  `mapHookExit`; B1 bridge terminal arms; B2 unref'd reply floor). 18 HTTP routes + hooks through
+  the Effect bridge. Excluded-by-design: GET `/mail` + GET `/api/watch` (P10), static assets (P13).
+  Evidence: [p6-route-wave.md](./evidence/effect/p6-route-wave.md),
+  [p6-http-matrix.md](./evidence/effect/p6-http-matrix.md).
+- [x] P6.5 Preserve the audited WS backpressure contract as implemented: per-socket
   `getBufferedAmount()` thresholds with eviction (snapshot peers `terminate()` past
   `MAX_WS_BUFFER`; terminal viewers `close(1009)` past `MAX_TERM_WS_BUFFER`),
   `send()`/`ping()` return values deliberately ignored (probed: `-1` means queued-not-rejected,
@@ -748,35 +750,61 @@ rollback.
   payload bytes even while a subscriber sits at Bun's 16 MiB silent-drop cliff). Evidence:
   [p6-http-matrix.md](./evidence/effect/p6-http-matrix.md) §3 and
   [p6-ws-send-probe.md](./evidence/effect/p6-ws-send-probe.md).
-- [ ] P6.6 Implement graceful `Bun.serve` stop: initiate `server.stop(false)` once during quiesce,
+  **Preserved through the wave.** The WS-snapshot slice (`a1ea6020`) extracted
+  `wsBufferEviction` / `wsKeepaliveAction` / `assembleSnapshotFrame` as pure `http-policy.ts`
+  leaves, wired byte-identically; `ws-hardening` and `terminal-ws` stayed green. Probe + matrix
+  §3 remain the evidence.
+- [x] P6.6 Implement graceful `Bun.serve` stop: initiate `server.stop(false)` once during quiesce,
   release holds, close clients, and race the graceful Promise with the absolute remaining deadline.
   If it loses, call and await `server.stop(true)`; do not await graceful stop serially before the
   force decision.
-  The frozen `res.done` join invariant that `closeClients` depends on was restored
-  for async-mutating Effect routes by `e2518a63` (`startOnce` + join-on-interrupt:
-  503 only when the native Promise never started; else JOIN and emit true legacy
-  bytes). P6.6 still owns the `stop(false)`-once-race-deadline-`stop(true)`
-  machine. See [p6-route-wave.md](./evidence/effect/p6-route-wave.md) §4–§5.
+  **Complete at `b2d11d84`.** All seven atomic clauses are implemented and pinned. Evidence:
+  [p6-graceful-stop-verification.md](./evidence/effect/p6-graceful-stop-verification.md).
+  Nuance recorded there: `stop(true)` is awaited on every path except hard absolute-deadline
+  exhaustion (deliberate, pinned — ownership retained for the synchronous host-exit fallback).
+  The frozen `res.done` join invariant that `closeClients` depends on was restored for
+  async-mutating Effect routes by `e2518a63` (`startOnce` + join-on-interrupt: 503 only when
+  the native Promise never started; else JOIN and emit true legacy bytes).
 - [x] P6.7 Independently trial `effect/unstable/http/HttpRouter` and
   `@effect/platform-bun/BunHttpServer`. Switch the transport only if every black-box fixture and
   shutdown budget passes. Override its default shutdown timing to Fleet Deck's budget.
   **Verdict: KEEP CUSTOM ADAPTER** (the continuation rule records this as success). Evidence:
   [p6-transport-trial.md](./evidence/effect/p6-transport-trial.md).
-- [ ] P6.8 Benchmark `/health`, `/state`, hook POSTs, large paste, withheld bodies, WS broadcast,
+- [x] P6.8 Benchmark `/health`, `/state`, hook POSTs, large paste, withheld bodies, WS broadcast,
   and static assets at representative concurrency.
+  **Within budget at `b2d11d84`.** 12/12 `/health`+`/state` p95 cells PASS the +10% line.
+  Evidence: [p6-bench-comparison.md](./evidence/effect/p6-bench-comparison.md);
+  post-conversion JSON [p6-postconv.json](./evidence/effect/p6-postconv.json) alongside the
+  quiet-host baseline [p6-baseline.json](./evidence/effect/p6-baseline.json) (captured at
+  `ac438c21`, taken at `51d39ddd`). Harness gap: `POST /command` is converted but is not a
+  harness workload (correctness covered by `fleet-command` tests). P6.8's process-p95 half
+  remains the P0 exec bench.
 
 Using Effect for all route workflows while retaining a custom scoped `Bun.serve` adapter is a
 successful full migration. The platform-bun adapter is optional because Fleet Deck's audited wire
 semantics are the requirement. P6.7 decided **KEEP CUSTOM ADAPTER** at rc.110; see
-[p6-transport-trial.md](./evidence/effect/p6-transport-trial.md). The P6.8 harness exists at
-`d5404aac` (`scripts/effect-migration/p6-http-bench.ts`). The quiet-host baseline was captured at
-`ac438c21` (`docs/v1/evidence/effect/p6-baseline.json`, taken at `51d39ddd`). P6.8 stays open
-until the post-conversion comparison is in.
+[p6-transport-trial.md](./evidence/effect/p6-transport-trial.md).
 
-**Exit gate:** no scattered runtime runners, exact HTTP/WS parity, cancellation on disconnect where
-safe, all transport resources root-owned, and performance within budget.
+**Exit gate:** MET at `b2d11d84`, with these dispositions:
 
-**Rollback:** route groups retain translation facades until the group and source/bundle lanes pass.
+- **no scattered runtime runners** — the sole bridge is `IngressSupervisor.runPromiseExit` via
+  `HttpServer.runRequest` (import-boundary + owner tests).
+- **exact HTTP/WS parity** — freeze tests + fail-open contract + byte-identity fixtures across
+  every slice.
+- **cancellation on disconnect where safe** — DELIBERATELY NONE YET: admitted requests JOIN their
+  operations (the frozen `res.done` invariant restored by `e2518a63`); disconnect-triggered
+  cancellation was judged not-yet-safe for converted routes and is deferred to the packages that
+  make the underlying operations abort-aware. This is the reviewed disposition, not a silent pass.
+- **all transport resources root-owned** — P6.3 owner + fallback ordering test.
+- **performance within budget** — P6.8 evidence
+  ([p6-bench-comparison.md](./evidence/effect/p6-bench-comparison.md)).
+
+**Rollback:** route groups revert via `effectRoutes=null` (unset `installEffectRoutes` in
+`program.ts`) per-group. Whole-slice revert of `307fae0a` through `b2d11d84` — P6.1 freeze
+(`307fae0a`, `46e13c50`, `9332d576`), P6.2 (`d425cc96`, `3735759e`), P6.3 (`e7900bac`,
+`51d39ddd`), plus the route wave `56a15e8a`..`b2d11d84` (and the intervening P6.7/P6.8 harness
+and gzip-recovery commits inside that range) — restores the P5 completion tree at `67758ba9` /
+`ca62b94f`.
 
 ### P7 — terminal bridge under Effect ownership; Bun transport trial
 
@@ -1216,7 +1244,7 @@ Update this table only when a work package's exit gate has actually passed:
 | P3 Bun subprocess service | Not started | — | — |
 | P4 root runtime/shutdown | Not started | — | — |
 | P5 boot and schedules | Complete | [p5.md](./evidence/effect/p5.md) | `ca62b94f`; whole-slice revert of `972621d5`–`ca62b94f` restores `661dfe31` |
-| P6 HTTP/WS workflows | Not started | — | — |
+| P6 HTTP/WS workflows | Complete | [p6-http-matrix.md](./evidence/effect/p6-http-matrix.md), [p6-route-wave.md](./evidence/effect/p6-route-wave.md), [p6-graceful-stop-verification.md](./evidence/effect/p6-graceful-stop-verification.md), [p6-bench-comparison.md](./evidence/effect/p6-bench-comparison.md), [p6-transport-trial.md](./evidence/effect/p6-transport-trial.md), [p6-ws-send-probe.md](./evidence/effect/p6-ws-send-probe.md) | Per-group: `effectRoutes=null` (unset `installEffectRoutes`). Whole-slice: revert `307fae0a` through `b2d11d84` (P6.1–P6.3 plus the route wave `56a15e8a`..`b2d11d84`) restores P5 at `67758ba9` / `ca62b94f` |
 | P7 terminal stream | Not started | — | — |
 | P8 store/SQLite | Not started | — | — |
 | P9 application workflows | Not started | — | — |
