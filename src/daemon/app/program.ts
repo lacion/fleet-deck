@@ -39,6 +39,8 @@ import { errText, errCode } from '../errors.ts';
 import {
   type AgentsIngestWork,
   legacyAgentsIngestWork,
+  legacyLivenessWork,
+  type LivenessWork,
   makeAgentsPollProgram,
 } from './agents-poll.ts';
 import type { BackgroundController } from './background-owner.ts';
@@ -55,6 +57,7 @@ import {
   makeStoreLanTickWork,
 } from './db-workflows/lan-tick.ts';
 import { makeStoreRetentionWork } from './db-workflows/retention.ts';
+import { makeStoreLivenessWork } from './db-workflows/spawn-liveness.ts';
 import { DaemonStartupRefusalError, HttpBindStartupError } from './errors.ts';
 import { type HttpServerOwner, makeHttpServerOwner } from './http-server-owner.ts';
 import {
@@ -1215,6 +1218,19 @@ async function bootDaemon(
   const wiredLanTick: LanTickWork<Store> = STORE_BACKED_LAN_TICK
     ? storeBackedLanTick
     : legacyLanTick;
+  // P8.6 slice 5 (final): the agents-poll spawn-liveness tick now yields the
+  // root-owned Store service (db-workflows/spawn-liveness.ts). storeBackedLiveness
+  // is the wired default; legacyLiveness is retained as the one-flag rollback seam
+  // — flip STORE_BACKED_LIVENESS to false to restore the legacy capability-free
+  // path. Both build on the same ownedLivenessTick join machinery and translate a
+  // tick fault through the same AgentsPollLivenessError, so the poller's fail-open
+  // runLiveness boundary skips the tick byte-identically either way.
+  const legacyLiveness = legacyLivenessWork(core);
+  const storeBackedLiveness = makeStoreLivenessWork(core);
+  const STORE_BACKED_LIVENESS = true;
+  const wiredLiveness: LivenessWork<Store> = STORE_BACKED_LIVENESS
+    ? storeBackedLiveness
+    : legacyLiveness;
   const backgroundProgram: Effect.Effect<never, never, ProcessRunner> = Effect.gen(function* () {
     // Upcast retention to the background program's unified environment. The work
     // itself requires only Store, but it joins siblings that require ProcessRunner;
@@ -1232,7 +1248,7 @@ async function bootDaemon(
           : Effect.void,
     });
     return yield* makeDaemonBackgroundProgram(inputs.backgroundController, {
-      agentsPoll: makeAgentsPollProgram(core, {}, wiredAgentsIngest),
+      agentsPoll: makeAgentsPollProgram(core, {}, wiredAgentsIngest, wiredLiveness),
       lanRefresh: lanRefresh({
         enabled: LAN_MODE,
         interval: LAN_REFRESH_MS,

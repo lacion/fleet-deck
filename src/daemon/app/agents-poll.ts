@@ -210,16 +210,35 @@ function ingestPoll<Environment>(
   return ingest(records).pipe(Effect.catchTag('AgentsPollIngestError', () => Effect.void));
 }
 
-/**
- * Promise callback bridge whose interruption finalizer joins the admitted callback. The callback
- * itself has no cancellation protocol, but close cannot retire downstream resources while it is
- * still running, and a rejected operational callback remains a named fail-open skip.
- */
-function runLiveness(core: AgentsPollCore): Effect.Effect<void, never> {
-  const callback = core.spawnLivenessTick?.bind(core);
-  if (callback === undefined) return Effect.void;
+/** The single liveness leg of an agents poll: core's spawn-liveness/tombstone sweep. */
+export interface LivenessCallbacks {
+  readonly spawnLivenessTick?: () => void | Promise<void>;
+}
 
-  const owned = Effect.callback<void, AgentsPollLivenessError>((resume) => {
+/**
+ * The coarse liveness-tick operation, parameterized over its Effect environment.
+ * The legacy adapter requires nothing (`never`); the P8.6 store-backed adapter
+ * (db-workflows/spawn-liveness.ts) yields the root-owned Store first, so its
+ * requirement is `Store`. Both build on the identical join/cancel machinery
+ * (ownedLivenessTick) and translate a tick fault into the identical
+ * AgentsPollLivenessError, so the scheduler's fail-open boundary (runLiveness)
+ * catches that tag either way.
+ */
+export type LivenessWork<Environment> = Effect.Effect<void, AgentsPollLivenessError, Environment>;
+
+/**
+ * The shared liveness join/cancel machinery: a Promise callback bridge whose
+ * interruption finalizer joins the admitted callback. The callback itself has no
+ * cancellation protocol, but close cannot retire downstream resources while it is
+ * still running. A synchronous throw and an async rejection both become the named
+ * AgentsPollLivenessError, a fail-open skip at the scheduler boundary. Both the
+ * legacy and store-backed adapters build on this one helper, so the load-bearing
+ * no-overlap machinery is byte-identical either way.
+ */
+export function ownedLivenessTick(
+  callback: () => void | Promise<void>,
+): Effect.Effect<void, AgentsPollLivenessError> {
+  return Effect.callback<void, AgentsPollLivenessError>((resume) => {
     let completion: Promise<void>;
     try {
       completion = Promise.resolve(callback()).then(() => undefined);
@@ -238,13 +257,32 @@ function runLiveness(core: AgentsPollCore): Effect.Effect<void, never> {
     );
     return Effect.promise(() => settled);
   });
+}
 
-  return owned.pipe(Effect.catchTag('AgentsPollLivenessError', () => Effect.void));
+/**
+ * Capability-parameterized liveness work (R = never): core's optional
+ * spawnLivenessTick wrapped in the shared ownedLivenessTick machinery, or
+ * Effect.void when no callback is present. This is the wired default and the
+ * P8.6 rollback path for the store-backed adapter.
+ */
+export function legacyLivenessWork(callbacks: LivenessCallbacks): LivenessWork<never> {
+  const callback = callbacks.spawnLivenessTick?.bind(callbacks);
+  if (callback === undefined) return Effect.void;
+  return ownedLivenessTick(callback);
+}
+
+function runLiveness<Environment>(
+  liveness: LivenessWork<Environment>,
+): Effect.Effect<void, never, Environment> {
+  // Named fail-open skip (P5): a translated liveness failure — a synchronous
+  // throw or an async rejection — is swallowed so the scheduler keeps ticking. A
+  // missing-Store defect is not this tagged failure and deliberately survives.
+  return liveness.pipe(Effect.catchTag('AgentsPollLivenessError', () => Effect.void));
 }
 
 function makeTick<Environment>(
-  core: AgentsPollCore,
   ingest: AgentsIngestWork<Environment>,
+  liveness: LivenessWork<Environment>,
   settings: ResolvedAgentsPollOptions,
   runner: ProcessRunnerService | null,
   state: Ref.Ref<AgentsPollState>,
@@ -273,7 +311,7 @@ function makeTick<Environment>(
       }
     }
 
-    yield* runLiveness(core);
+    yield* runLiveness(liveness);
   });
 }
 
@@ -285,6 +323,7 @@ export function makeAgentsPollProgram<Environment = never>(
   core: AgentsPollCore,
   options: AgentsPollOptions = {},
   ingest: AgentsIngestWork<Environment> = legacyAgentsIngestWork(core),
+  liveness: LivenessWork<Environment> = legacyLivenessWork(core),
 ): Effect.Effect<never, never, ProcessRunner | Environment> {
   const settings = resolveAgentsPollOptions(options);
 
@@ -295,7 +334,7 @@ export function makeAgentsPollProgram<Environment = never>(
       agentsWereActive: false,
       nextAgentsPollAt: 0,
     });
-    const tick = makeTick(core, ingest, settings, runner, state);
+    const tick = makeTick(ingest, liveness, settings, runner, state);
 
     yield* Effect.sleep(Duration.millis(settings.firstRunDelayMs));
     yield* Effect.repeat(tick, Schedule.spaced(Duration.millis(settings.pollIntervalMs)));
