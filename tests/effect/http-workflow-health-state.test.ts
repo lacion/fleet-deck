@@ -38,6 +38,7 @@ import {
   controlSyncWorkflow,
   nameControlWorkflow,
   questionsDismissWorkflow,
+  spawnRouteWorkflow,
 } from '../../src/daemon/app/http-workflows/control.ts';
 import {
   type HealthCapabilities,
@@ -87,6 +88,7 @@ const ALL_ROUTE_BUILDERS = {
   questionsDismiss: questionsDismissWorkflow,
   nameControl: nameControlWorkflow,
   armUnsupervised: armUnsupervisedWorkflow,
+  spawnRoute: spawnRouteWorkflow,
   hookDispatch: hookDispatchWorkflow,
 };
 

@@ -173,3 +173,129 @@ test('plan-claim compensation: a concurrent via change in the failure window is 
   );
   assert.equal(after.executed_via, 'spawn:concurrent', 'the concurrent via is preserved');
 });
+
+// P9.1 §7 — BINDING PRE-SLICE-6 REQUIREMENT (docs/v1/evidence/effect/p9-1-design.md).
+//
+// Before /api/spawn moves onto the P6.4 transport (Slice 6a) the plan-claim
+// compensation must be pinned against the class of 400 the design flags as the
+// riskiest to regress: a *repo-mode validation refusal that fires AFTER the
+// claim*. Unlike the two throws above, these are RETURNED wires — the spawn body
+// resolves with {status:400, body} rather than rejecting — and each of them
+// lives inside the try whose `finally` runs `guard.settle()`. So the invariant
+// under test is exactly the same one Slice 6a must preserve byte-for-byte: the
+// plan flipped approved -> executed by the claim, then a repo-mode 400 returned,
+// and `guard.settle()` reverted the plan back to its pre-claim status with the
+// claim's own via still recorded (via-keyed release). Each case runs the
+// PRODUCTION path — core.spawn (ownedSpawn) with the tmux runner injected — and
+// asserts BOTH the wire bytes and the reverted plan row. Authored against the
+// legacy code; must pass UNCHANGED after Slice 6a wires the Effect transport.
+//
+// A plain repo body reaches the claim block (spawnCapability available via the
+// test-override; runtimeOverrideRefusal / unsupervisedGate / gatewayDecision all
+// pass a bare repo request) and then the three repo-mode gates, every one of
+// which returns BEFORE validateBranch/resolveTarget — so no repo resolution or
+// clone is attempted, and the tmux adapter is never driven past capability.
+
+type SpawnWire = { status: number; body: { ok: boolean; reason: string } };
+
+function makeRepoModeCore(db: ReturnType<typeof openDb>, home: string) {
+  return createCore(db, {
+    port: 4711,
+    home,
+    tmuxAdapter: makeAdapter({ spawnOverrideCmd: () => '/fake-spawn-override' }),
+  });
+}
+
+test('plan-claim compensation §7: a repo-mode worktree-conflict 400 reverts the claim (via-keyed)', async (t: TestContext) => {
+  const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-plan-claim-repo-wt-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const db = openDb(':memory:');
+  const core = makeRepoModeCore(db, home);
+  t.after(async () => {
+    await core.lifecycle.close();
+    db.close();
+  });
+
+  const planId = insertApprovedPlan(db);
+  assert.equal(readPlan(db, planId).status, 'approved');
+
+  const out = (await core.spawn({
+    repo: 'owner/repo',
+    worktree: true,
+    plan_id: planId,
+  })) as SpawnWire;
+  assert.equal(out.status, 400);
+  assert.equal(out.body.ok, false);
+  assert.equal(out.body.reason, 'branch_mode replaces worktree in repo mode');
+
+  const after = readPlan(db, planId);
+  assert.equal(
+    after.status,
+    'approved',
+    'a repo-mode 400 after the claim released it back to the pre-claim status',
+  );
+  assert.match(
+    after.executed_via ?? '',
+    /^spawn:[0-9a-f]{8}$/,
+    "release is via-keyed: the claim's own via is recorded",
+  );
+});
+
+test('plan-claim compensation §7: a repo-mode branch-required 400 reverts the claim (via-keyed)', async (t: TestContext) => {
+  const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-plan-claim-repo-br-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const db = openDb(':memory:');
+  const core = makeRepoModeCore(db, home);
+  t.after(async () => {
+    await core.lifecycle.close();
+    db.close();
+  });
+
+  const planId = insertApprovedPlan(db);
+  assert.equal(readPlan(db, planId).status, 'approved');
+
+  const out = (await core.spawn({ repo: 'owner/repo', plan_id: planId })) as SpawnWire;
+  assert.equal(out.status, 400);
+  assert.equal(out.body.ok, false);
+  assert.equal(out.body.reason, 'branch is required in repo mode');
+
+  const after = readPlan(db, planId);
+  assert.equal(
+    after.status,
+    'approved',
+    'a repo-mode 400 after the claim released it back to the pre-claim status',
+  );
+  assert.match(after.executed_via ?? '', /^spawn:[0-9a-f]{8}$/, 'release is via-keyed');
+});
+
+test('plan-claim compensation §7: a repo-mode invalid-branch_mode 400 reverts the claim (via-keyed)', async (t: TestContext) => {
+  const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-plan-claim-repo-bm-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const db = openDb(':memory:');
+  const core = makeRepoModeCore(db, home);
+  t.after(async () => {
+    await core.lifecycle.close();
+    db.close();
+  });
+
+  const planId = insertApprovedPlan(db);
+  assert.equal(readPlan(db, planId).status, 'approved');
+
+  const out = (await core.spawn({
+    repo: 'owner/repo',
+    branch: 'main',
+    branch_mode: 'bogus',
+    plan_id: planId,
+  })) as SpawnWire;
+  assert.equal(out.status, 400);
+  assert.equal(out.body.ok, false);
+  assert.equal(out.body.reason, 'branch_mode must be worktree or in-place');
+
+  const after = readPlan(db, planId);
+  assert.equal(
+    after.status,
+    'approved',
+    'a repo-mode 400 after the claim released it back to the pre-claim status',
+  );
+  assert.match(after.executed_via ?? '', /^spawn:[0-9a-f]{8}$/, 'release is via-keyed');
+});

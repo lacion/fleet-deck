@@ -54,6 +54,7 @@ import {
   controlSyncWorkflow,
   nameControlWorkflow,
   questionsDismissWorkflow,
+  spawnRouteWorkflow,
 } from '../../src/daemon/app/http-workflows/control.ts';
 import { healthWorkflow, stateWorkflow } from '../../src/daemon/app/http-workflows/health-state.ts';
 import { hookDispatchWorkflow } from '../../src/daemon/app/http-workflows/hooks.ts';
@@ -83,6 +84,7 @@ const ALL_ROUTE_BUILDERS = {
   questionsDismiss: questionsDismissWorkflow,
   nameControl: nameControlWorkflow,
   armUnsupervised: armUnsupervisedWorkflow,
+  spawnRoute: spawnRouteWorkflow,
   hookDispatch: hookDispatchWorkflow,
 } as const;
 

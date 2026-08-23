@@ -194,3 +194,35 @@ export const armUnsupervisedWorkflow = (
   caps: ArmUnsupervisedCapabilities,
 ): Effect.Effect<ControlWire, never, never> =>
   Effect.sync(() => ({ status: 200, body: { ok: true, arm_token: caps.run() } }));
+
+/**
+ * POST /api/spawn (P9.1 Slice 6a). Brings spawn onto the P6.4 transport WITHOUT
+ * converting spawn's core (that is Slice 6b): `run` is the raw core.spawn call
+ * and its assembled { status, body } control result is relayed VERBATIM as the
+ * success wire — the 202 provisioning pass-through, every early 4xx, and the
+ * maintenance-gate 503 {ok:false,reason:'daemon is shutting down; spawn
+ * maintenance is quiescing'} are all SUCCESS values here.
+ *
+ * THE ONE DIVERGENCE FROM controlAsyncWorkflow — DO NOT FOLD THE REJECTION. The
+ * six async control routes fold a promise rejection INTO a success wire (500
+ * {ok:false,reason:'internal'}); spawn must NOT. The legacy spawn route's .catch
+ * answers 500 {ok:false, reason: spawnFailureReason(err)} — a REDACTED, per-error
+ * line (redactGitText / scrubUrlCredentials, so a token-bearing clone URL never
+ * reaches the wire), which the design (D6) makes contractual. A fold would erase
+ * that reason and freeze a static body the settler could not vary per error. So
+ * here `Effect.promise` awaits the RAW promise: a rejection becomes a die, and the
+ * dedicated spawn settler in http.ts (settleEffectSpawnRoute) renders
+ * spawnFailureReason on its defect / joined-rejection arms. A synchronous throw
+ * while constructing the promise (ownedSpawn never does — runMaintenance turns a
+ * sync throw into a rejected Promise) likewise dies under Effect.sync and the
+ * settler still emits spawnFailureReason, NOT {err:'internal'}. R = never,
+ * E = never — the die travels the defect channel, not the error channel.
+ */
+export interface SpawnRouteCapabilities {
+  readonly run: () => Promise<ControlWire>;
+}
+
+export const spawnRouteWorkflow = (
+  caps: SpawnRouteCapabilities,
+): Effect.Effect<ControlWire, never, never> =>
+  Effect.sync(() => caps.run()).pipe(Effect.flatMap((pending) => Effect.promise(() => pending)));

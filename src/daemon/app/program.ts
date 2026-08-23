@@ -66,6 +66,7 @@ import {
   controlSyncWorkflow,
   nameControlWorkflow,
   questionsDismissWorkflow,
+  spawnRouteWorkflow,
 } from './http-workflows/control.ts';
 import { healthWorkflow, stateWorkflow } from './http-workflows/health-state.ts';
 import { hookDispatchWorkflow } from './http-workflows/hooks.ts';
@@ -889,6 +890,8 @@ async function bootDaemon(
     nameControl: nameControlWorkflow,
     // P9.1 Slice 0: POST /api/spawn/arm-unsupervised.
     armUnsupervised: armUnsupervisedWorkflow,
+    // P9.1 Slice 6a: POST /api/spawn under the P6.4 transport (core unchanged).
+    spawnRoute: spawnRouteWorkflow,
     // P6.4 HOOK ROUTE GROUP: POST /hook/:name (the final route slice). Fails open
     // on every non-success Exit via mapHookExit (see http-workflows/hooks.ts).
     hookDispatch: hookDispatchWorkflow,

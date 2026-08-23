@@ -599,6 +599,17 @@ export interface NameControlRouteCapabilities {
 export interface ArmUnsupervisedRouteCapabilities {
   readonly run: () => string;
 }
+// P9.1 Slice 6a — POST /api/spawn. STRUCTURAL MIRROR of SpawnRouteCapabilities in
+// app/http-workflows/control.ts: `run` is the raw core.spawn call and its
+// { status, body } control result is relayed VERBATIM as the workflow's success
+// value (202 provisioning, every early 4xx, the maintenance-gate 503 — all
+// success DATA). E stays `never`: a rejection is NOT folded into a wire (unlike
+// the six controlAsync routes) — it dies, and settleEffectSpawnRoute renders the
+// redacted spawnFailureReason on its defect/joined-rejection arms (D6). tsc checks
+// this mirror against the real interface at program.ts's installEffectRoutes site.
+export interface SpawnRouteCapabilities {
+  readonly run: () => Promise<{ status: number; body?: unknown }>;
+}
 // P6.4 HOOK ROUTE GROUP (POST /hook/:name) — STRUCTURAL MIRROR of
 // HookDispatchCapabilities in app/http-workflows/hooks.ts. All three fields are
 // thunks the workflow calls inside the Effect, so building the capability object
@@ -637,6 +648,8 @@ export interface HttpEffectRoutes {
   readonly nameControl: (caps: NameControlRouteCapabilities) => HttpWorkflowEffect;
   // P9.1 Slice 0 CONTROL ROUTE: POST /api/spawn/arm-unsupervised.
   readonly armUnsupervised: (caps: ArmUnsupervisedRouteCapabilities) => HttpWorkflowEffect;
+  // P9.1 Slice 6a CONTROL ROUTE: POST /api/spawn (transport only; core unchanged).
+  readonly spawnRoute: (caps: SpawnRouteCapabilities) => HttpWorkflowEffect;
   // P6.4 HOOK ROUTE GROUP builder (see the mirror interface above).
   readonly hookDispatch: (caps: HookDispatchRouteCapabilities) => HttpWorkflowEffect;
 }
@@ -1242,6 +1255,88 @@ export function createHttp(
         },
       },
     );
+  }
+
+  // SPAWN SETTLER (POST /api/spawn — P9.1 Slice 6a). Modeled on
+  // settleControlAsyncRoute (start-once witness + JOIN-on-interrupt + quiesce 503)
+  // with ONE contractual divergence in the defect arm. spawn is the single control
+  // POST whose 500 body is COMPUTED from the escaped error, not static: the legacy
+  // route's .catch was
+  //   console.error('fleetd spawn error:', err);
+  //   json(res, 500, { ok: false, reason: spawnFailureReason(err) });
+  // and spawnFailureReason applies redactGitText/scrubUrlCredentials + one-line +
+  // truncation (spawns.ts) so a token-bearing clone URL never reaches the wire.
+  // Design D6 makes that redaction contractual — a defect MUST reproduce these
+  // bytes, NEVER CONTROL_DEFECT's {"err":"internal"}. settleEffectAsyncMutatingRoute
+  // cannot serve this: its relay.defect.body is a STATIC value it cannot vary per
+  // error. So spawn owns this settler and funnels EVERY failure arm — a joined
+  // native rejection, a never-started defect, and the outer catch — through ONE
+  // emitSpawnFailure(err).
+  //   success  → spawn's assembled wire verbatim (202 provisioning, early 4xx, AND
+  //              the maintenance-gate 503 {ok:false,reason:'daemon is shutting
+  //              down; spawn maintenance is quiescing'} — a NORMAL success wire,
+  //              distinct from the transport quiesce 503 below).
+  //   quiesce  → started? JOIN the in-flight native write (closeClients waits for
+  //              it exactly as the legacy .then(json) chain did) : 503
+  //              {ok:false,reason:'shutting-down'} — the transport refusal, emitted
+  //              ONLY when the native write PROVABLY never started (an
+  //              ApplicationQuiescingError admission refusal or an interrupt before
+  //              the Effect.promise thunk fired).
+  //   defect   → the die comes FROM the rejected native (Effect.promise raises a
+  //              rejection as a die and the workflow does NOT fold it), so it
+  //              coincides with a started write — JOIN it, rendering
+  //              spawnFailureReason. The never-started-defect edge (a synchronous
+  //              throw constructing the promise; ownedSpawn never does —
+  //              runMaintenance turns a sync throw into a rejected Promise) still
+  //              emits spawnFailureReason(defect) via the outer catch, NOT
+  //              {"err":"internal"} (D6).
+  function settleEffectSpawnRoute(
+    routes: HttpEffectRoutes,
+    operation: string,
+    res: HttpResShim,
+    run: () => ControlResult,
+  ): void {
+    const emitSpawnFailure = (err: unknown): void => {
+      console.error('fleetd spawn error:', err);
+      try {
+        json(res, 500, { ok: false, reason: spawnFailureReason(err) });
+      } catch {
+        /* socket gone */
+      }
+    };
+    const recorder = startOnce(run);
+    const joinNative = (native: ControlResult): Promise<void> =>
+      native.then(
+        (out) => {
+          json(res, out.status, out.body);
+        },
+        (err) => emitSpawnFailure(err),
+      );
+    routes
+      .runRequest(operation, routes.spawnRoute({ run: recorder.invoke }))
+      .then((exit) => {
+        const outcome = mapEffectRouteExit(exit);
+        if (outcome.kind === 'success') {
+          const payload = outcome.value as { status: number; body: unknown };
+          json(res, payload.status, payload.body);
+          return;
+        }
+        const native = recorder.started();
+        if (outcome.kind === 'quiesce') {
+          if (native === null) {
+            json(res, 503, { ok: false, reason: 'shutting-down' });
+            return;
+          }
+          return joinNative(native);
+        }
+        // Defect. A started native op renders spawnFailureReason via the join; the
+        // never-started edge falls through to the outer catch → emitSpawnFailure.
+        if (native !== null) return joinNative(native);
+        throw outcome.defect;
+      })
+      .catch((err: unknown) => {
+        emitSpawnFailure(err);
+      });
   }
 
   function legacySettingsResponse(res: HttpResShim, ev: unknown): void {
@@ -2489,6 +2584,25 @@ export function createHttp(
                 req,
                 `${spawnUnsupervised ? ' unsupervised=true' : ' unsupervised=false'}${spawnPlanSuffix}`,
               );
+              // P9.1 Slice 6a: /api/spawn under the P6.4 transport. The core is
+              // UNCHANGED this slice (that is Slice 6b) — the capability is the raw
+              // native ownedSpawn Promise, wrapped once by the start-once recorder
+              // so closeClients can JOIN an in-flight spawn on shutdown. The
+              // dedicated spawn settler reproduces the legacy .then(json) success
+              // relay AND the redacted 500 spawnFailureReason dialect on a
+              // die/joined-rejection (D6); the legacy handler below stays the
+              // rollback seam (effectRoutes unset → installEffectRoutes not called).
+              // The validateSpawnRequest wall above is transport-level and precedes
+              // BOTH paths, exactly as it did the legacy dispatch.
+              if (effectRoutes) {
+                settleEffectSpawnRoute(
+                  effectRoutes,
+                  'POST /api/spawn',
+                  res,
+                  () => core.spawn(ev) as ControlResult,
+                );
+                return;
+              }
               (core.spawn(ev) as ControlResult)
                 .then((out) => {
                   json(res, out.status, out.body);
