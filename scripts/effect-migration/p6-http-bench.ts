@@ -26,6 +26,7 @@ type WorkloadName =
   | 'hook'
   | 'hook-fail-open'
   | 'paste'
+  | 'command'
   | 'withheld'
   | 'ws'
   | 'static-shell'
@@ -115,6 +116,7 @@ const ALL_WORKLOADS = [
   'hook',
   'hook-fail-open',
   'paste',
+  'command',
   'withheld',
   'ws',
   'static-shell',
@@ -925,6 +927,43 @@ async function measurePaste(
   );
 }
 
+async function measureCommand(
+  daemon: RunningDaemon,
+  config: BenchConfig,
+  concurrency: number,
+): Promise<WorkloadRow> {
+  const requestBody = JSON.stringify({ text: 'p6-http-bench note' });
+  const timed = await runTimed(config.durationMs, config.warmupMs, concurrency, async () => {
+    const response = await fetch(
+      `${daemon.baseUrl}/command`,
+      requestInit(config, {
+        method: 'POST',
+        headers: authHeaders(daemon, { 'content-type': 'application/json' }),
+        body: requestBody,
+      }),
+    );
+    const text = await response.text();
+    if (response.status !== 200) {
+      throw new Error(`POST /command returned HTTP ${response.status}: ${text}`);
+    }
+    const body = parseJsonObject(text, 'POST /command');
+    if (body['ok'] !== true || body['delivered'] !== 0 || !isObject(body['parsed'])) {
+      throw new Error('POST /command violated its ok/delivered/parsed note contract');
+    }
+    return encoder.encode(text).byteLength;
+  });
+  return rowFromSamples(
+    'command',
+    daemon.target,
+    concurrency,
+    config.durationMs,
+    config.warmupMs,
+    timed.samples,
+    timed.wallMs,
+    'P7 POST /command {text: note} — core.command relay, always-200 on success',
+  );
+}
+
 async function measureStaticShell(
   daemon: RunningDaemon,
   config: BenchConfig,
@@ -1141,6 +1180,7 @@ async function runWorkloads(
     if (wanted.has('hook-fail-open'))
       rows.push(await measureHookFailOpen(daemon, config, concurrency));
     if (wanted.has('paste')) rows.push(await measurePaste(daemon, config, concurrency));
+    if (wanted.has('command')) rows.push(await measureCommand(daemon, config, concurrency));
     if (wanted.has('static-shell'))
       rows.push(await measureStaticShell(daemon, config, concurrency));
     if (wanted.has('static-asset'))
@@ -1320,6 +1360,7 @@ async function main(): Promise<void> {
     },
     designChoices: [
       'Paste uses a few MB decoded (default 2 MiB, same as P0), under the 10 MiB image cap and 14e6 transport cap — not near 14e6.',
+      'Command is POST /command with {text: <note>} (parseCommand note path), relayed by core.command at 200; not broadcast/assign.',
       'Valid hook is POST /hook/Notification with session_id (known handler still returns 200 {}).',
       'Fail-open is authenticated POST /hook/Stop with no session_id (validateHookEvent), not the tokenless silentHookRefusal site.',
       'Withheld body is a raw POST /hook/Stop with Content-Length and a partial JSON body; the measured signal is GET /health on other connections after BODY_DRAIN_GRACE_MS.',

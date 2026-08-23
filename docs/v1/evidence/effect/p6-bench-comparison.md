@@ -62,13 +62,17 @@ and plan §8 (do not silently loosen):
 
 The +10% line for a cell is `p95_base × 1.10`. PASS iff `p95_post ≤ line`.
 
-`POST /command` (P7) is converted on this tree
-(`settings-command-mail-cleanup.ts`) but **is not a harness workload**.
-Nothing in the nine workloads POSTs `/command`. The converted mutating HTTP
-path the harness *does* drive is paste (P8). Hook / hook-fail-open drive
-the converted `/hook/:name` fail-open settler. WS mutations are serial
-`POST /hook/Notification` (converted hook) plus ownership-only snapshot
-fanout.
+This comparison's JSON reports are the **nine-workload** set. `POST /command`
+(P7) is converted on this tree (`settings-command-mail-cleanup.ts`); the
+harness gap is closed (`command` is a tenth workload in
+[`p6-http-bench.ts`](../../../scripts/effect-migration/p6-http-bench.ts),
+`--workload=all`, `{text: <note>}` → 200 `core.command`). Quiet-host
+`command` numbers are the next idle-machine slot and a **new**
+`comparison.key` — do not mix them with the nine-workload pair below. The
+converted mutating HTTP path these reports *do* drive is paste (P8). Hook /
+hook-fail-open drive the converted `/hook/:name` fail-open settler. WS
+mutations are serial `POST /hook/Notification` (converted hook) plus
+ownership-only snapshot fanout.
 
 ---
 

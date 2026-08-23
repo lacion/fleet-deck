@@ -223,9 +223,10 @@ P6 is complete. Sub-slices (historical, all landed):
 - **P6.8** within budget. 12/12 `/health`+`/state` p95 cells PASS the +10%
   line. Evidence: [p6-bench-comparison.md](./evidence/effect/p6-bench-comparison.md);
   [p6-postconv.json](./evidence/effect/p6-postconv.json) vs
-  [p6-baseline.json](./evidence/effect/p6-baseline.json). Harness gap:
-  `POST /command` is converted but is not a harness workload (correctness
-  covered by `fleet-command` tests).
+  [p6-baseline.json](./evidence/effect/p6-baseline.json). The `/command`
+  harness gap is closed: `command` is a tenth workload (`POST {text: note}`
+  → 200 `core.command` relay) in `p6-http-bench.ts` and `--workload=all`.
+  Quiet-host numbers wait on the next idle-machine slot; smoke-only until then.
 
 ### P6.4 wave and closing slices
 
@@ -305,8 +306,9 @@ publish. Not a reason to revert conversions.
 ### Open notes (do not close from P6)
 
 - P3's paired quiet-host performance evidence remains an explicit ledger item.
-- `POST /command` is converted but is not a P6.8 harness workload (correctness
-  covered by `fleet-command` tests).
+- Quiet-host recapture of the tenth (`command`) harness workload — smoke-only
+  until the next idle-machine slot; do not mix with the nine-workload
+  `comparison.key`.
 - Suite-context flake in `tests/process-driver-reference.test.ts` as above.
 - Version-manifest landmine (`0.23.6` ×4) still stands for any merge-to-main.
 
