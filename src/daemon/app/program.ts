@@ -42,6 +42,7 @@ import { makeDaemonBackgroundProgram } from './background-program.ts';
 import { legacyBootReconciliationWithoutRetentionWork } from './boot-reconciliation.ts';
 import { DaemonStartupRefusalError, HttpBindStartupError } from './errors.ts';
 import { type HttpServerOwner, makeHttpServerOwner } from './http-server-owner.ts';
+import { healthWorkflow, stateWorkflow } from './http-workflows/health-state.ts';
 import { lanRefresh } from './lan-refresh.ts';
 import { makeIngressExecFileDelegate } from './legacy-process-facade.ts';
 import { legacyRetentionWork, makeRetentionSchedule } from './retention-schedule.ts';
@@ -801,6 +802,19 @@ async function bootDaemon(
   // blessed entry into the already-built root runtime. Shutdown stays driven by
   // the coordinator via setHttp above; the owner only adds a root-Scope fallback.
   const httpServer = makeHttpServerOwner({ name: 'http-server', ingress, transport: http });
+
+  // P6.4 EFFECT-ROUTE WIRING: hand the transport the ingress runRequest bridge and
+  // the app-zone workflow builders now that the owner (and thus runRequest) exists.
+  // This is the one place the domain module (http.ts) and the app-zone workflows
+  // meet; tsc checks the workflows against http.ts's structural capability mirror
+  // here. Removing this call is the per-route-group rollback: /health and /state
+  // fall back to their legacy synchronous handlers with no other edit. (A FULL
+  // P6.3 revert additionally unwires the owner above — see effect-migration-status.)
+  http.installEffectRoutes({
+    runRequest: (operation, effect) => httpServer.service.runRequest(operation, effect),
+    health: healthWorkflow,
+    state: stateWorkflow,
+  });
 
   // Every non-internal IPv4 this host answers on. Wildcard and interface-specific
   // binds have no single portable hostname, so the board, the startup banner and

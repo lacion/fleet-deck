@@ -15,6 +15,13 @@
 // the import; no node:http server is ever constructed.
 import type * as http from 'node:http';
 import type { Server, ServerWebSocket, WebSocketHandler } from 'bun';
+// P6.4: type-only Effect imports. http.ts is the DOMAIN zone — it may reference
+// bare `effect/*` at type level (import-boundaries allows it) but must NOT import
+// the app-zone workflow module (src/daemon/app/http-workflows). The Effect values
+// are injected at runtime via installEffectRoutes (see HttpEffectRoutes below);
+// only the shapes are needed here.
+import type * as Effect from 'effect/Effect';
+import type * as Exit from 'effect/Exit';
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -48,6 +55,7 @@ import {
   isLoopbackAddress,
   isPublicShell,
   isUnsupervisedRequest,
+  mapEffectRouteExit,
   originTrusted as policyOriginTrusted,
   parseBearer,
   repoPreflightBodyError,
@@ -490,6 +498,57 @@ export interface HttpBindFailed {
 
 export type HttpBindResult = HttpBound | HttpBindFailed;
 
+// P6.4 EFFECT-ROUTES PORT. The pilot route group (GET /health, GET /state) runs
+// as Effect workflows through the P6.3 ingress bridge. The workflows and their
+// canonical capability interfaces live in the app zone
+// (src/daemon/app/http-workflows/health-state.ts), which this domain module may
+// not import — so the shapes below are STRUCTURAL MIRRORS. program.ts injects the
+// live builders + runRequest via installEffectRoutes(), and tsc checks the mirror
+// against the real interfaces at that injection site (a drift there is a compile
+// error, not a silent skew). Until injected, effectRoutes stays null and every
+// route answers through its legacy synchronous handler — that null is the
+// per-route-group rollback seam (remove the installEffectRoutes call in
+// program.ts). See health-state.ts for the full convention.
+// Every workflow this port carries is E = never: /health and /state are
+// always-200 snapshot reads with no expected failure (see health-state.ts).
+// Pinning E = never here (not `unknown`) makes a later route group that widens
+// its error channel a COMPILE ERROR at installEffectRoutes in program.ts until
+// this port AND mapEffectRouteExit are deliberately grown to route the new tag.
+export type HttpWorkflowEffect = Effect.Effect<unknown, never, never>;
+// The ONE error the settled Exit can still carry: the ingress bridge resolves a
+// quiescing request to Exit.fail(ApplicationQuiescingError) WITHOUT running the
+// workflow. This domain module may not import app/errors.ts, so its error is a
+// STRUCTURAL MIRROR keyed on the _tag mapEffectRouteExit already detects; the
+// covariant Exit error channel makes the concrete bridge return assignable here.
+export interface HttpQuiescingFailure {
+  readonly _tag: 'ApplicationQuiescingError';
+}
+export interface HealthRouteCapabilities {
+  readonly fleet: () => number;
+  readonly pid: number;
+  readonly version: string;
+  readonly managed: boolean;
+  readonly spawn: () => unknown;
+  readonly auth: { readonly term_token: boolean };
+  readonly startup: () => unknown;
+}
+export interface StateRouteCapabilities {
+  readonly snapshotWithLan: () => unknown;
+}
+export interface HttpEffectRoutes {
+  // runRequest routes the workflow Effect through the ingress bridge and settles
+  // to an Exit whose error channel is exactly HttpQuiescingFailure: a quiescing
+  // ingress resolves to Exit.fail(ApplicationQuiescingError) WITHOUT running the
+  // workflow (mapEffectRouteExit reports 'quiesce'), and the E=never workflow
+  // contributes no other failure.
+  readonly runRequest: (
+    operation: string,
+    effect: HttpWorkflowEffect,
+  ) => Promise<Exit.Exit<unknown, HttpQuiescingFailure>>;
+  readonly health: (caps: HealthRouteCapabilities) => HttpWorkflowEffect;
+  readonly state: (caps: StateRouteCapabilities) => HttpWorkflowEffect;
+}
+
 // CONTROL-API SEAM: the board-spawn lifecycle methods (spawn / revive /
 // spawnKill / enableRemote) are declared loosely on derive's hand-written ctx
 // surface as (...args) => unknown — only adoptSession is spelled out there,
@@ -680,6 +739,137 @@ export function createHttp(
         console.error(`fleetd ${scope} filesystem error:`, err);
         json(res, 500, { ok: false, reason: 'internal' });
       });
+  }
+
+  // ------------------------------------------------------------ P6.4 effect routes
+  // GET /health and GET /state run as Effect workflows through the P6.3 ingress
+  // bridge, injected post-construction via installEffectRoutes() — the domain zone
+  // cannot import the app-zone workflow module (tests/import-boundaries.ts), so
+  // program.ts hands the live builders + runRequest in here.
+  //
+  // ROUTE-GROUP ROLLBACK: while effectRoutes is null — i.e. program.ts never
+  // called installEffectRoutes (or its call is removed) — both routes answer
+  // through the legacy synchronous handlers below, byte-for-byte as before the
+  // conversion. Those same handlers are also the quiesce fallback. This null is
+  // the documented per-route-group rollback seam; a FULL P6.3 revert additionally
+  // unwires the HttpServer owner (see docs/v1/effect-migration-status.md).
+  let effectRoutes: HttpEffectRoutes | null = null;
+
+  // The pre-P6.4 GET /health body, verbatim — the rollback + quiesce path and
+  // what the focused freeze tests pin. Key order is the frozen wire contract:
+  // ok, fleet, pid, version, managed, spawn, auth, startup.
+  function legacyHealthResponse(res: HttpResShim): void {
+    json(res, 200, {
+      ok: true,
+      fleet: core.fleetSize(),
+      pid: process.pid,
+      version,
+      managed,
+      spawn: core.spawnCapability(),
+      auth: termAuth,
+      startup: startup?.reconciliationStatus?.() ?? null,
+    });
+  }
+
+  // The pre-P6.4 GET /state body, verbatim (core.snapshot() + lan + banner).
+  function legacyStateResponse(res: HttpResShim): void {
+    json(res, 200, snapshotWithLan());
+  }
+
+  // Capability objects handed to the workflows. Reads are thunks the workflow
+  // resolves inside its Effect; pid/version/managed/auth are boot constants.
+  // Shapes mirror HealthCapabilities/StateCapabilities in health-state.ts; tsc
+  // checks the mirror at the program.ts injection site.
+  function healthCapabilities(): HealthRouteCapabilities {
+    return {
+      fleet: () => core.fleetSize(),
+      pid: process.pid,
+      version,
+      managed,
+      spawn: () => core.spawnCapability(),
+      auth: termAuth,
+      startup: () => startup?.reconciliationStatus?.() ?? null,
+    };
+  }
+
+  function stateCapabilities(): StateRouteCapabilities {
+    return { snapshotWithLan: () => snapshotWithLan() };
+  }
+
+  // Run a workflow Effect through the ingress bridge and settle it to the exact
+  // legacy response bytes. Mirrors the async-dispatch idiom of /api/worktrees:
+  // routeRequest stays synchronous and returns at once; the response is written
+  // when the Exit resolves a microtask later (fetchHandler's drainThenRespond
+  // awaits res.done). Exit → Response via mapEffectRouteExit():
+  //   success → json(res, 200, value) — the workflow assembled the frozen body;
+  //   quiesce → legacy(res) — the ingress refused (ApplicationQuiescingError);
+  //             a snapshot read still answers 200 exactly as before shutdown;
+  //   defect  → reproduce routeRequest's outer catch byte-for-byte: log
+  //             'fleetd request error:' and answer 500 {} (a non-hook route).
+  function settleEffectSnapshotRoute(
+    routes: HttpEffectRoutes,
+    operation: string,
+    effect: HttpWorkflowEffect,
+    res: HttpResShim,
+    legacy: (res: HttpResShim) => void,
+  ): void {
+    routes
+      .runRequest(operation, effect)
+      .then((exit) => {
+        const outcome = mapEffectRouteExit(exit);
+        if (outcome.kind === 'success') {
+          json(res, 200, outcome.value);
+          return;
+        }
+        if (outcome.kind === 'quiesce') {
+          legacy(res);
+          return;
+        }
+        // A defect is the byte-identical 500 the outer catch emits; rethrow so a
+        // single sink (the .catch below) writes it.
+        throw outcome.defect;
+      })
+      .catch((err: unknown) => {
+        // Mirrors routeRequest's outer catch for a non-hook path exactly:
+        // /health and /state are never /hook/ routes, so 500 {} — never the
+        // fail-open 200 branch.
+        console.error('fleetd request error:', err);
+        try {
+          json(res, 500, {});
+        } catch {
+          /* socket gone */
+        }
+      });
+  }
+
+  // GET /health dispatch: legacy when the bridge is unwired, else the workflow.
+  function dispatchHealth(res: HttpResShim): void {
+    if (!effectRoutes) {
+      legacyHealthResponse(res);
+      return;
+    }
+    settleEffectSnapshotRoute(
+      effectRoutes,
+      'GET /health',
+      effectRoutes.health(healthCapabilities()),
+      res,
+      legacyHealthResponse,
+    );
+  }
+
+  // GET /state dispatch: legacy when the bridge is unwired, else the workflow.
+  function dispatchState(res: HttpResShim): void {
+    if (!effectRoutes) {
+      legacyStateResponse(res);
+      return;
+    }
+    settleEffectSnapshotRoute(
+      effectRoutes,
+      'GET /state',
+      effectRoutes.state(stateCapabilities()),
+      res,
+      legacyStateResponse,
+    );
   }
 
   // AUTH CONTRACT (http-policy.tokenMatches): every non-loopback HTTP route and
@@ -1270,36 +1460,20 @@ export function createHttp(
           return;
         }
         if (url.pathname === '/health') {
-          // v1.2: spawn capability rides /health so the launcher/board can
-          // hide all spawn UI when unavailable.
-          // `managed` rides /health because that is the one thing the SessionStart
-          // hook already fetches before it decides whether to evict us.
-          json(res, 200, {
-            ok: true,
-            fleet: core.fleetSize(),
-            pid: process.pid,
-            version,
-            managed,
-            spawn: core.spawnCapability(),
-            auth: termAuth,
-            // Boot-reconciliation readiness (BUG-066). Both heals are kicked
-            // fire-and-forget from the listen callback, so /health answering 200
-            // is NOT proof they have run — and the asynchronous half
-            // (reconcileSpawns) pushes a mutation broadcast when it settles a
-            // row. A client with zero tolerance for a broadcast it did not cause
-            // (the /ws backpressure hardening test) needs a deterministic
-            // "startup mutation window is closed" signal; 'settled' flips only
-            // when BOTH heals are done. No status exposed (a boot tmux failure
-            // still settles); the startup refusals that would leave it
-            // 'reconciling' forever never reach listen. Tests poll /health →
-            // http.mjs stays the consumer of readiness, so no timer keeps the
-            // loop alive. auth: termAuth is BUG-186 (the /ws/term capability).
-            startup: startup?.reconciliationStatus?.() ?? null,
-          });
+          // P6.4: /health now runs as an Effect workflow through the ingress
+          // bridge when program.ts has wired it (else the legacy handler). The
+          // frozen body and every rider — spawn capability (v1.2: the board hides
+          // spawn UI when unavailable), `managed` (the SessionStart hook reads it
+          // before deciding to evict us), auth: termAuth (BUG-186, the /ws/term
+          // capability), and startup reconciliation readiness (BUG-066: /health
+          // answering 200 is NOT proof the heals ran; 'settled' flips only when
+          // both do) — all live in healthCapabilities()/legacyHealthResponse and
+          // the workflow in app/http-workflows/health-state.ts. See dispatchHealth.
+          dispatchHealth(res);
           return;
         }
         if (url.pathname === '/state') {
-          json(res, 200, snapshotWithLan());
+          dispatchState(res);
           return;
         }
         if (url.pathname === '/api/settings') {
@@ -2928,6 +3102,15 @@ export function createHttp(
     bind: bindHttp,
     lifecycle,
     whenBroadcastIdle,
+    // P6.4 INJECTION SEAM: program.ts (app zone) calls this after constructing
+    // the HttpServer owner to hand in the ingress runRequest + the app-zone
+    // workflow builders. Until it does, effectRoutes stays null and /health and
+    // /state answer through their legacy handlers (the rollback path). Arrow
+    // property for the same unbound-method reason as refreshLan; it closes over
+    // effectRoutes and never touches `this`.
+    installEffectRoutes: (routes: HttpEffectRoutes) => {
+      effectRoutes = routes;
+    },
     // Arrow-PROPERTY (not method shorthand) so the daemon entry can destructure it
     // without tripping @typescript-eslint/unbound-method: the body closes over
     // refreshLanHosts/lan and never touches `this`, so an arrow is behaviorally

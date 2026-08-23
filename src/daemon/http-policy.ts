@@ -13,9 +13,16 @@
 // Wire contract: the exact reason strings, header names/order, status codes and
 // CSP below are frozen by docs/v1/evidence/effect/p6-http-matrix.md and
 // tests/p6-http-freeze.test.ts. Moving a literal is fine; rewording one is not.
+//
+// P6.4: mapEffectRouteExit (bottom of file) turns an Effect route's Exit into a
+// response PLAN. It stays pure — it never writes res — and imports effect/Exit +
+// effect/Cause only as pure classifiers (a DOMAIN module may import bare effect/*;
+// only contracts/ and the fail-open floor are barred — see import-boundaries.ts).
 import type * as http from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
+import * as Cause from 'effect/Cause';
+import * as Exit from 'effect/Exit';
 
 // A parsed JSON POST body is any value — object, array, scalar, or null. asRecord
 // gives a typed view for the handful of fields http reads defensively WITHOUT
@@ -304,4 +311,51 @@ export function repoPreflightBodyError(body: Record<string, unknown>): string | 
     if (body[key] != null && typeof body[key] !== 'string') return `${key} must be a string`;
   }
   return null;
+}
+
+// ------------------------------------------------------- effect route mapping
+// P6.4: the Exit → Response PLAN for an Effect route (see the CONVENTION header
+// in app/http-workflows/health-state.ts). Pure — it classifies the Exit and
+// returns a discriminated plan; the transport in http.ts performs the actual res
+// write, so this stays as side-effect-free as every other policy leaf. Cases are
+// FROZEN against the legacy behaviour of these routes:
+//   success → the workflow value, written verbatim as the 200 JSON body;
+//   quiesce → the ingress refused with ApplicationQuiescingError; the route
+//             falls back to its legacy synchronous handler (we do NOT invent a
+//             new 503). Detected STRUCTURALLY by _tag so this domain module needs
+//             no import of app/errors.ts;
+//   defect  → a die (or an unexpected fail/interrupt on an E=never route); the
+//             transport replays the byte-identical `console.error` + 500 {} the
+//             outer catch already emits for a non-hook route.
+export type EffectRouteOutcome<A> =
+  | { readonly kind: 'success'; readonly value: A }
+  | { readonly kind: 'quiesce' }
+  | { readonly kind: 'defect'; readonly defect: unknown };
+
+function isApplicationQuiescing(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { readonly _tag?: unknown })._tag === 'ApplicationQuiescingError'
+  );
+}
+
+export function mapEffectRouteExit<A>(exit: Exit.Exit<A, unknown>): EffectRouteOutcome<A> {
+  if (Exit.isSuccess(exit)) return { kind: 'success', value: exit.value };
+  // v4 Cause: inspect reasons directly, mirroring live-layer.ts's exit mapping.
+  const failure = exit.cause.reasons.find(Cause.isFailReason);
+  if (failure && isApplicationQuiescing(failure.error)) return { kind: 'quiesce' };
+  // Interruption during shutdown (the quiescing fiber cancels this in-flight
+  // request) reports quiesce so the always-200 snapshot contract holds — the
+  // route falls back to its legacy synchronous handler, exactly as the explicit
+  // ApplicationQuiescingError refusal does. hasInterruptsOnly is true only when
+  // EVERY reason is an interrupt, so a mixed defect+interrupt cause still falls
+  // through to the defect arm below.
+  if (Cause.hasInterruptsOnly(exit.cause)) return { kind: 'quiesce' };
+  const die = exit.cause.reasons.find(Cause.isDieReason);
+  if (die) return { kind: 'defect', defect: die.defect };
+  // An unexpected non-quiesce fail (should not occur on an E=never route) is a
+  // defect: the transport replays the byte-identical console.error + 500 {} the
+  // legacy outer catch already emits for a non-hook route.
+  return { kind: 'defect', defect: failure ? failure.error : exit.cause };
 }
