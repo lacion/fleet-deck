@@ -37,12 +37,31 @@ import {
   type PasteImageCapabilities,
   pasteImageWorkflow,
 } from '../../src/daemon/app/http-workflows/paste.ts';
+import {
+  cleanupWorkflow,
+  commandWorkflow,
+  mailWorkflow,
+  settingsWorkflow,
+} from '../../src/daemon/app/http-workflows/settings-command-mail-cleanup.ts';
 
 import { startDaemon } from '../helpers/daemon.ts';
 import test, { type TestContext } from '../helpers/harness-test.ts';
 
 const PASTE_OK_KEY_ORDER = ['ok', 'path', 'bytes'] as const;
 const PASTE_ERR_KEY_ORDER = ['ok', 'reason'] as const;
+
+// Port growth: HttpEffectRoutes requires every converted group's builders. This
+// focused fixture exercises only POST /api/paste-image; the other groups'
+// builders are inert here but keep the install object well-typed.
+const ALL_ROUTE_BUILDERS = {
+  health: healthWorkflow,
+  state: stateWorkflow,
+  settings: settingsWorkflow,
+  command: commandWorkflow,
+  mail: mailWorkflow,
+  cleanup: cleanupWorkflow,
+  pasteImage: pasteImageWorkflow,
+};
 
 const PNG = Buffer.concat([
   Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
@@ -267,9 +286,7 @@ function normalizePasteBody(body: string): unknown {
 function installFaithful(board: BoardHandle): void {
   board.installEffectRoutes({
     runRequest: (_operation, effect) => Effect.runPromiseExit(effect),
-    health: healthWorkflow,
-    state: stateWorkflow,
-    pasteImage: pasteImageWorkflow,
+    ...ALL_ROUTE_BUILDERS,
   });
 }
 
@@ -316,9 +333,7 @@ test('a quiescing ingress refuses paste-image with the frozen 503 and writes not
       Promise.resolve(
         Exit.fail(new ApplicationQuiescingError({ operation, message: 'daemon is quiescing' })),
       ),
-    health: healthWorkflow,
-    state: stateWorkflow,
-    pasteImage: pasteImageWorkflow,
+    ...ALL_ROUTE_BUILDERS,
   });
 
   const refused = await pastePost(board.port, { data: b64(PNG) });
@@ -335,9 +350,7 @@ test('an interrupts-only Exit refuses paste-image with the frozen 503 and writes
   const board = await startBoard(t);
   board.installEffectRoutes({
     runRequest: (_operation, _effect) => Promise.resolve(Exit.failCause(Cause.interrupt(1))),
-    health: healthWorkflow,
-    state: stateWorkflow,
-    pasteImage: pasteImageWorkflow,
+    ...ALL_ROUTE_BUILDERS,
   });
 
   const refused = await pastePost(board.port, { data: b64(PNG) });
@@ -351,9 +364,7 @@ test('a workflow defect reproduces the POST inner-catch 500 {err:internal}', asy
   const board = await startBoard(t);
   board.installEffectRoutes({
     runRequest: (_operation, _effect) => Promise.resolve(Exit.die(new Error('boom'))),
-    health: healthWorkflow,
-    state: stateWorkflow,
-    pasteImage: pasteImageWorkflow,
+    ...ALL_ROUTE_BUILDERS,
   });
 
   const defected = await pastePost(board.port, { data: b64(PNG) });

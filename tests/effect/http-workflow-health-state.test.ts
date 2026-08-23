@@ -38,6 +38,12 @@ import {
   stateWorkflow,
 } from '../../src/daemon/app/http-workflows/health-state.ts';
 import { pasteImageWorkflow } from '../../src/daemon/app/http-workflows/paste.ts';
+import {
+  cleanupWorkflow,
+  commandWorkflow,
+  mailWorkflow,
+  settingsWorkflow,
+} from '../../src/daemon/app/http-workflows/settings-command-mail-cleanup.ts';
 
 import { REPO_ROOT, startDaemon } from '../helpers/daemon.ts';
 import test, { type TestContext } from '../helpers/harness-test.ts';
@@ -54,6 +60,17 @@ const HEALTH_KEY_ORDER = [
   'auth',
   'startup',
 ] as const;
+
+// Port growth: HttpEffectRoutes requires every converted group's builders.
+const ALL_ROUTE_BUILDERS = {
+  health: healthWorkflow,
+  state: stateWorkflow,
+  settings: settingsWorkflow,
+  command: commandWorkflow,
+  mail: mailWorkflow,
+  cleanup: cleanupWorkflow,
+  pasteImage: pasteImageWorkflow,
+};
 
 // ============================ A. ISOLATION ============================
 
@@ -340,9 +357,7 @@ test('workflow dispatch is byte-identical to the legacy handler for /health and 
   // through Effect.runPromiseExit — the same Exit the ingress runtime produces).
   board.installEffectRoutes({
     runRequest: (_operation, effect) => Effect.runPromiseExit(effect),
-    health: healthWorkflow,
-    state: stateWorkflow,
-    pasteImage: pasteImageWorkflow,
+    ...ALL_ROUTE_BUILDERS,
   });
 
   const workflowHealth = await rawFull(board.port, { path: '/health' });
@@ -365,9 +380,7 @@ test('a quiescing ingress falls back to the legacy handler with identical bytes'
       Promise.resolve(
         Exit.fail(new ApplicationQuiescingError({ operation, message: 'daemon is quiescing' })),
       ),
-    health: healthWorkflow,
-    state: stateWorkflow,
-    pasteImage: pasteImageWorkflow,
+    ...ALL_ROUTE_BUILDERS,
   });
 
   const quiesceHealth = await rawFull(board.port, { path: '/health' });
@@ -394,9 +407,7 @@ test('an interrupts-only Exit maps to quiesce and falls back to the legacy 200',
 
   board.installEffectRoutes({
     runRequest: (_operation, _effect) => Promise.resolve(Exit.failCause(Cause.interrupt(1))),
-    health: healthWorkflow,
-    state: stateWorkflow,
-    pasteImage: pasteImageWorkflow,
+    ...ALL_ROUTE_BUILDERS,
   });
 
   const interruptedHealth = await rawFull(board.port, { path: '/health' });
@@ -412,9 +423,7 @@ test('a workflow defect reproduces the legacy 500 {} exactly', async (t) => {
   // outer catch already emits for a non-hook route — never the fail-open 200.
   board.installEffectRoutes({
     runRequest: (_operation, _effect) => Promise.resolve(Exit.die(new Error('boom'))),
-    health: healthWorkflow,
-    state: stateWorkflow,
-    pasteImage: pasteImageWorkflow,
+    ...ALL_ROUTE_BUILDERS,
   });
 
   const defected = await rawFull(board.port, { path: '/health' });

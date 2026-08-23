@@ -498,24 +498,24 @@ export interface HttpBindFailed {
 
 export type HttpBindResult = HttpBound | HttpBindFailed;
 
-// P6.4 EFFECT-ROUTES PORT. The pilot route group (GET /health, GET /state) runs
-// as Effect workflows through the P6.3 ingress bridge. The workflows and their
-// canonical capability interfaces live in the app zone
-// (src/daemon/app/http-workflows/health-state.ts), which this domain module may
-// not import — so the shapes below are STRUCTURAL MIRRORS. program.ts injects the
-// live builders + runRequest via installEffectRoutes(), and tsc checks the mirror
-// against the real interfaces at that injection site (a drift there is a compile
-// error, not a silent skew). Until injected, effectRoutes stays null and every
-// route answers through its legacy synchronous handler — that null is the
-// per-route-group rollback seam (remove the installEffectRoutes call in
-// program.ts). See health-state.ts for the full convention.
-// Every workflow this port carries is E = never: /health and /state are
-// always-200 snapshot reads with no expected failure (see health-state.ts);
-// POST /api/paste-image's validation/limit/dir/write failures are data
-// responses (status+body), not typed errors (see http-workflows/paste.ts).
-// Pinning E = never here (not `unknown`) makes a later route group that widens
-// its error channel a COMPILE ERROR at installEffectRoutes in program.ts until
-// this port AND mapEffectRouteExit are deliberately grown to route the new tag.
+// P6.4 EFFECT-ROUTES PORT. Route groups run as Effect workflows through the
+// P6.3 ingress bridge. The workflows and their canonical capability interfaces
+// live in the app zone (src/daemon/app/http-workflows/), which this domain
+// module may not import — so the shapes below are STRUCTURAL MIRRORS.
+// program.ts injects the live builders + runRequest via installEffectRoutes(),
+// and tsc checks the mirror against the real interfaces at that injection site
+// (a drift there is a compile error, not a silent skew). Until injected,
+// effectRoutes stays null and every route answers through its legacy handler —
+// that null is the per-route-group rollback seam (remove the
+// installEffectRoutes call in program.ts). See health-state.ts for the
+// snapshot convention and paste.ts / settings-command-mail-cleanup.ts for the
+// mutating convention (do NOT copy settleEffectSnapshotRoute onto a write).
+// Every workflow this port carries is E = never: snapshot reads have no
+// expected failure, and the mutating groups' 400/409/413/422/429/503-from-core
+// answers are DATA (a {status, body} payload), not Effect errors. Pinning
+// E = never here (not `unknown`) makes a later route group that widens its
+// error channel a COMPILE ERROR at installEffectRoutes in program.ts until this
+// port AND mapEffectRouteExit are deliberately grown to route the new tag.
 export type HttpWorkflowEffect = Effect.Effect<unknown, never, never>;
 // The ONE error the settled Exit can still carry: the ingress bridge resolves a
 // quiescing request to Exit.fail(ApplicationQuiescingError) WITHOUT running the
@@ -536,6 +536,20 @@ export interface HealthRouteCapabilities {
 }
 export interface StateRouteCapabilities {
   readonly snapshotWithLan: () => unknown;
+}
+// settings/command/mail/cleanup group (P6.4). Structural mirrors of the
+// capability interfaces in http-workflows/settings-command-mail-cleanup.ts.
+export interface SettingsRouteCapabilities {
+  readonly setSettings: () => { readonly status: number; readonly body: unknown };
+}
+export interface CommandRouteCapabilities {
+  readonly command: () => unknown;
+}
+export interface MailRouteCapabilities {
+  readonly postMail: () => Promise<unknown>;
+}
+export interface CleanupRouteCapabilities {
+  readonly cleanup: () => Promise<{ readonly ok: boolean }>;
 }
 // paste-image group (P6.4). Structural mirror of PasteImageCapabilities /
 // PasteImageResult in http-workflows/paste.ts. The thunk closes over the
@@ -559,6 +573,11 @@ export interface HttpEffectRoutes {
   ) => Promise<Exit.Exit<unknown, HttpQuiescingFailure>>;
   readonly health: (caps: HealthRouteCapabilities) => HttpWorkflowEffect;
   readonly state: (caps: StateRouteCapabilities) => HttpWorkflowEffect;
+  // settings/command/mail/cleanup group
+  readonly settings: (caps: SettingsRouteCapabilities) => HttpWorkflowEffect;
+  readonly command: (caps: CommandRouteCapabilities) => HttpWorkflowEffect;
+  readonly mail: (caps: MailRouteCapabilities) => HttpWorkflowEffect;
+  readonly cleanup: (caps: CleanupRouteCapabilities) => HttpWorkflowEffect;
   // paste-image group
   readonly pasteImage: (caps: PasteImageRouteCapabilities) => HttpWorkflowEffect;
 }
@@ -813,6 +832,22 @@ export function createHttp(
     return { snapshotWithLan: () => snapshotWithLan() };
   }
 
+  function settingsCapabilities(ev: unknown): SettingsRouteCapabilities {
+    return { setSettings: () => core.setSettings(ev) };
+  }
+
+  function commandCapabilities(ev: unknown): CommandRouteCapabilities {
+    return { command: () => core.command((ev as { text?: unknown }).text) };
+  }
+
+  function mailCapabilities(ev: unknown): MailRouteCapabilities {
+    return { postMail: () => core.postMail(ev as Parameters<typeof core.postMail>[0]) };
+  }
+
+  function cleanupCapabilities(): CleanupRouteCapabilities {
+    return { cleanup: () => core.cleanup() };
+  }
+
   // Run a workflow Effect through the ingress bridge and settle it to the exact
   // legacy response bytes. Mirrors the async-dispatch idiom of /api/worktrees:
   // routeRequest stays synchronous and returns at once; the response is written
@@ -953,6 +988,147 @@ export function createHttp(
       'POST /api/paste-image',
       effectRoutes.pasteImage(pasteImageCapabilities(ev)),
       res,
+    );
+  }
+
+  // MUTATING-ROUTE SETTLER (settings/command/mail/cleanup quiesce policy).
+  // Unlike settleEffectSnapshotRoute, 'quiesce' MUST NOT replay the legacy
+  // handler: in the intra-quiesce window the ingress has already refused the
+  // write, but the transport is still admitting the request. Replaying would
+  // perform the write. Map 'quiesce' (ApplicationQuiescingError OR an
+  // interrupts-only Exit — mapEffectRouteExit already classifies both as
+  // 'quiesce') to the frozen fetchHandler shutdown body. In-router json()
+  // adds content-length; fetchHandler's new Response does not. That delta is
+  // the same as every other in-router JSON and is accepted.
+  // Defect bytes are PER ROUTE (the frozen .catch / inner-catch dialect).
+  function settleEffectMutatingRoute(
+    routes: HttpEffectRoutes,
+    operation: string,
+    effect: HttpWorkflowEffect,
+    res: HttpResShim,
+    defect: { readonly log: string; readonly body: unknown },
+  ): void {
+    routes
+      .runRequest(operation, effect)
+      .then((exit) => {
+        const outcome = mapEffectRouteExit(exit);
+        if (outcome.kind === 'success') {
+          const payload = outcome.value as { status: number; body: unknown };
+          json(res, payload.status, payload.body);
+          return;
+        }
+        if (outcome.kind === 'quiesce') {
+          json(res, 503, { ok: false, reason: 'shutting-down' });
+          return;
+        }
+        throw outcome.defect;
+      })
+      .catch((err: unknown) => {
+        console.error(defect.log, err);
+        try {
+          json(res, 500, defect.body);
+        } catch {
+          /* socket gone */
+        }
+      });
+  }
+
+  const SETTINGS_COMMAND_DEFECT = { log: 'fleetd handler error:', body: { err: 'internal' } };
+  const MAIL_DEFECT = { log: 'fleetd mail error:', body: { ok: false, err: 'internal' } };
+  const CLEANUP_DEFECT = { log: 'fleetd cleanup error:', body: { ok: false, err: 'internal' } };
+
+  function legacySettingsResponse(res: HttpResShim, ev: unknown): void {
+    const out = core.setSettings(ev);
+    json(res, out.status, out.body);
+  }
+
+  function legacyCommandResponse(res: HttpResShim, ev: unknown): void {
+    json(res, 200, core.command((ev as { text?: unknown }).text));
+  }
+
+  function legacyMailResponse(res: HttpResShim, ev: unknown): void {
+    core
+      .postMail(ev as Parameters<typeof core.postMail>[0])
+      // 0.16.0: postMail returns {status, body} on a refusal and the
+      // historical bare delivery object on success (in-process callers
+      // consume the bare shape — the adapter lives in mailWorkflow too).
+      .then((out) => {
+        json(res, out.status ?? 200, out.body ?? out);
+      })
+      .catch((err: unknown) => {
+        console.error('fleetd mail error:', err);
+        json(res, 500, { ok: false, err: 'internal' });
+      });
+  }
+
+  function legacyCleanupResponse(res: HttpResShim): void {
+    // BUG-145: an incomplete Clear (tmux unreachable / a dead window
+    // that would not die) comes back {ok:false, reason} with NOTHING
+    // touched — speak a real code so the board can fail loud.
+    core
+      .cleanup()
+      .then((out) => {
+        json(res, !out.ok ? 409 : 200, out);
+      })
+      .catch((err: unknown) => {
+        console.error('fleetd cleanup error:', err);
+        json(res, 500, { ok: false, err: 'internal' });
+      });
+  }
+
+  function dispatchSettings(res: HttpResShim, ev: unknown): void {
+    if (!effectRoutes) {
+      legacySettingsResponse(res, ev);
+      return;
+    }
+    settleEffectMutatingRoute(
+      effectRoutes,
+      'POST /api/settings',
+      effectRoutes.settings(settingsCapabilities(ev)),
+      res,
+      SETTINGS_COMMAND_DEFECT,
+    );
+  }
+
+  function dispatchCommand(res: HttpResShim, ev: unknown): void {
+    if (!effectRoutes) {
+      legacyCommandResponse(res, ev);
+      return;
+    }
+    settleEffectMutatingRoute(
+      effectRoutes,
+      'POST /command',
+      effectRoutes.command(commandCapabilities(ev)),
+      res,
+      SETTINGS_COMMAND_DEFECT,
+    );
+  }
+
+  function dispatchMail(res: HttpResShim, ev: unknown): void {
+    if (!effectRoutes) {
+      legacyMailResponse(res, ev);
+      return;
+    }
+    settleEffectMutatingRoute(
+      effectRoutes,
+      'POST /mail',
+      effectRoutes.mail(mailCapabilities(ev)),
+      res,
+      MAIL_DEFECT,
+    );
+  }
+
+  function dispatchCleanup(res: HttpResShim): void {
+    if (!effectRoutes) {
+      legacyCleanupResponse(res);
+      return;
+    }
+    settleEffectMutatingRoute(
+      effectRoutes,
+      'POST /api/cleanup',
+      effectRoutes.cleanup(cleanupCapabilities()),
+      res,
+      CLEANUP_DEFECT,
     );
   }
 
@@ -1810,33 +1986,11 @@ export function createHttp(
               return;
             }
             if (url.pathname === '/mail') {
-              core
-                .postMail(ev as Parameters<typeof core.postMail>[0])
-                // 0.16.0: postMail returns {status, body} on a refusal and the
-                // historical bare delivery object on success (in-process
-                // callers consume the bare shape — the adapter lives HERE).
-                .then((out) => {
-                  json(res, out.status ?? 200, out.body ?? out);
-                })
-                .catch((err: unknown) => {
-                  console.error('fleetd mail error:', err);
-                  json(res, 500, { ok: false, err: 'internal' });
-                });
+              dispatchMail(res, ev);
               return;
             }
             if (url.pathname === '/api/cleanup') {
-              // BUG-145: an incomplete Clear (tmux unreachable / a dead window
-              // that would not die) comes back {ok:false, reason} with NOTHING
-              // touched — speak a real code so the board can fail loud.
-              core
-                .cleanup()
-                .then((out) => {
-                  json(res, !out.ok ? 409 : 200, out);
-                })
-                .catch((err: unknown) => {
-                  console.error('fleetd cleanup error:', err);
-                  json(res, 500, { ok: false, err: 'internal' });
-                });
+              dispatchCleanup(res);
               return;
             }
             if (url.pathname === '/api/worktrees/remove') {
@@ -1881,12 +2035,11 @@ export function createHttp(
                 }
                 logExec(url.pathname, req, ' gateway=true');
               }
-              const out = core.setSettings(ev);
-              json(res, out.status, out.body);
+              dispatchSettings(res, ev);
               return;
             }
             if (url.pathname === '/command') {
-              json(res, 200, core.command((ev as { text?: unknown }).text));
+              dispatchCommand(res, ev);
               return;
             }
             if (url.pathname === '/api/paste-image') {
@@ -3190,10 +3343,10 @@ export function createHttp(
     whenBroadcastIdle,
     // P6.4 INJECTION SEAM: program.ts (app zone) calls this after constructing
     // the HttpServer owner to hand in the ingress runRequest + the app-zone
-    // workflow builders. Until it does, effectRoutes stays null and /health,
-    // /state, and /api/paste-image answer through their legacy handlers (the
-    // rollback path). Arrow property for the same unbound-method reason as
-    // refreshLan; it closes over effectRoutes and never touches `this`.
+    // workflow builders. Until it does, effectRoutes stays null and every
+    // converted route answers through its legacy handler (the rollback path).
+    // Arrow property for the same unbound-method reason as refreshLan; it
+    // closes over effectRoutes and never touches `this`.
     installEffectRoutes: (routes: HttpEffectRoutes) => {
       effectRoutes = routes;
     },

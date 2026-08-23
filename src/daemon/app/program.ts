@@ -44,6 +44,12 @@ import { DaemonStartupRefusalError, HttpBindStartupError } from './errors.ts';
 import { type HttpServerOwner, makeHttpServerOwner } from './http-server-owner.ts';
 import { healthWorkflow, stateWorkflow } from './http-workflows/health-state.ts';
 import { pasteImageWorkflow } from './http-workflows/paste.ts';
+import {
+  cleanupWorkflow,
+  commandWorkflow,
+  mailWorkflow,
+  settingsWorkflow,
+} from './http-workflows/settings-command-mail-cleanup.ts';
 import { lanRefresh } from './lan-refresh.ts';
 import { makeIngressExecFileDelegate } from './legacy-process-facade.ts';
 import { legacyRetentionWork, makeRetentionSchedule } from './retention-schedule.ts';
@@ -808,14 +814,18 @@ async function bootDaemon(
   // the app-zone workflow builders now that the owner (and thus runRequest) exists.
   // This is the one place the domain module (http.ts) and the app-zone workflows
   // meet; tsc checks the workflows against http.ts's structural capability mirror
-  // here. Removing this call is the per-route-group rollback: /health, /state,
-  // and /api/paste-image fall back to their legacy handlers with no other edit.
-  // (A FULL P6.3 revert additionally unwires the owner above — see
-  // effect-migration-status.)
+  // here. Removing this call is the per-route-group rollback: converted routes
+  // fall back to their legacy handlers with no other edit. (A FULL P6.3 revert
+  // additionally unwires the owner above — see effect-migration-status.)
   http.installEffectRoutes({
     runRequest: (operation, effect) => httpServer.service.runRequest(operation, effect),
     health: healthWorkflow,
     state: stateWorkflow,
+    // settings/command/mail/cleanup group
+    settings: settingsWorkflow,
+    command: commandWorkflow,
+    mail: mailWorkflow,
+    cleanup: cleanupWorkflow,
     // paste-image group
     pasteImage: pasteImageWorkflow,
   });
