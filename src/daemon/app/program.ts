@@ -40,6 +40,7 @@ import { makeAgentsPollProgram } from './agents-poll.ts';
 import type { BackgroundController } from './background-owner.ts';
 import { makeDaemonBackgroundProgram } from './background-program.ts';
 import { legacyBootReconciliationWithoutRetentionWork } from './boot-reconciliation.ts';
+import { makeStoreRetentionWork } from './db-workflows/retention.ts';
 import { DaemonStartupRefusalError, HttpBindStartupError } from './errors.ts';
 import { type HttpServerOwner, makeHttpServerOwner } from './http-server-owner.ts';
 import {
@@ -59,11 +60,17 @@ import {
 } from './http-workflows/settings-command-mail-cleanup.ts';
 import { lanRefresh } from './lan-refresh.ts';
 import { makeIngressExecFileDelegate } from './legacy-process-facade.ts';
-import { legacyRetentionWork, makeRetentionSchedule } from './retention-schedule.ts';
+import {
+  legacyRetentionWork,
+  makeRetentionSchedule,
+  type RetentionSchedule,
+  type RetentionWork,
+} from './retention-schedule.ts';
 import type { AppConfigService } from './services/app-config.ts';
 import type { BackgroundService } from './services/background.ts';
 import type { RootIngressSupervisorService } from './services/ingress-supervisor.ts';
 import type { ProcessRunner } from './services/process-runner.ts';
+import { Store } from './services/store.ts';
 import { type StoreOwner, makeStoreOwner } from './store-owner.ts';
 
 // takeover.ts exports the pidRecord PARSER but not its result interface, so
@@ -1136,9 +1143,29 @@ async function bootDaemon(
     pruneEvents: core.pruneEvents,
     retentionSweep: core.retentionSweep,
   });
+  // P8.6 pilot: the retention DB seams now yield the root-owned Store service
+  // (db-workflows/retention.ts). storeBackedRetentionWork is the wired default;
+  // retentionWork above is retained as the one-flag rollback seam — flip
+  // STORE_BACKED_RETENTION to false to restore the legacy capability-free path.
+  // Both branches translate a sweep failure through the same operationalError, so
+  // the schedule's BackgroundOperationalError boundary is byte-identical either way.
+  const storeBackedRetentionWork = makeStoreRetentionWork({
+    pruneEvents: core.pruneEvents,
+    retentionSweep: core.retentionSweep,
+  });
+  const STORE_BACKED_RETENTION = true;
+  const wiredRetentionWork: RetentionWork<Store> = STORE_BACKED_RETENTION
+    ? storeBackedRetentionWork
+    : retentionWork;
   const backgroundProgram: Effect.Effect<never, never, ProcessRunner> = Effect.gen(function* () {
-    const retention = yield* makeRetentionSchedule({
-      ...retentionWork,
+    // Upcast retention to the background program's unified environment. The work
+    // itself requires only Store, but it joins siblings that require ProcessRunner;
+    // ProcessRunner | Store is the composed program's requirement, and naming it
+    // here gives makeDaemonBackgroundProgram's Environment inference the common
+    // supertype it needs. The single provideService(Store) below discharges the
+    // Store half, leaving Effect<never, never, ProcessRunner> unchanged.
+    const retention: RetentionSchedule<ProcessRunner | Store> = yield* makeRetentionSchedule({
+      ...wiredRetentionWork,
       onOperationalFailure: ({ phase, error }) =>
         phase === 'boot'
           ? Effect.sync(() => {
@@ -1199,7 +1226,12 @@ async function bootDaemon(
           }),
       },
     });
-  });
+    // Discharge the Store requirement the P8.6 retention workflow adds, using the
+    // exact same owner instance the root Layer publishes (live-layer.ts). The
+    // background fiber is forked with the acquisition Context, before the root
+    // adds Store, so the requirement is satisfied locally here — this keeps the
+    // owner's program typed Effect<never, never, ProcessRunner> unchanged.
+  }).pipe(Effect.provideService(Store, store.service));
 
   const acquired: AcquiredDaemonResources = {
     resources: daemonResources,

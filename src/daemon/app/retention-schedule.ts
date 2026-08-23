@@ -58,7 +58,7 @@ interface ResolvedRetentionScheduleOptions<Environment> extends RetentionWork<En
     | undefined;
 }
 
-function operationalError(
+export function operationalError(
   operation: RetentionOperation,
   cause: unknown,
 ): BackgroundOperationalError {
