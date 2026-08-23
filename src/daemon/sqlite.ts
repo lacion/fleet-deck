@@ -1,24 +1,25 @@
-// sqlite.ts — the runtime-agnostic SQLite handle fleetd opens its store through.
+// sqlite.ts — the SQLite handle fleetd opens its store through.
 //
-// The daemon runs on two runtimes and the SQLite driver differs by construction:
-// the Claude Code plugin path forks the exact Node that Claude Code launched, so
-// it gets node:sqlite (DatabaseSync); the standalone/dev path may run under bun,
-// which ships bun:sqlite (Database) and has NO node:sqlite at all. Neither
-// builtin exists on the other runtime, so a bare `import 'node:sqlite'` throws at
-// link time under bun (and `import 'bun:sqlite'` throws under Node). This module
-// is the single guarded seam: it picks the driver once, at import, off
-// process.versions.bun, and every other file opens through openDatabase() so no
-// other module names either builtin.
+// fleetd is Bun-only (since 0.23.0 bin/fleetdeck.ts's serve() preflight exits
+// EX_CONFIG on any non-Bun runtime), so the store has exactly one driver:
+// bun:sqlite's Database. This module is the single seam that names it — every
+// other file opens through openDatabase(), so no other module imports the
+// builtin. (Historically this seam also carried a node:sqlite arm for the Node
+// plugin path, picked at import off process.versions.bun; that path is retired,
+// so the seam is now a plain static import of bun:sqlite.)
 //
-// The two drivers already agree on the tiny surface fleetd uses — positional `?`
-// binding, multi-statement .exec(), plain-object rows, and a .run() result
-// carrying { changes, lastInsertRowid } as plain numbers — verified against
-// Node 22 and bun 1.3.14. The one observed divergence is a missed .get():
-// node:sqlite returns `undefined`, bun:sqlite returns `null`. The wrapper below
-// pins that to `undefined` so the two channels are byte-identical at the seam,
-// and returns ONE stable object per open — statements.mjs keys a WeakMap on the
-// handle to cache prepared statements, so the handle identity must stay durable
-// for the life of the connection.
+// fleetd uses a tiny slice of the driver: positional `?` binding, multi-statement
+// .exec(), plain-object rows, and a .run() result carrying { changes,
+// lastInsertRowid } as plain numbers. The one quirk the wrapper normalizes is a
+// missed .get(): bun:sqlite returns `null`, and the wrapper below pins that to
+// `undefined` so consumers reading a miss with truthiness / ?? / ?. see a stable
+// sentinel (the historical node:sqlite parity, kept so the store's behavior did
+// not shift when the runtime unified). openDatabase() returns ONE stable object
+// per open — statements.ts keys a WeakMap on the handle to cache prepared
+// statements, so the handle identity must stay durable for the life of the
+// connection.
+
+import { Database } from 'bun:sqlite';
 
 // The store's foundational value types. Every row shape db.ts and statements.ts
 // declare is built on top of these: a cell is one of SQLite's storage classes, a
@@ -28,7 +29,7 @@
 export type SqlValue = null | number | bigint | string | Uint8Array;
 export type SqlRow = Record<string, SqlValue>;
 
-// What .run() reports. Both drivers carry these as number | bigint (a rowid or
+// What .run() reports. bun:sqlite carries these as number | bigint (a rowid or
 // change count past 2^53 stays exact only as a bigint), so any consumer doing
 // arithmetic on them has to reckon with both.
 export interface SqlRunResult {
@@ -51,12 +52,10 @@ export interface SqliteHandle {
   close(): void;
 }
 
-// The subset of each driver's own handle that wrap() actually touches. Both
-// node:sqlite's DatabaseSync and bun:sqlite's Database satisfy it structurally,
-// but their published types spell rows differently (node's SQLOutputValue vs
-// bun's `any`), so the seam asserts this one shape at construction and reads
-// every row back as `unknown` rather than threading either driver's row type
-// through fleetd.
+// The subset of bun:sqlite's Database/Statement that wrap() actually touches.
+// bun's published row type is `any`, so the seam asserts this one narrow shape at
+// construction and reads every row back as `unknown` rather than letting bun's
+// `any` thread through fleetd.
 interface DriverStatement {
   run(...params: SqlValue[]): SqlRunResult;
   get(...params: SqlValue[]): unknown;
@@ -68,51 +67,17 @@ interface DriverHandle {
   close(): void;
 }
 
-let makeHandle: (file: string) => SqliteHandle;
-
-if (process.versions.bun) {
-  const { Database } = await import('bun:sqlite');
-  makeHandle = (file) => wrap(new Database(file));
-} else {
-  // node:sqlite emits a single ExperimentalWarning the instant it is imported.
-  // Intercept ONLY that one emission at its source: removing `warning` listeners
-  // would clobber handlers installed by launchers, test runners and
-  // observability tooling, while installing our own formatter would lose Node's
-  // normal warning detail. Every pre-existing listener and every unrelated
-  // warning is left alone, and the original emitWarning is restored in `finally`
-  // even if the import throws.
-  // eslint-disable-next-line @typescript-eslint/unbound-method -- captured verbatim so `finally` restores the exact original method object; only ever forwarded through with its receiver preserved (.call below), never invoked free-floating.
-  const emitWarning = process.emitWarning;
-  process.emitWarning = function fleetdSqliteWarningFilter(
-    this: unknown,
-    warning: string | Error,
-    type?: string | { type?: string },
-    ...args: unknown[]
-  ): void {
-    const name =
-      warning instanceof Error ? warning.name : typeof type === 'string' ? type : type?.type;
-    const message = warning instanceof Error ? warning.message : warning;
-    if (name === 'ExperimentalWarning' && /^SQLite is an experimental feature\b/i.test(message))
-      return;
-    (emitWarning as unknown as (this: unknown, ...a: unknown[]) => void).call(
-      this,
-      warning,
-      type,
-      ...args,
-    );
-  } as unknown as typeof process.emitWarning;
-  let DatabaseSync: typeof import('node:sqlite').DatabaseSync;
-  try {
-    ({ DatabaseSync } = await import('node:sqlite'));
-  } finally {
-    process.emitWarning = emitWarning;
-  }
-  makeHandle = (file) => wrap(new DatabaseSync(file));
+// fleetd's single SQLite driver is bun:sqlite's Database. makeHandle opens one
+// and wraps it into the uniform handle below. (wrap is a hoisted function
+// declaration, so the forward reference here is fine.)
+function makeHandle(file: string): SqliteHandle {
+  return wrap(new Database(file));
 }
 
-// One thin, uniform wrapper for both drivers. It delegates 1:1 except for the
+// One thin wrapper over the bun:sqlite handle. It delegates 1:1 except for the
 // single normalization noted above (a missed .get() -> undefined), so the object
-// the rest of fleetd threads through `ctx` behaves identically on either runtime.
+// the rest of fleetd threads through `ctx` presents a stable, driver-independent
+// surface.
 function wrap(handle: DriverHandle): SqliteHandle {
   return {
     exec(sql) {
@@ -124,9 +89,9 @@ function wrap(handle: DriverHandle): SqliteHandle {
         run: (...params) => stmt.run(...params),
         get: (...params) => {
           const row = stmt.get(...params);
-          // bun:sqlite yields null for a missed row, node:sqlite yields
-          // undefined; consumers read a miss with truthiness / ?? / ?., but the
-          // shape is pinned to Node's so the two channels never diverge.
+          // bun:sqlite yields null for a missed row; pin it to undefined so a
+          // miss read with truthiness / ?? / ?. sees a stable sentinel (the
+          // historical node:sqlite parity, kept unchanged as the runtime unified).
           return (row ?? undefined) as R | undefined;
         },
         all: (...params) => stmt.all(...params) as R[],
@@ -138,11 +103,11 @@ function wrap(handle: DriverHandle): SqliteHandle {
   };
 }
 
-// openDatabase(file) — open a SQLite database on whichever runtime we are and
-// return the wrapped handle. `file` is a filesystem path or the ':memory:'
-// sentinel; both drivers accept both. This is the low-level primitive: it opens
-// and wraps only. fleetd's store shape (the DDL, migrate(), and the 0600
-// confidentiality chmod) lives in db.mjs's openDb(), which builds on this.
+// openDatabase(file) — open a SQLite database via bun:sqlite and return the
+// wrapped handle. `file` is a filesystem path or the ':memory:' sentinel;
+// bun:sqlite accepts both. This is the low-level primitive: it opens and wraps
+// only. fleetd's store shape (the DDL, migrate(), and the 0600 confidentiality
+// chmod) lives in db.ts's openDb(), which builds on this.
 export function openDatabase(file: string): SqliteHandle {
   return makeHandle(file);
 }

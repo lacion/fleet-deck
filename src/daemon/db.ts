@@ -1,7 +1,6 @@
 // db.ts — SQLite store for fleetd (WAL mode). All timestamps are ms epoch
-// integers. The SQLite handle comes from ./sqlite.ts, the one guarded seam that
-// picks node:sqlite or bun:sqlite by runtime (the ExperimentalWarning suppression
-// the Node driver needs now lives there); everything below is driver-agnostic.
+// integers. The SQLite handle comes from ./sqlite.ts, the single seam that opens
+// the store through bun:sqlite; everything below is driver-agnostic.
 //
 // The store is versioned with PRAGMA user_version: openDb() runs the numbered
 // migration ladder below, each migration wrapped in its own transaction. A fresh
@@ -503,8 +502,8 @@ export function migrate(db: SqliteHandle, migrations: Migration[] = MIGRATIONS):
     } catch (err) {
       // ROLLBACK undoes the partial up() AND the (uncommitted) version bump. An
       // engine-level error can auto-rollback the transaction first, after which an
-      // explicit ROLLBACK throws "no transaction is active" (identical message on
-      // bun:sqlite and node:sqlite) — that is the rolled-back state we want, so
+      // explicit ROLLBACK throws "no transaction is active" (bun:sqlite's
+      // message) — that is the rolled-back state we want, so
       // swallow ONLY that. Any other ROLLBACK failure means the transaction may
       // still be open; surface it (with the up() error as cause) rather than hide it.
       try {
