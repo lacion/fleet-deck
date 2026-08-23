@@ -17,6 +17,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { openDb } from '../src/daemon/db.ts';
+import { runControlDetached } from '../src/daemon/platform/bun/ingress-supervisor-live.ts';
 import { claudeTranscriptPath, createCore } from '../src/daemon/derive.ts';
 
 const HOUR = 3_600_000;
@@ -242,6 +243,9 @@ function memoryCore(
     port: tmux.port,
     home,
     tmuxAdapter: tmux.adapter as unknown as CoreTmuxAdapter,
+    // Production always injects the runner; Fix 1's concurrent-revive pin (the
+    // unique double-pane guard) must exercise the Effect core (slice-5 review).
+    runControlDetached,
   });
   if (boardConnected) core.questions.setBoardConsumerProbe(() => true);
   t.after(() => {

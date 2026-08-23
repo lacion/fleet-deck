@@ -138,6 +138,65 @@ type EnableRemoteStep =
 // whenever no runControlDetached runner was injected).
 const EFFECT_CORE_ENABLE_REMOTE = true;
 
+// P9.1 Slice 5: the uniform success value of the revive Effect core —
+// structurally identical to SpawnKillWire (a control-result pair the transport
+// hands straight to json()). Spelled locally for the same reason: spawns is
+// DOMAIN and must not relative-import the app zone.
+interface ReviveWire {
+  readonly status: number;
+  readonly body?: unknown;
+}
+
+// revive's two-phase shape (mirrors SpawnKillStep): the synchronous prefix — the
+// row lookup and its 404 — resolves EITHER to a terminal wire OR to the coarse
+// resume-phase thunk (`runRevive`, which carries every remaining gate in legacy
+// order — shell / not-revivable / tmux_window / runtime-override / unsupervised /
+// gateway / active / single-flight — the revivingSessions claim, the worktree
+// path-lock + custody leases, the H-R7 cwd/transcript validation, the window
+// collision defense + BUG-3 adoption, and the shared launchResume tail — i.e.
+// every await). The sync region CONSTRUCTS runRevive but never runs it; the
+// flatMap below discharges it as one Effect.promise. Keeping the whole tail inside
+// runRevive preserves legacy timing byte-for-byte: the runtime runs Effect.sync →
+// flatMap → Effect.promise synchronously up to runRevive's FIRST await (the
+// worktree path-lock, or findScopedWindow when there is no worktree), so every
+// sync gate AND the revivingSessions.add single-flight claim still fire on the
+// request turn, exactly as the legacy async body did.
+type ReviveStep =
+  | { readonly done: true; readonly wire: ReviveWire }
+  | { readonly done: false; readonly runRevive: () => Promise<ReviveWire> };
+
+// P9.1 Slice 5 rollback seam: false → the revive dispatcher bypasses the Effect
+// core and answers through the legacy async body (also reached whenever no
+// runControlDetached runner was injected).
+const EFFECT_CORE_REVIVE = true;
+
+// P9.1 Slice 5: the uniform success value of the adoptSession ("Move to tmux")
+// Effect core — structurally identical to ReviveWire. Spelled locally for the
+// same reason.
+interface AdoptWire {
+  readonly status: number;
+  readonly body?: unknown;
+}
+
+// adoptSession's two-phase shape (mirrors ReviveStep): the synchronous prefix —
+// the session lookup and its 404 — resolves EITHER to a terminal wire OR to the
+// coarse adopt-phase thunk (`runAdopt`, which carries every remaining gate in
+// legacy order — callsign / body-validation / unsupervised / disarm / lineage /
+// live-arm / ended-forks / not-resumable / single-flight — the shared
+// revivingSessions claim, the arm consume, the H-R7 validation, the window
+// collision defense, and the shared launchResume tail — i.e. every await). Same
+// timing guarantee as ReviveStep: the runtime runs synchronously up to runAdopt's
+// FIRST await (findScopedWindow), so every sync gate AND the revivingSessions.add
+// claim fire on the request turn, exactly as the legacy async body did.
+type AdoptStep =
+  | { readonly done: true; readonly wire: AdoptWire }
+  | { readonly done: false; readonly runAdopt: () => Promise<AdoptWire> };
+
+// P9.1 Slice 5 rollback seam: false → the adoptSession dispatcher bypasses the
+// Effect core and answers through the legacy async body (also reached whenever no
+// runControlDetached runner was injected).
+const EFFECT_CORE_ADOPT_SESSION = true;
+
 // The consumer view of the threaded closure state. derive assembles the literal
 // and casts it `as unknown as CoreCtx`, so the ONLY assignability check is
 // CoreCtx <: SpawnsCtx. Function fields use ARROW-PROPERTY syntax (not method
@@ -2246,7 +2305,316 @@ export function createSpawns(ctx: SpawnsCtx) {
   // POST /api/spawn/:id/revive — resume a terminal board-owned Claude
   // conversation into a NEW durable spawn row. Historical rows are immutable
   // evidence; the same session id/callsign/window identity is reused.
-  async function revive(spawn_id: string, body: SpawnBody = {}) {
+  // P9.1 Slice 5: revive is now an Effect core (reviveEffect) — R = never,
+  // E = never, expected outcomes are DATA (ReviveWire). The sync prefix (row
+  // lookup + 404) is one Effect.sync; the whole awaiting tail — every remaining
+  // sync gate in legacy order, the revivingSessions single-flight claim, the
+  // worktree path-lock + custody leases, the H-R7 validation, the window
+  // collision defense + BUG-3 adoption (resurrectSpawn, unchanged), and the
+  // shared launchResume tail (a plain async fn, unchanged — D5 option (a)) — is
+  // one Effect.promise (runRevive) that preserves legacy timing byte-for-byte:
+  // the runtime runs Effect.sync → flatMap → Effect.promise synchronously up to
+  // runRevive's first await, so every sync gate and revivingSessions.add still
+  // fire on the request turn exactly as the legacy async body did. Discharged to
+  // a native Promise<ReviveWire> by the injected runControlDetached runner. The
+  // legacy async body (reviveLegacy) is retained UNCHANGED as the rollback seam.
+  function reviveEffect(
+    spawn_id: string,
+    body: SpawnBody = {},
+  ): Effect.Effect<ReviveWire, never, never> {
+    return Effect.sync((): ReviveStep => {
+      const row = q.getSpawn.get(spawn_id);
+      if (!row)
+        return {
+          done: true,
+          wire: { status: 404, body: { ok: false, reason: 'no such spawn' } },
+        };
+      const runRevive = async (): Promise<ReviveWire> => {
+        if (row.kind === 'shell') {
+          return {
+            status: 410,
+            body: { ok: false, reason: 'shell sessions have no conversation to resume' },
+          };
+        }
+        if (!['pane-dead', 'killed', 'gone'].includes(row.status)) {
+          return {
+            status: 409,
+            body: { ok: false, reason: `spawn is ${row.status}, not revivable` },
+          };
+        }
+        // Every spawn is inserted with its deterministic window name, so a revivable
+        // row (pane-dead/killed/gone) always carries one; this proves it to the type
+        // system for the window reconciliation below without altering behavior.
+        if (row.tmux_window == null) throw new Error('revivable spawn is missing its tmux window');
+        const runtimeOverrideError = runtimeOverrideRefusal(body);
+        if (runtimeOverrideError) {
+          return { status: 400, body: { ok: false, reason: runtimeOverrideError } };
+        }
+        // 0.16.0 (adversarial review): reviving an UNSUPERVISED lineage launches
+        // --dangerously-skip-permissions again, so it is an unsupervised spawn and
+        // must pass the same gate — otherwise the 60s single-use arm becomes a
+        // permanent replayable capability (arm once, revive forever, tokenless).
+        // A supervised lineage revives with no gate, as before.
+        if (row.skip_permissions) {
+          const reviveArmRefusal = unsupervisedGate(true, body);
+          if (reviveArmRefusal)
+            return { status: 403, body: { ok: false, reason: reviveArmRefusal } };
+        }
+        // Remote control survives death: inherit the dead row's wish unless the
+        // human overrides it on this revive.
+        const remoteWanted = body.remote_control ?? !!row.remote_control;
+        // Gateway routing survives death the same way — and for a stronger reason
+        // than symmetry. A revive RESUMES a conversation, and the transcript being
+        // resumed was produced by whatever provider served it; silently continuing
+        // it against a different one changes who is billed for the rest of that
+        // conversation without anything on screen saying so. Inheriting the dead
+        // row's routing keeps a lineage on one provider unless a human says
+        // otherwise. Note the fallback resolves to a BOOLEAN, never null: null would
+        // re-consult gateway_default, so flipping that setting on would quietly
+        // reroute every later revive of every pre-existing session. A revive asks
+        // "what was this lineage doing", not "what would a new spawn do".
+        const gateway = gatewayDecision(
+          body.gateway ?? !!row.gateway,
+          body.gateway == null ? 'inherited' : 'request',
+        );
+        if (gateway.error) return { status: 400, body: { ok: false, reason: gateway.error } };
+        const rcConflict = gatewayRemoteConflict(gateway.use, remoteWanted);
+        if (rcConflict) return { status: 400, body: { ok: false, reason: rcConflict } };
+        // HIGH (revive single-flight), part 1 — the DB guard. A live-eligible OR a
+        // PROVISIONING spawn for this session means someone is already bringing a
+        // pane up; refuse. Including 'provisioning' matters because a revive's own
+        // durable row is 'provisioning' from the instant it is inserted until its
+        // pane is up, so a later revive request cannot slip past a still-in-flight
+        // one (activeSpawnBySession alone would not see it).
+        const active =
+          q.activeSpawnBySession.get(row.session_id) ??
+          q.provisioningSpawnBySession.get(row.session_id);
+        if (active) {
+          return {
+            status: 409,
+            body: { ok: false, reason: `session already has active spawn ${active.spawn_id}` },
+          };
+        }
+        // HIGH (revive single-flight), part 2 — the SYNCHRONOUS claim. The DB guard
+        // above cannot stop TWO near-simultaneous revives: both read the same
+        // pre-insert state, both cross the async window inspection below, and both
+        // insert a provisional row + launch a pane → two live panes for one
+        // session. Claim the session id here with no await between the check and
+        // the add, so the second concurrent revive is refused until the first
+        // settles. The try/finally guarantees the claim is released on EVERY exit
+        // (success, refusal, or throw). R2-5 stale-kill protection is untouched —
+        // the provisional owner row is still inserted below before newWindow.
+        if (revivingSessions.has(row.session_id)) {
+          return {
+            status: 409,
+            body: {
+              ok: false,
+              reason: `session ${row.session_id.slice(0, 8)} is already being revived`,
+            },
+          };
+        }
+        revivingSessions.add(row.session_id);
+        // BUG-060: acquire the worktree path's canonical claim BEFORE validating
+        // the cwd/transcript and launching, and hold it through the launch. A
+        // worktree removal holds the same claim for its entire inspect → git
+        // remove → DB purge sequence, so a revive racing a removal that is already
+        // mid-flight QUEUES here behind it and, once the removal has deleted the
+        // checkout and released, proceeds only to 410 on the now-missing cwd —
+        // never launching a pane into a directory `git worktree remove` was about
+        // to delete. Acquired first, so the queueing (path-lock) path decides the
+        // race before the synchronous custody fallback below can turn a held
+        // removal into an early refusal. Standalone cores without the mutex fall
+        // back to `() => {}` and lean on the custody claim instead.
+        const releasePathLock =
+          row.worktree_path && acquireWorktreePathLock
+            ? await acquireWorktreePathLock(canonicalPathKey(row.worktree_path))
+            : () => {
+                /* no path lock in standalone cores without the keyed mutex */
+              };
+        // The other half of the remove-vs-revive race (worktrees.mjs owns the
+        // remove half): claim custody of the worktree this revive will run in.
+        // removeWorktree holds the same per-path lease from its final liveness
+        // re-check through the awaited `git worktree remove`/prune/branch/purge
+        // tail. When the path-lock mutex is wired the removal already holds it, so
+        // a racing revive blocks above and never reaches a held custody claim;
+        // this claim is the fallback that keeps standalone cores (no mutex, but
+        // derive always wires claimWorktreeCustody) honest — a revive that finds
+        // custody held is refused rather than launching into a doomed checkout.
+        // A refused revive retries cleanly; a lost worktree does not.
+        let releaseCustody: (() => void) | null = null;
+        if (row.worktree_path && claimWorktreeCustody) {
+          releaseCustody = claimWorktreeCustody(row.worktree_path, 'revive');
+          if (!releaseCustody) {
+            revivingSessions.delete(row.session_id);
+            releasePathLock();
+            return {
+              status: 409,
+              body: {
+                ok: false,
+                reason: 'this worktree is being removed — retry once the removal settles',
+              },
+            };
+          }
+        }
+        try {
+          // H-R7: validate ALL resume eligibility BEFORE touching tmux. Reviving
+          // reuses the deterministic window name, and the old code killed whatever
+          // occupied it and THEN checked cwd/transcript — so a missing transcript
+          // would 410 only AFTER an unrelated pane had already been destroyed.
+          // Prove the resume can actually happen first; only then reconcile the
+          // window.
+          const runCwd = row.worktree_path ?? row.cwd;
+          let st: fs.Stats | null = null;
+          try {
+            if (runCwd) st = fs.statSync(runCwd);
+          } catch {
+            /* missing */
+          }
+          if (!runCwd || !st?.isDirectory()) {
+            return { status: 410, body: { ok: false, reason: 'revive cwd no longer exists' } };
+          }
+          if (!fs.existsSync(claudeTranscriptPath(runCwd, row.session_id))) {
+            return {
+              status: 410,
+              body: { ok: false, reason: 'resume transcript no longer exists' },
+            };
+          }
+
+          // Exact scoped-name collision defense, now that eligibility is proven. A
+          // live Claude pane is ownership proof and must never be duplicated. Only a
+          // pane PROVEN dead, or an expected bare shell (claude exited, leaving the
+          // login shell in a remain-on-exit window), is a safe remnant to remove by
+          // verified name before reusing the window. A live pane running ANYTHING
+          // ELSE (the human repurposed the window) is never destroyed — refuse.
+          const existing = await findScopedWindow(row.tmux_window);
+          if (existing === null) {
+            return {
+              status: 503,
+              body: {
+                ok: false,
+                reason: 'tmux window lookup failed; revive held to avoid a duplicate session',
+              },
+            };
+          }
+          if (existing && !existing.pane_dead && existing.pane_cmd === 'claude') {
+            // BUG 3: the deterministic window ALREADY hosts a live claude pane for
+            // this session — it was wrongly condemned (BUG 1 /clear, BUG 2 silence)
+            // while the agent kept running, and the board hid the terminal. A human
+            // clicking Revive here used to hit a dead-end 409 ("already has a live
+            // claude pane") and stay stuck until the next liveness poll. There is
+            // nothing to resume: the pane IS the live session. ADOPT it — resurrect
+            // the row to 'live' and lift the card back onto the board — and return
+            // success so the terminal shows NOW. No tmux launch, no kill: we never
+            // duplicate a live billed session (the same safety the 409 protected).
+            //
+            // MED (adoption must mirror the liveness-tick's resurrection guards):
+            // the tick only resurrects a 'pane-dead'/'gone' row (never 'killed')
+            // AND only when currentWindowOwner still names THAT row. Adoption did
+            // NEITHER, which let two things go wrong:
+            //   (a) a 'killed' row (a human decision) could be flipped back to
+            //       'live' by adoption — breaking "a human kill never resurrects".
+            //   (b) reviving a NON-newest 'pane-dead'/'gone' row whose reused window
+            //       is a live claude could resurrect the OLDER row while a newer
+            //       pane-dead row still outranks it in currentWindowOwner: BOTH end
+            //       up 'live' (countActiveSpawns double-counts) and the adopted row
+            //       becomes un-killable (spawnKill's owner check points at the other
+            //       one). Guard both here before resurrecting.
+            if (row.status !== 'pane-dead' && row.status !== 'gone') {
+              // 'killed': the window hosts a live claude, but a human kill is never
+              // undone by adoption. Refuse rather than resurrect or duplicate.
+              return {
+                status: 409,
+                body: {
+                  ok: false,
+                  reason: `spawn ${spawn_id} was killed — its window hosts a live claude, but a killed spawn is never resurrected by adoption`,
+                },
+              };
+            }
+            const owner = q.currentWindowOwner.get(row.tmux_window);
+            if (owner && owner.spawn_id !== row.spawn_id) {
+              return {
+                status: 409,
+                body: {
+                  ok: false,
+                  reason: `window ${row.tmux_window} is owned by spawn ${owner.spawn_id} — revive that one`,
+                  current_spawn_id: owner.spawn_id,
+                },
+              };
+            }
+            resurrectSpawn(row);
+            return {
+              status: 200,
+              body: {
+                ok: true,
+                adopted: true,
+                spawn_id: row.spawn_id,
+                session_id: row.session_id,
+                callsign: row.callsign,
+                tmux: { session: tmuxAdapter.sessionName(port), window: row.tmux_window },
+              },
+            };
+          }
+          if (existing && !existing.pane_dead && !SHELL_RE.test(existing.pane_cmd)) {
+            return {
+              status: 409,
+              body: {
+                ok: false,
+                reason: `window ${row.tmux_window} hosts a live '${existing.pane_cmd}' pane — not a dead remnant; refusing to kill it`,
+              },
+            };
+          }
+          if (existing) {
+            const killed = await tmuxAdapter.killWindowVerified(row.tmux_window);
+            if (!killed.ok && !killed.gone) {
+              return {
+                status: 500,
+                body: { ok: false, reason: killed.error ?? 'tmux kill-window failed' },
+              };
+            }
+          }
+
+          // The launch discipline (R2-5 pre-launch owner re-check, provisional owner
+          // row, override/newWindow, live-flip, card update, nudge) is shared with
+          // adopt now — launchResume() below is the single source of truth. Reviving
+          // reuses the dead row's window name and callsign, carries the dead row's
+          // requested cwd + worktree_path + skip-permissions, inherits the remote
+          // wish, and excludes ITS OWN terminal row (spawn_id) from the owner
+          // re-check (a 'pane-dead' row still naming its window is not a rival).
+          return await launchResume({
+            session_id: row.session_id,
+            callsign: row.callsign,
+            tmux_window: row.tmux_window,
+            runCwd,
+            requested_cwd: row.cwd,
+            worktree_path: row.worktree_path,
+            skip_permissions: !!row.skip_permissions,
+            remoteWanted,
+            gatewayEnv: gateway.env,
+            excludeSpawnId: spawn_id,
+            overrideExtra: { revive_of: spawn_id },
+            note: 'reviving…',
+            tickMsg: `⟲ reviving ${row.callsign} (resume ${row.session_id.slice(0, 8)})`,
+            failReason: 'tmux revive failed',
+          });
+        } finally {
+          // Release the single-flight claim on EVERY exit path.
+          revivingSessions.delete(row.session_id);
+          releasePathLock();
+          // Release the worktree-custody lease on every exit path too: the new
+          // spawn row is durable by now ('provisioning'/'spawning'), so
+          // worktreePathIsLive keeps any later removal honest without the lease.
+          releaseCustody?.();
+        }
+      };
+      return { done: false, runRevive };
+    }).pipe(
+      Effect.flatMap((step) =>
+        step.done ? Effect.succeed(step.wire) : Effect.promise(step.runRevive),
+      ),
+    );
+  }
+
+  async function reviveLegacy(spawn_id: string, body: SpawnBody = {}) {
     const row = q.getSpawn.get(spawn_id);
     if (!row) return { status: 404, body: { ok: false, reason: 'no such spawn' } };
     if (row.kind === 'shell') {
@@ -2519,6 +2887,16 @@ export function createSpawns(ctx: SpawnsCtx) {
     }
   }
 
+  // P9.1 Slice 5 dispatcher: discharge the Effect core through the injected
+  // ingress runner (runControlDetached), or fall back to the legacy async body
+  // when the Effect path is disabled (EFFECT_CORE_REVIVE=false) or no runner was
+  // wired. Keeps the name `revive` so ownedRevive is unchanged.
+  function revive(spawn_id: string, body: SpawnBody = {}): Promise<ReviveWire> {
+    return EFFECT_CORE_REVIVE && runControlDetached
+      ? runControlDetached(reviveEffect(spawn_id, body))
+      : reviveLegacy(spawn_id, body);
+  }
+
   // Shared resume-launch discipline — the tail extracted VERBATIM from revive()
   // so revive and adopt build the pane exactly one way. Given a session id +
   // callsign + a scoped window name it: builds the env-wrapped
@@ -2722,7 +3100,300 @@ export function createSpawns(ctx: SpawnsCtx) {
   // ended between snapshot and this POST adopts now instead of arming, and vice
   // versa) and the response says which happened. Never sets --remote-control in
   // v1 (/rc is available from the live card once the pane is up).
-  async function adoptSession(
+  // P9.1 Slice 5: adoptSession ("Move to tmux") is now an Effect core
+  // (adoptSessionEffect) — R = never, E = never, outcomes are DATA (AdoptWire).
+  // Same shape as reviveEffect: Effect.sync(session lookup + 404) → one coarse
+  // Effect.promise (runAdopt) carrying every remaining sync gate in legacy order,
+  // the shared revivingSessions claim, the arm consume, the H-R7 validation, the
+  // window collision defense, and the shared launchResume tail (unchanged — D5
+  // option (a)). The deferred flag is threaded through unchanged. Timing is
+  // byte-for-byte: the runtime runs synchronously up to runAdopt's first await
+  // (findScopedWindow), so every sync gate and revivingSessions.add fire on the
+  // request turn. Discharged by runControlDetached; adoptSessionLegacy is the
+  // UNCHANGED rollback seam.
+  function adoptSessionEffect(
+    session_id: string,
+    body: SpawnBody = {},
+    { deferred = false }: { deferred?: boolean } = {},
+  ): Effect.Effect<AdoptWire, never, never> {
+    return Effect.sync((): AdoptStep => {
+      const c = q.getSession.get(session_id);
+      if (!c)
+        return {
+          done: true,
+          wire: { status: 404, body: { ok: false, reason: 'no such session' } },
+        };
+      const runAdopt = async (): Promise<AdoptWire> => {
+        // Every session is registered with a callsign, so an adoptable card always
+        // carries one; this proves it to the type system for the window name and the
+        // ticker lines below without altering behavior.
+        if (c.callsign == null) throw new Error('adoptable session is missing its callsign');
+
+        // Body validation. dangerously_skip_permissions is the two-step unsupervised
+        // gate; disarm cancels a pending arm.
+        if (
+          body.dangerously_skip_permissions != null &&
+          typeof body.dangerously_skip_permissions !== 'boolean'
+        ) {
+          return {
+            status: 400,
+            body: { ok: false, reason: 'dangerously_skip_permissions must be a boolean' },
+          };
+        }
+        if (body.disarm != null && typeof body.disarm !== 'boolean') {
+          return { status: 400, body: { ok: false, reason: 'disarm must be a boolean' } };
+        }
+        if (body.arm_token != null && typeof body.arm_token !== 'string') {
+          return { status: 400, body: { ok: false, reason: 'arm_token must be a string' } };
+        }
+        const skip = body.dangerously_skip_permissions === true;
+        // 0.16.0: same unsupervised gate as /api/spawn — an adopt with skip:true
+        // launches a process, so it must echo a fresh arm token. A DEFERRED call
+        // (the armed auto-adopt fired by hookSessionEnd, or the boot sweep) is
+        // exempt: its body is reconstructed from the adopt_armed_skip column the
+        // human's ORIGINAL arm POST wrote — that POST already passed this gate
+        // with a fresh arm token, and the single-use token cannot be echoed a
+        // second time. Gating it again would 403 every armed move-to-tmux.
+        const adoptArmRefusal = deferred ? null : unsupervisedGate(skip, body);
+        if (adoptArmRefusal) return { status: 403, body: { ok: false, reason: adoptArmRefusal } };
+
+        // Disarm FIRST, in any state: the click that disarms is the human revoking
+        // the earlier arm click, and it must NEVER fall through into an adopt (a
+        // card that ended between the armed snapshot and this disarm POST would
+        // otherwise be adopted by a cancel click). Because the arm now survives
+        // until CONSUMED (see the ended fork), a disarm landing inside the deferred
+        // grace window genuinely cancels the scheduled move — the deferred call
+        // finds the arm gone and stands down. Idempotent.
+        if (body.disarm === true) {
+          updateSession(session_id, { adopt_armed_until: null, adopt_armed_skip: null });
+          tick(`⇥ ${c.callsign} move-to-tmux disarmed`);
+          onMutate();
+          return { status: 200, body: { ok: true, armed: false, disarmed: true } };
+        }
+
+        // Board-owned never adopts — and never ARMS. ANY spawn lineage (dead or
+        // alive) means the board already owns this session's pane story: revive
+        // owns dead lineages, and arming a board-owned session would fire a second
+        // `claude --resume` lineage at its next SessionEnd, fighting the first over
+        // the window name and worktree bookkeeping. This sits BEFORE the live/ended
+        // fork so neither path can slip past it. A deferred call landing here means
+        // a manual adopt/revive won the race and created the row — benign (the
+        // caller treats 409 as "someone else already did it").
+        const lineage = q.spawnBySession.get(session_id);
+        if (lineage) {
+          return {
+            status: 409,
+            body: {
+              ok: false,
+              reason: `session is board-owned (spawn ${lineage.spawn_id}, ${lineage.status}) — revive owns its pane story`,
+            },
+          };
+        }
+
+        // LIVE fork: the CLI is still running (ended_at null). Two processes can't
+        // drive one conversation, so we can't grab it now.
+        if (c.ended_at == null) {
+          // A DEFERRED call reaching a live session is the resurrection race: the
+          // CLI exited (arming the move) and something resumed it inside the grace
+          // window. The human's click was one-shot — re-arming here would plant a
+          // standing 30-minute arm they never asked for, firing a surprise move at
+          // the NEXT exit. Cancel instead: consume the arm, say so once.
+          if (deferred) {
+            updateSession(session_id, { adopt_armed_until: null, adopt_armed_skip: null });
+            tick(
+              `↷ move-to-tmux canceled for ${c.callsign} — session came back live before the move`,
+            );
+            onMutate();
+            return { status: 200, body: { ok: true, canceled: true } };
+          }
+          // Manual click → ARM: remember it as a durable deadline; hookSessionEnd
+          // fires the adopt the instant the CLI exits. Re-arm refreshes the
+          // deadline + bypass choice.
+          const expires_at = Date.now() + ADOPT_ARM_MS;
+          updateSession(session_id, {
+            adopt_armed_until: expires_at,
+            adopt_armed_skip: skip ? 1 : 0,
+          });
+          tick(
+            `⧗ ${c.callsign} armed for move-to-tmux — exit the CLI to move it${skip ? ' (unsupervised)' : ''}`,
+          );
+          onMutate();
+          return { status: 200, body: { ok: true, armed: true, expires_at } };
+        }
+
+        // ENDED fork: the card is offline — adopt NOW.
+        // A deferred call whose arm is already gone stands down silently: the human
+        // disarmed inside the grace window (their cancel must win), or another
+        // actor already consumed the arm. Not a failure — no ticker line.
+        if (deferred && c.adopt_armed_until == null) {
+          return { status: 200, body: { ok: true, canceled: true } };
+        }
+        // A deferred call whose arm has EXPIRED must stand down too: SessionEnd
+        // validated the deadline when it scheduled the grace timer, but the move
+        // only runs AFTER the grace delay — launching now would start a process
+        // past the documented human authorization window. Clear the stale columns
+        // and say so once, BEFORE claiming single-flight or touching tmux.
+        if (deferred && c.adopt_armed_until != null && c.adopt_armed_until <= Date.now()) {
+          updateSession(session_id, { adopt_armed_until: null, adopt_armed_skip: null });
+          tick(
+            `↷ move-to-tmux canceled for ${c.callsign} — the arm deadline expired before the move fired`,
+          );
+          onMutate();
+          return { status: 200, body: { ok: true, canceled: true, expired: true } };
+        }
+        // Immediate adopt requires an end that is BOTH proven and final — the
+        // NOT_RESUMABLE_END allowlist in helpers.mjs owns that judgement (a NULL is
+        // unproven, 'presumed' is a silence guess, and 0.7.1's 'superseded' means
+        // the session did not stop at all: it continued under a new id after a
+        // /clear, and the heir already owns the pane). Resuming any of them mints a
+        // second billed session → refuse; arm it instead. Sharing the set with
+        // sessionAdoptableNow is what keeps the board's chip and this guard honest
+        // about exactly the same cards.
+        if (NOT_RESUMABLE_END.has(c.end_reason ?? null)) {
+          return {
+            status: 409,
+            body: {
+              ok: false,
+              reason:
+                c.end_reason === 'superseded'
+                  ? 'session was superseded by a /clear — its heir owns the card now'
+                  : 'session has no hook-proven end (presumed/unstamped) — arm it instead',
+            },
+          };
+        }
+        // Single-flight: reuse the revive Set so a manual adopt, an armed auto-adopt,
+        // and a revive can never race two panes onto one session. The try/finally
+        // releases it on EVERY exit path.
+        if (revivingSessions.has(session_id)) {
+          return {
+            status: 409,
+            body: {
+              ok: false,
+              reason: `session ${session_id.slice(0, 8)} is already being moved/revived`,
+            },
+          };
+        }
+        revivingSessions.add(session_id);
+        try {
+          // Consume the arm INSIDE the single-flight claim, before any external op:
+          // one-shot by construction — whoever acts first (deferred timer, manual
+          // click, sweep) burns it, and a failed launch never retries. Skipped when
+          // the columns are already clear (the common manual adopt-now).
+          if (c.adopt_armed_until != null || c.adopt_armed_skip != null) {
+            updateSession(session_id, { adopt_armed_until: null, adopt_armed_skip: null });
+          }
+          // H-R7: validate ALL resume eligibility BEFORE touching tmux. runCwd is
+          // the hook-reported sessions.cwd (the dir claudeTranscriptPath munges) —
+          // NEVER sessions.worktree (the git worktree root); adopt creates no
+          // worktree, so the spawn row's worktree_path stays NULL.
+          const runCwd = c.cwd;
+          let st: fs.Stats | null = null;
+          try {
+            if (runCwd) st = fs.statSync(runCwd);
+          } catch {
+            /* missing */
+          }
+          if (!runCwd || !st?.isDirectory()) {
+            return { status: 410, body: { ok: false, reason: 'session cwd no longer exists' } };
+          }
+          if (!fs.existsSync(claudeTranscriptPath(runCwd, session_id))) {
+            return {
+              status: 410,
+              body: { ok: false, reason: 'resume transcript no longer exists' },
+            };
+          }
+
+          // Window collision defense — mirrors revive minus resurrection. The window
+          // name comes from the LIVE callsign (windowName(port, callsign), the
+          // enableRemote precedent). Adopt has NO prior ownership claim, so unlike
+          // revive there is no self-row to ADOPT: a live claude pane on this name is
+          // some other live session → 409; a live pane running anything else (the
+          // human repurposed the window) → 409; only a pane PROVEN dead or an
+          // expected bare shell is a safe remnant to kill by verified name and reuse.
+          const tmux_window = tmuxAdapter.windowName(port, c.callsign);
+          const existing = await findScopedWindow(tmux_window);
+          if (existing === null) {
+            return {
+              status: 503,
+              body: {
+                ok: false,
+                reason: 'tmux window lookup failed; adopt held to avoid a duplicate session',
+              },
+            };
+          }
+          if (existing && !existing.pane_dead && existing.pane_cmd === 'claude') {
+            return {
+              status: 409,
+              body: { ok: false, reason: `window ${tmux_window} already hosts a live claude pane` },
+            };
+          }
+          if (existing && !existing.pane_dead && !SHELL_RE.test(existing.pane_cmd)) {
+            return {
+              status: 409,
+              body: {
+                ok: false,
+                reason: `window ${tmux_window} hosts a live '${existing.pane_cmd}' pane — not a dead remnant; refusing to kill it`,
+              },
+            };
+          }
+          if (existing) {
+            const killed = await tmuxAdapter.killWindowVerified(tmux_window);
+            if (!killed.ok && !killed.gone) {
+              return {
+                status: 500,
+                body: { ok: false, reason: killed.error ?? 'tmux kill-window failed' },
+              };
+            }
+          }
+
+          // Launch. adopt carries the LIVE callsign, the hook cwd as both effective
+          // and requested cwd, NULL worktree_path, the human's bypass choice, and
+          // NEVER remote_control (v1). excludeSpawnId is null — adopt has no prior
+          // row, so ANY active owner on the window is a rival to refuse.
+          //
+          // Gateway routing: unlike revive, adopt has NO evidence to inherit — the
+          // session it resumes was started by a human in their own terminal, and
+          // whether that terminal had a gateway exported is not knowable from here
+          // (the pane is gone by the time we resume). So this is the one path that
+          // consults gateway_default, which is exactly what a default is for: the
+          // stated answer to "what should a fleet pane do when nothing else says".
+          // A human who runs everything through a proxy sets it and adopt follows;
+          // anyone else gets Anthropic, as before. Deliberately NOT an error when
+          // the profile is half-configured — an adopt is a move, not a new billed
+          // session, and refusing it would strand a live conversation outside the
+          // board over a settings typo.
+          const adoptGateway = gatewayDecision(null);
+          return await launchResume({
+            session_id,
+            callsign: c.callsign,
+            tmux_window,
+            runCwd,
+            requested_cwd: runCwd,
+            worktree_path: null,
+            skip_permissions: skip,
+            remoteWanted: false,
+            gatewayEnv: adoptGateway.env,
+            excludeSpawnId: null,
+            overrideExtra: { adopt_of: session_id },
+            note: 'moving to tmux…',
+            tickMsg: `⇥ moving ${c.callsign} to tmux (resume ${session_id.slice(0, 8)})${skip ? ' (unsupervised)' : ''}`,
+            failReason: 'tmux adopt failed',
+            bodyExtra: { adopted: true },
+          });
+        } finally {
+          // Release the single-flight claim on EVERY exit path.
+          revivingSessions.delete(session_id);
+        }
+      };
+      return { done: false, runAdopt };
+    }).pipe(
+      Effect.flatMap((step) =>
+        step.done ? Effect.succeed(step.wire) : Effect.promise(step.runAdopt),
+      ),
+    );
+  }
+
+  async function adoptSessionLegacy(
     session_id: string,
     body: SpawnBody = {},
     { deferred = false }: { deferred?: boolean } = {},
@@ -2981,6 +3652,20 @@ export function createSpawns(ctx: SpawnsCtx) {
       // Release the single-flight claim on EVERY exit path.
       revivingSessions.delete(session_id);
     }
+  }
+
+  // P9.1 Slice 5 dispatcher: discharge the Effect core through runControlDetached
+  // (or the legacy async body when EFFECT_CORE_ADOPT_SESSION=false or no runner
+  // was wired). Keeps the name `adoptSession` so ownedAdoptSession is unchanged;
+  // the deferred opts object is passed straight through.
+  function adoptSession(
+    session_id: string,
+    body: SpawnBody = {},
+    opts: { deferred?: boolean } = {},
+  ): Promise<AdoptWire> {
+    return EFFECT_CORE_ADOPT_SESSION && runControlDetached
+      ? runControlDetached(adoptSessionEffect(session_id, body, opts))
+      : adoptSessionLegacy(session_id, body, opts);
   }
 
   // POST /api/spawn/:id/rc — an explicit human board action, relayed as

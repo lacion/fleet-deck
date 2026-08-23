@@ -216,3 +216,24 @@ atomicity proven; the release-to-finally move shown unobservable through the
    line (never a duplicate DB write — the via-match WHERE makes the second
    UPDATE changes=0). Not fixable without breaking byte-order parity with the
    legacy releasePlanClaim.
+
+## §8 — SLICE 5 CORRECTION + LADDER RECORD (2026-08-23)
+
+- §1D/§3-Slice-5's "mixed caller of launchResume" premise was FACTUALLY WRONG:
+  launchResume has only the two request callers (revive, adopt). The real mixed
+  caller is resurrectSpawn — a synchronous compare-and-set reached from revive's
+  BUG-3 branch and the root liveness tick — which needed no conversion. D5
+  option (a) landed with both functions byte-untouched (reviewer-verified SHAs).
+- Slice-5 review follow-ups: (1) DONE this slice — fleet-bugs' memoryCore
+  injects the runner so the unique concurrent-revive double-pane pin exercises
+  the Effect core; (2) OPEN — one in-process adoptSessionEffect {deferred:true}
+  case in the mixed-caller file (production pin exists via adopt.test.ts);
+  (3) BINDING ON SLICE 6b — consolidate the per-core Wire/Step/discharge
+  copies into one file-local SpawnsWire + ControlStep<A> + dischargeStep before
+  spawn() adds a fifth copy, and do NOT take full-body Legacy copies into
+  spawn(); (4) daemon-maintenance and p1-spawns-lifecycle memoryCores still
+  omit the runner (legacy-path fixtures) — align when next touched.
+- Pre-existing residuals R1-R3 (BUG-3 pre-await snapshot vs the tick's BUG-152
+  re-read; revivingSessions add-before-try latent leak; adopt's ended_at
+  TOCTOU) are recorded as token-identical legacy behavior both sides — NOT to
+  be fixed inside conversion slices.
