@@ -39,7 +39,11 @@ import { errText, errCode } from '../errors.ts';
 import { makeAgentsPollProgram } from './agents-poll.ts';
 import type { BackgroundController } from './background-owner.ts';
 import { makeDaemonBackgroundProgram } from './background-program.ts';
-import { legacyBootReconciliationWithoutRetentionWork } from './boot-reconciliation.ts';
+import {
+  type BootReconciliationWork,
+  legacyBootReconciliationWithoutRetentionWork,
+} from './boot-reconciliation.ts';
+import { makeStoreBootReconciliationWork } from './db-workflows/boot.ts';
 import { makeStoreRetentionWork } from './db-workflows/retention.ts';
 import { DaemonStartupRefusalError, HttpBindStartupError } from './errors.ts';
 import { type HttpServerOwner, makeHttpServerOwner } from './http-server-owner.ts';
@@ -1139,6 +1143,24 @@ async function bootDaemon(
     reconcileSpawns: () => Promise.resolve(core.reconcileSpawns()),
     awaitBroadcastIdle: whenBroadcastIdle,
   });
+  // P8.6 slice 2: the boot reconciliation legs now yield the root-owned Store
+  // service (db-workflows/boot.ts). storeBackedBoot is the wired default; boot
+  // above is retained as the one-flag rollback seam — flip STORE_BACKED_BOOT to
+  // false to restore the legacy capability-free path. Both branches translate a
+  // leg failure through the same operationalError, so the boot workflow's
+  // BackgroundOperationalError boundary is byte-identical either way, and
+  // fail-open readiness settles regardless.
+  const storeBackedBoot = makeStoreBootReconciliationWork({
+    clearForkHealing: () => {
+      core.reconcileClearForks();
+    },
+    reconcileSpawns: () => Promise.resolve(core.reconcileSpawns()),
+    awaitBroadcastIdle: whenBroadcastIdle,
+  });
+  const STORE_BACKED_BOOT = true;
+  const wiredBoot: Omit<BootReconciliationWork<Store>, 'firstRetention'> = STORE_BACKED_BOOT
+    ? storeBackedBoot
+    : boot;
   const retentionWork = legacyRetentionWork({
     pruneEvents: core.pruneEvents,
     retentionSweep: core.retentionSweep,
@@ -1213,7 +1235,7 @@ async function bootDaemon(
       }),
       retention,
       boot: {
-        ...boot,
+        ...wiredBoot,
         onOperationalFailure: ({ operation, error }) =>
           Effect.sync(() => {
             const label =

@@ -48,7 +48,7 @@ export type LegacyBootReconciliationWithoutRetentionCallbacks = Omit<
   'firstRetention'
 >;
 
-function operationalError(
+export function operationalError(
   operation: BootReconciliationOperation,
   cause: unknown,
 ): BackgroundOperationalError {
