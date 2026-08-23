@@ -197,3 +197,22 @@ Ordered, commit-sized, characterization-first. **Rule:** no path is converted un
 - **Q3 RULED:** split confirmed — Slice 6a wires `/api/spawn` under a SPAWN-SPECIFIC settler (its defect arm must reproduce the redacted `spawnFailureReason` bytes per D6, never the control group's `{err:'internal'}`), legacy fall-through retained; Slice 6b converts `spawnEffect`.
 - **Q4 RULED:** Slice 0 may skip the subagent adversarial review (orchestrator line review). Slices 1, 2, 3, 4, 5, 6a, 6b are adversarial-review-mandatory.
 - Danger notes D1–D7 are binding, byte-frozen requirements on every slice brief.
+
+## §7 — SLICE 1 REVIEW RECORD (2026-08-23)
+
+Slice 1 landed with an independent adversarial verdict of SHIP-WITH-NITS (no
+blockers; the twenty-row disposition table verified row-by-row; handOff
+atomicity proven; the release-to-finally move shown unobservable through the
+60 ms broadcast coalesce). Two nits, both scheduled:
+
+1. **BINDING PRE-SLICE-6 REQUIREMENT:** the three repo-mode validation 400s
+   (worktree-in-repo, branch-required, branch_mode-invalid) are deliberate
+   leak-fixes now released by the structural finally, but no test pins them.
+   Before Slice 6 converts spawn's control flow, add a characterization case
+   (plan_id + repo body hitting each 400 → plan reverts to restoreStatus), and
+   the Slice 6 author must keep those 400s INSIDE the ensuring body — pulling
+   them into the claim prefix would silently re-open the leak.
+2. Accepted: a pathologically throwing tick/onMutate can emit a duplicate feed
+   line (never a duplicate DB write — the via-match WHERE makes the second
+   UPDATE changes=0). Not fixable without breaking byte-order parity with the
+   legacy releasePlanClaim.
