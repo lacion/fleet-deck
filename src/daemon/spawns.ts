@@ -106,6 +106,38 @@ type SpawnKillStep =
 // runControlDetached runner was injected).
 const EFFECT_CORE_SPAWN_KILL = true;
 
+// P9.1 Slice 4: the uniform success value of the enableRemote (`/rc`) Effect
+// core — structurally identical to SpawnKillWire (a control-result pair the
+// transport hands straight to json()). Spelled locally for the same reason:
+// spawns is DOMAIN and must not relative-import the app zone.
+interface EnableRemoteWire {
+  readonly status: number;
+  readonly body?: unknown;
+}
+
+// enableRemote's two-phase shape (mirrors SpawnKillStep): the synchronous prefix
+// — the row lookup and every pre-await gate (404 / shell 409 / not-live 409 /
+// already-enabled 200 / not-idle 409) — resolves EITHER to a terminal wire OR to
+// the coarse enable-phase thunk (`runEnable`, which carries the window lookup,
+// the TOCTOU re-read, the per-pane input lock, the type+Enter keystroke, and the
+// 6s harvest race — i.e. every await). The sync region CONSTRUCTS runEnable but
+// never runs it; the flatMap below discharges it as one Effect.promise. Keeping
+// the whole awaiting tail inside runEnable preserves legacy timing byte-for-byte:
+// the runtime executes Effect.sync → flatMap → Effect.promise synchronously up to
+// runEnable's FIRST await (findScopedWindow), so every sync gate still fires on
+// the request turn, exactly as the legacy async body did. The single-flight latch
+// (remoteEnables) lives OUTSIDE this Effect — in enableRemote, wrapping the
+// dispatcher-produced native Promise — so Promise identity and the map lifecycle
+// are unchanged by the conversion (danger note D7).
+type EnableRemoteStep =
+  | { readonly done: true; readonly wire: EnableRemoteWire }
+  | { readonly done: false; readonly runEnable: () => Promise<EnableRemoteWire> };
+
+// P9.1 Slice 4 rollback seam: false → the enableRemoteOnce dispatcher bypasses
+// the Effect core and answers through the legacy async body (also reached
+// whenever no runControlDetached runner was injected).
+const EFFECT_CORE_ENABLE_REMOTE = true;
+
 // The consumer view of the threaded closure state. derive assembles the literal
 // and casts it `as unknown as CoreCtx`, so the ONLY assignability check is
 // CoreCtx <: SpawnsCtx. Function fields use ARROW-PROPERTY syntax (not method
@@ -554,7 +586,7 @@ export function createSpawns(ctx: SpawnsCtx) {
     resolveGatewayEnv,
     acquireWorktreePathLock,
     claimWorktreeCustody, // remove-vs-revive serialization (revive side; derive wires it)
-    runControlDetached, // P9.1 Q1: ingress-owned runner for the spawnKill Effect core
+    runControlDetached, // P9.1 Q1: ingress-owned runner for the spawns Effect cores (kill, rc, …)
   } = ctx;
 
   // ------------------------------------------------ P1 maintenance ownership
@@ -2976,7 +3008,205 @@ export function createSpawns(ctx: SpawnsCtx) {
     remoteEnables.set(spawn_id, promise);
     return promise;
   }
-  async function enableRemoteOnce(spawn_id: string) {
+  // P9.1 Slice 4: enableRemoteOnce dispatches to the Effect core (the live path)
+  // or the verbatim legacy async body (the rollback seam / no-runner fallback).
+  // enableRemote (above) is UNCHANGED — the single-flight latch (remoteEnables)
+  // still wraps whatever native Promise this returns, so two concurrent /rc
+  // requests for one spawn collapse to one harvest exactly as before: the memo
+  // sits OUTSIDE the Effect boundary, so Promise identity and the map lifecycle
+  // are byte-identical across the flip (danger note D7).
+  function enableRemoteOnce(spawn_id: string): Promise<EnableRemoteWire> {
+    return EFFECT_CORE_ENABLE_REMOTE && runControlDetached
+      ? runControlDetached(enableRemoteOnceEffect(spawn_id))
+      : enableRemoteOnceLegacy(spawn_id);
+  }
+
+  // The Effect core (R = never, E = never; expected outcomes are DATA —
+  // EnableRemoteWire). The sync prefix (row lookup + every pre-await gate) is one
+  // Effect.sync; the whole awaiting tail (window lookup, TOCTOU re-read, per-pane
+  // input lock, type+Enter, the 6s harvest race) is one Effect.promise (runEnable)
+  // that preserves legacy timing byte-for-byte: the runtime runs Effect.sync →
+  // flatMap → Effect.promise synchronously up to runEnable's first await
+  // (findScopedWindow), so every sync gate still fires on the request turn exactly
+  // as the legacy async body did. Discharged to a native Promise<EnableRemoteWire>
+  // by the injected runControlDetached runner (the ingress-owned
+  // Effect.runPromiseWith runner — Q1). Expected refusals are DATA, so this is
+  // faithful with Effect.promise (throw → die), not Effect.tryPromise: a genuine
+  // throw becomes a die → the transport's defect arm → 500, exactly as an escaping
+  // throw in the legacy async body did.
+  function enableRemoteOnceEffect(spawn_id: string): Effect.Effect<EnableRemoteWire, never, never> {
+    return Effect.sync((): EnableRemoteStep => {
+      const row = q.getSpawn.get(spawn_id);
+      if (!row)
+        return { done: true, wire: { status: 404, body: { ok: false, reason: 'no such spawn' } } };
+      if (row.kind === 'shell') {
+        return {
+          done: true,
+          wire: {
+            status: 409,
+            body: { ok: false, reason: 'remote control is unavailable for shell sessions' },
+          },
+        };
+      }
+      if (row.status !== 'live') {
+        return {
+          done: true,
+          wire: { status: 409, body: { ok: false, reason: `spawn is ${row.status}, not live` } },
+        };
+      }
+      if (row.remote_control && row.remote_url) {
+        return {
+          done: true,
+          wire: {
+            status: 200,
+            body: { ok: true, enabled: true, url: row.remote_url, pending: false },
+          },
+        };
+      }
+      const session = q.getSession.get(row.session_id);
+      if (!session || !['queued', 'idle'].includes(session.col)) {
+        return {
+          done: true,
+          wire: {
+            status: 409,
+            body: {
+              ok: false,
+              reason: `session is ${session?.col ?? 'missing'}, not queued or idle`,
+            },
+          },
+        };
+      }
+      // runEnable = the coarse enable tail (every await from findScopedWindow on),
+      // kept in ONE Effect.promise so legacy timing is byte-identical. `row` (a
+      // const narrowed non-null above) persists into this closure; findScopedWindow
+      // accepts row.tmux_window's nullable type directly, so no re-narrow is needed
+      // (unlike spawnKill, whose kill path required a non-null tmux_window). The
+      // body below is the verbatim legacy tail, one indentation level deeper.
+      const runEnable = async (): Promise<EnableRemoteWire> => {
+        const win = await findScopedWindow(row.tmux_window);
+        if (win === null) {
+          return {
+            status: 503,
+            body: { ok: false, reason: 'tmux window lookup failed; remote control was not sent' },
+          };
+        }
+        if (!win || win.pane_dead || win.pane_cmd !== 'claude') {
+          const observed = !win
+            ? 'missing'
+            : win.pane_dead
+              ? 'dead'
+              : `running ${win.pane_cmd || 'unknown'}`;
+          return {
+            status: 409,
+            body: { ok: false, reason: `claude pane is not alive (${observed})` },
+          };
+        }
+        // TOCTOU recheck: findScopedWindow awaited above, and in that gap another
+        // client's prompt can move this card from idle/queued to working/needs-you
+        // while the pane stays a live `claude` (so the window check still passes).
+        // Re-read the turn-state FRESH — the same q.getSession query the initial
+        // idle/queued gate used — and bail before typing `/rc`: injecting it into a
+        // now-active TUI corrupts the human's in-flight turn. (Mirrors the initial
+        // gate; closes the check-then-send race that the window-only recheck missed.)
+        const fresh = q.getSession.get(row.session_id);
+        if (!fresh || !['queued', 'idle'].includes(fresh.col)) {
+          return {
+            status: 409,
+            body: {
+              ok: false,
+              reason: `session is ${fresh?.col ?? 'missing'}, not queued or idle`,
+            },
+          };
+        }
+        // `/rc <name>` — named by callsign so the session the human finds on
+        // claude.ai carries the same name as the card on the board. Verified live
+        // on CLI 2.1.207: no confirmation dialog, and the
+        // https://claude.ai/code/session_… URL lands in the pane's scrollback.
+        // Use the LIVE session callsign (a manual re-ticket renames the card but not
+        // the frozen spawn.callsign) so claude.ai shows today's name.
+        const target = scopedPaneTarget(win);
+        // BUG-053: the FINAL turn-state validation happens here, after every
+        // remaining pre-mutation await, and text + Enter then go to tmux as ONE
+        // send-keys argument list — a single tmux command queue the server runs
+        // back-to-back against the pane. The former split (typeKeys → recheck →
+        // sendEnter) was self-defeating: the recheck could only fire after the TUI
+        // was already mutated, so a session flipping active while typeKeys was in
+        // flight got a 409 that left `/rc <callsign>` sitting in the active input
+        // buffer, and a flip during sendEnter submitted it outright. A turn-state
+        // flip is hook-driven and lands on a LATER event-loop tick than the daemon
+        // action that caused it, so checking now and submitting as one tmux
+        // invocation never precedes a flip with unsent `/rc` text in the buffer.
+        const idleNow = (s: SessionRow | undefined) => s && ['queued', 'idle'].includes(s.col);
+        const attempt = async () => {
+          const current = q.getSession.get(row.session_id);
+          if (!idleNow(current)) {
+            return {
+              status: 409,
+              body: {
+                ok: false,
+                reason: `session is ${current?.col ?? 'missing'}, not queued or idle`,
+              },
+            };
+          }
+          const sent = await tmuxAdapter.typeAndEnter(
+            target,
+            `/rc ${current?.callsign ?? row.callsign}`,
+          );
+          if (!sent) {
+            return {
+              status: 500,
+              body: { ok: false, reason: 'failed to type remote-control command into pane' },
+            };
+          }
+          return null; // submitted — proceed to the harvest
+        };
+        // Serialize daemon control input per pane (the recommended "same lease"):
+        // a second /rc for THIS pane waits for the first attempt's type+Enter to
+        // settle, then re-validates before it mutates — two concurrent enables can
+        // never interleave keystrokes in one input buffer. The promise chain is
+        // keyed by pane target and pruned on settle, so the map stays empty in the
+        // steady state.
+        const prior = rcInputLocks.get(target) ?? Promise.resolve();
+        const run = prior
+          .catch(() => {
+            /* a prior lease's rejection is that attempt's concern, not this one's */
+          })
+          .then(attempt);
+        rcInputLocks.set(target, run);
+        let refused: Awaited<ReturnType<typeof attempt>>;
+        try {
+          refused = await run;
+        } finally {
+          if (rcInputLocks.get(target) === run) rcInputLocks.delete(target);
+        }
+        if (refused) return refused;
+        const harvest = delayedRemoteHarvest(spawn_id);
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        const timed = new Promise<{ pending: boolean; url: string | null }>((resolve) => {
+          timeout = setTimeout(() => {
+            resolve({ pending: true, url: null });
+          }, 6_000);
+          timeout.unref();
+        });
+        const result = await Promise.race([
+          harvest.then(({ url }) => ({ pending: false, url })),
+          timed,
+        ]);
+        clearTimeout(timeout);
+        return {
+          status: 200,
+          body: { ok: true, enabled: true, url: result.url, pending: result.pending },
+        };
+      };
+      return { done: false, runEnable };
+    }).pipe(
+      Effect.flatMap((step) =>
+        step.done ? Effect.succeed(step.wire) : Effect.promise(step.runEnable),
+      ),
+    );
+  }
+
+  async function enableRemoteOnceLegacy(spawn_id: string): Promise<EnableRemoteWire> {
     const row = q.getSpawn.get(spawn_id);
     if (!row) return { status: 404, body: { ok: false, reason: 'no such spawn' } };
     if (row.kind === 'shell') {
