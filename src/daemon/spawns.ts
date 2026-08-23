@@ -77,125 +77,91 @@ interface SpawnsTmuxAdapter {
   paneCurrentCommand: SpawnModule['paneCurrentCommand'];
 }
 
-// P9.1 Slice 3: the uniform success value of the spawnKill Effect core — the
-// (status, body) control-result pair the transport hands straight to json(). It
-// mirrors app/http-workflows/control.ts's ControlWire structurally; spawns is
-// DOMAIN and must not relative-import the app zone, so it is spelled locally
-// (exactly as retention's DismissWire is).
-interface SpawnKillWire {
+// P9.1 Slice 6 (§8 item 3 — consolidation): the file-local shared control-result
+// vocabulary for spawns' Effect cores. Slice 3 (spawnKill), Slice 4 (enableRemote),
+// and Slice 5 (revive, adoptSession) each converted their request path to an
+// Effect<SpawnsWire, never, never> and each carried a PRIVATE copy of this Wire +
+// Step + discharge trio (SpawnsWire/SpawnsWire/SpawnsWire/SpawnsWire and the
+// matching *Step). Those copies were byte-identical modulo the run-thunk's local
+// name, so they are unified here — ONE SpawnsWire, ONE ControlStep<A>, ONE
+// dischargeStep — BEFORE Slice 6 (spawn) would add a fifth. This is type-level and
+// mechanical: the wire bytes and every core's behavior are unchanged (the slice
+// 3/4/5 suites prove it). It mirrors app/http-workflows/control.ts's ControlWire
+// structurally; spawns is DOMAIN and must not relative-import the app zone, so it
+// is spelled locally — exactly as retention's DismissWire is (retention keeps its
+// own copy; the rule is file-local).
+interface SpawnsWire {
   readonly status: number;
   readonly body?: unknown;
 }
 
-// spawnKill's two-phase shape (mirrors retention's DismissStep): the synchronous
-// prefix — the row lookup and its 404 — resolves EITHER to a terminal wire (the
-// 404) OR to the coarse kill-phase thunk (`runKill`, which carries the tmux_window
-// invariant, the provisioning-cancel race, and the verified kill — i.e. every
-// await). The sync region CONSTRUCTS runKill (harmless, synchronous) but never
-// runs it; the flatMap below discharges it as one Effect.promise. Keeping the
-// whole awaiting tail inside runKill preserves legacy timing byte-for-byte: the
-// runtime executes Effect.sync → flatMap → Effect.promise synchronously up to
-// runKill's FIRST await, so the tmux_window throw and `controller.abort()` still
-// fire on the request turn, exactly as the legacy async body did.
-type SpawnKillStep =
-  | { readonly done: true; readonly wire: SpawnKillWire }
-  | { readonly done: false; readonly runKill: () => Promise<SpawnKillWire> };
+// The uniform two-phase shape shared by every spawns Effect core (mirrors
+// retention's DismissStep). A core's synchronous prefix resolves EITHER to a
+// terminal wire (an early 404 / sync gate) OR to a single coarse `run` thunk that
+// carries EVERY remaining await. The sync region CONSTRUCTS `run` (harmless,
+// synchronous) but never runs it; dischargeStep discharges it as one
+// Effect.promise. Keeping the whole awaiting tail inside `run` preserves legacy
+// timing byte-for-byte: the runtime executes Effect.sync → flatMap → Effect.promise
+// synchronously up to `run`'s FIRST await, so every synchronous gate AND any
+// single-flight claim in the prefix (revivingSessions.add, controller.abort(), the
+// tmux_window throw) still fires on the request turn, exactly as the legacy async
+// body did. Each core keeps a descriptively-named local thunk (runKill / runEnable /
+// runRevive / runAdopt) assigned to `run` at the return site, and documents what its
+// tail carries where it is built:
+//   • runKill   — the tmux_window invariant, the provisioning-cancel race, the
+//                 verified kill.
+//   • runEnable — the window lookup, the TOCTOU re-read, the per-pane input lock, the
+//                 type+Enter keystroke, the 6s harvest race. (Its single-flight latch,
+//                 remoteEnables, lives OUTSIDE the Effect — in enableRemote, wrapping
+//                 the dispatcher-produced native Promise — so Promise identity and the
+//                 map lifecycle are unchanged by the conversion: danger note D7.)
+//   • runRevive — every remaining gate in legacy order, the revivingSessions claim,
+//                 the worktree path-lock + custody leases, the H-R7 cwd/transcript
+//                 validation, the window-collision defense + BUG-3 adoption,
+//                 launchResume.
+//   • runAdopt  — every remaining gate in legacy order, the revivingSessions claim,
+//                 the arm consume, the H-R7 validation, the window-collision defense,
+//                 launchResume.
+type ControlStep<A> =
+  | { readonly done: true; readonly wire: A }
+  | { readonly done: false; readonly run: () => Promise<A> };
+
+// The shared discharge for every ControlStep tail: a terminal wire succeeds
+// immediately; a `run` thunk is awaited as ONE Effect.promise (a rejection becomes a
+// die, never a typed error — E stays never). Used verbatim as
+// `.pipe(Effect.flatMap(dischargeStep))` at every core's tail.
+const dischargeStep = <A>(step: ControlStep<A>): Effect.Effect<A, never, never> =>
+  step.done ? Effect.succeed(step.wire) : Effect.promise(step.run);
 
 // P9.1 Slice 3 rollback seam: false → the spawnKill dispatcher bypasses the Effect
 // core and answers through the legacy async body (also reached whenever no
 // runControlDetached runner was injected).
 const EFFECT_CORE_SPAWN_KILL = true;
 
-// P9.1 Slice 4: the uniform success value of the enableRemote (`/rc`) Effect
-// core — structurally identical to SpawnKillWire (a control-result pair the
-// transport hands straight to json()). Spelled locally for the same reason:
-// spawns is DOMAIN and must not relative-import the app zone.
-interface EnableRemoteWire {
-  readonly status: number;
-  readonly body?: unknown;
-}
-
-// enableRemote's two-phase shape (mirrors SpawnKillStep): the synchronous prefix
-// — the row lookup and every pre-await gate (404 / shell 409 / not-live 409 /
-// already-enabled 200 / not-idle 409) — resolves EITHER to a terminal wire OR to
-// the coarse enable-phase thunk (`runEnable`, which carries the window lookup,
-// the TOCTOU re-read, the per-pane input lock, the type+Enter keystroke, and the
-// 6s harvest race — i.e. every await). The sync region CONSTRUCTS runEnable but
-// never runs it; the flatMap below discharges it as one Effect.promise. Keeping
-// the whole awaiting tail inside runEnable preserves legacy timing byte-for-byte:
-// the runtime executes Effect.sync → flatMap → Effect.promise synchronously up to
-// runEnable's FIRST await (findScopedWindow), so every sync gate still fires on
-// the request turn, exactly as the legacy async body did. The single-flight latch
-// (remoteEnables) lives OUTSIDE this Effect — in enableRemote, wrapping the
-// dispatcher-produced native Promise — so Promise identity and the map lifecycle
-// are unchanged by the conversion (danger note D7).
-type EnableRemoteStep =
-  | { readonly done: true; readonly wire: EnableRemoteWire }
-  | { readonly done: false; readonly runEnable: () => Promise<EnableRemoteWire> };
-
 // P9.1 Slice 4 rollback seam: false → the enableRemoteOnce dispatcher bypasses
 // the Effect core and answers through the legacy async body (also reached
 // whenever no runControlDetached runner was injected).
 const EFFECT_CORE_ENABLE_REMOTE = true;
-
-// P9.1 Slice 5: the uniform success value of the revive Effect core —
-// structurally identical to SpawnKillWire (a control-result pair the transport
-// hands straight to json()). Spelled locally for the same reason: spawns is
-// DOMAIN and must not relative-import the app zone.
-interface ReviveWire {
-  readonly status: number;
-  readonly body?: unknown;
-}
-
-// revive's two-phase shape (mirrors SpawnKillStep): the synchronous prefix — the
-// row lookup and its 404 — resolves EITHER to a terminal wire OR to the coarse
-// resume-phase thunk (`runRevive`, which carries every remaining gate in legacy
-// order — shell / not-revivable / tmux_window / runtime-override / unsupervised /
-// gateway / active / single-flight — the revivingSessions claim, the worktree
-// path-lock + custody leases, the H-R7 cwd/transcript validation, the window
-// collision defense + BUG-3 adoption, and the shared launchResume tail — i.e.
-// every await). The sync region CONSTRUCTS runRevive but never runs it; the
-// flatMap below discharges it as one Effect.promise. Keeping the whole tail inside
-// runRevive preserves legacy timing byte-for-byte: the runtime runs Effect.sync →
-// flatMap → Effect.promise synchronously up to runRevive's FIRST await (the
-// worktree path-lock, or findScopedWindow when there is no worktree), so every
-// sync gate AND the revivingSessions.add single-flight claim still fire on the
-// request turn, exactly as the legacy async body did.
-type ReviveStep =
-  | { readonly done: true; readonly wire: ReviveWire }
-  | { readonly done: false; readonly runRevive: () => Promise<ReviveWire> };
 
 // P9.1 Slice 5 rollback seam: false → the revive dispatcher bypasses the Effect
 // core and answers through the legacy async body (also reached whenever no
 // runControlDetached runner was injected).
 const EFFECT_CORE_REVIVE = true;
 
-// P9.1 Slice 5: the uniform success value of the adoptSession ("Move to tmux")
-// Effect core — structurally identical to ReviveWire. Spelled locally for the
-// same reason.
-interface AdoptWire {
-  readonly status: number;
-  readonly body?: unknown;
-}
-
-// adoptSession's two-phase shape (mirrors ReviveStep): the synchronous prefix —
-// the session lookup and its 404 — resolves EITHER to a terminal wire OR to the
-// coarse adopt-phase thunk (`runAdopt`, which carries every remaining gate in
-// legacy order — callsign / body-validation / unsupervised / disarm / lineage /
-// live-arm / ended-forks / not-resumable / single-flight — the shared
-// revivingSessions claim, the arm consume, the H-R7 validation, the window
-// collision defense, and the shared launchResume tail — i.e. every await). Same
-// timing guarantee as ReviveStep: the runtime runs synchronously up to runAdopt's
-// FIRST await (findScopedWindow), so every sync gate AND the revivingSessions.add
-// claim fire on the request turn, exactly as the legacy async body did.
-type AdoptStep =
-  | { readonly done: true; readonly wire: AdoptWire }
-  | { readonly done: false; readonly runAdopt: () => Promise<AdoptWire> };
-
 // P9.1 Slice 5 rollback seam: false → the adoptSession dispatcher bypasses the
 // Effect core and answers through the legacy async body (also reached whenever no
 // runControlDetached runner was injected).
 const EFFECT_CORE_ADOPT_SESSION = true;
+
+// P9.1 Slice 6 (spawn) rollback seam: false → the spawn dispatcher bypasses the
+// Effect core and answers through the legacy async body (also reached whenever no
+// runControlDetached runner was injected). spawn is the largest core: its sync
+// prefix (validation gates + BUG-040 claim + guard construction) and its coarse
+// `runSpawn` tail (the try whose finally settles the claim — repo-mode 400s,
+// claimTarget, probe/materialize, the pre-abort quiesce guard, the fork+handOff,
+// launchPane) are EXTRACTED to spawnStep so spawnLegacy and spawnEffect compose
+// the SAME code (§8 item 3 — no full-body twin; danger notes D1–D4/D6/D7).
+const EFFECT_CORE_SPAWN = true;
 
 // The consumer view of the threaded closure state. derive assembles the literal
 // and casts it `as unknown as CoreCtx`, so the ONLY assignability check is
@@ -1474,14 +1440,35 @@ export function createSpawns(ctx: SpawnsCtx) {
 
   // POST /api/spawn — either the original existing-cwd flow or managed
   // {repo, branch, branch_mode} provisioning.
-  async function spawn(body: SpawnBody) {
+  // P9.1 Slice 6 (spawn) — the SPLIT producer shared by both composers (§8 item 3,
+  // R2: no full-body twin). The synchronous prefix (validation gates + BUG-040
+  // claim + guard construction) runs on the request turn and either resolves a
+  // terminal wire (`{ done: true }`) or hands the ENTIRE awaiting tail — the try
+  // whose `finally` settles the claim — to a single coarse `runSpawn` thunk
+  // (`{ done: false, run }`). spawnEffect discharges it as one Effect.promise;
+  // spawnLegacy awaits it directly; the bytes are identical either way.
+  //
+  // Every prefix early-return fires BEFORE the claim is owed (either before the
+  // claim UPDATE at `claimPlanExecution.run`, or on a claim that never landed),
+  // so terminating `{ done: true }` here without `guard.settle()` cannot strand a
+  // claim — the guard is constructed only once, at the prefix's tail, and every
+  // path that reaches an owed claim flows into `runSpawn`. The three repo-mode
+  // 400s, claimTarget, the pre-abort quiesce guard, the fork+handOff, and
+  // launchPane ALL stay inside `runSpawn` (§7 nit 1 / D2 / D3 / D4).
+  function spawnStep(body: SpawnBody): ControlStep<SpawnsWire> {
     const cap = spawnCapability();
     if (!cap.available) {
-      return { status: 400, body: { ok: false, reason: `spawning unavailable: ${cap.reason}` } };
+      return {
+        done: true,
+        wire: { status: 400, body: { ok: false, reason: `spawning unavailable: ${cap.reason}` } },
+      };
     }
     const kind = body.kind ?? 'claude';
     if (kind !== 'claude' && kind !== 'shell') {
-      return { status: 400, body: { ok: false, reason: "kind must be 'claude' or 'shell'" } };
+      return {
+        done: true,
+        wire: { status: 400, body: { ok: false, reason: "kind must be 'claude' or 'shell'" } },
+      };
     }
     for (const k of [
       'cwd',
@@ -1496,7 +1483,10 @@ export function createSpawns(ctx: SpawnsCtx) {
       'repo_org',
     ]) {
       if (body[k] != null && typeof body[k] !== 'string') {
-        return { status: 400, body: { ok: false, reason: `${k} must be a string` } };
+        return {
+          done: true,
+          wire: { status: 400, body: { ok: false, reason: `${k} must be a string` } },
+        };
       }
     }
     // repo_host only steers the org/repo shorthand (see repos.mjs). Validate its
@@ -1504,10 +1494,16 @@ export function createSpawns(ctx: SpawnsCtx) {
     // repo — a host with nothing to steer is a confused request, not a default.
     if (body.repo_host != null) {
       if (body.repo_host !== 'github' && body.repo_host !== 'gitlab') {
-        return { status: 400, body: { ok: false, reason: 'repo_host must be github or gitlab' } };
+        return {
+          done: true,
+          wire: { status: 400, body: { ok: false, reason: 'repo_host must be github or gitlab' } },
+        };
       }
       if (body.repo == null) {
-        return { status: 400, body: { ok: false, reason: 'repo_host requires repo' } };
+        return {
+          done: true,
+          wire: { status: 400, body: { ok: false, reason: 'repo_host requires repo' } },
+        };
       }
     }
     // repo_transport steers the SAME shorthand (D1) and is refused without a
@@ -1515,59 +1511,92 @@ export function createSpawns(ctx: SpawnsCtx) {
     // a confused request. An explicit value also PERSISTS (D2), below.
     if (body.repo_transport != null) {
       if (body.repo_transport !== 'ssh' && body.repo_transport !== 'https') {
-        return { status: 400, body: { ok: false, reason: 'repo_transport must be ssh or https' } };
+        return {
+          done: true,
+          wire: {
+            status: 400,
+            body: { ok: false, reason: 'repo_transport must be ssh or https' },
+          },
+        };
       }
       if (body.repo == null) {
-        return { status: 400, body: { ok: false, reason: 'repo_transport requires repo' } };
+        return {
+          done: true,
+          wire: { status: 400, body: { ok: false, reason: 'repo_transport requires repo' } },
+        };
       }
     }
     if (body.repo_org != null) {
       if (body.repo == null)
-        return { status: 400, body: { ok: false, reason: 'repo_org requires repo' } };
+        return {
+          done: true,
+          wire: { status: 400, body: { ok: false, reason: 'repo_org requires repo' } },
+        };
       try {
         validateRepoDefaultOrg(body.repo_org);
       } catch (err) {
         return {
-          status: errStatus(err) ?? 400,
-          body: { ok: false, reason: errMessage(err) },
+          done: true,
+          wire: {
+            status: errStatus(err) ?? 400,
+            body: { ok: false, reason: errMessage(err) },
+          },
         };
       }
     }
     if (body.worktree != null && typeof body.worktree !== 'boolean') {
-      return { status: 400, body: { ok: false, reason: 'worktree must be a boolean' } };
+      return {
+        done: true,
+        wire: { status: 400, body: { ok: false, reason: 'worktree must be a boolean' } },
+      };
     }
     if (
       body.dangerously_skip_permissions != null &&
       typeof body.dangerously_skip_permissions !== 'boolean'
     ) {
       return {
-        status: 400,
-        body: { ok: false, reason: 'dangerously_skip_permissions must be a boolean' },
+        done: true,
+        wire: {
+          status: 400,
+          body: { ok: false, reason: 'dangerously_skip_permissions must be a boolean' },
+        },
       };
     }
     const runtimeOverrideError = runtimeOverrideRefusal(body);
     if (runtimeOverrideError) {
-      return { status: 400, body: { ok: false, reason: runtimeOverrideError } };
+      return {
+        done: true,
+        wire: { status: 400, body: { ok: false, reason: runtimeOverrideError } },
+      };
     }
     if (body.setup_cmd != null) {
       if (typeof body.setup_cmd !== 'string') {
-        return { status: 400, body: { ok: false, reason: 'setup_cmd must be a string' } };
+        return {
+          done: true,
+          wire: { status: 400, body: { ok: false, reason: 'setup_cmd must be a string' } },
+        };
       }
       if (body.setup_cmd.length > SETUP_CMD_MAX) {
         return {
-          status: 400,
-          body: {
-            ok: false,
-            reason: `setup_cmd must be ${SETUP_CMD_MAX} characters or fewer — got ${body.setup_cmd.length}`,
+          done: true,
+          wire: {
+            status: 400,
+            body: {
+              ok: false,
+              reason: `setup_cmd must be ${SETUP_CMD_MAX} characters or fewer — got ${body.setup_cmd.length}`,
+            },
           },
         };
       }
       if (SETUP_CONTROL_RE.test(body.setup_cmd)) {
         return {
-          status: 400,
-          body: {
-            ok: false,
-            reason: 'setup_cmd must not contain NUL or control characters other than newline',
+          done: true,
+          wire: {
+            status: 400,
+            body: {
+              ok: false,
+              reason: 'setup_cmd must not contain NUL or control characters other than newline',
+            },
           },
         };
       }
@@ -1593,10 +1622,13 @@ export function createSpawns(ctx: SpawnsCtx) {
       if (forbidden || body.worktree === true) {
         const field = forbidden ?? 'worktree';
         return {
-          status: 400,
-          body: {
-            ok: false,
-            reason: `shell sessions are cwd-only; ${field} is a Claude-only field`,
+          done: true,
+          wire: {
+            status: 400,
+            body: {
+              ok: false,
+              reason: `shell sessions are cwd-only; ${field} is a Claude-only field`,
+            },
           },
         };
       }
@@ -1606,14 +1638,19 @@ export function createSpawns(ctx: SpawnsCtx) {
     // it lands here beside the other pure-body gates rather than at launch time.
     const gateway: GatewayDecision =
       kind === 'shell' ? { use: false, env: null } : gatewayDecision(body.gateway);
-    if (gateway.error) return { status: 400, body: { ok: false, reason: gateway.error } };
+    if (gateway.error)
+      return { done: true, wire: { status: 400, body: { ok: false, reason: gateway.error } } };
     const rcConflict = gatewayRemoteConflict(gateway.use, body.remote_control === true);
-    if (rcConflict) return { status: 400, body: { ok: false, reason: rcConflict } };
+    if (rcConflict)
+      return { done: true, wire: { status: 400, body: { ok: false, reason: rcConflict } } };
 
     const hasRepo = body.repo != null;
     const hasCwd = body.cwd != null;
     if (hasRepo && hasCwd) {
-      return { status: 400, body: { ok: false, reason: 'provide either cwd or repo, not both' } };
+      return {
+        done: true,
+        wire: { status: 400, body: { ok: false, reason: 'provide either cwd or repo, not both' } },
+      };
     }
     // permission_mode is an enum the CLI parses case-insensitively: validate
     // it that way too, or 'BypassPermissions' would sail past an exact-string
@@ -1627,8 +1664,11 @@ export function createSpawns(ctx: SpawnsCtx) {
       const lower = body.permission_mode.toLowerCase();
       if (!PERMISSION_MODES.has(lower)) {
         return {
-          status: 400,
-          body: { ok: false, reason: `unknown permission_mode '${body.permission_mode}'` },
+          done: true,
+          wire: {
+            status: 400,
+            body: { ok: false, reason: `unknown permission_mode '${body.permission_mode}'` },
+          },
         };
       }
       if (lower === 'bypasspermissions' && body.permission_mode !== 'bypassPermissions') {
@@ -1642,7 +1682,8 @@ export function createSpawns(ctx: SpawnsCtx) {
     // 0.16.0: the unsupervised gate refuses before any clone/worktree/pane is
     // created — an arm refusal must cost the caller nothing.
     const armRefusal = unsupervisedGate(skipPermissions, body);
-    if (armRefusal) return { status: 403, body: { ok: false, reason: armRefusal } };
+    if (armRefusal)
+      return { done: true, wire: { status: 403, body: { ok: false, reason: armRefusal } } };
 
     // BUG-040 — atomic pre-spawn execution claim. plan_id on the body means
     // "this spawn IS the execution of that plan" (the board's plan-execute
@@ -1660,18 +1701,28 @@ export function createSpawns(ctx: SpawnsCtx) {
     if (body.plan_id != null) {
       const pid = Number(body.plan_id);
       if (!Number.isInteger(pid) || pid < 1) {
-        return { status: 400, body: { ok: false, reason: 'plan_id must be a positive integer' } };
+        return {
+          done: true,
+          wire: {
+            status: 400,
+            body: { ok: false, reason: 'plan_id must be a positive integer' },
+          },
+        };
       }
       const plan = q.getPlan.get(pid);
-      if (!plan) return { status: 404, body: { ok: false, reason: 'no such plan' } };
+      if (!plan)
+        return { done: true, wire: { status: 404, body: { ok: false, reason: 'no such plan' } } };
       const via = `spawn:${randomUUID().slice(0, 8)}`;
       const r = q.claimPlanExecution.run(via, pid);
       if (r.changes !== 1) {
         return {
-          status: 409,
-          body: {
-            ok: false,
-            reason: `plan #${pid} is ${plan.status} — already executed or not executable`,
+          done: true,
+          wire: {
+            status: 409,
+            body: {
+              ok: false,
+              reason: `plan #${pid} is ${plan.status} — already executed or not executable`,
+            },
           },
         };
       }
@@ -1704,609 +1755,653 @@ export function createSpawns(ctx: SpawnsCtx) {
       tick,
       onMutate,
     });
-    try {
-      if (hasRepo) {
-        if (body.worktree === true) {
-          return {
-            status: 400,
-            body: { ok: false, reason: 'branch_mode replaces worktree in repo mode' },
-          };
-        }
-        if (!body.branch)
-          return { status: 400, body: { ok: false, reason: 'branch is required in repo mode' } };
-        // Captured here (narrowed to string by the guard above) so the async
-        // provisioning closure below can pass it to materializeBranch: inside that
-        // closure `body.branch`'s narrowing is lost — property narrowing does not
-        // survive a nested-function boundary — but this const keeps its string type.
-        const branch = body.branch;
-        const branchMode = body.branch_mode ?? 'worktree';
-        if (!['worktree', 'in-place'].includes(branchMode)) {
-          return {
-            status: 400,
-            body: { ok: false, reason: 'branch_mode must be worktree or in-place' },
-          };
-        }
-        try {
-          await validateBranch(body.branch);
-        } catch (err) {
-          return { status: 400, body: { ok: false, reason: errMessage(err) } };
-        }
-
-        // `hasRepo` guaranteed body.repo above, but the `await validateBranch` reset
-        // the property-narrowing; re-assert it here. Under exactOptionalPropertyTypes an
-        // *optional* body.repo is not assignable to resolveTarget's *required* repo even
-        // once its value is narrowed (optional-vs-required is structural), so build its
-        // ResolveTargetBody explicitly — the four fields resolveTarget reads — with
-        // `?? null` mapping absent overrides to null (its declared `string | null`),
-        // matching the untyped pre-migration behavior.
-        if (body.repo == null) {
-          return { status: 400, body: { ok: false, reason: 'repo is required in repo mode' } };
-        }
-
-        let target: Awaited<ReturnType<ReposSurface['resolveTarget']>>;
-        try {
-          target = await resolveTarget({
-            repo: body.repo,
-            repo_host: body.repo_host ?? null,
-            repo_transport: body.repo_transport ?? null,
-            repo_org: body.repo_org ?? null,
-          });
-        } catch (err) {
-          return {
-            status: errStatus(err) ?? 400,
-            body: { ok: false, reason: errMessage(err) },
-          };
-        }
-        const targetPath = target.mode === 'clone' ? target.dest : target.root;
-        let releaseTarget: () => void;
-        try {
-          // The claim itself is the atomic check. A separate targetOwner probe
-          // before an awaited auth preflight let two same-destination requests
-          // both pass, then the second threw after its card existed.
-          releaseTarget = claimTarget(targetPath, 'repository access check');
-        } catch (err) {
-          return {
-            status: 409,
-            body: {
-              ok: false,
-              reason: errMessage(err),
-            },
-          };
-        }
-        // Authenticate the exact origin before a durable card, clone slot, temp
-        // directory, or tmux name exists. This is deliberately the daemon's gate
-        // (the board also offers a friendly Check button): curl clients and stale
-        // boards must not recreate the old ten-minute "cloning…" ghost when
-        // Coder/GitHub/GitLab credentials are missing.
-        if (target.mode === 'clone') {
-          const access = await probeRepoAccess(target.origin_url);
-          if (!access.ok) {
-            releaseTarget();
+    // The coarse tail: every remaining await lives here, inside the try whose
+    // `finally` settles the claim on every non-complete / non-handOff exit (D4).
+    // Built synchronously (harmless) but not run until dischargeStep awaits it,
+    // so the sync prefix above still fires on the request turn byte-for-byte.
+    const runSpawn = async (): Promise<SpawnsWire> => {
+      try {
+        if (hasRepo) {
+          if (body.worktree === true) {
             return {
-              status: access.status,
-              body: {
-                ok: false,
-                reason: access.reason,
-                git_access: access.git_access,
-              },
+              status: 400,
+              body: { ok: false, reason: 'branch_mode replaces worktree in repo mode' },
             };
           }
-        }
-        // Reserve a clone slot BEFORE any card/row exists, so a full pool returns a
-        // clean 429 with nothing to compensate. Local materialization is uncapped.
-        let releaseCloneSlot = () => {
-          /* replaced once a clone slot is reserved */
-        };
-        if (target.mode === 'clone') {
-          try {
-            releaseCloneSlot = reserveCloneSlot();
-          } catch (err) {
-            releaseTarget();
+          if (!body.branch)
+            return { status: 400, body: { ok: false, reason: 'branch is required in repo mode' } };
+          // Captured here (narrowed to string by the guard above) so the async
+          // provisioning closure below can pass it to materializeBranch: inside that
+          // closure `body.branch`'s narrowing is lost — property narrowing does not
+          // survive a nested-function boundary — but this const keeps its string type.
+          const branch = body.branch;
+          const branchMode = body.branch_mode ?? 'worktree';
+          if (!['worktree', 'in-place'].includes(branchMode)) {
             return {
-              status: errStatus(err) ?? 429,
+              status: 400,
+              body: { ok: false, reason: 'branch_mode must be worktree or in-place' },
+            };
+          }
+          try {
+            await validateBranch(body.branch);
+          } catch (err) {
+            return { status: 400, body: { ok: false, reason: errMessage(err) } };
+          }
+
+          // `hasRepo` guaranteed body.repo above, but the `await validateBranch` reset
+          // the property-narrowing; re-assert it here. Under exactOptionalPropertyTypes an
+          // *optional* body.repo is not assignable to resolveTarget's *required* repo even
+          // once its value is narrowed (optional-vs-required is structural), so build its
+          // ResolveTargetBody explicitly — the four fields resolveTarget reads — with
+          // `?? null` mapping absent overrides to null (its declared `string | null`),
+          // matching the untyped pre-migration behavior.
+          if (body.repo == null) {
+            return { status: 400, body: { ok: false, reason: 'repo is required in repo mode' } };
+          }
+
+          let target: Awaited<ReturnType<ReposSurface['resolveTarget']>>;
+          try {
+            target = await resolveTarget({
+              repo: body.repo,
+              repo_host: body.repo_host ?? null,
+              repo_transport: body.repo_transport ?? null,
+              repo_org: body.repo_org ?? null,
+            });
+          } catch (err) {
+            return {
+              status: errStatus(err) ?? 400,
               body: { ok: false, reason: errMessage(err) },
             };
           }
-        }
-        // D2: an EXPLICIT transport on an ACCEPTED shorthand spawn becomes the
-        // remembered default for the next one (and for curl users) — not a pill
-        // click, which is exploratory. It sits AFTER every synchronous rejection
-        // (validation 400s, the provisioning-owner 409, the clone-cap 429): a
-        // request the daemon refused must never rewrite the remembered choice.
-        // From here the spawn is committed to a card. A transport absent-and-
-        // resolved-from-the-setting never rewrites it; and it steers shorthand
-        // only, so a URL/path/known-local-name target (kind !== 'shorthand')
-        // persists nothing. A bare name promoted through repo_org IS shorthand.
-        let settingChanged = false;
-        if (body.repo_transport != null && target.kind === 'shorthand') {
-          persistRepoTransport(body.repo_transport);
-          settingChanged = true;
-        }
-        if (body.repo_org != null && target.kind === 'shorthand') {
-          persistRepoDefaultOrg(body.repo_org);
-          settingChanged = true;
-        }
-        if (settingChanged) onMutate();
-
-        const session_id = randomUUID();
-        const spawn_id = randomUUID();
-        const initialNote =
-          target.mode === 'clone' ? `cloning ${target.repo_name}…` : `preparing ${body.branch}…`;
-        // UX 2.3 option 4 — the LAST synchronous gate of the clone path. A throw
-        // from createSpawnedCard's branchOf probe, the callsign lottery or the
-        // card INSERT used to escape spawn() entirely, where http.mjs answered a
-        // bare {reason:'internal'} for what was really a boring, retryable fault
-        // (a flake in the 1.5s git probe, a busy DB). Classify it HERE, with the
-        // hardened/bounded reason, so the caller can retry instead of guessing.
-        // Between the slot's reservation and this point nothing external exists
-        // (no dir on disk, no pane), so the slot release is the only cleanup a
-        // refusal owes. The two materialization paths BELOW already own their
-        // failure surfaces (spawnCompensate tombstones + a real status body) —
-        // this guard deliberately covers the card-creation prefix only.
-        let callsign: string;
-        let tmux_session: string;
-        let tmux_window: string;
-        try {
-          const c = createSpawnedCard(session_id, targetPath, body.prompt, {
-            repo_name: target.repo_name,
-            branch: body.branch,
-            note: initialNote,
-          });
-          if (c.callsign == null) throw new Error('spawned card is missing its callsign');
-          callsign = c.callsign;
-          tmux_session = tmuxAdapter.sessionName(port);
-          tmux_window = tmuxAdapter.windowName(port, callsign);
-          if (!relabelTarget(targetPath, 'repository access check', callsign)) {
-            throw new Error('repository destination claim vanished before provisioning');
-          }
-          q.insertProvisionalSpawn.run(
-            spawn_id,
-            session_id,
-            callsign,
-            tmux_session,
-            tmux_window,
-            targetPath,
-            null,
-            Date.now(),
-            skipPermissions ? 1 : 0,
-            body.remote_control === true ? 1 : 0,
-            target.origin_url ?? null,
-            body.branch,
-            branchMode,
-            gateway.use ? 1 : 0,
-            kind,
-            body.setup_cmd ?? null,
-          );
-        } catch (err) {
-          releaseCloneSlot();
-          releaseTarget();
-          // KEEP (not structural): the release must fire BEFORE the tombstone
-          // below (mutate: true) so its tick/onMutate ordering matches legacy;
-          // the finally would emit it AFTER the tombstone. Idempotent — settle()
-          // no-ops once this ran.
-          guard.release();
+          const targetPath = target.mode === 'clone' ? target.dest : target.root;
+          let releaseTarget: () => void;
           try {
-            // createSpawnedCard can fail after its session INSERT (for example
-            // while deriving ticket metadata), so look up the row rather than
-            // relying on its return assignment having completed.
-            if (q.getSession.get(session_id)) {
-              tombstoneCard(session_id, { note: 'spawn setup failed', mutate: true });
-            }
-          } catch {
-            // The originating storage error can also block the best-effort
-            // tombstone. The in-memory claims above are already released.
-          }
-          return {
-            status: 500,
-            body: {
-              ok: false,
-              reason: `could not create the spawn card: ${spawnFailureReason(err)}`,
-            },
-          };
-        }
-
-        const finishMaterialization = async (materialized: Materialized, source: string) => {
-          const worktree_path = branchMode === 'worktree' ? materialized.runCwd : null;
-          if (worktree_path)
-            q.setSpawnWorktree.run(worktree_path, materialized.created.worktree ? 1 : 0, spawn_id);
-          const repo = deriveRepo(materialized.runCwd);
-          updateSession(session_id, {
-            cwd: materialized.runCwd,
-            repo_id: repo.repo_id,
-            repo_name: repo.repo_name,
-            worktree: repo.worktree,
-            // updateSession coerces every value through `?? null` at bind time, so
-            // an absent body.branch (undefined) already becomes NULL there — spell
-            // it here to satisfy SqlValue without changing what SQLite stores.
-            branch: branchOf(materialized.runCwd, { fresh: true }) ?? body.branch ?? null,
-          });
-          const defaultRef = await baseBranch(target.mode === 'clone' ? target.dest : target.root);
-          touchRepo({
-            repo_id: repo.repo_id,
-            repo_name: repo.repo_name,
-            root: repo.main_tree,
-            origin_url: target.origin_url ?? null,
-            default_branch: defaultRef?.ref.replace(/^origin\//, '') ?? null,
-            source,
-          });
-          return worktree_path;
-        };
-
-        if (target.mode === 'local') {
-          try {
-            let materialized: Materialized;
-            let worktree_path: string | null = null;
-            let paneMayExist = false;
-            try {
-              materialized = await materializeBranch({
-                root: target.root,
-                branch: body.branch,
-                mode: branchMode,
-                spawn_id,
-                sid: session_id,
-              });
-            } catch (err) {
-              await spawnCompensate({
-                spawn_id,
-                session_id,
-                callsign,
-                cwd: target.root,
-                worktree_path: null,
-                tmux_window: null,
+            // The claim itself is the atomic check. A separate targetOwner probe
+            // before an awaited auth preflight let two same-destination requests
+            // both pass, then the second threw after its card existed.
+            releaseTarget = claimTarget(targetPath, 'repository access check');
+          } catch (err) {
+            return {
+              status: 409,
+              body: {
+                ok: false,
                 reason: errMessage(err),
-                created: { clone: false, worktree: false },
-              });
-              // KEEP: release runs AFTER spawnCompensate here; the nested
-              // `finally { releaseTarget() }` below would otherwise reorder it.
-              guard.release();
+              },
+            };
+          }
+          // Authenticate the exact origin before a durable card, clone slot, temp
+          // directory, or tmux name exists. This is deliberately the daemon's gate
+          // (the board also offers a friendly Check button): curl clients and stale
+          // boards must not recreate the old ten-minute "cloning…" ghost when
+          // Coder/GitHub/GitLab credentials are missing.
+          if (target.mode === 'clone') {
+            const access = await probeRepoAccess(target.origin_url);
+            if (!access.ok) {
+              releaseTarget();
               return {
-                status: errStatus(err) ?? 409,
+                status: access.status,
+                body: {
+                  ok: false,
+                  reason: access.reason,
+                  git_access: access.git_access,
+                },
+              };
+            }
+          }
+          // Reserve a clone slot BEFORE any card/row exists, so a full pool returns a
+          // clean 429 with nothing to compensate. Local materialization is uncapped.
+          let releaseCloneSlot = () => {
+            /* replaced once a clone slot is reserved */
+          };
+          if (target.mode === 'clone') {
+            try {
+              releaseCloneSlot = reserveCloneSlot();
+            } catch (err) {
+              releaseTarget();
+              return {
+                status: errStatus(err) ?? 429,
                 body: { ok: false, reason: errMessage(err) },
               };
             }
-            worktree_path = branchMode === 'worktree' ? materialized.runCwd : null;
-            try {
-              await finishMaterialization(materialized, 'spawn');
-              paneMayExist = true;
-              const out = await guard.releaseOnThrow(launchPane)({
-                spawn_id,
-                session_id,
-                callsign,
-                tmux_session,
-                tmux_window,
-                requestedCwd: target.root,
-                runCwd: materialized.runCwd,
-                cleanupRoot: target.root,
-                worktree_path,
-                body,
-                skipPermissions,
-                gatewayEnv: gateway.env,
-                created: materialized.created,
-              });
-              if (out.status >= 400) guard.release();
-              else guard.complete(spawn_id);
-              return out;
-            } catch (err) {
-              // in-place already ran `git switch`; compensation won't revert the
-              // user's own checkout, so say plainly that it was left on the branch.
-              const reason =
-                branchMode === 'in-place'
-                  ? `${errMessage(err)} — ${path.basename(target.root)} was left switched to ${body.branch}`
-                  : errMessage(err);
-              await spawnCompensate({
-                spawn_id,
-                session_id,
-                callsign,
-                cwd: target.root,
-                worktree_path,
-                tmux_window: paneMayExist ? tmux_window : null,
-                reason,
-                created: materialized.created,
-              });
-              // KEEP: on a finishMaterialization throw this is the real release,
-              // and it must run after spawnCompensate / before the nested finally.
-              guard.release();
-              return { status: errStatus(err) ?? 409, body: { ok: false, reason } };
-            }
-          } finally {
-            releaseTarget();
           }
-        }
+          // D2: an EXPLICIT transport on an ACCEPTED shorthand spawn becomes the
+          // remembered default for the next one (and for curl users) — not a pill
+          // click, which is exploratory. It sits AFTER every synchronous rejection
+          // (validation 400s, the provisioning-owner 409, the clone-cap 429): a
+          // request the daemon refused must never rewrite the remembered choice.
+          // From here the spawn is committed to a card. A transport absent-and-
+          // resolved-from-the-setting never rewrites it; and it steers shorthand
+          // only, so a URL/path/known-local-name target (kind !== 'shorthand')
+          // persists nothing. A bare name promoted through repo_org IS shorthand.
+          let settingChanged = false;
+          if (body.repo_transport != null && target.kind === 'shorthand') {
+            persistRepoTransport(body.repo_transport);
+            settingChanged = true;
+          }
+          if (body.repo_org != null && target.kind === 'shorthand') {
+            persistRepoDefaultOrg(body.repo_org);
+            settingChanged = true;
+          }
+          if (settingChanged) onMutate();
 
-        // Clone provisioning continues after the HTTP 202 response. The guarded
-        // detached chain owns both compensation and the single-flight release.
-        // A spawn admitted before quiesce may reach this point only after its
-        // access/materialization awaits. Do not launch a NEW clone once shutdown
-        // has begun; compensate the already-durable provisional row while the
-        // admitted parent operation is still owned.
-        if (!spawnMaintenance.isOpen()) {
-          await spawnCompensate({
-            spawn_id,
-            session_id,
-            callsign,
-            cwd: target.dest,
-            worktree_path: null,
-            tmux_window: null,
-            reason: 'spawn cancelled',
-            created: { clone: false, worktree: false },
-            cancelled: true,
-          });
-          releaseCloneSlot();
-          releaseTarget();
-          return {
-            status: 503,
-            body: { ok: false, reason: 'daemon is shutting down; spawn was cancelled' },
-          };
-        }
-        const controller = new AbortController();
-        let resolveProvisioning!: () => void;
-        const provisioningDone = new Promise<void>((resolve) => {
-          resolveProvisioning = resolve;
-        });
-        const provisioningOp = { controller, done: provisioningDone };
-        provisioningOps.set(spawn_id, provisioningOp);
-        const provisioning = spawnMaintenance.run(async () => {
-          let created = { clone: false, worktree: false };
-          let worktree_path: string | null = null;
-          let paneMayExist = false;
+          const session_id = randomUUID();
+          const spawn_id = randomUUID();
+          const initialNote =
+            target.mode === 'clone' ? `cloning ${target.repo_name}…` : `preparing ${body.branch}…`;
+          // UX 2.3 option 4 — the LAST synchronous gate of the clone path. A throw
+          // from createSpawnedCard's branchOf probe, the callsign lottery or the
+          // card INSERT used to escape spawn() entirely, where http.mjs answered a
+          // bare {reason:'internal'} for what was really a boring, retryable fault
+          // (a flake in the 1.5s git probe, a busy DB). Classify it HERE, with the
+          // hardened/bounded reason, so the caller can retry instead of guessing.
+          // Between the slot's reservation and this point nothing external exists
+          // (no dir on disk, no pane), so the slot release is the only cleanup a
+          // refusal owes. The two materialization paths BELOW already own their
+          // failure surfaces (spawnCompensate tombstones + a real status body) —
+          // this guard deliberately covers the card-creation prefix only.
+          let callsign: string;
+          let tmux_session: string;
+          let tmux_window: string;
           try {
-            await cloneRepo({
-              origin_url: target.origin_url,
-              dest: target.dest,
-              spawn_id,
-              signal: controller.signal,
+            const c = createSpawnedCard(session_id, targetPath, body.prompt, {
+              repo_name: target.repo_name,
+              branch: body.branch,
+              note: initialNote,
             });
-            created.clone = true;
-            if (controller.signal.aborted) throw new Error('spawn cancelled');
-            updateSession(session_id, { note: `preparing ${body.branch}…` });
-            onMutate();
-            const materialized = await materializeBranch({
-              root: target.dest,
-              branch,
-              mode: branchMode,
-              spawn_id,
-              sid: session_id,
-              clone: true,
-              signal: controller.signal,
-            });
-            created = materialized.created;
-            worktree_path = branchMode === 'worktree' ? materialized.runCwd : null;
-            if (controller.signal.aborted) throw new Error('spawn cancelled');
-            await finishMaterialization(materialized, 'clone');
-            if (controller.signal.aborted) throw new Error('spawn cancelled');
-            paneMayExist = true;
-            const launched = await launchPane({
+            if (c.callsign == null) throw new Error('spawned card is missing its callsign');
+            callsign = c.callsign;
+            tmux_session = tmuxAdapter.sessionName(port);
+            tmux_window = tmuxAdapter.windowName(port, callsign);
+            if (!relabelTarget(targetPath, 'repository access check', callsign)) {
+              throw new Error('repository destination claim vanished before provisioning');
+            }
+            q.insertProvisionalSpawn.run(
               spawn_id,
               session_id,
               callsign,
               tmux_session,
               tmux_window,
-              requestedCwd: target.dest,
-              runCwd: materialized.runCwd,
-              cleanupRoot: target.dest,
-              worktree_path,
-              body,
-              skipPermissions,
-              created,
-              gatewayEnv: gateway.env,
-              signal: controller.signal,
-            });
-            if (launched.status >= 400) guard.release();
-            else guard.complete(spawn_id);
+              targetPath,
+              null,
+              Date.now(),
+              skipPermissions ? 1 : 0,
+              body.remote_control === true ? 1 : 0,
+              target.origin_url ?? null,
+              body.branch,
+              branchMode,
+              gateway.use ? 1 : 0,
+              kind,
+              body.setup_cmd ?? null,
+            );
           } catch (err) {
-            const cancelled = controller.signal.aborted;
-            const reason = cancelled
-              ? 'spawn cancelled'
-              : branchMode === 'in-place' && created.clone
-                ? `${errMessage(err)} — ${path.basename(target.dest)} was left switched to ${body.branch}`
-                : errMessage(err);
+            releaseCloneSlot();
+            releaseTarget();
+            // KEEP (not structural): the release must fire BEFORE the tombstone
+            // below (mutate: true) so its tick/onMutate ordering matches legacy;
+            // the finally would emit it AFTER the tombstone. Idempotent — settle()
+            // no-ops once this ran.
+            guard.release();
+            try {
+              // createSpawnedCard can fail after its session INSERT (for example
+              // while deriving ticket metadata), so look up the row rather than
+              // relying on its return assignment having completed.
+              if (q.getSession.get(session_id)) {
+                tombstoneCard(session_id, { note: 'spawn setup failed', mutate: true });
+              }
+            } catch {
+              // The originating storage error can also block the best-effort
+              // tombstone. The in-memory claims above are already released.
+            }
+            return {
+              status: 500,
+              body: {
+                ok: false,
+                reason: `could not create the spawn card: ${spawnFailureReason(err)}`,
+              },
+            };
+          }
+
+          const finishMaterialization = async (materialized: Materialized, source: string) => {
+            const worktree_path = branchMode === 'worktree' ? materialized.runCwd : null;
+            if (worktree_path)
+              q.setSpawnWorktree.run(
+                worktree_path,
+                materialized.created.worktree ? 1 : 0,
+                spawn_id,
+              );
+            const repo = deriveRepo(materialized.runCwd);
+            updateSession(session_id, {
+              cwd: materialized.runCwd,
+              repo_id: repo.repo_id,
+              repo_name: repo.repo_name,
+              worktree: repo.worktree,
+              // updateSession coerces every value through `?? null` at bind time, so
+              // an absent body.branch (undefined) already becomes NULL there — spell
+              // it here to satisfy SqlValue without changing what SQLite stores.
+              branch: branchOf(materialized.runCwd, { fresh: true }) ?? body.branch ?? null,
+            });
+            const defaultRef = await baseBranch(
+              target.mode === 'clone' ? target.dest : target.root,
+            );
+            touchRepo({
+              repo_id: repo.repo_id,
+              repo_name: repo.repo_name,
+              root: repo.main_tree,
+              origin_url: target.origin_url ?? null,
+              default_branch: defaultRef?.ref.replace(/^origin\//, '') ?? null,
+              source,
+            });
+            return worktree_path;
+          };
+
+          if (target.mode === 'local') {
+            try {
+              let materialized: Materialized;
+              let worktree_path: string | null = null;
+              let paneMayExist = false;
+              try {
+                materialized = await materializeBranch({
+                  root: target.root,
+                  branch: body.branch,
+                  mode: branchMode,
+                  spawn_id,
+                  sid: session_id,
+                });
+              } catch (err) {
+                await spawnCompensate({
+                  spawn_id,
+                  session_id,
+                  callsign,
+                  cwd: target.root,
+                  worktree_path: null,
+                  tmux_window: null,
+                  reason: errMessage(err),
+                  created: { clone: false, worktree: false },
+                });
+                // KEEP: release runs AFTER spawnCompensate here; the nested
+                // `finally { releaseTarget() }` below would otherwise reorder it.
+                guard.release();
+                return {
+                  status: errStatus(err) ?? 409,
+                  body: { ok: false, reason: errMessage(err) },
+                };
+              }
+              worktree_path = branchMode === 'worktree' ? materialized.runCwd : null;
+              try {
+                await finishMaterialization(materialized, 'spawn');
+                paneMayExist = true;
+                const out = await guard.releaseOnThrow(launchPane)({
+                  spawn_id,
+                  session_id,
+                  callsign,
+                  tmux_session,
+                  tmux_window,
+                  requestedCwd: target.root,
+                  runCwd: materialized.runCwd,
+                  cleanupRoot: target.root,
+                  worktree_path,
+                  body,
+                  skipPermissions,
+                  gatewayEnv: gateway.env,
+                  created: materialized.created,
+                });
+                if (out.status >= 400) guard.release();
+                else guard.complete(spawn_id);
+                return out;
+              } catch (err) {
+                // in-place already ran `git switch`; compensation won't revert the
+                // user's own checkout, so say plainly that it was left on the branch.
+                const reason =
+                  branchMode === 'in-place'
+                    ? `${errMessage(err)} — ${path.basename(target.root)} was left switched to ${body.branch}`
+                    : errMessage(err);
+                await spawnCompensate({
+                  spawn_id,
+                  session_id,
+                  callsign,
+                  cwd: target.root,
+                  worktree_path,
+                  tmux_window: paneMayExist ? tmux_window : null,
+                  reason,
+                  created: materialized.created,
+                });
+                // KEEP: on a finishMaterialization throw this is the real release,
+                // and it must run after spawnCompensate / before the nested finally.
+                guard.release();
+                return { status: errStatus(err) ?? 409, body: { ok: false, reason } };
+              }
+            } finally {
+              releaseTarget();
+            }
+          }
+
+          // Clone provisioning continues after the HTTP 202 response. The guarded
+          // detached chain owns both compensation and the single-flight release.
+          // A spawn admitted before quiesce may reach this point only after its
+          // access/materialization awaits. Do not launch a NEW clone once shutdown
+          // has begun; compensate the already-durable provisional row while the
+          // admitted parent operation is still owned.
+          if (!spawnMaintenance.isOpen()) {
             await spawnCompensate({
               spawn_id,
               session_id,
               callsign,
               cwd: target.dest,
-              worktree_path,
-              tmux_window: paneMayExist ? tmux_window : null,
-              reason,
-              created,
-              cancelled,
+              worktree_path: null,
+              tmux_window: null,
+              reason: 'spawn cancelled',
+              created: { clone: false, worktree: false },
+              cancelled: true,
             });
-            guard.release();
-          } finally {
             releaseCloneSlot();
             releaseTarget();
-            if (provisioningOps.get(spawn_id) === provisioningOp) {
-              provisioningOps.delete(spawn_id);
-            }
-            resolveProvisioning();
+            return {
+              status: 503,
+              body: { ok: false, reason: 'daemon is shutting down; spawn was cancelled' },
+            };
           }
-        });
-        // The open check and run() call are synchronous neighbours, so refusal
-        // here is unreachable without a programming error. Keep a defensive
-        // settle path so a future refactor cannot strand Kill/close waiters.
-        if (!provisioning) {
-          controller.abort();
-          provisioningOps.delete(spawn_id);
-          releaseCloneSlot();
-          releaseTarget();
-          // KEEP: defensive request-turn path; release must precede
-          // resolveProvisioning() (the close waiter). settle() no-ops after it.
-          guard.release();
-          resolveProvisioning();
-        } else {
-          // The detached chain now owns the claim: it releases/completes on its
-          // own exit in a later turn. Mark the hand-off so the request-turn
-          // finally's settle() does NOT release — the plain-TS analogue of not
-          // running the request Effect's `ensuring` when work was forked to a
-          // detached fiber.
-          guard.handOff();
-          void provisioning.catch((err: unknown) => {
-            console.error('fleetd detached repo provisioning error:', err);
+          const controller = new AbortController();
+          let resolveProvisioning!: () => void;
+          const provisioningDone = new Promise<void>((resolve) => {
+            resolveProvisioning = resolve;
           });
-        }
-
-        return {
-          status: 202,
-          body: {
-            ok: true,
-            provisioning: true,
-            spawn_id,
-            session_id,
-            callsign,
-            clone: { origin_url: target.origin_url, dest: target.dest },
-            tmux: { session: tmux_session, window: tmux_window },
-          },
-        };
-      }
-
-      // Original cwd mode remains synchronous through optional worktree creation.
-      const cwd = body.cwd ?? '';
-      let st: fs.Stats | null = null;
-      try {
-        st = fs.statSync(cwd);
-      } catch {
-        /* missing */
-      }
-      if (!cwd || !st?.isDirectory()) {
-        return { status: 400, body: { ok: false, reason: 'cwd missing or not a directory' } };
-      }
-      if (body.worktree === true && !deriveRepo(cwd).is_git) {
-        return {
-          status: 409,
-          body: { ok: false, reason: 'cwd is not a git repository — cannot spawn into a worktree' },
-        };
-      }
-
-      const session_id = randomUUID();
-      const spawn_id = randomUUID();
-      const c =
-        kind === 'shell'
-          ? createSpawnedCard(session_id, cwd, null, {
-              deriveRepo: true,
-              source: 'shell',
-              col: 'idle',
-              note: 'shell',
-            })
-          : createSpawnedCard(session_id, cwd, body.prompt);
-      const callsign = c.callsign;
-      // As in the repo path above: a freshly created card always carries a
-      // callsign, but the SELECT-* row type is nullable. Prove it once rather than
-      // thread `string | null` through windowName/animalOf/spawnCompensate.
-      if (callsign == null) throw new Error('spawned card is missing its callsign');
-      const tmux_session = tmuxAdapter.sessionName(port);
-      const tmux_window = tmuxAdapter.windowName(port, callsign);
-      q.insertProvisionalSpawn.run(
-        spawn_id,
-        session_id,
-        callsign,
-        tmux_session,
-        tmux_window,
-        cwd,
-        null,
-        Date.now(),
-        skipPermissions ? 1 : 0,
-        body.remote_control === true ? 1 : 0,
-        null,
-        null,
-        null,
-        gateway.use ? 1 : 0,
-        kind,
-        body.setup_cmd ?? null,
-      );
-
-      let worktree_path: string | null = null;
-      if (body.worktree === true) {
-        const ticketNamed = c.ticket && callsign.endsWith(`-${c.ticket}`);
-        const baseName = ticketNamed ? `${c.ticket}-${animalOf(callsign)}` : callsign;
-        const pathFor = (name: string) =>
-          path.join(path.dirname(cwd), `${path.basename(cwd)}--fd-${name}`);
-        const dedup = `${baseName}-${session_id.slice(0, 4)}`;
-        const names = fs.existsSync(pathFor(baseName)) ? [dedup] : [baseName, dedup];
-        let candidate = '';
-        let result: ExecResult = { ok: false, err: '' };
-        for (const workname of names) {
-          candidate = pathFor(workname);
-          result = await execFileP('git', [
-            '-C',
-            cwd,
-            'worktree',
-            'add',
-            '-b',
-            `fd/${workname}`,
-            candidate,
-          ]);
-          if (result.ok) break;
-        }
-        worktree_path = candidate;
-        if (!result.ok) {
-          // `git worktree add` is a purely local operation, so a credential in its
-          // stderr is unlikely — but repos.mjs now asserts that no path in the clone
-          // family puts unscrubbed git stderr into a note or an HTTP body, and a
-          // control applied unevenly reads to the next reader as a deliberate
-          // posture rather than a gap. One call, no behaviour change on stderr that
-          // holds no credential.
-          const addErr = scrubUrlCredentials(result.err);
-          await spawnCompensate({
-            spawn_id,
-            session_id,
-            callsign,
-            cwd,
-            worktree_path,
-            tmux_window: null,
-            reason: `git worktree add: ${addErr}`,
+          const provisioningOp = { controller, done: provisioningDone };
+          provisioningOps.set(spawn_id, provisioningOp);
+          const provisioning = spawnMaintenance.run(async () => {
+            let created = { clone: false, worktree: false };
+            let worktree_path: string | null = null;
+            let paneMayExist = false;
+            try {
+              await cloneRepo({
+                origin_url: target.origin_url,
+                dest: target.dest,
+                spawn_id,
+                signal: controller.signal,
+              });
+              created.clone = true;
+              if (controller.signal.aborted) throw new Error('spawn cancelled');
+              updateSession(session_id, { note: `preparing ${body.branch}…` });
+              onMutate();
+              const materialized = await materializeBranch({
+                root: target.dest,
+                branch,
+                mode: branchMode,
+                spawn_id,
+                sid: session_id,
+                clone: true,
+                signal: controller.signal,
+              });
+              created = materialized.created;
+              worktree_path = branchMode === 'worktree' ? materialized.runCwd : null;
+              if (controller.signal.aborted) throw new Error('spawn cancelled');
+              await finishMaterialization(materialized, 'clone');
+              if (controller.signal.aborted) throw new Error('spawn cancelled');
+              paneMayExist = true;
+              const launched = await launchPane({
+                spawn_id,
+                session_id,
+                callsign,
+                tmux_session,
+                tmux_window,
+                requestedCwd: target.dest,
+                runCwd: materialized.runCwd,
+                cleanupRoot: target.dest,
+                worktree_path,
+                body,
+                skipPermissions,
+                created,
+                gatewayEnv: gateway.env,
+                signal: controller.signal,
+              });
+              if (launched.status >= 400) guard.release();
+              else guard.complete(spawn_id);
+            } catch (err) {
+              const cancelled = controller.signal.aborted;
+              const reason = cancelled
+                ? 'spawn cancelled'
+                : branchMode === 'in-place' && created.clone
+                  ? `${errMessage(err)} — ${path.basename(target.dest)} was left switched to ${body.branch}`
+                  : errMessage(err);
+              await spawnCompensate({
+                spawn_id,
+                session_id,
+                callsign,
+                cwd: target.dest,
+                worktree_path,
+                tmux_window: paneMayExist ? tmux_window : null,
+                reason,
+                created,
+                cancelled,
+              });
+              guard.release();
+            } finally {
+              releaseCloneSlot();
+              releaseTarget();
+              if (provisioningOps.get(spawn_id) === provisioningOp) {
+                provisioningOps.delete(spawn_id);
+              }
+              resolveProvisioning();
+            }
           });
+          // The open check and run() call are synchronous neighbours, so refusal
+          // here is unreachable without a programming error. Keep a defensive
+          // settle path so a future refactor cannot strand Kill/close waiters.
+          if (!provisioning) {
+            controller.abort();
+            provisioningOps.delete(spawn_id);
+            releaseCloneSlot();
+            releaseTarget();
+            // KEEP: defensive request-turn path; release must precede
+            // resolveProvisioning() (the close waiter). settle() no-ops after it.
+            guard.release();
+            resolveProvisioning();
+          } else {
+            // The detached chain now owns the claim: it releases/completes on its
+            // own exit in a later turn. Mark the hand-off so the request-turn
+            // finally's settle() does NOT release — the plain-TS analogue of not
+            // running the request Effect's `ensuring` when work was forked to a
+            // detached fiber.
+            guard.handOff();
+            void provisioning.catch((err: unknown) => {
+              console.error('fleetd detached repo provisioning error:', err);
+            });
+          }
+
           return {
-            status: 409,
-            body: { ok: false, reason: `git worktree add failed: ${addErr}`.slice(0, 300) },
+            status: 202,
+            body: {
+              ok: true,
+              provisioning: true,
+              spawn_id,
+              session_id,
+              callsign,
+              clone: { origin_url: target.origin_url, dest: target.dest },
+              tmux: { session: tmux_session, window: tmux_window },
+            },
           };
         }
-        q.setSpawnWorktree.run(worktree_path, 1, spawn_id); // cwd mode always creates the worktree above
-        const repo = deriveRepo(worktree_path);
-        updateSession(session_id, {
-          cwd: worktree_path,
-          repo_id: repo.repo_id,
-          repo_name: repo.repo_name,
-          worktree: repo.worktree,
-          branch: branchOf(worktree_path),
+
+        // Original cwd mode remains synchronous through optional worktree creation.
+        const cwd = body.cwd ?? '';
+        let st: fs.Stats | null = null;
+        try {
+          st = fs.statSync(cwd);
+        } catch {
+          /* missing */
+        }
+        if (!cwd || !st?.isDirectory()) {
+          return { status: 400, body: { ok: false, reason: 'cwd missing or not a directory' } };
+        }
+        if (body.worktree === true && !deriveRepo(cwd).is_git) {
+          return {
+            status: 409,
+            body: {
+              ok: false,
+              reason: 'cwd is not a git repository — cannot spawn into a worktree',
+            },
+          };
+        }
+
+        const session_id = randomUUID();
+        const spawn_id = randomUUID();
+        const c =
+          kind === 'shell'
+            ? createSpawnedCard(session_id, cwd, null, {
+                deriveRepo: true,
+                source: 'shell',
+                col: 'idle',
+                note: 'shell',
+              })
+            : createSpawnedCard(session_id, cwd, body.prompt);
+        const callsign = c.callsign;
+        // As in the repo path above: a freshly created card always carries a
+        // callsign, but the SELECT-* row type is nullable. Prove it once rather than
+        // thread `string | null` through windowName/animalOf/spawnCompensate.
+        if (callsign == null) throw new Error('spawned card is missing its callsign');
+        const tmux_session = tmuxAdapter.sessionName(port);
+        const tmux_window = tmuxAdapter.windowName(port, callsign);
+        q.insertProvisionalSpawn.run(
+          spawn_id,
+          session_id,
+          callsign,
+          tmux_session,
+          tmux_window,
+          cwd,
+          null,
+          Date.now(),
+          skipPermissions ? 1 : 0,
+          body.remote_control === true ? 1 : 0,
+          null,
+          null,
+          null,
+          gateway.use ? 1 : 0,
+          kind,
+          body.setup_cmd ?? null,
+        );
+
+        let worktree_path: string | null = null;
+        if (body.worktree === true) {
+          const ticketNamed = c.ticket && callsign.endsWith(`-${c.ticket}`);
+          const baseName = ticketNamed ? `${c.ticket}-${animalOf(callsign)}` : callsign;
+          const pathFor = (name: string) =>
+            path.join(path.dirname(cwd), `${path.basename(cwd)}--fd-${name}`);
+          const dedup = `${baseName}-${session_id.slice(0, 4)}`;
+          const names = fs.existsSync(pathFor(baseName)) ? [dedup] : [baseName, dedup];
+          let candidate = '';
+          let result: ExecResult = { ok: false, err: '' };
+          for (const workname of names) {
+            candidate = pathFor(workname);
+            result = await execFileP('git', [
+              '-C',
+              cwd,
+              'worktree',
+              'add',
+              '-b',
+              `fd/${workname}`,
+              candidate,
+            ]);
+            if (result.ok) break;
+          }
+          worktree_path = candidate;
+          if (!result.ok) {
+            // `git worktree add` is a purely local operation, so a credential in its
+            // stderr is unlikely — but repos.mjs now asserts that no path in the clone
+            // family puts unscrubbed git stderr into a note or an HTTP body, and a
+            // control applied unevenly reads to the next reader as a deliberate
+            // posture rather than a gap. One call, no behaviour change on stderr that
+            // holds no credential.
+            const addErr = scrubUrlCredentials(result.err);
+            await spawnCompensate({
+              spawn_id,
+              session_id,
+              callsign,
+              cwd,
+              worktree_path,
+              tmux_window: null,
+              reason: `git worktree add: ${addErr}`,
+            });
+            return {
+              status: 409,
+              body: { ok: false, reason: `git worktree add failed: ${addErr}`.slice(0, 300) },
+            };
+          }
+          q.setSpawnWorktree.run(worktree_path, 1, spawn_id); // cwd mode always creates the worktree above
+          const repo = deriveRepo(worktree_path);
+          updateSession(session_id, {
+            cwd: worktree_path,
+            repo_id: repo.repo_id,
+            repo_name: repo.repo_name,
+            worktree: repo.worktree,
+            branch: branchOf(worktree_path),
+          });
+        }
+        // The deterministic-argv build + override/tmux launch + status flip is
+        // shared with repo-mode spawns; it lives in launchPane() (incl. the `--`
+        // end-of-options fix carried over from origin/main's audit).
+        // Unwrapped: a throw escaping launchPane now unwinds through the single
+        // finally below (structural release), and the cwd path has no intervening
+        // compensate to order against — so the wrapper is no longer needed here.
+        const out = await launchPane({
+          spawn_id,
+          session_id,
+          callsign,
+          tmux_session,
+          tmux_window,
+          requestedCwd: cwd,
+          runCwd: worktree_path ?? cwd,
+          cleanupRoot: cwd,
+          worktree_path,
+          body,
+          skipPermissions,
+          gatewayEnv: gateway.env,
         });
+        // On a launch refusal (>= 400) the claim is released by guard.settle() in
+        // the finally; only an accepted launch completes it.
+        if (out.status < 400) guard.complete(spawn_id);
+        return out;
+      } finally {
+        // Structural BUG-040 compensation: releases the claim on every exit that
+        // was not an explicit complete or a hand-off to the detached chain. Maps
+        // 1:1 onto `Effect.ensuring` wrapping the spawn body in Slice 6 (D4).
+        guard.settle();
       }
-      // The deterministic-argv build + override/tmux launch + status flip is
-      // shared with repo-mode spawns; it lives in launchPane() (incl. the `--`
-      // end-of-options fix carried over from origin/main's audit).
-      // Unwrapped: a throw escaping launchPane now unwinds through the single
-      // finally below (structural release), and the cwd path has no intervening
-      // compensate to order against — so the wrapper is no longer needed here.
-      const out = await launchPane({
-        spawn_id,
-        session_id,
-        callsign,
-        tmux_session,
-        tmux_window,
-        requestedCwd: cwd,
-        runCwd: worktree_path ?? cwd,
-        cleanupRoot: cwd,
-        worktree_path,
-        body,
-        skipPermissions,
-        gatewayEnv: gateway.env,
-      });
-      // On a launch refusal (>= 400) the claim is released by guard.settle() in
-      // the finally; only an accepted launch completes it.
-      if (out.status < 400) guard.complete(spawn_id);
-      return out;
-    } finally {
-      // Structural BUG-040 compensation: releases the claim on every exit that
-      // was not an explicit complete or a hand-off to the detached chain. Maps
-      // 1:1 onto `Effect.ensuring` wrapping the spawn body in Slice 6 (D4).
-      guard.settle();
-    }
+    };
+    return { done: false, run: runSpawn };
+  }
+
+  // P9.1 Slice 6 — the two THIN composers over the SAME spawnStep (§8 item 3;
+  // no full-body twin). spawnEffect wraps the sync producer in one Effect.sync
+  // and discharges its tail through the shared dischargeStep: a terminal wire
+  // succeeds; the coarse `runSpawn` runs as one Effect.promise. E stays never —
+  // a genuine throw inside any thunk escapes as a DIE (never folded), so the
+  // spawn settler renders the redacted 500 (D6). No catch/fold here.
+  function spawnEffect(body: SpawnBody): Effect.Effect<SpawnsWire, never, never> {
+    return Effect.sync(() => spawnStep(body)).pipe(Effect.flatMap(dischargeStep));
+  }
+
+  // The legacy async body: run the SAME producer and await its tail directly.
+  // Reached whenever the dispatcher's flag is off or no ingress runner was
+  // injected — behaviourally identical to the pre-Slice-6 monolith.
+  async function spawnLegacy(body: SpawnBody): Promise<SpawnsWire> {
+    const step = spawnStep(body);
+    return step.done ? step.wire : step.run();
+  }
+
+  // POST /api/spawn dispatcher — keeps the name `spawn`. Runs spawnEffect through
+  // the ingress-owned detached runner (unsupervised, context-free) when enabled,
+  // exactly as spawnKill/enableRemote/revive/adoptSession do; falls back to the
+  // legacy async body otherwise. No new Effect.runPromise* call site is added.
+  function spawn(body: SpawnBody): Promise<SpawnsWire> {
+    return EFFECT_CORE_SPAWN && runControlDetached
+      ? runControlDetached(spawnEffect(body))
+      : spawnLegacy(body);
   }
 
   // POST /api/spawn/:id/revive — resume a terminal board-owned Claude
   // conversation into a NEW durable spawn row. Historical rows are immutable
   // evidence; the same session id/callsign/window identity is reused.
   // P9.1 Slice 5: revive is now an Effect core (reviveEffect) — R = never,
-  // E = never, expected outcomes are DATA (ReviveWire). The sync prefix (row
+  // E = never, expected outcomes are DATA (SpawnsWire). The sync prefix (row
   // lookup + 404) is one Effect.sync; the whole awaiting tail — every remaining
   // sync gate in legacy order, the revivingSessions single-flight claim, the
   // worktree path-lock + custody leases, the H-R7 validation, the window
@@ -2316,20 +2411,20 @@ export function createSpawns(ctx: SpawnsCtx) {
   // the runtime runs Effect.sync → flatMap → Effect.promise synchronously up to
   // runRevive's first await, so every sync gate and revivingSessions.add still
   // fire on the request turn exactly as the legacy async body did. Discharged to
-  // a native Promise<ReviveWire> by the injected runControlDetached runner. The
+  // a native Promise<SpawnsWire> by the injected runControlDetached runner. The
   // legacy async body (reviveLegacy) is retained UNCHANGED as the rollback seam.
   function reviveEffect(
     spawn_id: string,
     body: SpawnBody = {},
-  ): Effect.Effect<ReviveWire, never, never> {
-    return Effect.sync((): ReviveStep => {
+  ): Effect.Effect<SpawnsWire, never, never> {
+    return Effect.sync((): ControlStep<SpawnsWire> => {
       const row = q.getSpawn.get(spawn_id);
       if (!row)
         return {
           done: true,
           wire: { status: 404, body: { ok: false, reason: 'no such spawn' } },
         };
-      const runRevive = async (): Promise<ReviveWire> => {
+      const runRevive = async (): Promise<SpawnsWire> => {
         if (row.kind === 'shell') {
           return {
             status: 410,
@@ -2606,12 +2701,8 @@ export function createSpawns(ctx: SpawnsCtx) {
           releaseCustody?.();
         }
       };
-      return { done: false, runRevive };
-    }).pipe(
-      Effect.flatMap((step) =>
-        step.done ? Effect.succeed(step.wire) : Effect.promise(step.runRevive),
-      ),
-    );
+      return { done: false, run: runRevive };
+    }).pipe(Effect.flatMap(dischargeStep));
   }
 
   async function reviveLegacy(spawn_id: string, body: SpawnBody = {}) {
@@ -2891,7 +2982,7 @@ export function createSpawns(ctx: SpawnsCtx) {
   // ingress runner (runControlDetached), or fall back to the legacy async body
   // when the Effect path is disabled (EFFECT_CORE_REVIVE=false) or no runner was
   // wired. Keeps the name `revive` so ownedRevive is unchanged.
-  function revive(spawn_id: string, body: SpawnBody = {}): Promise<ReviveWire> {
+  function revive(spawn_id: string, body: SpawnBody = {}): Promise<SpawnsWire> {
     return EFFECT_CORE_REVIVE && runControlDetached
       ? runControlDetached(reviveEffect(spawn_id, body))
       : reviveLegacy(spawn_id, body);
@@ -3101,7 +3192,7 @@ export function createSpawns(ctx: SpawnsCtx) {
   // versa) and the response says which happened. Never sets --remote-control in
   // v1 (/rc is available from the live card once the pane is up).
   // P9.1 Slice 5: adoptSession ("Move to tmux") is now an Effect core
-  // (adoptSessionEffect) — R = never, E = never, outcomes are DATA (AdoptWire).
+  // (adoptSessionEffect) — R = never, E = never, outcomes are DATA (SpawnsWire).
   // Same shape as reviveEffect: Effect.sync(session lookup + 404) → one coarse
   // Effect.promise (runAdopt) carrying every remaining sync gate in legacy order,
   // the shared revivingSessions claim, the arm consume, the H-R7 validation, the
@@ -3115,15 +3206,15 @@ export function createSpawns(ctx: SpawnsCtx) {
     session_id: string,
     body: SpawnBody = {},
     { deferred = false }: { deferred?: boolean } = {},
-  ): Effect.Effect<AdoptWire, never, never> {
-    return Effect.sync((): AdoptStep => {
+  ): Effect.Effect<SpawnsWire, never, never> {
+    return Effect.sync((): ControlStep<SpawnsWire> => {
       const c = q.getSession.get(session_id);
       if (!c)
         return {
           done: true,
           wire: { status: 404, body: { ok: false, reason: 'no such session' } },
         };
-      const runAdopt = async (): Promise<AdoptWire> => {
+      const runAdopt = async (): Promise<SpawnsWire> => {
         // Every session is registered with a callsign, so an adoptable card always
         // carries one; this proves it to the type system for the window name and the
         // ticker lines below without altering behavior.
@@ -3385,12 +3476,8 @@ export function createSpawns(ctx: SpawnsCtx) {
           revivingSessions.delete(session_id);
         }
       };
-      return { done: false, runAdopt };
-    }).pipe(
-      Effect.flatMap((step) =>
-        step.done ? Effect.succeed(step.wire) : Effect.promise(step.runAdopt),
-      ),
-    );
+      return { done: false, run: runAdopt };
+    }).pipe(Effect.flatMap(dischargeStep));
   }
 
   async function adoptSessionLegacy(
@@ -3662,7 +3749,7 @@ export function createSpawns(ctx: SpawnsCtx) {
     session_id: string,
     body: SpawnBody = {},
     opts: { deferred?: boolean } = {},
-  ): Promise<AdoptWire> {
+  ): Promise<SpawnsWire> {
     return EFFECT_CORE_ADOPT_SESSION && runControlDetached
       ? runControlDetached(adoptSessionEffect(session_id, body, opts))
       : adoptSessionLegacy(session_id, body, opts);
@@ -3700,27 +3787,27 @@ export function createSpawns(ctx: SpawnsCtx) {
   // requests for one spawn collapse to one harvest exactly as before: the memo
   // sits OUTSIDE the Effect boundary, so Promise identity and the map lifecycle
   // are byte-identical across the flip (danger note D7).
-  function enableRemoteOnce(spawn_id: string): Promise<EnableRemoteWire> {
+  function enableRemoteOnce(spawn_id: string): Promise<SpawnsWire> {
     return EFFECT_CORE_ENABLE_REMOTE && runControlDetached
       ? runControlDetached(enableRemoteOnceEffect(spawn_id))
       : enableRemoteOnceLegacy(spawn_id);
   }
 
   // The Effect core (R = never, E = never; expected outcomes are DATA —
-  // EnableRemoteWire). The sync prefix (row lookup + every pre-await gate) is one
+  // SpawnsWire). The sync prefix (row lookup + every pre-await gate) is one
   // Effect.sync; the whole awaiting tail (window lookup, TOCTOU re-read, per-pane
   // input lock, type+Enter, the 6s harvest race) is one Effect.promise (runEnable)
   // that preserves legacy timing byte-for-byte: the runtime runs Effect.sync →
   // flatMap → Effect.promise synchronously up to runEnable's first await
   // (findScopedWindow), so every sync gate still fires on the request turn exactly
-  // as the legacy async body did. Discharged to a native Promise<EnableRemoteWire>
+  // as the legacy async body did. Discharged to a native Promise<SpawnsWire>
   // by the injected runControlDetached runner (the ingress-owned
   // Effect.runPromiseWith runner — Q1). Expected refusals are DATA, so this is
   // faithful with Effect.promise (throw → die), not Effect.tryPromise: a genuine
   // throw becomes a die → the transport's defect arm → 500, exactly as an escaping
   // throw in the legacy async body did.
-  function enableRemoteOnceEffect(spawn_id: string): Effect.Effect<EnableRemoteWire, never, never> {
-    return Effect.sync((): EnableRemoteStep => {
+  function enableRemoteOnceEffect(spawn_id: string): Effect.Effect<SpawnsWire, never, never> {
+    return Effect.sync((): ControlStep<SpawnsWire> => {
       const row = q.getSpawn.get(spawn_id);
       if (!row)
         return { done: true, wire: { status: 404, body: { ok: false, reason: 'no such spawn' } } };
@@ -3767,7 +3854,7 @@ export function createSpawns(ctx: SpawnsCtx) {
       // accepts row.tmux_window's nullable type directly, so no re-narrow is needed
       // (unlike spawnKill, whose kill path required a non-null tmux_window). The
       // body below is the verbatim legacy tail, one indentation level deeper.
-      const runEnable = async (): Promise<EnableRemoteWire> => {
+      const runEnable = async (): Promise<SpawnsWire> => {
         const win = await findScopedWindow(row.tmux_window);
         if (win === null) {
           return {
@@ -3883,15 +3970,11 @@ export function createSpawns(ctx: SpawnsCtx) {
           body: { ok: true, enabled: true, url: result.url, pending: result.pending },
         };
       };
-      return { done: false, runEnable };
-    }).pipe(
-      Effect.flatMap((step) =>
-        step.done ? Effect.succeed(step.wire) : Effect.promise(step.runEnable),
-      ),
-    );
+      return { done: false, run: runEnable };
+    }).pipe(Effect.flatMap(dischargeStep));
   }
 
-  async function enableRemoteOnceLegacy(spawn_id: string): Promise<EnableRemoteWire> {
+  async function enableRemoteOnceLegacy(spawn_id: string): Promise<SpawnsWire> {
     const row = q.getSpawn.get(spawn_id);
     if (!row) return { status: 404, body: { ok: false, reason: 'no such spawn' } };
     if (row.kind === 'shell') {
@@ -4031,7 +4114,7 @@ export function createSpawns(ctx: SpawnsCtx) {
   // "Stop" needs no endpoint: the board mails the session instead.
   //
   // P9.1 Slice 3: spawnKill is now an Effect core (spawnKillEffect) — R = never,
-  // E = never, expected outcomes are DATA (SpawnKillWire). The sync prefix (row
+  // E = never, expected outcomes are DATA (SpawnsWire). The sync prefix (row
   // lookup + 404) is one Effect.sync; the whole awaiting tail — the tmux_window
   // invariant, the provisioning-cancel race (AbortController FROZEN, danger note
   // D3), the H-R5 stale-id owner re-check, and the verified kill — is one
@@ -4039,14 +4122,14 @@ export function createSpawns(ctx: SpawnsCtx) {
   // runtime runs Effect.sync → flatMap → Effect.promise synchronously up to
   // runKill's first await, so op.controller.abort() and the sync guards still
   // fire on the request turn exactly as the legacy async body did. Discharged to
-  // a native Promise<SpawnKillWire> by the injected runControlDetached runner
+  // a native Promise<SpawnsWire> by the injected runControlDetached runner
   // (the ingress-owned Effect.runPromiseWith runner — Q1). The legacy async body
   // (spawnKillLegacy) is retained UNCHANGED as the per-path rollback seam.
   function spawnKillEffect(
     spawn_id: string,
     force: unknown,
-  ): Effect.Effect<SpawnKillWire, never, never> {
-    return Effect.sync((): SpawnKillStep => {
+  ): Effect.Effect<SpawnsWire, never, never> {
+    return Effect.sync((): ControlStep<SpawnsWire> => {
       const row = q.getSpawn.get(spawn_id);
       if (!row)
         return {
@@ -4058,7 +4141,7 @@ export function createSpawns(ctx: SpawnsCtx) {
       // without altering behavior. Kept as runKill's FIRST line (before any await)
       // so it re-narrows row.tmux_window inside this closure and still throws on
       // the request turn — the throw → Effect.promise die → 500, as it did before.
-      const runKill = async (): Promise<SpawnKillWire> => {
+      const runKill = async (): Promise<SpawnsWire> => {
         if (row.tmux_window == null) throw new Error('spawn is missing its tmux window');
         if (row.status === 'provisioning') {
           const op = provisioningOps.get(spawn_id);
@@ -4175,15 +4258,11 @@ export function createSpawns(ctx: SpawnsCtx) {
         onMutate();
         return { status: 200, body: { ok: true, spawn_id, status: 'killed' } };
       };
-      return { done: false, runKill };
-    }).pipe(
-      Effect.flatMap((step) =>
-        step.done ? Effect.succeed(step.wire) : Effect.promise(step.runKill),
-      ),
-    );
+      return { done: false, run: runKill };
+    }).pipe(Effect.flatMap(dischargeStep));
   }
 
-  async function spawnKillLegacy(spawn_id: string, force: unknown): Promise<SpawnKillWire> {
+  async function spawnKillLegacy(spawn_id: string, force: unknown): Promise<SpawnsWire> {
     const row = q.getSpawn.get(spawn_id);
     if (!row) return { status: 404, body: { ok: false, reason: 'no such spawn' } };
     // Every spawn is inserted with its deterministic window name; this proves it
@@ -4307,10 +4386,10 @@ export function createSpawns(ctx: SpawnsCtx) {
   // ingress runner (runControlDetached), or fall back to the legacy async body
   // when the Effect path is disabled (EFFECT_CORE_SPAWN_KILL=false) or no runner
   // was wired (a standalone spawns factory with no ingress supervisor). Either
-  // branch returns exactly ONE native Promise<SpawnKillWire> — the object
+  // branch returns exactly ONE native Promise<SpawnsWire> — the object
   // ownedSpawnKill hands to the transport's start-once recorder, byte-for-byte
   // with the legacy contract.
-  function spawnKill(spawn_id: string, force: unknown): Promise<SpawnKillWire> {
+  function spawnKill(spawn_id: string, force: unknown): Promise<SpawnsWire> {
     return EFFECT_CORE_SPAWN_KILL && runControlDetached
       ? runControlDetached(spawnKillEffect(spawn_id, force))
       : spawnKillLegacy(spawn_id, force);

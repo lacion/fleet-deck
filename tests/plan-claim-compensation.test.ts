@@ -6,6 +6,7 @@ import type { TestContext } from 'node:test';
 
 import { openDb } from '../src/daemon/db.ts';
 import { createCore } from '../src/daemon/derive.ts';
+import { runControlDetached } from '../src/daemon/platform/bun/ingress-supervisor-live.ts';
 import test from './helpers/harness-test.ts';
 
 // P9.1 Slice 1 characterization — BUG-040 plan-claim compensation.
@@ -95,6 +96,12 @@ test('plan-claim compensation: a throw during launch reverts the plan to its pre
         throw new Error('launch override boom');
       },
     }),
+    // Wire the ingress runner so the Effect core (post-Slice-6 conversion) is the
+    // path under test; a harmless no-op for the legacy async body. A throw
+    // escaping launchPane becomes a die inside the coarse spawn tail, which the
+    // unsupervised runner squashes back to the same rejected Error — so this
+    // assertion is byte-identical across the flip (D6: no catch/fold folds it).
+    runControlDetached,
   });
   t.after(async () => {
     await core.lifecycle.close();
@@ -154,6 +161,7 @@ test('plan-claim compensation: a concurrent via change in the failure window is 
         throw new Error('launch override boom');
       },
     }),
+    runControlDetached,
   });
   t.after(async () => {
     await core.lifecycle.close();
@@ -182,13 +190,17 @@ test('plan-claim compensation: a concurrent via change in the failure window is 
 // claim*. Unlike the two throws above, these are RETURNED wires — the spawn body
 // resolves with {status:400, body} rather than rejecting — and each of them
 // lives inside the try whose `finally` runs `guard.settle()`. So the invariant
-// under test is exactly the same one Slice 6a must preserve byte-for-byte: the
+// under test is exactly the same one Slice 6 must preserve byte-for-byte: the
 // plan flipped approved -> executed by the claim, then a repo-mode 400 returned,
 // and `guard.settle()` reverted the plan back to its pre-claim status with the
 // claim's own via still recorded (via-keyed release). Each case runs the
-// PRODUCTION path — core.spawn (ownedSpawn) with the tmux runner injected — and
-// asserts BOTH the wire bytes and the reverted plan row. Authored against the
-// legacy code; must pass UNCHANGED after Slice 6a wires the Effect transport.
+// PRODUCTION path — core.spawn (ownedSpawn) with the tmux runner AND the ingress
+// runControlDetached runner injected — and asserts BOTH the wire bytes and the
+// reverted plan row. Authored against the legacy code; must pass UNCHANGED after
+// Slice 6b converts spawn() to an Effect core, which the wired runner makes this
+// case actually traverse (§7 nit 1: the three 400s must stay INSIDE the coarse
+// tail whose `finally` settles the claim — pulling them into the sync claim
+// prefix would silently re-open the leak this pins).
 //
 // A plain repo body reaches the claim block (spawnCapability available via the
 // test-override; runtimeOverrideRefusal / unsupervisedGate / gatewayDecision all
@@ -203,6 +215,12 @@ function makeRepoModeCore(db: ReturnType<typeof openDb>, home: string) {
     port: 4711,
     home,
     tmuxAdapter: makeAdapter({ spawnOverrideCmd: () => '/fake-spawn-override' }),
+    // Wire the ingress runner so the SAME assertions exercise the legacy async
+    // body before Slice 6 converts spawn() and the Effect core after it —
+    // byte-identical across the flip. Without it the dispatcher would fall back
+    // to the legacy body forever, and this §7 pin would never traverse the
+    // Effect core the conversion actually ships.
+    runControlDetached,
   });
 }
 

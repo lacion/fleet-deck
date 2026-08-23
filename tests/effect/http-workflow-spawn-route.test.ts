@@ -41,7 +41,11 @@
 //      runRequest (the object program.ts installs) drives an actual interrupt against
 //      a gated core.spawn: an interrupt AFTER the native started JOINs it and answers
 //      its TRUE result (never 503); a quiesce BEFORE admission is the ONLY 503 case
-//      and core.spawn is never called.
+//      and core.spawn is never called. A second live-ingress case drives a REAL
+//      launch-time throw through the UNSTUBBED converted spawn composition (core
+//      with runControlDetached, no core.spawn stub) and pins D6: HTTP 500
+//      {"ok":false,"reason":"<thrown message>"} plus the 'fleetd spawn error:' log,
+//      never {"err":"internal"}.
 //
 // §7 BINDING PIN NOTE: the three repo-mode validation 400s (worktree-in-repo,
 // branch-required, branch_mode-invalid) each revert their plan claim to
@@ -49,8 +53,11 @@
 // compensation is what those 400s exercise); this suite pins the TRANSPORT contract.
 
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 
 import * as Cause from 'effect/Cause';
 import * as Context from 'effect/Context';
@@ -597,12 +604,58 @@ interface LiveBoard {
   readonly supervisor: IngressSupervisorService<never>;
 }
 
+type CoreTmuxAdapter = NonNullable<NonNullable<Parameters<typeof createCore>[1]>['tmuxAdapter']>;
+
+// Narrow test tmux adapter (same surface as plan-claim-compensation). Default
+// launchOverride is a no-op; the D6 pin overrides it to throw at launch time.
+function makeAdapter(overrides: Partial<CoreTmuxAdapter> = {}): CoreTmuxAdapter {
+  const adapter = {
+    spawnOverrideCmd: () => null,
+    hasTmux: () => true,
+    tmuxCapability: () => ({ available: true }),
+    fleetServerAbsent: () => Promise.resolve(false),
+    capturePane: () => Promise.resolve('ready'),
+    pasteText: () => Promise.resolve(true),
+    sendEnter: () => Promise.resolve(true),
+    sendBringupEnter: () => Promise.resolve(true),
+    killWindowVerified: () => Promise.resolve({ ok: true }),
+    launchOverride: () => {
+      /* unused by default */
+    },
+    ensureSession: () => Promise.resolve('fleetdeck-4711'),
+    newWindow: () =>
+      Promise.resolve({
+        session: 'fleetdeck-4711',
+        window: 'fd4711-test',
+        window_id: '@1',
+      }),
+    sessionName: () => 'fleetdeck-4711',
+    windowName: (_port: number, callsign: string) => `fd4711-${callsign}`,
+    typeAndEnter: () => Promise.resolve(true),
+    listScopedWindows: () => Promise.resolve([]),
+    paneCurrentCommand: () => Promise.resolve(null),
+    ...overrides,
+  };
+  return adapter as unknown as CoreTmuxAdapter;
+}
+
 // Wires the REAL supervisor (runRequest === supervisor.runPromiseExit, exactly as
 // makeHttpServerOwner does in production) so interrupt()/quiesce() drive genuine
 // fiber lifecycle, and hands `core` back so a test can gate core.spawn before firing.
-function startLiveBoard(t: TestContext): Promise<LiveBoard> {
+// `runControlDetached` is always injected so core.spawn walks spawnEffect — the
+// production dispatcher. Optional home/tmuxAdapter let a case drive the REAL
+// converted spawn (no core.spawn stub) through launchOverride.
+function startLiveBoard(
+  t: TestContext,
+  opts: { home?: string; tmuxAdapter?: CoreTmuxAdapter } = {},
+): Promise<LiveBoard> {
   const db = openDb(':memory:');
-  const core = createCore(db, { port: 0, home: '/daemon-home', runControlDetached });
+  const core = createCore(db, {
+    port: 0,
+    home: opts.home ?? '/daemon-home',
+    runControlDetached,
+    ...(opts.tmuxAdapter ? { tmuxAdapter: opts.tmuxAdapter } : {}),
+  });
   const rootScope = Scope.makeUnsafe('sequential');
   const probe = http.createServer();
   return new Promise<LiveBoard>((resolve, reject) => {
@@ -707,4 +760,60 @@ test('live bridge: interrupting an in-flight spawn JOINs the started core.spawn 
   assert.equal(refused.headers['content-type'], 'application/json');
   assert.equal(refused.headers['x-content-type-options'], 'nosniff');
   assert.equal(refusalGate.invocations(), 0, 'a refused admission never invokes core.spawn');
+});
+
+test('live bridge: a real launch-time throw through unstubbed spawnEffect answers 500 spawnFailureReason (not {err:internal}) and logs fleetd spawn error:', async (t) => {
+  // Finding 1 / D6: the production composition is
+  //   launchOverride throw → Effect.promise DIE → runControlDetached squash →
+  //   ownedSpawn reject → spawnRouteWorkflow DIE → settleEffectSpawnRoute →
+  //   emitSpawnFailure → console.error('fleetd spawn error:', err) +
+  //   json(res, 500, {ok:false, reason: spawnFailureReason(err)})
+  // The C-section 500 pins the settler dialect with core.spawn STUBBED, so they
+  // never enter spawnEffect. This case does not stub: LiveIngressSupervisor as
+  // runRequest (program.ts), runControlDetached injected, launchOverride throws.
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-spawn-d6-http-'));
+  const LAUNCH_BOOM = 'launch override boom';
+  const board = await startLiveBoard(t, {
+    home: cwd,
+    tmuxAdapter: makeAdapter({
+      spawnOverrideCmd: () => '/fake-spawn-override',
+      launchOverride: () => {
+        throw new Error(LAUNCH_BOOM);
+      },
+    }),
+  });
+  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+
+  const logged: unknown[][] = [];
+  const originalError = console.error;
+  console.error = (...args: unknown[]) => {
+    logged.push(args);
+  };
+  let res: RawResponse;
+  try {
+    res = await postSpawn(board.port, JSON.stringify({ cwd, prompt: 'x' }));
+  } finally {
+    console.error = originalError;
+  }
+
+  assert.equal(res.status, 500, 'launch-time throw → HTTP 500');
+  assert.equal(
+    res.body,
+    JSON.stringify({ ok: false, reason: LAUNCH_BOOM }),
+    'wire is exactly 500 {ok:false, reason: <the thrown message>}',
+  );
+  assert.equal(res.body, `{"ok":false,"reason":"${LAUNCH_BOOM}"}`);
+  assert.notEqual(res.body, '{"err":"internal"}', 'not the outer-catch CONTROL_DEFECT body');
+  assert.notEqual(
+    res.body,
+    '{"ok":false,"reason":"internal"}',
+    'not the controlAsync folded 500-internal wire',
+  );
+  const spawnLog = logged.find((args) => args[0] === 'fleetd spawn error:');
+  assert.ok(spawnLog, "console.error('fleetd spawn error:', err) fired");
+  assert.match(
+    String(spawnLog[1]),
+    /launch override boom/,
+    'the log carries the thrown launch error, not a Cause-inspection TypeError',
+  );
 });
