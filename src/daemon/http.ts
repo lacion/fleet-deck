@@ -591,6 +591,14 @@ export interface NameControlRouteCapabilities {
   readonly validateSuffix: (suffix: string) => string | null;
   readonly applyName: (suffix: string | null) => { readonly ok: boolean };
 }
+// P9.1 Slice 0 — POST /api/spawn/arm-unsupervised. STRUCTURAL MIRROR of
+// ArmUnsupervisedCapabilities in app/http-workflows/control.ts: `run` is the raw
+// token mint (core.armUnsupervised), and the workflow assembles the frozen 200
+// { ok, arm_token } wire. Sync + E = never like the other pass-through control
+// routes; it rides settleEffectMutatingRoute with CONTROL_DEFECT.
+export interface ArmUnsupervisedRouteCapabilities {
+  readonly run: () => string;
+}
 // P6.4 HOOK ROUTE GROUP (POST /hook/:name) — STRUCTURAL MIRROR of
 // HookDispatchCapabilities in app/http-workflows/hooks.ts. All three fields are
 // thunks the workflow calls inside the Effect, so building the capability object
@@ -627,6 +635,8 @@ export interface HttpEffectRoutes {
   readonly controlSync: (caps: ControlSyncRouteCapabilities) => HttpWorkflowEffect;
   readonly questionsDismiss: (caps: QuestionsDismissRouteCapabilities) => HttpWorkflowEffect;
   readonly nameControl: (caps: NameControlRouteCapabilities) => HttpWorkflowEffect;
+  // P9.1 Slice 0 CONTROL ROUTE: POST /api/spawn/arm-unsupervised.
+  readonly armUnsupervised: (caps: ArmUnsupervisedRouteCapabilities) => HttpWorkflowEffect;
   // P6.4 HOOK ROUTE GROUP builder (see the mirror interface above).
   readonly hookDispatch: (caps: HookDispatchRouteCapabilities) => HttpWorkflowEffect;
 }
@@ -2396,7 +2406,25 @@ export function createHttp(
               // must echo. Token-gated by tokenGatedRoute even on loopback, so
               // this route existing means the caller already proved it holds
               // the bearer — the API-side half of the board's red two-step.
+              // P9.1 Slice 0: Effect workflow when wired; the legacy synchronous
+              // handler below is the rollback seam. SYNC + MUTATING (mints a
+              // single-use token), so it rides settleEffectMutatingRoute: an
+              // intra-quiesce admission refusal answers the frozen 503 and never
+              // replays the mint, and a defect reproduces the outer-catch 500
+              // {"err":"internal"} the legacy throw already lands in.
               logExec(url.pathname, req);
+              if (effectRoutes) {
+                settleEffectMutatingRoute(
+                  effectRoutes,
+                  'POST /api/spawn/arm-unsupervised',
+                  effectRoutes.armUnsupervised({
+                    run: () => core.armUnsupervised() as string,
+                  }),
+                  res,
+                  CONTROL_DEFECT,
+                );
+                return;
+              }
               json(res, 200, { ok: true, arm_token: core.armUnsupervised() });
               return;
             }

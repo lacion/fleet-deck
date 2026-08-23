@@ -61,6 +61,7 @@ import { makeStoreLivenessWork } from './db-workflows/spawn-liveness.ts';
 import { DaemonStartupRefusalError, HttpBindStartupError } from './errors.ts';
 import { type HttpServerOwner, makeHttpServerOwner } from './http-server-owner.ts';
 import {
+  armUnsupervisedWorkflow,
   controlAsyncWorkflow,
   controlSyncWorkflow,
   nameControlWorkflow,
@@ -880,6 +881,8 @@ async function bootDaemon(
     controlSync: controlSyncWorkflow,
     questionsDismiss: questionsDismissWorkflow,
     nameControl: nameControlWorkflow,
+    // P9.1 Slice 0: POST /api/spawn/arm-unsupervised.
+    armUnsupervised: armUnsupervisedWorkflow,
     // P6.4 HOOK ROUTE GROUP: POST /hook/:name (the final route slice). Fails open
     // on every non-success Exit via mapHookExit (see http-workflows/hooks.ts).
     hookDispatch: hookDispatchWorkflow,

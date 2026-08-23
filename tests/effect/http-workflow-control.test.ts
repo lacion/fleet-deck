@@ -44,6 +44,7 @@ import { ApplicationQuiescingError } from '../../src/daemon/app/errors.ts';
 import type { IngressSupervisorService } from '../../src/daemon/app/services/ingress-supervisor.ts';
 import { makeIngressSupervisor } from '../../src/daemon/platform/bun/ingress-supervisor-live.ts';
 import {
+  armUnsupervisedWorkflow,
   controlAsyncWorkflow,
   controlSyncWorkflow,
   nameControlWorkflow,
@@ -79,6 +80,7 @@ const ALL_ROUTE_BUILDERS = {
   controlSync: controlSyncWorkflow,
   questionsDismiss: questionsDismissWorkflow,
   nameControl: nameControlWorkflow,
+  armUnsupervised: armUnsupervisedWorkflow,
   hookDispatch: hookDispatchWorkflow,
 } as const;
 
@@ -294,6 +296,49 @@ test('nameControlWorkflow clears without validating (applyName receives null)', 
   assert.equal(appliedWith, null);
 });
 
+test('armUnsupervisedWorkflow mints via run and echoes the frozen 200 { ok, arm_token } wire', () => {
+  let runCalls = 0;
+  const out = Effect.runSync(
+    armUnsupervisedWorkflow({
+      run: () => {
+        runCalls += 1;
+        return 'minted-token-value';
+      },
+    }),
+  );
+  assert.deepEqual(out, { status: 200, body: { ok: true, arm_token: 'minted-token-value' } });
+  assert.equal(runCalls, 1);
+});
+
+test('armUnsupervisedWorkflow builds lazily — constructing the Effect mints no token', () => {
+  let runCalls = 0;
+  // Building the workflow must touch no capability: the mint happens only when the
+  // Effect runs, exactly like the other sync control routes.
+  armUnsupervisedWorkflow({
+    run: () => {
+      runCalls += 1;
+      return 'unminted';
+    },
+  });
+  assert.equal(runCalls, 0);
+});
+
+test('armUnsupervisedWorkflow turns a throw into a die (the outer-catch 500)', async () => {
+  const boom = new Error('mint threw');
+  const exit = await Effect.runPromiseExit(
+    armUnsupervisedWorkflow({
+      run: () => {
+        throw boom;
+      },
+    }),
+  );
+  // The mint has no local catch, so a throw lands in routeRequest's outer catch;
+  // Effect.sync turns it into a die → the transport's defect arm → 500 {"err":"internal"}.
+  const outcome = mapEffectRouteExit(exit);
+  assert.equal(outcome.kind, 'defect');
+  assert.equal(outcome.kind === 'defect' ? outcome.defect : null, boom);
+});
+
 test('mapEffectRouteExit classifies a control quiesce and interrupt as quiesce, a die as defect', () => {
   // The mutating group leans on the mapper for two policies: a quiescing refusal and
   // an interrupts-only Cause (the shutdown fiber cancelling this in-flight mutation)
@@ -430,8 +475,11 @@ type BoardHandle = ReturnType<typeof createHttp> & { port: number };
 // port). effectRoutes starts null — the legacy path — and the test installs the
 // bridge when it wants. token:null + plain loopback authorizes every control POST
 // (none is in tokenGatedRoute, requireToken defaults off), so the requests reach the
-// route handlers rather than a 401/403 wall.
-function startBoard(t: TestContext): Promise<BoardHandle> {
+// route handlers rather than a 401/403 wall. A token may be supplied (default null)
+// for the token-gated arm route (POST /api/spawn/arm-unsupervised): configuring a
+// real token makes plain loopback fall through to the bearer check, so arm requests
+// must carry `Authorization: Bearer <token>` to reach the handler.
+function startBoard(t: TestContext, token: string | null = null): Promise<BoardHandle> {
   const db = openDb(':memory:');
   const core = createCore(db, { port: 0, home: '/daemon-home' });
   const probe = http.createServer();
@@ -440,7 +488,7 @@ function startBoard(t: TestContext): Promise<BoardHandle> {
     probe.listen(0, '127.0.0.1', () => {
       const port = (probe.address() as AddressInfo).port;
       probe.close(() => {
-        const handle = createHttp(core, { port, token: null as unknown as string, lan: null });
+        const handle = createHttp(core, { port, token: token as unknown as string, lan: null });
         handle.server.once('error', reject);
         handle.server.listen(port, '127.0.0.1', () => {
           t.after(() => {
@@ -607,6 +655,138 @@ test('a workflow defect reproduces the legacy POST outer-catch 500 {"err":"inter
     method: 'POST',
     path: '/api/spawn/nope/kill',
     body: '{}',
+  });
+  assert.equal(defected.status, 500);
+  assert.equal(defected.body, '{"err":"internal"}');
+  assert.equal(defected.headers['content-type'], 'application/json');
+  assert.equal(defected.headers['x-content-type-options'], 'nosniff');
+});
+
+// The arm route (POST /api/spawn/arm-unsupervised) is token-gated, so its board is
+// started WITH a token and every request carries the bearer; the capability MINTS a
+// fresh 32-char token per call, so the arm_token value is normalized (like the
+// pilot's uptime/path fields) while its length — hence content-length — is pinned.
+const ARM_BOARD_TOKEN = 'arm-slice0-board-token';
+const ARM_HEADERS: Record<string, string> = { authorization: `Bearer ${ARM_BOARD_TOKEN}` };
+
+// base64url(24 bytes) is always 32 chars, so the wire length is deterministic even
+// though the token value is random. Assert the frozen 200 shape, then blank the token
+// to a fixed placeholder so two independent mints compare byte-for-byte.
+function normalizeArmToken(body: string): string {
+  const parsed = JSON.parse(body) as { ok?: unknown; arm_token?: unknown };
+  assert.equal(parsed.ok, true, 'arm: ok:true');
+  assert.equal(typeof parsed.arm_token, 'string', 'arm: arm_token is a string');
+  assert.equal((parsed.arm_token as string).length, 32, 'arm: token is 32 base64url chars');
+  return body.replace(parsed.arm_token as string, '<minted>');
+}
+
+test('arm workflow dispatch is byte-identical to the legacy mint (token value normalized)', async (t) => {
+  const board = await startBoard(t, ARM_BOARD_TOKEN);
+
+  // effectRoutes null ⇒ the legacy synchronous mint answers.
+  const legacy = await rawFull(board.port, {
+    method: 'POST',
+    path: '/api/spawn/arm-unsupervised',
+    body: '{}',
+    headers: ARM_HEADERS,
+  });
+  assert.equal(legacy.status, 200, 'legacy arm → 200');
+
+  // Wire the FAITHFUL success bridge (the real workflow Effect through the same Exit
+  // the ingress runtime produces).
+  board.installEffectRoutes({
+    runRequest: (_operation, effect) => Effect.runPromiseExit(effect),
+    ...ALL_ROUTE_BUILDERS,
+  });
+
+  const workflow = await rawFull(board.port, {
+    method: 'POST',
+    path: '/api/spawn/arm-unsupervised',
+    body: '{}',
+    headers: ARM_HEADERS,
+  });
+
+  assert.equal(workflow.status, legacy.status, 'arm: status');
+  assert.equal(
+    normalizeArmToken(workflow.body),
+    normalizeArmToken(legacy.body),
+    'arm: normalized body',
+  );
+  // Both captures collapse to the one frozen 200 wire; only the minted token differed.
+  assert.equal(
+    normalizeArmToken(legacy.body),
+    '{"ok":true,"arm_token":"<minted>"}',
+    'arm: frozen 200 wire',
+  );
+  assert.equal(
+    workflow.headers['content-type'],
+    legacy.headers['content-type'],
+    'arm: content-type',
+  );
+  assert.equal(
+    workflow.headers['x-content-type-options'],
+    legacy.headers['x-content-type-options'],
+    'arm: nosniff',
+  );
+  // Both tokens are 32 chars ⇒ the raw content-length is identical to the byte.
+  assert.equal(
+    workflow.headers['content-length'],
+    legacy.headers['content-length'],
+    'arm: content-length',
+  );
+});
+
+test('arm: a quiescing ingress answers 503 shutting-down — NEVER a legacy re-mint', async (t) => {
+  const board = await startBoard(t, ARM_BOARD_TOKEN);
+
+  // The legacy answer the route would give — a 200 mint a replay WOULD perform.
+  const legacyArm = await rawFull(board.port, {
+    method: 'POST',
+    path: '/api/spawn/arm-unsupervised',
+    body: '{}',
+    headers: ARM_HEADERS,
+  });
+  assert.equal(legacyArm.status, 200);
+
+  // A quiescing ingress resolves runRequest to a failed Exit WITHOUT running the
+  // workflow, so the mint inside that never-run Effect never happens; the mutating
+  // settler answers the 503 refusal, never a legacy re-mint of the capability token.
+  board.installEffectRoutes({
+    runRequest: (operation, _effect) =>
+      Promise.resolve(
+        Exit.fail(new ApplicationQuiescingError({ operation, message: 'daemon is quiescing' })),
+      ),
+    ...ALL_ROUTE_BUILDERS,
+  });
+
+  const quiesced = await rawFull(board.port, {
+    method: 'POST',
+    path: '/api/spawn/arm-unsupervised',
+    body: '{}',
+    headers: ARM_HEADERS,
+  });
+  assert.equal(quiesced.status, 503, 'quiesce → 503, not the legacy 200');
+  assert.notEqual(quiesced.status, legacyArm.status, 'the 503 must NOT be a legacy re-mint');
+  assert.equal(quiesced.body, '{"ok":false,"reason":"shutting-down"}');
+  assert.equal(quiesced.headers['content-type'], 'application/json');
+  assert.equal(quiesced.headers['x-content-type-options'], 'nosniff');
+});
+
+test('arm: a workflow defect reproduces the legacy POST outer-catch 500 {"err":"internal"}', async (t) => {
+  const board = await startBoard(t, ARM_BOARD_TOKEN);
+
+  // A die must surface as the byte-identical 500 the legacy POST outer catch emits
+  // for a non-hook route — 500 {"err":"internal"}, never the fail-open 200.
+  board.installEffectRoutes({
+    runRequest: (_operation, _effect) => Promise.resolve(Exit.die(new Error('boom'))),
+    ...ALL_ROUTE_BUILDERS,
+  });
+
+  const defected = await rawFull(board.port, {
+    method: 'POST',
+    path: '/api/spawn/arm-unsupervised',
+    body: '{}',
+    headers: ARM_HEADERS,
   });
   assert.equal(defected.status, 500);
   assert.equal(defected.body, '{"err":"internal"}');

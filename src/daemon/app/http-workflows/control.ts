@@ -174,3 +174,23 @@ export const nameControlWorkflow = (
     const out = caps.applyName(caps.clearing ? null : (caps.suffix as string));
     return { status: out.ok ? 200 : 409, body: out };
   });
+
+/**
+ * POST /api/spawn/arm-unsupervised (P9.1 Slice 0). Mints the single-use
+ * unsupervised-spawn capability token and echoes it as the frozen 200 wire
+ * { ok: true, arm_token }. Like questionsDismiss this is a SYNC workflow whose
+ * capability is the raw core call — here `run` is core.armUnsupervised (the
+ * mint, returning the token string) — and the (status, body) assembly lives IN
+ * the workflow so the 200 echo shape is pinned and isolation-tested. R = never,
+ * E = never; a throw inside `run` becomes a die (→ 500 {"err":"internal"}, the
+ * routeRequest outer catch — the same dialect the legacy synchronous handler's
+ * throw already lands in).
+ */
+export interface ArmUnsupervisedCapabilities {
+  readonly run: () => string;
+}
+
+export const armUnsupervisedWorkflow = (
+  caps: ArmUnsupervisedCapabilities,
+): Effect.Effect<ControlWire, never, never> =>
+  Effect.sync(() => ({ status: 200, body: { ok: true, arm_token: caps.run() } }));

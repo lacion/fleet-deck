@@ -49,6 +49,7 @@ import { createHttp } from '../../src/daemon/http.ts';
 import { mapHookExit } from '../../src/daemon/hook-policy.ts';
 import { ApplicationQuiescingError } from '../../src/daemon/app/errors.ts';
 import {
+  armUnsupervisedWorkflow,
   controlAsyncWorkflow,
   controlSyncWorkflow,
   nameControlWorkflow,
@@ -81,6 +82,7 @@ const ALL_ROUTE_BUILDERS = {
   controlSync: controlSyncWorkflow,
   questionsDismiss: questionsDismissWorkflow,
   nameControl: nameControlWorkflow,
+  armUnsupervised: armUnsupervisedWorkflow,
   hookDispatch: hookDispatchWorkflow,
 } as const;
 

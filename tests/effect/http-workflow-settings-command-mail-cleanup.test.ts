@@ -40,6 +40,7 @@ import { ApplicationQuiescingError } from '../../src/daemon/app/errors.ts';
 import type { IngressSupervisorService } from '../../src/daemon/app/services/ingress-supervisor.ts';
 import { makeIngressSupervisor } from '../../src/daemon/platform/bun/ingress-supervisor-live.ts';
 import {
+  armUnsupervisedWorkflow,
   controlAsyncWorkflow,
   controlSyncWorkflow,
   nameControlWorkflow,
@@ -77,6 +78,7 @@ const ALL_ROUTE_BUILDERS = {
   controlSync: controlSyncWorkflow,
   questionsDismiss: questionsDismissWorkflow,
   nameControl: nameControlWorkflow,
+  armUnsupervised: armUnsupervisedWorkflow,
   hookDispatch: hookDispatchWorkflow,
 };
 
