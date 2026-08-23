@@ -18,18 +18,27 @@
 // QUIESCE POLICY — INVERTED FROM THE SNAPSHOT PILOT (this is the whole point of a
 // mutating group). A quiescing ingress resolves runRequest to
 // Exit.fail(ApplicationQuiescingError) WITHOUT running the workflow. Because each
-// workflow's core call lives INSIDE that (never-run) Effect, the write the
-// ingress refused simply never happens — there is no half-applied mutation to
-// reconcile. The transport settler (settleEffectControlRoute in http.ts) must
+// workflow's core call lives INSIDE that (never-run) Effect, a REFUSED admission
+// never performs its write — there is no half-applied mutation to reconcile. The
+// transport settlers (settleEffectMutatingRoute for the five sync routes,
+// settleControlAsyncRoute for the six async routes, both in http.ts) must
 // therefore NOT fall back to the legacy synchronous handler the way a snapshot
 // read does: replaying it would perform the very write the ingress just refused.
-// Instead it answers the byte-identical refusal the request would receive one
+// Instead they answer the byte-identical refusal the request would receive one
 // tick later once the transport's `quiescing` flag flips — 503
 // {"ok":false,"reason":"shutting-down"} (http.ts fetchHandler quiescing gate).
-// The mapper's interrupt policy is per-group for the same reason: an
-// interrupts-only Exit (the shutdown fiber cancelling this in-flight request)
-// classifies as quiesce, so a mid-flight mutation takes the same 503 refusal —
-// we did not complete it, and we say so.
+//
+// INTERRUPT-AFTER-START IS NOT A REFUSAL. mapEffectRouteExit also classifies an
+// interrupts-only Exit (the shutdown fiber cancelling this ALREADY-admitted
+// request) as quiesce, but a mutating route that already started its write has a
+// DIFFERENT obligation than a fresh refusal. The five SYNC routes complete their
+// core call on the admitting turn, so their fiber is already done before
+// closing-clients — an interrupt is a no-op and the 503 arm never fires for them.
+// The six ASYNC routes start a native Promise (under Effect.sync/Effect.promise
+// below) that interrupt() cannot cancel; settleControlAsyncRoute JOINS that
+// in-flight Promise and emits its TRUE result, so closeClients waits for the
+// write exactly as res.done joined the legacy .then(json) chain. A 503 is emitted
+// ONLY when the write provably never started (the recorder never captured it).
 //
 // DEFECT FAITHFULNESS — TWO LEGACY 500 SHAPES, PRESERVED EXACTLY. The legacy
 // handlers emit two different 500 bodies, and each workflow reproduces its own:

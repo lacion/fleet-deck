@@ -53,6 +53,30 @@
 //   group reports a mid-flight interruption as quiesce so its contract holds;
 //   another group decides what an interrupt means inside its own slice.
 //
+// ASYNC-MUTATING PATTERN (JOIN-ON-INTERRUPT — a THIRD settler shape). A mutating
+// route whose core call is a native Promise (Effect.promise over core.postMail /
+// core.cleanup / the async control calls) cannot treat every 'quiesce' Exit as a
+// refusal: interrupt() cannot cancel an already-started native Promise, so the
+// underlying write WILL commit. Collapsing that to 503 would answer "no write"
+// while the DB mutates — a lie the transport must never tell, and the very defect
+// this pattern exists to prevent (a settled response whose bytes contradict the
+// operation's true result). Such a group's settler (settleEffectAsyncMutatingRoute
+// in http.ts) therefore does START-ONCE + JOIN:
+//   * START-ONCE: the capability's operation is invoked exactly once through a
+//     memoizing recorder (startOnce) whose `invoke` thunk is what the workflow
+//     calls; the recorder's `started()` witnesses whether the native Promise is in
+//     flight. This is the ONLY way the settler can tell a true admission refusal
+//     (workflow never ran → started() === null) from an interrupt-after-start
+//     (native Promise captured → started() !== null), because mapEffectRouteExit
+//     collapses both to 'quiesce'.
+//   * SETTLE: success → emit the workflow's wire result; 'quiesce' with
+//     started() === null → 503 {ok:false,reason:'shutting-down'} (the ONLY 503
+//     case); 'quiesce' with started() !== null → JOIN the stored Promise and emit
+//     the legacy fulfilled/ rejected bytes; a defect with a started Promise joins
+//     first, a defect with none rides the group's defect arm. Joining before the
+//     response resolves keeps res.done tied to the operation exactly as the legacy
+//     .then(json) chain did, so closeClients still waits for the in-flight write.
+//
 // ROLLBACK SEAM (per route group): the legacy synchronous handler for each route
 // stays reachable in http.ts. Removing the `http.installEffectRoutes(...)` call
 // in program.ts leaves effectRoutes unset, and every route in the group answers

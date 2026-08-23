@@ -1065,16 +1065,153 @@ export function createHttp(
   const MAIL_DEFECT = { log: 'fleetd mail error:', body: { ok: false, err: 'internal' } };
   const CLEANUP_DEFECT = { log: 'fleetd cleanup error:', body: { ok: false, err: 'internal' } };
   // P6.4 CONTROL ROUTE GROUP defect dialect — shared by all 11 mutating control
-  // POSTs. They ride the SAME mutating quiesce policy as settleEffectMutatingRoute
-  // (quiesce → 503 {"ok":false,"reason":"shutting-down"}, never a legacy replay:
-  // the ingress already refused the core WRITE, so replaying would perform it). A
-  // defect reproduces routeRequest's outer catch for a non-hook /api/ path
-  // byte-for-byte — log 'fleetd handler error:' + 500 {"err":"internal"} — so the
-  // control group reuses settleEffectMutatingRoute with this defect rather than a
-  // second settler. (The async family's per-route rejection dialect and the
-  // 'fleetd <route> error:' logs live in each control workflow's onError, not
-  // here; a core promise rejection is folded to a 500 wire inside control.ts.)
+  // POSTs. A defect reproduces routeRequest's outer catch for a non-hook /api/
+  // path byte-for-byte — log 'fleetd handler error:' + 500 {"err":"internal"}.
+  // The group splits by whether its core write is synchronous or in-flight when
+  // shutdown interrupts the request fiber:
+  //   FIVE SYNC POSTs (name / questions.answer / questions.dismiss / plans.mark /
+  //     plans.assign) complete on the admitting turn, so their fiber is already
+  //     done before closing-clients. They ride settleEffectMutatingRoute with this
+  //     defect: an interrupt-after-completion is a no-op, and a true quiesce
+  //     refusal (workflow never ran) is the only 503 case.
+  //   SIX ASYNC POSTs (kill / revive / adopt / dismiss / dismiss-retry / rc) start
+  //     a native Promise that interrupt() cannot cancel. They ride
+  //     settleControlAsyncRoute (start-once + JOIN-on-interrupt) so closeClients
+  //     waits for the in-flight write exactly as res.done joined the legacy
+  //     .then(json) chain — a 503 is emitted ONLY when the write provably never
+  //     started. The per-route rejection dialect ('fleetd <route> error:' +
+  //     500 {ok:false,reason:'internal'}) still lives in the route's onError.
   const CONTROL_DEFECT = { log: 'fleetd handler error:', body: { err: 'internal' } };
+
+  // START-ONCE recorder for an async mutating core call. The workflow invokes
+  // `invoke` (memoized): the native Promise starts EXACTLY ONCE, from inside the
+  // Effect, and is captured on that first call. The settler reads `started()` to
+  // learn, on an interrupts-only Exit, whether that native write is in flight.
+  interface StartedOnce<T> {
+    readonly invoke: () => Promise<T>;
+    readonly started: () => Promise<T> | null;
+  }
+  function startOnce<T>(operation: () => Promise<T>): StartedOnce<T> {
+    let native: Promise<T> | null = null;
+    return {
+      invoke: () => (native ??= operation()),
+      started: () => native,
+    };
+  }
+
+  // ASYNC-MUTATING SETTLER (POST /mail, POST /api/cleanup, the six async control
+  // POSTs). Unlike settleEffectMutatingRoute, an interrupts-only Exit here does
+  // NOT blindly become a 503: the workflow's Effect.promise thunk already STARTED
+  // a native Promise that interrupt() cannot cancel (an arity-0 thunk carries no
+  // AbortController). The frozen invariant is that closeClients — which joins
+  // res.done AFTER supervisor.interrupt() — waits for that in-flight mutation
+  // exactly as the legacy .then(json) chain on the same Promise did. So the
+  // settler JOINS the recorded native Promise and emits the legacy .then/.catch
+  // bytes. Only a mutation that PROVABLY never started (recorder.started() === null
+  // — an ApplicationQuiescingError admission refusal, or an interrupt before the
+  // thunk fired) takes the frozen shutdown 503.
+  //   success  → the workflow's assembled {status, body}, same as the sync settler.
+  //   quiesce  → started? JOIN + legacy bytes : 503 {ok:false,reason:'shutting-down'}.
+  //   defect   → started? JOIN first (never abandon a started write) : per-route
+  //              defect arm (log + 500 defect.body), same as the sync settler.
+  // onRejected defaults to the defect arm: mail/cleanup's legacy .catch bytes ARE
+  // their defect bytes. Control overrides it — its .catch logs the route prefix
+  // and answers a 500 SUCCESS wire {ok:false,reason:'internal'}, a different
+  // dialect from CONTROL_DEFECT's {err:'internal'}.
+  function settleEffectAsyncMutatingRoute<T>(
+    routes: HttpEffectRoutes,
+    operation: string,
+    effect: HttpWorkflowEffect,
+    res: HttpResShim,
+    recorder: StartedOnce<T>,
+    relay: {
+      readonly defect: { readonly log: string; readonly body: unknown };
+      readonly onFulfilled: (res: HttpResShim, out: T) => void;
+      readonly onRejected?: (res: HttpResShim, err: unknown) => void;
+    },
+  ): void {
+    const emitDefect = (err: unknown): void => {
+      console.error(relay.defect.log, err);
+      try {
+        json(res, 500, relay.defect.body);
+      } catch {
+        /* socket gone */
+      }
+    };
+    const joinNative = (native: Promise<T>): Promise<void> =>
+      native.then(
+        (out) => relay.onFulfilled(res, out),
+        (err) => (relay.onRejected ? relay.onRejected(res, err) : emitDefect(err)),
+      );
+    routes
+      .runRequest(operation, effect)
+      .then((exit) => {
+        const outcome = mapEffectRouteExit(exit);
+        if (outcome.kind === 'success') {
+          const payload = outcome.value as { status: number; body: unknown };
+          json(res, payload.status, payload.body);
+          return;
+        }
+        // mapEffectRouteExit collapses BOTH an explicit ApplicationQuiescingError
+        // refusal AND an interrupts-only Exit to 'quiesce'; the recorder is the
+        // only witness that tells them apart. Never started → true refusal → 503.
+        const native = recorder.started();
+        if (outcome.kind === 'quiesce') {
+          if (native === null) {
+            json(res, 503, { ok: false, reason: 'shutting-down' });
+            return;
+          }
+          return joinNative(native);
+        }
+        // Defect (die). A started native op should not coincide with a defect,
+        // but if it did, join it first so a started write is never abandoned.
+        if (native !== null) return joinNative(native);
+        throw outcome.defect;
+      })
+      .catch((err: unknown) => {
+        emitDefect(err);
+      });
+  }
+
+  // Wire one async control POST through the start-once/join seam. `run` is the raw
+  // core control call (spawnKill / revive / adoptSession / dismissSession /
+  // dismissRetry / enableRemote); the recorder starts it EXACTLY ONCE and the
+  // settler JOINS its Promise on an interrupts-only Exit. On a JOINED rejection
+  // onRejected emits the legacy .catch bytes (log `errorPrefix` + 500
+  // {ok:false,reason:'internal'}). NOTE: controlAsyncWorkflow ALSO folds a native
+  // rejection through the SAME onError (control.ts), and that fold's continuation
+  // still runs after the fiber is interrupted; so an interrupt racing a native
+  // REJECTION logs `errorPrefix` twice. The response bytes stay single and
+  // correct — this is a harmless duplicate log line during shutdown only.
+  function settleControlAsyncRoute(
+    routes: HttpEffectRoutes,
+    operation: string,
+    res: HttpResShim,
+    run: () => ControlResult,
+    errorPrefix: string,
+  ): void {
+    const onError = (err: unknown): void => {
+      console.error(errorPrefix, err);
+    };
+    const recorder = startOnce(run);
+    settleEffectAsyncMutatingRoute(
+      routes,
+      operation,
+      routes.controlAsync({ run: recorder.invoke, onError }),
+      res,
+      recorder,
+      {
+        defect: CONTROL_DEFECT,
+        onFulfilled: (target, out) => {
+          json(target, out.status, out.body);
+        },
+        onRejected: (target, err) => {
+          onError(err);
+          json(target, 500, { ok: false, reason: 'internal' });
+        },
+      },
+    );
+  }
 
   function legacySettingsResponse(res: HttpResShim, ev: unknown): void {
     const out = core.setSettings(ev);
@@ -1148,12 +1285,26 @@ export function createHttp(
       legacyMailResponse(res, ev);
       return;
     }
-    settleEffectMutatingRoute(
+    // start-once around the SAME core thunk mailCapabilities names, so the
+    // settler can JOIN the in-flight postMail() on an interrupts-only Exit.
+    const recorder = startOnce(mailCapabilities(ev).postMail);
+    settleEffectAsyncMutatingRoute(
       effectRoutes,
       'POST /mail',
-      effectRoutes.mail(mailCapabilities(ev)),
+      effectRoutes.mail({ postMail: recorder.invoke }),
       res,
-      MAIL_DEFECT,
+      recorder,
+      {
+        // legacy .catch bytes == MAIL_DEFECT bytes, so onRejected defaults to it.
+        defect: MAIL_DEFECT,
+        // legacy .then bytes: postMail returns {status, body} on a refusal and
+        // the bare delivery object on success — the `?? out` fallback matches
+        // legacyMailResponse and adaptMailResult.
+        onFulfilled: (target, out) => {
+          const rec = out as { status?: number; body?: unknown };
+          json(target, rec.status ?? 200, rec.body ?? out);
+        },
+      },
     );
   }
 
@@ -1162,12 +1313,22 @@ export function createHttp(
       legacyCleanupResponse(res);
       return;
     }
-    settleEffectMutatingRoute(
+    const recorder = startOnce(cleanupCapabilities().cleanup);
+    settleEffectAsyncMutatingRoute(
       effectRoutes,
       'POST /api/cleanup',
-      effectRoutes.cleanup(cleanupCapabilities()),
+      effectRoutes.cleanup({ cleanup: recorder.invoke }),
       res,
-      CLEANUP_DEFECT,
+      recorder,
+      {
+        // legacy .catch bytes == CLEANUP_DEFECT bytes, so onRejected defaults.
+        defect: CLEANUP_DEFECT,
+        // BUG-145 legacy .then bytes: an incomplete Clear comes back
+        // {ok:false, reason} untouched — a real 409 so the board fails loud.
+        onFulfilled: (target, out) => {
+          json(target, !out.ok ? 409 : 200, out);
+        },
+      },
     );
   }
 
@@ -2189,21 +2350,16 @@ export function createHttp(
               // without force:true, 410 window already gone.
               logExec(url.pathname, req);
               if (effectRoutes) {
-                settleEffectMutatingRoute(
+                settleControlAsyncRoute(
                   effectRoutes,
                   'POST /api/spawn/:id/kill',
-                  effectRoutes.controlAsync({
-                    run: () =>
-                      core.spawnKill(
-                        killMatch[1] ?? '',
-                        asRecord(ev)['force'] === true,
-                      ) as ControlResult,
-                    onError: (err) => {
-                      console.error('fleetd spawn kill error:', err);
-                    },
-                  }),
                   res,
-                  CONTROL_DEFECT,
+                  () =>
+                    core.spawnKill(
+                      killMatch[1] ?? '',
+                      asRecord(ev)['force'] === true,
+                    ) as ControlResult,
+                  'fleetd spawn kill error:',
                 );
                 return;
               }
@@ -2225,17 +2381,12 @@ export function createHttp(
               // body may override remote_control (default: inherit).
               logExec(url.pathname, req);
               if (effectRoutes) {
-                settleEffectMutatingRoute(
+                settleControlAsyncRoute(
                   effectRoutes,
                   'POST /api/spawn/:id/revive',
-                  effectRoutes.controlAsync({
-                    run: () => core.revive(reviveMatch[1] ?? '', ev ?? {}) as ControlResult,
-                    onError: (err) => {
-                      console.error('fleetd spawn revive error:', err);
-                    },
-                  }),
                   res,
-                  CONTROL_DEFECT,
+                  () => core.revive(reviveMatch[1] ?? '', ev ?? {}) as ControlResult,
+                  'fleetd spawn revive error:',
                 );
                 return;
               }
@@ -2270,24 +2421,19 @@ export function createHttp(
               // signature is (session_id, body: SpawnBody = {}, {deferred} = {}) and
               // always resolves a concrete {status, body}; re-assert it at this seam.
               if (effectRoutes) {
-                settleEffectMutatingRoute(
+                settleControlAsyncRoute(
                   effectRoutes,
                   'POST /api/sessions/:sid/adopt',
-                  effectRoutes.controlAsync({
-                    run: () =>
-                      (
-                        core.adoptSession as (
-                          sid: string,
-                          body?: unknown,
-                          meta?: { deferred?: boolean },
-                        ) => ControlResult
-                      )(adoptMatch[1] ?? '', ev ?? {}),
-                    onError: (err) => {
-                      console.error('fleetd adopt error:', err);
-                    },
-                  }),
                   res,
-                  CONTROL_DEFECT,
+                  () =>
+                    (
+                      core.adoptSession as (
+                        sid: string,
+                        body?: unknown,
+                        meta?: { deferred?: boolean },
+                      ) => ControlResult
+                    )(adoptMatch[1] ?? '', ev ?? {}),
+                  'fleetd adopt error:',
                 );
                 return;
               }
@@ -2363,17 +2509,12 @@ export function createHttp(
               // derive; the CSRF/Host walls above apply like any control POST.
               logExec(url.pathname, req);
               if (effectRoutes) {
-                settleEffectMutatingRoute(
+                settleControlAsyncRoute(
                   effectRoutes,
                   'POST /api/sessions/:sid/dismiss',
-                  effectRoutes.controlAsync({
-                    run: () => core.dismissSession(sessionDismissMatch[1] ?? ''),
-                    onError: (err) => {
-                      console.error('fleetd dismiss error:', err);
-                    },
-                  }),
                   res,
-                  CONTROL_DEFECT,
+                  () => core.dismissSession(sessionDismissMatch[1] ?? ''),
+                  'fleetd dismiss error:',
                 );
                 return;
               }
@@ -2397,17 +2538,12 @@ export function createHttp(
             if (dismissRetryMatch) {
               logExec(url.pathname, req);
               if (effectRoutes) {
-                settleEffectMutatingRoute(
+                settleControlAsyncRoute(
                   effectRoutes,
                   'POST /api/sessions/:sid/dismiss/retry',
-                  effectRoutes.controlAsync({
-                    run: () => core.dismissRetry(dismissRetryMatch[1] ?? ''),
-                    onError: (err) => {
-                      console.error('fleetd dismiss-retry error:', err);
-                    },
-                  }),
                   res,
-                  CONTROL_DEFECT,
+                  () => core.dismissRetry(dismissRetryMatch[1] ?? ''),
+                  'fleetd dismiss-retry error:',
                 );
                 return;
               }
@@ -2428,17 +2564,12 @@ export function createHttp(
               // pane boundary, types /rc literally, and waits for harvesting.
               logExec(url.pathname, req);
               if (effectRoutes) {
-                settleEffectMutatingRoute(
+                settleControlAsyncRoute(
                   effectRoutes,
                   'POST /api/spawn/:id/rc',
-                  effectRoutes.controlAsync({
-                    run: () => core.enableRemote(rcMatch[1] ?? '') as ControlResult,
-                    onError: (err) => {
-                      console.error('fleetd remote-control error:', err);
-                    },
-                  }),
                   res,
-                  CONTROL_DEFECT,
+                  () => core.enableRemote(rcMatch[1] ?? '') as ControlResult,
+                  'fleetd remote-control error:',
                 );
                 return;
               }

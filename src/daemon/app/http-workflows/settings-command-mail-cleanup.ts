@@ -58,10 +58,18 @@
 //   Core-mail's own 503 `{ok:false, reason:'mail lifecycle is quiescing'}` is
 //   a successful ControlPayload from postMail, distinct from ingress quiesce.
 //
-// INTERRUPT POLICY (PER-GROUP): mapEffectRouteExit already classifies an
-//   interrupts-only Exit as 'quiesce' (the shutdown fiber cancelling this
-//   in-flight request). This group treats that the same as ingress quiesce:
-//   503 shutting-down, no write. We do not grow the mapper.
+// INTERRUPT POLICY (PER-GROUP, SPLIT BY SYNC vs ASYNC): mapEffectRouteExit also
+//   classifies an interrupts-only Exit (the shutdown fiber cancelling this
+//   ALREADY-admitted request) as 'quiesce'. The two SYNC routes (settings,
+//   command) complete their core write on the admitting turn, so their fiber is
+//   done before closing-clients — an interrupt-after-completion is a no-op and
+//   the 503 arm only ever fires for a true admission refusal. The two ASYNC
+//   routes (mail, cleanup) start a native Promise the interrupt cannot cancel;
+//   their transport dispatch rides settleEffectAsyncMutatingRoute, which on an
+//   interrupts-only Exit JOINS the in-flight Promise and emits its TRUE result
+//   — frozen: closeClients waits for the write exactly as res.done joined the
+//   legacy .then(json) chain. A 503 is emitted ONLY when the write provably
+//   never started. We do not grow the mapper.
 //
 // EXCLUSIONS (not converted; stay under their P1 owners until P10):
 //   GET /mail — mutating drain+lease, CSRF-walled, broadcasts; not a simple

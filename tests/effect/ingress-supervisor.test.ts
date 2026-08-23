@@ -493,6 +493,63 @@ describe('IngressSupervisor', () => {
     }
   });
 
+  test('an in-flight runPromiseExit externally interrupted resolves an interrupts-only Exit without abandoning the native Promise', async () => {
+    // The FROZEN contract the transport relies on: interrupt() (the shutdown
+    // path) interrupts the tracked request fiber, and runPromiseExit RESOLVES an
+    // interrupts-only Exit — it does NOT reject the way runPromise(Effect.exit)
+    // would ("All fibers interrupted without error"). The native Promise the
+    // fiber was awaiting is NOT cancelled, so the transport can still JOIN it and
+    // relay the true result, exactly as res.done joined the legacy .then chain.
+    const { rootScope, supervisor } = await makeFixture();
+    let release: (value: string) => void = () => undefined;
+    const gate = new Promise<string>((resolve) => {
+      release = resolve;
+    });
+    let nativeStarts = 0;
+    let nativeSettled = false;
+    const exitPromise = supervisor.runPromiseExit(
+      'interruptible mutation',
+      // Arity-0 thunk, exactly like the mail/cleanup/control async workflows: no
+      // AbortController, so an interrupt cannot cancel the native Promise.
+      Effect.promise(() => {
+        nativeStarts++;
+        return gate.then((value) => {
+          nativeSettled = true;
+          return value;
+        });
+      }),
+    );
+
+    try {
+      // The Effect.promise thunk and onFiberStart fire synchronously on submit.
+      assert.equal(nativeStarts, 1);
+      assert.equal(supervisor.activeCount, 1);
+      assert.equal(nativeSettled, false);
+
+      supervisor.interrupt();
+      assert.equal(supervisor.state, 'quiescing');
+
+      const exit = await within(
+        exitPromise,
+        'externally interrupted runPromiseExit resolves an Exit',
+      );
+      assert.ok(Exit.isFailure(exit));
+      assert.equal(Cause.hasInterruptsOnly(exit.cause), true);
+      // Resolved BEFORE the native Promise settled: the interrupt did not wait
+      // for — nor cancel — the in-flight native operation.
+      assert.equal(nativeSettled, false);
+      assert.equal(supervisor.activeCount, 0);
+
+      release('landed');
+      assert.equal(await within(gate, 'native Promise still joinable after interrupt'), 'landed');
+      await Bun.sleep(0);
+      assert.equal(nativeSettled, true);
+    } finally {
+      release('landed');
+      await closeRoot(rootScope);
+    }
+  });
+
   test('Context.Service tag and scoped Layer capture and finalize the provided root', async () => {
     const captured = { service: null as IngressSupervisorService<unknown> | null };
     const probeLayer = Layer.succeed(Probe, { value: 'layer-context' });
@@ -524,6 +581,9 @@ describe('IngressSupervisor', () => {
     assert.equal(source.match(/Effect\.runForkWith\(/g)?.length, 1);
     assert.equal(source.match(/Effect\.runCallbackWith\(/g)?.length, 1);
     assert.equal(source.match(/Effect\.runPromiseWith\(/g)?.length, 1);
+    // runPromiseExit resolves the Exit at the fiber boundary (external interrupt →
+    // resolved interrupts-only Exit, never a rejection). Exactly one such runner.
+    assert.equal(source.match(/Effect\.runPromiseExitWith\(/g)?.length, 1);
     assert.doesNotMatch(source, /ManagedRuntime(?:\.make)?/);
     assert.doesNotMatch(source, /Layer\.(?:build|provide)/);
     assert.doesNotMatch(source, /^\s*Fiber\.runIn\(/m);

@@ -28,6 +28,19 @@ type ContextPromiseRunner<Services> = <A, E>(
   options?: Effect.RunOptions,
 ) => Promise<A>;
 
+// runPromiseExitWith resolves the fiber's Exit through an addObserver at the
+// fiber boundary, so an EXTERNAL interruptUnsafe() of a tracked fiber makes the
+// returned Promise RESOLVE an interrupts-only Exit.Failure. runPromiseWith wraps
+// that same runPromiseExit and re-throws causeSquash(exit.cause) on a Failure,
+// so external interruption would instead REJECT ("All fibers interrupted without
+// error"). runPromiseExit MUST resolve the Exit — the transport keys its
+// shutdown-join decision on that Exit — so the runner below is the Exit-resolving
+// variant, not runPromiseWith(Effect.exit(...)).
+type ContextPromiseExitRunner<Services> = <A, E>(
+  effect: Effect.Effect<A, E, Services>,
+  options?: Effect.RunOptions,
+) => Promise<Exit.Exit<A, E>>;
+
 class LiveIngressSupervisor<Services> implements IngressSupervisorService<Services> {
   private phase: IngressSupervisorState = 'open';
   private readonly active = new Set<Fiber.Fiber<unknown, unknown>>();
@@ -39,6 +52,7 @@ class LiveIngressSupervisor<Services> implements IngressSupervisorService<Servic
   private readonly runForkWithContext: ContextForkRunner<Services>;
   private readonly runCallbackWithContext: ContextCallbackRunner<Services>;
   private readonly runPromiseWithContext: ContextPromiseRunner<Services>;
+  private readonly runPromiseExitWithContext: ContextPromiseExitRunner<Services>;
   private readonly rootScope: Scope.Scope;
 
   constructor(context: Context.Context<Services>, rootScope: Scope.Scope) {
@@ -47,6 +61,7 @@ class LiveIngressSupervisor<Services> implements IngressSupervisorService<Servic
     this.runForkWithContext = Effect.runForkWith(context);
     this.runCallbackWithContext = Effect.runCallbackWith(context);
     this.runPromiseWithContext = Effect.runPromiseWith(context);
+    this.runPromiseExitWithContext = Effect.runPromiseExitWith(context);
     this.rootScope = rootScope;
   }
 
@@ -140,7 +155,12 @@ class LiveIngressSupervisor<Services> implements IngressSupervisorService<Servic
     try {
       const runnable: Effect.Effect<A, E | ApplicationQuiescingError, Services> =
         options?.signal?.aborted === true ? Effect.interrupt : effect;
-      const promise = this.runPromiseWithContext(Effect.exit(runnable), {
+      // Pass `runnable` DIRECTLY (not Effect.exit(runnable)): runPromiseExitWith
+      // captures the Exit at the fiber boundary via addObserver, so an external
+      // interrupt() reaches this tracked fiber and RESOLVES an interrupts-only
+      // Exit rather than rejecting. Double-wrapping in Effect.exit would nest the
+      // Exit and break mapEffectRouteExit.
+      const promise = this.runPromiseExitWithContext(runnable, {
         ...options,
         onFiberStart: this.trackFiber,
       });

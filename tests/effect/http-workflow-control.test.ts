@@ -31,14 +31,18 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 
 import * as Cause from 'effect/Cause';
+import * as Context from 'effect/Context';
 import * as Effect from 'effect/Effect';
 import * as Exit from 'effect/Exit';
+import * as Scope from 'effect/Scope';
 
 import { openDb } from '../../src/daemon/db.ts';
 import { createCore } from '../../src/daemon/derive.ts';
 import { createHttp } from '../../src/daemon/http.ts';
 import { mapEffectRouteExit } from '../../src/daemon/http-policy.ts';
 import { ApplicationQuiescingError } from '../../src/daemon/app/errors.ts';
+import type { IngressSupervisorService } from '../../src/daemon/app/services/ingress-supervisor.ts';
+import { makeIngressSupervisor } from '../../src/daemon/platform/bun/ingress-supervisor-live.ts';
 import {
   controlAsyncWorkflow,
   controlSyncWorkflow,
@@ -606,4 +610,192 @@ test('a workflow defect reproduces the legacy POST outer-catch 500 {"err":"inter
   assert.equal(defected.body, '{"err":"internal"}');
   assert.equal(defected.headers['content-type'], 'application/json');
   assert.equal(defected.headers['x-content-type-options'], 'nosniff');
+});
+
+// =================== D. LIVE INGRESS BRIDGE (JOIN-ON-INTERRUPT) ===================
+// The C-section interrupt test above proves the SYNC-route case with a fixed
+// Exit.failCause(Cause.interrupt(1)): a sync route's fiber is already done, its
+// recorder never captured a Promise, so an interrupts-only Exit → 503. That fixed
+// Exit CANNOT reproduce the ASYNC case this fix exists for: a real interrupt()
+// landing on an already-admitted controlAsync route whose native core Promise
+// (core.spawnKill) settles only AFTER the interrupt. Here the recorder DID capture
+// the Promise, so settleControlAsyncRoute must JOIN it and answer its TRUE control
+// result — never 503 — with closeClients waiting for res.done exactly as the legacy
+// .then(json) chain did. This test wires the REAL LiveIngressSupervisor as
+// runRequest (the object program.ts installs) and drives an actual interrupt against
+// a gated core.spawnKill; a quiesce-before-admission assertion pins the ONLY 503
+// case (a refusal that never calls spawnKill: invocation counter === 0).
+
+// Context.empty() ⇒ Services = never, so the supervisor's runPromiseExit accepts the
+// R = never HttpWorkflowEffect the bridge submits. The import-boundaries tripwire
+// bans bare Effect.runPromise/Fork, not runPromiseWith / the runPromiseExit method.
+const runIngress = Effect.runPromiseWith(Context.empty());
+
+interface Gate {
+  /** How many times the real core method was actually invoked (0 ⇒ a true refusal). */
+  invocations(): number;
+  /** Whether the native operation has settled (flips strictly before the settler joins it). */
+  settled(): boolean;
+  /** Let the gated native operation run to completion. */
+  release(): void;
+}
+
+// Replace ONE async core method with a gate: its returned Promise settles only
+// after release(), modelling core.spawnKill still in flight when the shutdown fiber
+// interrupts the request. The kill dispatch's run thunk reads core.spawnKill at
+// invoke time, so overriding it after createHttp still takes effect; the recorder in
+// http.ts captures THIS exact Promise, so `settled` flipping before the response
+// resolves witnesses that the settler joined the native op rather than 503-ing.
+function gateAsyncMethod(core: unknown, name: string): Gate {
+  const holder = core as Record<string, (...args: unknown[]) => Promise<unknown>>;
+  const original = (holder[name] as (...args: unknown[]) => Promise<unknown>).bind(holder);
+  let invocations = 0;
+  let settled = false;
+  let open: () => void = () => undefined;
+  const opened = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  holder[name] = (...args: unknown[]): Promise<unknown> => {
+    invocations += 1;
+    return opened
+      .then(() => original(...args))
+      .then(
+        (out) => {
+          settled = true;
+          return out;
+        },
+        (err) => {
+          settled = true;
+          throw err;
+        },
+      );
+  };
+  return {
+    invocations: () => invocations,
+    settled: () => settled,
+    release: () => open(),
+  };
+}
+
+interface LiveBoard {
+  readonly port: number;
+  readonly core: ReturnType<typeof createCore>;
+  readonly supervisor: IngressSupervisorService<never>;
+}
+
+// The C-section startBoard toggles a stubbed bridge on an idle core; this variant
+// wires the REAL supervisor (runRequest === supervisor.runPromiseExit, exactly as
+// makeHttpServerOwner does in production) so interrupt()/quiesce() drive genuine
+// fiber lifecycle, and hands `core` back so a test can gate one method before firing.
+// token:null keeps every control POST loopback-open, as in startBoard.
+function startLiveBoard(t: TestContext): Promise<LiveBoard> {
+  const db = openDb(':memory:');
+  const core = createCore(db, { port: 0, home: '/daemon-home' });
+  const rootScope = Scope.makeUnsafe('sequential');
+  const probe = http.createServer();
+  return new Promise<LiveBoard>((resolve, reject) => {
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', () => {
+      const port = (probe.address() as AddressInfo).port;
+      probe.close(() => {
+        runIngress(makeIngressSupervisor(Context.empty(), rootScope)).then((supervisor) => {
+          const handle = createHttp(core, { port, token: null as unknown as string, lan: null });
+          handle.installEffectRoutes({
+            runRequest: (operation, effect) => supervisor.runPromiseExit(operation, effect),
+            ...ALL_ROUTE_BUILDERS,
+          });
+          handle.server.once('error', reject);
+          handle.server.listen(port, '127.0.0.1', () => {
+            t.after(async () => {
+              handle.server.close();
+              db.close();
+              await runIngress(Scope.close(rootScope, Exit.void));
+            });
+            resolve({ port, core, supervisor });
+          });
+        }, reject);
+      });
+    });
+  });
+}
+
+async function waitFor(pred: () => boolean, label: string, timeoutMs = 2000): Promise<void> {
+  const start = Date.now();
+  while (!pred()) {
+    if (Date.now() - start > timeoutMs)
+      throw new Error(`${label} not reached within ${timeoutMs}ms`);
+    await Bun.sleep(1);
+  }
+}
+
+async function within<A>(promise: Promise<A>, label: string, timeoutMs = 3000): Promise<A> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`${label} did not settle within ${timeoutMs}ms`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+test('live bridge: interrupting an in-flight controlAsync kill joins the started spawnKill and answers its TRUE result, while a quiesce-before-start refuses with 503 and never calls spawnKill', async (t) => {
+  // (a) + (b): admitted, in flight, then interrupted → JOIN, then the TRUE control
+  // result (404 for an unknown spawn id) — never 503, never 500.
+  const board = await startLiveBoard(t);
+  const gate = gateAsyncMethod(board.core, 'spawnKill');
+
+  const reqP = rawFull(board.port, { method: 'POST', path: '/api/spawn/nope/kill', body: '{}' });
+  let responded = false;
+  void reqP.then(() => {
+    responded = true;
+  });
+
+  await waitFor(() => gate.invocations() === 1, 'spawnKill invoked');
+  assert.equal(board.supervisor.activeCount, 1, 'the request fiber is in flight');
+  assert.equal(gate.settled(), false, 'the native kill has not settled yet');
+
+  board.supervisor.interrupt();
+  assert.equal(board.supervisor.state, 'quiescing', 'interrupt() quiesces admission');
+
+  // The interrupt must NOT collapse to 503: the write already started, so the
+  // settler JOINs it. The fiber's Exit resolves (activeCount → 0) but the response
+  // stays pending on the still-gated native Promise.
+  await waitFor(() => board.supervisor.activeCount === 0, 'the interrupted fiber settled');
+  await Bun.sleep(20);
+  assert.equal(responded, false, 'response must join the started kill, not resolve to 503');
+  assert.equal(gate.settled(), false, 'the joined kill is still gated');
+
+  gate.release();
+  const res = await within(reqP, 'joined kill response');
+  assert.equal(gate.settled(), true, 'spawnKill settled before the response resolved');
+  assert.equal(res.status, 404, 'the TRUE control result (unknown id → 404) — not 503, not 500');
+  assert.equal((JSON.parse(res.body) as { ok?: unknown }).ok, false);
+  assert.notEqual(
+    res.body,
+    '{"ok":false,"reason":"shutting-down"}',
+    'not the shutting-down refusal',
+  );
+  assert.notEqual(res.body, '{"err":"internal"}', 'not the outer-catch defect');
+  assert.notEqual(res.body, '{"ok":false,"reason":"internal"}', 'not the .catch fault wire');
+
+  // (c) A quiesce BEFORE admission is the ONLY 503 case — spawnKill is never called.
+  const refusalBoard = await startLiveBoard(t);
+  const refusalGate = gateAsyncMethod(refusalBoard.core, 'spawnKill');
+  refusalBoard.supervisor.quiesce();
+  const refused = await within(
+    rawFull(refusalBoard.port, { method: 'POST', path: '/api/spawn/nope/kill', body: '{}' }),
+    'quiesce-before-start kill',
+  );
+  assert.equal(refused.status, 503, 'quiesce-before-start → 503');
+  assert.equal(refused.body, '{"ok":false,"reason":"shutting-down"}');
+  assert.equal(refused.headers['content-type'], 'application/json');
+  assert.equal(refused.headers['x-content-type-options'], 'nosniff');
+  assert.equal(refusalGate.invocations(), 0, 'a refused admission never invokes spawnKill');
 });

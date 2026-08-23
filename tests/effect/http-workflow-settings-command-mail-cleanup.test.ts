@@ -27,14 +27,18 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 
 import * as Cause from 'effect/Cause';
+import * as Context from 'effect/Context';
 import * as Effect from 'effect/Effect';
 import * as Exit from 'effect/Exit';
+import * as Scope from 'effect/Scope';
 
 import { openDb } from '../../src/daemon/db.ts';
 import { createCore } from '../../src/daemon/derive.ts';
 import { createHttp } from '../../src/daemon/http.ts';
 import { mapEffectRouteExit } from '../../src/daemon/http-policy.ts';
 import { ApplicationQuiescingError } from '../../src/daemon/app/errors.ts';
+import type { IngressSupervisorService } from '../../src/daemon/app/services/ingress-supervisor.ts';
+import { makeIngressSupervisor } from '../../src/daemon/platform/bun/ingress-supervisor-live.ts';
 import {
   controlAsyncWorkflow,
   controlSyncWorkflow,
@@ -553,4 +557,223 @@ test('effectRoutes=null is the rollback seam: the four POSTs stay on the legacy 
   // Never installed — still the legacy handler. A second capture must match.
   const again = await postRaw(board.port, '/api/settings', { nope: 1 });
   assertByteIdentical(again, legacy, 'rollback seam');
+});
+
+// =================== D. LIVE INGRESS BRIDGE (JOIN-ON-INTERRUPT) ===================
+// A, B and C stub runRequest with fixed Exits (installQuiesce/installInterrupt/
+// installDefect) or run the workflow off the interruption path. A fixed Exit can
+// PROVE the settler's branch table, but it cannot reproduce the one behaviour this
+// fix exists to guarantee: that when the shutdown fiber interrupt()s an ALREADY-
+// admitted async mutation whose native core Promise settles only AFTER the
+// interrupt fires, the response still answers that Promise's TRUE result (never
+// 503/500) and JOINS its completion before resolving — so http.closeClients (which
+// awaits res.done) waits for the write exactly as the legacy .then(json) chain did.
+// These tests therefore wire the REAL LiveIngressSupervisor as runRequest (the same
+// object program.ts installs) and drive an actual interrupt() against a gated core
+// method. A separate quiesce-before-admission assertion pins the ONLY 503 case: a
+// refusal that never invokes core at all (invocation counter === 0).
+
+// The sanctioned Effect runner: Context.empty() ⇒ Services = never, so the built
+// supervisor's runPromiseExit accepts exactly the R = never HttpWorkflowEffect the
+// bridge submits (the import-boundaries tripwire bans bare Effect.runPromise/Fork,
+// not runPromiseWith / the runPromiseExit method).
+const runIngress = Effect.runPromiseWith(Context.empty());
+
+interface Gate {
+  /** How many times the real core method was actually invoked (0 ⇒ a true refusal). */
+  invocations(): number;
+  /** Whether the native operation has settled (flips strictly before the settler joins it). */
+  settled(): boolean;
+  /** Let the gated native operation run to completion. */
+  release(): void;
+}
+
+// Replace ONE async core method with a gate: its returned Promise settles only
+// after release(), modelling core.postMail / core.cleanup still in flight when the
+// shutdown fiber interrupts the request. Capabilities read core.<method> at invoke
+// time, so overriding it after createHttp still takes effect. The recorder in
+// http.ts captures THIS exact Promise, so `settled` flipping before the response
+// resolves is a direct witness that the settler joined the native op, not a 503.
+function gateAsyncMethod(core: unknown, name: string): Gate {
+  const holder = core as Record<string, (...args: unknown[]) => Promise<unknown>>;
+  const original = (holder[name] as (...args: unknown[]) => Promise<unknown>).bind(holder);
+  let invocations = 0;
+  let settled = false;
+  let open: () => void = () => undefined;
+  const opened = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  holder[name] = (...args: unknown[]): Promise<unknown> => {
+    invocations += 1;
+    return opened
+      .then(() => original(...args))
+      .then(
+        (out) => {
+          settled = true;
+          return out;
+        },
+        (err) => {
+          settled = true;
+          throw err;
+        },
+      );
+  };
+  return {
+    invocations: () => invocations,
+    settled: () => settled,
+    release: () => open(),
+  };
+}
+
+interface LiveBoard {
+  readonly port: number;
+  readonly core: ReturnType<typeof createCore>;
+  readonly supervisor: IngressSupervisorService<never>;
+}
+
+// Same in-memory board as startBoard, but the bridge is the REAL supervisor
+// (runRequest === supervisor.runPromiseExit, exactly as makeHttpServerOwner wires
+// it in production), so interrupt()/quiesce() drive genuine fiber lifecycle; `core`
+// is handed back so a test can gate one method before firing a request.
+function startLiveBoard(t: TestContext): Promise<LiveBoard> {
+  const db = openDb(':memory:');
+  const core = createCore(db, { port: 0, home: '/daemon-home' });
+  const rootScope = Scope.makeUnsafe('sequential');
+  const probe = http.createServer();
+  return new Promise<LiveBoard>((resolve, reject) => {
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', () => {
+      const port = (probe.address() as AddressInfo).port;
+      probe.close(() => {
+        runIngress(makeIngressSupervisor(Context.empty(), rootScope)).then((supervisor) => {
+          const handle = createHttp(core, { port, token: BOARD_TOKEN, lan: null });
+          handle.installEffectRoutes({
+            runRequest: (operation, effect) => supervisor.runPromiseExit(operation, effect),
+            ...ALL_ROUTE_BUILDERS,
+          });
+          handle.server.once('error', reject);
+          handle.server.listen(port, '127.0.0.1', () => {
+            t.after(async () => {
+              handle.server.close();
+              db.close();
+              await runIngress(Scope.close(rootScope, Exit.void));
+            });
+            resolve({ port, core, supervisor });
+          });
+        }, reject);
+      });
+    });
+  });
+}
+
+async function waitFor(pred: () => boolean, label: string, timeoutMs = 2000): Promise<void> {
+  const start = Date.now();
+  while (!pred()) {
+    if (Date.now() - start > timeoutMs)
+      throw new Error(`${label} not reached within ${timeoutMs}ms`);
+    await Bun.sleep(1);
+  }
+}
+
+async function within<A>(promise: Promise<A>, label: string, timeoutMs = 3000): Promise<A> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`${label} did not settle within ${timeoutMs}ms`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+test('live bridge: interrupting an in-flight POST /mail joins the started write and answers its TRUE result, while a quiesce-before-start refuses with 503 and never calls postMail', async (t) => {
+  // (a) + (b): admitted, in flight, then interrupted → JOIN, then true 200 result.
+  const board = await startLiveBoard(t);
+  const gate = gateAsyncMethod(board.core, 'postMail');
+  const mailHeaders = { authorization: `Bearer ${BOARD_TOKEN}` };
+
+  const reqP = postRaw(board.port, '/mail', { to: 'all', from: 'ops', text: 'live' }, mailHeaders);
+  let responded = false;
+  void reqP.then(() => {
+    responded = true;
+  });
+
+  await waitFor(() => gate.invocations() === 1, 'postMail invoked');
+  assert.equal(board.supervisor.activeCount, 1, 'the request fiber is in flight');
+  assert.equal(gate.settled(), false, 'the native write has not settled yet');
+
+  board.supervisor.interrupt();
+  assert.equal(board.supervisor.state, 'quiescing', 'interrupt() quiesces admission');
+
+  // The interrupt must NOT collapse to 503: the write already started, so the
+  // settler JOINs it. The fiber's Exit resolves (activeCount → 0) but the response
+  // stays pending on the still-gated native Promise.
+  await waitFor(() => board.supervisor.activeCount === 0, 'the interrupted fiber settled');
+  await Bun.sleep(20);
+  assert.equal(responded, false, 'response must not resolve to 503 — it joins the started write');
+  assert.equal(gate.settled(), false, 'the joined write is still gated');
+
+  gate.release();
+  const res = await within(reqP, 'joined POST /mail response');
+  assert.equal(gate.settled(), true, 'the native write settled before the response resolved');
+  assert.equal(res.status, 200, 'the TRUE postMail result — not 503, not 500');
+  assert.equal((JSON.parse(res.body) as { ok?: unknown }).ok, true);
+  assert.notEqual(res.body, SHUTDOWN_BODY, 'not the shutting-down refusal');
+  assert.notEqual(res.body, '{"ok":false,"err":"internal"}', 'not the mail defect body');
+
+  // (c) A quiesce BEFORE admission is the ONLY 503 case — postMail is never called.
+  const refusalBoard = await startLiveBoard(t);
+  const refusalGate = gateAsyncMethod(refusalBoard.core, 'postMail');
+  refusalBoard.supervisor.quiesce();
+  const refused = await within(
+    postRaw(refusalBoard.port, '/mail', { to: 'all', from: 'ops', text: 'nope' }, mailHeaders),
+    'quiesce-before-start POST /mail',
+  );
+  assertShutdown503(refused, 'POST /mail quiesce-before-start');
+  assert.equal(refusalGate.invocations(), 0, 'a refused admission never invokes postMail');
+});
+
+test('live bridge: interrupting an in-flight POST /api/cleanup joins the started cleanup and answers its TRUE result, while a quiesce-before-start refuses with 503 and never calls cleanup', async (t) => {
+  const board = await startLiveBoard(t);
+  const gate = gateAsyncMethod(board.core, 'cleanup');
+
+  const reqP = postRaw(board.port, '/api/cleanup', {});
+  let responded = false;
+  void reqP.then(() => {
+    responded = true;
+  });
+
+  await waitFor(() => gate.invocations() === 1, 'cleanup invoked');
+  assert.equal(board.supervisor.activeCount, 1, 'the request fiber is in flight');
+  assert.equal(gate.settled(), false, 'the native cleanup has not settled yet');
+
+  board.supervisor.interrupt();
+  await waitFor(() => board.supervisor.activeCount === 0, 'the interrupted fiber settled');
+  await Bun.sleep(20);
+  assert.equal(responded, false, 'response must join the started cleanup, not resolve to 503');
+  assert.equal(gate.settled(), false, 'the joined cleanup is still gated');
+
+  gate.release();
+  const res = await within(reqP, 'joined POST /api/cleanup response');
+  assert.equal(gate.settled(), true, 'the cleanup settled before the response resolved');
+  assert.equal(res.status, 200, 'the TRUE cleanup result — not 503, not 500');
+  assert.equal((JSON.parse(res.body) as { ok?: unknown }).ok, true);
+  assert.notEqual(res.body, SHUTDOWN_BODY, 'not the shutting-down refusal');
+  assert.notEqual(res.body, '{"ok":false,"err":"internal"}', 'not the cleanup defect body');
+
+  const refusalBoard = await startLiveBoard(t);
+  const refusalGate = gateAsyncMethod(refusalBoard.core, 'cleanup');
+  refusalBoard.supervisor.quiesce();
+  const refused = await within(
+    postRaw(refusalBoard.port, '/api/cleanup', {}),
+    'quiesce-before-start POST /api/cleanup',
+  );
+  assertShutdown503(refused, 'POST /api/cleanup quiesce-before-start');
+  assert.equal(refusalGate.invocations(), 0, 'a refused admission never invokes cleanup');
 });
