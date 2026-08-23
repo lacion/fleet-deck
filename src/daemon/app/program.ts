@@ -42,6 +42,12 @@ import { makeDaemonBackgroundProgram } from './background-program.ts';
 import { legacyBootReconciliationWithoutRetentionWork } from './boot-reconciliation.ts';
 import { DaemonStartupRefusalError, HttpBindStartupError } from './errors.ts';
 import { type HttpServerOwner, makeHttpServerOwner } from './http-server-owner.ts';
+import {
+  controlAsyncWorkflow,
+  controlSyncWorkflow,
+  nameControlWorkflow,
+  questionsDismissWorkflow,
+} from './http-workflows/control.ts';
 import { healthWorkflow, stateWorkflow } from './http-workflows/health-state.ts';
 import { pasteImageWorkflow } from './http-workflows/paste.ts';
 import {
@@ -828,6 +834,11 @@ async function bootDaemon(
     cleanup: cleanupWorkflow,
     // paste-image group
     pasteImage: pasteImageWorkflow,
+    // P6.4 CONTROL ROUTE GROUP: the 11 mutating board-action POSTs.
+    controlAsync: controlAsyncWorkflow,
+    controlSync: controlSyncWorkflow,
+    questionsDismiss: questionsDismissWorkflow,
+    nameControl: nameControlWorkflow,
   });
 
   // Every non-internal IPv4 this host answers on. Wildcard and interface-specific

@@ -32,6 +32,12 @@ import { createCore } from '../../src/daemon/derive.ts';
 import { createHttp } from '../../src/daemon/http.ts';
 import { mapEffectRouteExit } from '../../src/daemon/http-policy.ts';
 import { ApplicationQuiescingError } from '../../src/daemon/app/errors.ts';
+import {
+  controlAsyncWorkflow,
+  controlSyncWorkflow,
+  nameControlWorkflow,
+  questionsDismissWorkflow,
+} from '../../src/daemon/app/http-workflows/control.ts';
 import { healthWorkflow, stateWorkflow } from '../../src/daemon/app/http-workflows/health-state.ts';
 import {
   type PasteImageCapabilities,
@@ -61,6 +67,10 @@ const ALL_ROUTE_BUILDERS = {
   mail: mailWorkflow,
   cleanup: cleanupWorkflow,
   pasteImage: pasteImageWorkflow,
+  controlAsync: controlAsyncWorkflow,
+  controlSync: controlSyncWorkflow,
+  questionsDismiss: questionsDismissWorkflow,
+  nameControl: nameControlWorkflow,
 };
 
 const PNG = Buffer.concat([

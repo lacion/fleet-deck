@@ -33,6 +33,12 @@ import { createHttp } from '../../src/daemon/http.ts';
 import { mapEffectRouteExit } from '../../src/daemon/http-policy.ts';
 import { ApplicationQuiescingError } from '../../src/daemon/app/errors.ts';
 import {
+  controlAsyncWorkflow,
+  controlSyncWorkflow,
+  nameControlWorkflow,
+  questionsDismissWorkflow,
+} from '../../src/daemon/app/http-workflows/control.ts';
+import {
   type HealthCapabilities,
   healthWorkflow,
   stateWorkflow,
@@ -61,7 +67,11 @@ const HEALTH_KEY_ORDER = [
   'startup',
 ] as const;
 
-// Port growth: HttpEffectRoutes requires every converted group's builders.
+// Port growth: HttpEffectRoutes requires every converted group's builders. These
+// pilot tests only exercise /health and /state, but installEffectRoutes requires
+// the whole port, so every group's real builders are wired unchanged to satisfy
+// the type (the other groups are never reached here — each has its own focused
+// suite: paste, settings-command-mail-cleanup, control).
 const ALL_ROUTE_BUILDERS = {
   health: healthWorkflow,
   state: stateWorkflow,
@@ -70,6 +80,10 @@ const ALL_ROUTE_BUILDERS = {
   mail: mailWorkflow,
   cleanup: cleanupWorkflow,
   pasteImage: pasteImageWorkflow,
+  controlAsync: controlAsyncWorkflow,
+  controlSync: controlSyncWorkflow,
+  questionsDismiss: questionsDismissWorkflow,
+  nameControl: nameControlWorkflow,
 };
 
 // ============================ A. ISOLATION ============================

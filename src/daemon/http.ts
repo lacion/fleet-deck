@@ -561,6 +561,29 @@ export interface PasteImageRouteResult {
 export interface PasteImageRouteCapabilities {
   readonly pasteImage: () => PasteImageRouteResult;
 }
+// P6.4 CONTROL ROUTE GROUP (11 mutating POSTs) — STRUCTURAL MIRRORS of the
+// capability interfaces in app/http-workflows/control.ts, one per route pattern.
+// Every control workflow's success value is the (status, body) pair the transport
+// hands to json() — its expected 400/404/409/410 outcomes are DATA carried in
+// that body, not Effect errors, so the whole group stays E = never and neither
+// this port's error channel nor mapEffectRouteExit grows. tsc checks each mirror
+// against the real interface at the program.ts installEffectRoutes() site.
+export interface ControlAsyncRouteCapabilities {
+  readonly run: () => Promise<{ status: number; body?: unknown }>;
+  readonly onError: (err: unknown) => void;
+}
+export interface ControlSyncRouteCapabilities {
+  readonly run: () => { status: number; body?: unknown };
+}
+export interface QuestionsDismissRouteCapabilities {
+  readonly run: () => { readonly ok: boolean };
+}
+export interface NameControlRouteCapabilities {
+  readonly clearing: boolean;
+  readonly suffix: unknown;
+  readonly validateSuffix: (suffix: string) => string | null;
+  readonly applyName: (suffix: string | null) => { readonly ok: boolean };
+}
 export interface HttpEffectRoutes {
   // runRequest routes the workflow Effect through the ingress bridge and settles
   // to an Exit whose error channel is exactly HttpQuiescingFailure: a quiescing
@@ -580,6 +603,11 @@ export interface HttpEffectRoutes {
   readonly cleanup: (caps: CleanupRouteCapabilities) => HttpWorkflowEffect;
   // paste-image group
   readonly pasteImage: (caps: PasteImageRouteCapabilities) => HttpWorkflowEffect;
+  // P6.4 CONTROL ROUTE GROUP builders (see the mirror interfaces above).
+  readonly controlAsync: (caps: ControlAsyncRouteCapabilities) => HttpWorkflowEffect;
+  readonly controlSync: (caps: ControlSyncRouteCapabilities) => HttpWorkflowEffect;
+  readonly questionsDismiss: (caps: QuestionsDismissRouteCapabilities) => HttpWorkflowEffect;
+  readonly nameControl: (caps: NameControlRouteCapabilities) => HttpWorkflowEffect;
 }
 
 // CONTROL-API SEAM: the board-spawn lifecycle methods (spawn / revive /
@@ -1036,6 +1064,17 @@ export function createHttp(
   const SETTINGS_COMMAND_DEFECT = { log: 'fleetd handler error:', body: { err: 'internal' } };
   const MAIL_DEFECT = { log: 'fleetd mail error:', body: { ok: false, err: 'internal' } };
   const CLEANUP_DEFECT = { log: 'fleetd cleanup error:', body: { ok: false, err: 'internal' } };
+  // P6.4 CONTROL ROUTE GROUP defect dialect — shared by all 11 mutating control
+  // POSTs. They ride the SAME mutating quiesce policy as settleEffectMutatingRoute
+  // (quiesce → 503 {"ok":false,"reason":"shutting-down"}, never a legacy replay:
+  // the ingress already refused the core WRITE, so replaying would perform it). A
+  // defect reproduces routeRequest's outer catch for a non-hook /api/ path
+  // byte-for-byte — log 'fleetd handler error:' + 500 {"err":"internal"} — so the
+  // control group reuses settleEffectMutatingRoute with this defect rather than a
+  // second settler. (The async family's per-route rejection dialect and the
+  // 'fleetd <route> error:' logs live in each control workflow's onError, not
+  // here; a core promise rejection is folded to a 500 wire inside control.ts.)
+  const CONTROL_DEFECT = { log: 'fleetd handler error:', body: { err: 'internal' } };
 
   function legacySettingsResponse(res: HttpResShim, ev: unknown): void {
     const out = core.setSettings(ev);
@@ -2149,6 +2188,25 @@ export function createHttp(
               // v1.2 name-verified kill: 404 unknown id, 409 card not offline
               // without force:true, 410 window already gone.
               logExec(url.pathname, req);
+              if (effectRoutes) {
+                settleEffectMutatingRoute(
+                  effectRoutes,
+                  'POST /api/spawn/:id/kill',
+                  effectRoutes.controlAsync({
+                    run: () =>
+                      core.spawnKill(
+                        killMatch[1] ?? '',
+                        asRecord(ev)['force'] === true,
+                      ) as ControlResult,
+                    onError: (err) => {
+                      console.error('fleetd spawn kill error:', err);
+                    },
+                  }),
+                  res,
+                  CONTROL_DEFECT,
+                );
+                return;
+              }
               (core.spawnKill(killMatch[1] ?? '', asRecord(ev)['force'] === true) as ControlResult)
                 .then((out) => {
                   json(res, out.status, out.body);
@@ -2166,6 +2224,21 @@ export function createHttp(
               // collision/cap check and returns the control-API status. The
               // body may override remote_control (default: inherit).
               logExec(url.pathname, req);
+              if (effectRoutes) {
+                settleEffectMutatingRoute(
+                  effectRoutes,
+                  'POST /api/spawn/:id/revive',
+                  effectRoutes.controlAsync({
+                    run: () => core.revive(reviveMatch[1] ?? '', ev ?? {}) as ControlResult,
+                    onError: (err) => {
+                      console.error('fleetd spawn revive error:', err);
+                    },
+                  }),
+                  res,
+                  CONTROL_DEFECT,
+                );
+                return;
+              }
               (core.revive(reviveMatch[1] ?? '', ev ?? {}) as ControlResult)
                 .then((out) => {
                   json(res, out.status, out.body);
@@ -2196,6 +2269,28 @@ export function createHttp(
               // required, result defensively | null | undefined). The real runtime
               // signature is (session_id, body: SpawnBody = {}, {deferred} = {}) and
               // always resolves a concrete {status, body}; re-assert it at this seam.
+              if (effectRoutes) {
+                settleEffectMutatingRoute(
+                  effectRoutes,
+                  'POST /api/sessions/:sid/adopt',
+                  effectRoutes.controlAsync({
+                    run: () =>
+                      (
+                        core.adoptSession as (
+                          sid: string,
+                          body?: unknown,
+                          meta?: { deferred?: boolean },
+                        ) => ControlResult
+                      )(adoptMatch[1] ?? '', ev ?? {}),
+                    onError: (err) => {
+                      console.error('fleetd adopt error:', err);
+                    },
+                  }),
+                  res,
+                  CONTROL_DEFECT,
+                );
+                return;
+              }
               (
                 core.adoptSession as (
                   sid: string,
@@ -2222,6 +2317,21 @@ export function createHttp(
               // enforce one set of rules.
               const body = asRecord(ev);
               const clearing = body['clear'] === true;
+              if (effectRoutes) {
+                settleEffectMutatingRoute(
+                  effectRoutes,
+                  'POST /api/sessions/:sid/name',
+                  effectRoutes.nameControl({
+                    clearing,
+                    suffix: body['suffix'],
+                    validateSuffix: validateNameSuffix,
+                    applyName: (suffix) => core.applyCustomName(nameMatch[1] ?? '', suffix),
+                  }),
+                  res,
+                  CONTROL_DEFECT,
+                );
+                return;
+              }
               if (!clearing && typeof body['suffix'] !== 'string') {
                 json(res, 400, {
                   ok: false,
@@ -2252,6 +2362,21 @@ export function createHttp(
               // offline / 409 already dismissed / 409 stalled spawn) lives in
               // derive; the CSRF/Host walls above apply like any control POST.
               logExec(url.pathname, req);
+              if (effectRoutes) {
+                settleEffectMutatingRoute(
+                  effectRoutes,
+                  'POST /api/sessions/:sid/dismiss',
+                  effectRoutes.controlAsync({
+                    run: () => core.dismissSession(sessionDismissMatch[1] ?? ''),
+                    onError: (err) => {
+                      console.error('fleetd dismiss error:', err);
+                    },
+                  }),
+                  res,
+                  CONTROL_DEFECT,
+                );
+                return;
+              }
               core
                 .dismissSession(sessionDismissMatch[1] ?? '')
                 .then((out) => {
@@ -2271,6 +2396,21 @@ export function createHttp(
             );
             if (dismissRetryMatch) {
               logExec(url.pathname, req);
+              if (effectRoutes) {
+                settleEffectMutatingRoute(
+                  effectRoutes,
+                  'POST /api/sessions/:sid/dismiss/retry',
+                  effectRoutes.controlAsync({
+                    run: () => core.dismissRetry(dismissRetryMatch[1] ?? ''),
+                    onError: (err) => {
+                      console.error('fleetd dismiss-retry error:', err);
+                    },
+                  }),
+                  res,
+                  CONTROL_DEFECT,
+                );
+                return;
+              }
               core
                 .dismissRetry(dismissRetryMatch[1] ?? '')
                 .then((out) => {
@@ -2287,6 +2427,21 @@ export function createHttp(
               // Explicit human board action: derive enforces the idle/live
               // pane boundary, types /rc literally, and waits for harvesting.
               logExec(url.pathname, req);
+              if (effectRoutes) {
+                settleEffectMutatingRoute(
+                  effectRoutes,
+                  'POST /api/spawn/:id/rc',
+                  effectRoutes.controlAsync({
+                    run: () => core.enableRemote(rcMatch[1] ?? '') as ControlResult,
+                    onError: (err) => {
+                      console.error('fleetd remote-control error:', err);
+                    },
+                  }),
+                  res,
+                  CONTROL_DEFECT,
+                );
+                return;
+              }
               (core.enableRemote(rcMatch[1] ?? '') as ControlResult)
                 .then((out) => {
                   json(res, out.status, out.body);
@@ -2303,6 +2458,22 @@ export function createHttp(
               // v1.3: for an ExitPlanMode plan question the body may also be
               // {behavior:"capture"} (board-only pseudo-behavior) — the
               // branching lives in questions.mjs answer().
+              if (effectRoutes) {
+                settleEffectMutatingRoute(
+                  effectRoutes,
+                  'POST /api/questions/:id/answer',
+                  effectRoutes.controlSync({
+                    run: () =>
+                      core.questions.answer(
+                        Number(answerMatch[1] ?? ''),
+                        ev as Parameters<typeof core.questions.answer>[1],
+                      ),
+                  }),
+                  res,
+                  CONTROL_DEFECT,
+                );
+                return;
+              }
               const out = core.questions.answer(
                 Number(answerMatch[1] ?? ''),
                 ev as Parameters<typeof core.questions.answer>[1],
@@ -2314,6 +2485,18 @@ export function createHttp(
             if (dismissMatch) {
               // "I already handled this in the terminal." Retires the card and
               // tells the session NOTHING — unlike answer(), which mails it.
+              if (effectRoutes) {
+                settleEffectMutatingRoute(
+                  effectRoutes,
+                  'POST /api/questions/:id/dismiss',
+                  effectRoutes.questionsDismiss({
+                    run: () => core.questions.dismiss(Number(dismissMatch[1])),
+                  }),
+                  res,
+                  CONTROL_DEFECT,
+                );
+                return;
+              }
               const out = core.questions.dismiss(Number(dismissMatch[1]));
               json(res, out.ok ? 200 : 404, out);
               return;
@@ -2323,6 +2506,22 @@ export function createHttp(
               // v1.3 plan library mark (CONTRACT): {status:"executed"|"archived",
               // via?} — 404 unknown id, 409 bad transition. Matrix documented
               // at core.planMark (derive.mjs).
+              if (effectRoutes) {
+                settleEffectMutatingRoute(
+                  effectRoutes,
+                  'POST /api/plans/:id/mark',
+                  effectRoutes.controlSync({
+                    run: () =>
+                      core.planMark(
+                        Number(planMatch[1] ?? ''),
+                        ev as Parameters<typeof core.planMark>[1],
+                      ),
+                  }),
+                  res,
+                  CONTROL_DEFECT,
+                );
+                return;
+              }
               const out = core.planMark(
                 Number(planMatch[1] ?? ''),
                 ev as Parameters<typeof core.planMark>[1],
@@ -2337,6 +2536,22 @@ export function createHttp(
               // frame, which POST /mail 422s, so the daemon composes it here
               // through its internal mail() and marks the plan executed in the
               // same request. 404 unknown plan/target, 409 non-executable plan.
+              if (effectRoutes) {
+                settleEffectMutatingRoute(
+                  effectRoutes,
+                  'POST /api/plans/:id/assign',
+                  effectRoutes.controlSync({
+                    run: () =>
+                      core.assignPlan(
+                        Number(assignMatch[1] ?? ''),
+                        ev as Parameters<typeof core.assignPlan>[1],
+                      ),
+                  }),
+                  res,
+                  CONTROL_DEFECT,
+                );
+                return;
+              }
               const out = core.assignPlan(
                 Number(assignMatch[1] ?? ''),
                 ev as Parameters<typeof core.assignPlan>[1],
