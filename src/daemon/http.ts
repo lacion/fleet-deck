@@ -47,6 +47,7 @@ import { validateHookEvent, validateSpawnRequest } from '../../contracts/index.t
 // below stays byte-for-byte, calling these leaves and owning every side effect.
 import {
   asRecord,
+  assembleSnapshotFrame,
   authorityTrusted as policyAuthorityTrusted,
   boardAssetHeaders,
   gatewaySettingsTouched,
@@ -62,6 +63,8 @@ import {
   resolveBoardAssetPath,
   tokenGatedRoute,
   tokenMatches as policyTokenMatches,
+  wsBufferEviction,
+  wsKeepaliveAction,
 } from './http-policy.ts';
 import type { TrustedOrigin } from './http-policy.ts';
 // program.ts and the auth/origin suites import these two from the HTTP module's
@@ -2769,7 +2772,7 @@ export function createHttp(
   // preserves `lan` from later /state polls, so without this field the pre-0.16
   // restart banner is wiped as soon as the socket opens and never comes back.
   function wsSnapshot() {
-    return { type: 'snapshot', ...core.snapshot(), legacy_upgrade: legacyBanner() };
+    return assembleSnapshotFrame(core.snapshot(), legacyBanner());
   }
   function broadcast() {
     dirty = false;
@@ -2787,7 +2790,7 @@ export function createHttp(
       // a reconnect, and the connect handler seeds the fresh socket with a full
       // snapshot — correctness over a silent partial board. 'close' unwinds the
       // socket exactly as the keepalive's reap would.
-      if (c.getBufferedAmount() > MAX_WS_BUFFER) {
+      if (wsBufferEviction(c.getBufferedAmount(), MAX_WS_BUFFER) === 'evict') {
         try {
           c.terminate();
         } catch {
@@ -2798,6 +2801,12 @@ export function createHttp(
       c.send(msg);
     }
   }
+  // P6.4: LEFT as-is. The broadcast trigger is a single coalescing setTimeout —
+  // transport machinery, not an application handler — so it does not go through the
+  // ingress bridge: the exit gate needs route workflows for handlers, and bridging a
+  // 60 ms flush timer would change nothing but the coalescing window's timing. The
+  // per-frame send loop in broadcast() stays synchronous for the same reason; only the
+  // PURE decisions inside it (eviction, keepalive, frame shape) are lifted to policy.
   function scheduleBroadcast() {
     if (quiescing) return;
     dirty = true;
@@ -3012,7 +3021,7 @@ export function createHttp(
     if (quiescing) return;
     for (const clients of [snapshotClients, termClients]) {
       for (const ws of clients) {
-        if (!ws.data.isAlive) {
+        if (wsKeepaliveAction(ws.data.isAlive) === 'terminate') {
           ws.terminate();
           continue;
         }

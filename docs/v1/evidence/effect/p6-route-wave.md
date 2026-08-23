@@ -8,7 +8,8 @@ does not renumber G1–G11 / P1–P23.
 
 **Section inventory:** §0 identity · §1 slices and review verdicts · §2 defect
 family · §3 killing schedule · §4 closure · §5 Exit × witness settle table ·
-§6 bundle identity · §7 suite counts · §8 remaining / resume.
+§6 bundle identity · §7 suite counts · §8 remaining / resume · §9 WS-snapshot
+ingress slice (uncommitted, on top of `c03c406d`).
 
 Adversarial reviews lived in scratch (`/tmp/fd-effect/{paste,settings,control,join-fix}-review.md`)
 and are transcribed here. Do not treat those paths as durable evidence.
@@ -121,7 +122,11 @@ Interpretation is per settler:
 - Static assets: recorded legacy-until-P13 (paste review; wrapping
   `readFileSync` would invent an intra-quiesce window the sync path does not
   have).
-- WS-snapshot ingress: next P6.4 slice.
+- WS-snapshot ingress: **converted-by-ownership + pure-leaves-only** — see §9
+  (uncommitted, on top of `c03c406d`). No Effect workflow was added: the /ws
+  surface's lifecycle already runs under the P6.3 owner, and its three inline
+  decisions are lifted to pure `http-policy.ts` leaves. Terminal WS (`/ws/term`)
+  handlers stay untouched behind the termbridge facade until P7.
 - GET `/mail` and GET `/api/watch` stay under their P1 owners until P10.
 
 ---
@@ -383,7 +388,8 @@ routes; it did not finish the package.
 
 Resume order (do not start P7–P14; do not mark P3's quiet-host item closed):
 
-1. **WS-snapshot ingress slice** (next).
+1. **WS-snapshot ingress slice** — done as converted-by-ownership +
+   pure-leaves-only (§9), uncommitted on top of `c03c406d`.
 2. **Exhaustive fail-open contract test**, then the **hooks** slice (LAST,
    per the full-spine guardrail).
 3. **P6.6 / P6.8 closure.** P6.6 still owns the
@@ -395,5 +401,94 @@ Resume order (do not start P7–P14; do not mark P3's quiet-host item closed):
    check P6.8 until the post-conversion comparison is in.
 
 P6.5 is preserve-as-implemented (frozen in the matrix §3 / `p6-ws-send-probe.md`).
+
+---
+
+## 9. WS-snapshot ingress slice
+
+**Uncommitted**, on top of `c03c406d` (the wave-doc commit; implementation base
+`e2518a63`). Outcome: **converted-by-ownership (P6.3) + pure-leaves-only**. No
+Effect workflow, no new `HttpEffectRoutes` port surface, no `runRequest` bridge
+call. The reasoning, argued with anchors, is that the /ws snapshot surface has no
+application handler left to bridge — only transport machinery and pure decisions.
+
+### 9a. What was converted vs recorded-as-is
+
+| Surface | Disposition | Anchor |
+| --- | --- | --- |
+| /ws lifecycle (open/close/terminate at shutdown) | **converted-by-ownership** — already runs under the P6.3 `HttpServer` owner; the never-close-before-`stop(true)` invariant and the quiescing terminate path are untouched | `handleUpgrade` 503-on-quiescing (`http.ts:3046`); shared keepalive `if (quiescing) return` (`http.ts:3012`) |
+| Buffered-byte eviction decision | **pure leaf** `wsBufferEviction` | `http-policy.ts`; wired `broadcast()` `http.ts:2790` |
+| Keepalive liveness decision | **pure leaf** `wsKeepaliveAction` | `http-policy.ts`; wired shared keepalive `http.ts:3015` |
+| Snapshot-frame assembly | **pure leaf** `assembleSnapshotFrame` | `http-policy.ts`; wired `wsSnapshot()` `http.ts:2772` |
+| Upgrade admission | **already decomposed** — composes the existing `authorized`/`hostHeaderOk`/`crossSiteReason` policy leaves; no inline pure decision remained | `http.ts:3069` |
+| Broadcast TRIGGER (coalescing `setTimeout`) | **left as-is** — transport machinery, not a handler; bridging a 60 ms flush timer changes only its timing (direction (b)) | `scheduleBroadcast` `http.ts` |
+| Per-frame send loop | **left synchronous** — only the pure decisions inside it were lifted | `broadcast()` `http.ts` |
+| `/ws/term` handlers | **untouched** behind the termbridge facade until P7 (the eviction there is `sendTermFrame` + `MAX_TERM_WS_BUFFER` + `close(1009)`, a term handler, not this slice) | `http.ts` |
+
+The keepalive is a SHARED lifecycle timer over `[snapshotClients, termClients]`,
+not a term handler, so wiring `wsKeepaliveAction` there does not touch `/ws/term`
+handling — it replaces the identical inline `!isAlive` decision both servers ran.
+
+### 9b. Why pure leaves, not Effect workflows
+
+The leaves live in `src/daemon/http-policy.ts` (DOMAIN zone), not under
+`app/http-workflows/`, decided by `tests/import-boundaries.ts`: `http.ts` is a
+domain module (`isDomainSource`) barred by `domainImportForbidden` from importing
+`app/**`, and the workflow modules live under `app/`. `http-policy.ts` is the
+pre-existing pure-policy home `http.ts` already imports, and its header already
+permits bare `effect/*` in the domain zone. The three decisions run inside the
+synchronous broadcast loop and the keepalive timer — transport machinery — so
+wrapping them in an Effect through the ingress bridge would manufacture Effect for
+its own sake and buy nothing (the pre-authorized outcome).
+
+### 9c. Extracted leaves inventory
+
+All in `src/daemon/http-policy.ts`, byte/behaviour-identical to the inline code:
+
+- `wsBufferEviction(bufferedAmount, cap): 'evict' | 'send'` — R1-2 backpressure;
+  strictly-greater-than the cap evicts (matches the `FLEETDECK_WS_BUFFER_MAX=-1`
+  test lever: `0 > -1` evicts; idle `0 > 0` sends).
+- `wsKeepaliveAction(isAlive): 'ping' | 'terminate'` — H-R3 liveness.
+- `assembleSnapshotFrame<S, L>(snapshot, legacyUpgrade)` — the frozen frame
+  `{ type:'snapshot', ...snapshot, legacy_upgrade }` in exact key order; generic so
+  it preserves the concrete snapshot type (no `tsc` change). H-S1 stays a call-site
+  choice (`core.snapshot()`, not `snapshotWithLan()`); BUG-031 legacy_upgrade rides.
+
+Isolation coverage: `tests/effect/http-ws-snapshot-leaves.test.ts` (9 tests) —
+the boundaries, the `-1` lever, ping/terminate, frozen key order, legacy_upgrade
+present when null, no-injection (H-S1), and byte-identity with the pre-extraction
+inline expression. Real-daemon behaviour is unchanged and stays green in
+`tests/ws-hardening.test.ts` (coalescing / eviction / keepalive / H-S1 / BUG-031)
+and `tests/terminal-ws.test.ts` (untouched).
+
+### 9d. Gate counts (quiet WSL2 host, Bun 1.3.14, 2026-08-23)
+
+| Gate | Result |
+| --- | --- |
+| `bun run typecheck` (root + board) | exit 0 |
+| `bun run ci` (`biome ci`) | 404 files, no fixes applied |
+| `tests/effect/http-ws-snapshot-leaves.test.ts` (new isolation) | in the batch below |
+| `tests/effect/daemon-bundle-policy.test.ts` + `daemon-app.test.ts` + isolation | **13 pass / 0 fail**, 3 files |
+| `tests/import-boundaries.test.ts` + `p6-http-freeze.test.ts` | **13 pass / 0 fail**, 2 files |
+| `tests/ws-hardening.test.ts` | **5 pass / 0 fail** |
+| `tests/terminal-ws.test.ts` (untouched-green) | **21 pass / 0 fail** |
+| `tests/effect/` (full P6.4 wave regression) | **253 pass / 0 fail**, 39 files |
+
+### 9e. Bundle identity (this slice)
+
+Rebuilt twice, byte-identical (SHA `cd0ca27a2428266849888ae9d7876816b5ec0519f9200b87c94e38f4b92e6298`).
+Policy method `Bun.gzipSync(bytes, {level:9, library:'zlib'})`.
+
+| Field | e2518a63 (recorded) | this slice | Δ |
+| --- | --- | --- | --- |
+| Raw | 601,875 B | 602,148 B | +273 B (ceiling 768,000 B) |
+| gzip-9 zlib | 164,469 B | 164,593 B | +124 B |
+| Headroom vs 189,440 B | 24,971 B | **24,847 B** | −124 B |
+| Lines (`split('\n')`) | 19,841 | 19,853 | +12 |
+
+Well inside the budget; no tuning, raising, or reverting of the gzip ceiling. The
+standing `0.23.6` ×4 version-manifest landmine is unchanged by this slice.
+
+*End of WS-snapshot slice record. Anchors valid on top of `c03c406d`.*
 
 *End of wave record. Anchors and SHAs valid at HEAD `e2518a63`.*

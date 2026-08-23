@@ -313,6 +313,54 @@ export function repoPreflightBodyError(body: Record<string, unknown>): string | 
   return null;
 }
 
+// ------------------------------------------------------- websocket snapshot leaves
+// P6.4 WS-snapshot ingress slice. The /ws snapshot surface is CONVERTED-BY-OWNERSHIP
+// (its lifecycle already runs under the P6.3 HttpServer owner) plus PURE-LEAVES-ONLY:
+// the three decisions the surface makes are lifted here so each is testable without a
+// live socket. They are DECISIONS, never side effects — the transport in http.ts still
+// owns the send/terminate/ping calls, the isAlive write, and the frame stringify. Byte
+// identity is frozen by docs/v1/evidence/effect/p6-http-matrix.md §3 and pinned by the
+// ws-hardening suite; the backpressure signal is the per-socket buffered-byte count vs
+// a cap (P6.5 preserve-as-implemented), never a send()/ping() return value.
+//
+// These stay PURE POLICY rather than Effect workflows on purpose: they run inside the
+// synchronous broadcast loop and the keepalive timer — transport machinery, not
+// application handlers — so wrapping them in an Effect through the ingress bridge would
+// manufacture Effect for its own sake and buy nothing. The broadcast TRIGGER (a coalesced
+// setTimeout in http.ts) is left untouched for the same reason.
+
+// H-R3/R1-2 broadcast backpressure: a /ws peer whose queued bytes have passed the cap is
+// EVICTED rather than fed another snapshot — the transport terminates it so the connect
+// handler can re-seed a full snapshot on reconnect (correctness over a silent partial
+// board); at or under the cap the frame is sent. The test forces the cap to -1 to evict
+// every peer deterministically (bufferedAmount is always >= 0), so the comparison is
+// strictly-greater-than to match: 0 > -1 evicts, and an idle socket at 0 > 0 is admitted.
+export function wsBufferEviction(bufferedAmount: number, cap: number): 'evict' | 'send' {
+  return bufferedAmount > cap ? 'evict' : 'send';
+}
+
+// H-R3/M-P1 heartbeat liveness: on each keepalive tick a peer that has not ponged since
+// the previous tick (isAlive === false) is TERMINATED; a live one is PINGED (and marked
+// not-alive until its next pong). Both logical servers share the SAME rule — the /ws
+// snapshot sockets and the /ws/term viewers — so this one decision serves the shared
+// keepalive loop, which still owns ws.terminate()/ws.ping() and the isAlive reset.
+export function wsKeepaliveAction(isAlive: boolean): 'ping' | 'terminate' {
+  return isAlive ? 'ping' : 'terminate';
+}
+
+// The /ws snapshot FRAME shape, in frozen key order: the literal `type:'snapshot'`
+// discriminator, then the core snapshot spread (own key order preserved), then
+// legacy_upgrade LAST. H-S1: the caller passes core.snapshot() — NOT snapshotWithLan() —
+// so the token-bearing lan block never rides a frame a /ws client can read; that choice
+// stays at the call site, this leaf only fixes the wrapper shape/order. BUG-031:
+// legacy_upgrade MUST ride the frame or a live board wipes the restart banner on connect.
+export function assembleSnapshotFrame<S extends object, L>(
+  snapshot: S,
+  legacyUpgrade: L,
+): { readonly type: 'snapshot' } & S & { readonly legacy_upgrade: L } {
+  return { type: 'snapshot', ...snapshot, legacy_upgrade: legacyUpgrade };
+}
+
 // ------------------------------------------------------- effect route mapping
 // P6.4: the Exit → Response PLAN for an Effect route (see the CONVENTION header
 // in app/http-workflows/health-state.ts). Pure — it classifies the Exit and
