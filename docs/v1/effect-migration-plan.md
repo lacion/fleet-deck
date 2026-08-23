@@ -4,7 +4,7 @@
 v1 [plan of record](./README.md). This document is intended to be handed directly to a Codex goal
 and updated as each gate lands.*
 
-**Status:** P0–P6 checkpointed; P6 complete at `b2d11d84`; P7 next (terminal bridge under Effect ownership; P7.0 is the §7 platform authorization checkpoint)
+**Status:** P0–P8 checkpointed; P8 complete at `cd0470bb`; P7 remains the standing §7 platform authorization checkpoint; P9 next ([p9-completion-map.md](./evidence/effect/p9-completion-map.md), P9.1 first)
 **Working branch:** `fd/v1-effect-feasibility`
 **Starting point:** v0.23.6
 **Runtime floor:** exact Bun 1.3.14 in CI; `engines.bun >=1.3.14`
@@ -302,8 +302,8 @@ outcomes as work lands.
 | Detached supervisor/CLI launchers | `Bun.spawn` | **KEEP INITIALLY** | Child survival, `unref`, stdio, signal, and supervisor identity tests before conversion |
 | HTTP and server WS in `http.ts` | current `Bun.serve`; optional `BunHttpServer` | **KEEP CUSTOM ADAPTER** (P6.3 Effect-owns `Bun.serve`; P6.7 rejected `BunHttpServer` at rc.110) | Frozen HTTP/WS suite and graceful close remain the contract. Trial evidence: [p6-transport-trial.md](./evidence/effect/p6-transport-trial.md) |
 | Static board assets | `Bun.file` Response | **BENCHMARK LATE** | Missing/traversal/MIME/cache/CSP/HEAD/range parity and useful measured gain |
-| SQLite seam | static `bun:sqlite`, `strict: true` | **MIGRATE STALE SEAM; KEEP DIRECT BY DEFAULT** | Binding, null normalization, integers, WAL/busy, migrations, permissions, durability, performance |
-| Repeated SQL statements | `db.query()` cache | **INVENTORY/BENCHMARK** | Query lifetime and close tests; do not mechanically replace `prepare()` |
+| SQLite seam | static `bun:sqlite`; `strict: true` trial | **KEEP DIRECT bun:sqlite** (P8.1 static import landed; P8.2 **DO-NOT-ENABLE** `strict`; P8.7 **KEEP** `@effect/sql-sqlite-bun`) | Binding, null normalization, integers, WAL/busy, migrations, permissions, durability, performance. Evidence: [p8-strict-trial.md](./evidence/effect/p8-strict-trial.md), [p8-sql-client-trial.md](./evidence/effect/p8-sql-client-trial.md) |
+| Repeated SQL statements | `db.query()` cache | **KEEP prepare-once** (P8.5) | Query lifetime and close tests; do not mechanically replace `prepare()`. Evidence: [p8-stmt-cache-trial.md](./evidence/effect/p8-stmt-cache-trial.md) |
 | mDNS | `Bun.udpSocket` | **ISOLATE/TRIAL** | Two responders on 5353, interface membership/egress, TTL 255, send backpressure, goodbye completion, roaming, macOS+Linux |
 | Content reads/writes | `Bun.file` / `Bun.write` | **SELECTIVE** | Equal lazy-error, limit, atomicity, permission, and durability semantics |
 | Directories/metadata/permissions/atomic fd I/O | `node:fs` | **KEEP** | Bun APIs do not replace exact `O_NOFOLLOW`, chmod, fsync, link/rename, random-access, or symlink-safe requirements |
@@ -851,40 +851,85 @@ until the complete gate passes.
 **Purpose:** put persistence lifetime and workflow failures in the application model while keeping
 synchronous Bun SQLite honest.
 
-- [ ] P8.1 Remove the stale dynamic Node SQLite fallback and import `bun:sqlite` statically in the
+- [x] P8.1 Remove the stale dynamic Node SQLite fallback and import `bun:sqlite` statically in the
   Bun adapter. Preserve null-to-undefined normalization and public row types.
-- [ ] P8.2 Trial `strict: true` with fixtures for every binding style, missing/extra parameters,
+  Complete `05b40bd5`. Characterization-first; the `node:sqlite` fallback was already dead via the
+  0.23.0 serve() exit-78 preflight.
+- [x] P8.2 Trial `strict: true` with fixtures for every binding style, missing/extra parameters,
   integer types, and statement lifetime. Do not enable `safeIntegers` incidentally.
-- [ ] P8.3 Build the Store Layer explicitly from
+  **DO-NOT-ENABLE** `346ee85a` (pin retarget `4ff3e393`). Evidence:
+  [p8-strict-trial.md](./evidence/effect/p8-strict-trial.md). 100% positional corpus; named-bind
+  inversion. `safeIntegers` not enabled.
+- [x] P8.3 Build the Store Layer explicitly from
   `Layer.effect(Store, Effect.acquireRelease(openDatabase, closeDatabase))`; returning an object
   with `close()` from `Layer.effect` does not infer cleanup. Keep the centralized query/transaction
   surface synchronous and plain; the Layer owns lifetime, not every SQL call's return type.
-- [ ] P8.4 Preserve `user_version` migrations, rollback behavior, `BEGIN IMMEDIATE` boundaries,
+  Complete with P8.4 at `351b376f`. Store `Context.Service` owns the single handle under the root
+  Scope (P6.3 owner pattern). Coordinator remains the authoritative close driver via `setStore`.
+  Adversarial SHIP-WITH-NITS, all items applied.
+- [x] P8.4 Preserve `user_version` migrations, rollback behavior, `BEGIN IMMEDIATE` boundaries,
   WAL/busy behavior, chmod/sidecars, restart durability, and close ordering. Do not bump the DB
   schema version for an adapter-only refactor. Explicitly finalize owned/cached statements, then
   require `db.close(true)` to complete so `sqlite3_close_v2` cannot leave statement-owned closure
   deferred past the root finalizer.
-- [ ] P8.5 Inventory repeated/static statements for `db.query()` caching; benchmark against current
+  Complete `351b376f`. Finalize-then-`close(true)` (`sqlite3_close`, not `sqlite3_close_v2`
+  deferral). Completes-only root-Scope fallback honoring `storeSafe`. Two-finalizer LIFO: store
+  fallback registered before HttpServer so LIFO retires the listener first. Schema version not
+  bumped.
+- [x] P8.5 Inventory repeated/static statements for `db.query()` caching; benchmark against current
   `prepare()` and change only proven callsites.
-- [ ] P8.6 Convert application workflows to yield Store and translate failures once around a
+  **KEEP prepare-once** `50412bd8`. Evidence:
+  [p8-stmt-cache-trial.md](./evidence/effect/p8-stmt-cache-trial.md). `Database.query()` is a
+  20-slot first-20-win cache, not LRU; 92/112 overflow would leak stmts and break the close
+  invariant. No callsite changed.
+- [x] P8.6 Convert application workflows to yield Store and translate failures once around a
   coarse synchronous DB operation with `Effect.try`; do not wrap each statement. Leave row
   mapping, SQL constants, and pure derivation plain. Treat a synchronous query/transaction as
   non-interruptible; never pretend Effect can cancel work while Bun is blocking the event loop.
   Land one workflow/module per sub-slice, and forbid suspension/yielding inside a direct SQLite
   transaction callback so unrelated fibers cannot interleave on the same connection.
-- [ ] P8.7 Independently benchmark `@effect/sql-sqlite-bun@4.0.0-rc.110`. Its serialized semaphore,
+  Complete `cd0470bb`. Five root-context slices (retention `145e9fbd`, boot `e0ab862a`,
+  agents-ingest + lan-tick `570d8dae`, spawn-liveness `cd0470bb`) with per-slice `STORE_BACKED_*`
+  seams and a single whole-gen `provideService(Store)`. HTTP-bridged workflows keep capability
+  parameters BY CONVENTION (P6.4 constraint); holds/questions are P10; termbridge P7; async
+  shells + leftover HTTP are P9 — per
+  [p9-completion-map.md](./evidence/effect/p9-completion-map.md). This is the plan's own
+  boundary, not incompleteness.
+- [x] P8.7 Independently benchmark `@effect/sql-sqlite-bun@4.0.0-rc.110`. Its serialized semaphore,
   WAL default, five-second blocking busy timeout, writable `BEGIN IMMEDIATE`, and lack of streaming
   queries must match Fleet Deck intentionally. Adopt only if semantics and measured value justify
   the third dependency; otherwise record **KEEP direct bun:sqlite**.
+  **KEEP direct bun:sqlite** `917c4dc8`. Evidence:
+  [p8-sql-client-trial.md](./evidence/effect/p8-sql-client-trial.md). Trial archival
+  `fd/p8-sqltrial` @ `a673431e`. No finalize-then-`close(true)` expressivity, no `{changes,
+  lastInsertRowid}` run-result, ~4.3× slower hot read, async-coloring 303 sites.
 
-**Exit gate:** migration/restart/durability and query benchmarks pass; DB is acquired once, closed
-after all users, and cannot be accessed afterward; SQL candidate decision is recorded.
+**Exit gate:** MET. Four dispositions:
 
-**Rollback:** unchanged DB schema/files allow code rollback to the prior seam.
+- migration/restart/durability suites green throughout;
+- query benchmarks recorded ([p8-stmt-cache-trial.md](./evidence/effect/p8-stmt-cache-trial.md),
+  [p8-sql-client-trial.md](./evidence/effect/p8-sql-client-trial.md));
+- DB acquired once and closed after all users via the Store owner with the coordinator
+  authoritative (P8.3 evidence + ordering pins); post-close access impossible for tracked
+  statements (`finalize` throws `Statement has finalized`);
+- SQL candidate decision recorded (**KEEP** direct bun:sqlite).
+
+**Rollback:** Per-slice: flip `STORE_BACKED_BOOT` / `STORE_BACKED_RETENTION` /
+`STORE_BACKED_AGENTS_INGEST` / `STORE_BACKED_LAN_TICK` / `STORE_BACKED_LIVENESS` to `false`
+(legacy adapters remain in-tree). Whole-slice: revert the P8 commits `05b40bd5`, `346ee85a`,
+`4ff3e393`, `351b376f`, `145e9fbd`, `50412bd8`, `917c4dc8`, `e0ab862a`, `570d8dae`, `cd0470bb`
+to restore the store seam to P8.1's parent `37e07659`. Do **not** range-revert
+`05b40bd5^..cd0470bb`: that also drops interleaved P6.8 `742168a4` (POST `/command` harness).
+`4ff3e393`'s parent is `346ee85a` (the P8.2 trial itself), not the pre-P8 restore point.
+Unchanged DB schema/files allow the code rollback.
 
 ### P9 — migrate application workflows one bounded seam at a time
 
 **Purpose:** finish the daemon application architecture after platform services are stable.
+
+Kickoff spec: [p9-completion-map.md](./evidence/effect/p9-completion-map.md). Resume at **P9.1**
+(spawn orchestration first). P9 does not require P7's terminal ownership (`/ws/term` stays P7);
+P7.0 remains the standing §7 platform authorization checkpoint.
 
 Recommended order:
 
@@ -1246,7 +1291,7 @@ Update this table only when a work package's exit gate has actually passed:
 | P5 boot and schedules | Complete | [p5.md](./evidence/effect/p5.md) | `ca62b94f`; whole-slice revert of `972621d5`–`ca62b94f` restores `661dfe31` |
 | P6 HTTP/WS workflows | Complete | [p6-http-matrix.md](./evidence/effect/p6-http-matrix.md), [p6-route-wave.md](./evidence/effect/p6-route-wave.md), [p6-graceful-stop-verification.md](./evidence/effect/p6-graceful-stop-verification.md), [p6-bench-comparison.md](./evidence/effect/p6-bench-comparison.md), [p6-transport-trial.md](./evidence/effect/p6-transport-trial.md), [p6-ws-send-probe.md](./evidence/effect/p6-ws-send-probe.md) | Per-group: `effectRoutes=null` (unset `installEffectRoutes`). Whole-slice: revert `307fae0a` through `b2d11d84` (P6.1–P6.3 plus the route wave `56a15e8a`..`b2d11d84`) restores P5 at `67758ba9` / `ca62b94f` |
 | P7 terminal stream | Not started | — | — |
-| P8 store/SQLite | Not started | — | — |
+| P8 store/SQLite | Complete | [p8-strict-trial.md](./evidence/effect/p8-strict-trial.md), [p8-stmt-cache-trial.md](./evidence/effect/p8-stmt-cache-trial.md), [p8-sql-client-trial.md](./evidence/effect/p8-sql-client-trial.md), [p9-completion-map.md](./evidence/effect/p9-completion-map.md) | Per-slice: `STORE_BACKED_*` flags. Whole-slice: revert `05b40bd5`, `346ee85a`, `4ff3e393`, `351b376f`, `145e9fbd`, `50412bd8`, `917c4dc8`, `e0ab862a`, `570d8dae`, `cd0470bb` restores `37e07659`. Do not range-revert `05b40bd5^..cd0470bb` (drops interleaved P6.8 `742168a4`) |
 | P9 application workflows | Not started | — | — |
 | P10 holds/fail-open | Not started | — | — |
 | P11 Bun capability trials | Not started | — | — |

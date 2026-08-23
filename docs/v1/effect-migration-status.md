@@ -2,10 +2,14 @@
 
 - **Checkpoint date:** 2026-08-23
 - **Branch:** `fd/v1-effect-feasibility`
-- **Published branch:** `origin/fd/v1-effect-feasibility` currently at `b2d11d84`
-  (`feat(effect): convert the hook route group under the fail-open boundary`)
-- **Current implementation HEAD:** `b2d11d84`
-  (`feat(effect): convert the hook route group under the fail-open boundary`)
+- **Published branch:** `origin/fd/v1-effect-feasibility` currently at `cd0470bb`
+  (`feat(effect): the spawn-liveness tick yields Store`)
+- **Current implementation HEAD:** `cd0470bb`
+  (`feat(effect): the spawn-liveness tick yields Store`)
+- **P8 completion evidence:** [p8-strict-trial.md](./evidence/effect/p8-strict-trial.md),
+  [p8-stmt-cache-trial.md](./evidence/effect/p8-stmt-cache-trial.md),
+  [p8-sql-client-trial.md](./evidence/effect/p8-sql-client-trial.md),
+  [p9-completion-map.md](./evidence/effect/p9-completion-map.md)
 - **P6 completion evidence:** [p6-http-matrix.md](./evidence/effect/p6-http-matrix.md),
   [p6-route-wave.md](./evidence/effect/p6-route-wave.md),
   [p6-graceful-stop-verification.md](./evidence/effect/p6-graceful-stop-verification.md),
@@ -18,11 +22,11 @@
 - **Runtime floor:** Bun 1.3.14, revision `0d9b296af33f2b851fcbf4df3e9ec89751734ba4`
 
 This is the durable handoff for the executable
-[Effect migration plan](./effect-migration-plan.md). P5 and P6 are complete.
-Implementation HEAD equals origin at `b2d11d84`. This documentation is
-uncommitted (including the P6.6 / P6.8 evidence files). No pull request has
-been opened, and nothing has been tagged, released, or deployed. The next
-session starts P7.
+[Effect migration plan](./effect-migration-plan.md). P5, P6, and P8 are complete.
+Implementation HEAD equals origin at `cd0470bb`. This P8-close documentation is
+uncommitted. No pull request has been opened, and nothing has been tagged,
+released, or deployed. Local resume is **P9** (P9.1 first). P7 remains the
+standing §7 platform authorization checkpoint — it is not the local next slice.
 
 ## Executive status
 
@@ -32,14 +36,116 @@ session starts P7.
 | P1 | Complete | Explicit resource owners and ordered shutdown remain the rollback seam. |
 | P2 | Complete | The exact Effect RC cohort, kernel, boundaries, and Bun conformance are recorded. |
 | P3 | Implementation complete | Bun process routing is live. Quiet-host performance evidence remains an explicit ledger item. |
-| P4 | Implemented and checkpointed | The root cutover and shutdown evidence are complete for the pre-P5 artifact. Do not relabel that evidence as measuring the current P5 tree. |
+| P4 | Implemented and checkpointed | The root cutover and shutdown evidence are complete for the pre-P5 artifact. Do not relabel that evidence as measuring the current tree. |
 | P5 | Complete | Prompt failure publication, the reviewed detached-owner exception, whole-slice rollback, gzip budget, and quiet global suites are recorded at `ca62b94f`. |
 | P6 | Complete at `b2d11d84` | Exit gate met with the five dispositions in [effect-migration-plan.md](./effect-migration-plan.md) P6 (cancellation-on-disconnect is deliberately none-yet). |
-| P7 | Not started | Terminal bridge under Effect ownership; the termbridge facade is the seam. Plan P7 is the spec. P7.0 is the §7 platform authorization checkpoint. |
-| P8–P14 | Not started | Continue in plan order after P7. |
+| P7 | Not started | Standing §7 platform authorization checkpoint (draft-PR). Termbridge facade is the seam; `/ws/term` stays P7. Not the local next slice. |
+| P8 | Complete at `cd0470bb` | Exit gate MET with the four dispositions in [effect-migration-plan.md](./effect-migration-plan.md) P8. Root-owned Store + five db-workflows slices; HTTP-bridged keep capability params. |
+| P9 | Not started | Kickoff: [p9-completion-map.md](./evidence/effect/p9-completion-map.md). Resume at **P9.1** spawn orchestration. |
+| P10–P14 | Not started | Holds/questions (P10), remaining Bun trials (P11), build (P12), cleanup (P13), RC rehearsal (P14). |
 
-P3's paired quiet-host performance evidence is unchanged and out of P5 scope.
+P3's paired quiet-host performance evidence is unchanged and out of P8/P9 scope.
 Do not close it from these suites.
+
+## P8 complete at `cd0470bb`
+
+HEAD `cd0470bb` on Bun 1.3.14, quiet WSL2 host, 2026-08-23. P8.1–P8.7 boxes are
+checked. The five root-context conversions complete the checkbox for
+root-owned workflows; HTTP-bridged workflows keep capability parameters BY
+CONVENTION (P6.4 constraint), holds/questions are P10, termbridge P7, async
+shells + leftover HTTP are P9 — per
+[p9-completion-map.md](./evidence/effect/p9-completion-map.md). This is the
+plan's own boundary, not incompleteness.
+
+### Six item verdicts (P8.3+P8.4 share one landing)
+
+1. **P8.1 static `bun:sqlite` — Complete** `05b40bd5`. Characterization-first;
+   the `node:sqlite` fallback was already dead via the 0.23.0 serve() exit-78
+   preflight. Null-to-undefined miss normalization and public row types
+   preserved.
+2. **P8.2 `strict: true` — DO-NOT-ENABLE** `346ee85a` (pin retarget
+   `4ff3e393`). Evidence:
+   [p8-strict-trial.md](./evidence/effect/p8-strict-trial.md). 100% positional
+   corpus; named-bind inversion. `safeIntegers` not enabled.
+3. **P8.3+P8.4 Store owner — Complete** `351b376f`. Store `Context.Service`
+   owns the single SQLite handle under the root Scope (P6.3 owner pattern).
+   Coordinator remains the authoritative close driver via `setStore`.
+   Finalize-then-`close(true)` (`sqlite3_close`, not `sqlite3_close_v2`
+   deferral). Completes-only root-Scope fallback honoring `storeSafe`.
+   Two-finalizer LIFO: store fallback registered before HttpServer so LIFO
+   retires the listener first. Adversarial SHIP-WITH-NITS, all items applied.
+   Schema version not bumped. Post-close access on a tracked statement throws
+   `Statement has finalized`.
+4. **P8.5 `db.query()` cache — KEEP prepare-once** `50412bd8`. Evidence:
+   [p8-stmt-cache-trial.md](./evidence/effect/p8-stmt-cache-trial.md).
+   `Database.query()` is a 20-slot first-20-win cache, not LRU; 92/112
+   overflow would leak stmts and break the close invariant. No callsite
+   changed.
+5. **P8.6 root-context Store yield — Complete** `cd0470bb`. Five slices, one
+   family convention, one whole-gen `provideService(Store)`
+   (`program.ts:1312`). Per-slice `STORE_BACKED_*` seams remain. See the
+   family table below.
+6. **P8.7 `@effect/sql-sqlite-bun` — KEEP direct bun:sqlite** `917c4dc8`.
+   Evidence: [p8-sql-client-trial.md](./evidence/effect/p8-sql-client-trial.md).
+   Trial archival `fd/p8-sqltrial` @ `a673431e`. No finalize-then-`close(true)`
+   expressivity, no `{changes, lastInsertRowid}` run-result, ~4.3× slower hot
+   read, async-coloring 303 sites.
+
+### Family's five slices
+
+| Slice | Commit | Flag (`program.ts`) | Notes |
+| --- | --- | --- | --- |
+| retention prune + sweep | `145e9fbd` | `STORE_BACKED_RETENTION` `:1191` | Pilot; SHIP-WITH-NITS (negative undischarged-die pin) |
+| boot clear-fork + `reconcileSpawns` | `e0ab862a` | `STORE_BACKED_BOOT` `:1173` | Same `operationalError` both sides |
+| agents ingest | `570d8dae` | `STORE_BACKED_AGENTS_INGEST` `:1204` | Injectable 3rd param; default legacy keeps P5 Store-free |
+| LAN feed `core.tick` | `570d8dae` | `STORE_BACKED_LAN_TICK` `:1217` | Tick swallowed via `catchTag('LanTickError')` |
+| spawn-liveness tick | `cd0470bb` | `STORE_BACKED_LIVENESS` `:1230` | Final slice. `ownedLivenessTick` extracted verbatim — do **not** swap `ownedLegacyPromise`. Adversarial SHIP, zero findings |
+
+Type landmine: annotate `retention: RetentionSchedule<ProcessRunner | Store>`
+(`program.ts:1241`) — do **not** add an explicit type arg on
+`makeDaemonBackgroundProgram`.
+
+### Quiet global suites at HEAD `cd0470bb`
+
+Run on Bun 1.3.14, quiet WSL2 host, otherwise idle, 2026-08-23. All pushed.
+
+- `bun run test` (source) = **1,658 pass / 6 skip / 0 fail**.
+- `bun run test:bundle` = **1,649 pass / 15 skip / 0 fail**.
+- The 6/15 skips are the fail-open contract's declared fault-injection skips
+  plus platform skips (unchanged from P6).
+
+### Accepted daemon identity at HEAD `cd0470bb`
+
+- Raw: 607,404 B.
+- gzip-9 zlib: 165,586 B, **23,854 B** under the 189,440 B ceiling.
+- SHA-256: `1f601ddb497f1129da62bbc601ef8af83a1c6b3f3ba339a3e48b979e9ebcde66`.
+- Deterministic.
+
+### Exit-gate dispositions at `cd0470bb`
+
+- **migration/restart/durability suites green throughout.**
+- **query benchmarks recorded** (P8.5 / P8.7 evidence).
+- **DB acquired once and closed after all users** via the Store owner with the
+  coordinator authoritative (P8.3 evidence + ordering pins); post-close access
+  impossible for tracked statements (`finalize` throws `Statement has
+  finalized`).
+- **SQL candidate decision recorded (KEEP).**
+
+### Rollback
+
+Per-slice: flip `STORE_BACKED_BOOT` / `STORE_BACKED_RETENTION` /
+`STORE_BACKED_AGENTS_INGEST` / `STORE_BACKED_LAN_TICK` /
+`STORE_BACKED_LIVENESS` to `false` (legacy adapters remain in-tree).
+Whole-slice: revert the P8 commits `05b40bd5`, `346ee85a`, `4ff3e393`,
+`351b376f`, `145e9fbd`, `50412bd8`, `917c4dc8`, `e0ab862a`, `570d8dae`,
+`cd0470bb` to restore the store seam to P8.1's parent `37e07659`. Do **not**
+range-revert `05b40bd5^..cd0470bb`: that also drops interleaved P6.8
+`742168a4` (POST `/command` harness). `4ff3e393`'s parent is `346ee85a` (the
+P8.2 trial itself), not the pre-P8 restore point.
+
+Detached-work allowlist is unchanged: P8 added no new exceptions. The two
+reviewed exceptions remain the P5 `Effect.forkDetach` in `background-owner.ts`
+and the P6 unref'd `HOOK_REPLY_FLOOR_MS` timer.
 
 ## P5 completion at `ca62b94f`
 
@@ -314,9 +420,12 @@ publish. Not a reason to revert conversions.
 
 ## Exact resume order
 
-P6 exit gates are closed. The next session starts **P7 — terminal bridge under
-Effect ownership**. The termbridge facade is the seam; the plan's P7 section
-is the spec.
+P8 exit gates are closed. The next session starts **P9 — application
+workflows**, in the order of
+[p9-completion-map.md](./evidence/effect/p9-completion-map.md), beginning at
+**P9.1 spawn/revive/dismiss orchestration**. P7 remains the standing §7
+platform authorization checkpoint; it is not the local next slice. `/ws/term`
+stays behind the termbridge facade until P7.
 
 1. Confirm the checkpoint and runtime:
 
@@ -327,30 +436,47 @@ is the spec.
    bun --version
    ```
 
-   Expected HEAD **and** origin are `b2d11d84`. This documentation may still be
-   uncommitted (including `docs/v1/evidence/effect/p6-bench-comparison.md`,
-   `p6-postconv.json`, `p6-graceful-stop-verification.md`); do not switch
-   branches. Leave untracked `.claude/agents/` and `/tmp/fd-wt-*` alone.
+   Expected HEAD **and** origin are `cd0470bb`. This P8-close documentation
+   (`docs/v1/effect-migration-plan.md`, `docs/v1/effect-migration-status.md`,
+   `docs/v1/evidence/effect/migration-ledger.md`,
+   `docs/v1/evidence/effect/p9-completion-map.md`) may still be uncommitted;
+   do not switch branches. Leave untracked `.claude/agents/` and
+   `/tmp/fd-wt-*` alone.
 
-2. **P7.0** is the §7 platform authorization checkpoint: after P6 is locally
-   green, prepare the branch and ask for permission to push and open/update a
-   draft PR so the blocking macOS/real-tmux and Linux lifecycle jobs can run.
-   Implementation through `b2d11d84` is already on origin; this documentation
-   is not. At this checkpoint `hook-integrity` may be intentionally red
-   because version closure has not happened; record that expected failure, but
-   P7 cannot close until its named platform jobs are actually green. If
-   authorization is withheld, pause — the local goal is not complete. Do not
-   mark P3's quiet-host performance item closed. Do not start P8–P14.
+2. Start **P9.1** from the completion map. Landmines already recorded there:
+   `ownedLivenessTick` must not be swapped for `ownedLegacyPromise`; BUG-040
+   `claimPlanExecution` (`spawns.ts:1420–1441`) stays a single guarded UPDATE
+   **before** any clone/worktree/pane; do not yield Store on HTTP-bridged
+   fibers; do not yield inside a SQLite txn callback.
 
-3. Then P7.1 (expand parser/protocol fixtures) onward per the plan. Keep the
-   proven parser and `StringDecoder` initially; change decoding only in a
-   separate parity commit. If Bun stream/FileSink semantics or performance
-   fail, record **KEEP scoped Node-stream transport** and continue the Effect
-   ownership migration.
+3. Continue P9.2 → P9.6 in map order. GET `/mail` and GET `/api/watch` stay
+   P10. `/ws/term` stays P7. Static/favicon stay P13.
 
-## P7 preflight constraints
+## Standing open notes (do not close from P8/P9)
 
-From the plan's P7 section and the constraints still in force from P6:
+- **P7** awaits the §7 platform authorization checkpoint (push + draft PR so
+  the blocking macOS/real-tmux and Linux lifecycle jobs can run).
+  Implementation through `cd0470bb` is already on origin; this documentation
+  is not. At that checkpoint `hook-integrity` may be intentionally red
+  because version closure has not happened; record that expected failure, but
+  P7 cannot close until its named platform jobs are actually green. If
+  authorization is withheld, pause that checkpoint — it is not a reason to
+  stall P9 locally.
+- **P3's** paired quiet-host performance evidence remains an explicit ledger
+  item. Do not mark it closed.
+- Quiet-host recapture of the tenth (`/command`) harness workload —
+  smoke-only until the next idle-machine slot; do not mix with the
+  nine-workload `comparison.key`.
+- Suite-context flake watch in `tests/process-driver-reference.test.ts`
+  ("Node reference close is idempotent..."). One documented incident at P6
+  completion; a recurrence earns bisection.
+- Version-manifest landmine (`0.23.6` ×4) still stands for any merge-to-main.
+  `hook-integrity` needs a version bump ×4 before a PR to main / publish.
+  Not a reason to revert conversions.
+
+## P7 preflight constraints (still in force; not the local next slice)
+
+From the plan's P7 section and the constraints still in force from P6/P8:
 
 - The termbridge facade is the seam (`openViewer()` Promise/handle
   compatibility) until the terminal WS route is fully Effect-native (P7.6);
@@ -363,26 +489,29 @@ From the plan's P7 section and the constraints still in force from P6:
   child scopes close only that viewer; ref-count or root closure owns the
   shared client lifetime.
 - Keep hook holds/watch waiters under their P1 owners until P10.
-- Introduce a temporary exact legacy `Core` service; do not force the
-  SQLite/P8 migration early.
 - Request-bridged Effects must NOT `yield* HttpServer` / `DaemonLifecycle` /
-  `Background` — the ingress runtime captured the pre-daemon Context (`R`
-  must stay within `AppConfig | ProcessRunner | ProcessRuntimeControl`).
+  `Background` / `Store` — the ingress runtime captured the pre-daemon
+  Context (`R` must stay within
+  `AppConfig | ProcessRunner | ProcessRuntimeControl`). HTTP-bridged
+  workflows keep capability parameters (P6.4 / P8.6 convention).
 - Consumers key off `HttpServer.state()`, never a retained address value.
 - Preserve the established held-response barriers and `stop(false)` /
   `stop(true)` ordering on Bun 1.3.14. Keep the custom HTTP adapter.
 - Disconnect-triggered cancellation of converted HTTP routes is **not** in
-  P7's gift: admitted requests JOIN (P6 exit-gate disposition). Do not enable
-  request interruption until the underlying operations are abort-aware.
+  P7's (or P9's) gift: admitted requests JOIN (P6 exit-gate disposition). Do
+  not enable request interruption until the underlying operations are
+  abort-aware.
 - One integrator should own shared edits to `http.ts`, `live-layer.ts`, and
   `program.ts`.
 - Full P6 revert must include live-layer wiring, not only `program.ts`.
-  Per-group HTTP rollback remains `effectRoutes=null`.
+  Per-group HTTP rollback remains `effectRoutes=null`. Per-slice P8 rollback
+  remains the `STORE_BACKED_*` flags.
 
 ## Repository handoff expectation
 
-This documentation is currently uncommitted. Implementation HEAD equals
-`origin/fd/v1-effect-feasibility` at `b2d11d84`. No pull request has been
-opened. After the documentation is committed, the next session starts P7
-from `fd/v1-effect-feasibility`, beginning at the P7.0 authorization
-checkpoint. Leave untracked `.claude/agents/` and `/tmp/fd-wt-*` alone.
+This P8-close documentation is currently uncommitted. Implementation HEAD
+equals `origin/fd/v1-effect-feasibility` at `cd0470bb`. No pull request has
+been opened. After the documentation is committed, the next session starts
+**P9.1** from `fd/v1-effect-feasibility`, using
+[p9-completion-map.md](./evidence/effect/p9-completion-map.md). Leave
+untracked `.claude/agents/` and `/tmp/fd-wt-*` alone.
