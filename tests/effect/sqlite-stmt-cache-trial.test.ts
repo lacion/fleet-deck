@@ -134,7 +134,14 @@ describe('P8.5 bun:sqlite Database.query() cache trial (Bun 1.3.14)', () => {
       const src = readFileSync(path.join(REPO_ROOT, `src/daemon/${mod}.ts`), 'utf8');
       qCalls += (src.match(/\bq\.[A-Za-z0-9_]+\.(?:run|get|all)\(/g) ?? []).length;
     }
-    assert.equal(qCalls, 303);
+    // Corpus-usage tripwire: how many times the 112 `q` prepared statements are
+    // invoked across the daemon modules. A re-baselined characterization count,
+    // NOT a frozen invariant — it climbed 303 -> 330 across the P9.1 Effect-core
+    // conversions (plan-claim-structural 303->301, dismiss pair ->312, spawnKill
+    // ->320, enableRemote ->324, revive+adoptSession ->330 at d0083d01), each of
+    // which lifted gating reads into a sync step. Slice 6a/6b left the count
+    // unchanged (spawn's q.* histogram is byte-identical across the flip).
+    assert.equal(qCalls, 330);
 
     for (const rel of [
       'src/daemon/sqlite.ts',
