@@ -120,7 +120,9 @@ function namedPlaceholders(sql: string): string[] {
 describe('P8.2 bun:sqlite DatabaseOptions.strict trial (Bun 1.3.14)', () => {
   test('the daemon seam still opens with no constructor options', () => {
     const source = readFileSync(path.join(REPO_ROOT, 'src/daemon/sqlite.ts'), 'utf8');
-    assert.match(source, /makeHandle = \(file\) => wrap\(new Database\(file\)\);/);
+    // P8.1 (landed after this trial was authored) made makeHandle a plain
+    // function; the pin tracks the open expression itself, not the binding shape.
+    assert.match(source, /return wrap\(new Database\(file\)\);/);
     assert.doesNotMatch(source, /\bstrict\s*:/);
     assert.doesNotMatch(source, /\bsafeIntegers\b/);
     assert.match(source, /run\(\.\.\.params: SqlValue\[\]\): SqlRunResult;/);
