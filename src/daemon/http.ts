@@ -510,7 +510,9 @@ export type HttpBindResult = HttpBound | HttpBindFailed;
 // per-route-group rollback seam (remove the installEffectRoutes call in
 // program.ts). See health-state.ts for the full convention.
 // Every workflow this port carries is E = never: /health and /state are
-// always-200 snapshot reads with no expected failure (see health-state.ts).
+// always-200 snapshot reads with no expected failure (see health-state.ts);
+// POST /api/paste-image's validation/limit/dir/write failures are data
+// responses (status+body), not typed errors (see http-workflows/paste.ts).
 // Pinning E = never here (not `unknown`) makes a later route group that widens
 // its error channel a COMPILE ERROR at installEffectRoutes in program.ts until
 // this port AND mapEffectRouteExit are deliberately grown to route the new tag.
@@ -535,6 +537,16 @@ export interface HealthRouteCapabilities {
 export interface StateRouteCapabilities {
   readonly snapshotWithLan: () => unknown;
 }
+// paste-image group (P6.4). Structural mirror of PasteImageCapabilities /
+// PasteImageResult in http-workflows/paste.ts. The thunk closes over the
+// already-parsed JSON body at dispatch; base64/sniff/write stay in paste.ts.
+export interface PasteImageRouteResult {
+  readonly status: number;
+  readonly body: unknown;
+}
+export interface PasteImageRouteCapabilities {
+  readonly pasteImage: () => PasteImageRouteResult;
+}
 export interface HttpEffectRoutes {
   // runRequest routes the workflow Effect through the ingress bridge and settles
   // to an Exit whose error channel is exactly HttpQuiescingFailure: a quiescing
@@ -547,6 +559,8 @@ export interface HttpEffectRoutes {
   ) => Promise<Exit.Exit<unknown, HttpQuiescingFailure>>;
   readonly health: (caps: HealthRouteCapabilities) => HttpWorkflowEffect;
   readonly state: (caps: StateRouteCapabilities) => HttpWorkflowEffect;
+  // paste-image group
+  readonly pasteImage: (caps: PasteImageRouteCapabilities) => HttpWorkflowEffect;
 }
 
 // CONTROL-API SEAM: the board-spawn lifecycle methods (spawn / revive /
@@ -742,17 +756,20 @@ export function createHttp(
   }
 
   // ------------------------------------------------------------ P6.4 effect routes
-  // GET /health and GET /state run as Effect workflows through the P6.3 ingress
-  // bridge, injected post-construction via installEffectRoutes() — the domain zone
-  // cannot import the app-zone workflow module (tests/import-boundaries.ts), so
-  // program.ts hands the live builders + runRequest in here.
+  // GET /health, GET /state, and POST /api/paste-image run as Effect workflows
+  // through the P6.3 ingress bridge, injected post-construction via
+  // installEffectRoutes() — the domain zone cannot import the app-zone workflow
+  // modules (tests/import-boundaries.ts), so program.ts hands the live builders
+  // + runRequest in here.
   //
   // ROUTE-GROUP ROLLBACK: while effectRoutes is null — i.e. program.ts never
-  // called installEffectRoutes (or its call is removed) — both routes answer
-  // through the legacy synchronous handlers below, byte-for-byte as before the
-  // conversion. Those same handlers are also the quiesce fallback. This null is
-  // the documented per-route-group rollback seam; a FULL P6.3 revert additionally
-  // unwires the HttpServer owner (see docs/v1/effect-migration-status.md).
+  // called installEffectRoutes (or its call is removed) — every wired route
+  // answers through its legacy synchronous handler below, byte-for-byte as
+  // before the conversion. Snapshot routes also use those handlers as the
+  // quiesce fallback; paste-image does NOT (mutating: intra-quiesce is a 503
+  // refusal). This null is the documented per-route-group rollback seam; a FULL
+  // P6.3 revert additionally unwires the HttpServer owner (see
+  // docs/v1/effect-migration-status.md).
   let effectRoutes: HttpEffectRoutes | null = null;
 
   // The pre-P6.4 GET /health body, verbatim — the rollback + quiesce path and
@@ -869,6 +886,73 @@ export function createHttp(
       effectRoutes.state(stateCapabilities()),
       res,
       legacyStateResponse,
+    );
+  }
+
+  // The pre-P6.4 POST /api/paste-image handler, verbatim — rollback path only.
+  // MUTATING: the quiesce settler must NEVER call this (it would write).
+  function legacyPasteImageResponse(res: HttpResShim, ev: unknown): void {
+    const out = core.pasteImage(ev as Parameters<typeof core.pasteImage>[0]);
+    json(res, out.status, out.body);
+  }
+
+  function pasteImageCapabilities(ev: unknown): PasteImageRouteCapabilities {
+    return {
+      pasteImage: () => core.pasteImage(ev as Parameters<typeof core.pasteImage>[0]),
+    };
+  }
+
+  // Frozen non-hook shutdown body (fetchHandler + forceEnd). Emitted through
+  // json() so the in-router JSON header trio (content-type, content-length,
+  // nosniff) applies; status+body bytes match the transport 503.
+  const PASTE_IMAGE_QUIESCE_BODY = { ok: false, reason: 'shutting-down' } as const;
+
+  // MUTATING settler: success writes the paste envelope's own status (201/400/
+  // 413/500 data responses); quiesce/interrupt → frozen 503, no legacy replay;
+  // defect → POST inner-catch bytes (`fleetd handler error:` + 500 {err:'internal'}).
+  function settleEffectPasteImageRoute(
+    routes: HttpEffectRoutes,
+    operation: string,
+    effect: HttpWorkflowEffect,
+    res: HttpResShim,
+  ): void {
+    routes
+      .runRequest(operation, effect)
+      .then((exit) => {
+        const outcome = mapEffectRouteExit(exit);
+        if (outcome.kind === 'success') {
+          const value = outcome.value as PasteImageRouteResult;
+          json(res, value.status, value.body);
+          return;
+        }
+        if (outcome.kind === 'quiesce') {
+          json(res, 503, PASTE_IMAGE_QUIESCE_BODY);
+          return;
+        }
+        throw outcome.defect;
+      })
+      .catch((err: unknown) => {
+        console.error('fleetd handler error:', err);
+        try {
+          json(res, 500, { err: 'internal' });
+        } catch {
+          /* socket gone */
+        }
+      });
+  }
+
+  // POST /api/paste-image dispatch: legacy when the bridge is unwired, else the
+  // workflow. Quiesce is a 503 refusal, not a legacy fallback.
+  function dispatchPasteImage(res: HttpResShim, ev: unknown): void {
+    if (!effectRoutes) {
+      legacyPasteImageResponse(res, ev);
+      return;
+    }
+    settleEffectPasteImageRoute(
+      effectRoutes,
+      'POST /api/paste-image',
+      effectRoutes.pasteImage(pasteImageCapabilities(ev)),
+      res,
     );
   }
 
@@ -1812,8 +1896,10 @@ export function createHttp(
               // returned path is TYPED into the pane by the BOARD, not by us —
               // injection must ride TermPane's sendIn gate so the grid's
               // one-tile-types discipline also governs pastes.
-              const out = core.pasteImage(ev as Parameters<typeof core.pasteImage>[0]);
-              json(res, out.status, out.body);
+              // P6.4: Effect workflow when wired; legacy handler is the rollback
+              // seam. MUTATING: intra-quiesce answers the frozen shutdown 503
+              // and never replays the write. See dispatchPasteImage.
+              dispatchPasteImage(res, ev);
               return;
             }
             if (url.pathname === '/api/spawn/arm-unsupervised') {
@@ -3104,10 +3190,10 @@ export function createHttp(
     whenBroadcastIdle,
     // P6.4 INJECTION SEAM: program.ts (app zone) calls this after constructing
     // the HttpServer owner to hand in the ingress runRequest + the app-zone
-    // workflow builders. Until it does, effectRoutes stays null and /health and
-    // /state answer through their legacy handlers (the rollback path). Arrow
-    // property for the same unbound-method reason as refreshLan; it closes over
-    // effectRoutes and never touches `this`.
+    // workflow builders. Until it does, effectRoutes stays null and /health,
+    // /state, and /api/paste-image answer through their legacy handlers (the
+    // rollback path). Arrow property for the same unbound-method reason as
+    // refreshLan; it closes over effectRoutes and never touches `this`.
     installEffectRoutes: (routes: HttpEffectRoutes) => {
       effectRoutes = routes;
     },

@@ -37,6 +37,7 @@ import {
   healthWorkflow,
   stateWorkflow,
 } from '../../src/daemon/app/http-workflows/health-state.ts';
+import { pasteImageWorkflow } from '../../src/daemon/app/http-workflows/paste.ts';
 
 import { REPO_ROOT, startDaemon } from '../helpers/daemon.ts';
 import test, { type TestContext } from '../helpers/harness-test.ts';
@@ -341,6 +342,7 @@ test('workflow dispatch is byte-identical to the legacy handler for /health and 
     runRequest: (_operation, effect) => Effect.runPromiseExit(effect),
     health: healthWorkflow,
     state: stateWorkflow,
+    pasteImage: pasteImageWorkflow,
   });
 
   const workflowHealth = await rawFull(board.port, { path: '/health' });
@@ -365,6 +367,7 @@ test('a quiescing ingress falls back to the legacy handler with identical bytes'
       ),
     health: healthWorkflow,
     state: stateWorkflow,
+    pasteImage: pasteImageWorkflow,
   });
 
   const quiesceHealth = await rawFull(board.port, { path: '/health' });
@@ -393,6 +396,7 @@ test('an interrupts-only Exit maps to quiesce and falls back to the legacy 200',
     runRequest: (_operation, _effect) => Promise.resolve(Exit.failCause(Cause.interrupt(1))),
     health: healthWorkflow,
     state: stateWorkflow,
+    pasteImage: pasteImageWorkflow,
   });
 
   const interruptedHealth = await rawFull(board.port, { path: '/health' });
@@ -410,6 +414,7 @@ test('a workflow defect reproduces the legacy 500 {} exactly', async (t) => {
     runRequest: (_operation, _effect) => Promise.resolve(Exit.die(new Error('boom'))),
     health: healthWorkflow,
     state: stateWorkflow,
+    pasteImage: pasteImageWorkflow,
   });
 
   const defected = await rawFull(board.port, { path: '/health' });

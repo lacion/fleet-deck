@@ -319,14 +319,19 @@ export function repoPreflightBodyError(body: Record<string, unknown>): string | 
 // returns a discriminated plan; the transport in http.ts performs the actual res
 // write, so this stays as side-effect-free as every other policy leaf. Cases are
 // FROZEN against the legacy behaviour of these routes:
-//   success → the workflow value, written verbatim as the 200 JSON body;
-//   quiesce → the ingress refused with ApplicationQuiescingError; the route
-//             falls back to its legacy synchronous handler (we do NOT invent a
-//             new 503). Detected STRUCTURALLY by _tag so this domain module needs
-//             no import of app/errors.ts;
+//   success → the workflow value. Snapshot settlers write it as 200 JSON;
+//             paste-image writes `json(res, value.status, value.body)` because
+//             201/400/413/500 are data responses, not typed errors;
+//   quiesce → the ingress refused with ApplicationQuiescingError. Detected
+//             STRUCTURALLY by _tag so this domain module needs no import of
+//             app/errors.ts. Classification is shared; per-group settlers
+//             interpret it: snapshot routes fall back to the legacy handler
+//             (we do NOT invent a new 503 for those), mutating routes
+//             (paste-image) emit the frozen shutdown 503 and never replay the
+//             write;
 //   defect  → a die (or an unexpected fail/interrupt on an E=never route); the
-//             transport replays the byte-identical `console.error` + 500 {} the
-//             outer catch already emits for a non-hook route.
+//             transport replays the byte-identical catch of that route class
+//             (GET outer-catch `500 {}`; POST inner-catch `500 {err:'internal'}`).
 export type EffectRouteOutcome<A> =
   | { readonly kind: 'success'; readonly value: A }
   | { readonly kind: 'quiesce' }
