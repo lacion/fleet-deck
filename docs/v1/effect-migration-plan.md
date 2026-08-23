@@ -4,7 +4,7 @@
 v1 [plan of record](./README.md). This document is intended to be handed directly to a Codex goal
 and updated as each gate lands.*
 
-**Status:** P0–P5 checkpointed; P5 complete at `ca62b94f`; P6 in progress (P6.1–P6.3 and P6.7 done; P6.8 harness landed, baseline pending)
+**Status:** P0–P5 checkpointed; P5 complete at `ca62b94f`; P6 in progress (P6.1–P6.3 and P6.7 done; P6.4 wave 18 routes at `e2518a63`, box open; P6.8 harness landed, quiet-host baseline captured, comparison pending)
 **Working branch:** `fd/v1-effect-feasibility`
 **Starting point:** v0.23.6
 **Runtime floor:** exact Bun 1.3.14 in CI; `engines.bun >=1.3.14`
@@ -731,6 +731,13 @@ rollback.
 - [ ] P6.4 Convert route application handlers in repeatable route-group sub-slices, one service and
   focused fixture set per commit. Map typed errors to the exact existing Response only in
   `http-policy.ts`; map hook failures in `hook-policy.ts`. Complete terminal ingress before P7.
+  **Progress at `e2518a63` (2026-08-23):** 18 routes converted across five commits
+  (`56a15e8a` health/state, `cffb9dea` paste-image, `c7eeb641`
+  settings/command/mail/cleanup, `62ef3c0f` control, `e2518a63` join-on-interrupt).
+  Box stays open: WS-snapshot ingress is next, then the exhaustive fail-open
+  contract test, then the hooks slice (LAST). GET `/mail` and GET `/api/watch`
+  stay under their P1 owners until P10; static assets stay legacy until P13.
+  Evidence: [p6-route-wave.md](./evidence/effect/p6-route-wave.md).
 - [ ] P6.5 Preserve the audited WS backpressure contract as implemented: per-socket
   `getBufferedAmount()` thresholds with eviction (snapshot peers `terminate()` past
   `MAX_WS_BUFFER`; terminal viewers `close(1009)` past `MAX_TERM_WS_BUFFER`),
@@ -745,6 +752,11 @@ rollback.
   release holds, close clients, and race the graceful Promise with the absolute remaining deadline.
   If it loses, call and await `server.stop(true)`; do not await graceful stop serially before the
   force decision.
+  The frozen `res.done` join invariant that `closeClients` depends on was restored
+  for async-mutating Effect routes by `e2518a63` (`startOnce` + join-on-interrupt:
+  503 only when the native Promise never started; else JOIN and emit true legacy
+  bytes). P6.6 still owns the `stop(false)`-once-race-deadline-`stop(true)`
+  machine. See [p6-route-wave.md](./evidence/effect/p6-route-wave.md) §4–§5.
 - [x] P6.7 Independently trial `effect/unstable/http/HttpRouter` and
   `@effect/platform-bun/BunHttpServer`. Switch the transport only if every black-box fixture and
   shutdown budget passes. Override its default shutdown timing to Fleet Deck's budget.
@@ -757,8 +769,9 @@ Using Effect for all route workflows while retaining a custom scoped `Bun.serve`
 successful full migration. The platform-bun adapter is optional because Fleet Deck's audited wire
 semantics are the requirement. P6.7 decided **KEEP CUSTOM ADAPTER** at rc.110; see
 [p6-transport-trial.md](./evidence/effect/p6-transport-trial.md). The P6.8 harness exists at
-`d5404aac` (`scripts/effect-migration/p6-http-bench.ts`) but the quiet-host baseline has not been
-captured, so P6.8 stays open.
+`d5404aac` (`scripts/effect-migration/p6-http-bench.ts`). The quiet-host baseline was captured at
+`ac438c21` (`docs/v1/evidence/effect/p6-baseline.json`, taken at `51d39ddd`). P6.8 stays open
+until the post-conversion comparison is in.
 
 **Exit gate:** no scattered runtime runners, exact HTTP/WS parity, cancellation on disconnect where
 safe, all transport resources root-owned, and performance within budget.

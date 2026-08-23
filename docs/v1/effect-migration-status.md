@@ -1,11 +1,12 @@
 # Effect migration checkpoint status
 
-- **Checkpoint date:** 2026-08-22
+- **Checkpoint date:** 2026-08-23
 - **Branch:** `fd/v1-effect-feasibility`
-- **Published branch:** `origin/fd/v1-effect-feasibility` currently at `3735759e`
-  (`test(effect): retarget the cache-contract tripwire to http-policy`)
-- **Current implementation HEAD:** `d5404aac`
-  (`test(effect): add the P6.8 HTTP/WS load harness`)
+- **Published branch:** `origin/fd/v1-effect-feasibility` currently at `e2518a63`
+  (`fix(effect): join started mutations under interruption`)
+- **Current implementation HEAD:** `e2518a63`
+  (`fix(effect): join started mutations under interruption`)
+- **P6.4 wave evidence:** [p6-route-wave.md](./evidence/effect/p6-route-wave.md)
 - **P6.3 HttpServer owner:** `e7900bac`
   (`feat(effect): own the Bun listener as the HttpServer root service`)
 - **P5 completion evidence:** [p5.md](./evidence/effect/p5.md)
@@ -15,11 +16,11 @@
 
 This is the durable handoff for the executable
 [Effect migration plan](./effect-migration-plan.md). P5 is complete. P6 is
-active: P6.1–P6.3 and P6.7 are done, the P6.8 harness is in tree, and the
-quiet-host baseline is still pending. The two commits after `3735759e`
-(`e7900bac`, `d5404aac`) are local and unpushed; this documentation is
-uncommitted. No pull request has been opened, and nothing has been tagged,
-released, or deployed.
+active: P6.1–P6.3 and P6.7 are done; the P6.4 wave converted 18 application
+routes at `e2518a63` (box stays open); the P6.8 harness is in tree and the
+quiet-host baseline is captured at `ac438c21`. Implementation HEAD equals
+origin. This documentation is uncommitted. No pull request has been opened,
+and nothing has been tagged, released, or deployed.
 
 ## Executive status
 
@@ -31,7 +32,7 @@ released, or deployed.
 | P3 | Implementation complete | Bun process routing is live. Quiet-host performance evidence remains an explicit ledger item. |
 | P4 | Implemented and checkpointed | The root cutover and shutdown evidence are complete for the pre-P5 artifact. Do not relabel that evidence as measuring the current P5 tree. |
 | P5 | Complete | Prompt failure publication, the reviewed detached-owner exception, whole-slice rollback, gzip budget, and quiet global suites are recorded at `ca62b94f`. |
-| P6 | Active; P6.1–P6.3 and P6.7 done; P6.8 harness landed | Convert route groups (P6.4) under the owner constraints below. P6.6 graceful stop is still open. Capture the P6.8 quiet-host baseline at the next idle slot. |
+| P6 | Active; P6.1–P6.3, P6.7 done; P6.4 wave 18/remaining WS+hooks; P6.8 harness landed, baseline captured | WS-snapshot slice next, then hooks-contract-test, then hooks (LAST). P6.6 graceful stop is still open (`res.done` join invariant restored). P6.8 comparison still pending. |
 | P7–P14 | Not started | Continue in plan order after P6. |
 
 P3's paired quiet-host performance evidence is unchanged and out of P5 scope.
@@ -229,19 +230,78 @@ P6 is the active work. Sub-slices landed on 2026-08-22:
   + `.md`): pure-Bun load harness, workloads
   `health`/`state`/`hook`/`hook-fail-open`/`paste`/`withheld`/`ws`/`static-shell`/`static-asset`,
   targets `source|bundle`, p50/p95/p99 + rps JSON output, `--label=baseline`
-  implying the Bun-floor check. Smoke-validated only; the pre-conversion
-  quiet-host baseline is still to be captured at the next quiet-host slot.
-  Representative concurrency is 1/8/32. P6.8 exit criterion: `/health`+`/state`
-  p95 ≤ baseline+10%; throughput judged only with p95/p99+correctness. Do not
-  check the P6.8 plan box until that baseline exists and the post-conversion
-  comparison is in.
+  implying the Bun-floor check. The pre-conversion quiet-host baseline was
+  captured at `ac438c21` (`docs/v1/evidence/effect/p6-baseline.json`, taken at
+  `51d39ddd` on Bun 1.3.14 immediately after fully green global suites —
+  source 1,502/0; bundle 1,493 pass, 9 skip). Representative concurrency is
+  1/8/32. P6.8 exit criterion: `/health`+`/state` p95 ≤ baseline+10%;
+  throughput judged only with p95/p99+correctness. Do not check the P6.8 plan
+  box until the post-conversion comparison is in.
 
-P6.4, P6.5, and P6.6 remain open. P6.5's contract is already frozen (preserve
-as implemented).
+P6.4's plan box stays open (18 routes converted; WS-snapshot and hooks remain).
+P6.5's contract is already frozen (preserve as implemented). P6.6 remains open.
+
+## P6.4 wave at `e2518a63`
+
+Five commits on `fd/v1-effect-feasibility`, all pushed, parent `ac438c21`.
+Evidence: [p6-route-wave.md](./evidence/effect/p6-route-wave.md). Matrix overlay:
+[p6-http-matrix.md](./evidence/effect/p6-http-matrix.md).
+
+| Commit | Slice | Review |
+| --- | --- | --- |
+| `56a15e8a` | health/state (G1, G2) — P6.4 pilot; three template SHOULD-FIXes applied | SHIP-WITH-NITS |
+| `cffb9dea` | paste-image (P8); static recorded legacy-until-P13 | SHIP-WITH-NITS |
+| `c7eeb641` | settings/command/mail/cleanup (P6, P7, P3, P4) | initially **DO-NOT-SHIP** |
+| `62ef3c0f` | control, 11 routes (P12–P22) | initially **DO-NOT-SHIP** |
+| `e2518a63` | join-on-interrupt + bundle line-comment strip | **CLOSED-SHIP-WITH-NITS** |
+
+**Defect family (headline — record honestly).** The bridge's `runPromiseExit`
+was `runPromise(Effect.exit(...))` and **rejected** under external interruption
+(settler defect 500 instead of any Exit); and async mutating settlers answered
+503 while a started native Promise still owned SQLite/tmux, unsticking
+`res.done` so `closeClients` no longer joined in-flight mutations before
+closing-store (risks: `SQLITE_MISUSE`, partial cleanup Clear, silent
+success-after-refusal). All 190+ green tests missed it; two independent
+adversarial reviews caught it on both slices. Fix: `Effect.runPromiseExitWith`
+at the bridge (true Exits; P4 contracts re-verified) + `startOnce` witness with
+join-on-interrupt (503 only when the operation provably never ran); live-bridge
+tests now pin join-before-resolve. Residual accepted nit: a shutdown-only
+duplicate error-log line on controlAsync interrupt × rejection races (bytes
+single and correct).
+
+**18 routes** through the Effect bridge. Excluded/remaining: GET `/mail` + GET
+`/api/watch` (held/lease semantics, under P1 owners until P10), leftover
+application POSTs (P2 ack, P5 worktrees/remove, P9 arm, P10 preflight, P11
+spawn, G3 GET settings, G4–G6), static assets (legacy until P13), WS-snapshot
+ingress slice (next), hooks/fail-open group (LAST, behind an exhaustive
+fail-open contract test per the full-spine guardrail).
+
+**Quiet global suites at HEAD `e2518a63`** (Bun 1.3.14, quiet WSL2, 2026-08-23):
+
+- `bun run test` = 1,554 pass, 0 fail, 192 files, 530.42 s, exit 0.
+- `bun run test:bundle` = 1,545 pass, 9 skip, 0 fail, 192 files, 519.53 s, exit 0.
+
+Logs: `/tmp/fd-effect/quiet-test-9.log` and
+`/tmp/fd-effect/quiet-test-bundle-9.log`.
+
+**Accepted daemon identity at HEAD `e2518a63`** (line-comment strip in the
+post-step; minify-equivalence proof byte-identical; 18 lexer self-checks):
+
+- Raw: 601,875 B.
+- gzip-9 zlib: 164,469 B, **24,971 B** under the 189,440 B ceiling. The
+  recurring ceiling squeeze is retired.
+- SHA-256: `b9c02c5f00abe54edb516e2859b5de61badca18472220c5ac774b8bcf145f771`.
+- 19,841 lines; deterministic. Generated bundle carries no comments now
+  (line numbers, kept names, shebang, banner preserved).
+
+Standing landmine: version manifests still `0.23.6` while daemon + bundle
+changed. `hook-integrity` needs a version bump ×4 before a PR to main /
+publish. Not a reason to revert conversions.
 
 ## Exact resume order
 
-P5 exit gates are closed. The next session continues P6 at P6.4.
+P5 exit gates are closed. The P6.4 wave converted 18 routes; the next session
+continues P6.4 at the WS-snapshot slice.
 
 1. Confirm the checkpoint and runtime:
 
@@ -252,13 +312,16 @@ P5 exit gates are closed. The next session continues P6 at P6.4.
    bun --version
    ```
 
-   Expected HEAD is `d5404aac` if the P6.3 owner and P6.8 harness commits are
-   present. Origin is `3735759e`. This documentation may still be uncommitted;
-   do not switch branches.
+   Expected HEAD **and** origin are `e2518a63`. This documentation may still be
+   uncommitted; do not switch branches. Leave untracked `.claude/agents/` and
+   `/tmp/fd-wt-*` alone.
 
-2. Convert route application handlers (P6.4) under the constraints below. Do
-   not mark P3's quiet-host performance item closed. Do not start P7–P14. Do
-   not treat a busy-host P6.8 smoke JSON as baseline evidence.
+2. Convert the **WS-snapshot** ingress slice (next P6.4 group). Then write the
+   exhaustive fail-open **contract test**, then convert the **hooks** slice
+   (LAST). Then close P6.6 / P6.8 (comparison against `ac438c21`). Do not mark
+   P3's quiet-host performance item closed. Do not start P7–P14. Do not treat a
+   busy-host P6.8 smoke JSON as the captured baseline — that baseline already
+   exists at `docs/v1/evidence/effect/p6-baseline.json`.
 
 ## P6 preflight constraints
 
@@ -295,9 +358,8 @@ force, plus P6.3 owner constraints that route workers inherit:
 
 ## Repository handoff expectation
 
-This documentation is currently uncommitted. Implementation HEAD is
-`d5404aac`, two commits ahead of `origin/fd/v1-effect-feasibility`
-(`3735759e`). No pull request has been opened. After the documentation is
-committed, the next session continues P6.4 from `fd/v1-effect-feasibility`.
-Leave untracked `.claude/agents/` and `/tmp/fd-wt-*` alone. Ignore concurrent
-`package.json` / generated-bundle diffs from the gzip-headroom recovery.
+This documentation is currently uncommitted. Implementation HEAD equals
+`origin/fd/v1-effect-feasibility` at `e2518a63`. No pull request has been
+opened. After the documentation is committed, the next session continues P6.4
+at the WS-snapshot slice from `fd/v1-effect-feasibility`. Leave untracked
+`.claude/agents/` and `/tmp/fd-wt-*` alone.

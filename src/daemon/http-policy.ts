@@ -320,16 +320,26 @@ export function repoPreflightBodyError(body: Record<string, unknown>): string | 
 // write, so this stays as side-effect-free as every other policy leaf. Cases are
 // FROZEN against the legacy behaviour of these routes:
 //   success → the workflow value. Snapshot settlers write it as 200 JSON;
-//             paste-image writes `json(res, value.status, value.body)` because
-//             201/400/413/500 are data responses, not typed errors;
-//   quiesce → the ingress refused with ApplicationQuiescingError. Detected
-//             STRUCTURALLY by _tag so this domain module needs no import of
-//             app/errors.ts. Classification is shared; per-group settlers
-//             interpret it: snapshot routes fall back to the legacy handler
-//             (we do NOT invent a new 503 for those), mutating routes
-//             (paste-image) emit the frozen shutdown 503 and never replay the
-//             write;
-//   defect  → a die (or an unexpected fail/interrupt on an E=never route); the
+//             mutating settlers write `json(res, value.status, value.body)`
+//             because 201/400/409/413/500-from-core are data responses, not
+//             typed errors;
+//   quiesce → ApplicationQuiescingError (ingress refused, workflow never ran)
+//             OR an interrupts-only Exit (shutdown cancelled an already-
+//             admitted fiber). Detected STRUCTURALLY by _tag so this domain
+//             module needs no import of app/errors.ts. Classification is
+//             shared; interpretation is per settler:
+//               snapshot (health/state) → fall back to the legacy handler
+//                 (we do NOT invent a new 503 for those);
+//               sync mutating (paste-image, settings, command, five
+//                 controlSync POSTs) → frozen shutdown 503, never replay
+//                 the write (Effect.sync completes on the admitting turn;
+//                 interrupt-after-start is a no-op);
+//               async mutating (POST /mail, /api/cleanup, six
+//                 controlAsync POSTs) → startOnce witness: 503 ONLY when
+//                 the native Promise never started; else JOIN it and emit
+//                 the true legacy bytes so res.done still ties closeClients
+//                 to the write;
+//   defect  → a die (or an unexpected fail on an E=never route); the
 //             transport replays the byte-identical catch of that route class
 //             (GET outer-catch `500 {}`; POST inner-catch `500 {err:'internal'}`).
 export type EffectRouteOutcome<A> =
@@ -351,11 +361,16 @@ export function mapEffectRouteExit<A>(exit: Exit.Exit<A, unknown>): EffectRouteO
   const failure = exit.cause.reasons.find(Cause.isFailReason);
   if (failure && isApplicationQuiescing(failure.error)) return { kind: 'quiesce' };
   // Interruption during shutdown (the quiescing fiber cancels this in-flight
-  // request) reports quiesce so the always-200 snapshot contract holds — the
-  // route falls back to its legacy synchronous handler, exactly as the explicit
-  // ApplicationQuiescingError refusal does. hasInterruptsOnly is true only when
-  // EVERY reason is an interrupt, so a mixed defect+interrupt cause still falls
-  // through to the defect arm below.
+  // request) reports 'quiesce' — the SAME classification as an explicit
+  // ApplicationQuiescingError refusal. hasInterruptsOnly is true only when
+  // EVERY reason is an interrupt, so a mixed defect+interrupt cause still
+  // falls through to the defect arm below.
+  //
+  // Classification is shared; interpretation is per settler (see the header
+  // above). Do NOT read this arm as "always fall back to the legacy
+  // synchronous handler": that is snapshot-only. Mutating settlers must not
+  // replay a refused write; async-mutating settlers JOIN a started native
+  // Promise instead of 503ing it.
   if (Cause.hasInterruptsOnly(exit.cause)) return { kind: 'quiesce' };
   const die = exit.cause.reasons.find(Cause.isDieReason);
   if (die) return { kind: 'defect', defect: die.defect };
