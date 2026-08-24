@@ -103,8 +103,12 @@ const ALL_ROUTE_BUILDERS = {
   repoPreflight: repoPreflightWorkflow,
   worktreeRemove: worktreeRemoveWorkflow,
   watchHold: heldSettleWorkflow,
-  // Production held runner (untracked, squashes on defect) — not a runPromiseExit
-  // stub; see http-workflow-control.test.ts for the full rationale (finding 3).
+  hookHold: heldSettleWorkflow,
+  // Production held runner (untracked, runControlDetached = Effect.runPromiseWith
+  // (Context.empty())). A die REJECTS the Promise; it does NOT squash to a value.
+  // Hold fail-open safety is the settler's .catch (settleEffectWatchHold /
+  // settleEffectHookHold), not this runner. Not a runPromiseExit stub; see
+  // http-workflow-control.test.ts for the full rationale (finding 3).
   runHeld: runControlDetached,
 } as const;
 

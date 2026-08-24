@@ -101,16 +101,21 @@ const db = openDb(path.join(home, 'fleetd.db'));
 const core = createCore(db, { port, home, holdMs: 30_000, version: '0.0.0-test' });
 const http = createHttp(core, { port, token, version: '0.0.0-test' });
 
-// The one signal that proves the watch route took the Effect park: runHeld is
-// only reachable from settleEffectWatchHold (the `if (effectRoutes)` branch of
-// watchHook). A legacy-park watch never touches it.
+// The one signal that proves a HELD route took the Effect park: runHeld is
+// reachable ONLY from the two held settlers — settleEffectWatchHold (the
+// `if (effectRoutes)` branch of watchHook, Slice 2) and settleEffectHookHold (the
+// `if (effectRoutes && EFFECT_CORE_HOLD_RELAY)` branch of holdHook, Slice 3). A
+// legacy-park watch or hook hold never touches it, so runHeldCalls === 1 pins that
+// the parked response armed the Effect held primitive. The counter does not
+// distinguish watch from hook; each pin parks exactly one held response and asserts
+// the delta, so the surface under test is unambiguous per test.
 let runHeldCalls = 0;
 
-// FULL installEffectRoutes port — the live daemon's shape (program.ts:884-925).
+// FULL installEffectRoutes port — the live daemon's shape (program.ts:884-926).
 // runRequest uses the sanctioned in-process discharge (Effect.runPromiseExit,
-// mirroring the sibling suites' installSuccess); the watch route never routes
-// through runRequest — it uses runHeld — so the SessionStart hook is runRequest's
-// only consumer in these pins.
+// mirroring the sibling suites' installSuccess); the held routes (watch, hook hold)
+// never route through runRequest — they use runHeld — so a SessionStart hook is
+// runRequest's only consumer in these pins.
 http.installEffectRoutes({
   runRequest: (_operation, effect) => Effect.runPromiseExit(effect),
   health: healthWorkflow,
@@ -142,6 +147,7 @@ http.installEffectRoutes({
     return runControlDetached(effect);
   },
   watchHold: heldSettleWorkflow,
+  hookHold: heldSettleWorkflow,
 });
 
 let shutdownPromise: Promise<ClosedMessage> | null = null;

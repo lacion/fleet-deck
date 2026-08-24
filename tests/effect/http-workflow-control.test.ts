@@ -104,11 +104,14 @@ const ALL_ROUTE_BUILDERS = {
   repoPreflight: repoPreflightWorkflow,
   worktreeRemove: worktreeRemoveWorkflow,
   watchHold: heldSettleWorkflow,
+  hookHold: heldSettleWorkflow,
   // The production held runner (untracked Effect.runPromiseWith(Context.empty())).
   // Used verbatim, not a runPromiseExit stub, so a future board that parks watch
-  // (or slice 3 hooks) through these builders sees production's SQUASHED-error
-  // rejection, not a raw Cause. runHeld is never CALLED in this suite (no held
-  // route is exercised); the port is present only to compile installEffectRoutes.
+  // (or slice 3 hooks) through these builders sees production's REJECTED-Promise
+  // die (the defect as the rejection reason), not a resolved Exit. Hold fail-open
+  // safety is the settler .catch, not this runner. runHeld is never CALLED in this
+  // suite (no held route is exercised); the port is present only to compile
+  // installEffectRoutes.
   runHeld: runControlDetached,
 } as const;
 

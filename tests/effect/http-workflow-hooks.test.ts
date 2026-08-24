@@ -46,7 +46,7 @@ import * as Exit from 'effect/Exit';
 import { openDb } from '../../src/daemon/db.ts';
 import { createCore } from '../../src/daemon/derive.ts';
 import { createHttp } from '../../src/daemon/http.ts';
-import { mapHookExit } from '../../src/daemon/hook-policy.ts';
+import { hookFailOpenBody, mapHookExit } from '../../src/daemon/hook-policy.ts';
 import { ApplicationQuiescingError } from '../../src/daemon/app/errors.ts';
 import {
   armUnsupervisedWorkflow,
@@ -106,8 +106,12 @@ const ALL_ROUTE_BUILDERS = {
   repoPreflight: repoPreflightWorkflow,
   worktreeRemove: worktreeRemoveWorkflow,
   watchHold: heldSettleWorkflow,
-  // Production held runner (untracked, squashes on defect) — not a runPromiseExit
-  // stub; see http-workflow-control.test.ts for the full rationale (finding 3).
+  hookHold: heldSettleWorkflow,
+  // Production held runner (untracked, runControlDetached = Effect.runPromiseWith
+  // (Context.empty())). A die REJECTS the Promise; it does NOT squash to a value.
+  // Hold fail-open safety is the settler's .catch (settleEffectWatchHold /
+  // settleEffectHookHold), not this runner. Not a runPromiseExit stub; see
+  // http-workflow-control.test.ts for the full rationale (finding 3).
   runHeld: runControlDetached,
 } as const;
 
@@ -136,6 +140,19 @@ test('mapHookExit: EVERY failure shape collapses to { body: {} } — the fail-op
   assert.deepEqual(mapHookExit(Exit.die(new Error('boom'))), { body: {} });
   // Any other typed fail — still {}.
   assert.deepEqual(mapHookExit(Exit.fail(new Error('unexpected'))), { body: {} });
+});
+
+test('mapHookExit failure body is hookFailOpenBody() — shared source with the hold settler .catch', () => {
+  // Contract-tie (P10 slice-3 F1): mapHookExit's failure arm and
+  // settleEffectHookHold's .catch both call hookFailOpenBody(), so a later
+  // "tightening" of one cannot leave the other writing a different 200 body.
+  // Do NOT route a HeldOutcome through mapHookExit to reuse this — that
+  // double-wraps {body:{body:obj}} onto Claude.
+  const failOpen = hookFailOpenBody();
+  assert.deepEqual(failOpen, {});
+  assert.equal(JSON.stringify(failOpen), '{}');
+  assert.deepEqual(mapHookExit(Exit.die(new Error('boom'))).body, failOpen);
+  assert.deepEqual(mapHookExit(Exit.failCause(Cause.interrupt(1))).body, hookFailOpenBody());
 });
 
 test('hookDispatchWorkflow: building the workflow runs no capability thunk (lazy)', () => {

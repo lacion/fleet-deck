@@ -19,7 +19,8 @@
 // structurally unrepresentable — the transport (settleEffectHookRoute) can only
 // ever emit `json(res, 200, plan.body)`. The success body is whatever the E=never
 // hook workflow assembled (`{}` or a hook-output object, already `?? {}`-shaped);
-// every failure body is the canonical `{}`.
+// every failure body is hookFailOpenBody() — the SAME canonical `{}` the hold
+// settler's defensive .catch writes, so the two cannot drift.
 //
 // A DOMAIN module may import bare effect/* purely as classifiers (see the
 // import-boundaries tripwire and http-policy.ts's identical use); this module has
@@ -35,13 +36,26 @@ export interface HookResponse {
 }
 
 /**
+ * Canonical hook fail-open body. The ONLY `{}` a hook reply may emit on any
+ * non-success path. Shared by mapHookExit's failure arm AND settleEffectHookHold's
+ * defensive .catch so the two cannot drift (a later "tightening" of one would
+ * otherwise leave the other writing a different 200 body into a live Claude
+ * session). Fresh object every call — same bytes (`{}`) every time. Do NOT route
+ * a held outcome through mapHookExit to reuse this: that double-wraps
+ * `{body:{body:obj}}` onto Claude.
+ */
+export function hookFailOpenBody(): Record<string, never> {
+  return {};
+}
+
+/**
  * Total Exit → hook-response mapper. Success carries the workflow's assembled hook
  * body verbatim; EVERY failure shape (quiesce, interrupt, die, any fail) collapses
- * to the canonical `{}`. This is the `catchAllCause → 200` boundary for hooks,
+ * to hookFailOpenBody(). This is the `catchAllCause → 200` boundary for hooks,
  * realized on the transport side of the P6.3 bridge rather than inside the
  * E=never workflow (folding a die into `{}` here is equivalent and keeps the
  * workflow catch-free). No Cause detail is ever read, so nothing leaks.
  */
 export function mapHookExit(exit: Exit.Exit<unknown, unknown>): HookResponse {
-  return Exit.isSuccess(exit) ? { body: exit.value } : { body: {} };
+  return Exit.isSuccess(exit) ? { body: exit.value } : { body: hookFailOpenBody() };
 }

@@ -922,6 +922,12 @@ async function bootDaemon(
     // watch surface arms this slice (Slice 3 reuses it for hook fail-open).
     runHeld: (effect) => ingress.runControlDetached(effect),
     watchHold: heldSettleWorkflow,
+    // P10 Slice 3 HELD ROUTE: the hook HOLD relay (permission / elicitation /
+    // choice). REUSES the SAME generic held-settle primitive as watchHold; only the
+    // transport terminal differs (fail-open HookResponse vs watch idle-poll). Rides
+    // the SAME untracked runHeld so a parked hold survives shutdown and releaseAll
+    // settles it to 200 {} while Bun can still write (D2).
+    hookHold: heldSettleWorkflow,
   });
 
   // Every non-internal IPv4 this host answers on. Wildcard and interface-specific

@@ -70,10 +70,22 @@ import type { TrustedOrigin } from './http-policy.ts';
 // P6.4 hook route group: the DEDICATED Exit→hook-response mapper. Deliberately
 // NOT mapEffectRouteExit — hooks fail OPEN (every non-success Exit → 200 {}),
 // never 503/500/legacy-replay. See hook-policy.ts and settleEffectHookRoute.
-import { mapHookExit } from './hook-policy.ts';
+// P10 Slice 3 also imports HookResponse (type only): the hook HOLD relay settles a
+// Deferred<HookResponse, never>, and settleEffectHookHold renders its `.body`.
+import { hookFailOpenBody, mapHookExit, type HookResponse } from './hook-policy.ts';
 // program.ts and the auth/origin suites import these two from the HTTP module's
 // public surface; keep re-exporting them now that they live in http-policy.ts.
 export { isLoopbackAddress, parseTrustedOrigins } from './http-policy.ts';
+
+// P10 Slice 3 rollback seam (mirrors mail's EFFECT_CORE_POST_MAIL / files'
+// EFFECT_CORE_FILES): false → holdHook bypasses the Effect held primitive and
+// answers through the VERBATIM legacy imperative park below the branch. The seam
+// is doubly gated (`effectRoutes && EFFECT_CORE_HOLD_RELAY`) — a null effectRoutes
+// (bridge unwired) OR this flag off both restore the pre-Slice-3 bytes. Unlike the
+// converted core files this const lives in the transport (http.ts) because the hold
+// relay's settlement — not a core write — is what moves onto the Deferred; the P1
+// hold manager (attachHold's Maps/timers/rearm chain) stays IMPERATIVE (§6-Q1).
+const EFFECT_CORE_HOLD_RELAY = true;
 
 const MAX_BODY = 1e6;
 // /api/paste-image only: a screenshot is megabytes, and base64-in-JSON (kept —
@@ -771,6 +783,15 @@ export interface HttpEffectRoutes {
   // its HeldOutcome to the wire (settle → 200 body, abandon → no write).
   readonly runHeld: (effect: HeldWorkflowEffect) => Promise<HeldOutcome>;
   readonly watchHold: (caps: HeldHoldRouteCapabilities) => HeldWorkflowEffect;
+  // P10 Slice 3 HELD ROUTE: the hook HOLD relay (permission / elicitation /
+  // choice). REUSES the SAME parameterized held primitive as watchHold — the
+  // generic heldSettleWorkflow — differing ONLY in the terminal fold: watchHold
+  // renders an idle-poll body, hookHold renders the fail-open HookResponse
+  // (settleEffectHookHold: settle → 200 `.body`, abandon → no write, defect → {}).
+  // The four+ racing legs (board answer / hold-window lapse+rearm / cap eviction /
+  // socket disconnect / board-disconnect / shutdown releaseAll) stay IMPERATIVE in
+  // the P1 hold manager (attachHold); the Deferred wraps SETTLEMENT ONLY (§6-Q1).
+  readonly hookHold: (caps: HeldHoldRouteCapabilities) => HeldWorkflowEffect;
 }
 
 // CONTROL-API SEAM: the board-spawn lifecycle methods (spawn / revive /
@@ -1406,6 +1427,57 @@ export function createHttp(
         console.error('fleetd watch error:', err);
         try {
           json(res, 200, { status: 'idle', session_alive: false, pending: 0 });
+        } catch {
+          /* socket gone */
+        }
+      });
+  }
+
+  // P10 Slice 3 — HOOK-HOLD SETTLER (permission / elicitation / choice relay). The
+  // hook hold reuses the SAME Deferred<HeldOutcome, never> primitive as the watch
+  // long-poll (heldSettleWorkflow), discharged on the SAME untracked runHeld runner
+  // so a parked hold SURVIVES shutdown and its releaseAll leg settles it while the
+  // transport can still write (D2). What differs is ONLY the terminal fold: this is
+  // the FAIL-OPEN dialect, not the watch idle-poll dialect (heed the SLICE 3 WARNING
+  // in settleEffectWatchHold's .catch). The P1 hold manager already chose the body
+  // for every leg — the board's decision object on answer(), the canonical `{}` on
+  // every fail-open leg (respondFailOpen) — and handed it to the arm's settle as a
+  // HookResponse `{body}`, so this settler renders that body verbatim:
+  //   settle  -> json(res, 200, (value as HookResponse).body)   answer body | {}
+  //   abandon -> NO WRITE                                        socket gone (1A.3)
+  // The `{body}` wrapping IS the mapHookExit success shape realized structurally:
+  // a held workflow yields a HeldOutcome, not an Exit, so this settler does NOT
+  // call mapHookExit (wrapping a HookResponse would double-wrap `{body:{body:obj}}`
+  // onto Claude). The failure-arm contract-tie is hookFailOpenBody() — the SAME
+  // source mapHookExit's failure arm uses — so the two cannot drift. NEVER a
+  // Cause/stack/token/path.
+  function settleEffectHookHold(
+    routes: HttpEffectRoutes,
+    effect: HeldWorkflowEffect,
+    res: HttpResShim,
+  ): void {
+    routes
+      .runHeld(effect)
+      .then((outcome) => {
+        if (outcome._tag === 'abandon') return; // socket gone: write nothing (1A.3)
+        try {
+          json(res, 200, (outcome.value as HookResponse).body);
+        } catch {
+          /* socket gone */
+        }
+      })
+      .catch((err: unknown) => {
+        // Unreachable-by-construction: settle/abandon are the only completions and
+        // both are Exit.succeed, so the held workflow (E = never) never dies. Purely
+        // defensive — and it MUST fold to hookFailOpenBody() (NOT the watch idle
+        // body): a hook reply is injected into a live Claude session, so an impossible
+        // hold defect still answers 200 {} and never a Cause/stack/token/path. This is
+        // the transport-side total fold for holds, sharing the fail-open body with
+        // mapHookExit's failure arm. runControlDetached REJECTS on die (it does not
+        // squash to a value); this .catch is the hold safety.
+        console.error('fleetd hook hold error:', err);
+        try {
+          json(res, 200, hookFailOpenBody());
         } catch {
           /* socket gone */
         }
@@ -2242,6 +2314,61 @@ export function createHttp(
       return;
     }
     const held = row;
+
+    // PARK. P10 Slice 3: the hold's settlement legs (board answer / hold-window
+    // lapse+rearm / per-session cap eviction / socket disconnect / board-disconnect /
+    // shutdown releaseAll) settle a Deferred<HeldOutcome> AT MOST once through the
+    // SAME untracked heldSettleWorkflow the watch long-poll uses (Slice 2); the legacy
+    // imperative park below is the rollback seam (`effectRoutes` unset OR the flag
+    // off). Per §6-Q1 the P1 hold manager stays IMPERATIVE — attachHold owns the holds
+    // Map, the unref'd hold-window timer, the per-session cap eviction, and the UX-2.1
+    // re-arm chain; the Deferred wraps SETTLEMENT ONLY. The manager's respond callback
+    // IS the settle arm: attachHold(held, respond) where respond(obj) settles
+    // {body:obj}, so the manager keeps choosing the body (the board's decision via
+    // answer(), the canonical {} via respondFailOpen on every other leg) and the
+    // Deferred merely carries it. Terminal fold = HOOK FAIL-OPEN (settleEffectHookHold):
+    // settle → json `.body`, abandon (socket gone) → no write, defect → {}.
+    if (effectRoutes && EFFECT_CORE_HOLD_RELAY) {
+      const caps: HeldHoldRouteCapabilities = {
+        arm: (settle, abandon) => {
+          // seam cast (identical to the legacy park below): hookHoldQuestion is typed
+          // { id: number } | null; the runtime row is a full QuestionRow, which is
+          // what attachHold/socketClosed read (row.session_id, row.id).
+          core.questions.attachHold(
+            held as Parameters<typeof core.questions.attachHold>[0],
+            (obj: unknown) => {
+              settle({ body: obj });
+            },
+          );
+          res.on('close', () => {
+            try {
+              core.questions.socketClosed(held.id);
+            } catch {
+              /* hold hygiene only */
+            }
+            // Resolve the held Deferred so its Scope retires and the settler observes
+            // the outcome. socketClosed already released the manager's hold WITHOUT a
+            // respond (the peer is gone — leg 1A.3), so settle never fired; abandon
+            // makes settleEffectHookHold write NOTHING. If the board answered first,
+            // settle already won: doneUnsafe is idempotent so this abandon no-ops, and
+            // socketClosed hits its `holds.has(id)` guard (miss) and no-ops too.
+            abandon();
+          });
+          // teardown: NO-OP. Unlike watchHook (whose transport owned the timer, the
+          // waiter registration, and the activeWatchClosers membership), the hook
+          // hold's every imperative resource is owned by the P1 manager, which
+          // self-retires it (releaseHold clears the hold-window timer and deletes the
+          // Map entry) BEFORE every respond. The shim exposes no removeListener, so the
+          // 'close' handler cannot be detached — but a post-settlement 'close' is a
+          // guarded no-op (socketClosed's holds.has miss + the idempotent abandon), so
+          // there is nothing transport-owned for the acquireRelease finalizer to undo.
+          return () => {};
+        },
+      };
+      settleEffectHookHold(effectRoutes, effectRoutes.hookHold(caps), res);
+      return;
+    }
+
     // seam cast: events.ts deliberately narrows questions.create to { id: number }
     // in its ctx contract, so hookHoldQuestion is typed { id: number } | null; the
     // runtime row is a full QuestionRow, which is what attachHold/socketClosed read
@@ -2276,7 +2403,9 @@ export function createHttp(
   // Read at createHttp construction time (default 5000ms) so a test can shorten it
   // via FLEETDECK_HOOK_REPLY_FLOOR_MS before the server binds. It never fires under
   // load — the sync hook workflow settles on a microtask — and never truncates a
-  // HOLD (holds answer through legacy holdHook and never reach this settler).
+  // HOLD: holds answer through the Effect hold settler (settleEffectHookHold) and
+  // never reach this settler. The FLOOR deliberately does NOT apply to holds — a
+  // 5s floor would truncate a 600s park.
   const HOOK_REPLY_FLOOR_MS = (() => {
     const raw = Number(process.env['FLEETDECK_HOOK_REPLY_FLOOR_MS']);
     return Number.isFinite(raw) && raw > 0 ? raw : 5000;

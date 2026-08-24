@@ -399,6 +399,7 @@ const WATCH_PORT_BUILDERS = {
   worktreeRemove: worktreeRemoveWorkflow,
   runHeld: runControlDetached,
   watchHold: heldSettleWorkflow,
+  hookHold: heldSettleWorkflow,
 } as const;
 
 interface RawResponse {
