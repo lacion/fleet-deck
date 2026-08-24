@@ -237,6 +237,11 @@ const dischargeStep = (step: PaneDeliveryStep): Effect.Effect<boolean, never, ne
 // EFFECT_CORE_SPAWN_KILL et al. (spawns.ts:139-164).
 const EFFECT_CORE_PANE_DELIVERY = true;
 
+// P9.5 Slice 3 rollback seam: false → the postMail dispatcher bypasses the
+// Effect core and answers through the legacy async body (also reached whenever
+// no runControlDetached runner was injected). Mirrors EFFECT_CORE_PANE_DELIVERY.
+const EFFECT_CORE_POST_MAIL = true;
+
 export function createMail(ctx: MailCtx) {
   const {
     db,
@@ -850,7 +855,23 @@ export function createMail(ctx: MailCtx) {
     };
   }
 
-  async function postMailImpl({ to, from, text }: { to: string; from?: unknown; text?: unknown }) {
+  // postMailImplLegacy: the POST /mail body, renamed VERBATIM (P9.5 Slice 3). It
+  // is the async twin — the EFFECT_CORE_POST_MAIL=false / runner-absent rollback
+  // path, and the single shared body the Effect core wraps (no duplication, so
+  // the q.* corpus is unchanged). Its expected outcomes (422/409/429/quiescing/
+  // success) are DATA the promise resolves to; only a genuine throw becomes a
+  // die. The mid-body quiesce gate (below) sits AFTER the non-cancellable probe
+  // fan-out, so the whole body — sync validation prefix, fan-out, gate, insert,
+  // refusal arms — stays ONE coarse tail with no sync-terminal gate to fold out.
+  async function postMailImplLegacy({
+    to,
+    from,
+    text,
+  }: {
+    to: string;
+    from?: unknown;
+    text?: unknown;
+  }) {
     // BUG-037: resolve the FINAL sender FIRST. The old flow validated the raw
     // input and defaulted LATER (`from || 'human'`), so an omitted/empty/zero/
     // false `from` sailed past the reserved check and was then stored — row and
@@ -974,9 +995,31 @@ export function createMail(ctx: MailCtx) {
     };
   }
 
+  // postMailEffect: the degenerate coarse Effect core — a bare Effect.promise
+  // over the whole POST /mail body (worktreesReadEffect precedent). There is no
+  // sync-terminal gate to fold: the mid-body quiesce gate lives AFTER the awaited
+  // probe fan-out, so the entire body is the one coarse thunk. A body rejection
+  // dies (Effect.promise) and runControlDetached rejects with the RAW error
+  // (§6 defect-identity), so the transport fail-soft fold sees the identical
+  // rejection it does on the legacy path.
+  function postMailEffect(args: { to: string; from?: unknown; text?: unknown }) {
+    return Effect.promise(() => postMailImplLegacy(args));
+  }
+
+  // postMail: the dispatcher. It KEEPS the public name so the transport (POST
+  // /mail) and every direct-drive caller are untouched. The outer quiesce
+  // pre-gate and the own()/inFlight admission latch are preserved on BOTH paths:
+  // calling the producer before own() keeps the historical synchronous prefix
+  // (Effect.promise runs the thunk up to postMailImplLegacy's first await before
+  // runControlDetached yields, so own() registers the promise before any event-
+  // loop turn — danger note D4), and the Effect core is joined by the SAME
+  // own()/inFlight seam as the legacy body (D3). The flag + retained
+  // postMailImplLegacy twin are the rollback seam (worktrees dispatchRead shape).
   function postMail(args: { to: string; from?: unknown; text?: unknown }) {
     if (!isOpen()) return Promise.resolve(quiescingPostMailResult());
-    return own(postMailImpl(args));
+    return EFFECT_CORE_POST_MAIL && runControlDetached
+      ? own(runControlDetached(postMailEffect(args)))
+      : own(postMailImplLegacy(args));
   }
 
   function quiesce(): boolean {

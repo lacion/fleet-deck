@@ -223,49 +223,65 @@ test('P1 mail lifecycle quiesces synchronously, cancels grace timers, and closes
   );
 });
 
-test('P1 mail close joins an admitted postMail probe and suppresses its late insert', async (t) => {
-  const windowGate = deferred<typeof WINDOW>();
-  const probeStarted = deferred<void>();
-  const harness = mailHarness({
-    findScopedWindow: async () => {
-      probeStarted.resolve();
-      return windowGate.promise;
-    },
-  });
-  const { api, calls, db } = harness;
-  t.after(async () => {
+// P9.5 Slice 3: the postMail MID-BODY quiesce gate (mail.ts) — a quiesce landing
+// while the non-cancellable route-probe fan-out is in flight turns the resumed
+// continuation into an explicit 503 refusal BEFORE the first SQLite insert, and
+// close() joins the already-admitted operation. Parameterized so BOTH composers
+// walk the same gate: under `effect` the gate lives inside the coarse
+// Effect.promise thunk discharged through the ctx-resident runControlDetached
+// (which, unsupervised, does NOT interrupt the started body — the write join is
+// preserved); under `legacy` it is the same native `if`. Identical observable,
+// and the dispatcher-liveness spy proves the effect row actually took the runner
+// (a dead dispatcher, always the legacy twin, would be 0).
+for (const variant of CORE_VARIANTS) {
+  test(`P1 mail close joins an admitted postMail probe and suppresses its late insert (${variant.label})`, async (t) => {
+    const windowGate = deferred<typeof WINDOW>();
+    const probeStarted = deferred<void>();
+    const harness = mailHarness({
+      runControlDetached: variant.runner,
+      findScopedWindow: async () => {
+        probeStarted.resolve();
+        return windowGate.promise;
+      },
+    });
+    const { api, calls, db } = harness;
+    t.after(async () => {
+      windowGate.resolve(WINDOW);
+      await api.mailLifecycle.close();
+      harness.closeDb();
+    });
+
+    const posting = api.postMail({ to: SID, from: 'ops', text: 'blocked route probe' });
+    await probeStarted.promise;
+    const closing = api.mailLifecycle.close();
+    let closeSettled = false;
+    void closing.then(() => {
+      closeSettled = true;
+    });
+    await Promise.resolve();
+    assert.equal(closeSettled, false, 'close waits for the already-admitted postMail operation');
+    assert.equal(db.prepare<{ n: number }>('SELECT COUNT(*) AS n FROM mail').get()?.n, 0);
+
     windowGate.resolve(WINDOW);
-    await api.mailLifecycle.close();
+    const result = await posting;
+    assert.equal(result.status, 503, 'the resumed route probe is refused after quiesce');
+    await closing;
+    assert.equal(closeSettled, true);
+    assert.equal(
+      db.prepare<{ n: number }>('SELECT COUNT(*) AS n FROM mail').get()?.n,
+      0,
+      'the late continuation never inserted mail',
+    );
+    assert.equal(calls.ticks, 0);
+    assert.equal(calls.mutations, 0);
+
     harness.closeDb();
+    assert.equal((await api.postMail({ to: SID, from: 'ops', text: 'after close' })).status, 503);
+    // Line 1 postMail admitted the probe → runner invoked once on `effect`; the
+    // post-close send above short-circuits at the OUTER pre-gate (no runner).
+    assertDispatcherLiveness(variant.label, calls.runner, 1);
   });
-
-  const posting = api.postMail({ to: SID, from: 'ops', text: 'blocked route probe' });
-  await probeStarted.promise;
-  const closing = api.mailLifecycle.close();
-  let closeSettled = false;
-  void closing.then(() => {
-    closeSettled = true;
-  });
-  await Promise.resolve();
-  assert.equal(closeSettled, false, 'close waits for the already-admitted postMail operation');
-  assert.equal(db.prepare<{ n: number }>('SELECT COUNT(*) AS n FROM mail').get()?.n, 0);
-
-  windowGate.resolve(WINDOW);
-  const result = await posting;
-  assert.equal(result.status, 503, 'the resumed route probe is refused after quiesce');
-  await closing;
-  assert.equal(closeSettled, true);
-  assert.equal(
-    db.prepare<{ n: number }>('SELECT COUNT(*) AS n FROM mail').get()?.n,
-    0,
-    'the late continuation never inserted mail',
-  );
-  assert.equal(calls.ticks, 0);
-  assert.equal(calls.mutations, 0);
-
-  harness.closeDb();
-  assert.equal((await api.postMail({ to: SID, from: 'ops', text: 'after close' })).status, 503);
-});
+}
 
 // P9.4 Slice 1 gap 3: the isOpen() mid-run gate — a quiesce landing while the
 // non-cancellable paste is in flight leaves the lease intact and fires no
@@ -602,5 +618,106 @@ for (const variant of CORE_VARIANTS) {
     }
     assert.equal(calls.paste, 0);
     assertDispatcherLiveness(variant.label, calls.runner, 1);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// P9.5 Slice 3: the postMail dispatcher parity matrix. postMail now discharges
+// its coarse degenerate Effect core (Effect.promise over postMailImplLegacy)
+// through the ctx-resident runControlDetached when the flag is on AND a runner is
+// injected; else the verbatim legacy body. Today every direct-drive postMail pin
+// (daemon-maintenance/mail-and-blocking/fleet-bugs/shell-spawn) runs createCore
+// with NO runner, so the Effect dispatcher branch would ship CI-unexercised at
+// the createMail seam. These re-run the happy-path wire bytes, the OUTER quiesce
+// pre-gate, and raw-defect rejection identity through BOTH composers, and assert
+// the liveness spy — a dead dispatcher is invisible to byte assertions alone.
+for (const variant of CORE_VARIANTS) {
+  test(`P1 postMail (${variant.label}): a watcher-routed send returns identical wire bytes and inserts one row`, async (t) => {
+    const harness = mailHarness({ runControlDetached: variant.runner });
+    const { api, calls, tmuxLog, db } = harness;
+    t.after(async () => {
+      await api.mailLifecycle.close();
+      harness.closeDb();
+    });
+
+    // A registered waiter routes to 'watcher' with no tmux probe — the most
+    // deterministic full happy path through the dispatcher and the coarse core.
+    api.addWatchWaiter(SID, () => {});
+    const result = await api.postMail({ to: SID, from: 'ops', text: 'hello mailbox' });
+    assert.deepEqual(
+      result,
+      {
+        ok: true,
+        delivered: 1,
+        targets: [{ session_id: SID, callsign: 'heron-mail', route: 'watcher' }],
+      },
+      `${variant.label}: exact success body`,
+    );
+    assert.deepEqual(tmuxLog, [], `${variant.label}: the watcher route pastes nothing`);
+    assert.equal(
+      db.prepare<{ n: number }>('SELECT COUNT(*) AS n FROM mail').get()?.n,
+      1,
+      `${variant.label}: exactly one row inserted`,
+    );
+    assert.equal(calls.ticks, 1, `${variant.label}: one delivery tick`);
+    assert.equal(calls.mutations, 1, `${variant.label}: one onMutate`);
+    assertDispatcherLiveness(variant.label, calls.runner, 1);
+  });
+
+  test(`P1 postMail (${variant.label}): the OUTER quiesce pre-gate answers 503 without invoking the core`, async (t) => {
+    const harness = mailHarness({ runControlDetached: variant.runner });
+    const { api, calls, db } = harness;
+    t.after(async () => {
+      await api.mailLifecycle.close();
+      harness.closeDb();
+    });
+
+    assert.equal(api.mailLifecycle.quiesce(), true);
+    const result = await api.postMail({ to: SID, from: 'ops', text: 'after quiesce' });
+    assert.deepEqual(
+      result,
+      { status: 503, body: { ok: false, reason: 'mail lifecycle is quiescing' } },
+      `${variant.label}: exact 503 pre-gate body`,
+    );
+    assert.equal(
+      db.prepare<{ n: number }>('SELECT COUNT(*) AS n FROM mail').get()?.n,
+      0,
+      `${variant.label}: the pre-gate never reaches SQLite`,
+    );
+    // The synchronous OUTER pre-gate short-circuits before the Effect core is
+    // ever built, so even the effect row must show ZERO runner invocations.
+    assertDispatcherLiveness(variant.label, calls.runner, 0);
+  });
+
+  test(`P1 postMail (${variant.label}): a raw defect in the body rejects with the identical error object`, async (t) => {
+    const harness = mailHarness({ runControlDetached: variant.runner });
+    const { api, q } = harness;
+    t.after(async () => {
+      await api.mailLifecycle.close();
+      harness.closeDb();
+    });
+
+    // Force a genuine throw at a real q.* seam in the body (visibleSessions.all,
+    // read after the 422/409 prefix, before target resolution). postMailImplLegacy
+    // is async, so the throw becomes a rejected promise on either path; the
+    // legacy body rejects with it directly, and on the effect path Effect.promise
+    // folds a rejected thunk into a die whose causeSquash runControlDetached
+    // re-throws — so the RAW error reaches the caller by IDENTITY, exactly as the
+    // legacy body's rejection does (§6 defect-identity; the transport's fail-soft
+    // fold keys on this). The coarse thunk wraps the whole body, so the identity
+    // is position-independent — a post-await defect dies the same way.
+    const boom = new Error('visibleSessions boom');
+    const qMut = q as unknown as { visibleSessions: { all: () => unknown } };
+    qMut.visibleSessions = {
+      all: () => {
+        throw boom;
+      },
+    };
+
+    await assert.rejects(
+      api.postMail({ to: SID, from: 'ops', text: 'defect' }),
+      (err) => err === boom,
+      `${variant.label}: the raw body defect propagates by identity`,
+    );
   });
 }
