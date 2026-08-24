@@ -188,7 +188,11 @@ export function spawnRaw({
   // Running the suite from inside tmux must not leak the outer server either.
   delete childEnv['TMUX'];
   delete childEnv['TMUX_PANE'];
-  const child = spawn(process.execPath, [scriptPath], {
+  // `--no-env-file` (P11.6): match the production launchers so a developer's repo
+  // `.env` cannot auto-load (bun's cwd .env stack) into a spawned test daemon and
+  // inject keys this helper's scrub list does not overwrite. Bun runtime flag →
+  // precedes the script path (process.execPath is bun).
+  const child = spawn(process.execPath, ['--no-env-file', scriptPath], {
     env: childEnv,
     stdio: ['ignore', 'pipe', 'pipe'],
   });

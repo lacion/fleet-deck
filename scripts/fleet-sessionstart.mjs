@@ -761,7 +761,7 @@ async function ensureServer(round = 0) {
     const logFile = path5.join(HOME, "fleetd.log");
     out = fs5.openSync(logFile, "a", 384);
     fs5.chmodSync(logFile, 384);
-    const child = spawn(process.execPath, [FLEETD], {
+    const child = spawn(process.execPath, ["--no-env-file", FLEETD], {
       detached: true,
       stdio: ["ignore", out, out],
       env: bootEnv()

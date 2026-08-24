@@ -1,7 +1,15 @@
 import test, { type TestContext } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdtempSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -30,6 +38,10 @@ function fixture(t: TestContext): Fixture {
   writeFileSync(
     bun,
     `#!/bin/sh
+if [ -n "\${FAKE_ARGS_FILE-}" ]; then
+  : >"$FAKE_ARGS_FILE"
+  for a in "$@"; do printf '%s\\n' "$a" >>"$FAKE_ARGS_FILE"; done
+fi
 printf '%s' "\${FAKE_STDOUT-}"
 printf '%s' "\${FAKE_STDERR-}" >&2
 exit "\${FAKE_STATUS-0}"
@@ -132,6 +144,22 @@ test('watch launcher relays only the intentional mail wake signal', (t) => {
     }),
     { status: 0, stdout: '', stderr: '' },
   );
+  assertCapturesRemoved(fx);
+});
+
+test('launcher runs bun with --no-env-file before the bundle (P11.6)', (t) => {
+  // The launcher runs in the Claude project cwd; without --no-env-file bun would
+  // auto-load that project's `.env*` into the hook process. The flag is a bun
+  // runtime flag, so it must be argv[0], with the bundle path immediately after.
+  const fx = fixture(t);
+  const argsFile = path.join(fx.root, 'bun-argv');
+  run(fx, 'decision', { FAKE_STDOUT: '{}', FAKE_ARGS_FILE: argsFile });
+  const argv = readFileSync(argsFile, 'utf8')
+    .split('\n')
+    .filter((l) => l.length > 0);
+  assert.equal(argv[0], '--no-env-file', 'bun runtime flag is first');
+  assert.equal(argv[1], fx.bundle, 'the bundle path follows the flag');
+  assert.equal(argv[2], 'arg with spaces', 'hook arguments are preserved after the bundle');
   assertCapturesRemoved(fx);
 });
 

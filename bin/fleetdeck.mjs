@@ -439,7 +439,7 @@ After=network.target
 [Service]
 Type=simple
 EnvironmentFile=-${unitEnvFilePath(ENV_FILE)}
-ExecStart=${quoteExecArg(process.execPath)} ${quoteExecArg(path2.join(HERE, "fleetdeck.mjs"))} serve
+ExecStart=${quoteExecArg(process.execPath)} --no-env-file ${quoteExecArg(path2.join(HERE, "fleetdeck.mjs"))} serve
 Restart=always
 RestartSec=2
 # exit 3 is "another daemon already owns the port" \u2014 restarting is a hot loop.
@@ -462,7 +462,7 @@ trap term TERM INT
 
 delay=1
 while :; do
-  ${shQuote(process.execPath)} ${shQuote(path2.join(HERE, "fleetdeck.mjs"))} serve &
+  ${shQuote(process.execPath)} --no-env-file ${shQuote(path2.join(HERE, "fleetdeck.mjs"))} serve &
   child=$!
   wait "$child"
   code=$?

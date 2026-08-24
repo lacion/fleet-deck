@@ -310,7 +310,13 @@ async function ensureServer(round = 0): Promise<boolean> {
     // hook gives a daemon another chance to write credentials into them.
     out = fs.openSync(logFile, 'a', 0o600);
     fs.chmodSync(logFile, 0o600);
-    const child = spawn(process.execPath, [FLEETD], {
+    // `--no-env-file` (P11.6): this hook runs in the Claude PROJECT cwd — exactly
+    // where Vite/Next `.env.local` files live. Without the flag, bun auto-loads
+    // that cwd `.env*` stack into the spawned daemon, injecting unset keys
+    // (FLEETDECK_BIND=0.0.0.0, a stray FLEETDECK_TOKEN, gateway leftovers) that
+    // bootEnv()'s scrub list does not know about. The flag is a bun runtime flag,
+    // so it MUST come before the script path in argv (process.execPath is bun).
+    const child = spawn(process.execPath, ['--no-env-file', FLEETD], {
       detached: true,
       stdio: ['ignore', out, out],
       env: bootEnv(),

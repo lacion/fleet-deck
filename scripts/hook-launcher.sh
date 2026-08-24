@@ -46,7 +46,11 @@ trap '/bin/rm -rf "$capture_dir"' EXIT HUP INT TERM
 stdout_file=$capture_dir/stdout
 stderr_file=$capture_dir/stderr
 
-bun "$bundle" "$@" >"$stdout_file" 2>"$stderr_file"
+# --no-env-file (P11.6): this launcher runs in the Claude project cwd, where a
+# project .env / .env.local (Vite/Next secrets, stray FLEETDECK_*) would be
+# auto-loaded by bun into the hook process. The flag disables that automatic cwd
+# .env stack; it is a bun runtime flag, so it precedes the bundle path.
+bun --no-env-file "$bundle" "$@" >"$stdout_file" 2>"$stderr_file"
 status=$?
 
 case "$mode" in

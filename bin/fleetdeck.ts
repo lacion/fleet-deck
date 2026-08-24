@@ -588,6 +588,14 @@ function unitEnvFilePath(p: string): string {
   return unitEscape(p);
 }
 
+// `--no-env-file` (P11.6): Bun auto-loads a Vite-shaped `.env*` stack from the
+// process cwd, injecting UNSET keys (a systemd user unit has no WorkingDirectory,
+// so cwd defaults to $HOME — `~/.env` is a real dotenv location). That is a
+// second, accidental config channel beside Fleet Deck's intentional
+// EnvironmentFile=service.env. The flag disables ONLY the automatic cwd stack;
+// it does not touch EnvironmentFile (systemd applies that before bun starts, so
+// those keys are process env and win regardless). It is a bare literal argv
+// token like `serve`, placed as a bun RUNTIME flag BEFORE the script path.
 const UNIT = (): string => `[Unit]
 Description=Fleet Deck — the always-on board for your Claude Code fleet
 After=network.target
@@ -595,7 +603,7 @@ After=network.target
 [Service]
 Type=simple
 EnvironmentFile=-${unitEnvFilePath(ENV_FILE)}
-ExecStart=${quoteExecArg(process.execPath)} ${quoteExecArg(path.join(HERE, 'fleetdeck.mjs'))} serve
+ExecStart=${quoteExecArg(process.execPath)} --no-env-file ${quoteExecArg(path.join(HERE, 'fleetdeck.mjs'))} serve
 Restart=always
 RestartSec=2
 # exit 3 is "another daemon already owns the port" — restarting is a hot loop.
@@ -631,7 +639,7 @@ trap term TERM INT
 
 delay=1
 while :; do
-  ${shQuote(process.execPath)} ${shQuote(path.join(HERE, 'fleetdeck.mjs'))} serve &
+  ${shQuote(process.execPath)} --no-env-file ${shQuote(path.join(HERE, 'fleetdeck.mjs'))} serve &
   child=$!
   wait "$child"
   code=$?

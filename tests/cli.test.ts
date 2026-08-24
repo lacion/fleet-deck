@@ -792,6 +792,14 @@ test('UNIT(): a well-formed systemd user unit that execs `serve` and guards exit
   assert.match(u, /^\[Service\]$/m);
   assert.ok(u.includes(`EnvironmentFile=-${ENV_FILE}`), 'optional env file (leading -)');
   assert.ok(u.includes('serve'), 'ExecStart runs `serve`');
+  // P11.6: bun runs with --no-env-file (before the script) so a stray cwd `.env`
+  // (systemd user cwd is $HOME) cannot auto-load and inject unset keys. This does
+  // NOT replace EnvironmentFile=service.env (applied before bun starts).
+  assert.match(
+    u,
+    /^ExecStart="[^"]*" --no-env-file "[^"]*" serve$/m,
+    'ExecStart disables bun cwd .env auto-load, flag before the script (P11.6)',
+  );
   assert.match(u, /^Restart=always$/m);
   assert.match(
     u,
@@ -844,8 +852,8 @@ test('quoteExecArg(): systemd-quotes ExecStart args so spaced/percent paths surv
   assert.ok(execLine !== undefined, 'the generated unit has an ExecStart line');
   assert.match(
     execLine,
-    /^ExecStart="[^"]*" "[^"]*" serve$/,
-    'both paths double-quoted, serve bare',
+    /^ExecStart="[^"]*" --no-env-file "[^"]*" serve$/,
+    'both paths double-quoted, --no-env-file and serve bare',
   );
 });
 
@@ -860,6 +868,11 @@ test('SUPERVISE(): sources the env file safely and backs off, never respawning a
     'an incomplete-install exit (daemon bundle missing) is not hot-looped',
   );
   assert.ok(s.includes('serve'), 'execs `fleetdeck serve`');
+  // P11.6: the supervised bun exec passes --no-env-file so a project `.env` in the
+  // supervisor's cwd cannot auto-load into the daemon for its whole lifetime. The
+  // env file is still sourced (set -a; . service.env) before the loop, so those
+  // keys are process env and win regardless of the flag.
+  assert.ok(s.includes(' --no-env-file '), 'the supervised bun exec passes --no-env-file');
 });
 
 // -------------------------------------------- systemd unit path escaping (BUG-077)
@@ -967,8 +980,11 @@ test('SUPERVISE(): embeds paths single-quoted — $(), backticks, and quotes in 
   );
   assert.match(
     s,
-    new RegExp(`^  ${escapeRe(shQuote(process.execPath))} ${escapeRe(shQuote(CLI))} serve &`, 'm'),
-    'exec line single-quotes both paths',
+    new RegExp(
+      `^  ${escapeRe(shQuote(process.execPath))} --no-env-file ${escapeRe(shQuote(CLI))} serve &`,
+      'm',
+    ),
+    'exec line single-quotes both paths, --no-env-file bare before the script',
   );
 });
 
