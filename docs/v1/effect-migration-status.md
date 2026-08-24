@@ -1,16 +1,22 @@
 # Effect migration checkpoint status
 
-- **Checkpoint date:** 2026-08-24
+- **Checkpoint date:** 2026-08-25
 - **Branch:** `fd/v1-effect-feasibility`
-- **Published branch:** `origin/fd/v1-effect-feasibility` at `5faec478`
-  (`feat(security): pass --no-env-file on every bun launcher (P11.6)`). **Fully
-  pushed** — `origin == HEAD == 5faec478`, 0 ahead / 0 behind. The P10-close docs
-  committed at `343a52bc`; the whole P10 six-slice stack (`650fb09b`..`16656dae`)
-  and its close are pushed.
-- **Current implementation HEAD:** `5faec478`
-  (`feat(security): pass --no-env-file on every bun launcher (P11.6)` — the one
-  P11 REQUIRE verdict; the P10 stack above the P9 docs-close `8d09b332` is
-  `650fb09b`..`16656dae`, then `343a52bc` P10 close, then `5faec478` P11.6)
+- **Published branch:** `origin/fd/v1-effect-feasibility` at `02f8ce88`
+  (`feat(build): pin the diagnostic-name property bundler-independently (P12)`).
+  **Fully pushed** — `origin == HEAD == 02f8ce88`, 0 ahead / 0 behind. P11-close
+  docs committed at `43b380bb`; P11.6 REQUIRE at `5faec478`; P10-close docs at
+  `343a52bc`; the whole P10 six-slice stack (`650fb09b`..`16656dae`) is pushed.
+- **Current implementation HEAD:** `02f8ce88`
+  (`feat(build): pin the diagnostic-name property bundler-independently (P12)` —
+  P12.1 `scripts/bundle-bun.ts` (inert) + 7 diagnostic-name source-literal pins.
+  Committed pipeline still esbuild; SELECT Bun.build is adjudicated but **not
+  executed**. Stack above the P9 docs-close `8d09b332`: P10 `650fb09b`..`16656dae`,
+  P10 close `343a52bc`, P11.6 `5faec478`, P11 close docs `43b380bb`, P12 pins
+  `02f8ce88`)
+- **P12 in-progress evidence:** this file, section [P12 in progress at `02f8ce88`](#p12-in-progress-at-02f8ce88)
+  (trial numbers quoted from the volatile `/tmp/fd-effect/p12-trial-report.md` and
+  `p12-keepnames-report.md`; those files are not in the repo)
 - **P11 completion evidence:** [p11-close.md](./evidence/effect/p11-close.md)
   (ten-item verdict table, §4 dispositions, owned-platform register close, the
   P11.6 hardening record, the exit-gate audit) + the four stamped trial reports
@@ -43,22 +49,26 @@
 - **Runtime floor:** Bun 1.3.14, revision `0d9b296af33f2b851fcbf4df3e9ec89751734ba4`
 
 This is the durable handoff for the executable
-[Effect migration plan](./effect-migration-plan.md). **P0–P11 are complete.** P11
-("finish the Bun-native capability trials") closed at `5faec478`: four trial groups
+[Effect migration plan](./effect-migration-plan.md). **P0–P11 are complete. P12
+is IN PROGRESS at `02f8ce88`.** P11 ("finish the Bun-native capability trials")
+closed at `5faec478` (close docs committed `43b380bb`): four trial groups
 adjudicated the ten remaining Bun-native candidates, and every one of them is a
 **KEEP** or **DEFER** — mDNS stays on `node:dgram` (P11.1–3), board assets and all
 content reads/writes stay on `node:fs` (P11.4/P11.5), and secrets stay on
 `node:crypto` (P11.7). The one REQUIRE verdict — P11.6, `--no-env-file` on every
 production bun launcher plus a bundle secret-scan gate — is the sole daemon-adjacent
-change and landed at `5faec478`. The §4 capability register is fully dispositioned
-and the owned-platform register (P11.10) closes locally: the app-local Bun process
-service is retained; upstream submission of the `rc110.patch` is a standing Luis ask.
-The branch is **fully pushed** — `origin == HEAD == 5faec478` — with the P10-close
-docs committed at `343a52bc`. This P11-close documentation is uncommitted. No pull
-request has been opened, and nothing has been tagged, released, or deployed. Local
-resume is **P12** (Bun-native builds and an optional compiled executable). P7 remains
-the standing §7 platform authorization checkpoint — it is BLOCKED on Luis's draft-PR
-authorization and is not the local next slice.
+P11 change and landed at `5faec478`. The §4 capability register is fully
+dispositioned and the owned-platform register (P11.10) closes locally: the app-local
+Bun process service is retained; upstream submission of the `rc110.patch` is a
+standing Luis ask. The branch is **fully pushed** — `origin == HEAD == 02f8ce88` —
+with the P11-close docs committed at `43b380bb` and the P12.1 script +
+diagnostic-name pins at `02f8ce88`. The committed pipeline is still esbuild;
+**SELECT Bun.build is adjudicated but not executed.** This status-doc update is
+uncommitted. No pull request has been opened, and nothing has been tagged, released,
+or deployed. Local resume is **the P12 selection swap** (after the audit-hardening
+flake if it still fails on the host), then P12.4–P12.6. P7 remains the standing §7
+platform authorization checkpoint — it is BLOCKED on Luis's draft-PR authorization
+and is not the local next slice.
 
 ## Executive status
 
@@ -76,10 +86,207 @@ authorization and is not the local next slice.
 | P9 | Complete at `b3666ca8` | Exit gate MET ([p9-close.md](./evidence/effect/p9-close.md) §3). P9.1 spawn/revive/dismiss `03ee63f2`; P9.2 repos/worktrees `f23cfc9b`/`991c82be`/`8409be88`/`0074a154`; P9.3 files `1b07aaa0`/`0a18335c`; P9.4 mail pane-delivery `cd65f374`; P9.5 settings/ack/postMail `ae6c36fd`/`b3666ca8`; P9.6 takeover = adjudicated justified NON-conversion. |
 | P10 | **Complete at `16656dae`** (close docs `343a52bc`) | Exit gate MET ([p10-close.md](./evidence/effect/p10-close.md)). Six-slice ladder: floor `650fb09b`; GET `/mail` `8c896a80`; GET `/api/watch` held `2ab8ec95`; hook HOLD relay `285122a1`; shutdown matrix pin `f2592534`; orphan-sweep DEFER `16656dae`. Held-response `Deferred` primitive; fail-open strengthened. Fully pushed. |
 | P11 | **Complete at `5faec478`** | Exit gate MET ([p11-close.md](./evidence/effect/p11-close.md) §5). Ten Bun-native candidates adjudicated across four trials: all KEEP/DEFER except P11.6 = REQUIRE `--no-env-file` + bundle secret-scan gate (`5faec478`, sole daemon-adjacent change). mDNS KEEP `node:dgram`; content KEEP `node:fs`; crypto KEEP `node:crypto`; spawns/launchers KEEP; tmux probe DEFER. Owned-platform register (P11.10) closes locally; upstream `rc110.patch` submission = standing Luis ask. |
-| P12–P14 | **Not started — resume at P12** | Bun-native builds + optional compiled executable (P12, resume here), cleanup/docs (P13), RC rehearsal + version-manifest closure checkpoint (P14). |
+| P12 | **IN PROGRESS at `02f8ce88`** | P12.1 `scripts/bundle-bun.ts` landed (inert; pipeline still esbuild). P12.2/P12.3 trial COMPLETE; diagnostic-name blocker dissolved by 7 source-literal pins. Orchestrator **SELECT Bun.build, not executed**. Next: (1) root-cause the audit-hardening flake if still failing on the host; (2) selection swap as ONE commit; (3) P12.4 metrics + esbuild removal after generated targets pass; (4) P12.5/P12.6 compiled executable (expect DEFER absent macOS arm64). |
+| P13–P14 | Not started | Cleanup/docs (P13), RC rehearsal + version-manifest closure checkpoint (P14). |
 
 P3's paired quiet-host performance evidence is unchanged and out of P8/P9/P10/P11
 scope. Do not close it from these suites.
+
+## P12 in progress at `02f8ce88`
+
+Luis ordered a session stop mid-P12. **P12.1–P12.3 trial evidence is complete and
+the diagnostic-name blocker is dissolved; the bundler selection is adjudicated
+(SELECT `Bun.build`) but not executed.** The committed pipeline is still esbuild.
+HEAD `02f8ce88` (`feat(build): pin the diagnostic-name property bundler-independently
+(P12)`), fully pushed (`origin == HEAD == 02f8ce88`, 0 ahead / 0 behind). At that
+commit the tree is clean apart from untracked `.claude/agents/`; this status-doc
+update is the only tracked modification and is uncommitted.
+
+The trial working reports lived in volatile `/tmp/fd-effect/`
+(`p12-trial-report.md` written against clean `43b380bb`; `p12-keepnames-report.md`
+written against the then-uncommitted pin diff that landed as `02f8ce88`). Key
+numbers are quoted here so they survive a scratch wipe.
+
+### P12.1 DONE — inert `scripts/bundle-bun.ts`
+
+Landed in `02f8ce88` (181 lines). Programmatic `Bun.build({ target: 'bun', format:
+'esm' })` producing all 5 generated JS artifacts, mirroring the three esbuild
+recipes in `package.json` (`bundle` / `bundle:bin` / `bundle:hooks`):
+
+| target | entry |
+| --- | --- |
+| `src/daemon/fleetd.bundle.mjs` | `src/daemon/fleetd.ts` |
+| `bin/fleetdeck.mjs` | `bin/fleetdeck.ts` |
+| `scripts/fleet-hook.mjs` | `scripts/fleet-hook.ts` |
+| `scripts/fleet-sessionstart.mjs` | `scripts/fleet-sessionstart.ts` |
+| `scripts/fleet-watch.mjs` | `scripts/fleet-watch.ts` |
+
+The script is **inert**: `package.json` still invokes esbuild (`--bundle
+--platform=node --format=esm --minify-identifiers --minify-syntax --keep-names`
+on the daemon; no minify on bin/hooks), and `esbuild ^0.28.1` remains a
+devDependency. `board-dist` is Vite-built and correctly out of `Bun.build` scope.
+The trial always wrote to a scratch `outBaseDir`; in-place repo writes are unused
+until the selection swap.
+
+### P12.2 / P12.3 trial COMPLETE (quoted from `/tmp/fd-effect/p12-trial-report.md`)
+
+Run against clean pushed `43b380bb` with only untracked `scripts/bundle-bun.ts`.
+Committed artifacts were byte-untouched for that trial. Original trial verdict
+was **KEEP esbuild** solely because diagnostic names existed only as esbuild
+`--keep-names` injections (dissolved at `02f8ce88`; see below). Everything else
+passed or favored Bun:
+
+- **Determinism (top gate) PASS:** 5/5 artifacts byte-identical across two builds,
+  stable across separate process invocations (including the strip-revert path).
+- **Full functional parity EXACT** via `FLEETDECK_TEST_DAEMON_SCRIPT` → Bun
+  daemon: **1,811 pass / 15 skip / 1 fail** (1,827 tests, 225 files). The single
+  fail is the audit-hardening flake below — proven environmental (identical 6
+  pass / 1 fail under the esbuild committed daemon too, 4 runs both ways). Every
+  daemon-discriminated test is at parity. `takeover.test.ts` = **19/19** against
+  the Bun daemon (needed `package.json` + `board-dist` symlinks in the scratch
+  layout — self-path, not a Bun defect).
+- **Effect boundary PASS (P12.3):** daemon `"~effect/` markers **36** both;
+  `Symbol.for("effect/` **2** both; externalized effect import/require **0 / 0**
+  both; `bun:sqlite` external both; hook effect-marker violations (6-pattern
+  predicate) **0** both. Effect is bundled **into** the daemon and **absent**
+  from hook artifacts.
+- **Spot-checks PASS:** CLI `--version` `0.23.6` both; `--help` + `doctor`
+  identical; daemon cold-start esbuild 436 ms / Bun 440 ms, `/state=200` both;
+  hook fail-open identical (fleet-hook `{}`/exit 0, sessionstart exit 0,
+  fleet-watch exit 124 = long-poll block, 0 stderr both); secret-scan **0 hits**
+  vs Bun artifacts. Build time **Bun 0.10–0.13 s < esbuild 0.15–0.17 s**.
+- **Pre-pin sizes** (trial at `43b380bb`, esbuild still the P11-close artifact
+  652,147 / 172,335): Bun daemon **630,152 raw / 161,063 gzip-9** (−3.4% /
+  −6.5%). Quoted for trajectory only — the post-pin numbers below are the ones
+  that match HEAD.
+
+### Diagnostic-name blocker DISSOLVED at `02f8ce88`
+
+The trial's sole blocker: `daemon-bundle-policy.test.ts` test 2 and
+`scripts/strip-bundle-jsdoc.ts`'s self-audit require the root diagnostic names as
+quoted strings. Under Bun `minify.identifiers` they appeared **0 times** — they
+were esbuild `--keep-names` `__name(target,"…")` injections, not source literals.
+`Bun.build` has no `--keep-names` equivalent.
+
+`02f8ce88` pins all **7** gate-asserted names as source-literal
+`Object.defineProperty(fn, 'name', { value: '…', configurable: true })` at the
+definition site (consumed only as `Function.prototype.name` for diagnostics; no
+app logic branches on them). Scope is 7, not the trial's nominal 4:
+`tests/effect/p3-production-selection.test.ts` also asserts `makeBunProcessDriver`,
+`runBounded`, `execFileP`.
+
+| File | Name(s) pinned |
+| --- | --- |
+| `src/daemon/app/host-control.ts` | `DaemonHostControl` |
+| `src/daemon/app/lifecycle-coordinator.ts` | `LifecycleCoordinator` |
+| `src/daemon/app/root-program.ts` | `makeDaemonApp` |
+| `src/daemon/platform/bun/process-driver.ts` | `BunProcessDriver`, `makeBunProcessDriver` |
+| `src/daemon/files.ts` | `runBounded` |
+| `src/daemon/exec.ts` | `execFileP` |
+
+Gates **unchanged and green**, strictly stronger: the same quoted-string
+assertions are now guaranteed by two independent mechanisms (source literal +
+esbuild `--keep-names`). `--keep-names` is kept (redundant guarantor for these
+seven; still minifies every other symbol). Zero runtime behavior change on the
+shipped esbuild artifact. The `P12_STRICT=1` strip-audit that was fatal on Bun
+output (`"DaemonHostControl did not survive"`) now **exits 0**.
+
+Quoted-name presence after the pins (keepnames report): all 7 present in **both**
+bundles; esbuild quoted=2 for six names and quoted=3 for `runBounded` (source pin
++ keep-names injection); Bun quoted=1 for every name (the source pin surviving
+`minify.identifiers`; was 0 before). Re-verified live on the committed esbuild
+artifact at `02f8ce88`: quoted=2 / 2 / 2 / 2 / 2 / 3 / 2 in that same order.
+
+### Post-pin sizes and suites (quoted from `/tmp/fd-effect/p12-keepnames-report.md`)
+
+Gzip is the gate method `Bun.gzipSync(bytes, { level: 9, library: 'zlib' })`
+(`daemon-bundle-policy.test.ts:34`). Re-verified live on the committed esbuild
+daemon at `02f8ce88`: raw **652,744**, gzip-9-zlib **172,523**, SHA-256
+`23bef9c3869dc45428d4554d5e750178c37f988cd53f9a64bc8311af1cd85090`, lines
+**21,487**. (Python `zlib.compress(..., 9)` reports 172,511 for the same bytes —
+not the policy metric.)
+
+| | raw | gzip-9-zlib | lines | vs raw/gzip ceilings 768,000 / 189,440 |
+| --- | --- | --- | --- | --- |
+| **esbuild** (committed at `02f8ce88`) | **652,744** (85.0%) | **172,523** (91.1%) | 21,487 | under |
+| **Bun** (`P12_STRICT=1` scratch; not shipped) | **625,650** (81.5%) | **159,994** (84.4%) | 20,844 | under |
+
+Bun daemon is smaller and has more headroom. esbuild rebuild was deterministic
+×2 (identical `23bef9c3…`); `bin/*` + hooks were byte-identical to `43b380bb`
+through the pin commit (daemon bytes moved because of the seven pins).
+
+Final full-suite runs at `02f8ce88` (totals reconcile to 1,827 tests / 225 files;
+skip delta 6↔15 is the `BUNDLE_SKIP` gate on `FLEETDECK_TEST_DAEMON_SCRIPT`):
+
+| Run | pass | skip | fail |
+| --- | --- | --- | --- |
+| Bun-daemon (`FLEETDECK_TEST_DAEMON_SCRIPT` → scratch Bun bundle) | 1,811 | 15 | 1 |
+| esbuild `bun run test` (default daemon) | 1,820 | 6 | 1 |
+| esbuild `bun run test:bundle` (committed esbuild bundle) | 1,811 | 15 | 1 |
+
+**Every run's sole failure is the audit-hardening flake below.**
+`daemon-bundle-policy` and `p3-production-selection` ran green inside all three.
+Keepnames-session VERIFY: typecheck 0/0 (root + board); biome clean on the 7
+edited tracked files; `bun run ci` then failed only on untracked
+`scripts/bundle-bun.ts` (now committed in `02f8ce88`).
+
+### Orchestrator selection ADJUDICATED but NOT EXECUTED: SELECT `Bun.build`
+
+The trial recommended KEEP esbuild only on the keep-names gate. After
+`02f8ce88` that gate is bundler-independent, so the name axis is
+**SELECT-READY**. The remaining `daemon-bundle-policy` test 1 asserts the
+`package.json` `bundle` recipe **string** contains `--minify-identifiers` /
+`--keep-names` and lacks `--minify` — a build-pipeline selection decision, not a
+name-property issue.
+
+**THE NEXT ACTION** is the selection swap as **ONE commit**, per the plan's P12
+rollback rule ("build-script selection only; never mix bundler and control-flow
+changes in one commit"):
+
+1. Point `package.json` bundle recipes at `scripts/bundle-bun.ts`.
+2. Re-express `daemon-bundle-policy` test 1 against the Bun recipe (deliberate
+   selection-justified guard change; test 2's quoted-name assertions stay).
+3. Rebuild all 5 artifacts with Bun.
+4. **Then P12.4:** record build time, artifact raw/gzip, packed package
+   contents/size, daemon/bin/hook cold start, hook deadline margin, and idle RSS.
+   Remove the esbuild dependency **only after all generated targets pass**.
+5. **Then P12.5 / P12.6:** separately prototype `bun build --compile` for macOS
+   arm64 and Linux x64. **Expect DEFER** absent a macOS arm64 lane; Linux x64
+   prototype locally. The executable is not required for the Effect architecture.
+
+### OPEN FLAKE (suite-trust item — FIRST action if it still fails on the host)
+
+`tests/audit-hardening.test.ts` `"fleet-watch timeout uses the same listener
+cleanup and pauses stdin"` — `child did not exit in time` at its **8 s** wall.
+The error is thrown at `audit-hardening.test.ts:67` (`exitOf`'s `setTimeout`
+reject); the call site passes `8000` at `:237` (`assert.deepEqual(await
+exitOf(child, 8000), { code: 0, signal: null })`). The production path under
+test is fleet-watch's five-second timer; the test withholds stdin EOF.
+
+History:
+
+- Passed on the quiet host through `5faec478`'s landing (**1,821 pass / 0 fail**;
+  skips unstated; reconciles with the later 1,827-test totals as 1,821 + 6 skip).
+  This 1,821 figure is the wrapup-stated quiet-host count — `p11-close.md` does
+  not record a full-suite roll-up at `5faec478`.
+- After a host/WSL restart on 2026-08-24 it fails **consistently**, even isolated
+  (6 pass / 1 fail of the 7 tests in that file), under **both** bundlers and at
+  the clean pushed HEAD `43b380bb` (4-run proof in the P12 trial: identical fail
+  esbuild-committed and Bun-scratch).
+- **Not caused by any P12 commit.** `scripts/fleet-watch.mjs` blob
+  `441f35fb60c7de2f9530d47b3955f10e58a48ec0` is byte-identical at `5faec478`,
+  `43b380bb`, and `02f8ce88`.
+- Final full-suite runs at `02f8ce88` were **1,820/6/1** + **1,811/15/1** with
+  this as the **sole** failure.
+
+Needs a dedicated root-cause worker (the `p1-clone-abort` fixture-idiom
+precedent in `tests/p1-spawns-lifecycle.test.ts` / `tests/spawn-kill-cancel.test.ts`);
+**never a timeout bump.**
+
+### Standing Luis items (unchanged)
+
+P7 draft-PR authorization; P11.10 upstream `rc110.patch` ask; P14 version-manifest
+pick. Version-manifest landmine (`0.23.6` ×4) retained for any merge-to-main.
 
 ## P11 complete at `5faec478`
 
@@ -786,16 +993,14 @@ publish. Not a reason to revert conversions.
 
 ## Exact resume order
 
-P11 is closed. The branch is fully pushed — `origin == HEAD == 5faec478` (the P10
-six-slice stack + its close `343a52bc` + the P11.6 commit `5faec478` are all on
-origin). The next session resumes at **P12 — Bun-native builds and an optional
-compiled executable**, in the order of
-[effect-migration-plan.md](./effect-migration-plan.md) P12 and
-[p9-completion-map.md](./evidence/effect/p9-completion-map.md). All held/lease paths
-(GET `/mail`, GET `/api/watch`, the hook HOLD relay) are converted (P10); the Bun
-trials are adjudicated (P11). P7 remains the standing §7 platform authorization
-checkpoint — BLOCKED on Luis's draft-PR authorization, not the local next slice;
-`/ws/term` stays behind the termbridge facade until P7.
+P12 is **IN PROGRESS** at `02f8ce88`. The branch is fully pushed — `origin == HEAD
+== 02f8ce88` (P11 close docs `43b380bb` + the P12.1 script and diagnostic-name
+pins `02f8ce88` are on origin). **SELECT `Bun.build` is adjudicated but not
+executed**; the committed pipeline is still esbuild. All held/lease paths (GET
+`/mail`, GET `/api/watch`, the hook HOLD relay) are converted (P10); the Bun
+capability trials are adjudicated (P11). P7 remains the standing §7 platform
+authorization checkpoint — BLOCKED on Luis's draft-PR authorization, not the local
+next slice; `/ws/term` stays behind the termbridge facade until P7.
 
 1. Confirm the checkpoint and runtime:
 
@@ -806,44 +1011,56 @@ checkpoint — BLOCKED on Luis's draft-PR authorization, not the local next slic
    bun --version
    ```
 
-   Expected HEAD **and** origin are both `5faec478` (**0 ahead / 0 behind**). This
-   P11-close documentation (`docs/v1/effect-migration-plan.md`,
-   `docs/v1/effect-migration-status.md`,
-   `docs/v1/evidence/effect/migration-ledger.md`,
-   `docs/v1/evidence/effect/p11-close.md`, and the four stamped
-   `docs/v1/evidence/effect/p11-*-trial.md` reports) may still be uncommitted; do
+   Expected HEAD **and** origin are both `02f8ce88` (**0 ahead / 0 behind**). This
+   status-doc update (`docs/v1/effect-migration-status.md` only) is uncommitted; do
    not switch branches. Leave untracked `.claude/agents/` and `/tmp/fd-wt-*` alone.
 
-2. Start **P12** from [effect-migration-plan.md](./effect-migration-plan.md) P12
-   (Bun-native builds). P12.1 = a programmatic `Bun.build({ target: "bun", format:
-   "esm" })` script for daemon/bin/hook artifacts, preserving banners, shebangs,
-   top-level await, dynamic/JSON imports, builtins, version/self paths, and
-   deterministic output; P12.2 = compare esbuild vs Bun-built artifacts across the
-   full source/bundle, CLI, plugin, hook-integrity, static-asset, and
-   release-version suites before selecting `Bun.build`. Carry-forward landmines from
-   P9/P10/P11: do not yield Store on HTTP-bridged fibers; do not yield inside a
-   SQLite txn callback; keep the ingress `run*With` pin at 2 (`runControlDetached`
-   is the only unsupervised runner); keep every verify list that touches `q.*` sites
-   pinned to the P8.5 q-corpus tripwire (334); do not route held answers through
-   `mapHookExit`; keep `--no-env-file` on every production bun launcher and the
-   bundle secret-scan gate green (P11.6); the questions orphan sweep and the tmux
-   probe stay DEFERs until their triggers fire.
+2. **Root-cause the audit-hardening flake if it is still failing on the host**
+   (suite-trust item — FIRST if it blocks).
+   `tests/audit-hardening.test.ts` `"fleet-watch timeout uses the same listener
+   cleanup and pauses stdin"`: `child did not exit in time` at the 8 s wall
+   (`exitOf(child, 8000)` at `:237`; error thrown at `:67`). Proven
+   environmental/host-state (4-run identical fail under both bundlers at clean
+   `43b380bb`; `scripts/fleet-watch.mjs` blob `441f35fb…` byte-identical
+   `5faec478`/`43b380bb`/`02f8ce88`). Dedicated root-cause worker; the
+   `p1-clone-abort` fixture-idiom precedent; **never a timeout bump**.
 
-3. P7 stays paused until Luis authorizes the draft PR (see standing notes). It is
-   not sequenced before P12.
+3. **The selection swap as ONE commit** per the plan's P12 rollback rule
+   ("build-script selection only; never mix bundler and control-flow changes in
+   one commit"): point `package.json` bundle recipes at `scripts/bundle-bun.ts`;
+   re-express `daemon-bundle-policy` test 1 against the Bun recipe (deliberate
+   selection-justified guard change); rebuild all 5 artifacts with Bun.
+
+4. **P12.4–P12.6.** P12.4: record build time, artifact raw/gzip, packed package
+   contents/size, daemon/bin/hook cold start, hook deadline margin, and idle RSS;
+   remove the esbuild dependency only after all generated targets pass. P12.5/P12.6:
+   `bun build --compile` prototype — expect DEFER absent a macOS arm64 lane; Linux
+   x64 prototype locally. Then **P13** cleanup/docs, **P14** RC rehearsal +
+   version-manifest closure.
+
+Carry-forward landmines from P9/P10/P11: do not yield Store on HTTP-bridged
+fibers; do not yield inside a SQLite txn callback; keep the ingress `run*With`
+pin at 2 (`runControlDetached` is the only unsupervised runner); keep every
+verify list that touches `q.*` sites pinned to the P8.5 q-corpus tripwire (334);
+do not route held answers through `mapHookExit`; keep `--no-env-file` on every
+production bun launcher and the bundle secret-scan gate green (P11.6); the
+questions orphan sweep and the tmux probe stay DEFERs until their triggers fire.
+P7 stays paused until Luis authorizes the draft PR (see standing notes); it is
+not sequenced before finishing P12.
 
 ## Standing open notes (do not close from P8/P9/P10/P11)
 
 **Three items still need Luis's authorization** — they gate outward-facing or
 release actions, not the local P12 work: (a) the P7 draft-PR authorization below;
 (b) the P11.10 upstream submission of the `rc110.patch`; (c) the P14 version-manifest
-pick. None blocks resuming P12.
+pick. None blocks finishing P12.
 
 - **P7 is BLOCKED on Luis's draft-PR authorization.** It awaits the §7
   platform authorization checkpoint (push + draft PR so the blocking
   macOS/real-tmux and Linux lifecycle jobs can run). The full branch is already on
-  origin (`origin == HEAD == 5faec478`), so this checkpoint is now purely the
-  authorization + draft-PR step — nothing local is left unpushed. At the checkpoint
+  origin (`origin == HEAD == 02f8ce88`), so this checkpoint is now purely the
+  authorization + draft-PR step — nothing local is left unpushed besides this
+  uncommitted status-doc update. At the checkpoint
   `hook-integrity` may be intentionally red because version closure has not happened;
   record that expected failure, but P7 cannot close until its named platform jobs are
   actually green. Authorization has not been given, so the checkpoint stays paused.
@@ -912,15 +1129,18 @@ From the plan's P7 section and the constraints still in force from P6/P8:
 
 ## Repository handoff expectation
 
-This P11-close documentation is currently uncommitted. The branch is **fully
+This status-doc update is currently uncommitted (the only intended working-tree
+change besides pre-existing untracked `.claude/agents/`). The branch is **fully
 pushed** — implementation HEAD **and** `origin/fd/v1-effect-feasibility` are both
-`5faec478` (**0 ahead / 0 behind**); the P10-close docs are committed at `343a52bc`
-and the P11.6 hardening at `5faec478`, both on origin. No pull request has been
-opened. After this documentation is committed and pushed, the next session resumes at
-**P12** from `fd/v1-effect-feasibility`, using
-[effect-migration-plan.md](./effect-migration-plan.md) P12 and
-[p9-completion-map.md](./evidence/effect/p9-completion-map.md); the P11 package record
-is [p11-close.md](./evidence/effect/p11-close.md), the P10 record is
+`02f8ce88` (**0 ahead / 0 behind**); the P11-close docs are committed at `43b380bb`,
+the P11.6 hardening at `5faec478`, and the P10-close docs at `343a52bc`, all on
+origin. No pull request has been opened. The next session resumes **mid-P12** from
+`fd/v1-effect-feasibility` at `02f8ce88`: root-cause the audit-hardening flake if
+it still fails on the host, then the SELECT-`Bun.build` swap as ONE commit, then
+P12.4–P12.6, then P13, then P14. Detail:
+[effect-migration-plan.md](./effect-migration-plan.md) P12,
+[p9-completion-map.md](./evidence/effect/p9-completion-map.md); the P11 package
+record is [p11-close.md](./evidence/effect/p11-close.md), the P10 record is
 [p10-close.md](./evidence/effect/p10-close.md), and the P9 record is
 [p9-close.md](./evidence/effect/p9-close.md). Leave untracked `.claude/agents/` and
 `/tmp/fd-wt-*` alone.
