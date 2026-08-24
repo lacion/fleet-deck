@@ -2,16 +2,16 @@
 
 - **Checkpoint date:** 2026-08-24
 - **Branch:** `fd/v1-effect-feasibility`
-- **Published branch:** `origin/fd/v1-effect-feasibility` currently at `03ee63f2`
-  (`test(effect): re-baseline the P8.5 q-corpus tripwire to 330`) — HEAD == origin,
-  0 ahead / 0 behind. P9.1 is fully pushed.
-- **Current implementation HEAD:** `03ee63f2`
-  (`test(effect): re-baseline the P8.5 q-corpus tripwire to 330`; the P9.1 feature
-  ladder is `7bdff948`..`53148019`)
-- **P9.1 completion evidence:** [p9-1-design.md](./evidence/effect/p9-1-design.md)
-  §9 (ladder close: per-slice commits, verdicts, quiet-suite numbers, open residuals)
-- **P9.2 / P9.3 stamped designs:** [p9-2-design.md](./evidence/effect/p9-2-design.md),
-  [p9-3-design.md](./evidence/effect/p9-3-design.md)
+- **Published branch:** `origin/fd/v1-effect-feasibility` currently at `b3666ca8`
+  (`feat(effect): convert the postMail core to Effect (P9.5 slice 3)`) — HEAD == origin,
+  0 ahead / 0 behind. The entire P9 stack is fully pushed.
+- **Current implementation HEAD:** `b3666ca8`
+  (`feat(effect): convert the postMail core to Effect (P9.5 slice 3)`; the P9 stack
+  above the P9.1 close is `84a4221d`..`b3666ca8`)
+- **P9 completion evidence:** [p9-close.md](./evidence/effect/p9-close.md)
+  (package roll-up, exit-gate audit, bridge inventory) + per-sub-package designs
+  [p9-1-design.md](./evidence/effect/p9-1-design.md) §9 …
+  [p9-6-design.md](./evidence/effect/p9-6-design.md)
 - **P8 completion evidence:** [p8-strict-trial.md](./evidence/effect/p8-strict-trial.md),
   [p8-stmt-cache-trial.md](./evidence/effect/p8-stmt-cache-trial.md),
   [p8-sql-client-trial.md](./evidence/effect/p8-sql-client-trial.md),
@@ -28,14 +28,15 @@
 - **Runtime floor:** Bun 1.3.14, revision `0d9b296af33f2b851fcbf4df3e9ec89751734ba4`
 
 This is the durable handoff for the executable
-[Effect migration plan](./effect-migration-plan.md). P0–P8 are complete and
-**P9.1 is complete** — the spawn/revive/dismiss request-path orchestration is now
-Effect cores. Implementation HEAD equals origin at `03ee63f2` (P9.1 pushed). This
-P9.1-close documentation is uncommitted. No pull request has been opened, and
-nothing has been tagged, released, or deployed. Local resume is **P9.2** (its
-design is stamped and ready to execute on the main tree now that P9.1 has closed);
-P9.3's design is stamped with slices 1+2 already implemented on a worktree, awaiting
-integration. P7 remains the standing §7 platform authorization checkpoint — it is
+[Effect migration plan](./effect-migration-plan.md). **P0–P9 are complete.** P9
+("daemon asynchronous application workflows become Effects") closed at `b3666ca8`:
+P9.1–P9.5 converted every async application shell + leftover HTTP application
+service to Effect cores/transports, and P9.6 (takeover) is an adjudicated justified
+NON-conversion. Implementation HEAD equals origin at `b3666ca8` (the whole P9 stack
+is pushed). This P9-close documentation is uncommitted. No pull request has been
+opened, and nothing has been tagged, released, or deployed. Local resume is
+**P10** (questions, holds, fail-open cleanup). P7 remains the standing §7 platform
+authorization checkpoint — it is BLOCKED on Luis's draft-PR authorization and is
 not the local next slice.
 
 ## Executive status
@@ -51,13 +52,51 @@ not the local next slice.
 | P6 | Complete at `b2d11d84` | Exit gate met with the five dispositions in [effect-migration-plan.md](./effect-migration-plan.md) P6 (cancellation-on-disconnect is deliberately none-yet). |
 | P7 | Blocked (not started) | Standing §7 platform authorization checkpoint — BLOCKED on Luis's draft-PR authorization (push + draft PR so the macOS/real-tmux + Linux lifecycle jobs can run). Termbridge facade is the seam; `/ws/term` stays P7. Not the local next slice; not a reason to stall P9. |
 | P8 | Complete at `cd0470bb` | Exit gate MET with the four dispositions in [effect-migration-plan.md](./effect-migration-plan.md) P8. Root-owned Store + five db-workflows slices; HTTP-bridged keep capability params. |
-| P9 | In progress — **P9.1 complete** at `03ee63f2` | P9.1 (spawn/revive/dismiss request-path → Effect cores) done: 8-slice ladder + tripwire re-baseline; evidence [p9-1-design.md](./evidence/effect/p9-1-design.md) §9. P9.2 design STAMPED (ready to execute on main tree); P9.3 design STAMPED with slices 1+2 on worktree `tmp/p9-3-design` @ `4aafe9c2` awaiting integration, slice 3 remaining. P9.4–P9.6 not started ([p9-completion-map.md](./evidence/effect/p9-completion-map.md)). |
-| P10–P14 | Not started | Holds/questions (P10), remaining Bun trials (P11), build (P12), cleanup (P13), RC rehearsal (P14). |
+| P9 | **Complete at `b3666ca8`** | Exit gate MET ([p9-close.md](./evidence/effect/p9-close.md) §3). P9.1 spawn/revive/dismiss `03ee63f2`; P9.2 repos/worktrees `f23cfc9b`/`991c82be`/`8409be88`/`0074a154`; P9.3 files `1b07aaa0`/`0a18335c`; P9.4 mail pane-delivery `cd65f374`; P9.5 settings/ack/postMail `ae6c36fd`/`b3666ca8`; P9.6 takeover = adjudicated justified NON-conversion. |
+| P10 | **Not started — resume here** | Questions, holds, and fail-open cleanup (the most policy-sensitive timers). GET `/mail` + GET `/api/watch` fold in here. |
+| P11–P14 | Not started | Remaining Bun trials (P11), build/distribution (P12), cleanup/docs (P13), RC rehearsal (P14). |
 
 P3's paired quiet-host performance evidence is unchanged and out of P8/P9 scope.
 Do not close it from these suites.
 
-## P9.1 complete at `03ee63f2`
+## P9 complete at `b3666ca8`
+
+P9 is **COMPLETE**. Every daemon HTTP-triggered / async application workflow now
+has an Effect primary path with a named rollback seam; the residual Promises are
+inside inventoried native adapters; the one justified non-conversion (takeover) is
+adjudicated. The full package record — per-slice ledgers, the exit-gate audit
+against all three gate clauses, and the compatibility-bridge inventory — is in
+[p9-close.md](./evidence/effect/p9-close.md). HEAD == origin at `b3666ca8`; the
+whole P9 stack is pushed. Sub-package landings:
+
+| Sub-pkg | Scope | Commits | Disposition |
+| --- | --- | --- | --- |
+| P9.1 | spawn/revive/dismiss request-path | `03ee63f2` (ladder `7bdff948`..`53148019`) | converted; `EFFECT_CORE_*` + `*Legacy` twins |
+| P9.2 | repos/worktrees + 3 routes | `f23cfc9b`/`991c82be`/`8409be88`/`0074a154` | converted; soft-read/preflight/remove settlers, `effectRoutes=null` |
+| P9.3 | bounded files read/list/search | `1b07aaa0`/`0a18335c` | converted; `settleFilesystemOperation`, `runBounded` frozen |
+| P9.4 | owned-pane mail delivery | `cd65f374` | converted; `EFFECT_CORE_PANE_DELIVERY` (q-corpus 330→334) |
+| P9.5 | settings GET + /mail/ack + postMail | `ae6c36fd`/`b3666ca8` | converted; last app-service (`EFFECT_CORE_POST_MAIL`, WRAP) |
+| P9.6 | takeover/election | (no source commit) | adjudicated justified NON-conversion |
+
+**Final quiet suites at HEAD `b3666ca8`** (Bun 1.3.14, quiet WSL2, 2026-08-24):
+`bun run test` **1,785 pass / 6 skip / 0 fail**; `bun run test:bundle` **1,776
+pass / 15 skip / 0 fail** (1,791 tests / 217 files). **Bundle** 648,714 B raw /
+171,096 B gzip-9 zlib (18,344 B under the 189,440 B ceiling) / SHA-256
+`5202bf81756465cc325ca0edc41d6c5c20c710a8c6d007f2d1dd5ae84ce83c92`; re-verified
+live. Trajectory + per-slice SHAs in [p9-close.md](./evidence/effect/p9-close.md) §6.
+(The gzip figure is Bun's `Bun.gzipSync(..,{level:9,library:'zlib'})`, the value
+the `daemon-bundle-policy` gate enforces; Node's zlib reports 171,436 for the same
+bytes — an implementation difference, not an artifact mismatch.)
+
+**Exit-gate leftover sweep** (routes deliberately not P9 targets): GET `/mail` +
+GET `/api/watch` → **P10**; `/ws/term` → **P7**; AskUserQuestion
+`PermissionRequest` fast-path → **P6.4 freeze**. Carry-forward landmines from the
+conversions: do not yield Store on HTTP-bridged fibers; do not yield inside a
+SQLite txn callback; keep the ingress `run*With` pin at 2 (`runControlDetached` is
+the only unsupervised runner); keep every verify list that touches `q.*` sites
+pinned to the P8.5 q-corpus tripwire (330→334 after P9.4, stable through P9.5).
+
+### P9.1 — spawn/revive/dismiss (`03ee63f2`)
 
 P9.1 converts the spawn/revive/dismiss **request-path** async orchestration
 (`spawns.ts` + the dismiss pair in `retention.ts`) to Effect cores under the
@@ -65,8 +104,7 @@ HTTP-CAPABILITY convention (`R=never`, `E=never`, capabilities-as-params; expect
 outcomes are `ControlWire` data, not typed errors; discharged through the
 ctx-resident `runControlDetached`, the sole sanctioned unsupervised runner). The
 root-fiber legs (`spawnLivenessTick` / `reconcileSpawns` / `reconcileClearForks`)
-were already Effects under P8.6 and were NOT reopened. HEAD == origin at
-`03ee63f2`; P9.1 is pushed.
+were already Effects under P8.6 and were NOT reopened.
 
 ### Eight-slice ladder (commit · verdict)
 
@@ -128,49 +166,61 @@ remain in-tree). Whole-P9.1: revert `7bdff948`, `80615321`, `69d3d98b`,
 `6835de2e`, `3c88576c`, `d0083d01`, `0dfce719`, `53148019`, `03ee63f2` to restore
 `79bd7fb9` (the stamped P9.1 design). No cross-module flag day.
 
-## P9.2 — design STAMPED, ready to execute
+### P9.2 — repos + worktrees (`f23cfc9b`/`991c82be`/`8409be88`/`0074a154`)
 
-[p9-2-design.md](./evidence/effect/p9-2-design.md) (stamped 2026-08-24). Scope:
-`repos.ts` + `worktrees.ts` and their three HTTP routes (`GET /api/worktrees`,
-`POST /api/worktrees/remove`, `POST /api/repos/preflight`). Orchestrator ruling
-(§6 OQ-1): **HYBRID** — each route slice does the P6.4 transport wiring AND a
-P9.1-style degenerate core conversion (Effect twin, verbatim `*Legacy` body behind
-an `EFFECT_CORE_*` flag, discharge via `runControlDetached`, no new `run*` site).
-Four slices (0 gap-pins → 1 GET → 2 preflight → 3 remove, ascending risk; slices 2
-and 3 adversarial-review-mandatory). The runner already reaches both modules; only
-the three new `HttpEffectRoutes` builders are added. **Starts on the main tree now
-that P9.1 has closed** — its transport work shares `http.ts` / `program.ts` with
-slice 6b, so it was gated on P9.1's close.
+Converted `GET /api/worktrees`, `POST /api/repos/preflight`, and destructive
+`POST /api/worktrees/remove` per the HYBRID ruling (§6 OQ-1): each route slice did
+the P6.4 transport wiring AND a degenerate/hybrid core conversion behind a
+fail-soft / preflight / remove settler, with the `effectRoutes=null` per-group
+rollback. Slice 0 (`f23cfc9b`) pinned the legacy 500-dialects first. Verdicts:
+slice 1 line-review; slices 2 & 3 SHIP-WITH-NITS (all nits applied, incl. N1–N5 on
+remove). Design [p9-2-design.md](./evidence/effect/p9-2-design.md).
 
-## P9.3 — design STAMPED; slices 1+2 implemented on a worktree, AWAITING INTEGRATION
+### P9.3 — bounded files (`1b07aaa0`/`0a18335c`)
 
-[p9-3-design.md](./evidence/effect/p9-3-design.md) (stamped 2026-08-24). Scope:
-`files.ts` read surfaces — `GET /…/fs/{list,read,search}` (session-FS + home-FS),
-six `createFiles` entry points. Orchestrator ruling (§6): convert the cores behind a
-single `EFFECT_CORE_FILES` flag, discharge via `runControlDetached`, and leave
-`settleFilesystemOperation` byte-identical — the routes stay OFF the P6.4
-`runRequest` transport (that move is P9.5, rows G5/G6). Three slices (+1 optional):
-1 seam+read core, 2 list core (git-ignore tail), 3 search core (2-in-flight counter
-+ BUG-027 retry; adversarial-review-mandatory).
+Converted the `files.ts` read / list / search cores behind
+`settleFilesystemOperation`, keeping `runBounded` as the frozen bounded-exec
+adapter. Slices 1+2 (`1b07aaa0`, integrated from worktree `tmp/p9-3-design`) + slice
+3 search core (`0a18335c`), all SHIP-WITH-NITS with fixups applied — including a
+test-only TS2345 typefix on the `execFileP` spy (amended into `1b07aaa0`). Design
+[p9-3-design.md](./evidence/effect/p9-3-design.md).
 
-**Slices 1+2 are ALREADY IMPLEMENTED + REVIEWED** on worktree branch
-`tmp/p9-3-design` @ commit `4aafe9c2` ("feat(effect): convert files read+list cores
-to Effect (P9.3 slices 1+2)"), verdict SHIP-WITH-NITS with fixups F1 (D6 reject-arm
-404 on both paths) + F2 (dispatcher liveness) applied; parity suite 4/4. This work is
-**AWAITING INTEGRATION onto `fd/v1-effect-feasibility`**: cherry-pick `4aafe9c2` →
-rebuild `fleetd.bundle.mjs` → run the gates (`session-fs` + `files-run-bounded` + the
-ingress `run*`-count pin, which must stay unchanged since P9.3 adds no new `run*`
-site). **P9.3 slice 3 (search core) remains** to implement.
+### P9.4 — owned-pane mail delivery (`cd65f374`)
 
-## P9.4–P9.6 and beyond
+Converted the owned-pane delivery leg to an Effect core behind
+`EFFECT_CORE_PANE_DELIVERY`, discharged via `runControlDetached` (DUPLICATE
+strategy → q-corpus re-baselined 330→334). SHIP-WITH-NITS, spy-fix applied
+(per-harness counting spy + `assertDispatcherLiveness` on the `p1-mail-lifecycle`
+delivery cases). Its design-deferred POST /mail core moved to P9.5. Design
+[p9-4-design.md](./evidence/effect/p9-4-design.md).
 
-Continue in [p9-completion-map.md](./evidence/effect/p9-completion-map.md) order:
-P9.4 mail + provider-specific async orchestration; P9.5 remaining HTTP-triggered
-application services (including the FS-routes `runRequest` move deferred from P9.3);
-P9.6 takeover/election operations that benefit from typed lifecycle policy. P10–P14
-follow P9 (holds/fail-open, remaining Bun trials, build/distribution, cleanup/docs,
-RC rehearsal). GET `/mail` and GET `/api/watch` stay P10; `/ws/term` stays P7;
-static/favicon stay P13.
+### P9.5 — remaining HTTP-triggered application services (`ae6c36fd`/`b3666ca8`)
+
+The last application-service conversions: `GET /api/settings` (snapshot settler) +
+`POST /mail/ack` (mutating settler + `CONTROL_DEFECT`) at `ae6c36fd` (no
+`EFFECT_CORE_*` flag — rollback is the `effectRoutes=null` seam), and the
+`POST /mail` core at `b3666ca8` as a **WRAP** (`Effect.promise(() =>
+postMailImplLegacy(args))` behind `EFFECT_CORE_POST_MAIL`, body byte-identical,
+q-corpus stays 334, `p1-mail-lifecycle` 18→25). Design
+[p9-5-design.md](./evidence/effect/p9-5-design.md).
+
+### P9.6 — takeover / election (justified NON-conversion)
+
+Adjudicated (§6) as a justified NON-conversion — no source change. The one async
+leg (`terminateDaemon`) already reaches Effect through the native
+`acquireDaemonResourcesOwned` adapter (`live-layer.ts:217`), and an in-file
+`Effect.run*` is forbidden by three green gates (`import-boundaries.test.ts:980`
+hook Effect-marker scan; `:772` fail-open floor `FLOOR_SEAM_ALLOW`;
+`cli-serve-paths.test.ts:235` bin self-containment). Design
+[p9-6-design.md](./evidence/effect/p9-6-design.md).
+
+## Beyond P9
+
+Continue in [effect-migration-plan.md](./effect-migration-plan.md) /
+[p9-completion-map.md](./evidence/effect/p9-completion-map.md) order: **P10**
+holds/questions/fail-open cleanup (resume here), P11 remaining Bun trials, P12
+build/distribution, P13 cleanup/docs, P14 RC rehearsal. GET `/mail` and GET
+`/api/watch` fold into P10; `/ws/term` stays P7; static/favicon stay P13.
 
 ## P8 complete at `cd0470bb`
 
@@ -545,13 +595,14 @@ publish. Not a reason to revert conversions.
 
 ## Exact resume order
 
-P9.1 is closed and pushed. The next session resumes at **P9.2 — repos +
-worktrees routes**, in the order of
-[p9-completion-map.md](./evidence/effect/p9-completion-map.md). Before P9.2, the
-lowest-friction next action is to **integrate the P9.3 slices 1+2 worktree**
-(already implemented + reviewed), since it is done work sitting off-branch. P7
-remains the standing §7 platform authorization checkpoint; it is not the local
-next slice. `/ws/term` stays behind the termbridge facade until P7.
+P9 is closed and pushed (HEAD == origin `b3666ca8`). The next session resumes at
+**P10 — questions, holds, and fail-open cleanup**, in the order of
+[effect-migration-plan.md](./effect-migration-plan.md) P10 and
+[p9-completion-map.md](./evidence/effect/p9-completion-map.md). GET `/mail` and GET
+`/api/watch` (held/lease semantics under their P1 owners) fold into P10. P7 remains
+the standing §7 platform authorization checkpoint — BLOCKED on Luis's draft-PR
+authorization, not the local next slice; `/ws/term` stays behind the termbridge
+facade until P7.
 
 1. Confirm the checkpoint and runtime:
 
@@ -562,43 +613,38 @@ next slice. `/ws/term` stays behind the termbridge facade until P7.
    bun --version
    ```
 
-   Expected HEAD **and** origin are `03ee63f2` (P9.1 pushed, 0 ahead / 0
-   behind). This close-out documentation
+   Expected HEAD **and** origin are `b3666ca8` (whole P9 stack pushed, 0 ahead /
+   0 behind). This P9-close documentation
    (`docs/v1/effect-migration-plan.md`, `docs/v1/effect-migration-status.md`,
    `docs/v1/evidence/effect/migration-ledger.md`,
-   `docs/v1/evidence/effect/p9-1-design.md`,
-   `docs/v1/evidence/effect/p9-2-design.md`,
-   `docs/v1/evidence/effect/p9-3-design.md`) may still be uncommitted; do not
-   switch branches. Leave untracked `.claude/agents/` and `/tmp/fd-wt-*` alone.
+   `docs/v1/evidence/effect/p9-close.md`, and the stamped
+   `docs/v1/evidence/effect/p9-4-design.md` / `p9-5-design.md` / `p9-6-design.md`)
+   may still be uncommitted; do not switch branches. Leave untracked
+   `.claude/agents/` and `/tmp/fd-wt-*` alone.
 
-2. **Integrate P9.3 slices 1+2** from worktree branch `tmp/p9-3-design` @
-   `4aafe9c2`: cherry-pick → rebuild `fleetd.bundle.mjs` → run the gates
-   (`session-fs` + `files-run-bounded` + the ingress `run*`-count pin, which
-   must stay unchanged — P9.3 adds no new `run*` site). Design in
-   [p9-3-design.md](./evidence/effect/p9-3-design.md); slice 3 (search core)
-   remains to implement after integration.
+2. Start **P10** from [effect-migration-plan.md](./effect-migration-plan.md) P10
+   (fixtures first: disconnect, timeout, no-board, persistence failure, duplicate
+   completion, rearm race, daemon shutdown, HTTP close, defects before/after
+   mutation). Carry-forward landmines from P9: do not yield Store on HTTP-bridged
+   fibers; do not yield inside a SQLite txn callback; keep the ingress `run*With`
+   pin at 2 (`runControlDetached` is the only unsupervised runner); keep every
+   verify list that touches `q.*` sites pinned to the P8.5 q-corpus tripwire (now
+   334).
 
-3. Start **P9.2** from [p9-2-design.md](./evidence/effect/p9-2-design.md)
-   (stamped, HYBRID ruling, four slices; starts on the main tree now that P9.1
-   has closed). P9.1 landmines that carry forward: do not yield Store on
-   HTTP-bridged fibers; do not yield inside a SQLite txn callback; keep the
-   ingress `run*With` pin at 2 (`runControlDetached` is the only unsupervised
-   runner); keep every verify list that touches `q.*` sites pinned to the P8.5
-   q-corpus tripwire.
-
-4. Continue P9.4 → P9.6 in map order. GET `/mail` and GET `/api/watch` stay
-   P10. `/ws/term` stays P7. Static/favicon stay P13.
+3. P7 stays paused until Luis authorizes the draft PR (see standing notes). It is
+   not sequenced before P10.
 
 ## Standing open notes (do not close from P8/P9)
 
 - **P7 is BLOCKED on Luis's draft-PR authorization.** It awaits the §7
   platform authorization checkpoint (push + draft PR so the blocking
-  macOS/real-tmux and Linux lifecycle jobs can run). Implementation through
-  `03ee63f2` is already on origin; this documentation is not. At that
+  macOS/real-tmux and Linux lifecycle jobs can run). The full implementation
+  through `b3666ca8` is already on origin; this documentation is not. At that
   checkpoint `hook-integrity` may be intentionally red because version closure
   has not happened; record that expected failure, but P7 cannot close until its
   named platform jobs are actually green. Authorization has not been given, so
-  the checkpoint stays paused — that is not a reason to stall P9 locally.
+  the checkpoint stays paused. P9 is now complete, so P7 is the only migration
+  work gated on that authorization — sequence P10 ahead of it locally.
 - **P3's** paired quiet-host performance evidence remains an explicit ledger
   item. Do not mark it closed.
 - Quiet-host recapture of the tenth (`/command`) harness workload —
@@ -646,12 +692,11 @@ From the plan's P7 section and the constraints still in force from P6/P8:
 
 ## Repository handoff expectation
 
-This P9.1 close-out documentation is currently uncommitted. Implementation HEAD
-equals `origin/fd/v1-effect-feasibility` at `03ee63f2` (0 ahead / 0 behind; P9.1
-pushed). No pull request has been opened. After the documentation is committed,
-the next session integrates the **P9.3 slices 1+2 worktree** (`tmp/p9-3-design`
-@ `4aafe9c2`) and then resumes at **P9.2** from `fd/v1-effect-feasibility`,
-using [p9-completion-map.md](./evidence/effect/p9-completion-map.md) and the
-stamped [p9-2-design.md](./evidence/effect/p9-2-design.md) /
-[p9-3-design.md](./evidence/effect/p9-3-design.md). Leave untracked
+This P9-close documentation is currently uncommitted. Implementation HEAD equals
+`origin/fd/v1-effect-feasibility` at `b3666ca8` (0 ahead / 0 behind; the whole P9
+stack is pushed). No pull request has been opened. After the documentation is
+committed, the next session resumes at **P10** from `fd/v1-effect-feasibility`,
+using [effect-migration-plan.md](./effect-migration-plan.md) P10 and
+[p9-completion-map.md](./evidence/effect/p9-completion-map.md); the P9 package
+record is [p9-close.md](./evidence/effect/p9-close.md). Leave untracked
 `.claude/agents/` and `/tmp/fd-wt-*` alone.

@@ -4,7 +4,7 @@
 v1 [plan of record](./README.md). This document is intended to be handed directly to a Codex goal
 and updated as each gate lands.*
 
-**Status:** P0–P8 checkpointed; P8 complete at `cd0470bb`; P7 remains the standing §7 platform authorization checkpoint; P9 next ([p9-completion-map.md](./evidence/effect/p9-completion-map.md), P9.1 first)
+**Status:** P0–P9 checkpointed; **P9 complete at `b3666ca8`** (async application shells are Effects — [p9-close.md](./evidence/effect/p9-close.md)); P7 remains the standing §7 platform authorization checkpoint; **P10 next** ([p9-completion-map.md](./evidence/effect/p9-completion-map.md))
 **Working branch:** `fd/v1-effect-feasibility`
 **Starting point:** v0.23.6
 **Runtime floor:** exact Bun 1.3.14 in CI; `engines.bun >=1.3.14`
@@ -940,12 +940,26 @@ Recommended order:
   Per-core `EFFECT_CORE_*` kill-switch flags with verbatim `*Legacy` twins; ingress
   `run*With` pin held at 2 (no new runner site). Quiet WSL2: `bun run test` 1693/6/0,
   `bun run test:bundle` 1684/15/0. Ladder record, verdicts, and open residuals:
-  [p9-1-design.md](./evidence/effect/p9-1-design.md) §9. P9.2–P9.6 remain.
-- [ ] P9.2 repo/worktree/git asynchronous workflows;
-- [ ] P9.3 bounded files/search/cache workflows;
-- [ ] P9.4 mail and provider-specific asynchronous orchestration;
-- [ ] P9.5 remaining HTTP-triggered application services;
-- [ ] P9.6 takeover/election operations that benefit from typed lifecycle policy.
+  [p9-1-design.md](./evidence/effect/p9-1-design.md) §9. P9.2–P9.6 complete — roll-up,
+  exit-gate audit, and bridge inventory in [p9-close.md](./evidence/effect/p9-close.md).
+- [x] P9.2 repo/worktree/git asynchronous workflows;
+  complete — 4 slices `f23cfc9b` (characterization) / `991c82be` (GET worktrees) /
+  `8409be88` (repos preflight) / `0074a154` (worktrees remove); soft-read / preflight /
+  remove settlers behind the `effectRoutes=null` seam. [p9-2-design.md](./evidence/effect/p9-2-design.md).
+- [x] P9.3 bounded files/search/cache workflows;
+  complete — `1b07aaa0` (read+list) + `0a18335c` (search) via `settleFilesystemOperation`;
+  `runBounded` kept as the frozen bounded-exec adapter. [p9-3-design.md](./evidence/effect/p9-3-design.md).
+- [x] P9.4 mail and provider-specific asynchronous orchestration;
+  complete — `cd65f374` owned-pane delivery core behind `EFFECT_CORE_PANE_DELIVERY`
+  (DUPLICATE; q-corpus 330→334). [p9-4-design.md](./evidence/effect/p9-4-design.md).
+- [x] P9.5 remaining HTTP-triggered application services;
+  complete — `ae6c36fd` (GET /api/settings + POST /mail/ack, `effectRoutes=null` seam) +
+  `b3666ca8` (POST /mail core, WRAP behind `EFFECT_CORE_POST_MAIL`; last app-service
+  conversion). [p9-5-design.md](./evidence/effect/p9-5-design.md).
+- [x] P9.6 takeover/election operations that benefit from typed lifecycle policy;
+  adjudicated **justified NON-conversion** — no source change; `terminateDaemon` already
+  reaches Effect via the native `acquireDaemonResourcesOwned` adapter, and an in-file
+  `Effect.run*` is forbidden by 3 green gates. [p9-6-design.md](./evidence/effect/p9-6-design.md).
 
 For each module:
 
@@ -1299,7 +1313,7 @@ Update this table only when a work package's exit gate has actually passed:
 | P6 HTTP/WS workflows | Complete | [p6-http-matrix.md](./evidence/effect/p6-http-matrix.md), [p6-route-wave.md](./evidence/effect/p6-route-wave.md), [p6-graceful-stop-verification.md](./evidence/effect/p6-graceful-stop-verification.md), [p6-bench-comparison.md](./evidence/effect/p6-bench-comparison.md), [p6-transport-trial.md](./evidence/effect/p6-transport-trial.md), [p6-ws-send-probe.md](./evidence/effect/p6-ws-send-probe.md) | Per-group: `effectRoutes=null` (unset `installEffectRoutes`). Whole-slice: revert `307fae0a` through `b2d11d84` (P6.1–P6.3 plus the route wave `56a15e8a`..`b2d11d84`) restores P5 at `67758ba9` / `ca62b94f` |
 | P7 terminal stream | Not started | — | — |
 | P8 store/SQLite | Complete | [p8-strict-trial.md](./evidence/effect/p8-strict-trial.md), [p8-stmt-cache-trial.md](./evidence/effect/p8-stmt-cache-trial.md), [p8-sql-client-trial.md](./evidence/effect/p8-sql-client-trial.md), [p9-completion-map.md](./evidence/effect/p9-completion-map.md) | Per-slice: `STORE_BACKED_*` flags. Whole-slice: revert `05b40bd5`, `346ee85a`, `4ff3e393`, `351b376f`, `145e9fbd`, `50412bd8`, `917c4dc8`, `e0ab862a`, `570d8dae`, `cd0470bb` restores `37e07659`. Do not range-revert `05b40bd5^..cd0470bb` (drops interleaved P6.8 `742168a4`) |
-| P9 application workflows | P9.1 complete; P9.2–P9.6 remaining | [p9-1-design.md](./evidence/effect/p9-1-design.md) §9 (ladder, verdicts, residuals) | Per-slice: `EFFECT_CORE_*` flags → false (default true, `*Legacy` twins in-tree). Whole-P9.1: revert `7bdff948`..`53148019` + `03ee63f2` restores `79bd7fb9` (the stamped P9.1 design) |
+| P9 application workflows | **Complete at `b3666ca8`** (P9.1–P9.5 converted; P9.6 justified NON-conversion) | [p9-close.md](./evidence/effect/p9-close.md) (roll-up, exit-gate audit, bridge inventory); [p9-1-design.md](./evidence/effect/p9-1-design.md) §9 … [p9-6-design.md](./evidence/effect/p9-6-design.md) | Per-slice: `EFFECT_CORE_*` flags → false (default true, `*Legacy` twins in-tree) for P9.1/P9.4/P9.5-s3; `effectRoutes=null` HTTP seam for P9.2/P9.5-s1+2. Whole-P9.1: revert `7bdff948`..`53148019` + `03ee63f2` restores `79bd7fb9`. Whole-P9.2–P9.5: revert `1b07aaa0`,`cd65f374`,`f23cfc9b`,`991c82be`,`0a18335c`,`8409be88`,`0074a154`,`ae6c36fd`,`b3666ca8` restores `84a4221d` |
 | P10 holds/fail-open | Not started | — | — |
 | P11 Bun capability trials | Not started | — | — |
 | P12 build/distribution | Not started | — | — |
