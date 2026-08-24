@@ -64,11 +64,16 @@ import {
   armUnsupervisedWorkflow,
   controlAsyncWorkflow,
   controlSyncWorkflow,
+  mailAckWorkflow,
   nameControlWorkflow,
   questionsDismissWorkflow,
   spawnRouteWorkflow,
 } from './http-workflows/control.ts';
-import { healthWorkflow, stateWorkflow } from './http-workflows/health-state.ts';
+import {
+  healthWorkflow,
+  settingsSnapshotWorkflow,
+  stateWorkflow,
+} from './http-workflows/health-state.ts';
 import { hookDispatchWorkflow } from './http-workflows/hooks.ts';
 import { pasteImageWorkflow } from './http-workflows/paste.ts';
 import {
@@ -878,6 +883,8 @@ async function bootDaemon(
     runRequest: (operation, effect) => httpServer.service.runRequest(operation, effect),
     health: healthWorkflow,
     state: stateWorkflow,
+    // P9.5 Slice 1 READ ROUTE: GET /api/settings (always-200 snapshot; /state model).
+    settingsSnapshot: settingsSnapshotWorkflow,
     // settings/command/mail/cleanup group
     settings: settingsWorkflow,
     command: commandWorkflow,
@@ -892,6 +899,8 @@ async function bootDaemon(
     nameControl: nameControlWorkflow,
     // P9.1 Slice 0: POST /api/spawn/arm-unsupervised.
     armUnsupervised: armUnsupervisedWorkflow,
+    // P9.5 Slice 2: POST /mail/ack (sync mutate; CONTROL_DEFECT).
+    mailAck: mailAckWorkflow,
     // P9.1 Slice 6a: POST /api/spawn under the P6.4 transport (core unchanged).
     spawnRoute: spawnRouteWorkflow,
     // P6.4 HOOK ROUTE GROUP: POST /hook/:name (the final route slice). Fails open

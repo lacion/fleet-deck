@@ -36,6 +36,7 @@ import {
   armUnsupervisedWorkflow,
   controlAsyncWorkflow,
   controlSyncWorkflow,
+  mailAckWorkflow,
   nameControlWorkflow,
   questionsDismissWorkflow,
   spawnRouteWorkflow,
@@ -43,6 +44,7 @@ import {
 import {
   type HealthCapabilities,
   healthWorkflow,
+  settingsSnapshotWorkflow,
   stateWorkflow,
 } from '../../src/daemon/app/http-workflows/health-state.ts';
 import { hookDispatchWorkflow } from '../../src/daemon/app/http-workflows/hooks.ts';
@@ -75,6 +77,49 @@ const HEALTH_KEY_ORDER = [
   'startup',
 ] as const;
 
+// P9.5 Slice 1 — GET /api/settings. The envelope is { ok, settings } and the
+// settings body is core.resolveSettings() verbatim: a FROZEN sync leaf shared by
+// GET /api/settings, the POST /api/settings response body, and the /state
+// broadcast. Its object-literal key order is the wire contract, and its `gateway`
+// is MASKED (a token_set boolean; NEVER the raw token) — a credential-safety
+// invariant the transport must pass through untouched. Values are
+// environment-dependent (real home/config paths), so the pins below assert this
+// STRUCTURE, not the paths, plus legacy↔workflow byte-identity for the exact bytes.
+const SETTINGS_ENVELOPE_KEY_ORDER = ['ok', 'settings'] as const;
+const SETTINGS_KEY_ORDER = [
+  'repos_dir',
+  'repo_transport',
+  'repo_default_org',
+  'browse_root',
+  'fav_dirs',
+  'repo_setup',
+  'hold_ms',
+  'gateway',
+] as const;
+const GATEWAY_KEY_ORDER = [
+  'base_url',
+  'auth_style',
+  'token_set',
+  'model_discovery',
+  'default',
+  'ready',
+] as const;
+
+// Assert the frozen GET /api/settings envelope + the masked-gateway invariant on a
+// parsed body, independent of the environment-specific path VALUES.
+function assertSettingsEnvelope(body: Record<string, unknown>, label: string): void {
+  assert.deepEqual(Object.keys(body), [...SETTINGS_ENVELOPE_KEY_ORDER], `${label}: envelope keys`);
+  assert.equal(body['ok'], true, `${label}: ok:true`);
+  const settings = body['settings'] as Record<string, unknown>;
+  assert.deepEqual(Object.keys(settings), [...SETTINGS_KEY_ORDER], `${label}: settings keys`);
+  const gateway = settings['gateway'] as Record<string, unknown>;
+  assert.deepEqual(Object.keys(gateway), [...GATEWAY_KEY_ORDER], `${label}: gateway keys`);
+  // The masking invariant: token presence is a boolean, and the raw token never
+  // reaches the wire under any key.
+  assert.equal(typeof gateway['token_set'], 'boolean', `${label}: gateway.token_set is boolean`);
+  assert.equal('token' in gateway, false, `${label}: gateway must not leak a raw token`);
+}
+
 // Port growth: HttpEffectRoutes requires every converted group's builders. These
 // pilot tests only exercise /health and /state, but installEffectRoutes requires
 // the whole port, so every group's real builders are wired unchanged to satisfy
@@ -83,6 +128,7 @@ const HEALTH_KEY_ORDER = [
 const ALL_ROUTE_BUILDERS = {
   health: healthWorkflow,
   state: stateWorkflow,
+  settingsSnapshot: settingsSnapshotWorkflow,
   settings: settingsWorkflow,
   command: commandWorkflow,
   mail: mailWorkflow,
@@ -93,6 +139,7 @@ const ALL_ROUTE_BUILDERS = {
   questionsDismiss: questionsDismissWorkflow,
   nameControl: nameControlWorkflow,
   armUnsupervised: armUnsupervisedWorkflow,
+  mailAck: mailAckWorkflow,
   spawnRoute: spawnRouteWorkflow,
   hookDispatch: hookDispatchWorkflow,
   worktreesSnapshot: worktreesSnapshotWorkflow,
@@ -172,6 +219,41 @@ test('stateWorkflow returns the snapshotWithLan result verbatim', () => {
   );
   // Same reference, resolved exactly once inside the Effect — no copy, no reshape.
   assert.equal(out, marker);
+  assert.equal(calls, 1);
+});
+
+test('settingsSnapshotWorkflow wraps resolve() as { ok:true, settings } in frozen key order', () => {
+  // The workflow only wraps: whatever resolve() returns is relayed verbatim under
+  // `settings` (so the masked gateway a real leaf produces passes through untouched),
+  // and the envelope key order is exactly [ok, settings].
+  const marker = { repos_dir: { value: '/x' }, gateway: { token_set: false } };
+  let calls = 0;
+  const payload = Effect.runSync(
+    settingsSnapshotWorkflow({
+      resolve: () => {
+        calls += 1;
+        return marker;
+      },
+    }),
+  );
+  assert.deepEqual(payload, { ok: true, settings: marker });
+  assert.deepEqual(Object.keys(payload), [...SETTINGS_ENVELOPE_KEY_ORDER]);
+  // Same reference under `settings` — no copy, no reshape.
+  assert.equal((payload as { settings: unknown }).settings, marker);
+  assert.equal(calls, 1);
+});
+
+test('settingsSnapshotWorkflow resolves its capability thunk lazily, inside the Effect', () => {
+  let calls = 0;
+  const effect = settingsSnapshotWorkflow({
+    resolve: () => {
+      calls += 1;
+      return {};
+    },
+  });
+  // Building the Effect must touch no capability — the read happens when it runs.
+  assert.equal(calls, 0);
+  Effect.runSync(effect);
   assert.equal(calls, 1);
 });
 
@@ -279,6 +361,20 @@ test('the wired daemon answers /health and /state with the frozen bytes', async 
     const stateKeys = Object.keys(stateBody);
     assert.equal(stateKeys[stateKeys.length - 2], 'lan');
     assert.equal(stateKeys[stateKeys.length - 1], 'legacy_upgrade');
+
+    // /api/settings — the P9.5 Slice 1 always-200 snapshot read, served through the
+    // live ingress bridge. Structural pin (values are env-specific): the { ok,
+    // settings } envelope, the frozen settings key order, and the masked gateway.
+    const settings = await fetch(`${daemon.baseUrl}/api/settings`, {
+      headers: { authorization: `Bearer ${daemon.token}` },
+    });
+    assert.equal(settings.status, 200);
+    assert.equal(settings.headers.get('content-type'), 'application/json');
+    assert.equal(settings.headers.get('x-content-type-options'), 'nosniff');
+    const settingsText = await settings.text();
+    const settingsCl = settings.headers.get('content-length');
+    if (settingsCl !== null) assert.equal(settingsCl, String(Buffer.byteLength(settingsText)));
+    assertSettingsEnvelope(JSON.parse(settingsText) as Record<string, unknown>, '/api/settings');
   } finally {
     await daemon.stop();
   }
@@ -373,6 +469,7 @@ test('workflow dispatch is byte-identical to the legacy handler for /health and 
   // effectRoutes null ⇒ the legacy synchronous handlers answer. Capture them.
   const legacyHealth = await rawFull(board.port, { path: '/health' });
   const legacyState = await rawFull(board.port, { path: '/state' });
+  const legacySettings = await rawFull(board.port, { path: '/api/settings' });
   assert.equal(legacyHealth.status, 200);
   assert.equal(legacyState.status, 200);
   assert.equal(legacyHealth.headers['content-type'], 'application/json');
@@ -380,6 +477,16 @@ test('workflow dispatch is byte-identical to the legacy handler for /health and 
   assert.deepEqual(Object.keys(JSON.parse(legacyHealth.body) as Record<string, unknown>), [
     ...HEALTH_KEY_ORDER,
   ]);
+  // Pin the LEGACY /api/settings dialect explicitly BEFORE the bridge exists: an
+  // always-200 { ok, settings } read with the masked gateway (the frozen bytes the
+  // workflow path must then reproduce to the byte).
+  assert.equal(legacySettings.status, 200);
+  assert.equal(legacySettings.headers['content-type'], 'application/json');
+  assert.equal(legacySettings.headers['x-content-type-options'], 'nosniff');
+  assertSettingsEnvelope(
+    JSON.parse(legacySettings.body) as Record<string, unknown>,
+    '/api/settings legacy',
+  );
 
   // Wire the bridge with a FAITHFUL success bridge (runs the real workflow Effect
   // through Effect.runPromiseExit — the same Exit the ingress runtime produces).
@@ -390,8 +497,12 @@ test('workflow dispatch is byte-identical to the legacy handler for /health and 
 
   const workflowHealth = await rawFull(board.port, { path: '/health' });
   const workflowState = await rawFull(board.port, { path: '/state' });
+  const workflowSettings = await rawFull(board.port, { path: '/api/settings' });
   assertByteIdentical(workflowHealth, legacyHealth, '/health');
   assertStateEquivalent(workflowState, legacyState, '/state');
+  // /api/settings carries no clock field, so the workflow bytes are strictly
+  // identical to the legacy read's — the whole point of the transport-only slice.
+  assertByteIdentical(workflowSettings, legacySettings, '/api/settings');
 });
 
 test('a quiescing ingress falls back to the legacy handler with identical bytes', async (t) => {
@@ -399,6 +510,7 @@ test('a quiescing ingress falls back to the legacy handler with identical bytes'
 
   const legacyHealth = await rawFull(board.port, { path: '/health' });
   const legacyState = await rawFull(board.port, { path: '/state' });
+  const legacySettings = await rawFull(board.port, { path: '/api/settings' });
 
   // The ingress runtime, while quiescing, resolves runRequest to a failed Exit
   // carrying ApplicationQuiescingError WITHOUT running the workflow. The mapper
@@ -413,8 +525,12 @@ test('a quiescing ingress falls back to the legacy handler with identical bytes'
 
   const quiesceHealth = await rawFull(board.port, { path: '/health' });
   const quiesceState = await rawFull(board.port, { path: '/state' });
+  const quiesceSettings = await rawFull(board.port, { path: '/api/settings' });
   assertByteIdentical(quiesceHealth, legacyHealth, '/health during quiesce');
   assertStateEquivalent(quiesceState, legacyState, '/state during quiesce');
+  // /api/settings is a snapshot READ: a quiescing ingress replays the legacy 200
+  // read (settleEffectSnapshotRoute), never a 503 — a read answers as before shutdown.
+  assertByteIdentical(quiesceSettings, legacySettings, '/api/settings during quiesce');
 });
 
 test('an interrupts-only Exit maps to quiesce and falls back to the legacy 200', async (t) => {
@@ -432,6 +548,7 @@ test('an interrupts-only Exit maps to quiesce and falls back to the legacy 200',
   const board = await startBoard(t);
   const legacyHealth = await rawFull(board.port, { path: '/health' });
   const legacyState = await rawFull(board.port, { path: '/state' });
+  const legacySettings = await rawFull(board.port, { path: '/api/settings' });
 
   board.installEffectRoutes({
     runRequest: (_operation, _effect) => Promise.resolve(Exit.failCause(Cause.interrupt(1))),
@@ -440,8 +557,10 @@ test('an interrupts-only Exit maps to quiesce and falls back to the legacy 200',
 
   const interruptedHealth = await rawFull(board.port, { path: '/health' });
   const interruptedState = await rawFull(board.port, { path: '/state' });
+  const interruptedSettings = await rawFull(board.port, { path: '/api/settings' });
   assertByteIdentical(interruptedHealth, legacyHealth, '/health during interrupt');
   assertStateEquivalent(interruptedState, legacyState, '/state during interrupt');
+  assertByteIdentical(interruptedSettings, legacySettings, '/api/settings during interrupt');
 });
 
 test('a workflow defect reproduces the legacy 500 {} exactly', async (t) => {
@@ -459,4 +578,14 @@ test('a workflow defect reproduces the legacy 500 {} exactly', async (t) => {
   assert.equal(defected.body, '{}');
   assert.equal(defected.headers['content-type'], 'application/json');
   assert.equal(defected.headers['x-content-type-options'], 'nosniff');
+
+  // /api/settings rides the SAME snapshot settler, so a defect there is the same
+  // byte-identical 500 {} the outer catch emits (UNREACHABLE in practice —
+  // resolveSettings is a synchronous, non-throwing frozen leaf — but the arm is
+  // wired, so pin it like /health.).
+  const defectedSettings = await rawFull(board.port, { path: '/api/settings' });
+  assert.equal(defectedSettings.status, 500);
+  assert.equal(defectedSettings.body, '{}');
+  assert.equal(defectedSettings.headers['content-type'], 'application/json');
+  assert.equal(defectedSettings.headers['x-content-type-options'], 'nosniff');
 });

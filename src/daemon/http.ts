@@ -544,6 +544,15 @@ export interface HealthRouteCapabilities {
 export interface StateRouteCapabilities {
   readonly snapshotWithLan: () => unknown;
 }
+// P9.5 Slice 1 — GET /api/settings (always-200 snapshot READ). STRUCTURAL MIRROR
+// of SettingsSnapshotCapabilities in app/http-workflows/health-state.ts: `resolve`
+// is the raw core.resolveSettings call (a sync frozen leaf; gateway masked by
+// construction) and the workflow wraps its result as the { ok: true, settings }
+// body. E = never; it rides settleEffectSnapshotRoute on the /state model — a
+// quiescing ingress replays the legacy 200 read, a defect surfaces as 500 {}.
+export interface SettingsSnapshotRouteCapabilities {
+  readonly resolve: () => unknown;
+}
 // settings/command/mail/cleanup group (P6.4). Structural mirrors of the
 // capability interfaces in http-workflows/settings-command-mail-cleanup.ts.
 export interface SettingsRouteCapabilities {
@@ -598,6 +607,16 @@ export interface NameControlRouteCapabilities {
 // routes; it rides settleEffectMutatingRoute with CONTROL_DEFECT.
 export interface ArmUnsupervisedRouteCapabilities {
   readonly run: () => string;
+}
+// P9.5 Slice 2 — POST /mail/ack. STRUCTURAL MIRROR of MailAckCapabilities in
+// app/http-workflows/control.ts: `ack` is the raw core.ackMail call (bound to the
+// one-element [mail_id] list at the transport) and the workflow assembles the
+// frozen 200 { ok: true, acked } wire. Sync + E = never like arm-unsupervised; it
+// rides settleEffectMutatingRoute with CONTROL_DEFECT. ackMail is a sync frozen
+// leaf (the P10-shared lease finalizer) and never throws, so the defect arm is
+// unreachable-by-construction — wired only for byte-fidelity with the outer catch.
+export interface MailAckRouteCapabilities {
+  readonly ack: () => { readonly acked: number };
 }
 // P9.1 Slice 6a — POST /api/spawn. STRUCTURAL MIRROR of SpawnRouteCapabilities in
 // app/http-workflows/control.ts: `run` is the raw core.spawn call and its
@@ -672,6 +691,8 @@ export interface HttpEffectRoutes {
   ) => Promise<Exit.Exit<unknown, HttpQuiescingFailure>>;
   readonly health: (caps: HealthRouteCapabilities) => HttpWorkflowEffect;
   readonly state: (caps: StateRouteCapabilities) => HttpWorkflowEffect;
+  // P9.5 Slice 1 READ ROUTE: GET /api/settings (always-200 snapshot; /state model).
+  readonly settingsSnapshot: (caps: SettingsSnapshotRouteCapabilities) => HttpWorkflowEffect;
   // settings/command/mail/cleanup group
   readonly settings: (caps: SettingsRouteCapabilities) => HttpWorkflowEffect;
   readonly command: (caps: CommandRouteCapabilities) => HttpWorkflowEffect;
@@ -686,6 +707,8 @@ export interface HttpEffectRoutes {
   readonly nameControl: (caps: NameControlRouteCapabilities) => HttpWorkflowEffect;
   // P9.1 Slice 0 CONTROL ROUTE: POST /api/spawn/arm-unsupervised.
   readonly armUnsupervised: (caps: ArmUnsupervisedRouteCapabilities) => HttpWorkflowEffect;
+  // P9.5 Slice 2 CONTROL ROUTE: POST /mail/ack (sync mutate; CONTROL_DEFECT).
+  readonly mailAck: (caps: MailAckRouteCapabilities) => HttpWorkflowEffect;
   // P9.1 Slice 6a CONTROL ROUTE: POST /api/spawn (transport only; core unchanged).
   readonly spawnRoute: (caps: SpawnRouteCapabilities) => HttpWorkflowEffect;
   // P6.4 HOOK ROUTE GROUP builder (see the mirror interface above).
@@ -928,6 +951,15 @@ export function createHttp(
     json(res, 200, snapshotWithLan());
   }
 
+  // The pre-P9.5 GET /api/settings body, verbatim — the rollback path (effectRoutes
+  // unwired) and the snapshot settler's quiesce replay. Always 200; the frozen key
+  // order is ok, settings; core.resolveSettings() masks the gateway by construction.
+  // Named ...Read to distinguish from legacySettingsResponse (the POST /api/settings
+  // WRITE handler in the settings-command-mail-cleanup group).
+  function legacySettingsReadResponse(res: HttpResShim): void {
+    json(res, 200, { ok: true, settings: core.resolveSettings() });
+  }
+
   // Capability objects handed to the workflows. Reads are thunks the workflow
   // resolves inside its Effect; pid/version/managed/auth are boot constants.
   // Shapes mirror HealthCapabilities/StateCapabilities in health-state.ts; tsc
@@ -948,6 +980,13 @@ export function createHttp(
     return { snapshotWithLan: () => snapshotWithLan() };
   }
 
+  // GET /api/settings capability: `resolve` is the raw sync frozen leaf
+  // (core.resolveSettings, gateway masked by construction). The workflow wraps its
+  // result as { ok: true, settings }. Mirror of SettingsSnapshotCapabilities.
+  function settingsSnapshotCapabilities(): SettingsSnapshotRouteCapabilities {
+    return { resolve: () => core.resolveSettings() };
+  }
+
   function settingsCapabilities(ev: unknown): SettingsRouteCapabilities {
     return { setSettings: () => core.setSettings(ev) };
   }
@@ -962,6 +1001,14 @@ export function createHttp(
 
   function cleanupCapabilities(): CleanupRouteCapabilities {
     return { cleanup: () => core.cleanup() };
+  }
+
+  // POST /mail/ack capability: `ack` is the raw sync frozen leaf (core.ackMail)
+  // bound to the one-element [mail_id] list read off the parsed body at dispatch.
+  // The workflow assembles the frozen 200 { ok: true, ...ack() } wire. Mirror of
+  // MailAckCapabilities; ackMail type-guards every input, so ack() never throws.
+  function mailAckCapabilities(ev: unknown): MailAckRouteCapabilities {
+    return { ack: () => core.ackMail([(ev as { mail_id?: unknown }).mail_id]) };
   }
 
   // Run a workflow Effect through the ingress bridge and settle it to the exact
@@ -1077,6 +1124,23 @@ export function createHttp(
       effectRoutes.state(stateCapabilities()),
       res,
       legacyStateResponse,
+    );
+  }
+
+  // GET /api/settings dispatch: legacy when the bridge is unwired, else the
+  // workflow. Always-200 snapshot read on the /state model (settleEffectSnapshotRoute):
+  // a quiescing ingress replays legacySettingsReadResponse, a defect answers 500 {}.
+  function dispatchSettingsRead(res: HttpResShim): void {
+    if (!effectRoutes) {
+      legacySettingsReadResponse(res);
+      return;
+    }
+    settleEffectSnapshotRoute(
+      effectRoutes,
+      'GET /api/settings',
+      effectRoutes.settingsSnapshot(settingsSnapshotCapabilities()),
+      res,
+      legacySettingsReadResponse,
     );
   }
 
@@ -2410,7 +2474,10 @@ export function createHttp(
           return;
         }
         if (url.pathname === '/api/settings') {
-          json(res, 200, { ok: true, settings: core.resolveSettings() });
+          // P9.5 Slice 1: Effect workflow when the bridge is wired; the legacy
+          // synchronous handler (legacySettingsReadResponse) is the rollback seam.
+          // Always-200 snapshot read on the /state model — see dispatchSettingsRead.
+          dispatchSettingsRead(res);
           return;
         }
         if (url.pathname === '/api/worktrees') {
@@ -2639,6 +2706,23 @@ export function createHttp(
             // claim whose response never arrived never acks, so the lease
             // lapses and the mail is re-delivered instead of lost).
             if (url.pathname === '/mail/ack') {
+              // P9.5 Slice 2: Effect workflow when wired; the legacy synchronous
+              // handler below is the rollback seam. SYNC + MUTATING (finalizes a
+              // leased claim), so it rides settleEffectMutatingRoute: an
+              // intra-quiesce admission refusal answers the frozen 503 and never
+              // replays the ack, and a defect reproduces the outer-catch 500
+              // {"err":"internal"} the legacy throw would land in (unreachable —
+              // ackMail is a sync, input-guarded frozen leaf that never throws).
+              if (effectRoutes) {
+                settleEffectMutatingRoute(
+                  effectRoutes,
+                  'POST /mail/ack',
+                  effectRoutes.mailAck(mailAckCapabilities(ev)),
+                  res,
+                  CONTROL_DEFECT,
+                );
+                return;
+              }
               const out = core.ackMail([(ev as { mail_id?: unknown }).mail_id]);
               json(res, 200, { ok: true, ...out });
               return;

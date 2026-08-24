@@ -48,11 +48,16 @@ import {
   armUnsupervisedWorkflow,
   controlAsyncWorkflow,
   controlSyncWorkflow,
+  mailAckWorkflow,
   nameControlWorkflow,
   questionsDismissWorkflow,
   spawnRouteWorkflow,
 } from '../../src/daemon/app/http-workflows/control.ts';
-import { healthWorkflow, stateWorkflow } from '../../src/daemon/app/http-workflows/health-state.ts';
+import {
+  healthWorkflow,
+  settingsSnapshotWorkflow,
+  stateWorkflow,
+} from '../../src/daemon/app/http-workflows/health-state.ts';
 import { hookDispatchWorkflow } from '../../src/daemon/app/http-workflows/hooks.ts';
 import { pasteImageWorkflow } from '../../src/daemon/app/http-workflows/paste.ts';
 import {
@@ -78,6 +83,7 @@ import test, { type TestContext } from '../helpers/harness-test.ts';
 const ALL_ROUTE_BUILDERS = {
   health: healthWorkflow,
   state: stateWorkflow,
+  settingsSnapshot: settingsSnapshotWorkflow,
   settings: settingsWorkflow,
   command: commandWorkflow,
   mail: mailWorkflow,
@@ -88,6 +94,7 @@ const ALL_ROUTE_BUILDERS = {
   questionsDismiss: questionsDismissWorkflow,
   nameControl: nameControlWorkflow,
   armUnsupervised: armUnsupervisedWorkflow,
+  mailAck: mailAckWorkflow,
   spawnRoute: spawnRouteWorkflow,
   hookDispatch: hookDispatchWorkflow,
   worktreesSnapshot: worktreesSnapshotWorkflow,
@@ -350,6 +357,59 @@ test('armUnsupervisedWorkflow turns a throw into a die (the outer-catch 500)', a
   assert.equal(outcome.kind === 'defect' ? outcome.defect : null, boom);
 });
 
+// --- POST /mail/ack (P9.5 Slice 2): the sync-mutate TWIN of arm-unsupervised ---
+// A sync capability (core.ackMail bound to the one-element [mail_id]) rendered as a
+// ControlWire and ridden on settleEffectMutatingRoute with CONTROL_DEFECT. Same
+// three isolation shapes as arm: relay, laziness, throw→die (the arm the guarded
+// leaf makes unreachable-by-construction).
+
+test('mailAckWorkflow relays the acked count as the frozen 200 { ok:true, acked:N } wire', () => {
+  let ackCalls = 0;
+  const out = Effect.runSync(
+    mailAckWorkflow({
+      ack: () => {
+        ackCalls += 1;
+        return { acked: 3 };
+      },
+    }),
+  );
+  assert.deepEqual(out, { status: 200, body: { ok: true, acked: 3 } });
+  assert.equal(ackCalls, 1);
+});
+
+test('mailAckWorkflow builds lazily — constructing the Effect acks nothing', () => {
+  let ackCalls = 0;
+  // Building the workflow must touch no capability: the ack (a guarded UPDATE)
+  // happens only when the Effect runs, exactly like the other sync control routes.
+  mailAckWorkflow({
+    ack: () => {
+      ackCalls += 1;
+      return { acked: 1 };
+    },
+  });
+  assert.equal(ackCalls, 0);
+});
+
+test('mailAckWorkflow turns a throw into a die — the unreachable-by-construction defect arm', async () => {
+  const boom = new Error('ack threw');
+  const exit = await Effect.runPromiseExit(
+    mailAckWorkflow({
+      ack: () => {
+        throw boom;
+      },
+    }),
+  );
+  // ackMail is a SYNC, input-guarded frozen leaf (Array.isArray, then
+  // Number.isSafeInteger per id): a non-integer / absent / non-array mail_id folds
+  // to { acked: 0 }, never a throw, so this arm CANNOT fire from any wire body. It
+  // is pinned only to document that, should the leaf ever regress into a throw, the
+  // die travels the defect channel → CONTROL_DEFECT (500 {"err":"internal"}), the
+  // byte-identical POST outer-catch dialect — never the fail-open 200 or a fold.
+  const outcome = mapEffectRouteExit(exit);
+  assert.equal(outcome.kind, 'defect');
+  assert.equal(outcome.kind === 'defect' ? outcome.defect : null, boom);
+});
+
 test('mapEffectRouteExit classifies a control quiesce and interrupt as quiesce, a die as defect', () => {
   // The mutating group leans on the mapper for two policies: a quiescing refusal and
   // an interrupts-only Cause (the shutdown fiber cancelling this in-flight mutation)
@@ -476,9 +536,50 @@ test('the wired daemon answers each control shape with the frozen control bytes'
   assert.equal(daemon.proc.exitCode, 0, `stderr: ${daemon.stderr}`);
 });
 
+test('the wired daemon acks over a real socket, folding every malformed mail_id to the frozen 200 { acked: 0 }', async () => {
+  const daemon = await startDaemon();
+  const ack = async (body: unknown) => {
+    const r = await fetch(`${daemon.baseUrl}/mail/ack`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${daemon.token}`,
+      },
+      body: JSON.stringify(body),
+    });
+    return { status: r.status, headers: r.headers, text: await r.text() };
+  };
+  try {
+    // /mail/ack is NOT token-gated (tokenGatedRoute gates only /mail and
+    // arm-unsupervised); the bearer rides along harmlessly. This idle daemon holds
+    // no leased row, and the sync guarded leaf never throws, so every malformed /
+    // no-row mail_id folds to the one frozen 200 wire — proving the group is wired
+    // end-to-end on a real socket.
+    for (const [label, body] of [
+      ['present integer, no such row', { mail_id: 999999 }],
+      ['mail_id absent', {}],
+      ['mail_id non-safe-integer (float)', { mail_id: 1.5 }],
+      ['mail_id non-scalar (array)', { mail_id: [1, 2] }],
+    ] as const) {
+      const res = await ack(body);
+      assert.equal(res.status, 200, `${label}: status`);
+      assert.equal(res.text, '{"ok":true,"acked":0}', `${label}: frozen acked:0 body`);
+      assert.equal(res.headers.get('content-type'), 'application/json', `${label}: content-type`);
+      assert.equal(res.headers.get('x-content-type-options'), 'nosniff', `${label}: nosniff`);
+      assert.equal(res.headers.get('content-length'), '21', `${label}: content-length`);
+    }
+  } finally {
+    await daemon.stop();
+  }
+  assert.equal(daemon.proc.exitCode, 0, `stderr: ${daemon.stderr}`);
+});
+
 // ============================ C. IN-PROCESS EQUIVALENCE ============================
 
-type BoardHandle = ReturnType<typeof createHttp> & { port: number };
+type BoardHandle = ReturnType<typeof createHttp> & {
+  port: number;
+  db: ReturnType<typeof openDb>;
+};
 
 // The in-process harness (mirrors the pilot): an idle :memory: core behind
 // createHttp, bound on a real loopback port (the Host wall pins Host's port to the
@@ -506,7 +607,7 @@ function startBoard(t: TestContext, token: string | null = null): Promise<BoardH
             handle.server.close();
             db.close();
           });
-          resolve({ ...handle, port });
+          resolve({ ...handle, port, db });
         });
       });
     });
@@ -798,6 +899,173 @@ test('arm: a workflow defect reproduces the legacy POST outer-catch 500 {"err":"
     path: '/api/spawn/arm-unsupervised',
     body: '{}',
     headers: ARM_HEADERS,
+  });
+  assert.equal(defected.status, 500);
+  assert.equal(defected.body, '{"err":"internal"}');
+  assert.equal(defected.headers['content-type'], 'application/json');
+  assert.equal(defected.headers['x-content-type-options'], 'nosniff');
+});
+
+// ---- POST /mail/ack equivalence (P9.5 Slice 2) ----
+// The sync-mutate twin's byte-fidelity on the SAME idle in-memory core. An idle
+// core holds no leased rows, so every malformed / no-row mail_id folds to acked:0
+// and a legacy-then-workflow capture agrees to the byte (idempotent — no mutation).
+const ACK_ZERO_INPUTS = [
+  { label: 'present integer, no such row', body: '{"mail_id":999999}' },
+  { label: 'mail_id absent', body: '{}' },
+  { label: 'mail_id non-safe-integer (float)', body: '{"mail_id":1.5}' },
+  { label: 'mail_id non-scalar (array)', body: '{"mail_id":[1,2]}' },
+] as const;
+
+test('mail/ack workflow dispatch is byte-identical to the legacy handler for every acked:0 fold', async (t) => {
+  const board = await startBoard(t);
+
+  // effectRoutes null ⇒ the legacy synchronous ack answers; capture each fold.
+  const captures: { input: (typeof ACK_ZERO_INPUTS)[number]; legacy: RawResponse }[] = [];
+  for (const input of ACK_ZERO_INPUTS) {
+    const legacy = await rawFull(board.port, {
+      method: 'POST',
+      path: '/mail/ack',
+      body: input.body,
+    });
+    assert.equal(legacy.status, 200, `${input.label}: legacy status`);
+    assert.equal(legacy.body, '{"ok":true,"acked":0}', `${input.label}: legacy acked:0`);
+    captures.push({ input, legacy });
+  }
+
+  // Wire the FAITHFUL success bridge (the real workflow Effect through the same Exit
+  // the ingress runtime produces).
+  board.installEffectRoutes({
+    runRequest: (_operation, effect) => Effect.runPromiseExit(effect),
+    ...ALL_ROUTE_BUILDERS,
+  });
+
+  for (const { input, legacy } of captures) {
+    const workflow = await rawFull(board.port, {
+      method: 'POST',
+      path: '/mail/ack',
+      body: input.body,
+    });
+    assertByteIdentical(workflow, legacy, `mail/ack ${input.label}`);
+  }
+});
+
+// Seed a live BUG-034 lease directly (claimed_at set to a far-future deadline,
+// delivered_at NULL — the row state /api/watch or a board drain leaves behind),
+// bypassing the drain protocol (a P10 concern the FROZEN ackMail leaf co-owns). The
+// ackMail guarded UPDATE (delivered_at IS NULL AND claimed_at IS NOT NULL) finalizes
+// exactly such a row → changes 1 → acked:1.
+function seedLeasedMail(board: BoardHandle, toSession: string): number {
+  const info = board.db
+    .prepare(
+      'INSERT INTO mail (to_session, from_id, text, at, delivered_at, claimed_at) VALUES (?, ?, ?, ?, ?, ?)',
+    )
+    .run(toSession, 'ops', 'lease me', 1, null, 9_999_999_999_999);
+  return Number(info.lastInsertRowid);
+}
+
+test('mail/ack acked:1 — a seeded lease acks once byte-identically, and a finalized row folds to acked:0', async (t) => {
+  const board = await startBoard(t);
+
+  // Two identical leases: one finalized via the legacy path, one via the workflow
+  // path. Both yield the SAME frozen 200 { acked: 1 } wire, so the captures are
+  // byte-identical even though each mutated its own row.
+  const legacyRow = seedLeasedMail(board, 's-legacy');
+  const legacy = await rawFull(board.port, {
+    method: 'POST',
+    path: '/mail/ack',
+    body: `{"mail_id":${legacyRow}}`,
+  });
+  assert.equal(legacy.status, 200, 'legacy ack status');
+  assert.equal(legacy.body, '{"ok":true,"acked":1}', 'legacy acked:1');
+
+  board.installEffectRoutes({
+    runRequest: (_operation, effect) => Effect.runPromiseExit(effect),
+    ...ALL_ROUTE_BUILDERS,
+  });
+
+  const workflowRow = seedLeasedMail(board, 's-workflow');
+  const workflow = await rawFull(board.port, {
+    method: 'POST',
+    path: '/mail/ack',
+    body: `{"mail_id":${workflowRow}}`,
+  });
+  assertByteIdentical(workflow, legacy, 'mail/ack acked:1');
+  assert.equal(workflow.body, '{"ok":true,"acked":1}', 'workflow acked:1');
+
+  // The guard survives the conversion: re-acking a now-finalized row (delivered_at
+  // set, claimed_at cleared) folds to acked:0 — a late / double ack is a no-op, not
+  // a resurrection.
+  const reack = await rawFull(board.port, {
+    method: 'POST',
+    path: '/mail/ack',
+    body: `{"mail_id":${workflowRow}}`,
+  });
+  assert.equal(reack.status, 200, 're-ack status');
+  assert.equal(reack.body, '{"ok":true,"acked":0}', 're-ack folds to acked:0');
+});
+
+test('mail/ack: a quiescing ingress answers 503 shutting-down — NEVER a legacy replay of the ack', async (t) => {
+  const board = await startBoard(t);
+
+  // A live lease a legacy replay WOULD finalize.
+  const id = seedLeasedMail(board, 's-quiesce');
+  const leaseRow = () =>
+    board.db
+      .prepare<{ delivered_at: number | null; claimed_at: number | null }>(
+        'SELECT delivered_at, claimed_at FROM mail WHERE id = ?',
+      )
+      .get(id);
+  const before = leaseRow();
+  assert.equal(before?.delivered_at, null, 'seeded row is a live lease (delivered_at NULL)');
+  assert.notEqual(before?.claimed_at, null, 'seeded row is a live lease (claimed_at set)');
+
+  // The ingress runtime, while quiescing, resolves runRequest to a failed Exit
+  // carrying ApplicationQuiescingError WITHOUT running the workflow, so the ackMail
+  // UPDATE inside that never-run Effect never happens. The mutating settler must NOT
+  // fall back to the legacy handler (that would finalize the refused lease); it
+  // answers the byte-identical 503 refusal one tick later.
+  board.installEffectRoutes({
+    runRequest: (operation, _effect) =>
+      Promise.resolve(
+        Exit.fail(new ApplicationQuiescingError({ operation, message: 'daemon is quiescing' })),
+      ),
+    ...ALL_ROUTE_BUILDERS,
+  });
+
+  const quiesced = await rawFull(board.port, {
+    method: 'POST',
+    path: '/mail/ack',
+    body: `{"mail_id":${id}}`,
+  });
+  assert.equal(quiesced.status, 503, 'quiesce → 503, not a legacy ack');
+  assert.equal(quiesced.body, '{"ok":false,"reason":"shutting-down"}');
+  assert.equal(quiesced.headers['content-type'], 'application/json');
+  assert.equal(quiesced.headers['x-content-type-options'], 'nosniff');
+
+  // The refused write never touched the row: the lease is still live, so the next
+  // watcher can re-claim it — the mail is NOT lost to a phantom finalization.
+  const after = leaseRow();
+  assert.equal(after?.delivered_at, null, 'the refused ack left delivered_at NULL');
+  assert.notEqual(after?.claimed_at, null, 'the lease is intact after the 503 refusal');
+});
+
+test('mail/ack: a workflow defect reproduces the legacy POST outer-catch 500 {"err":"internal"}', async (t) => {
+  const board = await startBoard(t);
+
+  // A die surfaces as the byte-identical 500 the legacy POST outer catch emits for a
+  // non-hook route (CONTROL_DEFECT) — 500 {"err":"internal"}, distinct from the GET
+  // snapshot 500 {} and never the fail-open 200. Unreachable from a real wire body
+  // (the sync guarded leaf never throws); pinned to freeze the settler's defect arm.
+  board.installEffectRoutes({
+    runRequest: (_operation, _effect) => Promise.resolve(Exit.die(new Error('boom'))),
+    ...ALL_ROUTE_BUILDERS,
+  });
+
+  const defected = await rawFull(board.port, {
+    method: 'POST',
+    path: '/mail/ack',
+    body: '{"mail_id":1}',
   });
   assert.equal(defected.status, 500);
   assert.equal(defected.body, '{"err":"internal"}');

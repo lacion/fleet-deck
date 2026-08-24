@@ -147,3 +147,29 @@ export interface StateCapabilities {
  */
 export const stateWorkflow = (caps: StateCapabilities): Effect.Effect<unknown, never, never> =>
   Effect.sync(() => caps.snapshotWithLan());
+
+/**
+ * GET /api/settings capabilities (P9.5 Slice 1). `resolve` is a thunk the
+ * workflow calls inside the Effect — core.resolveSettings, a SYNC FROZEN LEAF
+ * shared three ways (GET /api/settings, the POST /api/settings response body, and
+ * the /state broadcast). Its gateway masking (settings.ts resolveGateway:
+ * token_set boolean, no raw token key) is a credential-safety invariant the
+ * workflow passes through untouched — it never reshapes what resolve() returns.
+ */
+export interface SettingsSnapshotCapabilities {
+  readonly resolve: () => unknown;
+}
+
+/**
+ * GET /api/settings — always-200 snapshot read, the THIRD route on this model
+ * after /health and /state. R = never, E = never: it rides settleEffectSnapshotRoute
+ * exactly like /state, so a quiescing ingress replays the legacy 200 read and a
+ * defect (unreachable for a synchronous, non-throwing leaf) surfaces as the
+ * byte-identical 500 {} the outer catch already emits. The WHOLE body is the
+ * success value, in the frozen key order (ok, settings) with resolve()'s masked
+ * gateway relayed verbatim.
+ */
+export const settingsSnapshotWorkflow = (
+  caps: SettingsSnapshotCapabilities,
+): Effect.Effect<{ readonly ok: true; readonly settings: unknown }, never, never> =>
+  Effect.sync(() => ({ ok: true, settings: caps.resolve() }));

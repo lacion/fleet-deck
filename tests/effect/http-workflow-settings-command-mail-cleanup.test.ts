@@ -43,11 +43,16 @@ import {
   armUnsupervisedWorkflow,
   controlAsyncWorkflow,
   controlSyncWorkflow,
+  mailAckWorkflow,
   nameControlWorkflow,
   questionsDismissWorkflow,
   spawnRouteWorkflow,
 } from '../../src/daemon/app/http-workflows/control.ts';
-import { healthWorkflow, stateWorkflow } from '../../src/daemon/app/http-workflows/health-state.ts';
+import {
+  healthWorkflow,
+  settingsSnapshotWorkflow,
+  stateWorkflow,
+} from '../../src/daemon/app/http-workflows/health-state.ts';
 import { hookDispatchWorkflow } from '../../src/daemon/app/http-workflows/hooks.ts';
 import { pasteImageWorkflow } from '../../src/daemon/app/http-workflows/paste.ts';
 import {
@@ -75,6 +80,7 @@ const BOARD_TOKEN = 'test-token';
 const ALL_ROUTE_BUILDERS = {
   health: healthWorkflow,
   state: stateWorkflow,
+  settingsSnapshot: settingsSnapshotWorkflow,
   settings: settingsWorkflow,
   command: commandWorkflow,
   mail: mailWorkflow,
@@ -85,6 +91,7 @@ const ALL_ROUTE_BUILDERS = {
   questionsDismiss: questionsDismissWorkflow,
   nameControl: nameControlWorkflow,
   armUnsupervised: armUnsupervisedWorkflow,
+  mailAck: mailAckWorkflow,
   spawnRoute: spawnRouteWorkflow,
   hookDispatch: hookDispatchWorkflow,
   worktreesSnapshot: worktreesSnapshotWorkflow,

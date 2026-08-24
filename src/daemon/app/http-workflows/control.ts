@@ -226,3 +226,35 @@ export const spawnRouteWorkflow = (
   caps: SpawnRouteCapabilities,
 ): Effect.Effect<ControlWire, never, never> =>
   Effect.sync(() => caps.run()).pipe(Effect.flatMap((pending) => Effect.promise(() => pending)));
+
+/**
+ * POST /mail/ack (P9.5 Slice 2). Finalizes a leased mail claim and echoes the
+ * frozen 200 wire { ok: true, acked: N }. It lives in THIS module — not the
+ * settings/command/mail/cleanup group — because it is the structural TWIN of
+ * armUnsupervisedWorkflow: a SYNC mutate whose capability is the raw core call,
+ * rendered as a ControlWire and ridden on settleEffectMutatingRoute with
+ * CONTROL_DEFECT ({"err":"internal"}). The mail GROUP's async settler folds
+ * rejections into a DIFFERENT dialect (MAIL_DEFECT); /mail/ack has no local catch,
+ * so a legacy throw lands in routeRequest's outer catch = CONTROL_DEFECT, placing
+ * it with the sync CONTROL_DEFECT routes, not the async mail group.
+ *
+ * `ack` is core.ackMail bound to the one-element [mail_id] list at the transport.
+ * ackMail is a SYNC FROZEN LEAF — the P10-shared lease finalizer; its SQL and
+ * lease protocol (drain-lease / finalize / retention-sweep) are NOT touched here,
+ * only its ROUTE is converted. R = never, E = never.
+ *
+ * THE DEFECT ARM IS UNREACHABLE-BY-CONSTRUCTION (like arm-unsupervised): ackMail
+ * is synchronous and type-guards every input (Array.isArray, then
+ * Number.isSafeInteger per id), so it never throws for any wire body — a
+ * non-integer or absent mail_id folds to { acked: 0 }, not a throw. CONTROL_DEFECT
+ * is wired only to keep byte-fidelity with the outer catch should the leaf ever
+ * regress; the die → 500 {"err":"internal"} path is documented, not exercised.
+ */
+export interface MailAckCapabilities {
+  readonly ack: () => { readonly acked: number };
+}
+
+export const mailAckWorkflow = (
+  caps: MailAckCapabilities,
+): Effect.Effect<ControlWire, never, never> =>
+  Effect.sync(() => ({ status: 200, body: { ok: true, ...caps.ack() } }));
