@@ -14,6 +14,8 @@ import { errStatus, errMessage } from './errors.ts';
 import { repoTransportChoice } from './repo-policy.ts';
 import type { Statements } from './statements.ts';
 import type { SpawnMaintenance } from './spawns.ts';
+import * as Effect from 'effect/Effect';
+import { type RunControlDetached } from './retention.ts';
 
 // eslint-disable-next-line no-control-regex -- refusing NUL/C0/DEL in a repos_dir path is the entire purpose of this gate
 const CONTROL_RE = /[\x00-\x1f\x7f]/;
@@ -489,11 +491,24 @@ function dirtyNames(porcelain: string): string[] {
     .filter(Boolean);
 }
 
+// P9.2 Slice 2 rollback seam (mirrors worktrees' EFFECT_CORE_WORKTREES_READ):
+// false → the preflightRepo() dispatcher bypasses the Effect core and answers
+// through the legacy async body (also reached whenever no runControlDetached
+// runner was injected). preflightRepo() is a ZERO-GATE core (its first statement
+// is `await resolveTarget(body)`, no sync-terminal gate), so its Effect is a bare
+// coarse Effect.promise tail.
+const EFFECT_CORE_REPOS_PREFLIGHT = true;
+
 interface ReposCtx {
   q: Statements['q'];
   // createRepos is built before createSpawns, so this is read dynamically from
   // the shared ctx at touch time. Standalone repos tests intentionally omit it.
   spawnMaintenance?: SpawnMaintenance;
+  // P9.2 Slice 2: the ingress-owned unsupervised runner the POST /api/repos/preflight
+  // core Effect is discharged through. Absent in standalone factory tests and on
+  // the EFFECT_CORE_REPOS_PREFLIGHT rollback → the *Legacy body answers directly
+  // (mirrors worktrees' WorktreesCtx.runControlDetached from slice 1).
+  runControlDetached?: RunControlDetached;
 }
 
 type ResolvedTarget =
@@ -549,6 +564,7 @@ type RepoAccessProbe =
 
 export function createRepos(ctx: ReposCtx) {
   const { q } = ctx;
+  const runControlDetached = ctx.runControlDetached;
   const touchedAt = new Map<string, number>();
   const provisioningTargets = new Map<string, { id: symbol; owner: string }>();
   const accessCache = new Map<string, number>();
@@ -760,7 +776,14 @@ export function createRepos(ctx: ReposCtx) {
     return { ok: true, ...kind };
   }
 
-  async function preflightRepo(body: ResolveTargetBody): Promise<{
+  // runPreflightRepo: the POST /api/repos/preflight body, extracted VERBATIM
+  // (Leg R-c). Inherently async — its first statement is `await resolveTarget`,
+  // then an optional `await probeRepoAccess` — so like worktrees' runWorktreesRead
+  // it has no synchronous form. EVERY outcome (400/409/504 timeout DATA/200) is
+  // returned as a { status, body } DATA wire; it never throws for an expected
+  // outcome. The 504 is accessFailure's ETIMEDOUT arm (repos.ts probeRepoAccess),
+  // not a thrown defect.
+  async function runPreflightRepo(body: ResolveTargetBody): Promise<{
     status: number;
     body: Record<string, unknown>;
   }> {
@@ -791,6 +814,34 @@ export function createRepos(ctx: ReposCtx) {
           status: access.status,
           body: { ok: false, reason: access.reason, git_access: access.git_access },
         };
+  }
+
+  // preflightRepoEffect: the degenerate ZERO-GATE Effect core — a bare coarse
+  // Effect.promise over the run* body, no sync prefix (preflightRepo() has no
+  // sync-terminal gate to fold; resolveTarget is awaited immediately). A rejection
+  // from resolveTarget/probeRepoAccess dies (Effect.promise), and
+  // runControlDetached rejects with the RAW error (§6 defect-identity), so the
+  // transport 500 fold sees the identical rejection it does on the legacy path.
+  function preflightRepoEffect(
+    body: ResolveTargetBody,
+  ): Effect.Effect<{ status: number; body: Record<string, unknown> }, never, never> {
+    return Effect.promise(() => runPreflightRepo(body));
+  }
+
+  // preflightRepoLegacy: the async twin — the EFFECT_CORE_REPOS_PREFLIGHT=false /
+  // runner-absent rollback path (mirrors worktrees' worktreesLegacy passthrough).
+  function preflightRepoLegacy(body: ResolveTargetBody) {
+    return runPreflightRepo(body);
+  }
+
+  // preflightRepo: the dispatcher. It KEEPS the public name so the transport
+  // (POST /api/repos/preflight) and every direct-drive caller are untouched — the
+  // Effect core iff the flag is on AND the ctx carries the detached runner, else
+  // the verbatim legacy body (worktrees' worktrees() precedent).
+  function preflightRepo(body: ResolveTargetBody) {
+    return EFFECT_CORE_REPOS_PREFLIGHT && runControlDetached
+      ? runControlDetached(preflightRepoEffect(body))
+      : preflightRepoLegacy(body);
   }
 
   // Persist a failed git step's redacted excerpt on the spawn row that asked for

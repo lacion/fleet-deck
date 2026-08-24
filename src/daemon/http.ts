@@ -634,6 +634,18 @@ export interface WorktreesSnapshotRouteCapabilities {
   readonly run: () => Promise<unknown>;
   readonly onError: (err: unknown) => void;
 }
+// P9.2 Slice 2 — POST /api/repos/preflight (async pre-spawn probe). STRUCTURAL
+// MIRROR of RepoPreflightCapabilities in app/http-workflows/repos.ts: `run` starts
+// the core preflight call (core.preflightRepo) and `onError` reproduces the legacy
+// `.catch` preflight log. The workflow folds a core rejection to the 500 body
+// { ok: false, reason: 'Git access check failed internally' } INSIDE itself — its
+// own dialect, NOT controlAsync's {reason:'internal'} — so its success value is
+// always a { status, body } wire and E stays `never`. tsc checks this mirror
+// against the real interface at program.ts's installEffectRoutes() site.
+export interface RepoPreflightRouteCapabilities {
+  readonly run: () => Promise<{ status: number; body?: unknown }>;
+  readonly onError: (err: unknown) => void;
+}
 export interface HttpEffectRoutes {
   // runRequest routes the workflow Effect through the ingress bridge and settles
   // to an Exit whose error channel is exactly HttpQuiescingFailure: a quiescing
@@ -666,6 +678,8 @@ export interface HttpEffectRoutes {
   readonly hookDispatch: (caps: HookDispatchRouteCapabilities) => HttpWorkflowEffect;
   // P9.2 Slice 1 READ ROUTE: GET /api/worktrees (fail-soft; see the mirror above).
   readonly worktreesSnapshot: (caps: WorktreesSnapshotRouteCapabilities) => HttpWorkflowEffect;
+  // P9.2 Slice 2 ASYNC ROUTE: POST /api/repos/preflight (see the mirror above).
+  readonly repoPreflight: (caps: RepoPreflightRouteCapabilities) => HttpWorkflowEffect;
 }
 
 // CONTROL-API SEAM: the board-spawn lifecycle methods (spawn / revive /
@@ -1346,6 +1360,54 @@ export function createHttp(
         onRejected: (target, err) => {
           onError(err);
           json(target, 500, { ok: false, reason: 'internal' });
+        },
+      },
+    );
+  }
+
+  // P9.2 Slice 2 PREFLIGHT SETTLER (POST /api/repos/preflight). Modeled on
+  // settleControlAsyncRoute (start-once witness + JOIN-on-interrupt + quiesce 503)
+  // over the SAME generic settleEffectAsyncMutatingRoute — the generic settler is
+  // parameterized with no defaults, so it is left byte-identical; preflight only
+  // supplies its own config ALONGSIDE (§6-OQ-3 fallback: default-preserving
+  // parameterization of settleControlAsyncRoute is NOT cleanly provable because it
+  // also hardcodes routes.controlAsync). The ONE divergence from control is the 500
+  // dialect: preflight's defect body AND its joined-rejection body are BOTH
+  // { ok: false, reason: 'Git access check failed internally' } (the legacy route's
+  // single `.catch`), NOT CONTROL_DEFECT's {err:'internal'} nor controlAsync's
+  // {reason:'internal'}. `run` is the raw core.preflightRepo call; onError logs the
+  // frozen 'fleetd repo preflight error:' prefix. NOTE (mirrors settleControlAsyncRoute):
+  // repoPreflightWorkflow ALSO folds a native rejection through the SAME onError,
+  // so an interrupt racing a native REJECTION logs the prefix twice — a harmless
+  // duplicate log line during shutdown only; the response bytes stay single.
+  const PREFLIGHT_DEFECT = {
+    log: 'fleetd repo preflight error:',
+    body: { ok: false, reason: 'Git access check failed internally' },
+  };
+  function settleEffectPreflightRoute(
+    routes: HttpEffectRoutes,
+    operation: string,
+    res: HttpResShim,
+    run: () => ControlResult,
+  ): void {
+    const onError = (err: unknown): void => {
+      console.error(PREFLIGHT_DEFECT.log, err);
+    };
+    const recorder = startOnce(run);
+    settleEffectAsyncMutatingRoute(
+      routes,
+      operation,
+      routes.repoPreflight({ run: recorder.invoke, onError }),
+      res,
+      recorder,
+      {
+        defect: PREFLIGHT_DEFECT,
+        onFulfilled: (target, out) => {
+          json(target, out.status, out.body);
+        },
+        onRejected: (target, err) => {
+          onError(err);
+          json(target, 500, { ok: false, reason: 'Git access check failed internally' });
         },
       },
     );
@@ -2620,6 +2682,26 @@ export function createHttp(
                 return;
               }
               logExec(url.pathname, req);
+              // P9.2 Slice 2: Effect workflow when wired; the legacy async handler
+              // below is the rollback seam (effectRoutes unset → installEffectRoutes
+              // not called). ASYNC — it folds a core rejection to 500
+              // {ok:false,reason:'Git access check failed internally'} (its OWN 500
+              // dialect, not controlAsync's {reason:'internal'}), so it rides the
+              // dedicated settleEffectPreflightRoute (start-once witness +
+              // JOIN-on-interrupt + quiesce 503), NOT settleControlAsyncRoute. The
+              // body-validation 400 wall above runs BEFORE dispatch on BOTH paths
+              // (DANGER §4.8), so repoPreflightBodyError never reaches the workflow.
+              if (effectRoutes) {
+                settleEffectPreflightRoute(effectRoutes, 'POST /api/repos/preflight', res, () =>
+                  core.preflightRepo({
+                    repo: body['repo'] as string,
+                    repo_host: (body['repo_host'] as string | undefined) ?? null,
+                    repo_transport: (body['repo_transport'] as string | undefined) ?? null,
+                    repo_org: (body['repo_org'] as string | undefined) ?? null,
+                  }),
+                );
+                return;
+              }
               core
                 .preflightRepo({
                   repo: body['repo'] as string,

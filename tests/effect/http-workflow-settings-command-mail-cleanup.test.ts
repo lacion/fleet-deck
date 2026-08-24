@@ -57,6 +57,7 @@ import {
   settingsWorkflow,
 } from '../../src/daemon/app/http-workflows/settings-command-mail-cleanup.ts';
 import { worktreesSnapshotWorkflow } from '../../src/daemon/app/http-workflows/worktrees.ts';
+import { repoPreflightWorkflow } from '../../src/daemon/app/http-workflows/repos.ts';
 
 import { startDaemon } from '../helpers/daemon.ts';
 import { postJson } from '../helpers/http.ts';
@@ -84,6 +85,7 @@ const ALL_ROUTE_BUILDERS = {
   spawnRoute: spawnRouteWorkflow,
   hookDispatch: hookDispatchWorkflow,
   worktreesSnapshot: worktreesSnapshotWorkflow,
+  repoPreflight: repoPreflightWorkflow,
 };
 
 // Isolation tests unwrap a successful Exit. The banned v3 leftover is the

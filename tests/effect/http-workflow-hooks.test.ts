@@ -66,6 +66,7 @@ import {
   settingsWorkflow,
 } from '../../src/daemon/app/http-workflows/settings-command-mail-cleanup.ts';
 import { worktreesSnapshotWorkflow } from '../../src/daemon/app/http-workflows/worktrees.ts';
+import { repoPreflightWorkflow } from '../../src/daemon/app/http-workflows/repos.ts';
 
 import test, { type TestContext } from '../helpers/harness-test.ts';
 
@@ -88,6 +89,7 @@ const ALL_ROUTE_BUILDERS = {
   spawnRoute: spawnRouteWorkflow,
   hookDispatch: hookDispatchWorkflow,
   worktreesSnapshot: worktreesSnapshotWorkflow,
+  repoPreflight: repoPreflightWorkflow,
 } as const;
 
 // ============================ A. ISOLATION ============================
