@@ -63,6 +63,8 @@ import {
   worktreeRemoveWorkflow,
 } from '../../src/daemon/app/http-workflows/worktrees.ts';
 import { repoPreflightWorkflow } from '../../src/daemon/app/http-workflows/repos.ts';
+import { heldSettleWorkflow } from '../../src/daemon/app/http-workflows/held.ts';
+import { runControlDetached } from '../../src/daemon/platform/bun/ingress-supervisor-live.ts';
 
 import { startDaemon } from '../helpers/daemon.ts';
 import test, { type TestContext } from '../helpers/harness-test.ts';
@@ -94,6 +96,10 @@ const ALL_ROUTE_BUILDERS = {
   worktreesSnapshot: worktreesSnapshotWorkflow,
   repoPreflight: repoPreflightWorkflow,
   worktreeRemove: worktreeRemoveWorkflow,
+  watchHold: heldSettleWorkflow,
+  // Production held runner (untracked, squashes on defect) — not a runPromiseExit
+  // stub; see http-workflow-control.test.ts for the full rationale (finding 3).
+  runHeld: runControlDetached,
 };
 
 const PNG = Buffer.concat([

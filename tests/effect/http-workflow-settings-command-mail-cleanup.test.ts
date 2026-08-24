@@ -38,7 +38,10 @@ import { createHttp } from '../../src/daemon/http.ts';
 import { mapEffectRouteExit } from '../../src/daemon/http-policy.ts';
 import { ApplicationQuiescingError } from '../../src/daemon/app/errors.ts';
 import type { IngressSupervisorService } from '../../src/daemon/app/services/ingress-supervisor.ts';
-import { makeIngressSupervisor } from '../../src/daemon/platform/bun/ingress-supervisor-live.ts';
+import {
+  makeIngressSupervisor,
+  runControlDetached,
+} from '../../src/daemon/platform/bun/ingress-supervisor-live.ts';
 import {
   armUnsupervisedWorkflow,
   controlAsyncWorkflow,
@@ -67,6 +70,7 @@ import {
   worktreeRemoveWorkflow,
 } from '../../src/daemon/app/http-workflows/worktrees.ts';
 import { repoPreflightWorkflow } from '../../src/daemon/app/http-workflows/repos.ts';
+import { heldSettleWorkflow } from '../../src/daemon/app/http-workflows/held.ts';
 
 import { startDaemon } from '../helpers/daemon.ts';
 import { postJson } from '../helpers/http.ts';
@@ -99,6 +103,10 @@ const ALL_ROUTE_BUILDERS = {
   worktreesSnapshot: worktreesSnapshotWorkflow,
   repoPreflight: repoPreflightWorkflow,
   worktreeRemove: worktreeRemoveWorkflow,
+  watchHold: heldSettleWorkflow,
+  // Production held runner (untracked, squashes on defect) — not a runPromiseExit
+  // stub; see http-workflow-control.test.ts for the full rationale (finding 3).
+  runHeld: runControlDetached,
 };
 
 // Isolation tests unwrap a successful Exit. The banned v3 leftover is the

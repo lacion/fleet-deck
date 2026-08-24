@@ -698,6 +698,29 @@ export interface WorktreeRemoveRouteCapabilities {
   readonly run: () => Promise<{ status: number; body?: unknown }>;
   readonly onError: (err: unknown) => void;
 }
+// P10 Slice 2 — GET /api/watch HELD-RESPONSE settle primitive. STRUCTURAL MIRRORS
+// of HeldOutcome / HeldHoldCapabilities / heldSettleWorkflow in
+// app/http-workflows/held.ts — the ONE parameterized Deferred settle this
+// forgiving surface introduces (Slice 3 reuses it for hook fail-open). The held
+// workflow owns ONLY the Deferred it settles; §6-Q1 keeps the 25s timer, the
+// addWatchWaiter registration and the activeWatchClosers membership IMPERATIVE in
+// watchHook — that imperative half is `arm`, which registers the four racing legs
+// (waiter wake / 25s idle lapse / shutdown closer / socket disconnect) and returns
+// their teardown (run once when the winning leg resolves the hold, BEFORE the
+// transport writes). The TERMINAL FOLD is NOT in the generic workflow: which value
+// each leg settles with, and how a HeldOutcome renders to the wire
+// (settleEffectWatchHold below), both live on the transport — idle-info here, hook
+// fail-open in Slice 3. E = never (settle/abandon are the only completions, both
+// total); the workflow yields a HeldOutcome and does NOT ride the runRequest Exit
+// channel. tsc checks these mirrors against the real interfaces at program.ts's
+// installEffectRoutes() site.
+export type HeldOutcome =
+  | { readonly _tag: 'settle'; readonly value: unknown }
+  | { readonly _tag: 'abandon' };
+export interface HeldHoldRouteCapabilities {
+  readonly arm: (settle: (value: unknown) => void, abandon: () => void) => () => void;
+}
+export type HeldWorkflowEffect = Effect.Effect<HeldOutcome, never, never>;
 export interface HttpEffectRoutes {
   // runRequest routes the workflow Effect through the ingress bridge and settles
   // to an Exit whose error channel is exactly HttpQuiescingFailure: a quiescing
@@ -740,6 +763,14 @@ export interface HttpEffectRoutes {
   readonly repoPreflight: (caps: RepoPreflightRouteCapabilities) => HttpWorkflowEffect;
   // P9.2 Slice 3 ASYNC ROUTE: POST /api/worktrees/remove (see the mirror above).
   readonly worktreeRemove: (caps: WorktreeRemoveRouteCapabilities) => HttpWorkflowEffect;
+  // P10 Slice 2 HELD ROUTE: GET /api/watch long-poll. runHeld discharges the
+  // workflow through the UNTRACKED runControlDetached runner (NOT runRequest): a
+  // parked hold must SURVIVE shutdown so its closer leg can settle it as an idle
+  // watcher while the transport can still write (D2), instead of being
+  // interrupted. watchHold builds the four-leg hold; settleEffectWatchHold folds
+  // its HeldOutcome to the wire (settle → 200 body, abandon → no write).
+  readonly runHeld: (effect: HeldWorkflowEffect) => Promise<HeldOutcome>;
+  readonly watchHold: (caps: HeldHoldRouteCapabilities) => HeldWorkflowEffect;
 }
 
 // CONTROL-API SEAM: the board-spawn lifecycle methods (spawn / revive /
@@ -1324,6 +1355,57 @@ export function createHttp(
         console.error(defect.log, err);
         try {
           json(res, 500, defect.body);
+        } catch {
+          /* socket gone */
+        }
+      });
+  }
+
+  // P10 Slice 2 — HELD-RESPONSE SETTLER (GET /api/watch). The held long-poll's
+  // four racing legs (waiter wake / 25s idle lapse / shutdown closer / socket
+  // disconnect) settle a Deferred<HeldOutcome, never> AT MOST once; the winning
+  // leg's HeldOutcome renders here. UNLIKE the other settlers this rides the
+  // UNTRACKED runHeld runner (ingress.runControlDetached), not runRequest: a
+  // parked hold must NOT be interrupted on shutdown — the shutdown CLOSER leg
+  // settles it as an idle watcher while the transport can still write (D2). There
+  // is NO quiesce classification: watchHook answers a quiescing ingress
+  // SYNCHRONOUSLY pre-hold (below), so a parked hold only ever settles through one
+  // of its own legs. The TERMINAL FOLD lives here + on the arm side (which value
+  // each leg chose), NOT in the generic heldSettleWorkflow — that parameterization
+  // is what lets Slice 3 reuse the primitive for hook fail-open.
+  //   settle  -> json(res, 200, value)   the idle/mail body the winning leg chose
+  //   abandon -> NO WRITE                the socket-disconnect leg (peer is gone)
+  function settleEffectWatchHold(
+    routes: HttpEffectRoutes,
+    effect: HeldWorkflowEffect,
+    res: HttpResShim,
+  ): void {
+    routes
+      .runHeld(effect)
+      .then((outcome) => {
+        if (outcome._tag === 'abandon') return; // socket gone: write nothing (1E-4)
+        try {
+          json(res, 200, outcome.value);
+        } catch {
+          /* socket gone */
+        }
+      })
+      .catch((err: unknown) => {
+        // Unreachable-by-construction: settle/abandon are the only completions and
+        // both are Exit.succeed, so the held workflow never dies. Defensive only —
+        // an impossible defect settles the parked response to the closer's idle
+        // body so shutdown's activeResponses barrier can never wedge on an orphaned
+        // hold whose teardown already retired its closer.
+        //
+        // SLICE 3 WARNING — do NOT clone this .catch body for a hook-hold settler.
+        // This idle payload is the WATCH terminal dialect (GET /api/watch always
+        // answers 200 idle-poll). A hook hold's fail-open contract is {} produced by
+        // mapHookExit; copying this here would render a hook defect as 200 watch-
+        // idle-info instead of the hook fail-open {}. Reuse heldSettleWorkflow, but
+        // give the hook settler its own mapHookExit-based terminal.
+        console.error('fleetd watch error:', err);
+        try {
+          json(res, 200, { status: 'idle', session_alive: false, pending: 0 });
         } catch {
           /* socket gone */
         }
@@ -2388,6 +2470,60 @@ export function createHttp(
     const immediate = attempt();
     if (immediate) {
       json(res, 200, immediate);
+      return;
+    }
+
+    // PARK. P10 Slice 2: the four racing legs settle a Deferred<HeldOutcome> at
+    // most once through the untracked heldSettleWorkflow; the legacy imperative
+    // park below is the rollback seam (effectRoutes unset). Per §6-Q1 the timer,
+    // the waiter registration and the activeWatchClosers membership stay
+    // IMPERATIVE here (the `arm` closure) — the Deferred wraps SETTLEMENT ONLY,
+    // and the `done` latch below still guards the waiter's claimMail SIDE EFFECT
+    // so a wake racing settlement never leases mail into a response that will not
+    // be sent (the legacy `if (settled ...) return` guard). Terminal fold =
+    // idle-info: waiter → attempt() (idle|mail), 25s lapse → idle + FRESH
+    // watchInfo, shutdown → HARDCODED idle, socket close → abandon (no write).
+    if (effectRoutes) {
+      const caps: HeldHoldRouteCapabilities = {
+        arm: (settle, abandon) => {
+          let done = false;
+          let unregister = () => {
+            /* no-op until addWatchWaiter below returns the real unregister */
+          };
+          let timer: ReturnType<typeof setTimeout> | null = null;
+          const settleOnce = (obj: unknown) => {
+            if (done) return;
+            done = true;
+            settle(obj);
+          };
+          const closeForShutdown = () => {
+            settleOnce({ status: 'idle', session_alive: false, pending: 0 });
+          };
+          activeWatchClosers.add(closeForShutdown);
+          timer = setTimeout(() => {
+            settleOnce({ status: 'idle', ...core.watchInfo(sid) });
+          }, holdMs);
+          timer.unref();
+          unregister = core.addWatchWaiter(sid, () => {
+            if (done || res.writableEnded || res.destroyed) return;
+            const out = attempt();
+            if (out) settleOnce(out);
+          });
+          res.on('close', () => {
+            if (done) return;
+            done = true;
+            abandon();
+          });
+          // teardown: run when the winning leg resolves the hold, BEFORE the
+          // settler writes (mirrors legacy finish()'s clear/unregister/delete).
+          return () => {
+            if (timer) clearTimeout(timer);
+            unregister();
+            activeWatchClosers.delete(closeForShutdown);
+          };
+        },
+      };
+      settleEffectWatchHold(effectRoutes, effectRoutes.watchHold(caps), res);
       return;
     }
 

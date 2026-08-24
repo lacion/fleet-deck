@@ -72,6 +72,7 @@ import {
   worktreeRemoveWorkflow,
 } from '../../src/daemon/app/http-workflows/worktrees.ts';
 import { repoPreflightWorkflow } from '../../src/daemon/app/http-workflows/repos.ts';
+import { heldSettleWorkflow } from '../../src/daemon/app/http-workflows/held.ts';
 
 import { startDaemon } from '../helpers/daemon.ts';
 import test, { type TestContext } from '../helpers/harness-test.ts';
@@ -102,6 +103,13 @@ const ALL_ROUTE_BUILDERS = {
   worktreesSnapshot: worktreesSnapshotWorkflow,
   repoPreflight: repoPreflightWorkflow,
   worktreeRemove: worktreeRemoveWorkflow,
+  watchHold: heldSettleWorkflow,
+  // The production held runner (untracked Effect.runPromiseWith(Context.empty())).
+  // Used verbatim, not a runPromiseExit stub, so a future board that parks watch
+  // (or slice 3 hooks) through these builders sees production's SQUASHED-error
+  // rejection, not a raw Cause. runHeld is never CALLED in this suite (no held
+  // route is exercised); the port is present only to compile installEffectRoutes.
+  runHeld: runControlDetached,
 } as const;
 
 // ============================ A. ISOLATION ============================

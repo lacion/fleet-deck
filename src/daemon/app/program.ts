@@ -75,6 +75,7 @@ import {
   settingsSnapshotWorkflow,
   stateWorkflow,
 } from './http-workflows/health-state.ts';
+import { heldSettleWorkflow } from './http-workflows/held.ts';
 import { hookDispatchWorkflow } from './http-workflows/hooks.ts';
 import { pasteImageWorkflow } from './http-workflows/paste.ts';
 import {
@@ -915,6 +916,12 @@ async function bootDaemon(
     repoPreflight: repoPreflightWorkflow,
     // P9.2 Slice 3 ASYNC ROUTE: POST /api/worktrees/remove (core hybrid-converted).
     worktreeRemove: worktreeRemoveWorkflow,
+    // P10 Slice 2 HELD ROUTE: GET /api/watch long-poll. runHeld is the UNTRACKED
+    // control runner (a parked hold must survive shutdown for its closer leg to
+    // settle it — D2), and watchHold is the generic held-settle primitive the
+    // watch surface arms this slice (Slice 3 reuses it for hook fail-open).
+    runHeld: (effect) => ingress.runControlDetached(effect),
+    watchHold: heldSettleWorkflow,
   });
 
   // Every non-internal IPv4 this host answers on. Wildcard and interface-specific

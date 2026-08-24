@@ -96,6 +96,7 @@ import {
   worktreeRemoveWorkflow,
 } from '../../src/daemon/app/http-workflows/worktrees.ts';
 import { repoPreflightWorkflow } from '../../src/daemon/app/http-workflows/repos.ts';
+import { heldSettleWorkflow } from '../../src/daemon/app/http-workflows/held.ts';
 
 import { startDaemon } from '../helpers/daemon.ts';
 import { postJson } from '../helpers/http.ts';
@@ -127,6 +128,10 @@ const ALL_ROUTE_BUILDERS = {
   worktreesSnapshot: worktreesSnapshotWorkflow,
   repoPreflight: repoPreflightWorkflow,
   worktreeRemove: worktreeRemoveWorkflow,
+  watchHold: heldSettleWorkflow,
+  // Production held runner (untracked, squashes on defect) — not a runPromiseExit
+  // stub; see http-workflow-control.test.ts for the full rationale (finding 3).
+  runHeld: runControlDetached,
 } as const;
 
 // The frozen DISTINCT preflight 500 wire — the fold body AND the settler defect body.
