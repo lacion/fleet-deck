@@ -4,7 +4,7 @@
 v1 [plan of record](./README.md). This document is intended to be handed directly to a Codex goal
 and updated as each gate lands.*
 
-**Status:** P0–P9 checkpointed; **P9 complete at `b3666ca8`** (async application shells are Effects — [p9-close.md](./evidence/effect/p9-close.md)); P7 remains the standing §7 platform authorization checkpoint; **P10 next** ([p9-completion-map.md](./evidence/effect/p9-completion-map.md))
+**Status:** P0–P10 checkpointed; **P10 complete at `16656dae`** (holds/fail-open are the held `Deferred` primitive — [p10-close.md](./evidence/effect/p10-close.md); slices 0–4 pushed at `f2592534`, the slice-5 orphan-sweep DEFER is local-only); P7 remains the standing §7 platform authorization checkpoint; **P11 next**
 **Working branch:** `fd/v1-effect-feasibility`
 **Starting point:** v0.23.6
 **Runtime floor:** exact Bun 1.3.14 in CI; `engines.bun >=1.3.14`
@@ -982,25 +982,40 @@ native callback/Response values inside named adapters; every compatibility bridg
 
 **Purpose:** migrate the most policy-sensitive timers only after root/HTTP/store behavior is stable.
 
-- [ ] P10.1 Add fixtures for disconnect, timeout, no-board, persistence failure, duplicate
-  completion, rearm race, daemon shutdown, HTTP close, and defects before/after mutation.
-- [ ] P10.2 Model each hold/rearm lifetime as a child Scope with a `Deferred` result and explicit
-  first-settlement semantics.
-- [ ] P10.3 Move orphan sweeping to a scoped fiber driven by `Effect.repeat`/`Schedule` and the
-  `Clock` service only if doing so preserves deliberate redundant cleanup and fail-open
-  auditability. Effect's `Scheduler` service controls fiber dispatch/yielding; it is not the
-  periodic-timer abstraction.
-- [ ] P10.4 Ensure root quiesce settles all outstanding holds to canonical `200 {}` before HTTP
-  stops, even if Store or terminal teardown fails.
-- [ ] P10.5 Preserve pre-dispatch no-mutation behavior and the exact current post-dispatch
-  mutation/rollback behavior; ensure Causes/secrets never reach the hook client.
+Complete — 6-slice ladder `650fb09b`..`16656dae` (roll-up, DO-NOT-SHIP→SHIP arc, exit-gate
+audit: [p10-close.md](./evidence/effect/p10-close.md); adjudicated design
+[p10-design.md](./evidence/effect/p10-design.md)). Slice 1 (`8c896a80`) landed `GET /mail` as a
+P9-class transport slice (`mailDrainWorkflow` + `MAIL_DRAIN_DEFECT`, §6-Q4), separate from the
+P10.x items below.
 
-**Exit gate:** all existing and new hook/needs-you/board-hold suites pass from source and bundle;
-every shutdown/failure race returns control to the native terminal; no hold timer or Deferred is
-left live.
+- [x] P10.1 Fixtures/characterization floor — slice 0 (`650fb09b`, test-only): lockstep source-pin
+  (650<660<720) + 25 s watch ceiling; in-process socket-disconnect / cap-evict / `failOpenAllHolds`.
+- [x] P10.2 The held `Deferred` primitive landed — `heldSettleWorkflow` (`Deferred<_, never>` under
+  `Effect.scoped`, first-settlement via `Deferred.doneUnsafe`, parameterized on the terminal fold),
+  on `GET /api/watch` (slice 2 `2ab8ec95`, idle fold, adversarial DO-NOT-SHIP→SHIP) and the hook
+  HOLD relay (slice 3 `285122a1`, fail-open `{}` fold behind `EFFECT_CORE_HOLD_RELAY`). Q1
+  settlement-only: the P1 hold Maps stay imperative behind the policy adapter.
+- [x] P10.3 Orphan sweep **DEFERRED** past P10 — slice 5 (`16656dae`, local-only): risk>value per
+  §6-Q2; characterization floor (3 pins) + explicit triggers T1/T2.
+  [p10-slice5-defer.md](./evidence/effect/p10-slice5-defer.md).
+- [x] P10.4 Root quiesce settles all holds to `200 {}` before HTTP stops — delivered by the
+  P4-frozen `ShutdownPhaseOrder` + the slices-2/3 settlers, closed by the slice-4 mixed-load matrix
+  pin (`f2592534`, test-only; P9.6-style collapse-to-pins).
+- [x] P10.5 Fail-open STRENGTHENED — `hookFailOpenBody()` shared by `mapHookExit`'s failure arm and
+  the hold settler's `.catch`; anti-truncation floor pin; `Deferred<_, never>` so no Cause/secret
+  reaches the client; pre-dispatch no-mutation and post-dispatch mutation/rollback preserved.
 
-**Rollback:** keep the explicit P1 hold manager behind the same policy adapter until the entire
-race matrix passes.
+**Exit gate:** MET. Suites pass source AND bundle (**1812/6/0 + 1803/15/0** at `f2592534`; +3
+slice-5 characterization tests local, individually green); every shutdown/failure race settles
+through the Deferred primitive and returns control to the native terminal (D1 lockstep + D2
+mixed-load matrix pinned); no hold timer or Deferred is left live (the one surviving `setInterval`,
+the orphan sweep, is `unref`'d, redundant, characterization-pinned, and a trigger-gated DEFER).
+Full audit: [p10-close.md](./evidence/effect/p10-close.md) §6.
+
+**Rollback:** Per-slice: `EFFECT_CORE_HOLD_RELAY`→`false` (slice 3, verbatim `*Legacy` twins,
+double-gated with `effectRoutes`) + the `effectRoutes=null` transport seam (slices 1–2). Whole-P10:
+revert `650fb09b`, `8c896a80`, `70b37f90`, `2ab8ec95`, `285122a1`, `f2592534`, `16656dae` restores
+the P9 docs-close `8d09b332`.
 
 ### P11 — finish the Bun-native capability trials
 
@@ -1314,7 +1329,7 @@ Update this table only when a work package's exit gate has actually passed:
 | P7 terminal stream | Not started | — | — |
 | P8 store/SQLite | Complete | [p8-strict-trial.md](./evidence/effect/p8-strict-trial.md), [p8-stmt-cache-trial.md](./evidence/effect/p8-stmt-cache-trial.md), [p8-sql-client-trial.md](./evidence/effect/p8-sql-client-trial.md), [p9-completion-map.md](./evidence/effect/p9-completion-map.md) | Per-slice: `STORE_BACKED_*` flags. Whole-slice: revert `05b40bd5`, `346ee85a`, `4ff3e393`, `351b376f`, `145e9fbd`, `50412bd8`, `917c4dc8`, `e0ab862a`, `570d8dae`, `cd0470bb` restores `37e07659`. Do not range-revert `05b40bd5^..cd0470bb` (drops interleaved P6.8 `742168a4`) |
 | P9 application workflows | **Complete at `b3666ca8`** (P9.1–P9.5 converted; P9.6 justified NON-conversion) | [p9-close.md](./evidence/effect/p9-close.md) (roll-up, exit-gate audit, bridge inventory); [p9-1-design.md](./evidence/effect/p9-1-design.md) §9 … [p9-6-design.md](./evidence/effect/p9-6-design.md) | Per-slice: `EFFECT_CORE_*` flags → false (default true, `*Legacy` twins in-tree) for P9.1/P9.4/P9.5-s3; `effectRoutes=null` HTTP seam for P9.2/P9.5-s1+2. Whole-P9.1: revert `7bdff948`..`53148019` + `03ee63f2` restores `79bd7fb9`. Whole-P9.2–P9.5: revert `1b07aaa0`,`cd65f374`,`f23cfc9b`,`991c82be`,`0a18335c`,`8409be88`,`0074a154`,`ae6c36fd`,`b3666ca8` restores `84a4221d` |
-| P10 holds/fail-open | Not started | — | — |
+| P10 holds/fail-open | **Complete at `16656dae`** (P10.1–P10.5; GET /mail P9-class slice 1; orphan sweep DEFERRED; slices 0–4 pushed at `f2592534`, slice-5 DEFER local) | [p10-close.md](./evidence/effect/p10-close.md) (roll-up, exit-gate audit); [p10-design.md](./evidence/effect/p10-design.md); [p10-slice5-defer.md](./evidence/effect/p10-slice5-defer.md) | Per-slice: `EFFECT_CORE_HOLD_RELAY`→false (slice 3, `*Legacy` twins, double-gated) + `effectRoutes=null` transport seam (slices 1–2). Whole-P10: revert `650fb09b`,`8c896a80`,`70b37f90`,`2ab8ec95`,`285122a1`,`f2592534`,`16656dae` restores the P9 docs-close `8d09b332` |
 | P11 Bun capability trials | Not started | — | — |
 | P12 build/distribution | Not started | — | — |
 | P13 cleanup/docs | Not started | — | — |
