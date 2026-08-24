@@ -22,6 +22,8 @@ import { execFileP, baseBranch } from './exec.ts';
 import { scrubUrlCredentials } from './payload-capture.ts';
 import type { Statements, WorktreeSpawnRow } from './statements.ts';
 import type { SqliteHandle } from './sqlite.ts';
+import * as Effect from 'effect/Effect';
+import { type RunControlDetached } from './retention.ts';
 
 // The last-commit tuple the board renders when a worktree has any history.
 interface WorktreeLastCommit {
@@ -86,7 +88,19 @@ interface WorktreesCtx {
   // and tests driving this module directly opt in (so both are optional).
   acquireWorktreePathLock?: (key: string) => Promise<() => void>;
   claimWorktreeCustody?: (path: string, reason: string) => (() => void) | null | undefined;
+  // P9.2 Slice 1: the ingress-owned unsupervised runner the GET /api/worktrees
+  // read Effect core is discharged through. Absent in standalone factory tests
+  // and on the EFFECT_CORE_WORKTREES_READ rollback → the *Legacy body answers
+  // directly (mirrors files' FilesCtx.runControlDetached).
+  runControlDetached?: RunControlDetached;
 }
+
+// P9.2 Slice 1 rollback seam (mirrors files' EFFECT_CORE_FILES / retention's
+// EFFECT_CORE_DISMISS): false → the worktrees() dispatcher bypasses the Effect
+// core and answers through the legacy async body (also reached whenever no
+// runControlDetached runner was injected). worktrees() is a ZERO-GATE core (no
+// sync-terminal gate), so its Effect is a bare coarse Effect.promise tail.
+const EFFECT_CORE_WORKTREES_READ = true;
 
 // Pure path canonicalization (same rule as repo-identity.mjs canon()).
 function canonical(p: string): string {
@@ -148,6 +162,9 @@ async function repoOwnsWorktree(
 
 export function createWorktrees(ctx: WorktreesCtx) {
   const { q, db, tick, onMutate, acquireWorktreePathLock, claimWorktreeCustody } = ctx;
+  // P9.2 Slice 1: the ingress-owned detached runner the read Effect core is
+  // discharged through. Absent in standalone factory tests → legacy fallback.
+  const runControlDetached = ctx.runControlDetached;
 
   // ------------------------------------------------------- worktree custody
   // CONTRACT: inspection is deliberately real git state, not remembered
@@ -333,8 +350,41 @@ export function createWorktrees(ctx: WorktreesCtx) {
     return item;
   }
 
-  async function worktrees() {
+  // runWorktreesRead: the GET /api/worktrees inspector body, extracted VERBATIM
+  // (Leg W-e). It is inherently async — the one await is mapLimit's bounded git
+  // fan-out — so unlike files' pure-sync readAtBody it has no synchronous form.
+  async function runWorktreesRead(): Promise<{ ok: true; worktrees: WorktreeItem[] }> {
     return { ok: true, worktrees: await mapLimit(worktreeRows(), 4, inspectWorktree) };
+  }
+
+  // worktreesReadEffect: the degenerate ZERO-GATE Effect core — a bare coarse
+  // Effect.promise over the run* body, no sync prefix (worktrees() has no
+  // sync-terminal gate to fold). A rejection from the git fan-out dies
+  // (Effect.promise), and runControlDetached rejects with the RAW error
+  // (§6 defect-identity), so the transport fail-soft fold sees the identical
+  // rejection it does on the legacy path.
+  function worktreesReadEffect(): Effect.Effect<
+    { ok: true; worktrees: WorktreeItem[] },
+    never,
+    never
+  > {
+    return Effect.promise(() => runWorktreesRead());
+  }
+
+  // worktreesLegacy: the async twin — the EFFECT_CORE_WORKTREES_READ=false /
+  // runner-absent rollback path (mirrors files' readAtLegacy passthrough).
+  function worktreesLegacy() {
+    return runWorktreesRead();
+  }
+
+  // worktrees: the dispatcher. It KEEPS the public name so the transport
+  // (GET /api/worktrees) and every direct-drive caller are untouched — the
+  // Effect core iff the flag is on AND the ctx carries the detached runner,
+  // else the verbatim legacy body (files' dispatchRead precedent).
+  function worktrees() {
+    return EFFECT_CORE_WORKTREES_READ && runControlDetached
+      ? runControlDetached(worktreesReadEffect())
+      : worktreesLegacy();
   }
 
   // CONTRACT: removal reuses the inspector's daemon verdict, but the DB

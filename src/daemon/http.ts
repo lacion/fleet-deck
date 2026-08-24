@@ -622,6 +622,18 @@ export interface HookDispatchRouteCapabilities {
   readonly valid: () => boolean;
   readonly ingestUnknown: () => void;
 }
+// P9.2 Slice 1 — GET /api/worktrees (fail-soft READ). STRUCTURAL MIRROR of
+// WorktreesSnapshotCapabilities in app/http-workflows/worktrees.ts: `run` starts
+// the core inspector snapshot (core.worktrees()) and `onError` reproduces the
+// legacy `.catch` inspector log. The workflow folds a core rejection to the soft
+// body { ok: true, worktrees: [] } INSIDE itself, so its success value is ALWAYS a
+// 200 body and E stays `never`; the never-500 soft-read settler emits no status of
+// its own. tsc checks this mirror against the real interface at program.ts's
+// installEffectRoutes() site.
+export interface WorktreesSnapshotRouteCapabilities {
+  readonly run: () => Promise<unknown>;
+  readonly onError: (err: unknown) => void;
+}
 export interface HttpEffectRoutes {
   // runRequest routes the workflow Effect through the ingress bridge and settles
   // to an Exit whose error channel is exactly HttpQuiescingFailure: a quiescing
@@ -652,6 +664,8 @@ export interface HttpEffectRoutes {
   readonly spawnRoute: (caps: SpawnRouteCapabilities) => HttpWorkflowEffect;
   // P6.4 HOOK ROUTE GROUP builder (see the mirror interface above).
   readonly hookDispatch: (caps: HookDispatchRouteCapabilities) => HttpWorkflowEffect;
+  // P9.2 Slice 1 READ ROUTE: GET /api/worktrees (fail-soft; see the mirror above).
+  readonly worktreesSnapshot: (caps: WorktreesSnapshotRouteCapabilities) => HttpWorkflowEffect;
 }
 
 // CONTROL-API SEAM: the board-spawn lifecycle methods (spawn / revive /
@@ -966,6 +980,46 @@ export function createHttp(
       });
   }
 
+  // Fail-soft READ settler (GET /api/worktrees, DANGER §4.7): the ONE read whose
+  // EVERY Exit arm renders 200. Unlike settleEffectSnapshotRoute, the defect arm
+  // does NOT reproduce routeRequest's 500 — a broken inspector must never surface
+  // as an error status. The workflow already folded a core rejection to the soft
+  // body { ok: true, worktrees: [] } (its onError logged the inspector line), so:
+  //   success → json(res, 200, value) — the real snapshot OR the folded soft body;
+  //   quiesce → legacy(res) — a snapshot read answers 200 as before shutdown;
+  //   defect  → the (structurally unreachable, core.worktrees is async) sync-throw
+  //             path STILL answers the 200 soft body, never 500; the defect is
+  //             logged with the frozen inspector line so a real regression is not
+  //             swallowed silently.
+  function settleEffectSoftReadRoute(
+    routes: HttpEffectRoutes,
+    operation: string,
+    effect: HttpWorkflowEffect,
+    res: HttpResShim,
+    legacy: (res: HttpResShim) => void,
+  ): void {
+    routes
+      .runRequest(operation, effect)
+      .then((exit) => {
+        const outcome = mapEffectRouteExit(exit);
+        if (outcome.kind === 'success') {
+          json(res, 200, outcome.value);
+          return;
+        }
+        if (outcome.kind === 'quiesce') {
+          legacy(res);
+          return;
+        }
+        // Never-500: an (unreachable) defect still renders the fail-soft wire.
+        console.error('fleetd worktree inspector error:', outcome.defect);
+        json(res, 200, { ok: true, worktrees: [] });
+      })
+      .catch(() => {
+        // The only way here is json() throwing on a dead socket (the defect arm
+        // above is handled inline, never rethrown). Nothing left to write.
+      });
+  }
+
   // GET /health dispatch: legacy when the bridge is unwired, else the workflow.
   function dispatchHealth(res: HttpResShim): void {
     if (!effectRoutes) {
@@ -993,6 +1047,46 @@ export function createHttp(
       effectRoutes.state(stateCapabilities()),
       res,
       legacyStateResponse,
+    );
+  }
+
+  // GET /api/worktrees legacy handler, verbatim — the rollback path (effectRoutes
+  // unwired) and the fail-soft settler's quiesce replay. Fail-SOFT: a rejection
+  // folds to 200 { ok: true, worktrees: [] } + the inspector log; NEVER a 500.
+  function legacyWorktreesResponse(res: HttpResShim): void {
+    core
+      .worktrees()
+      .then((out) => {
+        json(res, 200, out);
+      })
+      .catch((err: unknown) => {
+        console.error('fleetd worktree inspector error:', err);
+        json(res, 200, { ok: true, worktrees: [] });
+      });
+  }
+
+  function worktreesSnapshotCapabilities(): WorktreesSnapshotRouteCapabilities {
+    return {
+      run: () => core.worktrees(),
+      onError: (err) => {
+        console.error('fleetd worktree inspector error:', err);
+      },
+    };
+  }
+
+  // GET /api/worktrees dispatch: legacy when the bridge is unwired, else the
+  // fail-soft workflow settled through the never-500 soft-read settler.
+  function dispatchWorktrees(res: HttpResShim): void {
+    if (!effectRoutes) {
+      legacyWorktreesResponse(res);
+      return;
+    }
+    settleEffectSoftReadRoute(
+      effectRoutes,
+      'GET /api/worktrees',
+      effectRoutes.worktreesSnapshot(worktreesSnapshotCapabilities()),
+      res,
+      legacyWorktreesResponse,
     );
   }
 
@@ -2192,18 +2286,13 @@ export function createHttp(
           return;
         }
         if (url.pathname === '/api/worktrees') {
-          // Inspector failures are represented per row as verdict:unknown;
-          // one broken repository must never turn this fleet-wide view into a
-          // 500 or hide the other worktrees from the human.
-          core
-            .worktrees()
-            .then((out) => {
-              json(res, 200, out);
-            })
-            .catch((err: unknown) => {
-              console.error('fleetd worktree inspector error:', err);
-              json(res, 200, { ok: true, worktrees: [] });
-            });
+          // Inspector failures are represented per row as verdict:unknown; one
+          // broken repository must never turn this fleet-wide view into a 500 or
+          // hide the other worktrees from the human. The fail-soft fold now lives
+          // inside worktreesSnapshotWorkflow; dispatchWorktrees settles it through
+          // the never-500 soft-read settler, or replays this legacy handler when
+          // the Effect bridge is unwired.
+          dispatchWorktrees(res);
           return;
         }
         const sessionFsMatch = /^\/api\/sessions\/([^/]+)\/fs\/(list|read|search)$/.exec(

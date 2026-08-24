@@ -77,6 +77,7 @@ import {
   mailWorkflow,
   settingsWorkflow,
 } from './http-workflows/settings-command-mail-cleanup.ts';
+import { worktreesSnapshotWorkflow } from './http-workflows/worktrees.ts';
 import { lanRefresh } from './lan-refresh.ts';
 import { makeIngressExecFileDelegate } from './legacy-process-facade.ts';
 import {
@@ -895,6 +896,8 @@ async function bootDaemon(
     // P6.4 HOOK ROUTE GROUP: POST /hook/:name (the final route slice). Fails open
     // on every non-success Exit via mapHookExit (see http-workflows/hooks.ts).
     hookDispatch: hookDispatchWorkflow,
+    // P9.2 Slice 1 READ ROUTE: GET /api/worktrees (fail-soft; core unchanged).
+    worktreesSnapshot: worktreesSnapshotWorkflow,
   });
 
   // Every non-internal IPv4 this host answers on. Wildcard and interface-specific
