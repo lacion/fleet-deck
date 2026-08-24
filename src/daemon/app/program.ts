@@ -77,7 +77,7 @@ import {
   mailWorkflow,
   settingsWorkflow,
 } from './http-workflows/settings-command-mail-cleanup.ts';
-import { worktreesSnapshotWorkflow } from './http-workflows/worktrees.ts';
+import { worktreesSnapshotWorkflow, worktreeRemoveWorkflow } from './http-workflows/worktrees.ts';
 import { repoPreflightWorkflow } from './http-workflows/repos.ts';
 import { lanRefresh } from './lan-refresh.ts';
 import { makeIngressExecFileDelegate } from './legacy-process-facade.ts';
@@ -901,6 +901,8 @@ async function bootDaemon(
     worktreesSnapshot: worktreesSnapshotWorkflow,
     // P9.2 Slice 2 ASYNC ROUTE: POST /api/repos/preflight (core degenerate-converted).
     repoPreflight: repoPreflightWorkflow,
+    // P9.2 Slice 3 ASYNC ROUTE: POST /api/worktrees/remove (core hybrid-converted).
+    worktreeRemove: worktreeRemoveWorkflow,
   });
 
   // Every non-internal IPv4 this host answers on. Wildcard and interface-specific

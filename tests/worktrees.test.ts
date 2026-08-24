@@ -9,6 +9,8 @@ import { openDb } from '../src/daemon/db.ts';
 import { createKeyedMutex } from '../src/daemon/helpers.ts';
 import { createStatements, type WorktreeSpawnRow } from '../src/daemon/statements.ts';
 import { createWorktrees } from '../src/daemon/worktrees.ts';
+import { runControlDetached } from '../src/daemon/platform/bun/ingress-supervisor-live.ts';
+import type { RunControlDetached } from '../src/daemon/retention.ts';
 import { claudeTranscriptPath } from '../src/daemon/derive.ts';
 import { startDaemon } from './helpers/daemon.ts';
 import { makeRepoWithWorktree, makePlainDir, makeRemoteRepo } from './helpers/gitrepo.ts';
@@ -717,6 +719,303 @@ test('a revive racing in under removal custody is refused and writes no durable 
   assert.equal(res.body['rows_purged'], 2, 'only the dead spawn + session rows were purged');
   assert.equal(existsSync(repo.worktree), false, 'the tree was removed');
   assert.equal(claims.size, 0, 'custody was released when removal settled');
+});
+
+// The P9.2 Slice 3 hybrid Effect-core seam. Direct-drive tests that omit
+// `runControlDetached` run the VERBATIM legacy tail (removeWorktreeLegacy) — the
+// rollback leg. This twin injects the real runControlDetached (wrapped in a spy)
+// AND the raw `db` handle (production createCore always does), so removeWorktree
+// dispatches through removeWorktreeEffect → runControlDetached and the purge
+// actually takes the `if (db) { BEGIN IMMEDIATE; … }` arm rather than the
+// unordered-by-txn else. The whole run tail is one coarse Effect.promise, so its
+// observable result — the 200 wire, the purged rows, the BEGIN IMMEDIATE txn, and
+// the claim-then-release of the shared custody lease — must be byte- and
+// side-effect-identical to the legacy path. The two Effect-path race tests below
+// re-run the lease discriminations through the same dispatcher.
+test('CORE (effect leg): removal through the injected runControlDetached claims+releases custody and purges rows identically', async (t) => {
+  const repo = makeRepoWithWorktree({ repoName: 'fleetdeck-effect-leg' });
+  const home = mkdtempSync(path.join(tmpdir(), 'fd-effect-leg-home-'));
+  t.after(() => {
+    repo.cleanup();
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+  const db = openDb(path.join(home, 'fleetd.db'));
+  t.after(() => {
+    db.close();
+  });
+  const now = Date.now();
+  // A dead spawn + its offline session — the same clean-removal fixture the legacy
+  // custody tests use, minus any revive race. rows_purged must land at 2.
+  db.prepare(
+    `INSERT INTO sessions
+    (session_id, callsign, cwd, branch, col, note, events, started_at, last_seen, ended_at, source)
+    VALUES ('effect-leg', 'otter', ?, 'wt-branch', 'offline', 'test', 0, ?, ?, ?, 'spawned')`,
+  ).run(repo.worktree, now, now, now);
+  db.prepare(
+    `INSERT INTO spawns
+    (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status)
+    VALUES ('sp-effect-leg', 'effect-leg', 'otter', 'fleetdeck-test', ?, ?, ?, ?, 'pane-dead')`,
+  ).run(repo.root, repo.root, repo.worktree, now);
+
+  const { q } = createStatements(db);
+  // Count the atomic wrapper's SQL so this twin actually proves BEGIN IMMEDIATE
+  // ran — passing `db` is necessary but not sufficient without the spy.
+  const txn = { begin: 0, commit: 0, rollback: 0 };
+  const realExec = db.exec.bind(db);
+  db.exec = (sql: string): void => {
+    if (sql === 'BEGIN IMMEDIATE') txn.begin += 1;
+    else if (sql === 'COMMIT') txn.commit += 1;
+    else if (sql === 'ROLLBACK') txn.rollback += 1;
+    realExec(sql);
+  };
+  // The shared Map-backed lease the daemon wires through derive — the SAME contract
+  // the legacy custody tests assert against. Track claim/release so the effect leg is
+  // proven to run the custody section, not skip it.
+  const claims = new Map<string, () => void>();
+  let claimCalls = 0;
+  const claimWorktreeCustody = (p: string): (() => void) | null => {
+    claimCalls += 1;
+    if (claims.has(p)) return null;
+    let released = false;
+    const release = (): void => {
+      if (!released) {
+        released = true;
+        claims.delete(p);
+      }
+    };
+    claims.set(p, release);
+    return release;
+  };
+
+  // The Effect-core seam: a spy over the real runControlDetached. Its presence flips
+  // the dispatcher onto removeWorktreeEffect; the count proves the effect leg ran.
+  let runnerCalls = 0;
+  const spyRunner: RunControlDetached = (effect) => {
+    runnerCalls += 1;
+    return runControlDetached(effect);
+  };
+
+  const { removeWorktree } = createWorktrees({
+    q,
+    db,
+    tick: noop,
+    onMutate: noop,
+    claimWorktreeCustody,
+    runControlDetached: spyRunner,
+    ...freshMutexCtx(),
+  });
+  const res = await removeWorktree({ path: repo.worktree, force: true });
+
+  assert.equal(
+    runnerCalls,
+    1,
+    'the dispatcher routed through the injected runner (effect leg ran)',
+  );
+  assert.equal(
+    res.status,
+    200,
+    `removal completes on the effect leg (got ${JSON.stringify(res.body)})`,
+  );
+  assert.equal(res.body['ok'], true);
+  assert.equal(
+    res.body['rows_purged'],
+    2,
+    'the BEGIN IMMEDIATE purgeRows txn ran under the effect discharge',
+  );
+  assert.equal(txn.begin, 1, 'the Effect discharge issued exactly one BEGIN IMMEDIATE');
+  assert.equal(txn.commit, 1, 'the purge txn committed');
+  assert.equal(txn.rollback, 0, 'the purge txn did not roll back');
+  assert.equal(existsSync(repo.worktree), false, 'the tree was removed on the effect leg');
+  assert.equal(
+    claimCalls,
+    1,
+    'the custody lease was claimed exactly once inside the effect-discharged run tail',
+  );
+  assert.equal(
+    claims.size,
+    0,
+    'the effect leg released custody when removal settled — no wedged path',
+  );
+  assert.equal(
+    db.prepare("SELECT 1 FROM spawns WHERE spawn_id = 'sp-effect-leg'").get(),
+    undefined,
+    'the dead spawn row was purged',
+  );
+});
+
+// The same two lease discriminations as the legacy race tests, now through the
+// Effect dispatcher. Production always injects runControlDetached (program.ts),
+// so a wrapper tick would be invisible to the runner-absent cases; the lease
+// window itself is inside the verbatim tail (no new await in front of the claim),
+// so revive-wins and remove-wins must agree with the legacy cases. The path lock
+// is left unwired, matching those cases — the lease is the fallback discriminator.
+test('CORE (effect leg): a revive racing in under removal custody is refused and writes no durable row', async (t) => {
+  const repo = makeRepoWithWorktree({ repoName: 'fleetdeck-effect-revive-blocked' });
+  const home = mkdtempSync(path.join(tmpdir(), 'fd-effect-revive-blocked-home-'));
+  t.after(() => {
+    repo.cleanup();
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+  const db = openDb(path.join(home, 'fleetd.db'));
+  t.after(() => {
+    db.close();
+  });
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO sessions
+    (session_id, callsign, cwd, branch, col, note, events, started_at, last_seen, ended_at, source)
+    VALUES ('effect-blocked-revive', 'otter', ?, 'wt-branch', 'offline', 'test', 0, ?, ?, ?, 'spawned')`,
+  ).run(repo.worktree, now, now, now);
+  db.prepare(
+    `INSERT INTO spawns
+    (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status)
+    VALUES ('sp-effect-blocked-revive', 'effect-blocked-revive', 'otter', 'fleetdeck-test', ?, ?, ?, ?, 'pane-dead')`,
+  ).run(repo.root, repo.root, repo.worktree, now);
+
+  const { q } = createStatements(db);
+  const claims = new Map<string, () => void>();
+  const claimWorktreeCustody = (p: string): (() => void) | null => {
+    if (claims.has(p)) return null;
+    let released = false;
+    const release = (): void => {
+      if (!released) {
+        released = true;
+        claims.delete(p);
+      }
+    };
+    claims.set(p, release);
+    return release;
+  };
+  let reviveRefused = false;
+  let calls = 0;
+  const realStmt = q.worktreeSpawns;
+  q.worktreeSpawns = {
+    ...realStmt,
+    all: (...args: SqlValue[]): WorktreeSpawnRow[] => {
+      calls += 1;
+      if (calls >= 4 && !reviveRefused) {
+        if (claimWorktreeCustody(repo.worktree) === null) reviveRefused = true;
+        else {
+          db.prepare(
+            `INSERT INTO spawns
+            (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status)
+            VALUES ('sp-effect-revive-should-not-exist', 'effect-blocked-revive', 'otter', 'fleetdeck-test', ?, ?, ?, ?, 'provisioning')`,
+          ).run(repo.root, repo.root, repo.worktree, now + 1);
+        }
+      }
+      return realStmt.all(...args);
+    },
+  };
+
+  let runnerCalls = 0;
+  const spyRunner: RunControlDetached = (effect) => {
+    runnerCalls += 1;
+    return runControlDetached(effect);
+  };
+
+  const { removeWorktree } = createWorktrees({
+    q,
+    db,
+    tick: noop,
+    onMutate: noop,
+    claimWorktreeCustody,
+    runControlDetached: spyRunner,
+  });
+  const res = await removeWorktree({ path: repo.worktree, force: true });
+
+  assert.equal(runnerCalls, 1, 'the dispatcher routed through the injected runner');
+  assert.equal(reviveRefused, true, 'the revive was refused while removal held custody');
+  assert.equal(
+    db.prepare("SELECT 1 FROM spawns WHERE spawn_id = 'sp-effect-revive-should-not-exist'").get(),
+    undefined,
+    'a refused revive never writes its durable row',
+  );
+  assert.equal(res.status, 200, `removal completes (got ${JSON.stringify(res.body)})`);
+  assert.equal(res.body['rows_purged'], 2, 'only the dead spawn + session rows were purged');
+  assert.equal(existsSync(repo.worktree), false, 'the tree was removed');
+  assert.equal(claims.size, 0, 'custody was released when removal settled');
+});
+
+test('CORE (effect leg): a removal arriving during a revive is refused — a successful revive keeps its directory', async (t) => {
+  const repo = makeRepoWithWorktree({ repoName: 'fleetdeck-effect-revive-wins' });
+  const home = mkdtempSync(path.join(tmpdir(), 'fd-effect-revive-wins-home-'));
+  t.after(() => {
+    repo.cleanup();
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+  const db = openDb(path.join(home, 'fleetd.db'));
+  t.after(() => {
+    db.close();
+  });
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO sessions
+    (session_id, callsign, cwd, branch, col, note, events, started_at, last_seen, ended_at, source)
+    VALUES ('effect-winning-revive', 'otter', ?, 'wt-branch', 'offline', 'test', 0, ?, ?, ?, 'spawned')`,
+  ).run(repo.worktree, now, now, now);
+  db.prepare(
+    `INSERT INTO spawns
+    (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status)
+    VALUES ('sp-effect-winning-revive', 'effect-winning-revive', 'otter', 'fleetdeck-test', ?, ?, ?, ?, 'pane-dead')`,
+  ).run(repo.root, repo.root, repo.worktree, now);
+
+  const { q } = createStatements(db);
+  const claims = new Map<string, () => void>();
+  const claimWorktreeCustody = (p: string): (() => void) | null => {
+    if (claims.has(p)) return null;
+    let released = false;
+    const release = (): void => {
+      if (!released) {
+        released = true;
+        claims.delete(p);
+      }
+    };
+    claims.set(p, release);
+    return release;
+  };
+  const reviveRelease = claimWorktreeCustody(repo.worktree);
+  assert.ok(reviveRelease, 'the revive claimed custody first');
+
+  let runnerCalls = 0;
+  const spyRunner: RunControlDetached = (effect) => {
+    runnerCalls += 1;
+    return runControlDetached(effect);
+  };
+
+  const { removeWorktree } = createWorktrees({
+    q,
+    db,
+    tick: noop,
+    onMutate: noop,
+    claimWorktreeCustody,
+    runControlDetached: spyRunner,
+  });
+  const res = await removeWorktree({ path: repo.worktree, force: true });
+
+  assert.equal(runnerCalls, 1, 'the dispatcher routed through the injected runner');
+  assert.equal(
+    res.status,
+    409,
+    `removal must yield to the in-flight revive (got ${JSON.stringify(res.body)})`,
+  );
+  assert.equal(res.body['ok'], false);
+  assert.equal(res.body['reason'], 'session became live during removal');
+  assert.equal(existsSync(repo.worktree), true, 'the revived worktree keeps its directory');
+  assert.ok(
+    db.prepare('SELECT 1 FROM spawns WHERE worktree_path = ?').get(repo.worktree),
+    'the spawn rows survive',
+  );
+  db.prepare(
+    `INSERT INTO spawns
+    (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status)
+    VALUES ('sp-effect-revive-won', 'effect-winning-revive', 'otter', 'fleetdeck-test', ?, ?, ?, ?, 'spawning')`,
+  ).run(repo.root, repo.root, repo.worktree, now + 1);
+  reviveRelease();
+  const retry = await removeWorktree({ path: repo.worktree, force: true });
+  assert.equal(runnerCalls, 2, 'the retry also discharged through the injected runner');
+  assert.equal(retry.status, 409);
+  assert.equal(retry.body['reason'], 'session is still alive');
+  assert.equal(existsSync(repo.worktree), true, 'the live tree is never removed');
 });
 
 // And the reverse order, the half the audit's test must pin: a successful

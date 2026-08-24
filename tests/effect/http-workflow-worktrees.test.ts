@@ -60,7 +60,10 @@ import {
   mailWorkflow,
   settingsWorkflow,
 } from '../../src/daemon/app/http-workflows/settings-command-mail-cleanup.ts';
-import { worktreesSnapshotWorkflow } from '../../src/daemon/app/http-workflows/worktrees.ts';
+import {
+  worktreesSnapshotWorkflow,
+  worktreeRemoveWorkflow,
+} from '../../src/daemon/app/http-workflows/worktrees.ts';
 import { repoPreflightWorkflow } from '../../src/daemon/app/http-workflows/repos.ts';
 
 import { startDaemon } from '../helpers/daemon.ts';
@@ -88,6 +91,7 @@ const ALL_ROUTE_BUILDERS = {
   hookDispatch: hookDispatchWorkflow,
   worktreesSnapshot: worktreesSnapshotWorkflow,
   repoPreflight: repoPreflightWorkflow,
+  worktreeRemove: worktreeRemoveWorkflow,
 } as const;
 
 // The frozen fail-soft / empty-snapshot wire — the soft body the fold renders AND

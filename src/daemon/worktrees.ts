@@ -77,6 +77,27 @@ interface RemoveResult {
   body: Record<string, unknown>;
 }
 
+// P9.2 Slice 3: the file-local ControlStep for the POST /api/worktrees/remove
+// hybrid core, spelled here (worktrees.ts is DOMAIN, must not relative-import the
+// app zone) exactly as mail.ts:222-232 spells PaneDeliveryStep and
+// spawns.ts:125-134 its ControlStep<A>. removeWorktree has ONE sync-terminal gate
+// before its first await (a non-string path → 400 'not a fleet worktree'), so the
+// step collapses to: either a terminal RemoveResult wire (that 400 answered
+// synchronously) or one coarse `run` thunk carrying EVERY remaining await — the
+// path lock, the liveness gates, the git remove/prune/branch ops, the custody
+// lease, and the BEGIN IMMEDIATE purge txn.
+type RemoveStep =
+  | { readonly done: true; readonly wire: RemoveResult }
+  | { readonly done: false; readonly run: () => Promise<RemoveResult> };
+
+// The shared discharge for the remove tail: a terminal wire succeeds immediately;
+// the coarse `run` thunk is awaited as ONE Effect.promise. A rejection becomes a
+// die (E stays never), and runControlDetached rejects with the RAW error (§6
+// defect-identity), so the transport removal-500 fold sees the identical rejection
+// it does on the legacy path. Mirrors mail.ts:231-232 with the RemoveResult wire.
+const dischargeStep = (step: RemoveStep): Effect.Effect<RemoveResult, never, never> =>
+  step.done ? Effect.succeed(step.wire) : Effect.promise(step.run);
+
 interface WorktreesCtx {
   q: Statements['q'];
   // The atomic purge wrapper needs the raw handle; direct-drive tests omit it
@@ -101,6 +122,14 @@ interface WorktreesCtx {
 // runControlDetached runner was injected). worktrees() is a ZERO-GATE core (no
 // sync-terminal gate), so its Effect is a bare coarse Effect.promise tail.
 const EFFECT_CORE_WORKTREES_READ = true;
+
+// P9.2 Slice 3 rollback seam (mirrors EFFECT_CORE_WORKTREES_READ / spawns'
+// EFFECT_CORE_SPAWN): false → the removeWorktree dispatcher bypasses the Effect
+// core and answers through the legacy async body (also reached whenever no
+// runControlDetached runner was injected). removeWorktree is a HYBRID core
+// (§6-OQ-1): its sync prefix is the single non-string-path 400 gate, its coarse
+// runRemoveWorktree tail every await through the BEGIN IMMEDIATE purge txn.
+const EFFECT_CORE_WORKTREES_REMOVE = true;
 
 // Pure path canonicalization (same rule as repo-identity.mjs canon()).
 function canonical(p: string): string {
@@ -463,10 +492,14 @@ export function createWorktrees(ctx: WorktreesCtx) {
     };
   }
 
-  async function removeWorktree(body: RemoveBody | null = {}): Promise<RemoveResult> {
-    if (typeof body?.path !== 'string') {
-      return { status: 400, body: { ok: false, reason: 'not a fleet worktree' } };
-    }
+  // runRemoveWorktree: the POST /api/worktrees/remove destructive tail, extracted
+  // VERBATIM (Leg W-h) from the legacy body — the path lock, the liveness gates,
+  // the inspect/git-remove/prune/branch ops, the custody lease, and the BEGIN
+  // IMMEDIATE purge txn. `worktreePath` is the string the sync gate in
+  // removeWorktreeStep already proved, so the tail opens on the path lock directly.
+  // Byte-frozen (§4): the custody-lease no-await claim (§4.2) and the
+  // expiry-before-delete purge ordering (§4.1) MUST stay exactly as-is.
+  async function runRemoveWorktree(worktreePath: string, body: RemoveBody): Promise<RemoveResult> {
     // BUG-060: hold this path's canonical claim for the WHOLE removal — the
     // liveness gates, the awaited inspect/git-remove/prune/branch ops, and the
     // DB purge. The pre-remove recheck below was never enough on its own: a
@@ -477,7 +510,6 @@ export function createWorktrees(ctx: WorktreesCtx) {
     // so it either queues behind the removal (and then fails its own
     // "cwd no longer exists" validation) or lands before it (and the liveness
     // gates then refuse the removal). Released on every exit path.
-    const worktreePath = body.path;
     const releasePath = acquireWorktreePathLock
       ? await acquireWorktreePathLock(canonicalPathKey(worktreePath))
       : () => {
@@ -752,10 +784,10 @@ export function createWorktrees(ctx: WorktreesCtx) {
           for (const sessionId of sessionIds)
             sessionsPurged += Number(q.deleteEndedSession.run(sessionId).changes);
         };
-        // The atomic wrapper needs the raw handle; production and the full-core
-        // tests wire `db`, while the direct-drive createWorktrees tests do not —
-        // there the same statements run outside an explicit transaction (a
-        // single-threaded test needs no isolation), so the expiry-before-delete
+        // The atomic wrapper needs the raw handle; production and the Effect-leg
+        // twin (worktrees.test.ts) wire `db`. Most other direct-drive createWorktrees
+        // tests omit it and run the same statements outside an explicit transaction
+        // (a single-threaded test needs no isolation), so the expiry-before-delete
         // ordering is preserved either way.
         if (db) {
           db.exec('BEGIN IMMEDIATE');
@@ -794,6 +826,54 @@ export function createWorktrees(ctx: WorktreesCtx) {
     } finally {
       releasePath();
     }
+  }
+
+  // removeWorktreeStep: the shared producer (§8 item 3 — no full-body twin). The
+  // ONE sync-terminal gate (a non-string path → 400 'not a fleet worktree') answers
+  // as a terminal wire; everything else is the coarse runRemoveWorktree tail,
+  // returned as one `run` thunk. removeWorktreeLegacy and removeWorktreeEffect
+  // compose the SAME producer, so the gate and the tail are spelled once (§4).
+  function removeWorktreeStep(body: RemoveBody | null = {}): RemoveStep {
+    if (typeof body?.path !== 'string') {
+      return {
+        done: true,
+        wire: { status: 400, body: { ok: false, reason: 'not a fleet worktree' } },
+      };
+    }
+    const worktreePath = body.path;
+    return { done: false, run: () => runRemoveWorktree(worktreePath, body) };
+  }
+
+  // The two THIN composers over the SAME removeWorktreeStep. removeWorktreeEffect
+  // wraps the sync producer in one Effect.sync and discharges its tail through the
+  // shared dischargeStep: the terminal 400 wire succeeds; the coarse
+  // runRemoveWorktree runs as one Effect.promise. E stays never — a genuine throw
+  // inside the tail escapes as a DIE (never folded), so the transport removal
+  // settler renders the generic 500 dialect; a RESOLVED purge-500 relays as data
+  // (GAP-3a vs GAP-3b stay distinct). No catch/fold here.
+  function removeWorktreeEffect(
+    body: RemoveBody | null = {},
+  ): Effect.Effect<RemoveResult, never, never> {
+    return Effect.sync(() => removeWorktreeStep(body)).pipe(Effect.flatMap(dischargeStep));
+  }
+
+  // The legacy async body: run the SAME producer and await its tail directly.
+  // Reached whenever EFFECT_CORE_WORKTREES_REMOVE is off or no ingress runner was
+  // injected — behaviourally identical to the pre-Slice-3 monolith.
+  async function removeWorktreeLegacy(body: RemoveBody | null = {}): Promise<RemoveResult> {
+    const step = removeWorktreeStep(body);
+    return step.done ? step.wire : step.run();
+  }
+
+  // POST /api/worktrees/remove dispatcher — KEEPS the public name `removeWorktree`
+  // so the transport route and every direct-drive caller are untouched. Runs the
+  // Effect core through the ingress-owned detached runner when enabled AND wired,
+  // exactly as worktrees()/spawn() do; falls back to the legacy async body
+  // otherwise. No new Effect.runPromise* call site is added (ingress pin stays 2).
+  function removeWorktree(body: RemoveBody | null = {}): Promise<RemoveResult> {
+    return EFFECT_CORE_WORKTREES_REMOVE && runControlDetached
+      ? runControlDetached(removeWorktreeEffect(body))
+      : removeWorktreeLegacy(body);
   }
 
   return { worktrees, removeWorktree };

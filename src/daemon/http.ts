@@ -646,6 +646,20 @@ export interface RepoPreflightRouteCapabilities {
   readonly run: () => Promise<{ status: number; body?: unknown }>;
   readonly onError: (err: unknown) => void;
 }
+// P9.2 Slice 3 — POST /api/worktrees/remove (async allow-listed destruction).
+// STRUCTURAL MIRROR of WorktreeRemoveCapabilities in
+// app/http-workflows/worktrees.ts: `run` starts the core removal
+// (core.removeWorktree) and `onError` reproduces the legacy `.catch` removal log.
+// The workflow folds a core REJECTION to the generic 500 body
+// { ok: false, reason: 'internal' } INSIDE itself — remove's OWN GAP-3a dialect,
+// NOT preflight's 'Git access check failed internally' NOR controlAsync's bare
+// {reason:'internal'} — while a RESOLVED purge-500 relays verbatim (GAP-3b). Its
+// success value is always a { status, body } wire and E stays `never`. tsc checks
+// this mirror against the real interface at program.ts's installEffectRoutes() site.
+export interface WorktreeRemoveRouteCapabilities {
+  readonly run: () => Promise<{ status: number; body?: unknown }>;
+  readonly onError: (err: unknown) => void;
+}
 export interface HttpEffectRoutes {
   // runRequest routes the workflow Effect through the ingress bridge and settles
   // to an Exit whose error channel is exactly HttpQuiescingFailure: a quiescing
@@ -680,6 +694,8 @@ export interface HttpEffectRoutes {
   readonly worktreesSnapshot: (caps: WorktreesSnapshotRouteCapabilities) => HttpWorkflowEffect;
   // P9.2 Slice 2 ASYNC ROUTE: POST /api/repos/preflight (see the mirror above).
   readonly repoPreflight: (caps: RepoPreflightRouteCapabilities) => HttpWorkflowEffect;
+  // P9.2 Slice 3 ASYNC ROUTE: POST /api/worktrees/remove (see the mirror above).
+  readonly worktreeRemove: (caps: WorktreeRemoveRouteCapabilities) => HttpWorkflowEffect;
 }
 
 // CONTROL-API SEAM: the board-spawn lifecycle methods (spawn / revive /
@@ -1408,6 +1424,56 @@ export function createHttp(
         onRejected: (target, err) => {
           onError(err);
           json(target, 500, { ok: false, reason: 'Git access check failed internally' });
+        },
+      },
+    );
+  }
+
+  // P9.2 Slice 3 REMOVE SETTLER (POST /api/worktrees/remove). Modeled on
+  // settleEffectPreflightRoute (start-once witness + JOIN-on-interrupt + quiesce 503)
+  // over the SAME generic settleEffectAsyncMutatingRoute, added ALONGSIDE for the
+  // identical reason (§6-OQ-3 fallback: settleControlAsyncRoute also hardcodes
+  // routes.controlAsync, so default-preserving parameterization is not cleanly
+  // provable — the generic settler stays byte-identical). The ONE divergence from
+  // preflight is remove's 500 dialect: its defect body AND its joined-rejection body
+  // are BOTH { ok: false, reason: 'internal' } (the legacy remove route's single
+  // `.catch`, slice-0 GAP-3a), NOT PREFLIGHT_DEFECT's 'Git access check failed
+  // internally' nor CONTROL_DEFECT's {err:'internal'}. A RESOLVED purge-500 is a
+  // SUCCESS wire and rides onFulfilled verbatim with NO log (slice-0 GAP-3b), so the
+  // two 500 sources stay byte- and log-distinct. `run` is the raw core.removeWorktree
+  // call; onError logs the frozen 'fleetd worktree removal error:' prefix. NOTE
+  // (mirrors settleEffectPreflightRoute): worktreeRemoveWorkflow ALSO folds a native
+  // rejection through the SAME onError, so an interrupt racing a native REJECTION
+  // logs the prefix twice — a harmless duplicate log line during shutdown only; the
+  // response bytes stay single.
+  const REMOVE_DEFECT = {
+    log: 'fleetd worktree removal error:',
+    body: { ok: false, reason: 'internal' },
+  };
+  function settleEffectRemoveRoute(
+    routes: HttpEffectRoutes,
+    operation: string,
+    res: HttpResShim,
+    run: () => ControlResult,
+  ): void {
+    const onError = (err: unknown): void => {
+      console.error(REMOVE_DEFECT.log, err);
+    };
+    const recorder = startOnce(run);
+    settleEffectAsyncMutatingRoute(
+      routes,
+      operation,
+      routes.worktreeRemove({ run: recorder.invoke, onError }),
+      res,
+      recorder,
+      {
+        defect: REMOVE_DEFECT,
+        onFulfilled: (target, out) => {
+          json(target, out.status, out.body);
+        },
+        onRejected: (target, err) => {
+          onError(err);
+          json(target, 500, { ok: false, reason: 'internal' });
         },
       },
     );
@@ -2588,6 +2654,22 @@ export function createHttp(
             if (url.pathname === '/api/worktrees/remove') {
               // Security and data-loss gates live together in derive: only a
               // spawn-owned path reaches git, and force is an exact boolean.
+              // P9.2 Slice 3: Effect workflow when wired; the legacy async handler
+              // below is the rollback seam (effectRoutes unset → installEffectRoutes
+              // not called). ASYNC mutation with a destructive tail that must not be
+              // double-started, so it rides settleEffectRemoveRoute (start-once
+              // witness + JOIN-on-interrupt + quiesce 503), NOT settleControlAsyncRoute.
+              // Its rejection fold is the generic 500 {ok:false,reason:'internal'}
+              // (slice-0 GAP-3a); a RESOLVED purge-500 relays verbatim with no log
+              // (GAP-3b). There is NO transport body wall here — the non-string-path
+              // 400 is the CORE's own sync gate (removeWorktreeStep), answered
+              // identically on both the effect and the legacy dispatcher paths.
+              if (effectRoutes) {
+                settleEffectRemoveRoute(effectRoutes, 'POST /api/worktrees/remove', res, () =>
+                  core.removeWorktree(ev as Parameters<typeof core.removeWorktree>[0]),
+                );
+                return;
+              }
               core
                 .removeWorktree(ev as Parameters<typeof core.removeWorktree>[0])
                 .then((out) => {

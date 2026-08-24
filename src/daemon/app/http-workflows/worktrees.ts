@@ -1,5 +1,6 @@
-// http-workflows/worktrees.ts — the WORKTREES READ route group (P9.2 Slice 1):
-// GET /api/worktrees, the fleet-wide worktree inspector snapshot.
+// http-workflows/worktrees.ts — the WORKTREES route group: GET /api/worktrees,
+// the fleet-wide worktree inspector snapshot (P9.2 Slice 1), and
+// POST /api/worktrees/remove, the allow-listed destruction (P9.2 Slice 3).
 //
 // FAIL-SOFT (DANGER §4.7 — the one read whose EVERY arm renders 200): the core
 // dispatcher core.worktrees() is a bounded git fan-out over every remembered
@@ -49,6 +50,77 @@ export const worktreesSnapshotWorkflow = (
           (err): unknown => {
             caps.onError(err);
             return { ok: true, worktrees: [] };
+          },
+        ),
+      ),
+    ),
+  );
+
+// ---------------------------------------------------------------------------
+// POST /api/worktrees/remove (P9.2 Slice 3)
+//
+// EXPECTED FAILURES ARE DATA, NOT EFFECT ERRORS (control.ts convention). The core
+// removeWorktree call already speaks a { status, body } contract: derive returns a
+// concrete wire encoding every expected outcome — the 400 (not a fleet worktree),
+// the 409 refusals, the 200 success, AND a RESOLVED purge-path 500
+// {ok:false,reason:`could not purge worktree rows: …`} — and that wire is the
+// SUCCESS value of the workflow, relayed verbatim (GAP-3b: the purge-500 passes
+// through with NO fold and NO log, byte-distinct from the rejection fold). E =
+// never: no ok:false is lifted into a typed error.
+//
+// WHY A DISTINCT BUILDER (not controlAsyncWorkflow, not repoPreflightWorkflow).
+// The fold BODY is byte-equal to controlAsyncWorkflow's
+// `{ status: 500, body: { ok: false, reason: 'internal' } }` (control.ts:106 ≡
+// the return below) — reusing controlAsync would NOT move GAP-3a bytes. What
+// must stay distinct is the builder/port (`routes.worktreeRemove`) and the log
+// prefix (`fleetd worktree removal error:` vs controlAsync's line vs preflight's
+// `Git access check failed internally`). Reusing controlAsyncWorkflow would only
+// be wrong if it stole CONTROL_DEFECT's log/`{err:internal}` settler; reusing
+// repoPreflightWorkflow WOULD collapse GAP-3a to preflight's distinct 500
+// (DANGER §4.6 / slice-0 GAP-3a). onError reproduces the legacy
+// 'fleetd worktree removal error:' log.
+
+/**
+ * The success value of the remove workflow: the exact (status, body) pair the
+ * transport passes to json(res, status, body). `body` is optional and preserved
+ * verbatim (byte-for-byte with the legacy `json(res, out.status, out.body)`).
+ */
+export interface WorktreeRemoveWire {
+  readonly status: number;
+  readonly body?: unknown;
+}
+
+/**
+ * POST /api/worktrees/remove capabilities. `run` starts the core removal
+ * (core.removeWorktree) and returns its promise; `onError` reproduces the legacy
+ * `.catch`'s `console.error('fleetd worktree removal error:', err)`. R = never,
+ * E = never.
+ */
+export interface WorktreeRemoveCapabilities {
+  readonly run: () => Promise<WorktreeRemoveWire>;
+  readonly onError: (err: unknown) => void;
+}
+
+/**
+ * POST /api/worktrees/remove. The core call runs under Effect.sync so a
+ * (structurally unreachable — removeWorktree is a Promise-returning dispatcher)
+ * synchronous throw would die to the settler's defect arm; its promise is awaited
+ * under Effect.promise, and a rejection is folded exactly as the legacy `.catch`
+ * did: onError logs 'fleetd worktree removal error:' and the SUCCESS value carries
+ * the generic 500 wire { ok: false, reason: 'internal' } (GAP-3a). On resolve the
+ * removal wire — including a RESOLVED purge-500 — is relayed verbatim (GAP-3b).
+ */
+export const worktreeRemoveWorkflow = (
+  caps: WorktreeRemoveCapabilities,
+): Effect.Effect<WorktreeRemoveWire, never, never> =>
+  Effect.sync(() => caps.run()).pipe(
+    Effect.flatMap((pending) =>
+      Effect.promise(() =>
+        pending.then(
+          (out): WorktreeRemoveWire => out,
+          (err): WorktreeRemoveWire => {
+            caps.onError(err);
+            return { status: 500, body: { ok: false, reason: 'internal' } };
           },
         ),
       ),

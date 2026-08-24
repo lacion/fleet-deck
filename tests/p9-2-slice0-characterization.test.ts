@@ -7,19 +7,21 @@
 //
 //   GAP-2  GET  /api/worktrees        fail-SOFT: any worktrees() rejection folds to
 //          200 {ok:true,worktrees:[]} + log 'fleetd worktree inspector error:'
-//          (http.ts:2194-2208). NEVER a 500 — the one route where a defect must
-//          not surface as an error status.
+//          (http.ts:2416-2424 dispatch → legacyWorktreesResponse :1086-1095).
+//          NEVER a 500 — the one route where a defect must not surface as an
+//          error status.
 //   GAP-1  POST /api/repos/preflight   an unexpected preflightRepo() rejection folds
 //          to the DISTINCT 500 {ok:false,reason:'Git access check failed internally'}
-//          + log 'fleetd repo preflight error:' (http.ts:2526-2549). Distinct from
-//          remove's 'internal' — the controlAsync fold hardcodes 'internal', so this
-//          route cannot reuse it (§1C byte-diff, DANGER §4.6).
+//          + log 'fleetd repo preflight error:' (http.ts:2759-2801, the route
+//          .catch). Distinct from remove's 'internal' — the controlAsync fold
+//          hardcodes 'internal', so this route cannot reuse it (§1C byte-diff,
+//          DANGER §4.6).
 //   GAP-3  POST /api/worktrees/remove  TWO distinct 500 sources that must not collapse:
 //            (a) an unexpected removeWorktree() rejection folds to the generic
 //                500 {ok:false,reason:'internal'} + log 'fleetd worktree removal error:'
-//                (http.ts:2437-2450, the route .catch).
+//                (http.ts:2654-2682, the route .catch).
 //            (b) a RESOLVED purge-path 500 {ok:false,reason:`could not purge worktree
-//                rows: ${detail}`} (worktrees.ts:722-725) passes through the route's
+//                rows: ${detail}`} (worktrees.ts:804-807) passes through the route's
 //                .then verbatim — no fold, no error log.
 //
 // PRODUCTION ROUTE PATH: every pin drives the real createHttp dispatcher over a
@@ -188,7 +190,7 @@ test("GAP-3a: POST /api/worktrees/remove folds a removeWorktree() rejection to t
 test('GAP-3b: POST /api/worktrees/remove passes a RESOLVED purge-path 500 through verbatim — distinct body, no fold, no removal log', async (t) => {
   const { core, port } = await startBoard(t);
   // The purge-path 500 is a RESOLVED {status,body} the core returns from its
-  // BEGIN IMMEDIATE catch (worktrees.ts:722-725) — NOT a rejection. Its body
+  // BEGIN IMMEDIATE catch (worktrees.ts:804-807) — NOT a rejection. Its body
   // template is `could not purge worktree rows: ${detail}`, reproduced here so
   // the anchor tracks the source expression byte-for-byte.
   const detail = 'disk I/O error';
