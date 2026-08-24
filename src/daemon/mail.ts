@@ -6,9 +6,15 @@
 // adapter + findScopedWindow (owned-pane probe), db (the atomic claim), and the
 // PANE_MAIL_GRACE_MS knob.
 
+import * as Effect from 'effect/Effect';
 import type { Statements, MailRow } from './statements.ts';
 import type { SqliteHandle } from './sqlite.ts';
 import { asText, dropOrphanSurrogate } from './helpers.ts';
+// P9.4: the type of the ingress-owned unsupervised runner the pane-delivery
+// Effect core is discharged through. Type-only (erased under
+// verbatimModuleSyntax), so mail↔retention stays a runtime-free type edge —
+// exactly as spawns.ts:33 already imports it.
+import { type RunControlDetached } from './retention.ts';
 
 // BUG 4: mail is pasted VERBATIM into a tmux paste-buffer, so it must stay
 // bounded — but the old 500-char clamp silently truncated real messages (it
@@ -175,6 +181,12 @@ interface MailCtx {
   tmuxAdapter: TmuxAdapter;
   findScopedWindow: (name: string | null) => Promise<TmuxWindow | null | undefined>;
   scopedPaneTarget: (win: TmuxWindow) => string;
+  // P9.4: the ingress-owned context-free runner the pane-delivery Effect core
+  // is discharged through (own(runControlDetached(effect))). Optional — absent
+  // in standalone mail-factory tests, which then fall back to the legacy
+  // tryOwnedPaneDeliveryImpl body, exactly as spawns/retention degrade without
+  // an injected runner.
+  runControlDetached?: RunControlDetached;
   PANE_MAIL_GRACE_MS: number;
   MAIL_CLAIM_LEASE_MS: number;
   MAIL_PENDING_MAX?: number;
@@ -200,6 +212,31 @@ export interface MailLifecycle {
   close: () => Promise<void>;
 }
 
+// P9.4 Slice 2: the file-local ControlStep trio for the pane-delivery workflow,
+// spelled here because mail.ts is DOMAIN and must not relative-import the app
+// zone — exactly as spawns.ts:125-134 spells its own ControlStep<A>/dischargeStep
+// and retention.ts:102-134 its own DismissStep. The wire is a bare boolean (the
+// delivery outcome is DATA, never a typed error), so the step type collapses:
+// either a terminal boolean (the synchronous eligibility gate answered) or one
+// coarse `run` thunk carrying EVERY remaining await AND the claimAllMail txn.
+type PaneDeliveryStep =
+  | { readonly done: true; readonly wire: boolean }
+  | { readonly done: false; readonly run: () => Promise<boolean> };
+
+// The shared discharge for the delivery tail: a terminal wire succeeds
+// immediately; the `run` thunk is awaited as ONE Effect.promise. A `run`
+// rejection becomes a die (E stays never) — the discharged Promise rejects and
+// the arming timer's .catch swallows it (fail-open, danger note D6). Mirrors
+// spawns.ts:133-134 with the boolean wire inlined.
+const dischargeStep = (step: PaneDeliveryStep): Effect.Effect<boolean, never, never> =>
+  step.done ? Effect.succeed(step.wire) : Effect.promise(step.run);
+
+// P9.4 Slice 2 rollback seam: false → the tryOwnedPaneDelivery dispatcher
+// bypasses the Effect core and answers through the legacy async body (also
+// reached whenever no runControlDetached runner was injected). Mirrors
+// EFFECT_CORE_SPAWN_KILL et al. (spawns.ts:139-164).
+const EFFECT_CORE_PANE_DELIVERY = true;
+
 export function createMail(ctx: MailCtx) {
   const {
     db,
@@ -211,6 +248,10 @@ export function createMail(ctx: MailCtx) {
     tmuxAdapter,
     findScopedWindow,
     scopedPaneTarget,
+    // P9.4 Slice 2: the ingress-owned context-free runner the pane-delivery
+    // Effect core is discharged through; undefined in standalone mail-factory
+    // tests → the legacy tryOwnedPaneDeliveryImpl fallback.
+    runControlDetached,
     PANE_MAIL_GRACE_MS,
     MAIL_CLAIM_LEASE_MS,
     // BUG-128: test-only budget overrides (createCore passes these through
@@ -637,12 +678,135 @@ export function createMail(ctx: MailCtx) {
     return true;
   }
 
+  // P9.4 Slice 2: the Effect-core producer for owned-pane delivery. The
+  // synchronous eligibility prefix (ownedPaneRow + watcher priority) resolves as
+  // a terminal { done:true, wire } ControlStep; when it survives, the coarse
+  // runDeliver tail carries EVERY remaining await AND the claimAllMail txn +
+  // BUG-8 TOCTOU re-read, byte-for-byte identical to tryOwnedPaneDeliveryImpl's
+  // tail (below, retained UNCHANGED as the rollback twin). Because dischargeStep
+  // runs Effect.sync -> flatMap -> Effect.promise synchronously up to runDeliver's
+  // first await, own(runControlDetached(...)) registers the promise before any
+  // yield — preserving the legacy synchronous-prefix invariant (danger note D4).
+  function paneDeliveryStep(sid: string): PaneDeliveryStep {
+    const pair = ownedPaneRow(sid); // session + spawn
+    if (!pair || hasWatchWaiter(sid)) return { done: true, wire: false }; // watcher priority
+    const runDeliver = async (): Promise<boolean> => {
+      const win = await findScopedWindow(pair.sp.tmux_window); // live scoped pane
+      if (!isOpen()) return false;
+      if (win === null) return false; // UNKNOWN: leave mail queued
+      if (!win || win.pane_dead) return false;
+      const target = scopedPaneTarget(win);
+      const pane = await tmuxAdapter.paneCurrentCommand(target);
+      if (!isOpen()) return false;
+      if (!pane || pane.dead || pane.cmd !== 'claude') return false;
+
+      // Re-check waiter priority after the asynchronous probes, then atomically
+      // claim every pending row before any text enters the pane.
+      if (hasWatchWaiter(sid)) return false;
+      // BUG 8: close the owned-pane TOCTOU. The eligibility gate at the top
+      // (ownedPaneRow) read this session's turn-state/col BEFORE the awaited
+      // findScopedWindow + paneCurrentCommand probes. During those awaits a
+      // PermissionRequest/Notification hook can flip the card out of idle/queued
+      // into needs-you/working — pasting now would inject text + Enter into a
+      // permission or question TUI. Re-read the row FRESH through the same gate
+      // and bail (claiming nothing) unless it is still an idle/queued owned pane.
+      if (!ownedPaneRow(sid)) return false;
+      const { batch: box, remaining } = claimAllMail(sid);
+      if (!box.length) return false;
+      // BUG-128: one bounded batch per paste. When rows remain pending, re-arm
+      // exactly one grace timer so the rest follows in later rounds (and a burst
+      // still coalesces to one probe per batch instead of one per row).
+      if (remaining) rearmPaneMailTimer(sid);
+      const text = box.map((m) => `[FLEETDECK MAIL from ${m.from_id}] ${m.text}`).join('\n');
+      const pasted = await tmuxAdapter.pasteText(target, text);
+      // pasteText cannot be interrupted. Once shutdown latches, the lease is the
+      // durable recovery boundary: do not release/ack/log against a DB that the
+      // composition root is preparing to close. An unacked lease becomes
+      // claimable again through the existing expiry path on the next daemon.
+      if (!isOpen()) return false;
+      if (!pasted) {
+        // paste failed → redeliver at a later turn
+        for (const m of box) q.releaseClaim.run(m.id);
+        onMutate();
+        return false;
+      }
+      // BUG 8 (last mile): the pasteText round-trip above yielded the event loop, so
+      // re-read turn-state ONE more time before pressing Enter. If a hook flipped the
+      // pane to needs-you/working in that window, do NOT auto-SUBMIT: the (sanitized,
+      // bounded) text is already in the pane, but Enter would fire it into a
+      // permission/question TUI. Leave it un-entered — recoverable — and keep it
+      // marked delivered so it is never re-pasted.
+      if (!ownedPaneRow(sid)) {
+        const now = Date.now();
+        for (const m of box) q.ackMail.run(now, m.id); // pasted = side effect landed
+        onMutate();
+        return true;
+      }
+      const entered = await tmuxAdapter.sendEnter(target);
+      // sendEnter has the same non-cancellable boundary. Suppress every late
+      // acknowledgement/event callback; close() still joins this promise before
+      // reporting that the mail owner is settled.
+      if (!isOpen()) return false;
+      // BUG-033 × BUG-034: once pasteText succeeded the text is already IN the
+      // pane, so a failed/uncertain Enter must NOT requeue the rows — re-pasting
+      // would submit the same text twice (duplicated prompts, repeated
+      // non-idempotent side effects). Under the lease model claimAllMail only
+      // LEASED these rows, so a bare return would leave them claimed-but-unacked
+      // and retentionSweep would later hand them back and re-deliver (a delayed
+      // re-paste). FINALIZE delivery instead: the paste itself is the side effect
+      // that landed, exactly like the "pane flipped" branch above. The pre-paste
+      // releaseClaim remains the only requeue path.
+      if (!entered) {
+        const now = Date.now();
+        for (const m of box) q.ackMail.run(now, m.id); // pasted = side effect landed; never re-paste
+        logEvent(
+          sid,
+          'MailPaneEnterFailed',
+          null,
+          `pasted ${box.length} mail into ${pair.sp.tmux_window ?? '?'} but Enter failed — left un-entered, NOT requeued (text already in pane)`,
+        );
+        onMutate();
+        return false;
+      }
+      // Enter confirmed: the text is submitted to the agent — THAT is the
+      // acknowledgement for the pane channel. Finalize delivery only now.
+      {
+        const now = Date.now();
+        for (const m of box) q.ackMail.run(now, m.id);
+      }
+      tick(
+        `✉ delivered ${box.length} mail to ${pair.c.callsign ?? pair.c.session_id} (typed into pane)`,
+      );
+      logEvent(
+        sid,
+        'MailPaneDelivery',
+        null,
+        `typed ${box.length} mail into ${pair.sp.tmux_window ?? '?'}`,
+      );
+      onMutate();
+      return true;
+    };
+    return { done: false, run: runDeliver };
+  }
+
+  // Two-phase discharge: Effect.sync evaluates the eligibility prefix, then
+  // dischargeStep either succeeds the terminal wire or awaits the coarse run
+  // thunk as one Effect.promise. E stays never — the delivery outcome is DATA.
+  function tryOwnedPaneDeliveryEffect(sid: string): Effect.Effect<boolean, never, never> {
+    return Effect.sync(() => paneDeliveryStep(sid)).pipe(Effect.flatMap(dischargeStep));
+  }
+
   function tryOwnedPaneDelivery(sid: string): Promise<boolean> {
     if (!isOpen()) return Promise.resolve(false);
-    // Calling the implementation before own() preserves its historical
-    // synchronous prefix. JavaScript cannot interleave quiesce on this stack,
-    // so the promise is registered before shutdown can begin.
-    return own(tryOwnedPaneDeliveryImpl(sid));
+    // Calling the producer before own() preserves the historical synchronous
+    // prefix on BOTH paths. JavaScript cannot interleave quiesce on this stack,
+    // so the promise is registered before shutdown can begin. The Effect core is
+    // discharged through the ctx-resident unsupervised runner and joined by the
+    // SAME own()/inFlight seam as the legacy body (danger note D3); the flag +
+    // retained tryOwnedPaneDeliveryImpl twin are the rollback seam.
+    return EFFECT_CORE_PANE_DELIVERY && runControlDetached
+      ? own(runControlDetached(tryOwnedPaneDeliveryEffect(sid)))
+      : own(tryOwnedPaneDeliveryImpl(sid));
   }
 
   // ATOMIC claim of the oldest undelivered mail for a session — ANY sender

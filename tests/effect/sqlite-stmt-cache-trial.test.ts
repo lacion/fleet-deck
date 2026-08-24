@@ -141,7 +141,8 @@ describe('P8.5 bun:sqlite Database.query() cache trial (Bun 1.3.14)', () => {
     // ->320, enableRemote ->324, revive+adoptSession ->330 at d0083d01), each of
     // which lifted gating reads into a sync step. Slice 6a/6b left the count
     // unchanged (spawn's q.* histogram is byte-identical across the flip).
-    assert.equal(qCalls, 330);
+    // P9.4 +4 = the four q.* sites duplicated by mail.ts's P9.4 legacy twin (releaseClaim :620→:729, ackMail :632→:741, :652→:761, :666→:775).
+    assert.equal(qCalls, 334);
 
     for (const rel of [
       'src/daemon/sqlite.ts',
