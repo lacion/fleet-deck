@@ -638,6 +638,16 @@ type ListStep =
   | { readonly done: true; readonly wire: FsResult }
   | { readonly done: false; readonly runIgnore: () => Promise<FsResult> };
 
+// searchAt's two-phase shape (Leg C, danger note D6 mirror). The synchronous
+// admission prefix resolves EITHER to a terminal wire (guard 400s, root
+// resolution error, or the 429 refusal) OR to the coarse search thunk
+// (`runSearch`, the only await). The reservation (searchesInFlight += 1, D3)
+// happens IN this prefix so admission decides synchronously; unlike listAt's
+// runIgnore, runSearch has NO catch — a backend rejection propagates (die → 500).
+type SearchStep =
+  | { readonly done: true; readonly wire: FsResult }
+  | { readonly done: false; readonly runSearch: () => Promise<FsResult> };
+
 export function createFiles(ctx: FilesCtx) {
   // P9.3 Q1: the ingress-owned unsupervised runner the fs Effect cores are
   // discharged through (Effect.runPromiseWith(Context.empty()), injected as a
@@ -913,7 +923,7 @@ export function createFiles(ctx: FilesCtx) {
       : readAtLegacy(resolve, relPath);
   }
 
-  async function searchAt(
+  async function searchAtLegacy(
     resolve: RootResolver,
     q: unknown,
     { mode }: { mode?: string } = {},
@@ -953,6 +963,89 @@ export function createFiles(ctx: FilesCtx) {
     }
   }
 
+  // searchAtEffect: the two-phase Effect core (Leg C). The Effect.sync admission
+  // prefix runs the guard 400s, root resolution, the 429 cap refusal AND — when
+  // admitted — the reservation `searchesInFlight += 1` (D3: this must stay in the
+  // sync prefix so, discharged eagerly by runControlDetached, two un-awaited
+  // searches both reserve before a third reads the counter). It then defers to
+  // runSearch, the coarse thunk wrapping the VERBATIM gitSearch/walkSearch body.
+  //
+  // D6 asymmetry (vs listAtEffect's runIgnore): runSearch has NO catch. A backend
+  // rejection propagates out of Effect.promise as a die → runFs (runPromiseWith)
+  // rejects with the RAW cause (§6 Q4) → the transport settler turns it into a
+  // 500 `{ok:false, reason:'internal'}`. The native try/finally still releases the
+  // reserved slot on EVERY exit — the success return and the propagated throw.
+  function searchAtEffect(
+    resolve: RootResolver,
+    q: unknown,
+    { mode }: { mode?: string } = {},
+  ): Effect.Effect<FsResult, never, never> {
+    return Effect.sync((): SearchStep => {
+      if (typeof q !== 'string' || q.length < 2 || q.length > 256) {
+        return {
+          done: true,
+          wire: { status: 400, body: { ok: false, reason: 'query must be 2–256 characters' } },
+        };
+      }
+      if (mode !== 'content' && mode !== 'name') {
+        return {
+          done: true,
+          wire: { status: 400, body: { ok: false, reason: 'invalid search mode' } },
+        };
+      }
+      const resolved = resolve();
+      if (resolved.error) return { done: true, wire: resolved.error };
+      if (searchesInFlight >= 2) {
+        return {
+          done: true,
+          wire: { status: 429, body: { ok: false, reason: 'search busy — try again' } },
+        };
+      }
+      searchesInFlight += 1;
+      const { root, git } = resolved;
+      const started = Date.now();
+      const runSearch = async (): Promise<FsResult> => {
+        try {
+          const deadline = started + SEARCH_TIMEOUT_MS;
+          const result = git
+            ? await gitSearch(root, q, mode, deadline)
+            : await walkSearch(root, q, mode, deadline);
+          return {
+            status: 200,
+            body: {
+              ok: true,
+              mode,
+              q,
+              backend: git ? 'git' : 'walk',
+              hits: result.hits,
+              truncated: result.truncated,
+              elapsed_ms: Date.now() - started,
+            },
+          };
+        } finally {
+          searchesInFlight -= 1;
+        }
+      };
+      return { done: false, runSearch };
+    }).pipe(
+      Effect.flatMap((step) =>
+        step.done ? Effect.succeed(step.wire) : Effect.promise(step.runSearch),
+      ),
+    );
+  }
+
+  // dispatchSearch: per-op seam (mirrors dispatchList/dispatchRead). Effect core
+  // when enabled AND a runner is injected; otherwise the verbatim legacy Promise.
+  function dispatchSearch(
+    resolve: RootResolver,
+    q: unknown,
+    opts?: { mode?: string },
+  ): Promise<FsResult> {
+    return EFFECT_CORE_FILES && runFs
+      ? runFs(searchAtEffect(resolve, q, opts))
+      : searchAtLegacy(resolve, q, opts);
+  }
+
   // Per-session entry points (root resolved from the session id) and the global
   // browse-root explorer share one implementation via the resolver thunk.
   const sessionRoot =
@@ -964,10 +1057,10 @@ export function createFiles(ctx: FilesCtx) {
     fsList: (sid: string, p: unknown) => dispatchList(sessionRoot(sid), p),
     fsRead: (sid: string, p: unknown) => dispatchRead(sessionRoot(sid), p),
     fsSearch: (sid: string, q: unknown, opts?: { mode?: string }) =>
-      searchAt(sessionRoot(sid), q, opts),
+      dispatchSearch(sessionRoot(sid), q, opts),
     fsListHome: (p: unknown) => dispatchList(homeRoot, p),
     fsReadHome: (p: unknown) => dispatchRead(homeRoot, p),
-    fsSearchHome: (q: unknown, opts?: { mode?: string }) => searchAt(homeRoot, q, opts),
+    fsSearchHome: (q: unknown, opts?: { mode?: string }) => dispatchSearch(homeRoot, q, opts),
   };
 }
 
