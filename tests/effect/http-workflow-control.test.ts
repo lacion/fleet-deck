@@ -49,6 +49,7 @@ import {
   controlAsyncWorkflow,
   controlSyncWorkflow,
   mailAckWorkflow,
+  mailDrainWorkflow,
   nameControlWorkflow,
   questionsDismissWorkflow,
   spawnRouteWorkflow,
@@ -95,6 +96,7 @@ const ALL_ROUTE_BUILDERS = {
   nameControl: nameControlWorkflow,
   armUnsupervised: armUnsupervisedWorkflow,
   mailAck: mailAckWorkflow,
+  mailDrain: mailDrainWorkflow,
   spawnRoute: spawnRouteWorkflow,
   hookDispatch: hookDispatchWorkflow,
   worktreesSnapshot: worktreesSnapshotWorkflow,
@@ -1069,6 +1071,270 @@ test('mail/ack: a workflow defect reproduces the legacy POST outer-catch 500 {"e
   });
   assert.equal(defected.status, 500);
   assert.equal(defected.body, '{"err":"internal"}');
+  assert.equal(defected.headers['content-type'], 'application/json');
+  assert.equal(defected.headers['x-content-type-options'], 'nosniff');
+});
+
+// ============= C2. GET /mail (P10 Slice 1) — the leased-drain TWIN =============
+// GET /mail is the board's leased mailbox poll: it optionally ACKs the ids it
+// drained last time, then DRAINS + LEASES the current mailbox and hands the drained
+// ids back as ack_mail_ids. Both leaves MUTATE (ack finalizes a lease, drain leases
+// the queue), so it rides settleEffectMutatingRoute exactly like POST /mail/ack —
+// a quiescing ingress answers the frozen 503 refusal, NEVER a legacy replay of the
+// drain. The ONE dialect difference from /mail/ack: GET /mail has no POST inner
+// catch, so a defect reproduces the OUTER catch (500 {} + 'fleetd request error:',
+// MAIL_DRAIN_DEFECT), not the POST CONTROL_DEFECT (500 {"err":"internal"}). GET
+// /mail is NOT token-gated (tokenGatedRoute is POST-only for /mail), and it carries
+// no Origin from rawFull so the CSRF wall (crossSiteReason) waves it through.
+//
+// The wire embeds the row id (autoincrement DATA), so a legacy-then-workflow drain
+// on two seeded rows is byte-identical only AFTER the id is normalized — the same
+// technique the arm route uses for its minted token. The empty-drain wire carries
+// no id and is strictly byte-identical, the acked:0 analog.
+
+// A PENDING mail row (delivered_at NULL, claimed_at NULL): the queue state a fresh
+// insert leaves, which pendingMail picks up and GET /mail drains + leases. Mirror of
+// seedLeasedMail but with no live lease.
+function seedPendingMail(
+  board: BoardHandle,
+  toSession: string,
+  { from, text, at }: { from: string; text: string; at: number },
+): number {
+  const info = board.db
+    .prepare(
+      'INSERT INTO mail (to_session, from_id, text, at, delivered_at, claimed_at) VALUES (?, ?, ?, ?, ?, ?)',
+    )
+    .run(toSession, from, text, at, null, null);
+  return Number(info.lastInsertRowid);
+}
+
+// Read one row's lease state so a test can pin the BUG-034 side effect (a drain
+// leases: claimed_at set, delivered_at NULL; an ack finalizes: delivered_at set,
+// claimed_at cleared).
+function readLease(
+  board: BoardHandle,
+  id: number,
+): { delivered_at: number | null; claimed_at: number | null } | undefined {
+  return board.db
+    .prepare<{ delivered_at: number | null; claimed_at: number | null }>(
+      'SELECT delivered_at, claimed_at FROM mail WHERE id = ?',
+    )
+    .get(id);
+}
+
+// --- CHARACTERIZATION (legacy path, effectRoutes null): freeze the dialect ---
+
+test('GET /mail (legacy) drains a seeded pending row to the frozen 200 wire and LEASES it', async (t) => {
+  const board = await startBoard(t);
+  const id = seedPendingMail(board, 's-drain', { from: 'ops', text: 'drain me', at: 1 });
+
+  const res = await rawFull(board.port, { method: 'GET', path: '/mail?session=s-drain' });
+  assert.equal(res.status, 200, 'legacy drain status');
+  assert.equal(
+    res.body,
+    `{"mail":[{"id":${id},"from":"ops","text":"drain me","at":1}],"ack_mail_ids":[${id}]}`,
+    'legacy drain body',
+  );
+  assert.equal(res.headers['content-type'], 'application/json');
+  assert.equal(res.headers['x-content-type-options'], 'nosniff');
+
+  // BUG-034 lease side effect: the drained row is LEASED (claimed_at set to the
+  // far-future deadline, delivered_at still NULL), not delivered — an unacked poll
+  // re-delivers when the lease lapses instead of losing the mail.
+  const row = readLease(board, id);
+  assert.equal(row?.delivered_at, null, 'the drained row is leased, not delivered');
+  assert.notEqual(row?.claimed_at, null, 'the drained row carries a live lease');
+});
+
+test('GET /mail (legacy) with an empty mailbox answers the frozen empty wire', async (t) => {
+  const board = await startBoard(t);
+  const res = await rawFull(board.port, { method: 'GET', path: '/mail?session=s-empty' });
+  assert.equal(res.status, 200);
+  assert.equal(res.body, '{"mail":[],"ack_mail_ids":[]}');
+  assert.equal(res.headers['content-type'], 'application/json');
+  assert.equal(res.headers['x-content-type-options'], 'nosniff');
+});
+
+test('GET /mail (legacy) acks the leased id it is handed back, finalizing that row', async (t) => {
+  const board = await startBoard(t);
+  const leased = seedLeasedMail(board, 's-ack'); // a live lease, delivered_at NULL
+
+  // The poll acks the id it drained last time: ackMail runs FIRST (before the
+  // drain), finalizing the leased row (delivered_at set, claimed_at cleared). The
+  // s-ack drain is empty (the row is under lease, then finalized), so the wire is
+  // the frozen empty one.
+  const res = await rawFull(board.port, {
+    method: 'GET',
+    path: `/mail?session=s-ack&ack=${leased}`,
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.body, '{"mail":[],"ack_mail_ids":[]}');
+
+  const row = readLease(board, leased);
+  assert.notEqual(row?.delivered_at, null, 'the acked row is finalized (delivered_at set)');
+  assert.equal(row?.claimed_at, null, 'the acked row lease is cleared');
+});
+
+// --- EQUIVALENCE / QUIESCE / DEFECT (toggle the bridge on the SAME core) ---
+
+// An empty-drain wire carries no id, so a legacy-then-workflow capture on the same
+// idle core is strictly byte-identical — the acked:0 analog.
+test('GET /mail workflow dispatch is byte-identical to the legacy handler on an empty drain', async (t) => {
+  const board = await startBoard(t);
+
+  const legacy = await rawFull(board.port, { method: 'GET', path: '/mail?session=s-empty' });
+  assert.equal(legacy.status, 200, 'legacy empty status');
+  assert.equal(legacy.body, '{"mail":[],"ack_mail_ids":[]}', 'legacy empty body');
+
+  board.installEffectRoutes({
+    runRequest: (_operation, effect) => Effect.runPromiseExit(effect),
+    ...ALL_ROUTE_BUILDERS,
+  });
+
+  const workflow = await rawFull(board.port, { method: 'GET', path: '/mail?session=s-empty' });
+  assertByteIdentical(workflow, legacy, 'GET /mail empty drain');
+});
+
+// The seeded-drain wire embeds the autoincrement id (DATA that legitimately differs
+// per row), so — like the arm route's minted token — the two captures compare
+// byte-for-byte only after the id is normalized. Both seeded rows get a single-digit
+// id on a fresh core (legacy → 1, workflow → 2), so the RAW content-length is
+// identical to the byte too.
+function normalizeDrain(body: string): string {
+  const parsed = JSON.parse(body) as {
+    mail: { id: number; from: string; text: string; at: number }[];
+    ack_mail_ids: number[];
+  };
+  assert.equal(parsed.mail.length, 1, 'exactly one drained row');
+  assert.equal(parsed.ack_mail_ids.length, 1, 'exactly one ack id');
+  const [row] = parsed.mail;
+  assert.ok(row, 'exactly one drained row');
+  assert.equal(parsed.ack_mail_ids[0], row.id, 'ack_mail_ids names the drained row id');
+  return JSON.stringify({
+    mail: [{ id: '<id>', from: row.from, text: row.text, at: row.at }],
+    ack_mail_ids: ['<id>'],
+  });
+}
+
+test('GET /mail workflow drains + LEASES a seeded row byte-identically (id normalized), and a re-drain folds to empty', async (t) => {
+  const board = await startBoard(t);
+
+  // Legacy path drains its own seeded row.
+  const legacyRow = seedPendingMail(board, 's-legacy', { from: 'ops', text: 'drain me', at: 7 });
+  const legacy = await rawFull(board.port, { method: 'GET', path: '/mail?session=s-legacy' });
+  assert.equal(legacy.status, 200, 'legacy drain status');
+  assert.equal(
+    legacy.body,
+    `{"mail":[{"id":${legacyRow},"from":"ops","text":"drain me","at":7}],"ack_mail_ids":[${legacyRow}]}`,
+    'legacy drain body',
+  );
+
+  board.installEffectRoutes({
+    runRequest: (_operation, effect) => Effect.runPromiseExit(effect),
+    ...ALL_ROUTE_BUILDERS,
+  });
+
+  const workflowRow = seedPendingMail(board, 's-workflow', {
+    from: 'ops',
+    text: 'drain me',
+    at: 7,
+  });
+  const workflow = await rawFull(board.port, { method: 'GET', path: '/mail?session=s-workflow' });
+  assert.equal(workflow.status, legacy.status, 'drain: status');
+  assert.equal(
+    normalizeDrain(workflow.body),
+    normalizeDrain(legacy.body),
+    'drain: normalized body (id is per-row DATA)',
+  );
+  // Both captures collapse to the one frozen 200 wire; only the row id differed.
+  assert.equal(
+    normalizeDrain(legacy.body),
+    '{"mail":[{"id":"<id>","from":"ops","text":"drain me","at":7}],"ack_mail_ids":["<id>"]}',
+    'drain: frozen 200 wire',
+  );
+  assert.equal(
+    workflow.headers['content-type'],
+    legacy.headers['content-type'],
+    'drain: content-type',
+  );
+  assert.equal(
+    workflow.headers['x-content-type-options'],
+    legacy.headers['x-content-type-options'],
+    'drain: nosniff',
+  );
+  // Both ids are single-digit on a fresh core ⇒ the raw content-length matches.
+  assert.equal(
+    workflow.headers['content-length'],
+    legacy.headers['content-length'],
+    'drain: content-length',
+  );
+
+  // BUG-034 lease side effect SURVIVES the conversion: the workflow-drained row is
+  // leased (claimed_at set, delivered_at NULL), so a re-drain of the SAME session
+  // finds it under lease and folds to the empty wire — the mail is not re-served
+  // until the lease lapses. (The mailAck re-ack→acked:0 analog for the drain path.)
+  const leased = readLease(board, workflowRow);
+  assert.equal(leased?.delivered_at, null, 'the workflow-drained row is leased, not delivered');
+  assert.notEqual(leased?.claimed_at, null, 'the workflow-drained row carries a live lease');
+  const reDrain = await rawFull(board.port, { method: 'GET', path: '/mail?session=s-workflow' });
+  assert.equal(reDrain.status, 200, 're-drain status');
+  assert.equal(
+    reDrain.body,
+    '{"mail":[],"ack_mail_ids":[]}',
+    're-drain folds to empty (row under lease)',
+  );
+});
+
+test('GET /mail: a quiescing ingress answers 503 shutting-down — NEVER a legacy replay of the drain', async (t) => {
+  const board = await startBoard(t);
+
+  // A live pending row a legacy replay WOULD drain + lease.
+  const id = seedPendingMail(board, 's-quiesce', { from: 'ops', text: 'do not drain', at: 1 });
+  const before = readLease(board, id);
+  assert.equal(before?.delivered_at, null, 'seeded row is pending (delivered_at NULL)');
+  assert.equal(before?.claimed_at, null, 'seeded row is pending (claimed_at NULL)');
+
+  // A quiescing ingress resolves runRequest to a failed Exit WITHOUT running the
+  // workflow, so the ack+drain inside that never-run Effect never happens. The
+  // mutating settler must NOT fall back to the legacy drain (that would lease the
+  // refused row); it answers the byte-identical 503 refusal.
+  board.installEffectRoutes({
+    runRequest: (operation, _effect) =>
+      Promise.resolve(
+        Exit.fail(new ApplicationQuiescingError({ operation, message: 'daemon is quiescing' })),
+      ),
+    ...ALL_ROUTE_BUILDERS,
+  });
+
+  const quiesced = await rawFull(board.port, { method: 'GET', path: '/mail?session=s-quiesce' });
+  assert.equal(quiesced.status, 503, 'quiesce → 503, not the legacy drain');
+  assert.equal(quiesced.body, '{"ok":false,"reason":"shutting-down"}');
+  assert.equal(quiesced.headers['content-type'], 'application/json');
+  assert.equal(quiesced.headers['x-content-type-options'], 'nosniff');
+
+  // The refused drain never touched the row: it is still pending (NOT leased), so
+  // the next poll can drain it — the mail is not stranded under a phantom lease.
+  const after = readLease(board, id);
+  assert.equal(after?.delivered_at, null, 'the refused drain left delivered_at NULL');
+  assert.equal(after?.claimed_at, null, 'the refused drain left the row pending (no lease)');
+});
+
+test('GET /mail: a workflow defect reproduces the legacy GET outer-catch 500 {} — NOT the POST {"err":"internal"}', async (t) => {
+  const board = await startBoard(t);
+
+  // A die surfaces as the byte-identical 500 the legacy GET arm lands in — the OUTER
+  // catch for a non-hook route emits 500 {} with 'fleetd request error:'
+  // (MAIL_DRAIN_DEFECT), distinct from the POST inner-catch 500 {"err":"internal"}
+  // (CONTROL_DEFECT) that /mail/ack reproduces. Unreachable from a real wire body
+  // (ackMail/drainMail are sync guarded leaves); pinned to freeze the defect arm.
+  board.installEffectRoutes({
+    runRequest: (_operation, _effect) => Promise.resolve(Exit.die(new Error('boom'))),
+    ...ALL_ROUTE_BUILDERS,
+  });
+
+  const defected = await rawFull(board.port, { method: 'GET', path: '/mail?session=s-defect' });
+  assert.equal(defected.status, 500);
+  assert.equal(defected.body, '{}', 'GET outer-catch empty body, not {"err":"internal"}');
   assert.equal(defected.headers['content-type'], 'application/json');
   assert.equal(defected.headers['x-content-type-options'], 'nosniff');
 });

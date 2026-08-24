@@ -258,3 +258,55 @@ export const mailAckWorkflow = (
   caps: MailAckCapabilities,
 ): Effect.Effect<ControlWire, never, never> =>
   Effect.sync(() => ({ status: 200, body: { ok: true, ...caps.ack() } }));
+
+/**
+ * GET /mail (P10 Slice 1). The board's leased mailbox poll: it optionally ACKs the
+ * ids it drained on its previous poll, then DRAINS + LEASES the current mailbox and
+ * hands the drained ids back as ack_mail_ids for the next poll to finalize. It lives
+ * in THIS module — alongside mailAckWorkflow, its finalize TWIN — because it is a
+ * SYNC mutate whose capabilities are raw core calls, rendered as a ControlWire and
+ * ridden on settleEffectMutatingRoute. It is MUTATING (ack finalizes a lease, drain
+ * leases the queue), so a quiescing ingress answers the frozen 503 refusal, NEVER a
+ * legacy replay of the drain — a replay would lease/finalize the very rows the
+ * ingress just refused, and an unacked drained lease re-delivers on the next poll.
+ *
+ * DEFECT DIALECT DIFFERS FROM mailAckWorkflow. POST /mail/ack lands in routeRequest's
+ * POST inner catch (CONTROL_DEFECT — 500 {"err":"internal"}); GET /mail is a GET with
+ * no local catch, so a throw lands in the OUTER catch — 500 {} with 'fleetd request
+ * error:' (MAIL_DRAIN_DEFECT at the transport). The mutating settler CLASS is shared;
+ * only the per-route defect bytes differ.
+ *
+ * `ack` (core.ackMail bound to the parsed ?ack ids), `drain` (core.drainMail(sid,
+ * { lease: true })), and `broadcast` are raw leaves — the BUG-034 lease protocol
+ * (drain-lease / finalize / retention-sweep) is NOT touched here, only its ROUTE is
+ * converted. The workflow preserves the legacy ORDERING exactly: ack, then drain,
+ * then broadcast-if-nonempty, then assemble { mail, ack_mail_ids }. R = never,
+ * E = never.
+ *
+ * THE DEFECT ARM IS UNREACHABLE-BY-CONSTRUCTION (like mailAckWorkflow): ackMail is a
+ * sync input-guarded leaf and drainMail is a sync SELECT-then-UPDATE that never
+ * throws for any query string, so no wire body drives a die. MAIL_DRAIN_DEFECT is
+ * wired only for byte-fidelity with the outer catch should a leaf ever regress.
+ */
+export interface MailDrainItem {
+  readonly id: number;
+  readonly from: string;
+  readonly text: string;
+  readonly at: number;
+}
+
+export interface MailDrainCapabilities {
+  readonly ack: () => void;
+  readonly drain: () => ReadonlyArray<MailDrainItem>;
+  readonly broadcast: () => void;
+}
+
+export const mailDrainWorkflow = (
+  caps: MailDrainCapabilities,
+): Effect.Effect<ControlWire, never, never> =>
+  Effect.sync(() => {
+    caps.ack();
+    const box = caps.drain();
+    if (box.length) caps.broadcast();
+    return { status: 200, body: { mail: box, ack_mail_ids: box.map((m) => m.id) } };
+  });

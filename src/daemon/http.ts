@@ -618,6 +618,25 @@ export interface ArmUnsupervisedRouteCapabilities {
 export interface MailAckRouteCapabilities {
   readonly ack: () => { readonly acked: number };
 }
+// P10 Slice 1 — GET /mail. STRUCTURAL MIRROR of MailDrainCapabilities in
+// app/http-workflows/control.ts: `ack` is core.ackMail bound to the parsed ?ack ids
+// (a no-op when absent), `drain` is core.drainMail(sid, { lease: true }), and
+// `broadcast` is the hoisted transport broadcast. The workflow assembles the frozen
+// 200 { mail, ack_mail_ids } wire in the legacy order (ack → drain → broadcast). Sync
+// + MUTATING like /mail/ack, but it rides settleEffectMutatingRoute with the GET
+// outer-catch dialect (MAIL_DRAIN_DEFECT — 500 {}), NOT CONTROL_DEFECT. Both leaves
+// are sync, guarded, non-throwing frozen BUG-034 leaves, so the defect arm is
+// unreachable-by-construction — wired only for byte-fidelity with the outer catch.
+export interface MailDrainRouteCapabilities {
+  readonly ack: () => void;
+  readonly drain: () => ReadonlyArray<{
+    readonly id: number;
+    readonly from: string;
+    readonly text: string;
+    readonly at: number;
+  }>;
+  readonly broadcast: () => void;
+}
 // P9.1 Slice 6a — POST /api/spawn. STRUCTURAL MIRROR of SpawnRouteCapabilities in
 // app/http-workflows/control.ts: `run` is the raw core.spawn call and its
 // { status, body } control result is relayed VERBATIM as the workflow's success
@@ -709,6 +728,8 @@ export interface HttpEffectRoutes {
   readonly armUnsupervised: (caps: ArmUnsupervisedRouteCapabilities) => HttpWorkflowEffect;
   // P9.5 Slice 2 CONTROL ROUTE: POST /mail/ack (sync mutate; CONTROL_DEFECT).
   readonly mailAck: (caps: MailAckRouteCapabilities) => HttpWorkflowEffect;
+  // P10 Slice 1 CONTROL ROUTE: GET /mail (sync mutate: ack+drain; MAIL_DRAIN_DEFECT).
+  readonly mailDrain: (caps: MailDrainRouteCapabilities) => HttpWorkflowEffect;
   // P9.1 Slice 6a CONTROL ROUTE: POST /api/spawn (transport only; core unchanged).
   readonly spawnRoute: (caps: SpawnRouteCapabilities) => HttpWorkflowEffect;
   // P6.4 HOOK ROUTE GROUP builder (see the mirror interface above).
@@ -1009,6 +1030,22 @@ export function createHttp(
   // MailAckCapabilities; ackMail type-guards every input, so ack() never throws.
   function mailAckCapabilities(ev: unknown): MailAckRouteCapabilities {
     return { ack: () => core.ackMail([(ev as { mail_id?: unknown }).mail_id]) };
+  }
+
+  // GET /mail capability: `ack` finalizes the ids the board drained on its last
+  // poll (the raw ?ack comma list; a blank list is a no-op, exactly as the legacy
+  // `if (ackIds)` guard), `drain` is the leased drain (core.drainMail with
+  // lease:true — the board hands the ids back next poll), and `broadcast` is the
+  // hoisted transport broadcast. Mirror of MailDrainCapabilities; both leaves are
+  // sync guarded frozen BUG-034 leaves, so neither ever throws.
+  function mailDrainCapabilities(sid: string, ackIds: string): MailDrainRouteCapabilities {
+    return {
+      ack: () => {
+        if (ackIds) core.ackMail(ackIds.split(',').map(Number));
+      },
+      drain: () => core.drainMail(sid, { lease: true }),
+      broadcast: () => broadcast(),
+    };
   }
 
   // Run a workflow Effect through the ingress bridge and settle it to the exact
@@ -1314,6 +1351,13 @@ export function createHttp(
   //     started. The per-route rejection dialect ('fleetd <route> error:' +
   //     500 {ok:false,reason:'internal'}) still lives in the route's onError.
   const CONTROL_DEFECT = { log: 'fleetd handler error:', body: { err: 'internal' } };
+  // P10 Slice 1 — GET /mail defect dialect. Unlike the POST control routes, GET
+  // /mail runs in the SYNCHRONOUS GET arm of routeRequest with no inner catch, so a
+  // throw lands in the OUTER catch for a non-hook route — log 'fleetd request error:'
+  // + 500 {} (the empty body, distinct from CONTROL_DEFECT's {"err":"internal"}).
+  // Unreachable-by-construction (ackMail/drainMail are sync guarded leaves); wired
+  // only so a regressed leaf's die reproduces the outer catch byte-for-byte.
+  const MAIL_DRAIN_DEFECT = { log: 'fleetd request error:', body: {} };
 
   // START-ONCE recorder for an async mutating core call. The workflow invokes
   // `invoke` (memoized): the native Promise starts EXACTLY ONCE, from inside the
@@ -2528,6 +2572,24 @@ export function createHttp(
           // acking anything else is a guarded no-op (a final response never
           // carries a stale backlog — every poll acks what IT drained).
           const ackIds = url.searchParams.get('ack') ?? '';
+          // P10 Slice 1: Effect workflow when the bridge is wired; the legacy
+          // synchronous drain below is the rollback seam. SYNC + MUTATING (ack
+          // finalizes a lease, drain leases the queue), so it rides
+          // settleEffectMutatingRoute: an intra-quiesce admission refusal answers
+          // the frozen 503 and NEVER replays the drain, and a defect reproduces the
+          // GET OUTER-catch 500 {} (MAIL_DRAIN_DEFECT, not CONTROL_DEFECT). The
+          // defect is unreachable — ackMail/drainMail are sync guarded frozen
+          // BUG-034 leaves that never throw for any query string.
+          if (effectRoutes) {
+            settleEffectMutatingRoute(
+              effectRoutes,
+              'GET /mail',
+              effectRoutes.mailDrain(mailDrainCapabilities(sid, ackIds)),
+              res,
+              MAIL_DRAIN_DEFECT,
+            );
+            return;
+          }
           if (ackIds) core.ackMail(ackIds.split(',').map(Number));
           // The new drain is LEASED: the board must hand the ids back as
           // ack_mail_ids on its next poll. A poll whose response never

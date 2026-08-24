@@ -65,6 +65,7 @@ import {
   controlAsyncWorkflow,
   controlSyncWorkflow,
   mailAckWorkflow,
+  mailDrainWorkflow,
   nameControlWorkflow,
   questionsDismissWorkflow,
   spawnRouteWorkflow,
@@ -901,6 +902,8 @@ async function bootDaemon(
     armUnsupervised: armUnsupervisedWorkflow,
     // P9.5 Slice 2: POST /mail/ack (sync mutate; CONTROL_DEFECT).
     mailAck: mailAckWorkflow,
+    // P10 Slice 1: GET /mail (sync mutate: ack+drain; MAIL_DRAIN_DEFECT).
+    mailDrain: mailDrainWorkflow,
     // P9.1 Slice 6a: POST /api/spawn under the P6.4 transport (core unchanged).
     spawnRoute: spawnRouteWorkflow,
     // P6.4 HOOK ROUTE GROUP: POST /hook/:name (the final route slice). Fails open
