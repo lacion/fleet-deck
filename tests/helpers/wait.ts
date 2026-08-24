@@ -140,6 +140,39 @@ export async function waitForSpecRecords(
 }
 
 /**
+ * Parse an append-only JSONL capture file into its raw records, tolerating a
+ * torn trailing line but never masking real corruption.
+ *
+ * The FLEETDECK_SPAWN_CMD fixture appends each launch with a single
+ * `appendFileSync(JSON.stringify(rec) + '\n')`. A launch spec is multi-KB, and
+ * Node's appendFileSync loops `writeSync` until every byte lands — so a reader
+ * polling concurrently can observe the final record's bytes BEFORE its
+ * terminating '\n'. That un-terminated tail is a normal, transient state of an
+ * append-only log, not corruption. Two full-suite `test:bundle` runs caught it
+ * as a `JSON.parse` "Unterminated string" in a per-file records() helper
+ * (2026-08-24: first sighting during P9.2 slice-3 integration, second during
+ * P10 slice-2) — see the adopt-jsonl-partial-read-flake note.
+ *
+ * Every '\n'-terminated line must be valid JSON: a parse error on one is real
+ * corruption (a truncated file, interleaved concurrent writers) and is
+ * re-thrown, never swallowed. Only the single un-terminated trailing line is
+ * dropped; the caller's poll (waitForRecords) picks the record up on a later
+ * read, once the newline has landed. Unlike readSpecRecords above — which
+ * try/catch-drops ANY bad line for its multi-writer spawn callers — this reader
+ * is deliberately strict about mid-file lines.
+ */
+export function readJsonlRecords(file: string): unknown[] {
+  if (!existsSync(file)) return [];
+  const lines = readFileSync(file, 'utf8').split('\n');
+  // With `json + '\n'` appends, the final split element is '' when the file ends
+  // on a newline (all records complete) and the torn partial line otherwise;
+  // drop that one element either way. Every remaining line is newline-terminated,
+  // so a JSON.parse throw below is genuine corruption, not an in-flight write.
+  lines.pop();
+  return lines.filter(Boolean).map((line) => JSON.parse(line) as unknown);
+}
+
+/**
  * Create a scratch spec-record file (mkdtemp'd dir + <name>, default
  * specs.jsonl) whose OWNING directory is removed at test teardown. The old
  * pattern — `path.join(scratchDir(), 'specs.jsonl')` kept only as a string —

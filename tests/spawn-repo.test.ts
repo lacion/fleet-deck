@@ -2,15 +2,7 @@ import test, { type TestContext } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import {
-  chmodSync,
-  existsSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,7 +14,7 @@ import { openDb } from '../src/daemon/db.ts';
 import type { SessionEntry, StateResponse } from '../contracts/state.ts';
 // All waits route through the shared, WAIT_SCALE-aware helper so the macOS
 // advisory lane (issue #2, WAIT_SCALE=3) gets its headroom.
-import { waitUntil } from './helpers/wait.ts';
+import { readJsonlRecords, waitUntil } from './helpers/wait.ts';
 // Test-only export (leading underscore, never imported): lets the BUG-176
 // regression in wait-scaling.test.ts prove by identity that every waitUntil
 // in THIS module is the scaled shared helper — the exported binding and every
@@ -90,12 +82,11 @@ function git(args: string[], cwd: string): string {
   }).trim();
 }
 
+// Shared reader tolerates a torn trailing line: the fixture appends each launch
+// as one multi-KB JSONL line, so a concurrent poll can catch the last record
+// before its newline (the adopt-jsonl-partial-read-flake).
 function records(file: string): SpecRecord[] {
-  if (!existsSync(file)) return [];
-  return readFileSync(file, 'utf8')
-    .split('\n')
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as SpecRecord);
+  return readJsonlRecords(file) as SpecRecord[];
 }
 
 function spawnEnv(

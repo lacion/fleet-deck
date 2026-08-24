@@ -1,15 +1,7 @@
 import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,6 +10,7 @@ import { claudeTranscriptPath, mungeClaudeProjectCwd } from '../src/daemon/deriv
 import { guardScratchDirs, startDaemon } from './helpers/daemon.ts';
 import { postHook, postJson } from './helpers/http.ts';
 import { getState } from './helpers/state.ts';
+import { readJsonlRecords } from './helpers/wait.ts';
 import type { SqliteHandle } from '../src/daemon/sqlite.ts';
 import type { SessionEntry, StateResponse } from '../contracts/state.ts';
 
@@ -87,12 +80,11 @@ function writeTranscript(userHome: string, cwd: string, sid: string) {
   return file;
 }
 
+// Tolerates a torn trailing line via the shared reader — the fixture's JSONL is
+// appended one multi-KB line at a time, so a concurrent poll can catch the last
+// record mid-write (the adopt-jsonl-partial-read-flake).
 function records(file: string): SpawnSpec[] {
-  if (!existsSync(file)) return [];
-  return readFileSync(file, 'utf8')
-    .split('\n')
-    .filter(Boolean)
-    .map((line) => (JSON.parse(line) as { parsed: SpawnSpec }).parsed);
+  return readJsonlRecords(file).map((rec) => (rec as { parsed: SpawnSpec }).parsed);
 }
 
 async function waitForRecords(file: string, count: number): Promise<SpawnSpec[]> {
