@@ -1,11 +1,17 @@
 # Effect migration checkpoint status
 
-- **Checkpoint date:** 2026-08-23
+- **Checkpoint date:** 2026-08-24
 - **Branch:** `fd/v1-effect-feasibility`
-- **Published branch:** `origin/fd/v1-effect-feasibility` currently at `cd0470bb`
-  (`feat(effect): the spawn-liveness tick yields Store`)
-- **Current implementation HEAD:** `cd0470bb`
-  (`feat(effect): the spawn-liveness tick yields Store`)
+- **Published branch:** `origin/fd/v1-effect-feasibility` currently at `03ee63f2`
+  (`test(effect): re-baseline the P8.5 q-corpus tripwire to 330`) — HEAD == origin,
+  0 ahead / 0 behind. P9.1 is fully pushed.
+- **Current implementation HEAD:** `03ee63f2`
+  (`test(effect): re-baseline the P8.5 q-corpus tripwire to 330`; the P9.1 feature
+  ladder is `7bdff948`..`53148019`)
+- **P9.1 completion evidence:** [p9-1-design.md](./evidence/effect/p9-1-design.md)
+  §9 (ladder close: per-slice commits, verdicts, quiet-suite numbers, open residuals)
+- **P9.2 / P9.3 stamped designs:** [p9-2-design.md](./evidence/effect/p9-2-design.md),
+  [p9-3-design.md](./evidence/effect/p9-3-design.md)
 - **P8 completion evidence:** [p8-strict-trial.md](./evidence/effect/p8-strict-trial.md),
   [p8-stmt-cache-trial.md](./evidence/effect/p8-stmt-cache-trial.md),
   [p8-sql-client-trial.md](./evidence/effect/p8-sql-client-trial.md),
@@ -22,11 +28,15 @@
 - **Runtime floor:** Bun 1.3.14, revision `0d9b296af33f2b851fcbf4df3e9ec89751734ba4`
 
 This is the durable handoff for the executable
-[Effect migration plan](./effect-migration-plan.md). P5, P6, and P8 are complete.
-Implementation HEAD equals origin at `cd0470bb`. This P8-close documentation is
-uncommitted. No pull request has been opened, and nothing has been tagged,
-released, or deployed. Local resume is **P9** (P9.1 first). P7 remains the
-standing §7 platform authorization checkpoint — it is not the local next slice.
+[Effect migration plan](./effect-migration-plan.md). P0–P8 are complete and
+**P9.1 is complete** — the spawn/revive/dismiss request-path orchestration is now
+Effect cores. Implementation HEAD equals origin at `03ee63f2` (P9.1 pushed). This
+P9.1-close documentation is uncommitted. No pull request has been opened, and
+nothing has been tagged, released, or deployed. Local resume is **P9.2** (its
+design is stamped and ready to execute on the main tree now that P9.1 has closed);
+P9.3's design is stamped with slices 1+2 already implemented on a worktree, awaiting
+integration. P7 remains the standing §7 platform authorization checkpoint — it is
+not the local next slice.
 
 ## Executive status
 
@@ -39,13 +49,128 @@ standing §7 platform authorization checkpoint — it is not the local next slic
 | P4 | Implemented and checkpointed | The root cutover and shutdown evidence are complete for the pre-P5 artifact. Do not relabel that evidence as measuring the current tree. |
 | P5 | Complete | Prompt failure publication, the reviewed detached-owner exception, whole-slice rollback, gzip budget, and quiet global suites are recorded at `ca62b94f`. |
 | P6 | Complete at `b2d11d84` | Exit gate met with the five dispositions in [effect-migration-plan.md](./effect-migration-plan.md) P6 (cancellation-on-disconnect is deliberately none-yet). |
-| P7 | Not started | Standing §7 platform authorization checkpoint (draft-PR). Termbridge facade is the seam; `/ws/term` stays P7. Not the local next slice. |
+| P7 | Blocked (not started) | Standing §7 platform authorization checkpoint — BLOCKED on Luis's draft-PR authorization (push + draft PR so the macOS/real-tmux + Linux lifecycle jobs can run). Termbridge facade is the seam; `/ws/term` stays P7. Not the local next slice; not a reason to stall P9. |
 | P8 | Complete at `cd0470bb` | Exit gate MET with the four dispositions in [effect-migration-plan.md](./effect-migration-plan.md) P8. Root-owned Store + five db-workflows slices; HTTP-bridged keep capability params. |
-| P9 | Not started | Kickoff: [p9-completion-map.md](./evidence/effect/p9-completion-map.md). Resume at **P9.1** spawn orchestration. |
+| P9 | In progress — **P9.1 complete** at `03ee63f2` | P9.1 (spawn/revive/dismiss request-path → Effect cores) done: 8-slice ladder + tripwire re-baseline; evidence [p9-1-design.md](./evidence/effect/p9-1-design.md) §9. P9.2 design STAMPED (ready to execute on main tree); P9.3 design STAMPED with slices 1+2 on worktree `tmp/p9-3-design` @ `4aafe9c2` awaiting integration, slice 3 remaining. P9.4–P9.6 not started ([p9-completion-map.md](./evidence/effect/p9-completion-map.md)). |
 | P10–P14 | Not started | Holds/questions (P10), remaining Bun trials (P11), build (P12), cleanup (P13), RC rehearsal (P14). |
 
 P3's paired quiet-host performance evidence is unchanged and out of P8/P9 scope.
 Do not close it from these suites.
+
+## P9.1 complete at `03ee63f2`
+
+P9.1 converts the spawn/revive/dismiss **request-path** async orchestration
+(`spawns.ts` + the dismiss pair in `retention.ts`) to Effect cores under the
+HTTP-CAPABILITY convention (`R=never`, `E=never`, capabilities-as-params; expected
+outcomes are `ControlWire` data, not typed errors; discharged through the
+ctx-resident `runControlDetached`, the sole sanctioned unsupervised runner). The
+root-fiber legs (`spawnLivenessTick` / `reconcileSpawns` / `reconcileClearForks`)
+were already Effects under P8.6 and were NOT reopened. HEAD == origin at
+`03ee63f2`; P9.1 is pushed.
+
+### Eight-slice ladder (commit · verdict)
+
+| Slice | Commit | Verdict |
+| --- | --- | --- |
+| 0 — arm-unsupervised | `7bdff948` | line review (no adversarial pass, per §6 Q4) |
+| 1 — plan-claim release structural | `80615321` | SHIP-WITH-NITS |
+| 2 — dismiss pair | `69d3d98b` | DO-NOT-SHIP → fixed (runner pin + tripwire bump) |
+| 3 — spawnKill | `6835de2e` | SHIP (no findings) |
+| 4 — enableRemote | `3c88576c` | SHIP-WITH-NITS (2 LOW) |
+| 5 — revive + adoptSession | `d0083d01` | SHIP-WITH-NITS |
+| 6a — /api/spawn transport | `0dfce719` | SHIP (no surviving findings) |
+| 6b — spawn core | `53148019` | SHIP-WITH-NITS → both fixed |
+| tripwire re-baseline (test-only) | `03ee63f2` | q-corpus `qCalls` 303 → 330 |
+
+Per-core `EFFECT_CORE_*` kill-switch flags (default true) keep verbatim `*Legacy`
+twins in-tree as the per-slice rollback; the ingress `run*With` pin held at 2
+throughout. Full per-slice one-liners, findings applied, and the slice→commit
+reconciliation are in [p9-1-design.md](./evidence/effect/p9-1-design.md) §9.
+
+### Quiet global suites at HEAD `03ee63f2`
+
+Bun 1.3.14, quiet WSL2 host, sequential, 2026-08-24. All pushed.
+
+- `bun run test` (source) = **1,693 pass / 6 skip / 0 fail** (210 files).
+- `bun run test:bundle` = **1,684 pass / 15 skip / 0 fail** (210 files).
+- Was 1-fail on each before `03ee63f2` — the stale P8.5 q-corpus tripwire only.
+  Its `qCalls` constant had silently drifted red across five conversions; the
+  re-baseline `303 → 330` is its designed maintenance (no assertion weakened,
+  slices 6a/6b added zero `q.*` call sites).
+
+### Accepted daemon identity at HEAD `03ee63f2`
+
+`03ee63f2` is TEST-ONLY, so the daemon bundle is byte-identical to slice 6b
+(`53148019`):
+
+- Raw: 636,984 B.
+- gzip-9 zlib: 169,587 B, **19,853 B** under the 189,440 B ceiling.
+- SHA-256: `d6df8703894af59862bf06769cad2d74d41b7a1301dfc361f213dc6a56706dc1`.
+- Deterministic (double-build identical).
+
+### Open residuals (detail in [p9-1-design.md](./evidence/effect/p9-1-design.md) §9)
+
+- (a) in-process `adoptSessionEffect {deferred:true}` pin missing (production
+  pinned via `adopt.test.ts`); add when the mixed-caller file is next touched.
+- (b) `daemon-maintenance` / `p1-spawns-lifecycle` / `spawn-setup` memoryCores omit
+  the runner (legacy-path fixtures) — align when next touched.
+- (c) Slice 7 deferred (§6 Q2): AbortController→fiber + `spawnMaintenance`
+  fiber-pool ownership, gated on dedicated survival/signal tests. Four native
+  bridges named: `provisioningOps`, `AbortController`, `runControlDetached`,
+  `spawnMaintenance.run`.
+- (d) PROCESS LESSON: the P8.5 q-corpus tripwire must be in every verify list that
+  touches `q.*` call sites (it drifted red for five slices before it was caught).
+
+### Rollback
+
+Per-slice: flip the relevant `EFFECT_CORE_*` flag to `false` (legacy adapters
+remain in-tree). Whole-P9.1: revert `7bdff948`, `80615321`, `69d3d98b`,
+`6835de2e`, `3c88576c`, `d0083d01`, `0dfce719`, `53148019`, `03ee63f2` to restore
+`79bd7fb9` (the stamped P9.1 design). No cross-module flag day.
+
+## P9.2 — design STAMPED, ready to execute
+
+[p9-2-design.md](./evidence/effect/p9-2-design.md) (stamped 2026-08-24). Scope:
+`repos.ts` + `worktrees.ts` and their three HTTP routes (`GET /api/worktrees`,
+`POST /api/worktrees/remove`, `POST /api/repos/preflight`). Orchestrator ruling
+(§6 OQ-1): **HYBRID** — each route slice does the P6.4 transport wiring AND a
+P9.1-style degenerate core conversion (Effect twin, verbatim `*Legacy` body behind
+an `EFFECT_CORE_*` flag, discharge via `runControlDetached`, no new `run*` site).
+Four slices (0 gap-pins → 1 GET → 2 preflight → 3 remove, ascending risk; slices 2
+and 3 adversarial-review-mandatory). The runner already reaches both modules; only
+the three new `HttpEffectRoutes` builders are added. **Starts on the main tree now
+that P9.1 has closed** — its transport work shares `http.ts` / `program.ts` with
+slice 6b, so it was gated on P9.1's close.
+
+## P9.3 — design STAMPED; slices 1+2 implemented on a worktree, AWAITING INTEGRATION
+
+[p9-3-design.md](./evidence/effect/p9-3-design.md) (stamped 2026-08-24). Scope:
+`files.ts` read surfaces — `GET /…/fs/{list,read,search}` (session-FS + home-FS),
+six `createFiles` entry points. Orchestrator ruling (§6): convert the cores behind a
+single `EFFECT_CORE_FILES` flag, discharge via `runControlDetached`, and leave
+`settleFilesystemOperation` byte-identical — the routes stay OFF the P6.4
+`runRequest` transport (that move is P9.5, rows G5/G6). Three slices (+1 optional):
+1 seam+read core, 2 list core (git-ignore tail), 3 search core (2-in-flight counter
++ BUG-027 retry; adversarial-review-mandatory).
+
+**Slices 1+2 are ALREADY IMPLEMENTED + REVIEWED** on worktree branch
+`tmp/p9-3-design` @ commit `4aafe9c2` ("feat(effect): convert files read+list cores
+to Effect (P9.3 slices 1+2)"), verdict SHIP-WITH-NITS with fixups F1 (D6 reject-arm
+404 on both paths) + F2 (dispatcher liveness) applied; parity suite 4/4. This work is
+**AWAITING INTEGRATION onto `fd/v1-effect-feasibility`**: cherry-pick `4aafe9c2` →
+rebuild `fleetd.bundle.mjs` → run the gates (`session-fs` + `files-run-bounded` + the
+ingress `run*`-count pin, which must stay unchanged since P9.3 adds no new `run*`
+site). **P9.3 slice 3 (search core) remains** to implement.
+
+## P9.4–P9.6 and beyond
+
+Continue in [p9-completion-map.md](./evidence/effect/p9-completion-map.md) order:
+P9.4 mail + provider-specific async orchestration; P9.5 remaining HTTP-triggered
+application services (including the FS-routes `runRequest` move deferred from P9.3);
+P9.6 takeover/election operations that benefit from typed lifecycle policy. P10–P14
+follow P9 (holds/fail-open, remaining Bun trials, build/distribution, cleanup/docs,
+RC rehearsal). GET `/mail` and GET `/api/watch` stay P10; `/ws/term` stays P7;
+static/favicon stay P13.
 
 ## P8 complete at `cd0470bb`
 
@@ -420,48 +545,60 @@ publish. Not a reason to revert conversions.
 
 ## Exact resume order
 
-P8 exit gates are closed. The next session starts **P9 — application
-workflows**, in the order of
-[p9-completion-map.md](./evidence/effect/p9-completion-map.md), beginning at
-**P9.1 spawn/revive/dismiss orchestration**. P7 remains the standing §7
-platform authorization checkpoint; it is not the local next slice. `/ws/term`
-stays behind the termbridge facade until P7.
+P9.1 is closed and pushed. The next session resumes at **P9.2 — repos +
+worktrees routes**, in the order of
+[p9-completion-map.md](./evidence/effect/p9-completion-map.md). Before P9.2, the
+lowest-friction next action is to **integrate the P9.3 slices 1+2 worktree**
+(already implemented + reviewed), since it is done work sitting off-branch. P7
+remains the standing §7 platform authorization checkpoint; it is not the local
+next slice. `/ws/term` stays behind the termbridge facade until P7.
 
 1. Confirm the checkpoint and runtime:
 
    ```sh
    git switch fd/v1-effect-feasibility
    git status --short
-   git log --oneline -8
+   git log --oneline -12
    bun --version
    ```
 
-   Expected HEAD **and** origin are `cd0470bb`. This P8-close documentation
+   Expected HEAD **and** origin are `03ee63f2` (P9.1 pushed, 0 ahead / 0
+   behind). This close-out documentation
    (`docs/v1/effect-migration-plan.md`, `docs/v1/effect-migration-status.md`,
    `docs/v1/evidence/effect/migration-ledger.md`,
-   `docs/v1/evidence/effect/p9-completion-map.md`) may still be uncommitted;
-   do not switch branches. Leave untracked `.claude/agents/` and
-   `/tmp/fd-wt-*` alone.
+   `docs/v1/evidence/effect/p9-1-design.md`,
+   `docs/v1/evidence/effect/p9-2-design.md`,
+   `docs/v1/evidence/effect/p9-3-design.md`) may still be uncommitted; do not
+   switch branches. Leave untracked `.claude/agents/` and `/tmp/fd-wt-*` alone.
 
-2. Start **P9.1** from the completion map. Landmines already recorded there:
-   `ownedLivenessTick` must not be swapped for `ownedLegacyPromise`; BUG-040
-   `claimPlanExecution` (`spawns.ts:1420–1441`) stays a single guarded UPDATE
-   **before** any clone/worktree/pane; do not yield Store on HTTP-bridged
-   fibers; do not yield inside a SQLite txn callback.
+2. **Integrate P9.3 slices 1+2** from worktree branch `tmp/p9-3-design` @
+   `4aafe9c2`: cherry-pick → rebuild `fleetd.bundle.mjs` → run the gates
+   (`session-fs` + `files-run-bounded` + the ingress `run*`-count pin, which
+   must stay unchanged — P9.3 adds no new `run*` site). Design in
+   [p9-3-design.md](./evidence/effect/p9-3-design.md); slice 3 (search core)
+   remains to implement after integration.
 
-3. Continue P9.2 → P9.6 in map order. GET `/mail` and GET `/api/watch` stay
+3. Start **P9.2** from [p9-2-design.md](./evidence/effect/p9-2-design.md)
+   (stamped, HYBRID ruling, four slices; starts on the main tree now that P9.1
+   has closed). P9.1 landmines that carry forward: do not yield Store on
+   HTTP-bridged fibers; do not yield inside a SQLite txn callback; keep the
+   ingress `run*With` pin at 2 (`runControlDetached` is the only unsupervised
+   runner); keep every verify list that touches `q.*` sites pinned to the P8.5
+   q-corpus tripwire.
+
+4. Continue P9.4 → P9.6 in map order. GET `/mail` and GET `/api/watch` stay
    P10. `/ws/term` stays P7. Static/favicon stay P13.
 
 ## Standing open notes (do not close from P8/P9)
 
-- **P7** awaits the §7 platform authorization checkpoint (push + draft PR so
-  the blocking macOS/real-tmux and Linux lifecycle jobs can run).
-  Implementation through `cd0470bb` is already on origin; this documentation
-  is not. At that checkpoint `hook-integrity` may be intentionally red
-  because version closure has not happened; record that expected failure, but
-  P7 cannot close until its named platform jobs are actually green. If
-  authorization is withheld, pause that checkpoint — it is not a reason to
-  stall P9 locally.
+- **P7 is BLOCKED on Luis's draft-PR authorization.** It awaits the §7
+  platform authorization checkpoint (push + draft PR so the blocking
+  macOS/real-tmux and Linux lifecycle jobs can run). Implementation through
+  `03ee63f2` is already on origin; this documentation is not. At that
+  checkpoint `hook-integrity` may be intentionally red because version closure
+  has not happened; record that expected failure, but P7 cannot close until its
+  named platform jobs are actually green. Authorization has not been given, so
+  the checkpoint stays paused — that is not a reason to stall P9 locally.
 - **P3's** paired quiet-host performance evidence remains an explicit ledger
   item. Do not mark it closed.
 - Quiet-host recapture of the tenth (`/command`) harness workload —
@@ -509,9 +646,12 @@ From the plan's P7 section and the constraints still in force from P6/P8:
 
 ## Repository handoff expectation
 
-This P8-close documentation is currently uncommitted. Implementation HEAD
-equals `origin/fd/v1-effect-feasibility` at `cd0470bb`. No pull request has
-been opened. After the documentation is committed, the next session starts
-**P9.1** from `fd/v1-effect-feasibility`, using
-[p9-completion-map.md](./evidence/effect/p9-completion-map.md). Leave
-untracked `.claude/agents/` and `/tmp/fd-wt-*` alone.
+This P9.1 close-out documentation is currently uncommitted. Implementation HEAD
+equals `origin/fd/v1-effect-feasibility` at `03ee63f2` (0 ahead / 0 behind; P9.1
+pushed). No pull request has been opened. After the documentation is committed,
+the next session integrates the **P9.3 slices 1+2 worktree** (`tmp/p9-3-design`
+@ `4aafe9c2`) and then resumes at **P9.2** from `fd/v1-effect-feasibility`,
+using [p9-completion-map.md](./evidence/effect/p9-completion-map.md) and the
+stamped [p9-2-design.md](./evidence/effect/p9-2-design.md) /
+[p9-3-design.md](./evidence/effect/p9-3-design.md). Leave untracked
+`.claude/agents/` and `/tmp/fd-wt-*` alone.

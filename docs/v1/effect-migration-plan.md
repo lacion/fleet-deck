@@ -933,7 +933,14 @@ P7.0 remains the standing §7 platform authorization checkpoint.
 
 Recommended order:
 
-- [ ] P9.1 spawn/revive/dismiss orchestration and supervised launch decisions;
+- [x] P9.1 spawn/revive/dismiss orchestration and supervised launch decisions;
+  Complete at `03ee63f2`. Eight-slice ladder `7bdff948`..`53148019` (arm-unsupervised,
+  plan-claim structural, dismiss pair, spawnKill, enableRemote, revive+adoptSession,
+  /api/spawn transport, spawn core) plus the q-corpus tripwire re-baseline `03ee63f2`.
+  Per-core `EFFECT_CORE_*` kill-switch flags with verbatim `*Legacy` twins; ingress
+  `run*With` pin held at 2 (no new runner site). Quiet WSL2: `bun run test` 1693/6/0,
+  `bun run test:bundle` 1684/15/0. Ladder record, verdicts, and open residuals:
+  [p9-1-design.md](./evidence/effect/p9-1-design.md) §9. P9.2–P9.6 remain.
 - [ ] P9.2 repo/worktree/git asynchronous workflows;
 - [ ] P9.3 bounded files/search/cache workflows;
 - [ ] P9.4 mail and provider-specific asynchronous orchestration;
@@ -1292,7 +1299,7 @@ Update this table only when a work package's exit gate has actually passed:
 | P6 HTTP/WS workflows | Complete | [p6-http-matrix.md](./evidence/effect/p6-http-matrix.md), [p6-route-wave.md](./evidence/effect/p6-route-wave.md), [p6-graceful-stop-verification.md](./evidence/effect/p6-graceful-stop-verification.md), [p6-bench-comparison.md](./evidence/effect/p6-bench-comparison.md), [p6-transport-trial.md](./evidence/effect/p6-transport-trial.md), [p6-ws-send-probe.md](./evidence/effect/p6-ws-send-probe.md) | Per-group: `effectRoutes=null` (unset `installEffectRoutes`). Whole-slice: revert `307fae0a` through `b2d11d84` (P6.1–P6.3 plus the route wave `56a15e8a`..`b2d11d84`) restores P5 at `67758ba9` / `ca62b94f` |
 | P7 terminal stream | Not started | — | — |
 | P8 store/SQLite | Complete | [p8-strict-trial.md](./evidence/effect/p8-strict-trial.md), [p8-stmt-cache-trial.md](./evidence/effect/p8-stmt-cache-trial.md), [p8-sql-client-trial.md](./evidence/effect/p8-sql-client-trial.md), [p9-completion-map.md](./evidence/effect/p9-completion-map.md) | Per-slice: `STORE_BACKED_*` flags. Whole-slice: revert `05b40bd5`, `346ee85a`, `4ff3e393`, `351b376f`, `145e9fbd`, `50412bd8`, `917c4dc8`, `e0ab862a`, `570d8dae`, `cd0470bb` restores `37e07659`. Do not range-revert `05b40bd5^..cd0470bb` (drops interleaved P6.8 `742168a4`) |
-| P9 application workflows | Not started | — | — |
+| P9 application workflows | P9.1 complete; P9.2–P9.6 remaining | [p9-1-design.md](./evidence/effect/p9-1-design.md) §9 (ladder, verdicts, residuals) | Per-slice: `EFFECT_CORE_*` flags → false (default true, `*Legacy` twins in-tree). Whole-P9.1: revert `7bdff948`..`53148019` + `03ee63f2` restores `79bd7fb9` (the stamped P9.1 design) |
 | P10 holds/fail-open | Not started | — | — |
 | P11 Bun capability trials | Not started | — | — |
 | P12 build/distribution | Not started | — | — |

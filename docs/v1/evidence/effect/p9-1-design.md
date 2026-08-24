@@ -237,3 +237,94 @@ atomicity proven; the release-to-finally move shown unobservable through the
   re-read; revivingSessions add-before-try latent leak; adopt's ended_at
   TOCTOU) are recorded as token-identical legacy behavior both sides — NOT to
   be fixed inside conversion slices.
+
+## §9 — P9.1 LADDER CLOSE (2026-08-24)
+
+P9.1 (spawn/revive/dismiss request-path orchestration → Effect cores) is COMPLETE
+and pushed on `fd/v1-effect-feasibility`. The design above (§1–§8) was executed as
+an eight-step ladder plus a final tripwire re-baseline. Every slice landed green
+under an independent review; the two blocker-class findings were fixed in place
+before the next slice started. Commit shas and titles below are from
+`git log --oneline a1a5a639..HEAD` (authoritative — see the slice-numbering note at
+the end of this section).
+
+### Per-slice ladder (slice · commit · verdict · findings applied)
+
+| Slice | Commit | Title | Verdict | Findings applied |
+|---|---|---|---|---|
+| 0 — arm-unsupervised | `7bdff948` | convert arm-unsupervised to the Effect route pattern | line review (no adversarial pass, per §6 Q4) | `armUnsupervisedWorkflow` in `app/http-workflows/control.ts`, `Effect.Effect<ControlWire, never, never>`, rides `settleEffectMutatingRoute`; bundle gzip-9 165,636 B |
+| 1 — plan-claim release structural | `80615321` | make the plan-claim release structural | SHIP-WITH-NITS | Nit1 (binding): the three repo-mode validation 400s stay INSIDE the `ensuring` body — pinned before slice 6; Nit2 (throwing tick/onMutate can emit one duplicate feed line, never a duplicate DB write) accepted, not fixed — would break byte-order parity. See §7 |
+| 2 — dismiss pair | `69d3d98b` | convert the dismiss pair to Effect cores | DO-NOT-SHIP → fixed | Finding1 HIGH: bumped the `Effect.runPromiseWith(` source-scan tripwire 1→2 at `ingress-supervisor.test.ts` AND pinned the unsupervised runner via the new exported `runControlDetached`; Nit2 stale comment lines removed |
+| 3 — spawnKill | `6835de2e` | convert spawnKill to an Effect core | SHIP (no findings) | reused `runControlDetached`; no new `run*With` site (+208/−1) |
+| 4 — enableRemote | `3c88576c` | convert enableRemote to an Effect core | SHIP-WITH-NITS | Nit1 LOW (test pins the fulfillment value, not Promise identity); Nit2 LOW (runner-destructure comment says spawnKill only) — both LOW, carried |
+| 5 — revive + adoptSession | `d0083d01` | convert revive and adoptSession to Effect cores | SHIP-WITH-NITS | Finding1 MED fixed in-slice: fleet-bugs' concurrent-revive double-pane pin now injects the runner so it exercises the Effect core (was running `reviveLegacy`); Finding3 LOW → became R1, the Wire/Step 4th-copy consolidation (landed slice 6b); Finding2 LOW (no in-process `adoptSessionEffect {deferred:true}` pin) and Finding4 LOW (stale comments) carried — Finding2 is OPEN RESIDUAL (a). See §8 for the launchResume/resurrectSpawn mixed-caller correction |
+| 6a — /api/spawn transport | `0dfce719` | route /api/spawn through the P6.4 transport | SHIP (no surviving findings) | new `settleEffectSpawnRoute` (redacted 500 dialect) + non-fold `spawnRouteWorkflow`; `emitSpawnFailure` renders `spawnFailureReason(err)`, never `{err:'internal'}`; two 503s (transport-quiesce vs maintenance-gate); bundle gzip-9 169,303 B (sha `7d6138b7…891f`) |
+| 6b — spawn core | `53148019` | convert the spawn core to Effect | SHIP-WITH-NITS → both fixed | R1 consolidation (file-local `SpawnsWire` / `ControlStep<A>` / `dischargeStep`); `spawnStep` + `runSpawn` + `spawnEffect`/`spawnLegacy` dispatcher, `EFFECT_CORE_SPAWN=true`; fixups F1 (live-bridge D6 500 pin, `http-workflow-spawn-route` 15/15×3) + F2 (quiesce line ref 1978→2084 + effect/legacy `CORE_VARIANTS`, `spawn-quiesce-cancel` 2/2×3); bundle gzip-9 169,587 B (sha `d6df8703…6dc1`) |
+
+Each converted core kept a verbatim `*Legacy` twin behind a default-true
+kill-switch flag (`EFFECT_CORE_DISMISS`, `EFFECT_CORE_SPAWN_KILL`,
+`EFFECT_CORE_ENABLE_REMOTE`, `EFFECT_CORE_REVIVE`, `EFFECT_CORE_ADOPT_SESSION`,
+`EFFECT_CORE_SPAWN`) as the per-slice rollback seam. The ingress `run*With` pin
+held at 2 throughout (slice 2 bumped it once for the unsupervised runner; no later
+slice added a runner site).
+
+### Quiet-suite close (the tripwire re-baseline)
+
+The final commit `03ee63f2` ("test(effect): re-baseline the P8.5 q-corpus tripwire
+to 330") is TEST-ONLY — the daemon bundle is byte-identical to slice 6b's
+(sha `d6df8703…6dc1`, raw 636,984 B / gzip-9 169,587 B, 19,853 B under the
+189,440 B ceiling). It re-baselined the static `qCalls` corpus-usage constant
+`303 → 330` in `tests/effect/sqlite-stmt-cache-trial.test.ts:137` — the count's
+verified current value. The +27 drift accumulated legitimately across the five
+Effect-core conversions (slices 1–5 each lifted gating reads into a synchronous
+step, adding `q.*` call sites); slices 6a/6b added none (the `spawns.ts`
+`q.*.(run|get|all)(` histogram is byte-identical across the flip). Quiet WSL2 host,
+sequential:
+
+- Before `03ee63f2`: `bun run test` 1692 pass / 6 skip / **1 fail**;
+  `bun run test:bundle` 1683 pass / 15 skip / **1 fail** (the stale tripwire only).
+- At `03ee63f2` (HEAD): `bun run test` **1693 pass / 6 skip / 0 fail**;
+  `bun run test:bundle` **1684 pass / 15 skip / 0 fail** (210 files each).
+
+### OPEN RESIDUALS
+
+(a) **Slice-5 follow-up 2 — in-process `adoptSessionEffect {deferred:true}` case.**
+    Production is pinned via `adopt.test.ts`; the one un-pinned surface is the
+    in-process deferred-adopt path in the mixed-caller file. Add the in-process pin
+    when that file is next touched.
+
+(b) **§8-note-4 — memoryCores that omit the runner.** The `daemon-maintenance`,
+    `p1-spawns-lifecycle`, and `spawn-setup` memoryCores build ctx without
+    `runControlDetached`, so they walk the legacy composers (legacy-path fixtures).
+    Align them to inject the runner when next touched. (§8-note-4 names the first
+    two explicitly; `spawn-setup` is carried here from the closeout brief.)
+
+(c) **Slice 7 deferred (per §6 Q2) — AbortController→fiber + `spawnMaintenance`
+    fiber-pool ownership.** Gated on dedicated survival/signal tests before
+    conversion. The four inventoried compatibility bridges that stay native through
+    P9.1: `provisioningOps`, `AbortController`, `runControlDetached`, and
+    `spawnMaintenance.run`.
+
+(d) **PROCESS LESSON — the P8.5 q-corpus tripwire must be in every verify list that
+    touches `q.*` call sites.** The `sqlite-stmt-cache-trial` static source-scan
+    silently drifted red for five slices (red from the slice-1 conversion through
+    `d0083d01`, ~7 commits) because its hardcoded `qCalls` constant was never
+    re-baselined as slices legitimately added `q.*` sites. It is a static,
+    context-independent scan: any slice that adds or removes a
+    `q.<name>.(run|get|all)(` call site MUST re-run
+    `tests/effect/sqlite-stmt-cache-trial.test.ts` and re-baseline the constant in
+    the same slice. Add it to the standing verify checklist for every q.*-touching
+    package.
+
+### Slice-numbering note (source reconciliation)
+
+The commit→slice mapping in this section is `git log --oneline a1a5a639..HEAD`
+cross-referenced with each slice's review base and the suite-fail-report labels.
+The closeout brief's parenthetical list
+(`7bdff948, 80615321, 69d3d98b, 6835de2e, 3c88576c, d0083d01` — "slices
+0,2,3,4,5,6a-precursor") is off-by-one: it omits slice 1 and mislabels the rest.
+The git commit titles are authoritative — `80615321` IS slice 1 (plan-claim release
+structural; reviewed in §7), `69d3d98b` slice 2 (dismiss pair), `6835de2e` slice 3
+(spawnKill), `3c88576c` slice 4 (enableRemote), `d0083d01` slice 5 (revive +
+adoptSession), `0dfce719` slice 6a (/api/spawn transport), `53148019` slice 6b
+(spawn core). `79bd7fb9` ("stamp the adjudicated P9.1 design") precedes the ladder.
