@@ -370,6 +370,11 @@ export function runBounded(
   });
 }
 
+// Pin `.name` to a source literal so this diagnostic name survives any bundler's
+// identifier minification (esbuild `--keep-names` has no Bun.build equivalent);
+// asserted quoted in the generated daemon by tests/effect/p3-production-selection.test.ts.
+Object.defineProperty(runBounded, 'name', { value: 'runBounded', configurable: true });
+
 function entryPath(relDir: string, name: string): string {
   return relDir ? path.posix.join(relDir.split(path.sep).join('/'), name) : name;
 }

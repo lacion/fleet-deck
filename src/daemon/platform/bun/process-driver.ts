@@ -745,3 +745,16 @@ export class BunProcessDriver implements ProcessDriver {
 export function makeBunProcessDriver(): BunProcessDriver {
   return new BunProcessDriver();
 }
+
+// Pin `.name` to source literals so these diagnostic names survive any bundler's
+// identifier minification (esbuild `--keep-names` has no Bun.build equivalent);
+// asserted quoted in the generated daemon by tests/effect/daemon-bundle-policy.test.ts
+// (BunProcessDriver) and tests/effect/p3-production-selection.test.ts (both).
+Object.defineProperty(BunProcessDriver, 'name', {
+  value: 'BunProcessDriver',
+  configurable: true,
+});
+Object.defineProperty(makeBunProcessDriver, 'name', {
+  value: 'makeBunProcessDriver',
+  configurable: true,
+});

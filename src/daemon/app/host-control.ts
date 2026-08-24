@@ -170,3 +170,12 @@ export class DaemonHostControl {
     this.coordinator?.force(force);
   }
 }
+
+// Pin `.name` to a source literal so this root diagnostic name survives any
+// bundler's identifier minification (esbuild `--keep-names` has no Bun.build
+// equivalent); asserted quoted in the generated daemon by
+// tests/effect/daemon-bundle-policy.test.ts and scripts/strip-bundle-jsdoc.ts.
+Object.defineProperty(DaemonHostControl, 'name', {
+  value: 'DaemonHostControl',
+  configurable: true,
+});

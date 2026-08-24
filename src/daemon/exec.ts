@@ -147,6 +147,11 @@ export function execFileP(
   return Promise.resolve().then(() => delegate.run(request));
 }
 
+// Pin `.name` to a source literal so this diagnostic name survives any bundler's
+// identifier minification (esbuild `--keep-names` has no Bun.build equivalent);
+// asserted quoted in the generated daemon by tests/effect/p3-production-selection.test.ts.
+Object.defineProperty(execFileP, 'name', { value: 'execFileP', configurable: true });
+
 // Distil a git subprocess's stderr down to the one line a human needs on a
 // tombstone or ticker: git's own `fatal:`/`error:` verdict. git narrates before
 // it fails ("Cloning into '…'"), so the FIRST stderr line — the one an 80-char
