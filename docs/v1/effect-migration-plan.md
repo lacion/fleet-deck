@@ -4,7 +4,7 @@
 v1 [plan of record](./README.md). This document is intended to be handed directly to a Codex goal
 and updated as each gate lands.*
 
-**Status:** P0–P10 checkpointed; **P10 complete at `16656dae`** (holds/fail-open are the held `Deferred` primitive — [p10-close.md](./evidence/effect/p10-close.md); slices 0–4 pushed at `f2592534`, the slice-5 orphan-sweep DEFER is local-only); P7 remains the standing §7 platform authorization checkpoint; **P11 next**
+**Status:** P0–P11 complete and fully pushed (`origin == HEAD == 5faec478`); **P10 complete at `16656dae`**, close docs committed `343a52bc`; **P11 complete at `5faec478`** — the Bun-native capability trials are finished, every trialled candidate is **KEEP**, and the `--no-env-file` REQUIRE + a bundle secret-scan gate landed ([p11-close.md](./evidence/effect/p11-close.md)); P7 remains the standing §7 platform authorization checkpoint; **P12 next** (Bun-native builds + optional executable)
 **Working branch:** `fd/v1-effect-feasibility`
 **Starting point:** v0.23.6
 **Runtime floor:** exact Bun 1.3.14 in CI; `engines.bun >=1.3.14`
@@ -297,22 +297,22 @@ outcomes as work lands.
 | One-shot execution in `exec.ts` | direct `Bun.spawn` | **MIGRATE FIRST** | Exact result parity, shared output cap, Web-stream draining, live env, abort/timeout race, TERM-to-KILL, descendant cleanup, zero leaks |
 | Bounded git execution in `files.ts` | shared Bun process service | **MIGRATE AFTER EXEC** | Preserve partial output, truncation, stdin early-close, exit 1 semantics, and two-search concurrency |
 | tmux control client in `termbridge.ts` | `Bun.spawn` long-lived Web streams/FileSink | **EFFECT-OWN; TRIAL BUN IN P7** | Protocol/UTF-8/order/backpressure fixtures plus real-tmux soak; a scoped Node-stream adapter is a valid KEEP outcome |
-| Sync CLI capability checks | `Bun.spawnSync` | **SEPARATE CLI-ONLY PARITY TRIAL** | Exit/stdout/stderr/self-path parity and latency; otherwise keep `execFileSync` |
-| Cached sync tmux probe inside the daemon | async `Bun.spawn` Effect fiber | **CHARACTERIZE SEPARATELY** | Do not promote `Bun.spawnSync`; preserve cache/readiness and avoid blocking `/health` |
-| Detached supervisor/CLI launchers | `Bun.spawn` | **KEEP INITIALLY** | Child survival, `unref`, stdio, signal, and supervisor identity tests before conversion |
+| Sync CLI capability checks | `Bun.spawnSync` | **KEEP `execFileSync`** (P11.8: CLI doctor already uses async `execFileP`, zero `execFileSync` in `bin/`; `spawnSync` is MIGRATE-eligible only for a future sync CLI path with a throw/timeout adapter) | Exit/stdout/stderr/self-path parity and latency; otherwise keep `execFileSync`. Evidence: [p11-spawn-trial.md](./evidence/effect/p11-spawn-trial.md) |
+| Cached sync tmux probe inside the daemon | async `Bun.spawn` Effect fiber | **DEFER** (P11.8: async boot-warm + stale-while-revalidate fiber characterized, not built — a product-behavior change; do not promote `Bun.spawnSync`) | Do not promote `Bun.spawnSync`; preserve cache/readiness and avoid blocking `/health`. Evidence: [p11-spawn-trial.md](./evidence/effect/p11-spawn-trial.md) |
+| Detached supervisor/CLI launchers | `Bun.spawn` | **KEEP** (P11.9: L1 `bin/fleetdeck.ts:1074`, L2 `scripts/fleet-sessionstart.ts:313`, L3 `spawn.ts:1383` stay on `node:child_process.spawn`; never route through `ProcessRunner`) | Child survival, `unref`, stdio, signal, and supervisor identity tests before conversion. Evidence: [p11-spawn-trial.md](./evidence/effect/p11-spawn-trial.md) |
 | HTTP and server WS in `http.ts` | current `Bun.serve`; optional `BunHttpServer` | **KEEP CUSTOM ADAPTER** (P6.3 Effect-owns `Bun.serve`; P6.7 rejected `BunHttpServer` at rc.110) | Frozen HTTP/WS suite and graceful close remain the contract. Trial evidence: [p6-transport-trial.md](./evidence/effect/p6-transport-trial.md) |
-| Static board assets | `Bun.file` Response | **BENCHMARK LATE** | Missing/traversal/MIME/cache/CSP/HEAD/range parity and useful measured gain |
+| Static board assets | `Bun.file` Response | **KEEP `node:fs` (readFileSync) + `HttpResShim`** (P11.4: a `Bun.file` body adds Range 206/416, auto-HEAD 200, and a 500 HTML dump — parity fails before any benchmark) | Missing/traversal/MIME/cache/CSP/HEAD/range parity and useful measured gain. Evidence: [p11-content-trial.md](./evidence/effect/p11-content-trial.md) |
 | SQLite seam | static `bun:sqlite`; `strict: true` trial | **KEEP DIRECT bun:sqlite** (P8.1 static import landed; P8.2 **DO-NOT-ENABLE** `strict`; P8.7 **KEEP** `@effect/sql-sqlite-bun`) | Binding, null normalization, integers, WAL/busy, migrations, permissions, durability, performance. Evidence: [p8-strict-trial.md](./evidence/effect/p8-strict-trial.md), [p8-sql-client-trial.md](./evidence/effect/p8-sql-client-trial.md) |
 | Repeated SQL statements | `db.query()` cache | **KEEP prepare-once** (P8.5) | Query lifetime and close tests; do not mechanically replace `prepare()`. Evidence: [p8-stmt-cache-trial.md](./evidence/effect/p8-stmt-cache-trial.md) |
-| mDNS | `Bun.udpSocket` | **ISOLATE/TRIAL** | Two responders on 5353, interface membership/egress, TTL 255, send backpressure, goodbye completion, roaming, macOS+Linux |
-| Content reads/writes | `Bun.file` / `Bun.write` | **SELECTIVE** | Equal lazy-error, limit, atomicity, permission, and durability semantics |
+| mDNS | `Bun.udpSocket` | **KEEP `node:dgram`** (P11.1 already isolated behind `createMdns`+`inject`; P11.2 no reuse option → `EADDRINUSE` coexistence failure; P11.3 goodbye completion unprovable) | Two responders on 5353, interface membership/egress, TTL 255, send backpressure, goodbye completion, roaming, macOS+Linux. Evidence: [p11-udp-trial.md](./evidence/effect/p11-udp-trial.md) |
+| Content reads/writes | `Bun.file` / `Bun.write` | **KEEP `node:fs`** (P11.5: the selective safe-list is EMPTY — `Bun.write` lacks mode/`wx`/append/atomic/fsync and every daemon write needs ≥1) | Equal lazy-error, limit, atomicity, permission, and durability semantics. Evidence: [p11-content-trial.md](./evidence/effect/p11-content-trial.md) |
 | Directories/metadata/permissions/atomic fd I/O | `node:fs` | **KEEP** | Bun APIs do not replace exact `O_NOFOLLOW`, chmod, fsync, link/rename, random-access, or symlink-safe requirements |
-| UUID/random data | Web Crypto | **OPTIONAL CLEANUP** | Fixed shape/entropy tests; no behavior or material performance regression |
-| Token compare and exact SHA-256/base64url | `node:crypto` | **KEEP** | Never substitute non-cryptographic `Bun.hash` |
+| UUID/random data | Web Crypto | **KEEP `node:crypto` — cleanup DECLINED** (P11.7: χ² 253.48 web vs 253.46 node is a MATCH, so uniformity-only churn) | Fixed shape/entropy tests; no behavior or material performance regression. Evidence: [p11-env-crypto-trial.md](./evidence/effect/p11-env-crypto-trial.md) |
+| Token compare and exact SHA-256/base64url | `node:crypto` | **KEEP** (P11.7 confirmed: `timingSafeEqual`, `createHash('sha256')`, secret `randomBytes`; `Bun.hash` = wyhash, forbidden for secrets) | Never substitute non-cryptographic `Bun.hash`. Evidence: [p11-env-crypto-trial.md](./evidence/effect/p11-env-crypto-trial.md) |
 | Daemon/bin/hook bundles | programmatic `Bun.build({ target: "bun", format: "esm" })` | **TRIAL IN P12** | Determinism, banners, builtins, dynamic imports, source/bundle parity, payload integrity |
 | Standalone executable | `bun build --compile` | **DISTRIBUTION GATE AFTER BUN.BUILD** | macOS arm64 + Linux x64, assets, writable DB, tmux/git, signals, takeover, self-path, size/start/RSS |
 | Tests | `bun:test` | **KEEP** | Add Effect test services, not another runner |
-| Environment | explicit `process.env`; consider `--no-env-file` | **KEEP AND CHARACTERIZE** | Service env vs Bun auto-loaded `.env` precedence; no bundled secrets |
+| Environment | explicit `process.env`; consider `--no-env-file` | **KEEP; REQUIRE `--no-env-file`** (P11.6: Bun auto-loads a cwd `.env`; `--no-env-file` on every production launcher + a bundle secret-scan gate landed `5faec478`) | Service env vs Bun auto-loaded `.env` precedence; no bundled secrets. Evidence: [p11-env-crypto-trial.md](./evidence/effect/p11-env-crypto-trial.md) |
 | Paths, URLs, and OS metadata | `node:path`, `node:url`, `node:os` | **KEEP** | Mature complete semantics; no Bun-native performance win to prove |
 | Incremental UTF-8 decoding | `node:string_decoder` | **KEEP BY DEFAULT** | Terminal fragmentation semantics are proven; replace only by byte-for-byte decoder tests |
 | Web primitives | standard `fetch`, `Request`, `Response`, `AbortSignal` | **KEEP** | Portable native Web APIs already supplied efficiently by Bun |
@@ -995,8 +995,8 @@ P10.x items below.
   on `GET /api/watch` (slice 2 `2ab8ec95`, idle fold, adversarial DO-NOT-SHIP→SHIP) and the hook
   HOLD relay (slice 3 `285122a1`, fail-open `{}` fold behind `EFFECT_CORE_HOLD_RELAY`). Q1
   settlement-only: the P1 hold Maps stay imperative behind the policy adapter.
-- [x] P10.3 Orphan sweep **DEFERRED** past P10 — slice 5 (`16656dae`, local-only): risk>value per
-  §6-Q2; characterization floor (3 pins) + explicit triggers T1/T2.
+- [x] P10.3 Orphan sweep **DEFERRED** past P10 — slice 5 (`16656dae`, pushed; P10 close `343a52bc`):
+  risk>value per §6-Q2; characterization floor (3 pins) + explicit triggers T1/T2.
   [p10-slice5-defer.md](./evidence/effect/p10-slice5-defer.md).
 - [x] P10.4 Root quiesce settles all holds to `200 {}` before HTTP stops — delivered by the
   P4-frozen `ShutdownPhaseOrder` + the slices-2/3 settlers, closed by the slice-4 mixed-load matrix
@@ -1021,41 +1021,53 @@ the P9 docs-close `8d09b332`.
 
 **Purpose:** use Bun to its fullest where it is actually complete and faster for Fleet Deck.
 
-- [ ] P11.1 Isolate mDNS behind Discovery/Datagram interfaces. Trial `Bun.udpSocket` multicast
+- [x] P11.1 Isolate mDNS behind Discovery/Datagram interfaces. Trial `Bun.udpSocket` multicast
   membership, interface selection, TTL 255, loopback, boolean send/backpressure and `drain`.
-- [ ] P11.2 Prove two responders can coexist on port 5353 on macOS and Linux. Bun 1.3.14's
+  **→ NO SLICE NEEDED (under KEEP):** the responder is already a narrow `createMdns` port; a Bun-neutral interface would exist only to host the adapter P11.2 rejects.
+- [x] P11.2 Prove two responders can coexist on port 5353 on macOS and Linux. Bun 1.3.14's
   documented UDP options expose neither the current `reuseAddr` contract nor an equivalent
   documented reuse option; a coexistence failure means **KEEP node:dgram**.
-- [ ] P11.3 Prove goodbye datagrams reach a receiving peer or packet capture before close; Bun's
+  **→ KEEP `node:dgram`:** two `Bun.udpSocket` sockets on one port → `EADDRINUSE`; `udp.SocketOptions` exposes no `reuseAddr`/`reusePort`.
+- [x] P11.3 Prove goodbye datagrams reach a receiving peer or packet capture before close; Bun's
   `send() === true` and later `drain` prove buffer acceptance/writability, not completion of one
   particular datagram. Bind failures remain fail-open, interface roaming reconfigures safely, and
   stop finishes within the shutdown budget.
-- [ ] P11.4 Trial `Bun.file` for immutable board asset Responses only after exact traversal,
+  **→ KEEP `node:dgram`:** `send()`/`drain` prove writability, not delivery; the goodbye OS-handoff barrier is unprovable on `Bun.udpSocket`.
+- [x] P11.4 Trial `Bun.file` for immutable board asset Responses only after exact traversal,
   missing-file, MIME, CSP, cache, HEAD, Range, and content-length fixtures. Keep current path/header
   gates outside the file API.
-- [ ] P11.5 Inventory content-only writes that can safely use `Bun.write`. Keep `node:fs` for
+  **→ KEEP `node:fs` (readFileSync) + `HttpResShim`:** a `Bun.file` body adds Range/HEAD/500 divergence; the one parity form has no measured gain and bypasses the audited shim.
+- [x] P11.5 Inventory content-only writes that can safely use `Bun.write`. Keep `node:fs` for
   directories, metadata, permissions, symlink-safe fd operations, fsync, atomic link/rename,
   bounded random access, and transcript tails.
-- [ ] P11.6 Characterize Bun's `.env` auto-loading against system service and runtime overrides;
+  **→ KEEP `node:fs`:** the safe-list is EMPTY — `Bun.write` lacks mode/`wx`/append/atomic-rename/fsync and every daemon write needs ≥1.
+- [x] P11.6 Characterize Bun's `.env` auto-loading against system service and runtime overrides;
   decide explicitly whether production launchers need `--no-env-file`. Always pass live
   `process.env` to children and scan bundles for secrets.
-- [ ] P11.7 Keep constant-time compare and exact security hashes on proven crypto APIs. Trial Web
+  **→ KEEP + REQUIRE `--no-env-file`** (landed `5faec478`) plus a bundle secret-scan gate; the live child env was already correct.
+- [x] P11.7 Keep constant-time compare and exact security hashes on proven crypto APIs. Trial Web
   Crypto UUID/random generation only with shape/entropy fixtures; never use `Bun.hash` for secrets.
-- [ ] P11.8 Trial `Bun.spawnSync` only in bounded CLI/capability paths with exit/output/self-path
+  **→ KEEP `node:crypto`:** the Web-Crypto UUID/random cleanup is DECLINED (χ² match); `Bun.hash` (wyhash) is forbidden for secrets.
+- [x] P11.8 Trial `Bun.spawnSync` only in bounded CLI/capability paths with exit/output/self-path
   parity and latency evidence. For the daemon's cached tmux probe, characterize an asynchronous
   `Bun.spawn`/Effect replacement and its readiness/cache semantics; do not add a new event-loop
   blocking sync call.
-- [ ] P11.9 Characterize detached supervisor/CLI launchers separately: child survival, `unref`,
+  **→ KEEP `execFileSync`** (daemon git) **+ KEEP async `execFileP`** (CLI doctor); the cached tmux probe is a recorded DEFER (async-fiber blueprint, not built — a P13 candidate).
+- [x] P11.9 Characterize detached supervisor/CLI launchers separately: child survival, `unref`,
   stdio flush, process group, signal forwarding, and identity. Record MIGRATE or KEEP; never route
   deliberately detached children through an ordinary root-scoped process API accidentally.
-- [ ] P11.10 Close the owned-platform register for each generic gap. A parity-proven app-local
+  **→ KEEP** all three detached launchers (L1/L2/L3) on `node:child_process.spawn`; never route them through `ProcessRunner`.
+- [x] P11.10 Close the owned-platform register for each generic gap. A parity-proven app-local
   implementation plus an upstream-ready patch is a valid local completion state. Present the
   maintenance/dependency evidence and ask before upstream submission, package extraction, or full
   fork consumption; if approved, run exact-RC conformance, package, lock, and rollback gates before
   consuming it. If not approved, retain the app-local implementation and record that decision.
+  **→ CLOSED LOCALLY:** the app-local Bun process service is retained; upstream submission / package extraction / fork is a standing Luis ask, evidenced by the parity conformance suites + the `rc110.patch`.
 
 **Exit gate:** each row in §4 has measured **MIGRATE**, **KEEP**, or **DEFER** evidence and a named
 owner. No broad "replace all node imports" task remains.
+**→ DISCHARGED** at `5faec478` — every §4 row carries a disposition + owner (see the annotated table
+above); the audit is walked row by row in [p11-close.md](./evidence/effect/p11-close.md) §5.
 
 **Rollback:** one adapter/callsite per commit.
 
@@ -1330,7 +1342,7 @@ Update this table only when a work package's exit gate has actually passed:
 | P8 store/SQLite | Complete | [p8-strict-trial.md](./evidence/effect/p8-strict-trial.md), [p8-stmt-cache-trial.md](./evidence/effect/p8-stmt-cache-trial.md), [p8-sql-client-trial.md](./evidence/effect/p8-sql-client-trial.md), [p9-completion-map.md](./evidence/effect/p9-completion-map.md) | Per-slice: `STORE_BACKED_*` flags. Whole-slice: revert `05b40bd5`, `346ee85a`, `4ff3e393`, `351b376f`, `145e9fbd`, `50412bd8`, `917c4dc8`, `e0ab862a`, `570d8dae`, `cd0470bb` restores `37e07659`. Do not range-revert `05b40bd5^..cd0470bb` (drops interleaved P6.8 `742168a4`) |
 | P9 application workflows | **Complete at `b3666ca8`** (P9.1–P9.5 converted; P9.6 justified NON-conversion) | [p9-close.md](./evidence/effect/p9-close.md) (roll-up, exit-gate audit, bridge inventory); [p9-1-design.md](./evidence/effect/p9-1-design.md) §9 … [p9-6-design.md](./evidence/effect/p9-6-design.md) | Per-slice: `EFFECT_CORE_*` flags → false (default true, `*Legacy` twins in-tree) for P9.1/P9.4/P9.5-s3; `effectRoutes=null` HTTP seam for P9.2/P9.5-s1+2. Whole-P9.1: revert `7bdff948`..`53148019` + `03ee63f2` restores `79bd7fb9`. Whole-P9.2–P9.5: revert `1b07aaa0`,`cd65f374`,`f23cfc9b`,`991c82be`,`0a18335c`,`8409be88`,`0074a154`,`ae6c36fd`,`b3666ca8` restores `84a4221d` |
 | P10 holds/fail-open | **Complete at `16656dae`** (P10.1–P10.5; GET /mail P9-class slice 1; orphan sweep DEFERRED; slices 0–4 pushed at `f2592534`, slice-5 DEFER local) | [p10-close.md](./evidence/effect/p10-close.md) (roll-up, exit-gate audit); [p10-design.md](./evidence/effect/p10-design.md); [p10-slice5-defer.md](./evidence/effect/p10-slice5-defer.md) | Per-slice: `EFFECT_CORE_HOLD_RELAY`→false (slice 3, `*Legacy` twins, double-gated) + `effectRoutes=null` transport seam (slices 1–2). Whole-P10: revert `650fb09b`,`8c896a80`,`70b37f90`,`2ab8ec95`,`285122a1`,`f2592534`,`16656dae` restores the P9 docs-close `8d09b332` |
-| P11 Bun capability trials | Not started | — | — |
+| P11 Bun capability trials | **Complete at `5faec478`** (four trial groups → every trialled candidate **KEEP**; P11.6 `--no-env-file` REQUIRE + bundle secret-scan gate landed; P11.8 tmux probe DEFER; P11.10 owned-platform register closed locally) | [p11-close.md](./evidence/effect/p11-close.md) (roll-up, §4 dispositions, exit-gate audit); [p11-udp-trial.md](./evidence/effect/p11-udp-trial.md), [p11-content-trial.md](./evidence/effect/p11-content-trial.md), [p11-env-crypto-trial.md](./evidence/effect/p11-env-crypto-trial.md), [p11-spawn-trial.md](./evidence/effect/p11-spawn-trial.md) | P11 added no daemon source or adapter seam (bundle byte-identical to P10 close); rollback = ordinary revert of `5faec478` (launcher flags + two test files) |
 | P12 build/distribution | Not started | — | — |
 | P13 cleanup/docs | Not started | — | — |
 | P14 RC rehearsal/release readiness | Not started | — | — |

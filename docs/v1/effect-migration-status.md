@@ -2,13 +2,22 @@
 
 - **Checkpoint date:** 2026-08-24
 - **Branch:** `fd/v1-effect-feasibility`
-- **Published branch:** `origin/fd/v1-effect-feasibility` currently at `f2592534`
-  (`test(effect): pin the mixed-load shutdown matrix (P10 slice 4)`). Implementation
-  HEAD is **1 commit ahead** — the slice-5 orphan-sweep DEFER (`16656dae`, test +
-  docs only) is local-only and unpushed. Slices 0–4 are pushed.
-- **Current implementation HEAD:** `16656dae`
-  (`test(effect): defer the orphan-sweep conversion with its floor (P10 slice 5)`;
-  the P10 stack above the P9 docs-close `8d09b332` is `650fb09b`..`16656dae`)
+- **Published branch:** `origin/fd/v1-effect-feasibility` at `5faec478`
+  (`feat(security): pass --no-env-file on every bun launcher (P11.6)`). **Fully
+  pushed** — `origin == HEAD == 5faec478`, 0 ahead / 0 behind. The P10-close docs
+  committed at `343a52bc`; the whole P10 six-slice stack (`650fb09b`..`16656dae`)
+  and its close are pushed.
+- **Current implementation HEAD:** `5faec478`
+  (`feat(security): pass --no-env-file on every bun launcher (P11.6)` — the one
+  P11 REQUIRE verdict; the P10 stack above the P9 docs-close `8d09b332` is
+  `650fb09b`..`16656dae`, then `343a52bc` P10 close, then `5faec478` P11.6)
+- **P11 completion evidence:** [p11-close.md](./evidence/effect/p11-close.md)
+  (ten-item verdict table, §4 dispositions, owned-platform register close, the
+  P11.6 hardening record, the exit-gate audit) + the four stamped trial reports
+  [p11-udp-trial.md](./evidence/effect/p11-udp-trial.md),
+  [p11-content-trial.md](./evidence/effect/p11-content-trial.md),
+  [p11-env-crypto-trial.md](./evidence/effect/p11-env-crypto-trial.md),
+  [p11-spawn-trial.md](./evidence/effect/p11-spawn-trial.md)
 - **P10 completion evidence:** [p10-close.md](./evidence/effect/p10-close.md)
   (package roll-up, the slice-2 DO-NOT-SHIP→SHIP arc, the held-primitive record,
   the exit-gate audit, the bundle trajectory) + the stamped design
@@ -34,19 +43,22 @@
 - **Runtime floor:** Bun 1.3.14, revision `0d9b296af33f2b851fcbf4df3e9ec89751734ba4`
 
 This is the durable handoff for the executable
-[Effect migration plan](./effect-migration-plan.md). **P0–P10 are complete.** P10
-("questions, holds, and fail-open cleanup") closed at `16656dae`: a six-slice
-ladder converted GET `/mail` (slice 1) and the last two held request paths — GET
-`/api/watch` (slice 2) and the hook HOLD relay (slice 3) — onto one held-response
-`Deferred` settlement primitive; slice 4 pinned the mixed-load shutdown matrix; and
-the slice-5 orphan-sweep conversion is an adjudicated DEFER (risk > value, with an
-explicit re-evaluation trigger). The fail-open contract is strengthened, not merely
-preserved. Implementation HEAD `16656dae` is 1 commit ahead of origin `f2592534` —
-the slice-5 test+docs commit is local-only and unpushed. This P10-close
-documentation is uncommitted. No pull request has been opened, and nothing has been
-tagged, released, or deployed. Local resume is **P11** (remaining Bun trials). P7
-remains the standing §7 platform authorization checkpoint — it is BLOCKED on Luis's
-draft-PR authorization and is not the local next slice.
+[Effect migration plan](./effect-migration-plan.md). **P0–P11 are complete.** P11
+("finish the Bun-native capability trials") closed at `5faec478`: four trial groups
+adjudicated the ten remaining Bun-native candidates, and every one of them is a
+**KEEP** or **DEFER** — mDNS stays on `node:dgram` (P11.1–3), board assets and all
+content reads/writes stay on `node:fs` (P11.4/P11.5), and secrets stay on
+`node:crypto` (P11.7). The one REQUIRE verdict — P11.6, `--no-env-file` on every
+production bun launcher plus a bundle secret-scan gate — is the sole daemon-adjacent
+change and landed at `5faec478`. The §4 capability register is fully dispositioned
+and the owned-platform register (P11.10) closes locally: the app-local Bun process
+service is retained; upstream submission of the `rc110.patch` is a standing Luis ask.
+The branch is **fully pushed** — `origin == HEAD == 5faec478` — with the P10-close
+docs committed at `343a52bc`. This P11-close documentation is uncommitted. No pull
+request has been opened, and nothing has been tagged, released, or deployed. Local
+resume is **P12** (Bun-native builds and an optional compiled executable). P7 remains
+the standing §7 platform authorization checkpoint — it is BLOCKED on Luis's draft-PR
+authorization and is not the local next slice.
 
 ## Executive status
 
@@ -62,11 +74,59 @@ draft-PR authorization and is not the local next slice.
 | P7 | Blocked (not started) | Standing §7 platform authorization checkpoint — BLOCKED on Luis's draft-PR authorization (push + draft PR so the macOS/real-tmux + Linux lifecycle jobs can run). Termbridge facade is the seam; `/ws/term` stays P7. Not the local next slice; not a reason to stall P9. |
 | P8 | Complete at `cd0470bb` | Exit gate MET with the four dispositions in [effect-migration-plan.md](./effect-migration-plan.md) P8. Root-owned Store + five db-workflows slices; HTTP-bridged keep capability params. |
 | P9 | Complete at `b3666ca8` | Exit gate MET ([p9-close.md](./evidence/effect/p9-close.md) §3). P9.1 spawn/revive/dismiss `03ee63f2`; P9.2 repos/worktrees `f23cfc9b`/`991c82be`/`8409be88`/`0074a154`; P9.3 files `1b07aaa0`/`0a18335c`; P9.4 mail pane-delivery `cd65f374`; P9.5 settings/ack/postMail `ae6c36fd`/`b3666ca8`; P9.6 takeover = adjudicated justified NON-conversion. |
-| P10 | **Complete at `16656dae`** | Exit gate MET ([p10-close.md](./evidence/effect/p10-close.md)). Six-slice ladder: floor `650fb09b`; GET `/mail` `8c896a80`; GET `/api/watch` held `2ab8ec95`; hook HOLD relay `285122a1`; shutdown matrix pin `f2592534`; orphan-sweep DEFER `16656dae`. Held-response `Deferred` primitive; fail-open strengthened. Slices 0–4 pushed; slice 5 local-only. |
-| P11–P14 | **Not started — resume at P11** | Remaining Bun trials (P11, resume here), build/distribution (P12), cleanup/docs (P13), RC rehearsal + version-manifest closure checkpoint (P14). |
+| P10 | **Complete at `16656dae`** (close docs `343a52bc`) | Exit gate MET ([p10-close.md](./evidence/effect/p10-close.md)). Six-slice ladder: floor `650fb09b`; GET `/mail` `8c896a80`; GET `/api/watch` held `2ab8ec95`; hook HOLD relay `285122a1`; shutdown matrix pin `f2592534`; orphan-sweep DEFER `16656dae`. Held-response `Deferred` primitive; fail-open strengthened. Fully pushed. |
+| P11 | **Complete at `5faec478`** | Exit gate MET ([p11-close.md](./evidence/effect/p11-close.md) §5). Ten Bun-native candidates adjudicated across four trials: all KEEP/DEFER except P11.6 = REQUIRE `--no-env-file` + bundle secret-scan gate (`5faec478`, sole daemon-adjacent change). mDNS KEEP `node:dgram`; content KEEP `node:fs`; crypto KEEP `node:crypto`; spawns/launchers KEEP; tmux probe DEFER. Owned-platform register (P11.10) closes locally; upstream `rc110.patch` submission = standing Luis ask. |
+| P12–P14 | **Not started — resume at P12** | Bun-native builds + optional compiled executable (P12, resume here), cleanup/docs (P13), RC rehearsal + version-manifest closure checkpoint (P14). |
 
-P3's paired quiet-host performance evidence is unchanged and out of P8/P9/P10
+P3's paired quiet-host performance evidence is unchanged and out of P8/P9/P10/P11
 scope. Do not close it from these suites.
+
+## P11 complete at `5faec478`
+
+P11 ("finish the Bun-native capability trials") is **COMPLETE**. Four trial groups
+adjudicated the ten remaining Bun-native candidates; every verdict is **KEEP** or
+**DEFER** except the one **REQUIRE** (P11.6), which is the sole daemon-adjacent
+change and landed at `5faec478`. The full package record — the ten-item verdict
+table, the §4 capability-register dispositions, the owned-platform register close,
+the P11.6 hardening record, and the exit-gate audit — is in
+[p11-close.md](./evidence/effect/p11-close.md). The four stamped trial reports are
+[p11-udp-trial.md](./evidence/effect/p11-udp-trial.md) (mDNS),
+[p11-content-trial.md](./evidence/effect/p11-content-trial.md) (board assets +
+writes), [p11-env-crypto-trial.md](./evidence/effect/p11-env-crypto-trial.md) (`.env`
+auto-load + crypto), and [p11-spawn-trial.md](./evidence/effect/p11-spawn-trial.md)
+(sync spawns + detached launchers). *(The trials' `/tmp` working drafts were lost to
+a scratch wipe; the four reports are reconstructed verbatim from the trial workers'
+final reports — the reconstruction note is retained in each.)*
+
+Push state: the P11.6 commit `5faec478` is the branch HEAD and is pushed
+(`origin == HEAD == 5faec478`). This P11-close documentation is uncommitted.
+
+### Ten verdicts (candidate · disposition)
+
+| Item | Candidate | Verdict |
+| --- | --- | --- |
+| P11.1–3 | mDNS via `Bun.udpSocket` | **KEEP `node:dgram`** — no `reuseAddr` coexistence (two sockets/port → `EADDRINUSE`); goodbye-send completion unprovable. Zero source change. |
+| P11.4 | Board static assets via `Bun.file` body | **KEEP `node:fs` + `HttpResShim`** — `Bun.serve` silently adds Range/HEAD/500-on-missing; parity fails pre-benchmark. |
+| P11.5 | Content writes via `Bun.write` | **KEEP `node:fs`** — `Bun.write` is `0o664`/no-`wx`/truncate/symlink-follow/non-atomic/no-fsync; safe-list is EMPTY. |
+| P11.6 | `.env` auto-load | **KEEP explicit env + REQUIRE `--no-env-file`** on every production bun launcher + bundle secret-scan gate — implemented at `5faec478`. |
+| P11.7 | Crypto (`timingSafeEqual`/SHA-256/`randomBytes`) | **KEEP `node:crypto`**; UUID/random uniformity cleanup **DECLINED** (χ² 253.48 vs 253.46 — churn only). `Bun.hash` forbidden for secrets. |
+| P11.8 | `Bun.spawnSync` as daemon drop-in | **KEEP `execFileSync`** (`repo-identity.ts`); **KEEP async CLI**; tmux probe **DEFER** (product-behavior change, P13 candidate). |
+| P11.9 | Detached launchers via `Bun.spawn`/`ProcessRunner` | **KEEP all three on `node:child_process.spawn`** (L1 supervisor / L2 SessionStart / L3 launchOverride); never `ProcessRunner`. |
+| P11.10 | Owned-platform register | **CLOSES LOCALLY** — app-local Bun process service retained; upstream `rc110.patch` submission / extraction / fork = standing Luis ask. |
+
+The exit gate ("each §4 row has measured MIGRATE/KEEP/DEFER evidence and a named
+owner; no broad 'replace all node imports' task remains") is **DISCHARGED** at
+`5faec478` — walked row by row in [p11-close.md](./evidence/effect/p11-close.md) §5
+and reflected in the annotated §4 register of the plan.
+
+### Bundle at close
+
+The daemon bundle is **byte-identical to the P10 close** — P11 added no daemon
+source (the P11.6 change touches launchers/tests only): raw **652,147** / gzip-9-zlib
+**172,335** / sha `84daf597…`. Headroom under the policy ceilings (raw ≤768,000,
+gzip-9-zlib ≤189,440) is ~115,853 raw / ~17,105 gzip. *(The trial reports quote
+`gzip -c` level-6 figures ≈172,632–173,231; those are not the policy metric — the
+gate value is the gzip-9-zlib 172,335 above.)*
 
 ## P10 complete at `16656dae`
 
@@ -80,9 +140,9 @@ the §6 adjudications that bind Q1 settlement-only and the slice-5 defer) is
 [p10-design.md](./evidence/effect/p10-design.md); the slice-5 gap analysis is
 [p10-slice5-defer.md](./evidence/effect/p10-slice5-defer.md).
 
-Push state: slices 0–4 are pushed (origin at `f2592534`); the slice-5 orphan-sweep
-DEFER (`16656dae`, test + docs only) is local-only, 1 ahead. This P10-close
-documentation is uncommitted.
+Push state: the full six-slice stack (`650fb09b`..`16656dae`) is pushed, and the
+P10-close documentation is committed at `343a52bc` and pushed. P10 is closed; the
+branch has since advanced to `5faec478` (P11.6).
 
 ### Six-slice ladder (commit · disposition)
 
@@ -94,7 +154,7 @@ documentation is uncommitted.
 | — test fixup (interleaved) | `70b37f90` | tolerate a torn trailing line when reading fixture spawn JSONL | test-robustness, no seam |
 | 3 — hook HOLD relay | `285122a1` | final held conversion; fail-open `{}` fold; `EFFECT_CORE_HOLD_RELAY` + `*Legacy` twins | converted (double-gated) |
 | 4 — shutdown matrix | `f2592534` | mixed hook+watch in ONE shutdown → releasing-holds ordering pin | test-only (collapse to pins) |
-| 5 — orphan sweep | `16656dae` | gap analysis → **DEFER** (risk > value; §6-Q2) + characterization floor | test + docs only; local-only |
+| 5 — orphan sweep | `16656dae` | gap analysis → **DEFER** (risk > value; §6-Q2) + characterization floor | test + docs only; pushed (P10 close `343a52bc`) |
 
 ### Held-response primitive
 
@@ -341,15 +401,17 @@ hook Effect-marker scan; `:772` fail-open floor `FLOOR_SEAM_ALLOW`;
 `cli-serve-paths.test.ts:235` bin self-containment). Design
 [p9-6-design.md](./evidence/effect/p9-6-design.md).
 
-## Beyond P10
+## Beyond P11
 
-P10 closed GET `/mail` and GET `/api/watch` (they folded in as slices 1–2).
-Continue in [effect-migration-plan.md](./effect-migration-plan.md) /
-[p9-completion-map.md](./evidence/effect/p9-completion-map.md) order: **P11**
-remaining Bun trials (resume here), P12 build/distribution, P13 cleanup/docs, P14
-RC rehearsal + version-manifest closure checkpoint. `/ws/term` stays P7;
+P11 closed the Bun-native capability trials with no daemon control-flow change
+(only the P11.6 launcher hardening at `5faec478`). Continue in
+[effect-migration-plan.md](./effect-migration-plan.md) /
+[p9-completion-map.md](./evidence/effect/p9-completion-map.md) order: **P12**
+Bun-native builds + optional compiled executable (resume here), P13 cleanup/docs,
+P14 RC rehearsal + version-manifest closure checkpoint. `/ws/term` stays P7;
 static/favicon stay P13; the questions orphan sweep is a P10 DEFER whose triggers
-(T1/T2) are the earliest a later package would revisit it.
+(T1/T2) are the earliest a later package would revisit it; the tmux-probe async
+rewrite is a P11.8 DEFER and a P13-cleanup candidate.
 
 ## P8 complete at `cd0470bb`
 
@@ -724,14 +786,16 @@ publish. Not a reason to revert conversions.
 
 ## Exact resume order
 
-P10 is closed. Slices 0–4 are pushed (origin at `f2592534`); the slice-5
-orphan-sweep DEFER (`16656dae`, test + docs only) is local-only, 1 ahead. The next
-session resumes at **P11 — remaining Bun trials**, in the order of
-[effect-migration-plan.md](./effect-migration-plan.md) P11 and
-[p9-completion-map.md](./evidence/effect/p9-completion-map.md). GET `/mail` and GET
-`/api/watch` are now converted (P10 slices 1–2). P7 remains the standing §7 platform
-authorization checkpoint — BLOCKED on Luis's draft-PR authorization, not the local
-next slice; `/ws/term` stays behind the termbridge facade until P7.
+P11 is closed. The branch is fully pushed — `origin == HEAD == 5faec478` (the P10
+six-slice stack + its close `343a52bc` + the P11.6 commit `5faec478` are all on
+origin). The next session resumes at **P12 — Bun-native builds and an optional
+compiled executable**, in the order of
+[effect-migration-plan.md](./effect-migration-plan.md) P12 and
+[p9-completion-map.md](./evidence/effect/p9-completion-map.md). All held/lease paths
+(GET `/mail`, GET `/api/watch`, the hook HOLD relay) are converted (P10); the Bun
+trials are adjudicated (P11). P7 remains the standing §7 platform authorization
+checkpoint — BLOCKED on Luis's draft-PR authorization, not the local next slice;
+`/ws/term` stays behind the termbridge facade until P7.
 
 1. Confirm the checkpoint and runtime:
 
@@ -742,39 +806,55 @@ next slice; `/ws/term` stays behind the termbridge facade until P7.
    bun --version
    ```
 
-   Expected HEAD is `16656dae` and origin is `f2592534` (the slice-5 test+docs
-   commit is local-only, **1 ahead / 0 behind**). Push `16656dae` before opening
-   any PR. This P10-close documentation
-   (`docs/v1/effect-migration-plan.md`, `docs/v1/effect-migration-status.md`,
+   Expected HEAD **and** origin are both `5faec478` (**0 ahead / 0 behind**). This
+   P11-close documentation (`docs/v1/effect-migration-plan.md`,
+   `docs/v1/effect-migration-status.md`,
    `docs/v1/evidence/effect/migration-ledger.md`,
-   `docs/v1/evidence/effect/p10-close.md`, and the stamped
-   `docs/v1/evidence/effect/p10-design.md`) may still be uncommitted; do not switch
-   branches. Leave untracked `.claude/agents/` and `/tmp/fd-wt-*` alone.
+   `docs/v1/evidence/effect/p11-close.md`, and the four stamped
+   `docs/v1/evidence/effect/p11-*-trial.md` reports) may still be uncommitted; do
+   not switch branches. Leave untracked `.claude/agents/` and `/tmp/fd-wt-*` alone.
 
-2. Start **P11** from [effect-migration-plan.md](./effect-migration-plan.md) P11
-   (the remaining Bun-native trials). Carry-forward landmines from P9/P10: do not
-   yield Store on HTTP-bridged fibers; do not yield inside a SQLite txn callback;
-   keep the ingress `run*With` pin at 2 (`runControlDetached` is the only
-   unsupervised runner); keep every verify list that touches `q.*` sites pinned to
-   the P8.5 q-corpus tripwire (334); do not route held answers through `mapHookExit`
-   (the `{body:{body:obj}}` double-wrap); the questions orphan sweep stays a DEFER
-   until its T1/T2 trigger fires.
+2. Start **P12** from [effect-migration-plan.md](./effect-migration-plan.md) P12
+   (Bun-native builds). P12.1 = a programmatic `Bun.build({ target: "bun", format:
+   "esm" })` script for daemon/bin/hook artifacts, preserving banners, shebangs,
+   top-level await, dynamic/JSON imports, builtins, version/self paths, and
+   deterministic output; P12.2 = compare esbuild vs Bun-built artifacts across the
+   full source/bundle, CLI, plugin, hook-integrity, static-asset, and
+   release-version suites before selecting `Bun.build`. Carry-forward landmines from
+   P9/P10/P11: do not yield Store on HTTP-bridged fibers; do not yield inside a
+   SQLite txn callback; keep the ingress `run*With` pin at 2 (`runControlDetached`
+   is the only unsupervised runner); keep every verify list that touches `q.*` sites
+   pinned to the P8.5 q-corpus tripwire (334); do not route held answers through
+   `mapHookExit`; keep `--no-env-file` on every production bun launcher and the
+   bundle secret-scan gate green (P11.6); the questions orphan sweep and the tmux
+   probe stay DEFERs until their triggers fire.
 
 3. P7 stays paused until Luis authorizes the draft PR (see standing notes). It is
-   not sequenced before P11.
+   not sequenced before P12.
 
-## Standing open notes (do not close from P8/P9/P10)
+## Standing open notes (do not close from P8/P9/P10/P11)
+
+**Three items still need Luis's authorization** — they gate outward-facing or
+release actions, not the local P12 work: (a) the P7 draft-PR authorization below;
+(b) the P11.10 upstream submission of the `rc110.patch`; (c) the P14 version-manifest
+pick. None blocks resuming P12.
 
 - **P7 is BLOCKED on Luis's draft-PR authorization.** It awaits the §7
   platform authorization checkpoint (push + draft PR so the blocking
-  macOS/real-tmux and Linux lifecycle jobs can run). The implementation through
-  `f2592534` is already on origin; the slice-5 DEFER commit `16656dae` and this
-  documentation are not — push `16656dae` as part of that checkpoint. At the
-  checkpoint `hook-integrity` may be intentionally red because version closure has
-  not happened; record that expected failure, but P7 cannot close until its named
-  platform jobs are actually green. Authorization has not been given, so the
-  checkpoint stays paused. P10 is now complete, so P7 is the only migration work
-  gated on that authorization — sequence P11 ahead of it locally.
+  macOS/real-tmux and Linux lifecycle jobs can run). The full branch is already on
+  origin (`origin == HEAD == 5faec478`), so this checkpoint is now purely the
+  authorization + draft-PR step — nothing local is left unpushed. At the checkpoint
+  `hook-integrity` may be intentionally red because version closure has not happened;
+  record that expected failure, but P7 cannot close until its named platform jobs are
+  actually green. Authorization has not been given, so the checkpoint stays paused.
+  P10 and P11 are now complete, so P7 is the only migration work gated on that
+  authorization — sequence P12 ahead of it locally.
+- **P11.10 upstream submission is a standing Luis ask.** The owned-platform register
+  closes locally: the app-local Bun process service is retained and the
+  upstream-ready `upstream/effect-platform-bun-child-process-spawner-rc110.patch`
+  is written and backed by parity conformance suites. Submitting it upstream,
+  extracting it to a package, or forking Effect requires Luis's explicit approval
+  (§3 owned-platform gate). Detail: [p11-close.md](./evidence/effect/p11-close.md) §3.
 - **Questions orphan-sweep DEFER (P10 slice 5).** The sweep stays a domain-owned
   `setInterval` (adjudicated §6-Q2, risk > value). It is NOT incompleteness: the
   §2D redundancy proof and a 3-test characterization floor back it. Revisit only on
@@ -808,7 +888,10 @@ From the plan's P7 section and the constraints still in force from P6/P8:
 - A command timeout tears down the compromised shared client as today. Viewer
   child scopes close only that viewer; ref-count or root closure owns the
   shared client lifetime.
-- Keep hook holds/watch waiters under their P1 owners until P10.
+- ~~Keep hook holds/watch waiters under their P1 owners until P10.~~ **Satisfied:**
+  P10 converted the hook HOLD relay and GET `/api/watch` onto the held-response
+  `Deferred` primitive; the questions orphan sweep remains a domain-owned
+  `setInterval` (P10 slice-5 DEFER).
 - Request-bridged Effects must NOT `yield* HttpServer` / `DaemonLifecycle` /
   `Background` / `Store` — the ingress runtime captured the pre-daemon
   Context (`R` must stay within
@@ -829,13 +912,15 @@ From the plan's P7 section and the constraints still in force from P6/P8:
 
 ## Repository handoff expectation
 
-This P10-close documentation is currently uncommitted. Implementation HEAD is
-`16656dae`, **1 commit ahead** of `origin/fd/v1-effect-feasibility` at `f2592534`
-(slices 0–4 pushed; the slice-5 orphan-sweep DEFER `16656dae`, test + docs only, is
-local-only). No pull request has been opened. After the documentation is committed
-and `16656dae` is pushed, the next session resumes at **P11** from
-`fd/v1-effect-feasibility`, using [effect-migration-plan.md](./effect-migration-plan.md)
-P11 and [p9-completion-map.md](./evidence/effect/p9-completion-map.md); the P10
-package record is [p10-close.md](./evidence/effect/p10-close.md) and the P9 record is
+This P11-close documentation is currently uncommitted. The branch is **fully
+pushed** — implementation HEAD **and** `origin/fd/v1-effect-feasibility` are both
+`5faec478` (**0 ahead / 0 behind**); the P10-close docs are committed at `343a52bc`
+and the P11.6 hardening at `5faec478`, both on origin. No pull request has been
+opened. After this documentation is committed and pushed, the next session resumes at
+**P12** from `fd/v1-effect-feasibility`, using
+[effect-migration-plan.md](./effect-migration-plan.md) P12 and
+[p9-completion-map.md](./evidence/effect/p9-completion-map.md); the P11 package record
+is [p11-close.md](./evidence/effect/p11-close.md), the P10 record is
+[p10-close.md](./evidence/effect/p10-close.md), and the P9 record is
 [p9-close.md](./evidence/effect/p9-close.md). Leave untracked `.claude/agents/` and
 `/tmp/fd-wt-*` alone.
