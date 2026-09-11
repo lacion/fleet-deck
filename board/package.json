@@ -19,7 +19,7 @@
   },
   "devDependencies": {
     "@babel/core": "8.0.1",
-    "@rolldown/plugin-babel": "0.2.3",
+    "@rolldown/plugin-babel": "0.2.4",
     "@types/react": "19",
     "@types/react-dom": "19",
     "@vitejs/plugin-react": "^6.0.5",
