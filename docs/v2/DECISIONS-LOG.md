@@ -362,7 +362,7 @@ Format: context, options, choice, reason, owner review.
 - Choice: option 3.
 - Reason: The evidence is stored in the event log in the same transaction that confirms the effect (PLAN §6.4), it matches exactly one effect, and a late answer still settles an `outcome_unknown` claim. A refused interrupt (`accepted: false`) retires the effect as `refused_by_provider` (ADR-002 §3 rule for refused requests) and does not mark the turn interrupted. Codex (P5) maps the `turn/interrupt` JSON-RPC answer to the same event. `set_mode`/`set_model` keep their value match (`mode.changed`/`model.changed` come only from the matching control response).
 - Changes: `fleetdeck_proto::Event::InterruptResult` (25 kinds; TS types regenerated), `fleetdeck_providers::ControlId`, `LiveSession::interrupt(Option<ControlId>)`, `HostRequest::Interrupt(Option<String>)`, `effects::observe`.
-- Owner review: pending
+- Owner review: approved (owner, 2026-10-12)
 
 ## DL-037: Session manager scope in P2-6
 
@@ -382,7 +382,7 @@ Format: context, options, choice, reason, owner review.
   - Interrupt: `invalid_state` when the session started and no turn or run is open. Answer: the decision checks the request belongs to the session; an `updated_input` needs the `edit_input` capability.
   - Codex instances get no adapter until Phase 5 (`adapters_from_config` skips them); a start for one retires as `not_dispatched`.
 - Reason: a receipt must not promise an effect that cannot run (PLAN §6.4: the decision is the single place for policy); a spawned Claude process without a prompt is live and controllable, so waiting for `session.started` would leave a healthy start `claimed` and turn it into `outcome_unknown` at the next worker restart; resume needs the stored native id and a host that may survive restarts, which are outside P2-6.
-- Owner review: pending
+- Owner review: approved (owner, 2026-10-12)
 
 ## DL-038: Station-local CLI protocol and `station serve` without a link
 
@@ -401,7 +401,7 @@ Format: context, options, choice, reason, owner review.
   - A live socket makes a second `station serve` fail (`InUse`); a stale socket file is replaced.
   - SIGINT or SIGTERM stops `station serve`: the socket closes, every live session stops gracefully (ADR-001 stop policy), the pumps get up to 5 s to store the last events, the socket file is removed.
 - Reason: the link protocol needs the Phase 3 handshake, scopes and pairing, which a same-user emergency path does not need; the peer uid check keeps other local users out even if the directory mode changes; the request id is unique on the station, so asking for the session id adds a way to get it wrong.
-- Owner review: pending
+- Owner review: approved (owner, 2026-10-12)
 
 ## DL-039: Fault injection, "after the send", and stale answers after a restart
 
@@ -418,7 +418,7 @@ Format: context, options, choice, reason, owner review.
   - Worker restart: in-process tests (`manager/fault_tests.rs`) abort the worker task at the claim or after the send; the new worker's fence settles the old claim (`outcome_unknown`), and late provider evidence still confirms a sent effect.
   - Station crash: `crates/fleetdeck-cli/tests/station_faults.rs` runs one `fleetdeck station serve` per boundary, sends the same command id again after the restart and checks receipt, effect state and the fake provider's stdin log; one more test kills the station with `SIGKILL` while an approval is open.
 - Reason: a timing crash cannot hit a boundary of a few microseconds, and a feature keeps the abort out of every normal build; `sent` must mean the I/O happened, or a crash right after it loses a write that the store calls sent; an answer that the station already applied must get the same outcome every time, also after the session ended.
-- Owner review: pending
+- Owner review: approved (owner, 2026-10-12)
 
 ## DL-040: Link protocol Revision 2 (GATE-M1 G14 and G1–G7)
 
@@ -436,7 +436,7 @@ Format: context, options, choice, reason, owner review.
   - The spike `spikes/s4-link` stays at Revision 1 (GATE-M1: do not fix the spike).
   - ADR-004 §8 asks for an adversary DESIGN REVIEW before Phase 3 freezes the protocol. The goal loop forbids subagents, so this run cannot do it; it stays an owner step together with the acceptance of ADR-004.
 - Reason: the spike is the evidence base of §2–§7 and must stay readable as such; a separate revision section makes each superseded rule explicit, and the PLAN keeps the summary that the other sections refer to. A log entry alone would leave Phase 3 without a contract to test against.
-- Owner review: pending
+- Owner review: approved (owner, 2026-10-12)
 
 ## DL-041: Envelopes of the non-session mutating methods
 
@@ -455,7 +455,7 @@ Format: context, options, choice, reason, owner review.
   - `target_incarnation` is optional only in `CommandEnvelope` (station-local socket, DL-038).
   - The admission check moved to `command::admit` and is shared by every envelope.
 - Reason: an untyped payload cannot be checked against its method, and session commands do not fit station settings, keys or fleet intent; typed envelopes keep the receipt rules identical for every holder and let a test compare the ADR table with the code table.
-- Owner review: pending
+- Owner review: approved (owner, 2026-10-12)
 
 ## DL-042: Link base in `fleetdeck-link` (M2 P3-1)
 
@@ -474,7 +474,7 @@ Format: context, options, choice, reason, owner review.
   - The pair channel answers "pairing is not open on this listener" until P3-4. `dial_with(DialFault)` is a hidden test hook for failure injection at each setup step.
   - `Hello` gains `attempt_id` and `incarnation`; `Close` gains `min_epoch`; version negotiation uses `fleetdeck_proto::version`.
 - Reason: the setup layer is where G1 and G10 live, and it can be tested alone over loopback (TCP or the FIFO stand-in, DL-025); the spike's control and data tasks change with G2, G6, G8 and G9 anyway, so they move in their own items.
-- Owner review: pending
+- Owner review: approved (owner, 2026-10-12)
 
 ## DL-043: Control channel of `fleetdeck-link` (M2 P3-2)
 
@@ -493,7 +493,7 @@ Format: context, options, choice, reason, owner review.
   - The application gets `Inbound::{Request, Frame}`; the end of the link is `Control::ended()/closed()` (the inbound queue then returns `None`), so delivery of the end never waits for queue capacity. The supervisor owns the link's `TableGuard`, so the table entry goes with the channel. Dropping every `Control` handle closes the link (`closed`).
   - The injected clock of the G8 tests is tokio's paused test clock over in-memory WebSocket pairs (`tokio::io::duplex`); the channel is generic over the socket for that reason. The data channel stays a plain `Ws` in `LiveLink` until P3-3 ties it to the control channel.
 - Reason: a reader that waits for the application, or a writer that waits for a blackholed peer, can then never delay a supersession or a shutdown (G8); the checks match the ADR order exactly and are tested over in-memory pairs and real loopback links.
-- Owner review: pending
+- Owner review: approved (owner, 2026-10-12)
 
 ## DL-044: Request limit per link, and the data channel of `fleetdeck-link` (M2 round 16, P3-3)
 
@@ -510,7 +510,7 @@ Format: context, options, choice, reason, owner review.
   - `Data::write` returns when the last chunk is queued for the socket (it waits for credit); a reset (by either side) or the end of the channel fails the pending writes of the stream at once with the reason.
   - One lifetime (`live::start`, `tie`): the end of the control channel ends the data channel with the same reason. When the data channel ends first, a mux violation closes the control channel with its reason; otherwise the control channel waits up to 500 ms (`DATA_LOSS_GRACE`) for the peer's `close` frame and then closes with `data_channel_lost`. When the peer closes the data socket, the data channel waits up to 500 ms for the control end, so pending writes fail with the link's reason (for example `superseded`), not with `eof`. Dropping the application's data handles keeps the link.
 - Reason: a per-direction limit allows 256 open requests, which the ADR does not allow. The sans-IO mux can be tested exhaustively (property tests for `decode` and `receive`), and the task layout keeps G8 (no shutdown waits for a blocked peer) for the data channel too.
-- Owner review: pending
+- Owner review: approved (owner, 2026-10-12)
 
 ## DL-045: Invitation id, pairing admission and reconnect in `fleetdeck-link` (M2 rounds 17–18, P3-4)
 
@@ -526,7 +526,7 @@ Format: context, options, choice, reason, owner review.
   - Reconnect (`spawn_dialer`, ADR §2.10): equal jitter in `[c/2, c]`, `c = min(5 min, 500 ms · 2^attempt)`, reset only after a link stayed up 60 s; every attempt commits a new epoch. When the peer key is not pinned any more (revoked), the dialer reports `Stopped { reason: "not_paired" }` and ends instead of retrying forever.
   - The ADR text of §2.8 is superseded by §9.7 for the failure count; the wire contract change (the id) is this entry.
 - Reason: G11 needs per-invitation counts; an id is the smallest change that gives them, and it is not secret.
-- Owner review: pending
+- Owner review: approved (owner, 2026-10-12)
 
 ## DL-046: Where G5 and G12 are enforced, and the order of their parts (M2 round 18, P3-4)
 
@@ -539,7 +539,7 @@ Format: context, options, choice, reason, owner review.
   - CLI: `invite::read` (prompt with echo off through `rustix::termios`, `--stdin`, `--invite-file` that must be a regular file with no group/other bits); input is bounded to 4 KiB and kept in `Secret<String>`; no error message contains it. Without a terminal and without a flag the command fails at once. An argument that contains `fdinv1:` makes the binary print a fixed message instead of clap's error, which would echo the argument. The commands then still report "not implemented yet" until P3-5/P3-6 add pairing to them.
   - P3-5 (station) and P3-6 (deck) add: the `PairingSink`/`GrantSource` of the stores (pin + grants + revocation generation in one transaction), `link.rotate_key` intake with its envelope, the decision-transaction check of pin and grant (`forbidden` for a queued command of a revoked link), and the `forget-deck` / `remove-station` / `join` / `add-station` commands with their end-to-end tests. PROGRESS lists these parts under those items.
 - Reason: the stores do not exist before P3-5/P3-6; building them inside P3-4 would mix four items into one round. The link-layer behaviour does not change when the stores arrive: they plug in through `PairingSink` and `GrantSource`.
-- Owner review: pending
+- Owner review: approved (owner, 2026-10-12)
 
 ## DL-047: Station link service surface in this build (M2 round 19, P3-5)
 
@@ -554,7 +554,7 @@ Format: context, options, choice, reason, owner review.
   - `station.info` answers `StationInfo { name, incarnation, head, live_sessions }`; `command.receipt { command_id }` answers the stored receipt or `null`.
   - Over a link, a session command without `target_incarnation` is rejected with `invalid_command` and not stored (the local CLI may omit it, G3).
 - Reason: the ADR method table stays the single list of methods (the table-agreement test keeps it true), and a deck gets a typed refusal instead of an unknown method.
-- Owner review: pending
+- Owner review: approved (owner, 2026-10-12)
 
 ## DL-048: Station pairing at run time: one deck, persisted listen addresses, pairing through the local socket (M2 round 20, P3-5c)
 
@@ -562,7 +562,7 @@ Format: context, options, choice, reason, owner review.
 - Options: (1) the CLI process pairs by itself and writes `station.db` while `serve` runs; (2) the running `station serve` process pairs; the CLI is a client of its 0600 local socket. For (b): allow several decks, or one deck per station. For (c): add the address to `station.toml`, or store it in `station.db`.
 - Choice: (2): `serve` owns the link node (`StationNode`: listeners, dialers, `Invitations`), and `invite`/`join`/`forget-deck` are local-socket requests. One deck per station: `invite` and `join` are refused while a deck key is pinned (`forget-deck` first). The bound `--listen` address goes into `station.db` (schema V5 table `listen_addrs`) in the same call that opens the invitation; at start the station listens on `station.toml` `listen` plus the stored addresses. A joined deck's address goes into `pairing.dial_url` in the pin transaction, and the station dials it with jittered backoff until the deck is no longer pinned. The station grants a deck `read`, `drive`, `approve` and `admin` (ADR-004 §9.6). Round 21 (review): the one-deck rule is enforced in the pin transaction (`Store::pin_peer` refuses a deck key while another deck key is pinned, `StoreError::DeckPaired`), so two invitations opened before the first pairing cannot pin two decks; the refused pairing closes with `pairing_failed` and the link layer pins nothing. The CLI-level refusal stays as an early, friendlier message.
 - Reason: only the process that holds the link node can listen for the pairing connection and close links within 1 s at revocation (G5); a second writer to the pin tables would race the cache in `StationPeers`. PLAN §1 says one deck controls the fleet; refusing a second deck makes `forget-deck` total and prevents a silent second controller. The CLI must not rewrite the owner's `station.toml`. The invitation crosses the local socket only (mode 0600, same user, peer-credential check) and its type redacts `Debug`; a bad request line is no longer echoed back (G12).
-- Owner review: pending
+- Owner review: approved (owner, 2026-10-12)
 
 ## DL-049: Deck read model, station ids and the status projection (M2 round 21, P3-6a)
 
@@ -577,7 +577,7 @@ Format: context, options, choice, reason, owner review.
   - The condensed timeline keeps every event except `message.delta` and `reasoning.delta` (the completed message holds the text), at most 500 rows per session (newest kept).
   - A station's `station_id` is its fingerprint at pairing; a rotation changes `key` and `fingerprint` and keeps the id, name, cursor and read model, and increments the revocation generation (G5). Station names are unique; without a name from `deck add-station` the name is the short fingerprint. The deck pairs only with stations (a deck key is refused in the pairing sink).
 - Reason: one fold for station and deck keeps the card and the station's own view equal; the summary is what a snapshot carries, so a snapshot alone gives the correct status. A stable id keeps commands, receipts and the board's URLs valid across a key rotation.
-- Owner review: pending
+- Owner review: approved (owner, 2026-10-12)
 
 ## DL-050: Deck link runtime: station grants, names, the first sync, and the deck's local socket (M2 round 22, P3-6b)
 
@@ -593,7 +593,7 @@ Format: context, options, choice, reason, owner review.
   - `deck invite` needs a link listener (`link_listen` in deck.toml); without one it fails with "the deck has no link listener".
   - The line protocol of the two local sockets moved to `fleetdeck_core::localsock` (bind 0600, peer uid check, 64 KiB line limit, error text without the request body).
 - Reason: least privilege for the station key (doctrine: fail closed); the station.toml name is the name that the owner chose, and no prompt is needed on the deck; the local socket keeps the pairing secret off the network and off the command line (G12), as on the station.
-- Owner review: pending
+- Owner review: approved (owner, 2026-10-12)
 
 ## DL-051: A bound for snapshot batches (M2 round 23, review of P3-6b)
 
@@ -604,7 +604,7 @@ Format: context, options, choice, reason, owner review.
   - The deck closes the link with `protocol_error` and drops the open batch when `snapshot_begin` announces more than the limit, or when a `snapshot_session` arrives after the announced count. A new `snapshot_begin` (a restarted stream) replaces an unfinished batch. So an unfinished batch holds at most `min(session_count, 4096)` summaries, each below the 1 MiB frame limit.
   - The station's `Store::snapshot` sends every session that has not exited (state not `exited` / `lost`) and then the newest exited sessions, up to `StoreConfig::snapshot_sessions` (default 4096). Running sessions are bounded by `max_sessions` (≤ 256). The deck therefore drops the cards of the oldest exited sessions when a snapshot replaces a station's read model; the station keeps them.
 - Reason: the deck must not trust a peer for its memory use (doctrine: fail closed); one atomic replacement of the read model stays (no mixed state); a session-count limit is simple to check on both sides and the frame limit already bounds each summary.
-- Owner review: pending
+- Owner review: approved (owner, 2026-10-12)
 
 ## DL-052: Command router details that PLAN §8.4 does not state (M2 round 23, P3-7a)
 
@@ -621,7 +621,7 @@ Format: context, options, choice, reason, owner review.
   - Until the board API exists, `fleetdeck deck command <station> '<SessionCommand JSON>'` routes one command (origin `board`) and waits up to 15 s for its outcome; `fleetdeck deck commands` lists the router's table.
   - The outbox (A5) and the coordinator receipts (G7) are P3-7b (DL-053).
 - Reason: every command ends in a state that tells the owner what is known (doctrine: no silent loss, no double execution); a resend never changes the bytes or the id, so the station's receipt store keeps execution at most once.
-- Owner review: pending
+- Owner review: approved (owner, 2026-10-12)
 
 ## DL-053: Outbox attempts and coordinator receipts before Phase 6 (M2 round 24, P3-7b)
 
@@ -636,7 +636,7 @@ Format: context, options, choice, reason, owner review.
   - Until Phase 6 adds mail and task assignment, only `DeckLink::enqueue` (tests) writes the outbox.
   - Round 25 (review): an attempt's `retry_until` is `min(now + 15 min, expires_at)`, and `start_attempt` refuses an attempt whose `retry_until` is after the item's `expires_at` or that starts after it. A resend of a `sending` item therefore never carries intent past its expiry; an attempt without a receipt at `expires_at` becomes `ambiguous` → `dead`.
 - Reason: one delivery mechanism keeps the at-most-once guarantee in one place (the station's receipt store); a new id is used only when the old one provably did not run, so intent is never lost silently and never executed twice (doctrine).
-- Owner review: pending
+- Owner review: approved (owner, 2026-10-12)
 
 ## DL-054: Board login, cookies, API tokens and the audit log (M2 round 25, P3-8)
 
@@ -651,7 +651,7 @@ Format: context, options, choice, reason, owner review.
   - `deck password [--stdin]` sets the owner password (at least 12 characters) and ends every login. API tokens (`deck token create <name> --scope … --days N`, at most 90 days, scopes from read/drive/approve/admin, value shown once, prefix `fdtok1_`) are the bearer credential of non-browser clients; the short-lived WS tickets of L15 come with the WS route in P3-9.
   - `deck.db` V5: `owner`, `login_sessions`, `login_links`, `api_tokens`, `audit`. The audit row has actor (`owner`, `token:<name>`, `local`, `anonymous`), action, target, command id, result (`ok | refused | failed`) and detail; it never holds a secret. `deck.sock` mutations (invite, add/remove station, command, password, tokens, login link) are audited with the actor `local`. `deck audit [--json]` and `GET /api/audit` (admin) read it.
 - Reason: D13 allows no reverse proxy, so the deck must serve HTTPS itself; a kept self-signed certificate works on every private address with no setup, the owner's certificate (for example `tailscale cert`) removes the browser warning, and the CLI pins the certificate. The guard enforces the same rules on loopback as elsewhere (A13). The local socket is the narrowest owner-only channel the node already has.
-- Owner review: pending
+- Owner review: approved (owner, 2026-10-12)
 
 ## DL-055: Board command calls: client-chosen command ids and a short receipt wait (M2 round 26, P3-9a)
 
@@ -663,7 +663,7 @@ Format: context, options, choice, reason, owner review.
   - The call waits up to 5 s for the receipt, then answers the command as it is (`pending` when the station is unreachable); the router sends it when the link returns, and the board polls `GET /api/commands/{command_id}`.
   - The scope of each command route is the scope of the link method of the same name (`drive`, `approve` for `approval.answer`); a test checks the table against the link table. Every call is audited: `ok` (detail `duplicate` for a resend) or `refused` with the error code.
 - Reason: the board is the only party that knows whether a POST is a retry; a client id is the same rule the station uses for receipts (PLAN §6.4), so one id covers the whole path board → deck → station. A short wait gives a phone an immediate answer in the normal case without holding requests open while a station is away.
-- Owner review: pending
+- Owner review: approved (owner, 2026-10-12)
 
 ## DL-056: The board WebSocket protocol, tickets and the Origin rule (M2 round 27, P3-9b)
 
@@ -676,7 +676,7 @@ Format: context, options, choice, reason, owner review.
   - Every 30 s a socket checks that its login session or token is still valid and closes with code 4401 when not (logout, password change, token revoke or expiry).
   - The client's 5-minute idle cursor (§7.1) belongs to the Phase 4 web runtime.
 - Reason: one socket per phone keeps the connection count low on a mobile network and gives one order for board and timeline messages; the incarnation rule is the same rule the deck uses for station replays (G4), so a replaced station database can never splice two timelines. Tickets keep long-lived bearer tokens out of URLs and logs (L15).
-- Owner review: pending
+- Owner review: approved (owner, 2026-10-12)
 
 ## DL-057: Browser connection ownership, retry bounds, and timeline cache (M2 round 29, P4-1)
 
@@ -689,7 +689,7 @@ Format: context, options, choice, reason, owner review.
   - Reference-count timeline watches. Unsubscribe when the last reader leaves. Keep each idle cursor and timeline for five minutes. Resume with the station incarnation and cursor; reset on a changed incarnation. Cap each cached timeline at 1,000 recent events. Enforce the server's 32-active-subscription limit, including reactivated idle entries. A subscription error changes timeline freshness, not transport health.
   - Validate the wire fields that the runtime reads before reducing them. Reject malformed projections and unsafe sequence numbers. Keep unknown canonical event kinds readable, as L16 requires. This is not a second provider protocol parser.
 - Reason: one page-owned runtime prevents duplicate retries and one-time login consumption. Injected fakes prove reconnection without network or wall-clock waits. Timer and cache bounds protect a phone from stalled connections and unbounded streamed text. Generation and incarnation fences prevent old cached data from replacing new live data.
-- Owner review: pending
+- Owner review: approved (owner, 2026-10-12)
 
 
 ## DL-058: Fleet identity, deck status lanes and honest station presentation (M2 round 30, P4-2a)
@@ -702,7 +702,7 @@ Format: context, options, choice, reason, owner review.
   - Show observed provider instances and versions from session summaries under an explicit observed-data heading. Do not call those values the configured provider inventory. Count active process states (`starting`, `running`, `stopping`) separately from configured capacity. Mark missing station version, capacity and branch data as not reported until the station reports them. These placeholders do not satisfy P4-2; metadata and pairing stay unchecked in PROGRESS.md.
   - Use existing tokens, minimum tap sizes, responsive lanes and wrapped paths. Add no dependencies or browser credential storage. Escape untrusted text through React, never inject HTML.
 - Reason: station-scoped identity prevents card collisions across a fleet. The deck knows link and process loss; summary activity alone cannot represent those states. Clear stale and unknown labels prevent the board from making false health, inventory or capacity claims while the metadata path is unfinished.
-- Owner review: pending
+- Owner review: approved (owner, 2026-10-12)
 
 ## DL-059: Station report, pairing API and phone browser tests (M2 round 31, P4-2b)
 
@@ -717,7 +717,7 @@ Format: context, options, choice, reason, owner review.
   - Browser tests use Playwright 1.59.1 (exact dev dependency) with headless Chromium at 390×844 (touch, mobile) against the built board from `vite preview`. P4-2 interaction tests script the board API with Playwright request and WebSocket routing (`web/e2e/fake-deck.ts`). The P4-5 MVP flows will run against real deck and station processes with fake agents. `make check` runs `bun run --cwd web e2e`; CI installs `chromium-headless-shell` first.
   - `SessionSummary.branch` moved `ControlFrame::SnapshotSession` over clippy's `large_enum_variant` limit. Boxing that variant moves the limit to `Event`, so `ControlFrame` takes `#[expect(clippy::large_enum_variant)]` with a reason: a frame lives only between decode and dispatch, and boxing would add an allocation per frame.
 - Reason: the station is the only process that knows its configuration and provider CLIs; a cached probe keeps `station.info` fast and bounded. Memory-only reports cannot become stale after a deck restart. Scripted browser tests prove the UI interactions without a long process setup, and real-process flows stay in P4-5.
-- Owner review: pending
+- Owner review: approved (owner, 2026-10-12)
 
 ## DL-060: Session view, subagent tree and board commands (M2 round 31, P4-3)
 
@@ -731,7 +731,7 @@ Format: context, options, choice, reason, owner review.
   - The needs-you rail lists the open requests of all sessions, oldest first, and opens the session.
   - The canonical Claude fixtures for the board (`web/src/testing/fixtures/claude-{subagent,tool_call_approve}.events.json`) are generated from the provider replay and a Rust test proves they equal it (`FD_UPDATE_FIXTURES=1` rewrites them). The recorded subagent was a background subagent without child frames, so a synthetic typed fixture (`nestedSubagents`) adds nested foreground subagents with tools, text, a failure and an approval. `web/e2e/fake-deck.ts` serves timelines through the board subscription protocol.
 - Reason: the tree needs no protocol change and works for any provider that emits `parent_node_id`. A summary counter keeps the fleet board cheap. One send per user action keeps the "never resend an ambiguous command" rule at the board edge.
-- Owner review: pending
+- Owner review: approved (owner, 2026-10-12)
 
 ## DL-061: Spawn form, directory picker, embedded board and `fleetdeck up` (M2 round 32, P4-4)
 
@@ -745,7 +745,7 @@ Format: context, options, choice, reason, owner review.
   - Board assets: `rust-embed` 8.13 (no default features) embeds `web/dist` at build time (`allow_missing`, so a deck builds without a board build and answers 404 with a build hint). Every page has a strict CSP (`default-src 'none'`, `script-src 'self'`, `connect-src 'self'`, `frame-ancestors 'none'`, …), `nosniff`, `no-referrer`, `X-Frame-Options: DENY`. `/assets/*` is immutable-cached; other paths are `no-cache`. A path without a dot falls back to `index.html` (client routes); `/api/*` never falls back. Only GET and HEAD are served.
   - `fleetdeck up` runs `RunningDeck` and `RunningStation` (new start/stop split of `deck serve` and `station serve`) in one process from the normal config files. At the first start the deck makes an invitation in memory and the station joins it over the deck's link listener; the invitation never leaves the process. A station that is already paired with this deck only reconnects; a station that is paired with another deck is an error with the `fleetdeck station forget-deck` hint (`up` never replaces a pairing). A deck without `link_listen` is an error.
 - Reason: the station is the only process that may read its file system, and the drive scope is the right gate for directory names. One embedded binary makes the single-machine mode one command. In-process pairing keeps the secret out of files and terminals.
-- Owner review: pending
+- Owner review: approved (owner, 2026-10-12)
 
 ## DL-062: Real-process MVP browser flows (M2 round 33, P4-5)
 
@@ -760,7 +760,7 @@ Format: context, options, choice, reason, owner review.
   - Assertions come from the board and from the stations' own `station sessions --json` lists (no session started twice after the deck restart).
   - Round 34 addition (review feedback: session counts alone cannot prove that commands ran once): the deck's own routed-command list (`deck commands --json`) must hold exactly the expected count per method, unique command ids, every row `done` after one attempt; and each station's fake agent logs every stdin frame (`FLEETDECK_FAKE_STDIN_LOG` in `station.toml`), so the tests compare the exact user messages, control requests (`initialize`, `interrupt`) and approval answers that reached each provider process after the deck restart, the phone network drop and the station restart.
 - Reason: real processes prove the whole path (board → deck → link → station → provider host → fake agent) with the same binaries that users run, offline and in under 10 s. Closing the routed socket is the closest browser-level model of a phone that loses its network.
-- Owner review: pending
+- Owner review: approved (owner, 2026-10-12)
 
 ## DL-063: Production Codex core (M2 round 34, P5-1)
 
@@ -776,7 +776,7 @@ Format: context, options, choice, reason, owner review.
   - Errors map to `ProviderError`: no thread → `NotReady`; a mode outside the capability list → `InvalidMode`; an edited approval input → `Unsupported(EditInput)`; an invalid question reply → new `ProviderError::InvalidAnswer`; an expired request → `RequestClosed`; a duplicate answer → no output (idempotent).
   - `codex::capabilities(allow_full_access)`: the §6.2 Codex column; the mode list is `approvalPolicy/sandbox`, ordered most restrictive first, and `danger-full-access` modes appear only when the station allows them.
 - Reason: the spike's replay-proven logic stays the same, so the 18 recorded fixtures replay byte-exact through the production core, and new behaviour is limited to the production event fields. Reading the fixtures and schema in place avoids a second copy that could drift.
-- Owner review: pending
+- Owner review: approved (owner, 2026-10-12)
 
 ## DL-064: Codex driver, fake Codex app-server and station integration (M2 round 35, P5-2)
 
@@ -792,7 +792,7 @@ Format: context, options, choice, reason, owner review.
   - The station builds a Codex adapter for each `driver = "codex"` instance (`adapters_from_config`).
 - Reason: (b) for the start keeps the station's start → prompt order valid without a second wait path. (b) for the mode prevents a session that runs in a mode the owner did not choose, and the owner sees the error. The probe follows trap 9: only a definite provider answer is `signed_out`.
 - Amendment (M2 round 38, clean-checkout `make check`): an app-server that exits during the handshake ended the start with `SessionEnded` when the reader saw the end first, but with a host write error when the stdin writer saw it first (`a_failed_handshake_fails_the_start` failed once under load). A write error during the handshake now also ends the start with `SessionEnded`. The invariant is that the handshake cannot continue: the stdin writer has stopped (usually because the app-server is gone), so no `initialize` or thread request can reach it. Every error of `CodexSession::open` aborts the start, and `start_session` then kills the process group before it returns the error, so no process or task stays behind. The station treats both errors as a failed start, so the station behaviour does not change; the error is now the same for every timing.
-- Owner review: pending
+- Owner review: approved (owner, 2026-10-12)
 
 ## DL-065: Capability matrix tests and capability-driven UI (M2 round 36, P5-3)
 
@@ -805,7 +805,7 @@ Format: context, options, choice, reason, owner review.
   - Board timeline fixtures for Codex (`web/src/testing/fixtures/codex-{subagent,tool_call_approve}.events.json`) come from the production core replay (`FD_UPDATE_FIXTURES=1`) and check that the board builds the same tree shapes for both providers. `web/src/testing/capabilities.ts` holds literal Claude, Codex and minimal capabilities for the Playwright fake deck; a unit test compares them with the recorded `session.started` events.
   - Limitation (M2): rows without a board control (fork, resume, edit input, plan text, usage display) are covered by provider tests only; the board has no fork, resume or edit-input control in M2 (resume and fork effects are DL-037). (Corrected in M2 round 39: this entry first said that the board answers a Codex `requestUserInput` question with an option only. That was wrong: the board sent `updated_input: null`, which the Codex adapter rejects, so such a question could not be answered from the board at all. DL-068 adds the question answer form for both providers.)
 - Reason: a test that pairs each value with the recorded behaviour prevents a capability from claiming more than the provider does. Station-reported capabilities remove the second copy of the mode lists in the board, so a station setting (bypass, full access) shows in the spawn form.
-- Owner review: pending
+- Owner review: approved (owner, 2026-10-12)
 
 ## DL-066: Codex board flows next to the Claude flows (M2 round 37, P5-4)
 
@@ -813,7 +813,7 @@ Format: context, options, choice, reason, owner review.
 - Options: (a) one parameterised spec that runs identical steps and identical expected texts for both providers; (b) a second spec with the same steps for Codex, with expected texts and provider input from the Codex capabilities; (c) Codex sessions added to the Claude fleet.
 - Choice: (b). Every real-process station offers both `fake-claude` (`sim`) and `fake-codex` (`app-server`, `sim`) instances (`web/e2e-real/fleet.ts`, with a separate stdin log per provider and `Station.codexInput()`). `web/e2e-real/codex.spec.ts` runs its own deck and two stations (one dialed, one dialing) and the same steps as `mvp.spec.ts` with Codex sessions: pairing, spawn on each station, an approval from the needs-you rail, steer, interrupt, a deck restart with work done meanwhile, a phone network drop and a station link drop, each with the deck's command rows (one row, one delivery per command) and the Codex agents' input (each turn, steer and answer once). Codex differences: the steer step expects `steered: <text>` in the running turn, and a second waiting turn takes the interrupt; the composer shows the station follow-up note; the spawn form offers the Codex modes; the mode button of the stale view is `untrusted/read-only`. One more step checks a background command on the card until the station poll (DL-024, 5 s) sees it end. The shared phone steps are in `web/e2e-real/board.ts` (`Phone`); `mvp.spec.ts` stays unchanged except its header.
 - Reason: (a) would hide the real capability differences or force the fake to act unlike Codex; (c) would change the verified Claude counts. (b) keeps both flows strict and lets each expected value follow the provider's §6.2 column.
-- Owner review: pending
+- Owner review: approved (owner, 2026-10-12)
 
 ## DL-067: Opt-in live smoke tests (M2 round 37, P5-5)
 
@@ -821,7 +821,7 @@ Format: context, options, choice, reason, owner review.
 - Options for the level: (a) a provider-driver test (probe, start, one turn, stop) with the production adapters; (b) a full station or `fleetdeck up` run. Options for the gate: (a) the environment variable only; (b) `#[ignore]` and the environment variable.
 - Choice: (a) for the level: `crates/fleetdeck-providers/tests/live_smoke.rs` drives `ClaudeAdapter` and `CodexAdapter` with `ChildEnv::from_process()` in a new temporary directory, in each provider's safest mode (`default`, `untrusted/read-only`), with the prompt `Reply with the single word pong. Do not use any tool.`, and checks the probe (a version, not signed out), `session.started`, one `done` turn with `pong` in the answer, no approval request, and a graceful stop. Claude runs with `--safe-mode` (the same reason as DL-005: the owner's hooks and plugins stay out of the session); Codex uses effort `low`. (b) for the gate: each test is `#[ignore]`d and returns at once without `FD_LIVE_SMOKE=1`. `make smoke-live` runs both (bounded by `timeout 900`); `docs/v2/LIVE-SMOKE.md` documents the run and the last result. The full station path stays covered offline by the fake-agent tests and the real-process Playwright flows.
 - Reason: the driver level is the boundary that a CLI change breaks; the station above it is provider-independent and already tested with the fakes. The double gate keeps `cargo test -- --ignored` (for the debug helpers) from spending tokens by accident.
-- Owner review: pending
+- Owner review: approved (owner, 2026-10-12)
 
 ## DL-068: Question requests get an answer form; answers are not input edits (M2 round 39)
 
@@ -833,7 +833,7 @@ Format: context, options, choice, reason, owner review.
   - Board: `web/src/session/question.ts` builds an answer form from the request input: Codex RPC questions (option `answer`, `{answers: {id: {answers: [..]}}}`), Codex message questions (option `answer`, the text), Claude `AskUserQuestion` (option `allow`, the input plus `answers` by question text, several answers joined by `, `). `QuestionAnswer.tsx` shows one radio (or checkbox for Claude `multiSelect`) per option and a text field for a free answer (password field for a secret Codex question); "Send answer" stays disabled until every question has an answer; the other options (Claude `deny`) stay buttons. Other requests keep the plain option buttons.
   - Tests: the shapes equal the recorded answers of `spikes/s2-codex/fixtures/question_rpc.jsonl` and `spikes/s1-claude/fixtures/rust/ask_user_question.jsonl` (`web/src/session/question.test.ts`, with board fixtures from the production cores); `fake-codex` (`sim`) asks a question for a prompt `question <text>`; station test `a_codex_question_takes_its_answers_and_an_approval_refuses_an_input_edit`; phone flow `web/e2e-real/codex.spec.ts` `a Codex question gets its answer from the phone answer form`.
 - Reason: a question's answers are the content of the answer, not an edit of a tool input, so the `edit_input` capability does not apply; giving Codex `edit_input` would wrongly allow edited command approvals. A node from the core keeps one rule for answer confirmation (provider evidence after the write), and `serverRequest/resolved` is that evidence for Codex. Building the shape from the recorded input keeps the board free of provider-specific forms beyond the three recorded shapes.
-- Owner review: pending
+- Owner review: approved (owner, 2026-10-12)
 
 ## DL-069: The real-process spawn helper waits for the chosen listing (M2 round 40)
 
@@ -841,7 +841,7 @@ Format: context, options, choice, reason, owner review.
 - Options: (a) disable "Use this directory" while a listing loads; (b) make the test wait until the listing path is the workspace before it chooses.
 - Choice: (b). `web/e2e-real/board.ts` (`Phone.spawn`) and `web/e2e-real/mvp.spec.ts` (`spawn`) wait for `.fd-path` to equal the station workspace before they click "Use this directory". The scripted flow `web/e2e/spawn.spec.ts` already waits for "Up one level".
 - Reason: the board behavior is correct (the button takes the path on screen), so a product change is not necessary; the defect is a missing wait in the test helper.
-- Owner review: pending
+- Owner review: approved (owner, 2026-10-12)
 
 ## DL-070: M2 gate correction: answer admission before the claim, and session-loss cleanup (M2 round 41)
 
@@ -854,7 +854,7 @@ Format: context, options, choice, reason, owner review.
   - Unplanned details (recorded here): the timeline also reads the kind `session.state_changed` (the Rust variant name; the wire kind is `session.state`), so the adversary's hand-written reproduction gets the same cleanup and an old client message never leaves a running node. The goal's acceptance filter `cargo test -p fleetdeck-station manager::codex_tests` matches no test, because the module path is `manager::tests::codex` (`manager/tests.rs` declares `#[path = "codex_tests.rs"] mod codex;`, and `manager/mod.rs` is not an owned file); the evidence uses `cargo test -p fleetdeck-station manager::tests::codex` and also records the zero-test result of the literal filter. The store regressions are in the new `crates/fleetdeck-station/src/store/m2_gate_tests.rs`, a child module of `effects_tests.rs` (which was 775 lines). A message-channel question has no `fake-codex sim` scenario (`sim_codex.rs` is not an owned file), so its station test writes the question events into the store for a Codex session without an adapter process; the worker then proves each answer unsent (`no_process`), which also tests the release end to end.
 - Reason: a payload that the provider will refuse must never take the request's only answer slot; checking it with the provider's own pure validator in the command transaction keeps one rule in one place and adds no schema, wire or ambiguity change. The release covers the remaining case (a refusal before any I/O) with proof from the live, fenced worker only, so no ambiguous effect is ever sent again. A lost or exited process runs nothing, so every view must show zero running work; writing the loss before the empty list lets the timeline end background children instead of marking them done.
 - Regression evidence: station `crates/fleetdeck-station/src/manager/codex_tests.rs::{a_malformed_first_answer_is_refused_and_a_corrected_one_is_delivered_once, an_empty_free_answer_to_a_message_question_is_refused_before_the_claim}`; store `crates/fleetdeck-station/src/store/m2_gate_tests.rs` (8: `a_not_dispatched_answer_opens_its_request_again_with_its_own_deadline`, `a_released_wait_request_gets_no_deadline`, `sent_unknown_and_confirmed_answers_keep_their_claim`, `a_fenced_out_worker_releases_nothing`, `a_closed_request_stays_closed_after_a_not_dispatched_answer`, `an_effect_that_does_not_own_the_receipt_releases_nothing`, `a_lost_process_expires_the_answered_request_without_a_release`, `a_lost_session_reports_the_loss_before_it_empties_the_background_list`); provider `crates/fleetdeck-providers/src/codex/tests_review.rs::the_station_validator_is_the_core_validator_over_the_event_input`; fold `crates/fleetdeck-proto/src/fold_tests.rs::{a_lost_session_runs_nothing_but_keeps_its_requests_and_error, a_loss_with_only_background_work_clears_it, a_normal_run_completion_keeps_background_work}`; timeline `web/src/session/timeline.test.ts` describe `session loss and exit end the tree (M2 gate correction)` (7) and `a child completion leaves its parent subagent active`. Both adversary reproductions now pass their intent.
-- Owner review: pending
+- Owner review: approved (owner, 2026-10-12)
 
 ## DL-071: M2 gate closed; T3 P2 contracts applied to PLAN (Revision 3)
 
@@ -879,7 +879,7 @@ Format: context, options, choice, reason, owner review.
   - ADR-006 (Phase 6, §7.1): wire and authorization (the G3 envelopes and ambiguity rules, G5 revocation, the G6/G7 direction and scope checks; the tool/class matrix; transactional spawn-cap accounting; duplicate handling; expiry behavior for queries).
 - Unchanged: D1–D15, D13 (loopback, private LAN, tailnet, never public), PLAN §8, and every M1/M2 contract. No source, test or tooling file changed.
 - Reason: each finding was a gap in which a correct implementation of the old text could lose data, revert the wrong state, or give authority to an unauthenticated local caller. Exact contracts before code are cheaper than fixes after M3 code. The ADR items need design detail that the PLAN does not hold, so they are required ADR decisions, not PLAN text.
-- Owner review: architect decision; awaits a fresh adversary DESIGN REVIEW before M3 implementation
+- Owner review: approved (owner, 2026-10-12); the fresh adversary DESIGN REVIEW passed (DL-073)
 
 ## DL-073: M3 starts after the design review PASS
 
@@ -887,5 +887,10 @@ Format: context, options, choice, reason, owner review.
 - Options: (a) start M3 now with the M3 goal loop; (b) wait for the owner.
 - Choice: (a). The owner asked for M2 and M3 to be finished without further questions (2026-10-12). M3 runs as one goal loop of at most 40 rounds (more than the 9 left of the old 50-round M2+M3 budget, because Phases 6–7 need more rounds). Clean-checkout checks run on `/mnt/rust-cow` (btrfs, shared with the kache build cache). Merge to `main` and the `2.0.0` release stay owner steps.
 - Reason: the precondition of DL-072 is met; waiting adds no information.
-- Owner review: pending
+- Owner review: approved (owner, 2026-10-12)
+- Owner answers (2026-10-12), recorded by the architect:
+  - DL-036 to DL-073: approved.
+  - ADR-005 (`ShimHost`) and ADR-006 (coordinator MCP grants): approved in advance. The loop writes each ADR with every required decision of PLAN Phases 6–7 before its implementation and sets its status to "Accepted (owner pre-approval, 2026-10-12)". A later deviation from a written ADR still needs a new DECISIONS-LOG entry.
+  - Parity rows that M3 marks "deferred: owner decision needed": the owner approves these deferrals. Each deferral still needs its own DECISIONS-LOG entry with the reason.
+  - Merge of `v2` into `main` and the `2.0.0` release: the owner does these after M3 is complete. They stay out of the loop.
 
