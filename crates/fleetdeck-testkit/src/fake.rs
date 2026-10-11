@@ -111,6 +111,9 @@ impl FakeAgent {
 /// - Scenario `exit:<code>` exits at once with `<code>`.
 /// - Scenario `hang` reads stdin until it closes, then exits 0 (for stop and
 ///   kill tests).
+/// - Scenario `echo` copies stdin lines to stdout until stdin closes.
+/// - Scenario `env` prints its environment (`NAME=value`, sorted) and exits 0
+///   (for the environment scrub tests).
 /// - Every other scenario is an error (exit 2). The protocol scenarios come
 ///   with the adapters (P2-3 Claude, Phase 5 Codex).
 #[must_use]
@@ -133,15 +136,42 @@ pub fn fake_main(agent: FakeAgent) -> std::process::ExitCode {
             }
         };
     }
-    if scenario == "hang" {
-        let mut sink = Vec::new();
-        return match std::io::stdin().read_to_end(&mut sink) {
-            Ok(_) => ExitCode::SUCCESS,
-            Err(_) => ExitCode::from(1),
-        };
+    match scenario.as_str() {
+        "hang" => {
+            let mut sink = Vec::new();
+            return match std::io::stdin().read_to_end(&mut sink) {
+                Ok(_) => ExitCode::SUCCESS,
+                Err(_) => ExitCode::from(1),
+            };
+        }
+        "echo" => return echo_lines(),
+        "env" => {
+            let mut vars: Vec<String> = std::env::vars_os()
+                .map(|(k, v)| format!("{}={}", k.to_string_lossy(), v.to_string_lossy()))
+                .collect();
+            vars.sort();
+            println!("{}", vars.join("\n"));
+            return ExitCode::SUCCESS;
+        }
+        _ => {}
     }
     eprintln!("{name}: unknown scenario `{scenario}` (set {SCENARIO_ENV})");
     ExitCode::from(2)
+}
+
+/// Copies stdin lines to stdout until the end of input, then exits 0.
+fn echo_lines() -> std::process::ExitCode {
+    use std::io::{BufRead, Write};
+    let mut out = std::io::stdout().lock();
+    for line in std::io::stdin().lock().lines() {
+        let Ok(line) = line else {
+            return std::process::ExitCode::from(1);
+        };
+        if writeln!(out, "{line}").and_then(|()| out.flush()).is_err() {
+            return std::process::ExitCode::from(1);
+        }
+    }
+    std::process::ExitCode::SUCCESS
 }
 
 /// `target/<profile>` for a test executable in `target/<profile>/deps`, or

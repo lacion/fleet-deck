@@ -10,6 +10,15 @@ publish.workspace = true
 [dependencies]
 fleetdeck-proto = { path = "../fleetdeck-proto" }
 fleetdeck-core = { path = "../fleetdeck-core" }
+async-trait = { workspace = true }
+rustix = { workspace = true, features = ["process"] }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+fleetdeck-testkit = { path = "../fleetdeck-testkit" }
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

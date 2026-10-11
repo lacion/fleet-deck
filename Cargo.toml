@@ -37,6 +37,7 @@ thiserror = "2"
 ts-rs = { version = "12", features = ["serde-json-impl", "no-serde-warnings"] }
 ulid = "1"
 ed25519-dalek = { version = "3", features = ["pkcs8", "alloc"] }
+async-trait = "0.1"
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring"] }
 ring = "0.17"
 rusqlite = { version = "0.40", features = ["bundled"] }

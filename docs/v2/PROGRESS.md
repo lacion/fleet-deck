@@ -18,7 +18,7 @@ Sources: PLAN §14 Phases 1–5, GATE-M1 G1–G14, goal acceptance. G13 is P1-5.
 
 ### Phase 2 — Station core
 
-- [ ] **P2-1 `SessionHost` + `DirectChildHost`.** Process groups, clean stop, kill, exit reporting; env scrub for children (§3 rule 6).
+- [x] **P2-1 `SessionHost` + `DirectChildHost`.** Process groups, clean stop, kill, exit reporting; env scrub for children (§3 rule 6). Done round 5 (DL-031): `fleetdeck_providers::host` (`SessionHost`, `ProcessControl`, `ExitReport`, `StopPolicy`, `DirectChildHost`; re-exported as `fleetdeck_station::host`), `fleetdeck_core::childenv::ChildEnv`. Tests (`fleetdeck-providers host::direct::tests::*`): `a_fake_agent_runs_through_the_host_and_stops_cleanly`, `the_child_gets_exactly_the_scrubbed_environment`, `the_child_leads_its_own_process_group`, `kill_ends_the_whole_process_group`, `background_work_dies_when_the_leader_exits`, `dropping_the_control_kills_a_running_group`, `stop_escalates_to_sigterm_when_the_child_ignores_end_of_input`, `stop_escalates_to_sigkill_when_the_child_ignores_sigterm`, `the_exit_report_has_the_code_and_the_stderr_tail`, `a_stderr_flood_does_not_block_the_child`, `stop_and_kill_after_the_exit_return_the_first_report`, `a_missing_program_is_a_spawn_error`, `the_working_directory_is_the_spec_cwd`, `the_direct_host_does_not_survive_a_station_restart`; `fleetdeck-core childenv::tests::*` (5): `ambient_provider_credentials_and_markers_are_removed`, `the_instance_adds_back_only_its_own_settings`, `non_utf8_names_are_removed`, `bad_names_and_values_are_refused`, `debug_output_shows_names_but_not_values`.
 - [ ] **P2-2 Adapter traits + Claude core.** `ProviderAdapter`, `LiveSession`, `Capabilities`, typed `Unsupported { op, degradation }` (L5); the Claude sans-IO core copied from `spikes/s1-claude` and hardened, mapped to `fleetdeck-proto` events; traps 1–10 (t3code-lessons §5).
 - [ ] **P2-3 Claude driver, raw-frame log, fake-claude, replays.** Live driver on `SessionHost`; bounded rotating raw-frame log (L12); `fake-claude` binary in the testkit; all Claude fixtures replay through the production adapter.
 - [ ] **P2-4 Station event log and receipts.** `station.db` migrations (§10); `station_seq`, `session_seq`, `incarnation_id`, retention; command receipts (duplicate → stored receipt; reused id with another method/payload/caller → rejected).
@@ -126,6 +126,20 @@ Sources: PLAN §14 Phases 1–5, GATE-M1 G1–G14, goal acceptance. G13 is P1-5.
   - Worktree: `make check` → `check: all 12 commands passed` (fmt ok, clippy `-D warnings` ok, nextest 336/336, deny ok, ts_drift 2/2, bun install ok, typecheck ok, lint ok, bun test 5 pass, build ok, replays 29 + 18). `make test-web` → ok (5 pass).
 - Owner step: a real GitHub Actions run of `.github/workflows/v2.yml` (no push in this loop).
 - Next: P2-1 `SessionHost` + `DirectChildHost` (G-C stays before any Phase 3 link code).
+
+### M2 round 5 (2026-10-11)
+
+- Start: review feedback "continue: P2-1 SessionHost and DirectChildHost". Committed the round-4 work as `edab2ed` (`ci(v2): run every M2 check and replay offline via make check (M2 P1-5)`).
+- **P2-1 done (DL-031).**
+  - `crates/fleetdeck-providers/src/host/mod.rs`: the `SessionHost` / `ProcessControl` traits (`async-trait`, PLAN §6.2 style), `ProcessSpec`, `ExitReport { termination, cause, stderr_tail }`, `StopPolicy` (30 s grace, then SIGTERM, 5 s, then SIGKILL).
+  - `crates/fleetdeck-providers/src/host/direct.rs`: `DirectChildHost`. The child leads its own process group; stop, kill, leader exit and drop all act on the whole group; stderr is drained into an 8 KiB tail; one supervisor task per process publishes the exit report.
+  - `crates/fleetdeck-core/src/childenv.rs`: `ChildEnv` (scrub of `ANTHROPIC_*`, `CLAUDE_*`, `OPENAI_*`, `CODEX_*`, `FLEETDECK_*`, `CLAUDECODE`, `AI_AGENT`; instance `config_home` and `env` added back; names-only `Debug`).
+  - `fleetdeck-testkit` fakes: new scenarios `echo` and `env`.
+  - Mutation check: with the group signals disabled, `kill_ends_the_whole_process_group`, `background_work_dies_when_the_leader_exits` and `dropping_the_control_kills_a_running_group` fail (grandchild survives).
+- Commands and results:
+  - `cargo nextest run -p fleetdeck-providers` -> 14 passed; `cargo nextest run -p fleetdeck-core childenv` -> 5 passed; `cargo test -p fleetdeck-providers` -> 14 passed.
+  - `make check` -> all 12 commands passed (fmt ok, clippy -D warnings ok, nextest 355/355, deny ok, ts_drift 2/2, bun install --offline ok, typecheck ok, lint ok, web test 5 pass, build ok, replay-claude 29 ok, replay-codex 18 ok).
+- Next: P2-2 adapter traits + Claude core.
 
 ## M1 checklist (complete)
 
