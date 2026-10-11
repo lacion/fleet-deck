@@ -411,15 +411,7 @@ async fn confirmations_follow_the_evidence_table() {
     .await;
     assert_eq!(state(&s, &set_mode).await, EffectState::Confirmed);
     assert_eq!(state(&s, &interrupt).await, EffectState::Claimed);
-    emit(
-        &s,
-        Event::TurnCompleted {
-            turn_id: "turn-1".into(),
-            status: TurnStatus::Interrupted,
-            usage: None,
-        },
-    )
-    .await;
+    emit(&s, interrupted(&interrupt, true)).await;
     assert_eq!(state(&s, &interrupt).await, EffectState::Confirmed);
     assert_eq!(state(&s, &stop).await, EffectState::Claimed);
     emit(
@@ -774,3 +766,9 @@ async fn recovery_keeps_the_queue_and_requests_of_a_surviving_process() {
         SessionState::Starting
     );
 }
+
+// --- interrupt evidence (ADR-001 §3.1) ---------------------------------------------
+
+#[path = "effects_interrupt_tests.rs"]
+mod interrupt;
+use interrupt::interrupted;

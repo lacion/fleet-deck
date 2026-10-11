@@ -134,6 +134,11 @@ fn samples() -> Vec<Event> {
         Event::ModelChanged {
             model: "haiku".into(),
         },
+        Event::InterruptResult {
+            control_id: Some("e1".into()),
+            accepted: true,
+            message: None,
+        },
         Event::InputUpdated {
             input_id: "in-1".into(),
             turn_id: Some(turn),

@@ -350,6 +350,17 @@ pub enum Event {
     ModeChanged { mode: String },
     #[serde(rename = "model.changed")]
     ModelChanged { model: String },
+    /// The provider answered an interrupt request (ADR-001 §3.1): this is
+    /// the evidence that confirms or refuses the station's interrupt. The
+    /// turn ends later with its own `turn.completed` (trap 10).
+    #[serde(rename = "interrupt.result")]
+    InterruptResult {
+        /// The host's id for the request (the station's effect id); `None`
+        /// when the host gave no id.
+        control_id: Option<String>,
+        accepted: bool,
+        message: Option<String>,
+    },
     #[serde(rename = "input.updated")]
     InputUpdated {
         input_id: InputId,
@@ -375,7 +386,7 @@ pub enum Event {
 
 impl Event {
     /// Every known kind name, in declaration order.
-    pub const KINDS: [&'static str; 24] = [
+    pub const KINDS: [&'static str; 25] = [
         "session.started",
         "session.state",
         "run.started",
@@ -396,6 +407,7 @@ impl Event {
         "run.completed",
         "mode.changed",
         "model.changed",
+        "interrupt.result",
         "input.updated",
         "background.updated",
         "error",
@@ -426,6 +438,7 @@ impl Event {
             Self::RunCompleted { .. } => "run.completed",
             Self::ModeChanged { .. } => "mode.changed",
             Self::ModelChanged { .. } => "model.changed",
+            Self::InterruptResult { .. } => "interrupt.result",
             Self::InputUpdated { .. } => "input.updated",
             Self::BackgroundUpdated { .. } => "background.updated",
             Self::Error { .. } => "error",

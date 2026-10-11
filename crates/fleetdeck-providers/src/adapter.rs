@@ -30,6 +30,12 @@ pub struct PermissionMode(pub String);
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ModelId(pub String);
 
+/// The host's id for a control request, echoed in the provider's answer
+/// (`interrupt.result`). The station passes its effect id, so the answer
+/// confirms exactly that effect (ADR-001 §3.1).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ControlId(pub String);
+
 /// One input from the host: the station mints `id` and reports it in the
 /// command receipt; the provider reports the fate of the input under it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -211,8 +217,9 @@ pub trait LiveSession: Send {
     async fn steer(&mut self, input: HostInput) -> Result<()>;
     async fn follow_up(&mut self, input: HostInput) -> Result<()>;
     /// A request to the provider; the turn ends later with its own terminal
-    /// event (trap 10).
-    async fn interrupt(&mut self) -> Result<()>;
+    /// event (trap 10). The provider's answer comes as `interrupt.result`
+    /// with `control_id`.
+    async fn interrupt(&mut self, control_id: Option<ControlId>) -> Result<()>;
     /// Idempotent: a second answer to the same request writes nothing (L3).
     async fn answer(&mut self, answer: Answer) -> Result<()>;
     async fn set_mode(&mut self, mode: PermissionMode) -> Result<()>;

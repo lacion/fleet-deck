@@ -161,6 +161,7 @@ pub fn fake_main(agent: FakeAgent) -> std::process::ExitCode {
             };
         }
         "echo" => return echo_lines(),
+        "sim" if agent == FakeAgent::Claude => return crate::sim_claude::run(),
         "deaf" => loop {
             std::thread::park();
         },

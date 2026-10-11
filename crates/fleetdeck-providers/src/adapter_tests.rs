@@ -34,7 +34,7 @@ impl LiveSession for Minimal {
         self.sent.push("follow_up");
         Ok(())
     }
-    async fn interrupt(&mut self) -> Result<()> {
+    async fn interrupt(&mut self, _: Option<ControlId>) -> Result<()> {
         require(&self.caps, Operation::Interrupt)?;
         self.sent.push("interrupt");
         Ok(())
@@ -91,7 +91,7 @@ async fn unsupported_operations_return_a_typed_degradation() {
         sent: Vec::new(),
     };
     assert_eq!(unsupported(s.steer(host_input()).await), Operation::Steer);
-    assert_eq!(unsupported(s.interrupt().await), Operation::Interrupt);
+    assert_eq!(unsupported(s.interrupt(None).await), Operation::Interrupt);
     let answer = Answer {
         request: RequestId::new("req-1"),
         decision: ApprovalDecision {

@@ -16,7 +16,7 @@
 //! | prompt, steer, follow-up | `input.updated { started }` for its input id |
 //! | start, resume | `session.started` |
 //! | answer | `tool.output` / `tool.completed` of the request's node |
-//! | interrupt | `turn.completed` or `run.completed` |
+//! | interrupt | `interrupt.result { accepted }` with its effect id (DL-036) |
 //! | set mode / set model | `mode.changed` / `model.changed` with the requested value |
 //! | stop | `session.ended` |
 //!
@@ -567,8 +567,28 @@ pub(super) fn observe(conn: &Connection, envelope: &EventEnvelope, now: i64) -> 
                  (SELECT request_id FROM runtime_requests WHERE session_id = ?2 AND node_id = ?3)",
             &[&node_id.as_str()],
         )?,
-        Event::TurnCompleted { .. } | Event::RunCompleted { .. } => {
-            confirm("kind = 'interrupt'", &[])?;
+        // Only the provider's answer to this effect's own control request
+        // settles an interrupt (ADR-001 §3.1); a turn that ends is no
+        // evidence, it can end for any reason.
+        Event::InterruptResult {
+            control_id: Some(effect_id),
+            accepted: true,
+            ..
+        } => confirm(
+            "kind = 'interrupt' AND effect_id = ?3",
+            &[&effect_id.as_str()],
+        )?,
+        Event::InterruptResult {
+            control_id: Some(effect_id),
+            accepted: false,
+            ..
+        } => {
+            conn.execute(
+                "UPDATE effects SET state = 'retired_not_dispatched', reason = ?4, updated_at = ?1
+                 WHERE session_id = ?2 AND state IN ('claimed', 'outcome_unknown')
+                   AND kind = 'interrupt' AND effect_id = ?3",
+                params![now, session, effect_id.as_str(), REASON_REFUSED],
+            )?;
         }
         Event::ModeChanged { mode } => {
             confirm("kind = 'set_mode' AND correlation = ?3", &[&mode.as_str()])?;

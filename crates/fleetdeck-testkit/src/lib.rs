@@ -8,11 +8,13 @@
 //!   with a `station.toml` writer.
 //! - [`fake`]: how a test finds and starts `fake-claude` and `fake-codex`.
 //! - [`script`]: the fixture player of the fake agents.
+//! - [`sim_claude`]: scenario `sim`, a reactive model of the Claude CLI.
 
 pub mod det;
 pub mod fake;
 pub mod node;
 pub mod script;
+pub mod sim_claude;
 
 pub use det::Det;
 pub use fake::{FakeAgent, FakeError};

@@ -66,7 +66,7 @@ impl ClaudeCore {
                 },
                 by: ResolvedBy::Board,
             }),
-            HostCmd::Interrupt => self.interrupt(),
+            HostCmd::Interrupt => self.interrupt(None),
             HostCmd::SetMode { mode } => self.set_mode(mode),
             HostCmd::SetModel { model } => self.set_model(model.as_deref().unwrap_or("default")),
         }

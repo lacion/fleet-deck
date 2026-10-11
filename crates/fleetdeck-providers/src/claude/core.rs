@@ -110,7 +110,8 @@ pub(super) struct RuntimeRequest {
 #[derive(Debug, Clone, PartialEq)]
 pub(super) enum HostRequest {
     Initialize,
-    Interrupt,
+    /// With the host's control id, echoed in `interrupt.result`.
+    Interrupt(Option<String>),
     SetMode(String),
     /// `None` is the default-model sentinel (trap 2).
     SetModel(Option<String>),
@@ -361,13 +362,13 @@ impl ClaudeCore {
     ///
     /// # Errors
     /// [`ProviderError::NoTurn`] when no turn runs and no input waits.
-    pub fn interrupt(&mut self) -> Result<Vec<Output>> {
+    pub fn interrupt(&mut self, control_id: Option<String>) -> Result<Vec<Output>> {
         self.live()?;
         if self.is_quiet() {
             return Err(ProviderError::NoTurn);
         }
         self.interrupt_requested = true;
-        let id = self.next_host_id(HostRequest::Interrupt);
+        let id = self.next_host_id(HostRequest::Interrupt(control_id));
         Ok(vec![Output::Write(control::interrupt(&id))])
     }
 

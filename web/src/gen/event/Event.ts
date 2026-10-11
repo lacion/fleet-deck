@@ -56,7 +56,12 @@ input: JsonValue | null, options: Array<ApprovalOption>, response: ResponseChann
 /**
  * Background work still runs; the session is not idle (L7).
  */
-background_pending: boolean, } | { "kind": "mode.changed", mode: string, } | { "kind": "model.changed", model: string, } | { "kind": "input.updated", input_id: InputId, turn_id: TurnId | null, state: InputState, } | { "kind": "background.updated", tasks: Array<BackgroundTask>, } | { "kind": "error", 
+background_pending: boolean, } | { "kind": "mode.changed", mode: string, } | { "kind": "model.changed", model: string, } | { "kind": "interrupt.result", 
+/**
+ * The host's id for the request (the station's effect id); `None`
+ * when the host gave no id.
+ */
+control_id: string | null, accepted: boolean, message: string | null, } | { "kind": "input.updated", input_id: InputId, turn_id: TurnId | null, state: InputState, } | { "kind": "background.updated", tasks: Array<BackgroundTask>, } | { "kind": "error", 
 /**
  * Stable code, for example `usage_limit` or `auth_required`.
  */

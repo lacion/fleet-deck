@@ -93,7 +93,7 @@ fn trap_3_an_interrupt_before_the_turn_started_cancels_the_input() {
     init(&mut core);
     core.prompt(&input(1, "x")).unwrap();
     lifecycle(&mut core, 1, "queued");
-    let w = writes(&core.interrupt().unwrap());
+    let w = writes(&core.interrupt(None).unwrap());
     assert_eq!(w[0]["request"]["subtype"], "interrupt");
     let ev = lifecycle(&mut core, 1, "cancelled");
     assert!(matches!(
@@ -123,7 +123,7 @@ fn trap_3_an_interrupt_before_the_turn_started_cancels_the_input() {
 fn trap_3_an_interrupt_with_nothing_to_stop_is_an_error() {
     let mut core = ClaudeCore::new(config(false));
     init(&mut core);
-    assert!(matches!(core.interrupt(), Err(ProviderError::NoTurn)));
+    assert!(matches!(core.interrupt(None), Err(ProviderError::NoTurn)));
 }
 
 #[test]
@@ -354,7 +354,7 @@ fn trap_9_an_unknown_sign_in_state_is_unknown() {
 #[test]
 fn trap_10_an_interrupt_is_a_request_and_the_turn_ends_with_its_result() {
     let mut core = running_core();
-    let out = core.interrupt().unwrap();
+    let out = core.interrupt(Some("effect-7".to_owned())).unwrap();
     assert!(
         emits(&out).is_empty(),
         "no terminal event before the CLI confirms"
@@ -367,7 +367,16 @@ fn trap_10_an_interrupt_is_a_request_and_the_turn_ends_with_its_result() {
         json!({"type":"control_response","response":{"subtype":"success","request_id":id,
                "response":{"still_queued":[]}}}),
     ));
-    assert!(reply.is_empty());
+    // The matching success answer is the interrupt's evidence; the turn
+    // still runs until its own result.
+    assert_eq!(
+        reply,
+        [Event::InterruptResult {
+            control_id: Some("effect-7".to_owned()),
+            accepted: true,
+            message: None,
+        }]
+    );
     assert!(core.current_turn().is_some());
     let ev = result(&mut core, "error_during_execution", "aborted_streaming");
     assert!(ev.iter().any(|e| matches!(
@@ -409,7 +418,7 @@ fn pending_background_work_after_the_turn_is_not_idle() {
     assert!(core.is_quiet());
     assert!(!core.is_idle(), "background work pending (PLAN §6.3, L7)");
     // Nothing runs that an interrupt can stop.
-    assert!(matches!(core.interrupt(), Err(ProviderError::NoTurn)));
+    assert!(matches!(core.interrupt(None), Err(ProviderError::NoTurn)));
     // The task ends: the session is idle again.
     let ev = emits(&feed(
         &mut core,
@@ -426,4 +435,39 @@ fn pending_background_work_after_the_turn_is_not_idle() {
     assert!(!core.is_idle());
     result(&mut core, "success", "completed");
     assert!(core.is_idle());
+}
+
+#[test]
+fn a_refused_interrupt_reports_its_control_id_and_the_turn_ends_normally() {
+    let mut core = running_core();
+    let w = writes(&core.interrupt(Some("effect-8".to_owned())).unwrap());
+    let id = w[0]["request_id"].as_str().unwrap().to_owned();
+    // A response to another control id is no evidence for this interrupt.
+    let other = emits(&feed(
+        &mut core,
+        json!({"type":"control_response","response":{"subtype":"success",
+               "request_id":"fd-999","response":{}}}),
+    ));
+    assert!(other.is_empty());
+    let reply = emits(&feed(
+        &mut core,
+        json!({"type":"control_response","response":{"subtype":"error","request_id":id,
+               "error":"no turn to interrupt"}}),
+    ));
+    assert_eq!(
+        reply,
+        [Event::InterruptResult {
+            control_id: Some("effect-8".to_owned()),
+            accepted: false,
+            message: Some("no turn to interrupt".to_owned()),
+        }]
+    );
+    let ev = result(&mut core, "success", "completed");
+    assert!(ev.iter().any(|e| matches!(
+        e,
+        Event::TurnCompleted {
+            status: TurnStatus::Done,
+            ..
+        }
+    )));
 }

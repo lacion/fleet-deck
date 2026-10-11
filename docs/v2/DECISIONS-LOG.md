@@ -350,3 +350,36 @@ Format: context, options, choice, reason, owner review.
   - `deny_at` = request time + `after_ms` when the session's policy is `deny_after`; `Store::deny_overdue` (called by the session manager while no deck is connected, P2-6) queues the deny answer `by: timeout` with no `command_id`.
 - **Reason:** a pipe write proves nothing about delivery (A10); a generation counter needs no clock and makes "never dispatch a claim twice" a database invariant; a session that keeps showing "working" after its process is gone breaks trap 6; a station-wide option id would allow wrong answers for providers with other option names, and an allow is never a safe default (fail closed); admitting commands before recovery could target a dead incarnation.
 - **Owner review:** pending
+
+## DL-036: Interrupt evidence is a matched `interrupt.result` event
+
+- Date: 2026-10-11 (M2 round 10, review fix before P2-6)
+- Context: ADR-001 §3.1 confirms an interrupt only by the CLI's `control_response` success to that interrupt's own control request. The P2-5 outbox confirmed every claimed interrupt on any `turn.completed` or `run.completed`, and the Claude core dropped the interrupt's `control_response`. A turn can end for any reason, so this confirmed interrupts without evidence. PLAN §6.3 has no event for the answer of a control request, and `LiveSession::interrupt()` (PLAN §6.2) takes no id, so the station could not match an answer to an effect.
+- Options:
+  1. Confirm the oldest (or newest) open interrupt of the process on any interrupt answer (no contract change; ambiguous with two open interrupts, for example one `outcome_unknown` claim of a replaced worker).
+  2. Let `LiveSession::interrupt` wait for the answer and return it as the dispatch result (no proto change; a late answer after a worker restart has no path to the store).
+  3. Add a proto event `interrupt.result { control_id, accepted, message }` and give `LiveSession::interrupt` an optional `ControlId`. The station passes the effect id; the adapter keeps it next to its own wire id (`fd-N` stays on the wire, so fixtures do not change) and echoes it in the event.
+- Choice: option 3.
+- Reason: The evidence is stored in the event log in the same transaction that confirms the effect (PLAN §6.4), it matches exactly one effect, and a late answer still settles an `outcome_unknown` claim. A refused interrupt (`accepted: false`) retires the effect as `refused_by_provider` (ADR-002 §3 rule for refused requests) and does not mark the turn interrupted. Codex (P5) maps the `turn/interrupt` JSON-RPC answer to the same event. `set_mode`/`set_model` keep their value match (`mode.changed`/`model.changed` come only from the matching control response).
+- Changes: `fleetdeck_proto::Event::InterruptResult` (25 kinds; TS types regenerated), `fleetdeck_providers::ControlId`, `LiveSession::interrupt(Option<ControlId>)`, `HostRequest::Interrupt(Option<String>)`, `effects::observe`.
+- Owner review: pending
+
+## DL-037: Session manager scope in P2-6
+
+- Date: 2026-10-11 (M2 round 10, P2-6)
+- Context: P2-6 connects commands to adapters (`decide → commit → effect → adapter`, PLAN §6.4) with the `station.toml` policy (§6.5, §10). The PLAN does not say: which checks run in the decision transaction and which at dispatch; what happens to a command for a session whose process has not started yet or is gone; when the start effect is confirmed for Claude, which emits `session.started` only after the first user message (ADR-001 §2.4); and in which phase resume and fork get their station path.
+- Options:
+  1. Checks: (a) only at dispatch (an accepted receipt for a command that cannot run); (b) in the decision: provider instance, allowed roots on the canonical path (trap 8), `max_sessions` (sessions not `exited`/`lost`), the session state, the session's capabilities once `session.started` told them, the request's options; the adapter checks again at dispatch.
+  2. A command before the process is live or after it ended: (a) queue it for later; (b) reject it with `invalid_state` (no receipt that promises a send nobody does).
+  3. Start confirmation: (a) wait for `session.started` (a start without a prompt would stay `claimed` until the first prompt); (b) `Dispatch::Confirmed` when the spawn returned a live session (the rule DL-035 already allows).
+  4. Resume and fork: (a) build them now; (b) reject them with `unsupported` until the station keeps the native session id and the ended sessions can come back (later P2/P3 work).
+- Choice: 1b, 2b, 3b, 4b.
+- Details:
+  - `manager::SessionManager::start` runs `Store::recover(vec![])` (the direct-child host keeps no process across a station restart, DL-031), registers the effect worker and runs the offline-deny ticker every second.
+  - `manager::target::SessionTarget` is the only provider I/O. A pump task per session appends the adapter's events in batches (64); it holds them until the process is recorded, so the end of a process can never come before its start. On `session.ended` (or a closed channel) it calls `Store::process_ended`. When the log fails, the pump stops reading, the sink closes and the driver kills the process (fail closed, DL-033).
+  - Error mapping: a host write error, `SinkClosed` and `EventsUndelivered` are `Dispatch::Unknown`; every other adapter error happens before the write and is `NotDispatched`. An effect for another process incarnation is `NotDispatched(process_changed)`.
+  - A start that gets no process appends `error { start_failed }` and `session.ended { start_failed }`, so the session is `exited` and does not count against `max_sessions`.
+  - Interrupt: `invalid_state` when the session started and no turn or run is open. Answer: the decision checks the request belongs to the session; an `updated_input` needs the `edit_input` capability.
+  - Codex instances get no adapter until Phase 5 (`adapters_from_config` skips them); a start for one retires as `not_dispatched`.
+- Reason: a receipt must not promise an effect that cannot run (PLAN §6.4: the decision is the single place for policy); a spawned Claude process without a prompt is live and controllable, so waiting for `session.started` would leave a healthy start `claimed` and turn it into `outcome_unknown` at the next worker restart; resume needs the stored native id and a host that may survive restarts, which are outside P2-6.
+- Owner review: pending

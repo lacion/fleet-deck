@@ -8,6 +8,9 @@ pub mod host {
     pub use fleetdeck_providers::host::*;
 }
 
+/// The session manager (PLAN §6.4, M2 P2-6).
+pub mod manager;
+
 pub mod store;
 
 /// The effect worker (PLAN §6.4).

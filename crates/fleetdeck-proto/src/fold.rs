@@ -127,6 +127,7 @@ impl SessionSummary {
             | Event::ToolCompleted { .. }
             | Event::FileChanged { .. }
             | Event::PlanProposed { .. }
+            | Event::InterruptResult { .. }
             | Event::InputUpdated { .. } => {}
         }
     }

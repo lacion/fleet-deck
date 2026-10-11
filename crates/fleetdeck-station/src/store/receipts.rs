@@ -110,6 +110,25 @@ impl Decision<'_> {
         self.conn
     }
 
+    /// A new id from the station's id source.
+    #[must_use]
+    pub fn new_id<I: From<String>>(&self) -> I {
+        fleetdeck_core::new_id(self.ids)
+    }
+
+    /// The number of sessions that have not ended (`max_sessions` policy).
+    ///
+    /// # Errors
+    /// A database error.
+    pub fn active_sessions(&self) -> Result<u64> {
+        let n: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM sessions WHERE state NOT IN ('exited', 'lost')",
+            [],
+            |r| r.get(0),
+        )?;
+        Ok(u64::try_from(n).unwrap_or(0))
+    }
+
     /// A session's current projection.
     ///
     /// # Errors

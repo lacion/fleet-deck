@@ -511,6 +511,18 @@ fn on_control_response(core: &mut ClaudeCore, resp: &ControlResponse) -> Vec<Out
     let Some(kind) = core.host_requests.remove(&resp.request_id) else {
         return Vec::new();
     };
+    // Only the matching response confirms or refuses an interrupt.
+    if let HostRequest::Interrupt(control_id) = kind {
+        if !resp.ok {
+            // A refused interrupt does not interrupt the turn.
+            core.interrupt_requested = false;
+        }
+        return vec![Output::Emit(Event::InterruptResult {
+            control_id,
+            accepted: resp.ok,
+            message: if resp.ok { None } else { resp.error.clone() },
+        })];
+    }
     if !resp.ok {
         return vec![Output::Emit(Event::Error {
             code: "control_request_failed".to_owned(),
@@ -539,6 +551,7 @@ fn on_control_response(core: &mut ClaudeCore, resp: &ControlResponse) -> Vec<Out
             core.model = Some(model.clone());
             vec![Output::Emit(Event::ModelChanged { model })]
         }
-        HostRequest::Interrupt => Vec::new(),
+        // Answered above.
+        HostRequest::Interrupt(_) => Vec::new(),
     }
 }

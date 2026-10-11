@@ -117,7 +117,7 @@ async fn apply(session: &mut ClaudeSession, cmd: HostCmd) {
                 })
                 .await
         }
-        HostCmd::Interrupt => session.interrupt().await,
+        HostCmd::Interrupt => session.interrupt(None).await,
         HostCmd::SetMode { mode } => session.set_mode(PermissionMode(mode)).await,
         HostCmd::SetModel { model } => {
             let model = model.unwrap_or_else(|| "default".to_owned());

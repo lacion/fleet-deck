@@ -9,6 +9,6 @@ pub mod host;
 pub mod rawlog;
 
 pub use adapter::{
-    Answer, AuthState, Emitted, EventSink, HostInput, LiveSession, ModelId, NativeSessionId,
-    PermissionMode, ProviderAdapter, ProviderError, ProviderProbe,
+    Answer, AuthState, ControlId, Emitted, EventSink, HostInput, LiveSession, ModelId,
+    NativeSessionId, PermissionMode, ProviderAdapter, ProviderError, ProviderProbe,
 };

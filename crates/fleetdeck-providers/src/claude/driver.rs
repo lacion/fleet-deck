@@ -31,7 +31,7 @@ use super::core::{ClaudeCore, CoreConfig, Output};
 use super::frames::{CliFrame, parse_value};
 use super::{Launch, capabilities, cli_args, parse_auth_status, parse_version};
 use crate::adapter::{
-    Answer, EventSink, HostInput, LiveSession, ModelId, NativeSessionId, PermissionMode,
+    Answer, ControlId, EventSink, HostInput, LiveSession, ModelId, NativeSessionId, PermissionMode,
     ProviderAdapter, ProviderError, ProviderProbe, Result, canonical_workspace, require,
 };
 use crate::host::{ProcessControl, ProcessSpec, SessionHost, StopPolicy};
@@ -531,9 +531,10 @@ impl LiveSession for ClaudeSession {
         self.input(Operation::FollowUp, input).await
     }
 
-    async fn interrupt(&mut self) -> Result<()> {
+    async fn interrupt(&mut self, control_id: Option<ControlId>) -> Result<()> {
         require(&self.caps, Operation::Interrupt)?;
-        self.run(ClaudeCore::interrupt).await
+        self.run(|core| core.interrupt(control_id.map(|c| c.0)))
+            .await
     }
 
     async fn answer(&mut self, answer: Answer) -> Result<()> {
