@@ -118,6 +118,50 @@ CREATE TABLE coordinator_receipts (
 ) STRICT;
 ";
 
+/// Owner login and audit (P3-8; PLAN §9, A13, L15). Secrets are stored as
+/// SHA-256 hashes (session cookies, login links, API tokens) or as an
+/// argon2id PHC string (the password).
+const V5: &str = "
+CREATE TABLE owner (
+    id              INTEGER PRIMARY KEY CHECK (id = 1),
+    owner_id        TEXT NOT NULL,
+    password_hash   TEXT,
+    password_set_at INTEGER,
+    created_at      INTEGER NOT NULL
+) STRICT;
+CREATE TABLE login_sessions (
+    session_hash TEXT PRIMARY KEY,
+    csrf_token   TEXT NOT NULL,
+    method       TEXT NOT NULL CHECK (method IN ('password', 'link')),
+    created_at   INTEGER NOT NULL,
+    last_seen    INTEGER NOT NULL,
+    expires_at   INTEGER NOT NULL
+) STRICT;
+CREATE TABLE login_links (
+    token_hash TEXT PRIMARY KEY,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL
+) STRICT;
+CREATE TABLE api_tokens (
+    name       TEXT PRIMARY KEY,
+    token_hash TEXT NOT NULL UNIQUE,
+    scopes     TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    last_used  INTEGER
+) STRICT;
+CREATE TABLE audit (
+    audit_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    at         INTEGER NOT NULL,
+    actor      TEXT NOT NULL,
+    action     TEXT NOT NULL,
+    target     TEXT,
+    command_id TEXT,
+    result     TEXT NOT NULL CHECK (result IN ('ok', 'refused', 'failed')),
+    detail     TEXT
+) STRICT;
+";
+
 /// The `deck.db` migrations.
 #[must_use]
 pub fn migrations() -> Migrations<'static> {
@@ -126,6 +170,7 @@ pub fn migrations() -> Migrations<'static> {
         M::up(fleetdeck_link::LINK_EPOCHS_SQL),
         M::up(V3),
         M::up(V4),
+        M::up(V5),
     ])
 }
 

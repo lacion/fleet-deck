@@ -3,7 +3,9 @@
 //! router tick reconciles the items and, for each reachable station,
 //! starts the due attempts ([`DeckLink::start_outbox`]). An attempt is one
 //! routed command, inserted with the item's move to `sending` in one
-//! transaction and then sent like every other routed command.
+//! transaction and then sent like every other routed command. Its
+//! `retry_until` is capped at the item's `expires_at`, so the router never
+//! sends or resends expired intent.
 
 use std::time::Duration;
 
@@ -61,7 +63,11 @@ impl DeckLink {
             "coordinator" => CommandOrigin::Coordinator,
             _ => CommandOrigin::Board,
         };
-        let cmd = self.build(item.station_id.clone(), origin, kind).await?;
+        // The attempt ends no later than the item: nothing is sent, or
+        // resent, after `expires_at`.
+        let cmd = self
+            .build_until(item.station_id.clone(), origin, kind, item.expires_at)
+            .await?;
         self.store
             .start_attempt(item.outbox_id.clone(), cmd)
             .await?;

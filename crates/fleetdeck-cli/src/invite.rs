@@ -1,4 +1,4 @@
-//! Reads a pairing invitation (G12): from a prompt that does not echo, from
+//! Reads a pairing invitation (G12) or the owner password (P3-8): from a prompt that does not echo, from
 //! stdin (`--stdin`), or from `--invite-file` with mode 0600. Never from
 //! argv: `clap` has no argument for it. The text stays in a `Secret` and
 //! no error message contains it.
@@ -56,17 +56,23 @@ pub fn from_file(path: &Path) -> anyhow::Result<Secret<String>> {
 /// The first line of `r`, without surrounding white space, at most
 /// [`MAX_BYTES`].
 pub fn from_reader(r: impl Read) -> anyhow::Result<Secret<String>> {
+    secret_line(r, "invitation")
+}
+
+/// The first line of `r` as the secret `what` (an invitation or a
+/// password), trimmed, at most [`MAX_BYTES`]. No error contains the text.
+pub fn secret_line(r: impl Read, what: &str) -> anyhow::Result<Secret<String>> {
     let mut line = String::new();
     BufReader::new(r.take(MAX_BYTES))
         .read_line(&mut line)
-        .context("cannot read the invitation")?;
+        .with_context(|| format!("cannot read the {what}"))?;
     let line = Secret::new(line);
     let text = line.expose().trim();
     if text.is_empty() {
-        bail!("no invitation was given");
+        bail!("no {what} was given");
     }
     if text.len() as u64 >= MAX_BYTES - 1 {
-        bail!("the input is too long to be an invitation");
+        bail!("the input is too long to be an {what}");
     }
     Ok(Secret::new(text.to_owned()))
 }
@@ -93,16 +99,26 @@ fn echo_off(fd: std::os::fd::BorrowedFd<'_>) -> io::Result<EchoOff<'_>> {
 }
 
 fn from_prompt() -> anyhow::Result<Secret<String>> {
+    prompt(
+        "Paste the invitation (input is hidden): ",
+        "invitation",
+        "use --stdin or --invite-file",
+    )
+}
+
+/// Reads the secret `what` from a prompt that does not echo. `other` names
+/// the other sources for the error when stdin is not a terminal.
+pub fn prompt(label: &str, what: &str, other: &str) -> anyhow::Result<Secret<String>> {
     let stdin = io::stdin();
     let fd = stdin.as_fd();
     if !rustix::termios::isatty(fd) {
-        bail!("standard input is not a terminal: use --stdin or --invite-file");
+        bail!("standard input is not a terminal: {other}");
     }
-    eprint!("Paste the invitation (input is hidden): ");
+    eprint!("{label}");
     io::stderr().flush().ok();
     let text = {
         let _quiet = echo_off(fd).context("cannot turn off the terminal echo")?;
-        from_reader(stdin.lock())
+        secret_line(stdin.lock(), what)
     };
     eprintln!();
     text

@@ -9,10 +9,14 @@
 //! - [`commands`]: the command router's stored envelopes and states (G3).
 //! - [`outbox`]: deck-owned intent delivered as routed commands (A5).
 //! - [`coordinator`]: the receipts of `coordinator.call` (G7).
+//! - [`auth`]: the owner, login sessions, login links and API tokens
+//!   (A13, L15); [`audit`]: the audit log of every mutation (§3 rule 7).
 //!
 //! Station reachability is link state, not stored state: the deck keeps it
 //! in memory and the board status projection reads it (§7.2).
 
+pub mod audit;
+pub mod auth;
 pub mod commands;
 pub mod coordinator;
 pub mod outbox;
@@ -31,6 +35,8 @@ use fleetdeck_proto::{IncarnationId, StationId};
 use rusqlite::{Connection, OptionalExtension};
 use tokio::sync::watch;
 
+pub use audit::{AuditEntry, AuditResult, NewAudit};
+pub use auth::{ApiToken, LoginMethod, LoginSession, NewLogin, Principal};
 pub use commands::{DeckCommand, NewCommand, Settle};
 pub use outbox::{NewOutboxItem, OutboxItem, OutboxState};
 pub use read_model::{DeckSession, TIMELINE_CAP};
@@ -60,6 +66,10 @@ pub enum DeckError {
     NotSynced(String),
     #[error("unknown command {0}")]
     UnknownCommand(String),
+    #[error("{0}")]
+    Invalid(String),
+    #[error("password hashing: {0}")]
+    Hash(String),
     #[error("corrupt store: {0}")]
     Corrupt(String),
 }
@@ -119,6 +129,7 @@ impl DeckStore {
 
     async fn start(db: Db, clock: SharedClock, ids: SharedIds) -> Result<Self> {
         let fresh: IncarnationId = new_id(ids.as_ref());
+        let owner: String = new_id(ids.as_ref());
         let now = now_ms(&clock);
         let incarnation = call(&db, move |conn| {
             let tx = conn.transaction()?;
@@ -133,6 +144,11 @@ impl DeckStore {
                     tx.execute(
                         "INSERT INTO meta (id, incarnation_id, created_at) VALUES (1, ?1, ?2)",
                         rusqlite::params![fresh.as_str(), now],
+                    )?;
+                    // D6: one owner now; the id keeps room for teams.
+                    tx.execute(
+                        "INSERT OR IGNORE INTO owner (id, owner_id, created_at) VALUES (1, ?1, ?2)",
+                        rusqlite::params![owner.as_str(), now],
                     )?;
                     fresh.0.clone()
                 }

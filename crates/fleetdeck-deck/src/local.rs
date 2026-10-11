@@ -1,6 +1,9 @@
 //! The deck's owner-only local socket `deck.sock` (M2 P3-6b; PLAN §6.5):
 //! the pairing commands and the registry and read model views of the local
-//! CLI, and `deck command` through the command router. The wire is that of [`fleetdeck_core::localsock`].
+//! CLI, `deck command` through the command router, and the owner-auth
+//! requests of [`crate::local_auth`] (P3-8). The wire is that of
+//! [`fleetdeck_core::localsock`]. Every mutation is audited with the actor
+//! `local`.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -19,7 +22,18 @@ use tokio::sync::watch;
 pub use fleetdeck_core::localsock::InvitationText;
 
 use crate::link::{CommandKind, DeckNode};
-use crate::store::{DeckCommand, DeckError, DeckSession, Direction, StationRecord};
+use crate::local_auth::{self, AuthRequest, AuthResponse, LOCAL_ACTOR};
+use crate::store::{
+    AuditResult, DeckCommand, DeckError, DeckSession, Direction, NewAudit, StationRecord,
+};
+
+/// What the socket serves.
+#[derive(Debug)]
+pub struct LocalDeck {
+    pub node: Arc<DeckNode>,
+    /// The URL of the first board listener (login links), if any.
+    pub board_url: Option<String>,
+}
 
 /// The socket's file name in the deck directory.
 pub const SOCKET_NAME: &str = "deck.sock";
@@ -56,6 +70,8 @@ pub enum DeckRequest {
     },
     /// `deck commands`: the router's commands, oldest first.
     Commands,
+    /// `fleetdeck open`, `deck password`, `deck token`, `deck audit`.
+    Auth { auth: AuthRequest },
 }
 
 /// How long `deck command` waits for a receipt before it answers with the
@@ -123,6 +139,9 @@ pub enum DeckResponse {
     Commands {
         commands: Vec<DeckCommand>,
     },
+    Auth {
+        auth: AuthResponse,
+    },
     Error {
         message: String,
     },
@@ -139,14 +158,14 @@ pub async fn bind(path: &Path) -> Result<UnixListener, BindError> {
 /// Serves the socket until `shutdown` turns true.
 pub async fn serve(
     listener: UnixListener,
-    node: Arc<DeckNode>,
+    deck: Arc<LocalDeck>,
     mut shutdown: watch::Receiver<bool>,
 ) {
     loop {
         tokio::select! {
             accepted = localsock::accept_own(&listener) => match accepted {
                 Ok(Some(stream)) => {
-                    tokio::spawn(connection(stream, Arc::clone(&node)));
+                    tokio::spawn(connection(stream, Arc::clone(&deck)));
                 }
                 Ok(None) => {}
                 Err(e) => tracing::warn!(error = %e, "local socket accept"),
@@ -160,7 +179,7 @@ pub async fn serve(
     }
 }
 
-async fn connection(stream: UnixStream, node: Arc<DeckNode>) {
+async fn connection(stream: UnixStream, deck: Arc<LocalDeck>) {
     let (read, mut write) = stream.into_split();
     let mut reader = BufReader::new(read);
     loop {
@@ -173,7 +192,7 @@ async fn connection(stream: UnixStream, node: Arc<DeckNode>) {
             }
         };
         let response = match serde_json::from_slice::<DeckRequest>(&line) {
-            Ok(request) => handle(&node, request).await,
+            Ok(request) => handle(&deck, request).await,
             Err(e) => error(localsock::bad_request(&e)),
         };
         if send(&mut write, &response).await.is_err() {
@@ -186,17 +205,37 @@ fn error(message: String) -> DeckResponse {
     DeckResponse::Error { message }
 }
 
-async fn handle(node: &DeckNode, request: DeckRequest) -> DeckResponse {
+/// Audits a `deck.sock` mutation.
+async fn audit<T, E: std::fmt::Display>(
+    node: &DeckNode,
+    action: &str,
+    target: &str,
+    r: &Result<T, E>,
+) {
+    let row = match r {
+        Ok(_) => NewAudit::new(LOCAL_ACTOR, action, AuditResult::Ok),
+        Err(e) => NewAudit::new(LOCAL_ACTOR, action, AuditResult::Failed).detail(e.to_string()),
+    };
+    node.link().store.audit_or_log(row.target(target)).await;
+}
+
+async fn handle(deck: &LocalDeck, request: DeckRequest) -> DeckResponse {
+    let node = &*deck.node;
     let store = &node.link().store;
     match request {
-        DeckRequest::Invite => match node.invite() {
+        DeckRequest::Auth { auth } => {
+            local_auth::respond(local_auth::handle(store, deck.board_url.as_deref(), auth).await)
+        }
+        DeckRequest::Invite => match audited(node, "station.invite", "", node.invite()).await {
             Ok(text) => DeckResponse::Invitation {
                 invitation: InvitationText(text.expose().clone()),
             },
             Err(e) => error(e.to_string()),
         },
         DeckRequest::AddStation { invitation, name } => {
-            match node.add_station(&Secret::new(invitation.0), name).await {
+            let r = node.add_station(&Secret::new(invitation.0), name).await;
+            audit(node, "station.add", "", &r).await;
+            match r {
                 Ok(st) => DeckResponse::Paired {
                     station: StationView::new(&st, store.is_reachable(&st.station_id)),
                 },
@@ -212,7 +251,14 @@ async fn handle(node: &DeckNode, request: DeckRequest) -> DeckResponse {
             },
             Err(e) => error(e.to_string()),
         },
-        DeckRequest::RemoveStation { station } => match node.remove_station(&station).await {
+        DeckRequest::RemoveStation { station } => match audited(
+            node,
+            "station.remove",
+            &station.clone(),
+            node.remove_station(&station).await,
+        )
+        .await
+        {
             Ok(st) => DeckResponse::Removed {
                 station: StationView::new(&st, false),
             },
@@ -233,6 +279,16 @@ async fn handle(node: &DeckNode, request: DeckRequest) -> DeckResponse {
     }
 }
 
+async fn audited<T, E: std::fmt::Display>(
+    node: &DeckNode,
+    action: &str,
+    target: &str,
+    r: Result<T, E>,
+) -> Result<T, E> {
+    audit(node, action, target, &r).await;
+    r
+}
+
 async fn route(
     node: &DeckNode,
     station: String,
@@ -244,10 +300,19 @@ async fn route(
         .find_station(station.clone())
         .await?
         .ok_or(DeckError::UnknownStation(station))?;
-    let cmd = link
-        .submit(st.station_id, CommandOrigin::Board, kind)
-        .await?;
-    link.wait_command(cmd.command_id, COMMAND_WAIT).await
+    let method = kind.method().to_owned();
+    let submitted = link
+        .submit(st.station_id.clone(), CommandOrigin::Board, kind)
+        .await;
+    let mut row = match &submitted {
+        Ok(cmd) => {
+            NewAudit::new(LOCAL_ACTOR, method, AuditResult::Ok).command(cmd.command_id.clone())
+        }
+        Err(e) => NewAudit::new(LOCAL_ACTOR, method, AuditResult::Failed).detail(e.to_string()),
+    };
+    row = row.target(st.station_id.0.clone());
+    link.store.audit_or_log(row).await;
+    link.wait_command(submitted?.command_id, COMMAND_WAIT).await
 }
 
 /// The client side, for the CLI.

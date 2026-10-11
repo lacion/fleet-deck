@@ -9,6 +9,8 @@ publish.workspace = true
 
 [dependencies]
 ring = { workspace = true }
+axum = { workspace = true }
+argon2 = { workspace = true }
 fleetdeck-proto = { path = "../fleetdeck-proto" }
 fleetdeck-core = { path = "../fleetdeck-core" }
 fleetdeck-link = { path = "../fleetdeck-link" }

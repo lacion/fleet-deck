@@ -7,7 +7,9 @@
 //! **same transaction** that moves the item to `sending`, so a crash never
 //! leaves an item that is sent but not recorded, or recorded twice. The
 //! router resends the attempt's command with the same `command_id` until
-//! its `retry_until`, so the station's receipt store deduplicates.
+//! its `retry_until`, so the station's receipt store deduplicates. That
+//! `retry_until` is never after the item's `expires_at`: expired intent is
+//! never sent or resent.
 //!
 //! [`DeckStore::reconcile_outbox`] moves a `sending` item by its command:
 //!
@@ -298,10 +300,11 @@ impl DeckStore {
 
     /// Starts one attempt of a `queued` item: inserts `cmd` as `pending`
     /// and moves the item to `sending` with it, in one transaction.
-    /// Returns `None` when the item is no longer `queued`.
+    /// Returns `None` when the item is no longer `queued` or has expired.
     ///
     /// # Errors
-    /// A database error.
+    /// [`DeckError::Corrupt`] when `cmd.retry_until` is after the item's
+    /// `expires_at` (an attempt never outlives its item); a database error.
     pub async fn start_attempt(
         &self,
         outbox_id: String,
@@ -310,16 +313,21 @@ impl DeckStore {
         let now = self.now_ms();
         let out = call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
-            let queued = tx
+            let expires_at: Option<i64> = tx
                 .query_row(
-                    "SELECT 1 FROM outbox WHERE outbox_id = ?1 AND state = 'queued'",
-                    [&outbox_id],
-                    |_| Ok(()),
+                    "SELECT expires_at FROM outbox
+                     WHERE outbox_id = ?1 AND state = 'queued' AND expires_at > ?2",
+                    params![outbox_id, now],
+                    |r| r.get(0),
                 )
-                .optional()?
-                .is_some();
-            if !queued {
+                .optional()?;
+            let Some(expires_at) = expires_at else {
                 return Ok(None);
+            };
+            if cmd.retry_until > expires_at {
+                return Err(DeckError::Corrupt(format!(
+                    "an attempt of outbox item {outbox_id} outlives its expires_at"
+                )));
             }
             commands::insert(&tx, &cmd, now)?;
             tx.execute(

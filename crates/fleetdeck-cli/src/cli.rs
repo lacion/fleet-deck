@@ -44,7 +44,7 @@ pub enum Command {
         #[command(subcommand)]
         command: Option<StationCommand>,
     },
-    /// Print a one-time board login URL (read from an owner-only local file).
+    /// Print a one-time board login URL (from the deck's owner-only socket).
     Open,
 }
 
@@ -99,6 +99,53 @@ pub enum DeckCommand {
     RemoveStation {
         /// Station name or key fingerprint.
         station: String,
+    },
+    /// Set the owner password of the board (ends every login). Reads it
+    /// from a prompt or from stdin.
+    Password {
+        /// Read the password from the first line of stdin.
+        #[arg(long)]
+        stdin: bool,
+    },
+    /// Manage API tokens for bearer clients of the board API.
+    Token {
+        #[command(subcommand)]
+        command: TokenCommand,
+    },
+    /// Show the audit log, newest first.
+    Audit {
+        /// The number of entries.
+        #[arg(long, default_value_t = 50)]
+        limit: u32,
+        /// Print the entries as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum TokenCommand {
+    /// Create a token; its value is printed once.
+    Create {
+        /// Token name (letters, digits, `-`, `_`).
+        name: String,
+        /// A scope of the token: read, drive, approve or admin (repeat).
+        #[arg(long = "scope", required = true)]
+        scopes: Vec<String>,
+        /// Lifetime in days (at most 90).
+        #[arg(long, default_value_t = 30)]
+        days: u32,
+    },
+    /// List the tokens.
+    List {
+        /// Print the tokens as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Revoke a token.
+    Revoke {
+        /// Token name.
+        name: String,
     },
 }
 

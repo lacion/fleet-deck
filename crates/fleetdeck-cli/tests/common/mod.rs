@@ -242,6 +242,17 @@ fn zombie(pid: u32) -> bool {
 /// Runs `fleetdeck <args>` on `node` with `input` on stdin; it must
 /// succeed. Returns its stdout.
 pub fn with_stdin(node: &TempNode, args: &[&str], input: &str) -> String {
+    let out = run_stdin(node, args, input);
+    assert!(
+        out.status.success(),
+        "fleetdeck {args:?} failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8(out.stdout).unwrap()
+}
+
+/// Runs `fleetdeck args` with `input` as the first line of stdin.
+pub fn run_stdin(node: &TempNode, args: &[&str], input: &str) -> std::process::Output {
     use std::io::Write as _;
     let mut child = fleetdeck(node)
         .args(args)
@@ -256,13 +267,7 @@ pub fn with_stdin(node: &TempNode, args: &[&str], input: &str) -> String {
         .unwrap()
         .write_all(format!("{input}\n").as_bytes())
         .unwrap();
-    let out = child.wait_with_output().unwrap();
-    assert!(
-        out.status.success(),
-        "fleetdeck {args:?} failed: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).unwrap()
+    child.wait_with_output().unwrap()
 }
 
 pub fn fleetdeck(node: &TempNode) -> Command {

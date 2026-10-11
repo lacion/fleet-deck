@@ -205,7 +205,7 @@ async fn an_attempt_and_its_command_are_stored_in_one_transaction_and_survive_a_
         method: "session.interrupt".to_owned(),
         origin: "mail".to_owned(),
         envelope: json!({ "command_id": id }),
-        retry_until: store.now_ms() + RETRY_WINDOW_MS,
+        retry_until: it.expires_at,
     };
     let started = store
         .start_attempt(it.outbox_id.clone(), cmd("a1"))
@@ -237,4 +237,77 @@ async fn an_attempt_and_its_command_are_stored_in_one_transaction_and_survive_a_
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].command_id, CommandId::from("a1"));
     assert_eq!(store.commands().await.unwrap().len(), 1);
+}
+
+/// An attempt's `retry_until` is capped at the item's `expires_at`: when
+/// the item expires while its attempt is `sending`, the router stops
+/// resending, and the item ends `dead` (`ambiguous`, the station may have
+/// run it), never sent again.
+#[tokio::test]
+async fn an_item_that_expires_while_sending_is_never_resent() {
+    let mut f = fixture().await;
+    let mut station = f.connect().await;
+    let ttl = Duration::from_secs(30);
+    assert!(ttl < ms(RETRY_WINDOW_MS));
+    let queued = f
+        .ctx
+        .enqueue(f.station.clone(), CommandOrigin::Mail, interrupt(), ttl)
+        .await
+        .unwrap();
+    // The first send arrives; its envelope ends with the item.
+    let first = next_request(&mut station).await;
+    assert_eq!(first.params["retry_until"], json!(queued.expires_at));
+    let cmd = f.command(first.command_id.as_ref().unwrap()).await;
+    assert_eq!(cmd.retry_until, queued.expires_at);
+    // The response is lost; before `expires_at` the router resends.
+    f.drop_link(station).await;
+    let mut station = f.connect().await;
+    let resend = next_request(&mut station).await;
+    assert_eq!(resend.command_id, first.command_id);
+    f.drop_link(station).await;
+
+    // The item expires while `sending`: no resend after it.
+    f.det.advance(ttl + Duration::from_secs(1));
+    let dead = until_state(&f, &queued.outbox_id, OutboxState::Dead).await;
+    assert_eq!(dead.reason.as_deref(), Some("ambiguous: no_receipt"));
+    let mut station = f.connect().await;
+    no_request(&mut station, Duration::from_millis(500)).await;
+    assert_eq!(f.store.commands().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn the_store_refuses_an_attempt_that_outlives_its_item_or_starts_after_it() {
+    let f = fixture().await;
+    let it = f
+        .store
+        .enqueue(NewOutboxItem {
+            station_id: f.station.clone(),
+            origin: "mail".to_owned(),
+            payload: serde_json::to_value(interrupt()).unwrap(),
+            expires_at: f.store.now_ms() + 10_000,
+        })
+        .await
+        .unwrap();
+    let cmd = |id: &str, retry_until: i64| NewCommand {
+        command_id: CommandId::from(id),
+        station_id: f.station.clone(),
+        method: "session.interrupt".to_owned(),
+        origin: "mail".to_owned(),
+        envelope: json!({ "command_id": id }),
+        retry_until,
+    };
+    let late = f
+        .store
+        .start_attempt(it.outbox_id.clone(), cmd("x1", it.expires_at + 1))
+        .await
+        .unwrap_err();
+    assert!(late.to_string().contains("outlives"), "{late}");
+    f.det.advance(Duration::from_secs(11));
+    let after = f
+        .store
+        .start_attempt(it.outbox_id.clone(), cmd("x2", it.expires_at))
+        .await
+        .unwrap();
+    assert!(after.is_none());
+    assert!(f.store.commands().await.unwrap().is_empty());
 }

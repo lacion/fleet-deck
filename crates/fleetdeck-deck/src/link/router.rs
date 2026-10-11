@@ -39,6 +39,17 @@ pub enum CommandKind {
     Configure { change: StationChange },
 }
 
+impl CommandKind {
+    /// The link method of the command.
+    #[must_use]
+    pub fn method(&self) -> &'static str {
+        match self {
+            Self::Session { command } => command.method(),
+            Self::Configure { .. } => "station.configure",
+        }
+    }
+}
+
 /// The commands with a send in flight.
 #[derive(Debug, Default)]
 pub(crate) struct Inflight(Mutex<HashSet<CommandId>>);
@@ -104,6 +115,21 @@ impl DeckLink {
         origin: CommandOrigin,
         kind: CommandKind,
     ) -> Result<NewCommand, DeckError> {
+        self.build_until(station, origin, kind, i64::MAX).await
+    }
+
+    /// [`DeckLink::build`] with `retry_until` capped at `latest` (an outbox
+    /// attempt must not outlive its item's `expires_at`).
+    ///
+    /// # Errors
+    /// See [`DeckLink::build`].
+    pub(crate) async fn build_until(
+        &self,
+        station: StationId,
+        origin: CommandOrigin,
+        kind: CommandKind,
+        latest: i64,
+    ) -> Result<NewCommand, DeckError> {
         let rec = self
             .store
             .station(station.clone())
@@ -113,7 +139,7 @@ impl DeckLink {
             .incarnation
             .ok_or_else(|| DeckError::NotSynced(rec.name.clone()))?;
         let command_id = self.store.new_command_id();
-        let retry_until = self.store.now_ms() + RETRY_WINDOW_MS;
+        let retry_until = (self.store.now_ms() + RETRY_WINDOW_MS).min(latest);
         let (method, envelope) = match kind {
             CommandKind::Session { command } => (
                 command.method().to_owned(),

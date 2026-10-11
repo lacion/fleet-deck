@@ -1,5 +1,6 @@
 //! `fleetdeck deck serve|invite|add-station|stations|sessions|remove-station`
-//! (M2 P3-6b; PLAN §8.5) and `deck command|commands` (P3-7a, G3).
+//! (M2 P3-6b; PLAN §8.5) and `deck command|commands` (P3-7a, G3); the
+//! owner-auth commands are in [`crate::auth`].
 //!
 //! `serve` runs the deck; the other commands are clients of its local
 //! socket `deck.sock`. The invitation of `add-station` comes only from a
@@ -20,16 +21,18 @@ use crate::station::shutdown_signal;
 
 /// `fleetdeck deck serve`: runs until SIGINT or SIGTERM.
 pub async fn serve(dirs: &NodeDirs, args: &ServeArgs) -> anyhow::Result<()> {
-    let config = DeckConfig::load(&dirs.deck_config())?;
+    let mut config = DeckConfig::load(&dirs.deck_config())?;
     if let Some(listen) = args.listen {
-        tracing::warn!(%listen, "the board listener comes with PLAN Phase 3 P3-9; ignored");
+        fleetdeck_core::netscope::check_bind(listen)
+            .map_err(|e| anyhow::anyhow!("--listen: {e}"))?;
+        config.listen = vec![listen];
     }
     fleetdeck_deck::serve::serve(dirs, &config, BackoffPolicy::default(), shutdown_signal())
         .await?;
     Ok(())
 }
 
-async fn call(dirs: &NodeDirs, request: &DeckRequest) -> anyhow::Result<DeckResponse> {
+pub(crate) async fn call(dirs: &NodeDirs, request: &DeckRequest) -> anyhow::Result<DeckResponse> {
     let path = fleetdeck_deck::local::socket_path(&dirs.deck());
     let mut client = DeckClient::connect(&path).await?;
     let response = client.call(request).await?;

@@ -2,8 +2,10 @@
 //! station links, the command router and outbox, auth and audit, and the
 //! board API.
 
+pub mod http;
 pub mod link;
 pub mod local;
+pub mod local_auth;
 pub mod peers;
 pub mod serve;
 pub mod store;

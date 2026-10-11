@@ -15,6 +15,7 @@ use super::{WAIT, fleetdeck, with_stdin};
 pub struct Deck {
     pub node: TempNode,
     pub link_port: u16,
+    pub board_port: u16,
     child: Option<Child>,
 }
 
@@ -33,14 +34,15 @@ impl Deck {
     pub fn start() -> Self {
         let node = TempNode::new("deck").unwrap();
         let link_port = free_port();
+        let board_port = free_port();
         node.write_deck_toml(&format!(
-            "name = \"deck\"\nlisten = [\"127.0.0.1:{}\"]\nlink_listen = [\"127.0.0.1:{link_port}\"]\n",
-            free_port()
+            "name = \"deck\"\nlisten = [\"127.0.0.1:{board_port}\"]\nlink_listen = [\"127.0.0.1:{link_port}\"]\n",
         ))
         .unwrap();
         let mut deck = Self {
             node,
             link_port,
+            board_port,
             child: None,
         };
         deck.spawn();

@@ -1,0 +1,51 @@
+//! The read methods of the board API that P3-8 needs for its tests and
+//! that the board uses: stations, cards, commands, the audit log. P3-9
+//! adds the mutating methods and the event stream.
+
+use std::sync::Arc;
+
+use axum::Json;
+use axum::extract::State;
+
+use super::Board;
+use super::guard::ApiError;
+use crate::local::StationView;
+use crate::store::{AuditEntry, DeckCommand, DeckSession};
+
+/// The newest audit rows that `GET /api/audit` returns.
+pub const AUDIT_PAGE: u32 = 200;
+
+/// `GET /api/stations`.
+pub async fn stations(State(board): State<Arc<Board>>) -> Result<Json<Vec<StationView>>, ApiError> {
+    let list = board.store.stations().await.map_err(ApiError::internal)?;
+    Ok(Json(
+        list.iter()
+            .map(|st| StationView::new(st, board.store.is_reachable(&st.station_id)))
+            .collect(),
+    ))
+}
+
+/// `GET /api/sessions`: every card.
+pub async fn sessions(State(board): State<Arc<Board>>) -> Result<Json<Vec<DeckSession>>, ApiError> {
+    Ok(Json(
+        board.store.sessions().await.map_err(ApiError::internal)?,
+    ))
+}
+
+/// `GET /api/commands`.
+pub async fn commands(State(board): State<Arc<Board>>) -> Result<Json<Vec<DeckCommand>>, ApiError> {
+    Ok(Json(
+        board.store.commands().await.map_err(ApiError::internal)?,
+    ))
+}
+
+/// `GET /api/audit` (admin).
+pub async fn audit(State(board): State<Arc<Board>>) -> Result<Json<Vec<AuditEntry>>, ApiError> {
+    Ok(Json(
+        board
+            .store
+            .audit_log(AUDIT_PAGE)
+            .await
+            .map_err(ApiError::internal)?,
+    ))
+}

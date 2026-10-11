@@ -52,6 +52,8 @@ toml = "1"
 rustix = { version = "1.1", default-features = false, features = ["std", "system"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "sync", "time", "fs", "net", "signal"] }
 tracing = "0.1"
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "matched-path", "query", "tokio", "ws"] }
+argon2 = { version = "0.5", features = ["std"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 [workspace.lints.rust]
@@ -60,3 +62,9 @@ unsafe_code = "forbid"
 [workspace.lints.clippy]
 unwrap_used = "deny"
 expect_used = "warn"
+
+# Password hashing is slow without optimization; tests hash several times.
+[profile.dev.package.argon2]
+opt-level = 3
+[profile.dev.package.blake2]
+opt-level = 3

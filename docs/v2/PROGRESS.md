@@ -44,7 +44,7 @@ Sources: PLAN §14 Phases 1–5, GATE-M1 G1–G14, goal acceptance. G13 is P1-5.
 - [x] **P3-6b Deck link runtime and pairing commands.** `deck serve` link node (listener, dialers, sync loop: `events.replay` with the stored cursor, ack after the commit, snapshot batch, `unreachable` on link drop); `deck invite`, `deck add-station`, `deck remove-station`; multi-process test with one dialing and one dialed station.
 - [x] **P3-7a Command router.** `pending/done/failed/ambiguous` with the G3 rules: envelope stored before the send, resend with the same id and bytes on link up and on each tick, `retry_until`, `station_reset`, nothing redispatched; `deck command` / `deck commands` (DL-052). Tests: `crates/fleetdeck-deck/tests/router.rs` (6), `crates/fleetdeck-cli/tests/deck_commands.rs` (1).
 - [x] **P3-7b Outbox and coordinator receipts.** Outbox (A5); coordinator command dedupe with stored receipts (G7).
-- [ ] **P3-8 Auth and audit.** Owner login (argon2), session cookie, CSRF, WS `Origin` check, login also on loopback (A13), `fleetdeck open` one-time login URL, per-method scopes (L15), audit log.
+- [x] **P3-8 Auth and audit.** Owner login (argon2), session cookie, CSRF, WS `Origin` check, login also on loopback (A13), `fleetdeck open` one-time login URL, per-method scopes (L15), audit log.
 - [ ] **P3-9 Board API.** REST commands + WS snapshot/deltas, per-session subscriptions with a cursor.
 - [ ] **P3-10 Phase 3 exit tests.** Deck + 2 stations as separate processes on loopback (one dial-only, one dialed); link drops and deck restarts lose no events and duplicate no commands; public addresses rejected; scopes enforced.
 
@@ -52,7 +52,7 @@ Sources: PLAN §14 Phases 1–5, GATE-M1 G1–G14, goal acceptance. G13 is P1-5.
 
 - [ ] **P4-1 Connection runtime + login.** `web/src/runtime/` (L17): one retry owner, transport health vs freshness, stale cache, per-session cursors; login page.
 - [ ] **P4-2 Fleet lanes, stations panel, pairing dialog.**
-- [ ] **P4-3 Session view and needs-you rail.** Timeline, composer (prompt/steer/follow-up), interrupt, mode ladder, approvals.
+- [ ] **P4-3 Session view and needs-you rail.** Timeline, composer (prompt/steer/follow-up), interrupt, mode ladder, approvals. Subagent tree (PLAN D15, owner request): child subagents with their own timeline and status, running-subagent count on the session card; covered by a fixture with subagent frames.
 - [ ] **P4-4 Spawn form and `fleetdeck up`.** Station + provider + directory picker; all-in-one mode with the embedded board (`rust-embed`).
 - [ ] **P4-5 MVP demo test.** Playwright at a phone viewport against fake agents: spawn on two stations, answer an approval, steer, interrupt, survive a deck restart and a network drop.
 
@@ -348,6 +348,13 @@ Sources: PLAN §14 Phases 1–5, GATE-M1 G1–G14, goal acceptance. G13 is P1-5.
 - Tests: `outbox.rs` 5/5 (waits for the station and is delivered once; `station_reset` → queued, no attempt during the backoff, then a new command → delivered with 2 attempts; ambiguous → dead and never sent again; stored rejection / expiry / station removal → dead; attempt and command survive a restart and a second start does nothing) + unit test of the backoff; `coordinator.rs` 3/3 (no `coordinate` grant → link `forbidden`; decided once, resend and resend after `retry_until` return the stored receipt, reused id → `command_id_reused`, other incarnation / expired / id mismatch not stored, `coordinator.query` → `not_implemented`; grant removed in the store → `forbidden` in the decision transaction). Mutation checks: grant re-check disabled → the grant test fails; the never-ran reason list emptied → the retry test fails.
 - Checks: `make check` → all 12 commands passed (fmt, clippy -D warnings, nextest 676/676, deny, ts_drift 2/2, bun install/typecheck/lint/test 5 pass/build, replay-claude 29, replay-codex 18).
 - Next: P3-8 auth and audit.
+
+### Round 25 (goal round 7/50): outbox expiry cap (review) and P3-8 auth and audit
+- Committed round 24 as `4a10014`.
+- Review fix: an outbox attempt's `retry_until` is capped at the item's `expires_at` (`DeckLink::build_until`), and `DeckStore::start_attempt` refuses an attempt that outlives its item or starts after it. Tests `outbox.rs::an_item_that_expires_while_sending_is_never_resent`, `outbox.rs::the_store_refuses_an_attempt_that_outlives_its_item_or_starts_after_it`. Mutation check: without the cap the expiry test fails. DL-053 amended.
+- P3-8: `deck.db` V5 (owner, login_sessions, login_links, api_tokens, audit); `store/auth.rs` (argon2id password, hashed cookies/links/tokens, 7 d idle / 30 d absolute logins, one-time 5 min login links, API tokens ≤ 90 d), `store/audit.rs`; board API `http/` (axum 0.8: method table with one scope per method, guard: Origin → login → scope → CSRF, fail closed for unknown routes; login/link/logout/session routes with a 5-in-60 s failure lock; read routes stations/sessions/commands/audit); `deck serve` binds the board on deck.toml `listen` (`--listen` override with the D13 check); `deck.sock` auth requests (`local_auth.rs`) and audit of every local mutation; CLI `fleetdeck open`, `deck password [--stdin]`, `deck token create|list|revoke`, `deck audit [--json]`. DL-054.
+- Tests: `crates/fleetdeck-deck/src/store/auth_tests.rs` (5), `http/methods.rs` unit, `http/auth_routes.rs` limiter unit, `crates/fleetdeck-deck/tests/http_auth.rs` (6: login_is_required_on_loopback_for_every_method_but_the_login_methods, a_login_link_works_once_and_sets_a_strict_http_only_cookie, password_logins_are_limited_after_five_failures_for_a_minute, a_mutating_cookie_request_needs_the_csrf_token_of_its_login, only_the_origins_of_the_board_addresses_and_the_tailnet_name_are_allowed, bearer_tokens_hold_per_method_scopes_and_never_fall_back_to_the_cookie), `crates/fleetdeck-cli/tests/deck_login.rs` (2, multi-process: fleetdeck_open_logs_in_once_and_the_loopback_board_refuses_anonymous_requests, a_public_board_address_is_refused). Mutation checks: disabling the CSRF check or the scope check fails its test.
+- Next: P3-9 board API.
 
 ## M1 checklist (complete)
 

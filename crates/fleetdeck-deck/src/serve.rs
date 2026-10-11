@@ -2,7 +2,8 @@
 //! loads (or creates) the deck identity key, starts the link node
 //! (listeners for stations that dial in, dialers to stations that listen,
 //! [`crate::link::DeckNode`]) and serves `deck.sock` until the shutdown
-//! signal. The board API listener comes with P3-9.
+//! signal. The board API (P3-8) listens on the `listen` addresses of
+//! deck.toml.
 
 use std::future::Future;
 use std::path::PathBuf;
@@ -16,8 +17,9 @@ use fleetdeck_core::{SharedClock, SharedIds, SystemClock, UlidSource};
 use fleetdeck_link::reconnect::BackoffPolicy;
 use tokio::sync::watch;
 
+use crate::http::{Board, BoardServer, LoginLimiter, Origins};
 use crate::link::{DeckNode, NodeError};
-use crate::local;
+use crate::local::{self, LocalDeck};
 use crate::store::{DeckError, DeckStore};
 
 /// Why the deck cannot start.
@@ -37,6 +39,12 @@ pub enum ServeError {
     Identity(#[from] IdentityError),
     #[error("deck link: {0}")]
     Link(#[from] NodeError),
+    #[error("board listener {addr}: {source}")]
+    Board {
+        addr: String,
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 /// Runs the deck until `stop` completes.
@@ -60,20 +68,51 @@ pub async fn serve(
     let socket = local::socket_path(&deck_dir);
     let listener = local::bind(&socket).await?;
     let identity = Arc::new(Identity::load_or_create(&deck_dir)?);
-    let node = DeckNode::start(store, Arc::clone(&identity), &config.link_listen, backoff).await?;
+    let node = DeckNode::start(
+        store.clone(),
+        Arc::clone(&identity),
+        &config.link_listen,
+        backoff,
+    )
+    .await?;
+    let (shutdown, rx) = watch::channel(false);
+    let tailnet = config.tailnet_hostname.clone();
+    let board_store = store.clone();
+    let board = BoardServer::bind(
+        &config.listen,
+        move |bound| {
+            Arc::new(Board {
+                store: board_store,
+                origins: Origins::new(bound, tailnet.as_deref()),
+                limiter: LoginLimiter::default(),
+            })
+        },
+        rx.clone(),
+    )
+    .await
+    .map_err(|source| ServeError::Board {
+        addr: format!("{:?}", config.listen),
+        source,
+    })?;
+    let board_url = board.addrs.first().map(|a| format!("http://{a}"));
     tracing::info!(
         deck = %config.name,
         key = %identity.fingerprint().short(),
         socket = %socket.display(),
         link_listen = ?node.listen_addrs(),
+        board = ?board.addrs,
         "deck ready"
     );
-    let (shutdown, rx) = watch::channel(false);
-    let server = tokio::spawn(local::serve(listener, Arc::clone(&node), rx));
+    let local = Arc::new(LocalDeck {
+        node: Arc::clone(&node),
+        board_url,
+    });
+    let server = tokio::spawn(local::serve(listener, local, rx));
     stop.await;
     tracing::info!("deck stopping");
     let _ = shutdown.send(true);
     let _ = server.await;
+    board.join().await;
     node.shutdown();
     if let Err(e) = std::fs::remove_file(&socket) {
         tracing::debug!(error = %e, "socket file");

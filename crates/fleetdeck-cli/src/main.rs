@@ -1,5 +1,6 @@
 //! `fleetdeck`: the one binary of Fleet Deck v2 (PLAN §1, D2).
 
+mod auth;
 mod cli;
 mod deck;
 mod invite;
@@ -58,7 +59,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
     match &cli.command {
         Command::Deck { command } => runtime()?.block_on(deck_main(command.as_ref(), &dirs)),
         Command::Up(_) => anyhow::bail!("`fleetdeck up` is not implemented yet (PLAN Phase 4)"),
-        Command::Open => anyhow::bail!("`fleetdeck open` is not implemented yet (PLAN Phase 3)"),
+        Command::Open => runtime()?.block_on(auth::open(&dirs)),
         Command::Station { .. } => {
             anyhow::bail!("internal error: the station command was not dispatched")
         }
@@ -84,6 +85,9 @@ async fn deck_main(
             json,
         }) => deck::command(dirs, station, command, *json).await,
         Some(DeckCommand::Commands { json }) => deck::commands(dirs, *json).await,
+        Some(DeckCommand::Password { stdin }) => auth::password(dirs, *stdin).await,
+        Some(DeckCommand::Token { command }) => auth::token(dirs, command).await,
+        Some(DeckCommand::Audit { limit, json }) => auth::audit(dirs, *limit, *json).await,
     }
 }
 
