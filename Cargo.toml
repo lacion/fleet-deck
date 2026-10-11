@@ -6,6 +6,7 @@ resolver = "3"
 members = [
     "spikes/spike-canon",
     "spikes/s1-claude",
+    "spikes/s2-codex",
 ]
 
 [workspace.package]

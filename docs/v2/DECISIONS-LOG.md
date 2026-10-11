@@ -95,3 +95,19 @@ Format: context, options, choice, reason, owner review.
 - **Choice:** (b) in the spike only. The spike has no `run` entity; Phase 1 derives `run.completed.background_pending` from the same set and decides whether `background.updated` becomes a protocol event (an additive change).
 - **Reason:** the evidence must show when the set drains (after the turn), which a turn-end flag cannot show. No PLAN decision changes.
 - **Owner review:** pending
+
+## DL-012 — ADR-002 protocol source: the vendored generated JSON schema, not a git pin and not full codegen
+
+- **Context:** PLAN §14 S2 asks ADR-002 to choose "depend on `codex-app-server-protocol` (git pin) **or** codegen from `codex app-server generate-json-schema`". Facts (round 6): the crate at tag `rust-v0.160.0` (79b1b666) depends on about 15 internal monorepo crates (`codex-protocol`, `codex-rollout`, `codex-secrets`, `codex-shell-command`, `rmcp`, `zstd`, ...), so a git pin pulls a large part of the Codex workspace into `Cargo.lock` and `cargo deny`. The crates.io release of the crate is stale (0.63.0). `generate-json-schema --experimental` of codex-cli 0.160.0 writes one 864 KB draft-07 bundle (167 client requests, 11 server requests, 83 notifications). The only maintained Rust generator for JSON Schema, `typify`, is at 0.10.0-alpha.
+- **Options:** (a) git pin of the protocol crate; (b) full Rust codegen from the schema with `typify`; (c) vendor the generated schema of the pinned CLI version as the source of truth, hand-write serde access for the subset that the adapter uses, and test the subset against the schema.
+- **Choice:** (c), a narrow form of the PLAN's "codegen" option. `spikes/s2-codex/schema/0.160.0/codex_app_server_protocol.schemas.json` is vendored unchanged. `tests/schema_methods.rs` checks that every method that the core sends or matches exists in the schema. S2-3 adds a conformance test that validates recorded frames and host writes against the schema. A CLI upgrade regenerates the bundle into a new version directory, and the tests show what changed.
+- **Reason:** (a) adds a heavy, unpublished dependency tree for about 20 message shapes; (b) depends on an alpha generator and produces hundreds of unused types. (c) keeps the provider-native truth (doctrine: native protocol, no wrapper) with no new runtime dependency, and an upgrade is a diff of one generated file.
+- **Owner review:** pending
+
+## DL-013 — Codex sessions use the experimental API; mode names are `<approvalPolicy>/<sandbox>`
+
+- **Context:** `item/tool/requestUserInput` (the RPC-reply question channel of L4) and `collaborationMode` exist only when `initialize` sets `capabilities.experimentalApi: true`. PLAN §6.2 names the Codex modes "`approvalPolicy` × `sandbox` per turn" without a wire name.
+- **Options:** (a) stable API only (no RPC questions; questions only as async `agentMessage` questions); (b) experimental API on, with the stable subset used for everything else.
+- **Choice:** (b) for the spike. The core names a mode `<approvalPolicy>/<sandbox>` (for example `untrusted/workspace-write`) with only the native values of the schema (L8). A new session with no stored mode uses `untrusted/workspace-write`; an unknown stored mode (or a sentinel such as `default`, trap 2) runs as `untrusted/read-only`, the most restrictive pair. `danger-full-access` is never used outside a temporary directory.
+- **Reason:** L4 needs both response channels to be proven; the vendored schema (DL-012) marks the experimental methods, so Phase 1 can see each experimental dependency. The capability matrix records which rows need the experimental API.
+- **Owner review:** pending

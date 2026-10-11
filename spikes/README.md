@@ -6,7 +6,7 @@ These crates de-risk PLAN §14 Phase 0. They never ship. The product crates (Pha
 | --- | --- | --- | --- |
 | shared | `spike-canon/` | Spike subset of the canonical events (PLAN §6.3) | — |
 | S1 | `s1-claude/` | Claude Code stream-json control protocol from Rust (A8, D8) | `docs/v2/adr/ADR-001-native-claude-adapter.md` (Proposed) |
-| S2 | `s2-codex/` (planned) | Codex app-server JSON-RPC from Rust | `docs/v2/adr/ADR-002-*.md` |
+| S2 | `s2-codex/` | Codex app-server JSON-RPC from Rust | `docs/v2/adr/ADR-002-*.md` |
 | S4 | `s4-link/` (planned) | Link protocol v1 (mTLS, pairing, channels, reconnect) | `docs/v2/adr/ADR-004-*.md` |
 
 ## Offline commands (no network, no provider CLI)
@@ -53,6 +53,16 @@ SDK recorder self-test (offline: a fake `claude` that never answers). It proves 
 ```sh
 spikes/s1-claude/sdk-recorder/selftest.sh
 ```
+
+### S2 (Codex)
+
+JSON-RPC framing, the sans-IO adapter core, and the check of every method name against the vendored app-server schema of codex-cli 0.160.0 (`spikes/s2-codex/schema/0.160.0/`, DL-012):
+
+```sh
+cargo nextest run -p s2-codex
+```
+
+The Codex recorder, fixtures and `replay-codex` follow in S2-2 and S2-3 (see `docs/v2/PROGRESS.md`).
 
 ### Fixture format
 

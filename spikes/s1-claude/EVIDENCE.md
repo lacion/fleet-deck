@@ -85,5 +85,5 @@ Tests in `spikes/s1-claude/tests/capabilities.rs`, one per matrix row:
 | file-change telemetry | no diff event; `Edit`/`Write` tool results with `file_path` | `capabilities::write_tool_results_map_to_file_changes` |
 | questions (L4) | `AskUserQuestion` is a `can_use_tool` request; the answer is `allow` + `updatedInput.answers` | `capabilities::questions_are_answered_by_rpc_reply` |
 | stop before the turn started (trap 3) | the interrupt works; the input ends `cancelled`, the next prompt runs | `capabilities::interrupt_before_the_turn_started_cancels_the_input` |
-| reconciliation (§6.4) | the CLI transcript stores each prompt under the client `uuid` | `capabilities::the_transcript_keeps_prompts_under_the_client_uuid` |
+| reconciliation (§6.4) | the CLI transcript stores each delivered prompt under the client `uuid`; a found `uuid` confirms delivery, a missing `uuid` does not prove non-delivery (the effect stays `outcome_unknown`) | `capabilities::the_transcript_keeps_prompts_under_the_client_uuid` |
 | terminal paths (trap 6) | open tools close on `result` and on exit | `adapter::tests::terminal_paths_close_open_tools` |

@@ -12,7 +12,7 @@ Rules for this file: one checklist item per M1 deliverable, in PLAN order. Each 
 - [x] **S1-3 TypeScript SDK reference recordings.** `spikes/s1-claude/sdk-recorder/` (bun + `@anthropic-ai/claude-agent-sdk` 0.3.296, `tee-claude.mjs` as `pathToClaudeCodeExecutable`); 10 SDK fixtures in `spikes/s1-claude/fixtures/sdk/` (8 shared + `tool_call_edit_input`, `set_permission_mode`); `reference` module + `replay-claude` replay them offline (DL-008). *(round 3)*
 - [x] **S1-4 Claude replay + evidence.** *(round 2: `replay` module, `replay-claude`, `tests/replay_fixtures.rs`.)* *(round 3: replay rejects unmatched writes before `exit`; SDK reference replay.)* *(round 4: `insta` snapshots of the canonical event stream of all 22 fixtures; `tests/evidence.rs`; `spikes/s1-claude/EVIDENCE.md` for "prompt confirmed", queue/steer timing, restart survival, native option ids; SDK recorder exits nonzero and kills timed-out sessions + `selftest.sh`.)*
 - [x] **S1-5 ADR-001** (Proposed): native Claude adapter design, effect states and crash boundaries (§6.4), fixture set, unsupported scenarios with reasons. *(round 5: `docs/v2/adr/ADR-001-native-claude-adapter.md`; 7 extra recordings for the matrix rows; `tests/capabilities.rs`; EVIDENCE.md E7; DL-010, DL-011)*
-- [ ] **S2-1 Codex protocol core.** ADR-002 option evaluation (git pin of `codex-app-server-protocol` vs codegen from `codex app-server generate-json-schema`); JSON-RPC framing; sans-IO core: initialize, `thread/start`, `turn/start`, both approval requests, questions (L4), `turn/interrupt`, `thread/resume`, diff notifications.
+- [x] **S2-1 Codex protocol core.** ADR-002 option evaluation (git pin of `codex-app-server-protocol` vs codegen from `codex app-server generate-json-schema`); JSON-RPC framing; sans-IO core: initialize, `thread/start`, `turn/start`, both approval requests, questions (L4), `turn/interrupt`, `thread/resume`, diff notifications. *(round 6: `spikes/s2-codex` with `rpc` + `adapter` (mod/map/requests/host); option evaluation → DL-012 (vendored schema `schema/0.160.0/`, `tests/schema_methods.rs`); experimental API + mode names → DL-013; 23 tests)*
 - [ ] **S2-2 Codex live driver + `record-codex` + fixtures** for the §13 shared scenarios Codex supports (unsupported ones listed with reasons); restart survival experiment.
 - [ ] **S2-3 Codex replay + `replay-codex` + ADR-002** (Proposed) with effect states and crash boundaries.
 - [ ] **S4-1 Link identity + address rules.** Ed25519 identity keys, self-signed certs from them, mTLS with pinned-key verifiers, D13 address rules (loopback, RFC 1918, ULA, link-local, Tailscale ranges; reject public at bind and dial) as unit tests.
@@ -127,3 +127,20 @@ Rules for this file: one checklist item per M1 deliverable, in PLAN order. Each 
   - `spikes/s1-claude/sdk-recorder/selftest.sh` → ok sdk-recorder selftest
   - `web/` checks, TS-types drift → not applicable in M1
 - Next: S2-1 Codex protocol core.
+
+### Round 6 (2026-10-11)
+
+- Committed round 5 work first: `2c3634b docs(adr): ADR-001 native Claude adapter with capability evidence recordings`.
+- Review fix: ADR-001 §3.2 now treats the transcript lookup as one-sided. A uuid found in the provider transcript confirms the effect; a uuid not found keeps the effect `outcome_unknown` (the CLI can crash between its read and its transcript write). Never resend automatically. EVIDENCE.md E7 matches.
+- Done: S2-1.
+  - Live probes of `codex app-server` (codex-cli 0.160.0, `gpt-5.6-luna`, effort low, temp dirs, `untrusted/workspace-write`): handshake (`initialize` → `initialized`), `thread/start`, `turn/start` with `clientUserMessageId`, the echo `item/started userMessage {clientId}`, `item/commandExecution/requestApproval` with integer id 0 and `availableDecisions` (`accept`, `{acceptWithExecpolicyAmendment}`, `cancel`), reply `{decision}` → `serverRequest/resolved`, `item/tool/requestUserInput` (experimental API, plan collaboration mode) answered with `{answers: {<id>: {answers: [..]}}}`.
+  - Finding: `turn/start` while a turn runs returns the running turn id and the new user message joins that turn (it acts as a steer). The stable API has no follow-up queue (`thread/queue/*` is experimental), so the core queues follow-ups host-side and sends each one after `turn/completed` (the PLAN §6.2 degradation).
+  - Core semantics: a prompt is `received` when the `turn/start` reply arrives and `started` (confirmed) only on its own `userMessage` item (`clientId` == input id, own thread); interrupts before the native turn id are held and sent with the reply (trap 3); approvals keep native decision values as option ids, refuse edited input, are idempotent, and expire on `serverRequest/resolved` without an answer (`cancelled_by_provider`), at turn end (`turn_ended`) and on exit (`process_lost`); async `agentMessage` questions are answered by a new user message and survive the turn end (L4 message channel); unknown server requests get a JSON-RPC error, elicitations a `decline` (fail closed); `usageLimitExceeded` → `usage_limit` (trap 7); `turn/diff/updated` paths dedupe with `fileChange` items.
+- Commands and results:
+  - `cargo fmt --all --check` → pass
+  - `cargo clippy --workspace --all-targets -- -D warnings` → pass
+  - `CI=true cargo nextest run --workspace` → 90 passed (s2-codex: 23)
+  - `cargo deny check` → advisories ok, bans ok, licenses ok, sources ok
+  - `cargo run -p s1-claude --bin replay-claude` → 29 ok, unknown=0 (S1 unchanged)
+  - `web/` checks and TS-types drift check → not applicable in M1
+- Next: S2-2 Codex live driver + `record-codex` + fixtures.

@@ -136,15 +136,21 @@ The MVP has no session shim (A9), so a station crash also ends the `claude` chil
 | --- | --- | --- |
 | before the command transaction commits | nothing exists; the deck retries the same `command_id` | — |
 | after commit, before the claim | effect `queued` for a dead incarnation → `retired_not_dispatched` | — |
-| after the claim, before the write | `claimed` without confirmation → `outcome_unknown` | resume the session; the CLI transcript (`~/.claude/projects/<cwd>/<session>.jsonl`) has no user entry with that `uuid` → "not delivered". The owner decides on a new command |
-| after the write, before `started` | `outcome_unknown` | transcript has the `uuid` → delivered; a later `result`/assistant entry shows if the turn ran. Transcript without the `uuid` → not delivered (it was still in the CLI's in-memory queue) |
-| after `started`, before the station stored it | `outcome_unknown` | as above: the transcript has the `uuid` |
+| after the claim, before the write | `claimed` without confirmation → `outcome_unknown` (the station cannot tell this point from the next one) | transcript lookup (below) |
+| after the write, before `started` | `outcome_unknown` | transcript lookup (below) |
+| after `started`, before the station stored it | `outcome_unknown` | transcript lookup (below); here the `uuid` is expected in the transcript |
 | provider process dies, station alive | open requests → `approval.expired { process_lost }`; open turn and tools → `failed`; inputs not yet `started` → `outcome_unknown` | same transcript lookup after `--resume` |
 | station restarts | open requests of the dead process → `approval.expired { not_resumable }` (A10); session shown "resumed", not "reattached" | same |
 | effect worker restarts, process alive | `claimed` effects stay `outcome_unknown` until the live core reports `started` (late confirmation) | the live lifecycle frames |
 | stale approval reply (after a restart) | the request is expired; the station rejects the answer with "request expired". The CLI has no request with that id (a resumed CLI issues new ids) | — |
 
-Evidence for the transcript rule: the CLI stores each prompt under the client `uuid` (`capabilities::the_transcript_keeps_prompts_under_the_client_uuid`).
+**Transcript lookup (one-sided).** After `--resume`, the station reads the CLI transcript (`~/.claude/projects/<encoded cwd>/<session>.jsonl`) and searches for a user entry with the effect's `uuid`:
+
+- **`uuid` found** → `confirmed` (delivered). A later assistant / `result` entry shows whether the turn also ran. This is positive provider evidence (PLAN §6.4 "reconcile from provider evidence").
+- **`uuid` not found** → the effect **stays `outcome_unknown`**. A missing entry does not prove non-delivery: the crash can come after the CLI read the frame and before it wrote the transcript entry, or the CLI can have the input only in its in-memory command queue, which a crash loses without a trace. The spike has no crash-timing evidence that rules these cases out.
+- In both cases the station **never resends automatically** (PLAN §6.4). The UI shows "delivery unknown — not found in the provider transcript", and the owner decides whether to send a new command (a new effect with a new `uuid`).
+
+Evidence: the CLI stores each delivered prompt under the client `uuid` (`capabilities::the_transcript_keeps_prompts_under_the_client_uuid`). This proves only the positive direction. Phase 1 fault-injection tests (PLAN §13: crash after send, before confirmation stored) must keep the negative case `outcome_unknown`.
 
 ### 3.3 Open requests survive a provider restart: **no**
 
