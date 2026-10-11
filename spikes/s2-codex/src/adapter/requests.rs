@@ -51,6 +51,8 @@ pub(crate) struct OpenRequest {
     options: Vec<(String, Value)>,
     node_id: Option<String>,
     receipt: Option<AnswerReceipt>,
+    /// Native request parameters (or the question list of a message question).
+    params: Value,
 }
 
 #[derive(Debug, Default)]
@@ -58,6 +60,10 @@ pub(crate) struct Requests {
     next: u64,
     open: BTreeMap<String, OpenRequest>,
     by_native: HashMap<String, String>,
+    /// Requests that left `open`: app id → the receipt of the answer, or
+    /// `None` if the request expired unanswered. A late answer to a closed
+    /// request returns the first receipt (idempotent) or `Expired`.
+    closed: HashMap<String, Option<AnswerReceipt>>,
 }
 
 /// Server requests that become canonical approvals or questions.
@@ -132,6 +138,12 @@ impl CodexCore {
     }
 
     /// Native JSON-RPC id of an open request.
+    /// Native parameters of an open request (for example the question ids of
+    /// `item/tool/requestUserInput`).
+    pub fn request_params(&self, request_id: &str) -> Option<&Value> {
+        self.requests.open.get(request_id).map(|r| &r.params)
+    }
+
     pub fn native_request_id(&self, request_id: &str) -> Option<&Value> {
         self.requests.open.get(request_id).map(|r| &r.native_id)
     }
@@ -229,6 +241,7 @@ impl CodexCore {
                 options,
                 node_id,
                 receipt: None,
+                params: params.clone(),
             },
             title,
             provider_refs,
@@ -282,6 +295,7 @@ impl CodexCore {
                 options,
                 node_id: None,
                 receipt: None,
+                params: Value::from(questions.to_vec()),
             },
             title,
             refs(&[("item_id", Some(item_id)), ("delivery", Some("async"))]),
@@ -300,7 +314,12 @@ impl CodexCore {
             .open
             .get(request_id)
             .cloned()
-            .ok_or_else(|| AdapterError::UnknownRequest(request_id.to_owned()))?;
+            .ok_or_else(|| self.closed_error(request_id));
+        let req = match req {
+            Ok(r) => r,
+            Err(Ok(receipt)) => return Ok((receipt, Vec::new())),
+            Err(Err(e)) => return Err(e),
+        };
         if let Some(r) = &req.receipt {
             return Ok((
                 AnswerReceipt {
@@ -375,6 +394,28 @@ impl CodexCore {
         Ok((receipt, out))
     }
 
+    /// The answer to a request that is no longer open: the first receipt
+    /// (as a duplicate), `Expired`, or `UnknownRequest`.
+    fn closed_error(&self, request_id: &str) -> Result<AnswerReceipt, AdapterError> {
+        match self.requests.closed.get(request_id) {
+            Some(Some(r)) => Ok(AnswerReceipt {
+                duplicate: true,
+                ..r.clone()
+            }),
+            Some(None) => Err(AdapterError::Expired(request_id.to_owned())),
+            None => Err(AdapterError::UnknownRequest(request_id.to_owned())),
+        }
+    }
+
+    /// Moves a request from `open` to `closed`.
+    fn close(&mut self, app_id: &str) -> Option<OpenRequest> {
+        let r = self.requests.open.remove(app_id)?;
+        self.requests
+            .closed
+            .insert(app_id.to_owned(), r.receipt.clone());
+        Some(r)
+    }
+
     /// `serverRequest/resolved`: the app-server closed a request. If the host
     /// answered it, this confirms the answer; if not, the request expired.
     pub(crate) fn on_resolved(&mut self, params: &Value) -> Vec<Output> {
@@ -384,7 +425,7 @@ impl CodexCore {
         let Some(app_id) = self.requests.by_native.remove(&native_key(native)) else {
             return Vec::new();
         };
-        match self.requests.open.remove(&app_id) {
+        match self.close(&app_id) {
             Some(r) if r.receipt.is_none() => vec![Output::Emit(CanonEvent::ApprovalExpired {
                 request_id: app_id,
                 reason: "cancelled_by_provider".into(),
@@ -412,9 +453,15 @@ impl CodexCore {
                 reason: reason.to_owned(),
             }));
         }
-        self.requests
-            .open
-            .retain(|_, r| r.receipt.is_none() && !all && r.channel == ResponseChannel::Message);
+        let ids: Vec<String> = self.requests.open.keys().cloned().collect();
+        for app_id in ids {
+            let keep = self.requests.open.get(&app_id).is_some_and(|r| {
+                r.receipt.is_none() && !all && r.channel == ResponseChannel::Message
+            });
+            if !keep {
+                self.close(&app_id);
+            }
+        }
         self.requests.by_native.clear();
         out
     }

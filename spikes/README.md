@@ -62,7 +62,25 @@ JSON-RPC framing, the sans-IO adapter core, and the check of every method name a
 cargo nextest run -p s2-codex
 ```
 
-The Codex recorder, fixtures and `replay-codex` follow in S2-2 and S2-3 (see `docs/v2/PROGRESS.md`).
+Replay every recorded Codex fixture (`spikes/s2-codex/fixtures/*.jsonl`) through the core. Each host write must match the recording, and no frame may be unknown:
+
+```sh
+cargo run -p s2-codex --bin replay-codex                    # all fixtures
+cargo run -p s2-codex --bin replay-codex -- --events spikes/s2-codex/fixtures/simple.jsonl
+```
+
+The same checks and the adapter evidence (prompt confirmation, restart survival, native option ids, held interrupt) run as tests:
+
+```sh
+cargo nextest run -p s2-codex --test replay_fixtures --test evidence --test fixture_hygiene
+```
+
+Codex supports all 8 shared scenarios of PLAN §13 (`simple`, `multi_turn`, `queued_turn`, `turn_interrupt`, `message_steering`, `provider_thread_resume`, `tool_call_approve`, `tool_call_deny`). No shared scenario is unsupported. Two need a note:
+
+- `queued_turn`: the host holds the second prompt and sends it after the first turn, because `turn/start` during a turn joins that turn (DL-015).
+- `tool_call_deny`: under `untrusted` Codex 0.160.0 offers `accept`, `acceptWithExecpolicyAmendment` and `cancel` for a command, and no `decline`. The recorder denies with `cancel` (DL-015).
+
+Extra Codex fixtures: `question_rpc` (L4 RPC question), `plan_capture`, `file_change`, `interrupt_during_tool`, `interrupt_right_after_send` (trap 3), `set_mode`, `approval_restart` (open approval across a kill and `thread/resume`).
 
 ### Fixture format
 
@@ -97,3 +115,9 @@ cd spikes/s1-claude/sdk-recorder && bun install && bun record.ts all   # or one 
 ```
 
 It writes `spikes/s1-claude/fixtures/sdk/<scenario>.jsonl` with the same header, records, and scrubbing rules. SDK fixtures have no `host` records. `approval_restart` and `interrupt_during_tool` exist only as Rust fixtures: they test our driver's process control (a kill with an open request, an interrupt during a long tool), not the SDK's frames.
+
+The Codex recorder drives `codex app-server` 0.160.x with `gpt-5.6-luna`, effort `low`, and mode `untrusted/workspace-write` in a `tempfile` directory. It writes `spikes/s2-codex/fixtures/<scenario>.jsonl` (DL-014: it uses the user's `~/.codex`, so the scrubber removes account data and local paths):
+
+```sh
+cargo run -p s2-codex --bin record-codex -- --scenario all      # or a comma list
+```

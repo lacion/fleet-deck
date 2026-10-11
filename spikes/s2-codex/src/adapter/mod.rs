@@ -28,6 +28,9 @@ pub use host::HostCmd;
 pub use map::{HANDLED_NOTIFICATIONS, IGNORED_NOTIFICATIONS};
 pub use requests::{Answer, AnswerReceipt, DECLINED_REQUESTS, HANDLED_REQUESTS};
 
+/// Codex collaboration modes (`ModeKind` of the 0.160.0 schema).
+pub const COLLABORATION_MODES: &[&str] = &["plan", "default"];
+
 /// Client requests that the core sends.
 pub const CLIENT_REQUESTS: &[&str] = &[
     "initialize",
@@ -63,6 +66,8 @@ pub enum Output {
 pub enum AdapterError {
     #[error("unknown request {0}")]
     UnknownRequest(String),
+    #[error("request {0} expired before it was answered")]
+    Expired(String),
     #[error("option {option} is not offered by request {request}")]
     UnknownOption { request: String, option: String },
     #[error("mode {0} is not a native Codex mode")]
@@ -173,10 +178,22 @@ pub struct CodexCore {
     /// Mode that the next `turn/start` applies (trap 1: emitted on acceptance).
     pub(crate) pending_mode: Option<Mode>,
     pub(crate) provider_version: Option<String>,
+    /// The `initialize` reply arrived and `initialized` was sent.
+    pub(crate) initialized: bool,
     pub(crate) thread_id: Option<String>,
+    /// Model that the thread reports (`thread/start` / `thread/resume` reply).
+    pub(crate) thread_model: Option<String>,
+    /// Collaboration mode for the next turns (`plan` or `default`); `None`
+    /// sends no `collaborationMode` (experimental API, DL-013).
+    pub(crate) collaboration: Option<String>,
     /// Running turn: canonical id and native id once known.
     pub(crate) turn: Option<String>,
     pub(crate) native_turn: Option<String>,
+    /// True after `turn/started` for `native_turn`. The `turn/start` reply
+    /// names the turn before it runs; `turn/interrupt` before `turn/started`
+    /// fails with "no active turn to interrupt" (fixture
+    /// `interrupt_right_after_send`, first recording).
+    pub(crate) native_started: bool,
     /// A `turn/start` is on the wire and its reply is not in yet.
     pub(crate) turn_requested: bool,
     pub(crate) interrupt_pending: bool,
@@ -195,6 +212,11 @@ pub struct CodexCore {
 impl CodexCore {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// True after the `initialize` handshake.
+    pub fn is_initialized(&self) -> bool {
+        self.initialized
     }
 
     pub fn thread_id(&self) -> Option<&str> {
@@ -319,6 +341,21 @@ impl CodexCore {
             if let Some(e) = &self.spec.effort {
                 obj.insert("effort".into(), e.clone().into());
             }
+            if let Some(c) = &self.collaboration
+                && let Some(model) = self
+                    .thread_model
+                    .clone()
+                    .or_else(|| self.spec.model.clone())
+            {
+                obj.insert(
+                    "collaborationMode".into(),
+                    json!({"mode": c, "settings": {
+                        "model": model,
+                        "reasoning_effort": self.spec.effort,
+                        "developer_instructions": null,
+                    }}),
+                );
+            }
             if let Some(m) = &self.pending_mode {
                 obj.insert("approvalPolicy".into(), m.approval_policy.clone().into());
                 obj.insert("sandboxPolicy".into(), m.sandbox_policy());
@@ -363,7 +400,11 @@ impl CodexCore {
             return Ok(Vec::new());
         }
         match self.native_turn.clone() {
-            Some(turn) => Ok(self.send_interrupt(&thread, &turn)),
+            Some(turn) if self.native_started => Ok(self.send_interrupt(&thread, &turn)),
+            Some(_) => {
+                self.interrupt_pending = true;
+                Ok(Vec::new())
+            }
             None if self.turn_requested => {
                 self.interrupt_pending = true;
                 Ok(Vec::new())
@@ -381,6 +422,17 @@ impl CodexCore {
             "turn/interrupt",
             json!({"threadId": thread, "turnId": turn}),
         ))]
+    }
+
+    /// Sets the collaboration mode of the next turns (`plan` or `default`).
+    /// Codex plan mode is where the model asks questions with
+    /// `item/tool/requestUserInput` and writes `plan` items.
+    pub fn set_collaboration(&mut self, mode: &str) -> Result<Vec<Output>, AdapterError> {
+        if !COLLABORATION_MODES.contains(&mode) {
+            return Err(AdapterError::UnsupportedMode(mode.to_owned()));
+        }
+        self.collaboration = Some(mode.to_owned());
+        Ok(Vec::new())
     }
 
     /// Changes the mode for the next turn. Codex takes the approval policy and
@@ -422,6 +474,7 @@ impl CodexCore {
             }));
         }
         self.native_turn = None;
+        self.native_started = false;
         self.turn_requested = false;
         for (input_id, _) in std::mem::take(&mut self.follow_ups) {
             out.extend(self.set_input_state(&input_id, InputState::Discarded, None));

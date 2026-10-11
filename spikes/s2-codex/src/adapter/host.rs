@@ -43,6 +43,9 @@ pub enum HostCmd {
     SetMode {
         mode: String,
     },
+    SetCollaboration {
+        mode: String,
+    },
 }
 
 impl HostCmd {
@@ -94,6 +97,7 @@ impl CodexCore {
                 .map(|(_, out)| out),
             HostCmd::Interrupt => self.interrupt(),
             HostCmd::SetMode { mode } => self.set_mode(mode),
+            HostCmd::SetCollaboration { mode } => self.set_collaboration(mode),
         }
     }
 }

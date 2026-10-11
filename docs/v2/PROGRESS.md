@@ -13,8 +13,8 @@ Rules for this file: one checklist item per M1 deliverable, in PLAN order. Each 
 - [x] **S1-4 Claude replay + evidence.** *(round 2: `replay` module, `replay-claude`, `tests/replay_fixtures.rs`.)* *(round 3: replay rejects unmatched writes before `exit`; SDK reference replay.)* *(round 4: `insta` snapshots of the canonical event stream of all 22 fixtures; `tests/evidence.rs`; `spikes/s1-claude/EVIDENCE.md` for "prompt confirmed", queue/steer timing, restart survival, native option ids; SDK recorder exits nonzero and kills timed-out sessions + `selftest.sh`.)*
 - [x] **S1-5 ADR-001** (Proposed): native Claude adapter design, effect states and crash boundaries (§6.4), fixture set, unsupported scenarios with reasons. *(round 5: `docs/v2/adr/ADR-001-native-claude-adapter.md`; 7 extra recordings for the matrix rows; `tests/capabilities.rs`; EVIDENCE.md E7; DL-010, DL-011)*
 - [x] **S2-1 Codex protocol core.** ADR-002 option evaluation (git pin of `codex-app-server-protocol` vs codegen from `codex app-server generate-json-schema`); JSON-RPC framing; sans-IO core: initialize, `thread/start`, `turn/start`, both approval requests, questions (L4), `turn/interrupt`, `thread/resume`, diff notifications. *(round 6: `spikes/s2-codex` with `rpc` + `adapter` (mod/map/requests/host); option evaluation → DL-012 (vendored schema `schema/0.160.0/`, `tests/schema_methods.rs`); experimental API + mode names → DL-013; 23 tests)*
-- [ ] **S2-2 Codex live driver + `record-codex` + fixtures** for the §13 shared scenarios Codex supports (unsupported ones listed with reasons); restart survival experiment.
-- [ ] **S2-3 Codex replay + `replay-codex` + ADR-002** (Proposed) with effect states and crash boundaries.
+- [x] **S2-2 Codex live driver + `record-codex` + fixtures** for the §13 shared scenarios Codex supports (unsupported ones listed with reasons); restart survival experiment. *(round 7: 8 shared + 7 extra fixtures, none unsupported; `replay-codex` and evidence tests done early)*
+- [~] **S2-3 Codex replay + `replay-codex` + ADR-002** (Proposed) with effect states and crash boundaries. *(round 7: replay + `replay-codex` + evidence tests done; ADR-002 remains)*
 - [ ] **S4-1 Link identity + address rules.** Ed25519 identity keys, self-signed certs from them, mTLS with pinned-key verifiers, D13 address rules (loopback, RFC 1918, ULA, link-local, Tailscale ranges; reject public at bind and dial) as unit tests.
 - [ ] **S4-2 Link handshake + channels.** `Hello` with `proto_min/max`, feature flags, roles, `link_epoch`, nonce; transcript signature bound to the TLS exporter; version negotiation; control channel (frames of §8.3) and data channel (multiplexed streams, credit flow control).
 - [ ] **S4-3 Link pairing + reconnect.** `fdinv1:` invitations both directions (single use, 15 min, fingerprint-bound, secret proof bound to TLS); jittered backoff reconnect; duplicate link (`link_epoch`) rule; station-only-dials (NAT) case; multi-process loopback test with separate data dirs.
@@ -144,3 +144,26 @@ Rules for this file: one checklist item per M1 deliverable, in PLAN order. Each 
   - `cargo run -p s1-claude --bin replay-claude` → 29 ok, unknown=0 (S1 unchanged)
   - `web/` checks and TS-types drift check → not applicable in M1
 - Next: S2-2 Codex live driver + `record-codex` + fixtures.
+
+### Round 7 (2026-10-11)
+
+- Committed round 6 as `2f87b73`.
+- Review fixes (S2 core):
+  - Answer idempotence after resolution and turn end: closed requests keep their receipt; a late answer returns the first receipt with `duplicate: true` and writes nothing; a late answer to an expired, unanswered request returns `AdapterError::Expired`. Test `answers_stay_idempotent_after_resolution_and_turn_end`.
+  - Child threads: `turn/started` and `turn/completed` of another thread are ignored, and a second native turn id never replaces the running turn. Tests `child_thread_turns_never_replace_the_parent_turn`, `a_second_native_turn_never_replaces_the_running_one`.
+- S2-2: `driver.rs` (tokio process driver), `record/` (`record-codex`, 15 scenarios, scrubber, rollout notes), `replay.rs` + `replay-codex`; 15 fixtures in `spikes/s2-codex/fixtures/` recorded live (`gpt-5.6-luna`, effort low, temp dirs).
+- Bugs found by the recordings and fixed in the core, each with a test:
+  - Trap 3: `turn/interrupt` after the `turn/start` reply but before `turn/started` fails with -32600 "no active turn to interrupt". The core now holds the interrupt until `turn/started` (`interrupt_before_the_turn_id_is_held_then_sent`, fixture `interrupt_right_after_send` re-recorded: turn-1 interrupted).
+  - Relative `turn/diff/updated` paths are joined with the thread cwd before the duplicate check (`relative_diff_paths_join_the_thread_cwd_before_the_duplicate_check`).
+  - Empty commentary messages are not reported (`empty_agent_messages_are_not_reported`).
+  - `thread/goal/cleared` and `thread/settings/updated` are known, ignored notifications.
+- Evidence (`spikes/s2-codex/tests/evidence.rs`): prompt confirmed = `userMessage` item with the client id; the rollout keeps every client id; queued prompts = separate turns; steer joins the running turn; an open approval does not survive a restart (`process_lost`, the resumed process does not ask again); native option ids `accept`, `acceptWithExecpolicyAmendment`, `cancel` (no `decline` under `untrusted`); RPC question channel; held interrupt; interrupt during a tool.
+- DECISIONS-LOG: DL-014 (recordings use the user's `~/.codex`), DL-015 (host-side follow-up queue; deny = `decline` if offered, else `cancel`).
+- Commands and results:
+  - `cargo fmt --all --check` → pass
+  - `cargo clippy --workspace --all-targets -- -D warnings` → pass
+  - `CI=true cargo nextest run --workspace` → 109 passed (s2-codex: 42)
+  - `cargo deny check` → advisories ok, bans ok, licenses ok, sources ok
+  - `cargo run -p s2-codex --bin replay-codex` → 15 ok, unknown=0
+  - `cargo run -p s1-claude --bin replay-claude` → 29 ok, unknown=0
+- Next: S2-3 ADR-002.

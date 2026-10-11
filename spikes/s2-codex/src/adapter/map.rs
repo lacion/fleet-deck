@@ -11,12 +11,14 @@ use super::{CodexCore, HostRequest, Output, ToolNode};
 pub const IGNORED_NOTIFICATIONS: &[&str] = &[
     "thread/started",
     "thread/status/changed",
+    "thread/settings/updated",
     "thread/name/updated",
     "thread/archived",
     "thread/unarchived",
     "thread/closed",
     "thread/compacted",
     "thread/goal/updated",
+    "thread/goal/cleared",
     "thread/queue/changed",
     "turn/plan/updated",
     "item/commandExecution/outputDelta",
@@ -126,6 +128,7 @@ impl CodexCore {
                     .and_then(|ua| ua.split_whitespace().next())
                     .and_then(|first| first.rsplit('/').next())
                     .map(str::to_owned);
+                self.initialized = true;
                 vec![Output::Write(crate::rpc::notification("initialized"))]
             }
             (HostRequest::ThreadStart | HostRequest::ThreadResume, Ok(r)) => {
@@ -134,6 +137,7 @@ impl CodexCore {
                 let model = str_at(&r, "model")
                     .or_else(|| str_at(&thread, "model"))
                     .map(str::to_owned);
+                self.thread_model.clone_from(&model);
                 vec![Output::Emit(CanonEvent::SessionStarted {
                     provider: "codex".into(),
                     provider_version: self.provider_version.clone(),
@@ -184,8 +188,19 @@ impl CodexCore {
         // the input; `Started` needs the input's own `userMessage` item.
         let turn = self.turn.clone();
         out.extend(self.set_input_state(input_id, InputState::Received, turn));
-        if let Some(native) = native
-            && self.interrupt_pending
+        // A held interrupt waits for `turn/started` (see `native_started`).
+        out
+    }
+
+    /// `turn/started` of the own thread: the turn runs, so a held interrupt
+    /// can go out now (trap 3).
+    fn on_turn_started(&mut self, native: &str) -> Vec<Output> {
+        let mut out = self.ensure_turn(native);
+        if self.native_turn.as_deref() != Some(native) {
+            return out;
+        }
+        self.native_started = true;
+        if self.interrupt_pending
             && let Some(thread) = self.thread_id.clone()
         {
             out.extend(self.send_interrupt(&thread, native));
@@ -196,6 +211,12 @@ impl CodexCore {
     /// Starts the canonical turn for a native turn id, once.
     fn ensure_turn(&mut self, native: &str) -> Vec<Output> {
         if self.native_turn.as_deref() == Some(native) {
+            return Vec::new();
+        }
+        if self.turn.is_some() {
+            // Another native turn while one runs: never replace the running
+            // turn (its completion would be lost). Count it as unexpected.
+            self.unknown_frames += 1;
             return Vec::new();
         }
         let turn_id = self.ids.next("turn");
@@ -253,8 +274,11 @@ impl CodexCore {
 
     pub(crate) fn on_notification(&mut self, method: &str, p: &Value) -> Vec<Output> {
         match method {
+            // A sub-agent runs its own turns on a child thread; they never
+            // start, replace or end the session's turn.
+            "turn/started" | "turn/completed" if !self.own_thread(p) => Vec::new(),
             "turn/started" => match p.pointer("/turn/id").and_then(Value::as_str) {
-                Some(native) => self.ensure_turn(native),
+                Some(native) => self.on_turn_started(native),
                 None => Vec::new(),
             },
             "turn/completed" => self.on_turn_completed(p),
@@ -339,7 +363,10 @@ impl CodexCore {
             },
             "agentMessage" if completed && own => {
                 let mut out = Vec::new();
-                if let (Some(turn_id), Some(text)) = (self.turn.clone(), str_at(&item, "text")) {
+                // An empty commentary message before a tool call carries nothing.
+                if let (Some(turn_id), Some(text)) = (self.turn.clone(), str_at(&item, "text"))
+                    && !text.is_empty()
+                {
                     out.push(Output::Emit(CanonEvent::MessageCompleted {
                         turn_id,
                         text: text.to_owned(),
@@ -449,15 +476,21 @@ impl CodexCore {
         out
     }
 
+    /// One `file.changed` per path and turn. `fileChange` items carry absolute
+    /// paths and `turn/diff/updated` carries paths relative to the thread cwd,
+    /// so relative paths are joined with the cwd before the duplicate check.
     fn file_changed(&mut self, path: &str, change: FileChange) -> Vec<Output> {
-        if self.files_seen.iter().any(|p| p == path) {
+        let path = match &self.spec.cwd {
+            Some(cwd) if !path.starts_with('/') => {
+                format!("{}/{path}", cwd.trim_end_matches('/'))
+            }
+            _ => path.to_owned(),
+        };
+        if self.files_seen.contains(&path) {
             return Vec::new();
         }
-        self.files_seen.push(path.to_owned());
-        vec![Output::Emit(CanonEvent::FileChanged {
-            path: path.to_owned(),
-            change,
-        })]
+        self.files_seen.push(path.clone());
+        vec![Output::Emit(CanonEvent::FileChanged { path, change })]
     }
 
     /// `turn/diff/updated`: keeps the aggregated diff; a path that no
@@ -508,6 +541,7 @@ impl CodexCore {
             }));
         }
         self.native_turn = None;
+        self.native_started = false;
         self.interrupt_requested = false;
         self.interrupt_pending = false;
         out.extend(self.dispatch_follow_up());

@@ -111,3 +111,19 @@ Format: context, options, choice, reason, owner review.
 - **Choice:** (b) for the spike. The core names a mode `<approvalPolicy>/<sandbox>` (for example `untrusted/workspace-write`) with only the native values of the schema (L8). A new session with no stored mode uses `untrusted/workspace-write`; an unknown stored mode (or a sentinel such as `default`, trap 2) runs as `untrusted/read-only`, the most restrictive pair. `danger-full-access` is never used outside a temporary directory.
 - **Reason:** L4 needs both response channels to be proven; the vendored schema (DL-012) marks the experimental methods, so Phase 1 can see each experimental dependency. The capability matrix records which rows need the experimental API.
 - **Owner review:** pending
+
+## DL-014 — Codex recordings run with the user's Codex home; fixtures are scrubbed
+
+- **Context:** `codex app-server` has no equivalent of Claude's `--safe-mode`. A recording loads the user's `~/.codex` configuration: the global `AGENTS.md` (`instructionSources`), the configured MCP servers (`mcpServer/startupStatus/updated`), and the `sessionStart` hooks (`hook/started`, `hook/completed`). An isolated `CODEX_HOME` would need a separate login (secrets copied out of the user's home), which the run rules forbid.
+- **Options:** (a) copy the auth file to a temporary `CODEX_HOME`; (b) record with the user's home, map the extra notifications to "ignored", and scrub local data.
+- **Choice:** (b). The recorder redacts `email`, `account`, `planType`, `userId`, `accountId`, `serverName`, `installationId`, and replaces the work directory, the home directory and the user name. `tests/fixture_hygiene.rs` fails on a leaked path or account field. The core ignores MCP, hook and account notifications by name (the schema test checks the names).
+- **Reason:** no secret leaves its file, and the core must handle these notifications on owner machines anyway. Phase 1 decides if product sessions pass `-c` overrides to turn off user hooks (ADR-002 §8).
+- **Owner review:** pending
+
+## DL-015 — Codex follow-ups wait host-side; the deny option depends on the policy
+
+- **Context:** PLAN §6.2 lists "follow-up queue" for both providers. Codex 0.160.0: a `turn/start` sent while a turn runs joins the running turn (probe and fixture `message_steering` behaviour), and the queue API (`thread/queue/*`) is experimental. Separately, PLAN §13 `tool_call_deny` assumes a "deny, continue" answer; under the `untrusted` policy Codex 0.160.0 offers only `accept`, `acceptWithExecpolicyAmendment` and `cancel` (fixture `tool_call_deny`, note "offered decisions").
+- **Options:** follow-ups: (a) use the experimental queue; (b) hold follow-ups in the core and send `turn/start` after `turn/completed`. Deny: (a) send `decline` anyway; (b) send the deny option that the request offers: `decline` when offered, else `cancel` (deny and end the turn).
+- **Choice:** (b) for both. The matrix records "host-side queue" for Codex follow-ups and the offered native decision ids for approvals.
+- **Reason:** L8/L9 (never send an option the provider did not offer; unknown options fail closed); the experimental queue has no stability promise. A held follow-up stays `queued` (§6.4) until it is sent, so a crash before the send retires it without an unknown outcome.
+- **Owner review:** pending
