@@ -1,0 +1,123 @@
+/* Fleet Deck v2 design tokens, ported from board/src/tokens.css (v0). */
+:root {
+  /* color · dark (default) */
+  --bg: #0b0e14; /* app canvas */
+  --surface: #121722; /* cards, header, feed */
+  --raised: #18202f; /* buttons, option rows */
+  --code: #0a0d13; /* command blocks, inputs */
+  --border: #242e42;
+  --border-soft: #1b2333;
+  --text: #e7ecf5;
+  --dim: #94a0b8;
+  --faint: #5c6880;
+  --act: #f0a63c; /* yours-to-act (amber) */
+  --act-bg: #2a1f0c;
+  --act-ink: #1a1206; /* text on amber */
+  --hazard: #ff6b54; /* conflicts, timeouts */
+  --hazard-bg: #2a120d;
+  --ok: #57b98a; /* liveness, ship, delivered */
+  /* model families — one hue each, and NONE of them amber: on this board amber
+     is the "yours to act" language and a model badge is never a call to act. */
+  --m-fable: #c4b0ff;
+  --m-fable-bg: #241c3e;
+  --m-quill: #6fd6cd;
+  --m-quill-bg: #0e2a28;
+  --m-comet: #8fbcf7;
+  --m-comet-bg: #12233b;
+  --m-opus: #f0a8c6;
+  --m-opus-bg: #33172a; /* rose */
+  --m-sonnet: #b7d97a;
+  --m-sonnet-bg: #212b12; /* lime */
+  --m-haiku: #a8b4d8;
+  --m-haiku-bg: #1d2436; /* periwinkle */
+}
+[data-theme="light"] {
+  --bg: #eef1f5;
+  --surface: #ffffff;
+  --raised: #f7f9fc;
+  --code: #f1f3f7;
+  --border: #d4dae4;
+  --border-soft: #e2e7ef;
+  --text: #1a2230;
+  --dim: #57637a;
+  --faint: #8a94a8;
+  --act: #8a5300;
+  --act-bg: #fff3dc;
+  --act-ink: #ffffff;
+  --hazard: #b3301c;
+  --hazard-bg: #fde8e4;
+  --ok: #1e7a4e;
+  --m-fable: #4c2fa8;
+  --m-fable-bg: #ede8fc;
+  --m-quill: #0e6b63;
+  --m-quill-bg: #ddf4f2;
+  --m-comet: #1d4fa8;
+  --m-comet-bg: #e3edfc;
+  --m-opus: #a31c63;
+  --m-opus-bg: #fbe7f1;
+  --m-sonnet: #486b12;
+  --m-sonnet-bg: #edf5db;
+  --m-haiku: #3a4780;
+  --m-haiku-bg: #e7eaf7;
+}
+
+/* type */
+:root {
+  --font-ui: "IBM Plex Sans", system-ui, sans-serif; /* prose, titles, buttons */
+  --font-data: "IBM Plex Mono", monospace; /* callsigns, paths, cmds, timestamps */
+  --fs-micro: 10.5px; /* column labels, kbd hints, tags */
+  --fs-data: 11.5px; /* mono metadata rows */
+  --fs-body: 12.5px; /* card note, buttons */
+  --fs-title: 13.5px; /* question titles */
+  --fs-heading: 14px; /* header wordmark, drawer task */
+  --ls-label: 1.8px; /* letter-spacing on ALL-CAPS labels */
+}
+
+/* space & shape */
+:root {
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --r-chip: 4px;
+  --r-ctl: 7px;
+  --r-card: 9px;
+  --r-panel: 10px;
+  --r-pill: 999px;
+}
+
+/* motion */
+:root {
+  --t-fast: 200ms ease-out; /* selection ring, hover */
+  --t-move: 240ms ease; /* card column glide, fades */
+  --t-drawer: 220ms ease-out; /* drawer slide */
+  --pulse-working: 2400ms; /* liveness breathe */
+  --pulse-needs: 1600ms; /* needs-you breathe (faster) */
+  --ripple-conflict: 900ms; /* one iteration, never loops */
+  --ring-tick: 1s linear; /* countdown ring stroke */
+}
+
+/* v2: provider badges (PLAN §11). Not amber, same as the model hues. */
+:root {
+  --p-claude: #f0a8c6;
+  --p-claude-bg: #33172a;
+  --p-codex: #8fbcf7;
+  --p-codex-bg: #12233b;
+  --p-unknown: #94a0b8;
+  --p-unknown-bg: #18202f;
+}
+[data-theme="light"] {
+  --p-claude: #a31c63;
+  --p-claude-bg: #fbe7f1;
+  --p-codex: #1d4fa8;
+  --p-codex-bg: #e3edfc;
+  --p-unknown: #57637a;
+  --p-unknown-bg: #f7f9fc;
+}
+
+/* v2: phone layout (PLAN §11: approvals and interrupts are first-class on a phone). */
+:root {
+  --tap-min: 44px; /* minimum touch target */
+  --bp-phone: 640px; /* reference only; media queries use the literal value */
+}

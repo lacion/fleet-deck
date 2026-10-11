@@ -1,0 +1,122 @@
+/* Board layout. Colors, type, space and motion come from tokens.css. */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-body);
+}
+
+.fd-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.fd-wordmark {
+  font-family: var(--font-data);
+  font-weight: 600;
+  font-size: var(--fs-heading);
+  letter-spacing: 2.5px;
+}
+
+.fd-board {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(200px, 1fr));
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+}
+
+.fd-lane {
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-panel);
+  padding: var(--sp-3);
+}
+
+.fd-lane[data-lane="needs_you"] {
+  border-color: var(--act);
+}
+
+.fd-lane-title {
+  margin: 0 0 var(--sp-2);
+  font-size: var(--fs-micro);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.fd-count {
+  font-family: var(--font-data);
+  color: var(--faint);
+}
+
+.fd-empty {
+  color: var(--faint);
+  margin: 0;
+}
+
+.fd-cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--sp-2);
+}
+
+.fd-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: var(--tap-min);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+}
+
+.fd-title {
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+}
+
+.fd-badge {
+  font-family: var(--font-data);
+  font-size: var(--fs-micro);
+  padding: 1px var(--sp-1);
+  border-radius: var(--r-chip);
+  color: var(--p-unknown);
+  background: var(--p-unknown-bg);
+}
+
+.fd-badge[data-provider="claude"] {
+  color: var(--p-claude);
+  background: var(--p-claude-bg);
+}
+
+.fd-badge[data-provider="codex"] {
+  color: var(--p-codex);
+  background: var(--p-codex-bg);
+}
+
+.fd-model {
+  font-family: var(--font-data);
+  font-size: var(--fs-micro);
+  color: var(--dim);
+}
+
+/* Phone: one column; lanes stack with "Needs you" first. */
+@media (max-width: 640px) {
+  .fd-board {
+    grid-template-columns: 1fr;
+    padding: var(--sp-2);
+  }
+}

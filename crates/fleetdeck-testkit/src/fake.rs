@@ -1,0 +1,195 @@
+//! Entry points of the fake agents (PLAN §13: scripted fakes cover only the
+//! cases that a recording cannot produce, for example crashes and malformed
+//! frames).
+//!
+//! The fakes are binaries of this crate (`fake-claude`, `fake-codex`), so the
+//! station starts them through the same `SessionHost` code path as a real
+//! CLI. A test selects a scenario with [`SCENARIO_ENV`].
+//!
+//! Finding the binaries: inside this crate's integration tests Cargo sets
+//! `CARGO_BIN_EXE_<name>`. Tests of other crates call [`FakeAgent::locate`],
+//! which uses [`BIN_DIR_ENV`] first and then the Cargo target directory of
+//! the running test (`cargo nextest run --workspace` and
+//! `cargo test --workspace` build the fakes).
+
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+/// Environment variable that selects the scenario of a fake agent.
+pub const SCENARIO_ENV: &str = "FLEETDECK_FAKE_SCENARIO";
+/// Environment variable that overrides the directory of the fake binaries.
+pub const BIN_DIR_ENV: &str = "FLEETDECK_FAKE_BIN_DIR";
+
+/// The fake agent of one provider.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FakeAgent {
+    Claude,
+    Codex,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum FakeError {
+    #[error(
+        "fake agent `{name}` not found in {dir}; build it with \
+         `cargo build -p fleetdeck-testkit --bins` or set {BIN_DIR_ENV}"
+    )]
+    NotFound { name: &'static str, dir: PathBuf },
+    #[error("cannot find the test executable: {0}")]
+    CurrentExe(#[from] std::io::Error),
+}
+
+impl FakeAgent {
+    pub const ALL: [Self; 2] = [Self::Claude, Self::Codex];
+
+    /// The binary name.
+    #[must_use]
+    pub fn bin_name(self) -> &'static str {
+        match self {
+            Self::Claude => "fake-claude",
+            Self::Codex => "fake-codex",
+        }
+    }
+
+    /// The `driver` value in `station.toml`.
+    #[must_use]
+    pub fn driver(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Codex => "codex",
+        }
+    }
+
+    /// The provider instance id that [`crate::TempNode::station_toml`] uses.
+    #[must_use]
+    pub fn instance_id(self) -> &'static str {
+        self.bin_name()
+    }
+
+    /// The `--version` line, in the format of the real CLI.
+    #[must_use]
+    pub fn version_line(self) -> &'static str {
+        match self {
+            Self::Claude => "2.1.999 (Claude Code)",
+            Self::Codex => "codex-cli 0.160.999",
+        }
+    }
+
+    /// The directory with the fake binaries.
+    pub fn bin_dir() -> Result<PathBuf, FakeError> {
+        if let Some(dir) = std::env::var_os(BIN_DIR_ENV).filter(|d| !d.is_empty()) {
+            return Ok(PathBuf::from(dir));
+        }
+        let exe = std::env::current_exe()?;
+        Ok(target_dir_of(&exe))
+    }
+
+    /// The path of the fake binary.
+    pub fn locate(self) -> Result<PathBuf, FakeError> {
+        let dir = Self::bin_dir()?;
+        let path = dir.join(self.bin_name());
+        if path.is_file() {
+            Ok(path)
+        } else {
+            Err(FakeError::NotFound {
+                name: self.bin_name(),
+                dir,
+            })
+        }
+    }
+
+    /// A command that starts the fake with `scenario`.
+    pub fn command(self, scenario: &str) -> Result<Command, FakeError> {
+        let mut cmd = Command::new(self.locate()?);
+        cmd.env(SCENARIO_ENV, scenario);
+        Ok(cmd)
+    }
+}
+
+/// The `main` of a fake binary.
+///
+/// - `--version` prints [`FakeAgent::version_line`].
+/// - Scenario `exit:<code>` exits at once with `<code>`.
+/// - Scenario `hang` reads stdin until it closes, then exits 0 (for stop and
+///   kill tests).
+/// - Every other scenario is an error (exit 2). The protocol scenarios come
+///   with the adapters (P2-3 Claude, Phase 5 Codex).
+#[must_use]
+pub fn fake_main(agent: FakeAgent) -> std::process::ExitCode {
+    use std::io::Read;
+    use std::process::ExitCode;
+
+    let name = agent.bin_name();
+    if std::env::args().skip(1).any(|a| a == "--version") {
+        println!("{}", agent.version_line());
+        return ExitCode::SUCCESS;
+    }
+    let scenario = std::env::var(SCENARIO_ENV).unwrap_or_default();
+    if let Some(code) = scenario.strip_prefix("exit:") {
+        return match code.parse::<u8>() {
+            Ok(code) => ExitCode::from(code),
+            Err(_) => {
+                eprintln!("{name}: bad exit code in scenario `{scenario}`");
+                ExitCode::from(2)
+            }
+        };
+    }
+    if scenario == "hang" {
+        let mut sink = Vec::new();
+        return match std::io::stdin().read_to_end(&mut sink) {
+            Ok(_) => ExitCode::SUCCESS,
+            Err(_) => ExitCode::from(1),
+        };
+    }
+    eprintln!("{name}: unknown scenario `{scenario}` (set {SCENARIO_ENV})");
+    ExitCode::from(2)
+}
+
+/// `target/<profile>` for a test executable in `target/<profile>/deps`, or
+/// the executable's own directory otherwise.
+fn target_dir_of(exe: &Path) -> PathBuf {
+    let dir = exe.parent().unwrap_or(Path::new("."));
+    if dir.file_name().is_some_and(|n| n == "deps") {
+        dir.parent().unwrap_or(dir).to_path_buf()
+    } else {
+        dir.to_path_buf()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_executables_in_deps_map_to_the_profile_directory() {
+        assert_eq!(
+            target_dir_of(Path::new("/w/target/debug/deps/fleetdeck_station-abc")),
+            PathBuf::from("/w/target/debug")
+        );
+        assert_eq!(
+            target_dir_of(Path::new("/w/target/debug/fake-claude")),
+            PathBuf::from("/w/target/debug")
+        );
+    }
+
+    #[test]
+    fn names_match_the_station_config_drivers() {
+        for agent in FakeAgent::ALL {
+            assert!(agent.bin_name().ends_with(agent.driver()));
+            assert_eq!(agent.instance_id(), agent.bin_name());
+        }
+    }
+
+    #[test]
+    fn a_missing_binary_names_the_build_command() {
+        let err = FakeError::NotFound {
+            name: "fake-codex",
+            dir: PathBuf::from("/nowhere"),
+        };
+        let text = err.to_string();
+        assert!(
+            text.contains("cargo build -p fleetdeck-testkit --bins"),
+            "{text}"
+        );
+        assert!(text.contains(BIN_DIR_ENV), "{text}");
+    }
+}

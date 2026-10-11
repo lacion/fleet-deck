@@ -269,3 +269,15 @@ Format: context, options, choice, reason, owner review.
   5. SQLite: `synchronous = FULL` with WAL (the §6.4 effect journal needs a durable commit before dispatch), `foreign_keys = ON`, `busy_timeout` 5 s; a database with a newer schema version than the build is refused.
 - **Reason:** the added crates are the dependencies of the §12 choices or small, maintained single-purpose crates; sharing one address-rule implementation removes a class of bypass bugs (D13); the layout keeps the PLAN path for the default and still allows separate data directories per process (PLAN §13).
 - **Owner review:** pending
+
+## DL-029 — `web/` tool chain and `fleetdeck-testkit` fake-agent entry points
+
+- **Context:** P1-4 needs a lint tool and a test runner for `web/` and a way for tests of other crates to start the fake agents. PLAN §11 and §12 name React + TypeScript + Vite, `ts-rs` and Playwright (§13), but no web lint tool and no web unit-test runner. The usual Vite runner, Vitest, has no release in the local package cache that supports Vite 8 (Vitest 4.0.18 needs Vite 6 or 7).
+- **Options:** (a) Vitest with an older Vite; (b) `bun test` (built into bun, which the goal names for `web/`) and Biome 2.5.8 (the lint and format tool of the v0 code, so one tool for the whole repository); (c) ESLint + Prettier.
+- **Choice:** (b).
+  1. `web/` scripts: `typecheck` = `tsc` on `tsconfig.json` (browser code, no bun globals) and `tsconfig.test.json` (tests, bun globals); `lint` = `biome ci` (lint and format check); `test` = `bun test src`. `web/biome.jsonc` is a nested config (`root: false`, `extends: "//"`), so the v0 `biome lint` at the root keeps working; it excludes `src/gen/` because the Rust drift test owns those files.
+  2. Exact dependency versions: React 19.2.8, Vite 8.2.1, `@vitejs/plugin-react` 6.0.5, TypeScript 5.9.3, Biome 2.5.8, `@types/bun` 1.3.14. The React Compiler and its Babel plugin of the v0 board are left out until profiling asks for them.
+  3. No external fonts: the v0 board loaded IBM Plex from Google; the v2 board must work on a LAN or tailnet without internet access, so the token stack falls back to system fonts. The tokens of `board/src/tokens.css` are copied; v2 adds provider badge colors and a 44 px touch-target token (mobile, §11).
+  4. Fake agents are binaries of `fleetdeck-testkit` (`fake-claude`, `fake-codex`), so the station starts them through the same `SessionHost` path as a real CLI. Tests of other crates find them with `FakeAgent::locate` (`FLEETDECK_FAKE_BIN_DIR`, then the Cargo profile directory of the test executable); a scenario is selected with `FLEETDECK_FAKE_SCENARIO`. The skeleton has `--version` and the generic scenarios `exit:<code>` and `hang`; the protocol scenarios come with the adapters (P2-3, Phase 5).
+- **Reason:** (b) needs no new tool, works offline from the package cache, and keeps one lint configuration style in the repository; real binaries test the real process path (PLAN §13: scripted fakes only for crashes and malformed frames).
+- **Owner review:** pending

@@ -570,6 +570,9 @@ version = "0.0.0"
 dependencies = [
  "fleetdeck-core",
  "fleetdeck-proto",
+ "tempfile",
+ "thiserror",
+ "ulid",
 ]
 
 [[package]]

@@ -7,9 +7,22 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[[bin]]
+name = "fake-claude"
+path = "src/bin/fake-claude.rs"
+test = false
+
+[[bin]]
+name = "fake-codex"
+path = "src/bin/fake-codex.rs"
+test = false
+
 [dependencies]
 fleetdeck-proto = { path = "../fleetdeck-proto" }
 fleetdeck-core = { path = "../fleetdeck-core" }
+tempfile.workspace = true
+thiserror.workspace = true
+ulid.workspace = true
 
 [lints]
 workspace = true
