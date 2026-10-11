@@ -109,6 +109,18 @@ async function open(title: string): Promise<Locator> {
   return page.getByRole('main', { name: 'Session' });
 }
 
+/** The deck's command rows: the expected count per method, every one done
+ * after one delivery with a distinct command id and an accepted receipt. */
+function expectRouted(expected: Record<string, number>) {
+  const rows = deck.commands();
+  const counts: Record<string, number> = {};
+  for (const row of rows) counts[row.method] = (counts[row.method] ?? 0) + 1;
+  expect(counts).toEqual(expected);
+  expect(new Set(rows.map((row) => row.command_id)).size).toBe(rows.length);
+  for (const row of rows)
+    expect([row.method, row.state, row.attempts]).toEqual([row.method, 'done', 1]);
+}
+
 /** The station's own session list (the station is the source of truth). */
 function stationSessions(station: Station): { session_id: string }[] {
   return JSON.parse(station.cli(['station', 'sessions', '--json']));
@@ -215,6 +227,24 @@ test('the board survives a deck restart without a new login and shows work done 
   // No command ran twice: each station has only the sessions it started.
   expect(stationSessions(alpha)).toHaveLength(2);
   expect(stationSessions(bravo)).toHaveLength(1);
+  // Each board command was routed once and ran once: the deck's router has
+  // one row per command, and each agent read each input exactly once.
+  expectRouted({
+    'session.start': 2,
+    'approval.answer': 1,
+    'session.steer': 1,
+    'session.interrupt': 1,
+  });
+  expect(alpha.providerInput()).toEqual({
+    messages: ['ask echo hi', 'while the deck is away'],
+    controls: { initialize: 2 },
+    answers: 1,
+  });
+  expect(bravo.providerInput()).toEqual({
+    messages: ['wait for the signal', 'after the stop'],
+    controls: { initialize: 1, interrupt: 1 },
+    answers: 0,
+  });
 });
 
 test('the phone drops its network, catches up, and drives a session again', async () => {
@@ -233,6 +263,19 @@ test('the phone drops its network, catches up, and drives a session again', asyn
   await composer.getByRole('button', { name: 'Send' }).click();
   await expect(status('Done.')).toBeVisible();
   await expect(view).toContainText('echo: one more');
+  expectRouted({
+    'session.start': 2,
+    'approval.answer': 1,
+    'session.steer': 1,
+    'session.interrupt': 1,
+    'session.prompt': 1,
+  });
+  expect(bravo.providerInput().messages).toEqual([
+    'wait for the signal',
+    'after the stop',
+    'while the phone is offline',
+    'one more',
+  ]);
 });
 
 test('a station link drop shows the station unreachable until it returns', async () => {
@@ -245,4 +288,14 @@ test('a station link drop shows the station unreachable until it returns', async
   await expect(stationCard('bravo')).toContainText('Link up');
   await fleet();
   await expect(page.locator('.fd-card')).toHaveCount(4);
+  // The station restart resent nothing: no new command and no new input.
+  expectRouted({
+    'session.start': 2,
+    'approval.answer': 1,
+    'session.steer': 1,
+    'session.interrupt': 1,
+    'session.prompt': 1,
+  });
+  expect(bravo.providerInput().messages).toHaveLength(4);
+  expect(alpha.providerInput().messages).toHaveLength(2);
 });

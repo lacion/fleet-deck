@@ -93,6 +93,10 @@ pub enum ProviderError {
         request: RequestId,
         reason: ExpiredReason,
     },
+    /// An answer that does not fit its request (for example a question
+    /// answer that names no asked question).
+    #[error("invalid answer: {0}")]
+    InvalidAnswer(String),
     #[error("no turn is running and no input waits")]
     NoTurn,
     #[error("the session has ended")]

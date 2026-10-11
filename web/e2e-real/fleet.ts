@@ -3,7 +3,16 @@
 // own home and data directory. Stations run the offline `fake-claude sim`
 // agent, so no provider account or network is used.
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
-import { closeSync, mkdirSync, mkdtempSync, openSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -149,14 +158,42 @@ export class Deck extends Node {
   loginLink(): string {
     return this.cli(['open']);
   }
+
+  /** The deck's command router rows (`deck commands --json`). */
+  commands(): RoutedCommand[] {
+    return JSON.parse(this.cli(['deck', 'commands', '--json']));
+  }
 }
+
+/** The fields of a deck command row that the flows check. */
+export type RoutedCommand = {
+  command_id: string;
+  station_id: string;
+  method: string;
+  state: string;
+  attempts: number;
+};
+
+/** What a station's agents read on stdin (every process of the station). */
+export type ProviderInput = {
+  /** User messages: prompts, steers and follow-ups, in order. */
+  messages: string[];
+  /** Host control requests by subtype (`interrupt`, `set_model`, ...). */
+  controls: Record<string, number>;
+  /** Answers to the agent's permission requests. */
+  answers: number;
+};
 
 /** A station with the `fake-claude sim` agent and `~/projects/demo`. */
 export class Station extends Node {
   readonly workspace: string;
+  /** `fake-claude sim` appends every stdin line here (one file for all of
+   * the station's agent processes). */
+  readonly stdinLog: string;
 
   constructor(name: string) {
     super(name, ['station', 'serve'], ['station', 'sessions']);
+    this.stdinLog = join(this.root, 'agent-stdin.jsonl');
     this.workspace = join(this.home, 'projects', 'demo');
     mkdirSync(join(this.workspace, '.git'), { recursive: true });
     writeFileSync(join(this.workspace, '.git', 'HEAD'), `ref: refs/heads/${BRANCH}\n`);
@@ -172,7 +209,7 @@ export class Station extends Node {
         `id = "${PROVIDER}"`,
         'driver = "claude"',
         `binary = "${FAKE_CLAUDE}"`,
-        'env = { FLEETDECK_FAKE_SCENARIO = "sim" }',
+        `env = { FLEETDECK_FAKE_SCENARIO = "sim", FLEETDECK_FAKE_STDIN_LOG = "${this.stdinLog}" }`,
         '',
       ].join('\n'),
     );
@@ -182,5 +219,23 @@ export class Station extends Node {
    * deck. Returns the new session id. */
   run(prompt: string): string {
     return this.cli(['station', 'run', '--provider', PROVIDER, '--cwd', this.workspace, prompt]);
+  }
+
+  /** Every frame that the station wrote to its agents, grouped. A command
+   * that ran twice shows here as a second message, control or answer. */
+  providerInput(): ProviderInput {
+    const input: ProviderInput = { messages: [], controls: {}, answers: 0 };
+    if (!existsSync(this.stdinLog)) return input;
+    for (const line of readFileSync(this.stdinLog, 'utf8').split('\n')) {
+      if (!line.startsWith('{')) continue;
+      const frame = JSON.parse(line);
+      if (frame.type === 'user') input.messages.push(String(frame.message?.content));
+      if (frame.type === 'control_request') {
+        const subtype = String(frame.request?.subtype);
+        input.controls[subtype] = (input.controls[subtype] ?? 0) + 1;
+      }
+      if (frame.type === 'control_response') input.answers += 1;
+    }
+    return input;
   }
 }
