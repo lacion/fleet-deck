@@ -60,7 +60,7 @@ One important difference stays: **T3 Code has no hub.** Each client connects dir
 
 ## 4. Lessons that change the plan
 
-Each row names the plan section that changes. Priority: **P1** = change before Phase 1; **P2** = change before the phase that builds it; **P3** = later.
+Each row names the plan section that changes. Priority: **P1** = change before Phase 1 (all P1 rows and L4 are applied in PLAN.md draft 3); **P2** = change before the phase that builds it; **P3** = later.
 
 | # | T3 Code lesson | Evidence | Change to PLAN.md | Pri |
 | --- | --- | --- | --- | --- |
