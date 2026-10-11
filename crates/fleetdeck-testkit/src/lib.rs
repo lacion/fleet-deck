@@ -7,12 +7,12 @@
 //! - [`node`]: a temporary home and data directory for one station or deck,
 //!   with a `station.toml` writer.
 //! - [`fake`]: how a test finds and starts `fake-claude` and `fake-codex`.
-//!   The binaries are skeletons now; their scenarios come with the adapters
-//!   (Phase 2 P2-3 for Claude, Phase 5 for Codex).
+//! - [`script`]: the fixture player of the fake agents.
 
 pub mod det;
 pub mod fake;
 pub mod node;
+pub mod script;
 
 pub use det::Det;
 pub use fake::{FakeAgent, FakeError};

@@ -19,29 +19,17 @@
 )]
 
 use std::collections::{BTreeSet, VecDeque};
-use std::path::{Path, PathBuf};
+use std::path::Path;
+
+mod common;
+use common::{fixture_dir, fixtures, launch_of};
 
 use fleetdeck_proto::Event;
-use fleetdeck_providers::NativeSessionId;
 use fleetdeck_providers::claude::frames::parse_value;
 use fleetdeck_providers::claude::{
-    BYPASS_MODE, ClaudeCore, CoreConfig, HostCmd, Launch, Output, capabilities, cli_args,
+    BYPASS_MODE, ClaudeCore, CoreConfig, HostCmd, Output, capabilities, cli_args,
 };
 use serde_json::Value;
-
-fn fixture_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../spikes/s1-claude/fixtures/rust")
-}
-
-fn fixtures() -> Vec<PathBuf> {
-    let mut files: Vec<PathBuf> = std::fs::read_dir(fixture_dir())
-        .unwrap()
-        .map(|e| e.unwrap().path())
-        .filter(|p| p.extension().is_some_and(|x| x == "jsonl"))
-        .collect();
-    files.sort();
-    files
-}
 
 #[derive(Default)]
 struct Report {
@@ -49,22 +37,6 @@ struct Report {
     writes_checked: usize,
     processes: usize,
     unknown_frames: usize,
-}
-
-fn launch_of(args: &[Value]) -> Launch {
-    let args: Vec<&str> = args.iter().map(|a| a.as_str().unwrap()).collect();
-    let after = |flag: &str| {
-        args.iter()
-            .position(|a| *a == flag)
-            .map(|i| args[i + 1].to_owned())
-    };
-    Launch {
-        model: after("--model"),
-        mode: after("--permission-mode"),
-        resume: after("--resume").map(NativeSessionId),
-        fork: args.contains(&"--fork-session"),
-        extra_args: vec!["--safe-mode".to_owned()],
-    }
 }
 
 fn replay(path: &Path) -> Report {

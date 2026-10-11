@@ -83,9 +83,14 @@ impl FakeAgent {
         Ok(target_dir_of(&exe))
     }
 
-    /// The path of the fake binary.
+    /// The path of the fake binary. Without [`BIN_DIR_ENV`], the first call
+    /// in a test process builds the fakes (a no-op when they are fresh), so
+    /// `cargo test -p <crate>` never runs a missing or stale fake.
     pub fn locate(self) -> Result<PathBuf, FakeError> {
         let dir = Self::bin_dir()?;
+        if std::env::var_os(BIN_DIR_ENV).is_none_or(|d| d.is_empty()) {
+            build_once(&dir);
+        }
         let path = dir.join(self.bin_name());
         if path.is_file() {
             Ok(path)
@@ -112,10 +117,14 @@ impl FakeAgent {
 /// - Scenario `hang` reads stdin until it closes, then exits 0 (for stop and
 ///   kill tests).
 /// - Scenario `echo` copies stdin lines to stdout until stdin closes.
+/// - Scenario `deaf` never reads stdin and never exits (until a signal).
+/// - Arguments `auth status` print the sign-in state of scenario
+///   `auth:signed-in` / `auth:signed-out`, else fail.
 /// - Scenario `env` prints its environment (`NAME=value`, sorted) and exits 0
 ///   (for the environment scrub tests).
-/// - Every other scenario is an error (exit 2). The protocol scenarios come
-///   with the adapters (P2-3 Claude, Phase 5 Codex).
+/// - Scenario `fixture:<path>#<process>` plays one process of a recorded
+///   fixture ([`crate::script`]).
+/// - Every other scenario is an error (exit 2).
 #[must_use]
 pub fn fake_main(agent: FakeAgent) -> std::process::ExitCode {
     use std::io::Read;
@@ -127,6 +136,10 @@ pub fn fake_main(agent: FakeAgent) -> std::process::ExitCode {
         return ExitCode::SUCCESS;
     }
     let scenario = std::env::var(SCENARIO_ENV).unwrap_or_default();
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().map(String::as_str).eq(["auth", "status"]) {
+        return auth_status(&scenario);
+    }
     if let Some(code) = scenario.strip_prefix("exit:") {
         return match code.parse::<u8>() {
             Ok(code) => ExitCode::from(code),
@@ -135,6 +148,9 @@ pub fn fake_main(agent: FakeAgent) -> std::process::ExitCode {
                 ExitCode::from(2)
             }
         };
+    }
+    if let Some(spec) = scenario.strip_prefix(crate::script::FIXTURE_PREFIX) {
+        return crate::script::play(name, spec);
     }
     match scenario.as_str() {
         "hang" => {
@@ -145,6 +161,9 @@ pub fn fake_main(agent: FakeAgent) -> std::process::ExitCode {
             };
         }
         "echo" => return echo_lines(),
+        "deaf" => loop {
+            std::thread::park();
+        },
         "env" => {
             let mut vars: Vec<String> = std::env::vars_os()
                 .map(|(k, v)| format!("{}={}", k.to_string_lossy(), v.to_string_lossy()))
@@ -157,6 +176,17 @@ pub fn fake_main(agent: FakeAgent) -> std::process::ExitCode {
     }
     eprintln!("{name}: unknown scenario `{scenario}` (set {SCENARIO_ENV})");
     ExitCode::from(2)
+}
+
+/// `auth status` (Claude JSON form): scenario `auth:signed-in` or
+/// `auth:signed-out`; every other scenario fails (exit 1, no output).
+fn auth_status(scenario: &str) -> std::process::ExitCode {
+    match scenario {
+        "auth:signed-in" => println!(r#"{{"loggedIn":true,"authMethod":"claude.ai"}}"#),
+        "auth:signed-out" => println!(r#"{{"loggedIn":false}}"#),
+        _ => return std::process::ExitCode::from(1),
+    }
+    std::process::ExitCode::SUCCESS
 }
 
 /// Copies stdin lines to stdout until the end of input, then exits 0.
@@ -172,6 +202,41 @@ fn echo_lines() -> std::process::ExitCode {
         }
     }
     std::process::ExitCode::SUCCESS
+}
+
+/// Builds the fake binaries into `bin_dir` (`<target>/debug`) once per
+/// process. A failed build is not an error here: [`FakeAgent::locate`] then
+/// reports the missing binary.
+fn build_once(bin_dir: &Path) {
+    static BUILT: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    BUILT.get_or_init(|| {
+        let (Some(target), Some("debug")) = (
+            bin_dir.parent(),
+            bin_dir.file_name().and_then(|n| n.to_str()),
+        ) else {
+            return;
+        };
+        let cargo = std::env::var_os("CARGO")
+            .or_else(|| option_env!("CARGO").map(Into::into))
+            .unwrap_or_else(|| "cargo".into());
+        let status = Command::new(cargo)
+            .args([
+                "build",
+                "--quiet",
+                "--offline",
+                "-p",
+                "fleetdeck-testkit",
+                "--bins",
+            ])
+            .arg("--target-dir")
+            .arg(target)
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .stdin(std::process::Stdio::null())
+            .status();
+        if !status.as_ref().is_ok_and(|s| s.success()) {
+            eprintln!("fleetdeck-testkit: building the fake agents failed: {status:?}");
+        }
+    });
 }
 
 /// `target/<profile>` for a test executable in `target/<profile>/deps`, or

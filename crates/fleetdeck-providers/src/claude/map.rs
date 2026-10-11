@@ -197,7 +197,7 @@ fn set_input_state(core: &mut ClaudeCore, uuid: &str, state: InputState) -> Vec<
         state,
     }));
     // An interrupt that cancelled a waiting input ends here: no turn to mark.
-    if state == InputState::Cancelled && core.is_idle() {
+    if state == InputState::Cancelled && core.is_quiet() {
         core.interrupt_requested = false;
     }
     out

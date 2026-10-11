@@ -592,6 +592,7 @@ version = "0.0.0"
 dependencies = [
  "fleetdeck-core",
  "fleetdeck-proto",
+ "serde_json",
  "tempfile",
  "thiserror",
  "ulid",

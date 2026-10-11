@@ -386,3 +386,44 @@ fn trap_10_an_interrupt_is_a_request_and_the_turn_ends_with_its_result() {
         }
     ));
 }
+
+#[test]
+fn pending_background_work_after_the_turn_is_not_idle() {
+    let mut core = running_core();
+    feed(
+        &mut core,
+        json!({"type":"system","subtype":"background_tasks_changed",
+               "tasks":[{"task_id":"b1","task_type":"local_bash"}]}),
+    );
+    let ev = result(&mut core, "success", "completed");
+    assert!(ev.iter().any(|e| matches!(
+        e,
+        Event::RunCompleted {
+            background_pending: true,
+            ..
+        }
+    )));
+    lifecycle(&mut core, 1, "completed");
+    assert!(core.current_turn().is_none());
+    assert_eq!(core.pending_inputs(), 0);
+    assert!(core.is_quiet());
+    assert!(!core.is_idle(), "background work pending (PLAN §6.3, L7)");
+    // Nothing runs that an interrupt can stop.
+    assert!(matches!(core.interrupt(), Err(ProviderError::NoTurn)));
+    // The task ends: the session is idle again.
+    let ev = emits(&feed(
+        &mut core,
+        json!({"type":"system","subtype":"background_tasks_changed","tasks":[]}),
+    ));
+    assert_eq!(kinds(&ev), ["background.updated"]);
+    assert!(core.is_idle());
+    // The provider turn that reports the result makes it busy, then idle.
+    feed(
+        &mut core,
+        json!({"type":"assistant","message":{"role":"assistant",
+               "content":[{"type":"text","text":"the task finished"}]}}),
+    );
+    assert!(!core.is_idle());
+    result(&mut core, "success", "completed");
+    assert!(core.is_idle());
+}

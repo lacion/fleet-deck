@@ -137,8 +137,8 @@ async fn the_event_sink_keeps_order_and_reports_a_closed_station() {
             }
         })
     };
-    assert_eq!(rx.recv().await.unwrap(), events[0]);
-    assert_eq!(rx.recv().await.unwrap(), events[1]);
+    assert_eq!(rx.recv().await.unwrap().event, events[0]);
+    assert_eq!(rx.recv().await.unwrap().event, events[1]);
     send.await.unwrap();
     drop(rx);
     assert!(matches!(

@@ -232,9 +232,18 @@ impl ClaudeCore {
             .and_then(|i| i.state)
     }
 
-    /// True when no turn runs and no input waits for confirmation.
+    /// True when no turn runs, no input waits for confirmation, and no
+    /// background work is pending (PLAN §6.3, L7): a session whose background
+    /// task still runs shows "background work", not "idle".
     #[must_use]
     pub fn is_idle(&self) -> bool {
+        self.is_quiet() && self.background.is_empty()
+    }
+
+    /// True when no turn runs and no input waits: there is nothing that an
+    /// interrupt can stop. Background work may still run.
+    #[must_use]
+    pub fn is_quiet(&self) -> bool {
         self.turn.is_none() && self.pending_inputs() == 0
     }
 
@@ -276,6 +285,15 @@ impl ClaudeCore {
         self.requests
             .get(request)
             .map(|r| r.native_request_id.as_str())
+    }
+
+    /// The request that a CLI `request_id` opened.
+    #[must_use]
+    pub fn request_for_native(&self, native: &str) -> Option<&RequestId> {
+        self.requests
+            .iter()
+            .find(|(_, r)| r.native_request_id == native)
+            .map(|(id, _)| id)
     }
 
     /// The tool input of a request, as the CLI sent it.
@@ -345,7 +363,7 @@ impl ClaudeCore {
     /// [`ProviderError::NoTurn`] when no turn runs and no input waits.
     pub fn interrupt(&mut self) -> Result<Vec<Output>> {
         self.live()?;
-        if self.is_idle() {
+        if self.is_quiet() {
             return Err(ProviderError::NoTurn);
         }
         self.interrupt_requested = true;

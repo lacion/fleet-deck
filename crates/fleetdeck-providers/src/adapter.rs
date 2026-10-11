@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use fleetdeck_proto::command::{ApprovalDecision, SessionSpec, StopMode, UserInput};
-use fleetdeck_proto::event::{ExpiredReason, ProviderKind, ResolvedBy, RunOrigin};
+use fleetdeck_proto::event::{ExpiredReason, ProviderKind, RawRef, ResolvedBy, RunOrigin};
 use fleetdeck_proto::{Capabilities, Event, InputId, Operation, RequestId, Unsupported};
 use tokio::sync::mpsc;
 
@@ -112,26 +112,39 @@ pub fn require(caps: &Capabilities, op: Operation) -> Result<()> {
     caps.check(op).map_err(ProviderError::from)
 }
 
+/// One canonical event and, if the adapter logged the raw frame that caused
+/// it, where that frame is (L12).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Emitted {
+    pub event: Event,
+    pub raw_ref: Option<RawRef>,
+}
+
 /// Where an adapter sends the canonical events of one session. The station
 /// appends them to its event log in order. Bounded: a slow log slows the
 /// adapter, it never drops an event.
 #[derive(Debug, Clone)]
 pub struct EventSink {
-    tx: mpsc::Sender<Event>,
+    tx: mpsc::Sender<Emitted>,
 }
 
 impl EventSink {
     /// A sink and the receiver that the station reads.
     #[must_use]
-    pub fn channel(capacity: usize) -> (Self, mpsc::Receiver<Event>) {
+    pub fn channel(capacity: usize) -> (Self, mpsc::Receiver<Emitted>) {
         let (tx, rx) = mpsc::channel(capacity.max(1));
         (Self { tx }, rx)
     }
 
     /// Sends one event. Fails only when the station dropped the receiver.
     pub async fn emit(&self, event: Event) -> Result<()> {
+        self.emit_with(event, None).await
+    }
+
+    /// Sends one event with the reference of its raw frame.
+    pub async fn emit_with(&self, event: Event, raw_ref: Option<RawRef>) -> Result<()> {
         self.tx
-            .send(event)
+            .send(Emitted { event, raw_ref })
             .await
             .map_err(|_| ProviderError::SinkClosed)
     }
@@ -168,6 +181,18 @@ pub trait ProviderAdapter: Send + Sync {
         spec: SessionSpec,
         sink: EventSink,
     ) -> Result<Box<dyn LiveSession>>;
+    /// Starts a new session with the context of `native_id` (the id that
+    /// [`LiveSession::fork`] returned). Unsupported unless the adapter
+    /// overrides it (DL-033).
+    async fn fork(
+        &self,
+        native_id: &NativeSessionId,
+        spec: SessionSpec,
+        sink: EventSink,
+    ) -> Result<Box<dyn LiveSession>> {
+        let _ = (native_id, spec, sink);
+        Err(Unsupported::new(Operation::Fork).into())
+    }
 }
 
 /// One running provider session. Every operation that the provider does not
@@ -188,6 +213,8 @@ pub trait LiveSession: Send {
     async fn answer(&mut self, answer: Answer) -> Result<()>;
     async fn set_mode(&mut self, mode: PermissionMode) -> Result<()>;
     async fn set_model(&mut self, model: ModelId) -> Result<()>;
+    /// The native id to fork from: the station passes it to
+    /// [`ProviderAdapter::fork`] (DL-033).
     async fn fork(&mut self) -> Result<NativeSessionId>;
     async fn stop(&mut self, how: StopMode) -> Result<()>;
 }
