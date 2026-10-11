@@ -108,10 +108,17 @@ pub fn replay(fx: &Fixture) -> Result<ReplayReport, ReplayError> {
             }
             Record::Exit { code } => {
                 let c = core.as_mut().ok_or(ReplayError::NoProcess { index })?;
+                // Every write made while the process lived must be in the recording.
+                ensure_empty(&mut queue, index)?;
                 let outs = c.on_exit(*code);
-                collect(outs, &mut report, &mut queue);
-                // Writes after the exit go nowhere: the live driver drops them too.
-                queue.clear();
+                for o in outs {
+                    match o {
+                        Output::Emit(e) => report.events.push(e),
+                        // A write after the exit has no reader; the live driver cannot
+                        // write it either, so the recording cannot contain it.
+                        Output::Write(_) => {}
+                    }
+                }
             }
             Record::Raw { .. } | Record::Note { .. } => {}
         }

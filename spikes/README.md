@@ -31,6 +31,13 @@ cargo run -p s1-claude --bin replay-claude -- --events spikes/s1-claude/fixtures
 cargo nextest run -p s1-claude --test replay_fixtures
 ```
 
+S1 reference replay of the frames that the TypeScript Agent SDK recorded (`spikes/s1-claude/fixtures/sdk/*.jsonl`, D8). The replay infers each host command from the SDK's write, applies it to the adapter core, and compares the core's write semantically (DL-008). `replay-claude` with no path replays both directories:
+
+```sh
+cargo run -p s1-claude --bin replay-claude -- spikes/s1-claude/fixtures/sdk --keys
+cargo nextest run -p s1-claude --test reference_fixtures
+```
+
 ### Fixture format
 
 One JSON object per line. Line 1 is the header `{"fixture":{"provider","scenario","cli_version","recorder","model","notes"}}`. Each next line is a record with a `dir` tag:
@@ -56,3 +63,11 @@ cargo run -p s1-claude --bin record-claude -- --scenario all      # or one scena
 ```
 
 `record-claude` runs `claude` 2.1.x with `--model haiku --safe-mode --permission-mode default` (DL-004, DL-005) in a `tempfile` directory and writes `spikes/s1-claude/fixtures/rust/<scenario>.jsonl`. A failed scenario writes `<scenario>.failed.jsonl`; the tests skip it, and it must be deleted before a commit.
+
+The TypeScript SDK reference recorder (spike only, never ships) runs the same scenarios through `@anthropic-ai/claude-agent-sdk`. `tee-claude.mjs` sits between the SDK and `claude` as `pathToClaudeCodeExecutable` and logs every frame:
+
+```sh
+cd spikes/s1-claude/sdk-recorder && bun install && bun record.ts all   # or one scenario name
+```
+
+It writes `spikes/s1-claude/fixtures/sdk/<scenario>.jsonl` with the same header, records, and scrubbing rules. SDK fixtures have no `host` records. `approval_restart` and `interrupt_during_tool` exist only as Rust fixtures: they test our driver's process control (a kill with an open request, an interrupt during a long tool), not the SDK's frames.

@@ -5,9 +5,9 @@
 
 use std::path::{Path, PathBuf};
 
-use s1_claude::replay::replay;
+use s1_claude::replay::{ReplayError, replay};
 use spike_canon::CanonEvent;
-use spike_canon::fixture::Fixture;
+use spike_canon::fixture::{Fixture, Record};
 
 fn fixture_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/rust")
@@ -109,4 +109,83 @@ fn open_approval_does_not_survive_a_restart() {
         requested, 2,
         "the resumed process asks again only after a new prompt"
     );
+}
+
+fn without_in_record(mut fx: Fixture, nth: usize) -> Fixture {
+    let pos = fx
+        .records
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| matches!(r, Record::In { .. }))
+        .nth(nth)
+        .map(|(i, _)| i)
+        .unwrap();
+    fx.records.remove(pos);
+    fx
+}
+
+#[test]
+fn a_write_missing_from_the_recording_fails_before_exit() {
+    // The last write of `tool_call_deny` is the deny answer; without its `in` record
+    // the core's write stays unmatched until the process exits.
+    let fx = load("tool_call_deny");
+    let ins = fx
+        .records
+        .iter()
+        .filter(|r| matches!(r, Record::In { .. }))
+        .count();
+    let err = replay(&without_in_record(fx, ins - 1)).unwrap_err();
+    assert!(
+        matches!(&err, ReplayError::ExtraWrites { extra, .. } if extra[0]["type"] == "control_response"),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_dropped_write_in_a_restarted_session_is_not_hidden_by_the_exit() {
+    // `approval_restart` kills the first process; the prompt write of that process
+    // must still be matched before the `exit` record.
+    let fx = load("approval_restart");
+    let err = replay(&without_in_record(fx, 1)).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            ReplayError::ExtraWrites { .. } | ReplayError::WriteMismatch { .. }
+        ),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_recorded_write_that_the_core_does_not_make_fails() {
+    let mut fx = load("simple");
+    let pos = fx
+        .records
+        .iter()
+        .position(|r| matches!(r, Record::Exit { .. }))
+        .unwrap();
+    fx.records.insert(
+        pos,
+        Record::In {
+            frame: serde_json::json!({"type":"user","message":{"role":"user","content":"ghost"}}),
+        },
+    );
+    let err = replay(&fx).unwrap_err();
+    assert!(matches!(err, ReplayError::MissingWrite { .. }), "{err}");
+}
+
+#[test]
+fn a_changed_write_fails() {
+    let mut fx = load("tool_call_edit_input");
+    let host = fx
+        .records
+        .iter_mut()
+        .find(|r| matches!(r, Record::Host { cmd } if cmd["op"] == "answer"))
+        .unwrap();
+    let Record::Host { cmd } = host else {
+        unreachable!()
+    };
+    cmd["updated_input"]["command"] = "rm -r somewhere".into();
+    let err = replay(&fx).unwrap_err();
+    assert!(matches!(err, ReplayError::WriteMismatch { .. }), "{err}");
 }

@@ -8,10 +8,13 @@
 //! - [`adapter`]: sans-IO adapter core (commands + frames in, canonical events + writes out).
 //! - [`driver`]: live `claude` process around the core (recorder and smoke tests only).
 //! - [`record`]: scripted live scenarios that write fixtures (`record-claude`).
+//! - [`replay`]: offline replay of our own fixtures (exact host writes).
+//! - [`reference`]: offline replay of TypeScript SDK fixtures (semantic host writes).
 
 pub mod adapter;
 pub mod control;
 pub mod driver;
 pub mod frames;
 pub mod record;
+pub mod reference;
 pub mod replay;

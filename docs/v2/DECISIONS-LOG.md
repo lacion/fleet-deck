@@ -54,3 +54,20 @@ Format: context, options, choice, reason, owner review.
 - **Choice:** (c). Each host input carries a client UUID; `started` with the same `command_uuid` confirms it and binds it to a turn. (b) stays only as a fallback for a CLI that sends no lifecycle frames. A turn that the CLI starts on its own (for example after a background task, trap 4) gets `origin: provider` and never confirms an input.
 - **Reason:** (c) is the only signal that names the input. Evidence: fixtures `queued_turn`, `message_steering`, `turn_interrupt`; tests `adapter::tests::unrelated_frames_never_confirm_a_pending_prompt`, `provider_turn_does_not_confirm_a_pending_prompt`, `only_the_matching_uuid_confirms`.
 - **Owner review:** pending
+
+## DL-007 — Permission answers echo `toolUseID`, as the TypeScript SDK does
+
+- **Context:** the SDK reference recordings (S1-3, `spikes/s1-claude/fixtures/sdk/`) show that `@anthropic-ai/claude-agent-sdk` 0.3.296 adds `toolUseID` (the `tool_use_id` of the `can_use_tool` request) to every permission answer. Our first adapter did not send it. The CLI accepted both forms in the recordings.
+- **Options:** (a) keep the shorter answer; (b) send `toolUseID` when the request has a `tool_use_id`.
+- **Choice:** (b). `control::permission_response` takes the request's `tool_use_id`. The Rust fixtures with approvals were re-recorded with the new frame.
+- **Reason:** A8/D8 make the SDK the reference for the wire protocol. The field binds the answer to one tool call, so a late answer cannot apply to a different call. The deny answer keeps `interrupt: false`; the SDK omits it, and the CLI default is `false` (the reference replay treats both as equal).
+- **Owner review:** pending
+
+## DL-008 — SDK reference replay compares writes semantically
+
+- **Context:** PLAN §14 S1 asks for "TS SDK frame recording + replay". SDK frames differ from ours in fields that do not change the CLI's behaviour: random request ids, `systemPrompt: [""]` in `initialize`, and no `uuid`/`session_id` on user messages.
+- **Options:** (a) exact comparison (fails on every frame); (b) a semantic comparison of the behaviour-relevant fields, with the key differences reported as evidence.
+- **Choice:** (b). `spikes/s1-claude/src/reference.rs` infers the host command from each SDK write, re-addresses CLI responses to the core's request ids, compares the projection of `reference::semantic`, and lists one-sided keys (`replay-claude --keys`).
+- **Reason:** the replay must prove that the Rust core drives the CLI the same way as the reference client and handles every frame that the reference client receives (0 unknown frames). Exact bytes of ids are not part of the contract.
+- **Consequence (evidence for DL-006):** the SDK sends no `uuid`, so the CLI sends no `command_lifecycle` frames and the SDK stream has no per-input confirmation. In the reference replay every turn is a provider-origin turn and no input reaches `started` (`tests/reference_fixtures.rs::sdk_prompts_are_never_confirmed`). The station adapter must send a `uuid` on every user message.
+- **Owner review:** pending

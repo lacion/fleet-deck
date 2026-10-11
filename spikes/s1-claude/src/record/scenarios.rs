@@ -315,7 +315,13 @@ async fn approval_restart(c: &mut Ctx) -> Result<()> {
         .iter()
         .any(|e| matches!(e, CanonEvent::ApprovalRequested { .. }));
     c.note(format!("request issued again without input: {reissued}"));
-    c.prompt(&mut s, "Continue with the task.").await?;
+    // The resumed model may not repeat an unfinished tool call on its own, so the
+    // new prompt names the command again.
+    c.prompt(
+        &mut s,
+        "The previous command did not run. Use the Bash tool again to run exactly: touch fd-approve.txt && echo approve-ok",
+    )
+    .await?;
     let mut asked = false;
     let deadline = tokio::time::Instant::now() + super::TURN_LIMIT;
     while !s.core.is_idle() && tokio::time::Instant::now() < deadline {

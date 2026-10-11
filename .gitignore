@@ -11,3 +11,4 @@ ideas/
 # Rust (Fleet Deck v2)
 /target/
 spikes/**/node_modules/
+/.pi/

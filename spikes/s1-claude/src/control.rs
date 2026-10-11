@@ -77,10 +77,15 @@ pub fn control_error(request_id: &str, error: &str) -> Value {
     })
 }
 
-/// Response to a `can_use_tool` request.
+/// Response to a `can_use_tool` request. `tool_use_id` echoes the request's
+/// `tool_use_id` as `toolUseID`, the same as the TypeScript SDK does (DL-007).
 #[must_use]
-pub fn permission_response(request_id: &str, decision: &PermissionDecision) -> Value {
-    let body = match decision {
+pub fn permission_response(
+    request_id: &str,
+    decision: &PermissionDecision,
+    tool_use_id: Option<&str>,
+) -> Value {
+    let mut body = match decision {
         PermissionDecision::Allow { updated_input } => {
             json!({"behavior": "allow", "updatedInput": updated_input})
         }
@@ -88,6 +93,9 @@ pub fn permission_response(request_id: &str, decision: &PermissionDecision) -> V
             json!({"behavior": "deny", "message": message, "interrupt": interrupt})
         }
     };
+    if let (Some(id), Some(map)) = (tool_use_id, body.as_object_mut()) {
+        map.insert("toolUseID".to_owned(), Value::String(id.to_owned()));
+    }
     control_success(request_id, body)
 }
 
@@ -111,7 +119,9 @@ mod tests {
             &PermissionDecision::Allow {
                 updated_input: json!({"command":"echo edited"}),
             },
+            Some("toolu_1"),
         );
+        assert_eq!(allow["response"]["response"]["toolUseID"], "toolu_1");
         assert_eq!(allow["response"]["response"]["behavior"], "allow");
         assert_eq!(
             allow["response"]["response"]["updatedInput"]["command"],
@@ -123,8 +133,10 @@ mod tests {
                 message: "no".into(),
                 interrupt: false,
             },
+            None,
         );
         assert_eq!(deny["response"]["response"]["behavior"], "deny");
+        assert!(deny["response"]["response"].get("toolUseID").is_none());
         assert_eq!(
             control_error("z", "unknown")["response"]["subtype"],
             "error"

@@ -9,8 +9,8 @@ Rules for this file: one checklist item per M1 deliverable, in PLAN order. Each 
 - [x] **P0-1 Scaffold.** Root Cargo workspace (spike members only, DL-001), `deny.toml`, lint policy (`unsafe_code = forbid`, `clippy::unwrap_used = deny` outside tests), `spike-canon` (canonical event subset of §6.3), `docs/v2/DECISIONS-LOG.md`, `spikes/README.md`, this file. *(round 1)*
 - [x] **S1-1 Claude protocol core.** Frame parser (never panics, unknown frames kept, proptest), host control frames, sans-IO adapter core: init, prompt, partial deltas, `can_use_tool` with native option ids + edited input, idempotent answers, fail-closed unknown requests, interrupt, set mode (native modes only), exit expiry. *(round 1; round 2 review fix: a prompt is confirmed only by `command_lifecycle` `started` with the matching uuid, DL-006)*
 - [x] **S1-2 Claude live driver + fixture format + `record-claude`.** tokio process driver around the core; JSONL fixture format (`spawn`/`host`/`in`/`out`/`raw`/`exit`/`note` records + header, scrubbed); `record-claude`; live recordings (haiku, `--safe-mode`, temp dir) of all 8 §13 shared scenarios plus `tool_call_edit_input`, `interrupt_during_tool`, `set_permission_mode`, `approval_restart`. *(round 2; an early replay harness + `replay-claude` is pulled forward from S1-4)*
-- [ ] **S1-3 TypeScript SDK reference recordings.** `spikes/s1-claude/sdk-recorder/` (bun + `@anthropic-ai/claude-agent-sdk`, a tee wrapper as `pathToClaudeCodeExecutable`); SDK fixtures for the same scenarios.
-- [~] **S1-4 Claude replay + evidence.** *(round 2: `replay` module, `replay-claude`, `tests/replay_fixtures.rs` for the Rust fixtures.)* Remaining: replay of the SDK fixtures (after S1-3), `insta` snapshots of the canonical event stream of every fixture, evidence write-up for "prompt confirmed", restart survival, native option ids, steer/queue timing.
+- [x] **S1-3 TypeScript SDK reference recordings.** `spikes/s1-claude/sdk-recorder/` (bun + `@anthropic-ai/claude-agent-sdk` 0.3.296, `tee-claude.mjs` as `pathToClaudeCodeExecutable`); 10 SDK fixtures in `spikes/s1-claude/fixtures/sdk/` (8 shared + `tool_call_edit_input`, `set_permission_mode`); `reference` module + `replay-claude` replay them offline (DL-008). *(round 3)*
+- [~] **S1-4 Claude replay + evidence.** *(round 2: `replay` module, `replay-claude`, `tests/replay_fixtures.rs` for the Rust fixtures.)* *(round 3: replay rejects unmatched writes before `exit`; SDK reference replay.)* Remaining: `insta` snapshots of the canonical event stream of every fixture, evidence write-up for "prompt confirmed", restart survival, native option ids, steer/queue timing.
 - [ ] **S1-5 ADR-001** (Proposed): native Claude adapter design, effect states and crash boundaries (§6.4), fixture set, unsupported scenarios with reasons.
 - [ ] **S2-1 Codex protocol core.** ADR-002 option evaluation (git pin of `codex-app-server-protocol` vs codegen from `codex app-server generate-json-schema`); JSON-RPC framing; sans-IO core: initialize, `thread/start`, `turn/start`, both approval requests, questions (L4), `turn/interrupt`, `thread/resume`, diff notifications.
 - [ ] **S2-2 Codex live driver + `record-codex` + fixtures** for the §13 shared scenarios Codex supports (unsupported ones listed with reasons); restart survival experiment.
@@ -64,3 +64,26 @@ Rules for this file: one checklist item per M1 deliverable, in PLAN order. Each 
   - `cargo deny check` → advisories ok, bans ok, licenses ok, sources ok
   - `web/` checks and TS-types drift check → not applicable in M1
 - Next: S1-3 (TypeScript SDK reference recordings).
+
+### Round 3 (2026-10-11)
+
+- Committed round 2 as `8a114f5`.
+- Review fix: `replay` now checks that every write of a process is in the recording **before** `exit` (it no longer drops them). Regression tests in `spikes/s1-claude/tests/replay_fixtures.rs`: `a_write_missing_from_the_recording_fails_before_exit`, `a_dropped_write_in_a_restarted_session_is_not_hidden_by_the_exit`, `a_recorded_write_that_the_core_does_not_make_fails`, `a_changed_write_fails`.
+- Done: S1-3. SDK recorder (live, haiku, `--safe-mode`, temp dirs; `bun record.ts all` → 10 ok). Reference replay `spikes/s1-claude/src/reference.rs` + `tests/reference_fixtures.rs` (6 tests).
+- SDK findings (evidence for ADR-001):
+  - SDK args: `--output-format stream-json --verbose --input-format stream-json --model=haiku --permission-prompt-tool=stdio --permission-mode=default --include-partial-messages` (no `--replay-user-messages`).
+  - SDK user messages have no `uuid` → no `command_lifecycle` frames → no per-input confirmation in the SDK stream (DL-008). Our adapter must keep sending a `uuid`.
+  - The SDK sets `CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS` → `system/session_state_changed` (`running`/`requires_action`/`idle`); the core parses it as a system frame (0 unknown frames).
+  - SDK permission answers carry `toolUseID` → DL-007: our answers now do too; the 6 Rust fixtures with approvals were re-recorded. `approval_restart` now names the command again in the resumed prompt (the model did not repeat it on its own once).
+  - Steering via the SDK behaves like ours: the steer prompt joins the running turn.
+  - The turn outcomes of every shared scenario are equal for SDK and Rust frames (`sdk_and_rust_recordings_end_turns_the_same_way`).
+- Commands and results:
+  - `bun record.ts all` (live, spike) → 10 ok; `record-claude --scenario <6 approval scenarios>` (live) → 6 ok
+  - `grep -lE "/home|<user name>" spikes/s1-claude/fixtures/*/*.jsonl` → none
+  - `cargo run -p s1-claude --bin replay-claude` → 22 ok (12 rust + 10 sdk), unknown=0
+  - `cargo fmt --all --check` → pass
+  - `cargo clippy --workspace --all-targets -- -D warnings` → pass
+  - `cargo nextest run --workspace` → 43 passed
+  - `cargo deny check` → advisories ok, bans ok, licenses ok, sources ok
+  - `web/` checks and TS-types drift check → not applicable in M1
+- Next: S1-4 remainder (`insta` snapshots of the canonical events, evidence write-up).

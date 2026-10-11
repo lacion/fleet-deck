@@ -371,7 +371,11 @@ impl ClaudeCore {
                 interrupt: false,
             },
         };
-        let mut frame = control::permission_response(&req.native_request_id, &decision);
+        let mut frame = control::permission_response(
+            &req.native_request_id,
+            &decision,
+            req.tool_use_id.as_deref(),
+        );
         if answer.option_id == "allow_always"
             && let (Some(body), Some(s)) = (
                 frame["response"]["response"].as_object_mut(),
