@@ -32,6 +32,8 @@ pub enum NetError {
     NoPeerCertificate,
     #[error("the peer certificate is not a node certificate: {0}")]
     PeerKey(String),
+    #[error("the TCP connect to {0} reached its own socket (no listener on that port)")]
+    SelfConnect(SocketAddr),
 }
 
 /// Opens a listener after the D13 bind check.
@@ -46,8 +48,22 @@ pub async fn dial_tcp(addr: SocketAddr) -> Result<TcpStream, NetError> {
     let stream = tokio::time::timeout(HANDSHAKE_TIMEOUT, TcpStream::connect(addr))
         .await
         .map_err(|_| NetError::Timeout(HANDSHAKE_TIMEOUT))??;
+    refuse_self_connect(&stream)?;
     stream.set_nodelay(true)?;
     Ok(stream)
+}
+
+/// TCP "simultaneous open": when no process listens on a loopback port, the
+/// kernel can give the dialing socket that same port as its local port, and
+/// the socket connects to itself. Such a socket would hold the port of the
+/// restarting listener (its bind fails) and stall the TLS handshake until the
+/// timeout. The dialer drops it at once and retries with backoff.
+pub fn refuse_self_connect(stream: &TcpStream) -> Result<(), NetError> {
+    let local = stream.local_addr()?;
+    if local == stream.peer_addr()? {
+        return Err(NetError::SelfConnect(local));
+    }
+    Ok(())
 }
 
 fn peer_of(
@@ -104,4 +120,41 @@ pub async fn handshake_accepted(
         .map_err(|_| NetError::Timeout(HANDSHAKE_TIMEOUT))??;
     let key = peer_of(tls.get_ref().1.peer_certificates())?;
     Ok((tls, key))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_socket_connected_to_itself_is_refused() {
+        // Reserve a free port, release it, then bind a dialing socket to it
+        // and connect to the same address: Linux completes a self-connect.
+        let port = TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let addr = SocketAddr::from(([127, 0, 0, 1], port));
+        let socket = tokio::net::TcpSocket::new_v4().unwrap();
+        socket.set_reuseaddr(true).unwrap();
+        socket.bind(addr).unwrap();
+        let Ok(stream) = socket.connect(addr).await else {
+            return; // this kernel refuses self-connects; nothing to guard
+        };
+        assert!(matches!(
+            refuse_self_connect(&stream),
+            Err(NetError::SelfConnect(a)) if a == addr
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_normal_connection_is_kept() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let stream = TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        assert!(refuse_self_connect(&stream).is_ok());
+    }
 }

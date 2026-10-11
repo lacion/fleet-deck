@@ -202,4 +202,18 @@ Format: context, options, choice, reason, owner review.
 - **Options:** (a) one bound per node for each setup step after TLS; (b) separate bounds per step; (c) one bound for the whole setup.
 - **Choice:** (a). `NodeConfig::handshake_timeout` (default 10 s, the same as the TLS bound `net::HANDSHAKE_TIMEOUT`) bounds the WebSocket upgrade on the dialer and on the listener, the hello/auth exchange, the `ready` wait, the pairing proofs, and the listener's wait for the data channel. A timeout is the error `LinkError::Timeout` with the stable reason `timeout`. The reconnect supervisor treats it like any other failed attempt (backoff, then retry). Each accepted connection runs in its own task, so a stalled client never delays other dialers.
 - **Reason:** one value is simple to configure and to test (`tests/timeouts.rs` sets 300 ms). A per-step bound gives a clear error that names the step (`the WebSocket upgrade took longer than …`). A bound for the whole setup would hide which step stalled.
+- **Round 13 addition (review):** a timeout after the WebSocket upgrade (hello/auth, `ready`, pairing proofs, a handshake write) also returns `LinkError::Timeout` with reason `timeout`; before, two of them were protocol errors. The side that times out first sends `close` with reason `timeout`, so the stalled peer learns why. Every cleanup write (`close` frames, WebSocket close at handshake refusal, timeout, link shutdown, data channel end) has its own bound `CLEANUP_LIMIT` = 1 s, so a peer that reads nothing cannot hold a task. Tests: `tests/stalled_handshake.rs`.
+- **Owner review:** pending
+
+## DL-024 — Capability matrix values that change the adapter design
+
+- **Context:** M1-F filled the PLAN §6.2 capability matrix with verified values (value and evidence columns only). Some verified values differ from what the PLAN cells expected and need a design rule that PLAN does not state.
+- **Findings and choices:**
+  1. **Codex background work is polled, not pushed.** A command that outlives its turn sends no notification, and its `item/completed` arrives after `turn/completed` (`background_terminal`). Choice: the Codex adapter calls `thread/backgroundTerminals/list` after each `turn.completed` and then on an interval while the list is not empty, and reports the list as `run.completed { background_pending }` / `background.updated` (DL-011). The poll interval is a Phase 1 setting.
+  2. **Codex child work streams on the same connection.** The child thread's turn and items carry the child `threadId`; `spawnAgent` names the child in `receiverThreadIds` only in its completed item. Choice: the adapter links child tool items to the collab call, ignores child turn boundaries for the parent turn, and does not report child messages as parent messages (`spawn_agent_links_its_child_thread_when_the_item_completes`).
+  3. **Claude sub-agents and background tasks can start a provider turn without host input** after the parent turn ended (`subagent`, `background_task`). Choice: such a turn is `origin: provider` and never confirms a pending host input (DL-006); Phase 1 shows the session as "background work" until `background_tasks_changed` is empty.
+  4. **Codex has no follow-up queue and no edit-before-allow** in the stable API: the PLAN degradations apply (host-side queue, DL-015; allow/deny only).
+  5. **Codex reports no cost.** `usage.cost_usd` stays unknown (null), never zero.
+  6. **Open requests survive a restart: no, for both providers.** The PLAN degradation applies (`approval.expired { reason: not_resumable }`).
+- **Reason:** each choice is the PLAN degradation or the most conservative mapping of verified provider behaviour (doctrine PLAN §3: no invented state, unknown ≠ zero, fail closed).
 - **Owner review:** pending

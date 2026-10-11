@@ -38,9 +38,11 @@ pub const CLIENT_REQUESTS: &[&str] = &[
     "initialize",
     "thread/start",
     "thread/resume",
+    "thread/fork",
     "turn/start",
     "turn/steer",
     "turn/interrupt",
+    "thread/backgroundTerminals/list",
 ];
 
 use crate::rpc::{self, Incoming};
@@ -138,6 +140,9 @@ pub struct SessionSpec {
     pub cwd: Option<String>,
     /// Native thread id to resume instead of starting a new thread.
     pub resume: Option<String>,
+    /// With `resume`: fork that thread into a new thread (`thread/fork`)
+    /// instead of resuming it.
+    pub fork: bool,
 }
 
 /// Arguments for the `codex` binary.
@@ -164,6 +169,8 @@ pub(crate) enum HostRequest {
     Initialize,
     ThreadStart,
     ThreadResume,
+    ThreadFork,
+    BackgroundList,
     TurnStart { input_id: String },
     TurnSteer { input_id: String },
     Interrupt,
@@ -237,6 +244,12 @@ impl CodexCore {
         self.mode.as_ref().map(Mode::name)
     }
 
+    /// The parent tool node of a sub-agent thread, once a
+    /// `collabAgentToolCall` named the thread.
+    pub fn child_thread_parent(&self, thread_id: &str) -> Option<&str> {
+        self.child_threads.get(thread_id).map(String::as_str)
+    }
+
     /// Latest aggregated unified diff of the running or last turn.
     pub fn turn_diff(&self) -> Option<&str> {
         self.turn_diff.as_deref()
@@ -303,7 +316,11 @@ impl CodexCore {
                 if let Some(obj) = params.as_object_mut() {
                     obj.insert("threadId".into(), thread.clone().into());
                 }
-                ("thread/resume", HostRequest::ThreadResume)
+                if spec.fork {
+                    ("thread/fork", HostRequest::ThreadFork)
+                } else {
+                    ("thread/resume", HostRequest::ThreadResume)
+                }
             }
             None => {
                 if let Some(obj) = params.as_object_mut() {
@@ -424,6 +441,20 @@ impl CodexCore {
             "turn/interrupt",
             json!({"threadId": thread, "turnId": turn}),
         ))]
+    }
+
+    /// Asks Codex for the thread's background terminals
+    /// (`thread/backgroundTerminals/list`). Codex reports no background work
+    /// on its own after a turn ends (trap 4), so the adapter polls; the reply
+    /// becomes `background.updated`.
+    pub fn list_background(&mut self) -> Result<Vec<Output>, AdapterError> {
+        let thread = self.thread_id.clone().ok_or(AdapterError::NoThread)?;
+        let id = self.host_id(HostRequest::BackgroundList);
+        Ok(vec![Output::Write(rpc::request(
+            &id,
+            "thread/backgroundTerminals/list",
+            json!({ "threadId": thread }),
+        ))])
     }
 
     /// Sets the collaboration mode of the next turns (`plan` or `default`).

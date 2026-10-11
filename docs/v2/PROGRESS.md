@@ -19,7 +19,7 @@ Rules for this file: one checklist item per M1 deliverable, in PLAN order. Each 
 - [x] **S4-2 Link handshake + channels.** `Hello` with `proto_min/max`, feature flags, roles, `link_epoch`, nonce; transcript signature bound to the TLS exporter; version negotiation; control channel (frames of §8.3) and data channel (multiplexed streams, credit flow control). *(round 10)*
 - [x] **S4-3 Link pairing + reconnect.** `fdinv1:` invitations both directions (single use, 15 min, fingerprint-bound, secret proof bound to TLS); jittered backoff reconnect; duplicate link (`link_epoch`) rule; station-only-dials (NAT) case; multi-process loopback test with separate data dirs. *(round 11)*
 - [x] **S4-4 ADR-004** (Proposed): link protocol v1 (frames, handshake, pairing, scopes, reconnect, feature flags). *(round 12; plus WebSocket upgrade and setup timeouts, DL-023)*
-- [ ] **M1-F Close-out.** PLAN §6.2 matrix: verified value + evidence per cell; `spikes/README.md` offline commands for every spike; full acceptance run; DECISIONS-LOG complete.
+- [x] **M1-F Close-out.** PLAN §6.2 matrix: verified value + evidence per cell; `spikes/README.md` offline commands for every spike; full acceptance run; DECISIONS-LOG complete. *(round 13; plus the review fix for post-upgrade timeouts and the TCP self-connect guard)*
 
 ## Round log
 
@@ -267,3 +267,22 @@ Rules for this file: one checklist item per M1 deliverable, in PLAN order. Each 
   - `web/` checks and TS-types drift → not applicable in M1
 - Next: M1-F close-out (capability matrix in PLAN §6.2 with values + evidence, acceptance run).
 
+### Round 13 (2026-10-11)
+
+- Committed round 12 as `a144f0d`.
+- Review fix (post-upgrade timeouts): a stalled `hello`/`auth`, `ready`, or pairing proof now fails with `LinkError::Timeout` (reason `timeout`, the error names the step), the timed-out side sends `close` `timeout` to the peer, and every cleanup write (`close` frames, WebSocket close) has a 1 s bound (`CLEANUP_LIMIT`). New `spikes/s4-link/tests/stalled_handshake.rs` with scripted fake peers that upgrade the WebSocket and then stall: `a_listener_that_never_sends_hello_times_out_the_dial`, `a_listener_that_never_sends_ready_times_out_the_dial`, `a_dialer_that_never_sends_hello_times_out_on_the_listener`, `an_inviter_that_never_answers_the_proof_times_out_the_joiner`, `a_joiner_that_never_sends_its_proof_times_out_and_keeps_the_invitation`. DL-023 and ADR-004 §2.5/§3/§4 updated.
+- Flake found and fixed: one stress run failed `multiprocess::nat_stations_pair_dial_and_reconnect_after_a_deck_restart`. Cause: Linux TCP self-connect while the deck restarts (a dial to a free loopback port can get that port as its own source port and hold it). `net::dial_tcp` now refuses a self-connected socket (`NetError::SelfConnect`, reason `self_connect`); tests `net::tests::a_socket_connected_to_itself_is_refused`, `a_normal_connection_is_kept`.
+- M1-F capability evidence for the three Codex gaps, recorded live (gpt-5.6-luna, temp dirs): `fork_thread` (`thread/fork`), `subagent` (collab agent; child-thread frames stream on the same connection), `background_terminal` (no notification; found by `thread/backgroundTerminals/list` after the turn: 1, then 0). Core additions: `SessionSpec.fork`, `HostCmd::ListBackground`, child-thread linking when `spawnAgent` completes (`spawn_agent_links_its_child_thread_when_the_item_completes`).
+- New matrix tests: `spikes/s1-claude/tests/matrix.rs` (7) and `spikes/s2-codex/tests/matrix.rs` (7).
+- PLAN §6.2 matrix: every Claude/Codex value and every Evidence cell filled (only those columns changed; a script checked that Group, Capability and Degradation are unchanged). Every cited test name and fixture exists (checked with grep). DL-024 records the design consequences (Codex background polling, child-thread linking, provider-origin turns, no Codex cost, no restart survival).
+- ADR-002: `thread/fork`, `list_background`, child-thread linking, traps 4/5 with evidence, 18 fixtures, `tests/matrix.rs`. ADR-001: `tests/matrix.rs`. README: matrix test commands and the three new Codex fixtures.
+- Commands and results:
+  - `cargo fmt --all --check` → pass
+  - `cargo clippy --workspace --all-targets -- -D warnings` → pass
+  - `CI=true cargo nextest run --workspace` → 230 passed
+  - `cargo deny check` → advisories ok, bans ok, licenses ok, sources ok
+  - `cargo run -p s2-codex --bin replay-codex` → 18 ok, exit 0
+  - `cargo run -p s1-claude --bin replay-claude` → 29 ok (19 Rust + 10 SDK), exit 0
+  - Clean checkout check: a temporary `git worktree` of HEAD plus this round's diff and new files, each command's exit code captured (no pipes): `cargo fmt --all --check` exit 0; `cargo clippy --workspace --all-targets -- -D warnings` exit 0; `CI=true cargo nextest run --workspace` exit 0, 230 passed; `cargo deny check` exit 0; `replay-claude` exit 0, 29 ok; `replay-codex` exit 0, 18 ok; the README per-spike commands exit 0 (s1-claude 24, s2-codex 38, s4-link 90 passed)
+  - `web/` checks and TS-types drift → not applicable in M1 (no `web/`, no `ts-rs` types until Phase 1)
+- M1 acceptance (goal text): every item has file and command evidence (see the round 13 summary). The ADRs stay **Proposed** as the goal requires. PLAN Phase 0 *exit* is a separate owner gate: approve ADR-001/002/004, run the adversary DESIGN REVIEW of ADR-004 (the loop forbids subagents), do a real tailnet check, and review DL-001..DL-024.

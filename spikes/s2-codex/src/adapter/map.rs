@@ -1,7 +1,9 @@
 //! App-server replies and notifications → canonical events.
 
 use serde_json::{Map, Value};
-use spike_canon::{CanonEvent, FileChange, InputState, ToolKind, ToolStatus, TurnStatus, Usage};
+use spike_canon::{
+    BackgroundTask, CanonEvent, FileChange, InputState, ToolKind, ToolStatus, TurnStatus, Usage,
+};
 
 use super::{CodexCore, HostRequest, Output, ToolNode};
 
@@ -131,7 +133,10 @@ impl CodexCore {
                 self.initialized = true;
                 vec![Output::Write(crate::rpc::notification("initialized"))]
             }
-            (HostRequest::ThreadStart | HostRequest::ThreadResume, Ok(r)) => {
+            (
+                HostRequest::ThreadStart | HostRequest::ThreadResume | HostRequest::ThreadFork,
+                Ok(r),
+            ) => {
                 let thread = r.get("thread").cloned().unwrap_or_default();
                 self.thread_id = str_at(&thread, "id").map(str::to_owned);
                 let model = str_at(&r, "model")
@@ -165,6 +170,22 @@ impl CodexCore {
                 out
             }
             (HostRequest::Interrupt, Ok(_)) => Vec::new(),
+            (HostRequest::BackgroundList, Ok(r)) => {
+                let tasks = r
+                    .get("data")
+                    .and_then(Value::as_array)
+                    .map(|data| {
+                        data.iter()
+                            .filter_map(|t| str_at(t, "processId"))
+                            .map(|id| BackgroundTask {
+                                task_id: id.to_owned(),
+                                task_kind: "background_terminal".into(),
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                vec![Output::Emit(CanonEvent::BackgroundUpdated { tasks })]
+            }
             (_, Err((code, message))) => vec![Output::Emit(CanonEvent::Error {
                 code: format!("rpc_{code}"),
                 message,
@@ -409,18 +430,7 @@ impl CodexCore {
         let parent_node_id = str_at(p, "threadId")
             .and_then(|t| self.child_threads.get(t))
             .cloned();
-        if item_type == "collabAgentToolCall" {
-            for t in item
-                .get("receiverThreadIds")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-            {
-                if let Some(t) = t.as_str() {
-                    self.child_threads.insert(t.to_owned(), node_id.clone());
-                }
-            }
-        }
+        self.link_child_threads(item, item_type, &node_id);
         self.tools.insert(
             item_id.to_owned(),
             ToolNode {
@@ -460,6 +470,8 @@ impl CodexCore {
             _ => ToolStatus::Ok,
         };
         let node_id = node.node_id.clone();
+        // `spawnAgent` names its child thread only in the completed item.
+        self.link_child_threads(item, item_type, &node_id);
         if item_type == "fileChange" && status == ToolStatus::Ok {
             for change in item
                 .get("changes")
@@ -474,6 +486,25 @@ impl CodexCore {
         }
         out.push(Output::Emit(CanonEvent::ToolCompleted { node_id, status }));
         out
+    }
+
+    /// A `collabAgentToolCall` names the sub-agent threads it started or waits
+    /// for. Their tool items get this node as parent. The first parent wins.
+    fn link_child_threads(&mut self, item: &Value, item_type: &str, node_id: &str) {
+        if item_type != "collabAgentToolCall" {
+            return;
+        }
+        for t in item
+            .get("receiverThreadIds")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+        {
+            self.child_threads
+                .entry(t.to_owned())
+                .or_insert_with(|| node_id.to_owned());
+        }
     }
 
     /// One `file.changed` per path and turn. `fileChange` items carry absolute

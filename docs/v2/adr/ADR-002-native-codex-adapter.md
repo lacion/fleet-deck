@@ -45,15 +45,16 @@ The spike has the same three layers as S1 (ADR-001 §2.2); Phase 1 moves them to
 | Host command | Wire | Notes |
 | --- | --- | --- |
 | `initialize` | `initialize` request, then `initialized` | experimental API on |
-| `open_thread` | `thread/start` or `thread/resume` | mode → `approvalPolicy` + `sandbox` |
+| `open_thread` | `thread/start`, `thread/resume`, or `thread/fork` (resume + `fork`) | mode → `approvalPolicy` + `sandbox` |
 | `prompt { text, input_id }` | idle: `turn/start { threadId, input, clientUserMessageId: input_id, effort }`; busy: held host-side | a `turn/start` during a turn joins the running turn (it acts as a steer), and `thread/queue/*` is experimental, so the core queues follow-ups itself (DL-015) |
 | `steer { text, input_id }` | `turn/steer { threadId, expectedTurnId, input, clientUserMessageId }` | `NoTurn` if no turn runs |
 | `answer { request_id, option_id, updated_input?, message? }` | reply to the server request, or a new user message (§2.6) | idempotent |
 | `interrupt` | `turn/interrupt { threadId, turnId }` | held until `turn/started` (§2.8) |
 | `set_mode { mode }` | `approvalPolicy` + `sandboxPolicy` on the next `turn/start` | `mode.changed` when that turn is accepted |
 | `set_collaboration { mode }` | `collaborationMode { mode: plan\|default, settings }` on the next `turn/start` | plan capture, RPC questions |
+| `list_background` | `thread/backgroundTerminals/list { threadId }` | reply `data[]` → `background.updated` (DL-011); the only way to see work that outlives the turn (§2.10) |
 
-Codex has no separate `set_model` request: `turn/start` and `thread/resume` take `model`. Phase 1 maps `LiveSession::set_model` to the next `turn/start`, as for modes. Fork (`thread/fork`) exists in the schema and is not exercised by S2; the capability matrix records it as not verified.
+Codex has no separate `set_model` request: `turn/start` and `thread/resume` take `model`. Phase 1 maps `LiveSession::set_model` to the next `turn/start`, as for modes. Fork: `thread/fork` of a finished thread returns a new thread id with the source's context (`fork_thread`, `matrix::fork_gives_a_new_thread_with_the_old_context`). The fork's rollout does not repeat the source's client ids.
 
 ### 2.5 Provider frames → canonical events
 
@@ -66,7 +67,7 @@ Codex has no separate `set_model` request: `turn/start` and `thread/resume` take
 | `item/agentMessage/delta` | `message.delta` |
 | `item/completed` `agentMessage` (own thread, text not empty) | `message.completed`; `questions` with `delivery: async` → `approval.requested { response: message }` |
 | `item/reasoning/summaryTextDelta`, `item/reasoning/textDelta` | `reasoning.delta` |
-| `item/started` / `item/completed` `commandExecution`, `fileChange`, `mcpToolCall`, `webSearch`, `collabAgentToolCall`, … | `tool.started` / `tool.completed { ok \| failed \| denied }`; `parent_node_id` from `receiverThreadIds` of a collab call |
+| `item/started` / `item/completed` `commandExecution`, `fileChange`, `mcpToolCall`, `webSearch`, `collabAgentToolCall`, … | `tool.started` / `tool.completed { ok \| failed \| denied }`; tool items of a child thread get `parent_node_id` = the collab call that named the thread in `receiverThreadIds` (`spawnAgent` names it only in its completed item) |
 | `item/completed` `fileChange` (completed) | `file.changed` per change (`add`/`delete`/`update` → added/deleted/modified) |
 | `turn/diff/updated` | keeps the aggregated diff; each path that no item reported yet → `file.changed` (paths joined with the thread cwd before the duplicate check) |
 | `item/completed` `plan` | `plan.proposed { markdown }` |
@@ -114,8 +115,8 @@ A mode is `<approvalPolicy>/<sandbox>` with only native values: policies `untrus
 | 1 setting before advertised | modes/models apply per turn | pending mode is applied and announced only when a turn is accepted |
 | 2 `default` sentinel | not a native mode | `untrusted/read-only` |
 | 3 stop before the turn started | `-32600` | held interrupt (§2.8) |
-| 4 provider-started work | background terminals (`thread/backgroundTerminals/*`) exist; not recorded | Phase 1 adds a scenario; frames of unknown turns never confirm inputs |
-| 5 subagents outlive the run | collab agents run on child threads | child-thread turn frames never touch the parent turn |
+| 4 provider-started work | a command that outlives its turn sends no notification; its `item/completed` arrives after `turn/completed` (`background_terminal`) | the adapter polls `thread/backgroundTerminals/list` after `turn.completed` until it is empty and reports `background.updated`; frames of unknown turns never confirm inputs |
+| 5 subagents outlive the run | collab agents run on child threads; the child's turn and items stream on the same connection (`subagent`) | child-thread turn frames never touch the parent turn; child tool items link to the collab call; child messages are not parent messages |
 | 6 close everything on terminal paths | — | `turn/completed` and process exit close open tools and requests, discard waiting follow-ups (`exit_expires_requests_and_discards_follow_ups`) |
 | 7 usage limits | `error.codexErrorInfo.usageLimitExceeded` | `error { usage_limit }` (`usage_limit_errors_get_their_own_code`) |
 | 8 symlinked workspaces | item paths are absolute, diff paths relative | join with the thread cwd before comparing; Phase 1 canonicalizes the cwd once at session start |
@@ -185,8 +186,11 @@ Fixtures: `spikes/s2-codex/fixtures/*.jsonl` (format in `spikes/README.md`), rec
 | `interrupt_right_after_send` | — | trap 3, held interrupt |
 | `set_mode` | — | mode change applied with the next turn |
 | `approval_restart` | — | kill with an open approval, resume, new request |
+| `fork_thread` | — | `thread/fork`: new thread id, context kept |
+| `subagent` | — | `spawnAgent` + `wait` collab calls, child-thread frames on the same connection |
+| `background_terminal` | — | a command outlives the turn; found by `thread/backgroundTerminals/list` (1, then 0) |
 
-All 8 shared scenarios are supported; none is unsupported. Tests: `src/adapter/tests.rs` and `tests_review.rs` (core), `src/rpc.rs` (framing, proptest), `tests/replay_fixtures.rs` (every fixture replays with identical host writes; a changed write fails), `tests/evidence.rs`, `tests/schema_methods.rs`, `tests/schema_conformance.rs`, `tests/fixture_hygiene.rs`. Offline command: `cargo run -p s2-codex --bin replay-codex` and `cargo nextest run -p s2-codex`.
+All 8 shared scenarios are supported; none is unsupported. Tests: `src/adapter/tests.rs` and `tests_review.rs` (core), `src/rpc.rs` (framing, proptest), `tests/replay_fixtures.rs` (every fixture replays with identical host writes; a changed write fails), `tests/evidence.rs`, `tests/matrix.rs` (PLAN §6.2 matrix cells), `tests/schema_methods.rs`, `tests/schema_conformance.rs`, `tests/fixture_hygiene.rs`. Offline command: `cargo run -p s2-codex --bin replay-codex` and `cargo nextest run -p s2-codex`.
 
 ## 5. Coverage of PLAN §14 Phase 0, S2
 

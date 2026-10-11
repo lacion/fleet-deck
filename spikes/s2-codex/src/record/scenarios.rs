@@ -10,6 +10,7 @@ use anyhow::{Result, bail, ensure};
 use spike_canon::{CanonEvent, TurnStatus};
 
 use super::Ctx;
+use super::capability::{background_terminal, fork_thread, subagent};
 use super::extra::{
     approval_restart, file_change, interrupt_during_tool, interrupt_right_after_send, plan_capture,
     question_rpc, set_mode,
@@ -140,6 +141,24 @@ pub const SCENARIOS: &[Scenario] = &[
         false,
         "Kill app-server while a command approval is open; a new process resumes the thread: is the request asked again?",
         approval_restart
+    ),
+    scenario!(
+        "fork_thread",
+        false,
+        "thread/fork of a finished thread: a new thread id that keeps the old context.",
+        fork_thread
+    ),
+    scenario!(
+        "subagent",
+        false,
+        "One sub-agent through the multi-agent tools: child work and its parent link.",
+        subagent
+    ),
+    scenario!(
+        "background_terminal",
+        false,
+        "A command that outlives the turn; the host polls thread/backgroundTerminals/list.",
+        background_terminal
     ),
 ];
 

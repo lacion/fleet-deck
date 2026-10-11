@@ -41,10 +41,10 @@ cargo nextest run -p s1-claude --test reference_fixtures
 S1 canonical event snapshots (one `insta` snapshot per fixture in `spikes/s1-claude/tests/snapshots/`) and the adapter evidence tests that `spikes/s1-claude/EVIDENCE.md` cites:
 
 ```sh
-CI=true cargo nextest run -p s1-claude --test event_snapshots --test evidence --test capabilities --test fixture_hygiene
+CI=true cargo nextest run -p s1-claude --test event_snapshots --test evidence --test capabilities --test matrix --test fixture_hygiene
 ```
 
-`capabilities` holds the capability-matrix evidence (EVIDENCE.md E7). `fixture_hygiene` fails if a fixture contains a local path (home, user name, temporary directory), also across streamed deltas.
+`capabilities` and `matrix` hold the PLAN §6.2 capability-matrix evidence (EVIDENCE.md E7; every test name is cited in the matrix). `fixture_hygiene` fails if a fixture contains a local path (home, user name, temporary directory), also across streamed deltas.
 
 `CI=true` makes `insta` fail on a changed snapshot instead of writing a `.snap.new` file. After an intended change, review the new streams with `INSTA_UPDATE=always cargo nextest run -p s1-claude --test event_snapshots` and `git diff spikes/s1-claude/tests/snapshots`.
 
@@ -72,7 +72,7 @@ cargo run -p s2-codex --bin replay-codex -- --events spikes/s2-codex/fixtures/si
 The same checks and the adapter evidence (prompt confirmation, restart survival, native option ids, held interrupt) run as tests:
 
 ```sh
-cargo nextest run -p s2-codex --test replay_fixtures --test evidence --test fixture_hygiene --test schema_methods --test schema_conformance
+cargo nextest run -p s2-codex --test replay_fixtures --test evidence --test matrix --test fixture_hygiene --test schema_methods --test schema_conformance
 ```
 
 Codex supports all 8 shared scenarios of PLAN §13 (`simple`, `multi_turn`, `queued_turn`, `turn_interrupt`, `message_steering`, `provider_thread_resume`, `tool_call_approve`, `tool_call_deny`). No shared scenario is unsupported. Two need a note:
@@ -80,7 +80,7 @@ Codex supports all 8 shared scenarios of PLAN §13 (`simple`, `multi_turn`, `que
 - `queued_turn`: the host holds the second prompt and sends it after the first turn, because `turn/start` during a turn joins that turn (DL-015).
 - `tool_call_deny`: under `untrusted` Codex 0.160.0 offers `accept`, `acceptWithExecpolicyAmendment` and `cancel` for a command, and no `decline`. The recorder denies with `cancel` (DL-015).
 
-Extra Codex fixtures: `question_rpc` (L4 RPC question), `plan_capture`, `file_change`, `interrupt_during_tool`, `interrupt_right_after_send` (trap 3), `set_mode`, `approval_restart` (open approval across a kill and `thread/resume`).
+Extra Codex fixtures: `question_rpc` (L4 RPC question), `plan_capture`, `file_change`, `interrupt_during_tool`, `interrupt_right_after_send` (trap 3), `set_mode`, `approval_restart` (open approval across a kill and `thread/resume`), `fork_thread` (`thread/fork`), `subagent` (collab agent with a child thread), `background_terminal` (a command that outlives the turn, found by `thread/backgroundTerminals/list`). `matrix` holds the PLAN §6.2 matrix evidence for Codex.
 
 The second L4 question channel (an `agentMessage` with `delivery: "async"` questions, answered by a new user message) has no live fixture: in 0.160.0 its tool is behind the under-development feature `send_message_to_user_async`, and the model cannot call it. The unit test `async_questions_are_answered_by_a_new_message` and the schema test `async_question_fields_exist_in_the_schema` cover it (ADR-002 §2.6).
 

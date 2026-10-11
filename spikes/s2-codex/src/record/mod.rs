@@ -6,6 +6,7 @@
 //! mode, so every command that writes asks first. The recorder saves the
 //! scrubbed records as a fixture file.
 
+mod capability;
 mod extra;
 pub mod rollout;
 mod scenarios;
@@ -55,12 +56,19 @@ impl Ctx {
             mode: Some(mode.to_owned()),
             cwd: Some(self.workdir.to_string_lossy().into_owned()),
             resume,
+            fork: false,
         }
     }
 
     /// Starts `codex app-server`, runs the `initialize` handshake, and opens
     /// (or resumes) the thread.
     pub async fn start(&mut self, mode: &str, resume: Option<String>) -> Result<LiveSession> {
+        let spec = self.spec(mode, resume);
+        self.start_with(spec).await
+    }
+
+    /// [`Ctx::start`] with a full session spec (for example a fork).
+    pub async fn start_with(&mut self, spec: SessionSpec) -> Result<LiveSession> {
         let mut s = LiveSession::spawn(&self.cfg.bin, &self.workdir, &mut self.log)?;
         s.cmd(HostCmd::Initialize, &mut self.log).await?;
         let deadline = Instant::now() + Duration::from_secs(30);
@@ -71,7 +79,6 @@ impl Ctx {
                 bail!("app-server ended during initialize");
             }
         }
-        let spec = self.spec(mode, resume);
         s.cmd(HostCmd::open_thread(&spec), &mut self.log).await?;
         s.until(Duration::from_secs(30), &mut self.log, |e| {
             matches!(e, CanonEvent::SessionStarted { .. })

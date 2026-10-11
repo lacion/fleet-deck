@@ -15,6 +15,7 @@ use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 use tokio_tungstenite::tungstenite::Message;
 
+use super::handshake::CLEANUP_LIMIT;
 use super::{Grants, LinkError, Ws};
 use crate::frames::{ControlFrame, ErrorBody, Outcome, Scope, authorize};
 use crate::hello::Negotiated;
@@ -203,12 +204,13 @@ async fn run(
                 {
                     break end;
                 }
-                let _ = write(&mut ws, &ControlFrame::Close { reason: reason.clone(), detail: detail.clone() }).await;
+                let close = ControlFrame::Close { reason: reason.clone(), detail: detail.clone() };
+                let _ = tokio::time::timeout(CLEANUP_LIMIT, write(&mut ws, &close)).await;
                 break (reason, detail);
             }
         }
     };
-    let _ = ws.close(None).await;
+    let _ = tokio::time::timeout(CLEANUP_LIMIT, ws.close(None)).await;
     // The link is one unit: the data channel never outlives its control channel.
     if let Some(stop) = p.data_stop.take() {
         let _ = stop.send((reason.clone(), detail.clone()));

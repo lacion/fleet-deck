@@ -323,3 +323,53 @@ fn rpc_question_answers_are_validated_before_the_write() {
     );
     assert_eq!(writes(&out), vec![json!({"id": 3, "result": good})]);
 }
+
+/// Codex 0.160.0 names the child thread of `spawnAgent` only in the
+/// completed item (`receiverThreadIds` is empty in `item/started`), as in the
+/// `subagent` fixture. The child's tool items must still get the parent link.
+#[test]
+fn spawn_agent_links_its_child_thread_when_the_item_completes() {
+    let mut core = ready_core();
+    start_turn(&mut core, "in-1", "n1");
+    let spawn = json!({"type": "collabAgentToolCall", "id": "spawn1", "tool": "spawnAgent",
+        "receiverThreadIds": [], "status": "inProgress"});
+    notify(
+        &mut core,
+        "item/started",
+        json!({"threadId": T, "item": spawn}),
+    );
+    assert_eq!(core.child_thread_parent("child-1"), None);
+    let mut done = json!({"type": "collabAgentToolCall", "id": "spawn1", "tool": "spawnAgent",
+        "receiverThreadIds": ["child-1"], "status": "completed"});
+    notify(
+        &mut core,
+        "item/completed",
+        json!({"threadId": T, "item": done.clone()}),
+    );
+    assert_eq!(core.child_thread_parent("child-1"), Some("node-2"));
+    // A later `wait` call names the same thread; the first parent stays.
+    done["id"] = json!("wait1");
+    done["tool"] = json!("wait");
+    notify(
+        &mut core,
+        "item/started",
+        json!({"threadId": T, "item": done}),
+    );
+    assert_eq!(core.child_thread_parent("child-1"), Some("node-2"));
+    let ev = emits(&notify(
+        &mut core,
+        "item/started",
+        json!({"threadId": "child-1", "item": {"type": "commandExecution", "id": "cc1", "command": "ls"}}),
+    ));
+    assert!(
+        matches!(&ev[0], CanonEvent::ToolStarted { parent_node_id: Some(p), .. } if p == "node-2"),
+        "{ev:?}"
+    );
+    // The child's own message is not a message of the parent turn.
+    let ev = emits(&notify(
+        &mut core,
+        "item/completed",
+        json!({"threadId": "child-1", "item": {"type": "agentMessage", "id": "m1", "text": "sub-ok"}}),
+    ));
+    assert!(ev.is_empty(), "{ev:?}");
+}

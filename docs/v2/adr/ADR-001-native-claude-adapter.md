@@ -178,7 +178,7 @@ Extra Rust fixtures: `tool_call_edit_input` (also SDK), `set_permission_mode` (a
 Offline tests (no network, no `claude`):
 
 - `replay-claude`: replays every Rust fixture with byte-identical host writes and every SDK fixture semantically (`reference.rs`, DL-008).
-- `tests/replay_fixtures.rs`, `tests/reference_fixtures.rs`, `tests/event_snapshots.rs` (one `insta` snapshot per fixture), `tests/evidence.rs`, `tests/capabilities.rs`, `tests/fixture_hygiene.rs`, and the unit and property tests of the core.
+- `tests/replay_fixtures.rs`, `tests/reference_fixtures.rs`, `tests/event_snapshots.rs` (one `insta` snapshot per fixture), `tests/evidence.rs`, `tests/capabilities.rs`, `tests/matrix.rs` (PLAN §6.2 matrix cells), `tests/fixture_hygiene.rs`, and the unit and property tests of the core.
 
 Live tests: `record-claude` (Rust) and `sdk-recorder/` (SDK). PLAN §13 runs a nightly live smoke test with a cheap model, and the SDK changelog watch catches protocol changes that reach the SDK first (A8).
 

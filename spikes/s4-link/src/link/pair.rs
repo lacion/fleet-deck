@@ -6,7 +6,9 @@
 
 use std::collections::BTreeSet;
 
-use super::handshake::{self, recv_frame, refuse, send_frame};
+use super::handshake::{
+    self, STEP_PROOF, close_quietly, recv_frame, refuse, send_frame, send_within, timed_out,
+};
 use super::{LinkError, NodeConfig, Ws, connect_ws};
 use crate::frames::Scope;
 use crate::hello::{Channel, HandshakeError, HandshakeFrame, Side};
@@ -62,13 +64,11 @@ pub async fn pair(
     };
     match tokio::time::timeout(node.handshake_timeout, steps).await {
         Ok(r) => r?,
-        Err(_) => {
-            return Err(refuse(&mut ws, HandshakeError::Protocol("pairing timeout".into())).await);
-        }
+        Err(_) => return Err(timed_out(&mut ws, STEP_PROOF, node.handshake_timeout).await),
     }
     node.pins.pin(peer, node.peer_role());
     node.grants.grant(peer, scopes);
-    let _ = ws.close(None).await;
+    close_quietly(&mut ws).await;
     Ok(peer)
 }
 
@@ -89,9 +89,7 @@ pub(super) async fn accept(
             .await);
         }
         Ok(Err(e)) => return Err(e),
-        Err(_) => {
-            return Err(refuse(&mut ws, HandshakeError::Protocol("pairing timeout".into())).await);
-        }
+        Err(_) => return Err(timed_out(&mut ws, STEP_PROOF, node.handshake_timeout).await),
     };
     let redeemed = match node.invites.redeem(transcript, &proof) {
         Ok(r) => r,
@@ -100,14 +98,15 @@ pub(super) async fn accept(
     let role = node.peer_role();
     node.pins.pin(peer, role);
     node.grants.grant(peer, redeemed.scopes.iter().copied());
-    send_frame(
+    send_within(
         &mut ws,
         &HandshakeFrame::Paired {
             proof: redeemed.answer,
         },
+        node.handshake_timeout,
     )
     .await?;
-    let _ = ws.close(None).await;
+    close_quietly(&mut ws).await;
     node.invites.notify_paired(PairedPeer {
         key: peer,
         role,

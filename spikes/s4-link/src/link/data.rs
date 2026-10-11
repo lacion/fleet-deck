@@ -234,7 +234,7 @@ async fn run(
             }
         }
     };
-    let _ = ws.close(None).await;
+    let _ = tokio::time::timeout(super::handshake::CLEANUP_LIMIT, ws.close(None)).await;
     // Pending writes fail now instead of waiting for credit that never comes.
     for (_, queue) in std::mem::take(&mut pending) {
         for (_, _, reply) in queue {

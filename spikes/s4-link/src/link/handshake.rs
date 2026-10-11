@@ -66,11 +66,61 @@ pub(crate) async fn recv_frame(ws: &mut Ws) -> Result<(String, HandshakeFrame), 
     }
 }
 
-/// Sends the `Close` frame for `e` (best effort) and returns `e`.
+/// Bound of every best-effort cleanup write (a `close` frame, the WebSocket
+/// close): a peer that stopped reading never holds a task (DL-023).
+pub(crate) const CLEANUP_LIMIT: Duration = Duration::from_secs(1);
+
+/// Step names in timeout errors.
+pub(crate) const STEP_HELLO: &str = "hello/auth exchange";
+pub(crate) const STEP_READY: &str = "wait for ready";
+pub(crate) const STEP_PROOF: &str = "pairing proof exchange";
+pub(crate) const STEP_WRITE: &str = "handshake write";
+
+/// Closes the WebSocket, best effort, within [`CLEANUP_LIMIT`].
+pub(crate) async fn close_quietly(ws: &mut Ws) {
+    let _ = tokio::time::timeout(CLEANUP_LIMIT, ws.close(None)).await;
+}
+
+/// Sends `frame` and then closes, best effort, within [`CLEANUP_LIMIT`].
+pub(crate) async fn close_with(ws: &mut Ws, frame: &HandshakeFrame) {
+    let _ = tokio::time::timeout(CLEANUP_LIMIT, async {
+        let _ = send_frame(ws, frame).await;
+        let _ = ws.close(None).await;
+    })
+    .await;
+}
+
+/// Sends the `Close` frame for `e` (best effort, bounded) and returns `e`.
 pub(crate) async fn refuse(ws: &mut Ws, e: HandshakeError) -> LinkError {
-    let _ = send_frame(ws, &e.close_frame()).await;
-    let _ = ws.close(None).await;
+    close_with(ws, &e.close_frame()).await;
     LinkError::Handshake(e)
+}
+
+/// Tells the peer that `step` timed out (best effort, bounded) and returns
+/// [`LinkError::Timeout`], whose reason is `timeout` on both sides.
+pub(crate) async fn timed_out(ws: &mut Ws, step: &'static str, limit: Duration) -> LinkError {
+    let e = LinkError::Timeout(step, limit);
+    close_with(
+        ws,
+        &HandshakeFrame::Close {
+            reason: "timeout".into(),
+            detail: e.to_string(),
+        },
+    )
+    .await;
+    e
+}
+
+/// [`send_frame`] bounded by `limit`.
+pub(crate) async fn send_within(
+    ws: &mut Ws,
+    frame: &HandshakeFrame,
+    limit: Duration,
+) -> Result<String, LinkError> {
+    match tokio::time::timeout(limit, send_frame(ws, frame)).await {
+        Ok(r) => r,
+        Err(_) => Err(timed_out(ws, STEP_WRITE, limit).await),
+    }
 }
 
 /// Hello + Auth on one channel, bounded by `node.handshake_timeout`.
@@ -90,7 +140,7 @@ pub(crate) async fn run(
     .await
     {
         Ok(r) => r,
-        Err(_) => Err(refuse(ws, HandshakeError::Protocol("handshake timeout".into())).await),
+        Err(_) => Err(timed_out(ws, STEP_HELLO, node.handshake_timeout).await),
     }
 }
 
@@ -142,7 +192,8 @@ pub(crate) async fn await_ready(ws: &mut Ws, limit: Duration) -> Result<(), Link
             _ => Err(LinkError::Protocol("expected Ready".into())),
         }
     };
-    tokio::time::timeout(limit, wait)
-        .await
-        .map_err(|_| LinkError::Protocol("no Ready from the listener".into()))?
+    match tokio::time::timeout(limit, wait).await {
+        Ok(r) => r,
+        Err(_) => Err(timed_out(ws, STEP_READY, limit).await),
+    }
 }

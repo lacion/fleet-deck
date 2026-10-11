@@ -88,7 +88,7 @@ Each channel runs the same handshake after the TLS handshake and the WebSocket u
 4. **Transcript signature.** The transcript is the tag `fleet-deck link transcript v1\0`, the 32-byte exporter value, the dialer's raw `Hello` text and the listener's raw `Hello` text (each with a length prefix), then the 32-byte dialer key and the 32-byte listener key. The raw hello texts contain both roles, both nonces, the epoch and the channel. Each side signs the transcript with a side tag (`dialer`/`listener`) and sends `{"type":"auth","signature":"<128 hex>"}`. The peer verifies the signature with the TLS-proven key and the other side's tag. The signature binds the link to this TLS session: a replayed or relayed hello fails.
 5. **Ready.** The listener applies the link table (§2.9) and then sends `{"type":"ready"}`, or `close` with `stale_link_epoch`. The dialer considers the link up only after `ready`.
 
-Every step after TLS has the bound `NodeConfig::handshake_timeout` (default 10 s, DL-023). This includes the WebSocket upgrade on both sides. A timeout gives the reason `timeout`.
+Every step after TLS has the bound `NodeConfig::handshake_timeout` (default 10 s, DL-023): the WebSocket upgrade on both sides, the hello/auth exchange, the `ready` wait, the pairing proofs, and each handshake write. A timeout gives the reason `timeout`, and the error names the step (for example `the wait for ready took longer than 300ms`). The side that times out sends `close` with reason `timeout` before it closes. Each cleanup write (`close` frames and WebSocket close) has its own bound of 1 s, so a peer that reads nothing cannot hold a task.
 
 **Feature flags of v1** (`hello::feature`):
 
@@ -202,12 +202,14 @@ Every refusal has a stable reason code that both sides can show:
 | `bad_invitation`, `address_refused`, `invitation_expired`, `invalid_invitation`, `too_many_attempts`, `inviter_proof_failed` | pairing |
 | `unknown_method`, `feature_not_negotiated`, `forbidden`, `missing_command_id` | request errors in a `response` |
 | `timeout` | any bounded step |
+| `self_connect` | a dial whose TCP socket connected to itself (no listener on a loopback port) |
 
 ## 3. Failure behaviour
 
 | Failure | Behaviour | Evidence |
 | --- | --- | --- |
-| Peer stalls after TLS (no upgrade, no hello) | The step fails with `timeout` after `handshake_timeout`. The listener keeps accepting other dialers, and the dial supervisor retries with backoff. | `tests/timeouts.rs` |
+| Peer stalls after TLS (no upgrade, no hello, no `ready`, no pairing proof) | The step fails with `timeout` after `handshake_timeout`, and the stalled peer gets `close` `timeout`. The listener keeps accepting other dialers, the dial supervisor retries with backoff, and a stalled pairing pins nothing and keeps the invitation open. | `tests/timeouts.rs`, `tests/stalled_handshake.rs` |
+| No listener on a loopback port (deck restarting) | A dialing socket that the kernel connects to itself (TCP simultaneous open) is dropped at once (`self_connect`), so it never holds the port that the restarting listener needs. | `net::tests::a_socket_connected_to_itself_is_refused` |
 | Deck restarts | The stations see `Lost`, retry with backoff, and relink with a higher epoch. The pins persist in the data directory. | `multiprocess::nat_stations_pair_dial_and_reconnect_after_a_deck_restart` |
 | Old half-open link plus new link | The higher epoch wins. The old link and its data channel close with `superseded`. | `link::a_higher_link_epoch_supersedes_and_a_lower_one_is_refused`, `link::a_superseded_link_loses_its_data_channel_too` |
 | Data channel TCP drops | The control channel closes with `data_channel_lost`, and the dialer relinks. | `link::closing_the_control_channel_ends_the_data_channel_on_both_sides` (reverse path in `link::control`) |
@@ -228,7 +230,7 @@ Every refusal has a stable reason code that both sides can show:
 | NAT case (station only dials) | 2.8, 2.10 | `pairing::a_station_without_a_listener_joins_the_deck_and_dials_it`, `multiprocess::nat_stations_pair_dial_and_reconnect_after_a_deck_restart` (two stations without a listener, separate processes and data directories) |
 | Public-address rejection | 2.2 | `addr.rs` unit tests (`bind_dial_and_peer_checks`, `only_listed_ranges_are_allowed_v4`, `only_listed_ranges_are_allowed_v6`), `tls::public_and_unspecified_addresses_are_refused_before_any_packet`, `multiprocess::public_and_wildcard_addresses_are_refused` |
 | Tailnet address rules (unit tests) | 2.2 | `addr.rs` unit tests `tailnet_ipv4_range_edges`, `tailnet_ipv6_prefix_is_exactly_a_48`, `ipv4_mapped_ipv6_uses_the_ipv4_rules`, `resolved_names_keep_only_allowed_addresses`. A real tailnet check is an owner step (§8). |
-| Stalled peers do not block setup | 2.5 | `timeouts::a_dial_to_a_server_that_never_upgrades_times_out`, `timeouts::a_client_that_never_sends_the_upgrade_does_not_block_the_listener` |
+| Stalled peers do not block setup | 2.5 | `timeouts::a_dial_to_a_server_that_never_upgrades_times_out`, `timeouts::a_client_that_never_sends_the_upgrade_does_not_block_the_listener`, `stalled_handshake::a_listener_that_never_sends_hello_times_out_the_dial`, `stalled_handshake::a_listener_that_never_sends_ready_times_out_the_dial`, `stalled_handshake::a_dialer_that_never_sends_hello_times_out_on_the_listener`, `stalled_handshake::an_inviter_that_never_answers_the_proof_times_out_the_joiner`, `stalled_handshake::a_joiner_that_never_sends_its_proof_times_out_and_keeps_the_invitation` |
 
 Offline command (no network): `cargo nextest run -p s4-link`.
 

@@ -84,6 +84,7 @@ impl LinkError {
             Self::Handshake(e) => Some(e.reason()),
             Self::Closed { reason, .. } => Some(reason),
             Self::Timeout(..) | Self::Net(NetError::Timeout(_)) => Some("timeout"),
+            Self::Net(NetError::SelfConnect(_)) => Some("self_connect"),
             _ => None,
         }
     }
@@ -488,9 +489,13 @@ async fn accept_one(
             });
             match slot {
                 Some(slot) => {
-                    if handshake::send_frame(&mut ws, &HandshakeFrame::Ready)
-                        .await
-                        .is_ok()
+                    if handshake::send_within(
+                        &mut ws,
+                        &HandshakeFrame::Ready,
+                        node.handshake_timeout,
+                    )
+                    .await
+                    .is_ok()
                     {
                         let _ = slot.send(ws);
                     }
@@ -553,7 +558,7 @@ async fn attach_control(
         let e = HandshakeError::Protocol(format!(
             "link epoch {epoch} is not newer than the current link epoch {current}"
         ));
-        let _ = handshake::send_frame(
+        handshake::close_with(
             &mut ws,
             &HandshakeFrame::Close {
                 reason: "stale_link_epoch".into(),
@@ -563,7 +568,7 @@ async fn attach_control(
         .await;
         return Err(LinkError::closed("stale_link_epoch", &e.to_string()));
     }
-    handshake::send_frame(&mut ws, &HandshakeFrame::Ready).await?;
+    handshake::send_within(&mut ws, &HandshakeFrame::Ready, node.handshake_timeout).await?;
     let data = if wants_data {
         match tokio::time::timeout(node.handshake_timeout, data_rx).await {
             Ok(Ok(dws)) => Some(dws),

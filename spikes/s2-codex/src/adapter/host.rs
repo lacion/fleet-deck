@@ -22,6 +22,8 @@ pub enum HostCmd {
         cwd: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         resume: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        fork: bool,
     },
     Prompt {
         text: String,
@@ -46,6 +48,7 @@ pub enum HostCmd {
     SetCollaboration {
         mode: String,
     },
+    ListBackground,
 }
 
 impl HostCmd {
@@ -56,6 +59,7 @@ impl HostCmd {
             mode: spec.mode.clone(),
             cwd: spec.cwd.clone(),
             resume: spec.resume.clone(),
+            fork: spec.fork,
         }
     }
 }
@@ -71,12 +75,14 @@ impl CodexCore {
                 mode,
                 cwd,
                 resume,
+                fork,
             } => Ok(self.open_thread(&SessionSpec {
                 model: model.clone(),
                 effort: effort.clone(),
                 mode: mode.clone(),
                 cwd: cwd.clone(),
                 resume: resume.clone(),
+                fork: *fork,
             })),
             HostCmd::Prompt { text, input_id } => self.prompt(text, input_id),
             HostCmd::Steer { text, input_id } => self.steer(text, input_id),
@@ -98,6 +104,7 @@ impl CodexCore {
             HostCmd::Interrupt => self.interrupt(),
             HostCmd::SetMode { mode } => self.set_mode(mode),
             HostCmd::SetCollaboration { mode } => self.set_collaboration(mode),
+            HostCmd::ListBackground => self.list_background(),
         }
     }
 }
