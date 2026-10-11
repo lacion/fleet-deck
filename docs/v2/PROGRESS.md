@@ -1,6 +1,6 @@
 # Fleet Deck v2 — progress (goal loop memory)
 
-Current milestone: **M2 = PLAN Phases 1–5** (M1 = Phase 0 is complete, see the M1 section below; M3 = Phases 6–7). The M2 goal loop has at most 50 rounds for M2 and M3 together.
+Current milestone: **M2 = PLAN Phases 1–5** — gate closed, see [GATE-M2.md](./GATE-M2.md); M3 not started (M1 = Phase 0 is complete, see the M1 section below; M3 = Phases 6–7). The M2 goal loop has at most 50 rounds for M2 and M3 together.
 
 Rules for this file: one checklist item per deliverable, in PLAN order. Each round updates the item status, the commands it ran, and the results. The work of a round stays uncommitted for the reviewer; the next round commits it first.
 
@@ -67,6 +67,17 @@ Sources: PLAN §14 Phases 1–5, GATE-M1 G1–G14, goal acceptance. G13 is P1-5.
 - [x] **P5-4 Codex board flows.** The Playwright flows for Claude and Codex. *(round 37, DL-066)*
 - [x] **P5-5 Live smoke tests.** One per provider (real CLI, tiny prompt, temp dir) behind `FD_LIVE_SMOKE=1`, documented; not in the default run. *(round 37, DL-067)*
 - [x] **M2-F Close-out.** Every exit check named in this file; `make check` on a clean checkout; DECISIONS-LOG complete. *(round 38: section "M2 acceptance evidence" below; DL-064 amended. Round 40: clean-checkout `make check` of commit `b139891` (DL-068) plus the round-40 diff passed all 14 commands; DL-001..DL-069 complete; round 41: M2 gate correction DL-070 (answer admission before the claim, session-loss cleanup), see the round-41 log)*
+- [x] **M2 gate.** Gate passed on `548d9478c51c3e7bc2c34c3ab81dcaba451a8114`: first review FAIL, correction DL-070, architect clean-clone `make check` and adversary CODE REVIEW PASS. Record: [GATE-M2.md](./GATE-M2.md). Owner demo checklist (not yet performed): [DEMO-M2.md](./DEMO-M2.md). PLAN Revision 3 applies the T3 P2 contracts L13, L14, L19 and `ShimHost` (DL-071; awaits adversary DESIGN REVIEW before M3 implementation).
+
+## M3 (not started)
+
+M3 = PLAN Phases 6–7. No M3 work has started. The adversary DESIGN REVIEW of the PLAN Revision 3 contracts comes first. Required hardening items carried from GATE-M2 §6:
+
+- [ ] **P2-a** First-prompt failure is only logged; record failure evidence for the initial input (`crates/fleetdeck-station/src/manager/target.rs:146-163`).
+- [ ] **P2-b** Codex message-channel answer effects never confirm; add a correlated provider input-start confirmation (`crates/fleetdeck-providers/src/codex/requests.rs:340-348,395-411`; `crates/fleetdeck-station/src/store/effects.rs:571-595`).
+- [ ] **SIGKILL survival** An offline child-survival test for a provider after a station SIGKILL (`crates/fleetdeck-providers/src/host/direct.rs:50-60`). Unverified, not a proven defect.
+- [ ] **ADR-005** (`ShimHost`) and **ADR-006** (coordinator MCP grants) are written before their implementation.
+- [ ] **Owner demo** The owner runs [DEMO-M2.md](./DEMO-M2.md) (owner action).
 
 ## M2 acceptance evidence (M2-F)
 

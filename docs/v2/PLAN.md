@@ -2,6 +2,15 @@
 
 *Written 2026-10-11 against v0.23.6 (`main` @ `a9fb3a2`). Target branch: `v2` (worktree `../fleet-deck-worktrees/v2`). Status: DRAFT 3 — the owner answered the §15 questions (D8–D14). The P1 lessons (and L4) from [t3code-lessons.md](./t3code-lessons.md) are applied: L1, L2, L3, L4, L5, L6, L7, L8, L11, L12, L15, L16, L20. P2 lessons are applied before the phase that builds them.*
 
+> **Revision 3 (M2 gate, T3 P2 lessons, 2026-10-12).** The M2 gate passed ([GATE-M2.md](./GATE-M2.md)). Revision 3 applies these P2 lessons of [t3code-lessons.md](./t3code-lessons.md) as binding contracts before M3:
+>
+> - L13 (checkpoints and revert): §6.3, §6.6, Phase 6.
+> - L14 (the coordinator API is an MCP server): §7.1, §9, Phase 6.
+> - L19 (auto-continue after a station restart): A10, Phase 7.
+> - The `ShimHost` contract: Phase 7.
+>
+> Revision 3 also makes the merge into `main` and the `2.0.0` release owner-only steps (Phase 7). It adds the three open items of GATE-M2 §6 as required M3 hardening items (Phases 6 and 7). It does not change the meaning of D1–D15, the network rule (D13: loopback, private LAN, and tailnet, never public), or any M1/M2 contract. DL-071 logs the change. The contracts wait for an adversary DESIGN REVIEW before M3 implementation starts.
+
 ---
 
 ## 1. Summary
@@ -63,7 +72,7 @@ fleetdeck station join <inv> # pair this station with a deck
 | A7 | **Two WebSocket channels per link:** `control` (small frames, high priority) and `data` (multiplexed byte streams with credit flow control). | A large file transfer must never delay an approval or an interrupt. WebSocket over TLS is one well-known transport for both hops (board and link); QUIC gives no benefit on a LAN or a tailnet. |
 | A8 | **Claude adapter: native Rust implementation of the stream-json control protocol (owner decision D8).** The official TypeScript Agent SDK is the behaviour reference. Spike S1 runs the SDK through a recording proxy and saves its frames as replay fixtures; the Rust adapter must pass the same fixtures. | Both official SDKs (TypeScript and Python) are wrappers over this same CLI protocol (`claude --input-format stream-json --output-format stream-json`), so it is the de-facto contract. A native adapter keeps one binary and no JS runtime on stations. **The advisor preferred an SDK sidecar first; the owner chose no sidecar.** Risk: a protocol change reaches the SDK before it reaches us. Control: the nightly live smoke test (§13) and the SDK changelog watch; a gap is fixed in Rust or the capability is marked unsupported. |
 | A9 | **No session shim in the MVP.** Design the `SessionHost` boundary now; build the shim in Phase 7. | A shim is a full supervisor (child lifecycle, output drain, reconnect ownership, upgrade compatibility). The MVP guarantee is explicit (see A10). |
-| A10 | **MVP durability guarantee:** "A deck or network failure never stops a session. A station failure can stop sessions; recovery uses the provider's native resume, which can lose in-flight work and open approvals." The UI shows "resumed" differently from "reattached". On start, the station first retires every open effect that belongs to a dead provider process and records the reason; only then does it admit new commands (L2). Open approvals of a dead process become `approval.expired { reason: not_resumable }` (L3). | Honest scope. Phase 7 upgrades this to "a station restart reattaches live sessions". An effect tied to a lost process cannot replay safely. |
+| A10 | **MVP durability guarantee:** "A deck or network failure never stops a session. A station failure can stop sessions; recovery uses the provider's native resume, which can lose in-flight work and open approvals." The UI shows "resumed" differently from "reattached". On start, the station first retires every open effect that belongs to a dead provider process and records the reason; only then does it admit new commands (L2). Open approvals of a dead process become `approval.expired { reason: not_resumable }` (L3). **Phase 7 auto-continue (Revision 3, L19):** after a station restart, auto-continue is a per-session preference, default OFF. It resumes only when the app run, the app session, the provider instance and thread, the native resume identity, and the recovered host identity all match. The intent is stored in the outbox with stable command and message ids. Before dispatch, the station rechecks newer user work, a requested stop, a maintenance `/compact` turn, completion, expiry, and capability. An ambiguous continuation is not a new prompt. Unsupported or uncertain recovery stays explicit `lost`/`not_resumable`; the station never auto-spawns a replacement and calls it a reattachment. | Honest scope. Phase 7 upgrades this to "a station restart reattaches live sessions". An effect tied to a lost process cannot replay safely. |
 | A11 | Stations and deck: Linux and macOS (WSL2 counts as Linux). Windows is not planned (D12). | Unix sockets, process groups, and the shim design are Unix-first. |
 | A12 | Git operations shell out to the `git` CLI. | Same as v0. Worktree behaviour and auth helpers must match what the user's own `git` does. |
 | A13 | Board login is **required by default**, also on loopback. `fleetdeck open` prints a one-time login URL from a local owner-only file. | The v0 review flagged tokenless loopback as a P0 risk once agents can call the API. |
@@ -292,6 +301,7 @@ approval.expired     { request_id, reason: not_resumable|process_lost }
 plan.proposed        { plan_id, markdown }
 usage.updated        { input_tokens, output_tokens, cost_usd?, rate_limits? }   (unknown ≠ zero)
 turn.completed       { turn_id, status: done|interrupted|failed, usage? }
+turn.finalized       { turn_id, checkpoint?, diff_summary? }  (Phase 6, L13: after turn.completed; never extends the turn)
 run.completed        { run_id, status: done|interrupted|failed, background_pending }
 error                { code, message }
 session.ended        { reason, exit_code? }
@@ -327,7 +337,14 @@ The permission mode decides which approvals occur at all. After a station restar
 - Repo catalog per station (path, origin URL scrubbed, default branch).
 - Worktrees: `<repo>--fd-<callsign>` on branch `fd/<callsign>` (or ticket-first, as in v0).
 - Clone on the station with the station's own `git` credentials. The deck never holds forge tokens.
-- File browse, search, read; diffs against the recorded base ref; per-turn checkpoints (shadow refs at `turn.started` and `turn.completed`) with revert.
+- File browse, search, read; diffs against the recorded base ref.
+- **Checkpoints and revert (Revision 3, L13; Phase 6).** This contract replaces the earlier "shadow refs with revert" text.
+  - The station records a turn-start checkpoint and a turn-completion checkpoint as hidden Git refs (outside `refs/heads` and `refs/tags`).
+  - `turn.completed` and `turn.finalized` are two events (§6.3). `turn.completed` ends the turn. `turn.finalized` comes later with the checkpoint. A late diff or checkpoint cannot extend the turn duration and cannot keep the card in the working state.
+  - Diffs come from the checkpoints. The station does not use Codex `turn/diff/updated` as a diff source.
+  - Before any filesystem mutation, revert checks the target session, provider, run, and checkpoint, the station policy, and the readiness of the session. When the provider cannot roll back its conversation, revert rejects the request before any filesystem mutation.
+  - A filesystem-only restore is never called a conversation rollback (in events, the board, or the CLI).
+  - Tests prove that a rejected revert leaves the files, the refs, and the durable state unchanged. Tests prove that a supported rollback is safe at every effect boundary.
 - Repo grouping for the conflict radar: a normalized origin URL is a **heuristic**, not an identity. Repos with several remotes or no remote are grouped only by explicit owner choice.
 
 ### 6.7 Station policy (local file, owner-edited)
@@ -386,8 +403,18 @@ The owner can open a plain shell in a repo or worktree from the board. It is for
 | Outbox | Durable deck→station intents (mail delivery, task assignment) with retries and receipts |
 | Fleet services | Callsigns, routing (`assign auto` across stations), mail, plans, tasks/completions, conflict radar, usage meters |
 | Board API | REST for commands; WS for snapshot + deltas |
-| Coordinator API | Scoped tokens for agent sessions that drive the fleet (read, mail, drive, spawn classes; spawn caps) |
+| Coordinator API | An MCP server for agent sessions that drive the fleet (Revision 3, L14): read, mail, drive, and spawn classes; spawn caps. The contract follows this table. |
 | Auth and audit | Owner login, sessions, CSRF, audit log of every mutation |
+
+**Coordinator API contract (Revision 3, L14; Phase 6).**
+
+- The coordinator API is an MCP server. Each station serves a loopback MCP endpoint to its own driven agents. The station forwards each call to the deck over the pinned link. The deck checks the grant.
+- Authority is bound to the station + the app session + the provider instance + the native thread.
+- Credentials have an idle expiry and are revoked at the end of the session. The raw credential is never stored in databases, events, config, read models, URLs, or logs.
+- The read, mail, drive, and spawn classes and the spawn caps stay. Tool parameters select targets, never authority.
+- Every mutation goes through the durable receipts and the outbox with stable ids. Queries are scoped to the grant.
+- The deck rechecks the grant, the pin, the expiry, and the session identity in the decision transaction. A queued or replayed operation never gains authority.
+- ADR-006 (written in M3, before the wiring) specifies the grant lifecycle, retry, and revocation, with executable negative tests.
 
 ### 7.2 Status projection
 
@@ -496,7 +523,7 @@ Close            { reason, detail }
 | Prompt injection from forge text or agent output | Third-party text is fenced and labeled as untrusted data; issue-driven spawns default to supervised |
 | XSS from agent output | Markdown rendered without raw HTML; strict CSP; no `dangerouslySetInnerHTML` on agent text |
 | Credential leak | Provider credentials stay on the station; `Secret<T>` cannot be serialized; env scrub for children; no secrets in argv or logs |
-| Coordinator agent overreach | Scoped token classes and spawn caps; token passed by env, never argv; every use audited |
+| Coordinator agent overreach | Loopback MCP endpoint per station, grant checked by the deck (§7.1, L14); authority bound to station + app session + provider instance + native thread; scoped classes and spawn caps; idle expiry and revocation at session end; raw credential never in argv, storage, events, URLs, or logs; grant rechecked in the decision transaction; every use audited |
 | Replay of old commands | Command ids + receipts; `target_incarnation` and `retry_until` on every mutating command, so a reset station never runs a resent command (G3); link-bound signatures |
 
 The adversary agent does a DESIGN REVIEW of this section and of §8 before Phase 3 freezes the link protocol.
@@ -690,13 +717,19 @@ Work method (from `AGENTS.md`): the architect splits each phase into task briefs
 
 ### Phase 6 — Fleet features (parity and beyond)
 
+**Required M3 hardening (GATE-M2 §6, Revision 3).** The M2 adversary re-review found these items. M3 must close them:
+
+- **P2-a:** record failure evidence for the initial input. Today a first-prompt failure is only logged ("the first prompt was not sent") and the start path returns `Dispatch::Confirmed` (`crates/fleetdeck-station/src/manager/target.rs:146-163`).
+- **P2-b:** confirm Codex message-channel answer effects through a correlated provider input-start confirmation. Today these requests have no node id, use the input id `answer-{app_id}`, and never confirm, because the observer confirms answers only through node-correlated tool events (`crates/fleetdeck-providers/src/codex/requests.rs:340-348,395-411`; `crates/fleetdeck-station/src/store/effects.rs:571-595`).
+- **Station SIGKILL survival:** an offline child-survival test shows whether a provider child ends after an uncatchable station kill. The host uses a separate process group and `kill_on_drop(true)` (`crates/fleetdeck-providers/src/host/direct.rs:50-60`). This is not a proven defect; the test decides. Phase 7 `ShimHost` uses the same test.
+
 - Worktrees, batch spawn, `Nx`, repo catalog, clone on the station.
 - Mail through the outbox, delivered as native follow-up/steer.
 - `assign auto` across stations.
-- Tasks and waitable completions; coordinator API with token classes and spawn caps; a deck-served control skill for coordinator agents.
+- Tasks and waitable completions; the coordinator API as an MCP server with grant classes and spawn caps (§7.1 contract, L14); a deck-served control skill for coordinator agents. ADR-006 (grant lifecycle, retry, revocation, executable negative tests) is written in M3 before the wiring.
 - Plans (capture from Claude `ExitPlanMode` and Codex plan items), plan library.
 - Conflict radar across stations.
-- Files, diffs, per-turn checkpoints with revert.
+- Files, diffs, per-turn checkpoints with revert, per the §6.6 contract (L13): hidden Git refs at turn start and turn completion; `turn.completed` and `turn.finalized` as two events; diffs from checkpoints; revert rejected before any filesystem mutation when a check fails.
 - Usage and rate-limit meters ("unknown" is never shown as zero).
 - Screenshot/image paste into prompts; notifications.
 - Human shell (§6.8, D10).
@@ -706,15 +739,22 @@ Work method (from `AGENTS.md`): the architect splits each phase into task briefs
 
 ### Phase 7 — Hardening and cutover
 
-- `ShimHost`: agents survive a station restart or upgrade; the station reattaches.
+- `ShimHost` (Revision 3 contract): agents survive a station restart or upgrade; the station reattaches. ADR-005 (`ShimHost`) is written in M3 before the implementation.
+  - The shim preserves execution and output while the station restarts.
+  - A PID alone is not process identity.
+  - Fencing and exclusive reattachment: one station incarnation owns an attachment at a time.
+  - Bounded buffering and backpressure; stdout cursor recovery; an explicit exit state; socket permissions.
+  - Tests cover update and restart failures, and the station SIGKILL survival test (Phase 6 hardening).
+  - A durable shim attachment never reuses the `DirectChildHost` behavior where the drop of the last reference kills the child.
+- Auto-continue after a station restart (L19, A10): a per-session preference, default OFF, with the identity matches and dispatch rechecks of A10. Unsupported or uncertain recovery stays explicit `lost`/`not_resumable`.
 - Station drain and self-upgrade; deck and station version-skew rules (N−1 compatibility).
 - Security: adversary PRE-PR REVIEW of the whole branch; fix all findings.
 - Performance bars (§13) met and recorded.
 - Packaging: `cargo-dist`, systemd and launchd units, station container image.
 - Docs: new README, `docs/v2/internals.md` (glossary, crate map, protocol), operations guide.
-- Cutover on the `v2` branch: delete v0 code (`src/`, `board/`, `hooks/`, `scripts/`, plugin files), merge `v2` into `main`, release `2.0.0`.
+- Cutover on the `v2` branch only: delete v0 code (`src/`, `board/`, `hooks/`, `scripts/`, plugin files) on `v2`. Merge `v2` into `main` and release `2.0.0` is an owner-only step after owner sign-off (Revision 3).
 
-**Exit:** adversary approval of the final HEAD; owner sign-off; merge.
+**Exit:** adversary approval of the final HEAD. The merge into `main` and the `2.0.0` release are owner actions.
 
 ---
 
@@ -730,7 +770,7 @@ Work method (from `AGENTS.md`): the architect splits each phase into task briefs
 | 6 | Remote access to the deck | Local and tailnet only | D13, doctrine rule 5, §8.1, §9 |
 | 7 | Pi approvals | Pi is out for now; later, possibly as a full Pi package | D14, Phase 5 |
 
-No owner questions are open. The architect's next step is to apply the P1 rows of [t3code-lessons.md](./t3code-lessons.md) (with an advisor review of L1 and L14 first).
+No owner questions are open. The M2 gate passed: see [GATE-M2.md](./GATE-M2.md). The Revision 3 note at the top of this plan (DL-071) applies the P2 lessons L13, L14, L19 and the `ShimHost` contract before M3. The next step is an adversary DESIGN REVIEW of the Revision 3 contracts, then M3.
 
 ---
 
