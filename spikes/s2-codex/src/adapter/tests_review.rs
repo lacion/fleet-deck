@@ -165,3 +165,161 @@ fn empty_agent_messages_are_not_reported() {
     ));
     assert!(ev.is_empty(), "{ev:?}");
 }
+
+// Round 8 review: an async agent message with several questions must not drop
+// any of them, and RPC question answers are validated before they are written.
+
+fn async_two_questions(core: &mut CodexCore) -> Vec<CanonEvent> {
+    emits(&notify(
+        core,
+        "item/completed",
+        json!({"threadId": T, "item": {"type": "agentMessage", "id": "m1", "text": "Two things", "delivery": "async",
+        "questions": [
+            {"title": "Which color?", "options": ["red", "blue"]},
+            {"title": "Which size?"}
+        ]}}),
+    ))
+}
+
+#[test]
+fn every_async_question_becomes_its_own_request() {
+    let mut core = ready_core();
+    start_turn(&mut core, "in-1", "n1");
+    let ev = async_two_questions(&mut core);
+    let asked: Vec<_> = ev
+        .iter()
+        .filter_map(|e| match e {
+            CanonEvent::ApprovalRequested {
+                request_id,
+                title,
+                options,
+                provider_refs,
+                ..
+            } => Some((
+                request_id.clone(),
+                title.clone(),
+                options
+                    .iter()
+                    .map(|o| o.option_id.clone())
+                    .collect::<Vec<_>>(),
+                provider_refs["question_index"].clone(),
+            )),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(asked.len(), 2, "{ev:?}");
+    assert_eq!(asked[0].1, "Which color?");
+    assert_eq!(asked[0].2, ["red", "blue", "answer"]);
+    assert_eq!(asked[0].3, json!("0"));
+    assert_eq!(asked[1].1, "Which size?");
+    assert_eq!(
+        asked[1].2,
+        ["answer"],
+        "a free-text question offers only `answer`"
+    );
+    assert_eq!(asked[1].3, json!("1"));
+    complete(&mut core, "n1", "completed");
+
+    // Each answer is its own user message and names its question.
+    let (_, out) = core
+        .answer(
+            &asked[1].0,
+            &Answer {
+                option_id: "answer".into(),
+                updated_input: None,
+                message: Some("large".into()),
+            },
+        )
+        .unwrap();
+    let w = writes(&out);
+    assert_eq!(w[0]["params"]["input"][0]["text"], "Which size?: large");
+    let (_, out) = core
+        .answer(
+            &asked[0].0,
+            &Answer {
+                option_id: "blue".into(),
+                updated_input: None,
+                message: None,
+            },
+        )
+        .unwrap();
+    assert!(
+        writes(&out).is_empty(),
+        "the second answer waits for the turn"
+    );
+    assert_eq!(core.pending_inputs(), 2);
+}
+
+#[test]
+fn a_single_async_question_gets_the_bare_answer() {
+    let mut core = ready_core();
+    start_turn(&mut core, "in-1", "n1");
+    let ev = emits(&notify(
+        &mut core,
+        "item/completed",
+        json!({"threadId": T, "item": {"type": "agentMessage", "id": "m1", "text": "?", "delivery": "async",
+            "questions": [{"title": "Which color?", "options": ["red"]}]}}),
+    ));
+    let CanonEvent::ApprovalRequested { request_id, .. } = &ev[1] else {
+        panic!("{ev:?}")
+    };
+    complete(&mut core, "n1", "completed");
+    let (_, out) = core
+        .answer(
+            request_id,
+            &Answer {
+                option_id: "red".into(),
+                updated_input: None,
+                message: None,
+            },
+        )
+        .unwrap();
+    assert_eq!(writes(&out)[0]["params"]["input"][0]["text"], "red");
+}
+
+#[test]
+fn rpc_question_answers_are_validated_before_the_write() {
+    let mut core = ready_core();
+    start_turn(&mut core, "in-1", "n1");
+    let ev = emits(&feed(
+        &mut core,
+        json!({"id": 3, "method": "item/tool/requestUserInput", "params": {
+            "threadId": T, "turnId": "n1", "itemId": "call_q", "isBlocking": true,
+            "questions": [
+                {"id": "color", "header": "Color", "question": "Which color?", "options": [{"label": "Blue"}]},
+                {"id": "size", "header": "Size", "question": "Which size?", "options": null}
+            ]
+        }}),
+    ));
+    let CanonEvent::ApprovalRequested { request_id, .. } = &ev[0] else {
+        panic!("{ev:?}")
+    };
+    let with = |input: serde_json::Value| Answer {
+        option_id: "answer".into(),
+        updated_input: Some(input),
+        message: None,
+    };
+    for bad in [
+        json!({"answers": {}}),
+        json!({"answers": {"shape": {"answers": ["round"]}}}),
+        json!({"answers": {"color": "blue"}}),
+        json!({"answers": {"color": {"answers": "blue"}}}),
+        json!({"answers": {"color": {"answers": [1]}}}),
+        json!({"answers": ["blue"]}),
+    ] {
+        assert!(
+            matches!(
+                core.answer(request_id, &with(bad.clone())),
+                Err(AdapterError::InvalidAnswer(_))
+            ),
+            "accepted {bad}"
+        );
+    }
+    let good = json!({"answers": {"color": {"answers": ["Blue"]}, "size": {"answers": ["large"]}}});
+    let (receipt, out) = core.answer(request_id, &with(good.clone())).unwrap();
+    assert!(
+        !receipt.duplicate,
+        "a refused answer leaves the request open"
+    );
+    assert_eq!(writes(&out), vec![json!({"id": 3, "result": good})]);
+}

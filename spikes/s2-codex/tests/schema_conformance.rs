@@ -1,13 +1,16 @@
 //! Conformance of the recorded frames with the vendored app-server schema of
 //! codex-cli 0.160.0 (DL-012). A small JSON-schema subset checker (no new
-//! dependency): `$ref`, `type`, `enum`, `required`, `properties`, `items`,
-//! `anyOf`/`oneOf`/`allOf`.
+//! dependency): `$ref`, `type`, `enum`, `required`, `properties`,
+//! `additionalProperties`, `items`, `anyOf`/`oneOf`/`allOf`.
 //!
 //! - Host writes (client requests, the `initialized` notification, replies to
 //!   server requests) are checked strictly: every member that the core sends
 //!   must be a declared property, so a typo in a parameter name fails.
-//! - Provider frames (server notifications and server requests) are checked
-//!   for required members and types, so a renamed field fails.
+//! - Provider frames (server notifications, server requests, and the responses
+//!   to the core's client requests) are checked for required members and types,
+//!   so a renamed field fails.
+//! - Map values (`additionalProperties`, for example the answer map of
+//!   `ToolRequestUserInputResponse`) are checked against their value schema.
 
 #![allow(clippy::unwrap_used)]
 
@@ -98,10 +101,11 @@ impl Checker {
         {
             errs.push(format!("{path}: {} not in enum", short(v)));
         }
-        if let (Some(obj), Some(props)) = (
-            v.as_object(),
-            node.get("properties").and_then(Value::as_object),
-        ) {
+        let props = node.get("properties").and_then(Value::as_object);
+        let extra = node.get("additionalProperties");
+        if let Some(obj) = v.as_object()
+            && (props.is_some() || extra.is_some())
+        {
             for req in node
                 .get("required")
                 .and_then(Value::as_array)
@@ -114,10 +118,19 @@ impl Checker {
                 }
             }
             for (k, val) in obj {
-                match props.get(k) {
-                    Some(p) => self.check(val, p, &format!("{path}.{k}"), errs),
-                    None if self.strict => errs.push(format!("{path}: undeclared member `{k}`")),
-                    None => {}
+                let at = format!("{path}.{k}");
+                match (props.and_then(|p| p.get(k)), extra) {
+                    (Some(p), _) => self.check(val, p, &at, errs),
+                    (None, Some(Value::Bool(false))) => {
+                        errs.push(format!("{path}: member `{k}` not allowed"));
+                    }
+                    (None, Some(schema)) if schema.is_object() => {
+                        self.check(val, schema, &at, errs)
+                    }
+                    (None, _) if self.strict => {
+                        errs.push(format!("{path}: undeclared member `{k}`"))
+                    }
+                    (None, _) => {}
                 }
             }
         }
@@ -147,7 +160,7 @@ fn variants(root: &Value, union: &str) -> HashMap<String, Value> {
         .collect()
 }
 
-/// The response type of a server request: its `...Params` ref with `Response`.
+/// The response type of a request variant: its `...Params` ref with `Response`.
 fn response_ref(variant: &Value) -> Value {
     let params = variant["properties"]["params"]["$ref"].as_str().unwrap();
     let response = params.strip_suffix("Params").unwrap().to_owned() + "Response";
@@ -246,6 +259,92 @@ fn provider_frames_conform() {
 }
 
 #[test]
+fn provider_responses_conform() {
+    let root = root();
+    let client = variants(&root, "ClientRequest");
+    let c = Checker {
+        root: root.clone(),
+        strict: false,
+    };
+    let mut errs = Vec::new();
+    let mut checked = HashMap::<String, usize>::new();
+    for fx in fixtures() {
+        // id of each client request → its method, per process
+        let mut sent: HashMap<String, String> = HashMap::new();
+        for rec in &fx.records {
+            match rec {
+                Record::Spawn { .. } => sent.clear(),
+                Record::In { frame } => {
+                    if let (Some(id), Some(m)) = (frame.get("id"), frame["method"].as_str()) {
+                        sent.insert(id.to_string(), m.to_owned());
+                    }
+                }
+                Record::Out { frame } if frame.get("method").is_none() => {
+                    let id = frame["id"].to_string();
+                    let Some(m) = sent.get(&id) else {
+                        errs.push(format!(
+                            "{}: response to unknown id {id}",
+                            fx.header.scenario
+                        ));
+                        continue;
+                    };
+                    let at = format!("{}: response to {m}", fx.header.scenario);
+                    if let Some(result) = frame.get("result") {
+                        c.check(result, &response_ref(&client[m]), &at, &mut errs);
+                    } else {
+                        let e = &frame["error"];
+                        if !(e["code"].is_i64() && e["message"].is_string()) {
+                            errs.push(format!("{at}: malformed error {}", short(e)));
+                        }
+                    }
+                    *checked.entry(m.clone()).or_default() += 1;
+                }
+                _ => {}
+            }
+        }
+    }
+    for m in [
+        "initialize",
+        "thread/start",
+        "thread/resume",
+        "turn/start",
+        "turn/steer",
+        "turn/interrupt",
+    ] {
+        assert!(
+            checked.contains_key(m),
+            "no recorded response to {m}: {checked:?}"
+        );
+    }
+    assert!(errs.is_empty(), "{}", errs.join("\n"));
+}
+
+#[test]
+fn the_checker_validates_answer_map_values() {
+    let root = root();
+    let c = Checker {
+        root: root.clone(),
+        strict: true,
+    };
+    let node = serde_json::json!({ "$ref": "#/definitions/ToolRequestUserInputResponse" });
+    let check = |v: Value| {
+        let mut errs = Vec::new();
+        c.check(&v, &node, "reply", &mut errs);
+        errs
+    };
+    assert!(check(serde_json::json!({"answers": {"q": {"answers": ["blue"]}}})).is_empty());
+    for bad in [
+        serde_json::json!({"answers": {"q": {"answers": "blue"}}}),
+        serde_json::json!({"answers": {"q": {"answers": [1]}}}),
+        serde_json::json!({"answers": {"q": "blue"}}),
+        serde_json::json!({"answers": {"q": {}}}),
+        serde_json::json!({"answers": ["blue"]}),
+    ] {
+        assert!(!check(bad.clone()).is_empty(), "accepted {bad}");
+    }
+}
+
+#[test]
 fn the_checker_rejects_a_misspelled_parameter() {
     let root = root();
     let client = variants(&root, "ClientRequest");
@@ -263,4 +362,23 @@ fn the_checker_rejects_a_misspelled_parameter() {
         errs.iter().any(|e| e.contains("clientUserMesageId")),
         "{errs:?}"
     );
+}
+
+#[test]
+fn the_checker_rejects_a_response_without_a_required_member() {
+    let root = root();
+    let client = variants(&root, "ClientRequest");
+    let c = Checker {
+        root: root.clone(),
+        strict: false,
+    };
+    let node = response_ref(&client["turn/start"]);
+    let mut errs = Vec::new();
+    c.check(
+        &serde_json::json!({"turnId": "t"}),
+        &node,
+        "turn/start",
+        &mut errs,
+    );
+    assert!(errs.iter().any(|e| e.contains("`turn`")), "{errs:?}");
 }

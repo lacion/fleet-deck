@@ -1,0 +1,14 @@
+//! Phase 0 spike S4: link protocol v1 (PLAN §8, ADR-004).
+//!
+//! - [`secret`]: `Secret<T>`, a wrapper that cannot be serialized or printed.
+//! - [`identity`]: Ed25519 node identity, fingerprints, self-signed certificates.
+//! - [`addr`]: the D13 network scope (loopback, LAN, tailnet) for bind, dial
+//!   and accepted peers.
+//! - [`tls`]: mutual TLS 1.3 where each side trusts only pinned peer keys.
+//! - [`net`]: bind, dial and accept with the address rules and mTLS applied.
+
+pub mod addr;
+pub mod identity;
+pub mod net;
+pub mod secret;
+pub mod tls;

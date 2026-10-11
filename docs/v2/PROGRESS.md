@@ -15,7 +15,7 @@ Rules for this file: one checklist item per M1 deliverable, in PLAN order. Each 
 - [x] **S2-1 Codex protocol core.** ADR-002 option evaluation (git pin of `codex-app-server-protocol` vs codegen from `codex app-server generate-json-schema`); JSON-RPC framing; sans-IO core: initialize, `thread/start`, `turn/start`, both approval requests, questions (L4), `turn/interrupt`, `thread/resume`, diff notifications. *(round 6: `spikes/s2-codex` with `rpc` + `adapter` (mod/map/requests/host); option evaluation → DL-012 (vendored schema `schema/0.160.0/`, `tests/schema_methods.rs`); experimental API + mode names → DL-013; 23 tests)*
 - [x] **S2-2 Codex live driver + `record-codex` + fixtures** for the §13 shared scenarios Codex supports (unsupported ones listed with reasons); restart survival experiment. *(round 7: 8 shared + 7 extra fixtures, none unsupported; `replay-codex` and evidence tests done early)*
 - [x] **S2-3 Codex replay + `replay-codex` + ADR-002** (Proposed) with effect states and crash boundaries. *(round 7: replay + `replay-codex` + evidence tests; round 8: ADR-002, schema conformance, both question channels)*
-- [ ] **S4-1 Link identity + address rules.** Ed25519 identity keys, self-signed certs from them, mTLS with pinned-key verifiers, D13 address rules (loopback, RFC 1918, ULA, link-local, Tailscale ranges; reject public at bind and dial) as unit tests.
+- [x] **S4-1 Link identity + address rules.** Ed25519 identity keys, self-signed certs from them, mTLS with pinned-key verifiers, D13 address rules (loopback, RFC 1918, ULA, link-local, Tailscale ranges; reject public at bind and dial) as unit tests. *(round 9)*
 - [ ] **S4-2 Link handshake + channels.** `Hello` with `proto_min/max`, feature flags, roles, `link_epoch`, nonce; transcript signature bound to the TLS exporter; version negotiation; control channel (frames of §8.3) and data channel (multiplexed streams, credit flow control).
 - [ ] **S4-3 Link pairing + reconnect.** `fdinv1:` invitations both directions (single use, 15 min, fingerprint-bound, secret proof bound to TLS); jittered backoff reconnect; duplicate link (`link_epoch`) rule; station-only-dials (NAT) case; multi-process loopback test with separate data dirs.
 - [ ] **S4-4 ADR-004** (Proposed): link protocol v1 (frames, handshake, pairing, scopes, reconnect, feature flags).
@@ -188,3 +188,23 @@ Rules for this file: one checklist item per M1 deliverable, in PLAN order. Each 
   - `cargo run -p s1-claude --bin replay-claude` → 29 ok, unknown=0
   - `web/` checks and TS-types drift → not applicable in M1
 - Next: S4-1 link identity + address rules.
+
+### Round 9 (2026-10-11)
+
+- Committed round 8 first: `707a04d docs(adr): ADR-002 native Codex adapter with schema conformance and evidence tests`.
+- Review fixes (S2):
+  - Async message-channel questions: every question of an `agentMessage` is now its own request (one answer each; with more than one question the message names the question). Tests `every_async_question_becomes_its_own_request`, `a_single_async_question_gets_the_bare_answer`.
+  - RPC question answers are validated before the write (non-empty map, only asked ids, `{"answers":[strings]}` values); a bad answer writes nothing and the request stays open. Test `rpc_question_answers_are_validated_before_the_write`.
+  - `tests/schema_conformance.rs`: provider responses to every client request are checked against `<Method>Response` (`provider_responses_conform`), `additionalProperties` is enforced (`the_checker_validates_answer_map_values`), and a response without a required member fails (`the_checker_rejects_a_response_without_a_required_member`). ADR-002 §2.1/§2.6/§5 updated.
+- S4-1 done: new crate `spikes/s4-link` (`secret`, `addr`, `identity`, `tls`, `net`) and `tests/tls.rs` (11 loopback handshake tests).
+- Finding: TLS 1.3 session resumption skips the client and server certificate checks, so a revoked key could reconnect with a resumed session. `a_revoked_key_is_refused_on_the_next_handshake` failed until both configs turned resumption off → DL-017.
+- DL-016 (rustls + ring provider, tokio-rustls, rustls-webpki), DL-017 (no `0.0.0.0`/`::` bind, accepted-peer address check, no TLS resumption).
+- Commands and results:
+  - `cargo fmt --all --check` → pass
+  - `cargo clippy --workspace --all-targets -- -D warnings` → pass
+  - `CI=true cargo nextest run --workspace` → 155 passed (s4-link: 30)
+  - `cargo deny check` → advisories ok, bans ok, licenses ok, sources ok
+  - `cargo run -p s2-codex --bin replay-codex` → 15 ok, unknown=0, exit 0
+  - `cargo run -p s1-claude --bin replay-claude` → 29 ok, unknown=0
+  - `web/` checks and TS-types drift → not applicable in M1
+- Next: S4-2 link handshake + channels.

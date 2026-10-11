@@ -127,3 +127,19 @@ Format: context, options, choice, reason, owner review.
 - **Choice:** (b) for both. The matrix records "host-side queue" for Codex follow-ups and the offered native decision ids for approvals.
 - **Reason:** L8/L9 (never send an option the provider did not offer; unknown options fail closed); the experimental queue has no stability promise. A held follow-up stays `queued` (§6.4) until it is sent, so a crash before the send retires it without an unknown outcome.
 - **Owner review:** pending
+
+## DL-016 — Link TLS stack: rustls with the ring provider plus three supporting crates
+
+- **Context:** PLAN §12 names `rustls`, `rcgen`, `ed25519-dalek` and `tokio-tungstenite` for the link. Pinned-key mutual TLS also needs an async TLS stream, an X.509 parser to read the peer key, and a crypto provider. PLAN §12 does not name these.
+- **Options:** (a) `aws-lc-rs` (the rustls default provider; needs cmake and a C toolchain); (b) the `ring` provider; (c) read the peer key from the certificate bytes by hand.
+- **Choice:** (b) with `tokio-rustls` (async streams, from the rustls project) and `rustls-webpki` (the X.509 parser that rustls itself uses). `ring` also gives the system random generator and SHA-256 for fingerprints. No hand-written certificate parsing: a byte search for the key could be fooled by a certificate that carries a pinned key in an extension (test `a_forged_certificate_that_embeds_a_pinned_key_is_refused`).
+- **Reason:** these crates are the closest maintained parts of the named stack (rustls project and its default parser), they add no C build dependency, and `cargo deny check` accepts their licenses.
+- **Owner review:** pending
+
+## DL-017 — The link refuses `0.0.0.0`/`::`, checks accepted peers, and never resumes TLS sessions
+
+- **Context:** D13 lists the allowed address ranges for bind and dial. It does not state the "all interfaces" addresses, the source address of an accepted connection, or TLS session resumption.
+- **Options:** for each item, allow (simpler) or refuse (stricter).
+- **Choice:** refuse all three. (1) `bind` refuses `0.0.0.0` and `::` because they also listen on public interfaces; the owner gives a concrete LAN or tailnet address. (2) `accept` checks the TCP source address with the same D13 rules before the TLS handshake, because a router port forward can route a public peer to a LAN listener. (3) Both TLS configs turn off session tickets and the session cache. A resumed TLS 1.3 session skips the certificate check, so a revoked key could reconnect with an old ticket. The spike found this: `a_revoked_key_is_refused_on_the_next_handshake` failed before the fix.
+- **Reason:** doctrine "fail closed": the cost is one full handshake per link connection, and links reconnect rarely.
+- **Owner review:** pending

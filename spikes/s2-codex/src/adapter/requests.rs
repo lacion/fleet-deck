@@ -267,39 +267,48 @@ impl CodexCore {
         ]
     }
 
-    /// A question that the agent asked in an `agentMessage` with `delivery:
-    /// "async"`: the answer is a new user message (L4 message channel).
+    /// Questions that the agent asked in an `agentMessage` with `delivery:
+    /// "async"`: the answer is a new user message (L4 message channel). Each
+    /// question becomes its own request, so none is lost; when the message asks
+    /// more than one, each answer names its question (see [`message_answer`]).
     pub(crate) fn on_async_questions(&mut self, item_id: &str, questions: &[Value]) -> Vec<Output> {
-        let Some(first) = questions.first() else {
-            return Vec::new();
-        };
-        let title = first
-            .get("title")
-            .and_then(Value::as_str)
-            .unwrap_or("Question")
-            .to_owned();
-        let mut options: Vec<(String, Value)> = first
-            .get("options")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str)
-            .map(|o| (o.to_owned(), Value::from(o)))
-            .collect();
-        options.push(("answer".into(), Value::Null));
-        vec![self.register(
-            OpenRequest {
-                native_id: Value::Null,
-                channel: ResponseChannel::Message,
-                kind: RequestKind::Question,
-                options,
-                node_id: None,
-                receipt: None,
-                params: Value::from(questions.to_vec()),
-            },
-            title,
-            refs(&[("item_id", Some(item_id)), ("delivery", Some("async"))]),
-        )]
+        let count = questions.len();
+        let mut out = Vec::with_capacity(count);
+        for (index, question) in questions.iter().enumerate() {
+            let title = question
+                .get("title")
+                .and_then(Value::as_str)
+                .unwrap_or("Question")
+                .to_owned();
+            let mut options: Vec<(String, Value)> = question
+                .get("options")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(|o| (o.to_owned(), Value::from(o)))
+                .collect();
+            options.push(("answer".into(), Value::Null));
+            let index_text = index.to_string();
+            out.push(self.register(
+                OpenRequest {
+                    native_id: Value::Null,
+                    channel: ResponseChannel::Message,
+                    kind: RequestKind::Question,
+                    options,
+                    node_id: None,
+                    receipt: None,
+                    params: json!({"question": question, "index": index, "count": count}),
+                },
+                title,
+                refs(&[
+                    ("item_id", Some(item_id)),
+                    ("delivery", Some("async")),
+                    ("question_index", Some(&index_text)),
+                ]),
+            ));
+        }
+        out
     }
 
     /// Answers an open request. Idempotent: a second answer writes nothing and
@@ -349,16 +358,11 @@ impl CodexCore {
                         ));
                     }
                 };
+                let text = message_answer(&req.params, &text);
                 self.prompt(&text, &format!("answer-{request_id}"))?
             }
             (ResponseChannel::RpcReply, RequestKind::Question) => {
-                let result = answer
-                    .updated_input
-                    .clone()
-                    .filter(|v| v.get("answers").is_some_and(Value::is_object))
-                    .ok_or_else(|| {
-                        AdapterError::InvalidAnswer("a question needs {\"answers\": {..}}".into())
-                    })?;
+                let result = question_reply(&req.params, answer.updated_input.as_ref())?;
                 vec![Output::Write(rpc::reply(&req.native_id, result))]
             }
             (ResponseChannel::RpcReply, _) => {
@@ -465,4 +469,51 @@ impl CodexCore {
         self.requests.by_native.clear();
         out
     }
+}
+
+/// The user message that answers an async question. A message with one
+/// question gets the bare answer; with several, the answer names its question
+/// so that the agent can match each answer (`<title>: <answer>`).
+fn message_answer(params: &Value, text: &str) -> String {
+    let count = params.get("count").and_then(Value::as_u64).unwrap_or(1);
+    match params["question"].get("title").and_then(Value::as_str) {
+        Some(title) if count > 1 => format!("{title}: {text}"),
+        _ => text.to_owned(),
+    }
+}
+
+/// Validates the host's answer to `item/tool/requestUserInput` against the
+/// request and the schema (`ToolRequestUserInputResponse`): `{"answers":
+/// {<question id>: {"answers": [<string>, ..]}}}`, only ids that the request
+/// asked, at least one answer. Anything else is refused before it is written.
+fn question_reply(params: &Value, input: Option<&Value>) -> Result<Value, AdapterError> {
+    let bad = |m: &str| AdapterError::InvalidAnswer(m.to_owned());
+    let input = input.ok_or_else(|| bad("a question needs {\"answers\": {..}}"))?;
+    let answers = input
+        .get("answers")
+        .and_then(Value::as_object)
+        .ok_or_else(|| bad("a question needs {\"answers\": {..}}"))?;
+    if answers.is_empty() {
+        return Err(bad("the answer map is empty"));
+    }
+    let asked: Vec<&str> = params
+        .get("questions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|q| q.get("id").and_then(Value::as_str))
+        .collect();
+    for (id, value) in answers {
+        if !asked.contains(&id.as_str()) {
+            return Err(bad(&format!("the request asked no question `{id}`")));
+        }
+        let list = value
+            .get("answers")
+            .and_then(Value::as_array)
+            .ok_or_else(|| bad(&format!("`{id}` needs {{\"answers\": [..]}}")))?;
+        if !list.iter().all(Value::is_string) {
+            return Err(bad(&format!("`{id}`: every answer must be a string")));
+        }
+    }
+    Ok(json!({ "answers": answers }))
 }

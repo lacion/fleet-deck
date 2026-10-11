@@ -7,7 +7,7 @@ These crates de-risk PLAN §14 Phase 0. They never ship. The product crates (Pha
 | shared | `spike-canon/` | Spike subset of the canonical events (PLAN §6.3) | — |
 | S1 | `s1-claude/` | Claude Code stream-json control protocol from Rust (A8, D8) | `docs/v2/adr/ADR-001-native-claude-adapter.md` (Proposed) |
 | S2 | `s2-codex/` | Codex app-server JSON-RPC from Rust | [`docs/v2/adr/ADR-002-native-codex-adapter.md`](../docs/v2/adr/ADR-002-native-codex-adapter.md) |
-| S4 | `s4-link/` (planned) | Link protocol v1 (mTLS, pairing, channels, reconnect) | `docs/v2/adr/ADR-004-*.md` |
+| S4 | `s4-link/` | Link protocol v1 (mTLS, pairing, channels, reconnect) | `docs/v2/adr/ADR-004-*.md` |
 
 ## Offline commands (no network, no provider CLI)
 
@@ -99,6 +99,22 @@ One JSON object per line. Line 1 is the header `{"fixture":{"provider","scenario
 | `note` | A recorder note (timings, observations). |
 
 The recorder scrubs the work directory (`<workdir>`), `$HOME` (`<home>`), `$USER` (`<user>`), and the keys `account`, `email`, `organization`, `messaging_socket_path`.
+
+### S4 (link)
+
+S4 needs no provider CLI and no recordings: every test runs real TCP + TLS 1.3 handshakes on `127.0.0.1` between generated identities.
+
+```sh
+cargo nextest run -p s4-link
+```
+
+What runs so far (S4-1):
+
+- `src/addr.rs` unit and property tests: the D13 ranges (loopback, RFC 1918, ULA, link-local, Tailscale `100.64.0.0/10` and `fd7a:115c:a1e0::/48`), IPv4-mapped IPv6, refusal of `0.0.0.0`/`::` and public addresses at bind, dial and accept (DL-017). A real tailnet check is an owner step.
+- `src/identity.rs`: Ed25519 identity, self-signed certificate, fingerprint, key file with mode 600.
+- `tests/tls.rs`: pinned-key mTLS in both directions (station dials, deck dials), refusal of unpinned listeners and dialers, wrong role, revocation on the next handshake (no TLS session resumption, DL-017), missing client certificate, fingerprint policy, a forged certificate that embeds a pinned key, and the address refusal before any packet.
+
+The handshake, the channels, pairing and reconnect follow in S4-2 and S4-3 (see `docs/v2/PROGRESS.md`).
 
 ## Live commands (owner or recorder only)
 
