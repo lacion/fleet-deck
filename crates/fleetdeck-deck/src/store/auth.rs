@@ -122,6 +122,10 @@ impl Principal {
 }
 
 /// 32 random bytes as hex.
+pub(crate) fn random_token() -> Result<String> {
+    random_hex()
+}
+
 fn random_hex() -> Result<String> {
     let mut bytes = [0u8; 32];
     SystemRandom::new()
@@ -333,6 +337,33 @@ impl DeckStore {
                 )
                 .optional()?;
             Ok(found)
+        })
+        .await
+    }
+
+    /// True while the login session or the API token of `principal` is
+    /// still valid (an open board WebSocket checks this; an open board
+    /// also keeps its login session from idling out).
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn principal_alive(&self, principal: &Principal) -> Result<bool> {
+        let now = self.now_ms();
+        let principal = principal.clone();
+        call(&self.inner.db, move |conn| {
+            let n = match &principal {
+                Principal::Owner(s) => conn.execute(
+                    "UPDATE login_sessions SET last_seen = ?2
+                     WHERE session_hash = ?1 AND expires_at > ?2 AND last_seen > ?3",
+                    params![s.session_hash, now, now - SESSION_IDLE_MS],
+                )?,
+                Principal::Token(t) => conn.execute(
+                    "UPDATE api_tokens SET last_used = ?2
+                     WHERE name = ?1 AND created_at = ?3 AND expires_at > ?2",
+                    params![t.name, now, t.created_at],
+                )?,
+            };
+            Ok(n == 1)
         })
         .await
     }

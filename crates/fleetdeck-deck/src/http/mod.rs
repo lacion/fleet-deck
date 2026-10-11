@@ -9,6 +9,7 @@ pub mod guard;
 pub mod methods;
 pub mod read_routes;
 pub mod tls;
+pub mod ws;
 
 use std::io;
 use std::net::SocketAddr;
@@ -41,6 +42,10 @@ pub struct Board {
     pub link: Arc<DeckLink>,
     pub origins: Origins,
     pub limiter: LoginLimiter,
+    /// Single-use WebSocket tickets of bearer clients.
+    pub tickets: ws::Tickets,
+    /// How often an open WebSocket checks its login ([`ws::RECHECK`]).
+    pub ws_recheck: std::time::Duration,
 }
 
 /// The board API router.
@@ -61,6 +66,8 @@ pub fn router(board: Arc<Board>) -> Router {
             get(command_routes::get_command),
         )
         .route("/api/audit", get(read_routes::audit))
+        .route("/api/ws", get(ws::upgrade))
+        .route("/api/ws/ticket", post(ws::ticket))
         .route_layer(middleware::from_fn_with_state(
             Arc::clone(&board),
             guard::guard,

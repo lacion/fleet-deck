@@ -29,6 +29,8 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+futures-util = { workspace = true }
+tokio-tungstenite = { workspace = true }
 fleetdeck-station = { path = "../fleetdeck-station" }
 fleetdeck-testkit = { path = "../fleetdeck-testkit" }
 tempfile = { workspace = true }

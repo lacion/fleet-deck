@@ -46,7 +46,7 @@ Sources: PLAN §14 Phases 1–5, GATE-M1 G1–G14, goal acceptance. G13 is P1-5.
 - [x] **P3-7b Outbox and coordinator receipts.** Outbox (A5); coordinator command dedupe with stored receipts (G7).
 - [x] **P3-8 Auth and audit.** Owner login (argon2), session cookie, CSRF, WS `Origin` check, login also on loopback (A13), `fleetdeck open` one-time login URL, per-method scopes (L15), audit log.
 - [x] **P3-9a Board API: REST commands.** `POST /api/commands/<method>` (one scope per method, the link method's scope), client-chosen `command_id` with resend = stored command, `GET /api/commands/{id}`, audit of every call. DL-055.
-- [ ] **P3-9b Board API: WS snapshot/deltas.** Snapshot + deltas, per-session subscriptions with a cursor, short-lived WS tickets for bearer clients (L15), WS `Origin` check.
+- [x] **P3-9b Board API: WS snapshot/deltas.** Snapshot + deltas, per-session subscriptions with a cursor, short-lived WS tickets for bearer clients (L15), WS `Origin` check.
 - [ ] **P3-10 Phase 3 exit tests.** Deck + 2 stations as separate processes on loopback (one dial-only, one dialed); link drops and deck restarts lose no events and duplicate no commands; public addresses rejected; scopes enforced.
 
 ### Phase 4 — Board MVP
@@ -365,6 +365,14 @@ Sources: PLAN §14 Phases 1–5, GATE-M1 G1–G14, goal acceptance. G13 is P1-5.
 - Tests: `deck/tests/http_auth.rs` 7 (HTTPS client; plain HTTP gets no answer), `deck/tests/http_commands.rs` 4 (once + resend, refusals + audit, per-method scopes, pending while unreachable then sent once), `http/tls.rs` 2 unit, `http/methods.rs` 2 unit; CLI `deck_login.rs` 2 over HTTPS. Mutation check: removing the `command_id_reused` comparison fails `a_command_reaches_the_station_once_and_a_resend_returns_the_stored_command`.
 - Commands: `cargo nextest run -p fleetdeck-deck` → 54/54; CLI deck tests 3× in a row → 4/4 each; `make check` → all 12 commands passed (nextest 702/702, ts_drift 2/2, bun test 5 pass, replay-claude 29, replay-codex 18).
 - Next: P3-9b WS snapshot/deltas.
+
+### Round 27 (goal round 9/50): Origin fix (review) and P3-9b board WebSocket
+- Committed round 26 as `f0e3e83`.
+- Review fix: `http/guard.rs` `Origins::new` lists `https://<host>` without a port for a listener on 443 (RFC 6454 canonical origin, also for IP and `localhost` hosts) and `https://<host>:<port>` otherwise; IPv6 hosts in brackets. Unit tests `the_default_https_port_is_the_canonical_origin_without_a_port`, `another_port_is_part_of_the_origin`.
+- P3-9b: `fleetdeck-proto/src/board.rs` (`BoardServerMessage`, `BoardClientMessage`, `SessionKey`, `WsTicket`; `DeckSession` and `StationView` moved here; TS types in `web/src/gen/board/`); `DeckStore` board version watch (raised by read-model and registry changes) and a live-event broadcast of every folded event (also streaming deltas); `timeline_after`; `principal_alive`; `http/ws.rs` (`GET /api/ws`: hello, snapshot, deltas against the last sent view, timeline subscriptions with cursor and incarnation reset, lag catch-up from the stored timeline, login recheck with close 4401; `POST /api/ws/ticket` single-use 30 s tickets); guard: a ticket or a cookie with the board Origin opens a socket, a bearer header does not. DL-056.
+- Tests: `crates/fleetdeck-deck/tests/board_ws.rs` (4: a_socket_gets_a_versioned_snapshot_then_deltas_of_what_changed, a_timeline_subscription_resumes_from_its_cursor_and_resets_on_a_new_incarnation, cookie_sockets_need_the_board_origin_and_bearer_clients_need_a_single_use_ticket, a_socket_closes_when_its_login_or_token_ends), `board.rs` unit `client_messages_are_strict`, guard unit tests (2). Mutation checks: a reusable ticket fails the ticket test; resuming a cursor of another incarnation fails the timeline test.
+- Commands: `cargo nextest run -p fleetdeck-deck --test board_ws` → 4/4; first `make check` → 11 of 12 passed, nextest failed on a race in `a_timeline_subscription_resumes_from_its_cursor_and_resets_on_a_new_incarnation` (the server's `select!` handled a live event before the client's `unsubscribe`); fixed with a round-trip barrier in the test (an answered bad message proves the unsubscribe was handled); then `board_ws` 8 runs in a row → 4/4 each. The round ended before a second `make check`; round 28 reran it (see the round-28 log).
+- Status: P3-9b done; next P3-10.
 
 ## M1 checklist (complete)
 

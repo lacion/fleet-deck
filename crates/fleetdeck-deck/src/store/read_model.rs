@@ -17,12 +17,12 @@ use std::collections::BTreeSet;
 
 use fleetdeck_proto::link::ReplayParams;
 use fleetdeck_proto::{
-    CardStatus, EventEnvelope, IncarnationId, SessionId, SessionSummary, StationId, card_status,
+    EventEnvelope, IncarnationId, SessionId, SessionSummary, StationId, card_status,
 };
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use super::stations::station_by_id;
-use super::{DeckError, DeckStore, Result, call, to_i64};
+use super::{DeckError, DeckStore, LiveEvents, Result, call, to_i64};
 
 /// The timeline rows kept per session.
 pub const TIMELINE_CAP: u32 = 500;
@@ -31,13 +31,7 @@ pub const TIMELINE_CAP: u32 = 500;
 /// live; the completed message carries the full text).
 const DROPPED_KINDS: [&str; 2] = ["message.delta", "reasoning.delta"];
 
-/// One card of the board.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct DeckSession {
-    pub station_id: StationId,
-    pub summary: SessionSummary,
-    pub status: CardStatus,
-}
+pub use fleetdeck_proto::board::DeckSession;
 
 /// What [`DeckStore::apply_events`] did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -161,7 +155,8 @@ impl DeckStore {
         events: Vec<EventEnvelope>,
     ) -> Result<Applied> {
         let now = self.now_ms();
-        call(&self.inner.db, move |conn| {
+        let (id, inc) = (station.clone(), incarnation.clone());
+        let (applied, folded) = call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             let rec = station_by_id(&tx, &station)?
                 .ok_or_else(|| DeckError::UnknownStation(station.0.clone()))?;
@@ -175,26 +170,37 @@ impl DeckStore {
             let mut cursor = rec.cursor;
             let mut applied = 0;
             let mut touched = BTreeSet::new();
-            for e in &events {
+            let mut folded = Vec::new();
+            for e in events {
                 if e.station_seq <= cursor {
                     continue;
                 }
                 let mut summary = load_summary(&tx, &station, &e.session_id)?;
-                summary.apply(e);
+                summary.apply(&e);
                 store_summary(&tx, &station, &summary, now)?;
-                append_timeline(&tx, &station, e)?;
+                append_timeline(&tx, &station, &e)?;
                 touched.insert(e.session_id.clone());
                 cursor = e.station_seq;
                 applied += 1;
+                folded.push(e);
             }
             for session in &touched {
                 cap_timeline(&tx, &station, session)?;
             }
             set_cursor(&tx, &station, &incarnation, cursor)?;
             tx.commit()?;
-            Ok(Applied { applied, cursor })
+            Ok((Applied { applied, cursor }, folded))
         })
-        .await
+        .await?;
+        if !folded.is_empty() {
+            self.board_changed();
+            self.publish_live(LiveEvents {
+                station_id: id,
+                incarnation: inc,
+                events: folded,
+            });
+        }
+        Ok(applied)
     }
 
     /// Replaces the read model of `station` by a complete snapshot batch at
@@ -246,7 +252,9 @@ impl DeckStore {
             tx.commit()?;
             Ok(())
         })
-        .await
+        .await?;
+        self.board_changed();
+        Ok(())
     }
 
     /// Every card of the board, with the status projection of §7.2.
@@ -296,6 +304,37 @@ impl DeckStore {
             )?;
             let rows: Vec<String> = stmt
                 .query_map(params![station.as_str(), session.as_str()], |r| r.get(0))?
+                .collect::<rusqlite::Result<_>>()?;
+            let mut out = Vec::with_capacity(rows.len());
+            for text in rows {
+                out.push(serde_json::from_str(&text)?);
+            }
+            Ok(out)
+        })
+        .await
+    }
+
+    /// The condensed timeline of one session after `after`, oldest first.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn timeline_after(
+        &self,
+        station: StationId,
+        session: SessionId,
+        after: u64,
+    ) -> Result<Vec<EventEnvelope>> {
+        let after = to_i64(after)?;
+        call(&self.inner.db, move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT envelope FROM timeline
+                 WHERE station_id = ?1 AND session_id = ?2 AND station_seq > ?3
+                 ORDER BY station_seq",
+            )?;
+            let rows: Vec<String> = stmt
+                .query_map(params![station.as_str(), session.as_str(), after], |r| {
+                    r.get(0)
+                })?
                 .collect::<rusqlite::Result<_>>()?;
             let mut out = Vec::with_capacity(rows.len());
             for text in rows {

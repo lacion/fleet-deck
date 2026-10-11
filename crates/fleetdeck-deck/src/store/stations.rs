@@ -166,7 +166,7 @@ impl DeckStore {
     /// database error.
     pub async fn pin_station(&self, new: NewStation) -> Result<StationRecord> {
         let now = self.now_ms();
-        call(&self.inner.db, move |conn| {
+        let out = call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             let hex = key_hex(&new.key);
             let taken: Option<String> = tx
@@ -222,7 +222,9 @@ impl DeckStore {
             tx.commit()?;
             Ok(rec)
         })
-        .await
+        .await?;
+        self.board_changed();
+        Ok(out)
     }
 
     /// Removes the station with `key` (its pin, grants, sessions and
@@ -258,6 +260,7 @@ impl DeckStore {
         .await?;
         if out.is_some() {
             self.commands_changed();
+            self.board_changed();
         }
         Ok(out)
     }
@@ -283,7 +286,9 @@ impl DeckStore {
             tx.commit()?;
             Ok(())
         })
-        .await
+        .await?;
+        self.board_changed();
+        Ok(())
     }
 
     /// Every paired station, by name.
@@ -376,7 +381,9 @@ impl DeckStore {
             tx.commit()?;
             Ok(())
         })
-        .await
+        .await?;
+        self.board_changed();
+        Ok(())
     }
 
     /// Records that the station's link was up now.
@@ -392,6 +399,8 @@ impl DeckStore {
             )?;
             Ok(())
         })
-        .await
+        .await?;
+        self.board_changed();
+        Ok(())
     }
 }

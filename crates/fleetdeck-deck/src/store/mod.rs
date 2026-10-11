@@ -31,9 +31,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 use fleetdeck_core::clock::SharedClock;
 use fleetdeck_core::db::{Db, DbError};
 use fleetdeck_core::ids::{SharedIds, new_id};
-use fleetdeck_proto::{IncarnationId, StationId};
+use fleetdeck_proto::{EventEnvelope, IncarnationId, StationId};
 use rusqlite::{Connection, OptionalExtension};
-use tokio::sync::watch;
+use tokio::sync::{broadcast, watch};
 
 pub use audit::{AuditEntry, AuditResult, NewAudit};
 pub use auth::{ApiToken, LoginMethod, LoginSession, NewLogin, Principal};
@@ -84,6 +84,19 @@ impl From<rusqlite::Error> for DeckError {
 
 pub type Result<T, E = DeckError> = std::result::Result<T, E>;
 
+/// Batches of folded events that a slow board WebSocket may lag behind;
+/// it then catches up from the stored timeline.
+const LIVE_BUFFER: usize = 256;
+
+/// Events of one station that one transaction folded (also the streaming
+/// deltas that the condensed timeline drops).
+#[derive(Debug, Clone, PartialEq)]
+pub struct LiveEvents {
+    pub station_id: StationId,
+    pub incarnation: IncarnationId,
+    pub events: Vec<EventEnvelope>,
+}
+
 struct Inner {
     db: Db,
     clock: SharedClock,
@@ -91,6 +104,11 @@ struct Inner {
     incarnation: IncarnationId,
     /// Counts command state changes (the router waits on it).
     commands: watch::Sender<u64>,
+    /// Counts changes of the board view: cards, stations, reachability
+    /// (the board WebSocket sends a delta after each, P3-9b).
+    board: watch::Sender<u64>,
+    /// The events folded into the read model, after their commit.
+    live: broadcast::Sender<Arc<LiveEvents>>,
     /// The stations with a live link (§7.2 `unreachable`).
     reachable: Mutex<BTreeSet<StationId>>,
 }
@@ -166,6 +184,8 @@ impl DeckStore {
                 ids,
                 incarnation,
                 commands: watch::channel(0).0,
+                board: watch::channel(0).0,
+                live: broadcast::channel(LIVE_BUFFER).0,
                 reachable: Mutex::default(),
             }),
         })
@@ -191,12 +211,39 @@ impl DeckStore {
 
     /// Records whether the link to `station` is up.
     pub fn set_reachable(&self, station: &StationId, up: bool) {
-        let mut set = self.reachable_set();
-        if up {
-            set.insert(station.clone());
-        } else {
-            set.remove(station);
+        let changed = {
+            let mut set = self.reachable_set();
+            if up {
+                set.insert(station.clone())
+            } else {
+                set.remove(station)
+            }
+        };
+        if changed {
+            self.board_changed();
         }
+    }
+
+    /// The board version: it grows after each change of the cards, the
+    /// stations or their reachability.
+    #[must_use]
+    pub fn watch_board(&self) -> watch::Receiver<u64> {
+        self.inner.board.subscribe()
+    }
+
+    pub(crate) fn board_changed(&self) {
+        self.inner.board.send_modify(|n| *n += 1);
+    }
+
+    /// The events folded from now on.
+    #[must_use]
+    pub fn subscribe_live(&self) -> broadcast::Receiver<Arc<LiveEvents>> {
+        self.inner.live.subscribe()
+    }
+
+    pub(crate) fn publish_live(&self, live: LiveEvents) {
+        // No receiver is not an error.
+        let _ = self.inner.live.send(Arc::new(live));
     }
 
     /// True while the link to `station` is up.

@@ -12,7 +12,6 @@ use std::time::Duration;
 
 use fleetdeck_core::Secret;
 use fleetdeck_core::localsock::{self, BindError, LineClient, read_line, send};
-use fleetdeck_proto::StationId;
 use fleetdeck_proto::command::CommandOrigin;
 use serde::{Deserialize, Serialize};
 use tokio::io::BufReader;
@@ -78,38 +77,24 @@ pub enum DeckRequest {
 /// `pending` command; the router keeps resending until `retry_until`.
 pub const COMMAND_WAIT: Duration = Duration::from_secs(15);
 
-/// A paired station as the CLI shows it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct StationView {
-    pub station_id: StationId,
-    pub name: String,
-    /// The short fingerprint of the station key.
-    pub key: String,
-    /// `deck_dials` or `station_dials`.
-    pub direction: String,
-    pub dial_url: Option<String>,
-    pub reachable: bool,
-    pub last_seen: Option<i64>,
-    pub cursor: u64,
-}
+pub use fleetdeck_proto::board::StationView;
 
-impl StationView {
-    #[must_use]
-    pub fn new(st: &StationRecord, reachable: bool) -> Self {
-        Self {
-            station_id: st.station_id.clone(),
-            name: st.name.clone(),
-            key: st.key.fingerprint().short(),
-            direction: match st.direction {
-                Direction::DeckDials => "deck_dials",
-                Direction::StationDials => "station_dials",
-            }
-            .to_owned(),
-            dial_url: st.dial_url.clone(),
-            reachable,
-            last_seen: st.last_seen,
-            cursor: st.cursor,
+/// The view of a station record.
+#[must_use]
+pub fn station_view(st: &StationRecord, reachable: bool) -> StationView {
+    StationView {
+        station_id: st.station_id.clone(),
+        name: st.name.clone(),
+        key: st.key.fingerprint().short(),
+        direction: match st.direction {
+            Direction::DeckDials => "deck_dials",
+            Direction::StationDials => "station_dials",
         }
+        .to_owned(),
+        dial_url: st.dial_url.clone(),
+        reachable,
+        last_seen: st.last_seen,
+        cursor: st.cursor,
     }
 }
 
@@ -237,7 +222,7 @@ async fn handle(deck: &LocalDeck, request: DeckRequest) -> DeckResponse {
             audit(node, "station.add", "", &r).await;
             match r {
                 Ok(st) => DeckResponse::Paired {
-                    station: StationView::new(&st, store.is_reachable(&st.station_id)),
+                    station: station_view(&st, store.is_reachable(&st.station_id)),
                 },
                 Err(e) => error(e.to_string()),
             }
@@ -246,7 +231,7 @@ async fn handle(deck: &LocalDeck, request: DeckRequest) -> DeckResponse {
             Ok(list) => DeckResponse::Stations {
                 stations: list
                     .iter()
-                    .map(|st| StationView::new(st, store.is_reachable(&st.station_id)))
+                    .map(|st| station_view(st, store.is_reachable(&st.station_id)))
                     .collect(),
             },
             Err(e) => error(e.to_string()),
@@ -260,7 +245,7 @@ async fn handle(deck: &LocalDeck, request: DeckRequest) -> DeckResponse {
         .await
         {
             Ok(st) => DeckResponse::Removed {
-                station: StationView::new(&st, false),
+                station: station_view(&st, false),
             },
             Err(e) => error(e.to_string()),
         },

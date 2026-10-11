@@ -9,7 +9,7 @@ use axum::extract::State;
 
 use super::Board;
 use super::guard::ApiError;
-use crate::local::StationView;
+use crate::local::{StationView, station_view};
 use crate::store::{AuditEntry, DeckCommand, DeckSession};
 
 /// The newest audit rows that `GET /api/audit` returns.
@@ -20,7 +20,7 @@ pub async fn stations(State(board): State<Arc<Board>>) -> Result<Json<Vec<Statio
     let list = board.store.stations().await.map_err(ApiError::internal)?;
     Ok(Json(
         list.iter()
-            .map(|st| StationView::new(st, board.store.is_reachable(&st.station_id)))
+            .map(|st| station_view(st, board.store.is_reachable(&st.station_id)))
             .collect(),
     ))
 }

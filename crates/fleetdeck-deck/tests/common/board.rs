@@ -35,6 +35,57 @@ impl Http {
     }
 }
 
+/// A board WebSocket client.
+pub struct Ws(pub tokio_tungstenite::WebSocketStream<tokio_rustls::client::TlsStream<TcpStream>>);
+
+impl Ws {
+    /// The next JSON message (10 s), or `Err(close code)` when the server
+    /// closes.
+    pub async fn next(&mut self) -> Result<Value, Option<u16>> {
+        use futures_util::StreamExt;
+        use tokio_tungstenite::tungstenite::Message;
+        loop {
+            let m = tokio::time::timeout(Duration::from_secs(10), self.0.next())
+                .await
+                .expect("a websocket message");
+            match m {
+                Some(Ok(Message::Text(t))) => return Ok(serde_json::from_str(t.as_str()).unwrap()),
+                Some(Ok(Message::Close(f))) => return Err(f.map(|f| u16::from(f.code))),
+                Some(Ok(_)) => {}
+                Some(Err(_)) | None => return Err(None),
+            }
+        }
+    }
+
+    /// The next message of `kind` (skips others).
+    pub async fn next_of(&mut self, kind: &str) -> Value {
+        loop {
+            let m = self.next().await.expect("an open socket");
+            if m["type"] == kind {
+                return m;
+            }
+        }
+    }
+
+    /// No message within `wait`.
+    pub async fn quiet(&mut self, wait: Duration) {
+        use futures_util::StreamExt;
+        if let Ok(m) = tokio::time::timeout(wait, self.0.next()).await {
+            panic!("unexpected message: {m:?}");
+        }
+    }
+
+    pub async fn send(&mut self, v: Value) {
+        use futures_util::SinkExt;
+        self.0
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                v.to_string().into(),
+            ))
+            .await
+            .unwrap();
+    }
+}
+
 pub struct BoardClient {
     pub store: DeckStore,
     pub addr: std::net::SocketAddr,
@@ -58,6 +109,8 @@ pub async fn board(link: Arc<DeckLink>) -> BoardClient {
                 link,
                 origins: Origins::new(bound, Some("deck.tail1234.ts.net")),
                 limiter: LoginLimiter::default(),
+                tickets: fleetdeck_deck::http::ws::Tickets::default(),
+                ws_recheck: Duration::from_millis(200),
             });
             Ok::<_, fleetdeck_deck::http::tls::TlsError>((board, tls))
         },
@@ -147,6 +200,35 @@ impl BoardClient {
         let set = r.header("set-cookie").unwrap();
         let pair = set.split(';').next().unwrap().to_owned();
         (pair, r.body["csrf"].as_str().unwrap().to_owned())
+    }
+
+    /// The board's own origin.
+    pub fn origin(&self) -> String {
+        format!("https://{}", self.addr)
+    }
+
+    /// Opens `GET path` as a WebSocket with `headers`. A refused upgrade
+    /// returns the HTTP status.
+    pub async fn ws(&self, path: &str, headers: &[(&str, &str)]) -> Result<Ws, u16> {
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+        use tokio_tungstenite::tungstenite::http::HeaderValue;
+        let tcp = TcpStream::connect(self.addr).await.unwrap();
+        let name = ServerName::try_from("127.0.0.1").unwrap();
+        let tls = self.tls.connect(name, tcp).await.unwrap();
+        let mut req = format!("wss://{}{path}", self.addr)
+            .into_client_request()
+            .unwrap();
+        for (k, v) in headers {
+            req.headers_mut().insert(
+                tokio_tungstenite::tungstenite::http::HeaderName::from_bytes(k.as_bytes()).unwrap(),
+                HeaderValue::from_str(v).unwrap(),
+            );
+        }
+        match tokio_tungstenite::client_async(req, tls).await {
+            Ok((ws, _)) => Ok(Ws(ws)),
+            Err(tokio_tungstenite::tungstenite::Error::Http(r)) => Err(r.status().as_u16()),
+            Err(e) => panic!("websocket: {e}"),
+        }
     }
 
     pub async fn audited(&self, action: &str, result: AuditResult) -> Vec<Option<String>> {

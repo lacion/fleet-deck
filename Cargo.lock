@@ -679,6 +679,7 @@ dependencies = [
  "fleetdeck-proto",
  "fleetdeck-station",
  "fleetdeck-testkit",
+ "futures-util",
  "hyper",
  "hyper-util",
  "rcgen",
@@ -692,6 +693,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-rustls",
+ "tokio-tungstenite 0.30.0",
  "tracing",
 ]
 

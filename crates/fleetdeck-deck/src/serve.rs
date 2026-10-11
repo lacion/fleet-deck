@@ -88,6 +88,8 @@ pub async fn serve(
                 link: board_link,
                 origins: Origins::new(bound, tailnet.as_deref()),
                 limiter: LoginLimiter::default(),
+                tickets: crate::http::ws::Tickets::default(),
+                ws_recheck: crate::http::ws::RECHECK,
             });
             Ok((board, tls))
         },

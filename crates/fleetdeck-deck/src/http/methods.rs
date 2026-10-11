@@ -38,6 +38,10 @@ const fn m(
     }
 }
 
+/// The board WebSocket: the guard authenticates it by ticket or by a
+/// cookie with an `Origin` header (P3-9b).
+pub const WS_METHOD: &str = "board.ws";
+
 /// Every board-API method.
 pub const API: &[ApiMethod] = &[
     m("auth.login", Method::POST, "/api/auth/login", None, true),
@@ -90,6 +94,14 @@ pub const API: &[ApiMethod] = &[
         "/api/commands/{command_id}",
         Some(Scope::Read),
         false,
+    ),
+    m(WS_METHOD, Method::GET, "/api/ws", Some(Scope::Read), false),
+    m(
+        "board.ws_ticket",
+        Method::POST,
+        "/api/ws/ticket",
+        Some(Scope::Read),
+        true,
     ),
     cmd("session.start", Scope::Drive),
     cmd("session.resume", Scope::Drive),
