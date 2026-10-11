@@ -12,6 +12,7 @@ fleetdeck-proto = { path = "../fleetdeck-proto" }
 fleetdeck-core = { path = "../fleetdeck-core" }
 fleetdeck-link = { path = "../fleetdeck-link" }
 fleetdeck-providers = { path = "../fleetdeck-providers" }
+async-trait = { workspace = true }
 ring = { workspace = true }
 rusqlite = { workspace = true }
 rusqlite_migration = { workspace = true }

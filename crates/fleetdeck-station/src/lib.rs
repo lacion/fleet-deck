@@ -9,3 +9,6 @@ pub mod host {
 }
 
 pub mod store;
+
+/// The effect worker (PLAN §6.4).
+pub mod worker;

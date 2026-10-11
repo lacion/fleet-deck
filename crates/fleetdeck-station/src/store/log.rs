@@ -121,6 +121,9 @@ pub(super) fn append_one(
             now,
         ],
     )?;
+    // The request table first: an answer is confirmed through its node.
+    super::requests::observe(conn, &envelope, now)?;
+    super::effects::observe(conn, &envelope, now)?;
     Ok(envelope)
 }
 

@@ -15,9 +15,11 @@ use super::*;
 const DAY: Duration = Duration::from_secs(24 * 60 * 60);
 
 async fn store(det: &Det) -> Store {
-    Store::open_in_memory(det.clock(), det.ids(), StoreConfig::default())
+    let s = Store::open_in_memory(det.clock(), det.ids(), StoreConfig::default())
         .await
-        .unwrap()
+        .unwrap();
+    s.recover(Vec::new()).await.unwrap();
+    s
 }
 
 fn new_session(id: &str) -> NewSession {
@@ -511,6 +513,7 @@ async fn receipts_and_events_survive_a_restart() {
         let s = Store::open(&path, det.clock(), det.ids(), StoreConfig::default())
             .await
             .unwrap();
+        s.recover(Vec::new()).await.unwrap();
         s.create_session(new_session("s1")).await.unwrap();
         s.decide(
             envelope(&det, "c1", "hi"),
@@ -523,6 +526,7 @@ async fn receipts_and_events_survive_a_restart() {
     let s = Store::open(&path, det.clock(), det.ids(), StoreConfig::default())
         .await
         .unwrap();
+    s.recover(Vec::new()).await.unwrap();
     let again = s
         .decide(
             envelope(&det, "c1", "hi"),
@@ -534,5 +538,6 @@ async fn receipts_and_events_survive_a_restart() {
     assert!(again.duplicate);
     assert_eq!(again.receipt, first.receipt);
     assert_eq!(runs.load(Ordering::SeqCst), 1);
-    assert_eq!(read_all(&s, 0).await, first.events);
+    // Recovery appended the lost-session events after the stored ones.
+    assert!(read_all(&s, 0).await.starts_with(&first.events));
 }

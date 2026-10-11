@@ -5,8 +5,12 @@
 //!   stores the events and folds them into the session projection in one
 //!   SQLite transaction. Subscribers see a new head only after the commit.
 //! - **Command decisions** ([`Store::decide`]) commit the decision's events,
-//!   projection updates and the receipt in one transaction (P2-5 adds the
-//!   effects to the same transaction).
+//!   projection updates, effects and the receipt in one transaction.
+//! - **Effects** ([`effects`]) go through the outbox; the worker claims them
+//!   with its fence token before the I/O. Provider evidence confirms them in
+//!   the transaction that stores the evidence event.
+//! - **Recovery** ([`Store::recover`]) runs at station start, before the
+//!   store admits any command (A10).
 //! - **Receipts** acknowledge acceptance, not completion: a duplicate
 //!   `command_id` returns the stored receipt and does nothing else; a reused
 //!   id with another method, payload or caller is rejected (`command_id_reused`)
@@ -18,12 +22,17 @@
 //!   gets [`ReadResult::SnapshotRequired`]. Receipts stay for
 //!   [`RECEIPT_RETENTION_MS`].
 
+pub mod effects;
 mod log;
+mod outbox;
 mod receipts;
+mod recovery;
+pub mod requests;
 pub mod schema;
 
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use fleetdeck_core::db::{Db, DbError};
 use fleetdeck_core::{SharedClock, SharedIds, new_id};
@@ -38,7 +47,12 @@ use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
 
+pub use effects::{
+    Dispatch, Effect, EffectId, EffectPayload, EffectState, InputRecord, ProcessIncarnation,
+};
 pub use receipts::{Caller, DecideError, Decided, Decision};
+pub use recovery::RecoveryReport;
+pub use requests::{AnswerClaim, AnswerReceipt, RequestState, RuntimeRequest};
 
 /// The default event retention after the deck acknowledged the events.
 pub const EVENT_RETENTION_MS: i64 = 7 * 24 * 60 * 60 * 1000;
@@ -59,6 +73,12 @@ pub enum StoreError {
     CursorAhead { cursor: u64, head: u64 },
     #[error("corrupt store: {0}")]
     Corrupt(String),
+    #[error("session {0} has no live provider process")]
+    NoProcess(SessionId),
+    #[error("effect worker {fence} was replaced by worker {current}")]
+    Fenced { fence: u64, current: u64 },
+    #[error("the store admits no command before start recovery ran")]
+    NotRecovered,
 }
 
 impl From<rusqlite::Error> for StoreError {
@@ -165,9 +185,13 @@ pub struct PruneReport {
 struct Inner {
     db: Db,
     clock: SharedClock,
+    ids: SharedIds,
     incarnation: IncarnationId,
     config: StoreConfig,
     head: watch::Sender<u64>,
+    /// Wakes the effect worker after a commit that queued effects.
+    outbox: watch::Sender<u64>,
+    recovered: AtomicBool,
 }
 
 /// The station store. Clones share one database thread.
@@ -220,6 +244,7 @@ impl Store {
         config: StoreConfig,
     ) -> Result<Self> {
         let fresh: IncarnationId = new_id(ids.as_ref());
+        let ids_kept = Arc::clone(&ids);
         let now = now_ms(&clock);
         let (incarnation, head) = call(&db, move |conn| {
             let tx = conn.transaction()?;
@@ -246,13 +271,17 @@ impl Store {
         })
         .await?;
         let (head_tx, _) = watch::channel(head);
+        let (outbox_tx, _) = watch::channel(0);
         Ok(Self {
             inner: Arc::new(Inner {
                 db,
                 clock,
+                ids: ids_kept,
                 incarnation,
                 config,
                 head: head_tx,
+                outbox: outbox_tx,
+                recovered: AtomicBool::new(false),
             }),
         })
     }
@@ -414,6 +443,7 @@ impl Store {
     /// # Errors
     /// A database error: nothing is stored and the caller answers with an
     /// error, not with a receipt.
+    /// Rejected with [`StoreError::NotRecovered`] before [`Self::recover`].
     pub async fn decide<F>(
         &self,
         envelope: CommandEnvelope,
@@ -427,14 +457,29 @@ impl Store {
             + Send
             + 'static,
     {
+        if !self.inner.recovered.load(Ordering::Acquire) {
+            return Err(StoreError::NotRecovered);
+        }
         let now = self.now();
         let incarnation = self.inner.incarnation.clone();
+        let ids = Arc::clone(&self.inner.ids);
         let decided = call(&self.inner.db, move |conn| {
-            receipts::decide(conn, &incarnation, now, &envelope, &caller, decide)
+            receipts::decide(
+                conn,
+                ids.as_ref(),
+                &incarnation,
+                now,
+                &envelope,
+                &caller,
+                decide,
+            )
         })
         .await?;
         if let Some(last) = decided.events.last() {
             self.publish(last.station_seq);
+        }
+        if !decided.effects.is_empty() {
+            self.wake_worker();
         }
         Ok(decided)
     }
@@ -471,5 +516,7 @@ fn to_i64(v: u64) -> Result<i64> {
     i64::try_from(v).map_err(|_| StoreError::Corrupt(format!("sequence {v} too large")))
 }
 
+#[cfg(test)]
+mod effects_tests;
 #[cfg(test)]
 mod tests;

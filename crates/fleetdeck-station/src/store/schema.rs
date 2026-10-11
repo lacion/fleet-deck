@@ -1,9 +1,10 @@
 //! `station.db` migrations (PLAN §10). Each entry is one transactional
 //! migration; the list only grows (a shipped migration never changes).
 //!
-//! Phase 2 tables: `meta`, `pairing`, `deck_acks`, `sessions`, `events`,
-//! `commands`, `shells`. The effect outbox and the runtime requests follow in
-//! the next migration (M2 P2-5); the workspace tables in Phase 6.
+//! V1 (M2 P2-4): `meta`, `pairing`, `deck_acks`, `sessions`, `events`,
+//! `commands`, `shells`. V2 (M2 P2-5): `processes`, `effects`,
+//! `runtime_requests` and the worker fence. The workspace tables follow in
+//! Phase 6.
 
 use rusqlite_migration::{M, Migrations};
 
@@ -81,8 +82,67 @@ CREATE TABLE shells (
 ) STRICT;
 ";
 
+const V2: &str = "
+-- The fence token of the current effect worker (PLAN §6.4). Each worker
+-- start takes the next value; a claim or settle with an older token fails.
+ALTER TABLE meta ADD COLUMN worker_fence INTEGER NOT NULL DEFAULT 0;
+
+-- Provider processes (provider incarnations): one row per spawned process.
+CREATE TABLE processes (
+    process_incarnation  TEXT PRIMARY KEY,
+    session_id           TEXT    NOT NULL REFERENCES sessions(session_id),
+    pid                  INTEGER,
+    state                TEXT    NOT NULL CHECK (state IN ('live', 'dead')),
+    started_at           INTEGER NOT NULL,
+    ended_at             INTEGER,
+    reason               TEXT
+) STRICT;
+CREATE INDEX processes_session ON processes(session_id, state);
+
+-- The effect outbox (§6.4). seq orders the worker.
+CREATE TABLE effects (
+    seq                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    effect_id            TEXT    NOT NULL UNIQUE,
+    command_id           TEXT,
+    session_id           TEXT    NOT NULL REFERENCES sessions(session_id),
+    -- The target process; NULL for an effect that starts a process.
+    process_incarnation  TEXT REFERENCES processes(process_incarnation),
+    kind                 TEXT    NOT NULL,
+    payload              TEXT    NOT NULL,
+    -- The provider evidence that confirms the effect (input id, request id, mode).
+    correlation          TEXT,
+    state                TEXT    NOT NULL CHECK (state IN
+        ('queued', 'claimed', 'confirmed', 'retired_not_dispatched', 'outcome_unknown')),
+    fence_token          INTEGER,
+    reason               TEXT,
+    created_at           INTEGER NOT NULL,
+    updated_at           INTEGER NOT NULL
+) STRICT;
+CREATE INDEX effects_state ON effects(state, seq);
+CREATE INDEX effects_correlation ON effects(session_id, correlation);
+
+-- Runtime requests (approvals, questions) with the provider's option ids (L3).
+CREATE TABLE runtime_requests (
+    request_id           TEXT PRIMARY KEY,
+    session_id           TEXT    NOT NULL REFERENCES sessions(session_id),
+    process_incarnation  TEXT REFERENCES processes(process_incarnation),
+    node_id              TEXT,
+    kind                 TEXT    NOT NULL,
+    options              TEXT    NOT NULL,
+    response_channel     TEXT    NOT NULL,
+    state                TEXT    NOT NULL CHECK (state IN ('open', 'resolved', 'expired')),
+    -- The first answer (JSON AnswerReceipt): a repeated answer returns it.
+    receipt              TEXT,
+    -- deny_after (§6.5): the time of the automatic deny; NULL for wait.
+    deny_at              INTEGER,
+    requested_at         INTEGER NOT NULL,
+    updated_at           INTEGER NOT NULL
+) STRICT;
+CREATE INDEX runtime_requests_open ON runtime_requests(state, deny_at);
+";
+
 /// The `station.db` migrations.
 #[must_use]
 pub fn migrations() -> Migrations<'static> {
-    Migrations::new(vec![M::up(V1)])
+    Migrations::new(vec![M::up(V1), M::up(V2)])
 }

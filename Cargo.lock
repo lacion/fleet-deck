@@ -580,6 +580,7 @@ dependencies = [
 name = "fleetdeck-station"
 version = "0.0.0"
 dependencies = [
+ "async-trait",
  "fleetdeck-core",
  "fleetdeck-link",
  "fleetdeck-proto",

@@ -14,7 +14,10 @@
 //!
 //! A database error aborts everything: no events, no receipt.
 
+use fleetdeck_core::IdSource;
+use fleetdeck_proto::RequestId;
 use fleetdeck_proto::command::{CommandResult, ReceiptState};
+use fleetdeck_proto::event::ResolvedBy;
 use fleetdeck_proto::{
     CommandEnvelope, CommandId, EventEnvelope, IncarnationId, Receipt, Reject, RejectCode,
     SessionId, SessionSummary,
@@ -22,8 +25,9 @@ use fleetdeck_proto::{
 use ring::digest::{SHA256, digest};
 use rusqlite::{Connection, OptionalExtension, params};
 
-use super::log;
-use super::{NewEvent, NewSession, Result, StoreError, to_i64};
+use super::effects::{self, Effect, EffectPayload, ProcessIncarnation};
+use super::requests::{self, AnswerClaim, RuntimeRequest};
+use super::{NewEvent, NewSession, Result, StoreError, log, to_i64};
 
 /// The authenticated identity that sent a command: a reused `command_id`
 /// from another caller is rejected.
@@ -69,13 +73,18 @@ pub struct Decided {
     pub duplicate: bool,
     /// The events that this decision committed.
     pub events: Vec<EventEnvelope>,
+    /// The effects that this decision queued.
+    pub effects: Vec<Effect>,
 }
 
 /// The write handle of one command decision.
 pub struct Decision<'a> {
     conn: &'a Connection,
+    ids: &'a dyn IdSource,
     now: i64,
+    command_id: CommandId,
     events: Vec<EventEnvelope>,
+    effects: Vec<Effect>,
 }
 
 impl std::fmt::Debug for Decision<'_> {
@@ -83,6 +92,7 @@ impl std::fmt::Debug for Decision<'_> {
         f.debug_struct("Decision")
             .field("now", &self.now)
             .field("events", &self.events.len())
+            .field("effects", &self.effects.len())
             .finish_non_exhaustive()
     }
 }
@@ -126,6 +136,62 @@ impl Decision<'_> {
         self.events
             .last()
             .ok_or_else(|| StoreError::Corrupt("the appended event is missing".to_owned()))
+    }
+
+    /// The live provider process of a session, if any.
+    ///
+    /// # Errors
+    /// A database error.
+    pub fn live_process(&self, session_id: &SessionId) -> Result<Option<ProcessIncarnation>> {
+        effects::live_process(self.conn, session_id)
+    }
+
+    /// Queues one effect in the decision's transaction (§6.4). An effect
+    /// that acts on a process targets the session's live process.
+    ///
+    /// # Errors
+    /// [`StoreError::NoProcess`] or a database error.
+    pub fn enqueue(&mut self, session_id: &SessionId, payload: EffectPayload) -> Result<&Effect> {
+        let effect = effects::enqueue(
+            self.conn,
+            self.ids,
+            self.now,
+            Some(&self.command_id),
+            session_id,
+            payload,
+        )?;
+        self.effects.push(effect);
+        self.effects
+            .last()
+            .ok_or_else(|| StoreError::Corrupt("the queued effect is missing".to_owned()))
+    }
+
+    /// A runtime request (approval, question).
+    ///
+    /// # Errors
+    /// A database or JSON error.
+    pub fn request(&self, request_id: &RequestId) -> Result<Option<RuntimeRequest>> {
+        requests::request(self.conn, request_id)
+    }
+
+    /// Records this command as the first answer of a request (L3).
+    ///
+    /// # Errors
+    /// A database or JSON error.
+    pub fn claim_answer(
+        &mut self,
+        request_id: &RequestId,
+        option_id: &str,
+        by: ResolvedBy,
+    ) -> Result<AnswerClaim> {
+        requests::claim_answer(
+            self.conn,
+            request_id,
+            option_id,
+            by,
+            Some(&self.command_id),
+            self.now,
+        )
     }
 }
 
@@ -201,11 +267,13 @@ fn not_stored(envelope: &CommandEnvelope, reject: Reject, now: i64) -> Decided {
         receipt: Receipt::rejected(envelope.command_id.clone(), reject, now),
         duplicate: false,
         events: Vec::new(),
+        effects: Vec::new(),
     }
 }
 
 pub(super) fn decide<F>(
     conn: &mut Connection,
+    ids: &dyn IdSource,
     incarnation: &IncarnationId,
     now: i64,
     envelope: &CommandEnvelope,
@@ -233,6 +301,7 @@ where
                 receipt: prior.receipt,
                 duplicate: true,
                 events: Vec::new(),
+                effects: Vec::new(),
             });
         }
         let reject = Reject::new(
@@ -255,24 +324,29 @@ where
             receipt,
             duplicate: false,
             events: Vec::new(),
+            effects: Vec::new(),
         });
     }
-    let (outcome, events) = {
+    let (outcome, events, queued) = {
         let sp = tx.savepoint()?;
         let mut decision = Decision {
             conn: &sp,
+            ids,
             now,
+            command_id: envelope.command_id.clone(),
             events: Vec::new(),
+            effects: Vec::new(),
         };
         let outcome = decide(&mut decision);
         let events = std::mem::take(&mut decision.events);
+        let queued = std::mem::take(&mut decision.effects);
         match outcome {
             Ok(result) => {
                 sp.commit()?;
-                (Ok(result), events)
+                (Ok(result), events, queued)
             }
             // Dropping the savepoint rolls the decision's writes back.
-            Err(DecideError::Reject(reject)) => (Err(reject), Vec::new()),
+            Err(DecideError::Reject(reject)) => (Err(reject), Vec::new(), Vec::new()),
             Err(DecideError::Store(e)) => return Err(e),
         }
     };
@@ -291,5 +365,6 @@ where
         receipt,
         duplicate: false,
         events,
+        effects: queued,
     })
 }
