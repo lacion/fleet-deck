@@ -11,7 +11,6 @@ use super::{LinkError, NodeConfig, Ws, connect_ws};
 use crate::frames::Scope;
 use crate::hello::{Channel, HandshakeError, HandshakeFrame, Side};
 use crate::identity::PeerKey;
-use crate::net::HANDSHAKE_TIMEOUT;
 use crate::pairing::{Invitation, PairError, PairedPeer};
 use crate::tls::{self, PeerPolicy};
 
@@ -31,7 +30,13 @@ pub async fn pair(
         &node.identity,
         PeerPolicy::Fingerprint(invitation.fingerprint),
     )?;
-    let (mut ws, peer, exporter) = connect_ws(invitation.addr, config, Channel::Pair).await?;
+    let (mut ws, peer, exporter) = connect_ws(
+        invitation.addr,
+        config,
+        Channel::Pair,
+        node.handshake_timeout,
+    )
+    .await?;
     let steps = async {
         let est = handshake::run(
             &mut ws,
@@ -55,7 +60,7 @@ pub async fn pair(
             _ => Err(refuse(&mut ws, HandshakeError::Protocol("expected Paired".into())).await),
         }
     };
-    match tokio::time::timeout(HANDSHAKE_TIMEOUT, steps).await {
+    match tokio::time::timeout(node.handshake_timeout, steps).await {
         Ok(r) => r?,
         Err(_) => {
             return Err(refuse(&mut ws, HandshakeError::Protocol("pairing timeout".into())).await);
@@ -74,7 +79,7 @@ pub(super) async fn accept(
     peer: PeerKey,
     transcript: &[u8],
 ) -> Result<(), LinkError> {
-    let proof = match tokio::time::timeout(HANDSHAKE_TIMEOUT, recv_frame(&mut ws)).await {
+    let proof = match tokio::time::timeout(node.handshake_timeout, recv_frame(&mut ws)).await {
         Ok(Ok((_, HandshakeFrame::PairProof { proof }))) => proof,
         Ok(Ok(_)) => {
             return Err(refuse(

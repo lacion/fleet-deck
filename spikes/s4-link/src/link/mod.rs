@@ -16,6 +16,7 @@ mod pair;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, RwLock};
+use std::time::Duration;
 
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot};
@@ -55,6 +56,9 @@ pub enum LinkError {
     Closed { reason: String, detail: String },
     #[error("link protocol error: {0}")]
     Protocol(String),
+    /// A peer that stalls a setup step (for example the WebSocket upgrade).
+    #[error("the {0} took longer than {1:?}")]
+    Timeout(&'static str, Duration),
 }
 
 impl LinkError {
@@ -79,6 +83,7 @@ impl LinkError {
             Self::Handshake(HandshakeError::PeerClosed { reason, .. }) => Some(reason),
             Self::Handshake(e) => Some(e.reason()),
             Self::Closed { reason, .. } => Some(reason),
+            Self::Timeout(..) | Self::Net(NetError::Timeout(_)) => Some("timeout"),
             _ => None,
         }
     }
@@ -128,6 +133,10 @@ pub struct NodeConfig {
     /// Open invitations of this node (the listener accepts unpinned keys on
     /// the pair channel only while one is open).
     pub invites: Arc<Invitations>,
+    /// Bound of each setup step after TLS: the WebSocket upgrade on both
+    /// sides, the hello/auth exchange, the pairing proofs, and the wait for
+    /// the data channel. A stalled peer never blocks pairing or reconnect.
+    pub handshake_timeout: Duration,
 }
 
 impl NodeConfig {
@@ -138,6 +147,7 @@ impl NodeConfig {
             pins: PinSet::new(),
             grants: Grants::new(),
             invites: Invitations::new(),
+            handshake_timeout: net::HANDSHAKE_TIMEOUT,
         }
     }
 
@@ -183,6 +193,9 @@ fn ws_config(channel: Channel) -> WebSocketConfig {
         .max_frame_size(Some(max))
 }
 
+/// The setup step name in [`LinkError::Timeout`].
+const UPGRADE: &str = "WebSocket upgrade";
+
 fn exporter_of(conn: &rustls::ConnectionCommon<impl Sized>) -> Result<[u8; 32], LinkError> {
     conn.export_keying_material([0u8; 32], EXPORTER_LABEL, None)
         .map_err(|e| LinkError::Protocol(format!("TLS exporter: {e}")))
@@ -193,17 +206,20 @@ pub(crate) async fn connect_ws(
     addr: SocketAddr,
     config: Arc<rustls::ClientConfig>,
     channel: Channel,
+    limit: Duration,
 ) -> Result<(Ws, PeerKey, [u8; 32]), LinkError> {
     let (tls, peer) = net::connect(addr, config).await?;
     let exporter = exporter_of(tls.get_ref().1)?;
     let url = format!("wss://{SERVER_NAME}{}", channel.path());
-    let (ws, _) = client_async_with_config(
+    let upgrade = client_async_with_config(
         url,
         tokio_rustls::TlsStream::Client(tls),
         Some(ws_config(channel)),
-    )
-    .await
-    .map_err(LinkError::ws)?;
+    );
+    let (ws, _) = tokio::time::timeout(limit, upgrade)
+        .await
+        .map_err(|_| LinkError::Timeout(UPGRADE, limit))?
+        .map_err(LinkError::ws)?;
     Ok((ws, peer, exporter))
 }
 
@@ -214,9 +230,10 @@ async fn dial_channel(
     channel: Channel,
     epoch: u64,
 ) -> Result<(Ws, PeerKey, Negotiated), LinkError> {
-    let (mut ws, peer, exporter) = connect_ws(addr, config, channel).await?;
+    let (mut ws, peer, exporter) =
+        connect_ws(addr, config, channel, node.handshake_timeout).await?;
     let est = handshake::run(&mut ws, node, Side::Dialer, channel, epoch, exporter, peer).await?;
-    handshake::await_ready(&mut ws).await?;
+    handshake::await_ready(&mut ws, node.handshake_timeout).await?;
     Ok((ws, peer, est.negotiated))
 }
 
@@ -429,13 +446,16 @@ async fn accept_one(
                 }
             }
         };
-        let mut ws = accept_hdr_async_with_config(
+        let upgrade = accept_hdr_async_with_config(
             tokio_rustls::TlsStream::Server(tls),
             pick,
             Some(ws_config(Channel::Control)),
-        )
-        .await
-        .map_err(LinkError::ws)?;
+        );
+        let limit = node.handshake_timeout;
+        let mut ws = tokio::time::timeout(limit, upgrade)
+            .await
+            .map_err(|_| LinkError::Timeout(UPGRADE, limit))?
+            .map_err(LinkError::ws)?;
         let channel = chosen.ok_or_else(|| LinkError::Protocol("no channel path".into()))?;
         // TLS lets an unpinned key in while an invitation is open; such a key
         // may only pair.
@@ -545,7 +565,7 @@ async fn attach_control(
     }
     handshake::send_frame(&mut ws, &HandshakeFrame::Ready).await?;
     let data = if wants_data {
-        match tokio::time::timeout(net::HANDSHAKE_TIMEOUT, data_rx).await {
+        match tokio::time::timeout(node.handshake_timeout, data_rx).await {
             Ok(Ok(dws)) => Some(dws),
             _ => {
                 return Err(LinkError::closed(

@@ -195,3 +195,11 @@ Format: context, options, choice, reason, owner review.
 - **Choice:** epoch (b) (`reconnect::EpochClock`). Backoff: equal jitter, delay uniform in `[c/2, c]` with `c = min(5 min, 500 ms · 2^attempt)`; the attempt counter resets only after a link stayed up for 60 s (`BackoffPolicy`).
 - **Reason:** (b) needs no disk write before a dial, and a restarted dialer always starts above its previous epochs unless the clock steps back by more than the restart time (Phase 1 can add the persisted counter as a floor). Equal jitter never retries at once (no tight loops after a deck restart) and still spreads many stations apart.
 - **Owner review:** pending
+
+## DL-023 — Every link setup step after TLS has one time bound
+
+- **Context:** PLAN §8 states no timeouts. The round 11 review found that a peer that completes TLS and then stalls could block a WebSocket upgrade, and with it pairing and the reconnect supervisor, without limit.
+- **Options:** (a) one bound per node for each setup step after TLS; (b) separate bounds per step; (c) one bound for the whole setup.
+- **Choice:** (a). `NodeConfig::handshake_timeout` (default 10 s, the same as the TLS bound `net::HANDSHAKE_TIMEOUT`) bounds the WebSocket upgrade on the dialer and on the listener, the hello/auth exchange, the `ready` wait, the pairing proofs, and the listener's wait for the data channel. A timeout is the error `LinkError::Timeout` with the stable reason `timeout`. The reconnect supervisor treats it like any other failed attempt (backoff, then retry). Each accepted connection runs in its own task, so a stalled client never delays other dialers.
+- **Reason:** one value is simple to configure and to test (`tests/timeouts.rs` sets 300 ms). A per-step bound gives a clear error that names the step (`the WebSocket upgrade took longer than …`). A bound for the whole setup would hide which step stalled.
+- **Owner review:** pending

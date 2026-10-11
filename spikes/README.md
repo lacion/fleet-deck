@@ -7,7 +7,7 @@ These crates de-risk PLAN §14 Phase 0. They never ship. The product crates (Pha
 | shared | `spike-canon/` | Spike subset of the canonical events (PLAN §6.3) | — |
 | S1 | `s1-claude/` | Claude Code stream-json control protocol from Rust (A8, D8) | `docs/v2/adr/ADR-001-native-claude-adapter.md` (Proposed) |
 | S2 | `s2-codex/` | Codex app-server JSON-RPC from Rust | [`docs/v2/adr/ADR-002-native-codex-adapter.md`](../docs/v2/adr/ADR-002-native-codex-adapter.md) |
-| S4 | `s4-link/` | Link protocol v1 (mTLS, pairing, channels, reconnect) | `docs/v2/adr/ADR-004-*.md` |
+| S4 | `s4-link/` | Link protocol v1 (mTLS, pairing, channels, reconnect) | [`ADR-004`](../docs/v2/adr/ADR-004-link-protocol-v1.md) |
 
 ## Offline commands (no network, no provider CLI)
 
@@ -135,6 +135,14 @@ S4-3 adds pairing, reconnect and several processes (`src/pairing.rs`, `src/link/
 ```sh
 cargo nextest run -p s4-link --test pairing --test multiprocess
 ```
+
+`tests/timeouts.rs` (DL-023): a peer that completes TLS and then stalls never blocks a dial, a pairing, the reconnect supervisor, or the listener; each fails with the reason `timeout` after `NodeConfig::handshake_timeout`.
+
+```sh
+cargo nextest run -p s4-link --test timeouts
+```
+
+The whole S4 spike runs offline with `cargo nextest run -p s4-link`. ADR-004 maps every §14 S4 row to its tests.
 
 ## Live commands (owner or recorder only)
 

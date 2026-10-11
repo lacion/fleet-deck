@@ -14,7 +14,7 @@ use crate::hello::{
     self, Channel, HandshakeError, HandshakeFrame, Hello, Negotiated, Side, negotiate,
 };
 use crate::identity::PeerKey;
-use crate::net::HANDSHAKE_TIMEOUT;
+use std::time::Duration;
 
 pub(crate) struct Established {
     pub peer_hello: Hello,
@@ -73,7 +73,7 @@ pub(crate) async fn refuse(ws: &mut Ws, e: HandshakeError) -> LinkError {
     LinkError::Handshake(e)
 }
 
-/// Hello + Auth on one channel, bounded by [`HANDSHAKE_TIMEOUT`].
+/// Hello + Auth on one channel, bounded by `node.handshake_timeout`.
 pub(crate) async fn run(
     ws: &mut Ws,
     node: &NodeConfig,
@@ -84,7 +84,7 @@ pub(crate) async fn run(
     peer_key: PeerKey,
 ) -> Result<Established, LinkError> {
     match tokio::time::timeout(
-        HANDSHAKE_TIMEOUT,
+        node.handshake_timeout,
         steps(ws, node, side, channel, epoch, exporter, peer_key),
     )
     .await
@@ -135,14 +135,14 @@ async fn steps(
 }
 
 /// The dialer waits for the listener's `Ready` (or its `Close`).
-pub(crate) async fn await_ready(ws: &mut Ws) -> Result<(), LinkError> {
+pub(crate) async fn await_ready(ws: &mut Ws, limit: Duration) -> Result<(), LinkError> {
     let wait = async {
         match recv_frame(ws).await? {
             (_, HandshakeFrame::Ready) => Ok(()),
             _ => Err(LinkError::Protocol("expected Ready".into())),
         }
     };
-    tokio::time::timeout(HANDSHAKE_TIMEOUT, wait)
+    tokio::time::timeout(limit, wait)
         .await
         .map_err(|_| LinkError::Protocol("no Ready from the listener".into()))?
 }

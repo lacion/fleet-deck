@@ -18,7 +18,7 @@ Rules for this file: one checklist item per M1 deliverable, in PLAN order. Each 
 - [x] **S4-1 Link identity + address rules.** Ed25519 identity keys, self-signed certs from them, mTLS with pinned-key verifiers, D13 address rules (loopback, RFC 1918, ULA, link-local, Tailscale ranges; reject public at bind and dial) as unit tests. *(round 9)*
 - [x] **S4-2 Link handshake + channels.** `Hello` with `proto_min/max`, feature flags, roles, `link_epoch`, nonce; transcript signature bound to the TLS exporter; version negotiation; control channel (frames of §8.3) and data channel (multiplexed streams, credit flow control). *(round 10)*
 - [x] **S4-3 Link pairing + reconnect.** `fdinv1:` invitations both directions (single use, 15 min, fingerprint-bound, secret proof bound to TLS); jittered backoff reconnect; duplicate link (`link_epoch`) rule; station-only-dials (NAT) case; multi-process loopback test with separate data dirs. *(round 11)*
-- [ ] **S4-4 ADR-004** (Proposed): link protocol v1 (frames, handshake, pairing, scopes, reconnect, feature flags).
+- [x] **S4-4 ADR-004** (Proposed): link protocol v1 (frames, handshake, pairing, scopes, reconnect, feature flags). *(round 12; plus WebSocket upgrade and setup timeouts, DL-023)*
 - [ ] **M1-F Close-out.** PLAN §6.2 matrix: verified value + evidence per cell; `spikes/README.md` offline commands for every spike; full acceptance run; DECISIONS-LOG complete.
 
 ## Round log
@@ -249,3 +249,21 @@ Rules for this file: one checklist item per M1 deliverable, in PLAN order. Each 
   - `cargo run -p s1-claude --bin replay-claude` → 29 ok, unknown=0, exit 0
   - `web/` checks and TS-types drift → not applicable in M1
 - Next: S4-4 ADR-004.
+
+### Round 12 (2026-10-11)
+
+- Committed round 11 as `dcd0010`.
+- Review fix: every link setup step after TLS has the bound `NodeConfig::handshake_timeout` (default 10 s): the WebSocket upgrade on the dialer and on the listener, hello/auth, `ready`, the pairing proofs, the wait for the data channel. A timeout is `LinkError::Timeout` with reason `timeout` (DL-023).
+- Regression tests `spikes/s4-link/tests/timeouts.rs` (limit 300 ms, a TLS peer that never upgrades): `a_dial_to_a_server_that_never_upgrades_times_out`, `pairing_with_a_server_that_never_upgrades_times_out`, `the_reconnect_supervisor_keeps_retrying_a_stalled_server`, `a_client_that_never_sends_the_upgrade_does_not_block_the_listener`. Stress: 6 runs of `--test timeouts --test link --test pairing` → 0 failures.
+- S4-4: `docs/v2/adr/ADR-004-link-protocol-v1.md` (Status Proposed): layers, D13 scope, identity/TLS, channels, handshake + transcript signature + feature flags, control frames + scopes/method table, data mux + credit, pairing, epochs, reconnect, reason codes, failure behaviour, §14 S4 coverage table (every cited test name checked with grep), alternatives, risks, Phase 3 work, owner points (adversary DESIGN REVIEW not run: the loop forbids subagents).
+- README: ADR-004 link, timeouts command, whole-spike command.
+- Commands and results:
+  - `cargo fmt --all --check` → pass
+  - `cargo clippy --workspace --all-targets -- -D warnings` → pass
+  - `CI=true cargo nextest run --workspace` → 208 passed (s4-link 83)
+  - `cargo deny check` → advisories ok, bans ok, licenses ok, sources ok
+  - `cargo run -p s2-codex --bin replay-codex` → 15 ok, exit 0
+  - `cargo run -p s1-claude --bin replay-claude` → 29 ok, exit 0
+  - `web/` checks and TS-types drift → not applicable in M1
+- Next: M1-F close-out (capability matrix in PLAN §6.2 with values + evidence, acceptance run).
+
