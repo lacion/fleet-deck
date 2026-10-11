@@ -548,6 +548,20 @@ version = "0.0.0"
 dependencies = [
  "fleetdeck-core",
  "fleetdeck-proto",
+ "futures-util",
+ "ring",
+ "rusqlite",
+ "rusqlite_migration",
+ "rustix",
+ "rustls",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-rustls",
+ "tokio-tungstenite",
+ "tracing",
 ]
 
 [[package]]

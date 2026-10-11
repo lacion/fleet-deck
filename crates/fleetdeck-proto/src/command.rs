@@ -178,27 +178,12 @@ impl CommandEnvelope {
     /// `incarnation_mismatch` and `expired` do not store a receipt: a resend
     /// with the same `command_id` gets the same answer.
     pub fn admit(&self, now: i64, incarnation: &IncarnationId) -> Result<(), Reject> {
-        if let Some(target) = &self.target_incarnation
-            && target != incarnation
-        {
-            return Err(Reject::new(
-                RejectCode::IncarnationMismatch,
-                format!("the command targets incarnation {target}, the station is {incarnation}"),
-            ));
-        }
-        if now > self.retry_until.saturating_add(CLOCK_SKEW_MS) {
-            return Err(Reject::new(RejectCode::Expired, "retry_until has passed"));
-        }
-        let latest = now
-            .saturating_add(RETRY_WINDOW_MS)
-            .saturating_add(CLOCK_SKEW_MS);
-        if self.retry_until > latest {
-            return Err(Reject::new(
-                RejectCode::InvalidCommand,
-                "retry_until is further away than the retry window",
-            ));
-        }
-        Ok(())
+        admit(
+            self.target_incarnation.as_ref(),
+            self.retry_until,
+            now,
+            incarnation,
+        )
     }
 
     /// A stable text of the command payload. A reused `command_id` with a
@@ -209,6 +194,38 @@ impl CommandEnvelope {
         // sorted, so the text is stable for equal commands.
         serde_json::to_string(&self.command).unwrap_or_default()
     }
+}
+
+/// The admission checks of every mutating envelope (G3, ADR-004 §9.3):
+/// the receiver's database incarnation and the `retry_until` deadline.
+/// `target` is `None` only on the station-local socket.
+pub fn admit(
+    target: Option<&IncarnationId>,
+    retry_until: i64,
+    now: i64,
+    incarnation: &IncarnationId,
+) -> Result<(), Reject> {
+    if let Some(target) = target
+        && target != incarnation
+    {
+        return Err(Reject::new(
+            RejectCode::IncarnationMismatch,
+            format!("the command targets incarnation {target}, the receiver is {incarnation}"),
+        ));
+    }
+    if now > retry_until.saturating_add(CLOCK_SKEW_MS) {
+        return Err(Reject::new(RejectCode::Expired, "retry_until has passed"));
+    }
+    let latest = now
+        .saturating_add(RETRY_WINDOW_MS)
+        .saturating_add(CLOCK_SKEW_MS);
+    if retry_until > latest {
+        return Err(Reject::new(
+            RejectCode::InvalidCommand,
+            "retry_until is further away than the retry window",
+        ));
+    }
+    Ok(())
 }
 
 /// Accepted or rejected.

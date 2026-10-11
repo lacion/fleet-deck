@@ -449,7 +449,7 @@ Close            { reason, detail }
 
 - The deck gives every mutating command a ULID `command_id` and stores it as `pending` before it sends it.
 - If the link drops before the response, the deck re-sends **the same** `command_id` after reconnect. The station returns the stored accept/reject receipt or decides the command once; delivery and execution outcomes arrive later as events.
-- Every mutating command also carries `target_incarnation` (the station incarnation the deck last saw) and `retry_until` (deck UTC time; default accepted-at + 15 min). The deck stores the envelope before it sends it, and the stored envelope never changes (G3).
+- Every mutating command also carries `target_incarnation` (the incarnation of the receiving database that the sender last saw) and `retry_until` (sender UTC time; default accepted-at + 15 min). The sender stores the envelope before it sends it, and the stored envelope never changes (G3). Each mutating method has a typed envelope: session commands, `station.configure`, `link.rotate_key`, and `coordinator.call` (ADR-004 §9.3 table). Station and deck databases both have an incarnation id, and the `hello` carries it.
 - The station rejects a command for another incarnation (`incarnation_mismatch`) or with a `retry_until` more than 2 min in the past (`expired`), and stores no receipt for these two rejections. Stations keep receipts for at least 24 h.
 - The deck never resends after `retry_until`. A command that was sent and has no receipt by then, or that was sent before and is now rejected with `incarnation_mismatch` or `expired`, becomes `ambiguous`. Such a rejection of a command that was never sent makes it `failed` (`station_reset`). The board shows an ambiguous command and asks the owner. Nothing is redispatched automatically, and nothing is retried with a new id.
 - Coordinator operations that change fleet intent (`coordinator.call`) are mutating: they need a `command_id`, and the deck keeps receipts and deduplicates them like station receipts. Read operations (`coordinator.query`) are not mutating (G7). ADR-004 §9.6 has the method table with the caller and receiver role, scope, feature and mutating flag of every method.
@@ -525,6 +525,7 @@ Raw provider frames are not a table: bounded rotating log files per session (L12
 
 | Table | Key columns |
 | --- | --- |
+| `meta` | `incarnation_id` (targeted by `coordinator.call`, ADR-004 §9.3), identity key reference |
 | `owner`, `login_sessions` | auth |
 | `stations` | `station_id`, `name`, `key`, `role`, `dial_url?`, `direction`, `last_seen`, `incarnation_id`, `cursor` |
 | `sessions` | read model: `session_id`, `station_id`, `callsign`, `provider`, `status`, `model`, `repo_group`, ... |

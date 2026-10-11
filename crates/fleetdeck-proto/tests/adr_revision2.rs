@@ -10,6 +10,7 @@ use std::path::PathBuf;
 
 use fleetdeck_proto::command::SessionCommand;
 use fleetdeck_proto::link::ControlFrame;
+use fleetdeck_proto::mutation;
 use fleetdeck_proto::version::feature;
 use serde_json::{Value, json};
 
@@ -175,6 +176,93 @@ fn the_adr_table_names_known_features_and_scopes_and_makes_coordinator_calls_mut
     assert_eq!(row(&table, "artifact.open").feature, feature::DATA_STREAMS);
     for r in table.iter().filter(|r| r.scope == "read") {
         assert!(!r.mutating, "{:?}", r.methods);
+    }
+}
+
+/// One row of the §9.3 envelope table.
+#[derive(Debug)]
+struct EnvelopeRow {
+    methods: Vec<String>,
+    params: String,
+    payload: String,
+    holder: String,
+}
+
+fn envelope_table() -> Vec<EnvelopeRow> {
+    let adr = adr();
+    let text = section(
+        &adr,
+        "### 9.3 Command envelopes, incarnation and deadline (G3)",
+    );
+    text.lines()
+        .filter(|l| l.starts_with("| `"))
+        .map(|l| {
+            let cells: Vec<&str> = l.trim_matches('|').split('|').map(str::trim).collect();
+            assert_eq!(cells.len(), 4, "{l}");
+            EnvelopeRow {
+                methods: cells[0]
+                    .split(',')
+                    .map(|m| m.trim().trim_matches('`').to_owned())
+                    .collect(),
+                params: cells[1].trim_matches('`').to_owned(),
+                payload: cells[2].trim_matches('`').to_owned(),
+                holder: cells[3].to_owned(),
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn the_adr_envelope_table_equals_the_code_table() {
+    let doc = envelope_table();
+    assert_eq!(doc.len(), mutation::ENVELOPES.len(), "{doc:?}");
+    for (row, code) in doc.iter().zip(mutation::ENVELOPES) {
+        let methods: Vec<&str> = row.methods.iter().map(String::as_str).collect();
+        assert_eq!(methods, code.methods, "{row:?}");
+        assert_eq!(row.params, code.params, "{row:?}");
+        assert_eq!(row.payload, code.payload, "{row:?}");
+        assert_eq!(row.holder, code.holder.name(), "{row:?}");
+    }
+}
+
+#[test]
+fn every_mutating_method_of_the_method_table_has_exactly_one_envelope() {
+    let table = method_table();
+    let mut mutating = Vec::new();
+    for r in &table {
+        for m in &r.methods {
+            assert_eq!(
+                mutation::envelope_of(m).is_some(),
+                r.mutating,
+                "`{m}`: an envelope exists only for a mutating method"
+            );
+            if r.mutating {
+                mutating.push(m.clone());
+            }
+        }
+    }
+    let mut enveloped: Vec<String> = mutation::ENVELOPES
+        .iter()
+        .flat_map(|e| e.methods.iter().map(|m| (*m).to_owned()))
+        .collect();
+    mutating.sort();
+    enveloped.sort();
+    assert_eq!(mutating, enveloped);
+    // The holder agrees with the receiver role of the method table.
+    for kind in mutation::ENVELOPES {
+        for m in kind.methods {
+            let receiver = row(&table, m)
+                .direction
+                .rsplit(" → ")
+                .next()
+                .map(str::to_owned);
+            let expected = match kind.holder {
+                mutation::Holder::Station => "station",
+                mutation::Holder::Deck => "deck",
+                mutation::Holder::Receiver => "either",
+            };
+            assert_eq!(receiver.as_deref(), Some(expected), "{m}");
+        }
     }
 }
 

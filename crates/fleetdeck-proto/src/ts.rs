@@ -16,6 +16,7 @@ use crate::capability::{Capabilities, Operation, Unsupported};
 use crate::command::{CommandEnvelope, DeckCommandState, Receipt};
 use crate::event::{Event, EventEnvelope};
 use crate::link::ControlFrame;
+use crate::mutation::{CoordinatorCallEnvelope, KeyRotationEnvelope, StationConfigureEnvelope};
 use crate::session::SessionSummary;
 use crate::version::{Negotiated, VersionOffer};
 
@@ -36,6 +37,9 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         Operation::export_all(&cfg),
         Unsupported::export_all(&cfg),
         CommandEnvelope::export_all(&cfg),
+        StationConfigureEnvelope::export_all(&cfg),
+        KeyRotationEnvelope::export_all(&cfg),
+        CoordinatorCallEnvelope::export_all(&cfg),
         Receipt::export_all(&cfg),
         DeckCommandState::export_all(&cfg),
         ControlFrame::export_all(&cfg),

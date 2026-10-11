@@ -437,3 +437,41 @@ Format: context, options, choice, reason, owner review.
   - ADR-004 §8 asks for an adversary DESIGN REVIEW before Phase 3 freezes the protocol. The goal loop forbids subagents, so this run cannot do it; it stays an owner step together with the acceptance of ADR-004.
 - Reason: the spike is the evidence base of §2–§7 and must stay readable as such; a separate revision section makes each superseded rule explicit, and the PLAN keeps the summary that the other sections refer to. A log entry alone would leave Phase 3 without a contract to test against.
 - Owner review: pending
+
+## DL-041: Envelopes of the non-session mutating methods
+
+- Date: 2026-10-11 (M2 round 14, review fix of G-C)
+- Context: ADR-004 §9.3 (DL-040) gave every mutating request a `CommandEnvelope`, but that type carries only a `SessionCommand`. `station.configure`, `link.rotate_key` and `coordinator.call` are mutating too (§9.6), and `coordinator.call` and `link.rotate_key` are not decided by a station. The PLAN does not say what `station.configure` may change, what a rotation carries, or which incarnation a coordinator call targets.
+- Options:
+  1. One generic envelope with an untyped `payload: Value`.
+  2. Add the three methods as variants of `SessionCommand`.
+  3. One typed envelope per payload kind with the same admission fields, a code table `mutation::ENVELOPES` (method → params type, payload field, holder) and a `Mutation` parser that checks method and `command_id` agreement.
+- Choice: 3.
+- Details:
+  - Holder = the node that decides, keeps the receipt, and whose database incarnation `target_incarnation` names: station for session commands and `station.configure`, the receiver for `link.rotate_key`, the deck for `coordinator.call`. deck.db gets an `incarnation_id` too, and the Revision 2 `hello` carries the sender's incarnation.
+  - `StationChange` has only `set_max_sessions` (at most the station.toml value) and `set_offline_approval_policy`. Allowed roots, provider instances, shells and setup commands stay station-local (doctrine: the station is sovereign over what it may touch; a deck admin key must not widen file access).
+  - `KeyRotation { old_key, new_key, signature }`; the signed message is `fleetdeck-rotate-key-v1`, old key, new key, receiver fingerprint, `command_id`, each ended by a zero byte, so a signature is valid for one peer and one command.
+  - `CoordinatorCall { caller, token_digest, op }` with `CoordinatorOp` spawn / send / stop / assign. The token stays on the station; the deck matches the SHA-256 digest. Phase 6 may add ops; an unknown op or field fails closed (`deny_unknown_fields`, `invalid_command`).
+  - `target_incarnation` is optional only in `CommandEnvelope` (station-local socket, DL-038).
+  - The admission check moved to `command::admit` and is shared by every envelope.
+- Reason: an untyped payload cannot be checked against its method, and session commands do not fit station settings, keys or fleet intent; typed envelopes keep the receipt rules identical for every holder and let a test compare the ADR table with the code table.
+- Owner review: pending
+
+## DL-042: Link base in `fleetdeck-link` (M2 P3-1)
+
+- Date: 2026-10-11 (M2 round 14)
+- Context: P3-1 moves the spike link (`spikes/s4-link`) into `crates/fleetdeck-link` with the Revision 2 rules of ADR-004 §9.1 (G1, G10). The ADR names one `link_epochs(peer_key, epoch)` column for "the dialer's counter and the listener's highest accepted epoch", and it does not say where the link table lives or what a link setup returns before the control and data protocols (P3-2, P3-3) exist.
+- Options:
+  1. Copy the spike link module whole (setup, control, data, pairing) and change it in place.
+  2. Build the setup layer first: `node::dial` / `node::listen` return an `OpenLink` (authenticated control and data WebSockets, `LinkId { epoch, attempt_id, dialer }`, a `closing` watch and a `TableGuard`); the control, data and pairing protocols are added on top in P3-2 to P3-4.
+- Choice: 2.
+- Details:
+  - `epochs::Epochs` keeps two columns per peer: `dial_epoch` (incremented and committed before each dial) and `accepted_epoch` (the listener's highest accepted epoch). One column would mix the two directions of a reciprocal pair. `LINK_EPOCHS_SQL` is the table for the station.db and deck.db migrations; `Epochs::in_memory` serves tests and tools.
+  - The dialer dials one pinned key (`PeerPolicy::Fingerprint`), sends the epoch and a fresh 128-bit `attempt_id` on every channel of the attempt, and on `stale_link_epoch { min_epoch }` raises its counter to at least `min_epoch` and dials once more.
+  - The listener commits the accepted epoch, then admits the link into the node-wide `LinkTable` and only then sends `Ready`. A data channel binds to the entry with the same peer, epoch and `attempt_id` that the peer dialed; any other gets `no_control_channel`.
+  - The dialer admits its link after the control `Ready` and before it opens the data channel. Both nodes apply the same rule (`table::wins`): same dialer → higher epoch; opposite dialers → the link dialed by the lower fingerprint. The loser gets `superseded` (refused before `Ready`, or told through `closing` after it).
+  - `TableGuard` is created by the insert and removes the entry on drop only when the generation still matches (G10). Replacing an entry drops its data slot, so a superseded setup wait ends at once.
+  - The pair channel answers "pairing is not open on this listener" until P3-4. `dial_with(DialFault)` is a hidden test hook for failure injection at each setup step.
+  - `Hello` gains `attempt_id` and `incarnation`; `Close` gains `min_epoch`; version negotiation uses `fleetdeck_proto::version`.
+- Reason: the setup layer is where G1 and G10 live, and it can be tested alone over loopback (TCP or the FIFO stand-in, DL-025); the spike's control and data tasks change with G2, G6, G8 and G9 anyway, so they move in their own items.
+- Owner review: pending

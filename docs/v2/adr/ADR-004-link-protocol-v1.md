@@ -249,7 +249,7 @@ Offline command (no network): `cargo nextest run -p s4-link`.
 
 - **Clock steps back** by more than the restart time: the restarted dialer's epoch is lower than its old one, and the listener refuses it with `stale_link_epoch` until the old link closes (the old link's TCP dies or the backoff outlasts it). Mitigation in Phase 3: a persisted epoch floor.
 - **Data channel loss vs. control close race:** handled with a 500 ms grace (§2.4). Under extreme load the reason can be `data_channel_lost` instead of `superseded`. Both reasons lead to the same recovery.
-- **Key rotation (§8.5)** is not implemented in the spike: "a paired node signs a new key with its old key". Phase 3 adds a `link.rotate_key` method (scope `admin`) that carries the new key signed by the old key.
+- **Key rotation (§8.5)** is not implemented in the spike: "a paired node signs a new key with its old key". Phase 3 adds a `link.rotate_key` method (scope `admin`) that carries the new key signed by the old key (§9.5).
 - **In-memory invitations:** a restart of the inviter drops the open invitations. This is safe (fail closed), and the owner makes a new invitation.
 - **No real tailnet test:** the Tailscale ranges are unit-tested only.
 
@@ -298,19 +298,36 @@ Per link (these values replace §2.7 "at most 256 open streams"):
 - **Stream tokens** replace the free `purpose` string. A control response that authorizes a stream (for example `artifact.open`) returns `stream_token`: 128 random bits, single use, bound to the link's `attempt_id`, valid for 30 s. The `open` mux frame carries the token as its payload. An unknown, used, expired or foreign token resets the stream with `bad_stream_token`.
 - The reader and the writer stay independent tasks (§2.4).
 
-### 9.3 Command envelope, incarnation and deadline (G3)
+### 9.3 Command envelopes, incarnation and deadline (G3)
 
-- A mutating request carries `command_id` in the frame **and** a `CommandEnvelope` in `params` (`fleetdeck_proto::command::CommandEnvelope`: `command_id`, `target_incarnation`, `retry_until`, `origin`, `command`). The two `command_id` values and the method (`SessionCommand::method`) must agree, else `invalid_command`.
-- `target_incarnation` is the station incarnation that the deck last saw. `retry_until` is deck UTC time in Unix ms; the default is accepted-at + 15 min (`RETRY_WINDOW_MS`).
-- The deck stores the envelope before it sends it. A stored envelope never changes; a resend sends the same bytes.
-- The station rejects, **without storing a receipt**:
+- Every mutating method (§9.6) carries `command_id` in the frame **and** an envelope in `params`. Every envelope has the same admission fields (`command_id`, `target_incarnation`, `retry_until`) and one payload field. The frame's `command_id` and the envelope's must agree; a session command must belong to the method (`SessionCommand::method`); else `invalid_command`. An unknown payload operation or field is `invalid_command` (fail closed).
+- **Envelope table.** `fleetdeck_proto::mutation::ENVELOPES` must equal this table; `crates/fleetdeck-proto/tests/adr_revision2.rs` compares them.
+
+| Methods | `params` type | Payload field | Holder |
+| --- | --- | --- | --- |
+| `session.start`, `session.resume`, `session.fork`, `session.prompt`, `session.steer`, `session.follow_up`, `session.interrupt`, `session.set_mode`, `session.set_model`, `session.stop`, `approval.answer` | `CommandEnvelope` | `command` | station |
+| `station.configure` | `StationConfigureEnvelope` | `change` | station |
+| `link.rotate_key` | `KeyRotationEnvelope` | `rotation` | receiver |
+| `coordinator.call` | `CoordinatorCallEnvelope` | `call` | deck |
+
+- **Holder** is the node that decides the command in one transaction, keeps its receipt, and whose database incarnation `target_incarnation` names. Every node's database (station.db and deck.db) has an incarnation id; a reset database gets a new one. The `hello` of Revision 2 carries the sender's incarnation (new field `incarnation`), so each side knows the value to target.
+- `target_incarnation` is optional only in `CommandEnvelope`, and only on the station-local socket (PLAN §6.4, DL-038). Over the link it is required for every envelope.
+- Payloads:
+  - `CommandEnvelope.command`: a `SessionCommand` (tag `op`); `origin` says who sent it (`board`, `mail`, `coordinator`).
+  - `StationConfigureEnvelope.change`: a `StationChange` (tag `op`): `set_max_sessions { max_sessions }` (at most the station.toml value) or `set_offline_approval_policy { deny_after_ms? }`. Allowed roots, provider instances, shells and setup commands stay station-local; the deck cannot widen what a station may touch (DL-041).
+  - `KeyRotationEnvelope.rotation`: `{ old_key, new_key, signature }` (§9.5).
+  - `CoordinatorCallEnvelope.call`: `{ caller, token_digest, op }`: the session of the coordinator agent, the SHA-256 of the token that the agent showed to its station (the token never crosses the link), and a `CoordinatorOp` (tag `op`): `spawn { station, spec, prompt? }`, `send { to, text }`, `stop { station, session_id }`, `assign { task, to }`. The deck checks the token class and spawn cap in the decision transaction.
+- The receipt hash covers the method, the caller and the payload field only, so a resend with the same payload is a duplicate (`Mutation::canonical_payload`).
+- `retry_until` is the sender's UTC time in Unix ms; the default is accepted-at + 15 min (`RETRY_WINDOW_MS`).
+- The sender stores the envelope before it sends it. A stored envelope never changes; a resend sends the same bytes.
+- The holder rejects, **without storing a receipt**:
   - `incarnation_mismatch`: `target_incarnation` is not its current incarnation (for example after a database reset);
   - `expired`: `retry_until` is in the past by more than the 2 min skew allowance (`CLOCK_SKEW_MS`).
-- The deck never resends after `retry_until`. Deck command states (`DeckCommandState`):
+- The sender never resends after `retry_until`. Deck command states (`DeckCommandState`); a station that sends `coordinator.call` keeps the same states:
   - sent and not acknowledged before `retry_until` → `ambiguous`;
   - rejected with `incarnation_mismatch` or `expired` after an earlier send → `ambiguous`;
-  - rejected that way and never sent before → `failed` (`station_reset`).
-- Nothing is redispatched automatically. Stations keep receipts for at least 24 h (`RECEIPT_RETENTION_MS`), more than the retry horizon.
+  - rejected that way and never sent before → `failed` (`station_reset`, or `deck_reset` for a coordinator call).
+- Nothing is redispatched automatically. Every holder keeps receipts for at least 24 h (`RECEIPT_RETENTION_MS`), more than the retry horizon.
 - The response to a mutating request is the `Receipt` (accepted or rejected). Execution outcomes arrive later as events (PLAN §8.4).
 
 ### 9.4 Incarnation on every stream frame and snapshot batches (G4)
@@ -339,7 +356,7 @@ close             { reason, detail }
 - A revocation (`fleetdeck station forget-deck`, "remove station" on the deck) removes the pin and every grant of that key in **one** transaction and increments a persistent revocation generation.
 - Every active link of that key closes within 1 s (reason `revoked`).
 - The decision transaction of each command checks, in the same transaction, that the caller's pin and the needed grant still exist. A command that was queued from a revoked link is rejected (`forbidden`).
-- Key rotation (`link.rotate_key`, scope `admin`): the new key is signed by the old key; the peer replaces the key in one transaction. The new key gets only the role and the grants of the old key. The old key is then revoked as above.
+- Key rotation (`link.rotate_key`, scope `admin`, `KeyRotationEnvelope`): `old_key` is the fingerprint of the pinned key (64 hex digits), `new_key` the new Ed25519 public key (64 hex digits), `signature` an Ed25519 signature by the old key (128 hex digits) over `KeyRotation::signed_message`: `fleetdeck-rotate-key-v1`, old key, new key, the receiver's fingerprint and the `command_id`, each ended by a zero byte. The receiver checks that `old_key` is the link's pinned peer key and the signature, then replaces the key in one transaction. The new key gets only the role and the grants of the old key. The old key is then revoked as above.
 
 ### 9.6 Roles, directions and method table (G6, G7)
 

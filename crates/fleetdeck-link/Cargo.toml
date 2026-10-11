@@ -10,6 +10,23 @@ publish.workspace = true
 [dependencies]
 fleetdeck-proto = { path = "../fleetdeck-proto" }
 fleetdeck-core = { path = "../fleetdeck-core" }
+futures-util.workspace = true
+ring.workspace = true
+rusqlite.workspace = true
+rusqlite_migration.workspace = true
+rustls.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-rustls.workspace = true
+tokio-tungstenite.workspace = true
+tracing.workspace = true
+# FIFO test transport (DL-025).
+rustix = { workspace = true, features = ["fs"] }
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

@@ -43,6 +43,10 @@ ring = "0.17"
 rusqlite = { version = "0.40", features = ["bundled"] }
 rusqlite_migration = "2.6"
 rustls-pki-types = "1"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
+futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }
 rustls-webpki = { version = "0.103", default-features = false, features = ["ring", "std"] }
 toml = "1"
 rustix = { version = "1.1", default-features = false, features = ["std", "system"] }
