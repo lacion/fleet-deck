@@ -10,6 +10,8 @@
 > - The `ShimHost` contract: Phase 7.
 >
 > Revision 3 also makes the merge into `main` and the `2.0.0` release owner-only steps (Phase 7). It adds the three open items of GATE-M2 §6 as required M3 hardening items (Phases 6 and 7). It does not change the meaning of D1–D15, the network rule (D13: loopback, private LAN, and tailnet, never public), or any M1/M2 contract. DL-071 logs the change. The contracts wait for an adversary DESIGN REVIEW before M3 implementation starts.
+>
+> **Design review (Revision 3, design review).** The adversary DESIGN REVIEW of `4935e26` failed with five MAJOR contract findings, and DL-072 records the corrections (§6.6, §7.1, §9, Phases 6 and 7). The corrected contracts wait for a fresh adversary DESIGN REVIEW before M3 implementation starts.
 
 ---
 
@@ -340,11 +342,19 @@ The permission mode decides which approvals occur at all. After a station restar
 - File browse, search, read; diffs against the recorded base ref.
 - **Checkpoints and revert (Revision 3, L13; Phase 6).** This contract replaces the earlier "shadow refs with revert" text.
   - The station records a turn-start checkpoint and a turn-completion checkpoint as hidden Git refs (outside `refs/heads` and `refs/tags`).
+  - **Consistent boundary (Revision 3, design review).** The station publishes the start checkpoint before it dispatches input that can modify the workspace. It captures each completion checkpoint at a fenced workspace boundary. Writes of a later turn must not enter an earlier checkpoint. If native queued work (Claude queues turns natively) or background writers prevent a consistent boundary, the checkpoint is unavailable with an explicit reason and its revert is disabled. This never delays turn.completed.
+  - **Publication and recovery (Revision 3, design review).** The station commits turn.finalized only after its referenced Git objects and refs exist. Finalization is idempotent per app turn. Recovery reconciles an interrupted publication; it never captures the current workspace as the completion of an earlier turn. An unavailable checkpoint always has an explicit reason.
+  - Required boundary tests (Revision 3, design review): delayed finalization with T2 writes; background writes after the parent turn; crashes before and after each Git and SQLite publication boundary.
+  - **Checkpoint scope (Revision 3, design review).** Checkpoint refs use a namespace of station incarnation, worktree, app session, and app turn. Each checkpoint records its canonical worktree identity and its snapshot scope. The station rejects a checkpoint of another worktree or session.
+  - **Snapshot and restore limits (Revision 3, design review).** The first implementation snapshots tracked working-tree content, including existing tracked edits, without a change to the real Git index. It excludes untracked and ignored files. Restore does not clean excluded files and does not overwrite untracked path conflicts. It preserves the real index. Unsupported submodules, content formats, or size limits make the checkpoint unavailable before restore. These limits are explicit and tested. Broader Git coverage needs a separate snapshot contract.
   - `turn.completed` and `turn.finalized` are two events (§6.3). `turn.completed` ends the turn. `turn.finalized` comes later with the checkpoint. A late diff or checkpoint cannot extend the turn duration and cannot keep the card in the working state.
   - Diffs come from the checkpoints. The station does not use Codex `turn/diff/updated` as a diff source.
   - Before any filesystem mutation, revert checks the target session, provider, run, and checkpoint, the station policy, and the readiness of the session. When the provider cannot roll back its conversation, revert rejects the request before any filesystem mutation.
+  - **Revert fence (Revision 3, design review).** Revert takes an exclusive session/worktree execution fence before admission and holds it through reconciliation. A running turn, pending input, or an active workspace writer prevents revert. The worker rechecks the target identities, the checkpoint, and the workspace generation immediately before external I/O.
+  - **Mixed outcomes (Revision 3, design review).** Provider conversation rollback needs a correlated confirmation before the filesystem restore starts. The station records each external step durably. An uncertain or partial rollback blocks further session input and shows an explicit reconciliation-required state. Recovery uses evidence; it never repeats a claimed rollback blindly (§6.4). Revert reports success only when the conversation and the workspace both match the target.
+  - Required revert tests (Revision 3, design review): queued-input races, concurrent writers, provider uncertainty, restore failure, crashes between the two external operations.
   - A filesystem-only restore is never called a conversation rollback (in events, the board, or the CLI).
-  - Tests prove that a rejected revert leaves the files, the refs, and the durable state unchanged. Tests prove that a supported rollback is safe at every effect boundary.
+  - (Revision 3, design review.) Tests prove that a rejected revert leaves workspace files, checkpoint refs, session history, and execution effects unchanged. Ordinary command rejection still commits the rejection receipt and the required audit record under §6.4. A repeat of the same command returns that receipt. Existing admission exceptions stay unchanged. Tests prove that a supported rollback is safe at every effect boundary.
 - Repo grouping for the conflict radar: a normalized origin URL is a **heuristic**, not an identity. Repos with several remotes or no remote are grouped only by explicit owner choice.
 
 ### 6.7 Station policy (local file, owner-edited)
@@ -408,13 +418,16 @@ The owner can open a plain shell in a repo or worktree from the board. It is for
 
 **Coordinator API contract (Revision 3, L14; Phase 6).**
 
-- The coordinator API is an MCP server. Each station serves a loopback MCP endpoint to its own driven agents. The station forwards each call to the deck over the pinned link. The deck checks the grant.
-- Authority is bound to the station + the app session + the provider instance + the native thread.
+- The coordinator API is an MCP server. The station forwards each call to the deck over the pinned link. The deck checks the grant.
+- **Ingress authentication (Revision 3, design review).** Each station serves a loopback MCP endpoint with mandatory per-session authentication. Loopback, a PID, and tool-supplied identity are not authentication. The station derives the caller identity from its private credential binding. The deck verifies that binding against the pinned station and the grant.
+- **Authority binding (Revision 3, design review).** Authority is bound to the station identity, the app session, the provider instance, and the provider-native conversation identity (Claude session_id or Codex threadId) with an explicit generation. No authority is issued before the native identity is known.
+- **Credential bootstrap (Revision 3, design review).** ADR-006 specifies and tests a provider-supported private credential handoff before wiring. Raw credentials never enter argv, process-readable configuration, URLs, events, databases, or logs. The same-UID trust boundary is explicit: loopback gives no process isolation. If a provider cannot support the handoff, its coordinator capability is disabled.
+- **Credential lifetime (Revision 3, design review).** Credentials expire when idle. Process loss or a replacement of the native identity invalidates the binding. Session end revokes it. A renewal never authorizes an old queued operation.
 - Credentials have an idle expiry and are revoked at the end of the session. The raw credential is never stored in databases, events, config, read models, URLs, or logs.
 - The read, mail, drive, and spawn classes and the spawn caps stay. Tool parameters select targets, never authority.
 - Every mutation goes through the durable receipts and the outbox with stable ids. Queries are scoped to the grant.
 - The deck rechecks the grant, the pin, the expiry, and the session identity in the decision transaction. A queued or replayed operation never gains authority.
-- ADR-006 (written in M3, before the wiring) specifies the grant lifecycle, retry, and revocation, with executable negative tests.
+- ADR-006 (written in M3, before the wiring) specifies the grant lifecycle, retry, and revocation, with executable negative tests. Phase 6 lists the other ADR-006 decisions that the design review requires (Revision 3, design review).
 
 ### 7.2 Status projection
 
@@ -523,7 +536,7 @@ Close            { reason, detail }
 | Prompt injection from forge text or agent output | Third-party text is fenced and labeled as untrusted data; issue-driven spawns default to supervised |
 | XSS from agent output | Markdown rendered without raw HTML; strict CSP; no `dangerouslySetInnerHTML` on agent text |
 | Credential leak | Provider credentials stay on the station; `Secret<T>` cannot be serialized; env scrub for children; no secrets in argv or logs |
-| Coordinator agent overreach | Loopback MCP endpoint per station, grant checked by the deck (§7.1, L14); authority bound to station + app session + provider instance + native thread; scoped classes and spawn caps; idle expiry and revocation at session end; raw credential never in argv, storage, events, URLs, or logs; grant rechecked in the decision transaction; every use audited |
+| Coordinator agent overreach | mandatory per-session authentication on the loopback MCP endpoint; caller identity derived from the station's private credential binding, never from loopback, PID or tool parameters; same-UID boundary explicit; the deck verifies the binding against the pinned station and the grant (§7.1, L14; Revision 3, design review); authority bound to station identity + app session + provider instance + provider-native conversation identity with an explicit generation; no provider-supported private credential handoff (ADR-006) means no coordinator capability; binding invalidated on process loss or native identity replacement; scoped classes and spawn caps; idle expiry and revocation at session end; raw credential never in argv, storage, events, URLs, or logs; grant rechecked in the decision transaction; every use audited |
 | Replay of old commands | Command ids + receipts; `target_incarnation` and `retry_until` on every mutating command, so a reset station never runs a resent command (G3); link-bound signatures |
 
 The adversary agent does a DESIGN REVIEW of this section and of §8 before Phase 3 freezes the link protocol.
@@ -727,9 +740,12 @@ Work method (from `AGENTS.md`): the architect splits each phase into task briefs
 - Mail through the outbox, delivered as native follow-up/steer.
 - `assign auto` across stations.
 - Tasks and waitable completions; the coordinator API as an MCP server with grant classes and spawn caps (§7.1 contract, L14); a deck-served control skill for coordinator agents. ADR-006 (grant lifecycle, retry, revocation, executable negative tests) is written in M3 before the wiring.
+  - Required ADR-006 decisions (Revision 3, design review). Each is decided in the ADR before implementation:
+    - Ingress and credentials: the mandatory per-session authentication and the private credential handoff of §7.1, with tests.
+    - Wire and authorization: preserve the G3 envelopes and ambiguity rules, G5 revocation, and the G6/G7 direction and scope checks; the tool/class matrix; transactional spawn-cap accounting; duplicate handling; expiry behavior for queries.
 - Plans (capture from Claude `ExitPlanMode` and Codex plan items), plan library.
 - Conflict radar across stations.
-- Files, diffs, per-turn checkpoints with revert, per the §6.6 contract (L13): hidden Git refs at turn start and turn completion; `turn.completed` and `turn.finalized` as two events; diffs from checkpoints; revert rejected before any filesystem mutation when a check fails.
+- Files, diffs, per-turn checkpoints with revert, per the §6.6 contract (L13): hidden Git refs at turn start and turn completion; `turn.completed` and `turn.finalized` as two events; diffs from checkpoints; revert rejected before any filesystem mutation when a check fails. The §6.6 rules of the design review also apply (Revision 3, design review): the consistent checkpoint boundary and idempotent publication; the checkpoint scope (namespace, canonical worktree identity, tracked-content snapshot, restore limits); the exclusive session/worktree revert fence and the explicit reconciliation-required state for mixed outcomes; and their required tests.
 - Usage and rate-limit meters ("unknown" is never shown as zero).
 - Screenshot/image paste into prompts; notifications.
 - Human shell (§6.8, D10).
@@ -746,6 +762,11 @@ Work method (from `AGENTS.md`): the architect splits each phase into task briefs
   - Bounded buffering and backpressure; stdout cursor recovery; an explicit exit state; socket permissions.
   - Tests cover update and restart failures, and the station SIGKILL survival test (Phase 6 hardening).
   - A durable shim attachment never reuses the `DirectChildHost` behavior where the drop of the last reference kills the child.
+  - Required ADR-005 decisions (Revision 3, design review). Each is decided in the ADR before implementation:
+    - Attachment ownership: separate the database incarnation from the attachment-owner generation; takeover fencing; stale-writer rejection; authenticated exclusive attachment.
+    - Output recovery: cursor acknowledgement relative to committed station events; crashes after an output read but before the commit; partial frames; buffer exhaustion; explicit output gaps.
+    - Platform and upgrades: private socket placement and authentication on Linux and macOS; stale sockets; protocol negotiation; incompatible upgrades; rollback.
+    - Auto-continue integration: live reattachment is different from native resume; preserve the permission mode and the offline approval policy; an expired approval never becomes authorization; reconcile existing uncertain inputs before any continuation work.
 - Auto-continue after a station restart (L19, A10): a per-session preference, default OFF, with the identity matches and dispatch rechecks of A10. Unsupported or uncertain recovery stays explicit `lost`/`not_resumable`.
 - Station drain and self-upgrade; deck and station version-skew rules (N−1 compatibility).
 - Security: adversary PRE-PR REVIEW of the whole branch; fix all findings.
@@ -770,7 +791,7 @@ Work method (from `AGENTS.md`): the architect splits each phase into task briefs
 | 6 | Remote access to the deck | Local and tailnet only | D13, doctrine rule 5, §8.1, §9 |
 | 7 | Pi approvals | Pi is out for now; later, possibly as a full Pi package | D14, Phase 5 |
 
-No owner questions are open. The M2 gate passed: see [GATE-M2.md](./GATE-M2.md). The Revision 3 note at the top of this plan (DL-071) applies the P2 lessons L13, L14, L19 and the `ShimHost` contract before M3. The next step is an adversary DESIGN REVIEW of the Revision 3 contracts, then M3.
+No owner questions are open. The M2 gate passed: see [GATE-M2.md](./GATE-M2.md). The Revision 3 note at the top of this plan (DL-071) applies the P2 lessons L13, L14, L19 and the `ShimHost` contract before M3. The adversary DESIGN REVIEW of `4935e26` failed with five MAJOR contract findings, and DL-072 records the corrections (Revision 3, design review). The next step is a fresh adversary DESIGN REVIEW of the corrected contracts, then M3 implementation.
 
 ---
 

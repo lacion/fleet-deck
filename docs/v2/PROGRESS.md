@@ -71,7 +71,11 @@ Sources: PLAN §14 Phases 1–5, GATE-M1 G1–G14, goal acceptance. G13 is P1-5.
 
 ## M3 (not started)
 
-M3 = PLAN Phases 6–7. No M3 work has started. The adversary DESIGN REVIEW of the PLAN Revision 3 contracts comes first. Required hardening items carried from GATE-M2 §6:
+M3 = PLAN Phases 6–7. No M3 work has started. The adversary DESIGN REVIEW of the PLAN Revision 3 contracts comes first.
+
+- Revision 3 contracts corrected after the failed adversary DESIGN REVIEW of `4935e26` (five MAJOR findings, DL-072); they wait for a fresh adversary DESIGN REVIEW before M3 implementation.
+
+Required hardening items carried from GATE-M2 §6:
 
 - [ ] **P2-a** First-prompt failure is only logged; record failure evidence for the initial input (`crates/fleetdeck-station/src/manager/target.rs:146-163`).
 - [ ] **P2-b** Codex message-channel answer effects never confirm; add a correlated provider input-start confirmation (`crates/fleetdeck-providers/src/codex/requests.rs:340-348,395-411`; `crates/fleetdeck-station/src/store/effects.rs:571-595`).
