@@ -18,6 +18,8 @@ fleetdeck-station = { path = "../fleetdeck-station" }
 fleetdeck-deck = { path = "../fleetdeck-deck" }
 anyhow.workspace = true
 clap.workspace = true
+# Non-echoing invitation prompt (G12).
+rustix = { workspace = true, features = ["termios"] }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

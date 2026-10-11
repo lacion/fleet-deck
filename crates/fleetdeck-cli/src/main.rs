@@ -1,16 +1,31 @@
 //! `fleetdeck`: the one binary of Fleet Deck v2 (PLAN §1, D2).
 
 mod cli;
+mod invite;
 mod station;
 
 use std::process::ExitCode;
 
-use clap::Parser;
+use clap::Parser as _;
 
 use crate::cli::{Cli, Command, DeckCommand, StationCommand};
 
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        // clap would print the unexpected argument: never echo an
+        // invitation that was given as one (G12).
+        Err(e) if std::env::args_os().any(|a| a.to_string_lossy().contains(invite::PREFIX)) => {
+            drop(e);
+            eprintln!(
+                "fleetdeck: an invitation is never a command-line argument (the shell \
+                 history and the process list would keep it); use --invite-file, --stdin \
+                 or the prompt"
+            );
+            return ExitCode::from(2);
+        }
+        Err(e) => e.exit(),
+    };
     match run(cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
@@ -32,6 +47,17 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             .enable_all()
             .build()?;
         return runtime.block_on(local_main(local, &dirs, &env));
+    }
+    // G12: read and check the invitation first, so its source rules hold
+    // before pairing exists (the pairing commands come with P3-5/P3-6).
+    if let Command::Deck {
+        command: Some(DeckCommand::AddStation(input)),
+    }
+    | Command::Station {
+        command: Some(StationCommand::Join(input)),
+    } = &cli.command
+    {
+        let _invitation = invite::read(input)?;
     }
     let (name, phase) = match &cli.command {
         Command::Up(_) => ("up", 4),

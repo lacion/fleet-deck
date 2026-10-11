@@ -31,6 +31,7 @@ use crate::hello::{
     Attempt, Channel, HandshakeError, HandshakeFrame, LocalHello, Negotiated, Side, feature,
 };
 use crate::net::{self, NetError};
+use crate::pairing::{Invitations, PairLimiter, PairingSink};
 use crate::table::{Admitted, Closing, Dialer, LinkId, LinkTable, SUPERSEDED, TableGuard};
 use crate::tls::{self, InvitationGate, PeerPolicy, PinSet, Role};
 use crate::tokens::StreamTokens;
@@ -69,11 +70,19 @@ pub struct NodeConfig {
     /// Bound of each setup step after TLS: the WebSocket upgrade, the
     /// hello/auth exchange, the wait for `Ready` and for the data channel.
     pub handshake_timeout: Duration,
+    /// Stores what pairing, revocation and key rotation change. The default
+    /// is the in-memory [`Grants`] that is also `grants`.
+    pub sink: Arc<dyn PairingSink>,
+    /// The open invitations of this node; `None`: the pair channel is closed.
+    pub invitations: Option<Arc<Invitations>>,
+    /// Admission of pairing handshakes on this node's listeners (G11).
+    pub pair_limiter: PairLimiter,
 }
 
 impl NodeConfig {
     pub fn new(identity: Arc<Identity>, local: LocalHello, epochs: Arc<Epochs>) -> Self {
         let table = LinkTable::new(identity.fingerprint());
+        let grants = Grants::new();
         Self {
             identity,
             local,
@@ -81,18 +90,38 @@ impl NodeConfig {
             invites: Arc::new(NoInvitations),
             epochs,
             table,
-            grants: Grants::new(),
+            grants: Arc::clone(&grants) as Arc<dyn GrantSource>,
             control: ControlConfig::default(),
             tokens: StreamTokens::default(),
             handshake_timeout: net::HANDSHAKE_TIMEOUT,
+            sink: grants,
+            invitations: None,
+            pair_limiter: PairLimiter::default(),
         }
+    }
+
+    /// Uses `store` both to read grants and to store pairing changes.
+    #[must_use]
+    pub fn with_store<S: GrantSource + PairingSink + 'static>(mut self, store: Arc<S>) -> Self {
+        self.grants = Arc::clone(&store) as Arc<dyn GrantSource>;
+        self.sink = store;
+        self
+    }
+
+    /// Opens the pair channel: listeners accept pairing for `invitations`,
+    /// and TLS lets an unpinned key in while one of them is open.
+    #[must_use]
+    pub fn with_invitations(mut self, invitations: Arc<Invitations>) -> Self {
+        self.invites = Arc::clone(&invitations) as Arc<dyn InvitationGate>;
+        self.invitations = Some(invitations);
+        self
     }
 
     pub fn peer_role(&self) -> Role {
         crate::hello::expected_peer_role(self.local.role)
     }
 
-    fn own<'a>(&'a self, attempt: Option<&'a Attempt>) -> Own<'a> {
+    pub(crate) fn own<'a>(&'a self, attempt: Option<&'a Attempt>) -> Own<'a> {
         Own {
             identity: &self.identity,
             local: &self.local,
@@ -352,6 +381,16 @@ async fn accept_one(
     let limit = node.handshake_timeout;
     let accepted = async {
         let (mut ws, peer, channel, exporter) = ws::accept(stream, from, config, limit).await?;
+        if channel == Channel::Pair && node.invitations.is_some() {
+            return Ok(Err(crate::join::accept(
+                node,
+                ws,
+                peer,
+                from.ip(),
+                exporter,
+            )
+            .await));
+        }
         // TLS lets an unpinned key in while an invitation is open; such a key
         // may only pair.
         if channel == Channel::Pair || node.pins.role_of(&peer) != Some(node.peer_role()) {
@@ -375,11 +414,13 @@ async fn accept_one(
             peer,
         )
         .await?;
-        Ok::<_, LinkError>((ws, peer, channel, est))
+        Ok::<_, LinkError>(Ok((ws, peer, channel, est)))
     }
     .await;
     let (ws, peer, channel, est) = match accepted {
-        Ok(v) => v,
+        Ok(Ok(v)) => v,
+        // A pairing ended: success reports nothing, a failure its error.
+        Ok(Err(paired)) => return paired.err().map(Err),
         Err(e) => return Some(Err(e)),
     };
     let epoch = est.peer_hello.link_epoch;

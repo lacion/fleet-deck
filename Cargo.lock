@@ -501,6 +501,7 @@ dependencies = [
  "fleetdeck-proto",
  "fleetdeck-station",
  "fleetdeck-testkit",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",
@@ -563,6 +564,7 @@ dependencies = [
  "tokio-rustls",
  "tokio-tungstenite",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

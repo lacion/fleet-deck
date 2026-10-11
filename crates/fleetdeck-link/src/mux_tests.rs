@@ -150,10 +150,76 @@ fn violations_end_the_link_with_their_reason() {
             amount: u32::MAX,
         },
     );
+    assert!(matches!(e, MuxError::CreditExceedsWindow { stream: 3, .. }));
+    assert_eq!(e.reason(), "flow_control_violation");
+}
+
+fn credit(stream: u32, amount: u32) -> MuxFrame {
+    MuxFrame::Credit { stream, amount }
+}
+
+#[test]
+fn a_credit_grant_beyond_the_window_ends_the_link() {
+    let (mut d, mut l) = pair();
+    let (s, frame) = d.open("t").unwrap();
+    pump(&mut l, vec![frame]);
+    // A fresh stream has a full window: one more byte is too much.
+    let e = d.receive(credit(s, 1)).unwrap_err();
     assert_eq!(
         (e.clone(), e.reason()),
-        (MuxError::CreditOverflow(3), "protocol_error")
+        (
+            MuxError::CreditExceedsWindow {
+                stream: s,
+                amount: 1,
+                credit: u64::from(WINDOW)
+            },
+            "flow_control_violation"
+        )
     );
+
+    // After 100 KiB sent, the peer may give back exactly 100 KiB, in parts.
+    let (mut d, mut l) = pair();
+    let (s, frame) = d.open("t").unwrap();
+    pump(&mut l, vec![frame]);
+    let sent = 100 * 1024;
+    let (frames, taken) = d.send(s, &vec![0; sent]).unwrap();
+    assert_eq!(taken, sent);
+    pump(&mut l, frames);
+    let half = u32::try_from(sent / 2).unwrap();
+    assert_eq!(
+        d.receive(credit(s, half)),
+        Ok(Some(MuxEvent::Credit { stream: s }))
+    );
+    assert_eq!(
+        d.receive(credit(s, half)),
+        Ok(Some(MuxEvent::Credit { stream: s }))
+    );
+    assert_eq!(d.send_credit(s), u64::from(WINDOW));
+    let e = d.receive(credit(s, 1)).unwrap_err();
+    assert!(
+        matches!(e, MuxError::CreditExceedsWindow { amount: 1, .. }),
+        "{e}"
+    );
+
+    // The largest grant never overflows the counter; it is a violation too.
+    let (mut d, mut l) = pair();
+    let (s, frame) = d.open("t").unwrap();
+    pump(&mut l, vec![frame]);
+    let e = d.receive(credit(s, u32::MAX)).unwrap_err();
+    assert_eq!(e.reason(), "flow_control_violation");
+
+    // The grants of a correct reader never trip the check.
+    let (mut d, mut l) = pair();
+    let (s, frame) = d.open("t").unwrap();
+    pump(&mut l, vec![frame]);
+    for _ in 0..64 {
+        let (frames, taken) = d.send(s, &vec![1; MAX_CHUNK]).unwrap();
+        assert_eq!(taken, MAX_CHUNK);
+        pump(&mut l, frames);
+        if let Some(grant) = l.consumed(s, MAX_CHUNK) {
+            d.receive(grant).unwrap();
+        }
+    }
 }
 
 #[test]

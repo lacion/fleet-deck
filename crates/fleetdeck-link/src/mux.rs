@@ -61,8 +61,16 @@ pub enum MuxError {
     TooManyStreams,
     #[error("{0} unconsumed bytes exceed the {MAX_BUFFERED} byte budget")]
     Buffered(u64),
-    #[error("the credit of stream {0} overflowed")]
-    CreditOverflow(u32),
+    /// A grant that would let this side send more than one window of bytes
+    /// that the peer did not consume yet (ADR-004 §2.7, §9.2).
+    #[error(
+        "stream {stream}: a credit grant of {amount} bytes exceeds the {WINDOW} byte window ({credit} bytes of credit left)"
+    )]
+    CreditExceedsWindow {
+        stream: u32,
+        amount: u32,
+        credit: u64,
+    },
 }
 
 impl MuxError {
@@ -70,9 +78,10 @@ impl MuxError {
     #[must_use]
     pub fn reason(&self) -> &'static str {
         match self {
-            Self::Window { .. } | Self::TooManyStreams | Self::Buffered(_) => {
-                reason::FLOW_CONTROL_VIOLATION
-            }
+            Self::Window { .. }
+            | Self::CreditExceedsWindow { .. }
+            | Self::TooManyStreams
+            | Self::Buffered(_) => reason::FLOW_CONTROL_VIOLATION,
             _ => reason::PROTOCOL_ERROR,
         }
     }
@@ -432,11 +441,18 @@ impl Mux {
                     .streams
                     .get_mut(&stream)
                     .ok_or(MuxError::UnknownStream(stream))?;
-                s.send_credit = s
-                    .send_credit
-                    .checked_add(u64::from(amount))
-                    .filter(|c| *c <= u64::from(u32::MAX))
-                    .ok_or(MuxError::CreditOverflow(stream))?;
+                // A peer grants only bytes it consumed, so this side's credit
+                // never exceeds one window: send_credit + in flight + the
+                // peer's unconsumed bytes = WINDOW.
+                let credit = s.send_credit + u64::from(amount);
+                if credit > u64::from(WINDOW) {
+                    return Err(MuxError::CreditExceedsWindow {
+                        stream,
+                        amount,
+                        credit: s.send_credit,
+                    });
+                }
+                s.send_credit = credit;
                 Ok(Some(MuxEvent::Credit { stream }))
             }
             MuxFrame::Close { stream } => {

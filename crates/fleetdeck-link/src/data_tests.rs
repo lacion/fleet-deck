@@ -326,6 +326,33 @@ async fn peer_violations_end_the_channel_with_their_reason() {
 }
 
 #[tokio::test]
+async fn excess_credit_from_the_peer_ends_the_channel_with_flow_control_violation() {
+    // The local side opens a stream (window full); the raw peer grants credit
+    // for bytes it never received.
+    let (a, mut raw) = ws_pair(1 << 20).await;
+    let mut d = end(a, Side::Dialer, "att");
+    let s = d.data.open("t").await.unwrap();
+    send_raw(
+        &mut raw,
+        &MuxFrame::Credit {
+            stream: s,
+            amount: 64 * 1024,
+        },
+    )
+    .await;
+    let c = ended(&d).await;
+    assert_eq!(c.reason, "flow_control_violation", "{}", c.detail);
+    assert!(c.detail.contains("exceeds"), "{}", c.detail);
+    assert!(d.events.recv().await.is_none());
+    // A write after the end fails with the same reason.
+    let e = d.data.write(s, vec![1]).await.unwrap_err();
+    assert!(
+        matches!(&e, LinkError::Closed { reason, .. } if reason == "flow_control_violation"),
+        "{e}"
+    );
+}
+
+#[tokio::test]
 async fn a_stop_ends_the_channel_with_its_reason_at_once_even_with_a_blocked_socket() {
     // The peer reads nothing: the socket buffer fills and the writer blocks.
     let (a, _b) = ws_pair(4 * 1024).await;

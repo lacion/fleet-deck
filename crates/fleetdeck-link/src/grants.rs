@@ -44,3 +44,21 @@ impl GrantSource for Grants {
         map.get(peer).cloned().unwrap_or_default()
     }
 }
+
+impl crate::pairing::PairingSink for Grants {
+    fn paired(&self, peer: &crate::pairing::PairedPeer) -> Result<(), String> {
+        self.grant(peer.key.fingerprint(), peer.scopes.iter().copied());
+        Ok(())
+    }
+
+    fn revoked(&self, peer: &Fingerprint) {
+        self.revoke(peer);
+    }
+
+    fn rotated(&self, old: &Fingerprint, new: &Fingerprint) {
+        let mut map = self.map.write().unwrap_or_else(PoisonError::into_inner);
+        if let Some(scopes) = map.remove(old) {
+            map.insert(*new, scopes);
+        }
+    }
+}

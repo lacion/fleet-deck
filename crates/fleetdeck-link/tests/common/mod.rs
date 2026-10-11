@@ -11,7 +11,7 @@ use fleetdeck_link::control::{Inbound, InboundRequest};
 use fleetdeck_link::hello::LocalHello;
 use fleetdeck_link::node::{self, NodeConfig};
 use fleetdeck_link::tls::Role;
-use fleetdeck_link::{Epochs, GrantSource, Grants, LinkListener, LiveLink};
+use fleetdeck_link::{Epochs, Grants, LinkListener, LiveLink};
 use fleetdeck_proto::IncarnationId;
 use fleetdeck_proto::link::{Outcome, Scope};
 
@@ -25,13 +25,13 @@ pub struct Node {
 pub fn node(role: Role) -> Node {
     let identity = Arc::new(Identity::generate().unwrap());
     let inc = IncarnationId::from(format!("inc-{}", identity.fingerprint().short()));
-    let mut config = NodeConfig::new(
+    let grants = Grants::new();
+    let config = NodeConfig::new(
         identity,
         LocalHello::new(role, inc),
         Arc::new(Epochs::in_memory()),
-    );
-    let grants = Grants::new();
-    config.grants = Arc::clone(&grants) as Arc<dyn GrantSource>;
+    )
+    .with_store(Arc::clone(&grants));
     Node { config, grants }
 }
 
@@ -65,15 +65,16 @@ pub async fn listen(n: &Node) -> LinkListener {
 }
 
 /// `from` dials `to`; returns (live link at `from`, live link at `to`).
+/// Errors of earlier attempts on `l` (pairing failures) are skipped.
 pub async fn link(from: &Node, to: &Node, l: &mut LinkListener) -> (LiveLink, LiveLink) {
     let peer = to.config.identity.public_key();
     let (d, a) = tokio::time::timeout(T, async {
-        tokio::join!(node::dial(&from.config, l.local_addr, peer), l.next())
+        tokio::join!(node::dial(&from.config, l.local_addr, peer), l.next_link())
     })
     .await
     .expect("link setup timeout");
     let d = fleetdeck_link::start(&from.config, d.unwrap());
-    let a = fleetdeck_link::start(&to.config, a.expect("listener ended").unwrap());
+    let a = fleetdeck_link::start(&to.config, a.expect("listener ended"));
     (d, a)
 }
 

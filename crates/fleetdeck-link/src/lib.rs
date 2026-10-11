@@ -16,6 +16,10 @@
 //! - [`mux`], [`data`], [`tokens`]: the data channel: streams with credit
 //!   flow control, link budgets and single-use stream tokens (G2, G6, G9).
 //! - [`live`]: a running link; one lifetime for both channels.
+//! - [`pairing`]: invitations, proofs and pairing admission (G11, G12).
+//! - [`join`]: the pair channel on top of [`node`].
+//! - [`revoke`]: revocation and key rotation (G5).
+//! - [`reconnect`]: the dialer's backoff with jitter and its redial task.
 
 pub mod control;
 pub mod data;
@@ -23,11 +27,15 @@ pub mod epochs;
 pub mod grants;
 mod handshake;
 pub mod hello;
+pub mod join;
 pub mod live;
 pub mod methods;
 pub mod mux;
 pub mod net;
 pub mod node;
+pub mod pairing;
+pub mod reconnect;
+pub mod revoke;
 pub mod table;
 pub mod tls;
 pub mod tokens;
@@ -38,8 +46,14 @@ pub use control::{Control, ControlConfig, GrantSource, Grants, Inbound};
 pub use data::{Data, DataEvent};
 pub use epochs::{Epochs, LINK_EPOCHS_SQL};
 pub use handshake::Established;
+pub use join::pair;
 pub use live::{DataLink, LiveLink, start};
 pub use node::{LinkListener, NodeConfig, OpenLink, dial, listen};
+pub use pairing::{
+    Invitation, InvitationId, Invitations, PairError, PairLimiter, PairedPeer, PairingSink,
+};
+pub use reconnect::{Backoff, BackoffPolicy, DialerEvent, spawn_dialer};
+pub use revoke::{REVOKED, RotateError, revoke, rotate, sign_rotation};
 pub use table::{Closing, Dialer, LinkId, LinkTable};
 pub use tokens::{StreamToken, StreamTokens};
 pub use ws::LinkError;

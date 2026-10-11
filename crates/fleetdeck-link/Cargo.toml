@@ -29,6 +29,8 @@ rustix = { workspace = true, features = ["fs"] }
 proptest.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
+# Log capture: no invitation secret in any log line (G12).
+tracing-subscriber.workspace = true
 
 [lints]
 workspace = true

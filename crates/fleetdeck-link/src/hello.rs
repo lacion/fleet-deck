@@ -130,8 +130,10 @@ pub enum HandshakeFrame {
     /// the channel is live.
     Ready,
     /// Pair channel, joiner → inviter after both `Auth`s: HMAC of the
-    /// invitation secret over the transcript (64 hex).
+    /// invitation secret over the transcript (64 hex), and the non-secret
+    /// invitation id (16 hex) that selects the secret (G11, DL-045).
     PairProof {
+        invitation: String,
         proof: String,
     },
     /// Pair channel, inviter → joiner: the inviter's HMAC answer. The joiner

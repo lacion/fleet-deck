@@ -511,3 +511,32 @@ Format: context, options, choice, reason, owner review.
   - One lifetime (`live::start`, `tie`): the end of the control channel ends the data channel with the same reason. When the data channel ends first, a mux violation closes the control channel with its reason; otherwise the control channel waits up to 500 ms (`DATA_LOSS_GRACE`) for the peer's `close` frame and then closes with `data_channel_lost`. When the peer closes the data socket, the data channel waits up to 500 ms for the control end, so pending writes fail with the link's reason (for example `superseded`), not with `eof`. Dropping the application's data handles keeps the link.
 - Reason: a per-direction limit allows 256 open requests, which the ADR does not allow. The sans-IO mux can be tested exhaustively (property tests for `decode` and `receive`), and the task layout keeps G8 (no shutdown waits for a blocked peer) for the data channel too.
 - Owner review: pending
+
+## DL-045: Invitation id, pairing admission and reconnect in `fleetdeck-link` (M2 rounds 17–18, P3-4)
+
+- Date: 2026-10-11 (M2 round 18)
+- Context: ADR-004 §2.8 (spike) has an invitation text without an id, and "after 5 wrong proofs, every open invitation closes". GATE-M1 G11 (ADR §9.7) replaces the global cancel: failures count per invitation id, and 5 failures cancel only that invitation. A failure count per invitation needs an id that the joiner sends. The ADR also does not say whether refused attempts count against the rate limit, where pairing results go on the inviter, or what the dialer does when its peer is no longer pinned.
+- Options: 1. keep the spike text and count failures per source IP only; 2. add a non-secret invitation id to the text and to `pair_proof`.
+- Choice: 2.
+- Details:
+  - Invitation text: `fdinv1:wss://<ip>:<port>#<fingerprint 64 hex>.<id 16 hex>.<secret 32 hex>.<expiry unix s>`. `PairProof { invitation, proof }` carries the id. An unknown id and a wrong proof both give `invalid_invitation`, so the reason tells nothing about which ids exist. The fifth wrong proof gives `too_many_attempts` and cancels that invitation only.
+  - `PairLimiter`: 10 admitted attempts per source IP in a 60 s window, 4 pairing handshakes at a time. A refused attempt does not count, so a lockout ends one window after the tenth admitted attempt (G11 test: a new invitation works after the lockout). `PairLimiter::with_window` exists for loopback tests that cannot wait one minute.
+  - The pair channel is open only on a node with `NodeConfig::with_invitations`; otherwise it is refused as before. A failed pairing attempt is reported in the listener's queue like a failed link attempt; a success is reported by `Invitations::next_paired`.
+  - Both sides store the new peer through `PairingSink` (`NodeConfig::sink`; the in-memory `Grants` until the stores of P3-5/P3-6 implement it) before they pin the key. An error of the sink fails the pairing with `pairing_failed`.
+  - Reconnect (`spawn_dialer`, ADR §2.10): equal jitter in `[c/2, c]`, `c = min(5 min, 500 ms · 2^attempt)`, reset only after a link stayed up 60 s; every attempt commits a new epoch. When the peer key is not pinned any more (revoked), the dialer reports `Stopped { reason: "not_paired" }` and ends instead of retrying forever.
+  - The ADR text of §2.8 is superseded by §9.7 for the failure count; the wire contract change (the id) is this entry.
+- Reason: G11 needs per-invitation counts; an id is the smallest change that gives them, and it is not secret.
+- Owner review: pending
+
+## DL-046: Where G5 and G12 are enforced, and the order of their parts (M2 round 18, P3-4)
+
+- Date: 2026-10-11 (M2 round 18)
+- Context: G5 asks for revocation and key rotation in one transaction with a persistent revocation generation, and for a check of pin and grant in the decision transaction of each command. G12 asks that `station join` / `deck add-station` read the invitation only from a hidden prompt, stdin or a 0600 file. In round 18 no persistent pin store and no command intake exist yet (they are P3-5 and P3-6), and the pairing commands cannot run without them.
+- Options: 1. build the stores now inside P3-4; 2. do the link-layer parts now (revoke, rotate, close within 1 s, the input rules of the CLI) and do the store parts in the items that create the stores.
+- Choice: 2.
+- Details:
+  - Now: `revoke::revoke` unpins, calls `PairingSink::revoked` and closes the active link with reason `revoked` (test: closes in < 1 s, the queued request is not answered with `ok`, the next handshake is refused). `revoke::rotate` checks that `old_key` is the link peer, the new key format, that the new key is not already paired and the Ed25519 signature over `KeyRotation::signed_message` (receiver + `command_id`), pins the new key with the old role, moves only the old grants (`PairingSink::rotated`) and revokes the old key. `sign_rotation` makes the envelope payload.
+  - CLI: `invite::read` (prompt with echo off through `rustix::termios`, `--stdin`, `--invite-file` that must be a regular file with no group/other bits); input is bounded to 4 KiB and kept in `Secret<String>`; no error message contains it. Without a terminal and without a flag the command fails at once. An argument that contains `fdinv1:` makes the binary print a fixed message instead of clap's error, which would echo the argument. The commands then still report "not implemented yet" until P3-5/P3-6 add pairing to them.
+  - P3-5 (station) and P3-6 (deck) add: the `PairingSink`/`GrantSource` of the stores (pin + grants + revocation generation in one transaction), `link.rotate_key` intake with its envelope, the decision-transaction check of pin and grant (`forbidden` for a queued command of a revoked link), and the `forget-deck` / `remove-station` / `join` / `add-station` commands with their end-to-end tests. PROGRESS lists these parts under those items.
+- Reason: the stores do not exist before P3-5/P3-6; building them inside P3-4 would mix four items into one round. The link-layer behaviour does not change when the stores arrive: they plug in through `PairingSink` and `GrantSource`.
+- Owner review: pending
