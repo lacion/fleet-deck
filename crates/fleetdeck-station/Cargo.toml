@@ -15,6 +15,7 @@ fleetdeck-providers = { path = "../fleetdeck-providers" }
 async-trait = { workspace = true }
 ring = { workspace = true }
 rusqlite = { workspace = true }
+rustix = { workspace = true, features = ["process"] }
 rusqlite_migration = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

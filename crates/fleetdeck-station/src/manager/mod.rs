@@ -70,8 +70,9 @@ pub struct SessionManager {
     store: Store,
     policy: Arc<Policy>,
     target: Arc<SessionTarget>,
+    ids: SharedIds,
     shutdown: watch::Sender<bool>,
-    tasks: Vec<JoinHandle<()>>,
+    tasks: std::sync::Mutex<Vec<JoinHandle<()>>>,
 }
 
 impl std::fmt::Debug for SessionManager {
@@ -96,7 +97,11 @@ impl SessionManager {
         ids: SharedIds,
     ) -> Result<Self> {
         store.recover(Vec::new()).await?;
-        let target = Arc::new(SessionTarget::new(store.clone(), adapters, ids));
+        let target = Arc::new(SessionTarget::new(
+            store.clone(),
+            adapters,
+            Arc::clone(&ids),
+        ));
         let worker = EffectWorker::register(store.clone(), Arc::clone(&target) as Arc<_>).await?;
         let (shutdown, rx) = watch::channel(false);
         let mut tasks = Vec::new();
@@ -111,8 +116,9 @@ impl SessionManager {
             store,
             policy: Arc::new(policy),
             target,
+            ids,
             shutdown,
-            tasks,
+            tasks: std::sync::Mutex::new(tasks),
         })
     }
 
@@ -124,6 +130,12 @@ impl SessionManager {
     #[must_use]
     pub fn policy(&self) -> &Policy {
         &self.policy
+    }
+
+    /// A new id from the station's id source (command ids of the local CLI).
+    #[must_use]
+    pub fn new_id<I: From<String>>(&self) -> I {
+        fleetdeck_core::new_id(self.ids.as_ref())
     }
 
     /// The number of sessions with a live provider process.
@@ -147,10 +159,17 @@ impl SessionManager {
             .await
     }
 
-    /// Stops the worker and the ticker, then every live session.
-    pub async fn shutdown(mut self, how: StopMode) {
+    /// Stops the worker and the ticker, then every live session. Commands
+    /// that arrive later are still decided, but no worker dispatches them
+    /// until the next start (recovery retires them).
+    pub async fn shutdown(&self, how: StopMode) {
         let _ = self.shutdown.send(true);
-        for task in self.tasks.drain(..) {
+        let tasks: Vec<_> = self
+            .tasks
+            .lock()
+            .map(|mut t| t.drain(..).collect())
+            .unwrap_or_default();
+        for task in tasks {
             let _ = task.await;
         }
         self.target.stop_all(how).await;

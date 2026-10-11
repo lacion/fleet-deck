@@ -500,6 +500,11 @@ dependencies = [
  "fleetdeck-deck",
  "fleetdeck-proto",
  "fleetdeck-station",
+ "fleetdeck-testkit",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
  "tracing",
 ]
 
@@ -589,6 +594,7 @@ dependencies = [
  "ring",
  "rusqlite",
  "rusqlite_migration",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",

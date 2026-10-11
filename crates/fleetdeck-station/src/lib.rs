@@ -8,8 +8,14 @@ pub mod host {
     pub use fleetdeck_providers::host::*;
 }
 
+/// The station-local control socket (M2 P2-7).
+pub mod local;
+
 /// The session manager (PLAN §6.4, M2 P2-6).
 pub mod manager;
+
+/// `fleetdeck station serve` (M2 P2-7).
+pub mod serve;
 
 pub mod store;
 

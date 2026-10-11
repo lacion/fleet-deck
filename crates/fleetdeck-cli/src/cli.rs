@@ -90,7 +90,11 @@ pub enum StationCommand {
     /// Unpin the deck key on this station and close its links.
     ForgetDeck,
     /// List the sessions of this station (works without the deck).
-    Sessions,
+    Sessions {
+        /// Print the session summaries as JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Start a session on this station (works without the deck).
     Run(RunArgs),
     /// Answer an open approval on this station (works without the deck).
@@ -168,6 +172,7 @@ mod tests {
             &["station", "join"],
             &["station", "forget-deck"],
             &["station", "sessions"],
+            &["station", "sessions", "--json"],
             &[
                 "station",
                 "run",

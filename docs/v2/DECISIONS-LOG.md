@@ -383,3 +383,22 @@ Format: context, options, choice, reason, owner review.
   - Codex instances get no adapter until Phase 5 (`adapters_from_config` skips them); a start for one retires as `not_dispatched`.
 - Reason: a receipt must not promise an effect that cannot run (PLAN §6.4: the decision is the single place for policy); a spawned Claude process without a prompt is live and controllable, so waiting for `session.started` would leave a healthy start `claimed` and turn it into `outcome_unknown` at the next worker restart; resume needs the stored native id and a host that may survive restarts, which are outside P2-6.
 - Owner review: pending
+
+## DL-038: Station-local CLI protocol and `station serve` without a link
+
+- Date: 2026-10-11 (M2 round 11, P2-7)
+- Context: PLAN §6.5 and §13 Phase 2 ask for `fleetdeck station sessions|run|approve|interrupt` over a Unix socket that works without the deck. The PLAN does not give the socket path, its access rule, the wire format, how `approve` finds the session of a request, or what `station serve` does before Phase 3 adds the deck link.
+- Options:
+  1. Wire: (a) the link's `ControlFrame` JSON-RPC over the socket; (b) a small line protocol (`LocalRequest` / `LocalResponse`, one JSON object per line, at most `MAX_CONTROL_FRAME_BYTES`) that carries the proto `SessionCommand` and returns the stored `Receipt`.
+  2. Access: (a) file mode only; (b) socket `<data>/station/station.sock` 0600 inside the 0700 station directory, and the server checks `SO_PEERCRED` and accepts only the station's own uid.
+  3. `approve REQUEST`: (a) the user also gives the session id; (b) the station looks up the request in `runtime_requests` and builds `approval.answer` for its session.
+  4. `station serve` in Phase 2: (a) wait for Phase 3; (b) run the store, recovery, the session manager and the local socket now; Phase 3 adds the link to the same process.
+- Choice: 1b, 2b, 3b, 4b.
+- Details:
+  - Local commands are `CommandOrigin::Local` with the caller `local`; they go through `Store::decide` like deck commands (receipts, duplicate rule, policy). `retry_until` = the station clock + 15 min (`Store::now_ms`), `target_incarnation` = none.
+  - A rejected receipt exits 1 with `rejected (<code>): <message>`; a missing station exits 1 with "no station answers on … (is `fleetdeck station serve` running?)".
+  - `station run` makes `--cwd` absolute in the CLI; the station checks it against `allowed_roots` (DL-037).
+  - A live socket makes a second `station serve` fail (`InUse`); a stale socket file is replaced.
+  - SIGINT or SIGTERM stops `station serve`: the socket closes, every live session stops gracefully (ADR-001 stop policy), the pumps get up to 5 s to store the last events, the socket file is removed.
+- Reason: the link protocol needs the Phase 3 handshake, scopes and pairing, which a same-user emergency path does not need; the peer uid check keeps other local users out even if the directory mode changes; the request id is unique on the station, so asking for the session id adds a way to get it wrong.
+- Owner review: pending

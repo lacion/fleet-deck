@@ -286,6 +286,13 @@ impl Store {
         })
     }
 
+    /// The station clock in Unix milliseconds (command envelopes of the
+    /// local CLI use it for `retry_until`).
+    #[must_use]
+    pub fn now_ms(&self) -> i64 {
+        now_ms(&self.inner.clock)
+    }
+
     #[must_use]
     pub fn incarnation(&self) -> &IncarnationId {
         &self.inner.incarnation
