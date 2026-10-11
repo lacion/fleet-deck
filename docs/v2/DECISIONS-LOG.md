@@ -239,3 +239,20 @@ Format: context, options, choice, reason, owner review.
 - **Reason:** the goal requires that the reviewer can rerun the acceptance commands offline. Everything stays inside the repository, the allowed commands stay narrow (no live CLI, no network), and step 4 of the goal still names cargo-nextest, which the script uses wherever it is installed.
 - **Owner review:** pending (a reviewer whose allowlist ignores project rules still needs an entry for `cargo test` or `sh spikes/acceptance.sh`)
 - **Architect note (M1 gate, 2026-10-11):** the diagnosis was wrong. The reviewer is not Codex; the pi-web-ui goal-review gate allows only read-only commands plus test-runner shapes (`cargo test`, `make check`, `make test*`). The `.codex/rules/` file had no effect and is removed: the executor must not write permission rules for another agent. The root `Makefile` target `make check` runs `spikes/acceptance.sh`. The architect ran `sh spikes/acceptance.sh` at the M1 gate: 6/6 commands passed (240 tests, 29 Claude replays, 18 Codex replays).
+
+## DL-027 — Canonical event and command vocabulary of `fleetdeck-proto` v1
+
+- **Context:** PLAN §6.3 lists the canonical events, but the Phase 0 spikes (ADR-001, ADR-002, DL-024) and the t3code traps need more than that list. Some PLAN field names also collide with the serde tag `kind`. The PLAN does not give the shapes of commands and receipts beyond §6.4 and GATE-M1 G3.
+- **Options:** (a) ship exactly the PLAN §6.3 list and carry the extra facts in `provider_refs` or free text; (b) add the minimum typed fields and events that the verified matrix needs, and keep every PLAN name where it does not collide.
+- **Choice:** (b). The additions and renames:
+  1. `tool.started.kind` → `tool_kind`, `approval.requested.kind` → `request_kind`: `kind` is the event tag (the spike crates used the same names).
+  2. New events from the spikes: `mode.changed`, `model.changed`, `input.updated` (the fate of a host input, PLAN §6.4 input dispatch), `background.updated` (L7, trap 4).
+  3. `run.started.origin` adds `local` (station-local CLI, Phase 2) and `provider` (a turn the provider starts without host input, S1 `background_task`).
+  4. `approval.expired.reason` adds `turn_ended` and `cancelled_by_provider` (trap 6: terminal paths close open requests).
+  5. `error.retry_at` (trap 7: `usage_limit` with a reset time). `usage.updated` has `usage` plus typed `rate_limits[]`.
+  6. `session.started` adds `provider_instance` (L10), `capabilities` (L11: from the live session) and `resumed` (the "not resumed" degradation of the Resume row). `message.*` add `parent_node_id` for subagent text (L7). `approval.requested` adds `title` and `input` (needed for "edit input before allow"). `tool.output.truncated`, `file.changed.node_id`.
+  7. Unknown event kinds deserialize as `EventBody::Unknown` and pass through; unknown enum values of `ToolKind`, `ProviderKind` and `RejectCode` map to `other`/`unknown` (L16).
+  8. Commands: `SessionCommand` (tag `op`) maps 1:1 to link methods; `session.resume`, `session.steer`, `session.follow_up`, `session.set_mode`, `session.set_model` and `session.fork` extend the ADR-004 spike method table (Phase 3 adds them with scopes). `CommandEnvelope` carries `target_incarnation` and `retry_until` (G3). `admit()` also refuses a `retry_until` further away than the retry window plus skew (`invalid_command`, receipt stored), so no receipt can outlive its retention.
+  9. The ADR-004 `snapshot` frame is replaced by the G4 batch `snapshot_begin` / `snapshot_session` / `snapshot_end`; `event` and `ack` carry `incarnation` (G4).
+- **Reason:** every addition is a verified provider fact or a GATE-M1 decision; nothing is invented state (doctrine PLAN §3). Keeping the PLAN names elsewhere keeps the PLAN readable as the contract.
+- **Owner review:** pending

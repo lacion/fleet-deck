@@ -1,0 +1,23 @@
+[package]
+name = "fleetdeck-cli"
+description = "Fleet Deck v2 command-line binary `fleetdeck` (PLAN §1)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "fleetdeck"
+path = "src/main.rs"
+
+[dependencies]
+fleetdeck-proto = { path = "../fleetdeck-proto" }
+fleetdeck-core = { path = "../fleetdeck-core" }
+fleetdeck-station = { path = "../fleetdeck-station" }
+fleetdeck-deck = { path = "../fleetdeck-deck" }
+anyhow.workspace = true
+clap.workspace = true
+
+[lints]
+workspace = true

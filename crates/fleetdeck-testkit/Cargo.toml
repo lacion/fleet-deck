@@ -1,0 +1,15 @@
+[package]
+name = "fleetdeck-testkit"
+description = "Fleet Deck v2 test kit: fake agents, recorders, harness, fault injection (PLAN §13)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fleetdeck-proto = { path = "../fleetdeck-proto" }
+fleetdeck-core = { path = "../fleetdeck-core" }
+
+[lints]
+workspace = true

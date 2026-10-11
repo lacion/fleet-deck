@@ -1,9 +1,17 @@
 # Fleet Deck v2 Cargo workspace.
-# M1 (PLAN Phase 0) holds only the spike crates under spikes/.
-# Phase 1 adds the product crates under crates/.
+# Product crates live under crates/ (PLAN §12). The Phase 0 spike crates under
+# spikes/ stay members so that they keep building and passing (M2 goal).
 [workspace]
 resolver = "3"
 members = [
+    "crates/fleetdeck-proto",
+    "crates/fleetdeck-core",
+    "crates/fleetdeck-link",
+    "crates/fleetdeck-providers",
+    "crates/fleetdeck-station",
+    "crates/fleetdeck-deck",
+    "crates/fleetdeck-cli",
+    "crates/fleetdeck-testkit",
     "spikes/spike-canon",
     "spikes/s1-claude",
     "spikes/s2-codex",
@@ -19,13 +27,15 @@ publish = false
 
 [workspace.dependencies]
 anyhow = "1"
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 insta = { version = "1", features = ["json"] }
 proptest = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tempfile = "3"
 thiserror = "2"
+ts-rs = { version = "12", features = ["serde-json-impl", "no-serde-warnings"] }
+ulid = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "sync", "time", "fs", "net"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }

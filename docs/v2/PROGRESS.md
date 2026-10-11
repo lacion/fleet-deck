@@ -1,10 +1,82 @@
 # Fleet Deck v2 — progress (goal loop memory)
 
-Current milestone: **M1 = PLAN Phase 0 (spikes S1, S2, S4)**. Max 15 rounds.
+Current milestone: **M2 = PLAN Phases 1–5** (M1 = Phase 0 is complete, see the M1 section below; M3 = Phases 6–7). The M2 goal loop has at most 50 rounds for M2 and M3 together.
 
-Rules for this file: one checklist item per M1 deliverable, in PLAN order. Each round updates the item status, the commands it ran, and the results. The work of a round stays uncommitted for the reviewer; the next round commits it first.
+Rules for this file: one checklist item per deliverable, in PLAN order. Each round updates the item status, the commands it ran, and the results. The work of a round stays uncommitted for the reviewer; the next round commits it first.
 
-## M1 checklist
+## M2 checklist
+
+Sources: PLAN §14 Phases 1–5, GATE-M1 G1–G14, goal acceptance. G13 is P1-5. G14 and G1–G7 (contract) come before any Phase 3 link code (item G-C). G8–G12 are implementation items inside Phase 3; each one names its test. The **M2 acceptance** column says which exit check of the goal an item proves; the test names are filled in when the item is done.
+
+### Phase 1 — Foundations
+
+- [x] **P1-1 Workspace and skeletons.** Crates `crates/fleetdeck-{proto,core,link,providers,station,deck,cli,testkit}` (PLAN §12) as workspace members beside the spikes; the `fleetdeck` binary with every subcommand of PLAN §1, §6.5, §8.5 and G12 (stubs that fail with "not implemented" until their phase); CLI parse tests (G12: no invitation argument). *(M2 round 1: tests `fleetdeck-cli cli::tests::{the_command_tree_is_consistent, every_plan_subcommand_parses, an_invitation_given_as_an_argument_is_refused, stdin_and_invite_file_exclude_each_other}`)*
+- [x] **P1-2 `fleetdeck-proto` v1.** Canonical events (§6.3, with the L6/L7 ids and `provider_refs`), capabilities (§6.2 groups + degradations), commands and receipts (§6.4), link frames (§8.3 + G4 `incarnation` and snapshot batches), protocol version + feature negotiation; `ts-rs` export; serde round-trip and proptest decode tests; old-event decode rule (L16). *(M2 round 1: modules `ids`, `version`, `capability`, `event` (+`event_tests`), `command`, `session`, `link`, `ts`; 22 unit tests incl. `event::tests::{every_kind_has_a_sample_and_round_trips, an_unknown_kind_is_kept_verbatim, a_known_kind_is_strict_about_required_fields}`, `version::tests::negotiation_is_symmetric` (proptest), `command::tests::admission_checks_the_incarnation_and_the_deadline`, decode proptests `event::tests::decode_props::{event_decode_is_total, control_frame_decode_never_panics}`; drift test `fleetdeck-proto::ts_drift` (2 tests); `make ts-types`; vocabulary deviations in DL-027)*
+- [ ] **P1-3 `fleetdeck-core`.** Ids (ULID), `Secret<T>` (no `Serialize`, redacted `Debug`), identity keys, config (`station.toml` with `[[provider_instance]]` L10, deck config), SQLite on a dedicated DB thread + `rusqlite_migration`, logging (`tracing`, JSON option), injected `Clock` and id source.
+- [ ] **P1-4 `fleetdeck-testkit` skeleton and `web/` skeleton.** Testkit: fake clock, id source, temp data dirs, fake-agent harness entry points. `web/`: React + TS + Vite (bun), ported design tokens from `board/src`, imports the generated types from `web/src/generated/` (written by `make ts-types` in round 1); `bun run typecheck|lint|test`.
+- [ ] **P1-5 CI and `make check` (G13).** TS-types drift check (fails on a stale file, with a test that proves it); `make check` runs fmt, clippy, nextest, deny, the web checks, the drift check, and every replay; a v2 CI workflow file. Exit: CI green on the wired workspace; generated TS types imported by `web/`.
+
+### Phase 2 — Station core
+
+- [ ] **P2-1 `SessionHost` + `DirectChildHost`.** Process groups, clean stop, kill, exit reporting; env scrub for children (§3 rule 6).
+- [ ] **P2-2 Adapter traits + Claude core.** `ProviderAdapter`, `LiveSession`, `Capabilities`, typed `Unsupported { op, degradation }` (L5); the Claude sans-IO core copied from `spikes/s1-claude` and hardened, mapped to `fleetdeck-proto` events; traps 1–10 (t3code-lessons §5).
+- [ ] **P2-3 Claude driver, raw-frame log, fake-claude, replays.** Live driver on `SessionHost`; bounded rotating raw-frame log (L12); `fake-claude` binary in the testkit; all Claude fixtures replay through the production adapter.
+- [ ] **P2-4 Station event log and receipts.** `station.db` migrations (§10); `station_seq`, `session_seq`, `incarnation_id`, retention; command receipts (duplicate → stored receipt; reused id with another method/payload/caller → rejected).
+- [ ] **P2-5 Effects and recovery.** Effect outbox (`queued → claimed → confirmed | retired_not_dispatched | outcome_unknown`), claim with fence token + provider incarnation before I/O, effect worker, startup recovery before admission (A10, L2, L3), runtime requests table, offline approval policy (§6.5).
+- [ ] **P2-6 Session manager and policy.** Commands spawn/prompt/steer/follow-up/interrupt/answer/set-mode/stop through decide → commit → effect → adapter; `station.toml` policy (allowed roots, max sessions, provider instances).
+- [ ] **P2-7 Station-local CLI.** `fleetdeck station sessions|run|approve|interrupt` over a Unix socket. Exit test: a Claude session (fake-claude) runs, asks for approval, is answered and interrupted from the CLI.
+- [ ] **P2-8 Fault tests (§6.4, §13).** Crash before commit, after commit, after the dispatch claim, after the send, before the confirmation is stored; worker restart and provider restart separately; stale approval reply; duplicate replays.
+
+### Gate contract (before Phase 3 code)
+
+- [ ] **G-C G14 + G1–G7 contract.** ADR-004 "Revision 2 (M1 gate)", PLAN §8/§9 updates, DECISIONS-LOG entry pointing to GATE-M1.
+
+### Phase 3 — Deck core + link
+
+- [ ] **P3-1 Link base.** `fleetdeck-link` from `spikes/s4-link` (addr rules, identity, TLS, transport, hello/handshake); node-wide link table, persistent per-peer epoch + `attempt_id`, reciprocal-dial rule (G1); generation-aware cleanup (G10).
+- [ ] **P3-2 Control channel.** Role/direction checks and feature gates for every frame (G6); method table with roles, scopes, mutating flag (G7, table-agreement test); bounded queues, heartbeat 15 s / 45 s, 128 outstanding requests, shutdown never blocks (G8).
+- [ ] **P3-3 Data channel.** Budgets (64 streams, 256 KiB window, 4 MiB buffered), empty frame = error, single-use stream tokens (G2, G6); reset fails pending writes, no id reuse (G9).
+- [ ] **P3-4 Pairing, revocation, reconnect.** Per-invitation failure counts and rate limits (G11); revocation and key rotation close links within 1 s (G5); invitation input by prompt/stdin/`--invite-file` 0600 and log redaction (G12); jittered reconnect.
+- [ ] **P3-5 Station link service.** Event stream with `incarnation`, acks, snapshot batches (G4); command intake with `target_incarnation` / `retry_until` (G3); receipts kept ≥ 24 h.
+- [ ] **P3-6 Deck registry and read model.** `deck.db` migrations; station registry; read model apply with cursor, ack, snapshot batch, incarnation change; status projection (§7.2 incl. `unreachable`, `lost`).
+- [ ] **P3-7 Command router and outbox.** `pending/done/failed/ambiguous` with the G3 rules; outbox (A5); coordinator command dedupe (G7).
+- [ ] **P3-8 Auth and audit.** Owner login (argon2), session cookie, CSRF, WS `Origin` check, login also on loopback (A13), `fleetdeck open` one-time login URL, per-method scopes (L15), audit log.
+- [ ] **P3-9 Board API.** REST commands + WS snapshot/deltas, per-session subscriptions with a cursor.
+- [ ] **P3-10 Phase 3 exit tests.** Deck + 2 stations as separate processes on loopback (one dial-only, one dialed); link drops and deck restarts lose no events and duplicate no commands; public addresses rejected; scopes enforced.
+
+### Phase 4 — Board MVP
+
+- [ ] **P4-1 Connection runtime + login.** `web/src/runtime/` (L17): one retry owner, transport health vs freshness, stale cache, per-session cursors; login page.
+- [ ] **P4-2 Fleet lanes, stations panel, pairing dialog.**
+- [ ] **P4-3 Session view and needs-you rail.** Timeline, composer (prompt/steer/follow-up), interrupt, mode ladder, approvals.
+- [ ] **P4-4 Spawn form and `fleetdeck up`.** Station + provider + directory picker; all-in-one mode with the embedded board (`rust-embed`).
+- [ ] **P4-5 MVP demo test.** Playwright at a phone viewport against fake agents: spawn on two stations, answer an approval, steer, interrupt, survive a deck restart and a network drop.
+
+### Phase 5 — Codex
+
+- [ ] **P5-1 Codex core.** Sans-IO core from `spikes/s2-codex` (vendored schema) mapped to proto events; replays of all Codex fixtures.
+- [ ] **P5-2 Codex driver and fake-codex.** Background polling (DL-024), station integration.
+- [ ] **P5-3 Capability matrix tests + capability-driven UI.** Every §6.2 row covered for both providers; controls only when capabilities allow them.
+- [ ] **P5-4 Codex board flows.** The Playwright flows for Claude and Codex.
+- [ ] **P5-5 Live smoke tests.** One per provider (real CLI, tiny prompt, temp dir) behind `FD_LIVE_SMOKE=1`, documented; not in the default run.
+- [ ] **M2-F Close-out.** Every exit check named in this file; `make check` on a clean checkout; DECISIONS-LOG complete.
+
+## M2 round log
+
+### M2 round 1 (2026-10-11)
+
+- Start: working tree clean at `4888dbc`; nothing to commit.
+- Added this M2 checklist (Phases 1–5, the GATE-M1 items, close-out).
+- **P1-1 done.** Eight product crates under `crates/`; root `Cargo.toml` lists them before the spikes; workspace `clap` gets the `env` feature. `fleetdeck` binary (`crates/fleetdeck-cli`): full command tree (`up`, `open`, `deck serve|invite|add-station|stations|remove-station`, `station serve|invite|join|forget-deck|sessions|run|approve|interrupt`); `add-station`/`join` take the invitation only from a prompt, `--stdin` or `--invite-file` (G12). Each stub exits 1 with "`fleetdeck <cmd>` is not implemented yet (PLAN Phase N)".
+- **P1-2 done.** `fleetdeck-proto` v1 (2,300 lines, every module < 800): ids, version negotiation (symmetric, required `control.v1`), capabilities with `Unsupported { op, degradation }` per §6.2 row, canonical events with the L16 unknown-kind rule, commands/envelopes/receipts with the G3 admission rules, session projection shape, control frames with G4 `incarnation` and snapshot batches, ts-rs export. Workspace deps: `ts-rs` 12 (`serde-json-impl`), `ulid` 1. `web/src/generated/` holds the 60 generated files + `index.ts`; `make ts-types` regenerates them. DL-027 records the vocabulary additions to PLAN §6.3.
+- Commands and results:
+  - `cargo nextest run -p fleetdeck-cli` → 4 passed; `cargo nextest run -p fleetdeck-proto` → 26 passed (first run: the symmetry proptest found that `InvalidRange` depended on the argument order; fixed by checking the ranges in sorted order).
+  - `cargo run -q -p fleetdeck-cli -- station join` → "`fleetdeck station join` is not implemented yet (PLAN Phase 3)", exit 1.
+  - `make check` → all 6 commands passed (fmt, clippy `-D warnings`, nextest 270 passed, deny, 29 Claude replays, 18 Codex replays).
+  - `web/` has no `package.json` yet, so `bun run typecheck|lint|test` do not exist (P1-4). The drift check runs inside nextest (`fleetdeck-proto::ts_drift`).
+- Next: P1-3 `fleetdeck-core`.
+
+## M1 checklist (complete)
 
 - [x] **P0-1 Scaffold.** Root Cargo workspace (spike members only, DL-001), `deny.toml`, lint policy (`unsafe_code = forbid`, `clippy::unwrap_used = deny` outside tests), `spike-canon` (canonical event subset of §6.3), `docs/v2/DECISIONS-LOG.md`, `spikes/README.md`, this file. *(round 1)*
 - [x] **S1-1 Claude protocol core.** Frame parser (never panics, unknown frames kept, proptest), host control frames, sans-IO adapter core: init, prompt, partial deltas, `can_use_tool` with native option ids + edited input, idempotent answers, fail-closed unknown requests, interrupt, set mode (native modes only), exit expiry. *(round 1; round 2 review fix: a prompt is confirmed only by `command_lifecycle` `started` with the matching uuid, DL-006)*

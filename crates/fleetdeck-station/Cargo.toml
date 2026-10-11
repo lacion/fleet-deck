@@ -1,0 +1,17 @@
+[package]
+name = "fleetdeck-station"
+description = "Fleet Deck v2 station: session host, event log, receipts, effect worker, workspace, policy (PLAN §6)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fleetdeck-proto = { path = "../fleetdeck-proto" }
+fleetdeck-core = { path = "../fleetdeck-core" }
+fleetdeck-link = { path = "../fleetdeck-link" }
+fleetdeck-providers = { path = "../fleetdeck-providers" }
+
+[lints]
+workspace = true
