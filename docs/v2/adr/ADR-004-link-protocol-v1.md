@@ -1,7 +1,7 @@
 # ADR-004 — Link protocol v1
 
 - **Status:** Proposed
-- **Date:** 2026-10-11
+- **Date:** 2026-10-11 (Revision 2: 2026-10-11, M1 gate, §9)
 - **Deciders:** owner (approval pending), architect (goal loop, M1)
 - **Implements:** PLAN §8 (link protocol), D13 (network scope), L15 (scoped methods), L16 (feature flags), §14 Phase 0 row S4
 - **Evidence:** `spikes/s4-link/` (crate `s4-link`), tests in `spikes/s4-link/tests/` and module tests in `spikes/s4-link/src/`
@@ -13,7 +13,7 @@ A Fleet Deck **link** connects one deck and one station. Either side can dial: t
 
 PLAN §8 fixes the shape: two WebSockets (control and data) over mutual TLS with pinned Ed25519 keys, a `Hello` exchange with versions and feature flags, a transcript signature bound to the TLS session, `link_epoch` for duplicate links, the control frames of §8.3, scoped methods, single-use `fdinv1:` invitations, and jittered backoff. PLAN leaves several details open. The spike `s4-link` makes them concrete and tests them. DL-016 to DL-023 log every choice that PLAN does not state.
 
-This ADR describes link protocol **v1** as the spike implements it. Phase 3 takes it into `crates/link`. The PLAN requires an adversary DESIGN REVIEW of §8 before Phase 3 freezes the protocol. The goal loop cannot run that review (§8 of this ADR).
+This ADR describes link protocol **v1** as the spike implements it. Phase 3 takes it into `crates/fleetdeck-link`. **Revision 2 (§9) changes the contract after the M1 gate (`docs/v2/GATE-M1.md`, G1–G7). Where §2–§7 and §9 differ, §9 is binding; the spike keeps the Revision 1 behaviour.** The PLAN requires an adversary DESIGN REVIEW of §8 before Phase 3 freezes the protocol. The goal loop cannot run that review (§8 of this ADR).
 
 ## 2. Decision
 
@@ -262,3 +262,114 @@ The `command_id` receipt store and the `ambiguous` state (§8.4), the event repl
 1. PLAN Phase 0 asks for an adversary DESIGN REVIEW of ADR-004. The goal loop forbids subagents, so the review has not run. Run it before Phase 3 freezes the protocol.
 2. A real tailnet check (two nodes on Tailscale addresses) is an owner step.
 3. Approve DL-016 to DL-023, especially the spike scope names (DL-019), the pair channel and IP-literal invitations (DL-021), and the wall-clock epoch (DL-022).
+
+## 9. Revision 2 (M1 gate)
+
+- **Date:** 2026-10-11 (M2, item G-C). **Source:** `docs/v2/GATE-M1.md` §3, items G1–G7 (adversary DESIGN REVIEW, verdict FAIL; the architect decided each fix). **Log:** DL-040.
+- **Scope:** this section changes the protocol contract. `crates/fleetdeck-link` implements it in Phase 3 (items P3-1 to P3-10 of `docs/v2/PROGRESS.md`). The spike `spikes/s4-link` stays at Revision 1 and is not changed (GATE-M1: "Do not fix them in the spike").
+- **Supersedes:** §2.5 step 5 and §2.9 (epochs and duplicate links), §2.6 frame list, method table and command semantics, §2.7 stream limits and the `purpose` string, §2.8 "after 5 wrong proofs, every open invitation closes" (G11), §5 "a persisted epoch counter is deferred", and §6 risk "clock steps back".
+
+### 9.1 Link table, epochs and attempts (G1)
+
+- **One node-wide link table** keyed by the peer key fingerprint. It holds inbound and outbound links of every listener and every dialer of the node. A node never has two Ready links to one peer for longer than the resolution below takes.
+- **`link_epoch`** is a persistent per-peer counter of the dialer. The dialer increments it and commits it to its SQLite database (`link_epochs(peer_key PRIMARY KEY, epoch)` in station.db or deck.db) **before** each dial. It never comes from the wall clock. The listener sends epoch 0.
+- **`attempt_id`:** each dial attempt also has a random 128-bit `attempt_id` (32 lowercase hex characters). The dialer sends it in the `Hello` of every channel of the attempt (new field `attempt_id`; unknown fields stay ignored, L16). The data channel binds to the control channel with the same peer, epoch **and** `attempt_id`; any other data channel is closed with `no_control_channel`.
+- **Highest epoch per peer.** The listener persists the highest epoch that it accepted from each dialer. An attempt with an epoch lower than or equal to it is refused with `close { reason: "stale_link_epoch", min_epoch }`. The dialer then raises its counter above `min_epoch`, commits it and dials again. So a stale epoch after a restart is refused, and a dialer whose database was reset recovers after one attempt.
+- **Resolution** when a second link to the same peer reaches Ready (both sides compute the same result):
+  1. Same dialer: the higher epoch wins.
+  2. Opposite dialers (a reciprocal dial): the link dialed by the node with the **lower key fingerprint** (bytewise compare of the 32-byte SHA-256 values) wins.
+- The losing link closes with `superseded`. Frames of a superseded attempt are dropped before they reach the application.
+- **Cleanup** (G10, implementation): the table entry is removed by a generation-aware guard that is installed right after the insert and runs on every failure path.
+
+### 9.2 Data channel budgets and stream tokens (G2, G6)
+
+Per link (these values replace §2.7 "at most 256 open streams"):
+
+| Budget | Value | Violation |
+| --- | --- | --- |
+| Open streams | 64 | `flow_control_violation` |
+| Per-stream window (each direction) | 256 KiB | `flow_control_violation` |
+| Buffered inbound bytes, whole connection | 4 MiB, counted until the application consumes them, also after a stream reset | `flow_control_violation` |
+| Control inbound queue / outbound queue | 256 messages each; pending writes count against the budget | `flow_control_violation` |
+| Outstanding requests (G8) | 128 per link | `too_many_requests` error response |
+
+- An **empty data frame** is a protocol error (`protocol_error`). A **reset for an unknown stream** is ignored and makes no event.
+- A stream reset fails every pending write of that stream at once; stream ids are never reused within one attempt (G9, implementation).
+- **Stream tokens** replace the free `purpose` string. A control response that authorizes a stream (for example `artifact.open`) returns `stream_token`: 128 random bits, single use, bound to the link's `attempt_id`, valid for 30 s. The `open` mux frame carries the token as its payload. An unknown, used, expired or foreign token resets the stream with `bad_stream_token`.
+- The reader and the writer stay independent tasks (§2.4).
+
+### 9.3 Command envelope, incarnation and deadline (G3)
+
+- A mutating request carries `command_id` in the frame **and** a `CommandEnvelope` in `params` (`fleetdeck_proto::command::CommandEnvelope`: `command_id`, `target_incarnation`, `retry_until`, `origin`, `command`). The two `command_id` values and the method (`SessionCommand::method`) must agree, else `invalid_command`.
+- `target_incarnation` is the station incarnation that the deck last saw. `retry_until` is deck UTC time in Unix ms; the default is accepted-at + 15 min (`RETRY_WINDOW_MS`).
+- The deck stores the envelope before it sends it. A stored envelope never changes; a resend sends the same bytes.
+- The station rejects, **without storing a receipt**:
+  - `incarnation_mismatch`: `target_incarnation` is not its current incarnation (for example after a database reset);
+  - `expired`: `retry_until` is in the past by more than the 2 min skew allowance (`CLOCK_SKEW_MS`).
+- The deck never resends after `retry_until`. Deck command states (`DeckCommandState`):
+  - sent and not acknowledged before `retry_until` → `ambiguous`;
+  - rejected with `incarnation_mismatch` or `expired` after an earlier send → `ambiguous`;
+  - rejected that way and never sent before → `failed` (`station_reset`).
+- Nothing is redispatched automatically. Stations keep receipts for at least 24 h (`RECEIPT_RETENTION_MS`), more than the retry horizon.
+- The response to a mutating request is the `Receipt` (accepted or rejected). Execution outcomes arrive later as events (PLAN §8.4).
+
+### 9.4 Incarnation on every stream frame and snapshot batches (G4)
+
+Control frames (`fleetdeck_proto::link::ControlFrame`, tag `type`), replacing the §2.6 list:
+
+```text
+request           { id, command_id?, method, params }
+response          { id, ok } | { id, err: { code, message, data? } }
+event             { incarnation, station_seq, session_id, session_seq, at, proto_version, raw_ref?, event }
+ack               { incarnation, station_seq }
+snapshot_begin    { incarnation, watermark, session_count }
+snapshot_session  { incarnation, snapshot: { summary } }
+snapshot_end      { incarnation, watermark }
+ping              { nonce }
+pong              { nonce }
+close             { reason, detail }
+```
+
+- A snapshot is a batch: `snapshot_begin`, then `snapshot_session` × `session_count`, then `snapshot_end` with the same watermark. The deck applies the whole batch and sets its cursor to `watermark` in **one** transaction at `snapshot_end`. Sessions of that station that are not in the batch are marked `removed`. A batch without its end (link drop, wrong count, other incarnation) has no effect.
+- An `ack` with an incarnation that is not the station's current one, or with a `station_seq` above the highest sequence delivered on this link (event or snapshot watermark), is a protocol error that closes the link.
+- An `event` or snapshot frame with an incarnation that differs from the one the deck holds for that station starts a new cursor: the deck asks for a snapshot (`session.snapshot`) and does not mix the two sequences.
+
+### 9.5 Revocation and key rotation (G5)
+
+- A revocation (`fleetdeck station forget-deck`, "remove station" on the deck) removes the pin and every grant of that key in **one** transaction and increments a persistent revocation generation.
+- Every active link of that key closes within 1 s (reason `revoked`).
+- The decision transaction of each command checks, in the same transaction, that the caller's pin and the needed grant still exist. A command that was queued from a revoked link is rejected (`forbidden`).
+- Key rotation (`link.rotate_key`, scope `admin`): the new key is signed by the old key; the peer replaces the key in one transaction. The new key gets only the role and the grants of the old key. The old key is then revoked as above.
+
+### 9.6 Roles, directions and method table (G6, G7)
+
+- Every frame is checked against the roles that were **bound at pairing** (`station` or `deck`), never against the dial direction.
+- Fixed directions: `event`, `snapshot_begin`, `snapshot_session`, `snapshot_end` go station → deck; `ack` goes deck → station. A frame in the wrong direction is a protocol error that closes the link. `request`, `response`, `ping`, `pong`, `close` go both ways.
+- Snapshot frames need the negotiated `snapshots.v1`; without it they are a protocol error.
+- Request checks, in this order: `unknown_method`, `wrong_role` (the caller or the receiver role does not match the table), `feature_not_negotiated`, `forbidden` (scope not granted, read in the same transaction as the decision for a mutating method, §9.5), `missing_command_id`.
+- **Method table v1 (Revision 2).** The generated table in `fleetdeck-link` must equal this table; a table-agreement test (P3-2) compares them.
+
+| Method | Caller → receiver | Scope | Feature | Mutating |
+| --- | --- | --- | --- | --- |
+| `station.info` | deck → station | read | — | no |
+| `session.list` | deck → station | read | — | no |
+| `events.replay` | deck → station | read | — | no |
+| `session.snapshot` | deck → station | read | `snapshots.v1` | no |
+| `command.receipt` | deck → station | read | `command_receipts.v1` | no |
+| `artifact.open` | deck → station | read | `data_streams.v1` | no (returns a `stream_token`) |
+| `session.start`, `session.resume`, `session.fork`, `session.prompt`, `session.steer`, `session.follow_up`, `session.interrupt`, `session.set_mode`, `session.set_model`, `session.stop` | deck → station | drive | — | yes |
+| `approval.answer` | deck → station | approve | — | yes |
+| `station.configure` | deck → station | admin | — | yes |
+| `link.rotate_key` | either → either | admin | — | yes |
+| `coordinator.query` | station → deck | coordinate | — | no |
+| `coordinator.call` | station → deck | coordinate | — | yes |
+
+- **Coordinator (G7):** `coordinator.call` carries the operations that change fleet intent (spawn, send, stop, assign). It is mutating: it needs a `command_id`, and the **deck** keeps receipts for it and deduplicates them with the same rules as station receipts (same id + method + caller + payload hash → the stored receipt; reused id with another payload → rejected). `coordinator.query` carries the read operations and is not mutating. This replaces the Revision 1 row "`coordinator.call` | coordinate | — | no".
+
+### 9.7 Implementation items of the same gate (G8–G12)
+
+These do not change the wire contract; `fleetdeck-link` implements them with one test each (PROGRESS P3 items): socket writes and delivery outside the cancellation `select`, close bounded to 1 s, heartbeat ping every 15 s and close after 45 s without a frame (G8); a reset fails pending writes at once (G9); generation-aware table cleanup (G10); invitation failures counted per invitation id (5 failures cancel only that invitation), at most 10 pairing attempts per source IP per minute and 4 concurrent pairing handshakes (G11); invitations never in argv, read from a non-echoing prompt, stdin or `--invite-file` (mode 0600), `Secret<T>` and redacted everywhere else (G12).
+
+### 9.8 New reason codes
+
+`superseded` (now also for reciprocal links), `stale_link_epoch` (with `min_epoch`), `flow_control_violation`, `too_many_requests`, `bad_stream_token`, `wrong_role`, `revoked`, `incarnation_mismatch` and `expired` (receipts), `invalid_command`.

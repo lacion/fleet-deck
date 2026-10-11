@@ -111,7 +111,7 @@ pub enum SessionCommand {
 }
 
 impl SessionCommand {
-    /// The link method that carries this command (ADR-004 §2.6 method table).
+    /// The link method that carries this command (ADR-004 §9.6 method table).
     #[must_use]
     pub fn method(&self) -> &'static str {
         match self {

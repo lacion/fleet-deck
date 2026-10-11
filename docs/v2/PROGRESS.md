@@ -29,7 +29,7 @@ Sources: PLAN §14 Phases 1–5, GATE-M1 G1–G14, goal acceptance. G13 is P1-5.
 
 ### Gate contract (before Phase 3 code)
 
-- [ ] **G-C G14 + G1–G7 contract.** ADR-004 "Revision 2 (M1 gate)", PLAN §8/§9 updates, DECISIONS-LOG entry pointing to GATE-M1.
+- [x] **G-C G14 + G1–G7 contract.** ADR-004 "Revision 2 (M1 gate)", PLAN §8/§9 updates, DECISIONS-LOG entry pointing to GATE-M1. Done: ADR-004 §9 "Revision 2 (M1 gate)" (§9.1 G1 link table/epochs/`attempt_id`, §9.2 G2+G6 budgets and stream tokens, §9.3 G3 command envelope, §9.4 G4 incarnation and snapshot batches, §9.5 G5 revocation and rotation, §9.6 G6+G7 roles, directions and method table, §9.7 G8–G12, §9.8 reason codes); PLAN §8 (Revision 2 note, budgets, link table rule, frame list, envelope/`ambiguous` rules, coordinator), §9 (revocation, rotation, invitation input, threat rows), §10 (`links`, `coordinator_receipts`, deck `commands` envelope); DL-040. Tests in `crates/fleetdeck-proto/tests/adr_revision2.rs`: `every_session_command_is_a_mutating_deck_to_station_method_of_the_adr_table`, `the_adr_table_names_known_features_and_scopes_and_makes_coordinator_calls_mutating`, `every_control_frame_type_is_in_the_adr_frame_list_with_its_incarnation`, `plan_section_8_points_to_revision_2_and_the_decisions_log_has_its_entry`.
 
 ### Phase 3 — Deck core + link
 
@@ -229,6 +229,19 @@ Sources: PLAN §14 Phases 1–5, GATE-M1 G1–G14, goal acceptance. G13 is P1-5.
   - `cargo test -q -p fleetdeck-cli --test station_faults` -> 6 passed.
   - `make check` -> all 12 commands passed: fmt ok, clippy -D warnings ok, nextest 494/494, deny ok, ts_drift 2/2, bun install --offline ok, typecheck ok, lint ok, web test 5 pass, build ok, replay-claude 29 ok, replay-codex 18 ok.
 - Next: G-C (GATE-M1 items G14 and G1-G7 before Phase 3 link code).
+
+### M2 round 13 (2026-10-11)
+
+- Committed round 12 as `6cc10cb` (`test(v2): add fault tests at every effect boundary and fix sent-after-write (M2 P2-8)`).
+- Review fix (partial write): `crates/fleetdeck-providers/src/claude/driver.rs` has a free `flush(writes, limit)`: when the writer is gone after frames were queued (the `Flush` send fails), drops the acknowledgement, or does not answer within the limit, the result is a host write error (`Dispatch::Unknown` = `outcome_unknown`), never "not dispatched". `Shared::dispatch` treats a failed frame send after an earlier queued frame the same way. Tests in `crates/fleetdeck-providers/src/claude/driver_tests.rs`: `the_flush_returns_after_the_writer_took_every_frame_before_it`, `a_writer_that_ends_after_it_took_the_frames_is_a_partial_write`, `a_writer_that_drops_the_acknowledgement_is_a_partial_write`, `a_process_that_does_not_read_stdin_makes_the_flush_time_out`; classification test `manager::target::classify_tests::a_write_that_can_be_partial_is_unknown_and_an_ended_session_is_not_dispatched`. Mutation (a failed `Flush` send → session ended) fails `a_writer_that_ends_after_it_took_the_frames_is_a_partial_write`; restored.
+- G-C: ADR-004 §9 Revision 2, PLAN §8/§9/§10 updates, DL-040 (see the checklist item). The spike `spikes/s4-link` stays at Revision 1. The ADR-004 adversary DESIGN REVIEW stays an owner step (the loop forbids subagents; DL-040).
+- Mutation check: changing the ADR row of `coordinator.call` to "no" and `approval.answer` to scope `drive` fails 2 of the 4 `adr_revision2` tests; restored.
+- Commands and results:
+  - `cargo nextest run -p fleetdeck-proto --test adr_revision2` -> 4/4.
+  - `cargo nextest run -p fleetdeck-providers -E 'test(/flush|partial_write/)'` -> 4/4.
+  - `make check` (first run) -> fmt failed (formatting of the new files only), the other 11 passed, nextest 503/503; after `cargo fmt --all`:
+  - `make check` -> all 12 commands passed: fmt ok, clippy -D warnings ok, nextest 503/503, deny ok, ts_drift 2/2, bun install --offline ok, typecheck ok, lint ok, web test 5 pass, build ok, replay-claude 29 ok, replay-codex 18 ok.
+- Next: P3-1 link base (`fleetdeck-link` from `spikes/s4-link`, node-wide link table, persistent per-peer epoch + `attempt_id`, reciprocal-dial rule, generation-aware cleanup).
 
 ## M1 checklist (complete)
 

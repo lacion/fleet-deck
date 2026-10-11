@@ -405,12 +405,15 @@ Columns: `queued → working → verifying → needs-you → idle → ended`, pl
 
 ## 8. Link protocol
 
+> **Revision 2 (M1 gate, 2026-10-11).** GATE-M1 G1–G7 changed this section. ADR-004 §9 has the full contract; DL-040 logs the change.
+
 ### 8.1 Transport
 
 - One **control** WebSocket and one **data** WebSocket per link, both over TLS (rustls), both opened by the dialing side.
 - After the handshake, the direction does not matter. Both sides can send requests.
 - Control frames: ≤ 1 MiB, JSON. Data channel: multiplexed byte streams, chunks ≤ 64 KiB, credit-based flow control per stream.
 - Reconnect: exponential backoff with jitter, by the dialing side.
+- Budgets per link (G2): at most 64 open streams, a 256 KiB window per stream, 4 MiB of buffered inbound bytes for the connection (counted until the application consumes them), control queues of 256 messages each, and 128 outstanding requests. An empty data frame is a protocol error. A violation closes the link with `flow_control_violation`. A data stream opens only with a single-use stream token from the control response that authorized it (G6).
 - Network scope (D13): a node listens and dials only on loopback, private LAN ranges (RFC 1918, IPv6 ULA, link-local), and the Tailscale ranges (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`). Any other address is rejected at bind and at dial time. Tailscale identity is not used as authentication; mutual TLS with pinned keys stays required.
 
 ### 8.2 Handshake
@@ -420,18 +423,25 @@ Columns: `queued → working → verifying → needs-you → idle → ended`, pl
 3. Each side signs the handshake transcript (both identities, both roles, both nonces, the TLS exporter value). This binds the link to this TLS session.
 4. The deck checks that the peer key belongs to a paired station with role `station`. The station checks that the peer key is its paired deck.
 5. Protocol version = the highest common version. No common version → the link closes with a clear error on both sides.
-6. If a second link for the same station authenticates, the link with the higher `link_epoch` wins and the older link closes.
+6. One node-wide link table, keyed by the peer key fingerprint, covers inbound and outbound links and all listeners (G1). `link_epoch` is a persistent per-peer counter of the dialer, committed before each dial; each attempt also has a random 128-bit `attempt_id`, and the data channel binds to it. If a second link to the same peer reaches Ready: from the same dialer, the higher epoch wins; from opposite dialers, the link dialed by the node with the lower key fingerprint wins. The losing link closes with `superseded`, and its frames are dropped. A stale epoch is refused with `stale_link_epoch`.
+7. Every frame is checked against the roles bound at pairing, never against the dial direction (G6).
 
 ### 8.3 Frames (control channel)
 
 ```
-Request   { id, command_id?, method, params }
-Response  { id, ok | err }
-Event     { station_seq, session_id, session_seq, event }
-Ack       { station_seq }                              // deck → station, after the read model commits
-Snapshot  { session_id, as_of_station_seq, state }     // when replay is not possible
+Request          { id, command_id?, method, params }
+Response         { id, ok | err }
+Event            { incarnation, station_seq, session_id, session_seq, event }   // station → deck
+Ack              { incarnation, station_seq }            // deck → station, after the read model commits
+SnapshotBegin    { incarnation, watermark, session_count }   // station → deck, when replay is not possible
+SnapshotSession  { incarnation, snapshot }
+SnapshotEnd      { incarnation, watermark }
 Ping/Pong
+Close            { reason, detail }
 ```
+
+- A snapshot is a batch (G4). The deck applies it and sets its cursor to `watermark` in one transaction at `SnapshotEnd`; sessions that are not in the batch are marked `removed`; a batch without its end has no effect. Snapshot frames need the `snapshots.v1` feature.
+- An `Ack` with another incarnation, or with a sequence above the delivered watermark, is a protocol error. A frame in the wrong direction is a protocol error (G6).
 
 ### 8.4 Command semantics
 
@@ -439,7 +449,10 @@ Ping/Pong
 
 - The deck gives every mutating command a ULID `command_id` and stores it as `pending` before it sends it.
 - If the link drops before the response, the deck re-sends **the same** `command_id` after reconnect. The station returns the stored accept/reject receipt or decides the command once; delivery and execution outcomes arrive later as events.
-- If the outcome is still unknown after the receipt retention window, the command becomes `ambiguous`. The board shows it and asks the owner. It never retries with a new id.
+- Every mutating command also carries `target_incarnation` (the station incarnation the deck last saw) and `retry_until` (deck UTC time; default accepted-at + 15 min). The deck stores the envelope before it sends it, and the stored envelope never changes (G3).
+- The station rejects a command for another incarnation (`incarnation_mismatch`) or with a `retry_until` more than 2 min in the past (`expired`), and stores no receipt for these two rejections. Stations keep receipts for at least 24 h.
+- The deck never resends after `retry_until`. A command that was sent and has no receipt by then, or that was sent before and is now rejected with `incarnation_mismatch` or `expired`, becomes `ambiguous`. Such a rejection of a command that was never sent makes it `failed` (`station_reset`). The board shows an ambiguous command and asks the owner. Nothing is redispatched automatically, and nothing is retried with a new id.
+- Coordinator operations that change fleet intent (`coordinator.call`) are mutating: they need a `command_id`, and the deck keeps receipts and deduplicates them like station receipts. Read operations (`coordinator.query`) are not mutating (G7). ADR-004 §9.6 has the method table with the caller and receiver role, scope, feature and mutating flag of every method.
 
 ### 8.5 Pairing
 
@@ -456,8 +469,9 @@ Ping/Pong
 **Rules:**
 
 - Only the authenticated owner can add dial targets. The deck does not follow redirects. LAN discovery (mDNS) only suggests candidates.
-- Revoke: "remove station" on the deck unpins the key; `fleetdeck station forget-deck` on the station does the same on its side.
-- Key rotation: a paired node signs a new key with its old key; the peer pins the new key.
+- Revoke: "remove station" on the deck unpins the key; `fleetdeck station forget-deck` on the station does the same on its side. A revocation removes the pin and all grants of the key in one transaction and closes every active link of that key within 1 s. The decision transaction of each command checks that the pin and the grant still exist, so a queued command from a revoked link is rejected (G5).
+- Key rotation: a paired node signs a new key with its old key; the peer replaces the key in one transaction. The new key gets only the role and grants of the old key, and the old key is revoked as above (G5).
+- Invitation input (G11, G12): `fleetdeck station join` and `fleetdeck deck add-station` read the invitation from a non-echoing prompt, stdin, or `--invite-file` (mode 0600), never from an argument. Five wrong proofs cancel only that invitation; each source IP gets at most 10 pairing attempts per minute, and at most 4 pairing handshakes run at the same time.
 
 ---
 
@@ -472,14 +486,17 @@ Ping/Pong
 | CSRF / cross-site WS | CSRF token on every mutating request; WS `Origin` check against the deck's own listen addresses and configured tailnet hostname |
 | Exposure to the internet | D13: the deck and station refuse public addresses at bind and dial time (§8.1) |
 | Shell misuse | Shells are owner-only, `allow_shell` per station, cwd inside `allowed_roots`, open/close audited (§6.8) |
-| Rogue station or rogue deck | Mutual TLS with pinned keys; signed handshake transcript; roles bound at pairing |
-| Invitation theft | 128-bit secret, single use, 15-minute expiry, bound to the deck's key fingerprint; the secret stays in the URL fragment (after `#`), never in a query; the board strips it from history; pairing secrets never appear in a read model (L15) |
+| Rogue station or rogue deck | Mutual TLS with pinned keys; signed handshake transcript; roles bound at pairing; every frame and method checked against those roles and a fixed direction (G6) |
+| Revoked key with an open link | Revocation closes the key's links within 1 s; each command's decision transaction re-checks the pin and grant (G5) |
+| Duplicate or reciprocal links | One node-wide link table; persistent per-peer dialer epochs and `attempt_id`; a deterministic winner; frames of a superseded attempt are dropped (G1) |
+| Memory exhaustion over the link | Per-link stream, window, buffer, queue, and request budgets; violation closes the link (G2) |
+| Invitation theft | 128-bit secret, single use, 15-minute expiry, bound to the deck's key fingerprint; the secret stays in the URL fragment (after `#`), never in a query; the board strips it from history; pairing secrets never appear in a read model (L15); never in argv, logs, or events; failures counted per invitation and rate-limited per source IP (G11, G12) |
 | SSRF through deck dial targets | Only the owner configures targets; only loopback, LAN, and tailnet addresses; no redirects; discovery is not trust |
 | Prompt injection from forge text or agent output | Third-party text is fenced and labeled as untrusted data; issue-driven spawns default to supervised |
 | XSS from agent output | Markdown rendered without raw HTML; strict CSP; no `dangerouslySetInnerHTML` on agent text |
 | Credential leak | Provider credentials stay on the station; `Secret<T>` cannot be serialized; env scrub for children; no secrets in argv or logs |
 | Coordinator agent overreach | Scoped token classes and spawn caps; token passed by env, never argv; every use audited |
-| Replay of old commands | Command ids + receipts; link-bound signatures |
+| Replay of old commands | Command ids + receipts; `target_incarnation` and `retry_until` on every mutating command, so a reset station never runs a resent command (G3); link-bound signatures |
 
 The adversary agent does a DESIGN REVIEW of this section and of §8 before Phase 3 freezes the link protocol.
 
@@ -493,6 +510,7 @@ The adversary agent does a DESIGN REVIEW of this section and of §8 before Phase
 | --- | --- |
 | `meta` | `incarnation_id`, `station_seq_next`, identity key reference |
 | `pairing` | `deck_key`, `deck_url?`, `paired_at` |
+| `links` | link state (G1, G5): `link_epochs` (`peer_key`, `epoch`: the dialer's per-peer counter and the listener's highest accepted epoch), `grants` (`peer_key`, `scope`), `revocation_generation` |
 | `sessions` | `session_id`, `provider`, `native_session_id`, `cwd`, `worktree`, `mode`, `state`, `offline_approval_policy`, `created_at` |
 | `events` | `station_seq` PK, `session_id`, `session_seq`, `kind`, `payload` JSON (incl. `provider_refs`), `raw_ref?`, `at` |
 | `effects` | outbox of the effect worker: `effect_id`, `command_id`, `session_id`, `process_incarnation`, `kind`, `payload`, `state: queued|claimed|confirmed|retired_not_dispatched|outcome_unknown`, `fence_token?`, `reason?` |
@@ -511,7 +529,9 @@ Raw provider frames are not a table: bounded rotating log files per session (L12
 | `stations` | `station_id`, `name`, `key`, `role`, `dial_url?`, `direction`, `last_seen`, `incarnation_id`, `cursor` |
 | `sessions` | read model: `session_id`, `station_id`, `callsign`, `provider`, `status`, `model`, `repo_group`, ... |
 | `timeline` | condensed per-session timeline for the board |
-| `commands` | `command_id`, `station_id`, `state: pending|done|failed|ambiguous`, `origin` |
+| `commands` | `command_id`, `station_id`, `state: pending|done|failed|ambiguous`, `origin`, the stored envelope (`target_incarnation`, `retry_until`, G3), `sent_at?` |
+| `links` | `link_epochs`, `grants`, `revocation_generation` as in station.db (G1, G5) |
+| `coordinator_receipts` | receipts of mutating `coordinator.call` commands, same rules as station receipts (G7) |
 | `outbox` | `command_id`, `station_id`, `kind`, `payload`, `attempts`, `next_at`, `expires_at` |
 | `mail`, `plans`, `tasks`, `completions` | fleet intent |
 | `file_touches` | conflict radar input |

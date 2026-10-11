@@ -328,12 +328,21 @@ impl Shared {
         raw_ref: Option<&RawRef>,
         writes: &mpsc::UnboundedSender<Write>,
     ) -> Result<()> {
+        let mut queued = false;
         for o in out {
             match o {
                 Output::Write(v) => {
                     if writes.send(Write::Frame(v)).is_err() {
-                        return Err(ProviderError::SessionEnded);
+                        // Nothing of this output reached the writer, unless
+                        // an earlier frame of it did: then a part may be
+                        // written, and the outcome is unknown.
+                        return Err(if queued {
+                            write_failed("the stdin writer stopped")
+                        } else {
+                            ProviderError::SessionEnded
+                        });
                     }
+                    queued = true;
                 }
                 Output::Emit(e) => self.sink.emit_with(e, raw_ref.cloned()).await?,
             }
@@ -498,20 +507,8 @@ impl ClaudeSession {
         Ok(())
     }
 
-    /// Returns when the queued frames are in the stdin pipe, so a host
-    /// command returns after its write, not before it (PLAN §6.4: the
-    /// station records `sent` only after the I/O). A failed or stuck write
-    /// can be partial: its error is an unknown outcome.
     async fn flush(&self) -> Result<()> {
-        let (ack, done) = oneshot::channel();
-        if self.writes.send(Write::Flush(ack)).is_err() {
-            return Err(ProviderError::SessionEnded);
-        }
-        match tokio::time::timeout(WRITE_TIMEOUT, done).await {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(_)) => Err(write_failed("the stdin writer stopped")),
-            Err(_) => Err(write_failed("the process does not read stdin")),
-        }
+        flush(&self.writes, WRITE_TIMEOUT).await
     }
 
     async fn input(&self, op: Operation, input: HostInput) -> Result<()> {
@@ -643,9 +640,31 @@ impl Drop for ClaudeSession {
     }
 }
 
+/// Returns when every frame queued before it is in the stdin pipe, so a
+/// host command returns after its write, not before it (PLAN §6.4: the
+/// station records `sent` only after the I/O). Call it only after frames
+/// were queued: every failure then can follow a partial write, so it is a
+/// host write error (`outcome_unknown`), never "nothing was sent".
+async fn flush(writes: &mpsc::UnboundedSender<Write>, limit: Duration) -> Result<()> {
+    let (ack, done) = oneshot::channel();
+    if writes.send(Write::Flush(ack)).is_err() {
+        // The writer ended after it took (some of) the frames.
+        return Err(write_failed("the stdin writer stopped"));
+    }
+    match tokio::time::timeout(limit, done).await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(_)) => Err(write_failed("the stdin writer stopped")),
+        Err(_) => Err(write_failed("the process does not read stdin")),
+    }
+}
+
 fn write_failed(why: &str) -> ProviderError {
     ProviderError::Host(HostError::Write(std::io::Error::new(
         std::io::ErrorKind::BrokenPipe,
         why,
     )))
 }
+
+#[cfg(test)]
+#[path = "driver_tests.rs"]
+mod tests;
