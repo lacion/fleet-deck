@@ -24,6 +24,7 @@ export function summary(
     current_turn: null,
     open_requests: [],
     background_tasks: [],
+    running_tools: [],
     usage: { input_tokens: null, output_tokens: null, cost_usd: null },
     last_error: null,
     session_seq: 0,

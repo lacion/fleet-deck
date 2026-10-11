@@ -8,7 +8,7 @@ use ts_rs::TS;
 
 use crate::capability::Capabilities;
 use crate::event::{
-    ApprovalOption, ProviderKind, RequestKind, ResponseChannel, SessionState, Usage,
+    ApprovalOption, ProviderKind, RequestKind, ResponseChannel, SessionState, ToolKind, Usage,
 };
 use crate::ids::{NodeId, ProviderInstanceId, RequestId, RunId, SessionId, TurnId};
 
@@ -65,6 +65,11 @@ pub struct SessionSummary {
     pub open_requests: Vec<OpenRequest>,
     /// Ids of running background tasks (L7).
     pub background_tasks: Vec<String>,
+    /// Tools that started and did not complete yet, oldest first, at most
+    /// [`MAX_RUNNING_TOOLS`]. The deck derives `verifying` from them (§7.2).
+    /// Absent in a summary stored before M2 P3-6.
+    #[serde(default)]
+    pub running_tools: Vec<RunningTool>,
     /// Sum of the reported usage; `None` parts are unknown.
     pub usage: Usage,
     /// The last error, for example `usage_limit` with its retry time.
@@ -95,12 +100,47 @@ impl SessionSummary {
             current_turn: None,
             open_requests: Vec::new(),
             background_tasks: Vec::new(),
+            running_tools: Vec::new(),
             usage: Usage::default(),
             last_error: None,
             session_seq: 0,
             updated_at: 0,
         }
     }
+}
+
+/// The most running tools that a summary keeps; the oldest goes first.
+pub const MAX_RUNNING_TOOLS: usize = 32;
+
+/// A tool call that runs now.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "session/")]
+pub struct RunningTool {
+    pub node_id: NodeId,
+    pub tool_kind: ToolKind,
+    pub title: String,
+    pub input_summary: String,
+}
+
+/// The status column of a card (PLAN §7.2). The deck derives it from the
+/// session projection and the state of the station link.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "session/")]
+pub enum CardStatus {
+    /// The session is starting; no run yet.
+    Queued,
+    Working,
+    /// A running shell tool matches the test-runner pattern.
+    Verifying,
+    /// An open approval or question.
+    NeedsYou,
+    Idle,
+    Ended,
+    /// The station link is down; the card shows the last known state.
+    Unreachable,
+    /// The station restarted and the process is gone; the card offers resume.
+    Lost,
 }
 
 /// The last error of a session.

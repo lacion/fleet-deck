@@ -14,7 +14,9 @@
 //! - An unknown event kind changes only the sequence and the time (L16).
 
 use crate::event::{Event, EventEnvelope, SessionState, Usage};
-use crate::session::{Activity, OpenRequest, SessionError, SessionSummary};
+use crate::session::{
+    Activity, MAX_RUNNING_TOOLS, OpenRequest, RunningTool, SessionError, SessionSummary,
+};
 
 impl SessionSummary {
     /// Folds one event. Events at or below the summary's `session_seq` are
@@ -64,7 +66,31 @@ impl SessionSummary {
                 if self.current_run.as_ref() == Some(run_id) {
                     self.current_run = None;
                     self.current_turn = None;
+                    // A tool that reported no completion does not outlive
+                    // its run.
+                    self.running_tools.clear();
                 }
+            }
+            Event::ToolStarted {
+                node_id,
+                tool_kind,
+                title,
+                input_summary,
+                ..
+            } => {
+                self.running_tools.retain(|t| &t.node_id != node_id);
+                if self.running_tools.len() >= MAX_RUNNING_TOOLS {
+                    self.running_tools.remove(0);
+                }
+                self.running_tools.push(RunningTool {
+                    node_id: node_id.clone(),
+                    tool_kind: *tool_kind,
+                    title: title.clone(),
+                    input_summary: input_summary.clone(),
+                });
+            }
+            Event::ToolCompleted { node_id, .. } => {
+                self.running_tools.retain(|t| &t.node_id != node_id);
             }
             Event::ApprovalRequested {
                 request_id,
@@ -118,13 +144,12 @@ impl SessionSummary {
                 self.current_run = None;
                 self.current_turn = None;
                 self.background_tasks.clear();
+                self.running_tools.clear();
             }
             Event::MessageDelta { .. }
             | Event::MessageCompleted { .. }
             | Event::ReasoningDelta { .. }
-            | Event::ToolStarted { .. }
             | Event::ToolOutput { .. }
-            | Event::ToolCompleted { .. }
             | Event::FileChanged { .. }
             | Event::PlanProposed { .. }
             | Event::InterruptResult { .. }

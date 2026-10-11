@@ -19,7 +19,7 @@ use crate::link::{
     ControlFrame, ReceiptQuery, ReplayParams, Scope, StationInfo, StreamMode, StreamStart,
 };
 use crate::mutation::{CoordinatorCallEnvelope, KeyRotationEnvelope, StationConfigureEnvelope};
-use crate::session::SessionSummary;
+use crate::session::{CardStatus, SessionSummary};
 use crate::version::{Negotiated, VersionOffer};
 
 /// The ts-rs configuration: 64-bit integers are `number` (sequence numbers
@@ -52,6 +52,7 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         StationInfo::export_all(&cfg),
         ReceiptQuery::export_all(&cfg),
         SessionSummary::export_all(&cfg),
+        CardStatus::export_all(&cfg),
         VersionOffer::export_all(&cfg),
         Negotiated::export_all(&cfg),
     ];

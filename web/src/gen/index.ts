@@ -69,6 +69,8 @@ export * from "./mutation/StationChange";
 export * from "./mutation/StationConfigureEnvelope";
 export * from "./serde_json/JsonValue";
 export * from "./session/Activity";
+export * from "./session/CardStatus";
 export * from "./session/OpenRequest";
+export * from "./session/RunningTool";
 export * from "./session/SessionError";
 export * from "./session/SessionSummary";

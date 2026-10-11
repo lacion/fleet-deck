@@ -305,3 +305,52 @@ async fn bad_invitations_public_addresses_and_wrong_secrets_pair_nothing() {
     node.join(&text).await.unwrap();
     assert_eq!(station.store.paired_keys().await.unwrap().len(), 1);
 }
+
+#[tokio::test]
+async fn two_invitations_opened_before_pairing_pin_only_one_deck() {
+    let (first, second) = (deck().await, deck().await);
+    let station = station().await;
+    let node = station.node(&[]).await;
+    let a = Invitation::parse(&node.invite("127.0.0.1:0".parse().unwrap()).await.unwrap()).unwrap();
+    let b = Invitation::parse(&node.invite("127.0.0.1:0".parse().unwrap()).await.unwrap()).unwrap();
+
+    // Both decks pair at the same time; the pin transaction admits one.
+    let (ra, rb) = tokio::join!(
+        fleetdeck_link::pair(&first.node, &a, [Scope::Read]),
+        fleetdeck_link::pair(&second.node, &b, [Scope::Read]),
+    );
+    assert!(
+        ra.is_ok() != rb.is_ok(),
+        "exactly one pairing succeeds: {ra:?} {rb:?}"
+    );
+    let (winner, loser) = if ra.is_ok() {
+        (&first, &second)
+    } else {
+        (&second, &first)
+    };
+    let refused = if ra.is_ok() { rb } else { ra };
+    let reason = refused.unwrap_err().reason().unwrap_or_default().to_owned();
+    assert_eq!(reason, "pairing_failed");
+
+    let keys = station.store.paired_keys().await.unwrap();
+    assert_eq!(keys.len(), 1);
+    assert_eq!(keys[0].key, winner.identity.public_key());
+    let pins = &node.link().node.pins;
+    assert_eq!(
+        pins.role_of(&winner.identity.public_key()),
+        Some(Role::Deck)
+    );
+    assert_eq!(pins.role_of(&loser.identity.public_key()), None);
+
+    // The refused deck cannot link.
+    let open = node::dial(&loser.node, a.addr, station.identity.public_key()).await;
+    assert!(open.is_err(), "an unpinned deck is refused");
+
+    // A `join` while the race winner is paired is refused, too.
+    let late = deck().await;
+    let text = late.invitation();
+    assert!(matches!(
+        node.join(&text).await,
+        Err(NodeError::AlreadyPaired(_))
+    ));
+}

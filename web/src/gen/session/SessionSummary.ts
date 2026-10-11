@@ -9,6 +9,7 @@ import type { SessionId } from "../ids/SessionId";
 import type { TurnId } from "../ids/TurnId";
 import type { Activity } from "./Activity";
 import type { OpenRequest } from "./OpenRequest";
+import type { RunningTool } from "./RunningTool";
 import type { SessionError } from "./SessionError";
 
 /**
@@ -19,6 +20,12 @@ export type SessionSummary = { session_id: SessionId, provider: ProviderKind | n
  * Ids of running background tasks (L7).
  */
 background_tasks: Array<string>, 
+/**
+ * Tools that started and did not complete yet, oldest first, at most
+ * [`MAX_RUNNING_TOOLS`]. The deck derives `verifying` from them (§7.2).
+ * Absent in a summary stored before M2 P3-6.
+ */
+running_tools: Array<RunningTool>, 
 /**
  * Sum of the reported usage; `None` parts are unknown.
  */

@@ -131,19 +131,39 @@ impl Store {
     /// Stores the pin and the grants of a paired key (one transaction). A
     /// key that is already paired gets the new role, grants and address.
     ///
+    /// A station pairs with one deck (DL-048): a deck key is refused while
+    /// another deck key is pinned. The check and the insert run in the same
+    /// transaction, so two invitations that were opened before the first
+    /// pairing cannot pin two decks.
+    ///
     /// # Errors
-    /// A database error.
+    /// [`StoreError::DeckPaired`] when another deck is paired, or a
+    /// database error.
     pub async fn pin_peer(&self, peer: PairedKey) -> Result<()> {
         let now = self.now();
         call(&self.inner.db, move |conn| {
-            conn.execute(
+            let tx = conn.transaction()?;
+            let hex = key_hex(&peer.key);
+            if peer.role == Role::Deck {
+                let other: Option<String> = tx
+                    .query_row(
+                        "SELECT fingerprint FROM pairing WHERE role = ?1 AND deck_key <> ?2 LIMIT 1",
+                        params![role_name(Role::Deck), hex],
+                        |r| r.get(0),
+                    )
+                    .optional()?;
+                if let Some(fingerprint) = other {
+                    return Err(StoreError::DeckPaired(fingerprint));
+                }
+            }
+            tx.execute(
                 "INSERT INTO pairing (deck_key, deck_url, paired_at, fingerprint, role, scopes)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)
                  ON CONFLICT (deck_key) DO UPDATE SET deck_url = excluded.deck_url,
                      fingerprint = excluded.fingerprint, role = excluded.role,
                      scopes = excluded.scopes",
                 params![
-                    key_hex(&peer.key),
+                    hex,
                     peer.dial_url,
                     now,
                     peer.key.fingerprint().to_string(),
@@ -151,6 +171,7 @@ impl Store {
                     serde_json::to_string(&peer.scopes)?,
                 ],
             )?;
+            tx.commit()?;
             Ok(())
         })
         .await

@@ -71,6 +71,10 @@ pub enum StoreError {
     SessionExists(SessionId),
     #[error("deck {0} is not paired")]
     UnknownDeck(String),
+    #[error(
+        "this station is already paired with deck {0}; run `fleetdeck station forget-deck` first"
+    )]
+    DeckPaired(String),
     #[error("cursor {cursor} is ahead of the head {head}")]
     CursorAhead { cursor: u64, head: u64 },
     #[error("corrupt store: {0}")]

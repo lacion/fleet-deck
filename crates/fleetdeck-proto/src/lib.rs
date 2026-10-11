@@ -14,6 +14,7 @@ pub mod ids;
 pub mod link;
 pub mod mutation;
 pub mod session;
+pub mod status;
 pub mod ts;
 pub mod version;
 
@@ -23,5 +24,6 @@ pub use event::{Event, EventBody, EventEnvelope};
 pub use ids::*;
 pub use link::{ControlFrame, Scope};
 pub use mutation::Mutation;
-pub use session::SessionSummary;
+pub use session::{CardStatus, SessionSummary};
+pub use status::card_status;
 pub use version::{PROTO_MAX, PROTO_MIN};

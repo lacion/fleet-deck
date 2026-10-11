@@ -224,3 +224,69 @@ fn a_replayed_event_and_an_unknown_kind_change_nothing_else() {
     assert_eq!(s.session_seq, 2);
     assert_eq!(s.mode.as_deref(), Some("default"));
 }
+
+fn tool(id: &str, kind: crate::event::ToolKind, command: &str) -> Event {
+    Event::ToolStarted {
+        node_id: id.into(),
+        parent_node_id: None,
+        tool_kind: kind,
+        title: "Bash".to_owned(),
+        input_summary: command.to_owned(),
+        files: Vec::new(),
+        provider_refs: ProviderRefs::new(),
+    }
+}
+
+fn tool_done(id: &str) -> Event {
+    Event::ToolCompleted {
+        node_id: id.into(),
+        status: crate::event::ToolStatus::Ok,
+        files: Vec::new(),
+        exit_code: Some(0),
+    }
+}
+
+#[test]
+fn running_tools_open_at_start_close_at_completion_and_end_with_their_run() {
+    use crate::event::ToolKind;
+    let mut f = Feed::new();
+    f.push(started());
+    f.push(run("run-1"));
+    f.push(tool("t1", ToolKind::Shell, "cargo test"));
+    let s = f.push(tool("t2", ToolKind::Read, "a.rs"));
+    let ids: Vec<&str> = s.running_tools.iter().map(|t| t.node_id.as_str()).collect();
+    assert_eq!(ids, ["t1", "t2"]);
+    assert_eq!(s.running_tools[0].input_summary, "cargo test");
+    let s = f.push(tool_done("t1"));
+    assert_eq!(s.running_tools.len(), 1);
+    // A child run's completion keeps the tools of the parent run.
+    let s = f.push(Event::RunCompleted {
+        run_id: "run-other".into(),
+        status: TurnStatus::Done,
+        background_pending: false,
+    });
+    assert_eq!(s.running_tools.len(), 1);
+    let s = f.push(Event::RunCompleted {
+        run_id: "run-1".into(),
+        status: TurnStatus::Done,
+        background_pending: false,
+    });
+    assert!(s.running_tools.is_empty(), "no tool outlives its run");
+
+    // At most MAX_RUNNING_TOOLS; the oldest goes first.
+    f.push(run("run-2"));
+    for i in 0..=MAX_RUNNING_TOOLS {
+        f.push(tool(&format!("x{i}"), ToolKind::Shell, "sleep 1"));
+    }
+    let s = &f.summary;
+    assert_eq!(s.running_tools.len(), MAX_RUNNING_TOOLS);
+    assert_eq!(s.running_tools[0].node_id.as_str(), "x1");
+}
+
+#[test]
+fn a_summary_stored_without_running_tools_still_loads() {
+    let mut v = serde_json::to_value(SessionSummary::new(SessionId::from("s1"))).unwrap();
+    v.as_object_mut().unwrap().remove("running_tools");
+    let s: SessionSummary = serde_json::from_value(v).unwrap();
+    assert!(s.running_tools.is_empty());
+}

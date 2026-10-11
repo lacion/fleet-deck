@@ -171,7 +171,10 @@ async fn a_rotation_moves_role_grants_and_ack_to_the_new_key_only() {
     s.pin_peer(deck(old, &[Scope::Read, Scope::Admin]))
         .await
         .unwrap();
-    s.pin_peer(deck(other, &[Scope::Read])).await.unwrap();
+    // A key of another role stays untouched (one deck per station, DL-048).
+    let mut other_key = deck(other, &[Scope::Read]);
+    other_key.role = Role::Station;
+    s.pin_peer(other_key).await.unwrap();
     s.ack(key_hex(&old), 0).await.unwrap();
 
     let now = s.now_ms();
@@ -201,4 +204,32 @@ async fn a_rotation_moves_role_grants_and_ack_to_the_new_key_only() {
         .unwrap_err();
     assert!(matches!(err, StoreError::UnknownDeck(_)), "{err}");
     assert_eq!(s.revocation_generation().await.unwrap(), 1);
+}
+
+#[tokio::test]
+async fn a_second_deck_key_is_refused_in_the_pin_transaction_until_the_first_is_revoked() {
+    let det = Det::new();
+    let s = store(&det).await;
+    let (first, second) = (key(), key());
+    s.pin_peer(deck(first, &[Scope::Read])).await.unwrap();
+
+    let err = s.pin_peer(deck(second, &[Scope::Read])).await.unwrap_err();
+    assert!(
+        matches!(&err, StoreError::DeckPaired(fp) if *fp == first.fingerprint().to_string()),
+        "{err}"
+    );
+    // The paired deck may pin again (new grants or address).
+    s.pin_peer(deck(first, &[Scope::Read, Scope::Drive]))
+        .await
+        .unwrap();
+    let keys = s.paired_keys().await.unwrap();
+    assert_eq!(keys.len(), 1);
+    assert_eq!(keys[0].key, first);
+    assert_eq!(keys[0].scopes.len(), 2);
+
+    assert!(s.revoke_peer(first).await.unwrap());
+    s.pin_peer(deck(second, &[Scope::Read])).await.unwrap();
+    let keys = s.paired_keys().await.unwrap();
+    assert_eq!(keys.len(), 1);
+    assert_eq!(keys[0].key, second);
 }
