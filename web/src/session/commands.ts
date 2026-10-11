@@ -5,6 +5,7 @@
 // shown as such (A9, PLAN §8). The station answers a refused command with a
 // receipt; its message is shown as is.
 import type { DeckCommand, SessionCommand, SessionKey } from '../gen';
+import type { Reply } from './question';
 
 type Post = (path: string, body: unknown) => Promise<unknown>;
 
@@ -16,7 +17,8 @@ export type SessionActions = {
   readonly canApprove: boolean;
   send(kind: InputKind, text: string): Promise<Outcome>;
   interrupt(): Promise<Outcome>;
-  answer(requestId: string, optionId: string): Promise<Outcome>;
+  /** `reply` carries the answers of a question (DL-068); `null` for a plain option. */
+  answer(requestId: string, optionId: string, reply?: Reply | null): Promise<Outcome>;
   setMode(mode: string): Promise<Outcome>;
   setModel(model: string): Promise<Outcome>;
 };
@@ -91,12 +93,16 @@ export function sessionActions(
     canApprove: scopes.includes('approve'),
     send: (kind, text) => run({ op: kind, session_id, input: { text } }),
     interrupt: () => run({ op: 'interrupt', session_id }),
-    answer: (request_id, option_id) =>
+    answer: (request_id, option_id, reply = null) =>
       run({
         op: 'answer',
         session_id,
         request_id,
-        decision: { option_id, updated_input: null, text: null },
+        decision: {
+          option_id,
+          updated_input: reply?.updated_input ?? null,
+          text: reply?.text ?? null,
+        },
       }),
     setMode: (mode) => run({ op: 'set_mode', session_id, mode }),
     setModel: (model) => run({ op: 'set_model', session_id, model }),

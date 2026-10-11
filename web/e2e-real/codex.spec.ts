@@ -9,7 +9,9 @@
 // phone network drop and a station link drop. The expected texts and the
 // provider input differ where the capabilities differ (DL-066): a Codex steer
 // joins the running turn, and the station holds a follow-up (no native queue).
-// A last step shows Codex background work, which the station polls (DL-024).
+// A step shows Codex background work, which the station polls (DL-024). The
+// last step answers a Codex `requestUserInput` question with the board's
+// answer form (DL-068).
 import { expect, test } from '@playwright/test';
 import { Phone, stationSessions } from './board';
 import { BRANCH, CODEX, Deck, PROVIDER, Station } from './fleet';
@@ -230,4 +232,55 @@ test('a Codex background command shows on the card until the station poll sees i
   const a = alpha.codexInput();
   expect(a.turns).toEqual(['ask echo hi', 'while the deck is away', 'bg make build']);
   expect(a.methods['thread/backgroundTerminals/list']).toBeGreaterThanOrEqual(2);
+});
+
+test('a Codex question gets its answer from the phone answer form', async () => {
+  const page = phone.page;
+  await phone.fleet();
+  const rail = page.getByRole('region', { name: 'Needs you rail' });
+  await expect(rail).toContainText('Nothing waits for you.');
+  const view = await phone.open('Codex approval');
+  const composer = page.getByRole('form', { name: 'Composer' });
+  await composer.getByLabel('Message').fill('question Which color do you prefer?');
+  await composer.getByRole('button', { name: 'Send' }).click();
+  await expect(phone.status('Done.')).toBeVisible();
+  const form = page.getByRole('form', { name: 'Answer: Which color do you prefer?' });
+  await expect(form).toContainText('Choice: Which color do you prefer?');
+  const send = form.getByRole('button', { name: 'Send answer' });
+  // Nothing is chosen yet: the board does not send an empty answer.
+  await expect(send).toBeDisabled();
+  await form.getByRole('radio', { name: 'Blue' }).check();
+  expect(await phone.fitsWidth()).toBe(true);
+  await send.click();
+  await expect(phone.status('Done.')).toBeVisible();
+  await expect(view).toContainText('answered: Blue');
+  await expect(page.getByRole('region', { name: 'Needs you' })).toHaveCount(0);
+  await expect(view).toContainText('Question · Which color do you prefer?');
+  // A typed answer replaces the choice.
+  await composer.getByLabel('Message').fill('question Which size?');
+  await composer.getByRole('button', { name: 'Send' }).click();
+  await expect(phone.status('Done.')).toBeVisible();
+  const size = page.getByRole('form', { name: 'Answer: Which size?' });
+  await size.getByRole('radio', { name: 'Red' }).check();
+  await size.getByLabel('Other answer').fill('large');
+  await size.getByRole('button', { name: 'Send answer' }).click();
+  await expect(phone.status('Done.')).toBeVisible();
+  await expect(view).toContainText('answered: large');
+  // The station sent each answer once, in the shape that Codex asks for.
+  const a = alpha.codexInput();
+  expect(a.questions).toEqual([
+    { choice: { answers: ['Blue'] } },
+    { choice: { answers: ['large'] } },
+  ]);
+  expect(a.turns.slice(-2)).toEqual([
+    'question Which color do you prefer?',
+    'question Which size?',
+  ]);
+  phone.expectRouted({
+    'session.start': 2,
+    'approval.answer': 3,
+    'session.steer': 1,
+    'session.prompt': 5,
+    'session.interrupt': 1,
+  });
 });

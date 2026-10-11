@@ -105,6 +105,11 @@ fn change_paths(item: &Value) -> Vec<String> {
 }
 
 /// Title and input summary of a tool item (DL-063).
+/// The item type of the tool node that the core opens for a
+/// `item/tool/requestUserInput` question; Codex 0.160.0 starts no item for
+/// it (DL-068).
+pub(super) const QUESTION_ITEM: &str = "requestUserInput";
+
 fn tool_title(item: &Value, item_type: &str) -> (String, String) {
     let text = |k: &str| str_at(item, k).unwrap_or_default().to_owned();
     let (title, summary) = match item_type {
@@ -122,6 +127,8 @@ fn tool_title(item: &Value, item_type: &str) -> (String, String) {
             text("prompt"),
         ),
         "subAgentActivity" => ("Subagent".to_owned(), text("agentPath")),
+        // The node of a `requestUserInput` question (DL-068).
+        QUESTION_ITEM => ("Question".to_owned(), text("question")),
         "dynamicToolCall" => (
             str_at(item, "tool").unwrap_or(item_type).to_owned(),
             item.get("arguments")
@@ -448,7 +455,7 @@ impl CodexCore {
         out
     }
 
-    fn tool_started(
+    pub(super) fn tool_started(
         &mut self,
         p: &Value,
         item: &Value,

@@ -7,10 +7,12 @@
 // is a typed synthetic timeline with foreground subagents two levels deep,
 // child tools, child text, a child approval and a failed child: the shape the
 // Claude core produces from `parent_tool_use_id` frames (§6.3).
-import type { Capabilities, Event, EventEnvelope } from '../gen';
+import type { Capabilities, Event, EventEnvelope, OpenRequest } from '../gen';
+import askUserQuestion from './fixtures/claude-ask_user_question.events.json' with { type: 'json' };
 import approve from './fixtures/claude-tool_call_approve.events.json' with { type: 'json' };
 import subagent from './fixtures/claude-subagent.events.json' with { type: 'json' };
 import codexSubagent from './fixtures/codex-subagent.events.json' with { type: 'json' };
+import codexQuestion from './fixtures/codex-question_rpc.events.json' with { type: 'json' };
 import codexApprove from './fixtures/codex-tool_call_approve.events.json' with { type: 'json' };
 
 const RECORDED = {
@@ -18,12 +20,25 @@ const RECORDED = {
   tool_call_approve: approve,
   'codex-subagent': codexSubagent,
   'codex-tool_call_approve': codexApprove,
+  ask_user_question: askUserQuestion,
+  'codex-question_rpc': codexQuestion,
 };
 
 export function recorded(name: keyof typeof RECORDED): EventEnvelope[] {
   // SAFETY: the Rust tests above write these files from typed `EventEnvelope`
   // values; JSON imports widen string unions, so TypeScript cannot see it.
   return RECORDED[name] as unknown as EventEnvelope[];
+}
+
+/** The first request of a recorded fixture, as the session summary lists it. */
+export function recordedRequest(name: keyof typeof RECORDED): OpenRequest {
+  for (const { event: e, at } of recorded(name)) {
+    if (e.kind === 'approval.requested') {
+      const { kind: _kind, provider_refs: _refs, ...rest } = e;
+      return { ...rest, requested_at: at };
+    }
+  }
+  throw new Error(`${name} has no request`);
 }
 
 export function envelopes(sessionId: string, events: readonly Event[]): EventEnvelope[] {

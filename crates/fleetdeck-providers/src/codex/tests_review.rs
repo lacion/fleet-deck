@@ -251,7 +251,8 @@ fn rpc_question_answers_are_validated_before_the_write() {
             ]
         }}),
     ));
-    let Event::ApprovalRequested { request_id, .. } = &ev[0] else {
+    // ev[0] is the question node (DL-068).
+    let Event::ApprovalRequested { request_id, .. } = &ev[1] else {
         panic!("{ev:?}")
     };
     let with = |input: serde_json::Value| {

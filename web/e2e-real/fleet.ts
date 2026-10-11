@@ -199,6 +199,8 @@ export type CodexInput = {
   methods: Record<string, number>;
   /** Answers to the agent's approval requests. */
   answers: number;
+  /** The `answers` of every reply to a `requestUserInput` question (DL-068). */
+  questions: unknown[];
 };
 
 /** A station with the `fake-claude sim` and `fake-codex` agents and
@@ -250,7 +252,7 @@ export class Station extends Node {
 
   /** Every JSON-RPC frame that the station wrote to its Codex agents. */
   codexInput(): CodexInput {
-    const input: CodexInput = { turns: [], steers: [], methods: {}, answers: 0 };
+    const input: CodexInput = { turns: [], steers: [], methods: {}, answers: 0, questions: [] };
     if (!existsSync(this.codexLog)) return input;
     const text = (params: { input?: { text?: string }[] } | undefined) =>
       String(params?.input?.find((i) => typeof i.text === 'string')?.text);
@@ -262,6 +264,7 @@ export class Station extends Node {
         if (frame.method === 'turn/start') input.turns.push(text(frame.params));
         if (frame.method === 'turn/steer') input.steers.push(text(frame.params));
       } else if (frame.result?.decision !== undefined) input.answers += 1;
+      else if (frame.result?.answers !== undefined) input.questions.push(frame.result.answers);
     }
     return input;
   }

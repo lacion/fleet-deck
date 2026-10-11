@@ -4,6 +4,8 @@ import { providerLabel } from '../board/lanes';
 import type { DeckSession, OpenRequest, StationView } from '../gen';
 import type { Freshness, Timeline } from '../runtime/state';
 import type { InputKind, Outcome, SessionActions } from './commands';
+import { QuestionAnswer } from './QuestionAnswer';
+import { questionForm, type Reply } from './question';
 import { buildTimeline, type Item, subagentLabel } from './timeline';
 
 type Props = {
@@ -53,7 +55,7 @@ export function SessionView({ session, stations, timeline, freshness, actions, o
         answerable={caps?.approvals === true}
         enabled={live && !ended && actions?.canApprove === true}
         busy={busy}
-        onAnswer={(r, o) => actions && act(() => actions.answer(r, o))}
+        onAnswer={(r, o, reply) => actions && act(() => actions.answer(r, o, reply))}
       />
       <section className="fd-controls" aria-label="Session controls">
         {caps?.interrupt ? (
@@ -110,35 +112,47 @@ function Requests(props: {
   answerable: boolean;
   enabled: boolean;
   busy: boolean;
-  onAnswer: (request: string, option: string) => void;
+  onAnswer: (request: string, option: string, reply: Reply | null) => void;
 }) {
   if (props.requests.length === 0) return null;
   return (
     <section className="fd-requests" aria-label="Needs you">
       <h3>Needs you</h3>
       <ul>
-        {props.requests.map((r) => (
-          <li key={r.request_id} data-request={r.request_id}>
-            <strong>{r.title}</strong>
-            <pre className="fd-details">{r.details}</pre>
-            {/* Without the approvals capability the provider answers under its
+        {props.requests.map((r) => {
+          const form = props.answerable ? questionForm(r) : null;
+          return (
+            <li key={r.request_id} data-request={r.request_id}>
+              <strong>{r.title}</strong>
+              <pre className="fd-details">{r.details}</pre>
+              {/* Without the approvals capability the provider answers under its
                 own policy: the board shows the request but no controls (§6.2). */}
-            {props.answerable ? (
-              <div className="fd-options">
-                {r.options.map((o) => (
-                  <button
-                    key={o.option_id}
-                    type="button"
-                    disabled={!props.enabled || props.busy}
-                    onClick={() => props.onAnswer(r.request_id, o.option_id)}
-                  >
-                    {o.label}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </li>
-        ))}
+              {/* A question gets an answer form (DL-068). */}
+              {form ? (
+                <QuestionAnswer
+                  request={r}
+                  form={form}
+                  enabled={props.enabled}
+                  busy={props.busy}
+                  onAnswer={(o, reply) => props.onAnswer(r.request_id, o, reply)}
+                />
+              ) : props.answerable ? (
+                <div className="fd-options">
+                  {r.options.map((o) => (
+                    <button
+                      key={o.option_id}
+                      type="button"
+                      disabled={!props.enabled || props.busy}
+                      onClick={() => props.onAnswer(r.request_id, o.option_id, null)}
+                    >
+                      {o.label}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </li>
+          );
+        })}
       </ul>
       {!props.answerable ? (
         <p className="fd-note">This provider has no approval controls.</p>

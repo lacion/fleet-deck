@@ -10,6 +10,9 @@
 //!   reports a declined command, cancel interrupts the turn;
 //! - `wait ...`: a turn that streams and waits for `turn/steer` (the turn
 //!   then answers `steered: <text>`) or `turn/interrupt`;
+//! - `question ...`: a question with the options Red and Blue
+//!   (`item/tool/requestUserInput`, question id `choice`); the reply's
+//!   answers end the turn with `answered: <answers>`;
 //! - `bg ...`: a command that outlives its turn; the first
 //!   `thread/backgroundTerminals/list` lists it, the second completes it;
 //! - anything else: a reply `echo: <text>`.
@@ -35,6 +38,8 @@ enum Wait {
         item: String,
         command: String,
     },
+    /// The host reply to question request `request`.
+    Question { request: u64 },
     /// A steer or an interrupt.
     Host,
 }
@@ -268,6 +273,35 @@ impl<W: Write> Sim<W> {
                 },
             });
             Ok(())
+        } else if let Some(question) = text.strip_prefix("question ") {
+            let request = self.next();
+            self.emit(&json!({
+                "id": request,
+                "method": "item/tool/requestUserInput",
+                "params": {
+                    "autoResolutionMs": null,
+                    "isBlocking": true,
+                    "itemId": format!("call-sim-{request}"),
+                    "questions": [{
+                        "header": "Choice",
+                        "id": "choice",
+                        "isOther": true,
+                        "isSecret": false,
+                        "options": [
+                            {"description": "Choose red.", "label": "Red"},
+                            {"description": "Choose blue.", "label": "Blue"},
+                        ],
+                        "question": question,
+                    }],
+                    "threadId": self.thread_id(),
+                    "turnId": turn,
+                },
+            }))?;
+            self.turn = Some(Turn {
+                id: turn,
+                wait: Wait::Question { request },
+            });
+            Ok(())
         } else if text.starts_with("wait ") {
             let msg = format!("msg-sim-{}", self.next());
             self.item("started", &turn, agent_message(&msg, ""))?;
@@ -332,29 +366,37 @@ impl<W: Write> Sim<W> {
     }
 
     fn on_answer(&mut self, id: &Value, frame: &Value) -> std::io::Result<()> {
-        let Some(Turn {
-            id: turn,
-            wait:
-                Wait::Approval {
-                    request,
-                    item,
-                    command,
-                },
-        }) = self.turn.take()
-        else {
-            return Ok(());
+        let waits_for = match &self.turn {
+            Some(Turn {
+                wait: Wait::Approval { request, .. } | Wait::Question { request },
+                ..
+            }) => Some(*request),
+            _ => None,
         };
-        if id.as_u64() != Some(request) {
-            self.turn = Some(Turn {
-                id: turn,
-                wait: Wait::Approval {
-                    request,
-                    item,
-                    command,
-                },
-            });
+        if waits_for.is_none() || id.as_u64() != waits_for {
             return Ok(());
         }
+        let Some(Turn { id: turn, wait }) = self.turn.take() else {
+            return Ok(());
+        };
+        let (request, item, command) = match wait {
+            Wait::Approval {
+                request,
+                item,
+                command,
+            } => (request, item, command),
+            Wait::Question { request } => {
+                self.notify("serverRequest/resolved", json!({"requestId": request}))?;
+                let answers: Vec<&str> = frame
+                    .pointer("/result/answers/choice/answers")
+                    .and_then(Value::as_array)
+                    .map(|a| a.iter().filter_map(Value::as_str).collect())
+                    .unwrap_or_default();
+                let text = format!("answered: {}", answers.join(", "));
+                return self.answer(&turn, &text, "completed");
+            }
+            Wait::Host => return Ok(()),
+        };
         self.notify("serverRequest/resolved", json!({"requestId": request}))?;
         let decision = str_of(frame, &["result", "decision"]).unwrap_or("cancel");
         match decision {
@@ -398,7 +440,7 @@ impl<W: Write> Sim<W> {
         let Some(turn) = self.turn.take() else {
             return Ok(());
         };
-        if let Wait::Approval { request, .. } = turn.wait {
+        if let Wait::Approval { request, .. } | Wait::Question { request } = turn.wait {
             self.notify("serverRequest/resolved", json!({"requestId": request}))?;
         }
         self.complete(&turn.id, "interrupted", Vec::new())
@@ -531,6 +573,23 @@ mod tests {
         let out = frames(&mut s);
         assert_eq!(method(&out[0]), "serverRequest/resolved");
         assert_eq!(out.last().unwrap()["params"]["turn"]["status"], "completed");
+    }
+
+    #[test]
+    fn question_waits_for_the_answers() {
+        let mut s = sim();
+        let out = start(&mut s, "question Which color?");
+        let req = out.last().unwrap();
+        assert_eq!(method(req), "item/tool/requestUserInput");
+        assert_eq!(req["params"]["questions"][0]["question"], "Which color?");
+        let id = req["id"].clone();
+        s.on_frame(&json!({"id": id, "result": {"answers": {"choice": {"answers": ["Blue"]}}}}))
+            .unwrap();
+        let out = frames(&mut s);
+        assert_eq!(method(&out[0]), "serverRequest/resolved");
+        let last = out.last().unwrap();
+        assert_eq!(last["params"]["turn"]["status"], "completed");
+        assert_eq!(last["params"]["turn"]["items"][0]["text"], "answered: Blue");
     }
 
     #[test]

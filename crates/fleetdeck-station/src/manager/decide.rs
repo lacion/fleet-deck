@@ -3,7 +3,7 @@
 //! in the command's transaction. Nothing here touches a provider.
 
 use fleetdeck_proto::command::{CommandOrigin, CommandResult, SessionCommand, SessionSpec};
-use fleetdeck_proto::event::{ResolvedBy, RunOrigin, SessionState};
+use fleetdeck_proto::event::{RequestKind, ResolvedBy, RunOrigin, SessionState};
 use fleetdeck_proto::{InputId, Operation, Reject, RejectCode, SessionId, SessionSummary};
 
 use super::policy::{Policy, WorkspaceError};
@@ -87,14 +87,20 @@ pub fn decide(
             request_id,
             decision,
         } => {
-            let op = if decision.updated_input.is_some() {
+            let request = d
+                .request(&request_id)?
+                .filter(|r| r.session_id == session_id);
+            // The answers to a question travel in `updated_input` (Claude
+            // `AskUserQuestion`, Codex `requestUserInput`); that is an
+            // answer, not an edit of a tool input (DL-068).
+            let question = request
+                .as_ref()
+                .is_some_and(|r| r.kind == RequestKind::Question);
+            let op = if decision.updated_input.is_some() && !question {
                 Operation::EditInput
             } else {
                 Operation::Answer
             };
-            let request = d
-                .request(&request_id)?
-                .filter(|r| r.session_id == session_id);
             // A closed request answers for itself, also after its session
             // ended: a repeated answer gets the first outcome (L3), a stale
             // one `request_closed`. Only an open request needs a live session.

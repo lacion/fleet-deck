@@ -474,7 +474,7 @@ fn resume_and_fork_start_sessions_on_the_recorded_threads() {
 fn the_board_timeline_fixtures_equal_the_canonical_replay() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../web/src/testing/fixtures");
     let update = std::env::var_os("FD_UPDATE_FIXTURES").is_some();
-    for scenario in ["subagent", "tool_call_approve"] {
+    for scenario in ["subagent", "tool_call_approve", "question_rpc"] {
         let envelopes: Vec<fleetdeck_proto::EventEnvelope> = replay_named(scenario)
             .into_iter()
             .enumerate()

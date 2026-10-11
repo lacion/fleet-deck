@@ -18,13 +18,14 @@ use std::collections::{BTreeMap, HashMap};
 
 use fleetdeck_proto::command::UserInput;
 use fleetdeck_proto::event::{
-    ApprovalOption, ExpiredReason, ProviderRefs, RequestKind, ResponseChannel, RunOrigin,
+    ApprovalOption, ExpiredReason, ProviderRefs, RequestKind, ResponseChannel, RunOrigin, ToolKind,
+    ToolStatus,
 };
 use fleetdeck_proto::{Event, InputId, NodeId, Operation, RequestId, Unsupported};
 use serde_json::{Value, json};
 
 use super::core::{CodexCore, Output};
-use super::map::refs;
+use super::map::{QUESTION_ITEM, refs};
 use super::rpc;
 use super::{request_id, truncate};
 use crate::adapter::{Answer, HostInput, ProviderError, Result};
@@ -230,6 +231,22 @@ impl CodexCore {
         params: &Value,
     ) -> Vec<Output> {
         let item = params.get("itemId").and_then(Value::as_str);
+        let mut started = Vec::new();
+        // Codex starts no item for a question tool call. The core opens a
+        // node for it, so the timeline shows the question and the answer
+        // gets provider evidence: the node completes when the app-server
+        // resolves the answered request (DL-068).
+        if method == "item/tool/requestUserInput"
+            && let Some(i) = item
+            && !self.tools.contains_key(i)
+        {
+            let question = params
+                .pointer("/questions/0/question")
+                .cloned()
+                .unwrap_or(Value::Null);
+            let shape = json!({"type": QUESTION_ITEM, "id": i, "question": question});
+            started = self.tool_started(params, &shape, i, QUESTION_ITEM, ToolKind::Other);
+        }
         let node_id = item
             .and_then(|i| self.tools.get(i))
             .map(|n| n.node_id.clone());
@@ -266,7 +283,7 @@ impl CodexCore {
             }
             _ => return self.refuse(&id, method, None),
         };
-        vec![self.register(
+        started.push(self.register(
             OpenRequest {
                 native_id: id,
                 channel: ResponseChannel::RpcReply,
@@ -278,7 +295,8 @@ impl CodexCore {
             },
             title,
             provider_refs,
-        )]
+        ));
+        started
     }
 
     /// Fail closed: a request that the core does not model gets a refusal.
@@ -451,8 +469,27 @@ impl CodexCore {
                 request_id: request_id(&app_id),
                 reason: ExpiredReason::CancelledByProvider,
             })],
-            _ => Vec::new(),
+            Some(r) => self.answered_question(r.node_id.as_ref()),
+            None => Vec::new(),
         }
+    }
+
+    /// The app-server took the answer of a question: its node completes.
+    fn answered_question(&mut self, node_id: Option<&NodeId>) -> Vec<Output> {
+        let Some(node) = node_id.and_then(|n| {
+            self.tools
+                .values_mut()
+                .find(|t| &t.node_id == n && t.item_type == QUESTION_ITEM && !t.done)
+        }) else {
+            return Vec::new();
+        };
+        node.done = true;
+        vec![Output::Emit(Event::ToolCompleted {
+            node_id: node.node_id.clone(),
+            status: ToolStatus::Ok,
+            files: Vec::new(),
+            exit_code: None,
+        })]
     }
 
     /// Expires open requests. At turn end only the RPC requests expire; a

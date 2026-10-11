@@ -1,0 +1,317 @@
+[
+  {
+    "station_seq": 101,
+    "session_id": "claude-ask_user_question",
+    "session_seq": 1,
+    "at": 1760000001000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "session.started",
+      "provider": "claude",
+      "provider_instance": "claude",
+      "provider_version": "2.1.289",
+      "model": "claude-haiku-4-5-20251001",
+      "cwd": "/w",
+      "mode": "default",
+      "capabilities": {
+        "resume": true,
+        "fork": true,
+        "requests_survive_restart": false,
+        "interrupt": true,
+        "steer": true,
+        "native_follow_up": true,
+        "terminal_status": "strong",
+        "live_deltas": true,
+        "file_changes": true,
+        "approvals": true,
+        "response_channels": [
+          "rpc_reply"
+        ],
+        "edit_input": true,
+        "modes": [
+          "default",
+          "plan",
+          "acceptEdits",
+          "dontAsk",
+          "auto"
+        ],
+        "set_mode": true,
+        "set_model": true,
+        "plan_capture": true,
+        "subagents": true,
+        "background_work": "pushed",
+        "native_turn_ids": false,
+        "usage": {
+          "tokens": true,
+          "cost": true
+        }
+      },
+      "resumed": null,
+      "provider_refs": {
+        "session_id": "766dda2a-55d6-4acf-8bd2-a0f258d05f72"
+      }
+    }
+  },
+  {
+    "station_seq": 102,
+    "session_id": "claude-ask_user_question",
+    "session_seq": 2,
+    "at": 1760000002000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "input.updated",
+      "input_id": "00000000-0003-4bcc-8000-55a6bc306c62",
+      "turn_id": null,
+      "state": "received"
+    }
+  },
+  {
+    "station_seq": 103,
+    "session_id": "claude-ask_user_question",
+    "session_seq": 3,
+    "at": 1760000003000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "run.started",
+      "run_id": "run-1",
+      "input_summary": "Use the AskUserQuestion tool to ask me one question: 'Which color?' with the options red and blue. Then reply with my an…",
+      "origin": "board"
+    }
+  },
+  {
+    "station_seq": 104,
+    "session_id": "claude-ask_user_question",
+    "session_seq": 4,
+    "at": 1760000004000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "turn.started",
+      "run_id": "run-1",
+      "turn_id": "turn-1",
+      "provider_refs": {
+        "command_uuid": "00000000-0003-4bcc-8000-55a6bc306c62"
+      }
+    }
+  },
+  {
+    "station_seq": 105,
+    "session_id": "claude-ask_user_question",
+    "session_seq": 5,
+    "at": 1760000005000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "input.updated",
+      "input_id": "00000000-0003-4bcc-8000-55a6bc306c62",
+      "turn_id": "turn-1",
+      "state": "started"
+    }
+  },
+  {
+    "station_seq": 106,
+    "session_id": "claude-ask_user_question",
+    "session_seq": 6,
+    "at": 1760000006000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "tool.started",
+      "node_id": "node-2",
+      "parent_node_id": null,
+      "tool_kind": "other",
+      "title": "AskUserQuestion",
+      "input_summary": "{\"questions\":[{\"header\":\"Color\",\"multiSelect\":false,\"options\":[{\"description\":\"The color red\",\"label\":\"red\"},{\"description\":\"The color blue\",\"label\":\"blue\"}],\"question\":\"Which color?\"}]}",
+      "files": [],
+      "provider_refs": {
+        "tool_use_id": "toolu_011MMtDCwzpuRM8uDYSyh9R2"
+      }
+    }
+  },
+  {
+    "station_seq": 107,
+    "session_id": "claude-ask_user_question",
+    "session_seq": 7,
+    "at": 1760000007000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "approval.requested",
+      "request_id": "req-3",
+      "node_id": "node-2",
+      "request_kind": "question",
+      "title": "AskUserQuestion",
+      "details": "{\"questions\":[{\"header\":\"Color\",\"multiSelect\":false,\"options\":[{\"description\":\"The color red\",\"label\":\"red\"},{\"description\":\"The color blue\",\"label\":\"blue\"}],\"question\":\"Which color?\"}]}",
+      "input": {
+        "questions": [
+          {
+            "header": "Color",
+            "multiSelect": false,
+            "options": [
+              {
+                "description": "The color red",
+                "label": "red"
+              },
+              {
+                "description": "The color blue",
+                "label": "blue"
+              }
+            ],
+            "question": "Which color?"
+          }
+        ]
+      },
+      "options": [
+        {
+          "option_id": "allow",
+          "label": "Allow once"
+        },
+        {
+          "option_id": "deny",
+          "label": "Deny"
+        }
+      ],
+      "response": "rpc_reply",
+      "provider_refs": {
+        "control_request_id": "21871ea2-b6c2-430c-a537-408627bb7217",
+        "tool_use_id": "toolu_011MMtDCwzpuRM8uDYSyh9R2"
+      }
+    }
+  },
+  {
+    "station_seq": 108,
+    "session_id": "claude-ask_user_question",
+    "session_seq": 8,
+    "at": 1760000008000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "approval.resolved",
+      "request_id": "req-3",
+      "option_id": "allow",
+      "by": "board"
+    }
+  },
+  {
+    "station_seq": 109,
+    "session_id": "claude-ask_user_question",
+    "session_seq": 9,
+    "at": 1760000009000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "tool.completed",
+      "node_id": "node-2",
+      "status": "ok",
+      "files": [],
+      "exit_code": null
+    }
+  },
+  {
+    "station_seq": 110,
+    "session_id": "claude-ask_user_question",
+    "session_seq": 10,
+    "at": 1760000010000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "message.delta",
+      "turn_id": "turn-1",
+      "parent_node_id": null,
+      "text": "blue"
+    }
+  },
+  {
+    "station_seq": 111,
+    "session_id": "claude-ask_user_question",
+    "session_seq": 11,
+    "at": 1760000011000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "message.completed",
+      "turn_id": "turn-1",
+      "parent_node_id": null,
+      "text": "blue"
+    }
+  },
+  {
+    "station_seq": 112,
+    "session_id": "claude-ask_user_question",
+    "session_seq": 12,
+    "at": 1760000012000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "usage.updated",
+      "usage": {
+        "input_tokens": 18,
+        "output_tokens": 203,
+        "cost_usd": 0.012171
+      },
+      "rate_limits": []
+    }
+  },
+  {
+    "station_seq": 113,
+    "session_id": "claude-ask_user_question",
+    "session_seq": 13,
+    "at": 1760000013000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "turn.completed",
+      "turn_id": "turn-1",
+      "status": "done",
+      "usage": {
+        "input_tokens": 18,
+        "output_tokens": 203,
+        "cost_usd": 0.012171
+      }
+    }
+  },
+  {
+    "station_seq": 114,
+    "session_id": "claude-ask_user_question",
+    "session_seq": 14,
+    "at": 1760000014000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "run.completed",
+      "run_id": "run-1",
+      "status": "done",
+      "background_pending": false
+    }
+  },
+  {
+    "station_seq": 115,
+    "session_id": "claude-ask_user_question",
+    "session_seq": 15,
+    "at": 1760000015000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "input.updated",
+      "input_id": "00000000-0003-4bcc-8000-55a6bc306c62",
+      "turn_id": "turn-1",
+      "state": "completed"
+    }
+  },
+  {
+    "station_seq": 116,
+    "session_id": "claude-ask_user_question",
+    "session_seq": 16,
+    "at": 1760000016000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "session.ended",
+      "reason": "process_exit",
+      "exit_code": 0
+    }
+  }
+]

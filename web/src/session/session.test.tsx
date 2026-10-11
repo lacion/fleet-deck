@@ -6,7 +6,12 @@ import type { Timeline } from '../runtime/state';
 import { claudeCaps, codexCaps, minimalCaps } from '../testing/capabilities';
 import { station } from '../testing/fleet';
 import { summary } from '../testing/summary';
-import { claudeCapabilities, nestedSubagents, recorded } from '../testing/timeline';
+import {
+  claudeCapabilities,
+  nestedSubagents,
+  recorded,
+  recordedRequest,
+} from '../testing/timeline';
 import { commandId, outcomeOf, sessionActions } from './commands';
 
 const key = { station_id: 'station-a', session_id: 'nested' };
@@ -132,6 +137,26 @@ describe('session view (P4-3)', () => {
     expect(html).not.toContain('>Allow</button>');
     const answerable = view(session({ capabilities: codexCaps(), open_requests: [req] }));
     expect(answerable).toContain('>Allow</button>');
+  });
+
+  test('a question request gets an answer form for both providers (DL-068)', () => {
+    const codex = view(
+      session({
+        capabilities: codexCaps(),
+        open_requests: [recordedRequest('codex-question_rpc')],
+      }),
+    );
+    expect(codex).toContain('aria-label="Answer: Which color do you prefer?"');
+    expect(codex).toContain('<legend>Color: Which color do you prefer?</legend>');
+    expect(codex).toMatch(/type="radio"[^>]*value="Red"/);
+    expect(codex).toContain('Other answer');
+    // Nothing is chosen yet: the answer cannot be sent.
+    expect(codex).toMatch(/<button type="submit" disabled="">Send answer<\/button>/);
+    expect(codex).not.toContain('>Answer</button>');
+    const claude = view(session({ open_requests: [recordedRequest('ask_user_question')] }));
+    expect(claude).toContain('<legend>Color: Which color?</legend>');
+    expect(claude).toContain('>Deny</button>');
+    expect(claude).not.toContain('>Allow once</button>');
   });
 
   test('a stale board or an ended session disables every control', () => {

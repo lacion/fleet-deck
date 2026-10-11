@@ -435,15 +435,32 @@ fn request_user_input_is_answered_by_rpc_reply() {
             "questions": [{"id": "color", "header": "Color", "question": "Which color?", "options": [{"label": "Blue"}]}]
         }}),
     ));
+    // Codex starts no item for the question: the core opens its node
+    // (DL-068), and the request names it.
+    let Event::ToolStarted {
+        node_id: question,
+        title: tool,
+        input_summary,
+        ..
+    } = &ev[0]
+    else {
+        panic!("{ev:?}")
+    };
+    assert_eq!(
+        (tool.as_str(), input_summary.as_str()),
+        ("Question", "Which color?")
+    );
     let Event::ApprovalRequested {
         request_id,
         request_kind,
         title,
+        node_id,
         ..
-    } = &ev[0]
+    } = &ev[1]
     else {
         panic!()
     };
+    assert_eq!(node_id.as_ref(), Some(question));
     assert_eq!(*request_kind, RequestKind::Question);
     assert_eq!(title, "Which color?");
     assert!(matches!(
@@ -455,6 +472,16 @@ fn request_user_input_is_answered_by_rpc_reply() {
     answer.decision.updated_input = Some(answers.clone());
     let out = core.answer(&answer).unwrap();
     assert_eq!(writes(&out)[0], json!({"id": 3, "result": answers}));
+    // The app-server's resolution is the evidence that it took the answer.
+    let ev = emits(&notify(
+        &mut core,
+        "serverRequest/resolved",
+        json!({"threadId": T, "requestId": 3}),
+    ));
+    assert!(
+        matches!(&ev[..], [Event::ToolCompleted { node_id, status: ToolStatus::Ok, .. }] if node_id == question),
+        "{ev:?}"
+    );
 }
 
 #[test]

@@ -188,3 +188,81 @@ async fn a_codex_start_with_an_unknown_mode_spawns_nothing() {
     assert_eq!(st.state(&s).await, SessionState::Exited);
     st.manager.shutdown(StopMode::Kill).await;
 }
+
+#[tokio::test]
+async fn a_codex_question_takes_its_answers_and_an_approval_refuses_an_input_edit() {
+    let mut st = Station::new(4).await;
+    let ws = st.workspace();
+    let s = st
+        .start_with(codex_spec(&ws), Some("question Which color?"))
+        .await;
+    let request = st.wait_for("question", approval).await;
+    // The answers of a question travel in `updated_input`; for Codex that is
+    // an answer, not an input edit, which Codex does not support (DL-068).
+    let mut command = answer(&s, &request, "answer");
+    if let SessionCommand::Answer { decision, .. } = &mut command {
+        decision.updated_input = Some(serde_json::json!({
+            "answers": {"choice": {"answers": ["Blue"]}}
+        }));
+    }
+    st.accepted(command).await;
+    wait_count(
+        &st,
+        "answered turn",
+        1,
+        |e| matches!(e, Event::MessageCompleted { text, .. } if text == "answered: Blue"),
+    )
+    .await;
+    wait_count(&st, "done turns", 1, turn_done).await;
+
+    // A command approval with an edited input stays an input edit.
+    st.accepted(SessionCommand::Prompt {
+        session_id: s.clone(),
+        input: text("ask touch x"),
+    })
+    .await;
+    let approvals = |e: &Event| {
+        matches!(
+            e,
+            Event::ApprovalRequested {
+                request_kind: fleetdeck_proto::event::RequestKind::Command,
+                ..
+            }
+        )
+    };
+    wait_count(&st, "command approval", 1, approvals).await;
+    let command_request = st
+        .events()
+        .await
+        .iter()
+        .find_map(|e| match &e.event {
+            EventBody::Known(k) if approvals(k) => approval(k),
+            _ => None,
+        })
+        .unwrap();
+    let mut edit = answer(&s, &command_request, "accept");
+    if let SessionCommand::Answer { decision, .. } = &mut edit {
+        decision.updated_input = Some(serde_json::json!({"command": "rm -rf x"}));
+    }
+    assert_eq!(st.rejected(edit).await, RejectCode::Unsupported);
+    st.accepted(answer(&s, &command_request, "accept")).await;
+    wait_count(&st, "done turns", 2, turn_done).await;
+
+    st.accepted(SessionCommand::Stop {
+        session_id: s.clone(),
+        how: StopMode::Graceful,
+    })
+    .await;
+    let states = st.settled(&s).await;
+    assert_eq!(
+        states,
+        vec![
+            ("start", EffectState::Confirmed),
+            ("answer", EffectState::Confirmed),
+            ("prompt", EffectState::Confirmed),
+            ("answer", EffectState::Confirmed),
+            ("stop", EffectState::Confirmed),
+        ]
+    );
+    st.manager.shutdown(StopMode::Kill).await;
+}
