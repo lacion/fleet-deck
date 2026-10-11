@@ -190,9 +190,18 @@ pub(super) fn summary(conn: &Connection, session_id: &SessionId) -> Result<Optio
     Ok(text.map(|t| serde_json::from_str(&t)).transpose()?)
 }
 
-pub(super) fn summaries(conn: &Connection) -> Result<Vec<SessionSummary>> {
-    let mut stmt = conn.prepare("SELECT summary FROM sessions ORDER BY created_at, session_id")?;
-    let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+/// The session projections of a snapshot, oldest first: every session that
+/// has not exited and then the newest exited ones, `limit` at most (DL-051).
+pub(super) fn summaries(conn: &Connection, limit: u64) -> Result<Vec<SessionSummary>> {
+    let mut stmt = conn.prepare(
+        "SELECT summary FROM (
+             SELECT summary, created_at, session_id FROM sessions
+             ORDER BY state IN ('exited', 'lost'), created_at DESC, session_id DESC
+             LIMIT ?1)
+         ORDER BY created_at, session_id",
+    )?;
+    let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+    let rows = stmt.query_map([limit], |r| r.get::<_, String>(0))?;
     let mut out = Vec::new();
     for row in rows {
         out.push(serde_json::from_str(&row?)?);

@@ -16,10 +16,13 @@
 //!    database while the link ran) start a `session.snapshot` resync; the
 //!    deck drops events until the batch ends.
 //!
-//! A station is reachable while at least one of its links is up. Requests
+//! A station is reachable while at least one of its links is up. When a
+//! link comes up, the router resends the station's pending commands
+//! ([`router`]). Requests
 //! of a station (coordinator calls, key rotation) are answered with
 //! `not_implemented` in this build (DL-050).
 
+pub mod router;
 pub mod runtime;
 
 use std::collections::{HashMap, VecDeque};
@@ -32,12 +35,13 @@ use fleetdeck_link::methods::code;
 use fleetdeck_link::node::NodeConfig;
 use fleetdeck_link::revoke::REVOKED;
 use fleetdeck_link::{Closing, LiveLink};
-use fleetdeck_proto::link::{ControlFrame, Outcome, StationInfo, WireError};
+use fleetdeck_proto::link::{ControlFrame, MAX_SNAPSHOT_SESSIONS, Outcome, StationInfo, WireError};
 use fleetdeck_proto::session::SessionSummary;
 use fleetdeck_proto::{EventEnvelope, IncarnationId, StationId};
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
+pub use router::CommandKind;
 pub use runtime::{DeckNode, NodeError};
 
 use crate::peers::DeckPeers;
@@ -58,6 +62,7 @@ pub struct DeckLink {
     /// The open links of each station.
     live: Mutex<HashMap<StationId, Vec<(u64, Control)>>>,
     next_token: AtomicU64,
+    inflight: router::Inflight,
 }
 
 impl DeckLink {
@@ -69,6 +74,7 @@ impl DeckLink {
             node,
             live: Mutex::default(),
             next_token: AtomicU64::new(0),
+            inflight: router::Inflight::default(),
         }
     }
 
@@ -158,6 +164,10 @@ pub async fn serve(ctx: Arc<DeckLink>, link: LiveLink) -> Closing {
         Ok(params) => sync.start("events.replay", json!(params)),
         Err(e) => control.close(code::PROTOCOL_ERROR, &format!("deck store: {e}")),
     }
+    // Resend the pending commands of this station on the new link (G3).
+    let router = Arc::clone(&ctx);
+    let pending_of = sync.station.clone();
+    tokio::spawn(async move { router.dispatch_pending(pending_of).await });
     let mut held = VecDeque::new();
     while let Some(message) = next(&mut held, &mut inbound).await {
         match message {
@@ -289,6 +299,13 @@ impl Sync {
                 watermark,
                 session_count,
             } => {
+                if session_count > MAX_SNAPSHOT_SESSIONS {
+                    self.snapshot = None;
+                    return self.protocol(&format!(
+                        "a snapshot of {session_count} sessions is above the limit of {MAX_SNAPSHOT_SESSIONS}"
+                    ));
+                }
+                // A restarted stream replaces an unfinished batch.
                 self.snapshot = Some(OpenSnapshot {
                     incarnation,
                     watermark,
@@ -300,8 +317,15 @@ impl Sync {
                 incarnation,
                 snapshot,
             } => match &mut self.snapshot {
-                Some(open) if open.incarnation == incarnation => {
+                Some(open)
+                    if open.incarnation == incarnation
+                        && (open.sessions.len() as u64) < open.count =>
+                {
                     open.sessions.push(snapshot.summary);
+                }
+                Some(open) if open.incarnation == incarnation => {
+                    self.snapshot = None;
+                    self.protocol("a snapshot session beyond the announced count");
                 }
                 _ => self.protocol("a snapshot session outside its batch"),
             },

@@ -594,3 +594,31 @@ Format: context, options, choice, reason, owner review.
   - The line protocol of the two local sockets moved to `fleetdeck_core::localsock` (bind 0600, peer uid check, 64 KiB line limit, error text without the request body).
 - Reason: least privilege for the station key (doctrine: fail closed); the station.toml name is the name that the owner chose, and no prompt is needed on the deck; the local socket keeps the pairing secret off the network and off the command line (G12), as on the station.
 - Owner review: pending
+
+## DL-051: A bound for snapshot batches (M2 round 23, review of P3-6b)
+
+- Date: 2026-10-11 (M2 round 23)
+- Context: ADR-004 and G4 define the snapshot batch (`snapshot_begin { session_count }`, `snapshot_session` × n, `snapshot_end`) but give no upper limit. The deck buffers the batch until `snapshot_end` because the read model is replaced in one transaction. A station that never sends `snapshot_end`, or sends more sessions than announced, made the deck buffer without limit. The station sent every session it ever had, so an old station could also send a batch without limit.
+- Options: (a) apply each session as it arrives (no buffer, but a cut-off batch leaves a mixed read model); (b) a fixed protocol limit on the batch size, checked on both sides; (c) a limit by bytes.
+- Choice: (b). `fleetdeck_proto::link::MAX_SNAPSHOT_SESSIONS = 4096`.
+  - The deck closes the link with `protocol_error` and drops the open batch when `snapshot_begin` announces more than the limit, or when a `snapshot_session` arrives after the announced count. A new `snapshot_begin` (a restarted stream) replaces an unfinished batch. So an unfinished batch holds at most `min(session_count, 4096)` summaries, each below the 1 MiB frame limit.
+  - The station's `Store::snapshot` sends every session that has not exited (state not `exited` / `lost`) and then the newest exited sessions, up to `StoreConfig::snapshot_sessions` (default 4096). Running sessions are bounded by `max_sessions` (≤ 256). The deck therefore drops the cards of the oldest exited sessions when a snapshot replaces a station's read model; the station keeps them.
+- Reason: the deck must not trust a peer for its memory use (doctrine: fail closed); one atomic replacement of the read model stays (no mixed state); a session-count limit is simple to check on both sides and the frame limit already bounds each summary.
+- Owner review: pending
+
+## DL-052: Command router details that PLAN §8.4 does not state (M2 round 23, P3-7a)
+
+- Context: PLAN §8.4 and ADR-004 §9.3 give the `pending → done | failed | ambiguous` rules for commands that were sent. They do not say what happens to a command that the deck never sent before `retry_until`, to the commands of a removed station, to a request that the link layer refuses or that ends without an answer, or how the CLI addresses the router before the board API (P3-9) exists.
+- Options: (a) keep such commands `pending` forever, or redispatch them with a new id; (b) end them with explicit `failed` reasons and keep the router's resend loop for every outcome that leaves the station's decision unknown.
+- Choice: (b).
+  - The deck counts a send (`attempts`, first `sent_at`) in `deck.db` **before** the bytes leave. A crash between the count and the send can only turn a later outcome into `ambiguous`, never into a wrong `failed`.
+  - `retry_until` passed and never sent → `failed` with reason `not_sent`; sent and no receipt → `ambiguous` with `no_receipt`.
+  - A rejection with `incarnation_mismatch` / `expired` (no stored receipt at the station) → `failed` (`station_reset` / `expired`) when this was the first send, `ambiguous` with the same reason after an earlier send.
+  - A request refused by the link layer (`forbidden`, `wrong_role`, `unknown_method`, ...) → `failed` with the code as the reason: the station decided nothing. `too_many_requests`, `timeout`, a dropped link and a link that is down keep the command `pending`; the router resends the same stored envelope with the same `command_id` when a link comes up and on each tick (`ROUTER_TICK` = 1 s), until `retry_until`. One send per command is in flight at a time.
+  - A receipt whose `command_id` differs from the command's is a `failed` command with `protocol_error`.
+  - `remove-station` marks the station's pending commands `failed` (`station_removed`) in the removal transaction.
+  - The deck addresses a station only after its first sync: without a known incarnation, `submit` refuses with `NotSynced` (nothing is stored).
+  - Until the board API exists, `fleetdeck deck command <station> '<SessionCommand JSON>'` routes one command (origin `board`) and waits up to 15 s for its outcome; `fleetdeck deck commands` lists the router's table.
+  - The outbox (A5) and the coordinator receipts (G7) are P3-7b.
+- Reason: every command ends in a state that tells the owner what is known (doctrine: no silent loss, no double execution); a resend never changes the bytes or the id, so the station's receipt store keeps execution at most once.
+- Owner review: pending

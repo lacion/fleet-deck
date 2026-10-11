@@ -6,9 +6,12 @@
 //!   applied from the station event streams with the resync cursor, the
 //!   snapshot batch and the incarnation rules (G4).
 //!
+//! - [`commands`]: the command router's stored envelopes and states (G3).
+//!
 //! Station reachability is link state, not stored state: the deck keeps it
 //! in memory and the board status projection reads it (§7.2).
 
+pub mod commands;
 pub mod read_model;
 pub mod schema;
 pub mod stations;
@@ -22,7 +25,9 @@ use fleetdeck_core::db::{Db, DbError};
 use fleetdeck_core::ids::{SharedIds, new_id};
 use fleetdeck_proto::{IncarnationId, StationId};
 use rusqlite::{Connection, OptionalExtension};
+use tokio::sync::watch;
 
+pub use commands::{DeckCommand, NewCommand, Settle};
 pub use read_model::{DeckSession, TIMELINE_CAP};
 pub use stations::{Direction, StationRecord};
 
@@ -46,6 +51,10 @@ pub enum DeckError {
         expected: Option<IncarnationId>,
         got: IncarnationId,
     },
+    #[error("the deck has not synced with station {0} yet; try again when it is reachable")]
+    NotSynced(String),
+    #[error("unknown command {0}")]
+    UnknownCommand(String),
     #[error("corrupt store: {0}")]
     Corrupt(String),
 }
@@ -61,7 +70,10 @@ pub type Result<T, E = DeckError> = std::result::Result<T, E>;
 struct Inner {
     db: Db,
     clock: SharedClock,
+    ids: SharedIds,
     incarnation: IncarnationId,
+    /// Counts command state changes (the router waits on it).
+    commands: watch::Sender<u64>,
     /// The stations with a live link (§7.2 `unreachable`).
     reachable: Mutex<BTreeSet<StationId>>,
 }
@@ -128,7 +140,9 @@ impl DeckStore {
             inner: Arc::new(Inner {
                 db,
                 clock,
+                ids,
                 incarnation,
+                commands: watch::channel(0).0,
                 reachable: Mutex::default(),
             }),
         })

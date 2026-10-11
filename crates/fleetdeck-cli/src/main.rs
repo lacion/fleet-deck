@@ -78,6 +78,12 @@ async fn deck_main(
         Some(DeckCommand::Stations { json }) => deck::stations(dirs, *json).await,
         Some(DeckCommand::Sessions { json }) => deck::sessions(dirs, *json).await,
         Some(DeckCommand::RemoveStation { station }) => deck::remove_station(dirs, station).await,
+        Some(DeckCommand::Command {
+            station,
+            command,
+            json,
+        }) => deck::command(dirs, station, command, *json).await,
+        Some(DeckCommand::Commands { json }) => deck::commands(dirs, *json).await,
     }
 }
 

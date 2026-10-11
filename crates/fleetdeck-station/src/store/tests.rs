@@ -541,3 +541,39 @@ async fn receipts_and_events_survive_a_restart() {
     // Recovery appended the lost-session events after the stored ones.
     assert!(read_all(&s, 0).await.starts_with(&first.events));
 }
+
+#[tokio::test]
+async fn a_snapshot_keeps_every_running_session_and_the_newest_exited_ones_up_to_the_limit() {
+    let det = Det::new();
+    let config = StoreConfig {
+        snapshot_sessions: 3,
+        ..StoreConfig::default()
+    };
+    let s = Store::open_in_memory(det.clock(), det.ids(), config)
+        .await
+        .unwrap();
+    s.recover(Vec::new()).await.unwrap();
+    // live-old is the oldest and still running; e1..e4 exited later.
+    s.create_session(new_session("live-old")).await.unwrap();
+    for id in ["e1", "e2", "e3", "e4"] {
+        det.advance(Duration::from_secs(1));
+        s.create_session(new_session(id)).await.unwrap();
+        let ended: NewEvent = Event::SessionEnded {
+            reason: "done".to_owned(),
+            exit_code: Some(0),
+        }
+        .into();
+        s.append(id.into(), vec![ended]).await.unwrap();
+    }
+    let snap = s.snapshot().await.unwrap();
+    let ids: Vec<&str> = snap
+        .sessions
+        .iter()
+        .map(|x| x.session_id.as_str())
+        .collect();
+    assert_eq!(ids, ["live-old", "e3", "e4"]);
+    assert_eq!(
+        StoreConfig::default().snapshot_sessions,
+        fleetdeck_proto::link::MAX_SNAPSHOT_SESSIONS
+    );
+}

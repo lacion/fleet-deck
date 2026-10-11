@@ -1,14 +1,16 @@
 //! The deck's owner-only local socket `deck.sock` (M2 P3-6b; PLAN §6.5):
 //! the pairing commands and the registry and read model views of the local
-//! CLI. The wire is that of [`fleetdeck_core::localsock`].
+//! CLI, and `deck command` through the command router. The wire is that of [`fleetdeck_core::localsock`].
 
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use fleetdeck_core::Secret;
 use fleetdeck_core::localsock::{self, BindError, LineClient, read_line, send};
 use fleetdeck_proto::StationId;
+use fleetdeck_proto::command::CommandOrigin;
 use serde::{Deserialize, Serialize};
 use tokio::io::BufReader;
 use tokio::net::{UnixListener, UnixStream};
@@ -16,8 +18,8 @@ use tokio::sync::watch;
 
 pub use fleetdeck_core::localsock::InvitationText;
 
-use crate::link::DeckNode;
-use crate::store::{DeckSession, Direction, StationRecord};
+use crate::link::{CommandKind, DeckNode};
+use crate::store::{DeckCommand, DeckError, DeckSession, Direction, StationRecord};
 
 /// The socket's file name in the deck directory.
 pub const SOCKET_NAME: &str = "deck.sock";
@@ -46,7 +48,19 @@ pub enum DeckRequest {
     RemoveStation { station: String },
     /// `deck sessions`: every card of the read model.
     Sessions,
+    /// `deck command`: route one command to a station and wait up to
+    /// [`COMMAND_WAIT`] for its outcome (P3-7a).
+    Command {
+        station: String,
+        command: CommandKind,
+    },
+    /// `deck commands`: the router's commands, oldest first.
+    Commands,
 }
+
+/// How long `deck command` waits for a receipt before it answers with the
+/// `pending` command; the router keeps resending until `retry_until`.
+pub const COMMAND_WAIT: Duration = Duration::from_secs(15);
 
 /// A paired station as the CLI shows it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -102,6 +116,12 @@ pub enum DeckResponse {
     },
     Sessions {
         sessions: Vec<DeckSession>,
+    },
+    Command {
+        command: DeckCommand,
+    },
+    Commands {
+        commands: Vec<DeckCommand>,
     },
     Error {
         message: String,
@@ -202,7 +222,32 @@ async fn handle(node: &DeckNode, request: DeckRequest) -> DeckResponse {
             Ok(sessions) => DeckResponse::Sessions { sessions },
             Err(e) => error(e.to_string()),
         },
+        DeckRequest::Command { station, command } => match route(node, station, command).await {
+            Ok(command) => DeckResponse::Command { command },
+            Err(e) => error(e.to_string()),
+        },
+        DeckRequest::Commands => match store.commands().await {
+            Ok(commands) => DeckResponse::Commands { commands },
+            Err(e) => error(e.to_string()),
+        },
     }
+}
+
+async fn route(
+    node: &DeckNode,
+    station: String,
+    kind: CommandKind,
+) -> Result<DeckCommand, DeckError> {
+    let link = node.link();
+    let st = link
+        .store
+        .find_station(station.clone())
+        .await?
+        .ok_or(DeckError::UnknownStation(station))?;
+    let cmd = link
+        .submit(st.station_id, CommandOrigin::Board, kind)
+        .await?;
+    link.wait_command(cmd.command_id, COMMAND_WAIT).await
 }
 
 /// The client side, for the CLI.

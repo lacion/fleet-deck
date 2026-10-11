@@ -39,6 +39,7 @@ use fleetdeck_core::db::{Db, DbError};
 use fleetdeck_core::{SharedClock, SharedIds, new_id};
 use fleetdeck_proto::command::RECEIPT_RETENTION_MS;
 use fleetdeck_proto::event::{ProviderKind, RawRef};
+use fleetdeck_proto::link::MAX_SNAPSHOT_SESSIONS;
 use fleetdeck_proto::mutation::Mutation;
 use fleetdeck_proto::{
     CommandEnvelope, Event, EventBody, EventEnvelope, IncarnationId, ProviderInstanceId, Receipt,
@@ -100,6 +101,8 @@ pub type Result<T, E = StoreError> = std::result::Result<T, E>;
 pub struct StoreConfig {
     pub event_retention_ms: i64,
     pub receipt_retention_ms: i64,
+    /// The most sessions in a snapshot batch (DL-051).
+    pub snapshot_sessions: u64,
 }
 
 impl Default for StoreConfig {
@@ -107,6 +110,7 @@ impl Default for StoreConfig {
         Self {
             event_retention_ms: EVENT_RETENTION_MS,
             receipt_retention_ms: RECEIPT_RETENTION_MS,
+            snapshot_sessions: MAX_SNAPSHOT_SESSIONS,
         }
     }
 }
@@ -390,16 +394,19 @@ impl Store {
         call(&self.inner.db, move |conn| log::summary(conn, &session_id)).await
     }
 
-    /// Every session projection and the watermark in one read.
+    /// The session projections of a snapshot batch and the watermark in one
+    /// read: every session that has not exited, then the newest exited
+    /// ones, [`StoreConfig::snapshot_sessions`] at most (DL-051).
     ///
     /// # Errors
     /// A database or JSON error.
     pub async fn snapshot(&self) -> Result<Snapshot> {
         let incarnation = self.inner.incarnation.clone();
+        let limit = self.inner.config.snapshot_sessions;
         call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             let watermark = log::head(&tx)?;
-            let sessions = log::summaries(&tx)?;
+            let sessions = log::summaries(&tx, limit)?;
             tx.commit()?;
             Ok(Snapshot {
                 incarnation,

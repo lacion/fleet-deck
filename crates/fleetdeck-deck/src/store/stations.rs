@@ -232,7 +232,8 @@ impl DeckStore {
     /// # Errors
     /// A database error.
     pub async fn revoke_station(&self, key: PeerKey) -> Result<Option<StationRecord>> {
-        call(&self.inner.db, move |conn| {
+        let now = self.now_ms();
+        let out = call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             let found = tx
                 .query_row(
@@ -248,12 +249,17 @@ impl DeckStore {
                     "DELETE FROM stations WHERE station_id = ?1",
                     [rec.station_id.as_str()],
                 )?;
+                super::commands::fail_station(&tx, &rec.station_id, now)?;
                 bump_generation(&tx)?;
             }
             tx.commit()?;
             Ok(found)
         })
-        .await
+        .await?;
+        if out.is_some() {
+            self.commands_changed();
+        }
+        Ok(out)
     }
 
     /// Gives the row of `old` to `new` (the id, name, grants, address and

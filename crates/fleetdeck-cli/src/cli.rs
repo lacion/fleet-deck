@@ -77,6 +77,24 @@ pub enum DeckCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Route one command to a station through the deck's command router
+    /// and wait for its receipt.
+    Command {
+        /// Station name or id.
+        station: String,
+        /// The command as JSON, for example
+        /// `{"op":"interrupt","session_id":"..."}` (PLAN §6.1).
+        command: String,
+        /// Print the routed command as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// List the commands of the deck's router.
+    Commands {
+        /// Print the commands as JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Unpin a station key and close its links.
     RemoveStation {
         /// Station name or key fingerprint.

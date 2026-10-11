@@ -3,8 +3,9 @@
 //!
 //! V1 (M2 P3-6a): `meta` (incarnation, revocation generation), the station
 //! registry with its pins, grants and resync cursor, the session read model
-//! and the condensed timeline. V2: link epochs (G1). The command router,
-//! outbox, auth and audit tables follow in P3-7 and P3-8.
+//! and the condensed timeline. V2: link epochs (G1). V3 (P3-7): the
+//! command router's `commands` table (G3). Outbox, coordinator receipts,
+//! auth and audit tables follow in P3-7b and P3-8.
 
 use rusqlite_migration::{M, Migrations};
 
@@ -60,10 +61,37 @@ CREATE TABLE timeline (
 CREATE INDEX timeline_by_session ON timeline (station_id, session_id, station_seq);
 ";
 
+/// The command router (G3, PLAN §8.4). `envelope` is the stored envelope:
+/// it never changes, and every send sends these bytes. `attempts` counts
+/// the sends; the first send sets `sent_at`.
+const V3: &str = "
+CREATE TABLE commands (
+    command_id   TEXT PRIMARY KEY,
+    station_id   TEXT NOT NULL,
+    method       TEXT NOT NULL,
+    origin       TEXT NOT NULL,
+    envelope     TEXT NOT NULL,
+    retry_until  INTEGER NOT NULL,
+    state        TEXT NOT NULL CHECK (state IN ('pending', 'done', 'failed', 'ambiguous')),
+    attempts     INTEGER NOT NULL DEFAULT 0,
+    sent_at      INTEGER,
+    receipt      TEXT,
+    reason       TEXT,
+    created_at   INTEGER NOT NULL,
+    updated_at   INTEGER NOT NULL
+) STRICT;
+CREATE INDEX commands_pending ON commands (station_id, created_at) WHERE state = 'pending';
+CREATE INDEX commands_by_station ON commands (station_id, created_at);
+";
+
 /// The `deck.db` migrations.
 #[must_use]
 pub fn migrations() -> Migrations<'static> {
-    Migrations::new(vec![M::up(V1), M::up(fleetdeck_link::LINK_EPOCHS_SQL)])
+    Migrations::new(vec![
+        M::up(V1),
+        M::up(fleetdeck_link::LINK_EPOCHS_SQL),
+        M::up(V3),
+    ])
 }
 
 #[cfg(test)]

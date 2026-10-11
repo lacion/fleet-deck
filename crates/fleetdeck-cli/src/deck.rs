@@ -1,5 +1,5 @@
 //! `fleetdeck deck serve|invite|add-station|stations|sessions|remove-station`
-//! (M2 P3-6b; PLAN §8.5).
+//! (M2 P3-6b; PLAN §8.5) and `deck command|commands` (P3-7a, G3).
 //!
 //! `serve` runs the deck; the other commands are clients of its local
 //! socket `deck.sock`. The invitation of `add-station` comes only from a
@@ -9,8 +9,11 @@
 use anyhow::bail;
 use fleetdeck_core::config::DeckConfig;
 use fleetdeck_core::paths::NodeDirs;
+use fleetdeck_deck::link::CommandKind;
 use fleetdeck_deck::local::{DeckClient, DeckRequest, DeckResponse, InvitationText, StationView};
+use fleetdeck_deck::store::DeckCommand;
 use fleetdeck_link::reconnect::BackoffPolicy;
+use fleetdeck_proto::command::SessionCommand;
 
 use crate::cli::{AddStationArgs, ServeArgs};
 use crate::station::shutdown_signal;
@@ -136,4 +139,65 @@ pub async fn remove_station(dirs: &NodeDirs, station: &str) -> anyhow::Result<()
         station.name, station.key
     );
     Ok(())
+}
+
+/// `fleetdeck deck command <station> <json> [--json]`.
+pub async fn command(
+    dirs: &NodeDirs,
+    station: &str,
+    json_text: &str,
+    json: bool,
+) -> anyhow::Result<()> {
+    let command: SessionCommand = serde_json::from_str(json_text)
+        .map_err(|e| anyhow::anyhow!("the command is not valid JSON of PLAN §6.1: {e}"))?;
+    let request = DeckRequest::Command {
+        station: station.to_owned(),
+        command: CommandKind::Session { command },
+    };
+    let DeckResponse::Command { command } = call(dirs, &request).await? else {
+        bail!("unexpected answer from the deck");
+    };
+    if json {
+        println!("{}", serde_json::to_string_pretty(&command)?);
+    } else {
+        println!("{}", render_command(&command)?);
+    }
+    Ok(())
+}
+
+/// `fleetdeck deck commands [--json]`.
+pub async fn commands(dirs: &NodeDirs, json: bool) -> anyhow::Result<()> {
+    let DeckResponse::Commands { commands } = call(dirs, &DeckRequest::Commands).await? else {
+        bail!("unexpected answer from the deck");
+    };
+    if json {
+        println!("{}", serde_json::to_string_pretty(&commands)?);
+    } else if commands.is_empty() {
+        println!("no commands");
+    } else {
+        for c in &commands {
+            println!("{}", render_command(c)?);
+        }
+    }
+    Ok(())
+}
+
+fn render_command(c: &DeckCommand) -> anyhow::Result<String> {
+    let state = serde_json::to_value(c.state)?;
+    let detail = match (&c.receipt, &c.reason) {
+        (_, Some(reason)) => reason.clone(),
+        (Some(r), None) => match &r.reject {
+            Some(reject) => format!("rejected: {}", reject.message),
+            None => "accepted".to_owned(),
+        },
+        (None, None) => "-".to_owned(),
+    };
+    Ok(format!(
+        "{}  {}  {}  {}  {}",
+        c.command_id,
+        c.station_id,
+        c.method,
+        state.as_str().unwrap_or("-"),
+        detail
+    ))
 }

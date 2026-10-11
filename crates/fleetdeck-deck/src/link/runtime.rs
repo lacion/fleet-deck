@@ -36,6 +36,9 @@ use super::{DeckLink, serve};
 use crate::peers::{DeckPeers, Expected};
 use crate::store::{DeckError, DeckStore, Direction, StationRecord};
 
+/// How often the command router expires and resends commands (G3).
+pub const ROUTER_TICK: Duration = Duration::from_secs(1);
+
 /// How long an invitation of `deck invite` is valid (PLAN §8.5).
 pub const INVITE_TTL: Duration = Duration::from_secs(15 * 60);
 
@@ -142,6 +145,15 @@ impl DeckNode {
         for st in stations {
             this.dial_stored(&st);
         }
+        let ctx = Arc::clone(&this.ctx);
+        this.spawn(tokio::spawn(async move {
+            let mut every = tokio::time::interval(ROUTER_TICK);
+            every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                every.tick().await;
+                ctx.tick().await;
+            }
+        }));
         Ok(this)
     }
 

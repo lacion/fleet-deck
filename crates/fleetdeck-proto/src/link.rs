@@ -14,6 +14,13 @@ use crate::session::SessionSummary;
 /// The largest control frame in bytes (ADR-004 §2.6).
 pub const MAX_CONTROL_FRAME_BYTES: usize = 1024 * 1024;
 
+/// The most sessions in one snapshot batch (DL-051). A station sends every
+/// session that has not exited and then the newest exited ones up to this
+/// limit; a deck refuses a `snapshot_begin` above it and a
+/// `snapshot_session` beyond the announced count, so an unfinished batch
+/// holds at most this many summaries.
+pub const MAX_SNAPSHOT_SESSIONS: u64 = 4096;
+
 /// A typed error on the wire.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, thiserror::Error)]
 #[error("{code}: {message}")]
