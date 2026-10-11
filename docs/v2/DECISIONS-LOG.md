@@ -677,3 +677,16 @@ Format: context, options, choice, reason, owner review.
   - The client's 5-minute idle cursor (§7.1) belongs to the Phase 4 web runtime.
 - Reason: one socket per phone keeps the connection count low on a mobile network and gives one order for board and timeline messages; the incarnation rule is the same rule the deck uses for station replays (G4), so a replaced station database can never splice two timelines. Tickets keep long-lived bearer tokens out of URLs and logs (L15).
 - Owner review: pending
+
+## DL-057: Browser connection ownership, retry bounds, and timeline cache (M2 round 29, P4-1)
+
+- Context: PLAN §11 and L17 fix one retry owner, separate transport/freshness states, stale readable data, and five idle minutes for cursors. They do not specify timer bounds, React ownership, or login-secret handling.
+- Options: (a) a page-owned runtime with injected transport and timers; (b) React effects own separate sockets and retries per screen.
+- Choice: (a). `web/src/main.tsx` creates and starts one `Connection` outside React effects. React StrictMode cannot redeem a one-time link twice. `RuntimeApp` reads immutable state with `useSyncExternalStore`.
+  - Use the existing same-origin cookie login API. Keep the CSRF token only in memory. Do not store credentials in browser storage. Strip `#login=…` with `history.replaceState` before the link POST or rendering. Clear the password input when submitting. Never retry password or link POSTs.
+  - Retry only safe `/api/auth/session` reads before opening the cookie-authenticated `wss:` socket. Use exponential backoff from 500 ms, jitter in `[0.5, 1]`, and a 30 s cap. Reset backoff only after a snapshot connection stays stable for 10 s. Bound authentication, snapshot arrival, and subscription start waits to 10 s. A generation fences stale fetch results, socket callbacks, and timers.
+  - Keep stale cards during an outage. A new socket accepts its first snapshot even when a restarted deck has a lower process-local version. Ignore duplicate snapshots and non-increasing deltas. Clear credentials and caches on logout, HTTP 401, or socket close 4401.
+  - Reference-count timeline watches. Unsubscribe when the last reader leaves. Keep each idle cursor and timeline for five minutes. Resume with the station incarnation and cursor; reset on a changed incarnation. Cap each cached timeline at 1,000 recent events. Enforce the server's 32-active-subscription limit, including reactivated idle entries. A subscription error changes timeline freshness, not transport health.
+  - Validate the wire fields that the runtime reads before reducing them. Reject malformed projections and unsafe sequence numbers. Keep unknown canonical event kinds readable, as L16 requires. This is not a second provider protocol parser.
+- Reason: one page-owned runtime prevents duplicate retries and one-time login consumption. Injected fakes prove reconnection without network or wall-clock waits. Timer and cache bounds protect a phone from stalled connections and unbounded streamed text. Generation and incarnation fences prevent old cached data from replacing new live data.
+- Owner review: pending
