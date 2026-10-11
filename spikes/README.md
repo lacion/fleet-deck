@@ -6,7 +6,7 @@ These crates de-risk PLAN §14 Phase 0. They never ship. The product crates (Pha
 | --- | --- | --- | --- |
 | shared | `spike-canon/` | Spike subset of the canonical events (PLAN §6.3) | — |
 | S1 | `s1-claude/` | Claude Code stream-json control protocol from Rust (A8, D8) | `docs/v2/adr/ADR-001-native-claude-adapter.md` (Proposed) |
-| S2 | `s2-codex/` | Codex app-server JSON-RPC from Rust | `docs/v2/adr/ADR-002-*.md` |
+| S2 | `s2-codex/` | Codex app-server JSON-RPC from Rust | [`docs/v2/adr/ADR-002-native-codex-adapter.md`](../docs/v2/adr/ADR-002-native-codex-adapter.md) |
 | S4 | `s4-link/` (planned) | Link protocol v1 (mTLS, pairing, channels, reconnect) | `docs/v2/adr/ADR-004-*.md` |
 
 ## Offline commands (no network, no provider CLI)
@@ -72,7 +72,7 @@ cargo run -p s2-codex --bin replay-codex -- --events spikes/s2-codex/fixtures/si
 The same checks and the adapter evidence (prompt confirmation, restart survival, native option ids, held interrupt) run as tests:
 
 ```sh
-cargo nextest run -p s2-codex --test replay_fixtures --test evidence --test fixture_hygiene
+cargo nextest run -p s2-codex --test replay_fixtures --test evidence --test fixture_hygiene --test schema_methods --test schema_conformance
 ```
 
 Codex supports all 8 shared scenarios of PLAN §13 (`simple`, `multi_turn`, `queued_turn`, `turn_interrupt`, `message_steering`, `provider_thread_resume`, `tool_call_approve`, `tool_call_deny`). No shared scenario is unsupported. Two need a note:
@@ -81,6 +81,8 @@ Codex supports all 8 shared scenarios of PLAN §13 (`simple`, `multi_turn`, `que
 - `tool_call_deny`: under `untrusted` Codex 0.160.0 offers `accept`, `acceptWithExecpolicyAmendment` and `cancel` for a command, and no `decline`. The recorder denies with `cancel` (DL-015).
 
 Extra Codex fixtures: `question_rpc` (L4 RPC question), `plan_capture`, `file_change`, `interrupt_during_tool`, `interrupt_right_after_send` (trap 3), `set_mode`, `approval_restart` (open approval across a kill and `thread/resume`).
+
+The second L4 question channel (an `agentMessage` with `delivery: "async"` questions, answered by a new user message) has no live fixture: in 0.160.0 its tool is behind the under-development feature `send_message_to_user_async`, and the model cannot call it. The unit test `async_questions_are_answered_by_a_new_message` and the schema test `async_question_fields_exist_in_the_schema` cover it (ADR-002 §2.6).
 
 ### Fixture format
 

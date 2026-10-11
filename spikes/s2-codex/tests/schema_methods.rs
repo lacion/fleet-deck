@@ -94,3 +94,20 @@ fn approval_decisions_match_the_schema() {
         );
     }
 }
+
+/// L4 message channel: `agentMessage` items can carry `delivery: "async"` and
+/// `questions`. The core reads these fields (`on_async_questions`); 0.160.0
+/// gates the tool behind an under-development feature, so this channel has a
+/// unit test and this schema check, not a live fixture (ADR-002 §2.5).
+#[test]
+fn async_question_fields_exist_in_the_schema() {
+    let text = std::fs::read_to_string(SCHEMA).unwrap();
+    for name in [
+        "AsyncUserInputQuestion",
+        "AgentMessageDelivery",
+        "\"questions\"",
+        "\"delivery\"",
+    ] {
+        assert!(text.contains(name), "{name} not in the schema");
+    }
+}

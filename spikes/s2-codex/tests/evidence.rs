@@ -8,7 +8,9 @@ use std::path::Path;
 
 use s2_codex::replay::{ReplayReport, replay};
 use spike_canon::fixture::{Fixture, Record};
-use spike_canon::{CanonEvent, InputState, ResponseChannel, ToolStatus, TurnStatus};
+use spike_canon::{
+    CanonEvent, FileChange, InputState, RequestKind, ResponseChannel, ToolStatus, TurnStatus,
+};
 
 fn load(name: &str) -> Fixture {
     let p = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("fixtures/{name}.jsonl"));
@@ -204,4 +206,139 @@ fn an_interrupt_during_a_tool_ends_both() {
         input_states(&r, "fd-in-1").last(),
         Some(&InputState::Cancelled)
     );
+}
+
+/// S2 must prove `initialize` + `thread/start`: the core reads the provider
+/// version from the `initialize` reply and starts the session on the reply to
+/// `thread/start`.
+#[test]
+fn initialize_and_thread_start_open_the_session() {
+    let r = run("simple");
+    assert!(matches!(
+        &r.events[0],
+        CanonEvent::SessionStarted { provider, provider_version, mode, .. }
+            if provider == "codex"
+                && provider_version.as_deref() == Some("0.160.0")
+                && mode.as_deref() == Some("untrusted/workspace-write")
+    ));
+}
+
+/// S2 must prove `thread/resume`: a new process resumes the same thread id,
+/// and the model keeps the context of the first process.
+#[test]
+fn thread_resume_keeps_the_thread_and_its_context() {
+    let r = run("provider_thread_resume");
+    assert_eq!(r.processes, 2);
+    let threads: Vec<_> = r
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            CanonEvent::SessionStarted { provider_refs, .. } => {
+                provider_refs.get("thread_id").cloned()
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(threads.len(), 2);
+    assert_eq!(threads[0], threads[1], "the same thread after resume");
+    let last = r.events.iter().rev().find_map(|e| match e {
+        CanonEvent::MessageCompleted { text, .. } => Some(text.as_str()),
+        _ => None,
+    });
+    assert_eq!(last, Some("maple"));
+}
+
+/// S2 must prove both approval requests: the file-change approval
+/// (`item/fileChange/requestApproval`) has its own kind and native options.
+#[test]
+fn file_change_approvals_use_native_decisions() {
+    let r = run("file_change");
+    let (kind, options) = r
+        .events
+        .iter()
+        .find_map(|e| match e {
+            CanonEvent::ApprovalRequested {
+                request_kind,
+                options,
+                ..
+            } => Some((
+                *request_kind,
+                options
+                    .iter()
+                    .map(|o| o.option_id.clone())
+                    .collect::<Vec<_>>(),
+            )),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(kind, RequestKind::FileChange);
+    assert!(
+        options.starts_with(&["accept".to_owned(), "acceptForSession".to_owned()]),
+        "{options:?}"
+    );
+    let command = run("tool_call_approve");
+    assert!(command.events.iter().any(|e| matches!(
+        e,
+        CanonEvent::ApprovalRequested {
+            request_kind: RequestKind::Command,
+            ..
+        }
+    )));
+}
+
+/// S2 must prove diff notifications: `item/completed` (fileChange) and
+/// `turn/diff/updated` report the same file; the core reports it once.
+#[test]
+fn diff_notifications_report_each_file_once() {
+    let fx = load("file_change");
+    let diffs = fx
+        .records
+        .iter()
+        .filter(|r| matches!(r, Record::Out { frame } if frame["method"] == "turn/diff/updated"))
+        .count();
+    assert!(
+        diffs >= 1,
+        "the fixture has turn/diff/updated notifications"
+    );
+    let r = replay(&fx).unwrap();
+    let changes: Vec<_> = r
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            CanonEvent::FileChanged { path, change } => Some((path.as_str(), *change)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(changes, [("<workdir>/fd-edit.txt", FileChange::Added)]);
+}
+
+/// Plan capture: plan mode (`collaborationMode`) reports the plan item.
+#[test]
+fn plan_mode_reports_the_plan() {
+    let r = run("plan_capture");
+    assert!(
+        r.events
+            .iter()
+            .any(|e| matches!(e, CanonEvent::PlanProposed { markdown } if !markdown.is_empty()))
+    );
+}
+
+/// §6.4 reconciliation source: the `thread/resume` reply lists the earlier
+/// turns with their `userMessage` items and client ids (positive evidence).
+#[test]
+fn the_resume_reply_lists_earlier_prompts_by_client_id() {
+    let fx = load("provider_thread_resume");
+    let client_ids: Vec<String> = fx
+        .records
+        .iter()
+        .filter_map(|r| match r {
+            Record::Out { frame } => frame["result"]["thread"]["turns"].as_array().cloned(),
+            _ => None,
+        })
+        .flatten()
+        .flat_map(|t| t["items"].as_array().cloned().unwrap_or_default())
+        .filter(|i| i["type"] == "userMessage")
+        .filter_map(|i| i["clientId"].as_str().map(str::to_owned))
+        .collect();
+    assert_eq!(client_ids, ["fd-in-1"]);
 }

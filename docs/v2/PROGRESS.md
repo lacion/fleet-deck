@@ -14,7 +14,7 @@ Rules for this file: one checklist item per M1 deliverable, in PLAN order. Each 
 - [x] **S1-5 ADR-001** (Proposed): native Claude adapter design, effect states and crash boundaries (§6.4), fixture set, unsupported scenarios with reasons. *(round 5: `docs/v2/adr/ADR-001-native-claude-adapter.md`; 7 extra recordings for the matrix rows; `tests/capabilities.rs`; EVIDENCE.md E7; DL-010, DL-011)*
 - [x] **S2-1 Codex protocol core.** ADR-002 option evaluation (git pin of `codex-app-server-protocol` vs codegen from `codex app-server generate-json-schema`); JSON-RPC framing; sans-IO core: initialize, `thread/start`, `turn/start`, both approval requests, questions (L4), `turn/interrupt`, `thread/resume`, diff notifications. *(round 6: `spikes/s2-codex` with `rpc` + `adapter` (mod/map/requests/host); option evaluation → DL-012 (vendored schema `schema/0.160.0/`, `tests/schema_methods.rs`); experimental API + mode names → DL-013; 23 tests)*
 - [x] **S2-2 Codex live driver + `record-codex` + fixtures** for the §13 shared scenarios Codex supports (unsupported ones listed with reasons); restart survival experiment. *(round 7: 8 shared + 7 extra fixtures, none unsupported; `replay-codex` and evidence tests done early)*
-- [~] **S2-3 Codex replay + `replay-codex` + ADR-002** (Proposed) with effect states and crash boundaries. *(round 7: replay + `replay-codex` + evidence tests done; ADR-002 remains)*
+- [x] **S2-3 Codex replay + `replay-codex` + ADR-002** (Proposed) with effect states and crash boundaries. *(round 7: replay + `replay-codex` + evidence tests; round 8: ADR-002, schema conformance, both question channels)*
 - [ ] **S4-1 Link identity + address rules.** Ed25519 identity keys, self-signed certs from them, mTLS with pinned-key verifiers, D13 address rules (loopback, RFC 1918, ULA, link-local, Tailscale ranges; reject public at bind and dial) as unit tests.
 - [ ] **S4-2 Link handshake + channels.** `Hello` with `proto_min/max`, feature flags, roles, `link_epoch`, nonce; transcript signature bound to the TLS exporter; version negotiation; control channel (frames of §8.3) and data channel (multiplexed streams, credit flow control).
 - [ ] **S4-3 Link pairing + reconnect.** `fdinv1:` invitations both directions (single use, 15 min, fingerprint-bound, secret proof bound to TLS); jittered backoff reconnect; duplicate link (`link_epoch`) rule; station-only-dials (NAT) case; multi-process loopback test with separate data dirs.
@@ -167,3 +167,24 @@ Rules for this file: one checklist item per M1 deliverable, in PLAN order. Each 
   - `cargo run -p s2-codex --bin replay-codex` → 15 ok, unknown=0
   - `cargo run -p s1-claude --bin replay-claude` → 29 ok, unknown=0
 - Next: S2-3 ADR-002.
+
+### Round 8 (2026-10-11)
+
+- Committed round 7 as `7453425`.
+- S2-3: `docs/v2/adr/ADR-002-native-codex-adapter.md` (Status Proposed): protocol source (DL-012), process model, host commands, frame → event map, approvals, **both L4 question channels** (RPC reply for `item/tool/requestUserInput`; new user message for `agentMessage` async questions), fail-closed rules, idempotence, modes, interrupt, resume, traps 1–10, **effect states** (what "confirmed" means per effect), **crash boundaries** with one-sided history lookup (client id found → confirmed; not found → stays `outcome_unknown`; never auto-resend), open requests survive restart: no, fixture set, PLAN §14 S2 coverage table (every cited test exists: checked with a grep loop over the ADR).
+- New tests:
+  - `tests/schema_conformance.rs`: a JSON-schema subset checker validates every recorded frame against the vendored 0.160.0 schema; host writes strictly (`host_writes_conform_strictly`), provider frames for required members and types (`provider_frames_conform`), and a negative test (`the_checker_rejects_a_misspelled_parameter`).
+  - `tests/evidence.rs`: `initialize_and_thread_start_open_the_session`, `thread_resume_keeps_the_thread_and_its_context`, `file_change_approvals_use_native_decisions`, `diff_notifications_report_each_file_once`, `plan_mode_reports_the_plan`, `the_resume_reply_lists_earlier_prompts_by_client_id`.
+  - `tests/schema_methods.rs`: `async_question_fields_exist_in_the_schema`.
+- Core fix found by the new diff test: a scrubbed or already cwd-relative path was joined with the cwd twice; `file_changed` now joins only paths that are relative and do not start with the cwd.
+- Core tests split to stay readable: `src/adapter/tests.rs` (625 lines) and `src/adapter/tests_review.rs` (review regressions).
+- Live probe: `codex app-server --enable send_message_to_user_async` does not give the model the `request_user_input_async` tool in 0.160.0, so the message question channel has no live fixture; the unit test and the schema test cover it (README + ADR-002 §2.6 say so).
+- Commands and results:
+  - `cargo fmt --all --check` → pass
+  - `cargo clippy --workspace --all-targets -- -D warnings` → pass
+  - `CI=true cargo nextest run --workspace` → 119 passed
+  - `cargo deny check` → advisories ok, bans ok, licenses ok, sources ok
+  - `cargo run -p s2-codex --bin replay-codex` → 15 ok, unknown=0, exit 0
+  - `cargo run -p s1-claude --bin replay-claude` → 29 ok, unknown=0
+  - `web/` checks and TS-types drift → not applicable in M1
+- Next: S4-1 link identity + address rules.

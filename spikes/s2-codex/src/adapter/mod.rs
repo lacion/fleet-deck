@@ -18,6 +18,8 @@ mod map;
 mod requests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_review;
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 

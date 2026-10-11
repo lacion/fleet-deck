@@ -480,8 +480,10 @@ impl CodexCore {
     /// paths and `turn/diff/updated` carries paths relative to the thread cwd,
     /// so relative paths are joined with the cwd before the duplicate check.
     fn file_changed(&mut self, path: &str, change: FileChange) -> Vec<Output> {
+        // A path under the thread cwd counts as absolute; this also holds for a
+        // scrubbed fixture where the cwd is the placeholder `<workdir>`.
         let path = match &self.spec.cwd {
-            Some(cwd) if !path.starts_with('/') => {
+            Some(cwd) if !path.starts_with('/') && !path.starts_with(cwd.as_str()) => {
                 format!("{}/{path}", cwd.trim_end_matches('/'))
             }
             _ => path.to_owned(),
