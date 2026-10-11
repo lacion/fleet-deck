@@ -880,3 +880,12 @@ Format: context, options, choice, reason, owner review.
 - Unchanged: D1–D15, D13 (loopback, private LAN, tailnet, never public), PLAN §8, and every M1/M2 contract. No source, test or tooling file changed.
 - Reason: each finding was a gap in which a correct implementation of the old text could lose data, revert the wrong state, or give authority to an unauthenticated local caller. Exact contracts before code are cheaper than fixes after M3 code. The ADR items need design detail that the PLAN does not hold, so they are required ADR decisions, not PLAN text.
 - Owner review: architect decision; awaits a fresh adversary DESIGN REVIEW before M3 implementation
+
+## DL-073: M3 starts after the design review PASS
+
+- Context: DL-072 corrected the PLAN Revision 3 contracts and required a fresh adversary DESIGN REVIEW before M3 implementation. The adversary DESIGN REVIEW of `3fbc4c5` (subagent `sa-f21ff469`, `gpt-6.1-sol`) gave VERDICT: PASS with no findings. It confirmed that DL-072 items 1–5 are closed (PLAN §6.6 rejected revert, checkpoint boundary, checkpoint scope, revert fence and mixed outcomes; §7.1 and §9 MCP ingress authentication) and that the ADR-005/ADR-006 deferrals are acceptable because the PLAN requires each decision before implementation.
+- Options: (a) start M3 now with the M3 goal loop; (b) wait for the owner.
+- Choice: (a). The owner asked for M2 and M3 to be finished without further questions (2026-10-12). M3 runs as one goal loop of at most 40 rounds (more than the 9 left of the old 50-round M2+M3 budget, because Phases 6–7 need more rounds). Clean-checkout checks run on `/mnt/rust-cow` (btrfs, shared with the kache build cache). Merge to `main` and the `2.0.0` release stay owner steps.
+- Reason: the precondition of DL-072 is met; waiting adds no information.
+- Owner review: pending
+

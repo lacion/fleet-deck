@@ -73,7 +73,8 @@ Sources: PLAN §14 Phases 1–5, GATE-M1 G1–G14, goal acceptance. G13 is P1-5.
 
 M3 = PLAN Phases 6–7. No M3 work has started. The adversary DESIGN REVIEW of the PLAN Revision 3 contracts comes first.
 
-- Revision 3 contracts corrected after the failed adversary DESIGN REVIEW of `4935e26` (five MAJOR findings, DL-072); they wait for a fresh adversary DESIGN REVIEW before M3 implementation.
+- Revision 3 contracts corrected after the failed adversary DESIGN REVIEW of `4935e26` (five MAJOR findings, DL-072, commit `3fbc4c5`).
+- [x] **Design review.** Fresh adversary DESIGN REVIEW of `3fbc4c5` (subagent `sa-f21ff469`, `gpt-6.1-sol`): VERDICT: PASS, no BLOCKER, MAJOR or MINOR findings. All five DL-072 findings are closed by PLAN §6.6 and §7.1/§9; the ADR-005 and ADR-006 deferrals are acceptable. M3 implementation may start (DL-073).
 
 Required hardening items carried from GATE-M2 §6:
 
