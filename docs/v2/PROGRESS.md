@@ -64,8 +64,8 @@ Sources: PLAN §14 Phases 1–5, GATE-M1 G1–G14, goal acceptance. G13 is P1-5.
 - [x] **P5-1 Codex core.** Sans-IO core from `spikes/s2-codex` (vendored schema) mapped to proto events; replays of all Codex fixtures. *(round 34, DL-063)*
 - [x] **P5-2 Codex driver and fake-codex.** Background polling (DL-024), station integration. *(round 35, DL-064)*
 - [x] **P5-3 Capability matrix tests + capability-driven UI.** Every §6.2 row covered for both providers; controls only when capabilities allow them. *(round 36, DL-065)*
-- [ ] **P5-4 Codex board flows.** The Playwright flows for Claude and Codex.
-- [ ] **P5-5 Live smoke tests.** One per provider (real CLI, tiny prompt, temp dir) behind `FD_LIVE_SMOKE=1`, documented; not in the default run.
+- [x] **P5-4 Codex board flows.** The Playwright flows for Claude and Codex. *(round 37, DL-066)*
+- [x] **P5-5 Live smoke tests.** One per provider (real CLI, tiny prompt, temp dir) behind `FD_LIVE_SMOKE=1`, documented; not in the default run. *(round 37, DL-067)*
 - [ ] **M2-F Close-out.** Every exit check named in this file; `make check` on a clean checkout; DECISIONS-LOG complete.
 
 ## M2 round log
@@ -497,6 +497,26 @@ Sources: PLAN §14 Phases 1–5, GATE-M1 G1–G14, goal acceptance. G13 is P1-5.
   - Playwright `web/e2e/spawn.spec.ts` `the mode list follows the capabilities of the chosen provider (P5-3)`.
 - Commands/results: `cargo nextest run -p fleetdeck-providers --test capability_matrix` → 20/20 (1 ignored dump helper); `bun run typecheck`, `bun run lint`, `bun run test` (75 pass), `bun run build`, `bun run e2e` (12 passed); `make check` → all 14 commands passed: fmt, clippy, nextest 821/821 (1 skipped: the ignored `dump` helper), cargo deny, `ts_drift`, frozen offline `bun install`, web typecheck, lint, web test, web build, scripted e2e, real-process e2e:real, Claude replay, Codex replay 18/18 (log `/tmp/fd-mc-r36a.log`, `EXIT=0`).
 - Status: P5-3 complete; this round's changes remain uncommitted for review. Next: P5-4 Codex board flows (real-process Playwright flows with `fake-codex sim` next to Claude), P5-5 opt-in live smoke tests, M2-F close-out. No push, PR, main merge, release, v0 change or agent permission change occurred.
+
+### M2 round 37: P5-4 Codex board flows and P5-5 live smoke tests (P5-4, P5-5 complete)
+
+- Start: round-36 `make check` finished green (all 14 commands, nextest 821/821, `/tmp/fd-mc-r36a.log` `EXIT=0`); the `MAKE_CHECK_RESULT` placeholder in the round-36 entry was replaced with that result, and the round-36 work was committed as f479fcb.
+- Implemented (DL-066):
+  - `web/e2e-real/fleet.ts`: every real-process station has a `fake-codex` instance (driver `codex`, scenario `sim`, own stdin log) next to `fake-claude`; `Station.run(prompt, provider)`; `Station.codexInput()` (turn texts, steer texts, methods, approval answers).
+  - `web/e2e-real/board.ts`: `Phone` (phone context with routed board sockets; status, live, card, station card, fits width, fleet, pair, spawn with a chosen provider, open, `expectRouted`) and `stationSessions`.
+  - `web/e2e-real/codex.spec.ts`: the MVP flows with Codex sessions on their own deck and two stations.
+- Named tests (`web/e2e-real/codex.spec.ts`, 8, phone 390×844, real deck + two real stations):
+  - `the board pairs both stations and lists their Claude and Codex agents`
+  - `the spawn form offers the Codex modes that the station reports`
+  - `a Codex session on alpha asks for an approval that the needs-you rail answers` (rail `echo hi`, `Allow once`, `Shell · echo hi`, `ran: echo hi`, card `Instance: fake-codex`)
+  - `a Codex turn on bravo takes a steer into the running turn, then an interrupt` (follow-up note from `native_follow_up: false`, `steered: after the stop`, `Turn interrupted.`)
+  - `the board survives a deck restart and shows Codex work done meanwhile` (stale controls off; `station run --provider fake-codex` while away; deck rows start 2, answer 1, steer 1, prompt 1, interrupt 1, each `done` after 1 delivery; Codex input: each turn, steer and answer once; no Claude input)
+  - `the phone drops its network, catches up, and drives a Codex session again`
+  - `a station link drop shows the station unreachable until it returns` (nothing resent)
+  - `a Codex background command shows on the card until the station poll sees it end` (`Background tasks: 1`, then gone; ≥ 2 `thread/backgroundTerminals/list`)
+- P5-5 implemented (DL-067): `crates/fleetdeck-providers/tests/live_smoke.rs` (`live_claude_smoke`, `live_codex_smoke`: real CLI, probe, one `pong` turn in a temporary directory in the safest mode, graceful stop; `#[ignore]` and `FD_LIVE_SMOKE=1`); `Makefile` target `smoke-live`; `docs/v2/LIVE-SMOKE.md`.
+- Commands/results: `bun run e2e:real` → 14 passed (8 Codex + 6 Claude MVP, 19.6 s); `bun run typecheck` ok; `bun run lint` ok (52 files); `cargo nextest run -p fleetdeck-providers --test live_smoke` → 0 run, 2 skipped (not in the default run); `cargo test -p fleetdeck-providers --test live_smoke -- --ignored` without the flag → both print `skipped`; `make smoke-live` (opt-in, run once) → 2 passed in 7.1 s (claude 2.1.289 signed in `oauth_token`, 9 events; codex 0.160.0 signed in `chatgpt`, 10 events); `make check` → all 14 commands passed: fmt, clippy, nextest 821/821 (3 skipped: the two live smoke tests and the `dump` helper, all `#[ignore]`), cargo deny, `ts_drift`, frozen offline `bun install`, web typecheck, lint, web test (75 pass), web build, scripted e2e (12 passed), real-process e2e:real (14 passed), Claude replay, Codex replay (log `/tmp/fd-mc-r37a.log`, `EXIT=0`).
+- Status: P5-4 and P5-5 complete; this round's changes remain uncommitted for review. Next: M2-F close-out (every exit check named here, `make check` on a clean checkout, DECISIONS-LOG complete). No push, PR, main merge, release, v0 change or agent permission change occurred.
 
 ## M1 checklist (complete)
 

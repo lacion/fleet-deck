@@ -1,7 +1,7 @@
 # Fleet Deck v2 checks. `make check` is the one acceptance command (goal-mode
 # reviewers may run `make check` and `cargo test`, but not other cargo tools).
 # It is offline: see tools/check.sh for the one-time cache fill.
-.PHONY: check check-spikes test test-web ts-types
+.PHONY: check check-spikes test test-web ts-types smoke-live
 # Every check of the M2 goal: fmt, clippy, nextest, deny, TS-types drift,
 # web typecheck + lint + test + build, and every recorded replay (G13).
 check:
@@ -21,3 +21,8 @@ test-web:
 # The drift test `fleetdeck-proto::ts_drift` fails until the output is committed.
 ts-types:
 	cargo run -q -p fleetdeck-proto --example export_ts -- web/src/gen
+# Opt-in live smoke tests (P5-5, DL-067): the real `claude` and `codex` CLIs,
+# one tiny prompt each in a temporary directory. Not part of `make check`;
+# needs signed-in CLIs and network. See docs/v2/LIVE-SMOKE.md.
+smoke-live:
+	FD_LIVE_SMOKE=1 timeout 900 cargo test -p fleetdeck-providers --test live_smoke -- --ignored --nocapture --test-threads 1

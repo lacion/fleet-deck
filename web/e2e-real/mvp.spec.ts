@@ -1,7 +1,8 @@
 // M2 P4-5: the MVP flows on a phone viewport against real processes. One
 // `fleetdeck deck serve` and two `fleetdeck station serve` processes run on
 // temporary nodes; `alpha` listens and the deck dials it, `bravo` dials the
-// deck. Both stations run the offline `fake-claude sim` agent.
+// deck. Both stations run the offline `fake-claude sim` agent (and offer
+// `fake-codex`, whose flows are in `codex.spec.ts`).
 //
 // The steps share one fleet and one phone page, in order: pairing from the
 // board, spawn on each station, an approval from the needs-you rail, steer and

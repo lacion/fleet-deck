@@ -1,7 +1,8 @@
 // Real processes for the P4-5 browser flows: one `fleetdeck deck serve` and
 // two `fleetdeck station serve` processes on temporary nodes, each with its
-// own home and data directory. Stations run the offline `fake-claude sim`
-// agent, so no provider account or network is used.
+// own home and data directory. Stations run the offline `fake-claude sim` and
+// `fake-codex app-server` (`sim`) agents, so no provider account or network is
+// used.
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
 import {
   closeSync,
@@ -25,8 +26,11 @@ export const BIN_DIR = resolve(
 );
 const FLEETDECK = join(BIN_DIR, 'fleetdeck');
 const FAKE_CLAUDE = join(BIN_DIR, 'fake-claude');
-/** The fake agent's provider instance id in station.toml. */
+const FAKE_CODEX = join(BIN_DIR, 'fake-codex');
+/** The fake Claude agent's provider instance id in station.toml. */
 export const PROVIDER = 'fake-claude';
+/** The fake Codex agent's provider instance id in station.toml (P5-4). */
+export const CODEX = 'fake-codex';
 const WAIT_MS = 20_000;
 /** The branch that each station workspace reports (`.git/HEAD`). */
 export const BRANCH = 'fd/e2e';
@@ -184,16 +188,33 @@ export type ProviderInput = {
   answers: number;
 };
 
-/** A station with the `fake-claude sim` agent and `~/projects/demo`. */
+/** What a station's Codex agents read on stdin (JSON-RPC from the driver,
+ * every process of the station including the sign-in probe). */
+export type CodexInput = {
+  /** The text of every `turn/start`, in order. */
+  turns: string[];
+  /** The text of every `turn/steer`, in order. */
+  steers: string[];
+  /** Requests and notifications by method (`turn/interrupt`, ...). */
+  methods: Record<string, number>;
+  /** Answers to the agent's approval requests. */
+  answers: number;
+};
+
+/** A station with the `fake-claude sim` and `fake-codex` agents and
+ * `~/projects/demo`. */
 export class Station extends Node {
   readonly workspace: string;
   /** `fake-claude sim` appends every stdin line here (one file for all of
    * the station's agent processes). */
   readonly stdinLog: string;
+  /** The same for the `fake-codex` processes. */
+  readonly codexLog: string;
 
   constructor(name: string) {
     super(name, ['station', 'serve'], ['station', 'sessions']);
     this.stdinLog = join(this.root, 'agent-stdin.jsonl');
+    this.codexLog = join(this.root, 'codex-stdin.jsonl');
     this.workspace = join(this.home, 'projects', 'demo');
     mkdirSync(join(this.workspace, '.git'), { recursive: true });
     writeFileSync(join(this.workspace, '.git', 'HEAD'), `ref: refs/heads/${BRANCH}\n`);
@@ -211,14 +232,38 @@ export class Station extends Node {
         `binary = "${FAKE_CLAUDE}"`,
         `env = { FLEETDECK_FAKE_SCENARIO = "sim", FLEETDECK_FAKE_STDIN_LOG = "${this.stdinLog}" }`,
         '',
+        '[[provider_instance]]',
+        `id = "${CODEX}"`,
+        'driver = "codex"',
+        `binary = "${FAKE_CODEX}"`,
+        `env = { FLEETDECK_FAKE_SCENARIO = "sim", FLEETDECK_FAKE_STDIN_LOG = "${this.codexLog}" }`,
+        '',
       ].join('\n'),
     );
   }
 
   /** `station run`: a session started on the station itself, without the
    * deck. Returns the new session id. */
-  run(prompt: string): string {
-    return this.cli(['station', 'run', '--provider', PROVIDER, '--cwd', this.workspace, prompt]);
+  run(prompt: string, provider: string = PROVIDER): string {
+    return this.cli(['station', 'run', '--provider', provider, '--cwd', this.workspace, prompt]);
+  }
+
+  /** Every JSON-RPC frame that the station wrote to its Codex agents. */
+  codexInput(): CodexInput {
+    const input: CodexInput = { turns: [], steers: [], methods: {}, answers: 0 };
+    if (!existsSync(this.codexLog)) return input;
+    const text = (params: { input?: { text?: string }[] } | undefined) =>
+      String(params?.input?.find((i) => typeof i.text === 'string')?.text);
+    for (const line of readFileSync(this.codexLog, 'utf8').split('\n')) {
+      if (!line.startsWith('{')) continue;
+      const frame = JSON.parse(line);
+      if (typeof frame.method === 'string') {
+        input.methods[frame.method] = (input.methods[frame.method] ?? 0) + 1;
+        if (frame.method === 'turn/start') input.turns.push(text(frame.params));
+        if (frame.method === 'turn/steer') input.steers.push(text(frame.params));
+      } else if (frame.result?.decision !== undefined) input.answers += 1;
+    }
+    return input;
   }
 
   /** Every frame that the station wrote to its agents, grouped. A command
