@@ -80,7 +80,7 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
           {state.error}
         </p>
       ) : null}
-      <App sessions={state.sessions.map((session) => session.summary)} />
+      <App sessions={state.sessions} stations={state.stations} freshness={state.freshness} />
     </>
   );
 }

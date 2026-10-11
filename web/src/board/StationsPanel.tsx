@@ -1,0 +1,87 @@
+import type { DeckSession, StationView } from '../gen';
+import type { Freshness } from '../runtime/state';
+import { lastSeen, observedProviders } from './fleet';
+
+type Props = {
+  readonly stations: readonly StationView[];
+  readonly sessions: readonly DeckSession[];
+  readonly freshness: Freshness;
+};
+
+/** Link health and board freshness are different facts. Never invent metadata. */
+export function StationsPanel({ stations, sessions, freshness }: Props) {
+  return (
+    <section className="fd-stations" aria-label="Stations">
+      <h2>
+        Stations <span className="fd-count">{stations.length}</span>
+      </h2>
+      {stations.length === 0 ? <p>No paired stations.</p> : null}
+      <ul className="fd-station-list">
+        {stations.map((station) => {
+          const cards = sessions.filter((card) => card.station_id === station.station_id);
+          const providers = observedProviders(cards, station.station_id);
+          const active = cards.filter((card) =>
+            ['starting', 'running', 'stopping'].includes(card.summary.state),
+          ).length;
+          return (
+            <li className="fd-station" key={station.station_id} data-station={station.station_id}>
+              <h3>{station.name}</h3>
+              <p
+                className="fd-health"
+                data-health={freshness === 'stale' ? 'stale' : station.reachable ? 'up' : 'down'}
+              >
+                {freshness === 'stale'
+                  ? 'Stale link status'
+                  : station.reachable
+                    ? 'Link up'
+                    : 'Unreachable'}
+              </p>
+              {freshness === 'stale' ? (
+                <p>Last reported: {station.reachable ? 'link up' : 'unreachable'}.</p>
+              ) : null}
+              <dl>
+                <dt>Station ID</dt>
+                <dd>{station.station_id}</dd>
+                <dt>Key fingerprint</dt>
+                <dd>{station.key}</dd>
+                <dt>Direction</dt>
+                <dd>
+                  {station.direction === 'deck_dials'
+                    ? 'Deck dials station'
+                    : station.direction === 'station_dials'
+                      ? 'Station dials deck'
+                      : 'Unknown'}
+                </dd>
+                <dt>Link address</dt>
+                <dd>{station.dial_url ?? 'Dial-only station; no stored address'}</dd>
+                <dt>Last seen (UTC)</dt>
+                <dd>{lastSeen(station.last_seen)}</dd>
+                <dt>Event cursor</dt>
+                <dd>{station.cursor}</dd>
+                <dt>Observed active sessions</dt>
+                <dd>{active}</dd>
+                <dt>Configured capacity</dt>
+                <dd>Not reported</dd>
+                <dt>Station version</dt>
+                <dd>Not reported</dd>
+              </dl>
+              <h4>Providers observed in sessions</h4>
+              {providers.length === 0 ? (
+                <p>No provider sessions reported.</p>
+              ) : (
+                <ul>
+                  {providers.map((provider) => (
+                    <li key={provider}>{provider}</li>
+                  ))}
+                </ul>
+              )}
+              <p className="fd-note">
+                Observed providers are not the configured provider inventory.
+              </p>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}

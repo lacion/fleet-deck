@@ -29,7 +29,7 @@ body {
 
 .fd-board {
   display: grid;
-  grid-template-columns: repeat(5, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
   gap: var(--sp-3);
   padding: var(--sp-4);
 }
@@ -111,6 +111,117 @@ body {
   font-family: var(--font-data);
   font-size: var(--fs-micro);
   color: var(--dim);
+}
+
+.fd-app button,
+.fd-app input,
+.fd-app select {
+  font: inherit;
+  min-height: var(--tap-min);
+  padding: var(--sp-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  background: var(--raised);
+  color: var(--text);
+  max-width: 100%;
+}
+.fd-app button {
+  cursor: pointer;
+}
+.fd-app button:focus-visible,
+.fd-app input:focus-visible,
+.fd-app select:focus-visible {
+  outline: 2px solid var(--act);
+  outline-offset: 2px;
+}
+.fd-header {
+  flex-wrap: wrap;
+}
+.fd-header nav {
+  display: flex;
+  gap: var(--sp-2);
+}
+.fd-header button[aria-pressed="true"] {
+  border-color: var(--act);
+}
+.fd-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4);
+}
+.fd-filters label {
+  display: grid;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+.fd-filters output {
+  padding: var(--sp-2);
+}
+.fd-card,
+.fd-station {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.fd-card-line,
+.fd-tools {
+  width: 100%;
+  margin: 0;
+  font-size: var(--fs-micro);
+}
+.fd-tools {
+  padding-left: var(--sp-4);
+}
+.fd-usage,
+.fd-note {
+  color: var(--dim);
+}
+.fd-station-badge {
+  border: 1px solid var(--border);
+  border-radius: var(--r-chip);
+  padding: var(--sp-1);
+  font-size: var(--fs-micro);
+}
+.fd-health[data-health="down"],
+.fd-health[data-health="stale"] {
+  color: var(--act);
+}
+.fd-stations {
+  padding: var(--sp-4);
+}
+.fd-station-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
+  gap: var(--sp-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.fd-station {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-panel);
+  padding: var(--sp-3);
+}
+.fd-station dl {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: var(--sp-2);
+}
+.fd-station dd {
+  margin: 0;
+}
+.fd-station dt {
+  color: var(--dim);
+}
+@media (max-width: 640px) {
+  .fd-filters label {
+    width: 100%;
+  }
+  .fd-station dl {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Phone: one column; lanes stack with "Needs you" first. */

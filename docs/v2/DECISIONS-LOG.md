@@ -690,3 +690,16 @@ Format: context, options, choice, reason, owner review.
   - Validate the wire fields that the runtime reads before reducing them. Reject malformed projections and unsafe sequence numbers. Keep unknown canonical event kinds readable, as L16 requires. This is not a second provider protocol parser.
 - Reason: one page-owned runtime prevents duplicate retries and one-time login consumption. Injected fakes prove reconnection without network or wall-clock waits. Timer and cache bounds protect a phone from stalled connections and unbounded streamed text. Generation and incarnation fences prevent old cached data from replacing new live data.
 - Owner review: pending
+
+
+## DL-058: Fleet identity, deck status lanes and honest station presentation (M2 round 30, P4-2a)
+
+- Context: the skeleton board accepts bare session summaries. That loses the station ID and the deck status projection. PLAN §7.2 requires queued, working, verifying, needs-you, idle, ended, unreachable and lost states. PLAN §11 requests station details that the current board wire contract does not yet report.
+- Options: (a) retain the full `DeckSession` and present only known facts; (b) continue grouping bare summaries and estimate station metadata from sessions.
+- Choice: (a). Use `[station_id, session_id]` as the React card key. Group by the deck's `CardStatus`, not the station's summary activity. Put needs-you first, followed by queued, working, verifying, idle, ended, unreachable and lost. Show the last activity on an unreachable card. Keep background task counts as a separate badge, not a replacement status lane.
+  - Read fleet and stations from one runtime snapshot. Add in-memory station/provider/search filters and a clear action. Search title, session/station IDs, station name, workspace, model and provider instance, without case sensitivity. Do not mutate runtime projections or create another connection. Keep removed selected station IDs explicit instead of silently selecting all stations.
+  - Show cached card and station data during an outage. Label stale station link status separately from its last reported reachability. Show last-seen time in UTC; distinguish no previous link from Unix epoch zero.
+  - Show observed provider instances and versions from session summaries under an explicit observed-data heading. Do not call those values the configured provider inventory. Count active process states (`starting`, `running`, `stopping`) separately from configured capacity. Mark missing station version, capacity and branch data as not reported until the station reports them. These placeholders do not satisfy P4-2; metadata and pairing stay unchecked in PROGRESS.md.
+  - Use existing tokens, minimum tap sizes, responsive lanes and wrapped paths. Add no dependencies or browser credential storage. Escape untrusted text through React, never inject HTML.
+- Reason: station-scoped identity prevents card collisions across a fleet. The deck knows link and process loss; summary activity alone cannot represent those states. Clear stale and unknown labels prevent the board from making false health, inventory or capacity claims while the metadata path is unfinished.
+- Owner review: pending
