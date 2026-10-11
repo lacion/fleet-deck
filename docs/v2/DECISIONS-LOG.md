@@ -578,3 +578,19 @@ Format: context, options, choice, reason, owner review.
   - A station's `station_id` is its fingerprint at pairing; a rotation changes `key` and `fingerprint` and keeps the id, name, cursor and read model, and increments the revocation generation (G5). Station names are unique; without a name from `deck add-station` the name is the short fingerprint. The deck pairs only with stations (a deck key is refused in the pairing sink).
 - Reason: one fold for station and deck keeps the card and the station's own view equal; the summary is what a snapshot carries, so a snapshot alone gives the correct status. A stable id keeps commands, receipts and the board's URLs valid across a key rotation.
 - Owner review: pending
+
+## DL-050: Deck link runtime: station grants, names, the first sync, and the deck's local socket (M2 round 22, P3-6b)
+
+- Date: 2026-10-11 (M2 round 22)
+- Context: PLAN §8.5 gives the pairing commands (`deck invite`, `deck add-station`, `deck remove-station`) and §8.3 the per-method scopes, but not the scopes that a deck grants to a station, how a station that dials in gets its name, what the first sync of a new station is, or how the CLI talks to a running deck. The board API (P3-9) is not built yet, so the read model needs another view for tests.
+- Options: (a) grant the station every scope; (b) grant only the scopes of the station-to-deck methods that this build serves. Name: (1) ask for a name at `deck invite`; (2) store the short fingerprint and adopt the name of `station.info` at the first link. CLI: (i) the board API; (ii) an owner-only local socket `deck.sock`, the same line protocol as `station.sock`.
+- Choice: (b), (2), (ii).
+- Details:
+  - `STATION_SCOPES = [admin]`: the only station-to-deck method that this build serves is `link.rotate_key`. `coordinator.query` / `coordinator.call` (`coordinate`) come with the coordinator API (M3); the deck answers every station request with `not_implemented` until then.
+  - A station pinned without a name (the dialing station of `deck invite`, or `deck add-station` without `--name`) is stored under its short fingerprint. At its first link the deck asks `station.info` and renames the station to the station.toml name if that name is free. `deck add-station` waits up to 3 s for that first link so that it can print the name.
+  - The deck knows no incarnation of a new station, so the first sync is a snapshot batch (G4). The condensed timeline starts after the snapshot watermark: the events before pairing are in the station's summaries, not in the deck timeline. Later links replay from the stored cursor; the deck acknowledges only the committed cursor.
+  - `deck.sock` (0600, owner uid check) serves `invite`, `add_station`, `stations`, `remove_station` and `sessions` (the read model with the projected status). The new CLI commands `fleetdeck deck sessions [--json]` and `deck stations --json` read it; `deck add-station` accepts `--name`. The board listen address of `deck serve --listen` is ignored with a warning until P3-9.
+  - `deck invite` needs a link listener (`link_listen` in deck.toml); without one it fails with "the deck has no link listener".
+  - The line protocol of the two local sockets moved to `fleetdeck_core::localsock` (bind 0600, peer uid check, 64 KiB line limit, error text without the request body).
+- Reason: least privilege for the station key (doctrine: fail closed); the station.toml name is the name that the owner chose, and no prompt is needed on the deck; the local socket keeps the pairing secret off the network and off the command line (G12), as on the station.
+- Owner review: pending

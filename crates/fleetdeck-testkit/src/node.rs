@@ -91,7 +91,15 @@ impl TempNode {
 
     /// Writes `station.toml` (mode 0600) and returns its path.
     pub fn write_station_toml(&self, text: &str) -> io::Result<PathBuf> {
-        let path = self.dirs.station_config();
+        self.write_config(self.dirs.station_config(), text)
+    }
+
+    /// Writes `deck.toml` (mode 0600) and returns its path.
+    pub fn write_deck_toml(&self, text: &str) -> io::Result<PathBuf> {
+        self.write_config(self.dirs.deck_config(), text)
+    }
+
+    fn write_config(&self, path: PathBuf, text: &str) -> io::Result<PathBuf> {
         if let Some(parent) = path.parent() {
             ensure_private_dir(parent)?;
         }

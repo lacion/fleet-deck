@@ -12,16 +12,16 @@
 //! request; a line is at most [`MAX_LINE_BYTES`].
 
 use std::io;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use fleetdeck_core::localsock::{self, BindError, LineClient, read_line, send};
 use fleetdeck_proto::command::{
     ApprovalDecision, CommandEnvelope, CommandOrigin, RETRY_WINDOW_MS, Receipt, SessionCommand,
 };
 use fleetdeck_proto::{CommandId, RequestId, SessionSummary};
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::BufReader;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::watch;
 
@@ -30,7 +30,7 @@ use crate::manager::SessionManager;
 use crate::store::Caller;
 
 /// The longest request or response line.
-pub const MAX_LINE_BYTES: usize = fleetdeck_proto::link::MAX_CONTROL_FRAME_BYTES;
+pub const MAX_LINE_BYTES: usize = localsock::MAX_LINE_BYTES;
 /// The socket's file name in the station directory.
 pub const SOCKET_NAME: &str = "station.sock";
 
@@ -66,17 +66,7 @@ pub enum LocalRequest {
     ForgetDeck,
 }
 
-/// An invitation on the local socket. `Debug` never shows it (G12); the
-/// socket is 0600 and accepts only the station's own user.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct InvitationText(pub String);
-
-impl std::fmt::Debug for InvitationText {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("InvitationText(<redacted>)")
-    }
-}
+pub use fleetdeck_core::localsock::InvitationText;
 
 /// The answer to one [`LocalRequest`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -120,25 +110,16 @@ pub enum LocalError {
     },
 }
 
-/// Binds the socket. A stale socket file (no server answers) is replaced;
-/// a live one is an error.
+/// Binds the socket (0600). A stale socket file (no server answers) is
+/// replaced; a live one is an error.
 ///
 /// # Errors
 /// [`LocalError`].
 pub async fn bind(path: &Path) -> Result<UnixListener, LocalError> {
-    let io_err = |source| LocalError::Io {
-        path: path.to_owned(),
-        source,
-    };
-    if path.exists() {
-        if UnixStream::connect(path).await.is_ok() {
-            return Err(LocalError::InUse(path.to_owned()));
-        }
-        std::fs::remove_file(path).map_err(io_err)?;
-    }
-    let listener = UnixListener::bind(path).map_err(io_err)?;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(io_err)?;
-    Ok(listener)
+    localsock::bind(path).await.map_err(|e| match e {
+        BindError::InUse(path) => LocalError::InUse(path),
+        BindError::Io { path, source } => LocalError::Io { path, source },
+    })
 }
 
 /// Serves the local socket until `shutdown` turns true. Without `node`
@@ -149,18 +130,13 @@ pub async fn serve(
     node: Option<Arc<StationNode>>,
     mut shutdown: watch::Receiver<bool>,
 ) {
-    let uid = rustix::process::getuid().as_raw();
     loop {
         tokio::select! {
-            accepted = listener.accept() => match accepted {
-                Ok((stream, _)) => {
-                    let peer = stream.peer_cred().map(|c| c.uid()).ok();
-                    if peer != Some(uid) {
-                        tracing::warn!(?peer, "local socket: a peer of another user was refused");
-                        continue;
-                    }
+            accepted = localsock::accept_own(&listener) => match accepted {
+                Ok(Some(stream)) => {
                     tokio::spawn(connection(stream, Arc::clone(&manager), node.clone()));
                 }
+                Ok(None) => {}
                 Err(e) => tracing::warn!(error = %e, "local socket accept"),
             },
             changed = shutdown.changed() => {
@@ -192,11 +168,7 @@ async fn connection(
             Ok(request) => handle(&manager, node.as_deref(), request).await,
             // serde's message can quote the input; never echo a line that
             // may carry an invitation (G12).
-            Err(e) => error(format!(
-                "bad request at line {} column {}",
-                e.line(),
-                e.column()
-            )),
+            Err(e) => error(localsock::bad_request(&e)),
         };
         if send(&mut write, &response).await.is_err() {
             return;
@@ -289,45 +261,9 @@ async fn handle(
     }
 }
 
-/// Reads one line without its newline; `None` at a clean end.
-async fn read_line<R: AsyncBufReadExt + Unpin>(reader: &mut R) -> io::Result<Option<Vec<u8>>> {
-    let mut line = Vec::new();
-    let limit = u64::try_from(MAX_LINE_BYTES).unwrap_or(u64::MAX) + 1;
-    let n = (&mut *reader)
-        .take(limit)
-        .read_until(b'\n', &mut line)
-        .await?;
-    if n == 0 {
-        return Ok(None);
-    }
-    if line.last() == Some(&b'\n') {
-        line.pop();
-    } else if line.len() > MAX_LINE_BYTES {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("a line is longer than {MAX_LINE_BYTES} bytes"),
-        ));
-    }
-    Ok(Some(line))
-}
-
-async fn send<W, T>(write: &mut W, value: &T) -> io::Result<()>
-where
-    W: AsyncWriteExt + Unpin,
-    T: Serialize,
-{
-    let mut line = serde_json::to_vec(value).map_err(io::Error::other)?;
-    line.push(b'\n');
-    write.write_all(&line).await?;
-    write.flush().await
-}
-
 /// The client side, for the CLI.
 #[derive(Debug)]
-pub struct LocalClient {
-    reader: BufReader<tokio::net::unix::OwnedReadHalf>,
-    writer: tokio::net::unix::OwnedWriteHalf,
-}
+pub struct LocalClient(LineClient);
 
 impl LocalClient {
     /// Connects to the station's socket.
@@ -335,20 +271,7 @@ impl LocalClient {
     /// # Errors
     /// No station serves `path`.
     pub async fn connect(path: &Path) -> io::Result<Self> {
-        let stream = UnixStream::connect(path).await.map_err(|e| {
-            io::Error::new(
-                e.kind(),
-                format!(
-                    "no station answers on `{}` (is `fleetdeck station serve` running?): {e}",
-                    path.display()
-                ),
-            )
-        })?;
-        let (read, writer) = stream.into_split();
-        Ok(Self {
-            reader: BufReader::new(read),
-            writer,
-        })
+        LineClient::connect(path, "station").await.map(Self)
     }
 
     /// Sends one request and reads its response.
@@ -356,14 +279,7 @@ impl LocalClient {
     /// # Errors
     /// The connection failed or the response is not valid.
     pub async fn call(&mut self, request: &LocalRequest) -> io::Result<LocalResponse> {
-        send(&mut self.writer, request).await?;
-        let line = read_line(&mut self.reader).await?.ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "the station closed the socket",
-            )
-        })?;
-        serde_json::from_slice(&line).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+        self.0.call(request).await
     }
 }
 

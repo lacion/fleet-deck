@@ -85,7 +85,8 @@ fn stdin_works_and_a_missing_terminal_is_explained() {
         .unwrap();
     let out = child.wait_with_output().unwrap();
     let err = stderr(&out);
-    assert!(err.contains("not implemented yet"), "{err}");
+    // The invitation was read; `add-station` then needs the running deck.
+    assert!(err.contains("is `fleetdeck deck serve` running?"), "{err}");
     assert!(!err.contains("5ec2e75e"), "{err}");
 
     // No flag and no terminal: no prompt that waits forever.

@@ -26,7 +26,7 @@ pub async fn serve(dirs: &NodeDirs, env: &Env) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn shutdown_signal() {
+pub(crate) async fn shutdown_signal() {
     use tokio::signal::unix::{SignalKind, signal};
     match signal(SignalKind::terminate()) {
         Ok(mut term) => {

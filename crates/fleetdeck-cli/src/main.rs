@@ -1,6 +1,7 @@
 //! `fleetdeck`: the one binary of Fleet Deck v2 (PLAN §1, D2).
 
 mod cli;
+mod deck;
 mod invite;
 mod pairing;
 mod station;
@@ -49,29 +50,35 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             .build()?;
         return runtime.block_on(local_main(local, &dirs, &env));
     }
-    // G12: read and check the invitation first, so its source rules hold
-    // before the deck's pairing command exists (P3-6).
-    if let Command::Deck {
-        command: Some(DeckCommand::AddStation(input)),
-    } = &cli.command
-    {
-        let _invitation = invite::read(input)?;
-    }
-    let (name, phase) = match &cli.command {
-        Command::Up(_) => ("up", 4),
-        Command::Open => ("open", 3),
-        Command::Deck { command } => match command {
-            None | Some(DeckCommand::Serve(_)) => ("deck serve", 3),
-            Some(DeckCommand::Invite) => ("deck invite", 3),
-            Some(DeckCommand::AddStation(_)) => ("deck add-station", 3),
-            Some(DeckCommand::Stations) => ("deck stations", 3),
-            Some(DeckCommand::RemoveStation { .. }) => ("deck remove-station", 3),
-        },
+    let runtime = || {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+    };
+    match &cli.command {
+        Command::Deck { command } => runtime()?.block_on(deck_main(command.as_ref(), &dirs)),
+        Command::Up(_) => anyhow::bail!("`fleetdeck up` is not implemented yet (PLAN Phase 4)"),
+        Command::Open => anyhow::bail!("`fleetdeck open` is not implemented yet (PLAN Phase 3)"),
         Command::Station { .. } => {
             anyhow::bail!("internal error: the station command was not dispatched")
         }
-    };
-    anyhow::bail!("`fleetdeck {name}` is not implemented yet (PLAN Phase {phase})")
+    }
+}
+
+/// The deck commands (P3-6b).
+async fn deck_main(
+    command: Option<&DeckCommand>,
+    dirs: &fleetdeck_core::paths::NodeDirs,
+) -> anyhow::Result<()> {
+    match command {
+        None => deck::serve(dirs, &cli::ServeArgs { listen: None }).await,
+        Some(DeckCommand::Serve(args)) => deck::serve(dirs, args).await,
+        Some(DeckCommand::Invite) => deck::invite(dirs).await,
+        Some(DeckCommand::AddStation(args)) => deck::add_station(dirs, args).await,
+        Some(DeckCommand::Stations { json }) => deck::stations(dirs, *json).await,
+        Some(DeckCommand::Sessions { json }) => deck::sessions(dirs, *json).await,
+        Some(DeckCommand::RemoveStation { station }) => deck::remove_station(dirs, station).await,
+    }
 }
 
 /// The station commands (P2-7, P3-5c).

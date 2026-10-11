@@ -8,6 +8,7 @@ use std::time::Duration;
 use fleetdeck_proto::command::{ReceiptState, StopMode, UserInput};
 use fleetdeck_proto::{RejectCode, SessionId};
 use fleetdeck_testkit::Det;
+use tokio::io::AsyncWriteExt;
 
 use super::*;
 use crate::manager::{Adapters, Policy};

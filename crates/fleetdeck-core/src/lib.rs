@@ -9,6 +9,7 @@ pub mod config;
 pub mod db;
 pub mod identity;
 pub mod ids;
+pub mod localsock;
 pub mod logging;
 pub mod netscope;
 pub mod paths;

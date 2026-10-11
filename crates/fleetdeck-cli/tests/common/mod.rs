@@ -5,6 +5,8 @@
 
 #![allow(dead_code, reason = "each test binary uses a part of the harness")]
 
+pub mod deck;
+
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Output, Stdio};
@@ -37,7 +39,12 @@ impl Station {
 
     /// Writes the node's station.toml; starts nothing.
     pub fn new() -> Self {
-        let node = TempNode::new("cli").unwrap();
+        Self::named("cli")
+    }
+
+    /// A station whose station.toml name is `name`.
+    pub fn named(name: &str) -> Self {
+        let node = TempNode::new(name).unwrap();
         let workspace = node.workspace("demo").unwrap();
         let stdin_log = node.root().join("fake-stdin.log");
         let bins = FakeAgent::bin_dir().unwrap();
@@ -88,6 +95,12 @@ impl Station {
             String::from_utf8_lossy(&out.stderr)
         );
         String::from_utf8(out.stdout).unwrap()
+    }
+
+    /// Runs a CLI command with `input` on stdin; it must succeed. Returns
+    /// its stdout.
+    pub fn ok_stdin(&self, args: &[&str], input: &str) -> String {
+        with_stdin(&self.node, args, input)
     }
 
     /// Runs a CLI command that must fail; returns its stderr.
@@ -224,6 +237,32 @@ fn zombie(pid: u32) -> bool {
                 .is_some_and(|(_, rest)| rest.trim_start().starts_with('Z'))
         })
         .unwrap_or(true)
+}
+
+/// Runs `fleetdeck <args>` on `node` with `input` on stdin; it must
+/// succeed. Returns its stdout.
+pub fn with_stdin(node: &TempNode, args: &[&str], input: &str) -> String {
+    use std::io::Write as _;
+    let mut child = fleetdeck(node)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(format!("{input}\n").as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(
+        out.status.success(),
+        "fleetdeck {args:?} failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8(out.stdout).unwrap()
 }
 
 pub fn fleetdeck(node: &TempNode) -> Command {

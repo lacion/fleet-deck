@@ -14,10 +14,11 @@ rcgen = { workspace = true }
 ring = { workspace = true }
 rusqlite = { workspace = true }
 rusqlite_migration = { workspace = true }
-rustix = { workspace = true }
+rustix = { workspace = true, features = ["process"] }
 rustls-pki-types = { workspace = true }
 rustls-webpki = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 toml = { workspace = true }

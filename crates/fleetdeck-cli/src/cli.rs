@@ -64,9 +64,19 @@ pub enum DeckCommand {
     Invite,
     /// Pair with a station that listens (deck dials station). Reads the
     /// invitation from a prompt, stdin, or `--invite-file`.
-    AddStation(InviteInput),
+    AddStation(AddStationArgs),
     /// List the paired stations.
-    Stations,
+    Stations {
+        /// Print the stations as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// List the sessions of every paired station (the deck's read model).
+    Sessions {
+        /// Print the cards as JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Unpin a station key and close its links.
     RemoveStation {
         /// Station name or key fingerprint.
@@ -115,6 +125,16 @@ pub struct InviteInput {
     /// Read the invitation from standard input.
     #[arg(long)]
     pub stdin: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct AddStationArgs {
+    #[command(flatten)]
+    pub input: InviteInput,
+    /// The station's name on the board (default: the name in its
+    /// station.toml, learned at the first link).
+    #[arg(long)]
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Args)]

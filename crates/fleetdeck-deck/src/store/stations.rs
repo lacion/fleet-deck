@@ -324,6 +324,55 @@ impl DeckStore {
         .await
     }
 
+    /// The station that holds `key` now.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn station_by_key(&self, key: PeerKey) -> Result<Option<StationRecord>> {
+        call(&self.inner.db, move |conn| {
+            conn.query_row(
+                &format!("SELECT {COLUMNS} FROM stations WHERE key = ?1"),
+                [key_hex(&key)],
+                record,
+            )
+            .optional()?
+            .map(RawRecord::parse)
+            .transpose()
+        })
+        .await
+    }
+
+    /// Gives the station a new name.
+    ///
+    /// # Errors
+    /// [`DeckError::NameTaken`], [`DeckError::UnknownStation`], or a
+    /// database error.
+    pub async fn rename_station(&self, id: StationId, name: String) -> Result<()> {
+        call(&self.inner.db, move |conn| {
+            let tx = conn.transaction()?;
+            let taken: Option<String> = tx
+                .query_row(
+                    "SELECT station_id FROM stations WHERE name = ?1 AND station_id <> ?2",
+                    params![name, id.as_str()],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if taken.is_some() {
+                return Err(DeckError::NameTaken(name));
+            }
+            let n = tx.execute(
+                "UPDATE stations SET name = ?2 WHERE station_id = ?1",
+                params![id.as_str(), name],
+            )?;
+            if n == 0 {
+                return Err(DeckError::UnknownStation(id.to_string()));
+            }
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+    }
+
     /// Records that the station's link was up now.
     ///
     /// # Errors

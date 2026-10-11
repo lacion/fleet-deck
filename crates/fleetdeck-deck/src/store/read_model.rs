@@ -32,7 +32,7 @@ pub const TIMELINE_CAP: u32 = 500;
 const DROPPED_KINDS: [&str; 2] = ["message.delta", "reasoning.delta"];
 
 /// One card of the board.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DeckSession {
     pub station_id: StationId,
     pub summary: SessionSummary,
