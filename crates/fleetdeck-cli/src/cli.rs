@@ -17,6 +17,15 @@ pub struct Cli {
     /// platform data directory of the current user.
     #[arg(long, global = true, env = "FLEETDECK_DATA_DIR")]
     pub data_dir: Option<PathBuf>,
+    /// Log format on stderr: `text` or `json`. The filter comes from
+    /// `FLEETDECK_LOG` (or `RUST_LOG`), default `info`.
+    #[arg(
+        long,
+        global = true,
+        env = "FLEETDECK_LOG_FORMAT",
+        default_value = "text"
+    )]
+    pub log_format: fleetdeck_core::logging::LogFormat,
     #[command(subcommand)]
     pub command: Command,
 }
@@ -186,5 +195,14 @@ mod tests {
     #[test]
     fn stdin_and_invite_file_exclude_each_other() {
         assert!(parse(&["station", "join", "--stdin", "--invite-file", "x"]).is_err());
+    }
+
+    #[test]
+    fn the_log_format_is_text_or_json() {
+        use fleetdeck_core::logging::LogFormat;
+        assert_eq!(parse(&["up"]).unwrap().log_format, LogFormat::Text);
+        let cli = parse(&["station", "sessions", "--log-format", "json"]).unwrap();
+        assert_eq!(cli.log_format, LogFormat::Json);
+        assert!(parse(&["up", "--log-format", "xml"]).is_err());
     }
 }

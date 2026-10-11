@@ -1,3 +1,18 @@
-//! Fleet Deck v2 foundations shared by the deck, the station and the CLI
-//! (PLAN §12): ids, `Secret<T>`, identity keys, config, SQLite with numbered
-//! migrations, and logging.
+//! Fleet Deck v2 foundations (PLAN §12): injected clock and id source,
+//! [`Secret<T>`](secret::Secret), node identity keys, the D13 network scope,
+//! data and config directories, `station.toml` / `deck.toml`, SQLite on a
+//! dedicated thread with migrations, and logging.
+
+pub mod clock;
+pub mod config;
+pub mod db;
+pub mod identity;
+pub mod ids;
+pub mod logging;
+pub mod netscope;
+pub mod paths;
+pub mod secret;
+
+pub use clock::{Clock, ManualClock, SharedClock, SystemClock};
+pub use ids::{IdSource, SeqIds, SharedIds, UlidSource, new_id};
+pub use secret::Secret;

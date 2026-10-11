@@ -256,3 +256,16 @@ Format: context, options, choice, reason, owner review.
   9. The ADR-004 `snapshot` frame is replaced by the G4 batch `snapshot_begin` / `snapshot_session` / `snapshot_end`; `event` and `ack` carry `incarnation` (G4).
 - **Reason:** every addition is a verified provider fact or a GATE-M1 decision; nothing is invented state (doctrine PLAN §3). Keeping the PLAN names elsewhere keeps the PLAN readable as the contract.
 - **Owner review:** pending
+
+## DL-028 — `fleetdeck-core` support crates and file layout beyond PLAN §12
+
+- **Context:** P1-3 needs a TOML parser for `station.toml` (PLAN §6.7), the host name for a default station name, and the identity code of spike S4 (Ed25519 key, self-signed certificate, X.509 key read). PLAN §12 names `rustls`, `rcgen`, `ed25519-dalek` and `rusqlite`, but not the smaller crates that these need, and it gives no data-directory layout and no `deck.toml`.
+- **Options:** (a) put identity and address rules in `fleetdeck-link` and parse TOML by hand; (b) add the maintained support crates and keep identity and the D13 address rules in `fleetdeck-core`, so that config validation, the CLI and the link share one implementation.
+- **Choice:** (b).
+  1. New crates: `toml` 1 (config files), `rustls-pki-types` 1 and `rustls-webpki` 0.103 (the types and X.509 parser that `rustls` itself uses; S4 already used them), `ring` 0.17 (SHA-256 fingerprints, random seeds; the `rustls` provider of the spikes), `rustix` 1.1 (`uname` for the default station name, no `unsafe`), `rusqlite` 0.40 (bundled) with `rusqlite_migration` 2.6 (0.40 is the version that `rusqlite_migration` 2.6 needs).
+  2. Layout: config in `$XDG_CONFIG_HOME/fleetdeck` (PLAN §6.7 shows `~/.config/fleetdeck/station.toml`), data in `$XDG_DATA_HOME/fleetdeck`, on Linux and macOS alike (A11). `--data-dir` puts config and data into one directory (multi-process tests). The deck and the station of one machine are separate nodes: `<data>/deck/` and `<data>/station/`, each with its own identity key and database.
+  3. `deck.toml` keys: `name`, `listen` (board, default `127.0.0.1:7420`), `link_listen` (stations that dial in, default `127.0.0.1:7421`), `tailnet_hostname` (WS `Origin` check, §9). There is no key to turn off the login (A13).
+  4. Config rules: unknown keys are errors; a config file that other users can write is refused; listen addresses must pass the D13 bind rule; instance `env` values are `Secret<String>`; without `[[provider_instance]]` the station has the instances `claude` and `codex`; `offline_approval_policy` is `wait` or `deny_after(<n>s|m|h)` (§6.5).
+  5. SQLite: `synchronous = FULL` with WAL (the §6.4 effect journal needs a durable commit before dispatch), `foreign_keys = ON`, `busy_timeout` 5 s; a database with a newer schema version than the build is refused.
+- **Reason:** the added crates are the dependencies of the §12 choices or small, maintained single-purpose crates; sharing one address-rule implementation removes a class of bypass bugs (D13); the layout keeps the PLAN path for the default and still allows separate data directories per process (PLAN §13).
+- **Owner review:** pending

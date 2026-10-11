@@ -1,10 +1,10 @@
 //! TS-types drift check (PLAN §11): the committed bindings in
-//! `web/src/generated/` must equal a fresh export. Fix with `make ts-types`.
+//! `web/src/gen/` must equal a fresh export. Fix with `make ts-types`.
 
 use std::path::PathBuf;
 
 fn committed_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../web/src/generated")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../web/src/gen")
 }
 
 #[test]
@@ -14,7 +14,7 @@ fn committed_ts_bindings_match_the_rust_types() {
     let problems = fleetdeck_proto::ts::diff_dirs(fresh.path(), &committed_dir()).unwrap();
     assert!(
         problems.is_empty(),
-        "web/src/generated is out of date; run `make ts-types`:\n{}",
+        "web/src/gen is out of date; run `make ts-types`:\n{}",
         problems.join("\n")
     );
 }

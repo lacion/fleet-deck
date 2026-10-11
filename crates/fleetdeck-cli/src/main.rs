@@ -20,6 +20,10 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> anyhow::Result<()> {
+    fleetdeck_core::logging::init(cli.log_format)?;
+    let env = fleetdeck_core::paths::Env::from_process();
+    let dirs = fleetdeck_core::paths::NodeDirs::resolve(cli.data_dir.as_deref(), &env)?;
+    tracing::debug!(config = %dirs.config.display(), data = %dirs.data.display(), "directories");
     let (name, phase) = match &cli.command {
         Command::Up(_) => ("up", 4),
         Command::Open => ("open", 3),

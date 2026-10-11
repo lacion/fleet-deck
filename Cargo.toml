@@ -36,6 +36,15 @@ tempfile = "3"
 thiserror = "2"
 ts-rs = { version = "12", features = ["serde-json-impl", "no-serde-warnings"] }
 ulid = "1"
+ed25519-dalek = { version = "3", features = ["pkcs8", "alloc"] }
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring"] }
+ring = "0.17"
+rusqlite = { version = "0.40", features = ["bundled"] }
+rusqlite_migration = "2.6"
+rustls-pki-types = "1"
+rustls-webpki = { version = "0.103", default-features = false, features = ["ring", "std"] }
+toml = "1"
+rustix = { version = "1.1", default-features = false, features = ["std", "system"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "sync", "time", "fs", "net"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }

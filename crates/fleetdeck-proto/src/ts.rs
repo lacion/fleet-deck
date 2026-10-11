@@ -1,7 +1,7 @@
 //! TypeScript bindings for the board (PLAN §11, §12: ts-rs).
 //!
 //! `export_all` writes every wire type and an `index.ts` into a directory.
-//! The committed copy lives in `web/src/generated/`; the drift test
+//! The committed copy lives in `web/src/gen/`; the drift test
 //! (`tests/ts_drift.rs`) regenerates it into a temporary directory and fails
 //! if a file differs, is missing, or is extra. Regenerate with
 //! `make ts-types`.

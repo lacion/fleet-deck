@@ -1,5 +1,5 @@
 //! Writes the TypeScript bindings: `cargo run -p fleetdeck-proto --example export_ts -- <dir>`.
-//! `make ts-types` runs it for `web/src/generated`.
+//! `make ts-types` runs it for `web/src/gen`.
 
 use std::path::PathBuf;
 

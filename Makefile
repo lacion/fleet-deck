@@ -8,4 +8,4 @@ test:
 # Regenerate the board's TypeScript types from fleetdeck-proto (PLAN §11).
 # The drift test `fleetdeck-proto::ts_drift` fails until the output is committed.
 ts-types:
-	cargo run -q -p fleetdeck-proto --example export_ts -- web/src/generated
+	cargo run -q -p fleetdeck-proto --example export_ts -- web/src/gen
