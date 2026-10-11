@@ -46,7 +46,7 @@ fleetdeck station join <inv> # pair this station with a deck
 | D10 | Human shell | **Yes.** A PTY shell in a worktree or repo, opened from the board, for the owner (not for agents). Phase 6 |
 | D11 | v0 data | **No import.** v2 starts with empty databases |
 | D12 | Platforms | **Linux and macOS only** for deck and station. Windows is not planned |
-| D13 | Network | **Local network and Tailscale tailnet only.** No public exposure, no reverse proxy, no Coder, no hosted relay |
+| D13 | Network | **Local network and Tailscale tailnet only.** No public exposure, no reverse proxy, no Coder, no hosted relay. Owner clarification 2026-10-11 (choice B): loopback + private LAN + Tailscale tailnet, no public exposure; this is the behavior of §8.1 and does not change it |
 | D14 | Pi | **Not in v2 scope.** Pi comes later as a dedicated Pi package with full integration. The adapter trait must allow it |
 | D15 | Subagents | **Track and observe subagents.** Subagents (sub-sessions) that Claude Code starts (and Codex `spawnAgent` children) are visible on the board: a subagent tree in the session view, each child with its own timeline, status (running, done, failed) and background state, and a count of running subagents on the session card. Data path: `parent_node_id` (§6.3). Phase 4 (P4-3) |
 
