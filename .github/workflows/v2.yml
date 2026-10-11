@@ -1,0 +1,43 @@
+name: v2
+# Fleet Deck v2 (Rust workspace + web/ board). The v0 workflow is ci.yml.
+# One job: fill the caches with network access, then run `make check`
+# (tools/check.sh), which is offline and is the same command that reviewers
+# and developers run locally (GATE-M1 G13, PLAN §14 Phase 1).
+on:
+  push:
+    branches: [v2]
+  pull_request:
+    branches: [v2]
+concurrency:
+  group: v2-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CARGO_TERM_COLOR: never
+      RUST_TOOLCHAIN: "1.96"
+      NEXTEST_VERSION: "0.9.146"
+      DENY_VERSION: "0.19.9"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt,clippy
+          rustup default "$RUST_TOOLCHAIN"
+      - name: Cargo tools (pinned versions, locked dependencies)
+        run: cargo install --locked "cargo-nextest@$NEXTEST_VERSION" "cargo-deny@$DENY_VERSION"
+      - name: Fill the offline caches
+        run: |
+          cargo fetch --locked
+          cargo deny fetch
+          bun install --cwd web --frozen-lockfile --ignore-scripts
+      - name: make check
+        run: make check

@@ -4,7 +4,12 @@
 use std::path::PathBuf;
 
 fn committed_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../web/src/gen")
+    // Read the manifest dir at run time first: cargo and nextest set it, and a
+    // test binary that cargo reuses from a shared target dir must still check
+    // the checkout that runs it, not the one that compiled it.
+    let manifest = std::env::var_os("CARGO_MANIFEST_DIR")
+        .map_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")), PathBuf::from);
+    manifest.join("../../web/src/gen")
 }
 
 #[test]
