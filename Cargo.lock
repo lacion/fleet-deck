@@ -565,11 +565,15 @@ dependencies = [
  "fleetdeck-core",
  "fleetdeck-proto",
  "fleetdeck-testkit",
+ "proptest",
  "rustix",
+ "serde",
+ "serde_json",
  "tempfile",
  "thiserror",
  "tokio",
  "tracing",
+ "ulid",
 ]
 
 [[package]]

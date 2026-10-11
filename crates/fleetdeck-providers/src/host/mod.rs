@@ -163,12 +163,14 @@ pub trait ProcessControl: Send + Sync + fmt::Debug {
     /// The process id (also the process group id).
     fn pid(&self) -> u32;
     /// Writes all bytes to stdin and flushes. A child that does not read can
-    /// block this call: callers bound it with a timeout.
+    /// block this call until `close_stdin`, `stop` or `kill`; then it returns
+    /// [`HostError::StdinClosed`] (part of the bytes may be written).
     async fn write(&self, bytes: &[u8]) -> Result<(), HostError>;
-    /// Closes stdin (the clean end of input). Later writes fail.
+    /// Closes stdin (the clean end of input). It does not wait for the child,
+    /// also not behind a blocked write. Later writes fail.
     async fn close_stdin(&self);
-    /// Clean stop: close stdin, wait `grace`, SIGTERM the group, wait
-    /// `term_grace`, SIGKILL the group. Returns the exit report.
+    /// Clean stop: close stdin and wait, together at most `grace`; SIGTERM the
+    /// group, wait `term_grace`; SIGKILL the group. Returns the exit report.
     async fn stop(&self, policy: StopPolicy) -> ExitReport;
     /// SIGKILL the group now. Returns the exit report.
     async fn kill(&self) -> ExitReport;

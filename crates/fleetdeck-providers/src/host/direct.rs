@@ -72,6 +72,7 @@ impl SessionHost for DirectChildHost {
             tail: Mutex::new(VecDeque::with_capacity(STDERR_TAIL_BYTES)),
         });
         let (exit_tx, exit_rx) = watch::channel(None);
+        let (closing, _) = watch::channel(false);
         let drain = tokio::spawn(drain_stderr(stderr, Arc::clone(&shared)));
         tokio::spawn(supervise(child, pid, Arc::clone(&shared), drain, exit_tx));
         tracing::debug!(pid, program = %spec.program.display(), "session process started");
@@ -80,6 +81,7 @@ impl SessionHost for DirectChildHost {
             control: Arc::new(DirectProcess {
                 pid,
                 stdin: tokio::sync::Mutex::new(Some(stdin)),
+                closing,
                 shared,
                 exit_rx,
             }),
@@ -181,6 +183,10 @@ fn signal_group(pid: u32, sig: Signal) {
 struct DirectProcess {
     pid: u32,
     stdin: tokio::sync::Mutex<Option<ChildStdin>>,
+    /// Set by `close_stdin`. A write that is blocked (the child does not read
+    /// and the pipe is full) gives up the stdin lock when this turns true, so
+    /// closing never waits for the child.
+    closing: watch::Sender<bool>,
     shared: Arc<Shared>,
     exit_rx: watch::Receiver<Option<ExitReport>>,
 }
@@ -192,16 +198,31 @@ impl ProcessControl for DirectProcess {
     }
 
     async fn write(&self, bytes: &[u8]) -> Result<(), HostError> {
-        let mut guard = self.stdin.lock().await;
+        let mut closing = self.closing.subscribe();
+        if *closing.borrow_and_update() {
+            return Err(HostError::StdinClosed);
+        }
+        let mut guard = tokio::select! {
+            guard = self.stdin.lock() => guard,
+            _ = closing.wait_for(|c| *c) => return Err(HostError::StdinClosed),
+        };
         let stdin = guard.as_mut().ok_or(HostError::StdinClosed)?;
-        stdin.write_all(bytes).await.map_err(HostError::Write)?;
-        stdin.flush().await.map_err(HostError::Write)
+        let send = async {
+            stdin.write_all(bytes).await?;
+            stdin.flush().await
+        };
+        tokio::select! {
+            sent = send => sent.map_err(HostError::Write),
+            // A partial frame is fine here: the input ends anyway.
+            _ = closing.wait_for(|c| *c) => Err(HostError::StdinClosed),
+        }
     }
 
     async fn close_stdin(&self) {
-        if let Some(mut stdin) = self.stdin.lock().await.take() {
-            let _ = stdin.shutdown().await;
-        }
+        // First release a blocked writer, then drop the pipe. Dropping closes
+        // the write end; no `shutdown` call, which could wait on the child.
+        self.closing.send_replace(true);
+        drop(self.stdin.lock().await.take());
     }
 
     async fn stop(&self, policy: StopPolicy) -> ExitReport {
@@ -209,8 +230,12 @@ impl ProcessControl for DirectProcess {
             return report;
         }
         self.shared.request(EndCause::Stopped);
-        self.close_stdin().await;
-        if let Ok(report) = timeout(policy.grace, self.wait()).await {
+        // The grace period covers closing stdin too.
+        let close_then_wait = async {
+            self.close_stdin().await;
+            self.wait().await
+        };
+        if let Ok(report) = timeout(policy.grace, close_then_wait).await {
             return report;
         }
         self.shared.request(EndCause::StopForced);
@@ -228,7 +253,7 @@ impl ProcessControl for DirectProcess {
         }
         self.shared.request(EndCause::Killed);
         signal_group(self.pid, Signal::KILL);
-        self.close_stdin().await;
+        self.closing.send_replace(true);
         self.wait().await
     }
 

@@ -276,3 +276,90 @@ async fn the_direct_host_does_not_survive_a_station_restart() {
     assert_eq!(host.kind(), HostKind::DirectChild);
     assert!(!host.survives_station_restart());
 }
+
+/// More than a pipe buffer (64 KiB on Linux, 16 KiB on macOS).
+const BIG: usize = 1024 * 1024;
+
+#[tokio::test]
+async fn stop_keeps_its_deadline_while_a_write_to_a_non_reading_child_blocks() {
+    let dir = tempfile::tempdir().unwrap();
+    // `sleep` never reads stdin, so the write fills the pipe and blocks.
+    let (_out, control) = start(sh("exec sleep 30", dir.path())).await;
+    let writer = {
+        let control = Arc::clone(&control);
+        tokio::spawn(async move { control.write(&vec![b'x'; BIG]).await })
+    };
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        !writer.is_finished(),
+        "the write should block on the full pipe"
+    );
+
+    let t0 = Instant::now();
+    let report = tokio::time::timeout(Duration::from_secs(5), control.stop(QUICK))
+        .await
+        .expect("stop must not wait behind the blocked write");
+    assert!(t0.elapsed() < QUICK.grace + QUICK.term_grace + Duration::from_secs(1));
+    assert_eq!(report.cause, EndCause::StopForced);
+    assert_eq!(report.termination, Termination::Signal(15));
+    let written = tokio::time::timeout(Duration::from_secs(5), writer)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        matches!(written, Err(HostError::StdinClosed)),
+        "{written:?}"
+    );
+}
+
+#[tokio::test]
+async fn close_stdin_releases_a_blocked_write_at_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_out, control) = start(sh("exec sleep 30", dir.path())).await;
+    let writer = {
+        let control = Arc::clone(&control);
+        tokio::spawn(async move { control.write(&vec![b'x'; BIG]).await })
+    };
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(!writer.is_finished());
+    tokio::time::timeout(Duration::from_secs(2), control.close_stdin())
+        .await
+        .expect("close_stdin must not wait for the child");
+    let written = tokio::time::timeout(Duration::from_secs(2), writer)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        matches!(written, Err(HostError::StdinClosed)),
+        "{written:?}"
+    );
+    assert!(matches!(
+        control.write(b"more").await,
+        Err(HostError::StdinClosed)
+    ));
+    // The child did not read, so it still runs; kill also returns promptly.
+    let report = tokio::time::timeout(Duration::from_secs(5), control.kill())
+        .await
+        .unwrap();
+    assert_eq!(report.cause, EndCause::Killed);
+}
+
+#[tokio::test]
+async fn kill_releases_a_blocked_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_out, control) = start(sh("exec sleep 30", dir.path())).await;
+    let writer = {
+        let control = Arc::clone(&control);
+        tokio::spawn(async move { control.write(&vec![b'x'; BIG]).await })
+    };
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let report = tokio::time::timeout(Duration::from_secs(5), control.kill())
+        .await
+        .unwrap();
+    assert_eq!(report.termination, Termination::Signal(9));
+    let written = tokio::time::timeout(Duration::from_secs(5), writer)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(written.is_err(), "{written:?}");
+}

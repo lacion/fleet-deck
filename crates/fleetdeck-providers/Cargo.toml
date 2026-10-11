@@ -12,11 +12,15 @@ fleetdeck-proto = { path = "../fleetdeck-proto" }
 fleetdeck-core = { path = "../fleetdeck-core" }
 async-trait = { workspace = true }
 rustix = { workspace = true, features = ["process"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+ulid = { workspace = true }
 
 [dev-dependencies]
+proptest = { workspace = true }
 fleetdeck-testkit = { path = "../fleetdeck-testkit" }
 tempfile = { workspace = true }
 
