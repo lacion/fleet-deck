@@ -32,6 +32,7 @@ use serde_json::json;
 
 use super::Board;
 use super::methods::{self, ApiMethod};
+use crate::store::auth::secret_hash;
 use crate::store::{AuditResult, NewAudit, Principal};
 
 /// The login cookie.
@@ -155,7 +156,7 @@ pub async fn authenticate(board: &Board, headers: &HeaderMap) -> Result<Principa
     if headers.contains_key(header::AUTHORIZATION) {
         let value = bearer(headers).ok_or_else(missing)?;
         return match board.store.token(&value).await {
-            Ok(Some(t)) => Ok(Principal::Token(t)),
+            Ok(Some(t)) => Ok(Principal::Token(t, secret_hash(value.expose()))),
             Ok(None) => Err(missing()),
             Err(e) => Err(ApiError::internal(e)),
         };
@@ -244,7 +245,7 @@ async fn ws_principal(
         .split('&')
         .find_map(|kv| kv.strip_prefix("ticket="));
     if let Some(ticket) = ticket {
-        return board
+        let principal = board
             .tickets
             .redeem(ticket, board.store.now_ms())
             .ok_or_else(|| {
@@ -253,7 +254,23 @@ async fn ws_principal(
                     "login_required",
                     "the WebSocket ticket is unknown, used or expired",
                 )
-            });
+            })?;
+        // The login or token that asked for the ticket may have ended in
+        // the ticket's 30 s (logout, password change, token revoke or
+        // expiry): the ticket dies with it.
+        if !board
+            .store
+            .principal_alive(&principal)
+            .await
+            .map_err(ApiError::internal)?
+        {
+            return Err(ApiError::new(
+                StatusCode::UNAUTHORIZED,
+                "login_required",
+                "the login of this WebSocket ticket has ended",
+            ));
+        }
+        return Ok(principal);
     }
     if headers.contains_key(header::AUTHORIZATION) {
         return Err(ApiError::new(

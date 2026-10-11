@@ -327,3 +327,60 @@ async fn a_socket_closes_when_its_login_or_token_ends() {
     };
     assert_eq!(closed, Some(CLOSE_LOGIN_ENDED));
 }
+
+#[tokio::test]
+async fn a_ticket_dies_with_the_login_or_token_that_asked_for_it() {
+    let (_f, c) = setup().await;
+
+    // A cookie login asks for a ticket, then logs out: the ticket is
+    // refused at the upgrade although it is unused and not expired.
+    let (cookie, csrf) = c.login().await;
+    let h = [("Cookie", cookie.as_str()), ("X-CSRF-Token", csrf.as_str())];
+    let t = c.post("/api/ws/ticket", &h, json!({})).await;
+    assert_eq!(t.status, 200, "{}", t.body);
+    assert_eq!(c.post("/api/auth/logout", &h, json!({})).await.status, 204);
+    let path = format!("/api/ws?ticket={}", t.body["ticket"].as_str().unwrap());
+    assert_eq!(c.ws(&path, &[]).await.err(), Some(401));
+
+    // A token asks for a ticket and is revoked.
+    let scopes = BTreeSet::from([Scope::Read]);
+    let (_, token) = c
+        .store
+        .create_token("viewer".into(), scopes.clone(), DAY)
+        .await
+        .unwrap();
+    let bearer = format!("Bearer {}", token.expose());
+    let t = c
+        .post("/api/ws/ticket", &[("Authorization", &bearer)], json!({}))
+        .await;
+    assert!(c.store.revoke_token("viewer".into()).await.unwrap());
+    let path = format!("/api/ws?ticket={}", t.body["ticket"].as_str().unwrap());
+    assert_eq!(c.ws(&path, &[]).await.err(), Some(401));
+
+    // A token revoked and created again under the same name (same clock
+    // time) is another principal: the old token's ticket stays refused.
+    let (_, old) = c
+        .store
+        .create_token("viewer2".into(), scopes.clone(), DAY)
+        .await
+        .unwrap();
+    let bearer = format!("Bearer {}", old.expose());
+    let t = c
+        .post("/api/ws/ticket", &[("Authorization", &bearer)], json!({}))
+        .await;
+    assert!(c.store.revoke_token("viewer2".into()).await.unwrap());
+    c.store
+        .create_token("viewer2".into(), scopes, DAY)
+        .await
+        .unwrap();
+    let path = format!("/api/ws?ticket={}", t.body["ticket"].as_str().unwrap());
+    assert_eq!(c.ws(&path, &[]).await.err(), Some(401));
+
+    // A valid login's ticket still opens the socket.
+    let (cookie, csrf) = c.login().await;
+    let h = [("Cookie", cookie.as_str()), ("X-CSRF-Token", csrf.as_str())];
+    let t = c.post("/api/ws/ticket", &h, json!({})).await;
+    let path = format!("/api/ws?ticket={}", t.body["ticket"].as_str().unwrap());
+    let mut ws = c.ws(&path, &[]).await.expect("a live login's ticket opens");
+    assert_eq!(ws.next().await.unwrap()["type"], "hello");
+}

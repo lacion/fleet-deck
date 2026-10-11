@@ -90,8 +90,10 @@ pub struct ApiToken {
 pub enum Principal {
     /// The owner's login session (cookie; CSRF applies).
     Owner(LoginSession),
-    /// A bearer client.
-    Token(ApiToken),
+    /// A bearer client: the token and the SHA-256 of its value (a token
+    /// that is revoked and created again under the same name is another
+    /// principal).
+    Token(ApiToken, String),
 }
 
 impl Principal {
@@ -100,7 +102,7 @@ impl Principal {
     pub fn actor(&self) -> String {
         match self {
             Self::Owner(_) => "owner".to_owned(),
-            Self::Token(t) => format!("token:{}", t.name),
+            Self::Token(t, _) => format!("token:{}", t.name),
         }
     }
 
@@ -108,7 +110,7 @@ impl Principal {
     pub fn has(&self, scope: Scope) -> bool {
         match self {
             Self::Owner(_) => OWNER_SCOPES.contains(&scope),
-            Self::Token(t) => t.scopes.contains(&scope),
+            Self::Token(t, _) => t.scopes.contains(&scope),
         }
     }
 
@@ -116,7 +118,7 @@ impl Principal {
     pub fn scopes(&self) -> BTreeSet<Scope> {
         match self {
             Self::Owner(_) => OWNER_SCOPES.into_iter().collect(),
-            Self::Token(t) => t.scopes.clone(),
+            Self::Token(t, _) => t.scopes.clone(),
         }
     }
 }
@@ -357,10 +359,10 @@ impl DeckStore {
                      WHERE session_hash = ?1 AND expires_at > ?2 AND last_seen > ?3",
                     params![s.session_hash, now, now - SESSION_IDLE_MS],
                 )?,
-                Principal::Token(t) => conn.execute(
+                Principal::Token(_, hash) => conn.execute(
                     "UPDATE api_tokens SET last_used = ?2
-                     WHERE name = ?1 AND created_at = ?3 AND expires_at > ?2",
-                    params![t.name, now, t.created_at],
+                     WHERE token_hash = ?1 AND expires_at > ?2",
+                    params![hash, now],
                 )?,
             };
             Ok(n == 1)

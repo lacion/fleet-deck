@@ -209,7 +209,7 @@ pub async fn logout(
 pub async fn session(Extension(principal): Extension<Principal>) -> Json<SessionView> {
     let (csrf, expires_at) = match &principal {
         Principal::Owner(s) => (Some(s.csrf.clone()), s.expires_at),
-        Principal::Token(t) => (None, t.expires_at),
+        Principal::Token(t, _) => (None, t.expires_at),
     };
     Json(SessionView {
         actor: principal.actor(),
