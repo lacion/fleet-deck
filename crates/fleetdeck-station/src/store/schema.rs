@@ -3,8 +3,9 @@
 //!
 //! V1 (M2 P2-4): `meta`, `pairing`, `deck_acks`, `sessions`, `events`,
 //! `commands`, `shells`. V2 (M2 P2-5): `processes`, `effects`,
-//! `runtime_requests` and the worker fence. The workspace tables follow in
-//! Phase 6.
+//! `runtime_requests` and the worker fence. V3 (M2 P3-5): pins, grants and
+//! the revocation generation (G5). V4: link epochs (G1). The workspace
+//! tables follow in Phase 6.
 
 use rusqlite_migration::{M, Migrations};
 
@@ -141,8 +142,26 @@ CREATE TABLE runtime_requests (
 CREATE INDEX runtime_requests_open ON runtime_requests(state, deny_at);
 ";
 
-/// The `station.db` migrations.
+const V3: &str = "
+-- G5: the pin (key and role) and the grants of each paired key, and a
+-- revocation generation that every revocation and rotation increments.
+ALTER TABLE meta ADD COLUMN revocation_generation INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE pairing ADD COLUMN fingerprint TEXT;
+ALTER TABLE pairing ADD COLUMN role TEXT NOT NULL DEFAULT 'deck'
+    CHECK (role IN ('deck', 'station'));
+-- JSON array of scope names.
+ALTER TABLE pairing ADD COLUMN scopes TEXT NOT NULL DEFAULT '[]';
+CREATE UNIQUE INDEX pairing_fingerprint ON pairing(fingerprint);
+";
+
+/// The `station.db` migrations. V4 is the link epochs table of
+/// `fleetdeck-link` (G1).
 #[must_use]
 pub fn migrations() -> Migrations<'static> {
-    Migrations::new(vec![M::up(V1), M::up(V2)])
+    Migrations::new(vec![
+        M::up(V1),
+        M::up(V2),
+        M::up(V3),
+        M::up(fleetdeck_link::LINK_EPOCHS_SQL),
+    ])
 }

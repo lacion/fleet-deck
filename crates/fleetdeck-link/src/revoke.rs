@@ -23,6 +23,7 @@ use fleetdeck_proto::mutation::KeyRotation;
 use crate::node::NodeConfig;
 use crate::pairing::{hex, unhex};
 use crate::table::Closing;
+use crate::tls::Role;
 
 /// The close reason of a link whose key was revoked.
 pub const REVOKED: &str = "revoked";
@@ -42,14 +43,20 @@ pub enum RotateError {
     NewKeyPaired,
     #[error("the rotation signature is not valid")]
     BadSignature,
+    #[error("the key store failed: {0}")]
+    Store(String),
 }
 
-/// Revokes `key`: unpins it, removes its grants and closes its active link.
-/// Returns `false` when the key was not pinned.
-pub fn revoke(node: &NodeConfig, key: &PeerKey) -> bool {
+/// Revokes `key`: removes its pin and grants through the node's
+/// [`PairingSink`] (one transaction in a store), unpins it and closes its
+/// active link. Returns `false` when the key was not pinned. A sink error
+/// is logged; the key is unpinned and its link closed anyway (fail closed).
+pub async fn revoke(node: &NodeConfig, key: &PeerKey) -> bool {
     let fp = key.fingerprint();
+    if let Err(e) = node.sink.revoked(key).await {
+        tracing::error!(peer = %fp.short(), error = %e, "revocation store");
+    }
     let was_pinned = node.pins.unpin(key);
-    node.sink.revoked(&fp);
     close_revoked(node, key);
     tracing::info!(peer = %fp.short(), "key revoked");
     was_pinned
@@ -84,14 +91,16 @@ pub fn sign_rotation(
     rotation
 }
 
-/// Applies a `link.rotate_key` that arrived on the link of `link_peer`.
-/// Returns the new key, which now has the role and grants of the old one.
-pub fn rotate(
+/// Checks a `link.rotate_key` that arrived on the link of `link_peer`:
+/// `old_key` is the link's pinned key, the new key is valid, new and not
+/// paired, and the old key signed it for this node and `command_id`.
+/// Returns the new key and the role of the old one. Changes nothing.
+pub fn check_rotation(
     node: &NodeConfig,
     link_peer: &PeerKey,
     rotation: &KeyRotation,
     command_id: &CommandId,
-) -> Result<PeerKey, RotateError> {
+) -> Result<(PeerKey, Role), RotateError> {
     let old_fp = link_peer.fingerprint();
     if rotation.old_key != old_fp.to_string() {
         return Err(RotateError::NotLinkPeer);
@@ -111,15 +120,39 @@ pub fn rotate(
     if !link_peer.verify(&message, &signature) {
         return Err(RotateError::BadSignature);
     }
-    node.pins.pin(new_key, role);
-    node.sink.rotated(&old_fp, &new_key.fingerprint());
-    node.pins.unpin(link_peer);
-    close_revoked(node, link_peer);
+    Ok((new_key, role))
+}
+
+/// The link-layer part of a rotation that a store already committed: pins
+/// the new key with the old key's role, unpins the old key and closes its
+/// link with `revoked`.
+pub fn finish_rotation(node: &NodeConfig, old: &PeerKey, new: PeerKey, role: Role) {
+    node.pins.pin(new, role);
+    node.pins.unpin(old);
+    close_revoked(node, old);
     tracing::info!(
-        old = %old_fp.short(),
-        new = %new_key.fingerprint().short(),
+        old = %old.fingerprint().short(),
+        new = %new.fingerprint().short(),
         "peer key rotated; the old key is revoked"
     );
+}
+
+/// Checks and applies a `link.rotate_key` through the node's
+/// [`PairingSink`]. Returns the new key, which now has the role and grants
+/// of the old one. A store that keeps command receipts uses
+/// [`check_rotation`], its own transaction and [`finish_rotation`] instead.
+pub async fn rotate(
+    node: &NodeConfig,
+    link_peer: &PeerKey,
+    rotation: &KeyRotation,
+    command_id: &CommandId,
+) -> Result<PeerKey, RotateError> {
+    let (new_key, role) = check_rotation(node, link_peer, rotation, command_id)?;
+    node.sink
+        .rotated(link_peer, &new_key)
+        .await
+        .map_err(RotateError::Store)?;
+    finish_rotation(node, link_peer, new_key, role);
     Ok(new_key)
 }
 

@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::{Arc, PoisonError, RwLock};
 
-use fleetdeck_core::identity::Fingerprint;
+use fleetdeck_core::identity::{Fingerprint, PeerKey};
 use fleetdeck_proto::link::Scope;
 
 /// The scopes that this node granted to each paired key. Read for every
@@ -45,20 +45,23 @@ impl GrantSource for Grants {
     }
 }
 
+#[async_trait::async_trait]
 impl crate::pairing::PairingSink for Grants {
-    fn paired(&self, peer: &crate::pairing::PairedPeer) -> Result<(), String> {
+    async fn paired(&self, peer: &crate::pairing::PairedPeer) -> Result<(), String> {
         self.grant(peer.key.fingerprint(), peer.scopes.iter().copied());
         Ok(())
     }
 
-    fn revoked(&self, peer: &Fingerprint) {
-        self.revoke(peer);
+    async fn revoked(&self, peer: &PeerKey) -> Result<(), String> {
+        self.revoke(&peer.fingerprint());
+        Ok(())
     }
 
-    fn rotated(&self, old: &Fingerprint, new: &Fingerprint) {
+    async fn rotated(&self, old: &PeerKey, new: &PeerKey) -> Result<(), String> {
         let mut map = self.map.write().unwrap_or_else(PoisonError::into_inner);
-        if let Some(scopes) = map.remove(old) {
-            map.insert(*new, scopes);
+        if let Some(scopes) = map.remove(&old.fingerprint()) {
+            map.insert(new.fingerprint(), scopes);
         }
+        Ok(())
     }
 }

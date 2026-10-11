@@ -53,7 +53,9 @@ pub use pairing::{
     Invitation, InvitationId, Invitations, PairError, PairLimiter, PairedPeer, PairingSink,
 };
 pub use reconnect::{Backoff, BackoffPolicy, DialerEvent, spawn_dialer};
-pub use revoke::{REVOKED, RotateError, revoke, rotate, sign_rotation};
+pub use revoke::{
+    REVOKED, RotateError, check_rotation, finish_rotation, revoke, rotate, sign_rotation,
+};
 pub use table::{Closing, Dialer, LinkId, LinkTable};
 pub use tokens::{StreamToken, StreamTokens};
 pub use ws::LinkError;

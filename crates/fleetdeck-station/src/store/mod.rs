@@ -25,6 +25,7 @@
 pub mod effects;
 mod log;
 mod outbox;
+pub mod peers;
 mod receipts;
 mod recovery;
 pub mod requests;
@@ -38,6 +39,7 @@ use fleetdeck_core::db::{Db, DbError};
 use fleetdeck_core::{SharedClock, SharedIds, new_id};
 use fleetdeck_proto::command::RECEIPT_RETENTION_MS;
 use fleetdeck_proto::event::{ProviderKind, RawRef};
+use fleetdeck_proto::mutation::Mutation;
 use fleetdeck_proto::{
     CommandEnvelope, Event, EventBody, EventEnvelope, IncarnationId, ProviderInstanceId, Receipt,
     SessionId, SessionSummary,
@@ -464,6 +466,28 @@ impl Store {
             + Send
             + 'static,
     {
+        self.decide_mutation(Mutation::Session(envelope), caller, decide)
+            .await
+    }
+
+    /// Decides any mutating envelope (session command, `link.rotate_key`,
+    /// `station.configure`) with the same receipt rules as [`Self::decide`].
+    ///
+    /// # Errors
+    /// See [`Self::decide`].
+    pub async fn decide_mutation<F>(
+        &self,
+        mutation: Mutation,
+        caller: Caller,
+        decide: F,
+    ) -> Result<Decided>
+    where
+        F: FnOnce(
+                &mut Decision<'_>,
+            ) -> Result<fleetdeck_proto::command::CommandResult, DecideError>
+            + Send
+            + 'static,
+    {
         if !self.inner.recovered.load(Ordering::Acquire) {
             return Err(StoreError::NotRecovered);
         }
@@ -476,7 +500,7 @@ impl Store {
                 ids.as_ref(),
                 &incarnation,
                 now,
-                &envelope,
+                &mutation,
                 &caller,
                 decide,
             )

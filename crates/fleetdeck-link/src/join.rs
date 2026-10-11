@@ -80,7 +80,7 @@ pub async fn pair(
         role: node.peer_role(),
         scopes: scopes.into_iter().collect(),
     };
-    if let Err(detail) = node.sink.paired(&paired) {
+    if let Err(detail) = node.sink.paired(&paired).await {
         return Err(ws::close_reason(&mut ws, reason::PAIRING_FAILED, detail).await);
     }
     node.pins.pin(peer, paired.role);
@@ -146,7 +146,7 @@ pub(crate) async fn accept(
         role: node.peer_role(),
         scopes: redeemed.scopes.into_iter().collect::<BTreeSet<_>>(),
     };
-    if let Err(detail) = node.sink.paired(&paired) {
+    if let Err(detail) = node.sink.paired(&paired).await {
         return Err(ws::close_reason(&mut ws, reason::PAIRING_FAILED, detail).await);
     }
     node.pins.pin(peer, paired.role);

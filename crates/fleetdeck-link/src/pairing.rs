@@ -295,14 +295,19 @@ pub struct PairedPeer {
 
 /// Where a node stores what pairing, revocation and key rotation change
 /// (the station and deck stores; [`crate::Grants`] in memory). The link
-/// layer itself keeps the pins of the node's `PinSet`.
+/// layer itself keeps the pins of the node's `PinSet`. A database-backed
+/// sink makes each call one transaction (G5), so the methods are async.
+#[async_trait::async_trait]
 pub trait PairingSink: fmt::Debug + Send + Sync {
-    /// Stores the grants of a new peer. An error fails the pairing.
-    fn paired(&self, peer: &PairedPeer) -> Result<(), String>;
-    /// Removes every grant of `peer`.
-    fn revoked(&self, peer: &Fingerprint);
-    /// Gives the grants of `old` to `new` (only those; G5).
-    fn rotated(&self, old: &Fingerprint, new: &Fingerprint);
+    /// Stores the pin and the grants of a new peer. An error fails the
+    /// pairing.
+    async fn paired(&self, peer: &PairedPeer) -> Result<(), String>;
+    /// Removes the pin and every grant of `peer`. An error is logged; the
+    /// link layer unpins the key and closes its link anyway (fail closed).
+    async fn revoked(&self, peer: &PeerKey) -> Result<(), String>;
+    /// Gives the role and the grants of `old` to `new` (only those; G5) and
+    /// revokes `old`.
+    async fn rotated(&self, old: &PeerKey, new: &PeerKey) -> Result<(), String>;
 }
 
 struct Open {

@@ -248,7 +248,7 @@ async fn revocation_closes_the_link_within_one_second_and_the_queued_request_fai
     // `station forget-deck` while the request waits.
     let deck_key = deck.config.identity.public_key();
     let t0 = tokio::time::Instant::now();
-    assert!(revoke(&station.config, &deck_key));
+    assert!(revoke(&station.config, &deck_key).await);
     let closing = tokio::time::timeout(Duration::from_secs(1), at_deck.control.closed())
         .await
         .expect("the link closes within 1 s");
@@ -308,6 +308,7 @@ async fn a_rotated_key_keeps_only_the_old_grants_and_the_old_key_is_refused() {
         &rotation,
         &cmd,
     )
+    .await
     .unwrap();
     assert_eq!(new_key, new_deck.config.identity.public_key());
     let closing = tokio::time::timeout(Duration::from_secs(1), at_deck.control.closed())
@@ -401,7 +402,7 @@ async fn the_dialer_redials_with_a_higher_epoch_and_stops_when_revoked() {
     );
 
     // The deck removes the station: the link closes and the dialer stops.
-    assert!(revoke(&deck.config, &station_key));
+    assert!(revoke(&deck.config, &station_key).await);
     match next_event(&mut events).await {
         DialerEvent::Lost { reason, .. } => assert_eq!(reason, REVOKED),
         other => panic!("expected Lost, got {other:?}"),

@@ -40,11 +40,13 @@ pub fn from_file(path: &Path) -> anyhow::Result<Secret<String>> {
     if !meta.is_file() {
         bail!("{} is not a regular file", path.display());
     }
-    if meta.mode() & 0o077 != 0 {
+    // Exactly 0600 (review round 18): no execute bit, no group or other
+    // bits, owner read and write.
+    if meta.mode() & 0o7777 != 0o600 {
         bail!(
             "{} has mode {:o}: an invitation file must have mode 0600 (chmod 600 {})",
             path.display(),
-            meta.mode() & 0o777,
+            meta.mode() & 0o7777,
             path.display()
         );
     }
@@ -144,6 +146,11 @@ mod tests {
             !e.contains("fdinv1"),
             "the error never shows the invitation"
         );
+        for mode in [0o700, 0o400, 0o640, 0o4600] {
+            fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+            let e = format!("{:#}", from_file(&path).unwrap_err());
+            assert!(e.contains(&format!("mode {mode:o}")), "{e}");
+        }
         fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
         assert_eq!(from_file(&path).unwrap().expose(), INV);
         assert!(from_file(dir.path()).is_err(), "a directory is refused");

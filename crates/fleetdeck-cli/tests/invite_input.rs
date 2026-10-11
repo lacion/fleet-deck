@@ -39,16 +39,19 @@ fn an_invitation_file_readable_by_others_is_refused() {
     let node = TempNode::new("inv").unwrap();
     let path = node.root().join("inv.txt");
     std::fs::write(&path, INV).unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
-    let out = fleetdeck(&node)
-        .args(["station", "join", "--invite-file"])
-        .arg(&path)
-        .output()
-        .unwrap();
-    assert!(!out.status.success());
-    let err = stderr(&out);
-    assert!(err.contains("mode 0600"), "{err}");
-    assert!(!err.contains("5ec2e75e"), "{err}");
+    for mode in [0o640, 0o700] {
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+        let out = fleetdeck(&node)
+            .args(["station", "join", "--invite-file"])
+            .arg(&path)
+            .output()
+            .unwrap();
+        assert!(!out.status.success());
+        let err = stderr(&out);
+        assert!(err.contains("mode 0600"), "{err}");
+        assert!(err.contains(&format!("has mode {mode:o}")), "{err}");
+        assert!(!err.contains("5ec2e75e"), "{err}");
+    }
 
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
     let out = fleetdeck(&node)

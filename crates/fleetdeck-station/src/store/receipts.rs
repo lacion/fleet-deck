@@ -15,12 +15,14 @@
 //! A database error aborts everything: no events, no receipt.
 
 use fleetdeck_core::IdSource;
+use fleetdeck_core::identity::Fingerprint;
 use fleetdeck_proto::RequestId;
 use fleetdeck_proto::command::{CommandResult, ReceiptState};
 use fleetdeck_proto::event::ResolvedBy;
+use fleetdeck_proto::link::Scope;
+use fleetdeck_proto::mutation::Mutation;
 use fleetdeck_proto::{
-    CommandEnvelope, CommandId, EventEnvelope, IncarnationId, Receipt, Reject, RejectCode,
-    SessionId, SessionSummary,
+    CommandId, EventEnvelope, IncarnationId, Receipt, Reject, RejectCode, SessionId, SessionSummary,
 };
 use ring::digest::{SHA256, digest};
 use rusqlite::{Connection, OptionalExtension, params};
@@ -30,21 +32,48 @@ use super::requests::{self, AnswerClaim, RuntimeRequest};
 use super::{NewEvent, NewSession, Result, StoreError, log, to_i64};
 
 /// The authenticated identity that sent a command: a reused `command_id`
-/// from another caller is rejected.
+/// from another caller is rejected. A link caller also names the grant that
+/// the method needs; the decision transaction checks that the caller's pin
+/// and that grant still exist (G5).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Caller(pub String);
+pub struct Caller {
+    name: String,
+    grant: Option<(Fingerprint, Scope)>,
+}
 
 impl Caller {
     /// The station-local CLI (owner on the station machine).
     #[must_use]
     pub fn local() -> Self {
-        Self("local".to_owned())
+        Self {
+            name: "local".to_owned(),
+            grant: None,
+        }
     }
 
-    /// A paired deck, by its key.
+    /// A paired deck on a link; the method needs `scope`.
+    #[must_use]
+    pub fn peer(fingerprint: Fingerprint, scope: Scope) -> Self {
+        Self {
+            name: format!("deck:{fingerprint}"),
+            grant: Some((fingerprint, scope)),
+        }
+    }
+
+    /// A named caller without a grant check (store tests).
+    #[cfg(test)]
     #[must_use]
     pub fn deck(key: &str) -> Self {
-        Self(format!("deck:{key}"))
+        Self {
+            name: format!("deck:{key}"),
+            grant: None,
+        }
+    }
+
+    /// The name that receipts store.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
     }
 }
 
@@ -270,7 +299,7 @@ fn store_receipt(
         params![
             receipt.command_id.as_str(),
             method,
-            caller.0,
+            caller.name,
             payload_sha256,
             state,
             receipt.station_seq.map(to_i64).transpose()?,
@@ -281,9 +310,9 @@ fn store_receipt(
     Ok(())
 }
 
-fn not_stored(envelope: &CommandEnvelope, reject: Reject, now: i64) -> Decided {
+fn not_stored(mutation: &Mutation, reject: Reject, now: i64) -> Decided {
     Decided {
-        receipt: Receipt::rejected(envelope.command_id.clone(), reject, now),
+        receipt: Receipt::rejected(mutation.command_id().clone(), reject, now),
         duplicate: false,
         events: Vec::new(),
         effects: Vec::new(),
@@ -295,25 +324,41 @@ pub(super) fn decide<F>(
     ids: &dyn IdSource,
     incarnation: &IncarnationId,
     now: i64,
-    envelope: &CommandEnvelope,
+    mutation: &Mutation,
     caller: &Caller,
     decide: F,
 ) -> Result<Decided>
 where
     F: FnOnce(&mut Decision<'_>) -> Result<CommandResult, DecideError>,
 {
-    if let Some(target) = &envelope.target_incarnation
+    if let Some(target) = target_of(mutation)
         && target != incarnation
-        && let Err(reject) = envelope.admit(now, incarnation)
+        && let Err(reject) = mutation.admit(now, incarnation)
     {
-        return Ok(not_stored(envelope, reject, now));
+        return Ok(not_stored(mutation, reject, now));
     }
-    let method = envelope.command.method();
-    let payload_sha256 = sha256_hex(&envelope.canonical_payload());
+    let command_id = mutation.command_id();
+    let method = mutation.method();
+    let payload_sha256 = sha256_hex(&mutation.canonical_payload());
     let mut tx = conn.transaction()?;
-    if let Some(prior) = stored(&tx, &envelope.command_id)? {
+    // G5: the caller's pin and grant, read in the decision transaction. A
+    // command that was queued on a link whose key was revoked meanwhile is
+    // refused here; no receipt is stored for a caller that is not paired.
+    if let Some((fingerprint, scope)) = &caller.grant
+        && !super::peers::granted(&tx, fingerprint, *scope)?
+    {
+        let reject = Reject::new(
+            RejectCode::Forbidden,
+            format!(
+                "the caller is not paired or has no `{}` grant",
+                scope.name()
+            ),
+        );
+        return Ok(not_stored(mutation, reject, now));
+    }
+    if let Some(prior) = stored(&tx, command_id)? {
         if prior.method == method
-            && prior.caller == caller.0
+            && prior.caller == caller.name
             && prior.payload_sha256 == payload_sha256
         {
             return Ok(Decided {
@@ -327,16 +372,16 @@ where
             RejectCode::CommandIdReused,
             format!(
                 "command {} was used for another method, payload or caller",
-                envelope.command_id
+                command_id
             ),
         );
-        return Ok(not_stored(envelope, reject, now));
+        return Ok(not_stored(mutation, reject, now));
     }
-    if let Err(reject) = envelope.admit(now, incarnation) {
+    if let Err(reject) = mutation.admit(now, incarnation) {
         if !reject.code.stores_receipt() {
-            return Ok(not_stored(envelope, reject, now));
+            return Ok(not_stored(mutation, reject, now));
         }
-        let receipt = Receipt::rejected(envelope.command_id.clone(), reject, now);
+        let receipt = Receipt::rejected(command_id.clone(), reject, now);
         store_receipt(&tx, &receipt, method, caller, &payload_sha256)?;
         tx.commit()?;
         return Ok(Decided {
@@ -352,7 +397,7 @@ where
             conn: &sp,
             ids,
             now,
-            command_id: envelope.command_id.clone(),
+            command_id: command_id.clone(),
             events: Vec::new(),
             effects: Vec::new(),
         };
@@ -374,9 +419,9 @@ where
             let seq = events
                 .last()
                 .map_or_else(|| log::head(&tx), |e| Ok(e.station_seq))?;
-            Receipt::accepted(envelope.command_id.clone(), seq, result, now)
+            Receipt::accepted(command_id.clone(), seq, result, now)
         }
-        Err(reject) => Receipt::rejected(envelope.command_id.clone(), reject, now),
+        Err(reject) => Receipt::rejected(command_id.clone(), reject, now),
     };
     store_receipt(&tx, &receipt, method, caller, &payload_sha256)?;
     crate::fault::hit(crate::fault::FaultPoint::BeforeCommit, method);
@@ -388,4 +433,15 @@ where
         events,
         effects: queued,
     })
+}
+
+/// The `target_incarnation` of an envelope (optional only for a session
+/// command of the local socket).
+fn target_of(mutation: &Mutation) -> Option<&IncarnationId> {
+    match mutation {
+        Mutation::Session(e) => e.target_incarnation.as_ref(),
+        Mutation::Configure(e) => Some(&e.target_incarnation),
+        Mutation::RotateKey(e) => Some(&e.target_incarnation),
+        Mutation::Coordinator(e) => Some(&e.target_incarnation),
+    }
 }
