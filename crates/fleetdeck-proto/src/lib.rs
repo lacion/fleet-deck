@@ -21,7 +21,7 @@ pub use capability::{Capabilities, Degradation, Operation, Unsupported};
 pub use command::{CommandEnvelope, Receipt, Reject, RejectCode, SessionCommand};
 pub use event::{Event, EventBody, EventEnvelope};
 pub use ids::*;
-pub use link::ControlFrame;
+pub use link::{ControlFrame, Scope};
 pub use mutation::Mutation;
 pub use session::SessionSummary;
 pub use version::{PROTO_MAX, PROTO_MIN};

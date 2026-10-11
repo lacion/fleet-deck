@@ -24,6 +24,7 @@ use tokio::task::JoinHandle;
 
 use fleetdeck_core::identity::{Identity, PeerKey};
 
+use crate::control::{ControlConfig, GrantSource, Grants};
 use crate::epochs::Epochs;
 use crate::handshake::{self, Own};
 use crate::hello::{
@@ -58,6 +59,10 @@ pub struct NodeConfig {
     pub invites: Arc<dyn InvitationGate>,
     pub epochs: Arc<Epochs>,
     pub table: LinkTable,
+    /// The scopes this node granted to each paired key (empty: none).
+    pub grants: Arc<dyn GrantSource>,
+    /// Limits of the control channel of every link (G8).
+    pub control: ControlConfig,
     /// Bound of each setup step after TLS: the WebSocket upgrade, the
     /// hello/auth exchange, the wait for `Ready` and for the data channel.
     pub handshake_timeout: Duration,
@@ -73,6 +78,8 @@ impl NodeConfig {
             invites: Arc::new(NoInvitations),
             epochs,
             table,
+            grants: Grants::new(),
+            control: ControlConfig::default(),
             handshake_timeout: net::HANDSHAKE_TIMEOUT,
         }
     }

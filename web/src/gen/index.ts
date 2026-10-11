@@ -51,6 +51,7 @@ export * from "./ids/StationId";
 export * from "./ids/TurnId";
 export * from "./link/ControlFrame";
 export * from "./link/Negotiated";
+export * from "./link/Scope";
 export * from "./link/SessionSnapshot";
 export * from "./link/VersionOffer";
 export * from "./link/WireError";

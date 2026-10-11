@@ -475,3 +475,22 @@ Format: context, options, choice, reason, owner review.
   - `Hello` gains `attempt_id` and `incarnation`; `Close` gains `min_epoch`; version negotiation uses `fleetdeck_proto::version`.
 - Reason: the setup layer is where G1 and G10 live, and it can be tested alone over loopback (TCP or the FIFO stand-in, DL-025); the spike's control and data tasks change with G2, G6, G8 and G9 anyway, so they move in their own items.
 - Owner review: pending
+
+## DL-043: Control channel of `fleetdeck-link` (M2 P3-2)
+
+- Date: 2026-10-11 (M2 round 15)
+- Context: P3-2 implements the control channel with the Revision 2 rules (ADR-004 §9.4, §9.6, §9.7: G6, G7, G8). The ADR fixes the checks, the limits and the reason codes, but not where scopes live, how the caller treats a request that it may not send, which close reason a refused stream frame gets, or what "injected clock" means for the heartbeat test.
+- Options:
+  1. Copy the spike task (one `select!` that also awaits socket writes and application delivery) and add the checks.
+  2. Three tasks per channel: a reader (decode, check, deliver), a writer (owns the socket sink, every write bounded), and a supervisor (end conditions and heartbeat) that never awaits a queue or the socket.
+- Choice: 2.
+- Details:
+  - `Scope` moves to `fleetdeck_proto::link` (the board shows grants; TS type `link/Scope.ts`). The method table `fleetdeck_link::methods::METHODS` has `Callers` (deck → station, station → deck, either), scope, feature and mutating flag; `tests/method_table.rs` parses the ADR §9.6 table and compares it with the code table (G7). A unit test checks that exactly the mutating methods have a typed envelope (`fleetdeck_proto::mutation::envelope_of`, DL-041).
+  - Roles are the ones bound at pairing: this node's role and `node.peer_role()` (setup admits only keys pinned with that role, DL-042). Grants come from a `GrantSource` trait read for every inbound request (in-memory `Grants` now; the station and deck stores implement it in P3-5/P3-6, where the mutating decision re-reads them in its transaction, §9.5).
+  - The caller pre-checks its own requests (method, role, feature, `command_id`, open count) and answers a refused request locally with `Outcome::Err` without sending it; only the receiver checks scopes. `send` accepts only stream frames and checks their direction and feature.
+  - An inbound stream frame in the wrong direction closes the link with `wrong_role`; a snapshot frame without `snapshots.v1`, a binary message, bad JSON, a response to an unknown id and a repeated open request id close it with `protocol_error`.
+  - Limits: 128 open requests per direction (own: refused locally with `too_many_requests`; inbound: answered with `too_many_requests`); outbound and application queues of 256; each socket write ≤ 10 s; the final `close` frame and socket close ≤ 1 s (`CLEANUP_LIMIT`), then the writer is aborted. The heartbeat `ping` (every 15 s) uses `try_send`, so a full queue skips it; any received message resets the 45 s idle limit, which closes the link with `timeout`.
+  - The application gets `Inbound::{Request, Frame}`; the end of the link is `Control::ended()/closed()` (the inbound queue then returns `None`), so delivery of the end never waits for queue capacity. The supervisor owns the link's `TableGuard`, so the table entry goes with the channel. Dropping every `Control` handle closes the link (`closed`).
+  - The injected clock of the G8 tests is tokio's paused test clock over in-memory WebSocket pairs (`tokio::io::duplex`); the channel is generic over the socket for that reason. The data channel stays a plain `Ws` in `LiveLink` until P3-3 ties it to the control channel.
+- Reason: a reader that waits for the application, or a writer that waits for a blackholed peer, can then never delay a supersession or a shutdown (G8); the checks match the ADR order exactly and are tested over in-memory pairs and real loopback links.
+- Owner review: pending

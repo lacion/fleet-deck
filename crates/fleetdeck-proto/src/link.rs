@@ -47,6 +47,47 @@ pub enum Outcome {
     Err(WireError),
 }
 
+/// A permission that a pairing grants to the peer key (PLAN §9, L15).
+/// The method table of `fleetdeck-link` names the scope of each method.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "link/")]
+pub enum Scope {
+    /// Read station state, sessions, events and artifacts.
+    Read,
+    /// Start, prompt, steer, interrupt, configure and stop sessions.
+    Drive,
+    /// Answer approvals and questions.
+    Approve,
+    /// Station configuration and key rotation.
+    Admin,
+    /// Station → deck: coordinator calls of agents on that station (L14).
+    Coordinate,
+}
+
+impl Scope {
+    /// Every scope, in table order.
+    pub const ALL: [Self; 5] = [
+        Self::Read,
+        Self::Drive,
+        Self::Approve,
+        Self::Admin,
+        Self::Coordinate,
+    ];
+
+    /// The wire name (`read`, `drive`, ...).
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Read => "read",
+            Self::Drive => "drive",
+            Self::Approve => "approve",
+            Self::Admin => "admin",
+            Self::Coordinate => "coordinate",
+        }
+    }
+}
+
 /// The projection of one session at a watermark (G4).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export_to = "link/")]

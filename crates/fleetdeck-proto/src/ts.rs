@@ -15,7 +15,7 @@ use ts_rs::{Config, TS};
 use crate::capability::{Capabilities, Operation, Unsupported};
 use crate::command::{CommandEnvelope, DeckCommandState, Receipt};
 use crate::event::{Event, EventEnvelope};
-use crate::link::ControlFrame;
+use crate::link::{ControlFrame, Scope};
 use crate::mutation::{CoordinatorCallEnvelope, KeyRotationEnvelope, StationConfigureEnvelope};
 use crate::session::SessionSummary;
 use crate::version::{Negotiated, VersionOffer};
@@ -43,6 +43,7 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         Receipt::export_all(&cfg),
         DeckCommandState::export_all(&cfg),
         ControlFrame::export_all(&cfg),
+        Scope::export_all(&cfg),
         SessionSummary::export_all(&cfg),
         VersionOffer::export_all(&cfg),
         Negotiated::export_all(&cfg),
