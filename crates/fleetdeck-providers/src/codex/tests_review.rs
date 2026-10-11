@@ -281,6 +281,52 @@ fn rpc_question_answers_are_validated_before_the_write() {
     assert_eq!(writes(&out), vec![json!({"id": 3, "result": good})]);
 }
 
+/// The station admits a first answer with the same pure validator, against
+/// the request input of `approval.requested` (M2 gate correction, DL-070).
+#[test]
+fn the_station_validator_is_the_core_validator_over_the_event_input() {
+    let mut core = ready_core();
+    start_turn(&mut core, "in-1", "n1");
+    let ev = emits(&feed(
+        &mut core,
+        json!({"id": 4, "method": "item/tool/requestUserInput", "params": {
+            "threadId": T, "turnId": "n1", "itemId": "call_q", "isBlocking": true,
+            "questions": [{"id": "choice", "header": "Color", "question": "Which color?",
+                "options": [{"label": "Red"}, {"label": "Blue"}]}]
+        }}),
+    ));
+    let Event::ApprovalRequested {
+        request_id, input, ..
+    } = &ev[1]
+    else {
+        panic!("{ev:?}")
+    };
+    let params = input.as_ref().expect("an RPC question keeps its params");
+    for bad in [
+        None,
+        Some(json!({"answers": {}})),
+        Some(json!({"answers": {"colour": {"answers": ["Blue"]}}})),
+        Some(json!({"answers": {"choice": {"answers": [7]}}})),
+    ] {
+        assert!(
+            matches!(
+                validate_question_answer(params, bad.as_ref()),
+                Err(ProviderError::InvalidAnswer(_))
+            ),
+            "accepted {bad:?}"
+        );
+        let mut a = ans(request_id, "answer");
+        a.decision.updated_input = bad;
+        assert!(core.answer(&a).is_err(), "the core agrees");
+    }
+    let good = json!({"answers": {"choice": {"answers": ["Blue"]}}});
+    let reply = validate_question_answer(params, Some(&good)).unwrap();
+    let mut a = ans(request_id, "answer");
+    a.decision.updated_input = Some(good);
+    let out = core.answer(&a).unwrap();
+    assert_eq!(writes(&out), vec![json!({"id": 4, "result": reply})]);
+}
+
 /// Codex 0.160.0 names the child thread of `spawnAgent` only in the
 /// completed item (`receiverThreadIds` is empty in `item/started`), as in the
 /// `subagent` fixture. The child's items still get the parent link, and the

@@ -411,7 +411,8 @@ impl CodexCore {
                 })?
             }
             (ResponseChannel::RpcReply, RequestKind::Question) => {
-                let result = question_reply(&req.params, answer.decision.updated_input.as_ref())?;
+                let result =
+                    validate_question_answer(&req.params, answer.decision.updated_input.as_ref())?;
                 vec![Output::Write(rpc::reply(&req.native_id, result))]
             }
             (ResponseChannel::RpcReply, _) => {
@@ -545,7 +546,16 @@ fn message_answer(params: &Value, text: &str) -> String {
 /// request and the schema (`ToolRequestUserInputResponse`): `{"answers":
 /// {<question id>: {"answers": [<string>, ..]}}}`, only ids that the request
 /// asked, at least one answer. Anything else is refused before it is written.
-fn question_reply(params: &Value, input: Option<&Value>) -> Result<Value> {
+///
+/// `params` is the request's native params (the `input` of its
+/// `approval.requested`); `input` is the answer's `updated_input`. The
+/// result is the native RPC reply. Pure: the core uses it before it writes
+/// the reply, and the station uses it to admit an answer command before it
+/// claims the request (M2 gate correction).
+///
+/// # Errors
+/// [`ProviderError::InvalidAnswer`] for a missing or malformed answer.
+pub fn validate_question_answer(params: &Value, input: Option<&Value>) -> Result<Value> {
     let bad = |m: &str| ProviderError::InvalidAnswer(m.to_owned());
     let input = input.ok_or_else(|| bad("a question needs {\"answers\": {..}}"))?;
     let answers = input

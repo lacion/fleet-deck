@@ -180,6 +180,16 @@ fn policy(conn: &Connection, session: &SessionId) -> Result<OfflineApprovalPolic
     Ok(serde_json::from_str(&text)?)
 }
 
+/// The `deny_after` deadline of a request that opened at `requested_at`.
+fn deadline(policy: OfflineApprovalPolicy, requested_at: i64) -> Result<Option<i64>> {
+    Ok(match policy {
+        OfflineApprovalPolicy::Wait => None,
+        OfflineApprovalPolicy::DenyAfter { after_ms } => {
+            Some(requested_at.saturating_add(to_i64(after_ms)?))
+        }
+    })
+}
+
 /// Keeps the table in step with the event stream (inside the append).
 pub(super) fn observe(conn: &Connection, envelope: &EventEnvelope, now: i64) -> Result<()> {
     let EventBody::Known(event) = &envelope.event else {
@@ -195,12 +205,7 @@ pub(super) fn observe(conn: &Connection, envelope: &EventEnvelope, now: i64) -> 
             response,
             ..
         } => {
-            let deny_at = match policy(conn, session)? {
-                OfflineApprovalPolicy::Wait => None,
-                OfflineApprovalPolicy::DenyAfter { after_ms } => {
-                    Some(now.saturating_add(to_i64(after_ms)?))
-                }
-            };
+            let deny_at = deadline(policy(conn, session)?, now)?;
             let process = effects::live_process(conn, session)?;
             conn.execute(
                 "INSERT INTO runtime_requests (request_id, session_id, process_incarnation,
@@ -284,6 +289,45 @@ pub(super) fn claim_answer(
         params![request_id.as_str(), json(&receipt)?, now],
     )?;
     Ok(AnswerClaim::First)
+}
+
+/// Opens the answer slot of a request again after its answer effect was
+/// retired as not dispatched by the live worker (`settle`, fenced, from
+/// `claimed`): the provider got nothing, so a new command can answer. Called
+/// in the settlement's transaction. Only the claim of that very effect is
+/// released: the request is open, belongs to the effect's session and
+/// process, and its receipt has the effect's command id, option and `by`.
+/// Anything else changes nothing. `deny_at` returns to the request's own
+/// deadline (`requested_at` plus the session's `deny_after`), not a new one.
+/// The command's receipt and the retired effect stay as they are.
+pub(super) fn release_unsent_answer(
+    conn: &Connection,
+    effect: &Effect,
+    request_id: &RequestId,
+    option_id: &str,
+    by: ResolvedBy,
+    now: i64,
+) -> Result<bool> {
+    let Some(req) = request(conn, request_id)? else {
+        return Ok(false);
+    };
+    let ours = req.receipt.as_ref().is_some_and(|r| {
+        r.command_id == effect.command_id && r.option_id == option_id && r.by == by
+    });
+    if req.state != RequestState::Open
+        || req.session_id != effect.session_id
+        || req.process_incarnation != effect.process_incarnation
+        || !ours
+    {
+        return Ok(false);
+    }
+    let deny_at = deadline(policy(conn, &req.session_id)?, req.requested_at)?;
+    conn.execute(
+        "UPDATE runtime_requests SET receipt = NULL, deny_at = ?2, updated_at = ?3
+         WHERE request_id = ?1 AND state = 'open'",
+        params![request_id.as_str(), deny_at, now],
+    )?;
+    Ok(true)
 }
 
 /// Expires the open requests of a process that is gone (or whose response

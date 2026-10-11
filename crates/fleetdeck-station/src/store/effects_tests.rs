@@ -772,4 +772,7 @@ async fn recovery_keeps_the_queue_and_requests_of_a_surviving_process() {
 
 #[path = "effects_interrupt_tests.rs"]
 mod interrupt;
+
+#[path = "m2_gate_tests.rs"]
+mod m2_gate;
 use interrupt::interrupted;

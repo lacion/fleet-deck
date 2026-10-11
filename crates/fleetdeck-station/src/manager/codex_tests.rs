@@ -266,3 +266,221 @@ async fn a_codex_question_takes_its_answers_and_an_approval_refuses_an_input_edi
     );
     st.manager.shutdown(StopMode::Kill).await;
 }
+
+// --- answer admission before the claim (M2 gate correction, DL-070) ----------------
+
+/// Submits `command` under the fixed command id `id`.
+async fn submit_as(st: &Station, id: &str, command: SessionCommand) -> crate::store::Decided {
+    let envelope = CommandEnvelope {
+        command_id: CommandId::from(id),
+        target_incarnation: None,
+        retry_until: i64::try_from(st.det.now_ms()).unwrap() + RETRY_WINDOW_MS,
+        origin: CommandOrigin::Local,
+        command,
+    };
+    st.manager.submit(envelope, Caller::local()).await.unwrap()
+}
+
+/// `command` (an answer) with `updated_input` and `text`.
+fn with(
+    mut command: SessionCommand,
+    input: Option<serde_json::Value>,
+    message: Option<&str>,
+) -> SessionCommand {
+    if let SessionCommand::Answer { decision, .. } = &mut command {
+        decision.updated_input = input;
+        decision.text = message.map(str::to_owned);
+    }
+    command
+}
+
+fn answered_blue(e: &Event) -> bool {
+    matches!(e, Event::MessageCompleted { text, .. } if text == "answered: Blue")
+}
+
+/// The request is open and unanswered, with its first deadline.
+async fn assert_unclaimed(st: &Station, request: &RequestId, deny_at: Option<i64>) {
+    let req = st
+        .manager
+        .store()
+        .runtime_request(request.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(req.state, crate::store::RequestState::Open);
+    assert_eq!(req.receipt, None);
+    assert_eq!(req.deny_at, deny_at);
+}
+
+#[tokio::test]
+async fn a_malformed_first_answer_is_refused_and_a_corrected_one_is_delivered_once() {
+    let mut st = Station::new(4).await;
+    let ws = st.workspace();
+    let s = st
+        .start_with(codex_spec(&ws), Some("question Which color?"))
+        .await;
+    let request = st.wait_for("question", approval).await;
+    let deny_at = st
+        .manager
+        .store()
+        .runtime_request(request.clone())
+        .await
+        .unwrap()
+        .unwrap()
+        .deny_at;
+    let malformed = [
+        None,
+        Some(serde_json::json!({"answers": {}})),
+        Some(serde_json::json!({"answers": {"colour": {"answers": ["Blue"]}}})),
+        Some(serde_json::json!({"answers": {"choice": {"answers": [7]}}})),
+    ];
+    for (n, input) in malformed.into_iter().enumerate() {
+        let id = format!("bad-{n}");
+        let command = with(answer(&s, &request, "answer"), input, None);
+        let d = submit_as(&st, &id, command.clone()).await;
+        assert_eq!(d.receipt.state, ReceiptState::Rejected, "{id}");
+        assert_eq!(
+            d.receipt.reject.as_ref().map(|r| r.code),
+            Some(RejectCode::InvalidCommand),
+            "{id}"
+        );
+        assert!(d.effects.is_empty(), "{id}");
+        assert_unclaimed(&st, &request, deny_at).await;
+        // The same command id gets its stored rejection again.
+        let again = submit_as(&st, &id, command).await;
+        assert!(again.duplicate);
+        assert_eq!(again.receipt, d.receipt);
+    }
+    assert!(
+        st.effect_states(&s)
+            .await
+            .iter()
+            .all(|(k, _)| *k != "answer"),
+        "a refused answer queues no effect"
+    );
+
+    // A new command id with the answers takes the still open question.
+    let blue = Some(serde_json::json!({"answers": {"choice": {"answers": ["Blue"]}}}));
+    let good = with(answer(&s, &request, "answer"), blue, None);
+    let d = submit_as(&st, "good", good.clone()).await;
+    assert_eq!(d.receipt.state, ReceiptState::Accepted);
+    assert_eq!(d.effects.len(), 1);
+    wait_count(&st, "answered turn", 1, answered_blue).await;
+    wait_count(&st, "done turns", 1, turn_done).await;
+    // The accepted command repeats its receipt. A later answer, even a
+    // malformed one, gets the first outcome (L3) without a payload check,
+    // and sends nothing.
+    let dup = submit_as(&st, "good", good).await;
+    assert!(dup.duplicate && dup.effects.is_empty());
+    let late = st.accepted(answer(&s, &request, "answer")).await;
+    assert!(late.effects.is_empty());
+
+    st.accepted(SessionCommand::Stop {
+        session_id: s.clone(),
+        how: StopMode::Graceful,
+    })
+    .await;
+    let states = st.settled(&s).await;
+    assert_eq!(
+        states,
+        vec![
+            ("start", EffectState::Confirmed),
+            ("answer", EffectState::Confirmed),
+            ("stop", EffectState::Confirmed),
+        ]
+    );
+    let delivered = st
+        .events()
+        .await
+        .iter()
+        .filter(|e| matches!(&e.event, EventBody::Known(k) if answered_blue(k)))
+        .count();
+    assert_eq!(delivered, 1, "the answer reached fake Codex once");
+    st.manager.shutdown(StopMode::Kill).await;
+}
+
+#[tokio::test]
+async fn an_empty_free_answer_to_a_message_question_is_refused_before_the_claim() {
+    use fleetdeck_proto::event::{ApprovalOption, RequestKind, ResponseChannel};
+
+    let mut st = Station::new(4).await;
+    let store = st.manager.store().clone();
+    // A Codex message-channel question (an async `agentMessage` question),
+    // which `fake-codex sim` does not ask: the store gets its events. No
+    // adapter process exists, so the worker retires each answer unsent.
+    let s = SessionId::from("codex-message");
+    store
+        .create_session(crate::store::NewSession {
+            session_id: s.clone(),
+            provider: ProviderKind::Codex,
+            provider_instance: "codex".into(),
+            cwd: st.workspace(),
+            worktree: None,
+            branch: None,
+            mode: None,
+            title: None,
+            offline_approval_policy: OfflineApprovalPolicy::Wait,
+        })
+        .await
+        .unwrap();
+    store
+        .process_started(s.clone(), "proc-message".into(), None)
+        .await
+        .unwrap();
+    let question = |id: &str| Event::ApprovalRequested {
+        request_id: id.into(),
+        node_id: None,
+        request_kind: RequestKind::Question,
+        title: "Question".to_owned(),
+        details: "Red or Blue?".to_owned(),
+        input: Some(serde_json::json!({"title": "Question", "options": ["Red"]})),
+        options: ["Red", "answer"]
+            .iter()
+            .map(|o| ApprovalOption {
+                option_id: (*o).to_owned(),
+                label: (*o).to_owned(),
+            })
+            .collect(),
+        response: ResponseChannel::Message,
+        provider_refs: serde_json::Map::new(),
+    };
+    store
+        .append(
+            s.clone(),
+            vec![question("q-1").into(), question("q-2").into()],
+        )
+        .await
+        .unwrap();
+    let (q1, q2) = (RequestId::from("q-1"), RequestId::from("q-2"));
+
+    for message in [None, Some("")] {
+        let command = with(answer(&s, &q1, "answer"), None, message);
+        assert_eq!(st.rejected(command).await, RejectCode::InvalidCommand);
+        assert_unclaimed(&st, &q1, None).await;
+    }
+    let d = st
+        .accepted(with(answer(&s, &q1, "answer"), None, Some("Blue")))
+        .await;
+    assert_eq!(d.effects.len(), 1);
+    // An offered option needs no text; an unknown one keeps its refusal.
+    assert_eq!(
+        st.rejected(answer(&s, &q2, "Green")).await,
+        RejectCode::InvalidCommand
+    );
+    let d = st.accepted(answer(&s, &q2, "Red")).await;
+    assert_eq!(d.effects.len(), 1);
+
+    // The worker proves that no answer left the station: both requests
+    // open again for a new command (DL-070 decision 13).
+    let states = st.settled(&s).await;
+    assert_eq!(
+        states,
+        vec![
+            ("answer", EffectState::RetiredNotDispatched),
+            ("answer", EffectState::RetiredNotDispatched),
+        ]
+    );
+    assert_unclaimed(&st, &q1, None).await;
+    assert_unclaimed(&st, &q2, None).await;
+    st.manager.shutdown(StopMode::Kill).await;
+}

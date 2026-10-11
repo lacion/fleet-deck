@@ -89,6 +89,9 @@ async function spawn(station: Station, title: string, prompt: string): Promise<s
   await form.getByRole('button', { name: `Open ${station.home}/projects` }).click();
   await expect(form.getByRole('button', { name: 'Open demo' })).toContainText('git');
   await form.getByRole('button', { name: 'Open demo' }).click();
+  // Wait for the demo listing: "Use this directory" takes the path on
+  // screen, and the projects listing has the same button (DL-069).
+  await expect(form.locator('.fd-path')).toHaveText(station.workspace);
   await form.getByRole('button', { name: 'Use this directory' }).click();
   await expect(form).toContainText(`Chosen: ${station.workspace}`);
   await form.getByLabel('Title (optional)').fill(title);

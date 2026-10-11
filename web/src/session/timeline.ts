@@ -68,7 +68,29 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
   const subagents: Subagent[] = [];
   const messages = new Map<string, Open>(); // container node id ('' = root) → open message
   const approvals = new Map<string, Extract<Item, { type: 'approval' }>>();
+  const allMessages: Extract<Item, { type: 'message' }>[] = [];
   let tasks: string[] = []; // the current subagent task ids
+  // Background subagents that the previous event finished by an empty task
+  // list. An old station recovery wrote that list just before the loss, so
+  // a loss that follows at once ends them instead (M2 gate correction).
+  let justFinished: Subagent[] = [];
+
+  // A lost or ended process runs nothing more: every running node ends,
+  // open messages close with their text, open requests expire. Terminal
+  // statuses stay as they are.
+  const endAll = (requestOutcome: string) => {
+    for (const node of nodes.values()) {
+      if (node.type === 'tool' && node.status === 'running') node.status = 'ended';
+      if (node.type === 'subagent' && (node.status === 'running' || node.status === 'background'))
+        node.status = 'ended';
+    }
+    for (const message of allMessages) message.done = true;
+    messages.clear();
+    for (const a of approvals.values()) {
+      if (a.state === 'open') Object.assign(a, { state: 'expired', outcome: requestOutcome });
+    }
+    tasks = [];
+  };
 
   const list = (parent: string | null): Item[] => {
     if (parent === null) return root;
@@ -79,6 +101,8 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
   for (const env of events) {
     const event = env.event as Event | { kind: string };
     const key = `${env.session_seq}`;
+    const previousFinished = justFinished;
+    justFinished = [];
     switch (event.kind) {
       case 'run.started': {
         const e = event as Extract<Event, { kind: 'run.started' }>;
@@ -100,6 +124,7 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
         if (!open || open.turn !== e.turn_id || open.item.done) {
           const item = { type: 'message' as const, key, text: '', done: false };
           list(e.parent_node_id).push(item);
+          allMessages.push(item);
           open = { item, turn: e.turn_id };
           messages.set(container, open);
         }
@@ -176,8 +201,20 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
         for (const sub of subagents) {
           if (sub.status === 'background' && sub.task_id && !tasks.includes(sub.task_id)) {
             sub.status = 'done';
+            if (e.tasks.length === 0) justFinished.push(sub);
           }
         }
+        break;
+      }
+      // `session.state` is the wire kind of Rust `SessionStateChanged`. The
+      // variant name is read too, so a hand-written sequence that uses it
+      // gets the same cleanup (DL-070).
+      case 'session.state':
+      case 'session.state_changed': {
+        const e = event as Extract<Event, { kind: 'session.state' }>;
+        if (e.state !== 'lost' && e.state !== 'exited') break;
+        for (const sub of previousFinished) if (sub.status === 'done') sub.status = 'ended';
+        endAll(e.state === 'lost' ? 'session lost' : 'session ended');
         break;
       }
       case 'approval.requested': {
@@ -239,17 +276,7 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
         break;
       }
       case 'session.ended': {
-        for (const node of nodes.values()) {
-          if (node.type === 'tool' && node.status === 'running') node.status = 'ended';
-          if (
-            node.type === 'subagent' &&
-            (node.status === 'running' || node.status === 'background')
-          )
-            node.status = 'ended';
-        }
-        for (const a of approvals.values()) {
-          if (a.state === 'open') Object.assign(a, { state: 'expired', outcome: 'session ended' });
-        }
+        endAll('session ended');
         root.push({ type: 'notice', key, text: 'The session ended.', tone: 'info' });
         break;
       }
@@ -273,7 +300,7 @@ export function subagentLabel(status: SubagentStatus): string {
     case 'failed':
       return 'failed';
     case 'ended':
-      return 'stopped with the session';
+      return 'stopped';
   }
 }
 

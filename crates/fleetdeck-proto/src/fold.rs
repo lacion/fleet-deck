@@ -63,7 +63,14 @@ impl SessionSummary {
                 self.capabilities = Some(capabilities.as_ref().clone());
                 self.state = SessionState::Running;
             }
-            Event::SessionStateChanged { state, .. } => self.state = *state,
+            Event::SessionStateChanged { state, .. } => {
+                self.state = *state;
+                // A lost or exited process runs nothing more: the same
+                // cleanup as `session.ended` (M2 gate correction).
+                if matches!(state, SessionState::Lost | SessionState::Exited) {
+                    self.clear_running();
+                }
+            }
             Event::RunStarted { run_id, .. } => self.current_run = Some(run_id.clone()),
             Event::TurnStarted { turn_id, .. } => self.current_turn = Some(turn_id.clone()),
             Event::TurnCompleted { turn_id, .. } => {
@@ -155,11 +162,7 @@ impl SessionSummary {
                 if !matches!(self.state, SessionState::Lost) {
                     self.state = SessionState::Exited;
                 }
-                self.current_run = None;
-                self.current_turn = None;
-                self.background_tasks.clear();
-                self.background_agents = 0;
-                self.running_tools.clear();
+                self.clear_running();
             }
             Event::MessageDelta { .. }
             | Event::MessageCompleted { .. }
@@ -170,6 +173,16 @@ impl SessionSummary {
             | Event::InterruptResult { .. }
             | Event::InputUpdated { .. } => {}
         }
+    }
+
+    /// Ends every run, turn, tool and background task of the summary. The
+    /// timeline history, the open requests and `last_error` stay.
+    fn clear_running(&mut self) {
+        self.current_run = None;
+        self.current_turn = None;
+        self.background_tasks.clear();
+        self.background_agents = 0;
+        self.running_tools.clear();
     }
 
     fn derive_activity(&self) -> Activity {

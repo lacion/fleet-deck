@@ -133,6 +133,7 @@ fn lose_session(
 ) -> Result<()> {
     let summary =
         log::summary(conn, session)?.ok_or_else(|| StoreError::UnknownSession(session.clone()))?;
+    let had_background = !summary.background_tasks.is_empty();
     let mut events = Vec::new();
     if let Some(turn_id) = summary.current_turn {
         events.push(Event::TurnCompleted {
@@ -148,13 +149,16 @@ fn lose_session(
             background_pending: false,
         });
     }
-    if !summary.background_tasks.is_empty() {
-        events.push(Event::BackgroundUpdated { tasks: Vec::new() });
-    }
+    // The loss comes before the empty background list: a reader marks the
+    // background children as ended by the loss, not as done by the list
+    // (M2 gate correction).
     events.push(Event::SessionStateChanged {
         state: SessionState::Lost,
         detail: Some("station restart: the provider process is gone".to_owned()),
     });
+    if had_background {
+        events.push(Event::BackgroundUpdated { tasks: Vec::new() });
+    }
     for event in events {
         out.push(log::append_one(conn, session, event.into(), now)?);
     }

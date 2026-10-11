@@ -29,8 +29,8 @@ use fleetdeck_proto::{CommandId, Event, EventBody, EventEnvelope, InputId, Reque
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
-use super::log;
 use super::{Result, StoreError, to_i64, to_u64};
+use super::{log, requests};
 
 macro_rules! text_id {
     ($(#[$m:meta])* $name:ident) => {
@@ -449,6 +449,24 @@ pub(super) fn settle(
                 now,
                 out,
             )?;
+            // The live worker proved that no answer reached the provider:
+            // the request's answer slot opens again for a new command
+            // (never a retry of this one).
+            if let EffectPayload::Answer {
+                request_id,
+                decision,
+                by,
+            } = &found.payload
+            {
+                requests::release_unsent_answer(
+                    conn,
+                    &found,
+                    request_id,
+                    &decision.option_id,
+                    *by,
+                    now,
+                )?;
+            }
         }
         Dispatch::Unknown(reason) => {
             transition(conn, &found, EffectState::OutcomeUnknown, reason, now, out)?;

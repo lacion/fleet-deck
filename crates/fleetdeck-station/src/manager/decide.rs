@@ -2,13 +2,19 @@
 //! the station policy and the session's projection, then the effects, all
 //! in the command's transaction. Nothing here touches a provider.
 
-use fleetdeck_proto::command::{CommandOrigin, CommandResult, SessionCommand, SessionSpec};
-use fleetdeck_proto::event::{RequestKind, ResolvedBy, RunOrigin, SessionState};
+use fleetdeck_proto::command::{
+    ApprovalDecision, CommandOrigin, CommandResult, SessionCommand, SessionSpec,
+};
+use fleetdeck_proto::event::{
+    ProviderKind, RequestKind, ResolvedBy, ResponseChannel, RunOrigin, SessionState,
+};
 use fleetdeck_proto::{InputId, Operation, Reject, RejectCode, SessionId, SessionSummary};
+use fleetdeck_providers::codex::validate_question_answer;
 
 use super::policy::{Policy, WorkspaceError};
 use crate::store::{
     AnswerClaim, DecideError, Decision, EffectPayload, InputRecord, NewSession, RequestState,
+    RuntimeRequest,
 };
 
 /// The run origin of an input from `origin` (PLAN §6.3).
@@ -112,6 +118,13 @@ pub fn decide(
             }
             let request =
                 request.ok_or_else(|| reject(RejectCode::UnknownRequest, "no such request"))?;
+            // Admission before the claim (M2 gate correction): a first
+            // answer to an open question must be one that the provider can
+            // take, or it would hold the request's answer slot with an
+            // effect that the provider refuses.
+            if request.state == RequestState::Open && request.receipt.is_none() {
+                admit_answer(d, &session_id, &request, &decision)?;
+            }
             let by = resolved_by(origin);
             match d.claim_answer(&request.request_id, &decision.option_id, by)? {
                 AnswerClaim::First => {
@@ -163,6 +176,70 @@ pub fn decide(
         }
     }
 }
+
+/// Checks the payload of a first answer to an open request against the
+/// provider's own rules, before the answer is claimed. Only Codex questions
+/// have payload rules here: an RPC question needs the answer map that
+/// [`validate_question_answer`] accepts, and the free answer (`answer`) of a
+/// message question needs a text. Other requests pass unchanged. Missing
+/// request metadata fails closed.
+fn admit_answer(
+    d: &Decision<'_>,
+    session_id: &SessionId,
+    request: &RuntimeRequest,
+    decision: &ApprovalDecision,
+) -> Result<(), DecideError> {
+    if request.kind != RequestKind::Question
+        || !request
+            .options
+            .iter()
+            .any(|o| o.option_id == decision.option_id)
+    {
+        // An unknown option keeps its own refusal from the claim.
+        return Ok(());
+    }
+    let missing = || {
+        reject(
+            RejectCode::InvalidCommand,
+            "the station has no record of this question's input",
+        )
+    };
+    let summary = d.summary(session_id)?.ok_or_else(missing)?;
+    match summary.provider {
+        Some(ProviderKind::Claude) => return Ok(()),
+        Some(ProviderKind::Codex) => {}
+        Some(ProviderKind::Unknown) | None => return Err(missing()),
+    }
+    let open = summary
+        .open_requests
+        .iter()
+        .find(|r| r.request_id == request.request_id)
+        .ok_or_else(missing)?;
+    match open.response {
+        ResponseChannel::RpcReply => {
+            let params = open.input.as_ref().ok_or_else(missing)?;
+            validate_question_answer(params, decision.updated_input.as_ref())
+                .map(|_| ())
+                .map_err(|e| reject(RejectCode::InvalidCommand, e.to_string()))
+        }
+        ResponseChannel::Message => {
+            // The same rule as the Codex core: the free answer needs a
+            // non-empty text; an offered option is its own answer.
+            if decision.option_id == CODEX_FREE_ANSWER
+                && decision.text.as_ref().is_none_or(String::is_empty)
+            {
+                return Err(reject(
+                    RejectCode::InvalidCommand,
+                    "the answer needs a message",
+                ));
+            }
+            Ok(())
+        }
+    }
+}
+
+/// The option id of a Codex free answer (`codex/requests.rs`).
+const CODEX_FREE_ANSWER: &str = "answer";
 
 fn result(session_id: &SessionId, input_id: Option<InputId>) -> CommandResult {
     CommandResult {

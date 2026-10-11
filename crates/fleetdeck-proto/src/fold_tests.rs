@@ -322,3 +322,115 @@ fn background_subagents_are_counted_apart_from_other_background_work() {
     });
     assert_eq!((s.background_tasks.len(), s.background_agents), (0, 0));
 }
+
+fn agent_task(id: &str) -> BackgroundTask {
+    BackgroundTask {
+        task_id: id.to_owned(),
+        task_kind: "local_agent".to_owned(),
+    }
+}
+
+#[test]
+fn a_lost_session_runs_nothing_but_keeps_its_requests_and_error() {
+    for state in [SessionState::Lost, SessionState::Exited] {
+        let mut f = Feed::new();
+        f.push(started());
+        f.push(run("r1"));
+        f.push(Event::TurnStarted {
+            run_id: "r1".into(),
+            turn_id: "t1".into(),
+            provider_refs: ProviderRefs::new(),
+        });
+        f.push(tool("n1", crate::event::ToolKind::Subagent, "child"));
+        f.push(Event::BackgroundUpdated {
+            tasks: vec![agent_task("a1")],
+        });
+        f.push(request("q1"));
+        f.push(Event::Error {
+            code: "boom".to_owned(),
+            message: "the provider failed".to_owned(),
+            retry_at: None,
+        });
+        // The station recovery order: run and turn fail, then the loss.
+        f.push(Event::TurnCompleted {
+            turn_id: "t1".into(),
+            status: TurnStatus::Failed,
+            usage: None,
+        });
+        f.push(Event::RunCompleted {
+            run_id: "r1".into(),
+            status: TurnStatus::Failed,
+            background_pending: false,
+        });
+        let s = f.push(Event::SessionStateChanged {
+            state,
+            detail: Some("station restart: the provider process is gone".to_owned()),
+        });
+        assert_eq!(s.state, state);
+        assert_eq!(
+            (s.current_run.as_ref(), s.current_turn.as_ref()),
+            (None, None)
+        );
+        assert!(s.running_tools.is_empty());
+        assert!(s.background_tasks.is_empty());
+        assert_eq!(s.background_agents, 0, "a lost card counts no subagents");
+        assert_eq!(s.activity, Activity::Ended);
+        assert_eq!(
+            s.open_requests.len(),
+            1,
+            "requests close by their own events"
+        );
+        assert_eq!(s.last_error.as_ref().map(|e| e.code.as_str()), Some("boom"));
+        // The empty list that follows the loss changes nothing.
+        let s = f.push(Event::BackgroundUpdated { tasks: Vec::new() });
+        assert_eq!((s.background_agents, s.state), (0, state));
+    }
+}
+
+#[test]
+fn a_loss_with_only_background_work_clears_it() {
+    let mut f = Feed::new();
+    f.push(started());
+    let s = f.push(Event::BackgroundUpdated {
+        tasks: vec![agent_task("a1"), agent_task("a2")],
+    });
+    assert_eq!((s.background_agents, s.activity), (2, Activity::Background));
+    let s = f.push(Event::SessionStateChanged {
+        state: SessionState::Lost,
+        detail: None,
+    });
+    assert_eq!((s.background_tasks.len(), s.background_agents), (0, 0));
+}
+
+#[test]
+fn a_normal_run_completion_keeps_background_work() {
+    let mut f = Feed::new();
+    f.push(started());
+    f.push(run("r1"));
+    f.push(tool("n1", crate::event::ToolKind::Subagent, "child"));
+    f.push(Event::BackgroundUpdated {
+        tasks: vec![agent_task("a1")],
+    });
+    f.push(tool_done("n1"));
+    let s = f.push(Event::RunCompleted {
+        run_id: "r1".into(),
+        status: TurnStatus::Done,
+        background_pending: true,
+    });
+    assert_eq!(s.current_run, None);
+    assert_eq!((s.background_tasks.len(), s.background_agents), (1, 1));
+    assert_eq!(s.activity, Activity::Background);
+    // A running state change keeps it too; a later run still counts it.
+    f.push(Event::SessionStateChanged {
+        state: SessionState::Running,
+        detail: None,
+    });
+    let s = f.push(run("r2"));
+    assert_eq!(s.background_agents, 1);
+    let s = f.push(Event::RunCompleted {
+        run_id: "r2".into(),
+        status: TurnStatus::Done,
+        background_pending: true,
+    });
+    assert_eq!(s.background_agents, 1);
+}

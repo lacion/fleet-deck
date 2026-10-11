@@ -38,7 +38,7 @@ pub use driver::{
 pub use host_cmd::HostCmd;
 pub use map::{HANDLED_NOTIFICATIONS, IGNORED_NOTIFICATIONS};
 pub use probe::{parse_account, parse_version};
-pub use requests::{DECLINED_REQUESTS, HANDLED_REQUESTS};
+pub use requests::{DECLINED_REQUESTS, HANDLED_REQUESTS, validate_question_answer};
 
 /// Codex collaboration modes (`ModeKind` of the 0.160.0 schema).
 pub const COLLABORATION_MODES: &[&str] = &["plan", "default"];

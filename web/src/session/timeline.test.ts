@@ -1,10 +1,159 @@
 import { describe, expect, test } from 'bun:test';
 import { summary } from '../testing/summary';
-import { nestedSubagents, recorded } from '../testing/timeline';
-import { buildTimeline, type Item, runningSubagents, type Subagent } from './timeline';
+import type { Event, EventEnvelope } from '../gen';
+import { envelopes, nestedSubagents, recorded } from '../testing/timeline';
+import {
+  buildTimeline,
+  type Item,
+  runningSubagents,
+  type Subagent,
+  subagentLabel,
+} from './timeline';
 
 const subs = (items: readonly Item[]): Subagent[] =>
   items.filter((i): i is Subagent => i.type === 'subagent');
+
+// Events after `base`, numbered on from its last `session_seq`.
+const extend = (base: readonly EventEnvelope[], more: readonly Event[]): EventEnvelope[] => {
+  const last = base.at(-1)?.session_seq ?? 0;
+  const tail = envelopes(base[0]?.session_id ?? 's', more).map((e) => ({
+    ...e,
+    session_seq: e.session_seq + last,
+    station_seq: e.station_seq + last,
+  }));
+  return [...base, ...tail];
+};
+const turnFailed: Event = {
+  kind: 'turn.completed',
+  turn_id: 'turn-1',
+  status: 'failed',
+  usage: null,
+};
+const runFailed: Event = {
+  kind: 'run.completed',
+  run_id: 'run-1',
+  status: 'failed',
+  background_pending: false,
+};
+const lost: Event = {
+  kind: 'session.state',
+  state: 'lost',
+  detail: 'station restart: the provider process is gone',
+};
+const noTasks: Event = { kind: 'background.updated', tasks: [] };
+const agentTask: Event = {
+  kind: 'background.updated',
+  tasks: [{ task_id: 'task-1', task_kind: 'local_agent' }],
+};
+// A run whose subagent moves to the background (task-1) and the run ends.
+const backgroundRun = (): EventEnvelope[] =>
+  envelopes('bg', [
+    { kind: 'run.started', run_id: 'run-1', input_summary: 'go', origin: 'board' },
+    { kind: 'turn.started', run_id: 'run-1', turn_id: 'turn-1', provider_refs: {} },
+    {
+      kind: 'tool.started',
+      node_id: 'agent-1',
+      parent_node_id: null,
+      tool_kind: 'subagent',
+      title: 'Agent',
+      input_summary: 'work in the background',
+      files: [],
+      provider_refs: {},
+    },
+    agentTask,
+    { kind: 'tool.completed', node_id: 'agent-1', status: 'ok', files: [], exit_code: null },
+    { kind: 'turn.completed', turn_id: 'turn-1', status: 'done', usage: null },
+    { kind: 'run.completed', run_id: 'run-1', status: 'done', background_pending: true },
+  ]);
+
+describe('session loss and exit end the tree (M2 gate correction)', () => {
+  test('the restart recovery ends nested subagents, tools, messages and requests', () => {
+    // Three subagents run, a grandchild tool waits for an open approval,
+    // and node-1 has an open message; then the station recovery events.
+    const tree = buildTimeline(extend(nestedSubagents(10), [turnFailed, runFailed, lost]));
+    expect(tree.running).toBe(0);
+    expect(tree.subagents.map((s) => s.status)).toEqual(['ended', 'ended', 'ended']);
+    const [explore] = subs(tree.items);
+    // node-3 finished before the loss and keeps `ok`; node-5 was running.
+    expect(explore?.items[0]).toMatchObject({ type: 'tool', status: 'ok' });
+    expect(explore?.items[1]).toMatchObject({ type: 'message', text: 'main is small', done: true });
+    const docs = tree.subagents[2];
+    expect(docs?.items[0]).toMatchObject({ type: 'tool', status: 'ended' });
+    expect(docs?.items[1]).toMatchObject({
+      type: 'approval',
+      state: 'expired',
+      outcome: 'session lost',
+    });
+    const running = (items: readonly Item[]): number =>
+      items.reduce(
+        (n, i) =>
+          n +
+          (i.type === 'tool' && i.status === 'running' ? 1 : 0) +
+          (i.type === 'subagent' ? (i.status === 'running' ? 1 : 0) + running(i.items) : 0),
+        0,
+      );
+    expect(running(tree.items)).toBe(0);
+    expect(tree.items.at(-1)).toMatchObject({ type: 'turn', status: 'failed' });
+  });
+
+  test('the new recovery order ends a background subagent before the list empties', () => {
+    const events = extend(backgroundRun(), [lost, noTasks]);
+    expect(buildTimeline(events.slice(0, -1)).subagents[0]?.status).toBe('ended');
+    const tree = buildTimeline(events);
+    expect(tree.running).toBe(0);
+    expect(tree.subagents[0]?.status).toBe('ended');
+  });
+
+  test('the old recovery order (empty list, then loss) also ends the background subagent', () => {
+    const tree = buildTimeline(extend(backgroundRun(), [noTasks, lost]));
+    expect(tree.running).toBe(0);
+    expect(tree.subagents[0]?.status).toBe('ended');
+  });
+
+  test('a background subagent that finished earlier stays done after a loss', () => {
+    const user: Event = { kind: 'mode.changed', mode: 'plan' };
+    const tree = buildTimeline(extend(backgroundRun(), [noTasks, user, lost]));
+    expect(tree.subagents[0]?.status).toBe('done');
+    expect(tree.running).toBe(0);
+  });
+
+  test('a background subagent runs on across run completion and a later run', () => {
+    const events = extend(backgroundRun(), [
+      { kind: 'run.started', run_id: 'run-2', input_summary: 'next', origin: 'board' },
+      { kind: 'turn.started', run_id: 'run-2', turn_id: 'turn-2', provider_refs: {} },
+      { kind: 'turn.completed', turn_id: 'turn-2', status: 'done', usage: null },
+      { kind: 'run.completed', run_id: 'run-2', status: 'done', background_pending: true },
+    ]);
+    const between = buildTimeline(events);
+    expect(between.subagents[0]).toMatchObject({ status: 'background', task_id: 'task-1' });
+    expect(between.running).toBe(1);
+    const finished = buildTimeline(extend(events, [noTasks]));
+    expect(finished.subagents[0]?.status).toBe('done');
+    expect(finished.running).toBe(0);
+  });
+
+  test('a session exit ends running work like session.ended, and later events revive nothing', () => {
+    const exited: Event = { kind: 'session.state', state: 'exited', detail: null };
+    const tree = buildTimeline(
+      extend(nestedSubagents(10), [
+        exited,
+        agentTask,
+        { kind: 'session.ended', reason: 'process_exit', exit_code: 0 },
+      ]),
+    );
+    expect(tree.running).toBe(0);
+    expect(tree.subagents.map((s) => s.status)).toEqual(['ended', 'ended', 'ended']);
+    expect(tree.subagents[2]?.items[1]).toMatchObject({
+      state: 'expired',
+      outcome: 'session ended',
+    });
+    expect(tree.items.at(-1)).toMatchObject({ type: 'notice', text: 'The session ended.' });
+  });
+
+  test('the label of an ended subagent is neutral', () => {
+    expect(subagentLabel('ended')).toBe('stopped');
+  });
+});
 
 describe('session timeline tree (PLAN D15)', () => {
   test('the recorded background subagent runs on after its tool call and then finishes', () => {
@@ -115,6 +264,17 @@ describe('session timeline tree (PLAN D15)', () => {
       ['done', 1],
       ['done', 0],
     ]);
+  });
+
+  test('a child completion leaves its parent subagent active', () => {
+    // Index 15 completes the grandchild node-4; node-1 runs on.
+    const tree = buildTimeline(nestedSubagents(15));
+    expect(tree.subagents.map((s) => [s.input, s.status])).toEqual([
+      ['Explore the code', 'running'],
+      ['Check the tests', 'running'],
+      ['Read the docs', 'done'],
+    ]);
+    expect(tree.running).toBe(2);
   });
 
   test('unknown event kinds are skipped', () => {
