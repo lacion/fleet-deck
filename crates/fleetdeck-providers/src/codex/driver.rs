@@ -573,9 +573,18 @@ impl CodexSession {
     /// open.
     async fn open(&mut self, thread: &super::SessionSpec, limit: Duration) -> Result<()> {
         let deadline = tokio::time::Instant::now() + limit;
-        self.run(CodexCore::initialize).await?;
+        // A failed write means that the handshake cannot continue (the
+        // stdin writer stopped, usually because the app-server is gone).
+        // Report it as the same end as a reader that stops, so no race
+        // between the two paths decides the error (DL-064). The caller kills
+        // the process on every `open` error.
+        let gone = |e: ProviderError| match e {
+            ProviderError::Host(crate::host::HostError::Write(_)) => ProviderError::SessionEnded,
+            other => other,
+        };
+        self.run(CodexCore::initialize).await.map_err(gone)?;
         self.wait_until(deadline, CodexCore::is_initialized).await?;
-        self.run(|c| c.open_thread(thread)).await?;
+        self.run(|c| c.open_thread(thread)).await.map_err(gone)?;
         self.wait_until(deadline, |c| !c.is_opening()).await?;
         let core = self.shared.core.lock().await;
         if core.thread_id().is_none() {
