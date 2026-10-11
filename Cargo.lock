@@ -584,6 +584,16 @@ dependencies = [
  "fleetdeck-link",
  "fleetdeck-proto",
  "fleetdeck-providers",
+ "fleetdeck-testkit",
+ "ring",
+ "rusqlite",
+ "rusqlite_migration",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

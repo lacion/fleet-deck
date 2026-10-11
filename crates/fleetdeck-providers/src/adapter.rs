@@ -93,6 +93,10 @@ pub enum ProviderError {
     SessionEnded,
     #[error("the event sink is closed")]
     SinkClosed,
+    /// The process stopped, but the event sink stayed full: the station did
+    /// not receive the last events (for example `session.ended`).
+    #[error("the process stopped, but its last events were not delivered")]
+    EventsUndelivered,
     #[error("workspace `{path}` is not usable: {source}")]
     Workspace {
         path: PathBuf,
@@ -216,6 +220,9 @@ pub trait LiveSession: Send {
     /// The native id to fork from: the station passes it to
     /// [`ProviderAdapter::fork`] (DL-033).
     async fn fork(&mut self) -> Result<NativeSessionId>;
+    /// Stops the process within the stop policy. A sink that stays full
+    /// cannot hold `stop`: it then returns [`ProviderError::EventsUndelivered`]
+    /// after the process is stopped.
     async fn stop(&mut self, how: StopMode) -> Result<()>;
 }
 

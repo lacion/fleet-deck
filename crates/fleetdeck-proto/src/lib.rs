@@ -9,6 +9,7 @@
 pub mod capability;
 pub mod command;
 pub mod event;
+pub mod fold;
 pub mod ids;
 pub mod link;
 pub mod session;

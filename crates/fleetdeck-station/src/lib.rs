@@ -7,3 +7,5 @@
 pub mod host {
     pub use fleetdeck_providers::host::*;
 }
+
+pub mod store;

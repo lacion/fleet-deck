@@ -40,6 +40,7 @@ fn adapter(scenario: &str, root: &std::path::Path) -> ClaudeAdapter {
         grace: Duration::from_millis(300),
         term_grace: Duration::from_millis(300),
     };
+    config.delivery_grace = Duration::from_millis(300);
     config.raw_log = Some(RawLogSettings {
         root: root.join("raw"),
         limits: RawLogLimits::default(),
@@ -60,7 +61,15 @@ fn spec(root: &std::path::Path) -> SessionSpec {
 }
 
 async fn start(scenario: &str, root: &std::path::Path) -> (ClaudeSession, mpsc::Receiver<Emitted>) {
-    let (sink, rx) = EventSink::channel(256);
+    start_with(scenario, root, 256).await
+}
+
+async fn start_with(
+    scenario: &str,
+    root: &std::path::Path,
+    capacity: usize,
+) -> (ClaudeSession, mpsc::Receiver<Emitted>) {
+    let (sink, rx) = EventSink::channel(capacity);
     let session = adapter(scenario, root)
         .start_session(spec(root), sink, Origin::New)
         .await
@@ -238,4 +247,57 @@ async fn a_closed_event_sink_kills_the_process() {
     }
     session.stop(StopMode::Graceful).await.unwrap();
     assert!(session.raw_log_dir().is_some_and(std::path::Path::is_dir));
+}
+
+/// Starts the simple fixture with a capacity-one sink that nobody drains,
+/// and waits until the reader is blocked on the second event.
+async fn blocked_reader(root: &std::path::Path) -> (ClaudeSession, mpsc::Receiver<Emitted>) {
+    let path = common::fixture_dir().join("simple.jsonl");
+    let (mut session, rx) = start_with(&format!("fixture:{}#0", path.display()), root, 1).await;
+    tokio::time::timeout(WAIT, send_recorded_prompt(&mut session, &path))
+        .await
+        .expect("the prompt emits no event before session.started");
+    let started = Instant::now();
+    while rx.is_empty() {
+        assert!(started.elapsed() < WAIT, "no event arrived");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    // The fixture sends several frames at once: give the reader time to
+    // reach the full sink.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    (session, rx)
+}
+
+async fn assert_bounded_stop(how: StopMode) {
+    let tmp = tempfile::tempdir().unwrap();
+    let (mut session, rx) = blocked_reader(tmp.path()).await;
+    let proc_dir = std::path::PathBuf::from(format!("/proc/{}", session.pid()));
+    let started = Instant::now();
+    let result = tokio::time::timeout(WAIT, session.stop(how))
+        .await
+        .expect("stop keeps its deadline with a full event sink");
+    // grace 300 ms + term 300 ms + delivery 300 ms, plus slack.
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "{how:?}: {:?}",
+        started.elapsed()
+    );
+    assert!(
+        matches!(result, Err(ProviderError::EventsUndelivered)),
+        "{how:?}: {result:?}"
+    );
+    if cfg!(target_os = "linux") {
+        assert!(!proc_dir.exists(), "{how:?}: the process was reaped");
+    }
+    assert_eq!(rx.len(), 1, "the undrained sink still holds one event");
+}
+
+#[tokio::test]
+async fn graceful_stop_is_bounded_when_an_undrained_sink_is_full() {
+    assert_bounded_stop(StopMode::Graceful).await;
+}
+
+#[tokio::test]
+async fn kill_is_bounded_when_an_undrained_sink_is_full() {
+    assert_bounded_stop(StopMode::Kill).await;
 }

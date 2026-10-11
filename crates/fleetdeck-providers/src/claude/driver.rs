@@ -59,13 +59,17 @@ pub struct ClaudeAdapterConfig {
     pub extra_args: Vec<String>,
     pub raw_log: Option<RawLogSettings>,
     pub stop: StopPolicy,
+    /// How long `stop` waits, after the process ended, for the reader to
+    /// deliver the remaining events. A full sink that nobody drains cannot
+    /// hold `stop` longer than this.
+    pub delivery_grace: Duration,
     /// The time limit of each probe command.
     pub probe_timeout: Duration,
 }
 
 impl ClaudeAdapterConfig {
     /// A configuration with the defaults: no bypass, no raw log, the
-    /// ADR-001 stop policy, 10 s probes.
+    /// ADR-001 stop policy, 5 s event delivery after a stop, 10 s probes.
     #[must_use]
     pub fn new(instance: ProviderInstanceId, program: PathBuf, env: ChildEnv) -> Self {
         Self {
@@ -76,6 +80,7 @@ impl ClaudeAdapterConfig {
             extra_args: Vec::new(),
             raw_log: None,
             stop: StopPolicy::default(),
+            delivery_grace: Duration::from_secs(5),
             probe_timeout: Duration::from_secs(10),
         }
     }
@@ -186,6 +191,7 @@ impl ClaudeAdapter {
             writer: Some(writer),
             frames: frames_rx,
             stop: self.config.stop,
+            delivery_grace: self.config.delivery_grace,
             raw_dir,
         };
         for o in init {
@@ -441,6 +447,7 @@ pub struct ClaudeSession {
     writer: Option<JoinHandle<()>>,
     frames: watch::Receiver<u64>,
     stop: StopPolicy,
+    delivery_grace: Duration,
     raw_dir: Option<PathBuf>,
 }
 
@@ -479,14 +486,28 @@ impl ClaudeSession {
         self.run(move |c| c.prompt(&input)).await
     }
 
-    /// Waits until the reader saw the end of stdout and reported the exit.
-    async fn join(&mut self) {
-        if let Some(reader) = self.reader.take() {
-            let _ = reader.await;
-        }
+    /// Waits until the reader saw the end of stdout and reported the exit,
+    /// at most `delivery_grace`. A reader that is still blocked on a full
+    /// event sink then is aborted: its remaining events are lost.
+    async fn join(&mut self) -> Result<()> {
         if let Some(writer) = self.writer.take() {
             writer.abort();
         }
+        let Some(mut reader) = self.reader.take() else {
+            return Ok(());
+        };
+        if tokio::time::timeout(self.delivery_grace, &mut reader)
+            .await
+            .is_ok()
+        {
+            return Ok(());
+        }
+        reader.abort();
+        tracing::warn!(
+            pid = self.control.pid(),
+            "claude events undelivered at stop"
+        );
+        Err(ProviderError::EventsUndelivered)
     }
 }
 
@@ -547,7 +568,10 @@ impl LiveSession for ClaudeSession {
 
     /// Graceful: write the queued frames, close stdin, wait the rest of the
     /// grace time, then signal the group (ADR-001 §2.9). The grace time
-    /// includes the queued writes. Returns after the exit events were emitted.
+    /// includes the queued writes. Returns after the exit events were emitted,
+    /// or with [`ProviderError::EventsUndelivered`] when the event sink stays
+    /// full for `delivery_grace` after the process ended. The process is
+    /// stopped in both cases.
     async fn stop(&mut self, how: StopMode) -> Result<()> {
         match how {
             StopMode::Graceful => {
@@ -568,8 +592,7 @@ impl LiveSession for ClaudeSession {
             }
             StopMode::Kill => self.control.kill().await,
         };
-        self.join().await;
-        Ok(())
+        self.join().await
     }
 }
 
