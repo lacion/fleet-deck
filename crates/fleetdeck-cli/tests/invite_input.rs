@@ -60,8 +60,9 @@ fn an_invitation_file_readable_by_others_is_refused() {
         .output()
         .unwrap();
     let err = stderr(&out);
+    // The file was accepted; `join` then needs the running station (P3-5c).
     assert!(
-        err.contains("not implemented yet"),
+        err.contains("is `fleetdeck station serve` running?"),
         "the file was accepted: {err}"
     );
     assert!(!err.contains("5ec2e75e"), "{err}");

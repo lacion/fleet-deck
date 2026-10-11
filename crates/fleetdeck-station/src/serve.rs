@@ -1,20 +1,24 @@
-//! `fleetdeck station serve` (M2 P2-7): the station process without a deck
-//! link (Phase 3 adds the link). It opens `station.db`, recovers it, starts
-//! the session manager with the adapters of `station.toml`, and serves the
-//! local socket until the shutdown signal. At shutdown it stops every live
-//! session gracefully.
+//! `fleetdeck station serve` (M2 P2-7, P3-5c): the station process. It
+//! opens `station.db`, recovers it, starts the session manager with the
+//! adapters of `station.toml`, loads (or creates) the station identity key,
+//! starts the link node (listeners and dialers of the paired deck,
+//! [`crate::link::StationNode`]) and serves the local socket until the
+//! shutdown signal. At shutdown it stops every live session gracefully.
 
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use fleetdeck_core::config::StationConfig;
+use fleetdeck_core::identity::{Identity, IdentityError};
 use fleetdeck_core::paths::{NodeDirs, ensure_private_dir};
 use fleetdeck_core::{SharedClock, SharedIds, SystemClock, UlidSource};
+use fleetdeck_link::reconnect::BackoffPolicy;
 use fleetdeck_proto::command::StopMode;
 use fleetdeck_providers::host::{DirectChildHost, SessionHost};
 use tokio::sync::watch;
 
+use crate::link::{NodeError, StationNode};
 use crate::local;
 use crate::manager::{Policy, SessionManager, adapters_from_config};
 use crate::store::{Store, StoreConfig};
@@ -37,6 +41,10 @@ pub enum ServeError {
     ChildEnv(#[from] fleetdeck_core::childenv::ChildEnvError),
     #[error(transparent)]
     Local(#[from] local::LocalError),
+    #[error("station identity key: {0}")]
+    Identity(#[from] IdentityError),
+    #[error("station link: {0}")]
+    Link(#[from] NodeError),
 }
 
 /// Runs the station until `stop` completes.
@@ -68,17 +76,34 @@ pub async fn serve(
     let listener = local::bind(&socket).await?;
     let manager =
         Arc::new(SessionManager::start(store, Policy::from_config(config), adapters, ids).await?);
+    let identity = Arc::new(Identity::load_or_create(&station_dir)?);
+    let node = StationNode::start(
+        Arc::clone(&manager),
+        Arc::clone(&identity),
+        config.name.clone(),
+        &config.listen,
+        BackoffPolicy::default(),
+    )
+    .await?;
     tracing::info!(
         station = %config.name,
+        key = %identity.fingerprint().short(),
         socket = %socket.display(),
+        listen = ?node.listen_addrs().await,
         "station ready"
     );
     let (shutdown, rx) = watch::channel(false);
-    let server = tokio::spawn(local::serve(listener, Arc::clone(&manager), rx));
+    let server = tokio::spawn(local::serve(
+        listener,
+        Arc::clone(&manager),
+        Some(Arc::clone(&node)),
+        rx,
+    ));
     stop.await;
     tracing::info!("station stopping");
     let _ = shutdown.send(true);
     let _ = server.await;
+    node.shutdown();
     manager.shutdown(StopMode::Graceful).await;
     // The pumps store the last events of each process (`session.ended`).
     let deadline = tokio::time::Instant::now() + PUMP_GRACE;

@@ -42,7 +42,7 @@ async fn shutdown_signal() {
     }
 }
 
-async fn call(dirs: &NodeDirs, request: &LocalRequest) -> anyhow::Result<LocalResponse> {
+pub(crate) async fn call(dirs: &NodeDirs, request: &LocalRequest) -> anyhow::Result<LocalResponse> {
     let path = socket_path(&dirs.station());
     let mut client = LocalClient::connect(&path).await?;
     let response = client.call(request).await?;

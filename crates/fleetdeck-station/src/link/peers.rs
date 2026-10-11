@@ -8,8 +8,9 @@
 //! decision. A revocation empties the cache entry **before** the store
 //! write (fail closed).
 
-use std::collections::BTreeSet;
-use std::sync::Arc;
+use std::collections::{BTreeSet, HashMap};
+use std::net::SocketAddr;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use fleetdeck_core::identity::{Fingerprint, PeerKey};
 use fleetdeck_link::Grants;
@@ -26,6 +27,10 @@ use crate::store::{Result, Store};
 pub struct StationPeers {
     store: Store,
     cache: Arc<Grants>,
+    /// `station join`: the deck address to store with the deck's pin, by
+    /// the fingerprint of the invitation, so pin, grants and dial address
+    /// commit in one transaction.
+    dial_after: Mutex<HashMap<Fingerprint, SocketAddr>>,
 }
 
 impl StationPeers {
@@ -38,7 +43,34 @@ impl StationPeers {
         for peer in store.paired_keys().await? {
             cache.grant(peer.key.fingerprint(), peer.scopes.iter().copied());
         }
-        Ok(Arc::new(Self { store, cache }))
+        Ok(Arc::new(Self {
+            store,
+            cache,
+            dial_after: Mutex::default(),
+        }))
+    }
+
+    /// The store of these peers.
+    #[must_use]
+    pub fn store(&self) -> &Store {
+        &self.store
+    }
+
+    /// Stores `addr` as the dial address of the key with `fingerprint`
+    /// when it pairs (`station join`).
+    pub fn dial_after_pairing(&self, fingerprint: Fingerprint, addr: SocketAddr) {
+        self.dials().insert(fingerprint, addr);
+    }
+
+    /// Drops the dial address of a pairing that failed.
+    pub fn pairing_failed(&self, fingerprint: &Fingerprint) {
+        self.dials().remove(fingerprint);
+    }
+
+    fn dials(&self) -> std::sync::MutexGuard<'_, HashMap<Fingerprint, SocketAddr>> {
+        self.dial_after
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Pins every stored key in `pins` (at node start).
@@ -71,12 +103,16 @@ impl GrantSource for StationPeers {
 #[async_trait::async_trait]
 impl PairingSink for StationPeers {
     async fn paired(&self, peer: &PairedPeer) -> std::result::Result<(), String> {
+        let dial_url = self
+            .dials()
+            .remove(&peer.key.fingerprint())
+            .map(|a| a.to_string());
         self.store
             .pin_peer(PairedKey {
                 key: peer.key,
                 role: peer.role,
                 scopes: peer.scopes.clone(),
-                dial_url: None,
+                dial_url,
             })
             .await
             .map_err(|e| e.to_string())?;

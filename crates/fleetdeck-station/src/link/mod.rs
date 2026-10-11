@@ -12,6 +12,7 @@
 
 mod intake;
 pub mod peers;
+pub mod runtime;
 pub mod stream;
 
 use std::sync::Arc;
@@ -26,6 +27,7 @@ use fleetdeck_proto::link::{ControlFrame, Outcome, ReplayParams, WireError};
 
 pub use intake::NOT_IMPLEMENTED;
 pub use peers::StationPeers;
+pub use runtime::{NodeError, StationNode};
 use stream::{Start, Stream};
 
 use crate::manager::SessionManager;

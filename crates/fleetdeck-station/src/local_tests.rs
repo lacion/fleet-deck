@@ -41,7 +41,7 @@ async fn server() -> Server {
     let path = socket_path(dir.path());
     let listener = bind(&path).await.unwrap();
     let (shutdown, rx) = watch::channel(false);
-    let task = tokio::spawn(serve(listener, Arc::clone(&manager), rx));
+    let task = tokio::spawn(serve(listener, Arc::clone(&manager), None, rx));
     Server {
         dir,
         path,

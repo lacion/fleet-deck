@@ -243,6 +243,43 @@ impl Store {
         .await
     }
 
+    /// Remembers a listen address of `station invite --listen` (DL-048).
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn add_listen_addr(&self, addr: std::net::SocketAddr) -> Result<()> {
+        let now = self.now();
+        call(&self.inner.db, move |conn| {
+            conn.execute(
+                "INSERT INTO listen_addrs (addr, added_at) VALUES (?1, ?2)
+                 ON CONFLICT (addr) DO NOTHING",
+                params![addr.to_string(), now],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// The listen addresses of `station invite --listen`, oldest first.
+    ///
+    /// # Errors
+    /// A database error, or an address that does not parse.
+    pub async fn listen_addrs(&self) -> Result<Vec<std::net::SocketAddr>> {
+        call(&self.inner.db, move |conn| {
+            let mut stmt = conn.prepare("SELECT addr FROM listen_addrs ORDER BY added_at, addr")?;
+            let rows = stmt
+                .query_map([], |r| r.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            rows.iter()
+                .map(|a| {
+                    a.parse()
+                        .map_err(|_| StoreError::Corrupt(format!("listen address `{a}`")))
+                })
+                .collect()
+        })
+        .await
+    }
+
     /// The database handle, for the link epochs of this node.
     #[must_use]
     pub fn db(&self) -> fleetdeck_core::db::Db {

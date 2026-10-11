@@ -29,6 +29,7 @@ tracing.workspace = true
 # The crash tests run the `fleetdeck` binary with `FLEETDECK_FAULT` (M2 P2-8).
 fleetdeck-station = { path = "../fleetdeck-station", features = ["fault-injection"] }
 fleetdeck-testkit = { path = "../fleetdeck-testkit" }
+fleetdeck-link = { path = "../fleetdeck-link" }
 tempfile.workspace = true
 
 [lints]

@@ -4,8 +4,9 @@
 //! V1 (M2 P2-4): `meta`, `pairing`, `deck_acks`, `sessions`, `events`,
 //! `commands`, `shells`. V2 (M2 P2-5): `processes`, `effects`,
 //! `runtime_requests` and the worker fence. V3 (M2 P3-5): pins, grants and
-//! the revocation generation (G5). V4: link epochs (G1). The workspace
-//! tables follow in Phase 6.
+//! the revocation generation (G5). V4: link epochs (G1). V5 (M2 P3-5c):
+//! the listen addresses that `station invite --listen` added (DL-048). The
+//! workspace tables follow in Phase 6.
 
 use rusqlite_migration::{M, Migrations};
 
@@ -154,6 +155,15 @@ ALTER TABLE pairing ADD COLUMN scopes TEXT NOT NULL DEFAULT '[]';
 CREATE UNIQUE INDEX pairing_fingerprint ON pairing(fingerprint);
 ";
 
+const V5: &str = "
+-- DL-048: a listen address that `station invite --listen` opened; the
+-- station listens on it again after a restart (with `station.toml` listen).
+CREATE TABLE listen_addrs (
+    addr      TEXT PRIMARY KEY,
+    added_at  INTEGER NOT NULL
+) STRICT;
+";
+
 /// The `station.db` migrations. V4 is the link epochs table of
 /// `fleetdeck-link` (G1).
 #[must_use]
@@ -163,5 +173,6 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V2),
         M::up(V3),
         M::up(fleetdeck_link::LINK_EPOCHS_SQL),
+        M::up(V5),
     ])
 }

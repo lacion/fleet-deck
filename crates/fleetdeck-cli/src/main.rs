@@ -2,6 +2,7 @@
 
 mod cli;
 mod invite;
+mod pairing;
 mod station;
 
 use std::process::ExitCode;
@@ -49,12 +50,9 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         return runtime.block_on(local_main(local, &dirs, &env));
     }
     // G12: read and check the invitation first, so its source rules hold
-    // before pairing exists (the pairing commands come with P3-5/P3-6).
+    // before the deck's pairing command exists (P3-6).
     if let Command::Deck {
         command: Some(DeckCommand::AddStation(input)),
-    }
-    | Command::Station {
-        command: Some(StationCommand::Join(input)),
     } = &cli.command
     {
         let _invitation = invite::read(input)?;
@@ -69,30 +67,23 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             Some(DeckCommand::Stations) => ("deck stations", 3),
             Some(DeckCommand::RemoveStation { .. }) => ("deck remove-station", 3),
         },
-        Command::Station { command } => match command {
-            Some(StationCommand::Invite { .. }) => ("station invite", 3),
-            Some(StationCommand::Join(_)) => ("station join", 3),
-            Some(StationCommand::ForgetDeck) => ("station forget-deck", 3),
-            None
-            | Some(
-                StationCommand::Serve
-                | StationCommand::Sessions { .. }
-                | StationCommand::Run(_)
-                | StationCommand::Approve(_)
-                | StationCommand::Interrupt { .. },
-            ) => anyhow::bail!("internal error: the station command was not dispatched"),
-        },
+        Command::Station { .. } => {
+            anyhow::bail!("internal error: the station command was not dispatched")
+        }
     };
     anyhow::bail!("`fleetdeck {name}` is not implemented yet (PLAN Phase {phase})")
 }
 
-/// The station commands that Phase 2 implements (P2-7).
+/// The station commands (P2-7, P3-5c).
 enum Local<'a> {
     Serve,
     Sessions { json: bool },
     Run(&'a cli::RunArgs),
     Approve(&'a cli::ApproveArgs),
     Interrupt(&'a str),
+    Invite(std::net::SocketAddr),
+    Join(&'a cli::InviteInput),
+    ForgetDeck,
 }
 
 fn station_local(command: Option<&StationCommand>) -> Option<Local<'_>> {
@@ -102,7 +93,9 @@ fn station_local(command: Option<&StationCommand>) -> Option<Local<'_>> {
         Some(StationCommand::Run(args)) => Local::Run(args),
         Some(StationCommand::Approve(args)) => Local::Approve(args),
         Some(StationCommand::Interrupt { session }) => Local::Interrupt(session),
-        Some(_) => return None,
+        Some(StationCommand::Invite { listen }) => Local::Invite(*listen),
+        Some(StationCommand::Join(input)) => Local::Join(input),
+        Some(StationCommand::ForgetDeck) => Local::ForgetDeck,
     })
 }
 
@@ -117,5 +110,8 @@ async fn local_main(
         Local::Run(args) => station::run(dirs, args).await,
         Local::Approve(args) => station::approve(dirs, args).await,
         Local::Interrupt(session) => station::interrupt(dirs, session).await,
+        Local::Invite(listen) => pairing::invite(dirs, listen).await,
+        Local::Join(input) => pairing::join(dirs, input).await,
+        Local::ForgetDeck => pairing::forget_deck(dirs).await,
     }
 }

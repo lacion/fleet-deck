@@ -25,6 +25,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::watch;
 
+use crate::link::StationNode;
 use crate::manager::SessionManager;
 use crate::store::Caller;
 
@@ -56,6 +57,25 @@ pub enum LocalRequest {
         request_id: RequestId,
         decision: ApprovalDecision,
     },
+    /// `station invite --listen`: a single-use invitation for a deck that
+    /// dials this station.
+    Invite { listen: std::net::SocketAddr },
+    /// `station join`: pair with the deck of the invitation and dial it.
+    Join { invitation: InvitationText },
+    /// `station forget-deck`: revoke every deck key.
+    ForgetDeck,
+}
+
+/// An invitation on the local socket. `Debug` never shows it (G12); the
+/// socket is 0600 and accepts only the station's own user.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct InvitationText(pub String);
+
+impl std::fmt::Debug for InvitationText {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("InvitationText(<redacted>)")
+    }
 }
 
 /// The answer to one [`LocalRequest`].
@@ -68,6 +88,18 @@ pub enum LocalResponse {
     /// The command's receipt (accepted or rejected).
     Receipt {
         receipt: Receipt,
+    },
+    /// The invitation of [`LocalRequest::Invite`].
+    Invitation {
+        invitation: InvitationText,
+    },
+    /// [`LocalRequest::Join`] paired with the deck of this fingerprint.
+    Paired {
+        deck: String,
+    },
+    /// [`LocalRequest::ForgetDeck`] revoked this many deck keys.
+    Forgotten {
+        count: usize,
     },
     /// The station could not decide the request (bad line, database error).
     Error {
@@ -109,10 +141,12 @@ pub async fn bind(path: &Path) -> Result<UnixListener, LocalError> {
     Ok(listener)
 }
 
-/// Serves the local socket until `shutdown` turns true.
+/// Serves the local socket until `shutdown` turns true. Without `node`
+/// the pairing requests are refused.
 pub async fn serve(
     listener: UnixListener,
     manager: Arc<SessionManager>,
+    node: Option<Arc<StationNode>>,
     mut shutdown: watch::Receiver<bool>,
 ) {
     let uid = rustix::process::getuid().as_raw();
@@ -125,7 +159,7 @@ pub async fn serve(
                         tracing::warn!(?peer, "local socket: a peer of another user was refused");
                         continue;
                     }
-                    tokio::spawn(connection(stream, Arc::clone(&manager)));
+                    tokio::spawn(connection(stream, Arc::clone(&manager), node.clone()));
                 }
                 Err(e) => tracing::warn!(error = %e, "local socket accept"),
             },
@@ -138,7 +172,11 @@ pub async fn serve(
     }
 }
 
-async fn connection(stream: UnixStream, manager: Arc<SessionManager>) {
+async fn connection(
+    stream: UnixStream,
+    manager: Arc<SessionManager>,
+    node: Option<Arc<StationNode>>,
+) {
     let (read, mut write) = stream.into_split();
     let mut reader = BufReader::new(read);
     loop {
@@ -151,8 +189,14 @@ async fn connection(stream: UnixStream, manager: Arc<SessionManager>) {
             }
         };
         let response = match serde_json::from_slice::<LocalRequest>(&line) {
-            Ok(request) => handle(&manager, request).await,
-            Err(e) => error(format!("bad request: {e}")),
+            Ok(request) => handle(&manager, node.as_deref(), request).await,
+            // serde's message can quote the input; never echo a line that
+            // may carry an invitation (G12).
+            Err(e) => error(format!(
+                "bad request at line {} column {}",
+                e.line(),
+                e.column()
+            )),
         };
         if send(&mut write, &response).await.is_err() {
             return;
@@ -164,8 +208,42 @@ fn error(message: String) -> LocalResponse {
     LocalResponse::Error { message }
 }
 
-async fn handle(manager: &SessionManager, request: LocalRequest) -> LocalResponse {
+async fn pairing(node: Option<&StationNode>, request: LocalRequest) -> LocalResponse {
+    let Some(node) = node else {
+        return error("this station runs without its link node".to_owned());
+    };
+    let result = match request {
+        LocalRequest::Invite { listen } => {
+            node.invite(listen)
+                .await
+                .map(|text| LocalResponse::Invitation {
+                    invitation: InvitationText(text.expose().clone()),
+                })
+        }
+        LocalRequest::Join { invitation } => node
+            .join(&fleetdeck_core::Secret::new(invitation.0))
+            .await
+            .map(|deck| LocalResponse::Paired {
+                deck: deck.to_string(),
+            }),
+        LocalRequest::ForgetDeck => node
+            .forget_deck()
+            .await
+            .map(|count| LocalResponse::Forgotten { count }),
+        _ => return error("not a pairing request".to_owned()),
+    };
+    result.unwrap_or_else(|e| error(e.to_string()))
+}
+
+async fn handle(
+    manager: &SessionManager,
+    node: Option<&StationNode>,
+    request: LocalRequest,
+) -> LocalResponse {
     let (command_id, command) = match request {
+        LocalRequest::Invite { .. } | LocalRequest::Join { .. } | LocalRequest::ForgetDeck => {
+            return pairing(node, request).await;
+        }
         LocalRequest::Sessions => {
             return match manager.store().snapshot().await {
                 Ok(snapshot) => LocalResponse::Sessions {
