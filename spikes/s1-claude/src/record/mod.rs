@@ -5,7 +5,10 @@
 //! servers, so the fixture does not depend on the machine). The recorder saves
 //! the scrubbed records as a fixture file.
 
+pub mod coalesce;
+mod extra;
 mod scenarios;
+pub mod transcript;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -39,19 +42,29 @@ pub struct Ctx {
 pub const TURN_LIMIT: Duration = Duration::from_secs(120);
 
 impl Ctx {
-    fn spec(&self, mode: &str, resume: Option<String>) -> SessionSpec {
+    fn spec(&self, mode: &str, resume: Option<String>, fork: bool) -> SessionSpec {
         SessionSpec {
             model: Some(self.cfg.model.clone()),
             mode: Some(mode.to_owned()),
             resume,
-            fork: false,
+            fork,
             extra_args: vec!["--safe-mode".to_owned()],
         }
     }
 
     /// Starts a process and sends `initialize`.
     pub async fn start(&mut self, mode: &str, resume: Option<String>) -> Result<LiveSession> {
-        let spec = self.spec(mode, resume);
+        self.start_with(mode, resume, false).await
+    }
+
+    /// Starts a process (`--fork-session` when `fork`) and sends `initialize`.
+    pub async fn start_with(
+        &mut self,
+        mode: &str,
+        resume: Option<String>,
+        fork: bool,
+    ) -> Result<LiveSession> {
+        let spec = self.spec(mode, resume, fork);
         let mut s = LiveSession::spawn(&self.cfg.bin, &spec, &self.workdir, &mut self.log)?;
         s.cmd(HostCmd::Initialize, &mut self.log).await?;
         Ok(s)
@@ -118,6 +131,41 @@ impl Ctx {
             anyhow::ensure!(!left.is_zero(), "the core did not become idle");
             if s.step(left, &mut self.log).await?.is_none() {
                 break;
+            }
+        }
+        s.drain(Duration::from_millis(1500), &mut self.log).await
+    }
+
+    /// Like [`Ctx::idle`], but allows every approval request on the way (for
+    /// scenarios where an approval is possible but not the subject).
+    pub async fn idle_allowing(&mut self, s: &mut LiveSession) -> Result<()> {
+        self.idle_answering(s, "allow").await
+    }
+
+    /// Like [`Ctx::idle`], but answers every approval request on the way with
+    /// `option_id`.
+    pub async fn idle_answering(&mut self, s: &mut LiveSession, option_id: &str) -> Result<()> {
+        let deadline = tokio::time::Instant::now() + TURN_LIMIT;
+        while !s.core.is_idle() && !s.exited() {
+            let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+            anyhow::ensure!(!left.is_zero(), "the core did not become idle");
+            let Some(events) = s.step(left, &mut self.log).await? else {
+                break;
+            };
+            for e in events {
+                if let CanonEvent::ApprovalRequested { request_id, .. } = e {
+                    self.note(format!("auto-answer {option_id} {request_id}"));
+                    s.cmd(
+                        HostCmd::Answer {
+                            request_id,
+                            option_id: option_id.to_owned(),
+                            updated_input: None,
+                            message: None,
+                        },
+                        &mut self.log,
+                    )
+                    .await?;
+                }
             }
         }
         s.drain(Duration::from_millis(1500), &mut self.log).await
@@ -201,6 +249,8 @@ pub async fn record(cfg: &Config, sc: &Scenario) -> Result<PathBuf> {
         Ok(r) => r,
         Err(_) => Err(anyhow::anyhow!("scenario timeout")),
     };
+    let transcript_notes = transcript::notes(&ctx.log);
+    ctx.log.extend(transcript_notes);
     let scrub = scrubber(&workdir);
     let (name, notes) = match &outcome {
         Ok(()) => (format!("{}.jsonl", sc.name), sc.notes.to_owned()),
@@ -218,7 +268,7 @@ pub async fn record(cfg: &Config, sc: &Scenario) -> Result<PathBuf> {
             model: Some(cfg.model.clone()),
             notes: scrub.scrub_str(&notes),
         },
-        records: ctx.log.iter().map(|r| scrub.scrub_record(r)).collect(),
+        records: coalesce::scrub_records(&scrub, &ctx.log),
     };
     let path = cfg.out_dir.join(name);
     fixture.save(&path)?;

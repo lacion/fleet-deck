@@ -163,6 +163,11 @@ pub enum CanonEvent {
         turn_id: Option<String>,
         state: InputState,
     },
+    /// The provider's set of background work (background commands, async
+    /// subagents) changed. Spike-only: Phase 1 folds it into
+    /// `run.completed.background_pending` and the session idle state (L7).
+    #[serde(rename = "background.updated")]
+    BackgroundUpdated { tasks: Vec<BackgroundTask> },
     #[serde(rename = "error")]
     Error { code: String, message: String },
     #[serde(rename = "session.ended")]
@@ -193,10 +198,19 @@ impl CanonEvent {
             Self::TurnCompleted { .. } => "turn.completed",
             Self::ModeChanged { .. } => "mode.changed",
             Self::InputUpdated { .. } => "input.updated",
+            Self::BackgroundUpdated { .. } => "background.updated",
             Self::Error { .. } => "error",
             Self::SessionEnded { .. } => "session.ended",
         }
     }
+}
+
+/// One unit of provider background work.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BackgroundTask {
+    pub task_id: String,
+    /// The provider's kind name, for example `local_bash` or `local_agent`.
+    pub task_kind: String,
 }
 
 /// The fate of a host input as the provider reports it.

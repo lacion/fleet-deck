@@ -167,6 +167,8 @@ struct ToolNode {
     name: String,
     input: Value,
     denied: bool,
+    /// The tool has a terminal `tool.completed` event.
+    done: bool,
 }
 
 /// The sans-IO Claude adapter core.
@@ -193,6 +195,8 @@ pub struct ClaudeCore {
     /// Provider events that arrived before the first `system/init` (the CLI sends
     /// `command_lifecycle` frames first). They follow `session.started`.
     early: Vec<CanonEvent>,
+    /// Background work that the CLI reports as running (trap 4, trap 5).
+    background: Vec<spike_canon::BackgroundTask>,
 }
 
 impl ClaudeCore {
@@ -442,6 +446,13 @@ impl ClaudeCore {
         res
     }
 
+    /// Background work that the CLI reports as running. A session with
+    /// background work is not idle (L7), even when no turn runs.
+    #[must_use]
+    pub fn background(&self) -> &[spike_canon::BackgroundTask] {
+        &self.background
+    }
+
     /// The CLI process exited. Closes everything that is open (trap 6).
     pub fn on_exit(&mut self, exit_code: Option<i32>) -> Vec<Output> {
         let mut out: Vec<Output> = std::mem::take(&mut self.early)
@@ -449,6 +460,7 @@ impl ClaudeCore {
             .map(Output::Emit)
             .collect();
         out.extend(self.expire_open("process_lost"));
+        out.extend(map::close_open_tools(self));
         if let Some(turn_id) = self.turn.take() {
             out.push(Output::Emit(CanonEvent::TurnCompleted {
                 turn_id,

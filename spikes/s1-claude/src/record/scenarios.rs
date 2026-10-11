@@ -10,6 +10,10 @@ use anyhow::{Result, bail};
 use spike_canon::CanonEvent;
 
 use super::Ctx;
+use super::extra::{
+    ask_user_question, background_task, file_edit, fork_session, interrupt_right_after_send,
+    plan_capture, subagent,
+};
 use crate::adapter::HostCmd;
 
 type Run = for<'a> fn(&'a mut Ctx) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>>;
@@ -107,6 +111,48 @@ pub const SCENARIOS: &[Scenario] = &[
         false,
         "An approval is open when the process is killed; process 2 resumes the session: is the request issued again?",
         approval_restart
+    ),
+    scenario!(
+        "fork_session",
+        false,
+        "Process 1 runs a turn; process 2 starts with --resume --fork-session: new session id, same context?",
+        fork_session
+    ),
+    scenario!(
+        "plan_capture",
+        false,
+        "Plan mode: the model presents a plan with ExitPlanMode; the exit request is denied.",
+        plan_capture
+    ),
+    scenario!(
+        "subagent",
+        false,
+        "A Task subagent: do child frames carry parent_tool_use_id?",
+        subagent
+    ),
+    scenario!(
+        "background_task",
+        false,
+        "A background Bash command that finishes after the turn ended (trap 4).",
+        background_task
+    ),
+    scenario!(
+        "file_edit",
+        false,
+        "acceptEdits mode: a Write tool call without an approval (file-change telemetry).",
+        file_edit
+    ),
+    scenario!(
+        "ask_user_question",
+        false,
+        "AskUserQuestion: a question arrives as can_use_tool and is answered with updatedInput.answers.",
+        ask_user_question
+    ),
+    scenario!(
+        "interrupt_right_after_send",
+        false,
+        "Interrupt written right after the prompt, before any turn frame (trap 3).",
+        interrupt_right_after_send
     ),
 ];
 
@@ -206,7 +252,7 @@ async fn provider_thread_resume(c: &mut Ctx) -> Result<()> {
     c.close(s).await
 }
 
-async fn answer(
+pub(super) async fn answer(
     c: &mut Ctx,
     s: &mut crate::driver::LiveSession,
     req: &str,

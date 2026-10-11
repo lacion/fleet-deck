@@ -79,3 +79,19 @@ Format: context, options, choice, reason, owner review.
 - **Choice:** (b). `adapter::map::session_rules` keeps `addRules`/`replaceRules` entries with `behavior: "allow"` and sets `destination: "session"`. It drops `setMode` (L8: a mode changes only through `set_permission_mode`) and `addDirectories`. Without an allow rule the request offers no `allow_always`. The option label is "Allow always (this session)".
 - **Reason:** doctrine of least surprise and fail-closed permissions: a click in the deck must not change files in the workspace or the session mode without an explicit owner action. A persistent rule is a later, explicit feature (owner decision).
 - **Owner review:** pending
+
+## DL-010 — Two more `approval.expired` reasons: `turn_ended` and `cancelled_by_provider`
+
+- **Context:** PLAN §6.3 lists the reasons `not_resumable` and `process_lost` for `approval.expired`. The Claude CLI also ends an open request in two other ways: it sends `control_cancel_request` for a request id, and a turn can end (`result`) while a request is still open (for example after an interrupt).
+- **Options:** (a) map both to `process_lost`; (b) leave the request open; (c) add the reasons `cancelled_by_provider` and `turn_ended`.
+- **Choice:** (c), in the spike canonical events. ADR-001 §2.4 and §2.9 document them. Phase 1 adds them to the `approval.expired` reason enum of the protocol crate.
+- **Reason:** (a) gives a false cause in the timeline. (b) leaves an answerable card for a request that the CLI no longer waits for, and an answer to it would be a stale reply. A precise reason is consistent with L2 (show the real state).
+- **Owner review:** pending
+
+## DL-011 — Spike event `background.updated` for provider background work
+
+- **Context:** PLAN §6.3 reports background work only as `run.completed { background_pending }` (L7). The Claude CLI reports the background set while a turn runs and after it (`system/background_tasks_changed`), and a background task or an async subagent can start a new turn without host input (traps 4 and 5).
+- **Options:** (a) report only `background_pending` at turn end; (b) a spike event `background.updated { tasks }` each time the set changes.
+- **Choice:** (b) in the spike only. The spike has no `run` entity; Phase 1 derives `run.completed.background_pending` from the same set and decides whether `background.updated` becomes a protocol event (an additive change).
+- **Reason:** the evidence must show when the set drains (after the turn), which a turn-end flag cannot show. No PLAN decision changes.
+- **Owner review:** pending

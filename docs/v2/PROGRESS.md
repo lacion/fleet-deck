@@ -11,7 +11,7 @@ Rules for this file: one checklist item per M1 deliverable, in PLAN order. Each 
 - [x] **S1-2 Claude live driver + fixture format + `record-claude`.** tokio process driver around the core; JSONL fixture format (`spawn`/`host`/`in`/`out`/`raw`/`exit`/`note` records + header, scrubbed); `record-claude`; live recordings (haiku, `--safe-mode`, temp dir) of all 8 §13 shared scenarios plus `tool_call_edit_input`, `interrupt_during_tool`, `set_permission_mode`, `approval_restart`. *(round 2; an early replay harness + `replay-claude` is pulled forward from S1-4)*
 - [x] **S1-3 TypeScript SDK reference recordings.** `spikes/s1-claude/sdk-recorder/` (bun + `@anthropic-ai/claude-agent-sdk` 0.3.296, `tee-claude.mjs` as `pathToClaudeCodeExecutable`); 10 SDK fixtures in `spikes/s1-claude/fixtures/sdk/` (8 shared + `tool_call_edit_input`, `set_permission_mode`); `reference` module + `replay-claude` replay them offline (DL-008). *(round 3)*
 - [x] **S1-4 Claude replay + evidence.** *(round 2: `replay` module, `replay-claude`, `tests/replay_fixtures.rs`.)* *(round 3: replay rejects unmatched writes before `exit`; SDK reference replay.)* *(round 4: `insta` snapshots of the canonical event stream of all 22 fixtures; `tests/evidence.rs`; `spikes/s1-claude/EVIDENCE.md` for "prompt confirmed", queue/steer timing, restart survival, native option ids; SDK recorder exits nonzero and kills timed-out sessions + `selftest.sh`.)*
-- [ ] **S1-5 ADR-001** (Proposed): native Claude adapter design, effect states and crash boundaries (§6.4), fixture set, unsupported scenarios with reasons.
+- [x] **S1-5 ADR-001** (Proposed): native Claude adapter design, effect states and crash boundaries (§6.4), fixture set, unsupported scenarios with reasons. *(round 5: `docs/v2/adr/ADR-001-native-claude-adapter.md`; 7 extra recordings for the matrix rows; `tests/capabilities.rs`; EVIDENCE.md E7; DL-010, DL-011)*
 - [ ] **S2-1 Codex protocol core.** ADR-002 option evaluation (git pin of `codex-app-server-protocol` vs codegen from `codex app-server generate-json-schema`); JSON-RPC framing; sans-IO core: initialize, `thread/start`, `turn/start`, both approval requests, questions (L4), `turn/interrupt`, `thread/resume`, diff notifications.
 - [ ] **S2-2 Codex live driver + `record-codex` + fixtures** for the §13 shared scenarios Codex supports (unsupported ones listed with reasons); restart survival experiment.
 - [ ] **S2-3 Codex replay + `replay-codex` + ADR-002** (Proposed) with effect states and crash boundaries.
@@ -107,3 +107,23 @@ Rules for this file: one checklist item per M1 deliverable, in PLAN order. Each 
   - `spikes/s1-claude/sdk-recorder/selftest.sh` → ok sdk-recorder selftest
   - `web/` checks, TS-types drift → not applicable in M1
 - Next: S1-5 ADR-001.
+
+### Round 5 (2026-10-11)
+
+- Review feedback: "continue: S1-5 ADR-001 with Proposed status, covering every S1 Must prove row, provider effect states, and crash boundaries."
+- Committed round 4 as `da057cd`.
+- ADR-001 (`docs/v2/adr/ADR-001-native-claude-adapter.md`, Status: Proposed): process model and arguments, code structure, host commands → wire frames, CLI frames → canonical events, approvals/questions (no native option ids; `allow` / `allow_always` / `deny`), modes, interrupt, resume/fork, terminal paths, traps 1–10; §3 effect states ("confirmed" per effect type), a crash-boundary table with transcript reconciliation, open requests do not survive a restart; §4 fixture set (all 8 shared scenarios supported, none unsupported); §5 one row per §14 S1 "Must prove" with its evidence.
+- New live recordings (haiku, `--safe-mode`, temp dir) for the matrix rows: `fork_session`, `plan_capture`, `subagent`, `background_task`, `file_edit`, `ask_user_question`, `interrupt_right_after_send`; `approval_restart` re-recorded with a transcript note.
+- Findings: the subagent tool is `Agent` and runs async (it reports after the parent turn's `result` and starts a provider-origin turn); background Bash drains after the turn and its `task_notification` starts a provider-origin turn; plan mode writes the plan to `~/.claude/plans/` and sends it as the `ExitPlanMode` input; the CLI transcript stores each prompt under the client `uuid` (reconciliation key for `outcome_unknown`).
+- Core changes: open tool nodes close on `result` and on exit (trap 6, `terminal_paths_close_open_tools`); `background.updated` spike event (DL-011); `approval.expired` reasons `turn_ended` / `cancelled_by_provider` documented (DL-010).
+- Fixture hygiene: a home path and the temp dir name were split across streamed deltas and passed the scrubber. `record/coalesce.rs` merges such delta runs before scrubbing; `tests/fixture_hygiene.rs` checks raw frames and joined deltas.
+- Evidence: `tests/capabilities.rs` (8 tests) + EVIDENCE.md E7.
+- Commands and results:
+  - `cargo fmt --all --check` → pass
+  - `cargo clippy --workspace --all-targets -- -D warnings` → pass
+  - `CI=true cargo nextest run --workspace` → 67 passed
+  - `cargo deny check` → advisories ok, bans ok, licenses ok, sources ok
+  - `cargo run -p s1-claude --bin replay-claude` → 29 ok (19 Rust, 10 SDK), unknown=0
+  - `spikes/s1-claude/sdk-recorder/selftest.sh` → ok sdk-recorder selftest
+  - `web/` checks, TS-types drift → not applicable in M1
+- Next: S2-1 Codex protocol core.

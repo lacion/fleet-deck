@@ -528,3 +528,45 @@ fn no_allow_rule_means_no_allow_always() {
     let ids: Vec<_> = options.iter().map(|o| o.option_id.as_str()).collect();
     assert_eq!(ids, ["allow", "deny"]);
 }
+
+/// Trap 6: a turn that ends (or a process that exits) leaves no tool call open.
+#[test]
+fn terminal_paths_close_open_tools() {
+    let mut core = started_core();
+    run_prompt(&mut core, "x", IN1);
+    feed(
+        &mut core,
+        json!({"type":"assistant","message":{"content":[{"type":"tool_use","id":"tu1","name":"Bash","input":{}}]}}),
+    );
+    let ev = emits(&feed(
+        &mut core,
+        json!({"type":"result","subtype":"error_during_execution","is_error":true}),
+    ));
+    assert!(ev.iter().any(|e| matches!(
+        e,
+        CanonEvent::ToolCompleted {
+            status: ToolStatus::Failed,
+            ..
+        }
+    )));
+    // A late tool_result for the closed node emits nothing.
+    let late = emits(&feed(
+        &mut core,
+        json!({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tu1","content":"x"}]}}),
+    ));
+    assert!(late.is_empty(), "{late:?}");
+
+    run_prompt(&mut core, "y", IN2);
+    feed(
+        &mut core,
+        json!({"type":"assistant","message":{"content":[{"type":"tool_use","id":"tu2","name":"Bash","input":{}}]}}),
+    );
+    let ev = emits(&core.on_exit(None));
+    assert!(ev.iter().any(|e| matches!(
+        e,
+        CanonEvent::ToolCompleted {
+            status: ToolStatus::Failed,
+            ..
+        }
+    )));
+}

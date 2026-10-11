@@ -5,7 +5,7 @@ These crates de-risk PLAN §14 Phase 0. They never ship. The product crates (Pha
 | Spike | Directory | Proves | ADR |
 | --- | --- | --- | --- |
 | shared | `spike-canon/` | Spike subset of the canonical events (PLAN §6.3) | — |
-| S1 | `s1-claude/` | Claude Code stream-json control protocol from Rust (A8, D8) | `docs/v2/adr/ADR-001-*.md` |
+| S1 | `s1-claude/` | Claude Code stream-json control protocol from Rust (A8, D8) | `docs/v2/adr/ADR-001-native-claude-adapter.md` (Proposed) |
 | S2 | `s2-codex/` (planned) | Codex app-server JSON-RPC from Rust | `docs/v2/adr/ADR-002-*.md` |
 | S4 | `s4-link/` (planned) | Link protocol v1 (mTLS, pairing, channels, reconnect) | `docs/v2/adr/ADR-004-*.md` |
 
@@ -41,8 +41,10 @@ cargo nextest run -p s1-claude --test reference_fixtures
 S1 canonical event snapshots (one `insta` snapshot per fixture in `spikes/s1-claude/tests/snapshots/`) and the adapter evidence tests that `spikes/s1-claude/EVIDENCE.md` cites:
 
 ```sh
-CI=true cargo nextest run -p s1-claude --test event_snapshots --test evidence
+CI=true cargo nextest run -p s1-claude --test event_snapshots --test evidence --test capabilities --test fixture_hygiene
 ```
+
+`capabilities` holds the capability-matrix evidence (EVIDENCE.md E7). `fixture_hygiene` fails if a fixture contains a local path (home, user name, temporary directory), also across streamed deltas.
 
 `CI=true` makes `insta` fail on a changed snapshot instead of writing a `.snap.new` file. After an intended change, review the new streams with `INSTA_UPDATE=always cargo nextest run -p s1-claude --test event_snapshots` and `git diff spikes/s1-claude/tests/snapshots`.
 

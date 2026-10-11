@@ -58,7 +58,7 @@ Fixtures: `fixtures/rust/*.jsonl` (our recorder, `record-claude`) and `fixtures/
 | interrupt while streaming | `rust/turn_interrupt`, `sdk/turn_interrupt`: `terminal_reason: "aborted_streaming"` |
 | resume | `rust/provider_thread_resume`, `sdk/provider_thread_resume`: `--resume <session>` keeps the session id and the context (the reply names the code word) |
 | set permission mode | `rust/set_permission_mode`, `sdk/set_permission_mode`: `set_permission_mode` → `{"mode":"plan"}`, next `system/init` has `permissionMode: "plan"`; wire names `default`, `acceptEdits`, `plan`, `auto`, `dontAsk`, `bypassPermissions` (DL-003); other names rejected (`adapter::tests::set_mode_accepts_only_native_modes`) |
-| unknown-frame handling | the parser keeps unknown frames (`frames::tests::parser_never_panics_on_any_json`), the core counts them (`adapter::tests::unknown_control_request_fails_closed`, `adapter::tests::unknown_lifecycle_state_is_counted_not_applied`); all 22 fixtures replay with 0 unknown frames |
+| unknown-frame handling | the parser keeps unknown frames (`frames::tests::parser_never_panics_on_any_json`), the core counts them (`adapter::tests::unknown_control_request_fails_closed`, `adapter::tests::unknown_lifecycle_state_is_counted_not_applied`); all 29 fixtures replay with 0 unknown frames |
 | TS SDK frame recording + replay | `sdk-recorder/`, `src/reference.rs`, `tests/reference_fixtures.rs` (DL-008) |
 | response channel | the approval answer is a `control_response` on stdin to the CLI's `control_request` id (RPC reply); `toolUseID` binds it to one tool call |
 | open requests survive restart | E3: no |
@@ -71,3 +71,19 @@ Fixtures: `fixtures/rust/*.jsonl` (our recorder, `record-claude`) and `fixtures/
 - The CLI echoes the host's `control_response` frames on stdout; the adapter ignores responses to ids it did not send.
 - A long foreground `sleep` is blocked by the CLI and the model retries in the background; the background task later starts a turn without host input (trap 4). The adapter maps such a turn as `origin: provider` and never confirms an input with it.
 - `--permission-mode manual` is an alias: the CLI reports `default` (DL-003). The owner's settings default to `bypassPermissions`, so the adapter always passes a mode (DL-004).
+
+## E7 — Capability evidence from the extra recordings (§6.2 matrix)
+
+Tests in `spikes/s1-claude/tests/capabilities.rs`, one per matrix row:
+
+| Capability | Finding | Test |
+| --- | --- | --- |
+| fork | `--resume <id> --fork-session` gives a new session id with the old context | `capabilities::fork_starts_a_new_session_with_the_old_context` |
+| plan capture | in `plan` mode the plan is the `ExitPlanMode` tool input (`plan` markdown, `planFilePath`) and comes as an approval; the CLI first writes the plan file to `~/.claude/plans/` | `capabilities::plan_mode_captures_the_plan_from_exit_plan_mode` |
+| subagent parent link | the `Agent` tool starts an async subagent; its frames carry `parent_tool_use_id`; it reports after the parent turn's `result` and starts a provider-origin turn | `capabilities::subagent_frames_link_to_the_parent_tool_call` |
+| background work | `background_tasks_changed` / `task_started` / `task_notification`; the set drains after the turn; the notification starts a provider-origin turn | `capabilities::background_work_reports_after_the_turn` |
+| file-change telemetry | no diff event; `Edit`/`Write` tool results with `file_path` | `capabilities::write_tool_results_map_to_file_changes` |
+| questions (L4) | `AskUserQuestion` is a `can_use_tool` request; the answer is `allow` + `updatedInput.answers` | `capabilities::questions_are_answered_by_rpc_reply` |
+| stop before the turn started (trap 3) | the interrupt works; the input ends `cancelled`, the next prompt runs | `capabilities::interrupt_before_the_turn_started_cancels_the_input` |
+| reconciliation (§6.4) | the CLI transcript stores each prompt under the client `uuid` | `capabilities::the_transcript_keeps_prompts_under_the_client_uuid` |
+| terminal paths (trap 6) | open tools close on `result` and on exit | `adapter::tests::terminal_paths_close_open_tools` |

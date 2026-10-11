@@ -2,8 +2,8 @@
 
 use serde_json::{Map, Value};
 use spike_canon::{
-    ApprovalOption, CanonEvent, FileChange, InputState, ProviderRefs, RequestKind, ResponseChannel,
-    ToolKind, ToolStatus, TurnStatus, Usage,
+    ApprovalOption, BackgroundTask, CanonEvent, FileChange, InputState, ProviderRefs, RequestKind,
+    ResponseChannel, ToolKind, ToolStatus, TurnStatus, Usage,
 };
 
 use super::{ClaudeCore, HostRequest, Output, RuntimeRequest, ToolNode};
@@ -110,6 +110,28 @@ fn on_system(core: &mut ClaudeCore, subtype: &str, body: &Map<String, Value>) ->
                 provider_refs: refs(&[("session_id", get("session_id").as_deref())]),
             })]
         }
+        "background_tasks_changed" => {
+            let tasks: Vec<BackgroundTask> = body
+                .get("tasks")
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|t| {
+                            Some(BackgroundTask {
+                                task_id: t.get("task_id")?.as_str()?.to_owned(),
+                                task_kind: t
+                                    .get("task_type")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("unknown")
+                                    .to_owned(),
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            core.background.clone_from(&tasks);
+            vec![Output::Emit(CanonEvent::BackgroundUpdated { tasks })]
+        }
         // `status`, `ui_invalidate`, hook frames, ... never confirm an input: only a
         // frame that names the input's client uuid does (ADR-001 "prompt confirmed").
         _ => Vec::new(),
@@ -200,9 +222,14 @@ fn on_user(core: &mut ClaudeCore, msg: &MessageFrame) -> Vec<Output> {
         let Some(tool_use_id) = block.get("tool_use_id").and_then(Value::as_str) else {
             continue;
         };
-        let Some(node) = core.tools.get(tool_use_id).cloned() else {
+        let Some(node) = core.tools.get_mut(tool_use_id) else {
             continue;
         };
+        if node.done {
+            continue;
+        }
+        node.done = true;
+        let node = node.clone();
         let is_error = block
             .get("is_error")
             .and_then(Value::as_bool)
@@ -294,6 +321,7 @@ fn on_assistant(core: &mut ClaudeCore, msg: &MessageFrame) -> Vec<Output> {
                         name: name.to_owned(),
                         input: input.clone(),
                         denied: false,
+                        done: false,
                     },
                 );
                 out.push(Output::Emit(CanonEvent::ToolStarted {
@@ -383,6 +411,7 @@ fn on_result(core: &mut ClaudeCore, res: &ResultFrame) -> Vec<Output> {
     core.interrupt_requested = false;
     // A finished turn leaves no request open (trap 6).
     out.extend(core.expire_open("turn_ended"));
+    out.extend(close_open_tools(core));
     out.push(Output::Emit(CanonEvent::UsageUpdated {
         usage: usage.clone(),
     }));
@@ -394,6 +423,27 @@ fn on_result(core: &mut ClaudeCore, res: &ResultFrame) -> Vec<Output> {
         }));
     }
     out
+}
+
+/// Closes every tool node without a result on a terminal path (turn end or
+/// process exit, trap 6): `denied` if the owner denied it, else `failed`.
+pub(super) fn close_open_tools(core: &mut ClaudeCore) -> Vec<Output> {
+    let mut open: Vec<_> = core.tools.values_mut().filter(|n| !n.done).collect();
+    open.sort_by(|a, b| a.node_id.cmp(&b.node_id));
+    open.into_iter()
+        .map(|n| {
+            n.done = true;
+            let status = if n.denied {
+                ToolStatus::Denied
+            } else {
+                ToolStatus::Failed
+            };
+            Output::Emit(CanonEvent::ToolCompleted {
+                node_id: n.node_id.clone(),
+                status,
+            })
+        })
+        .collect()
 }
 
 /// The part of the CLI's `permission_suggestions` that `allow_always` may send
