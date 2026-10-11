@@ -335,13 +335,26 @@ The permission mode decides which approvals occur at all. After a station restar
 # ~/.config/fleetdeck/station.toml
 name = "laptop"
 allowed_roots = ["~/projects", "/workspace"]
-providers = ["claude", "codex"]
 max_sessions = 12
 allow_setup_cmd = false
 allow_shell = true            # PTY shells from the board (D10)
 max_shells = 8
 offline_approval_policy = "wait"
 listen = []                   # deck-dials-station mode only; loopback, LAN, or tailnet addresses
+
+# Provider instances (T3 lesson L10). Work is routed by instance id, never by driver.
+# Two accounts on one driver are two instances and never share session state.
+# The station removes ambient provider credentials that the instance does not configure.
+[[provider_instance]]
+id = "claude"                  # stable id shown in the board and stored on each session
+driver = "claude"              # claude | codex
+binary = "claude"              # optional path; default: driver name on PATH
+config_home = ""               # optional: CLAUDE_CONFIG_DIR / CODEX_HOME for this instance
+env = {}                       # optional extra environment for this instance
+
+[[provider_instance]]
+id = "codex"
+driver = "codex"
 ```
 
 ### 6.8 Shell service (D10)
@@ -525,6 +538,13 @@ React + TypeScript + Vite in `web/`. Types come from `web/src/gen/` (generated b
 | Plans, worktrees, files, diffs | As v0, routed through the deck to the owning station |
 | Settings, audit log | New: audit log viewer |
 | Mobile layout | Approvals and interrupts are first-class on a phone |
+
+**Connection runtime (T3 lesson L17, Phase 4).** `web/src/runtime/` owns the deck connection:
+
+- One retry owner for the deck connection (jittered backoff, cap 30 s in the browser).
+- Transport health and data freshness are separate states. "Connected, timeline subscription failed" is not "reconnecting".
+- Cached data stays readable while offline, is marked stale, and never overwrites newer live data.
+- Session timelines use per-session subscriptions with a cursor. The runtime keeps an idle subscription cursor for 5 minutes, so back navigation does not load a snapshot again. The fleet board uses one summary stream.
 
 ---
 
