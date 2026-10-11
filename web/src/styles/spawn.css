@@ -1,0 +1,62 @@
+/* M2 P4-4: the spawn form and its directory picker (phone first). */
+.fd-spawn {
+  padding: var(--sp-4);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.fd-spawn form {
+  display: grid;
+  gap: var(--sp-3);
+}
+.fd-spawn label {
+  display: grid;
+  gap: var(--sp-1);
+}
+.fd-spawn input,
+.fd-spawn select,
+.fd-spawn textarea {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  font: inherit;
+  background: var(--code);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+.fd-picker {
+  display: grid;
+  gap: var(--sp-2);
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-panel);
+}
+.fd-picker ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--sp-1);
+}
+.fd-picker li button {
+  width: 100%;
+  text-align: left;
+  display: flex;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+.fd-picker-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+.fd-path {
+  font-family: var(--font-data);
+  font-size: var(--fs-micro);
+  margin: 0;
+}
+.fd-tag {
+  font-size: var(--fs-micro);
+  border: 1px solid var(--border);
+  border-radius: var(--r-panel);
+  padding: 0 var(--sp-1);
+}

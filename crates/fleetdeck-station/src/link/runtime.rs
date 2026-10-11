@@ -189,7 +189,11 @@ impl StationNode {
         }));
     }
 
-    async fn paired_deck(&self) -> Result<Option<Fingerprint>, NodeError> {
+    /// The key fingerprint of the paired deck, if any.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn paired_deck(&self) -> Result<Option<Fingerprint>, NodeError> {
         let keys = self.ctx.peers.store().paired_keys().await?;
         Ok(keys
             .into_iter()

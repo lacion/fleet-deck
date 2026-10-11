@@ -7,7 +7,8 @@ import type { DeckSession, EventEnvelope, StationView } from '../src/gen';
 
 export type Reply = { status: number; body: unknown };
 export type Call = { path: string; body: unknown; csrf: string | null };
-type Handler = (body: unknown) => Reply;
+/** `body` is the JSON body of a POST; `query` holds the URL parameters. */
+type Handler = (body: unknown, query: URLSearchParams) => Reply;
 
 export const CSRF = 'csrf-e2e';
 export const PASSWORD = 'correct horse battery staple';
@@ -25,7 +26,8 @@ export class FakeDeck {
   private timelines = new Map<string, EventEnvelope[]>();
   private subscribed = new Map<WebSocketRoute, Set<string>>();
 
-  /** Answers `POST path` with `handler` (the default is 404). */
+  /** Answers `path` with `handler` (the default is 404). A POST needs the
+   * CSRF token, like the real deck. */
   on(path: string, handler: Handler): void {
     this.handlers.set(path, handler);
   }
@@ -112,7 +114,8 @@ export class FakeDeck {
   }
 
   private answer(request: Request): Reply {
-    const path = new URL(request.url()).pathname;
+    const url = new URL(request.url());
+    const path = url.pathname;
     const body: unknown = request.method() === 'POST' ? request.postDataJSON() : null;
     this.calls.push({ path, body, csrf: request.headers()['x-csrf-token'] ?? null });
     const login = {
@@ -135,10 +138,10 @@ export class FakeDeck {
     }
     const handler = this.handlers.get(path);
     if (handler === undefined) return { status: 404, body: { code: 'not_found', message: path } };
-    if (request.headers()['x-csrf-token'] !== CSRF) {
+    if (request.method() === 'POST' && request.headers()['x-csrf-token'] !== CSRF) {
       return { status: 403, body: { code: 'csrf', message: 'Missing CSRF token.' } };
     }
-    return handler(body);
+    return handler(body, url.searchParams);
   }
 }
 

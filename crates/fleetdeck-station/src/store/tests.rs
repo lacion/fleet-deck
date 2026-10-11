@@ -578,3 +578,38 @@ async fn a_snapshot_keeps_every_running_session_and_the_newest_exited_ones_up_to
         fleetdeck_proto::link::MAX_SNAPSHOT_SESSIONS
     );
 }
+
+#[tokio::test]
+async fn the_started_event_carries_the_title_and_branch_of_the_session() {
+    let det = Det::new();
+    let s = store(&det).await;
+    let mut new = new_session("s1");
+    new.branch = Some("fd/feature".to_owned());
+    s.create_session(new).await.unwrap();
+    let started: NewEvent = Event::SessionStarted {
+        provider: ProviderKind::Claude,
+        provider_instance: "claude".into(),
+        provider_version: None,
+        model: None,
+        cwd: "/w".to_owned(),
+        mode: None,
+        capabilities: Box::new(fleetdeck_proto::capability::Capabilities::minimal()),
+        resumed: None,
+        provider_refs: fleetdeck_proto::event::ProviderRefs::new(),
+        title: None,
+        branch: None,
+    }
+    .into();
+    s.append("s1".into(), vec![started]).await.unwrap();
+    let events = read_all(&s, 0).await;
+    let EventBody::Known(Event::SessionStarted { title, branch, .. }) = &events[0].event else {
+        panic!("{events:?}");
+    };
+    // The deck folds the same values without a snapshot (DL-061).
+    assert_eq!(title.as_deref(), Some("t"));
+    assert_eq!(branch.as_deref(), Some("fd/feature"));
+    let mut deck_view = fleetdeck_proto::SessionSummary::new("s1".into());
+    deck_view.apply(&events[0]);
+    assert_eq!(deck_view.title.as_deref(), Some("t"));
+    assert_eq!(deck_view.branch.as_deref(), Some("fd/feature"));
+}

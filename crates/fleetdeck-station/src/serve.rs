@@ -56,62 +56,100 @@ pub async fn serve(
     config: &StationConfig,
     stop: impl Future<Output = ()>,
 ) -> Result<(), ServeError> {
-    let station_dir = dirs.station();
-    ensure_private_dir(&station_dir).map_err(|source| ServeError::Dir {
-        path: station_dir.clone(),
-        source,
-    })?;
-    let clock: SharedClock = Arc::new(SystemClock);
-    let ids: SharedIds = Arc::new(UlidSource::new(Arc::clone(&clock)));
-    let store = Store::open(
-        &dirs.station_db(),
-        clock,
-        Arc::clone(&ids),
-        StoreConfig::default(),
-    )
-    .await?;
-    let host: Arc<dyn SessionHost> = Arc::new(DirectChildHost::new());
-    let adapters = adapters_from_config(config, &host, Some(station_dir.join("raw")))?;
-    let socket = local::socket_path(&station_dir);
-    let listener = local::bind(&socket).await?;
-    let manager =
-        Arc::new(SessionManager::start(store, Policy::from_config(config), adapters, ids).await?);
-    let identity = Arc::new(Identity::load_or_create(&station_dir)?);
-    let node = StationNode::start(
-        Arc::clone(&manager),
-        Arc::clone(&identity),
-        config.name.clone(),
-        &config.listen,
-        BackoffPolicy::default(),
-    )
-    .await?;
-    tracing::info!(
-        station = %config.name,
-        key = %identity.fingerprint().short(),
-        socket = %socket.display(),
-        listen = ?node.listen_addrs().await,
-        "station ready"
-    );
-    let (shutdown, rx) = watch::channel(false);
-    let server = tokio::spawn(local::serve(
-        listener,
-        Arc::clone(&manager),
-        Some(Arc::clone(&node)),
-        rx,
-    ));
+    let station = RunningStation::start(dirs, config).await?;
     stop.await;
-    tracing::info!("station stopping");
-    let _ = shutdown.send(true);
-    let _ = server.await;
-    node.shutdown();
-    manager.shutdown(StopMode::Graceful).await;
-    // The pumps store the last events of each process (`session.ended`).
-    let deadline = tokio::time::Instant::now() + PUMP_GRACE;
-    while manager.live_sessions() > 0 && tokio::time::Instant::now() < deadline {
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-    }
-    if let Err(e) = std::fs::remove_file(&socket) {
-        tracing::debug!(error = %e, "socket file");
-    }
+    station.stop().await;
     Ok(())
+}
+
+/// A started station: the session manager, the link node and the local
+/// socket (M2 P4-4: `fleetdeck up` runs it next to the deck).
+#[derive(Debug)]
+pub struct RunningStation {
+    pub manager: Arc<SessionManager>,
+    pub node: Arc<StationNode>,
+    pub identity: Arc<Identity>,
+    server: tokio::task::JoinHandle<()>,
+    shutdown: watch::Sender<bool>,
+    socket: PathBuf,
+}
+
+impl RunningStation {
+    /// Opens and recovers `station.db`, starts the manager, the link node
+    /// and the local socket.
+    ///
+    /// # Errors
+    /// [`ServeError`].
+    pub async fn start(dirs: &NodeDirs, config: &StationConfig) -> Result<Self, ServeError> {
+        let station_dir = dirs.station();
+        ensure_private_dir(&station_dir).map_err(|source| ServeError::Dir {
+            path: station_dir.clone(),
+            source,
+        })?;
+        let clock: SharedClock = Arc::new(SystemClock);
+        let ids: SharedIds = Arc::new(UlidSource::new(Arc::clone(&clock)));
+        let store = Store::open(
+            &dirs.station_db(),
+            clock,
+            Arc::clone(&ids),
+            StoreConfig::default(),
+        )
+        .await?;
+        let host: Arc<dyn SessionHost> = Arc::new(DirectChildHost::new());
+        let adapters = adapters_from_config(config, &host, Some(station_dir.join("raw")))?;
+        let socket = local::socket_path(&station_dir);
+        let listener = local::bind(&socket).await?;
+        let manager = Arc::new(
+            SessionManager::start(store, Policy::from_config(config), adapters, ids).await?,
+        );
+        let identity = Arc::new(Identity::load_or_create(&station_dir)?);
+        let node = StationNode::start(
+            Arc::clone(&manager),
+            Arc::clone(&identity),
+            config.name.clone(),
+            &config.listen,
+            BackoffPolicy::default(),
+        )
+        .await?;
+        tracing::info!(
+            station = %config.name,
+            key = %identity.fingerprint().short(),
+            socket = %socket.display(),
+            listen = ?node.listen_addrs().await,
+            "station ready"
+        );
+        let (shutdown, rx) = watch::channel(false);
+        let server = tokio::spawn(local::serve(
+            listener,
+            Arc::clone(&manager),
+            Some(Arc::clone(&node)),
+            rx,
+        ));
+        Ok(Self {
+            manager,
+            node,
+            identity,
+            server,
+            shutdown,
+            socket,
+        })
+    }
+
+    /// Stops the local socket and the link node, then every live session
+    /// gracefully.
+    pub async fn stop(self) {
+        tracing::info!("station stopping");
+        let _ = self.shutdown.send(true);
+        let _ = self.server.await;
+        self.node.shutdown();
+        self.manager.shutdown(StopMode::Graceful).await;
+        // The pumps store the last events of each process (`session.ended`).
+        let deadline = tokio::time::Instant::now() + PUMP_GRACE;
+        while self.manager.live_sessions() > 0 && tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        if let Err(e) = std::fs::remove_file(&self.socket) {
+            tracing::debug!(error = %e, "socket file");
+        }
+    }
 }

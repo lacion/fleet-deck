@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use fleetdeck_deck::DeckStore;
+use fleetdeck_deck::http::assets::BoardAssets;
 use fleetdeck_deck::http::tls::pinned_client;
 use fleetdeck_deck::http::{Board, BoardServer, BoardTls, LoginLimiter, Origins};
 use fleetdeck_deck::link::DeckLink;
@@ -20,6 +21,9 @@ pub struct Http {
     pub status: u16,
     pub headers: Vec<(String, String)>,
     pub body: Value,
+    /// The raw body (the board files are not JSON).
+    #[allow(dead_code)]
+    pub text: String,
 }
 
 impl Http {
@@ -96,18 +100,28 @@ pub struct BoardClient {
 
 /// Serves the board API of `link` on a loopback port.
 pub async fn board(link: Arc<DeckLink>) -> BoardClient {
-    serve(link, None).await
+    serve(link, None, BoardAssets::None).await
 }
 
 /// Serves the board API of `node`, with the pairing methods.
 #[allow(dead_code)]
 pub async fn board_with_node(node: Arc<fleetdeck_deck::link::DeckNode>) -> BoardClient {
-    serve(Arc::clone(node.link()), Some(node)).await
+    serve(Arc::clone(node.link()), Some(node), BoardAssets::None).await
+}
+
+/// Serves the board API of `node` and the board files of `assets`.
+#[allow(dead_code)]
+pub async fn board_with_assets(
+    node: Arc<fleetdeck_deck::link::DeckNode>,
+    assets: BoardAssets,
+) -> BoardClient {
+    serve(Arc::clone(node.link()), Some(node), assets).await
 }
 
 async fn serve(
     link: Arc<DeckLink>,
     pairing: Option<Arc<fleetdeck_deck::link::DeckNode>>,
+    assets: BoardAssets,
 ) -> BoardClient {
     let store = link.store.clone();
     let (stop, rx) = watch::channel(false);
@@ -125,6 +139,7 @@ async fn serve(
                 tickets: fleetdeck_deck::http::ws::Tickets::default(),
                 ws_recheck: Duration::from_millis(200),
                 pairing: pairing.clone(),
+                assets: assets.clone(),
             });
             Ok::<_, fleetdeck_deck::http::tls::TlsError>((board, tls))
         },
@@ -193,6 +208,7 @@ impl BoardClient {
             status,
             headers,
             body: serde_json::from_str(body).unwrap_or(Value::Null),
+            text: body.to_owned(),
         }
     }
 

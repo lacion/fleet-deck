@@ -7,6 +7,7 @@ import './styles/tokens.css';
 import './styles/app.css';
 import './styles/runtime.css';
 import './styles/session.css';
+import './styles/spawn.css';
 
 const root = document.getElementById('root');
 if (root === null) {

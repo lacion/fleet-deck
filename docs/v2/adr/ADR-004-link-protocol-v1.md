@@ -373,6 +373,7 @@ close             { reason, detail }
 | `events.replay` | deck → station | read | — | no |
 | `session.snapshot` | deck → station | read | `snapshots.v1` | no |
 | `command.receipt` | deck → station | read | `command_receipts.v1` | no |
+| `workspace.list` | deck → station | drive | — | no |
 | `artifact.open` | deck → station | read | `data_streams.v1` | no (returns a `stream_token`) |
 | `session.start`, `session.resume`, `session.fork`, `session.prompt`, `session.steer`, `session.follow_up`, `session.interrupt`, `session.set_mode`, `session.set_model`, `session.stop` | deck → station | drive | — | yes |
 | `approval.answer` | deck → station | approve | — | yes |
@@ -381,6 +382,7 @@ close             { reason, detail }
 | `coordinator.query` | station → deck | coordinate | — | no |
 | `coordinator.call` | station → deck | coordinate | — | yes |
 
+- **`workspace.list` (added in M2 P4-4, DL-061, under the extension rule of §3: "every new method must declare a scope and, if needed, a feature"):** the directory picker of the board's spawn form. It lists the sub-directories of a path inside the station's allowed roots (`WorkspaceQuery` → `WorkspaceListing`). It reads only, but it needs `drive` because only a caller that may start a session needs the station's directory names. Errors: `missing_workspace`, `outside_roots`, `timeout`.
 - **Coordinator (G7):** `coordinator.call` carries the operations that change fleet intent (spawn, send, stop, assign). It is mutating: it needs a `command_id`, and the **deck** keeps receipts for it and deduplicates them with the same rules as station receipts (same id + method + caller + payload hash → the stored receipt; reused id with another payload → rejected). `coordinator.query` carries the read operations and is not mutating. This replaces the Revision 1 row "`coordinator.call` | coordinate | — | no".
 
 ### 9.7 Implementation items of the same gate (G8–G12)

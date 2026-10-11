@@ -44,15 +44,23 @@ impl SessionSummary {
                 cwd,
                 mode,
                 capabilities,
+                title,
+                branch,
                 ..
             } => {
+                if title.is_some() {
+                    self.title.clone_from(title);
+                }
+                if branch.is_some() {
+                    self.branch.clone_from(branch);
+                }
                 self.provider = Some(*provider);
                 self.provider_instance = Some(provider_instance.clone());
                 self.provider_version.clone_from(provider_version);
                 self.model.clone_from(model);
                 self.cwd = Some(cwd.clone());
                 self.mode.clone_from(mode);
-                self.capabilities = Some(capabilities.clone());
+                self.capabilities = Some(capabilities.as_ref().clone());
                 self.state = SessionState::Running;
             }
             Event::SessionStateChanged { state, .. } => self.state = *state,

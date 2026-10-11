@@ -21,9 +21,11 @@ fn samples() -> Vec<Event> {
             model: None,
             cwd: "/w".into(),
             mode: Some("default".into()),
-            capabilities: Capabilities::minimal(),
+            capabilities: Box::new(Capabilities::minimal()),
             resumed: None,
             provider_refs: refs(),
+            title: None,
+            branch: None,
         },
         Event::SessionStateChanged {
             state: SessionState::Running,

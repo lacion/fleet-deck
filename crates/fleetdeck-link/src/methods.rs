@@ -96,6 +96,9 @@ pub const METHODS: &[MethodSpec] = &[
         Some(feature::DATA_STREAMS),
         false,
     ),
+    // The spawn form's directory picker (M2 P4-4, DL-061): a read with the
+    // drive scope, because only a caller that may start a session needs it.
+    m("workspace.list", DeckToStation, Scope::Drive, None, false),
     drive("session.start"),
     drive("session.resume"),
     drive("session.fork"),

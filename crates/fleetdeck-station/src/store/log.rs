@@ -2,7 +2,7 @@
 //! inside the caller's transaction (or one statement), so a command decision
 //! and a provider append use the same code.
 
-use fleetdeck_proto::event::RawRef;
+use fleetdeck_proto::event::{Event, RawRef};
 use fleetdeck_proto::{EventBody, EventEnvelope, PROTO_MAX, SessionId, SessionSummary};
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -79,6 +79,13 @@ pub(super) fn append_one(
         )
         .optional()?
         .ok_or_else(|| StoreError::UnknownSession(session_id.clone()))?;
+    let mut summary: SessionSummary = serde_json::from_str(&summary)?;
+    let mut event = event;
+    // The station is the source of the title and the branch (DL-061).
+    if let EventBody::Known(Event::SessionStarted { title, branch, .. }) = &mut event.event {
+        title.clone_from(&summary.title);
+        branch.clone_from(&summary.branch);
+    }
     let station_seq = head(conn)? + 1;
     let session_seq = to_u64(last_session_seq)? + 1;
     let envelope = EventEnvelope {
@@ -107,7 +114,6 @@ pub(super) fn append_one(
             now,
         ],
     )?;
-    let mut summary: SessionSummary = serde_json::from_str(&summary)?;
     summary.apply(&envelope);
     conn.execute(
         "UPDATE sessions SET session_seq = ?2, summary = ?3, state = ?4, mode = ?5,

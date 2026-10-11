@@ -57,6 +57,8 @@ argon2 = { version = "0.5", features = ["std"] }
 hyper = { version = "1", default-features = false, features = ["server", "http1"] }
 hyper-util = { version = "0.1", default-features = false, features = ["tokio", "service"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+# The board assets in the deck binary (PLAN §12; M2 P4-4).
+rust-embed = { version = "8.13", default-features = false }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

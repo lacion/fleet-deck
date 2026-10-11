@@ -15,7 +15,7 @@ use fleetdeck_link::control::{Control, InboundRequest};
 use fleetdeck_link::methods::code;
 use fleetdeck_link::revoke::{RotateError, check_rotation, finish_rotation};
 use fleetdeck_proto::command::{CommandResult, ReceiptState};
-use fleetdeck_proto::link::{Outcome, ReceiptQuery, StationInfo, WireError};
+use fleetdeck_proto::link::{Outcome, ReceiptQuery, StationInfo, WireError, WorkspaceQuery};
 use fleetdeck_proto::mutation::Mutation;
 use fleetdeck_proto::{Receipt, Reject, RejectCode};
 use serde::Serialize;
@@ -39,6 +39,36 @@ fn internal(e: impl std::fmt::Display) -> Outcome {
 
 fn bad_params(e: impl std::fmt::Display) -> Outcome {
     Outcome::Err(WireError::new(code::PROTOCOL_ERROR, format!("params: {e}")))
+}
+
+/// The longest a `workspace.list` may read the file system.
+pub const WORKSPACE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// `workspace.list` (M2 P4-4, DL-061): error codes `missing_workspace`,
+/// `outside_roots` and `timeout`.
+async fn workspaces(ctx: &StationLink, params: serde_json::Value) -> Outcome {
+    use crate::manager::policy::WorkspaceError;
+    let query: WorkspaceQuery = match serde_json::from_value(params) {
+        Ok(q) => q,
+        Err(e) => return bad_params(e),
+    };
+    let policy = ctx.manager.policy().clone();
+    let task =
+        tokio::task::spawn_blocking(move || crate::manager::workspaces::list(&policy, &query));
+    match tokio::time::timeout(WORKSPACE_TIMEOUT, task).await {
+        Ok(Ok(Ok(listing))) => ok(listing),
+        Ok(Ok(Err(e @ WorkspaceError::Missing(_)))) => {
+            Outcome::Err(WireError::new("missing_workspace", e.to_string()))
+        }
+        Ok(Ok(Err(e @ WorkspaceError::Outside(_)))) => {
+            Outcome::Err(WireError::new("outside_roots", e.to_string()))
+        }
+        Ok(Err(e)) => internal(e),
+        Err(_) => Outcome::Err(WireError::new(
+            "timeout",
+            "the directory took too long to read",
+        )),
+    }
 }
 
 /// Answers a request that is not `events.replay` or `session.snapshot`
@@ -82,6 +112,7 @@ async fn read(ctx: &StationLink, req: InboundRequest) -> Outcome {
             max_sessions: Some(ctx.manager.policy().max_sessions()),
             providers: ctx.manager.providers().await,
         }),
+        "workspace.list" => workspaces(ctx, req.params).await,
         "session.list" => match store.snapshot().await {
             Ok(s) => ok(s.sessions),
             Err(e) => internal(e),

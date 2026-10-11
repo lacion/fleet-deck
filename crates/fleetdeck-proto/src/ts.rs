@@ -21,6 +21,7 @@ use crate::command::{CommandEnvelope, DeckCommandState, Receipt};
 use crate::event::{Event, EventEnvelope};
 use crate::link::{
     ControlFrame, ReceiptQuery, ReplayParams, Scope, StationInfo, StreamMode, StreamStart,
+    WorkspaceListing, WorkspaceQuery,
 };
 use crate::mutation::{CoordinatorCallEnvelope, KeyRotationEnvelope, StationConfigureEnvelope};
 use crate::session::{CardStatus, SessionSummary};
@@ -64,6 +65,8 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         StreamMode::export_all(&cfg),
         StreamStart::export_all(&cfg),
         StationInfo::export_all(&cfg),
+        WorkspaceQuery::export_all(&cfg),
+        WorkspaceListing::export_all(&cfg),
         ReceiptQuery::export_all(&cfg),
         SessionSummary::export_all(&cfg),
         CardStatus::export_all(&cfg),

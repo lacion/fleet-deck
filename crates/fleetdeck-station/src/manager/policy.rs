@@ -87,6 +87,12 @@ impl Policy {
         self.offline
     }
 
+    /// The canonical allowed roots.
+    #[must_use]
+    pub fn allowed_roots(&self) -> &[PathBuf] {
+        &self.allowed_roots
+    }
+
     /// Every configured provider instance with its kind.
     #[must_use]
     pub fn instances(&self) -> &BTreeMap<ProviderInstanceId, ProviderKind> {

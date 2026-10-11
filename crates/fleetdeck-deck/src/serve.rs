@@ -56,78 +56,125 @@ pub async fn serve(
     backoff: BackoffPolicy,
     stop: impl Future<Output = ()>,
 ) -> Result<(), ServeError> {
-    let deck_dir = dirs.deck();
-    ensure_private_dir(&deck_dir).map_err(|source| ServeError::Dir {
-        path: deck_dir.clone(),
-        source,
-    })?;
-    let clock: SharedClock = Arc::new(SystemClock);
-    let ids: SharedIds = Arc::new(UlidSource::new(Arc::clone(&clock)));
-    let store = DeckStore::open(&dirs.deck_db(), clock, ids).await?;
-    let socket = local::socket_path(&deck_dir);
-    let listener = local::bind(&socket).await?;
-    let identity = Arc::new(Identity::load_or_create(&deck_dir)?);
-    let node = DeckNode::start(
-        store.clone(),
-        Arc::clone(&identity),
-        &config.link_listen,
-        backoff,
-    )
-    .await?;
-    let (shutdown, rx) = watch::channel(false);
-    let tailnet = config.tailnet_hostname.clone();
-    let board_store = store.clone();
-    let board_link = Arc::clone(node.link());
-    let board_node = Arc::clone(&node);
-    let tls_dir = deck_dir.clone();
-    let board = BoardServer::bind(
-        &config.listen,
-        move |bound| {
-            let tls = BoardTls::load_or_create(&tls_dir, &cert_names(bound, tailnet.as_deref()))?;
-            let board = Arc::new(Board {
-                store: board_store,
-                link: board_link,
-                origins: Origins::new(bound, tailnet.as_deref()),
-                limiter: LoginLimiter::default(),
-                tickets: crate::http::ws::Tickets::default(),
-                ws_recheck: crate::http::ws::RECHECK,
-                pairing: Some(board_node),
-            });
-            Ok((board, tls))
-        },
-        rx.clone(),
-    )
-    .await
-    .map_err(ServeError::Board)?;
-    let endpoint = board.addrs.first().map(|a| BoardEndpoint {
-        url: format!("https://{a}"),
-        certificate_sha256: board.tls.sha256.clone(),
-        self_signed: board.tls.self_signed,
-    });
-    tracing::info!(
-        deck = %config.name,
-        key = %identity.fingerprint().short(),
-        socket = %socket.display(),
-        link_listen = ?node.listen_addrs(),
-        board = ?board.addrs,
-        board_certificate = %board.tls.sha256,
-        "deck ready"
-    );
-    let local = Arc::new(LocalDeck {
-        node: Arc::clone(&node),
-        board: endpoint,
-    });
-    let server = tokio::spawn(local::serve(listener, local, rx));
+    let deck = RunningDeck::start(dirs, config, backoff).await?;
     stop.await;
-    tracing::info!("deck stopping");
-    let _ = shutdown.send(true);
-    let _ = server.await;
-    board.join().await;
-    node.shutdown();
-    if let Err(e) = std::fs::remove_file(&socket) {
-        tracing::debug!(error = %e, "socket file");
-    }
+    deck.stop().await;
     Ok(())
+}
+
+/// A started deck: the link node, the board server and the local socket
+/// (M2 P4-4: `fleetdeck up` runs it next to a station).
+#[derive(Debug)]
+pub struct RunningDeck {
+    pub node: Arc<DeckNode>,
+    pub identity: Arc<Identity>,
+    pub store: DeckStore,
+    /// The first board address, its certificate and whether it is
+    /// self-signed (`None` without a board listener).
+    pub endpoint: Option<BoardEndpoint>,
+    board: BoardServer,
+    server: tokio::task::JoinHandle<()>,
+    shutdown: watch::Sender<bool>,
+    socket: PathBuf,
+}
+
+impl RunningDeck {
+    /// Opens `deck.db`, starts the link node, the board and the local socket.
+    ///
+    /// # Errors
+    /// [`ServeError`].
+    pub async fn start(
+        dirs: &NodeDirs,
+        config: &DeckConfig,
+        backoff: BackoffPolicy,
+    ) -> Result<Self, ServeError> {
+        let deck_dir = dirs.deck();
+        ensure_private_dir(&deck_dir).map_err(|source| ServeError::Dir {
+            path: deck_dir.clone(),
+            source,
+        })?;
+        let clock: SharedClock = Arc::new(SystemClock);
+        let ids: SharedIds = Arc::new(UlidSource::new(Arc::clone(&clock)));
+        let store = DeckStore::open(&dirs.deck_db(), clock, ids).await?;
+        let socket = local::socket_path(&deck_dir);
+        let listener = local::bind(&socket).await?;
+        let identity = Arc::new(Identity::load_or_create(&deck_dir)?);
+        let node = DeckNode::start(
+            store.clone(),
+            Arc::clone(&identity),
+            &config.link_listen,
+            backoff,
+        )
+        .await?;
+        let (shutdown, rx) = watch::channel(false);
+        let tailnet = config.tailnet_hostname.clone();
+        let board_store = store.clone();
+        let board_link = Arc::clone(node.link());
+        let board_node = Arc::clone(&node);
+        let tls_dir = deck_dir.clone();
+        let board = BoardServer::bind(
+            &config.listen,
+            move |bound| {
+                let tls =
+                    BoardTls::load_or_create(&tls_dir, &cert_names(bound, tailnet.as_deref()))?;
+                let board = Arc::new(Board {
+                    store: board_store,
+                    link: board_link,
+                    origins: Origins::new(bound, tailnet.as_deref()),
+                    limiter: LoginLimiter::default(),
+                    tickets: crate::http::ws::Tickets::default(),
+                    ws_recheck: crate::http::ws::RECHECK,
+                    pairing: Some(board_node),
+                    assets: crate::http::assets::BoardAssets::Embedded,
+                });
+                Ok((board, tls))
+            },
+            rx.clone(),
+        )
+        .await
+        .map_err(ServeError::Board)?;
+        let endpoint = board.addrs.first().map(|a| BoardEndpoint {
+            url: format!("https://{a}"),
+            certificate_sha256: board.tls.sha256.clone(),
+            self_signed: board.tls.self_signed,
+        });
+        tracing::info!(
+            deck = %config.name,
+            key = %identity.fingerprint().short(),
+            socket = %socket.display(),
+            link_listen = ?node.listen_addrs(),
+            board = ?board.addrs,
+            board_certificate = %board.tls.sha256,
+            "deck ready"
+        );
+        let local = Arc::new(LocalDeck {
+            node: Arc::clone(&node),
+            board: endpoint.clone(),
+        });
+        let server = tokio::spawn(local::serve(listener, local, rx));
+        Ok(Self {
+            node,
+            identity,
+            store,
+            endpoint,
+            board,
+            server,
+            shutdown,
+            socket,
+        })
+    }
+
+    /// Stops the board, the local socket and the link node.
+    pub async fn stop(self) {
+        tracing::info!("deck stopping");
+        let _ = self.shutdown.send(true);
+        let _ = self.server.await;
+        self.board.join().await;
+        self.node.shutdown();
+        if let Err(e) = std::fs::remove_file(&self.socket) {
+            tracing::debug!(error = %e, "socket file");
+        }
+    }
 }
 
 /// The names of the board certificate: every bound address (an unspecified

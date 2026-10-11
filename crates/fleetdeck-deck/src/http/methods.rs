@@ -89,6 +89,13 @@ pub const API: &[ApiMethod] = &[
         true,
     ),
     m(
+        "stations.workspaces",
+        Method::GET,
+        "/api/stations/{station}/workspaces",
+        Some(Scope::Drive),
+        false,
+    ),
+    m(
         "sessions.list",
         Method::GET,
         "/api/sessions",

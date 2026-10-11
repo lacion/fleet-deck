@@ -6,6 +6,7 @@ mod deck;
 mod invite;
 mod pairing;
 mod station;
+mod up;
 
 use std::process::ExitCode;
 
@@ -58,7 +59,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
     };
     match &cli.command {
         Command::Deck { command } => runtime()?.block_on(deck_main(command.as_ref(), &dirs)),
-        Command::Up(_) => anyhow::bail!("`fleetdeck up` is not implemented yet (PLAN Phase 4)"),
+        Command::Up(args) => runtime()?.block_on(up::up(&dirs, &env, args)),
         Command::Open => runtime()?.block_on(auth::open(&dirs)),
         Command::Station { .. } => {
             anyhow::bail!("internal error: the station command was not dispatched")

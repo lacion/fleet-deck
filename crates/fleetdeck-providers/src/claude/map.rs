@@ -115,9 +115,11 @@ fn on_system(core: &mut ClaudeCore, subtype: &str, body: &Map<String, Value>) ->
                 model: get("model"),
                 cwd: config.cwd.clone(),
                 mode: get("permissionMode"),
-                capabilities: config.capabilities.clone(),
+                capabilities: Box::new(config.capabilities.clone()),
                 resumed: config.resumed,
                 provider_refs: refs(&[("session_id", get("session_id").as_deref())]),
+                title: None,
+                branch: None,
             })]
         }
         "background_tasks_changed" => {

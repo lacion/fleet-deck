@@ -1,0 +1,179 @@
+import { describe, expect, test } from 'bun:test';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { App } from '../App';
+import type { StationInfo, StationView, WorkspaceListing } from '../gen';
+import { station } from '../testing/fleet';
+import { listingView, providerLabel, spawnActions, spawnTargets } from './spawn';
+
+const info = (extra: Partial<StationInfo> = {}): StationInfo => ({
+  name: 'Alpha',
+  incarnation: 'inc',
+  head: 0,
+  live_sessions: 0,
+  version: '0.2.0',
+  max_sessions: 4,
+  providers: [
+    { instance: 'claude', provider: 'claude', version: '2.1.999', auth: 'signed_in' },
+    { instance: 'codex', provider: 'codex', version: null, auth: 'unknown' },
+  ],
+  ...extra,
+});
+
+const reported = (id = 'station-a', extra: Partial<StationView> = {}) =>
+  station(id, { info: info(), info_at: 1, ...extra });
+
+const listing: WorkspaceListing = {
+  path: '/home/me/projects',
+  parent: null,
+  entries: [
+    { name: 'app', path: '/home/me/projects/app', repository: true },
+    { name: 'notes', path: '/home/me/projects/notes', repository: false },
+  ],
+  truncated: true,
+};
+
+const form = (
+  stations: readonly StationView[],
+  scopes = ['read', 'drive'],
+  freshness: 'live' | 'stale' = 'live',
+  initial: WorkspaceListing | null = null,
+) =>
+  renderToStaticMarkup(
+    <App
+      stations={stations}
+      freshness={freshness}
+      initialScreen="spawn"
+      spawn={spawnActions(
+        async () => listing,
+        async () => ({}),
+        scopes,
+      )}
+      initialListing={initial}
+    />,
+  );
+
+describe('spawn form (P4-4)', () => {
+  test('only linked stations that reported providers are targets', () => {
+    const targets = spawnTargets([
+      reported('station-a'),
+      reported('station-b', { reachable: false }),
+      station('station-c'),
+      reported('station-d', { info: info({ providers: [] }) }),
+    ]);
+    expect(targets.map((s) => s.station_id)).toEqual(['station-a']);
+    expect(providerLabel({ instance: 'codex', provider: 'codex', version: null, auth: 'x' })).toBe(
+      'codex · codex · version unknown',
+    );
+  });
+
+  test('the form offers station, provider, mode and the picker', () => {
+    const html = form([reported()]);
+    expect(html).toContain('<h2>New session</h2>');
+    expect(html).toContain('<option value="station-a" selected="">Alpha</option>');
+    expect(html).toContain('claude · claude · 2.1.999');
+    expect(html).toContain('Browse the station');
+    expect(html).toContain('<option value="" selected="">Station default</option>');
+    expect(html).toContain('<option value="plan">plan</option>');
+    expect(html).toContain('No directory chosen.');
+    // No directory yet: the start button is off.
+    expect(html).toMatch(/<button type="submit" disabled="">Start session<\/button>/);
+  });
+
+  test('the picker shows entries, git repositories and truncation', () => {
+    const html = form([reported()], ['read', 'drive'], 'live', listing);
+    expect(html).toContain('/home/me/projects');
+    expect(html).toContain('aria-label="Open app"');
+    expect(html).toContain('<span class="fd-tag">git</span>');
+    expect(html).toContain('Back to the roots');
+    expect(html).toContain('Use this directory');
+    expect(html).toContain('The station shows only the first entries.');
+  });
+
+  test('without the drive scope, stale data or providers the form is off', () => {
+    expect(form([reported()], ['read'])).toContain('Starting sessions needs the drive scope.');
+    expect(form([reported()], ['read'])).toMatch(/disabled="">Browse the station/);
+    expect(form([reported()], ['read', 'drive'], 'stale')).toContain(
+      'The form is off until the board is live.',
+    );
+    expect(form([station()])).toContain('No linked station has reported its providers yet.');
+  });
+
+  test('a start sends one session.start command and returns the session id', async () => {
+    const posts: { path: string; body: unknown }[] = [];
+    const gets: string[] = [];
+    const actions = spawnActions(
+      async (path) => {
+        gets.push(path);
+        return listing;
+      },
+      async (path, body) => {
+        posts.push({ path, body });
+        return {
+          state: 'done',
+          receipt: {
+            state: 'accepted',
+            result: { session_id: 's-new', input_id: 'i-1' },
+            reject: null,
+          },
+        };
+      },
+      ['read', 'drive'],
+      () => 'b-fixed',
+    );
+    await actions.list('station a', '/home/me/projects/app & more');
+    expect(gets).toEqual([
+      '/api/stations/station%20a/workspaces?path=%2Fhome%2Fme%2Fprojects%2Fapp%20%26%20more',
+    ]);
+    const spec = {
+      provider_instance: 'claude',
+      cwd: '/home/me/projects/app',
+      mode: 'plan',
+      model: null,
+      title: 'Fix',
+    };
+    const out = await actions.start('station-a', spec, 'hello');
+    expect(out).toEqual({ ok: true, text: 'Done.', sessionId: 's-new' });
+    expect(posts).toEqual([
+      {
+        path: '/api/commands/session.start',
+        body: {
+          station: 'station-a',
+          command_id: 'b-fixed',
+          command: { op: 'start', spec, prompt: { text: 'hello' } },
+        },
+      },
+    ]);
+    // An empty prompt starts the session without a turn.
+    await actions.start('station-a', spec, '  ');
+    const second = posts[1];
+    expect(second).toBeDefined();
+    expect(JSON.stringify(second?.body)).toContain('"prompt":null');
+  });
+
+  test('a refused or failed start shows the reason and no session', async () => {
+    const refused = spawnActions(
+      async () => listing,
+      async () => ({
+        state: 'done',
+        receipt: { state: 'rejected', result: null, reject: { message: 'outside the roots' } },
+      }),
+      ['drive'],
+    );
+    const spec = { provider_instance: 'claude', cwd: '/x', mode: null, model: null, title: null };
+    expect(await refused.start('a', spec, '')).toEqual({
+      ok: false,
+      text: 'Refused: outside the roots',
+      sessionId: null,
+    });
+    const broken = spawnActions(async () => ({ path: 1 }), async () => {
+      throw new Error('Request failed (502)');
+    }, ['drive']);
+    expect(await broken.start('a', spec, '')).toEqual({
+      ok: false,
+      text: 'Request failed (502)',
+      sessionId: null,
+    });
+    expect(broken.list('a', null)).rejects.toThrow('Invalid directory listing');
+    expect(() => listingView({ ...listing, entries: [{ name: 1 }] })).toThrow();
+  });
+});

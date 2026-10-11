@@ -4,10 +4,12 @@ import { NeedsYouRail } from './board/NeedsYouRail';
 import { ALL, emptyFilter, filterFleet, type FleetFilter, stationName } from './board/fleet';
 import type { StationActions } from './board/pairing';
 import { StationsPanel } from './board/StationsPanel';
-import type { DeckSession, SessionKey, StationView } from './gen';
+import type { DeckSession, SessionKey, StationView, WorkspaceListing } from './gen';
 import { type Freshness, sessionKey, type Timeline } from './runtime/state';
 import type { SessionActions } from './session/commands';
 import { SessionView } from './session/SessionView';
+import type { SpawnActions } from './spawn/spawn';
+import { SpawnForm } from './spawn/SpawnForm';
 
 type Props = {
   readonly sessions?: readonly DeckSession[];
@@ -18,9 +20,16 @@ type Props = {
   /** Opens the live timeline of a session; returns the cancel function. */
   readonly watch?: ((key: SessionKey) => () => void) | undefined;
   readonly sessionActions?: ((key: SessionKey) => SessionActions) | undefined;
+  readonly spawn?: SpawnActions | undefined;
   /** The session open at the first render (tests). */
   readonly initialSession?: SessionKey | null;
+  /** The screen at the first render (tests). */
+  readonly initialScreen?: Screen;
+  /** The spawn form's directory listing at the first render (tests). */
+  readonly initialListing?: WorkspaceListing | null;
 };
+
+type Screen = 'fleet' | 'stations' | 'spawn';
 
 /** Screens read the same runtime snapshot; filters never open another connection. */
 export function App({
@@ -31,9 +40,12 @@ export function App({
   timelines = {},
   watch,
   sessionActions,
+  spawn,
   initialSession = null,
+  initialScreen = 'fleet',
+  initialListing = null,
 }: Props) {
-  const [screen, setScreen] = useState<'fleet' | 'stations'>('fleet');
+  const [screen, setScreen] = useState<Screen>(initialScreen);
   const [open, setOpen] = useState<SessionKey | null>(initialSession);
   const openId = open === null ? null : sessionKey(open);
   // `openId` identifies the session; a new `open` object with the same key
@@ -78,6 +90,16 @@ export function App({
           >
             Stations ({stations.length})
           </button>
+          <button
+            type="button"
+            aria-pressed={screen === 'spawn'}
+            onClick={() => {
+              setOpen(null);
+              setScreen('spawn');
+            }}
+          >
+            New session
+          </button>
         </nav>
       </header>
       {selected !== undefined && open !== null && openId !== null ? (
@@ -89,6 +111,17 @@ export function App({
           freshness={freshness}
           actions={sessionActions?.(open)}
           onBack={() => setOpen(null)}
+        />
+      ) : screen === 'spawn' ? (
+        <SpawnForm
+          stations={stations}
+          freshness={freshness}
+          actions={spawn}
+          initialListing={initialListing}
+          onOpen={(key) => {
+            setScreen('fleet');
+            setOpen(key);
+          }}
         />
       ) : screen === 'stations' ? (
         <StationsPanel

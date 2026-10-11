@@ -12,6 +12,7 @@
 pub mod decide;
 pub mod policy;
 pub mod target;
+pub mod workspaces;
 
 use std::path::PathBuf;
 use std::sync::Arc;

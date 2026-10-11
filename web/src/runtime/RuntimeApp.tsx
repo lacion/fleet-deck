@@ -3,6 +3,7 @@ import { App } from '../App';
 import { stationActions } from '../board/pairing';
 import type { SessionKey } from '../gen';
 import { sessionActions } from '../session/commands';
+import { spawnActions } from '../spawn/spawn';
 import type { Connection } from './connection';
 
 export function RuntimeApp({ connection }: { readonly connection: Connection }) {
@@ -26,6 +27,15 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
     return (key: SessionKey) =>
       sessionActions((path, body) => connection.post(path, body), key, scopes);
   }, [connection, scopeText]);
+  const spawn = useMemo(
+    () =>
+      spawnActions(
+        (path) => connection.get(path),
+        (path, body) => connection.post(path, body),
+        scopeText.split(' '),
+      ),
+    [connection, scopeText],
+  );
   const watch = useMemo(() => (key: SessionKey) => connection.watch(key), [connection]);
   if (state.login === null) {
     return (
@@ -104,6 +114,7 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
         timelines={state.timelines}
         watch={watch}
         sessionActions={commands}
+        spawn={spawn}
       />
     </>
   );

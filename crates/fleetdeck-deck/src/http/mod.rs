@@ -3,6 +3,7 @@
 //! accepts only the deck's board addresses (D13; checked in `DeckConfig`).
 //! The deck serves HTTPS itself ([`tls`]; D13: no reverse proxy, DL-054).
 
+pub mod assets;
 pub mod auth_routes;
 pub mod command_routes;
 pub mod guard;
@@ -10,6 +11,7 @@ pub mod methods;
 pub mod read_routes;
 pub mod station_routes;
 pub mod tls;
+pub mod workspace_routes;
 pub mod ws;
 
 use std::io;
@@ -49,6 +51,8 @@ pub struct Board {
     pub ws_recheck: std::time::Duration,
     /// The link node for the pairing methods (`None`: they answer 503).
     pub pairing: Option<Arc<crate::link::DeckNode>>,
+    /// The board web client (P4-4).
+    pub assets: assets::BoardAssets,
 }
 
 /// The board API router.
@@ -70,6 +74,10 @@ pub fn router(board: Arc<Board>) -> Router {
             "/api/stations/{station}/remove",
             post(station_routes::remove),
         )
+        .route(
+            "/api/stations/{station}/workspaces",
+            get(workspace_routes::list),
+        )
         .route("/api/sessions", get(read_routes::sessions))
         .route("/api/commands", get(read_routes::commands))
         .route(
@@ -83,7 +91,17 @@ pub fn router(board: Arc<Board>) -> Router {
             Arc::clone(&board),
             guard::guard,
         ))
+        .fallback(board_files)
         .with_state(board)
+}
+
+/// Every path outside the API table: the board web client (P4-4).
+async fn board_files(
+    axum::extract::State(board): axum::extract::State<Arc<Board>>,
+    method: axum::http::Method,
+    uri: axum::http::Uri,
+) -> axum::response::Response {
+    assets::serve(&board.assets, &method, &uri).await
 }
 
 /// Bound board listeners (HTTPS, HTTP/1.1 with upgrades for the WS route).

@@ -225,10 +225,21 @@ pub enum Event {
         model: Option<String>,
         cwd: String,
         mode: Option<String>,
-        capabilities: Capabilities,
+        /// Boxed: it is the largest field of the largest event (DL-061).
+        capabilities: Box<Capabilities>,
         /// `Some(false)`: a resume was asked for but a new session started.
         resumed: Option<bool>,
         provider_refs: ProviderRefs,
+        /// The title and the git branch that the station recorded when it
+        /// created the session (M2 P4-4, DL-061). A provider core leaves
+        /// them out; the station's store fills them in, so the deck's read
+        /// model has them without a snapshot.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        title: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        branch: Option<String>,
     },
     #[serde(rename = "session.state")]
     SessionStateChanged {

@@ -47,9 +47,11 @@ fn started() -> Event {
         model: Some("haiku".to_owned()),
         cwd: "/w".to_owned(),
         mode: Some("default".to_owned()),
-        capabilities: Capabilities::minimal(),
+        capabilities: Box::new(Capabilities::minimal()),
         resumed: None,
         provider_refs: ProviderRefs::new(),
+        title: None,
+        branch: None,
     }
 }
 

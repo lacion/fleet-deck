@@ -28,11 +28,22 @@ import type { Usage } from "./Usage";
 /**
  * A canonical event of a known kind.
  */
-export type Event = { "kind": "session.started", provider: ProviderKind, provider_instance: ProviderInstanceId, provider_version: string | null, model: string | null, cwd: string, mode: string | null, capabilities: Capabilities, 
+export type Event = { "kind": "session.started", provider: ProviderKind, provider_instance: ProviderInstanceId, provider_version: string | null, model: string | null, cwd: string, mode: string | null, 
+/**
+ * Boxed: it is the largest field of the largest event (DL-061).
+ */
+capabilities: Capabilities, 
 /**
  * `Some(false)`: a resume was asked for but a new session started.
  */
-resumed: boolean | null, provider_refs: { [key in string]: JsonValue }, } | { "kind": "session.state", state: SessionState, detail: string | null, } | { "kind": "run.started", run_id: RunId, input_summary: string, origin: RunOrigin, } | { "kind": "turn.started", run_id: RunId, turn_id: TurnId, provider_refs: { [key in string]: JsonValue }, } | { "kind": "message.delta", turn_id: TurnId, 
+resumed: boolean | null, provider_refs: { [key in string]: JsonValue }, 
+/**
+ * The title and the git branch that the station recorded when it
+ * created the session (M2 P4-4, DL-061). A provider core leaves
+ * them out; the station's store fills them in, so the deck's read
+ * model has them without a snapshot.
+ */
+title?: string, branch?: string, } | { "kind": "session.state", state: SessionState, detail: string | null, } | { "kind": "run.started", run_id: RunId, input_summary: string, origin: RunOrigin, } | { "kind": "turn.started", run_id: RunId, turn_id: TurnId, provider_refs: { [key in string]: JsonValue }, } | { "kind": "message.delta", turn_id: TurnId, 
 /**
  * The subagent tool call that produced the text, if any (L7).
  */

@@ -23,6 +23,8 @@ pub struct Deck {
     pub node: TempNode,
     pub link_port: u16,
     child: Option<Child>,
+    /// `deck serve`, or `up` for the all-in-one process (P4-4).
+    command: &'static [&'static str],
 }
 
 /// A loopback port that is free now.
@@ -46,11 +48,27 @@ impl Deck {
     /// and starts the deck. When another process takes the link port
     /// first, the deck exits and the harness picks a new port.
     pub fn start() -> Self {
-        let node = TempNode::new("deck").unwrap();
+        Self::start_with(TempNode::new("deck").unwrap(), &["deck", "serve"])
+    }
+
+    /// `fleetdeck up` on a node whose station.toml has `fake-claude sim`
+    /// (M2 P4-4). Returns the deck and the node's `~/projects/demo`.
+    pub fn up(name: &str) -> (Self, std::path::PathBuf) {
+        let node = TempNode::new(name).unwrap();
+        let workspace = node.workspace("demo").unwrap();
+        let bins = fleetdeck_testkit::FakeAgent::bin_dir().unwrap();
+        let mut text = node.station_toml(&bins, &[fleetdeck_testkit::FakeAgent::Claude]);
+        text.push_str("env = { FLEETDECK_FAKE_SCENARIO = \"sim\" }\n");
+        node.write_station_toml(&text).unwrap();
+        (Self::start_with(node, &["up"]), workspace)
+    }
+
+    fn start_with(node: TempNode, command: &'static [&'static str]) -> Self {
         let mut deck = Self {
             node,
             link_port: 0,
             child: None,
+            command,
         };
         for _ in 0..10 {
             deck.link_port = free_port();
@@ -84,7 +102,7 @@ impl Deck {
     fn try_spawn(&mut self) -> bool {
         assert!(self.child.is_none(), "a deck process runs already");
         let mut child = fleetdeck(&self.node)
-            .args(["deck", "serve"])
+            .args(self.command)
             .stdout(Stdio::null())
             .stderr(Stdio::inherit())
             .spawn()

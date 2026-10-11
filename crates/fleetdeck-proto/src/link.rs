@@ -237,6 +237,42 @@ pub struct StationProvider {
     pub auth: String,
 }
 
+/// `workspace.list` params (M2 P4-4, DL-061): the directory to list; `None`
+/// lists the station's allowed roots.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "link/")]
+pub struct WorkspaceQuery {
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
+/// The `workspace.list` answer: the sub-directories of `path` that a session
+/// may use, sorted by name. Hidden directories and entries that resolve
+/// outside the allowed roots are left out.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "link/")]
+pub struct WorkspaceListing {
+    /// The canonical directory; `None` for the list of roots.
+    pub path: Option<String>,
+    /// The directory above `path` inside the allowed roots; `None` at a root.
+    pub parent: Option<String>,
+    pub entries: Vec<WorkspaceEntry>,
+    /// More entries exist than the answer holds.
+    pub truncated: bool,
+}
+
+/// One directory of a [`WorkspaceListing`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "link/")]
+pub struct WorkspaceEntry {
+    pub name: String,
+    /// The canonical path; use it as `SessionSpec.cwd`.
+    pub path: String,
+    /// The directory holds a `.git` entry.
+    pub repository: bool,
+}
+
 /// `command.receipt` params.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields)]
