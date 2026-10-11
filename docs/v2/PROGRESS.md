@@ -305,3 +305,19 @@ Rules for this file: one checklist item per M1 deliverable, in PLAN order. Each 
   - s4-link with `FD_LINK_TRANSPORT=fifo:<dir>` 3 runs and with TCP: 94 passed each
   - `web/` checks and TS-types drift → not applicable in M1
 - M1 acceptance: all items keep their evidence (round 13 summary); DECISIONS-LOG now DL-001..DL-025. Phase 0 exit stays an owner gate (ADR approval, adversary DESIGN REVIEW of ADR-004, real tailnet check).
+
+### Round 15 (2026-10-11)
+
+- Review feedback: allow the cargo checks and the offline replays in the review-command allowlist; `cargo nextest` was rejected before it could run, so the reviewer could not accept independently.
+- Committed round 14 as `899a52d`.
+- The reviewer's allowlist is in its home directory (`~/.codex/rules/`), outside the repository. The goal forbids writes there, so this round makes the acceptance runnable from inside the repository (DL-026):
+  - `.codex/rules/fleet-deck-acceptance.rules`: project execpolicy rules (loaded by Codex in a trusted project) that allow only the offline acceptance commands. `codex execpolicy check -r .codex/rules/fleet-deck-acceptance.rules <cmd>` → `allow` for `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo nextest run --workspace`, `cargo test --workspace`, `env CI=true cargo nextest run --workspace`, `cargo deny check`, `cargo run [-q] -p s1-claude --bin replay-claude`, `cargo run [-q] -p s2-codex --bin replay-codex`, `sh spikes/acceptance.sh`; no match for `record-claude`, `record-codex`, `rm -rf target`, other scripts
+  - `spikes/acceptance.sh`: one command for all six acceptance commands, each exit code printed, non-zero exit on any failure; cargo-nextest if installed, else `cargo test --workspace` (`FD_TEST_RUNNER=test` forces it)
+  - README offline section: the script, the runner fallback, the rules file
+- Commands and results:
+  - `sh spikes/acceptance.sh` → exit 0 (fmt 0, clippy 0, `cargo nextest run --workspace` 0 with 240 passed, deny 0, replay-claude 0 with 29 ok, replay-codex 0 with 18 ok)
+  - `FD_TEST_RUNNER=test sh spikes/acceptance.sh` → exit 0 (`cargo test --workspace`: 32 test binaries, 240 passed, 0 failed)
+  - the same two runs inside `codex sandbox -P :workspace -C .` → exit 0 each
+  - the same two runs on a clean checkout (temporary `git worktree` of HEAD + this round's diff and new files, advisory db copied as `cargo deny fetch` would) → exit 0 each, 240 passed
+  - `web/` checks and TS-types drift → not applicable in M1
+- M1 acceptance: all items keep their evidence; DECISIONS-LOG DL-001..DL-026. Phase 0 exit stays an owner gate (ADR approval, adversary DESIGN REVIEW of ADR-004, real tailnet check).

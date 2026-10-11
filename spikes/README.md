@@ -16,6 +16,15 @@ All commands in this section also run in a sandbox without network and without s
 - `cargo deny check` reads the advisory database from `target/advisory-dbs` (`deny.toml`). On a fresh clone, run `cargo deny fetch` once with network access.
 - The s4-link tests use TCP on `127.0.0.1` where the OS allows IP sockets. Where it does not, `.cargo/config.toml` (`FD_LINK_TRANSPORT=auto`) moves the same loopback addresses to FIFO pairs under `<tmp>/fd-link-net`. To force a transport, set `FD_LINK_TRANSPORT=tcp` or `FD_LINK_TRANSPORT=fifo:<dir>`.
 
+**One command for the whole offline acceptance run** (DL-026). It runs `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, the workspace tests, `cargo deny check`, `replay-claude` and `replay-codex`, prints each exit code, and exits non-zero if one fails:
+
+```sh
+sh spikes/acceptance.sh
+FD_TEST_RUNNER=test sh spikes/acceptance.sh   # use `cargo test` instead of cargo-nextest
+```
+
+The workspace tests run with cargo-nextest when it is installed, else with `cargo test --workspace`. Both runners run the same 240 tests (`CI=true`, so a snapshot mismatch fails). For Codex reviewers, the project rules file `.codex/rules/fleet-deck-acceptance.rules` allows these offline commands, and only these (no recorder, no live CLI). Check it with `codex execpolicy check -r .codex/rules/fleet-deck-acceptance.rules cargo nextest run --workspace`.
+
 Run all spike tests from the repository root:
 
 ```sh
