@@ -86,7 +86,7 @@ M3 = PLAN Phases 6–7 (goal loop started 2026-10-12, round 1). Rules as for M2:
 
 ### Phase 6 — fleet features
 
-- [ ] **6-ADR6** ADR-006 coordinator MCP (ingress auth, private credential handoff, identity binding and generation, wire/authorization, tool/class matrix, spawn-cap accounting, duplicates, query expiry, lifecycle/retry/revocation) and its executable negative tests, status *Proposed*. Remaining: everything; wiring waits for the recorded DESIGN REVIEW PASS.
+- [ ] **6-ADR6** ADR-006 coordinator MCP (ingress auth, private credential handoff, identity binding and generation, wire/authorization, tool/class matrix, spawn-cap accounting, duplicates, query expiry, lifecycle/retry/revocation) and its executable negative tests, status *Proposed*. Done (round 2): [ADR-006](./adr/ADR-006-coordinator-mcp.md) written, *Proposed*, every required decision, 31 named tests (§8), DL-075. Remaining: commit at the round-3 start, adversary DESIGN REVIEW (architect), then the §8 tests before the wiring.
 - [ ] **6-1 Workspaces** Repo catalog on stations; credential-safe clone; worktrees; batch spawn and `Nx`; explicit repo grouping; provider-instance profiles; allowed-root and symlink validation; filesystem work through the effect worker. Remaining: everything.
 - [ ] **6-2 Mail** Fleet mail through the durable outbox, delivered as native follow-up/steer. Remaining: everything.
 - [ ] **6-3 Assign auto** Across stations with connected/capacity/provider/repo checks. Remaining: everything.
@@ -103,7 +103,7 @@ M3 = PLAN Phases 6–7 (goal loop started 2026-10-12, round 1). Rules as for M2:
 
 ### Phase 7 — hardening and cutover
 
-- [ ] **7-ADR5** ADR-005 `ShimHost` (attachment ownership, output recovery, platform/upgrades, auto-continue integration) and its negative tests, status *Proposed*. Remaining: everything; implementation waits for the recorded DESIGN REVIEW PASS.
+- [ ] **7-ADR5** ADR-005 `ShimHost` (attachment ownership, output recovery, platform/upgrades, auto-continue integration) and its negative tests, status *Proposed*. Done (round 2): [ADR-005](./adr/ADR-005-shim-host.md) written, *Proposed*, the four decision groups, 25 named tests (§9), DL-075. Remaining: commit at the round-3 start, adversary DESIGN REVIEW (architect), then the §9 tests before the implementation.
 - [ ] **7-1 ShimHost** Durable shim and reattachment; crash/restart, terminal events, requests, duplicate stdin, output cursor recovery tests. Remaining: everything (blocked on the ADR-005 review).
 - [ ] **7-2 Auto-continue** L19, per session, default OFF. Remaining: everything.
 - [ ] **7-3 Drain and self-upgrade** Stable launcher, migration/bind/activation trial, rollback-safe SQLite main/WAL/shm snapshot, update ids, N−1 wire and stored-event compatibility. Remaining: everything.
@@ -121,6 +121,13 @@ M3 = PLAN Phases 6–7 (goal loop started 2026-10-12, round 1). Rules as for M2:
 - Start: HEAD `0a50d66` (DL-073), clean tree; nothing from an earlier M3 round to commit. Gate-state file: ADR-005 and ADR-006 not reviewed.
 - Done: P2-a, P2-b, SIGKILL test (DL-074); M3 checklist.
 - Checks: `make check` (tools/check.sh) on the round-1 tree: all 14 commands passed (fmt, clippy `-D warnings`, nextest 843 passed / 3 skipped, deny, ts_drift, bun install/typecheck/lint/test 88 pass/build/e2e/e2e:real, replay-claude 29, replay-codex 18). The three carry-over items: P2-a 2 tests, P2-b 3 tests, SIGKILL 1 real-process test, all in that nextest run. Known flake (pre-existing, not changed): `local::tests::a_stale_socket_file_is_replaced` failed once in a targeted run and passed in 4 reruns and in this `make check`.
+
+### M3 round 2 (2026-10-12)
+
+- Start: the round-1 `make check` finished (14/14, above); the round-1 work is committed as `b951beb`. HEAD before it: `eaf6a3a` (owner approvals DL-036..DL-073, ADR pre-approval). Gate-state file: ADR-005 and ADR-006 not reviewed.
+- Done: ADR-006 and ADR-005 written with status *Proposed* (DL-075); no wiring, no implementation.
+- Checks: `make check` on the round-2 tree (only docs changed after `b951beb`): all 14 commands passed (nextest 843 passed / 3 skipped, bun test 88 pass, replay-claude 29, replay-codex 18).
+- Next: commit at the round-3 start so that the architect can start the two DESIGN REVIEWs; meanwhile independent Phase 6 items (6-1 workspaces, 6-8 checkpoints).
 
 ## M2 acceptance evidence (M2-F)
 
