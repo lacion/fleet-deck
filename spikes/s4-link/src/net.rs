@@ -86,11 +86,22 @@ pub async fn accept(
     config: Arc<ServerConfig>,
 ) -> Result<(server::TlsStream<TcpStream>, PeerKey, SocketAddr), NetError> {
     let (tcp, from) = listener.accept().await?;
+    let (tls, key) = handshake_accepted(tcp, from, config).await?;
+    Ok((tls, key, from))
+}
+
+/// The server side of [`accept`] for a TCP connection that a listener loop
+/// accepted: D13 source check, then the TLS handshake with a timeout.
+pub async fn handshake_accepted(
+    tcp: TcpStream,
+    from: SocketAddr,
+    config: Arc<ServerConfig>,
+) -> Result<(server::TlsStream<TcpStream>, PeerKey), NetError> {
     check_peer(from)?;
     tcp.set_nodelay(true)?;
     let tls = tokio::time::timeout(HANDSHAKE_TIMEOUT, TlsAcceptor::from(config).accept(tcp))
         .await
         .map_err(|_| NetError::Timeout(HANDSHAKE_TIMEOUT))??;
     let key = peer_of(tls.get_ref().1.peer_certificates())?;
-    Ok((tls, key, from))
+    Ok((tls, key))
 }

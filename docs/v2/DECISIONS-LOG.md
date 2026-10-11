@@ -143,3 +143,32 @@ Format: context, options, choice, reason, owner review.
 - **Choice:** refuse all three. (1) `bind` refuses `0.0.0.0` and `::` because they also listen on public interfaces; the owner gives a concrete LAN or tailnet address. (2) `accept` checks the TCP source address with the same D13 rules before the TLS handshake, because a router port forward can route a public peer to a LAN listener. (3) Both TLS configs turn off session tickets and the session cache. A resumed TLS 1.3 session skips the certificate check, so a revoked key could reconnect with an old ticket. The spike found this: `a_revoked_key_is_refused_on_the_next_handshake` failed before the fix.
 - **Reason:** doctrine "fail closed": the cost is one full handshake per link connection, and links reconnect rarely.
 - **Owner review:** pending
+
+## DL-018 — Link WebSocket stack: tokio-tungstenite plus futures-util
+
+- **Context:** PLAN §12 lists `tokio-tungstenite` for the link channels. Its `WebSocketStream` implements the `Stream`/`Sink` traits of the `futures` ecosystem, so the code needs those traits to send and receive.
+- **Options:** (a) `futures-util` (sink + std features only); (b) the full `futures` crate; (c) a hand-written poll loop.
+- **Choice:** (a) `tokio-tungstenite 0.30` with only the `handshake` feature (TLS comes from our own `tokio-rustls` stream, DL-016) and `futures-util 0.3` without default features.
+- **Reason:** the smallest addition that uses the §12 crate as intended. `cargo deny check` passes.
+- **Owner review:** pending
+
+## DL-019 — Spike link scopes and method table
+
+- **Context:** PLAN §8.3 and L15 say that every link method declares a scope and that the receiver checks it on each request. The plan names no scopes and no methods.
+- **Options:** (a) one scope per method; (b) a small set of scopes grouped by risk; (c) no scopes in the spike.
+- **Choice:** (b) five scopes: `read` (station.info, session.list, events.replay, session.snapshot, artifact.open), `drive` (session.start/prompt/interrupt/stop, mutating, need a `command_id`), `approve` (approval.answer, mutating), `admin` (station.configure), `coordinate` (coordinator.call, granted by a deck to a station). Each method can also need a negotiated feature. The check order is `unknown_method` → `feature_not_negotiated` → `forbidden` → `missing_command_id`, and a refused request never reaches the application. Grants are read on every request, so narrowing and revocation take effect at once.
+- **Reason:** risk groups map to what the owner grants a device (D14: view, drive, approve). ADR-004 records the table; Phase 1 can rename the methods without a change to the mechanism.
+- **Owner review:** pending
+
+## DL-020 — Handshake details that PLAN §8.2 does not state
+
+- **Context:** PLAN §8.2 gives the `Hello` fields, the transcript signature with the TLS exporter, the version rule, and "higher `link_epoch` wins". It does not state how the two channels of one link are tied together, how a refusal is reported, or the exporter label.
+- **Options:** for each gap, the smallest addition that keeps the §8.2 rules.
+- **Choice:**
+  1. `Hello` has a `channel` field (`control` | `data`); the WebSocket path (`/fdlink/v1/control`, `/fdlink/v1/data`) must agree, and the transcript covers it.
+  2. Handshake frames are `hello`, `auth` (Ed25519 signature over the transcript, with a side tag so a signature cannot be reflected), `ready` (listener → dialer: the epoch is accepted), and `close {reason, detail}`. Every refusal sends `close` with a stable reason code (`version_mismatch`, `role_mismatch`, `stale_link_epoch`, `no_control_channel`, ...) before the socket closes, so both sides report the same reason.
+  3. The dialer chooses the `link_epoch`; the listener sends `0` and adopts the dialer's value. A data channel attaches only to the current control channel of the same peer and epoch.
+  4. The exporter label is `EXPORTER-fleet-deck-link-v1` (32 bytes, no context), read before the WebSocket upgrade.
+  5. The control channel has a `close {reason, detail}` frame next to the §8.3 frames (used for `superseded`).
+- **Reason:** each item closes a gap that would otherwise make two implementations disagree; none changes a PLAN rule. ADR-004 records them.
+- **Owner review:** pending

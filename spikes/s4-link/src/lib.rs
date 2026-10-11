@@ -6,9 +6,17 @@
 //!   and accepted peers.
 //! - [`tls`]: mutual TLS 1.3 where each side trusts only pinned peer keys.
 //! - [`net`]: bind, dial and accept with the address rules and mTLS applied.
+//! - [`hello`]: the link handshake (Hello, negotiation, transcript signatures).
+//! - [`frames`]: control frames and the method table with scopes.
+//! - [`mux`]: data channel streams with credit flow control (sans-IO).
+//! - [`link`]: control + data WebSocket channels over mTLS, link epochs.
 
 pub mod addr;
+pub mod frames;
+pub mod hello;
 pub mod identity;
+pub mod link;
+pub mod mux;
 pub mod net;
 pub mod secret;
 pub mod tls;

@@ -114,7 +114,18 @@ What runs so far (S4-1):
 - `src/identity.rs`: Ed25519 identity, self-signed certificate, fingerprint, key file with mode 600.
 - `tests/tls.rs`: pinned-key mTLS in both directions (station dials, deck dials), refusal of unpinned listeners and dialers, wrong role, revocation on the next handshake (no TLS session resumption, DL-017), missing client certificate, fingerprint policy, a forged certificate that embeds a pinned key, and the address refusal before any packet.
 
-The handshake, the channels, pairing and reconnect follow in S4-2 and S4-3 (see `docs/v2/PROGRESS.md`).
+S4-2 adds the link itself (`src/hello.rs`, `src/frames.rs`, `src/mux.rs`, `src/link/`):
+
+- `src/hello_tests.rs`: version negotiation (highest common version, clear error without one), feature intersection with required features, unknown `Hello` fields ignored, identity/role/channel/nonce checks, and transcript signatures bound to the TLS exporter, both hellos and the side.
+- `src/frames.rs`: control frames (§8.3), the 1 MiB limit, and the method table with scopes and feature gates (DL-019).
+- `src/mux.rs`: data-channel streams with credit flow control (64 KiB chunks, 256 KiB window), including a property test.
+- `tests/link.rs`: both dial directions with requests in both directions, events/acks and ping; version mismatch reported on both sides; feature-gated methods and channels; scope checks, narrowing and revocation; link epochs (higher supersedes, lower or equal refused); a data channel without its control channel; 1 MiB each way over the data channel; a reader that gives no credit stops the writer.
+
+```sh
+cargo nextest run -p s4-link --test link
+```
+
+Pairing and reconnect follow in S4-3 (see `docs/v2/PROGRESS.md`).
 
 ## Live commands (owner or recorder only)
 

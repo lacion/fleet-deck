@@ -16,7 +16,7 @@ Rules for this file: one checklist item per M1 deliverable, in PLAN order. Each 
 - [x] **S2-2 Codex live driver + `record-codex` + fixtures** for the §13 shared scenarios Codex supports (unsupported ones listed with reasons); restart survival experiment. *(round 7: 8 shared + 7 extra fixtures, none unsupported; `replay-codex` and evidence tests done early)*
 - [x] **S2-3 Codex replay + `replay-codex` + ADR-002** (Proposed) with effect states and crash boundaries. *(round 7: replay + `replay-codex` + evidence tests; round 8: ADR-002, schema conformance, both question channels)*
 - [x] **S4-1 Link identity + address rules.** Ed25519 identity keys, self-signed certs from them, mTLS with pinned-key verifiers, D13 address rules (loopback, RFC 1918, ULA, link-local, Tailscale ranges; reject public at bind and dial) as unit tests. *(round 9)*
-- [ ] **S4-2 Link handshake + channels.** `Hello` with `proto_min/max`, feature flags, roles, `link_epoch`, nonce; transcript signature bound to the TLS exporter; version negotiation; control channel (frames of §8.3) and data channel (multiplexed streams, credit flow control).
+- [x] **S4-2 Link handshake + channels.** `Hello` with `proto_min/max`, feature flags, roles, `link_epoch`, nonce; transcript signature bound to the TLS exporter; version negotiation; control channel (frames of §8.3) and data channel (multiplexed streams, credit flow control). *(round 10)*
 - [ ] **S4-3 Link pairing + reconnect.** `fdinv1:` invitations both directions (single use, 15 min, fingerprint-bound, secret proof bound to TLS); jittered backoff reconnect; duplicate link (`link_epoch`) rule; station-only-dials (NAT) case; multi-process loopback test with separate data dirs.
 - [ ] **S4-4 ADR-004** (Proposed): link protocol v1 (frames, handshake, pairing, scopes, reconnect, feature flags).
 - [ ] **M1-F Close-out.** PLAN §6.2 matrix: verified value + evidence per cell; `spikes/README.md` offline commands for every spike; full acceptance run; DECISIONS-LOG complete.
@@ -208,3 +208,24 @@ Rules for this file: one checklist item per M1 deliverable, in PLAN order. Each 
   - `cargo run -p s1-claude --bin replay-claude` → 29 ok, unknown=0
   - `web/` checks and TS-types drift → not applicable in M1
 - Next: S4-2 link handshake + channels.
+
+### Round 10 (2026-10-11)
+
+- Committed round 9 first: `e02206e feat(spikes): S4 link identity, D13 address rules and pinned-key mTLS`.
+- S4-2 done in `spikes/s4-link`:
+  - `src/hello.rs` (+ `src/hello_tests.rs`, 8 tests): `Hello {proto_min, proto_max, features, role, node_id, link_epoch, nonce, channel}`, `negotiate()` (highest common version, feature intersection, required `control.v1`, identity/role/channel/nonce checks), transcript over the TLS exporter (`EXPORTER-fleet-deck-link-v1`), both raw hellos and both keys, Ed25519 `auth` signatures with a side tag, `ready` and `close` frames with stable reason codes.
+  - `src/frames.rs` (5 tests): control frames `request/response/event/ack/snapshot/ping/pong/close`, 1 MiB limit, method table with scopes and feature gates, `authorize()`.
+  - `src/mux.rs` (5 tests incl. a property test): data-channel stream multiplexer with credit flow control.
+  - `src/link/` (`mod.rs`, `handshake.rs`, `control.rs`, `data.rs`): `dial()` (control, then data when `data_streams.v1` is negotiated, same epoch), `listen()` with a per-peer link table (higher epoch supersedes with `superseded`, lower or equal → `stale_link_epoch`, data needs the control channel of the same epoch), request/response in both directions with scope checks per request, ping/pong, data streams.
+  - `tests/link.rs` (9 tests): `the_station_dials_the_deck`, `the_deck_dials_the_station`, `no_common_version_fails_on_both_sides_with_the_same_reason`, `features_are_negotiated_and_gate_methods_and_channels`, `requests_are_checked_against_the_method_table_and_the_granted_scopes`, `a_higher_link_epoch_supersedes_and_a_lower_one_is_refused`, `a_data_channel_needs_its_control_channel`, `the_data_channel_streams_a_mebibyte_each_way_with_flow_control`, `a_reader_that_gives_no_credit_stops_the_writer`.
+- DL-018 (tokio-tungstenite + futures-util), DL-019 (spike link scopes and method table), DL-020 (handshake details PLAN §8.2 does not state).
+- Commands and results:
+  - `cargo fmt --all --check` → pass
+  - `cargo clippy --workspace --all-targets -- -D warnings` → pass
+  - `CI=true cargo nextest run --workspace` → 182 passed (s4-link: 57)
+  - `cargo deny check` → advisories ok, bans ok, licenses ok, sources ok
+  - `cargo run -p s2-codex --bin replay-codex` → 15 ok, unknown=0
+  - `cargo run -p s1-claude --bin replay-claude` → 29 ok, unknown=0
+  - `web/` checks and TS-types drift → not applicable in M1
+- Next: S4-3 link pairing + reconnect.
+
