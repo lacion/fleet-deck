@@ -7,6 +7,9 @@ all-features = true
 # Every RustSec advisory (vulnerability, unmaintained, unsound, notice) fails the check
 # unless an entry below ignores it with a reason.
 ignore = []
+# Kept under target/ so the check also runs where ~/.cargo is read-only (the
+# reviewer sandbox). `cargo deny fetch` fills it; see spikes/README.md.
+db-path = "target/advisory-dbs"
 
 [licenses]
 allow = [

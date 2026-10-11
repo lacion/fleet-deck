@@ -18,7 +18,6 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
-use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
@@ -40,7 +39,7 @@ use crate::net::{self, NetError};
 use crate::pairing::Invitations;
 use crate::tls::{self, PeerPolicy, PinSet, Role, SERVER_NAME, TlsError};
 
-pub(crate) type Ws = WebSocketStream<tokio_rustls::TlsStream<tokio::net::TcpStream>>;
+pub(crate) type Ws = WebSocketStream<tokio_rustls::TlsStream<crate::transport::Stream>>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum LinkError {
@@ -389,7 +388,7 @@ impl Drop for LinkListener {
 
 /// Binds `addr` (D13 rules) and accepts links from pinned peers.
 pub async fn listen(node: NodeConfig, addr: SocketAddr) -> Result<LinkListener, LinkError> {
-    let listener: TcpListener = net::bind(addr).await?;
+    let listener = net::bind(addr).await?;
     let local_addr = listener.local_addr().map_err(NetError::Io)?;
     let config = tls::server_config(
         &node.identity,
@@ -423,7 +422,7 @@ pub async fn listen(node: NodeConfig, addr: SocketAddr) -> Result<LinkListener, 
 /// its control channel.
 async fn accept_one(
     node: &NodeConfig,
-    tcp: tokio::net::TcpStream,
+    tcp: crate::transport::Stream,
     from: SocketAddr,
     config: Arc<rustls::ServerConfig>,
     table: &Table,
@@ -461,6 +460,10 @@ async fn accept_one(
         // TLS lets an unpinned key in while an invitation is open; such a key
         // may only pair.
         if channel != Channel::Pair && node.pins.role_of(&peer) != Some(node.peer_role()) {
+            // Read the dialer's Hello first (bounded): the dialer writes it
+            // at once, and a socket closed before that write gives the dialer
+            // a broken pipe instead of the `not_paired` reason (DL-025).
+            let _ = tokio::time::timeout(limit, handshake::recv_text(&mut ws)).await;
             return Err(handshake::refuse(&mut ws, HandshakeError::NotPaired).await);
         }
         let est = handshake::run(&mut ws, node, Side::Listener, channel, 0, exporter, peer).await?;

@@ -435,8 +435,10 @@ impl CodexCore {
             item_id.to_owned(),
             ToolNode {
                 node_id: node_id.clone(),
+                item_type: item_type.to_owned(),
                 done: false,
                 denied: false,
+                background: false,
             },
         );
         vec![Output::Emit(CanonEvent::ToolStarted {
@@ -546,12 +548,19 @@ impl CodexCore {
             return Vec::new();
         }
         let mut out = self.expire_open("turn_ended");
-        out.extend(self.close_open_tools());
         let status = match p.pointer("/turn/status").and_then(Value::as_str) {
             Some("completed") => TurnStatus::Done,
             Some("interrupted") => TurnStatus::Interrupted,
             _ => TurnStatus::Failed,
         };
+        if status == TurnStatus::Done {
+            // A command that is still running when the turn completes became a
+            // background terminal (`thread/backgroundTerminals/list` names its
+            // item id). Its `item/completed` arrives later with the real status,
+            // so it stays open; every other open tool closes (trap 6).
+            self.keep_background_commands();
+        }
+        out.extend(self.close_open_tools());
         if let Some(turn_id) = self.turn.take() {
             let consumed: Vec<String> = self
                 .inputs
@@ -581,8 +590,33 @@ impl CodexCore {
         out
     }
 
+    /// Marks the open `commandExecution` nodes as background work.
+    fn keep_background_commands(&mut self) {
+        for node in self.tools.values_mut() {
+            if !node.done && node.item_type == "commandExecution" {
+                node.background = true;
+            }
+        }
+    }
+
+    /// Closes every open tool that is not background work (trap 6). Background
+    /// commands stay open until their `item/completed` arrives or the process
+    /// ends (`on_exit` calls [`Self::close_all_tools`]).
     pub(crate) fn close_open_tools(&mut self) -> Vec<Output> {
-        let mut open: Vec<_> = self.tools.values_mut().filter(|n| !n.done).collect();
+        self.close_tools(false)
+    }
+
+    /// Closes every open tool, background work too (the process ended).
+    pub(crate) fn close_all_tools(&mut self) -> Vec<Output> {
+        self.close_tools(true)
+    }
+
+    fn close_tools(&mut self, background_too: bool) -> Vec<Output> {
+        let mut open: Vec<_> = self
+            .tools
+            .values_mut()
+            .filter(|n| !n.done && (background_too || !n.background))
+            .collect();
         open.sort_by(|a, b| a.node_id.cmp(&b.node_id));
         open.into_iter()
             .map(|n| {

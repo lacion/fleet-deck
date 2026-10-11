@@ -286,3 +286,22 @@ Rules for this file: one checklist item per M1 deliverable, in PLAN order. Each 
   - Clean checkout check: a temporary `git worktree` of HEAD plus this round's diff and new files, each command's exit code captured (no pipes): `cargo fmt --all --check` exit 0; `cargo clippy --workspace --all-targets -- -D warnings` exit 0; `CI=true cargo nextest run --workspace` exit 0, 230 passed; `cargo deny check` exit 0; `replay-claude` exit 0, 29 ok; `replay-codex` exit 0, 18 ok; the README per-spike commands exit 0 (s1-claude 24, s2-codex 38, s4-link 90 passed)
   - `web/` checks and TS-types drift → not applicable in M1 (no `web/`, no `ts-rs` types until Phase 1)
 - M1 acceptance (goal text): every item has file and command evidence (see the round 13 summary). The ADRs stay **Proposed** as the goal requires. PLAN Phase 0 *exit* is a separate owner gate: approve ADR-001/002/004, run the adversary DESIGN REVIEW of ADR-004 (the loop forbids subagents), do a real tailnet check, and review DL-001..DL-024.
+
+### Round 14 (2026-10-11)
+
+- Review feedback: fix the Codex background tools that were closed as failed too early (and their later success discarded); add fixture regression tests; make the reviewer's acceptance commands run inside its sandbox.
+- Committed round 13 as `4730c13`.
+- Codex background tools (DL-025, ADR-002 §2.10 trap 4/6 rows): after a normally completed turn, open `commandExecution` items stay open as background work and close with the real status of their later `item/completed`. Other open tools still close as `failed`, an interrupted/failed turn closes its commands, and process exit closes everything. Tests:
+  - fixture tests `matrix::a_background_command_completes_after_the_turn_with_its_real_status` (`background_terminal`: one `tool.completed ok`, after `turn.completed` and the first `background.updated`) and `matrix::a_command_of_an_interrupted_turn_closes_with_the_turn` (`interrupt_during_tool`)
+  - unit tests in `src/adapter/tests_review.rs`: `a_command_that_outlives_a_completed_turn_stays_open_until_its_item_completes`, `a_background_command_keeps_its_failure_status`, `background_commands_close_when_the_process_ends`, `a_command_of_an_interrupted_turn_closes_with_it`
+- Sandbox (reproduced with `codex sandbox -P :workspace -C . -- <cmd>`: no IP sockets, no Unix socket bind/connect, `~/.cargo` read-only, FIFOs allowed). Before: `cargo deny check` exit 1 (advisory db lock on a read-only path), `cargo nextest run --workspace` exit 100 (s4-link). Fixes (DL-025):
+  - `deny.toml`: `db-path = "target/advisory-dbs"` (fresh clone: `cargo deny fetch` once with network)
+  - `spikes/s4-link/src/transport.rs`: `FD_LINK_TRANSPORT` = `tcp` | `fifo:<dir>` | `auto`; `.cargo/config.toml` sets `auto` (TCP where allowed, else FIFO pairs for loopback addresses); unit tests `fifo_pairs_connect_carry_bytes_both_ways_and_end_with_eof`, `an_accept_fifo_of_a_killed_listener_is_taken_over`
+  - two real defects that the FIFO runs exposed, fixed for every transport: the data channel writes in a separate writer task (no two-writer deadlock when the socket buffer is smaller than the credit window); the listener reads an unpaired dialer's Hello before it sends `not_paired` (no broken pipe instead of the reason)
+- ADR-004 (layers table, one-lifetime/writer note, `not_paired` step), README offline section (sandbox notes, `cargo deny fetch`, `FD_LINK_TRANSPORT`).
+- Commands and results:
+  - inside `codex sandbox -P :workspace`, each exit code captured: `cargo fmt --all --check` 0; `cargo clippy --workspace --all-targets -- -D warnings` 0; `CI=true cargo nextest run --workspace` 0, 240 passed; `cargo deny check` 0; `replay-claude` 0, 29 ok; `replay-codex` 0, 18 ok; README per-spike commands 0 (s1-claude 24, s2-codex 40, s4-link 94 passed, s4-link over FIFOs)
+  - clean checkout (temporary `git worktree` of HEAD + this round's diff and new files, advisory db copied as `cargo deny fetch` would): fmt 0, clippy 0, `CI=true cargo nextest run --workspace` 0 (240 passed), `cargo deny check` 0, `replay-claude` 0 (29 ok), `replay-codex` 0 (18 ok), `FD_LINK_TRANSPORT=fifo:<dir> cargo nextest run -p s4-link` 0 (94 passed)
+  - s4-link with `FD_LINK_TRANSPORT=fifo:<dir>` 3 runs and with TCP: 94 passed each
+  - `web/` checks and TS-types drift → not applicable in M1
+- M1 acceptance: all items keep their evidence (round 13 summary); DECISIONS-LOG now DL-001..DL-025. Phase 0 exit stays an owner gate (ADR approval, adversary DESIGN REVIEW of ADR-004, real tailnet check).

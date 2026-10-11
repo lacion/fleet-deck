@@ -108,17 +108,24 @@ pub(crate) fn spawn(ws: Ws, side: Side, ties: Ties) -> (Data, mpsc::UnboundedRec
     (Data { tx }, ev_rx)
 }
 
-async fn send(ws: &mut Ws, frames: Vec<MuxFrame>) -> Result<(), String> {
+/// Frames go to the writer task, so the reader never waits for the socket:
+/// both sides may write a full credit window at the same time, and a socket
+/// buffer smaller than the window (FIFOs, small TCP buffers) must not
+/// deadlock two writers that both wait for the other to read. Memory stays
+/// bounded: data frames never exceed the peer's credit, other frames are
+/// small and caused by the peer's own frames.
+type Out = mpsc::UnboundedSender<Message>;
+
+fn send(out: &Out, frames: Vec<MuxFrame>) -> Result<(), String> {
     for f in frames {
-        ws.send(Message::binary(f.encode()))
-            .await
-            .map_err(|e| e.to_string())?;
+        out.send(Message::binary(f.encode()))
+            .map_err(|_| "the data channel writer ended".to_owned())?;
     }
     Ok(())
 }
 
-async fn flush(
-    ws: &mut Ws,
+fn flush(
+    out: &Out,
     mux: &mut Mux,
     pending: &mut BTreeMap<u32, Pending>,
     stream: u32,
@@ -136,7 +143,7 @@ async fn flush(
                 continue;
             }
         };
-        send(ws, frames).await?;
+        send(out, frames)?;
         *off += taken;
         if *off < buf.len() {
             break; // wait for credit
@@ -149,12 +156,25 @@ async fn flush(
 }
 
 async fn run(
-    mut ws: Ws,
+    ws: Ws,
     mut mux: Mux,
     mut cmds: mpsc::Receiver<Cmd>,
     events: mpsc::UnboundedSender<DataEvent>,
     mut ties: Ties,
 ) {
+    let (mut sink, mut ws) = ws.split();
+    let (out, mut out_rx) = mpsc::unbounded_channel::<Message>();
+    let (write_err_tx, mut write_err) = oneshot::channel::<String>();
+    let mut writer = tokio::spawn(async move {
+        while let Some(m) = out_rx.recv().await {
+            if let Err(e) = sink.send(m).await {
+                let _ = write_err_tx.send(e.to_string());
+                return;
+            }
+        }
+        // Every sender is gone: the channel ends with a WebSocket close.
+        let _ = sink.close().await;
+    });
     let mut pending: BTreeMap<u32, Pending> = BTreeMap::new();
     let mut by_control = false;
     let mut cmds_open = true;
@@ -167,6 +187,9 @@ async fn run(
                     Err(_) => "closed".to_owned(),
                 };
             }
+            e = &mut write_err => {
+                break e.unwrap_or_else(|_| "the data channel writer ended".to_owned());
+            }
             cmd = cmds.recv(), if cmds_open => {
                 let r = match cmd {
                     // The application dropped every handle; keep receiving
@@ -177,7 +200,7 @@ async fn run(
                     }
                     Some(Cmd::Open(purpose, reply)) => match mux.open(&purpose) {
                         Ok((stream, frame)) => {
-                            let r = send(&mut ws, vec![frame]).await;
+                            let r = send(&out, vec![frame]);
                             let _ = reply.send(Ok(stream));
                             r
                         }
@@ -188,14 +211,14 @@ async fn run(
                     },
                     Some(Cmd::Write(stream, bytes, reply)) => {
                         pending.entry(stream).or_default().push_back((bytes, 0, reply));
-                        flush(&mut ws, &mut mux, &mut pending, stream).await
+                        flush(&out, &mut mux, &mut pending, stream)
                     }
                     Some(Cmd::Close(stream)) => match mux.close(stream) {
-                        Ok(f) => send(&mut ws, vec![f]).await,
+                        Ok(f) => send(&out, vec![f]),
                         Err(_) => Ok(()),
                     },
                     Some(Cmd::Consumed(stream, n)) => match mux.consumed(stream, n) {
-                        Some(f) => send(&mut ws, vec![f]).await,
+                        Some(f) => send(&out, vec![f]),
                         None => Ok(()),
                     },
                 };
@@ -215,10 +238,10 @@ async fn run(
                     Ok(e) => e,
                     Err(e) => break format!("protocol_error: {e}"),
                 };
-                let out = match event {
+                let ev = match event {
                     None => None,
                     Some(MuxEvent::Credit { stream }) => {
-                        if let Err(e) = flush(&mut ws, &mut mux, &mut pending, stream).await {
+                        if let Err(e) = flush(&out, &mut mux, &mut pending, stream) {
                             break e;
                         }
                         None
@@ -228,13 +251,22 @@ async fn run(
                     Some(MuxEvent::Closed { stream }) => Some(DataEvent::Closed { stream }),
                     Some(MuxEvent::Reset { stream, code }) => Some(DataEvent::Reset { stream, code }),
                 };
-                if let Some(ev) = out {
+                if let Some(ev) = ev {
                     let _ = events.send(ev);
                 }
             }
         }
     };
-    let _ = tokio::time::timeout(super::handshake::CLEANUP_LIMIT, ws.close(None)).await;
+    // The writer sends what is queued, then the close; a peer that reads
+    // nothing cannot hold this task longer than the cleanup limit.
+    drop(out);
+    if tokio::time::timeout(super::handshake::CLEANUP_LIMIT, &mut writer)
+        .await
+        .is_err()
+    {
+        writer.abort();
+    }
+    drop(ws);
     // Pending writes fail now instead of waiting for credit that never comes.
     for (_, queue) in std::mem::take(&mut pending) {
         for (_, _, reply) in queue {

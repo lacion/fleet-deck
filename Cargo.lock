@@ -957,6 +957,7 @@ dependencies = [
  "proptest",
  "rcgen",
  "ring",
+ "rustix",
  "rustls",
  "rustls-webpki",
  "serde",

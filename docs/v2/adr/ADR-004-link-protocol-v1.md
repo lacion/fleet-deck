@@ -31,6 +31,7 @@ This ADR describes link protocol **v1** as the spike implements it. Phase 3 take
 | Pairing | `src/pairing.rs`, `src/link/pair.rs` | `fdinv1:` invitations, proofs, pins and grants |
 | Reconnect | `src/reconnect.rs` | Backoff with jitter, epoch clock, dial supervisor |
 | Test node | `src/bin/fd-link-node.rs` | One deck or station process with its own data directory |
+| Test transport | `src/transport.rs` | TCP (product), or FIFO pairs for loopback addresses on hosts without sockets (tests only, DL-025) |
 
 ### 2.2 Network scope (D13)
 
@@ -62,6 +63,7 @@ This ADR describes link protocol **v1** as the spike implements it. Phase 3 take
 - An unknown path gets HTTP 404 before the handshake.
 - The **control** channel opens first. The **data** channel opens only if both sides negotiated `data_streams.v1`. The data channel uses the same `link_epoch` and attaches only to the live control channel of the same peer and epoch. Otherwise it is closed with reason `no_control_channel`. The listener waits for the data channel for at most `handshake_timeout`, then closes the link with reason `no_data_channel`.
 - **One lifetime:** when the control channel ends (close, superseded, error), the data channel ends with the same reason, and pending writes fail. When the data channel ends first, the control channel closes with reason `data_channel_lost`. Before it uses that reason, the control side waits up to 500 ms for the peer's `close` frame, because the two TCP connections can end in either order (`link::control`). Dropping the local data handles does not end the link.
+- **Writes never block reads:** a separate writer task sends the data frames. Both sides can write a full credit window at the same time without a deadlock, also when the socket buffer is smaller than the window (DL-025).
 
 ### 2.5 Handshake
 
@@ -166,7 +168,7 @@ Phase 3 extends the table. Every new method must declare a scope and, if needed,
 - **Single use:** the inviter keeps the open invitations in memory. A successful proof consumes its invitation. After 5 wrong proofs, every open invitation closes (`too_many_attempts`). An expired invitation fails on both sides: the joiner refuses to dial with it, and the inviter refuses its proof.
 - **Flow** (the joiner always dials; this works in both directions):
   1. The joiner opens `/fdlink/v1/pair` with `PeerPolicy::Fingerprint(<fingerprint>)`, so it talks only to the invited key.
-  2. The listener accepts the unpinned joiner key at the TLS level only while an invitation is open (`PinnedOrInvited`). An unpinned key on the control or data path gets `not_paired`.
+  2. The listener accepts the unpinned joiner key at the TLS level only while an invitation is open (`PinnedOrInvited`). An unpinned key on the control or data path gets `not_paired`. The listener reads that dialer's Hello first (bounded by `handshake_timeout`), so the dialer receives the reason and not a broken pipe.
   3. Both sides run the normal handshake (§2.5) with epoch 0.
   4. The joiner sends `{"type":"pair_proof","proof": HMAC-SHA256(secret, "fd-pair-v1 joiner\0" ‖ transcript)}`.
   5. The inviter verifies the proof in constant time, consumes the invitation, pins the joiner key with the joiner's role, grants the scopes chosen when the invitation was made, and answers `{"type":"paired","proof": HMAC-SHA256(secret, "fd-pair-v1 inviter\0" ‖ transcript)}`.

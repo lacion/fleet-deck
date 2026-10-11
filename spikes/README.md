@@ -11,6 +11,11 @@ These crates de-risk PLAN §14 Phase 0. They never ship. The product crates (Pha
 
 ## Offline commands (no network, no provider CLI)
 
+All commands in this section also run in a sandbox without network and without sockets (checked with `codex sandbox -P :workspace -C . -- <command>`, DL-025):
+
+- `cargo deny check` reads the advisory database from `target/advisory-dbs` (`deny.toml`). On a fresh clone, run `cargo deny fetch` once with network access.
+- The s4-link tests use TCP on `127.0.0.1` where the OS allows IP sockets. Where it does not, `.cargo/config.toml` (`FD_LINK_TRANSPORT=auto`) moves the same loopback addresses to FIFO pairs under `<tmp>/fd-link-net`. To force a transport, set `FD_LINK_TRANSPORT=tcp` or `FD_LINK_TRANSPORT=fifo:<dir>`.
+
 Run all spike tests from the repository root:
 
 ```sh
@@ -102,7 +107,7 @@ The recorder scrubs the work directory (`<workdir>`), `$HOME` (`<home>`), `$USER
 
 ### S4 (link)
 
-S4 needs no provider CLI and no recordings: every test runs real TCP + TLS 1.3 handshakes on `127.0.0.1` between generated identities.
+S4 needs no provider CLI and no recordings: every test runs real TLS 1.3 handshakes between generated identities on `127.0.0.1` (TCP, or FIFO pairs on a host without sockets; see above).
 
 ```sh
 cargo nextest run -p s4-link

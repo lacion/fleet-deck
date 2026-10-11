@@ -2,7 +2,7 @@
 //! (split from `tests.rs` to keep both modules under 800 lines).
 
 use serde_json::json;
-use spike_canon::{CanonEvent, TurnStatus};
+use spike_canon::{CanonEvent, ToolStatus, TurnStatus};
 
 use super::tests::*;
 use super::*;
@@ -372,4 +372,94 @@ fn spawn_agent_links_its_child_thread_when_the_item_completes() {
         json!({"threadId": "child-1", "item": {"type": "agentMessage", "id": "m1", "text": "sub-ok"}}),
     ));
     assert!(ev.is_empty(), "{ev:?}");
+}
+
+fn command_item(core: &mut CodexCore, method: &str, id: &str, status: &str) -> Vec<CanonEvent> {
+    emits(&notify(
+        core,
+        method,
+        json!({"threadId": T, "item": {"type": "commandExecution", "id": id,
+            "command": "sleep 25", "status": status}}),
+    ))
+}
+
+fn completions(ev: &[CanonEvent]) -> Vec<(String, ToolStatus)> {
+    ev.iter()
+        .filter_map(|e| match e {
+            CanonEvent::ToolCompleted { node_id, status } => Some((node_id.clone(), *status)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_command_that_outlives_a_completed_turn_stays_open_until_its_item_completes() {
+    let mut core = ready_core();
+    start_turn(&mut core, "in-1", "n1");
+    command_item(&mut core, "item/started", "bg1", "inProgress");
+    let ev = emits(&notify(
+        &mut core,
+        "item/started",
+        json!({"threadId": T, "item": {"type": "mcpToolCall", "id": "mcp1", "server": "s", "tool": "t"}}),
+    ));
+    let mcp = match &ev[0] {
+        CanonEvent::ToolStarted { node_id, .. } => node_id.clone(),
+        e => panic!("{e:?}"),
+    };
+    let ev = emits(&complete(&mut core, "n1", "completed"));
+    assert_eq!(
+        completions(&ev),
+        [(mcp, ToolStatus::Failed)],
+        "only the non-command tool closes with the turn (trap 6)"
+    );
+    assert!(matches!(
+        ev.last(),
+        Some(CanonEvent::TurnCompleted {
+            status: TurnStatus::Done,
+            ..
+        })
+    ));
+    let bg = core.background_tools();
+    assert_eq!(bg.len(), 1);
+    let ev = command_item(&mut core, "item/completed", "bg1", "completed");
+    assert_eq!(completions(&ev), [(bg[0].clone(), ToolStatus::Ok)]);
+    assert!(core.background_tools().is_empty());
+    // A repeated completion stays silent.
+    assert!(command_item(&mut core, "item/completed", "bg1", "completed").is_empty());
+}
+
+#[test]
+fn a_background_command_keeps_its_failure_status() {
+    let mut core = ready_core();
+    start_turn(&mut core, "in-1", "n1");
+    command_item(&mut core, "item/started", "bg1", "inProgress");
+    complete(&mut core, "n1", "completed");
+    // The next turn ends while the background command still runs.
+    start_turn(&mut core, "in-2", "n2");
+    let ev = emits(&complete(&mut core, "n2", "interrupted"));
+    assert!(completions(&ev).is_empty(), "{ev:?}");
+    let ev = command_item(&mut core, "item/completed", "bg1", "failed");
+    assert_eq!(completions(&ev)[0].1, ToolStatus::Failed);
+}
+
+#[test]
+fn background_commands_close_when_the_process_ends() {
+    let mut core = ready_core();
+    start_turn(&mut core, "in-1", "n1");
+    command_item(&mut core, "item/started", "bg1", "inProgress");
+    complete(&mut core, "n1", "completed");
+    let node = core.background_tools()[0].clone();
+    let ev = emits(&core.on_exit(Some(0)));
+    assert_eq!(completions(&ev), [(node, ToolStatus::Failed)]);
+}
+
+#[test]
+fn a_command_of_an_interrupted_turn_closes_with_it() {
+    let mut core = ready_core();
+    start_turn(&mut core, "in-1", "n1");
+    command_item(&mut core, "item/started", "c1", "inProgress");
+    let ev = emits(&complete(&mut core, "n1", "interrupted"));
+    assert_eq!(completions(&ev).len(), 1);
+    assert_eq!(completions(&ev)[0].1, ToolStatus::Failed);
+    assert!(core.background_tools().is_empty());
 }

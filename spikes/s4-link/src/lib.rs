@@ -13,6 +13,8 @@
 //!   invitation pairing on the pair channel.
 //! - [`pairing`]: `fdinv1:` invitations and their single-use store (§8.5).
 //! - [`reconnect`]: jittered exponential backoff and the redialing supervisor.
+//! - [`transport`]: TCP, or FIFO pairs as a loopback stand-in where the host
+//!   forbids sockets (DL-025).
 
 pub mod addr;
 pub mod frames;
@@ -25,3 +27,4 @@ pub mod pairing;
 pub mod reconnect;
 pub mod secret;
 pub mod tls;
+pub mod transport;

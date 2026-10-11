@@ -153,8 +153,13 @@ pub fn app_server_args() -> Vec<String> {
 #[derive(Debug, Clone)]
 pub(crate) struct ToolNode {
     pub(crate) node_id: String,
+    /// Native item type (`commandExecution`, `fileChange`, ...).
+    pub(crate) item_type: String,
     pub(crate) done: bool,
     pub(crate) denied: bool,
+    /// The turn completed while this command ran: it is a background terminal
+    /// and stays open until its own `item/completed`.
+    pub(crate) background: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -443,6 +448,18 @@ impl CodexCore {
         ))]
     }
 
+    /// Node ids of commands that outlived their turn and have not completed.
+    pub fn background_tools(&self) -> Vec<String> {
+        let mut ids: Vec<String> = self
+            .tools
+            .values()
+            .filter(|n| n.background && !n.done)
+            .map(|n| n.node_id.clone())
+            .collect();
+        ids.sort();
+        ids
+    }
+
     /// Asks Codex for the thread's background terminals
     /// (`thread/backgroundTerminals/list`). Codex reports no background work
     /// on its own after a turn ends (trap 4), so the adapter polls; the reply
@@ -498,7 +515,7 @@ impl CodexCore {
     /// The app-server process ended.
     pub fn on_exit(&mut self, exit_code: Option<i32>) -> Vec<Output> {
         let mut out = self.expire_open("process_lost");
-        out.extend(self.close_open_tools());
+        out.extend(self.close_all_tools());
         if let Some(turn_id) = self.turn.take() {
             out.push(Output::Emit(CanonEvent::TurnCompleted {
                 turn_id,

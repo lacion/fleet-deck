@@ -10,7 +10,7 @@ use std::path::Path;
 use s2_codex::replay::{ReplayReport, replay};
 use serde_json::Value;
 use spike_canon::fixture::{Fixture, Record};
-use spike_canon::{CanonEvent, ToolKind, TurnStatus};
+use spike_canon::{CanonEvent, ToolKind, ToolStatus, TurnStatus};
 
 fn dir() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures")
@@ -166,6 +166,88 @@ fn background_terminals_are_found_by_polling_after_the_turn() {
         methods[turn_done..].iter().any(|m| m == "item/completed"),
         "the command item completes after the turn"
     );
+}
+
+/// Regression (round 14 review): the command that outlives its turn is not
+/// closed as failed at `turn/completed`; it completes once, with the real
+/// status, when its `item/completed` arrives after the turn.
+#[test]
+fn a_background_command_completes_after_the_turn_with_its_real_status() {
+    let r = replay(&load("background_terminal")).unwrap();
+    let shell = r
+        .events
+        .iter()
+        .find_map(|e| match e {
+            CanonEvent::ToolStarted {
+                node_id,
+                tool_kind: ToolKind::Shell,
+                ..
+            } => Some(node_id.clone()),
+            _ => None,
+        })
+        .unwrap();
+    let completions: Vec<(usize, ToolStatus)> = r
+        .events
+        .iter()
+        .enumerate()
+        .filter_map(|(i, e)| match e {
+            CanonEvent::ToolCompleted { node_id, status } if *node_id == shell => {
+                Some((i, *status))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        completions.len(),
+        1,
+        "exactly one completion: {completions:?}"
+    );
+    let (at, status) = completions[0];
+    assert_eq!(status, ToolStatus::Ok);
+    let turn_done = r
+        .events
+        .iter()
+        .position(|e| matches!(e, CanonEvent::TurnCompleted { .. }))
+        .unwrap();
+    assert!(turn_done < at, "the completion comes after the turn");
+    let first_poll = r
+        .events
+        .iter()
+        .position(|e| matches!(e, CanonEvent::BackgroundUpdated { .. }))
+        .unwrap();
+    assert!(first_poll < at, "the poll saw the command still running");
+}
+
+/// The other side of the same rule: a command that is still running when the
+/// turn is interrupted closes with the turn (trap 6), exactly once.
+#[test]
+fn a_command_of_an_interrupted_turn_closes_with_the_turn() {
+    let r = replay(&load("interrupt_during_tool")).unwrap();
+    let closed: Vec<(usize, ToolStatus)> = r
+        .events
+        .iter()
+        .enumerate()
+        .filter_map(|(i, e)| match e {
+            CanonEvent::ToolCompleted { status, .. } => Some((i, *status)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(closed.len(), 1, "{closed:?}");
+    assert_eq!(closed[0].1, ToolStatus::Failed);
+    let turn_done = r
+        .events
+        .iter()
+        .position(|e| {
+            matches!(
+                e,
+                CanonEvent::TurnCompleted {
+                    status: TurnStatus::Interrupted,
+                    ..
+                }
+            )
+        })
+        .unwrap();
+    assert!(closed[0].0 < turn_done);
 }
 
 /// Live deltas: `item/agentMessage/delta` arrives before the completed

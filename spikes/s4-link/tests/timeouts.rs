@@ -16,7 +16,6 @@ use s4_link::pairing::Invitation;
 use s4_link::reconnect::{BackoffPolicy, DialerEvent, spawn_dialer};
 use s4_link::secret::Secret;
 use s4_link::tls::{self, PeerPolicy, Role};
-use tokio::net::TcpListener;
 
 const LIMIT: Duration = Duration::from_millis(300);
 /// Upper bound of a bounded failure (limit + scheduling slack); far below
@@ -32,7 +31,9 @@ fn node(role: Role) -> NodeConfig {
 /// A TLS listener that accepts any client key, completes TLS, and then never
 /// reads or writes a byte (it never answers the WebSocket upgrade).
 async fn stalled_server(identity: Arc<Identity>) -> SocketAddr {
-    let tcp = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let tcp = s4_link::net::bind("127.0.0.1:0".parse().unwrap())
+        .await
+        .unwrap();
     let addr = tcp.local_addr().unwrap();
     let config = tls::server_config(&identity, PeerPolicy::AnyKey).unwrap();
     tokio::spawn(async move {

@@ -1,0 +1,6 @@
+# Environment for cargo-run tests and binaries of the Phase 0 spikes.
+[env]
+# s4-link byte transport (DL-025): TCP wherever the OS allows IP sockets, else
+# FIFO pairs as a loopback stand-in (the reviewer sandbox forbids sockets).
+# A value already set in the environment wins.
+FD_LINK_TRANSPORT = "auto"
