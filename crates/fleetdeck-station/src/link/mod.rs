@@ -1,0 +1,140 @@
+//! The station side of a deck link (M2 P3-5; ADR-004 §9.3–§9.5).
+//!
+//! [`serve`] runs one live link of a paired deck until it ends:
+//!
+//! - `events.replay` and `session.snapshot` (re)start the event stream
+//!   ([`stream`], G4);
+//! - an `ack` is checked against the station's incarnation and the highest
+//!   `station_seq` delivered on this link (else `protocol_error` closes the
+//!   link) and stored for the deck's key;
+//! - every other request is answered by [`intake`] in its own task, so a
+//!   slow decision never delays acks or the stream (G3, G5).
+
+mod intake;
+pub mod peers;
+pub mod stream;
+
+use std::sync::Arc;
+
+use fleetdeck_core::identity::PeerKey;
+use fleetdeck_link::control::{Control, Inbound, InboundRequest};
+use fleetdeck_link::methods::code;
+use fleetdeck_link::node::NodeConfig;
+use fleetdeck_link::revoke::REVOKED;
+use fleetdeck_link::{Closing, LiveLink};
+use fleetdeck_proto::link::{ControlFrame, Outcome, ReplayParams, WireError};
+
+pub use intake::NOT_IMPLEMENTED;
+pub use peers::StationPeers;
+use stream::{Start, Stream};
+
+use crate::manager::SessionManager;
+use crate::store::StoreError;
+use crate::store::peers::key_hex;
+
+/// What every link of this station shares.
+#[derive(Debug)]
+pub struct StationLink {
+    pub manager: Arc<SessionManager>,
+    pub node: NodeConfig,
+    pub peers: Arc<StationPeers>,
+    /// The station name of `station.toml`.
+    pub name: String,
+}
+
+/// Serves `link` until it ends; returns why it ended.
+pub async fn serve(ctx: Arc<StationLink>, link: LiveLink) -> Closing {
+    let LiveLink {
+        peer,
+        control,
+        mut inbound,
+        ..
+    } = link;
+    let mut stream = Stream::new(ctx.manager.store().clone(), control.clone());
+    while let Some(message) = inbound.recv().await {
+        match message {
+            Inbound::Request(req) => request(&ctx, &control, &peer, &mut stream, req).await,
+            Inbound::Frame(frame) => match *frame {
+                ControlFrame::Ack {
+                    incarnation,
+                    station_seq,
+                } => {
+                    ack(&ctx, &control, &peer, &stream, &incarnation, station_seq).await;
+                }
+                // The control channel lets only `ack` reach a station.
+                other => control.close(
+                    code::PROTOCOL_ERROR,
+                    &format!("a station does not take `{}` frames", other.type_name()),
+                ),
+            },
+        }
+    }
+    drop(stream);
+    control.closed().await
+}
+
+async fn request(
+    ctx: &Arc<StationLink>,
+    control: &Control,
+    peer: &PeerKey,
+    stream: &mut Stream,
+    req: InboundRequest,
+) {
+    match req.method.as_str() {
+        "events.replay" => match serde_json::from_value::<ReplayParams>(req.params) {
+            Ok(p) => stream.restart(
+                Start::Replay {
+                    incarnation: p.incarnation,
+                    after: p.after,
+                },
+                req.id,
+            ),
+            Err(e) => {
+                let err = WireError::new(code::PROTOCOL_ERROR, format!("params: {e}"));
+                if let Err(e) = control.respond(req.id, Outcome::Err(err)).await {
+                    tracing::debug!(error = %e, "response");
+                }
+            }
+        },
+        "session.snapshot" => stream.restart(Start::Snapshot, req.id),
+        _ => {
+            let (ctx, control, peer) = (Arc::clone(ctx), control.clone(), *peer);
+            tokio::spawn(async move { intake::handle(&ctx, &control, &peer, req).await });
+        }
+    }
+}
+
+async fn ack(
+    ctx: &StationLink,
+    control: &Control,
+    peer: &PeerKey,
+    stream: &Stream,
+    incarnation: &fleetdeck_proto::IncarnationId,
+    station_seq: u64,
+) {
+    let store = ctx.manager.store();
+    if incarnation != store.incarnation() {
+        control.close(
+            code::PROTOCOL_ERROR,
+            &format!(
+                "ack for incarnation {incarnation}, the station is {}",
+                store.incarnation()
+            ),
+        );
+        return;
+    }
+    let delivered = stream.delivered();
+    if station_seq > delivered {
+        control.close(
+            code::PROTOCOL_ERROR,
+            &format!("ack of {station_seq}, but only {delivered} was delivered on this link"),
+        );
+        return;
+    }
+    match store.ack(key_hex(peer), station_seq).await {
+        Ok(()) => {}
+        // Revoked while the link was open.
+        Err(StoreError::UnknownDeck(_)) => control.close(REVOKED, "the deck is not paired"),
+        Err(e) => tracing::warn!(error = %e, "deck ack"),
+    }
+}

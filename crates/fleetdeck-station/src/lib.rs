@@ -11,6 +11,9 @@ pub mod host {
 /// Crash injection at the effect boundaries (M2 P2-8).
 pub mod fault;
 
+/// The station side of a deck link (M2 P3-5).
+pub mod link;
+
 /// The station-local control socket (M2 P2-7).
 pub mod local;
 

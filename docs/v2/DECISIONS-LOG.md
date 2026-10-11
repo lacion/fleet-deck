@@ -540,3 +540,18 @@ Format: context, options, choice, reason, owner review.
   - P3-5 (station) and P3-6 (deck) add: the `PairingSink`/`GrantSource` of the stores (pin + grants + revocation generation in one transaction), `link.rotate_key` intake with its envelope, the decision-transaction check of pin and grant (`forbidden` for a queued command of a revoked link), and the `forget-deck` / `remove-station` / `join` / `add-station` commands with their end-to-end tests. PROGRESS lists these parts under those items.
 - Reason: the stores do not exist before P3-5/P3-6; building them inside P3-4 would mix four items into one round. The link-layer behaviour does not change when the stores arrive: they plug in through `PairingSink` and `GrantSource`.
 - Owner review: pending
+
+## DL-047: Station link service surface in this build (M2 round 19, P3-5)
+
+- Date: 2026-10-11 (M2 round 19)
+- Context: ADR-004 §9.6 lists `station.configure` (admin) and `artifact.open` (read) in the method table. PLAN Phase 3 asks for the event stream, command intake and receipts, but no item of M2 defines a station policy that a deck can change at runtime, and artifacts are PLAN Phase 6 (M3). The ADR also does not define the result of `events.replay` / `session.snapshot` or the shape of `station.info`.
+- Options: 1. leave both methods out of the table; 2. keep the table as the ADR states and answer them with explicit refusals; 3. build runtime policy changes now.
+- Choice: 2.
+- Details:
+  - `station.configure` goes through the normal mutation path: the envelope is parsed, `target_incarnation` / `retry_until` / pin and grant are checked in the decision transaction, and the decision is a stored rejection with `RejectCode::Unsupported`. A resend returns the same receipt. The station policy stays read-only (it comes from the station config file) until an owner decision adds runtime changes.
+  - `artifact.open` answers `Outcome::Err` with code `not_implemented` (`fleetdeck_station::link::NOT_IMPLEMENTED`) until Phase 6. A `coordinator.*` mutation that reaches a station is rejected with `invalid_command` (not stored): coordinator calls belong to the deck.
+  - `events.replay { incarnation, after }` and `session.snapshot {}` answer `StreamStart { mode: replay | snapshot, incarnation, from }` and then restart the event stream of the link. A snapshot batch (`snapshot_begin` / `snapshot_session`×n / `snapshot_end`) is sent when the incarnation differs or is absent, when the cursor is ahead of the head, when the cursor is below the retention floor, or on `session.snapshot`; the stream then continues from the watermark. An ack of another incarnation or above the last delivered `station_seq` closes the link with `protocol_error`.
+  - `station.info` answers `StationInfo { name, incarnation, head, live_sessions }`; `command.receipt { command_id }` answers the stored receipt or `null`.
+  - Over a link, a session command without `target_incarnation` is rejected with `invalid_command` and not stored (the local CLI may omit it, G3).
+- Reason: the ADR method table stays the single list of methods (the table-agreement test keeps it true), and a deck gets a typed refusal instead of an unknown method.
+- Owner review: pending

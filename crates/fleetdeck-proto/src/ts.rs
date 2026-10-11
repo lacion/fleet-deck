@@ -15,7 +15,9 @@ use ts_rs::{Config, TS};
 use crate::capability::{Capabilities, Operation, Unsupported};
 use crate::command::{CommandEnvelope, DeckCommandState, Receipt};
 use crate::event::{Event, EventEnvelope};
-use crate::link::{ControlFrame, Scope};
+use crate::link::{
+    ControlFrame, ReceiptQuery, ReplayParams, Scope, StationInfo, StreamMode, StreamStart,
+};
 use crate::mutation::{CoordinatorCallEnvelope, KeyRotationEnvelope, StationConfigureEnvelope};
 use crate::session::SessionSummary;
 use crate::version::{Negotiated, VersionOffer};
@@ -44,6 +46,11 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         DeckCommandState::export_all(&cfg),
         ControlFrame::export_all(&cfg),
         Scope::export_all(&cfg),
+        ReplayParams::export_all(&cfg),
+        StreamMode::export_all(&cfg),
+        StreamStart::export_all(&cfg),
+        StationInfo::export_all(&cfg),
+        ReceiptQuery::export_all(&cfg),
         SessionSummary::export_all(&cfg),
         VersionOffer::export_all(&cfg),
         Negotiated::export_all(&cfg),

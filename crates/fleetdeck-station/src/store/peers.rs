@@ -175,6 +175,22 @@ impl Store {
         .await
     }
 
+    /// Replaces `old` by `new` in one transaction ([`rotate_in`]).
+    ///
+    /// # Errors
+    /// [`StoreError::UnknownDeck`] when `old` is not paired, or a database
+    /// error.
+    pub async fn rotate_peer(&self, old: PeerKey, new: PeerKey) -> Result<()> {
+        let now = self.now();
+        call(&self.inner.db, move |conn| {
+            let tx = conn.transaction()?;
+            rotate_in(&tx, &old, &new, now)?;
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+    }
+
     /// Every paired key (the node loads its pins and grants at start).
     ///
     /// # Errors

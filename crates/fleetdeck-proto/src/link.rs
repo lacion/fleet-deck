@@ -154,6 +154,60 @@ pub enum ControlFrame {
     },
 }
 
+/// `events.replay` params: where the deck's read model stands for this
+/// station (G4). `incarnation` is `None` for a deck that never synced.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "link/")]
+pub struct ReplayParams {
+    pub incarnation: Option<IncarnationId>,
+    /// The deck's cursor: the highest `station_seq` that it applied.
+    pub after: u64,
+}
+
+/// How a station continues the event stream of a link.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "link/")]
+pub enum StreamMode {
+    /// `event` frames after the deck's cursor.
+    Replay,
+    /// A snapshot batch first (other incarnation, cursor older than the
+    /// retained history, cursor ahead, or `session.snapshot`), then events
+    /// after its watermark.
+    Snapshot,
+}
+
+/// The response to `events.replay` and `session.snapshot`. The frames of
+/// the stream follow the response on the same channel.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "link/")]
+pub struct StreamStart {
+    pub mode: StreamMode,
+    pub incarnation: IncarnationId,
+    /// The replay cursor, or the snapshot watermark.
+    pub from: u64,
+}
+
+/// The response to `station.info`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "link/")]
+pub struct StationInfo {
+    pub name: String,
+    pub incarnation: IncarnationId,
+    /// The committed head `station_seq`.
+    pub head: u64,
+    pub live_sessions: u64,
+}
+
+/// `command.receipt` params.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "link/")]
+pub struct ReceiptQuery {
+    pub command_id: CommandId,
+}
+
 impl ControlFrame {
     /// The `type` tag of the frame.
     #[must_use]
