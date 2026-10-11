@@ -65,7 +65,7 @@ impl Drop for Claim<'_> {
     }
 }
 
-fn origin_name(origin: CommandOrigin) -> &'static str {
+pub(crate) fn origin_name(origin: CommandOrigin) -> &'static str {
     match origin {
         CommandOrigin::Board => "board",
         CommandOrigin::Coordinator => "coordinator",
@@ -91,19 +91,19 @@ impl DeckLink {
         live.keys().cloned().collect()
     }
 
-    /// Stores `kind` for `station` as `pending` and starts its first send.
-    /// Returns the stored command; [`DeckLink::wait_command`] waits for
-    /// its outcome.
+    /// Builds the stored command of `kind` for `station`: a new
+    /// `command_id`, the station incarnation that the read model holds as
+    /// `target_incarnation`, and `retry_until` = now + [`RETRY_WINDOW_MS`].
     ///
     /// # Errors
     /// [`DeckError::UnknownStation`]; [`DeckError::NotSynced`] when the
     /// deck has no incarnation of the station yet; a database error.
-    pub async fn submit(
-        self: &Arc<Self>,
+    pub(crate) async fn build(
+        &self,
         station: StationId,
         origin: CommandOrigin,
         kind: CommandKind,
-    ) -> Result<DeckCommand, DeckError> {
+    ) -> Result<NewCommand, DeckError> {
         let rec = self
             .store
             .station(station.clone())
@@ -135,17 +135,30 @@ impl DeckLink {
                 })?,
             ),
         };
-        let cmd = self
-            .store
-            .insert_command(NewCommand {
-                command_id,
-                station_id: station,
-                method,
-                origin: origin_name(origin).to_owned(),
-                envelope,
-                retry_until,
-            })
-            .await?;
+        Ok(NewCommand {
+            command_id,
+            station_id: station,
+            method,
+            origin: origin_name(origin).to_owned(),
+            envelope,
+            retry_until,
+        })
+    }
+
+    /// Stores `kind` for `station` as `pending` and starts its first send.
+    /// Returns the stored command; [`DeckLink::wait_command`] waits for
+    /// its outcome.
+    ///
+    /// # Errors
+    /// See [`DeckLink::build`].
+    pub async fn submit(
+        self: &Arc<Self>,
+        station: StationId,
+        origin: CommandOrigin,
+        kind: CommandKind,
+    ) -> Result<DeckCommand, DeckError> {
+        let new = self.build(station, origin, kind).await?;
+        let cmd = self.store.insert_command(new).await?;
         let ctx = Arc::clone(self);
         let id = cmd.command_id.clone();
         tokio::spawn(async move { ctx.send(&id).await });
@@ -164,13 +177,18 @@ impl DeckLink {
         }
     }
 
-    /// One router tick: ends the commands past `retry_until` and resends
-    /// the pending commands of every reachable station.
+    /// One router tick: ends the commands past `retry_until`, moves the
+    /// outbox items by their commands, starts the due outbox attempts and
+    /// resends the pending commands of every reachable station.
     pub async fn tick(&self) {
         if let Err(e) = self.store.expire_commands().await {
             tracing::warn!(error = %e, "command expiry");
         }
+        if let Err(e) = self.store.reconcile_outbox().await {
+            tracing::warn!(error = %e, "outbox reconcile");
+        }
         for station in self.live_stations() {
+            self.start_outbox(station.clone()).await;
             self.dispatch_pending(station).await;
         }
     }

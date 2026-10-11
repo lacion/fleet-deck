@@ -4,8 +4,9 @@
 //! V1 (M2 P3-6a): `meta` (incarnation, revocation generation), the station
 //! registry with its pins, grants and resync cursor, the session read model
 //! and the condensed timeline. V2: link epochs (G1). V3 (P3-7): the
-//! command router's `commands` table (G3). Outbox, coordinator receipts,
-//! auth and audit tables follow in P3-7b and P3-8.
+//! command router's `commands` table (G3). V4 (P3-7b): the outbox of
+//! deck-owned intent (A5) and the receipts of `coordinator.call` (G7). Auth
+//! and audit tables follow in P3-8.
 
 use rusqlite_migration::{M, Migrations};
 
@@ -84,6 +85,39 @@ CREATE INDEX commands_pending ON commands (station_id, created_at) WHERE state =
 CREATE INDEX commands_by_station ON commands (station_id, created_at);
 ";
 
+/// The outbox (A5) and the coordinator receipts (G7). An outbox item is
+/// deck-owned intent for one station; each delivery attempt is one routed
+/// command (`command_id`, in the same transaction). The receipts table
+/// follows the station's `commands` table: same id + method + caller +
+/// payload hash returns the stored receipt.
+const V4: &str = "
+CREATE TABLE outbox (
+    outbox_id    TEXT PRIMARY KEY,
+    station_id   TEXT NOT NULL,
+    kind         TEXT NOT NULL CHECK (kind IN ('command')),
+    origin       TEXT NOT NULL,
+    payload      TEXT NOT NULL,
+    state        TEXT NOT NULL CHECK (state IN ('queued', 'sending', 'delivered', 'dead')),
+    command_id   TEXT UNIQUE REFERENCES commands (command_id),
+    attempts     INTEGER NOT NULL DEFAULT 0,
+    next_at      INTEGER NOT NULL,
+    expires_at   INTEGER NOT NULL,
+    reason       TEXT,
+    created_at   INTEGER NOT NULL,
+    updated_at   INTEGER NOT NULL
+) STRICT;
+CREATE INDEX outbox_due ON outbox (station_id, next_at) WHERE state = 'queued';
+CREATE TABLE coordinator_receipts (
+    command_id     TEXT PRIMARY KEY,
+    station_id     TEXT NOT NULL,
+    method         TEXT NOT NULL,
+    caller         TEXT NOT NULL,
+    payload_sha256 TEXT NOT NULL,
+    receipt        TEXT NOT NULL,
+    at             INTEGER NOT NULL
+) STRICT;
+";
+
 /// The `deck.db` migrations.
 #[must_use]
 pub fn migrations() -> Migrations<'static> {
@@ -91,6 +125,7 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V1),
         M::up(fleetdeck_link::LINK_EPOCHS_SQL),
         M::up(V3),
+        M::up(V4),
     ])
 }
 

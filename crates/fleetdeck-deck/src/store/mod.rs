@@ -7,11 +7,15 @@
 //!   snapshot batch and the incarnation rules (G4).
 //!
 //! - [`commands`]: the command router's stored envelopes and states (G3).
+//! - [`outbox`]: deck-owned intent delivered as routed commands (A5).
+//! - [`coordinator`]: the receipts of `coordinator.call` (G7).
 //!
 //! Station reachability is link state, not stored state: the deck keeps it
 //! in memory and the board status projection reads it (§7.2).
 
 pub mod commands;
+pub mod coordinator;
+pub mod outbox;
 pub mod read_model;
 pub mod schema;
 pub mod stations;
@@ -28,6 +32,7 @@ use rusqlite::{Connection, OptionalExtension};
 use tokio::sync::watch;
 
 pub use commands::{DeckCommand, NewCommand, Settle};
+pub use outbox::{NewOutboxItem, OutboxItem, OutboxState};
 pub use read_model::{DeckSession, TIMELINE_CAP};
 pub use stations::{Direction, StationRecord};
 

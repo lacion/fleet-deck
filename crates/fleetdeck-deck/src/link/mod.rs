@@ -18,10 +18,13 @@
 //!
 //! A station is reachable while at least one of its links is up. When a
 //! link comes up, the router resends the station's pending commands
-//! ([`router`]). Requests
-//! of a station (coordinator calls, key rotation) are answered with
-//! `not_implemented` in this build (DL-050).
+//! ([`router`]) and the router tick delivers its outbox items. Requests of
+//! a station are answered by `requests`: `coordinator.call` through the
+//! coordinator receipts (G7); the others with `not_implemented` (DL-050,
+//! DL-053).
 
+mod outbox;
+mod requests;
 pub mod router;
 pub mod runtime;
 
@@ -35,7 +38,7 @@ use fleetdeck_link::methods::code;
 use fleetdeck_link::node::NodeConfig;
 use fleetdeck_link::revoke::REVOKED;
 use fleetdeck_link::{Closing, LiveLink};
-use fleetdeck_proto::link::{ControlFrame, MAX_SNAPSHOT_SESSIONS, Outcome, StationInfo, WireError};
+use fleetdeck_proto::link::{ControlFrame, MAX_SNAPSHOT_SESSIONS, Outcome, StationInfo};
 use fleetdeck_proto::session::SessionSummary;
 use fleetdeck_proto::{EventEnvelope, IncarnationId, StationId};
 use serde_json::{Value, json};
@@ -172,13 +175,11 @@ pub async fn serve(ctx: Arc<DeckLink>, link: LiveLink) -> Closing {
     while let Some(message) = next(&mut held, &mut inbound).await {
         match message {
             Inbound::Request(req) => {
-                let err = WireError::new(
-                    NOT_IMPLEMENTED,
-                    format!("the deck does not serve `{}` in this build", req.method),
-                );
-                if let Err(e) = control.respond(req.id, Outcome::Err(err)).await {
-                    tracing::debug!(error = %e, "response");
-                }
+                let (ctx, control, station) =
+                    (Arc::clone(&ctx), control.clone(), sync.station.clone());
+                tokio::spawn(async move {
+                    requests::answer(&ctx, &control, station, req).await;
+                });
             }
             Inbound::Frame(frame) => match *frame {
                 ControlFrame::Event {

@@ -8,6 +8,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+ring = { workspace = true }
 fleetdeck-proto = { path = "../fleetdeck-proto" }
 fleetdeck-core = { path = "../fleetdeck-core" }
 fleetdeck-link = { path = "../fleetdeck-link" }

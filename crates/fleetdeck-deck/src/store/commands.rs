@@ -10,7 +10,9 @@
 //!   stores no receipt) → `ambiguous` when the command was sent before this
 //!   attempt, else `failed` (`station_reset` / `expired`);
 //! - a refusal of the link layer (`forbidden`, `wrong_role`, ...; the
-//!   station did not decide the command) → `failed` with the code;
+//!   station did not decide this send) → `failed` with the code on the
+//!   first send, `ambiguous` with the code after an earlier send (that send
+//!   may have run);
 //! - `retry_until` passed while `pending` → `ambiguous` (`no_receipt`) when
 //!   it was sent, else `failed` (`not_sent`, DL-052);
 //! - the station was removed → `failed` (`station_removed`).
@@ -144,7 +146,7 @@ fn parse(r: RawCommand) -> Result<DeckCommand> {
     })
 }
 
-fn get(conn: &Connection, id: &CommandId) -> Result<Option<DeckCommand>> {
+pub(crate) fn get(conn: &Connection, id: &CommandId) -> Result<Option<DeckCommand>> {
     conn.query_row(
         &format!("SELECT {COLUMNS} FROM commands WHERE command_id = ?1"),
         [id.as_str()],
@@ -189,7 +191,40 @@ pub(crate) fn fail_station(conn: &Connection, station: &StationId, now: i64) -> 
         "UPDATE commands SET state = 'failed', reason = 'station_removed', updated_at = ?2
          WHERE station_id = ?1 AND state = 'pending'",
         params![station.as_str(), now],
-    )?)
+    )? + super::outbox::drop_station(conn, station, now)?)
+}
+
+/// Inserts `cmd` as `pending`.
+///
+/// # Errors
+/// [`DeckError::UnknownStation`], or a database error.
+pub(crate) fn insert(conn: &Connection, cmd: &NewCommand, now: i64) -> Result<()> {
+    let known = conn
+        .query_row(
+            "SELECT 1 FROM stations WHERE station_id = ?1",
+            [cmd.station_id.as_str()],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    if !known {
+        return Err(DeckError::UnknownStation(cmd.station_id.0.clone()));
+    }
+    conn.execute(
+        "INSERT INTO commands (command_id, station_id, method, origin, envelope,
+             retry_until, state, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending', ?7, ?7)",
+        params![
+            cmd.command_id.as_str(),
+            cmd.station_id.as_str(),
+            cmd.method,
+            cmd.origin,
+            serde_json::to_string(&cmd.envelope)?,
+            cmd.retry_until,
+            now
+        ],
+    )?;
+    Ok(())
 }
 
 /// The next state of a pending command for `settle` at `attempts` sends.
@@ -209,6 +244,12 @@ fn next_state(settle: &Settle, attempts: u32) -> (DeckCommandState, Option<Strin
             }
         }
         Settle::Receipt(_) => (DeckCommandState::Done, None),
+        // The link layer refused this send, so the station did not decide
+        // it now. An earlier send may have reached the station and run:
+        // after one, the outcome is unknown (round 24 review).
+        Settle::Refused { code, .. } if attempts > 1 => {
+            (DeckCommandState::Ambiguous, Some(code.clone()))
+        }
         Settle::Refused { code, .. } => (DeckCommandState::Failed, Some(code.clone())),
     }
 }
@@ -238,31 +279,7 @@ impl DeckStore {
         let now = self.now_ms();
         let out = call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
-            let known = tx
-                .query_row(
-                    "SELECT 1 FROM stations WHERE station_id = ?1",
-                    [cmd.station_id.as_str()],
-                    |_| Ok(()),
-                )
-                .optional()?
-                .is_some();
-            if !known {
-                return Err(DeckError::UnknownStation(cmd.station_id.0));
-            }
-            tx.execute(
-                "INSERT INTO commands (command_id, station_id, method, origin, envelope,
-                     retry_until, state, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending', ?7, ?7)",
-                params![
-                    cmd.command_id.as_str(),
-                    cmd.station_id.as_str(),
-                    cmd.method,
-                    cmd.origin,
-                    serde_json::to_string(&cmd.envelope)?,
-                    cmd.retry_until,
-                    now
-                ],
-            )?;
+            insert(&tx, &cmd, now)?;
             let stored = get(&tx, &cmd.command_id)?
                 .ok_or_else(|| DeckError::Corrupt("an inserted command is gone".to_owned()))?;
             tx.commit()?;
