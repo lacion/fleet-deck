@@ -256,3 +256,7 @@ mod tests;
 #[cfg(test)]
 #[path = "fault_tests.rs"]
 mod fault_tests;
+
+#[cfg(test)]
+#[path = "first_input_tests.rs"]
+mod first_input_tests;

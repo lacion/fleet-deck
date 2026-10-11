@@ -21,14 +21,14 @@ use fleetdeck_proto::event::{
     ApprovalOption, ExpiredReason, ProviderRefs, RequestKind, ResponseChannel, RunOrigin, ToolKind,
     ToolStatus,
 };
-use fleetdeck_proto::{Event, InputId, NodeId, Operation, RequestId, Unsupported};
+use fleetdeck_proto::{Event, NodeId, Operation, RequestId, Unsupported};
 use serde_json::{Value, json};
 
 use super::core::{CodexCore, Output};
 use super::map::{QUESTION_ITEM, refs};
 use super::rpc;
 use super::{request_id, truncate};
-use crate::adapter::{Answer, HostInput, ProviderError, Result};
+use crate::adapter::{Answer, HostInput, ProviderError, Result, answer_input_id};
 
 /// The longest request detail text.
 const DETAIL_CHARS: usize = 2_000;
@@ -405,7 +405,7 @@ impl CodexCore {
                 };
                 let text = message_answer(&req.params, &text);
                 self.prompt(&HostInput {
-                    id: InputId::new(format!("answer-{app_id}")),
+                    id: answer_input_id(&answer.request),
                     origin: RunOrigin::Board,
                     input: UserInput { text },
                 })?

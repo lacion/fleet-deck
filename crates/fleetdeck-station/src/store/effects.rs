@@ -29,6 +29,8 @@ use fleetdeck_proto::{CommandId, Event, EventBody, EventEnvelope, InputId, Reque
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
+use fleetdeck_providers::adapter::answered_request;
+
 use super::{Result, StoreError, to_i64, to_u64};
 use super::{log, requests};
 
@@ -235,6 +237,12 @@ pub const REASON_STATION_RESTART: &str = "station_restart";
 pub const REASON_WORKER_RESTART: &str = "worker_restart";
 pub const REASON_PROCESS_LOST: &str = "process_lost";
 pub const REASON_REFUSED: &str = "refused_by_provider";
+/// The reason prefix of a start effect whose first input was refused before
+/// any I/O (GATE-M2 P2-a); also the `error` code.
+pub const FIRST_INPUT_NOT_SENT: &str = "first_input_not_sent";
+/// The reason prefix of a start effect whose first input may have reached
+/// the provider (GATE-M2 P2-a).
+pub const FIRST_INPUT_UNKNOWN: &str = "first_input_unknown";
 
 const COLUMNS: &str = "effect_id, command_id, session_id, process_incarnation, payload, state,
     fence_token, reason";
@@ -475,6 +483,71 @@ pub(super) fn settle(
     effect(conn, id)
 }
 
+/// The start effect spawned a process, but its first input failed
+/// (GATE-M2 P2-a). The spawn stays confirmed; the effect records the input
+/// outcome as its reason, and the log gets the evidence: an input refused
+/// before any I/O is `discarded` (`first_input_not_sent`), an input that may
+/// have reached the provider is `delivery_unknown` and is never sent again.
+pub(super) fn first_input_failed(
+    conn: &Connection,
+    id: &EffectId,
+    dispatch: &Dispatch,
+    now: i64,
+    out: &mut Vec<EventEnvelope>,
+) -> Result<bool> {
+    let Some(found) = effect(conn, id)? else {
+        return Ok(false);
+    };
+    let EffectPayload::Start {
+        prompt: Some(input),
+        ..
+    } = &found.payload
+    else {
+        return Ok(false);
+    };
+    let (reason, events) = match dispatch {
+        Dispatch::NotDispatched(why) => (
+            format!("{FIRST_INPUT_NOT_SENT}: {why}"),
+            vec![
+                Event::InputUpdated {
+                    input_id: input.input_id.clone(),
+                    turn_id: None,
+                    state: InputState::Discarded,
+                },
+                Event::Error {
+                    code: FIRST_INPUT_NOT_SENT.to_owned(),
+                    message: format!(
+                        "the session started, but its first input {} was not sent: {why}",
+                        input.input_id
+                    ),
+                    retry_at: None,
+                },
+            ],
+        ),
+        Dispatch::Unknown(why) => (
+            format!("{FIRST_INPUT_UNKNOWN}: {why}"),
+            vec![Event::Error {
+                code: "delivery_unknown".to_owned(),
+                message: format!(
+                    "the station cannot tell whether the first input {} reached the provider \
+                     ({why}); it does not send it again",
+                    input.input_id
+                ),
+                retry_at: None,
+            }],
+        ),
+        Dispatch::Sent | Dispatch::Confirmed => return Ok(false),
+    };
+    conn.execute(
+        "UPDATE effects SET reason = ?2, updated_at = ?3 WHERE effect_id = ?1",
+        params![found.effect_id.as_str(), reason, now],
+    )?;
+    for event in events {
+        out.push(log::append_one(conn, &found.session_id, event.into(), now)?);
+    }
+    Ok(true)
+}
+
 /// Moves one effect to a final state and appends the events that tell the
 /// owner about it.
 pub(super) fn transition(
@@ -568,6 +641,31 @@ pub(super) fn observe(conn: &Connection, envelope: &EventEnvelope, now: i64) -> 
         Ok(())
     };
     match event {
+        // A message answer starts as a provider input (GATE-M2 P2-b): its
+        // start confirms the answer effect of its request.
+        Event::InputUpdated {
+            input_id,
+            state: InputState::Started,
+            ..
+        } if answered_request(input_id).is_some() => {
+            if let Some(request) = answered_request(input_id) {
+                confirm("kind = 'answer' AND correlation = ?3", &[&request.as_str()])?;
+            }
+        }
+        Event::InputUpdated {
+            input_id,
+            state: InputState::Refused,
+            ..
+        } if answered_request(input_id).is_some() => {
+            if let Some(request) = answered_request(input_id) {
+                conn.execute(
+                    "UPDATE effects SET state = 'retired_not_dispatched', reason = ?4, updated_at = ?1
+                     WHERE session_id = ?2 AND state IN ('claimed', 'outcome_unknown')
+                       AND kind = 'answer' AND correlation = ?3",
+                    params![now, session, request.as_str(), REASON_REFUSED],
+                )?;
+            }
+        }
         Event::InputUpdated {
             input_id,
             state: InputState::Started,

@@ -775,4 +775,7 @@ mod interrupt;
 
 #[path = "m2_gate_tests.rs"]
 mod m2_gate;
+
+#[path = "answer_input_tests.rs"]
+mod answer_input;
 use interrupt::interrupted;

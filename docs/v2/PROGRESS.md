@@ -1,6 +1,6 @@
 # Fleet Deck v2 — progress (goal loop memory)
 
-Current milestone: **M2 = PLAN Phases 1–5** — gate closed, see [GATE-M2.md](./GATE-M2.md); M3 not started (M1 = Phase 0 is complete, see the M1 section below; M3 = Phases 6–7). The M2 goal loop has at most 50 rounds for M2 and M3 together.
+Current milestone: **M2 = PLAN Phases 1–5** — gate closed, see [GATE-M2.md](./GATE-M2.md); M3 in progress, see the M3 checklist (M1 = Phase 0 is complete, see the M1 section below; M3 = Phases 6–7). The M2 goal loop has at most 50 rounds for M2 and M3 together.
 
 Rules for this file: one checklist item per deliverable, in PLAN order. Each round updates the item status, the commands it ran, and the results. The work of a round stays uncommitted for the reviewer; the next round commits it first.
 
@@ -69,20 +69,58 @@ Sources: PLAN §14 Phases 1–5, GATE-M1 G1–G14, goal acceptance. G13 is P1-5.
 - [x] **M2-F Close-out.** Every exit check named in this file; `make check` on a clean checkout; DECISIONS-LOG complete. *(round 38: section "M2 acceptance evidence" below; DL-064 amended. Round 40: clean-checkout `make check` of commit `b139891` (DL-068) plus the round-40 diff passed all 14 commands; DL-001..DL-069 complete; round 41: M2 gate correction DL-070 (answer admission before the claim, session-loss cleanup), see the round-41 log)*
 - [x] **M2 gate.** Gate passed on `548d9478c51c3e7bc2c34c3ab81dcaba451a8114`: first review FAIL, correction DL-070, architect clean-clone `make check` and adversary CODE REVIEW PASS. Record: [GATE-M2.md](./GATE-M2.md). Owner demo checklist (not yet performed): [DEMO-M2.md](./DEMO-M2.md). PLAN Revision 3 applies the T3 P2 contracts L13, L14, L19 and `ShimHost` (DL-071; awaits adversary DESIGN REVIEW before M3 implementation).
 
-## M3 (not started)
+## M3 checklist (PLAN Phases 6–7)
 
-M3 = PLAN Phases 6–7. No M3 work has started. The adversary DESIGN REVIEW of the PLAN Revision 3 contracts comes first.
+M3 = PLAN Phases 6–7 (goal loop started 2026-10-12, round 1). Rules as for M2: one item per deliverable, in PLAN order; each item names its evidence (tests, commands) and the remaining work. `[x]` = software evidence present and checked by the executor; review by the architect and the adversary is separate. Owner/platform items (physical demo, real LAN or tailnet, macOS, container runtime) are never marked as passes here.
 
 - Revision 3 contracts corrected after the failed adversary DESIGN REVIEW of `4935e26` (five MAJOR findings, DL-072, commit `3fbc4c5`).
 - [x] **Design review.** Fresh adversary DESIGN REVIEW of `3fbc4c5` (subagent `sa-f21ff469`, `gpt-6.1-sol`): VERDICT: PASS, no BLOCKER, MAJOR or MINOR findings. All five DL-072 findings are closed by PLAN §6.6 and §7.1/§9; the ADR-005 and ADR-006 deferrals are acceptable. M3 implementation may start (DL-073).
 
-Required hardening items carried from GATE-M2 §6:
+- [ ] **ADR approval boundary.** The M3 goal (2026-10-12) says ADR-005 and ADR-006 stay *Proposed* and unwired until the architect records an adversary DESIGN REVIEW PASS for each ADR in the "Design approvals" section of the gate-state file. Round 1 read: neither ADR is reviewed. DL-073 records an owner pre-approval that would set them *Accepted*; the executor follows the stricter goal text (DL-074). The gate-state file names the PLAN design review `sa-578e1214`; DL-073 names `sa-f21ff469` (the architect should reconcile the two ids).
 
-- [ ] **P2-a** First-prompt failure is only logged; record failure evidence for the initial input (`crates/fleetdeck-station/src/manager/target.rs:146-163`).
-- [ ] **P2-b** Codex message-channel answer effects never confirm; add a correlated provider input-start confirmation (`crates/fleetdeck-providers/src/codex/requests.rs:340-348,395-411`; `crates/fleetdeck-station/src/store/effects.rs:571-595`).
-- [ ] **SIGKILL survival** An offline child-survival test for a provider after a station SIGKILL (`crates/fleetdeck-providers/src/host/direct.rs:50-60`). Unverified, not a proven defect.
-- [ ] **ADR-005** (`ShimHost`) and **ADR-006** (coordinator MCP grants) are written before their implementation.
-- [ ] **Owner demo** The owner runs [DEMO-M2.md](./DEMO-M2.md) (owner action).
+### Phase 6 — required hardening (GATE-M2 §6)
+
+- [x] **P2-a** First-input failure evidence (DL-074). `crates/fleetdeck-station/src/manager/target.rs` (start), `store::effects::first_input_failed`, `Store::first_input_failed`. Tests: `manager::first_input_tests::{a_refused_first_input_is_discarded_with_an_error_and_the_session_stays_usable, a_first_input_that_may_have_reached_the_provider_is_unknown_and_never_resent}`.
+- [x] **P2-b** Codex message-channel answers confirm on the correlated `input.updated started` of `answer-<request>` and retire on `refused` (DL-074). `fleetdeck_providers::adapter::{answer_input_id, answered_request}`, `store::effects::observe`. Tests: `store::effects_tests::answer_input::{a_message_answer_is_confirmed_when_its_input_starts, an_outcome_unknown_message_answer_is_confirmed_by_a_late_start, a_refused_message_answer_input_retires_its_effect}`.
+- [x] **SIGKILL survival** (DL-074). `crates/fleetdeck-cli/tests/station_sigkill.rs::providers_of_a_sigkilled_station_exit_and_the_restarted_station_reports_them_lost` (Linux, `/proc` process-group check): an idle and a mid-turn `fake-claude` exit on stdin EOF, no group member survives, the restart reports both `lost`, no replacement process. No code fix needed. Limit: a provider that ignores stdin EOF survives until its next stdout write; ADR-005 owns identity-checked process ownership. macOS: owner/platform validation.
+
+### Phase 6 — fleet features
+
+- [ ] **6-ADR6** ADR-006 coordinator MCP (ingress auth, private credential handoff, identity binding and generation, wire/authorization, tool/class matrix, spawn-cap accounting, duplicates, query expiry, lifecycle/retry/revocation) and its executable negative tests, status *Proposed*. Remaining: everything; wiring waits for the recorded DESIGN REVIEW PASS.
+- [ ] **6-1 Workspaces** Repo catalog on stations; credential-safe clone; worktrees; batch spawn and `Nx`; explicit repo grouping; provider-instance profiles; allowed-root and symlink validation; filesystem work through the effect worker. Remaining: everything.
+- [ ] **6-2 Mail** Fleet mail through the durable outbox, delivered as native follow-up/steer. Remaining: everything.
+- [ ] **6-3 Assign auto** Across stations with connected/capacity/provider/repo checks. Remaining: everything.
+- [ ] **6-4 Tasks** Tasks and waitable completions. Remaining: everything.
+- [ ] **6-5 Coordinator** Scoped coordinator MCP API (after ADR-006 approval), deck-served control skill, race-safe spawn caps. Remaining: everything (blocked on the ADR-006 review).
+- [ ] **6-6 Plans** Claude `ExitPlanMode` and Codex plan-item capture; plan library. Remaining: everything.
+- [ ] **6-7 Conflict radar** across stations. Remaining: everything.
+- [ ] **6-8 Files and checkpoints** File browse/search/read/rename/event feed, diffs from checkpoints, hidden-ref turn-start/completion checkpoints, `turn.finalized`, safe revert with the §6.6 fence, rejection, race and crash tests. Remaining: everything.
+- [ ] **6-9 Usage meters** Usage and rate-limit meters; unknown never shown as zero. Remaining: everything.
+- [ ] **6-10 Images and notifications** Prompt image/screenshot attachments; notifications. Remaining: everything.
+- [ ] **6-11 Human shell** §6.8 PTY shell: policy checks, shell cap, scrubbed env, audited open/resize/close, data-channel bytes, 5,000 lines / 8 MiB scrollback, reconnect, deck/link-outage survival. Remaining: everything.
+- [ ] **6-12 Import** Driven import of an existing native CLI session (no terminal observation, no v0 data). Remaining: everything.
+- [ ] **6-13 Parity** Session-grid parity; every Keep row of §4.1 and §16 done or deferred by a recorded owner decision; provider-specific capability degradation tests. Remaining: everything.
+
+### Phase 7 — hardening and cutover
+
+- [ ] **7-ADR5** ADR-005 `ShimHost` (attachment ownership, output recovery, platform/upgrades, auto-continue integration) and its negative tests, status *Proposed*. Remaining: everything; implementation waits for the recorded DESIGN REVIEW PASS.
+- [ ] **7-1 ShimHost** Durable shim and reattachment; crash/restart, terminal events, requests, duplicate stdin, output cursor recovery tests. Remaining: everything (blocked on the ADR-005 review).
+- [ ] **7-2 Auto-continue** L19, per session, default OFF. Remaining: everything.
+- [ ] **7-3 Drain and self-upgrade** Stable launcher, migration/bind/activation trial, rollback-safe SQLite main/WAL/shm snapshot, update ids, N−1 wire and stored-event compatibility. Remaining: everything.
+- [ ] **7-4 Performance** Reproducible harness and results for §13 (hardware, OS, transport, samples, method; loopback distinct from LAN). Remaining: everything.
+- [ ] **7-5 Packaging** `cargo-dist` config, installer, systemd and launchd units, station container image definition, offline build smoke. Remaining: everything.
+- [ ] **7-6 Docs** New README, `docs/v2/internals.md`, operations guide, migration/cutover guide. Remaining: everything.
+- [ ] **7-7 Cutover** v0 deletion on `v2` only, last. Remaining: everything.
+- [ ] **7-8 Final checks** Clean-checkout `make check`, architect acceptance, adversary PRE-PR REVIEW of the final committed HEAD. Remaining: everything.
+- [ ] **Owner demo** The owner runs [DEMO-M2.md](./DEMO-M2.md) (owner action, not an executor item).
+
+## M3 round log
+
+### M3 round 1 (2026-10-12)
+
+- Start: HEAD `0a50d66` (DL-073), clean tree; nothing from an earlier M3 round to commit. Gate-state file: ADR-005 and ADR-006 not reviewed.
+- Done: P2-a, P2-b, SIGKILL test (DL-074); M3 checklist.
+- Checks: `make check` (tools/check.sh) on the round-1 tree: all 14 commands passed (fmt, clippy `-D warnings`, nextest 843 passed / 3 skipped, deny, ts_drift, bun install/typecheck/lint/test 88 pass/build/e2e/e2e:real, replay-claude 29, replay-codex 18). The three carry-over items: P2-a 2 tests, P2-b 3 tests, SIGKILL 1 real-process test, all in that nextest run. Known flake (pre-existing, not changed): `local::tests::a_stale_socket_file_is_replaced` failed once in a targeted run and passed in 4 reruns and in this `make check`.
 
 ## M2 acceptance evidence (M2-F)
 

@@ -158,7 +158,16 @@ impl SessionTarget {
         }
         let _ = ready_tx.send(process);
         if let Err(e) = sent_prompt {
-            tracing::warn!(error = %e, "the first prompt was not sent");
+            // The spawn is the provider's acceptance of the start; the first
+            // input gets its own durable evidence (GATE-M2 P2-a).
+            tracing::warn!(error = %e, "the first input was not sent");
+            if let Err(e) = self
+                .store
+                .first_input_failed(effect.effect_id.clone(), classify(&e))
+                .await
+            {
+                tracing::error!(error = %e, "the first input failure was not stored");
+            }
         }
         Dispatch::Confirmed
     }

@@ -51,7 +51,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
 
 pub use effects::{
-    Dispatch, Effect, EffectId, EffectPayload, EffectState, InputRecord, ProcessIncarnation,
+    Dispatch, Effect, EffectId, EffectPayload, EffectState, FIRST_INPUT_NOT_SENT,
+    FIRST_INPUT_UNKNOWN, InputRecord, ProcessIncarnation,
 };
 pub use receipts::{Caller, DecideError, Decided, Decision};
 pub use recovery::RecoveryReport;

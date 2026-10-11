@@ -144,6 +144,25 @@ impl Store {
         .map(|(e, _)| e)
     }
 
+    /// Records the failure of the first input of a start effect that
+    /// spawned its process (GATE-M2 P2-a): the effect reason and the input
+    /// evidence events, in one transaction. Returns false when the effect
+    /// has no first input or `dispatch` is not a failure.
+    ///
+    /// # Errors
+    /// A database or JSON error.
+    pub async fn first_input_failed(
+        &self,
+        effect_id: EffectId,
+        dispatch: Dispatch,
+    ) -> Result<bool> {
+        self.write(move |conn, now, out| {
+            effects::first_input_failed(conn, &effect_id, &dispatch, now, out)
+        })
+        .await
+        .map(|(done, _)| done)
+    }
+
     /// One effect.
     ///
     /// # Errors

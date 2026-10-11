@@ -36,6 +36,30 @@ pub struct ModelId(pub String);
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ControlId(pub String);
 
+/// The input id prefix of an answer that goes to the provider as a user
+/// message (a [`fleetdeck_proto::event::ResponseChannel::Message`] request).
+/// Station input ids are ULIDs, so no host input id has this prefix.
+pub const ANSWER_INPUT_PREFIX: &str = "answer-";
+
+/// The input id under which an adapter sends the message answer to
+/// `request`. Its `input.updated started` is the provider's evidence that
+/// the answer was accepted (GATE-M2 P2-b).
+#[must_use]
+pub fn answer_input_id(request: &RequestId) -> InputId {
+    InputId::new(format!("{ANSWER_INPUT_PREFIX}{request}"))
+}
+
+/// The request that a message answer input answers, or `None` for an
+/// ordinary input.
+#[must_use]
+pub fn answered_request(input: &InputId) -> Option<RequestId> {
+    input
+        .as_str()
+        .strip_prefix(ANSWER_INPUT_PREFIX)
+        .filter(|id| !id.is_empty())
+        .map(RequestId::new)
+}
+
 /// One input from the host: the station mints `id` and reports it in the
 /// command receipt; the provider reports the fate of the input under it.
 #[derive(Debug, Clone, PartialEq, Eq)]
