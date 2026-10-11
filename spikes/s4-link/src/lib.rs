@@ -9,7 +9,10 @@
 //! - [`hello`]: the link handshake (Hello, negotiation, transcript signatures).
 //! - [`frames`]: control frames and the method table with scopes.
 //! - [`mux`]: data channel streams with credit flow control (sans-IO).
-//! - [`link`]: control + data WebSocket channels over mTLS, link epochs.
+//! - [`link`]: control + data WebSocket channels over mTLS, link epochs,
+//!   invitation pairing on the pair channel.
+//! - [`pairing`]: `fdinv1:` invitations and their single-use store (§8.5).
+//! - [`reconnect`]: jittered exponential backoff and the redialing supervisor.
 
 pub mod addr;
 pub mod frames;
@@ -18,5 +21,7 @@ pub mod identity;
 pub mod link;
 pub mod mux;
 pub mod net;
+pub mod pairing;
+pub mod reconnect;
 pub mod secret;
 pub mod tls;

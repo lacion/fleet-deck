@@ -115,6 +115,11 @@ impl Control {
             .await;
     }
 
+    /// Waits until the control task ended (the link is down).
+    pub async fn closed(&self) {
+        self.tx.closed().await;
+    }
+
     /// True when the task ended.
     pub fn is_closed(&self) -> bool {
         self.tx.is_closed()
@@ -125,8 +130,11 @@ pub(crate) struct Params {
     pub negotiated: Negotiated,
     pub grants: Arc<Grants>,
     pub peer: PeerKey,
-    /// The link table closes a superseded link through this channel.
-    pub shutdown: Option<oneshot::Receiver<(String, String)>>,
+    /// The link table (a superseded link) and the data channel (lost) end the
+    /// control channel through this channel.
+    pub shutdown: mpsc::Receiver<(String, String)>,
+    /// Ends the data channel of the same link when the control channel ends.
+    pub data_stop: Option<oneshot::Sender<(String, String)>>,
     pub on_exit: Box<dyn FnOnce() + Send + Sync>,
 }
 
@@ -161,6 +169,7 @@ async fn run(
         pending: HashMap::new(),
         pings: HashMap::new(),
     };
+    let mut shutdown_open = true;
     let (reason, detail) = loop {
         tokio::select! {
             cmd = cmds.recv() => match cmd {
@@ -179,24 +188,56 @@ async fn run(
                 Ok(()) => {}
                 Err(end) => break end,
             },
-            sd = shutdown_signal(&mut p.shutdown) => {
-                let (reason, detail) = sd.unwrap_or_else(|_| ("closed".into(), "the link table ended".into()));
+            sd = p.shutdown.recv(), if shutdown_open => {
+                // No sender left (no link table, no data channel): nothing can
+                // end the link from outside any more.
+                let Some((reason, detail)) = sd else {
+                    shutdown_open = false;
+                    continue;
+                };
+                // The peer closes the control channel first and the data channel
+                // second, but the two TCP connections race: give a `close` frame
+                // that is already on its way the chance to name the real reason.
+                if reason == DATA_CHANNEL_LOST
+                    && let Some(end) = peer_close_within(&mut ws, &mut st, &inbound, &p).await
+                {
+                    break end;
+                }
                 let _ = write(&mut ws, &ControlFrame::Close { reason: reason.clone(), detail: detail.clone() }).await;
                 break (reason, detail);
             }
         }
     };
     let _ = ws.close(None).await;
+    // The link is one unit: the data channel never outlives its control channel.
+    if let Some(stop) = p.data_stop.take() {
+        let _ = stop.send((reason.clone(), detail.clone()));
+    }
     (p.on_exit)();
     let _ = inbound.send(Inbound::Closed { reason, detail }).await;
 }
 
-async fn shutdown_signal(
-    rx: &mut Option<oneshot::Receiver<(String, String)>>,
-) -> Result<(String, String), oneshot::error::RecvError> {
-    match rx {
-        Some(rx) => rx.await,
-        None => std::future::pending().await,
+/// Reason that the data task reports when its channel ends on its own.
+pub(crate) const DATA_CHANNEL_LOST: &str = "data_channel_lost";
+
+/// How long the control task waits for a peer `close` frame after its data
+/// channel was lost.
+const CLOSE_GRACE: Duration = Duration::from_millis(500);
+
+/// Processes control frames for at most [`CLOSE_GRACE`]; returns the end that
+/// a peer `close` frame (or a channel end) names.
+async fn peer_close_within(
+    ws: &mut Ws,
+    st: &mut State,
+    inbound: &mpsc::Sender<Inbound>,
+    p: &Params,
+) -> Option<End> {
+    let deadline = tokio::time::Instant::now() + CLOSE_GRACE;
+    loop {
+        let msg = tokio::time::timeout_at(deadline, ws.next()).await.ok()?;
+        if let Err(end) = on_message(ws, st, inbound, p, msg).await {
+            return Some(end);
+        }
     }
 }
 

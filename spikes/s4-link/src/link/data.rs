@@ -91,12 +91,20 @@ pub enum DataEvent {
 
 type Pending = VecDeque<(Vec<u8>, usize, oneshot::Sender<Result<(), LinkError>>)>;
 
-pub(crate) fn spawn(ws: Ws, side: Side) -> (Data, mpsc::UnboundedReceiver<DataEvent>) {
+/// The two ties between the data channel and its control channel: `stop`
+/// ends the data channel when the control channel ends, and `control` ends
+/// the control channel when the data channel is lost.
+pub(crate) struct Ties {
+    pub stop: oneshot::Receiver<(String, String)>,
+    pub control: mpsc::Sender<(String, String)>,
+}
+
+pub(crate) fn spawn(ws: Ws, side: Side, ties: Ties) -> (Data, mpsc::UnboundedReceiver<DataEvent>) {
     let (tx, rx) = mpsc::channel(64);
     // Unbounded is safe: the peer cannot send more than the credit window
     // of each open stream.
     let (ev_tx, ev_rx) = mpsc::unbounded_channel();
-    tokio::spawn(run(ws, Mux::new(side), rx, ev_tx));
+    tokio::spawn(run(ws, Mux::new(side), rx, ev_tx, ties));
     (Data { tx }, ev_rx)
 }
 
@@ -145,13 +153,28 @@ async fn run(
     mut mux: Mux,
     mut cmds: mpsc::Receiver<Cmd>,
     events: mpsc::UnboundedSender<DataEvent>,
+    mut ties: Ties,
 ) {
     let mut pending: BTreeMap<u32, Pending> = BTreeMap::new();
+    let mut by_control = false;
+    let mut cmds_open = true;
     let reason = loop {
         tokio::select! {
-            cmd = cmds.recv() => {
+            stop = &mut ties.stop => {
+                by_control = true;
+                break match stop {
+                    Ok((reason, _)) => reason,
+                    Err(_) => "closed".to_owned(),
+                };
+            }
+            cmd = cmds.recv(), if cmds_open => {
                 let r = match cmd {
-                    None => break "closed".to_owned(),
+                    // The application dropped every handle; keep receiving
+                    // until the control channel ends the link.
+                    None => {
+                        cmds_open = false;
+                        Ok(())
+                    }
                     Some(Cmd::Open(purpose, reply)) => match mux.open(&purpose) {
                         Ok((stream, frame)) => {
                             let r = send(&mut ws, vec![frame]).await;
@@ -212,5 +235,16 @@ async fn run(
         }
     };
     let _ = ws.close(None).await;
+    // Pending writes fail now instead of waiting for credit that never comes.
+    for (_, queue) in std::mem::take(&mut pending) {
+        for (_, _, reply) in queue {
+            let _ = reply.send(Err(LinkError::closed(&reason, "the data channel ended")));
+        }
+    }
+    if !by_control {
+        let _ = ties
+            .control
+            .try_send((super::control::DATA_CHANNEL_LOST.to_owned(), reason.clone()));
+    }
     let _ = events.send(DataEvent::Ended { reason });
 }

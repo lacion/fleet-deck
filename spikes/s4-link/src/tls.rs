@@ -11,9 +11,11 @@
 //!   role. Normal links.
 //! - [`PeerPolicy::Fingerprint`]: the key has this fingerprint. The invitee of
 //!   a pairing dials (or accepts) the inviter that the `fdinv1:` link names.
-//! - [`PeerPolicy::AnyKey`]: any key that proves possession. Only the side
-//!   that issued an invitation accepts this, and only on the pairing listener;
-//!   the pairing secret proof (S4-3) then decides.
+//! - [`PeerPolicy::PinnedOrInvited`]: the listener of a node with open
+//!   invitations. TLS accepts an unpinned key only while an invitation is
+//!   open; the link layer then refuses such a key on every channel except the
+//!   pair channel, where the secret proof decides (`pairing`).
+//! - [`PeerPolicy::AnyKey`]: any key that proves possession (tests only).
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -96,7 +98,18 @@ impl PinSet {
 /// Which peer key a TLS endpoint accepts.
 #[derive(Debug, Clone)]
 pub enum PeerPolicy {
-    Pinned { pins: Arc<PinSet>, role: Role },
+    Pinned {
+        pins: Arc<PinSet>,
+        role: Role,
+    },
+    /// A pinned key of `role`, or any key while the node has an open
+    /// invitation (§8.5). The link layer then lets an unpinned key use only
+    /// the pair channel.
+    PinnedOrInvited {
+        pins: Arc<PinSet>,
+        role: Role,
+        invites: Arc<crate::pairing::Invitations>,
+    },
     Fingerprint(Fingerprint),
     AnyKey,
 }
@@ -105,6 +118,11 @@ impl PeerPolicy {
     pub fn check(&self, key: &PeerKey) -> Result<(), rustls::Error> {
         let ok = match self {
             Self::Pinned { pins, role } => pins.role_of(key) == Some(*role),
+            Self::PinnedOrInvited {
+                pins,
+                role,
+                invites,
+            } => pins.role_of(key) == Some(*role) || invites.open_count() > 0,
             Self::Fingerprint(fp) => key.fingerprint().matches(fp),
             Self::AnyKey => true,
         };
@@ -180,7 +198,10 @@ pub struct PinnedServerVerifier {
 
 impl PinnedServerVerifier {
     pub fn new(policy: PeerPolicy) -> Result<Self, TlsError> {
-        if matches!(policy, PeerPolicy::AnyKey) {
+        if matches!(
+            policy,
+            PeerPolicy::AnyKey | PeerPolicy::PinnedOrInvited { .. }
+        ) {
             return Err(TlsError::AnyKeyForDialer);
         }
         Ok(Self {

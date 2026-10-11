@@ -359,3 +359,90 @@ async fn a_reader_that_gives_no_credit_stops_the_writer() {
     assert!(!writer.is_finished(), "the writer waits for credit");
     writer.abort();
 }
+
+async fn ended(events: &mut tokio::sync::mpsc::UnboundedReceiver<DataEvent>) -> String {
+    loop {
+        match tokio::time::timeout(T, events.recv())
+            .await
+            .expect("no Ended event")
+        {
+            Some(DataEvent::Ended { reason }) => return reason,
+            Some(_) => {}
+            None => panic!("the data events ended without Ended"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn closing_the_control_channel_ends_the_data_channel_on_both_sides() {
+    let (deck, station) = paired();
+    let (mut station_link, mut deck_link) = link_both_ways(deck, station).await;
+    let (s_data, mut s_events) = station_link.data.take().unwrap();
+    let (d_data, mut d_events) = deck_link.data.take().unwrap();
+    let stream = s_data.open("artifact:x").await.unwrap();
+    deck_link
+        .control
+        .close("bye", "the test closes the link")
+        .await;
+    assert_eq!(ended(&mut d_events).await, "bye");
+    ended(&mut s_events).await;
+    tokio::time::timeout(T, station_link.control.closed())
+        .await
+        .unwrap();
+    assert!(
+        s_data.write(stream, vec![0; 16]).await.is_err(),
+        "no write after the link ended"
+    );
+    assert!(d_data.open("artifact:y").await.is_err());
+}
+
+#[tokio::test]
+async fn a_superseded_link_loses_its_data_channel_too() {
+    let (deck, station) = paired();
+    let mut l = link::listen(deck, lo()).await.unwrap();
+    let addr = l.local_addr;
+    let mut old = link::dial(&station, addr, 1).await.unwrap();
+    let mut old_deck = l.next_link().await.unwrap();
+    let (old_s_data, mut old_s_events) = old.data.take().unwrap();
+    let (_old_d_data, mut old_d_events) = old_deck.data.take().unwrap();
+    // A writer blocked on credit must fail, not hang, when the link goes.
+    let stream = old_s_data.open("artifact:big").await.unwrap();
+    let blocked = tokio::spawn({
+        let d = old_s_data.clone();
+        async move { d.write(stream, vec![7; 1024 * 1024]).await }
+    });
+
+    let mut new = link::dial(&station, addr, 2).await.unwrap();
+    let mut new_deck = l.next_link().await.unwrap();
+    assert_eq!(ended(&mut old_d_events).await, "superseded");
+    ended(&mut old_s_events).await;
+    assert!(
+        tokio::time::timeout(T, blocked)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_err()
+    );
+
+    // The new link's data channel works.
+    let (n_s_data, _n_s_events) = new.data.take().unwrap();
+    let (n_d_data, mut n_d_events) = new_deck.data.take().unwrap();
+    let s = n_s_data.open("artifact:new").await.unwrap();
+    n_s_data.write(s, b"fresh".to_vec()).await.unwrap();
+    n_s_data.close(s).await.unwrap();
+    let (purpose, bytes) = read_stream(&n_d_data, &mut n_d_events).await;
+    assert_eq!(
+        (purpose.as_str(), bytes.as_slice()),
+        ("artifact:new", &b"fresh"[..])
+    );
+}
+
+#[tokio::test]
+async fn dropping_the_data_handles_keeps_the_link_up() {
+    let (deck, station) = paired();
+    let (mut station_link, deck_link) = link_both_ways(deck, station).await;
+    drop(station_link.data.take());
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    deck_link.control.ping().await.unwrap();
+    assert!(!station_link.control.is_closed());
+}

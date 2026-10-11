@@ -125,7 +125,16 @@ S4-2 adds the link itself (`src/hello.rs`, `src/frames.rs`, `src/mux.rs`, `src/l
 cargo nextest run -p s4-link --test link
 ```
 
-Pairing and reconnect follow in S4-3 (see `docs/v2/PROGRESS.md`).
+S4-3 adds pairing, reconnect and several processes (`src/pairing.rs`, `src/link/pair.rs`, `src/reconnect.rs`, `src/bin/fd-link-node.rs`):
+
+- `tests/link.rs` (also): closing the control channel ends the data channel on both sides; a superseded link loses its data channel; dropping the data handles keeps the link up.
+- `tests/pairing.rs`: `fdinv1:` invitations in both directions (a station without a listener joins the deck and dials it; the deck joins a station invitation and dials the station), single use, expiry on both sides, the invited key only, a wrong secret, unpaired keys limited to the pair channel, and the reconnect supervisor (backoff with jitter, a higher link epoch after the deck comes back).
+- `src/pairing.rs` and `src/reconnect.rs` unit tests: invitation text format, proofs, failure cap, backoff bounds and reset, growing epochs (DL-021, DL-022).
+- `tests/multiprocess.rs`: separate `fd-link-node` processes with their own data directories and ports on loopback: two NAT stations (no listener, dial only) pair and dial the deck, a used invitation fails, the deck restarts on the same port and data directory and both stations reconnect with a higher epoch; the mirror direction (station invites, deck joins and dials); public and wildcard addresses refused.
+
+```sh
+cargo nextest run -p s4-link --test pairing --test multiprocess
+```
 
 ## Live commands (owner or recorder only)
 

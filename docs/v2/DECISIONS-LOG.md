@@ -172,3 +172,26 @@ Format: context, options, choice, reason, owner review.
   5. The control channel has a `close {reason, detail}` frame next to the §8.3 frames (used for `superseded`).
 - **Reason:** each item closes a gap that would otherwise make two implementations disagree; none changes a PLAN rule. ADR-004 records them.
 - **Owner review:** pending
+
+## DL-021 — Pairing details that PLAN §8.5 does not state
+
+- **Context:** PLAN §8.5 gives the invitation shape `fdinv1:<deck-url>#<fingerprint>.<secret-128-bit>.<expiry>`, single use, 15 minutes, "the station proves the secret bound to the TLS transcript", and the mirror direction. It does not say how the proof travels, how an unpinned key gets through pinned mTLS, or what limits guessing.
+- **Options:** (a) a pairing request on the normal control channel; (b) a separate `pair` channel (`/fdlink/v1/pair`) that reuses the link handshake (Hello, TLS-exporter transcript, signatures) and then exchanges one proof each way.
+- **Choice:** (b), with these details:
+  - Proofs are HMAC-SHA256 with the invitation secret over a role tag and the handshake transcript (TLS exporter, both hellos, both keys). The joiner proves first; the inviter answers with its own proof, so the joiner also knows that the inviter holds the secret. Verification is constant time (`ring::hmac::verify`).
+  - The joiner checks the inviter's key against the fingerprint in TLS (`PeerPolicy::Fingerprint`) before it sends anything.
+  - The listener accepts an unpinned client key in TLS only while at least one invitation is open (`PeerPolicy::PinnedOrInvited`), and an unpinned key may open only the `pair` channel (`not_paired` otherwise).
+  - The `<deck-url>` part is `wss://<ip-literal>:<port>`. The address must pass the D13 dial rules when the invitation is parsed; host names are refused in the spike (Phase 1 can allow names with the resolved-address filter of `addr::filter_resolved`).
+  - The expiry is a unix time in seconds. Both sides check it; the inviter's own clock decides.
+  - After 5 wrong proofs the inviter closes all open invitations (`too_many_attempts`).
+  - Each side grants the other the scopes that the local owner chose when the invitation was made or redeemed. The spike assigns no station names (Phase 1 board work).
+- **Reason:** (b) keeps unpinned keys away from every request handler, reuses the audited handshake code, and binds the secret to this TLS session so that a relay cannot reuse a proof. D13 and the "no redirects" rule apply to the invitation address.
+- **Owner review:** pending
+
+## DL-022 — Reconnect backoff and link epoch source
+
+- **Context:** PLAN §8.1 asks for exponential backoff with jitter by the dialing side; t3code-lessons caps it at 5 minutes and resets it only after the link stays up. §8.2 says the higher `link_epoch` wins but not where the number comes from.
+- **Options:** epoch: (a) a counter persisted in the data directory; (b) the wall clock in milliseconds, strictly increasing inside the process. Jitter: full jitter vs. equal jitter.
+- **Choice:** epoch (b) (`reconnect::EpochClock`). Backoff: equal jitter, delay uniform in `[c/2, c]` with `c = min(5 min, 500 ms · 2^attempt)`; the attempt counter resets only after a link stayed up for 60 s (`BackoffPolicy`).
+- **Reason:** (b) needs no disk write before a dial, and a restarted dialer always starts above its previous epochs unless the clock steps back by more than the restart time (Phase 1 can add the persisted counter as a floor). Equal jitter never retries at once (no tight loops after a deck restart) and still spreads many stations apart.
+- **Owner review:** pending

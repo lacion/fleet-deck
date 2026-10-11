@@ -11,6 +11,7 @@
 pub mod control;
 pub mod data;
 mod handshake;
+mod pair;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::net::SocketAddr;
@@ -26,6 +27,7 @@ use tokio_tungstenite::{WebSocketStream, accept_hdr_async_with_config, client_as
 
 pub use control::{Control, Inbound};
 pub use data::{Data, DataEvent};
+pub use pair::pair;
 
 use crate::frames::{MAX_CONTROL_FRAME, Scope};
 use crate::hello::{
@@ -34,6 +36,7 @@ use crate::hello::{
 use crate::identity::{Identity, PeerKey};
 use crate::mux::MAX_CHUNK;
 use crate::net::{self, NetError};
+use crate::pairing::Invitations;
 use crate::tls::{self, PeerPolicy, PinSet, Role, SERVER_NAME, TlsError};
 
 pub(crate) type Ws = WebSocketStream<tokio_rustls::TlsStream<tokio::net::TcpStream>>;
@@ -122,6 +125,9 @@ pub struct NodeConfig {
     pub local: LocalHello,
     pub pins: Arc<PinSet>,
     pub grants: Arc<Grants>,
+    /// Open invitations of this node (the listener accepts unpinned keys on
+    /// the pair channel only while one is open).
+    pub invites: Arc<Invitations>,
 }
 
 impl NodeConfig {
@@ -131,10 +137,11 @@ impl NodeConfig {
             local: LocalHello::new(role),
             pins: PinSet::new(),
             grants: Grants::new(),
+            invites: Invitations::new(),
         }
     }
 
-    fn peer_role(&self) -> Role {
+    pub(crate) fn peer_role(&self) -> Role {
         crate::hello::expected_peer_role(self.local.role)
     }
 }
@@ -168,7 +175,7 @@ impl std::fmt::Debug for Link {
 
 fn ws_config(channel: Channel) -> WebSocketConfig {
     let max = match channel {
-        Channel::Control => MAX_CONTROL_FRAME,
+        Channel::Control | Channel::Pair => MAX_CONTROL_FRAME,
         Channel::Data => MAX_CHUNK + 16,
     };
     WebSocketConfig::default()
@@ -181,6 +188,25 @@ fn exporter_of(conn: &rustls::ConnectionCommon<impl Sized>) -> Result<[u8; 32], 
         .map_err(|e| LinkError::Protocol(format!("TLS exporter: {e}")))
 }
 
+/// TLS + WebSocket upgrade to `channel`; returns the TLS exporter too.
+pub(crate) async fn connect_ws(
+    addr: SocketAddr,
+    config: Arc<rustls::ClientConfig>,
+    channel: Channel,
+) -> Result<(Ws, PeerKey, [u8; 32]), LinkError> {
+    let (tls, peer) = net::connect(addr, config).await?;
+    let exporter = exporter_of(tls.get_ref().1)?;
+    let url = format!("wss://{SERVER_NAME}{}", channel.path());
+    let (ws, _) = client_async_with_config(
+        url,
+        tokio_rustls::TlsStream::Client(tls),
+        Some(ws_config(channel)),
+    )
+    .await
+    .map_err(LinkError::ws)?;
+    Ok((ws, peer, exporter))
+}
+
 async fn dial_channel(
     node: &NodeConfig,
     addr: SocketAddr,
@@ -188,16 +214,7 @@ async fn dial_channel(
     channel: Channel,
     epoch: u64,
 ) -> Result<(Ws, PeerKey, Negotiated), LinkError> {
-    let (tls, peer) = net::connect(addr, config).await?;
-    let exporter = exporter_of(tls.get_ref().1)?;
-    let url = format!("wss://{SERVER_NAME}{}", channel.path());
-    let (mut ws, _) = client_async_with_config(
-        url,
-        tokio_rustls::TlsStream::Client(tls),
-        Some(ws_config(channel)),
-    )
-    .await
-    .map_err(LinkError::ws)?;
+    let (mut ws, peer, exporter) = connect_ws(addr, config, channel).await?;
     let est = handshake::run(&mut ws, node, Side::Dialer, channel, epoch, exporter, peer).await?;
     handshake::await_ready(&mut ws).await?;
     Ok((ws, peer, est.negotiated))
@@ -244,20 +261,21 @@ pub async fn dial(node: &NodeConfig, addr: SocketAddr, epoch: u64) -> Result<Lin
                 "the data channel reached another node".into(),
             ));
         }
-        Some(data::spawn(dws, Side::Dialer))
+        Some(dws)
     } else {
         None
     };
-    let (control, inbound) = control::spawn(
+    // The dialer has no link table; it ends the link by dropping it.
+    let (shutdown_tx, shutdown) = mpsc::channel(2);
+    let (control, inbound, data) = start(
+        node,
         ws,
-        control::Params {
-            negotiated: negotiated.clone(),
-            grants: node.grants.clone(),
-            peer,
-            // The dialer has no link table; it ends the link by dropping it.
-            shutdown: None,
-            on_exit: Box::new(|| {}),
-        },
+        data,
+        Side::Dialer,
+        peer,
+        &negotiated,
+        (shutdown_tx, shutdown),
+        Box::new(|| {}),
     );
     Ok(Link {
         peer,
@@ -271,9 +289,51 @@ pub async fn dial(node: &NodeConfig, addr: SocketAddr, epoch: u64) -> Result<Lin
     })
 }
 
+type End = (String, String);
+type DataSide = (Data, mpsc::UnboundedReceiver<DataEvent>);
+
+/// Starts the control task and, when present, the data task, tied together:
+/// the data channel ends with its control channel, and a lost data channel
+/// ends the control channel (`data_channel_lost`).
+#[allow(clippy::too_many_arguments)]
+fn start(
+    node: &NodeConfig,
+    ws: Ws,
+    data_ws: Option<Ws>,
+    side: Side,
+    peer: PeerKey,
+    negotiated: &Negotiated,
+    (shutdown_tx, shutdown): (mpsc::Sender<End>, mpsc::Receiver<End>),
+    on_exit: Box<dyn FnOnce() + Send + Sync>,
+) -> (Control, mpsc::Receiver<Inbound>, Option<DataSide>) {
+    let (data, data_stop) = match data_ws {
+        Some(dws) => {
+            let (stop_tx, stop) = oneshot::channel();
+            let ties = data::Ties {
+                stop,
+                control: shutdown_tx,
+            };
+            (Some(data::spawn(dws, side, ties)), Some(stop_tx))
+        }
+        None => (None, None),
+    };
+    let (control, inbound) = control::spawn(
+        ws,
+        control::Params {
+            negotiated: negotiated.clone(),
+            grants: node.grants.clone(),
+            peer,
+            shutdown,
+            data_stop,
+            on_exit,
+        },
+    );
+    (control, inbound, data)
+}
+
 struct Entry {
     epoch: u64,
-    shutdown: Option<oneshot::Sender<(String, String)>>,
+    shutdown: mpsc::Sender<End>,
     data: Option<oneshot::Sender<Ws>>,
 }
 
@@ -315,9 +375,10 @@ pub async fn listen(node: NodeConfig, addr: SocketAddr) -> Result<LinkListener, 
     let local_addr = listener.local_addr().map_err(NetError::Io)?;
     let config = tls::server_config(
         &node.identity,
-        PeerPolicy::Pinned {
+        PeerPolicy::PinnedOrInvited {
             pins: node.pins.clone(),
             role: node.peer_role(),
+            invites: node.invites.clone(),
         },
     )?;
     let (tx, incoming) = mpsc::channel(16);
@@ -376,6 +437,11 @@ async fn accept_one(
         .await
         .map_err(LinkError::ws)?;
         let channel = chosen.ok_or_else(|| LinkError::Protocol("no channel path".into()))?;
+        // TLS lets an unpinned key in while an invitation is open; such a key
+        // may only pair.
+        if channel != Channel::Pair && node.pins.role_of(&peer) != Some(node.peer_role()) {
+            return Err(handshake::refuse(&mut ws, HandshakeError::NotPaired).await);
+        }
         let est = handshake::run(&mut ws, node, Side::Listener, channel, 0, exporter, peer).await?;
         Ok::<_, LinkError>((ws, peer, channel, est))
     }
@@ -386,6 +452,11 @@ async fn accept_one(
     };
     let epoch = est.peer_hello.link_epoch;
     match channel {
+        Channel::Pair => {
+            // A pairing is not a link: the outcome goes to `Invitations`.
+            let _ = pair::accept(node, ws, peer, &est.transcript).await;
+            None
+        }
         Channel::Control => {
             Some(attach_control(node, ws, peer, epoch, est.negotiated, table).await)
         }
@@ -428,7 +499,7 @@ async fn attach_control(
     negotiated: Negotiated,
     table: &Table,
 ) -> Result<Link, LinkError> {
-    let (shutdown_tx, shutdown) = oneshot::channel();
+    let (shutdown_tx, shutdown) = mpsc::channel(2);
     let wants_data = negotiated.has(feature::DATA_STREAMS);
     let (data_tx, data_rx) = oneshot::channel();
     let decision = {
@@ -440,8 +511,8 @@ async fn attach_control(
         match t.get_mut(&peer) {
             Some(cur) if cur.epoch >= epoch => Err(cur.epoch),
             cur => {
-                if let Some(old) = cur.and_then(|c| c.shutdown.take()) {
-                    let _ = old.send((
+                if let Some(old) = cur {
+                    let _ = old.shutdown.try_send((
                         "superseded".into(),
                         format!("a link with epoch {epoch} replaced this link"),
                     ));
@@ -450,7 +521,7 @@ async fn attach_control(
                     peer,
                     Entry {
                         epoch,
-                        shutdown: Some(shutdown_tx),
+                        shutdown: shutdown_tx.clone(),
                         data: wants_data.then_some(data_tx),
                     },
                 );
@@ -475,7 +546,7 @@ async fn attach_control(
     handshake::send_frame(&mut ws, &HandshakeFrame::Ready).await?;
     let data = if wants_data {
         match tokio::time::timeout(net::HANDSHAKE_TIMEOUT, data_rx).await {
-            Ok(Ok(dws)) => Some(data::spawn(dws, Side::Listener)),
+            Ok(Ok(dws)) => Some(dws),
             _ => {
                 return Err(LinkError::closed(
                     "no_data_channel",
@@ -494,15 +565,15 @@ async fn attach_control(
             t.remove(&peer);
         }
     });
-    let (control, inbound) = control::spawn(
+    let (control, inbound, data) = start(
+        node,
         ws,
-        control::Params {
-            negotiated: negotiated.clone(),
-            grants: node.grants.clone(),
-            peer,
-            shutdown: Some(shutdown),
-            on_exit,
-        },
+        data,
+        Side::Listener,
+        peer,
+        &negotiated,
+        (shutdown_tx, shutdown),
+        on_exit,
     );
     Ok(Link {
         peer,

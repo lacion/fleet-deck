@@ -17,7 +17,7 @@ Rules for this file: one checklist item per M1 deliverable, in PLAN order. Each 
 - [x] **S2-3 Codex replay + `replay-codex` + ADR-002** (Proposed) with effect states and crash boundaries. *(round 7: replay + `replay-codex` + evidence tests; round 8: ADR-002, schema conformance, both question channels)*
 - [x] **S4-1 Link identity + address rules.** Ed25519 identity keys, self-signed certs from them, mTLS with pinned-key verifiers, D13 address rules (loopback, RFC 1918, ULA, link-local, Tailscale ranges; reject public at bind and dial) as unit tests. *(round 9)*
 - [x] **S4-2 Link handshake + channels.** `Hello` with `proto_min/max`, feature flags, roles, `link_epoch`, nonce; transcript signature bound to the TLS exporter; version negotiation; control channel (frames of §8.3) and data channel (multiplexed streams, credit flow control). *(round 10)*
-- [ ] **S4-3 Link pairing + reconnect.** `fdinv1:` invitations both directions (single use, 15 min, fingerprint-bound, secret proof bound to TLS); jittered backoff reconnect; duplicate link (`link_epoch`) rule; station-only-dials (NAT) case; multi-process loopback test with separate data dirs.
+- [x] **S4-3 Link pairing + reconnect.** `fdinv1:` invitations both directions (single use, 15 min, fingerprint-bound, secret proof bound to TLS); jittered backoff reconnect; duplicate link (`link_epoch`) rule; station-only-dials (NAT) case; multi-process loopback test with separate data dirs. *(round 11)*
 - [ ] **S4-4 ADR-004** (Proposed): link protocol v1 (frames, handshake, pairing, scopes, reconnect, feature flags).
 - [ ] **M1-F Close-out.** PLAN §6.2 matrix: verified value + evidence per cell; `spikes/README.md` offline commands for every spike; full acceptance run; DECISIONS-LOG complete.
 
@@ -229,3 +229,23 @@ Rules for this file: one checklist item per M1 deliverable, in PLAN order. Each 
   - `web/` checks and TS-types drift → not applicable in M1
 - Next: S4-3 link pairing + reconnect.
 
+### Round 11 (2026-10-11)
+
+- Committed round 10 first: `97a1490 feat(spikes): S4 link handshake, feature negotiation, epochs and control/data channels`.
+- Review fix: the data channel now ends with its control channel. `src/link/control.rs` sends its end reason to the data task (`data_stop`); `src/link/data.rs` ends, fails pending writes, and reports `data_channel_lost` to the control task when it ends first. Because the two TCP connections race, a control task that sees `data_channel_lost` waits up to 500 ms for a peer `close` frame, so a superseded dialer reports `superseded`. Regression tests in `tests/link.rs`: `closing_the_control_channel_ends_the_data_channel_on_both_sides`, `a_superseded_link_loses_its_data_channel_too`, `dropping_the_data_handles_keeps_the_link_up`. 20 repeated runs of `tests/link.rs`: 0 failures.
+- S4-3 done in `spikes/s4-link`:
+  - `src/pairing.rs` (5 tests): `Invitation` (`fdinv1:wss://<ip>:<port>#<fingerprint>.<secret>.<expiry>`, `Secret` with redacted `Debug`), HMAC-SHA256 proofs over the handshake transcript in both directions, `Invitations` store (single use, 15 min, failure cap 5).
+  - `src/link/pair.rs` + `Channel::Pair`: `link::pair()` (joiner) and the listener side; `PeerPolicy::PinnedOrInvited` lets unknown keys through TLS only while an invitation is open, and only onto the pair channel.
+  - `src/reconnect.rs` (3 tests): `Backoff` (equal jitter, 500 ms → 5 min cap, reset after 60 s uptime), `EpochClock`, `spawn_dialer()`.
+  - `src/bin/fd-link-node.rs`: one deck or station process with its own data directory (identity key, `peers.json`).
+  - `tests/pairing.rs` (8 tests) and `tests/multiprocess.rs` (3 tests: `nat_stations_pair_dial_and_reconnect_after_a_deck_restart`, `the_deck_joins_a_station_invitation_and_dials_it`, `public_and_wildcard_addresses_are_refused`). 8 repeated runs of both files: 0 failures.
+- DL-021 (pairing details), DL-022 (backoff and epoch source).
+- Commands and results:
+  - `cargo fmt --all --check` → pass
+  - `cargo clippy --workspace --all-targets -- -D warnings` → pass
+  - `CI=true cargo nextest run --workspace` → 204 passed (s4-link: 79)
+  - `cargo deny check` → advisories ok, bans ok, licenses ok, sources ok
+  - `cargo run -p s2-codex --bin replay-codex` → 15 ok, unknown=0, exit 0
+  - `cargo run -p s1-claude --bin replay-claude` → 29 ok, unknown=0, exit 0
+  - `web/` checks and TS-types drift → not applicable in M1
+- Next: S4-4 ADR-004.

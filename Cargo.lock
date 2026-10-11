@@ -951,6 +951,7 @@ name = "s4-link"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "clap",
  "ed25519-dalek",
  "futures-util",
  "proptest",

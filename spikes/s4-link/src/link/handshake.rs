@@ -19,6 +19,8 @@ use crate::net::HANDSHAKE_TIMEOUT;
 pub(crate) struct Established {
     pub peer_hello: Hello,
     pub negotiated: Negotiated,
+    /// The signed transcript; pairing proofs are made over it.
+    pub transcript: Vec<u8>,
 }
 
 pub(crate) async fn send_frame(ws: &mut Ws, frame: &HandshakeFrame) -> Result<String, LinkError> {
@@ -49,7 +51,7 @@ pub(crate) async fn recv_text(ws: &mut Ws) -> Result<String, LinkError> {
     }
 }
 
-async fn recv_frame(ws: &mut Ws) -> Result<(String, HandshakeFrame), LinkError> {
+pub(crate) async fn recv_frame(ws: &mut Ws) -> Result<(String, HandshakeFrame), LinkError> {
     let text = recv_text(ws).await?;
     let frame = serde_json::from_str(&text)
         .map_err(|e| LinkError::Handshake(HandshakeError::BadHello(e.to_string())))?;
@@ -128,6 +130,7 @@ async fn steps(
     Ok(Established {
         peer_hello,
         negotiated,
+        transcript: tr,
     })
 }
 

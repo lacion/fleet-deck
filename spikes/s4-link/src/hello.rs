@@ -51,6 +51,8 @@ pub mod feature {
 pub enum Channel {
     Control,
     Data,
+    /// Invitation pairing (§8.5): handshake, proof, answer, close.
+    Pair,
 }
 
 impl Channel {
@@ -59,11 +61,12 @@ impl Channel {
         match self {
             Self::Control => "/fdlink/v1/control",
             Self::Data => "/fdlink/v1/data",
+            Self::Pair => "/fdlink/v1/pair",
         }
     }
 
     pub fn from_path(path: &str) -> Option<Self> {
-        [Self::Control, Self::Data]
+        [Self::Control, Self::Data, Self::Pair]
             .into_iter()
             .find(|c| c.path() == path)
     }
@@ -125,6 +128,16 @@ pub enum HandshakeFrame {
     /// listener → dialer after both `Auth`s: the link epoch is accepted and
     /// the channel is live.
     Ready,
+    /// Pair channel, joiner → inviter after both `Auth`s: HMAC of the
+    /// invitation secret over the transcript (64 hex).
+    PairProof {
+        proof: String,
+    },
+    /// Pair channel, inviter → joiner: the inviter's HMAC answer. The joiner
+    /// pins the inviter only after it checked this answer.
+    Paired {
+        proof: String,
+    },
 }
 
 /// The outcome of negotiation.
@@ -167,6 +180,10 @@ pub enum HandshakeError {
     BadSignature,
     #[error("the peer refused the link: {reason}: {detail}")]
     PeerClosed { reason: String, detail: String },
+    #[error("this node has not paired with the peer's key")]
+    NotPaired,
+    #[error("pairing failed: {0}")]
+    Pairing(#[from] crate::pairing::PairError),
     #[error("link protocol error: {0}")]
     Protocol(String),
 }
@@ -182,6 +199,8 @@ impl HandshakeError {
             Self::BadHello(_) => "bad_hello",
             Self::BadSignature => "bad_signature",
             Self::PeerClosed { .. } => "peer_closed",
+            Self::NotPaired => "not_paired",
+            Self::Pairing(e) => e.reason(),
             Self::Protocol(_) => "protocol_error",
         }
     }
