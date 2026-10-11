@@ -746,3 +746,18 @@ Format: context, options, choice, reason, owner review.
   - `fleetdeck up` runs `RunningDeck` and `RunningStation` (new start/stop split of `deck serve` and `station serve`) in one process from the normal config files. At the first start the deck makes an invitation in memory and the station joins it over the deck's link listener; the invitation never leaves the process. A station that is already paired with this deck only reconnects; a station that is paired with another deck is an error with the `fleetdeck station forget-deck` hint (`up` never replaces a pairing). A deck without `link_listen` is an error.
 - Reason: the station is the only process that may read its file system, and the drive scope is the right gate for directory names. One embedded binary makes the single-machine mode one command. In-process pairing keeps the secret out of files and terminals.
 - Owner review: pending
+
+## DL-062: Real-process MVP browser flows (M2 round 33, P4-5)
+
+- Context: the Phase 4 exit (MVP demo) asks for a phone that spawns Claude sessions on two machines, answers approvals, steers and interrupts, and survives a deck restart and a network drop. The P4-2..P4-4 Playwright tests use a scripted deck (DL-059). The plan does not say how the demo test starts processes, simulates a phone network drop, or treats the self-signed board certificate.
+- Options: (a) a second Playwright config that starts the real `fleetdeck` binaries (one deck, two stations with `fake-claude sim`) on temporary nodes from TypeScript; (b) a Rust test that drives the browser; (c) only the scripted deck.
+- Choice: (a).
+  - `web/playwright.real.config.ts` (`bun run --cwd web e2e:real`, part of `make check` after the scripted e2e): one worker, serial steps that share one fleet and one phone page (390×844, mobile, touch). The global setup runs `cargo build -p fleetdeck-cli -p fleetdeck-testkit --bins` unless `FD_BIN_DIR` names prebuilt binaries.
+  - `web/e2e-real/fleet.ts` makes one temporary directory per node under the OS temp directory (home + data dir, mode 0700, config 0600) and removes it after the run (`FD_E2E_KEEP=1` keeps it for debugging). Processes stop with SIGTERM, then SIGKILL after 20 s.
+  - The deck board listens on a fixed free loopback port, so a restarted deck serves the same origin and the phone keeps its login cookie. The context accepts the self-signed board certificate (`ignoreHTTPSErrors`), as a person does once on first use (A13).
+  - Both pairings go through the board dialog: bravo (no listener) joins a board-made invitation; the board pairs alpha (listener) from alpha's invitation.
+  - Network drop: Chromium's offline emulation blocks new requests but keeps open WebSockets. The test routes the board socket through Playwright (`routeWebSocket` + `connectToServer`), sets the context offline and closes the routed socket; the board must reconnect after the network returns.
+  - Assertions come from the board and from the stations' own `station sessions --json` lists (no session started twice after the deck restart).
+- Reason: real processes prove the whole path (board → deck → link → station → provider host → fake agent) with the same binaries that users run, offline and in under 10 s. Closing the routed socket is the closest browser-level model of a phone that loses its network.
+- Owner review: pending
+

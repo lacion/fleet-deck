@@ -6,7 +6,8 @@
 # network: web dependencies come from the local bun cache (`--offline`), and
 # `cargo deny` uses the local advisory database. It needs no provider CLI.
 # It writes only to `target/`, `web/node_modules/`, `web/dist/`,
-# `web/test-results/` and a temporary log directory.
+# `web/test-results/`, a temporary log directory, and the temporary node
+# directories of the real-process browser flows (removed after the run).
 #
 #   make check                                   # the normal entry point
 #   FD_TEST_RUNNER=test make check               # force `cargo test` instead of nextest
@@ -85,6 +86,9 @@ run bun run --cwd web test
 run bun run --cwd web build
 # Phone-viewport browser tests of the built board (Playwright, Chromium).
 run bun run --cwd web e2e
+# The MVP flows against a real deck and two real stations with the offline
+# fake agent (M2 P4-5); its setup builds `fleetdeck` and the fakes.
+run bun run --cwd web e2e:real
 
 # Recorded provider replays (offline; fixtures in spikes/*/fixtures).
 run cargo run -q -p s1-claude --bin replay-claude

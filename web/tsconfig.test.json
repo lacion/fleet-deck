@@ -4,6 +4,6 @@
   "compilerOptions": {
     "types": ["bun"]
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "e2e/**/*.ts", "vite.config.ts", "playwright.config.ts"],
+  "include": ["src/**/*.ts", "src/**/*.tsx", "e2e/**/*.ts", "e2e-real/**/*.ts", "vite.config.ts", "playwright.config.ts", "playwright.real.config.ts"],
   "exclude": ["node_modules", "dist", "test-results"]
 }

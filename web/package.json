@@ -12,7 +12,8 @@
     "lint": "biome ci --colors=off .",
     "format": "biome format --write .",
     "test": "bun test src",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "e2e:real": "playwright test -c playwright.real.config.ts"
   },
   "dependencies": {
     "react": "19.2.8",
