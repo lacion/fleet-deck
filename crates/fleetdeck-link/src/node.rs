@@ -33,6 +33,7 @@ use crate::hello::{
 use crate::net::{self, NetError};
 use crate::table::{Admitted, Closing, Dialer, LinkId, LinkTable, SUPERSEDED, TableGuard};
 use crate::tls::{self, InvitationGate, PeerPolicy, PinSet, Role};
+use crate::tokens::StreamTokens;
 use crate::ws::{self, LinkError, STEP_DATA, Ws};
 
 /// The close reason of a data channel without its control channel.
@@ -63,6 +64,8 @@ pub struct NodeConfig {
     pub grants: Arc<dyn GrantSource>,
     /// Limits of the control channel of every link (G8).
     pub control: ControlConfig,
+    /// Stream tokens that this node issued, for all of its links (G2).
+    pub tokens: StreamTokens,
     /// Bound of each setup step after TLS: the WebSocket upgrade, the
     /// hello/auth exchange, the wait for `Ready` and for the data channel.
     pub handshake_timeout: Duration,
@@ -80,6 +83,7 @@ impl NodeConfig {
             table,
             grants: Grants::new(),
             control: ControlConfig::default(),
+            tokens: StreamTokens::default(),
             handshake_timeout: net::HANDSHAKE_TIMEOUT,
         }
     }

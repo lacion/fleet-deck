@@ -26,6 +26,7 @@ tracing.workspace = true
 rustix = { workspace = true, features = ["fs"] }
 
 [dev-dependencies]
+proptest.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 

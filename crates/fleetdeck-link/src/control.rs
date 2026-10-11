@@ -17,7 +17,7 @@ use std::fmt;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use fleetdeck_core::identity::{Fingerprint, PeerKey};
+use fleetdeck_core::identity::Fingerprint;
 use fleetdeck_proto::CommandId;
 use fleetdeck_proto::link::{ControlFrame, MAX_CONTROL_FRAME_BYTES, Outcome, WireError};
 use fleetdeck_proto::version::Negotiated;
@@ -32,18 +32,16 @@ use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::Message;
 
 pub use crate::grants::{GrantSource, Grants};
-use crate::hello::Side;
 use crate::methods::{self, MethodSpec, code};
-use crate::node::{NodeConfig, OpenLink};
-use crate::table::{Closing, LinkId, TableGuard};
+use crate::table::{Closing, TableGuard};
 use crate::tls::Role;
-use crate::ws::{CLEANUP_LIMIT, LinkError, Ws};
+use crate::ws::{CLEANUP_LIMIT, LinkError};
 
 /// A heartbeat `ping` goes out at this interval (G8).
 pub const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
 /// The link closes (`timeout`) when no frame arrived for this long (G8).
 pub const IDLE_LIMIT: Duration = Duration::from_secs(45);
-/// Requests that one side may have open on a link, per direction (G8).
+/// Requests open on one link, both directions together (G8, DL-044).
 pub const MAX_OUTSTANDING: usize = 128;
 /// Capacity of the outbound frame queue and of the application queue.
 pub const QUEUE_CAPACITY: usize = 256;
@@ -124,6 +122,15 @@ struct Pending {
     open_in: HashSet<u64>,
 }
 
+impl Pending {
+    /// Requests open on the link in both directions: own requests that wait
+    /// for a response plus inbound requests that wait for this node's answer.
+    /// ADR-004 §9.7 G8 bounds this sum, not each direction (DL-044).
+    fn open(&self) -> usize {
+        self.out.len() + self.open_in.len()
+    }
+}
+
 struct Shared {
     params: ChannelParams,
     out: mpsc::Sender<String>,
@@ -133,7 +140,45 @@ struct Shared {
     last_rx: Mutex<Instant>,
 }
 
+/// See [`Control::watcher`].
+pub(crate) struct ControlWatch(Arc<Shared>);
+
+impl ControlWatch {
+    pub(crate) fn close(&self, reason: &str, detail: &str) {
+        self.0.close(reason, detail);
+    }
+
+    pub(crate) fn ended(&self) -> Option<Closing> {
+        self.0.ended.borrow().clone()
+    }
+
+    pub(crate) async fn closed(&self) -> Closing {
+        self.0.closed().await
+    }
+}
+
 impl Shared {
+    fn close(&self, reason: &str, detail: &str) {
+        self.stop.send_if_modified(|s| {
+            if s.is_some() {
+                return false;
+            }
+            *s = Some(Closing {
+                reason: reason.to_owned(),
+                detail: detail.to_owned(),
+            });
+            true
+        });
+    }
+
+    async fn closed(&self) -> Closing {
+        let mut rx = self.ended.subscribe();
+        match rx.wait_for(Option::is_some).await {
+            Ok(c) => c.clone().unwrap_or_else(unknown_end),
+            Err(_) => unknown_end(),
+        }
+    }
+
     fn pending(&self) -> std::sync::MutexGuard<'_, Pending> {
         self.pending.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -198,7 +243,8 @@ impl fmt::Debug for Control {
 impl Control {
     /// Sends a request and waits for its response. A request that this node
     /// may not send (method, role, feature, `command_id`, more than
-    /// `max_outstanding` open) is answered locally and never sent.
+    /// `max_outstanding` open on the link in both directions together) is
+    /// answered locally and never sent.
     pub async fn request(
         &self,
         method: &str,
@@ -216,13 +262,10 @@ impl Control {
         let (reply, rx) = oneshot::channel();
         let id = {
             let mut pending = self.shared.pending();
-            if pending.out.len() >= p.config.max_outstanding {
+            if pending.open() >= p.config.max_outstanding {
                 return Ok(refusal(
                     code::TOO_MANY_REQUESTS,
-                    format!(
-                        "{} requests are already open on this link",
-                        pending.out.len()
-                    ),
+                    format!("{} requests are already open on this link", pending.open()),
                 ));
             }
             pending.next_id += 1;
@@ -278,16 +321,12 @@ impl Control {
     /// Ends the link with a `close` frame. Never waits: the supervisor sends
     /// the frame within [`CLEANUP_LIMIT`].
     pub fn close(&self, reason: &str, detail: &str) {
-        self.shared.stop.send_if_modified(|s| {
-            if s.is_some() {
-                return false;
-            }
-            *s = Some(Closing {
-                reason: reason.to_owned(),
-                detail: detail.to_owned(),
-            });
-            true
-        });
+        self.shared.close(reason, detail);
+    }
+
+    /// A handle that sees and ends the link but does not keep it alive.
+    pub(crate) fn watcher(&self) -> ControlWatch {
+        ControlWatch(Arc::clone(&self.shared))
     }
 
     /// Why the link ended; `None` while it runs.
@@ -298,11 +337,7 @@ impl Control {
 
     /// Waits until the link ended.
     pub async fn closed(&self) -> Closing {
-        let mut rx = self.shared.ended.subscribe();
-        match rx.wait_for(Option::is_some).await {
-            Ok(c) => c.clone().unwrap_or_else(unknown_end),
-            Err(_) => unknown_end(),
-        }
+        self.shared.closed().await
     }
 
     /// Own requests that wait for a response.
@@ -315,6 +350,13 @@ impl Control {
     #[must_use]
     pub fn open_inbound(&self) -> usize {
         self.shared.pending().open_in.len()
+    }
+
+    /// Requests open on the link in both directions, as this node sees them.
+    /// It never exceeds `max_outstanding`.
+    #[must_use]
+    pub fn open_requests(&self) -> usize {
+        self.shared.pending().open()
     }
 
     #[must_use]
@@ -385,52 +427,6 @@ where
         _alive: Arc::new(alive),
     };
     (control, in_rx)
-}
-
-/// A link whose control channel runs (the result of [`start`]).
-pub struct LiveLink {
-    pub peer: PeerKey,
-    pub id: LinkId,
-    pub side: Side,
-    pub control: Control,
-    pub inbound: mpsc::Receiver<Inbound>,
-    /// The data channel; P3-3 serves it.
-    pub data: Option<Ws>,
-}
-
-impl fmt::Debug for LiveLink {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("LiveLink")
-            .field("peer", &self.peer.fingerprint().short())
-            .field("id", &self.id)
-            .field("side", &self.side)
-            .field("control", &self.control)
-            .finish_non_exhaustive()
-    }
-}
-
-/// Starts the control channel of an established link. The roles are the
-/// ones bound at pairing: this node's role and the role of the pinned peer
-/// key (setup admits only keys pinned with `node.peer_role()`).
-#[must_use]
-pub fn start(node: &NodeConfig, link: OpenLink) -> LiveLink {
-    let params = ChannelParams {
-        local: node.local.role,
-        peer_role: node.peer_role(),
-        peer: link.peer.fingerprint(),
-        negotiated: link.negotiated,
-        grants: Arc::clone(&node.grants),
-        config: node.control,
-    };
-    let (control, inbound) = spawn(link.control, params, link.closing, Some(link.guard));
-    LiveLink {
-        peer: link.peer,
-        id: link.id,
-        side: link.side,
-        control,
-        inbound,
-        data: link.data,
-    }
 }
 
 struct Tasks {
@@ -672,12 +668,9 @@ async fn on_frame(
                     Some(&granted),
                 ) {
                     Err(e) => Err(Outcome::Err(e)),
-                    Ok(_) if pending.open_in.len() >= p.config.max_outstanding => Err(refusal(
+                    Ok(_) if pending.open() >= p.config.max_outstanding => Err(refusal(
                         code::TOO_MANY_REQUESTS,
-                        format!(
-                            "{} requests are already open on this link",
-                            pending.open_in.len()
-                        ),
+                        format!("{} requests are already open on this link", pending.open()),
                     )),
                     Ok(spec) => {
                         pending.open_in.insert(id);

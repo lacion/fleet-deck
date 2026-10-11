@@ -549,6 +549,7 @@ dependencies = [
  "fleetdeck-core",
  "fleetdeck-proto",
  "futures-util",
+ "proptest",
  "ring",
  "rusqlite",
  "rusqlite_migration",

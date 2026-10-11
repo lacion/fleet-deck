@@ -343,35 +343,73 @@ async fn a_repeated_open_request_id_closes_the_link() {
     assert_eq!(s.control.closed().await.reason, "protocol_error");
 }
 
-#[tokio::test]
-async fn at_most_128_requests_are_open_in_each_direction() {
-    // Own requests: the 129th is refused locally and never sent.
-    let (deck, mut station) = pair(ControlConfig::default()).await;
+/// A deck and a station that may call each other: the station granted the
+/// deck `read`, the deck granted the station `coordinate`.
+async fn granted_pair() -> (Side, Side) {
+    let (deck, station) = pair(ControlConfig::default()).await;
     station.grants.grant(station.peer, [Scope::Read]);
-    let mut calls = Vec::new();
-    for _ in 0..MAX_OUTSTANDING {
-        let c = deck.control.clone();
-        calls.push(tokio::spawn(async move {
-            c.request("station.info", None, json!({})).await
-        }));
+    deck.grants.grant(deck.peer, [Scope::Coordinate]);
+    (deck, station)
+}
+
+type Call = tokio::task::JoinHandle<Result<Outcome, LinkError>>;
+
+fn call(from: &Side, method: &'static str) -> Call {
+    let c = from.control.clone();
+    tokio::spawn(async move { c.request(method, None, json!({})).await })
+}
+
+/// Receives `n` requests at `side` and keeps them open.
+async fn hold(side: &mut Side, n: usize) -> Vec<InboundRequest> {
+    let mut held = Vec::new();
+    for _ in 0..n {
+        let r = tokio::time::timeout(Duration::from_secs(10), next_request(side));
+        held.push(r.await.expect("a request was not delivered"));
     }
-    for _ in 0..MAX_OUTSTANDING {
-        next_request(&mut station).await;
+    held
+}
+
+#[tokio::test]
+async fn at_most_128_requests_are_open_on_one_link_in_both_directions_together() {
+    // 100 deck → station requests and 28 station → deck requests fill the link.
+    let (mut deck, mut station) = granted_pair().await;
+    let mut calls: Vec<Call> = (0..100).map(|_| call(&deck, "station.info")).collect();
+    let mut at_station = hold(&mut station, 100).await;
+    calls.extend((0..28).map(|_| call(&station, "coordinator.query")));
+    let at_deck = hold(&mut deck, 28).await;
+    for side in [&deck, &station] {
+        assert_eq!(side.control.open_requests(), MAX_OUTSTANDING);
     }
-    assert_eq!(deck.control.outstanding(), MAX_OUTSTANDING);
-    let o = deck
+
+    // The next request from either side is refused locally and never sent.
+    for (from, method) in [(&deck, "station.info"), (&station, "coordinator.query")] {
+        let o = from.control.request(method, None, json!({})).await.unwrap();
+        assert_eq!(err_code(&o), "too_many_requests");
+    }
+    assert!(deck.inbound.try_recv().is_err() && station.inbound.try_recv().is_err());
+
+    // An answer in one direction frees a slot for the other direction.
+    let first = at_station.remove(0);
+    station
         .control
-        .request("station.info", None, json!({}))
+        .respond(first.id, Outcome::Ok(json!(null)))
         .await
         .unwrap();
-    assert_eq!(err_code(&o), "too_many_requests");
-    assert!(
-        station.inbound.try_recv().is_err(),
-        "the refused request was not sent"
-    );
+    let freed = calls.remove(0);
+    assert_eq!(freed.await.unwrap().unwrap(), Outcome::Ok(json!(null)));
+    let extra = call(&station, "coordinator.query");
+    let r = next_request(&mut deck).await;
+    deck.control
+        .respond(r.id, Outcome::Ok(json!(1)))
+        .await
+        .unwrap();
+    assert_eq!(extra.await.unwrap().unwrap(), Outcome::Ok(json!(1)));
+    assert!(deck.control.ended().is_none() && station.control.ended().is_none());
+    drop((at_station, at_deck, calls));
 
-    // Inbound requests: the 129th open one gets too_many_requests.
-    let (mut s, mut raw) = with_raw(
+    // A peer that ignores the limit: with 64 own requests open, the 65th
+    // inbound request gets too_many_requests.
+    let (s, mut raw) = with_raw(
         Role::Station,
         feature::ALL,
         1 << 20,
@@ -379,37 +417,169 @@ async fn at_most_128_requests_are_open_in_each_direction() {
     )
     .await;
     s.grants.grant(s.peer, [Scope::Read]);
-    for id in 1..=129 {
+    let own: Vec<Call> = (0..64).map(|_| call(&s, "coordinator.query")).collect();
+    for _ in 0..64 {
+        assert!(matches!(
+            recv_raw(&mut raw).await,
+            Some(ControlFrame::Request { .. })
+        ));
+    }
+    for id in 1..=65 {
         send_raw(&mut raw, &request(id, "station.info", None)).await;
     }
     match recv_raw(&mut raw).await {
         Some(ControlFrame::Response { id, outcome }) => {
-            assert_eq!((id, err_code(&outcome)), (129, "too_many_requests"));
+            assert_eq!((id, err_code(&outcome)), (65, "too_many_requests"));
         }
         other => panic!("expected a response, got {other:?}"),
     }
-    assert_eq!(s.control.open_inbound(), MAX_OUTSTANDING);
-    // An answer frees a slot.
-    let first = next_request(&mut s).await;
-    s.control
-        .respond(first.id, Outcome::Ok(json!(null)))
-        .await
-        .unwrap();
-    assert!(matches!(
-        recv_raw(&mut raw).await,
-        Some(ControlFrame::Response { id: 1, .. })
-    ));
-    send_raw(&mut raw, &request(130, "station.info", None)).await;
-    let mut seen = 1;
-    while seen < 129 {
-        let r = next_request(&mut s).await;
-        seen += 1;
-        if r.id == 130 {
+    assert_eq!(
+        (s.control.outstanding(), s.control.open_inbound()),
+        (64, 64)
+    );
+    assert!(s.control.ended().is_none());
+    drop(own);
+}
+
+/// Regression (round 16 review): both sides send at the same moment. Each
+/// side counts what it sent and what it serves, so the requests that both
+/// sides serve together never exceed the link limit.
+#[tokio::test]
+async fn simultaneous_requests_from_both_sides_never_open_more_than_128() {
+    let (mut deck, mut station) = granted_pair().await;
+    let mut calls: Vec<Call> = Vec::new();
+    for _ in 0..MAX_OUTSTANDING {
+        calls.push(call(&deck, "station.info"));
+        calls.push(call(&station, "coordinator.query"));
+    }
+    // Collect what each side serves until every call is served or refused.
+    let mut served = Vec::new();
+    let mut refused = 0;
+    let mut pending: Vec<Call> = calls;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        while let Ok(Inbound::Request(r)) = deck.inbound.try_recv() {
+            served.push((true, r));
+        }
+        while let Ok(Inbound::Request(r)) = station.inbound.try_recv() {
+            served.push((false, r));
+        }
+        let mut still = Vec::new();
+        for c in pending {
+            if c.is_finished() {
+                let o = c.await.unwrap().unwrap();
+                assert_eq!(err_code(&o), "too_many_requests");
+                refused += 1;
+            } else {
+                still.push(c);
+            }
+        }
+        pending = still;
+        assert!(
+            deck.control.open_inbound() + station.control.open_inbound() <= MAX_OUTSTANDING,
+            "both sides serve more than the link limit"
+        );
+        for side in [&deck, &station] {
+            assert!(side.control.open_requests() <= MAX_OUTSTANDING);
+        }
+        if served.len() + refused == 2 * MAX_OUTSTANDING {
             break;
         }
+        assert!(
+            Instant::now() < deadline,
+            "served {} refused {refused}",
+            served.len()
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
     }
-    assert!(s.control.ended().is_none());
-    drop(calls);
+    assert!(served.len() <= MAX_OUTSTANDING, "served {}", served.len());
+    assert!(refused >= MAX_OUTSTANDING, "refused {refused}");
+
+    // Every served request can be answered; the link stays open.
+    for (at_deck, r) in served {
+        let side = if at_deck { &deck } else { &station };
+        side.control
+            .respond(r.id, Outcome::Ok(json!(null)))
+            .await
+            .unwrap();
+    }
+    for c in pending {
+        assert_eq!(c.await.unwrap().unwrap(), Outcome::Ok(json!(null)));
+    }
+    assert_eq!(deck.control.open_requests(), 0);
+    assert_eq!(station.control.open_requests(), 0);
+    assert!(deck.control.ended().is_none() && station.control.ended().is_none());
+}
+
+/// Regression: a raw peer sends its request while this node sends its own,
+/// at 127 open requests. Exactly one of the two requests is opened.
+#[tokio::test]
+async fn at_127_open_requests_only_one_of_two_crossing_requests_opens() {
+    let (mut ours_first, mut theirs_first) = (0, 0);
+    for _ in 0..20 {
+        let (mut s, mut raw) = with_raw(
+            Role::Station,
+            feature::ALL,
+            1 << 20,
+            ControlConfig::default(),
+        )
+        .await;
+        s.grants.grant(s.peer, [Scope::Read]);
+        let own: Vec<Call> = (0..64).map(|_| call(&s, "coordinator.query")).collect();
+        for _ in 0..64 {
+            assert!(matches!(
+                recv_raw(&mut raw).await,
+                Some(ControlFrame::Request { .. })
+            ));
+        }
+        for id in 1..=63 {
+            send_raw(&mut raw, &request(id, "station.info", None)).await;
+        }
+        hold(&mut s, 63).await;
+        assert_eq!(s.control.open_requests(), 127);
+
+        // The two requests cross on the wire.
+        let mine = call(&s, "coordinator.query");
+        send_raw(&mut raw, &request(64, "station.info", None)).await;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !(mine.is_finished() || s.control.outstanding() == 65) {
+            assert!(Instant::now() < deadline, "neither request settled");
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        if mine.is_finished() {
+            // The peer's request came first: it opened, ours was refused locally.
+            let o = mine.await.unwrap().unwrap();
+            assert_eq!(err_code(&o), "too_many_requests");
+            let _theirs = next_request(&mut s).await;
+            assert_eq!(
+                (s.control.outstanding(), s.control.open_inbound()),
+                (64, 64)
+            );
+            theirs_first += 1;
+        } else {
+            // Ours went out first: the peer's request is refused.
+            loop {
+                match recv_raw(&mut raw).await {
+                    Some(ControlFrame::Request { .. }) => {}
+                    Some(ControlFrame::Response { id, outcome }) => {
+                        assert_eq!((id, err_code(&outcome)), (64, "too_many_requests"));
+                        break;
+                    }
+                    other => panic!("unexpected {other:?}"),
+                }
+            }
+            assert_eq!(
+                (s.control.outstanding(), s.control.open_inbound()),
+                (65, 63)
+            );
+            ours_first += 1;
+        }
+        assert_eq!(s.control.open_requests(), MAX_OUTSTANDING);
+        assert!(s.control.ended().is_none());
+        drop(own);
+    }
+    // Both orders end with exactly one open request; record which ran.
+    assert_eq!(ours_first + theirs_first, 20);
 }
 
 #[tokio::test(start_paused = true)]

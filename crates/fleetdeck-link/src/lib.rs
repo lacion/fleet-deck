@@ -13,23 +13,33 @@
 //! - [`methods`]: the method table and the frame checks (G6, G7).
 //! - [`control`]: the control channel: requests, stream frames, heartbeat
 //!   and bounded shutdown (G8).
+//! - [`mux`], [`data`], [`tokens`]: the data channel: streams with credit
+//!   flow control, link budgets and single-use stream tokens (G2, G6, G9).
+//! - [`live`]: a running link; one lifetime for both channels.
 
 pub mod control;
+pub mod data;
 pub mod epochs;
 pub mod grants;
 mod handshake;
 pub mod hello;
+pub mod live;
 pub mod methods;
+pub mod mux;
 pub mod net;
 pub mod node;
 pub mod table;
 pub mod tls;
+pub mod tokens;
 pub mod transport;
 pub mod ws;
 
-pub use control::{Control, ControlConfig, GrantSource, Grants, Inbound, LiveLink};
+pub use control::{Control, ControlConfig, GrantSource, Grants, Inbound};
+pub use data::{Data, DataEvent};
 pub use epochs::{Epochs, LINK_EPOCHS_SQL};
 pub use handshake::Established;
+pub use live::{DataLink, LiveLink, start};
 pub use node::{LinkListener, NodeConfig, OpenLink, dial, listen};
 pub use table::{Closing, Dialer, LinkId, LinkTable};
+pub use tokens::{StreamToken, StreamTokens};
 pub use ws::LinkError;

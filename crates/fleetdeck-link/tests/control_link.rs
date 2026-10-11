@@ -4,112 +4,15 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use std::net::SocketAddr;
-use std::sync::Arc;
+mod common;
+
 use std::time::Duration;
 
-use fleetdeck_core::identity::Identity;
-use fleetdeck_link::control::{self, Inbound, InboundRequest};
-use fleetdeck_link::hello::LocalHello;
-use fleetdeck_link::node::{self, NodeConfig};
-use fleetdeck_link::tls::Role;
-use fleetdeck_link::{Epochs, GrantSource, Grants, LinkListener, LiveLink};
-use fleetdeck_proto::link::{ControlFrame, Outcome, Scope};
+use common::{T, code, eventually, link, listen, paired, serve_one};
+use fleetdeck_link::control::Inbound;
+use fleetdeck_proto::link::{ControlFrame, Outcome};
 use fleetdeck_proto::{CommandId, IncarnationId};
 use serde_json::json;
-
-const T: Duration = Duration::from_secs(10);
-
-struct Node {
-    config: NodeConfig,
-    grants: Arc<Grants>,
-}
-
-fn node(role: Role) -> Node {
-    let identity = Arc::new(Identity::generate().unwrap());
-    let inc = IncarnationId::from(format!("inc-{}", identity.fingerprint().short()));
-    let mut config = NodeConfig::new(
-        identity,
-        LocalHello::new(role, inc),
-        Arc::new(Epochs::in_memory()),
-    );
-    let grants = Grants::new();
-    config.grants = Arc::clone(&grants) as Arc<dyn GrantSource>;
-    Node { config, grants }
-}
-
-/// A deck and a station that paired: the deck may read, drive and approve;
-/// the station may coordinate.
-fn paired() -> (Node, Node) {
-    let deck = node(Role::Deck);
-    let station = node(Role::Station);
-    deck.config
-        .pins
-        .pin(station.config.identity.public_key(), Role::Station);
-    station
-        .config
-        .pins
-        .pin(deck.config.identity.public_key(), Role::Deck);
-    station.grants.grant(
-        deck.config.identity.fingerprint(),
-        [Scope::Read, Scope::Drive, Scope::Approve],
-    );
-    deck.grants
-        .grant(station.config.identity.fingerprint(), [Scope::Coordinate]);
-    (deck, station)
-}
-
-fn lo() -> SocketAddr {
-    "127.0.0.1:0".parse().unwrap()
-}
-
-async fn listen(n: &Node) -> LinkListener {
-    node::listen(n.config.clone(), lo()).await.unwrap()
-}
-
-/// `from` dials `to`; returns (live link at `from`, live link at `to`).
-async fn link(from: &Node, to: &Node, l: &mut LinkListener) -> (LiveLink, LiveLink) {
-    let peer = to.config.identity.public_key();
-    let (d, a) = tokio::time::timeout(T, async {
-        tokio::join!(node::dial(&from.config, l.local_addr, peer), l.next())
-    })
-    .await
-    .expect("link setup timeout");
-    let d = control::start(&from.config, d.unwrap());
-    let a = control::start(&to.config, a.expect("listener ended").unwrap());
-    (d, a)
-}
-
-async fn next_request(l: &mut LiveLink) -> InboundRequest {
-    match tokio::time::timeout(T, l.inbound.recv())
-        .await
-        .expect("no request")
-    {
-        Some(Inbound::Request(r)) => r,
-        other => panic!("expected a request, got {other:?}"),
-    }
-}
-
-async fn serve_one(l: &mut LiveLink, answer: serde_json::Value) -> String {
-    let r = next_request(l).await;
-    l.control.respond(r.id, Outcome::Ok(answer)).await.unwrap();
-    r.method
-}
-
-fn code(o: &Outcome) -> &str {
-    match o {
-        Outcome::Err(e) => &e.code,
-        Outcome::Ok(_) => "ok",
-    }
-}
-
-async fn eventually(what: &str, mut ok: impl FnMut() -> bool) {
-    let deadline = tokio::time::Instant::now() + T;
-    while !ok() {
-        assert!(tokio::time::Instant::now() < deadline, "timed out: {what}");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-}
 
 #[tokio::test]
 async fn roles_come_from_the_pairing_not_from_the_dial_direction() {
