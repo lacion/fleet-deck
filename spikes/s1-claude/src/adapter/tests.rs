@@ -431,3 +431,100 @@ fn set_mode_accepts_only_native_modes() {
         }]
     );
 }
+
+/// The CLI sends `command_lifecycle` frames before `system/init`; the canonical
+/// stream still opens with `session.started`.
+#[test]
+fn events_before_init_follow_session_started() {
+    let mut core = ClaudeCore::new();
+    core.prompt("hi", IN1);
+    assert!(lifecycle(&mut core, IN1, "queued").is_empty());
+    assert!(lifecycle(&mut core, IN1, "started").is_empty());
+    let ev = emits(&feed(
+        &mut core,
+        json!({"type":"system","subtype":"init","session_id":"S","model":"m","permissionMode":"default","claude_code_version":"2.1.289"}),
+    ));
+    let kinds: Vec<_> = ev.iter().map(CanonEvent::kind_name).collect();
+    assert_eq!(
+        kinds,
+        [
+            "session.started",
+            "input.updated",
+            "turn.started",
+            "input.updated"
+        ],
+        "{ev:?}"
+    );
+}
+
+/// A process that dies before `system/init` still reports its held events.
+#[test]
+fn held_events_are_flushed_on_exit() {
+    let mut core = ClaudeCore::new();
+    core.prompt("hi", IN1);
+    lifecycle(&mut core, IN1, "started");
+    let kinds: Vec<_> = emits(&core.on_exit(Some(1)))
+        .iter()
+        .map(CanonEvent::kind_name)
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            "turn.started",
+            "input.updated",
+            "turn.completed",
+            "session.ended"
+        ]
+    );
+}
+
+/// `allow_always` sends only allow rules, scoped to the session (DL-009): the
+/// recorded suggestions also hold a `localSettings` destination, `addDirectories`,
+/// and `setMode`.
+#[test]
+fn allow_always_sends_session_scoped_rules_only() {
+    let mut core = started_core();
+    run_prompt(&mut core, "x", IN1);
+    feed(
+        &mut core,
+        json!({"type":"control_request","request_id":"N1","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"touch a"},"tool_use_id":"tu1","permission_suggestions":[
+            {"type":"addRules","behavior":"allow","destination":"localSettings","rules":[{"toolName":"Bash","ruleContent":"touch a"}]},
+            {"type":"addDirectories","destination":"session","directories":["/w"]},
+            {"type":"setMode","destination":"session","mode":"acceptEdits"}
+        ]}}),
+    );
+    let req = core.open_requests()[0].clone();
+    let (_, out) = core
+        .answer(
+            &req,
+            &Answer {
+                option_id: "allow_always".into(),
+                updated_input: None,
+                message: None,
+            },
+        )
+        .unwrap();
+    let body = &writes(&out)[0]["response"]["response"];
+    assert_eq!(
+        body["updatedPermissions"],
+        json!([{"type":"addRules","behavior":"allow","destination":"session","rules":[{"toolName":"Bash","ruleContent":"touch a"}]}])
+    );
+}
+
+/// Without an allow rule among the suggestions there is no `allow_always`.
+#[test]
+fn no_allow_rule_means_no_allow_always() {
+    let mut core = started_core();
+    run_prompt(&mut core, "x", IN1);
+    let ev = emits(&feed(
+        &mut core,
+        json!({"type":"control_request","request_id":"N1","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{},"permission_suggestions":[
+            {"type":"setMode","destination":"session","mode":"acceptEdits"}
+        ]}}),
+    ));
+    let CanonEvent::ApprovalRequested { options, .. } = &ev[0] else {
+        panic!("{ev:?}")
+    };
+    let ids: Vec<_> = options.iter().map(|o| o.option_id.as_str()).collect();
+    assert_eq!(ids, ["allow", "deny"]);
+}

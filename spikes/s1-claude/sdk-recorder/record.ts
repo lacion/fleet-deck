@@ -29,8 +29,9 @@ const SDK_PACKAGE = parseJson(
 const SDK_VERSION =
   SDK_PACKAGE && typeof SDK_PACKAGE === "object" && !Array.isArray(SDK_PACKAGE) ? String(SDK_PACKAGE.version) : "unknown";
 const TEE = resolve(import.meta.dir, "tee-claude.mjs");
-const OUT_DIR = resolve(import.meta.dir, "../fixtures/sdk");
-const TURN_LIMIT_MS = 120_000;
+// FD_OUT_DIR and FD_TURN_LIMIT_MS exist for the recorder self-test (fake CLI, temp dir).
+const OUT_DIR = process.env.FD_OUT_DIR ?? resolve(import.meta.dir, "../fixtures/sdk");
+const TURN_LIMIT_MS = Number(process.env.FD_TURN_LIMIT_MS ?? 120_000);
 const BASH_TOUCH =
   "Use the Bash tool to run exactly this command: touch fd-approve.txt && echo approve-ok\nRun it in the foreground. Then reply with the command output only.";
 
@@ -74,9 +75,15 @@ class Session {
   private waiters: { n: number; resolve: () => void }[] = [];
   private onMsg: ((m: any) => void) | null = null;
   sessionId: string | undefined;
+  /** Resolves when the message pump ends; never rejects (see `error`). */
   done: Promise<void>;
+  error: unknown = null;
+  finished = false;
+  /** Aborting makes the SDK terminate its CLI process (the tee forwards SIGTERM). */
+  readonly abort = new AbortController();
 
   constructor(ctx: Ctx, opts: { mode?: string; resume?: string; decide?: Decide }) {
+    ctx.sessions.push(this);
     const decide: Decide = opts.decide ?? (async (_t, input) => ({ behavior: "allow", updatedInput: input }));
     this.q = query({
       prompt: this.prompts,
@@ -89,6 +96,7 @@ class Session {
         executable: "node",
         extraArgs: { "safe-mode": null },
         resume: opts.resume,
+        abortController: this.abort,
         env: { ...process.env, FD_TEE_LOG: ctx.log },
         canUseTool: async (tool, input) => {
           ctx.note(`canUseTool ${tool}`);
@@ -106,7 +114,14 @@ class Session {
           this.waiters = this.waiters.filter((w) => w.n > this.results);
         }
       }
-    })();
+    })()
+      .catch((e) => {
+        this.error = e;
+        ctx.note(`session error: ${e}`);
+      })
+      .finally(() => {
+        this.finished = true;
+      });
   }
 
   /** Resolves when `n` results arrived in total. */
@@ -133,17 +148,41 @@ class Session {
   async close() {
     this.prompts.close();
     await withTimeout(this.done, "session end");
+    if (this.error) throw this.error;
+  }
+
+  /** Terminates a session that did not end on its own (timeout or failure). */
+  async kill(ctx: Ctx) {
+    if (this.finished) return;
+    ctx.note("host aborted the session");
+    this.prompts.close();
+    this.abort.abort();
+    await Promise.race([this.done, sleep(KILL_GRACE_MS)]);
+    if (!this.finished) ctx.note("session did not end after the abort");
   }
 }
 
-function withTimeout<T>(p: Promise<T>, what: string): Promise<T> {
-  return Promise.race([
-    p,
-    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`timeout waiting for ${what}`)), TURN_LIMIT_MS)),
-  ]);
+const KILL_GRACE_MS = 10_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/** Rejects after `limit` ms; the timer is cleared when `p` settles first. */
+async function withTimeout<T>(p: Promise<T>, what: string, limit = TURN_LIMIT_MS): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<T>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`timeout waiting for ${what}`)), limit);
+  });
+  try {
+    return await Promise.race([p, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 class Ctx {
+  readonly sessions: Session[] = [];
   workdir = realpathSync(mkdtempSync(join(tmpdir(), "fd-s1-sdk-")));
   log = join(this.workdir, "..", `${this.workdir.split("/").pop()}.tee.jsonl`);
   note(text: string) {
@@ -308,18 +347,26 @@ function scrubber(workdir: string) {
   return val;
 }
 
-async function record(name: string) {
+const SCENARIO_LIMIT_MS = 300_000;
+
+/** Records one scenario. Returns `true` when it succeeded. */
+async function record(name: string): Promise<boolean> {
   const sc = SCENARIOS[name];
-  if (!sc) throw new Error(`unknown scenario ${name}`);
+  if (!sc) {
+    console.log(`FAILED ${name.padEnd(24)} unknown scenario`);
+    return false;
+  }
   const c = new Ctx();
   writeFileSync(c.log, "");
   let failed: unknown = null;
   try {
-    await withTimeout(sc.run(c), "scenario");
+    await withTimeout(sc.run(c), "scenario", SCENARIO_LIMIT_MS);
   } catch (e) {
     failed = e;
     c.note(`FAILED: ${e}`);
   }
+  // A failed or timed-out scenario can leave a CLI process running: terminate it.
+  for (const s of c.sessions) await s.kill(c);
   const scrub = scrubber(c.workdir);
   const records = readFileSync(c.log, "utf8")
     .split("\n")
@@ -337,11 +384,14 @@ async function record(name: string) {
   };
   const file = join(OUT_DIR, failed ? `${name}.failed.jsonl` : `${name}.jsonl`);
   writeFileSync(file, [header, ...records].map((r) => JSON.stringify(r)).join("\n") + "\n");
-  console.log(`${failed ? "FAILED" : "ok    "} ${name.padEnd(24)} ${file}`);
+  console.log(`${failed ? "FAILED" : "ok    "} ${name.padEnd(24)} ${file}${failed ? ` (${failed})` : ""}`);
+  return !failed;
 }
 
 const which = process.argv[2] ?? "all";
+let failures = 0;
 for (const name of which === "all" ? Object.keys(SCENARIOS) : [which]) {
-  await record(name);
+  if (!(await record(name))) failures += 1;
 }
-process.exit(0);
+// Exit code 1 when any scenario failed, so scripts and the reviewer see it.
+process.exit(failures === 0 ? 0 : 1);

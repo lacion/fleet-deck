@@ -38,6 +38,20 @@ cargo run -p s1-claude --bin replay-claude -- spikes/s1-claude/fixtures/sdk --ke
 cargo nextest run -p s1-claude --test reference_fixtures
 ```
 
+S1 canonical event snapshots (one `insta` snapshot per fixture in `spikes/s1-claude/tests/snapshots/`) and the adapter evidence tests that `spikes/s1-claude/EVIDENCE.md` cites:
+
+```sh
+CI=true cargo nextest run -p s1-claude --test event_snapshots --test evidence
+```
+
+`CI=true` makes `insta` fail on a changed snapshot instead of writing a `.snap.new` file. After an intended change, review the new streams with `INSTA_UPDATE=always cargo nextest run -p s1-claude --test event_snapshots` and `git diff spikes/s1-claude/tests/snapshots`.
+
+SDK recorder self-test (offline: a fake `claude` that never answers). It proves that the recorder exits nonzero on an unknown or timed-out scenario and kills the timed-out CLI process:
+
+```sh
+spikes/s1-claude/sdk-recorder/selftest.sh
+```
+
 ### Fixture format
 
 One JSON object per line. Line 1 is the header `{"fixture":{"provider","scenario","cli_version","recorder","model","notes"}}`. Each next line is a record with a `dir` tag:

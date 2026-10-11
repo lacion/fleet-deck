@@ -129,6 +129,7 @@ struct RuntimeRequest {
     native_request_id: String,
     tool_use_id: Option<String>,
     input: Value,
+    /// Session-scoped allow rules for `allow_always` (see `map::session_rules`).
     suggestions: Option<Value>,
     options: Vec<ApprovalOption>,
     receipt: Option<AnswerReceipt>,
@@ -189,6 +190,9 @@ pub struct ClaudeCore {
     native_to_app: BTreeMap<String, String>,
     tools: BTreeMap<String, ToolNode>,
     unknown_frames: usize,
+    /// Provider events that arrived before the first `system/init` (the CLI sends
+    /// `command_lifecycle` frames first). They follow `session.started`.
+    early: Vec<CanonEvent>,
 }
 
 impl ClaudeCore {
@@ -406,13 +410,45 @@ impl ClaudeCore {
     }
 
     /// Feeds one CLI frame.
+    ///
+    /// The canonical stream of a process opens with `session.started`: events of
+    /// frames before the first `system/init` are held and follow it. Writes are
+    /// never held.
     pub fn on_frame(&mut self, frame: CliFrame) -> Vec<Output> {
-        map::on_frame(self, frame)
+        let out = map::on_frame(self, frame);
+        if !self.started {
+            let mut writes = Vec::new();
+            for o in out {
+                match o {
+                    Output::Emit(e) => self.early.push(e),
+                    w @ Output::Write(_) => writes.push(w),
+                }
+            }
+            return writes;
+        }
+        if self.early.is_empty() {
+            return out;
+        }
+        let mut res = Vec::with_capacity(out.len() + self.early.len());
+        let mut early = std::mem::take(&mut self.early);
+        for o in out {
+            let opens = matches!(o, Output::Emit(CanonEvent::SessionStarted { .. }));
+            res.push(o);
+            if opens {
+                res.extend(early.drain(..).map(Output::Emit));
+            }
+        }
+        res.extend(early.into_iter().map(Output::Emit));
+        res
     }
 
     /// The CLI process exited. Closes everything that is open (trap 6).
     pub fn on_exit(&mut self, exit_code: Option<i32>) -> Vec<Output> {
-        let mut out = self.expire_open("process_lost");
+        let mut out: Vec<Output> = std::mem::take(&mut self.early)
+            .into_iter()
+            .map(Output::Emit)
+            .collect();
+        out.extend(self.expire_open("process_lost"));
         if let Some(turn_id) = self.turn.take() {
             out.push(Output::Emit(CanonEvent::TurnCompleted {
                 turn_id,

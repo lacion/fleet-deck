@@ -71,3 +71,11 @@ Format: context, options, choice, reason, owner review.
 - **Reason:** the replay must prove that the Rust core drives the CLI the same way as the reference client and handles every frame that the reference client receives (0 unknown frames). Exact bytes of ids are not part of the contract.
 - **Consequence (evidence for DL-006):** the SDK sends no `uuid`, so the CLI sends no `command_lifecycle` frames and the SDK stream has no per-input confirmation. In the reference replay every turn is a provider-origin turn and no input reaches `started` (`tests/reference_fixtures.rs::sdk_prompts_are_never_confirmed`). The station adapter must send a `uuid` on every user message.
 - **Owner review:** pending
+
+## DL-009 — `allow_always` sends session-scoped allow rules only
+
+- **Context:** a `can_use_tool` request carries `permission_suggestions` (fixture `rust/tool_call_approve.jsonl`): an `addRules` entry with `destination: "localSettings"`, an `addDirectories` entry, and a `setMode` entry (`acceptEdits`). The first adapter echoed all of them as `updatedPermissions` for `allow_always`. That writes `.claude/settings.local.json` into the owner's workspace, widens the workspace, and switches the session mode, all from one click. PLAN §11 lists "allow once / allow always / deny" but does not define the scope of "always".
+- **Options:** (a) echo the suggestions unchanged; (b) send only the allow rules, re-scoped to `destination: "session"`; (c) no `allow_always` for Claude.
+- **Choice:** (b). `adapter::map::session_rules` keeps `addRules`/`replaceRules` entries with `behavior: "allow"` and sets `destination: "session"`. It drops `setMode` (L8: a mode changes only through `set_permission_mode`) and `addDirectories`. Without an allow rule the request offers no `allow_always`. The option label is "Allow always (this session)".
+- **Reason:** doctrine of least surprise and fail-closed permissions: a click in the deck must not change files in the workspace or the session mode without an explicit owner action. A persistent rule is a later, explicit feature (owner decision).
+- **Owner review:** pending

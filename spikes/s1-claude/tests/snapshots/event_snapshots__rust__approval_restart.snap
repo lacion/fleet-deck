@@ -1,0 +1,216 @@
+---
+source: spikes/s1-claude/tests/event_snapshots.rs
+expression: events
+---
+[
+  {
+    "kind": "session.started",
+    "provider": "claude",
+    "provider_version": "2.1.289",
+    "model": "claude-haiku-4-5-20251001",
+    "mode": "default",
+    "provider_refs": {
+      "session_id": "b4c1c755-97fc-42e1-9086-ecb3be262899"
+    }
+  },
+  {
+    "kind": "input.updated",
+    "input_id": "00000000-0002-4d2e-8000-54ce56f35723",
+    "turn_id": null,
+    "state": "received"
+  },
+  {
+    "kind": "turn.started",
+    "turn_id": "turn-1",
+    "provider_refs": {
+      "command_uuid": "00000000-0002-4d2e-8000-54ce56f35723"
+    }
+  },
+  {
+    "kind": "input.updated",
+    "input_id": "00000000-0002-4d2e-8000-54ce56f35723",
+    "turn_id": "turn-1",
+    "state": "started"
+  },
+  {
+    "kind": "tool.started",
+    "node_id": "node-2",
+    "parent_node_id": null,
+    "tool_kind": "shell",
+    "title": "Bash",
+    "provider_refs": {
+      "tool_use_id": "toolu_013P7HEm4nifxQyFJdQFVciZ"
+    }
+  },
+  {
+    "kind": "approval.requested",
+    "request_id": "req-3",
+    "node_id": "node-2",
+    "request_kind": "command",
+    "title": "Bash",
+    "options": [
+      {
+        "option_id": "allow",
+        "label": "Allow once"
+      },
+      {
+        "option_id": "allow_always",
+        "label": "Allow always (this session)"
+      },
+      {
+        "option_id": "deny",
+        "label": "Deny"
+      }
+    ],
+    "response": "rpc_reply",
+    "provider_refs": {
+      "control_request_id": "400cf60e-4b41-4541-b515-eeda4ac3b392",
+      "tool_use_id": "toolu_013P7HEm4nifxQyFJdQFVciZ"
+    }
+  },
+  {
+    "kind": "approval.expired",
+    "request_id": "req-3",
+    "reason": "process_lost"
+  },
+  {
+    "kind": "turn.completed",
+    "turn_id": "turn-1",
+    "status": "failed",
+    "usage": null
+  },
+  {
+    "kind": "session.ended",
+    "reason": "process_exit",
+    "exit_code": null
+  },
+  {
+    "kind": "session.started",
+    "provider": "claude",
+    "provider_version": "2.1.289",
+    "model": "claude-haiku-4-5-20251001",
+    "mode": "default",
+    "provider_refs": {
+      "session_id": "b4c1c755-97fc-42e1-9086-ecb3be262899"
+    }
+  },
+  {
+    "kind": "input.updated",
+    "input_id": "00000001-0002-4d2e-8001-54d0dbb90975",
+    "turn_id": null,
+    "state": "received"
+  },
+  {
+    "kind": "turn.started",
+    "turn_id": "turn-1",
+    "provider_refs": {
+      "command_uuid": "00000001-0002-4d2e-8001-54d0dbb90975"
+    }
+  },
+  {
+    "kind": "input.updated",
+    "input_id": "00000001-0002-4d2e-8001-54d0dbb90975",
+    "turn_id": "turn-1",
+    "state": "started"
+  },
+  {
+    "kind": "tool.started",
+    "node_id": "node-2",
+    "parent_node_id": null,
+    "tool_kind": "shell",
+    "title": "Bash",
+    "provider_refs": {
+      "tool_use_id": "toolu_01C77bThDv1aMtvQd1qHBHRx"
+    }
+  },
+  {
+    "kind": "approval.requested",
+    "request_id": "req-3",
+    "node_id": "node-2",
+    "request_kind": "command",
+    "title": "Bash",
+    "options": [
+      {
+        "option_id": "allow",
+        "label": "Allow once"
+      },
+      {
+        "option_id": "allow_always",
+        "label": "Allow always (this session)"
+      },
+      {
+        "option_id": "deny",
+        "label": "Deny"
+      }
+    ],
+    "response": "rpc_reply",
+    "provider_refs": {
+      "control_request_id": "f09355ce-d181-46ae-bc42-ca1075f60e95",
+      "tool_use_id": "toolu_01C77bThDv1aMtvQd1qHBHRx"
+    }
+  },
+  {
+    "kind": "approval.resolved",
+    "request_id": "req-3",
+    "option_id": "deny"
+  },
+  {
+    "kind": "tool.completed",
+    "node_id": "node-2",
+    "status": "denied"
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-1",
+    "text": "The"
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-1",
+    "text": " command was denied by"
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-1",
+    "text": " the permission"
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-1",
+    "text": " system."
+  },
+  {
+    "kind": "message.completed",
+    "turn_id": "turn-1",
+    "text": "The command was denied by the permission system."
+  },
+  {
+    "kind": "usage.updated",
+    "usage": {
+      "input_tokens": 18,
+      "output_tokens": 203,
+      "cost_usd": 0.01224285
+    }
+  },
+  {
+    "kind": "turn.completed",
+    "turn_id": "turn-1",
+    "status": "done",
+    "usage": {
+      "input_tokens": 18,
+      "output_tokens": 203,
+      "cost_usd": 0.01224285
+    }
+  },
+  {
+    "kind": "input.updated",
+    "input_id": "00000001-0002-4d2e-8001-54d0dbb90975",
+    "turn_id": "turn-1",
+    "state": "completed"
+  },
+  {
+    "kind": "session.ended",
+    "reason": "process_exit",
+    "exit_code": 0
+  }
+]

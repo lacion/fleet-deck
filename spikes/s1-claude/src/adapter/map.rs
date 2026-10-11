@@ -396,15 +396,42 @@ fn on_result(core: &mut ClaudeCore, res: &ResultFrame) -> Vec<Output> {
     out
 }
 
-fn options_for(suggestions: Option<&Value>) -> Vec<ApprovalOption> {
+/// The part of the CLI's `permission_suggestions` that `allow_always` may send
+/// (DL-009): allow rules only, re-scoped to `destination: "session"`. Suggestions
+/// that write settings files (`localSettings`, `projectSettings`, `userSettings`
+/// destinations are rewritten), change the mode (`setMode`, L8: modes change only
+/// through `set_permission_mode`), or widen the workspace (`addDirectories`) are
+/// dropped. `None` when nothing is left.
+pub(super) fn session_rules(suggestions: Option<&Value>) -> Option<Value> {
+    let kept: Vec<Value> = suggestions?
+        .as_array()?
+        .iter()
+        .filter(|s| {
+            matches!(
+                s.get("type").and_then(Value::as_str),
+                Some("addRules" | "replaceRules")
+            ) && s.get("behavior").and_then(Value::as_str) == Some("allow")
+        })
+        .map(|s| {
+            let mut s = s.clone();
+            if let Some(m) = s.as_object_mut() {
+                m.insert("destination".to_owned(), Value::from("session"));
+            }
+            s
+        })
+        .collect();
+    (!kept.is_empty()).then_some(Value::Array(kept))
+}
+
+fn options_for(session_rules: Option<&Value>) -> Vec<ApprovalOption> {
     let mut options = vec![ApprovalOption {
         option_id: "allow".to_owned(),
         label: "Allow once".to_owned(),
     }];
-    if suggestions.is_some_and(|s| s.as_array().is_some_and(|a| !a.is_empty())) {
+    if session_rules.is_some() {
         options.push(ApprovalOption {
             option_id: "allow_always".to_owned(),
-            label: "Allow always".to_owned(),
+            label: "Allow always (this session)".to_owned(),
         });
     }
     options.push(ApprovalOption {
@@ -437,7 +464,8 @@ fn on_control_request(
                 .as_ref()
                 .and_then(|t| core.tools.get(t))
                 .map(|n| n.node_id.clone());
-            let options = options_for(permission_suggestions.as_ref());
+            let rules = session_rules(permission_suggestions.as_ref());
+            let options = options_for(rules.as_ref());
             core.native_to_app
                 .insert(native_id.to_owned(), request_id.clone());
             core.requests.insert(
@@ -446,7 +474,7 @@ fn on_control_request(
                     native_request_id: native_id.to_owned(),
                     tool_use_id: tool_use_id.clone(),
                     input,
-                    suggestions: permission_suggestions,
+                    suggestions: rules,
                     options: options.clone(),
                     receipt: None,
                 },

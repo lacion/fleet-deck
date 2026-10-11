@@ -10,7 +10,7 @@ Rules for this file: one checklist item per M1 deliverable, in PLAN order. Each 
 - [x] **S1-1 Claude protocol core.** Frame parser (never panics, unknown frames kept, proptest), host control frames, sans-IO adapter core: init, prompt, partial deltas, `can_use_tool` with native option ids + edited input, idempotent answers, fail-closed unknown requests, interrupt, set mode (native modes only), exit expiry. *(round 1; round 2 review fix: a prompt is confirmed only by `command_lifecycle` `started` with the matching uuid, DL-006)*
 - [x] **S1-2 Claude live driver + fixture format + `record-claude`.** tokio process driver around the core; JSONL fixture format (`spawn`/`host`/`in`/`out`/`raw`/`exit`/`note` records + header, scrubbed); `record-claude`; live recordings (haiku, `--safe-mode`, temp dir) of all 8 §13 shared scenarios plus `tool_call_edit_input`, `interrupt_during_tool`, `set_permission_mode`, `approval_restart`. *(round 2; an early replay harness + `replay-claude` is pulled forward from S1-4)*
 - [x] **S1-3 TypeScript SDK reference recordings.** `spikes/s1-claude/sdk-recorder/` (bun + `@anthropic-ai/claude-agent-sdk` 0.3.296, `tee-claude.mjs` as `pathToClaudeCodeExecutable`); 10 SDK fixtures in `spikes/s1-claude/fixtures/sdk/` (8 shared + `tool_call_edit_input`, `set_permission_mode`); `reference` module + `replay-claude` replay them offline (DL-008). *(round 3)*
-- [~] **S1-4 Claude replay + evidence.** *(round 2: `replay` module, `replay-claude`, `tests/replay_fixtures.rs` for the Rust fixtures.)* *(round 3: replay rejects unmatched writes before `exit`; SDK reference replay.)* Remaining: `insta` snapshots of the canonical event stream of every fixture, evidence write-up for "prompt confirmed", restart survival, native option ids, steer/queue timing.
+- [x] **S1-4 Claude replay + evidence.** *(round 2: `replay` module, `replay-claude`, `tests/replay_fixtures.rs`.)* *(round 3: replay rejects unmatched writes before `exit`; SDK reference replay.)* *(round 4: `insta` snapshots of the canonical event stream of all 22 fixtures; `tests/evidence.rs`; `spikes/s1-claude/EVIDENCE.md` for "prompt confirmed", queue/steer timing, restart survival, native option ids; SDK recorder exits nonzero and kills timed-out sessions + `selftest.sh`.)*
 - [ ] **S1-5 ADR-001** (Proposed): native Claude adapter design, effect states and crash boundaries (§6.4), fixture set, unsupported scenarios with reasons.
 - [ ] **S2-1 Codex protocol core.** ADR-002 option evaluation (git pin of `codex-app-server-protocol` vs codegen from `codex app-server generate-json-schema`); JSON-RPC framing; sans-IO core: initialize, `thread/start`, `turn/start`, both approval requests, questions (L4), `turn/interrupt`, `thread/resume`, diff notifications.
 - [ ] **S2-2 Codex live driver + `record-codex` + fixtures** for the §13 shared scenarios Codex supports (unsupported ones listed with reasons); restart survival experiment.
@@ -87,3 +87,23 @@ Rules for this file: one checklist item per M1 deliverable, in PLAN order. Each 
   - `cargo deny check` → advisories ok, bans ok, licenses ok, sources ok
   - `web/` checks and TS-types drift check → not applicable in M1
 - Next: S1-4 remainder (`insta` snapshots of the canonical events, evidence write-up).
+
+### Round 4 (2026-10-11)
+
+- Review feedback: "continue: S1-4 canonical-event snapshots and evidence write-up; make the SDK recorder exit nonzero on scenario failure and terminate timed-out sessions."
+- Committed round 3 as `a1e2389`.
+- SDK recorder (`sdk-recorder/record.ts`): every session has an `AbortController`; a scenario that times out (turn limit 120 s, scenario limit 300 s) is written as `<name>.failed.jsonl`, its sessions are aborted and noted ("host aborted the session"), and the process exits 1 if any scenario failed or is unknown. `sdk-recorder/selftest.sh` proves it offline with a fake CLI (`exec sleep 600`): unknown scenario → exit 1; timed-out scenario → exit 1, `.failed.jsonl` with the abort note and the `exit` record, fake process gone → `ok sdk-recorder selftest`.
+- Snapshots: `tests/event_snapshots.rs` + 22 snapshots (`rust__*`, `sdk__*`).
+- Core fixes found by the snapshots and the evidence work:
+  - `command_lifecycle` frames arrive before the first `system/init`; the core now holds those events so that the stream opens with `session.started` (`events_before_init_follow_session_started`, `held_events_are_flushed_on_exit`).
+  - `allow_always` echoed all `permission_suggestions`, including a `localSettings` destination (writes into the workspace), `setMode`, and `addDirectories`. It now sends session-scoped allow rules only (DL-009; `allow_always_sends_session_scoped_rules_only`, `no_allow_rule_means_no_allow_always`).
+- Evidence: `tests/evidence.rs` (6 tests) + `spikes/s1-claude/EVIDENCE.md` (E1 prompt confirmed = `command_lifecycle` `started` for the input's `uuid`; E2 queue/steer timing; E3 open requests do not survive a restart; E4 no native option ids, `behavior` allow/deny, CLI UUID request ids; E5 every §14 S1 row; E6 observed CLI behaviour).
+- Commands and results:
+  - `cargo fmt --all --check` → pass
+  - `cargo clippy --workspace --all-targets -- -D warnings` → pass
+  - `CI=true cargo nextest run --workspace` → 55 passed
+  - `cargo deny check` → advisories ok, bans ok, licenses ok, sources ok
+  - `cargo run -p s1-claude --bin replay-claude` → 22 ok, unknown=0
+  - `spikes/s1-claude/sdk-recorder/selftest.sh` → ok sdk-recorder selftest
+  - `web/` checks, TS-types drift → not applicable in M1
+- Next: S1-5 ADR-001.
