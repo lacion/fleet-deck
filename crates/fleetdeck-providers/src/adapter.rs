@@ -186,6 +186,10 @@ pub fn canonical_workspace(path: &Path) -> Result<PathBuf> {
 #[async_trait]
 pub trait ProviderAdapter: Send + Sync {
     fn kind(&self) -> ProviderKind;
+    /// The capabilities that a new session starts with under this
+    /// adapter's settings (M2 P5-3). A live session can report more after
+    /// the provider advertises its settings (trap 1).
+    fn capabilities(&self) -> Capabilities;
     /// Version and sign-in state only. A probe never opens a provider session.
     async fn probe(&self) -> Result<ProviderProbe>;
     async fn start(&self, spec: SessionSpec, sink: EventSink) -> Result<Box<dyn LiveSession>>;

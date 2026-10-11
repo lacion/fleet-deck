@@ -1,6 +1,7 @@
 // M2 P4-4: the spawn form and the directory picker in a phone browser.
 import { expect, test } from '@playwright/test';
 import type { WorkspaceListing } from '../src/gen';
+import { claudeCaps, codexCaps } from '../src/testing/capabilities';
 import { summary } from '../src/testing/summary';
 import { CSRF, FakeDeck, fitsWidth, logIn, stationView } from './fake-deck';
 
@@ -13,8 +14,20 @@ const alpha = stationView('st-alpha', 'Alpha', {
     version: '0.2.0',
     max_sessions: 4,
     providers: [
-      { instance: 'personal', provider: 'claude', version: '2.1.5', auth: 'signed_in' },
-      { instance: 'work', provider: 'codex', version: null, auth: 'unknown' },
+      {
+        instance: 'personal',
+        provider: 'claude',
+        version: '2.1.5',
+        auth: 'signed_in',
+        capabilities: claudeCaps(),
+      },
+      {
+        instance: 'work',
+        provider: 'codex',
+        version: '0.160.0',
+        auth: 'signed_in',
+        capabilities: codexCaps(),
+      },
     ],
   },
   info_at: 1_760_000_000_000,
@@ -118,6 +131,49 @@ test('a session starts from the form with a picked directory and opens', async (
   });
   await page.getByRole('button', { name: 'Open the new session' }).click();
   await expect(page.getByRole('heading', { name: 'Fix the login' })).toBeVisible();
+});
+
+test('the mode list follows the capabilities of the chosen provider (P5-3)', async ({ page }) => {
+  const deck = new FakeDeck();
+  deck.stations = [alpha];
+  picker(deck);
+  deck.on('/api/commands/session.start', () => ({
+    status: 200,
+    body: {
+      state: 'done',
+      receipt: { state: 'accepted', result: { session_id: 's-cx', input_id: null }, reject: null },
+    },
+  }));
+  await deck.install(page);
+  await logIn(page);
+  await chooseApp(page);
+  const form = page.getByRole('region', { name: 'New session' });
+  const mode = form.getByLabel('Permission mode');
+  await expect(mode.locator('option')).toHaveText([
+    'Station default',
+    'default',
+    'plan',
+    'acceptEdits',
+    'dontAsk',
+    'auto',
+  ]);
+  await mode.selectOption('plan');
+  // Another provider resets the mode and offers its own native modes.
+  await form.getByLabel('Provider').selectOption('work');
+  await expect(mode).toHaveValue('');
+  await expect(mode.locator('option')).toHaveText(['Station default', ...codexCaps().modes]);
+  await mode.selectOption('untrusted/read-only');
+  expect(await fitsWidth(page)).toBe(true);
+  await form.getByRole('button', { name: 'Start session' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Done.' })).toBeVisible();
+  const starts = deck.calls.filter((c) => c.path === '/api/commands/session.start');
+  expect(starts).toHaveLength(1);
+  expect(starts[0]?.body).toMatchObject({
+    command: {
+      op: 'start',
+      spec: { provider_instance: 'work', cwd: `${ROOT}/app`, mode: 'untrusted/read-only' },
+    },
+  });
 });
 
 test('a refused start shows the station reason and keeps the form', async ({ page }) => {

@@ -464,3 +464,45 @@ fn resume_and_fork_start_sessions_on_the_recorded_threads() {
         assert!(started >= 2, "{scenario}: {started} session.started");
     }
 }
+
+/// The board's test fixtures (M2 P5-3): the canonical events of a recorded
+/// Codex approval and subagent as the deck sends them on a timeline, in
+/// `web/src/testing/fixtures/codex-<scenario>.events.json`. The web tests
+/// read them for the capability-driven controls of a Codex session.
+/// `FD_UPDATE_FIXTURES=1` rewrites the files.
+#[test]
+fn the_board_timeline_fixtures_equal_the_canonical_replay() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../web/src/testing/fixtures");
+    let update = std::env::var_os("FD_UPDATE_FIXTURES").is_some();
+    for scenario in ["subagent", "tool_call_approve"] {
+        let envelopes: Vec<fleetdeck_proto::EventEnvelope> = replay_named(scenario)
+            .into_iter()
+            .enumerate()
+            .map(|(i, event)| {
+                let n = i as u64 + 1;
+                fleetdeck_proto::EventEnvelope {
+                    station_seq: 200 + n,
+                    session_id: format!("codex-{scenario}").into(),
+                    session_seq: n,
+                    at: 1_760_000_000_000 + 1000 * n as i64,
+                    proto_version: 1,
+                    raw_ref: None,
+                    event: event.into(),
+                }
+            })
+            .collect();
+        let text = serde_json::to_string_pretty(&envelopes).unwrap() + "\n";
+        let path = dir.join(format!("codex-{scenario}.events.json"));
+        if update {
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(&path, &text).unwrap();
+        } else {
+            let found = std::fs::read_to_string(&path).unwrap_or_default();
+            assert!(
+                found == text,
+                "{} is stale: run FD_UPDATE_FIXTURES=1 cargo test -p fleetdeck-providers --test codex_core_replay",
+                path.display()
+            );
+        }
+    }
+}

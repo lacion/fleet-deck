@@ -184,6 +184,7 @@ impl SessionManager {
                         provider: *kind,
                         version: probe.and_then(|p| p.version),
                         auth: auth.to_owned(),
+                        capabilities: self.target.adapter(instance).map(|a| a.capabilities()),
                     });
                 }
                 out

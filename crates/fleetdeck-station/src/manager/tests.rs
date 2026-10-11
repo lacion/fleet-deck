@@ -604,6 +604,16 @@ async fn station_info_providers_are_probed_once_with_versions() {
             ),
         ]
     );
+    // Each instance reports the capabilities of a new session under the
+    // station's settings (P5-3): the spawn form offers their modes.
+    let caps: Vec<_> = providers.iter().map(|p| p.capabilities.clone()).collect();
+    assert_eq!(
+        caps,
+        vec![
+            Some(fleetdeck_providers::claude::capabilities(false)),
+            Some(fleetdeck_providers::codex::capabilities(false)),
+        ]
+    );
     assert_eq!(st.manager.providers().await, providers, "cached");
     assert_eq!(st.manager.policy().max_sessions(), 3);
     st.manager.shutdown(StopMode::Kill).await;

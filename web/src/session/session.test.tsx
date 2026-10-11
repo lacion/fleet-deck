@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { App } from '../App';
 import type { DeckSession } from '../gen';
 import type { Timeline } from '../runtime/state';
+import { claudeCaps, codexCaps, minimalCaps } from '../testing/capabilities';
 import { station } from '../testing/fleet';
 import { summary } from '../testing/summary';
 import { claudeCapabilities, nestedSubagents, recorded } from '../testing/timeline';
@@ -90,6 +91,47 @@ describe('session view (P4-3)', () => {
     const noSteer = view(session({ capabilities: caps }), timeline());
     expect(noSteer).not.toContain('Steer now');
     expect(noSteer).not.toContain('Mode (most restrictive first)');
+  });
+
+  test('a Codex session shows the controls of its capabilities (P5-3)', () => {
+    const codex = view(session({ capabilities: codexCaps(), mode: 'untrusted/workspace-write' }));
+    expect(codex).toContain('Steer now');
+    expect(codex).toContain('Interrupt');
+    expect(codex).toContain('Set model');
+    expect(codex).toContain('>untrusted/read-only</button>');
+    expect(codex).toContain('aria-pressed="true" disabled="">untrusted/workspace-write</button>');
+    expect(codex).not.toContain('>acceptEdits</button>');
+    // No native follow-up queue: the station holds the follow-up.
+    expect(codex).toContain('Queue follow-up');
+    expect(codex).toContain('The station holds a follow-up until the turn ends.');
+    const claude = view(session({ capabilities: claudeCaps() }));
+    expect(claude).not.toContain('The station holds a follow-up');
+    expect(claude).toContain('>acceptEdits</button>');
+  });
+
+  test('a provider without optional capabilities gets prompt and follow-up only', () => {
+    const req = {
+      request_id: 'req-1',
+      node_id: null,
+      request_kind: 'command' as const,
+      title: 'Run ls',
+      details: 'ls',
+      input: null,
+      options: [{ option_id: 'allow', label: 'Allow' }],
+      response: 'rpc_reply' as const,
+      requested_at: 1,
+    };
+    const html = view(session({ capabilities: minimalCaps(), open_requests: [req] }));
+    expect(html).not.toContain('Interrupt');
+    expect(html).not.toContain('Steer now');
+    expect(html).not.toContain('Mode (most restrictive first)');
+    expect(html).not.toContain('Set model');
+    expect(html).toContain('Queue follow-up');
+    expect(html).toContain('Run ls');
+    expect(html).toContain('This provider has no approval controls.');
+    expect(html).not.toContain('>Allow</button>');
+    const answerable = view(session({ capabilities: codexCaps(), open_requests: [req] }));
+    expect(answerable).toContain('>Allow</button>');
   });
 
   test('a stale board or an ended session disables every control', () => {

@@ -20,14 +20,14 @@ export type SpawnActions = {
 };
 
 /**
- * Permission modes that the form offers per provider, most restrictive
- * first. `null` keeps the station's default. P5-3 replaces this table with
- * the capabilities that the station reports (DL-061).
+ * Permission modes that the form offers for a provider instance: the modes
+ * of a new session that the station reports (M2 P5-3, DL-065), most
+ * restrictive first. An instance without reported capabilities offers none:
+ * the start then uses the station's default mode.
  */
-export const MODES: Readonly<Record<string, readonly string[]>> = {
-  claude: ['plan', 'default', 'acceptEdits'],
-  codex: [],
-};
+export function spawnModes(p: StationProvider | undefined): readonly string[] {
+  return p?.capabilities?.modes ?? [];
+}
 
 const record = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);

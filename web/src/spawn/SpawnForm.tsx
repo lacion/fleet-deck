@@ -1,7 +1,13 @@
 import { useEffect, useState } from 'react';
 import type { SessionKey, StationView, WorkspaceListing } from '../gen';
 import type { Freshness } from '../runtime/state';
-import { MODES, providerLabel, type SpawnActions, type SpawnOutcome, spawnTargets } from './spawn';
+import {
+  providerLabel,
+  type SpawnActions,
+  type SpawnOutcome,
+  spawnModes,
+  spawnTargets,
+} from './spawn';
 
 type Props = {
   readonly stations: readonly StationView[];
@@ -49,7 +55,7 @@ export function SpawnForm({ stations, freshness, actions, onOpen, initialListing
       setBrowseError(error instanceof Error ? error.message : 'The station did not answer.');
     });
   };
-  const modes = provider === undefined ? [] : (MODES[provider.provider] ?? []);
+  const modes = spawnModes(provider);
   const ready =
     live && canDrive && !busy && station !== undefined && provider !== undefined && cwd !== null;
 
@@ -80,7 +86,7 @@ export function SpawnForm({ stations, freshness, actions, onOpen, initialListing
             const spec = {
               provider_instance: provider.instance,
               cwd,
-              mode: mode === '' ? null : mode,
+              mode: modes.includes(mode) ? mode : null,
               model: model.trim() === '' ? null : model.trim(),
               title: title.trim() === '' ? null : title.trim(),
             };
@@ -101,6 +107,7 @@ export function SpawnForm({ stations, freshness, actions, onOpen, initialListing
                 setStationId(event.target.value);
                 setListing(null);
                 setCwd(null);
+                setMode('');
               }}
             >
               {targets.map((s) => (

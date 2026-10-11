@@ -1,19 +1,29 @@
 // Timeline fixtures for the session view (M2 P4-3, PLAN D15).
 //
-// `recorded(...)` loads the canonical events of a recorded Claude fixture;
-// the Rust test `the_board_timeline_fixtures_equal_the_canonical_replay`
-// keeps those files equal to the Claude core's replay. `nestedSubagents()`
+// `recorded(...)` loads the canonical events of a recorded Claude or Codex
+// fixture; the Rust tests `the_board_timeline_fixtures_equal_the_canonical_replay`
+// (claude_core_replay, codex_core_replay) keep those files equal to the
+// production cores' replays. `nestedSubagents()`
 // is a typed synthetic timeline with foreground subagents two levels deep,
 // child tools, child text, a child approval and a failed child: the shape the
 // Claude core produces from `parent_tool_use_id` frames (§6.3).
 import type { Capabilities, Event, EventEnvelope } from '../gen';
 import approve from './fixtures/claude-tool_call_approve.events.json' with { type: 'json' };
 import subagent from './fixtures/claude-subagent.events.json' with { type: 'json' };
+import codexSubagent from './fixtures/codex-subagent.events.json' with { type: 'json' };
+import codexApprove from './fixtures/codex-tool_call_approve.events.json' with { type: 'json' };
 
-export function recorded(name: 'subagent' | 'tool_call_approve'): EventEnvelope[] {
-  // SAFETY: the Rust test above writes these files from typed `EventEnvelope`
+const RECORDED = {
+  subagent,
+  tool_call_approve: approve,
+  'codex-subagent': codexSubagent,
+  'codex-tool_call_approve': codexApprove,
+};
+
+export function recorded(name: keyof typeof RECORDED): EventEnvelope[] {
+  // SAFETY: the Rust tests above write these files from typed `EventEnvelope`
   // values; JSON imports widen string unions, so TypeScript cannot see it.
-  return (name === 'subagent' ? subagent : approve) as unknown as EventEnvelope[];
+  return RECORDED[name] as unknown as EventEnvelope[];
 }
 
 export function envelopes(sessionId: string, events: readonly Event[]): EventEnvelope[] {
@@ -107,9 +117,14 @@ export function nestedSubagents(upTo?: number): EventEnvelope[] {
   return envelopes('nested', upTo === undefined ? events : events.slice(0, upTo + 1));
 }
 
-/** The capabilities of the recorded Claude session (no bypass mode). */
-export function claudeCapabilities(): Capabilities {
-  const first = recorded('subagent')[0]?.event as Event | undefined;
+/** The capabilities of a recorded session (no bypass mode, no full access). */
+export function recordedCapabilities(name: keyof typeof RECORDED): Capabilities {
+  const first = recorded(name)[0]?.event as Event | undefined;
   if (first?.kind !== 'session.started') throw new Error('the fixture starts a session');
   return first.capabilities;
+}
+
+/** The capabilities of the recorded Claude session (no bypass mode). */
+export function claudeCapabilities(): Capabilities {
+  return recordedCapabilities('subagent');
 }

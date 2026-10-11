@@ -100,6 +100,23 @@ describe('session timeline tree (PLAN D15)', () => {
     });
   });
 
+  test('a recorded Codex approval and subagent build the same tree shapes (P5-3)', () => {
+    const approve = buildTimeline(recorded('codex-tool_call_approve'));
+    expect(approve.items.find((i) => i.type === 'approval')).toMatchObject({
+      state: 'answered',
+      outcome: 'Allow once (by board)',
+    });
+    expect(approve.items.find((i) => i.type === 'tool')).toMatchObject({ status: 'ok' });
+    // Codex reports the child's message under the spawnAgent node (D15).
+    const sub = buildTimeline(recorded('codex-subagent'));
+    expect(sub.running).toBe(0);
+    // spawnAgent holds the child's message; the wait tool has no events.
+    expect(sub.subagents.map((s) => [s.status, s.items.length])).toEqual([
+      ['done', 1],
+      ['done', 0],
+    ]);
+  });
+
   test('unknown event kinds are skipped', () => {
     const events = nestedSubagents(2);
     const odd = { ...events[0], session_seq: 50, event: { kind: 'future.thing' } };

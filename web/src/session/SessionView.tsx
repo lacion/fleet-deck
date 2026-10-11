@@ -50,6 +50,7 @@ export function SessionView({ session, stations, timeline, freshness, actions, o
       ) : null}
       <Requests
         requests={s.open_requests}
+        answerable={caps?.approvals === true}
         enabled={live && !ended && actions?.canApprove === true}
         busy={busy}
         onAnswer={(r, o) => actions && act(() => actions.answer(r, o))}
@@ -84,6 +85,7 @@ export function SessionView({ session, stations, timeline, freshness, actions, o
         enabled={drive && !busy}
         working={working}
         steer={caps?.steer === true}
+        nativeQueue={caps?.native_follow_up === true}
         onSend={(kind, text) => actions && act(() => actions.send(kind, text))}
       />
       {outcome ? (
@@ -105,6 +107,7 @@ export function SessionView({ session, stations, timeline, freshness, actions, o
 
 function Requests(props: {
   requests: readonly OpenRequest[];
+  answerable: boolean;
   enabled: boolean;
   busy: boolean;
   onAnswer: (request: string, option: string) => void;
@@ -118,22 +121,30 @@ function Requests(props: {
           <li key={r.request_id} data-request={r.request_id}>
             <strong>{r.title}</strong>
             <pre className="fd-details">{r.details}</pre>
-            <div className="fd-options">
-              {r.options.map((o) => (
-                <button
-                  key={o.option_id}
-                  type="button"
-                  disabled={!props.enabled || props.busy}
-                  onClick={() => props.onAnswer(r.request_id, o.option_id)}
-                >
-                  {o.label}
-                </button>
-              ))}
-            </div>
+            {/* Without the approvals capability the provider answers under its
+                own policy: the board shows the request but no controls (§6.2). */}
+            {props.answerable ? (
+              <div className="fd-options">
+                {r.options.map((o) => (
+                  <button
+                    key={o.option_id}
+                    type="button"
+                    disabled={!props.enabled || props.busy}
+                    onClick={() => props.onAnswer(r.request_id, o.option_id)}
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </li>
         ))}
       </ul>
-      {props.enabled ? null : <p className="fd-note">Answering needs the approve scope.</p>}
+      {!props.answerable ? (
+        <p className="fd-note">This provider has no approval controls.</p>
+      ) : props.enabled ? null : (
+        <p className="fd-note">Answering needs the approve scope.</p>
+      )}
     </section>
   );
 }
@@ -202,6 +213,7 @@ function Composer(props: {
   enabled: boolean;
   working: boolean;
   steer: boolean;
+  nativeQueue: boolean;
   onSend: (kind: InputKind, text: string) => void;
 }) {
   const [text, setText] = useState('');
@@ -244,6 +256,9 @@ function Composer(props: {
             <button type="submit" disabled={!props.enabled || empty}>
               Queue follow-up
             </button>
+            {props.nativeQueue ? null : (
+              <p className="fd-note">The station holds a follow-up until the turn ends.</p>
+            )}
           </>
         ) : (
           <button type="submit" disabled={!props.enabled || empty}>

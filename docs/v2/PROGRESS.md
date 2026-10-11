@@ -63,7 +63,7 @@ Sources: PLAN §14 Phases 1–5, GATE-M1 G1–G14, goal acceptance. G13 is P1-5.
 
 - [x] **P5-1 Codex core.** Sans-IO core from `spikes/s2-codex` (vendored schema) mapped to proto events; replays of all Codex fixtures. *(round 34, DL-063)*
 - [x] **P5-2 Codex driver and fake-codex.** Background polling (DL-024), station integration. *(round 35, DL-064)*
-- [ ] **P5-3 Capability matrix tests + capability-driven UI.** Every §6.2 row covered for both providers; controls only when capabilities allow them.
+- [x] **P5-3 Capability matrix tests + capability-driven UI.** Every §6.2 row covered for both providers; controls only when capabilities allow them. *(round 36, DL-065)*
 - [ ] **P5-4 Codex board flows.** The Playwright flows for Claude and Codex.
 - [ ] **P5-5 Live smoke tests.** One per provider (real CLI, tiny prompt, temp dir) behind `FD_LIVE_SMOKE=1`, documented; not in the default run.
 - [ ] **M2-F Close-out.** Every exit check named in this file; `make check` on a clean checkout; DECISIONS-LOG complete.
@@ -479,6 +479,24 @@ Sources: PLAN §14 Phases 1–5, GATE-M1 G1–G14, goal acceptance. G13 is P1-5.
   - Updated: `manager::tests` config test expects a Codex adapter; `station_info_providers_are_probed_once_with_versions` expects Codex `0.160.999` `signed_in`.
 - Commands/results: `cargo nextest run -p fleetdeck-providers --test codex_driver_sim` → 6/6; `cargo nextest run -p fleetdeck-station manager::` → 17/17; `cargo clippy --workspace --all-targets -- -D warnings` clean; `make check` → all 14 commands passed: fmt, clippy, nextest 799/799, cargo deny, `ts_drift` 2/2, frozen offline `bun install`, web typecheck, lint, web test, web build, scripted e2e, real-process e2e:real, Claude replay, Codex replay.
 - Status: P5-2 complete; this round's changes remain uncommitted for review. Next: P5-3 capability matrix tests (every §6.2 row for both providers) and capability-driven UI (spawn-form modes from the station's reported capabilities instead of the `MODES` table, DL-061), then P5-4 Codex board flows, P5-5 opt-in live smoke tests, close-out. No push, PR, main merge, release, v0 change or agent permission change occurred.
+
+### M2 round 36: P5-3 capability matrix tests and capability-driven UI (P5-3 complete)
+
+- Start: round-35 work verified (`make check` all 14 commands passed, nextest 799/799) and committed as 793be74.
+- Implemented (DL-065):
+  - `crates/fleetdeck-providers/tests/capability_matrix.rs` (+ `capability_matrix/replay.rs`): one test per PLAN §6.2 row for Claude and Codex; values from `claude::capabilities(false)` / `codex::capabilities(false)`, behaviour from the recorded fixtures replayed through the production cores.
+  - `crates/fleetdeck-proto/src/link.rs`: `StationProvider.capabilities: Option<Capabilities>` (serde default); TS regenerated (`web/src/gen/link/StationProvider.ts`).
+  - `crates/fleetdeck-providers/src/adapter.rs`: `ProviderAdapter::capabilities()`; Claude and Codex drivers implement it with the station settings.
+  - `crates/fleetdeck-station/src/manager/mod.rs`: `providers()` reports each instance's capabilities.
+  - `crates/fleetdeck-providers/tests/codex_core_replay.rs`: `the_board_timeline_fixtures_equal_the_canonical_replay` writes/checks `web/src/testing/fixtures/codex-{subagent,tool_call_approve}.events.json`.
+  - Web: `spawn.ts` `spawnModes()` replaces the `MODES` table; `SpawnForm.tsx` resets the mode on a provider change and never sends an unlisted mode; `SessionView.tsx` hides approval options without `approvals` and explains the station follow-up queue without `native_follow_up`; `web/src/testing/capabilities.ts` (Claude, Codex, minimal).
+- Named tests:
+  - `capability_matrix` (20): `row_resume_reopens_the_same_native_session_with_its_memory`, `row_fork_opens_a_new_native_session_with_the_parent_history`, `row_open_requests_expire_on_restart_and_are_asked_again`, `row_interrupt_ends_the_turn_as_interrupted_and_the_session_continues`, `row_steer_joins_the_running_turn`, `row_follow_up_queue_is_native_for_claude_and_a_station_queue_for_codex`, `row_terminal_status_is_strong_every_turn_and_run_ends_once`, `row_live_deltas_stream_before_the_completed_message`, `row_file_changes_name_the_file_and_the_edit_tool`, `row_approvals_are_answerable_with_the_providers_own_options`, `row_response_channels_cover_every_recorded_request`, `row_edit_input_reaches_claude_and_is_refused_for_codex`, `row_permission_modes_are_native_names_and_mode_changes_report_them`, `row_plan_capture_proposes_a_plan_in_the_turn`, `row_subagents_are_subagent_tool_nodes`, `row_background_work_keeps_the_run_pending_until_it_ends`, `row_native_turn_ids_only_codex`, `row_usage_reports_tokens_for_both_and_cost_for_claude_only`, `every_operation_is_supported_or_degrades_as_the_matrix_says`, `a_session_reports_the_capabilities_of_its_provider`.
+  - `fleetdeck-proto` `a_provider_from_a_station_before_p5_3_has_no_capabilities`; `manager::tests` station info asserts both instances' capabilities; `board_pairing` expects `"capabilities": null`.
+  - Web unit: `capabilities.test.ts` (literals equal the recorded `session.started`), session.test.tsx `a Codex session shows the controls of its capabilities (P5-3)` and `a provider without optional capabilities gets prompt and follow-up only`, timeline.test.ts `a recorded Codex approval and subagent build the same tree shapes (P5-3)`, spawn.test.tsx `the modes come from the capabilities that the station reports (P5-3)`.
+  - Playwright `web/e2e/spawn.spec.ts` `the mode list follows the capabilities of the chosen provider (P5-3)`.
+- Commands/results: `cargo nextest run -p fleetdeck-providers --test capability_matrix` → 20/20 (1 ignored dump helper); `bun run typecheck`, `bun run lint`, `bun run test` (75 pass), `bun run build`, `bun run e2e` (12 passed); `make check` → all 14 commands passed: fmt, clippy, nextest 821/821 (1 skipped: the ignored `dump` helper), cargo deny, `ts_drift`, frozen offline `bun install`, web typecheck, lint, web test, web build, scripted e2e, real-process e2e:real, Claude replay, Codex replay 18/18 (log `/tmp/fd-mc-r36a.log`, `EXIT=0`).
+- Status: P5-3 complete; this round's changes remain uncommitted for review. Next: P5-4 Codex board flows (real-process Playwright flows with `fake-codex sim` next to Claude), P5-5 opt-in live smoke tests, M2-F close-out. No push, PR, main merge, release, v0 change or agent permission change occurred.
 
 ## M1 checklist (complete)
 

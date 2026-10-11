@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
+use crate::capability::Capabilities;
 use crate::event::{EventEnvelope, ProviderKind};
 use crate::ids::{CommandId, IncarnationId, ProviderInstanceId};
 use crate::session::SessionSummary;
@@ -235,6 +236,12 @@ pub struct StationProvider {
     /// The sign-in state of the probe: `signed_in`, `signed_out` or
     /// `unknown`.
     pub auth: String,
+    /// The capabilities that a new session of this instance starts with,
+    /// under the station's settings (M2 P5-3, DL-065). The spawn form
+    /// offers their modes. `None` when the station has no adapter for the
+    /// instance, or from a station before P5-3.
+    #[serde(default)]
+    pub capabilities: Option<Capabilities>,
 }
 
 /// `workspace.list` params (M2 P4-4, DL-061): the directory to list; `None`
@@ -390,5 +397,20 @@ mod tests {
         ] {
             round_trip(&frame);
         }
+    }
+
+    #[test]
+    fn a_provider_from_a_station_before_p5_3_has_no_capabilities() {
+        let old =
+            json!({"instance": "codex", "provider": "codex", "version": null, "auth": "unknown"});
+        let p: StationProvider = serde_json::from_value(old).unwrap();
+        assert_eq!(p.capabilities, None);
+        let new = StationProvider {
+            capabilities: Some(Capabilities::minimal()),
+            ..p
+        };
+        let back: StationProvider =
+            serde_json::from_value(serde_json::to_value(&new).unwrap()).unwrap();
+        assert_eq!(back, new);
     }
 }

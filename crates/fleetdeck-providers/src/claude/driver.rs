@@ -216,6 +216,10 @@ impl ProviderAdapter for ClaudeAdapter {
         ProviderKind::Claude
     }
 
+    fn capabilities(&self) -> Capabilities {
+        capabilities(self.config.allow_bypass)
+    }
+
     /// `claude --version` and `claude auth status` (trap 9). Never a session.
     async fn probe(&self) -> Result<ProviderProbe> {
         let version = self.run_probe(&["--version"]).await?;

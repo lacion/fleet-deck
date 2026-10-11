@@ -268,6 +268,10 @@ impl ProviderAdapter for CodexAdapter {
         ProviderKind::Codex
     }
 
+    fn capabilities(&self) -> Capabilities {
+        capabilities(self.config.allow_full_access)
+    }
+
     /// `codex --version`, then `account/read` of a short app-server process
     /// that opens no thread (trap 9: unknown unless the answer is definite).
     async fn probe(&self) -> Result<ProviderProbe> {

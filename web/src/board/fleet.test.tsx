@@ -190,8 +190,20 @@ describe('station projections', () => {
               version: '0.2.0',
               max_sessions: 4,
               providers: [
-                { instance: 'personal', provider: 'claude', version: '2.1.5', auth: 'signed_in' },
-                { instance: 'work', provider: 'codex', version: null, auth: 'unknown' },
+                {
+                  instance: 'personal',
+                  provider: 'claude',
+                  version: '2.1.5',
+                  auth: 'signed_in',
+                  capabilities: null,
+                },
+                {
+                  instance: 'work',
+                  provider: 'codex',
+                  version: null,
+                  auth: 'unknown',
+                  capabilities: null,
+                },
               ],
             },
             info_at: 0,

@@ -2,8 +2,9 @@ import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { App } from '../App';
 import type { StationInfo, StationView, WorkspaceListing } from '../gen';
+import { claudeCaps, codexCaps } from '../testing/capabilities';
 import { station } from '../testing/fleet';
-import { listingView, providerLabel, spawnActions, spawnTargets } from './spawn';
+import { listingView, providerLabel, spawnActions, spawnModes, spawnTargets } from './spawn';
 
 const info = (extra: Partial<StationInfo> = {}): StationInfo => ({
   name: 'Alpha',
@@ -13,8 +14,20 @@ const info = (extra: Partial<StationInfo> = {}): StationInfo => ({
   version: '0.2.0',
   max_sessions: 4,
   providers: [
-    { instance: 'claude', provider: 'claude', version: '2.1.999', auth: 'signed_in' },
-    { instance: 'codex', provider: 'codex', version: null, auth: 'unknown' },
+    {
+      instance: 'claude',
+      provider: 'claude',
+      version: '2.1.999',
+      auth: 'signed_in',
+      capabilities: claudeCaps(),
+    },
+    {
+      instance: 'codex',
+      provider: 'codex',
+      version: null,
+      auth: 'unknown',
+      capabilities: codexCaps(),
+    },
   ],
   ...extra,
 });
@@ -61,9 +74,15 @@ describe('spawn form (P4-4)', () => {
       reported('station-d', { info: info({ providers: [] }) }),
     ]);
     expect(targets.map((s) => s.station_id)).toEqual(['station-a']);
-    expect(providerLabel({ instance: 'codex', provider: 'codex', version: null, auth: 'x' })).toBe(
-      'codex · codex · version unknown',
-    );
+    expect(
+      providerLabel({
+        instance: 'codex',
+        provider: 'codex',
+        version: null,
+        auth: 'x',
+        capabilities: null,
+      }),
+    ).toBe('codex · codex · version unknown');
   });
 
   test('the form offers station, provider, mode and the picker', () => {
@@ -77,6 +96,20 @@ describe('spawn form (P4-4)', () => {
     expect(html).toContain('No directory chosen.');
     // No directory yet: the start button is off.
     expect(html).toMatch(/<button type="submit" disabled="">Start session<\/button>/);
+  });
+
+  test('the modes come from the capabilities that the station reports (P5-3)', () => {
+    const [claude, codex] = info().providers;
+    expect(spawnModes(claude)).toEqual(['default', 'plan', 'acceptEdits', 'dontAsk', 'auto']);
+    expect(spawnModes(codex)).toEqual(codexCaps().modes);
+    expect(spawnModes(codex && { ...codex, capabilities: null })).toEqual([]);
+    expect(spawnModes(undefined)).toEqual([]);
+    // The first provider is Codex: the form offers its modes only.
+    const html = form([
+      reported('station-a', { info: info({ providers: [...info().providers].reverse() }) }),
+    ]);
+    expect(html).toContain('<option value="untrusted/read-only">untrusted/read-only</option>');
+    expect(html).not.toContain('<option value="plan">plan</option>');
   });
 
   test('the picker shows entries, git repositories and truncation', () => {
