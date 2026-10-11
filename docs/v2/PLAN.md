@@ -48,6 +48,7 @@ fleetdeck station join <inv> # pair this station with a deck
 | D12 | Platforms | **Linux and macOS only** for deck and station. Windows is not planned |
 | D13 | Network | **Local network and Tailscale tailnet only.** No public exposure, no reverse proxy, no Coder, no hosted relay |
 | D14 | Pi | **Not in v2 scope.** Pi comes later as a dedicated Pi package with full integration. The adapter trait must allow it |
+| D15 | Subagents | **Track and observe subagents.** Subagents (sub-sessions) that Claude Code starts (and Codex `spawnAgent` children) are visible on the board: a subagent tree in the session view, each child with its own timeline, status (running, done, failed) and background state, and a count of running subagents on the session card. Data path: `parent_node_id` (§6.3). Phase 4 (P4-3) |
 
 ### 2.2 Architect decisions (with reasons)
 
@@ -550,7 +551,7 @@ React + TypeScript + Vite in `web/`. Types come from `web/src/gen/` (generated b
 | --- | --- |
 | Fleet board | Status lanes; each card shows callsign, station badge, provider badge, model, repo/branch, current tool, usage |
 | Stations panel | Health, link direction, version, providers + versions, capacity, last seen; "Add station" (pairing) |
-| Session view | Turn timeline (messages, tool calls, diffs, approvals inline); composer with prompt / steer / follow-up; interrupt; mode ladder (only the modes in the session's capabilities, L8); model picker |
+| Session view | Turn timeline (messages, tool calls, diffs, approvals inline); subagent tree (D15): each child subagent with its own timeline and status; composer with prompt / steer / follow-up; interrupt; mode ladder (only the modes in the session's capabilities, L8); model picker |
 | Session grid | Many live session views at once (replaces the v0 terminal grid) |
 | Shell | xterm.js terminal for a station shell in a repo or worktree (D10); can sit in the session grid |
 | Needs-you rail | Approvals from the whole fleet; allow once / allow always / deny / edit input where the provider supports it |

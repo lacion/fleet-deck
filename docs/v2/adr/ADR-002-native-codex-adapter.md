@@ -1,8 +1,8 @@
 # ADR-002 — Native Codex adapter (`codex app-server` JSON-RPC)
 
-- **Status:** Proposed
+- **Status:** Accepted (owner, 2026-10-11)
 - **Date:** 2026-10-11
-- **Deciders:** owner (approval pending), architect
+- **Deciders:** owner (accepted 2026-10-11), architect
 - **Implements:** PLAN A8 (native adapters), A9, A10, §6.2–§6.4, §14 Phase 0 S2; lessons L1–L4, L6–L8, L12; t3code-lessons §5 traps 1–10
 - **Evidence:** spike S2 (`spikes/s2-codex/`), decisions DL-012 to DL-015 in `docs/v2/DECISIONS-LOG.md`
 - **Verified against:** `codex-cli` 0.160.0 (`codex app-server`), model `gpt-5.6-luna`, effort `low`

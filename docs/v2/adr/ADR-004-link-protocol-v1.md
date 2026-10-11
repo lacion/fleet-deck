@@ -1,8 +1,8 @@
 # ADR-004 — Link protocol v1
 
-- **Status:** Proposed
+- **Status:** Accepted (owner, 2026-10-11)
 - **Date:** 2026-10-11 (Revision 2: 2026-10-11, M1 gate, §9)
-- **Deciders:** owner (approval pending), architect (goal loop, M1)
+- **Deciders:** owner (accepted 2026-10-11), architect (goal loop, M1)
 - **Implements:** PLAN §8 (link protocol), D13 (network scope), L15 (scoped methods), L16 (feature flags), §14 Phase 0 row S4
 - **Evidence:** `spikes/s4-link/` (crate `s4-link`), tests in `spikes/s4-link/tests/` and module tests in `spikes/s4-link/src/`
 - **Verified against:** rustls 0.23 (ring provider), tokio-rustls 0.26, tokio-tungstenite 0.30, rcgen 0.14, ed25519-dalek 3, Rust 1.96, loopback only (no Docker, no Tailscale)

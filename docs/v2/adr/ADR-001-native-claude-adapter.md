@@ -1,10 +1,11 @@
 # ADR-001 — Native Claude Code adapter (stream-json control protocol)
 
-- **Status:** Proposed
+- **Status:** Accepted (owner, 2026-10-11)
 - **Date:** 2026-10-11
-- **Deciders:** owner (approval pending), architect
+- **Deciders:** owner (accepted 2026-10-11), architect
 - **Implements:** PLAN A8, A9, A10, D8; lessons L1–L4, L6–L8, L12; t3code-lessons §5 traps 1–10
 - **Evidence:** spike S1 (`spikes/s1-claude/`), `spikes/s1-claude/EVIDENCE.md`, decisions DL-003 to DL-009 in `docs/v2/DECISIONS-LOG.md`
+- **Owner note (2026-10-11):** the owner wants to track and observe the subagents (sub-sessions) that Claude Code starts. See PLAN D15.
 - **Verified against:** `claude` 2.1.289 (native build), TypeScript Agent SDK `@anthropic-ai/claude-agent-sdk` 0.3.296, model `haiku`
 
 ## 1. Context
