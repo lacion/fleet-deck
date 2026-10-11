@@ -7,6 +7,10 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+# Crash injection for the fault tests (M2 P2-8); never in a release build.
+fault-injection = []
+
 [dependencies]
 fleetdeck-proto = { path = "../fleetdeck-proto" }
 fleetdeck-core = { path = "../fleetdeck-core" }

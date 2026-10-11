@@ -533,11 +533,20 @@ pub(super) fn observe(conn: &Connection, envelope: &EventEnvelope, now: i64) -> 
     let confirm = |filter: &str, args: &[&dyn rusqlite::ToSql]| -> Result<()> {
         let sql = format!(
             "UPDATE effects SET state = 'confirmed', updated_at = ?1
-             WHERE session_id = ?2 AND {open} AND {filter}"
+             WHERE session_id = ?2 AND {open} AND {filter}
+             RETURNING kind"
         );
         let mut all: Vec<&dyn rusqlite::ToSql> = vec![&now, &session];
         all.extend_from_slice(args);
-        conn.execute(&sql, all.as_slice())?;
+        let mut stmt = conn.prepare(&sql)?;
+        let kinds = stmt
+            .query_map(all.as_slice(), |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        for kind in kinds {
+            // Crash tests: the evidence and the confirmation are in this
+            // uncommitted transaction (M2 P2-8).
+            crate::fault::hit(crate::fault::FaultPoint::BeforeConfirm, &kind);
+        }
         Ok(())
     };
     match event {

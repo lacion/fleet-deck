@@ -17,6 +17,10 @@ use std::process::Command;
 
 /// Environment variable that selects the scenario of a fake agent.
 pub const SCENARIO_ENV: &str = "FLEETDECK_FAKE_SCENARIO";
+/// Environment variable with a file path: the `sim` scenario appends every
+/// stdin line to it, so fault tests can count what reached the provider
+/// (after one `PID_LINE` with its process id).
+pub const STDIN_LOG_ENV: &str = "FLEETDECK_FAKE_STDIN_LOG";
 /// Environment variable that overrides the directory of the fake binaries.
 pub const BIN_DIR_ENV: &str = "FLEETDECK_FAKE_BIN_DIR";
 

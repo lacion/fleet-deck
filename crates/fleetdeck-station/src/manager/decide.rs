@@ -92,11 +92,20 @@ pub fn decide(
             } else {
                 Operation::Answer
             };
-            live_session(d, &session_id, op)?;
             let request = d
                 .request(&request_id)?
-                .filter(|r| r.session_id == session_id)
-                .ok_or_else(|| reject(RejectCode::UnknownRequest, "no such request"))?;
+                .filter(|r| r.session_id == session_id);
+            // A closed request answers for itself, also after its session
+            // ended: a repeated answer gets the first outcome (L3), a stale
+            // one `request_closed`. Only an open request needs a live session.
+            if request
+                .as_ref()
+                .is_none_or(|r| r.state == RequestState::Open)
+            {
+                live_session(d, &session_id, op)?;
+            }
+            let request =
+                request.ok_or_else(|| reject(RejectCode::UnknownRequest, "no such request"))?;
             let by = resolved_by(origin);
             match d.claim_answer(&request.request_id, &decision.option_id, by)? {
                 AnswerClaim::First => {

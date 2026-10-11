@@ -77,7 +77,10 @@ impl EffectWorker {
         let Some(effect) = self.store.claim_next(self.fence).await? else {
             return Ok(None);
         };
+        let kind = effect.payload.kind();
+        crate::fault::hit(crate::fault::FaultPoint::AfterClaim, kind);
         let dispatch = self.target.dispatch(&effect).await;
+        crate::fault::hit(crate::fault::FaultPoint::AfterSend, kind);
         let settled = self
             .store
             .settle(effect.effect_id.clone(), self.fence, dispatch)

@@ -51,6 +51,9 @@ struct Sim<W: Write> {
     queue: VecDeque<Input>,
 }
 
+/// The first line that `sim` writes to the stdin log, before its pid.
+pub const PID_LINE: &str = "# fake-claude pid ";
+
 /// Runs the model until stdin ends.
 pub fn run() -> ExitCode {
     let stdin = std::io::stdin();
@@ -67,10 +70,26 @@ pub fn run() -> ExitCode {
         turn: None,
         queue: VecDeque::new(),
     };
+    let mut log = std::env::var_os(crate::fake::STDIN_LOG_ENV).and_then(|path| {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .ok()
+    });
+    if let Some(file) = log.as_mut() {
+        // Fault tests find the process to kill here.
+        let _ = writeln!(file, "{PID_LINE}{}", std::process::id());
+    }
     for line in stdin.lock().lines() {
         let Ok(line) = line else {
             return ExitCode::from(1);
         };
+        if let Some(file) = log.as_mut() {
+            // One write per line, flushed before the model reacts.
+            let _ = file.write_all(format!("{line}\n").as_bytes());
+            let _ = file.flush();
+        }
         let Ok(frame) = serde_json::from_str::<Value>(&line) else {
             eprintln!("fake-claude sim: not JSON: {line}");
             continue;
@@ -311,5 +330,36 @@ impl<W: Write> Sim<W> {
         self.result("error_during_execution", "aborted_streaming", "")?;
         self.lifecycle(&input.uuid, "cancelled")?;
         self.next_turn()
+    }
+}
+
+/// What the `sim` processes that shared one stdin log received.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StdinLog {
+    /// The process ids, in start order.
+    pub pids: Vec<u32>,
+    /// Every stdin line of every process.
+    pub lines: Vec<String>,
+}
+
+impl StdinLog {
+    /// Reads a log; a missing file is an empty log.
+    #[must_use]
+    pub fn read(path: &std::path::Path) -> Self {
+        let text = std::fs::read_to_string(path).unwrap_or_default();
+        let mut log = Self::default();
+        for line in text.lines() {
+            match line.strip_prefix(PID_LINE) {
+                Some(pid) => log.pids.extend(pid.trim().parse::<u32>().ok()),
+                None => log.lines.push(line.to_owned()),
+            }
+        }
+        log
+    }
+
+    /// The number of stdin lines that contain `needle`.
+    #[must_use]
+    pub fn count(&self, needle: &str) -> usize {
+        self.lines.iter().filter(|l| l.contains(needle)).count()
     }
 }

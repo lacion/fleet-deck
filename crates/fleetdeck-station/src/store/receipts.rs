@@ -379,7 +379,9 @@ where
         Err(reject) => Receipt::rejected(envelope.command_id.clone(), reject, now),
     };
     store_receipt(&tx, &receipt, method, caller, &payload_sha256)?;
+    crate::fault::hit(crate::fault::FaultPoint::BeforeCommit, method);
     tx.commit()?;
+    crate::fault::hit(crate::fault::FaultPoint::AfterCommit, method);
     Ok(Decided {
         receipt,
         duplicate: false,

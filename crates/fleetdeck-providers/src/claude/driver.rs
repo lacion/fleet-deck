@@ -24,7 +24,7 @@ use fleetdeck_proto::event::{ProviderKind, RawRef};
 use fleetdeck_proto::{Capabilities, Operation, ProviderInstanceId};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
-use tokio::sync::{Mutex, mpsc, watch};
+use tokio::sync::{Mutex, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 
 use super::core::{ClaudeCore, CoreConfig, Output};
@@ -34,7 +34,12 @@ use crate::adapter::{
     Answer, ControlId, EventSink, HostInput, LiveSession, ModelId, NativeSessionId, PermissionMode,
     ProviderAdapter, ProviderError, ProviderProbe, Result, canonical_workspace, require,
 };
-use crate::host::{ProcessControl, ProcessSpec, SessionHost, StopPolicy};
+use crate::host::{HostError, ProcessControl, ProcessSpec, SessionHost, StopPolicy};
+
+/// How long a host command waits until its frames are in the stdin pipe.
+/// A process that stops reading stdin fills the pipe; the command then
+/// fails with an unknown outcome instead of blocking the station.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 use crate::rawlog::{RawDir, RawFrameLog, RawLogLimits};
 
 /// Where the raw-frame logs of the sessions go.
@@ -278,6 +283,8 @@ enum Write {
     Frame(Value),
     /// Close stdin after the frames before it (a graceful stop).
     Close,
+    /// Acknowledges that every frame before it is written to stdin.
+    Flush(oneshot::Sender<()>),
 }
 
 /// The state that the session, its reader and its writer share.
@@ -362,6 +369,10 @@ async fn write_loop(
             Write::Close => {
                 control.close_stdin().await;
                 break;
+            }
+            Write::Flush(ack) => {
+                let _ = ack.send(());
+                continue;
             }
         };
         shared.log(RawDir::In, &frame);
@@ -478,7 +489,29 @@ impl ClaudeSession {
     ) -> Result<()> {
         let mut core = self.shared.core.lock().await;
         let out = op(&mut core)?;
-        self.shared.dispatch(out, None, &self.writes).await
+        let wrote = out.iter().any(|o| matches!(o, Output::Write(_)));
+        self.shared.dispatch(out, None, &self.writes).await?;
+        drop(core);
+        if wrote {
+            self.flush().await?;
+        }
+        Ok(())
+    }
+
+    /// Returns when the queued frames are in the stdin pipe, so a host
+    /// command returns after its write, not before it (PLAN §6.4: the
+    /// station records `sent` only after the I/O). A failed or stuck write
+    /// can be partial: its error is an unknown outcome.
+    async fn flush(&self) -> Result<()> {
+        let (ack, done) = oneshot::channel();
+        if self.writes.send(Write::Flush(ack)).is_err() {
+            return Err(ProviderError::SessionEnded);
+        }
+        match tokio::time::timeout(WRITE_TIMEOUT, done).await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(_)) => Err(write_failed("the stdin writer stopped")),
+            Err(_) => Err(write_failed("the process does not read stdin")),
+        }
     }
 
     async fn input(&self, op: Operation, input: HostInput) -> Result<()> {
@@ -608,4 +641,11 @@ impl Drop for ClaudeSession {
             writer.abort();
         }
     }
+}
+
+fn write_failed(why: &str) -> ProviderError {
+    ProviderError::Host(HostError::Write(std::io::Error::new(
+        std::io::ErrorKind::BrokenPipe,
+        why,
+    )))
 }

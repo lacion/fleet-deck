@@ -8,6 +8,9 @@ pub mod host {
     pub use fleetdeck_providers::host::*;
 }
 
+/// Crash injection at the effect boundaries (M2 P2-8).
+pub mod fault;
+
 /// The station-local control socket (M2 P2-7).
 pub mod local;
 

@@ -197,3 +197,7 @@ async fn deny_ticker(store: Store, mut shutdown: watch::Receiver<bool>) {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "fault_tests.rs"]
+mod fault_tests;

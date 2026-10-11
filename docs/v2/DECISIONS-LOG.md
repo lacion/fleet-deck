@@ -402,3 +402,20 @@ Format: context, options, choice, reason, owner review.
   - SIGINT or SIGTERM stops `station serve`: the socket closes, every live session stops gracefully (ADR-001 stop policy), the pumps get up to 5 s to store the last events, the socket file is removed.
 - Reason: the link protocol needs the Phase 3 handshake, scopes and pairing, which a same-user emergency path does not need; the peer uid check keeps other local users out even if the directory mode changes; the request id is unique on the station, so asking for the session id adds a way to get it wrong.
 - Owner review: pending
+
+## DL-039: Fault injection, "after the send", and stale answers after a restart
+
+- Date: 2026-10-11 (M2 round 12, P2-8)
+- Context: PLAN §6.4, §11 and §13 Phase 2 ask for fault tests at every effect boundary (crash before commit, after commit, after the dispatch claim, after the send, before the confirmation is stored), a worker restart and a provider restart as separate faults, a stale approval reply and duplicate replays. The PLAN does not say how a test crashes a station at an exact point. The tests also found two gaps: the Claude driver returned from a host command when its frames were queued in memory, not written to stdin; and an answer to a request of an ended session got `invalid_state`, also when it repeated the first answer (L3 requires the first outcome).
+- Options:
+  1. Crash point: (a) timing (kill the process after a sleep); (b) a `fault-injection` cargo feature of fleetdeck-station: `fault::hit(point, label)` at the five boundaries; with `FLEETDECK_FAULT=<point>@<label>[#n]` the n-th hit calls `std::process::abort()`. Without the feature the hook is an empty inline function. The CLI's dev-dependency enables the feature, so only the test build of `fleetdeck` honors the variable.
+  2. "After the send": (a) keep `sent` when the frames are queued in the driver; (b) a host command waits until the writer task acknowledges that its frames are in the stdin pipe (`Write::Flush`), at most 10 s; a failed or stuck write is a host write error (`Dispatch::Unknown`).
+  3. Answer to a closed request: (a) check the live session first (`invalid_state`); (b) a closed request answers for itself: a repeated answer is accepted with no effect (L3), an expired one is `request_closed`; only an open request needs a live session.
+  4. Provider restart: (a) resume the session into a new process; (b) a provider crash ends the session (DL-037: resume is not built yet); the test checks that a new provider process gets nothing of the old one.
+- Choice: 1b, 2b, 3b, 4b.
+- Details:
+  - Labels: `before_commit` / `after_commit` = the command method (`session.prompt`); `after_claim` / `after_send` = the effect kind (`prompt`); `before_confirm` = the kind of the effect that provider evidence confirms, inside the uncommitted event transaction.
+  - Worker restart: in-process tests (`manager/fault_tests.rs`) abort the worker task at the claim or after the send; the new worker's fence settles the old claim (`outcome_unknown`), and late provider evidence still confirms a sent effect.
+  - Station crash: `crates/fleetdeck-cli/tests/station_faults.rs` runs one `fleetdeck station serve` per boundary, sends the same command id again after the restart and checks receipt, effect state and the fake provider's stdin log; one more test kills the station with `SIGKILL` while an approval is open.
+- Reason: a timing crash cannot hit a boundary of a few microseconds, and a feature keeps the abort out of every normal build; `sent` must mean the I/O happened, or a crash right after it loses a write that the store calls sent; an answer that the station already applied must get the same outcome every time, also after the session ended.
+- Owner review: pending
