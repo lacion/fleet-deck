@@ -8,3 +8,6 @@ demo/demo-logs/
 demo/project/.claude/settings.json
 board/dist/
 ideas/
+# Rust (Fleet Deck v2)
+/target/
+spikes/**/node_modules/

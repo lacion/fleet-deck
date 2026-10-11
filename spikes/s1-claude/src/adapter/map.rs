@@ -1,0 +1,436 @@
+//! Mapping of CLI frames to canonical events.
+
+use serde_json::{Map, Value};
+use spike_canon::{
+    ApprovalOption, CanonEvent, FileChange, ProviderRefs, RequestKind, ResponseChannel, ToolKind,
+    ToolStatus, TurnStatus, Usage,
+};
+
+use super::{ClaudeCore, HostRequest, Output, RuntimeRequest, ToolNode};
+use crate::control;
+use crate::frames::{CliFrame, ControlRequest, ControlResponse, MessageFrame, ResultFrame};
+
+fn refs(pairs: &[(&str, Option<&str>)]) -> ProviderRefs {
+    let mut map = Map::new();
+    for (k, v) in pairs {
+        if let Some(v) = v {
+            map.insert((*k).to_owned(), Value::String((*v).to_owned()));
+        }
+    }
+    map
+}
+
+/// Maps a Claude tool name to a canonical tool kind.
+#[must_use]
+pub fn tool_kind(name: &str) -> ToolKind {
+    match name {
+        "Bash" | "BashOutput" | "KillShell" | "Monitor" => ToolKind::Shell,
+        "Edit" | "MultiEdit" | "Write" | "NotebookEdit" => ToolKind::Edit,
+        "Read" => ToolKind::Read,
+        "Grep" | "Glob" | "LS" => ToolKind::Search,
+        "WebFetch" | "WebSearch" => ToolKind::Web,
+        "Task" | "Agent" => ToolKind::Subagent,
+        n if n.starts_with("mcp__") => ToolKind::Mcp,
+        _ => ToolKind::Other,
+    }
+}
+
+/// Maps a Claude tool name to the kind of its permission request.
+#[must_use]
+pub fn request_kind(name: &str) -> RequestKind {
+    match tool_kind(name) {
+        ToolKind::Shell => RequestKind::Command,
+        ToolKind::Edit => RequestKind::FileChange,
+        _ if name == "AskUserQuestion" => RequestKind::Question,
+        _ => RequestKind::Tool,
+    }
+}
+
+pub(super) fn on_frame(core: &mut ClaudeCore, frame: CliFrame) -> Vec<Output> {
+    match frame {
+        CliFrame::System { subtype, body } => on_system(core, &subtype, &body),
+        CliFrame::User(msg) => on_user(core, &msg),
+        CliFrame::Assistant(msg) => on_assistant(core, &msg),
+        CliFrame::StreamEvent {
+            event,
+            parent_tool_use_id,
+        } => on_stream_event(core, &event, parent_tool_use_id.is_some()),
+        CliFrame::Result(res) => on_result(core, &res),
+        CliFrame::ControlRequest {
+            request_id,
+            request,
+        } => on_control_request(core, &request_id, request),
+        CliFrame::ControlResponse(resp) => on_control_response(core, &resp),
+        CliFrame::ControlCancelRequest { request_id } => {
+            let Some(app) = core.native_to_app.get(&request_id).cloned() else {
+                return Vec::new();
+            };
+            match core.requests.get_mut(&app) {
+                Some(req) if req.receipt.is_none() => {
+                    req.receipt = Some(super::AnswerReceipt {
+                        request_id: app.clone(),
+                        option_id: String::new(),
+                        duplicate: false,
+                    });
+                    vec![Output::Emit(CanonEvent::ApprovalExpired {
+                        request_id: app,
+                        reason: "cancelled_by_provider".to_owned(),
+                    })]
+                }
+                _ => Vec::new(),
+            }
+        }
+        CliFrame::Unknown(_) => {
+            core.unknown_frames += 1;
+            Vec::new()
+        }
+    }
+}
+
+fn on_system(core: &mut ClaudeCore, subtype: &str, body: &Map<String, Value>) -> Vec<Output> {
+    let get = |k: &str| body.get(k).and_then(Value::as_str).map(str::to_owned);
+    match subtype {
+        "init" => {
+            core.native_session_id = get("session_id");
+            core.mode = get("permissionMode");
+            if core.started {
+                // A second init (for example after a resume inside one process) is not a new session.
+                return Vec::new();
+            }
+            core.started = true;
+            vec![Output::Emit(CanonEvent::SessionStarted {
+                provider: "claude".to_owned(),
+                provider_version: get("claude_code_version"),
+                model: get("model"),
+                mode: get("permissionMode"),
+                provider_refs: refs(&[("session_id", get("session_id").as_deref())]),
+            })]
+        }
+        // `status: requesting` is the first sign that the CLI works on an input.
+        "status" => start_turn_if_pending(core),
+        _ => Vec::new(),
+    }
+}
+
+/// Starts a turn when an input is pending and no turn runs.
+fn start_turn_if_pending(core: &mut ClaudeCore) -> Vec<Output> {
+    if core.turn.is_some() || core.pending_inputs.is_empty() {
+        return Vec::new();
+    }
+    core.pending_inputs.remove(0);
+    let turn_id = core.ids.next("turn");
+    core.turn = Some(turn_id.clone());
+    let session = core.native_session_id.clone();
+    vec![Output::Emit(CanonEvent::TurnStarted {
+        turn_id,
+        provider_refs: refs(&[("session_id", session.as_deref())]),
+    })]
+}
+
+fn text_of(blocks: &[Value]) -> String {
+    blocks
+        .iter()
+        .filter(|b| b.get("type").and_then(Value::as_str) == Some("text"))
+        .filter_map(|b| b.get("text").and_then(Value::as_str))
+        .collect::<Vec<_>>()
+        .join("")
+}
+
+fn on_user(core: &mut ClaudeCore, msg: &MessageFrame) -> Vec<Output> {
+    let blocks = msg.blocks();
+    let results: Vec<&Value> = blocks
+        .iter()
+        .filter(|b| b.get("type").and_then(Value::as_str) == Some("tool_result"))
+        .collect();
+    if results.is_empty() {
+        // A replayed user message (`--replay-user-messages`): the CLI read the input.
+        // This is "prompt confirmed" for Claude (ADR-001).
+        let _ = text_of(&blocks);
+        return start_turn_if_pending(core);
+    }
+    let mut out = Vec::new();
+    for block in results {
+        let Some(tool_use_id) = block.get("tool_use_id").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(node) = core.tools.get(tool_use_id).cloned() else {
+            continue;
+        };
+        let is_error = block
+            .get("is_error")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let status = if node.denied {
+            ToolStatus::Denied
+        } else if is_error {
+            ToolStatus::Failed
+        } else {
+            ToolStatus::Ok
+        };
+        if status == ToolStatus::Ok
+            && tool_kind(&node.name) == ToolKind::Edit
+            && let Some(path) = node.input.get("file_path").and_then(Value::as_str)
+        {
+            out.push(Output::Emit(CanonEvent::FileChanged {
+                path: path.to_owned(),
+                change: FileChange::Modified,
+            }));
+        }
+        out.push(Output::Emit(CanonEvent::ToolCompleted {
+            node_id: node.node_id,
+            status,
+        }));
+    }
+    out
+}
+
+fn on_assistant(core: &mut ClaudeCore, msg: &MessageFrame) -> Vec<Output> {
+    let mut out = start_turn_if_pending(core);
+    let Some(turn_id) = core.turn.clone() else {
+        return out;
+    };
+    let parent_node = msg
+        .parent_tool_use_id
+        .as_ref()
+        .and_then(|p| core.tools.get(p))
+        .map(|n| n.node_id.clone());
+    for block in msg.blocks() {
+        match block.get("type").and_then(Value::as_str) {
+            Some("text") => {
+                let text = block
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if !text.is_empty() && parent_node.is_none() {
+                    out.push(Output::Emit(CanonEvent::MessageCompleted {
+                        turn_id: turn_id.clone(),
+                        text: text.to_owned(),
+                    }));
+                }
+            }
+            Some("tool_use") => {
+                let Some(id) = block.get("id").and_then(Value::as_str) else {
+                    continue;
+                };
+                if core.tools.contains_key(id) {
+                    continue;
+                }
+                let name = block
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let input = block.get("input").cloned().unwrap_or(Value::Null);
+                let node_id = core.ids.next("node");
+                core.tools.insert(
+                    id.to_owned(),
+                    ToolNode {
+                        node_id: node_id.clone(),
+                        name: name.to_owned(),
+                        input: input.clone(),
+                        denied: false,
+                    },
+                );
+                out.push(Output::Emit(CanonEvent::ToolStarted {
+                    node_id,
+                    parent_node_id: parent_node.clone(),
+                    tool_kind: tool_kind(name),
+                    title: name.to_owned(),
+                    provider_refs: refs(&[("tool_use_id", Some(id))]),
+                }));
+                if name == "ExitPlanMode"
+                    && let Some(plan) = input.get("plan").and_then(Value::as_str)
+                {
+                    out.push(Output::Emit(CanonEvent::PlanProposed {
+                        markdown: plan.to_owned(),
+                    }));
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+fn on_stream_event(core: &mut ClaudeCore, event: &Value, is_child: bool) -> Vec<Output> {
+    let mut out = start_turn_if_pending(core);
+    let Some(turn_id) = core.turn.clone() else {
+        return out;
+    };
+    if is_child || event.get("type").and_then(Value::as_str) != Some("content_block_delta") {
+        return out;
+    }
+    let delta = event.get("delta").cloned().unwrap_or(Value::Null);
+    match delta.get("type").and_then(Value::as_str) {
+        Some("text_delta") => {
+            if let Some(text) = delta.get("text").and_then(Value::as_str) {
+                out.push(Output::Emit(CanonEvent::MessageDelta {
+                    turn_id,
+                    text: text.to_owned(),
+                }));
+            }
+        }
+        Some("thinking_delta") => {
+            if let Some(text) = delta.get("thinking").and_then(Value::as_str)
+                && !text.is_empty()
+            {
+                out.push(Output::Emit(CanonEvent::ReasoningDelta {
+                    turn_id,
+                    text: text.to_owned(),
+                }));
+            }
+        }
+        _ => {}
+    }
+    out
+}
+
+fn usage_of(res: &ResultFrame) -> Usage {
+    let u = res.usage.as_ref();
+    Usage {
+        input_tokens: u
+            .and_then(|u| u.get("input_tokens"))
+            .and_then(Value::as_u64),
+        output_tokens: u
+            .and_then(|u| u.get("output_tokens"))
+            .and_then(Value::as_u64),
+        cost_usd: res.total_cost_usd,
+    }
+}
+
+fn on_result(core: &mut ClaudeCore, res: &ResultFrame) -> Vec<Output> {
+    // A result can arrive for an input that never produced a status frame (an interrupt
+    // before the model call). Start the turn first so every turn has both ends.
+    let mut out = start_turn_if_pending(core);
+    let usage = usage_of(res);
+    let terminal_reason = res.body.get("terminal_reason").and_then(Value::as_str);
+    let status = if core.interrupt_requested
+        || terminal_reason.is_some_and(|r| r.contains("interrupt") || r.contains("abort"))
+    {
+        TurnStatus::Interrupted
+    } else if res.is_error || res.subtype != "success" {
+        TurnStatus::Failed
+    } else {
+        TurnStatus::Done
+    };
+    core.interrupt_requested = false;
+    // A finished turn leaves no request open (trap 6).
+    out.extend(core.expire_open("turn_ended"));
+    out.push(Output::Emit(CanonEvent::UsageUpdated {
+        usage: usage.clone(),
+    }));
+    if let Some(turn_id) = core.turn.take() {
+        out.push(Output::Emit(CanonEvent::TurnCompleted {
+            turn_id,
+            status,
+            usage: Some(usage),
+        }));
+    }
+    out
+}
+
+fn options_for(suggestions: Option<&Value>) -> Vec<ApprovalOption> {
+    let mut options = vec![ApprovalOption {
+        option_id: "allow".to_owned(),
+        label: "Allow once".to_owned(),
+    }];
+    if suggestions.is_some_and(|s| s.as_array().is_some_and(|a| !a.is_empty())) {
+        options.push(ApprovalOption {
+            option_id: "allow_always".to_owned(),
+            label: "Allow always".to_owned(),
+        });
+    }
+    options.push(ApprovalOption {
+        option_id: "deny".to_owned(),
+        label: "Deny".to_owned(),
+    });
+    options
+}
+
+fn on_control_request(
+    core: &mut ClaudeCore,
+    native_id: &str,
+    request: ControlRequest,
+) -> Vec<Output> {
+    match request {
+        ControlRequest::CanUseTool {
+            tool_name,
+            input,
+            tool_use_id,
+            permission_suggestions,
+            ..
+        } => {
+            if let Some(app) = core.native_to_app.get(native_id) {
+                // A repeated request with the same native id is the same request.
+                let _ = app;
+                return Vec::new();
+            }
+            let request_id = core.ids.next("req");
+            let node_id = tool_use_id
+                .as_ref()
+                .and_then(|t| core.tools.get(t))
+                .map(|n| n.node_id.clone());
+            let options = options_for(permission_suggestions.as_ref());
+            core.native_to_app
+                .insert(native_id.to_owned(), request_id.clone());
+            core.requests.insert(
+                request_id.clone(),
+                RuntimeRequest {
+                    native_request_id: native_id.to_owned(),
+                    tool_use_id: tool_use_id.clone(),
+                    input,
+                    suggestions: permission_suggestions,
+                    options: options.clone(),
+                    receipt: None,
+                },
+            );
+            vec![Output::Emit(CanonEvent::ApprovalRequested {
+                request_id,
+                node_id,
+                request_kind: request_kind(&tool_name),
+                title: tool_name,
+                options,
+                response: ResponseChannel::RpcReply,
+                provider_refs: refs(&[
+                    ("control_request_id", Some(native_id)),
+                    ("tool_use_id", tool_use_id.as_deref()),
+                ]),
+            })]
+        }
+        // The host registers no hooks and no SDK MCP servers: fail closed.
+        ControlRequest::HookCallback { .. } | ControlRequest::McpMessage { .. } => {
+            vec![Output::Write(control::control_error(
+                native_id,
+                "fleetdeck: not registered",
+            ))]
+        }
+        ControlRequest::Unknown { subtype, .. } => vec![
+            Output::Write(control::control_error(
+                native_id,
+                &format!("fleetdeck: unsupported control request {subtype}"),
+            )),
+            Output::Emit(CanonEvent::Error {
+                code: "unknown_control_request".to_owned(),
+                message: format!("denied unknown control request subtype '{subtype}'"),
+            }),
+        ],
+    }
+}
+
+fn on_control_response(core: &mut ClaudeCore, resp: &ControlResponse) -> Vec<Output> {
+    let Some(kind) = core.host_requests.remove(&resp.request_id) else {
+        return Vec::new();
+    };
+    if !resp.ok {
+        return vec![Output::Emit(CanonEvent::Error {
+            code: "control_request_failed".to_owned(),
+            message: resp.error.clone().unwrap_or_default(),
+        })];
+    }
+    match kind {
+        HostRequest::SetMode(mode) => {
+            core.mode = Some(mode.clone());
+            vec![Output::Emit(CanonEvent::ModeChanged { mode })]
+        }
+        HostRequest::Initialize | HostRequest::Interrupt | HostRequest::SetModel => Vec::new(),
+    }
+}
