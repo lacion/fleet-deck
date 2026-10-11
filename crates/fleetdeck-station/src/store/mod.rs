@@ -134,6 +134,8 @@ pub struct NewSession {
     pub provider_instance: ProviderInstanceId,
     pub cwd: String,
     pub worktree: Option<String>,
+    /// The git branch of `cwd` at start (M2 P4-2); kept in the summary.
+    pub branch: Option<String>,
     pub mode: Option<String>,
     pub title: Option<String>,
     pub offline_approval_policy: OfflineApprovalPolicy,

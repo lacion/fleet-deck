@@ -5,14 +5,15 @@
 # each exit code, and exits non-zero if any command fails. It needs no
 # network: web dependencies come from the local bun cache (`--offline`), and
 # `cargo deny` uses the local advisory database. It needs no provider CLI.
-# It writes only to `target/`, `web/node_modules/`, `web/dist/` and a
-# temporary log directory.
+# It writes only to `target/`, `web/node_modules/`, `web/dist/`,
+# `web/test-results/` and a temporary log directory.
 #
 #   make check                                   # the normal entry point
 #   FD_TEST_RUNNER=test make check               # force `cargo test` instead of nextest
 #
 # On a fresh machine, fill the caches once with network access:
 #   cargo deny fetch && (cd web && bun install --frozen-lockfile)
+#   (cd web && bunx playwright install chromium-headless-shell)
 #
 # The CI workflow `.github/workflows/v2.yml` fills the caches and then runs
 # this same script, so local and CI checks cannot drift apart.
@@ -82,6 +83,8 @@ run bun run --cwd web typecheck
 run bun run --cwd web lint
 run bun run --cwd web test
 run bun run --cwd web build
+# Phone-viewport browser tests of the built board (Playwright, Chromium).
+run bun run --cwd web e2e
 
 # Recorded provider replays (offline; fixtures in spikes/*/fixtures).
 run cargo run -q -p s1-claude --bin replay-claude

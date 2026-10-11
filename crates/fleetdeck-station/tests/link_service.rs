@@ -132,6 +132,7 @@ impl Fixture {
                 provider_instance: "claude".into(),
                 cwd: "/w".to_owned(),
                 worktree: None,
+                branch: None,
                 mode: None,
                 title: None,
                 offline_approval_policy: OfflineApprovalPolicy::Wait,

@@ -8,6 +8,7 @@ pub mod command_routes;
 pub mod guard;
 pub mod methods;
 pub mod read_routes;
+pub mod station_routes;
 pub mod tls;
 pub mod ws;
 
@@ -46,6 +47,8 @@ pub struct Board {
     pub tickets: ws::Tickets,
     /// How often an open WebSocket checks its login ([`ws::RECHECK`]).
     pub ws_recheck: std::time::Duration,
+    /// The link node for the pairing methods (`None`: they answer 503).
+    pub pairing: Option<Arc<crate::link::DeckNode>>,
 }
 
 /// The board API router.
@@ -58,7 +61,15 @@ pub fn router(board: Arc<Board>) -> Router {
         .route("/api/auth/link", post(auth_routes::link))
         .route("/api/auth/logout", post(auth_routes::logout))
         .route("/api/auth/session", get(auth_routes::session))
-        .route("/api/stations", get(read_routes::stations))
+        .route(
+            "/api/stations",
+            get(read_routes::stations).post(station_routes::add),
+        )
+        .route("/api/stations/invite", post(station_routes::invite))
+        .route(
+            "/api/stations/{station}/remove",
+            post(station_routes::remove),
+        )
         .route("/api/sessions", get(read_routes::sessions))
         .route("/api/commands", get(read_routes::commands))
         .route(

@@ -11,7 +11,8 @@
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.test.json",
     "lint": "biome ci --colors=off .",
     "format": "biome format --write .",
-    "test": "bun test src"
+    "test": "bun test src",
+    "e2e": "playwright test"
   },
   "dependencies": {
     "react": "19.2.8",
@@ -19,6 +20,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.8",
+    "@playwright/test": "1.59.1",
     "@types/bun": "1.3.14",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.4",

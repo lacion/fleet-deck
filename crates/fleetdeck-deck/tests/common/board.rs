@@ -96,6 +96,19 @@ pub struct BoardClient {
 
 /// Serves the board API of `link` on a loopback port.
 pub async fn board(link: Arc<DeckLink>) -> BoardClient {
+    serve(link, None).await
+}
+
+/// Serves the board API of `node`, with the pairing methods.
+#[allow(dead_code)]
+pub async fn board_with_node(node: Arc<fleetdeck_deck::link::DeckNode>) -> BoardClient {
+    serve(Arc::clone(node.link()), Some(node)).await
+}
+
+async fn serve(
+    link: Arc<DeckLink>,
+    pairing: Option<Arc<fleetdeck_deck::link::DeckNode>>,
+) -> BoardClient {
     let store = link.store.clone();
     let (stop, rx) = watch::channel(false);
     let s = store.clone();
@@ -111,6 +124,7 @@ pub async fn board(link: Arc<DeckLink>) -> BoardClient {
                 limiter: LoginLimiter::default(),
                 tickets: fleetdeck_deck::http::ws::Tickets::default(),
                 ws_recheck: Duration::from_millis(200),
+                pairing: pairing.clone(),
             });
             Ok::<_, fleetdeck_deck::http::tls::TlsError>((board, tls))
         },

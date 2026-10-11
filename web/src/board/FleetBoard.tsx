@@ -1,5 +1,6 @@
-import type { DeckSession, StationView } from '../gen';
+import type { DeckSession, SessionKey, StationView } from '../gen';
 import type { Freshness } from '../runtime/state';
+import { runningSubagents } from '../session/timeline';
 import { cardKey, stationName, STATUS_LANES, statusGroups, usageText } from './fleet';
 import { providerLabel } from './lanes';
 
@@ -7,10 +8,11 @@ type Props = {
   readonly sessions: readonly DeckSession[];
   readonly stations: readonly StationView[];
   readonly freshness: Freshness;
+  readonly onOpen?: ((key: SessionKey) => void) | undefined;
 };
 
 /** The deck projection owns the lane; cards retain the station-scoped identity. */
-export function FleetBoard({ sessions, stations, freshness }: Props) {
+export function FleetBoard({ sessions, stations, freshness, onOpen }: Props) {
   const groups = statusGroups(sessions);
   return (
     <main className="fd-board" aria-label="Fleet board">
@@ -32,6 +34,7 @@ export function FleetBoard({ sessions, stations, freshness }: Props) {
               <ul className="fd-cards">
                 {cards.map((card) => {
                   const s = card.summary;
+                  const subagents = runningSubagents(s);
                   return (
                     <li
                       key={cardKey(card)}
@@ -40,6 +43,18 @@ export function FleetBoard({ sessions, stations, freshness }: Props) {
                       data-station={card.station_id}
                     >
                       <span className="fd-title">{s.title ?? s.session_id}</span>
+                      {onOpen ? (
+                        <button
+                          type="button"
+                          className="fd-open"
+                          aria-label={`Open session ${s.title ?? s.session_id}`}
+                          onClick={() =>
+                            onOpen({ station_id: card.station_id, session_id: s.session_id })
+                          }
+                        >
+                          Open
+                        </button>
+                      ) : null}
                       <span className="fd-station-badge">
                         {stationName(card.station_id, stations)}
                       </span>
@@ -60,11 +75,16 @@ export function FleetBoard({ sessions, stations, freshness }: Props) {
                           Last activity: {s.activity.replaceAll('_', ' ')}
                         </span>
                       ) : null}
+                      {subagents > 0 ? (
+                        <span className="fd-subagents" data-running-subagents={subagents}>
+                          Subagents running: {subagents}
+                        </span>
+                      ) : null}
                       {s.background_tasks.length > 0 ? (
                         <span>Background tasks: {s.background_tasks.length}</span>
                       ) : null}
                       <span className="fd-card-line">Workspace: {s.cwd ?? 'unknown'}</span>
-                      <span className="fd-card-line">Branch: not reported</span>
+                      <span className="fd-card-line">Branch: {s.branch ?? 'not reported'}</span>
                       {s.running_tools.length === 0 ? (
                         <span className="fd-card-line">No current tool</span>
                       ) : (

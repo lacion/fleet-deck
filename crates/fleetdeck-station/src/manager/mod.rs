@@ -20,6 +20,8 @@ use std::time::Duration;
 use fleetdeck_core::config::{Driver, StationConfig};
 use fleetdeck_core::{ChildEnv, SharedIds};
 use fleetdeck_proto::command::{CommandEnvelope, StopMode};
+use fleetdeck_proto::link::StationProvider;
+use fleetdeck_providers::AuthState;
 use fleetdeck_providers::claude::{ClaudeAdapter, ClaudeAdapterConfig, RawLogSettings};
 use fleetdeck_providers::host::SessionHost;
 use fleetdeck_providers::rawlog::RawLogLimits;
@@ -31,6 +33,9 @@ pub use target::{Adapters, SessionTarget};
 
 use crate::store::{Caller, Decided, Result, Store};
 use crate::worker::EffectWorker;
+
+/// The longest wait for one provider probe of `station.info`.
+pub const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// How often the manager applies the offline approval policy.
 pub const DENY_TICK: Duration = Duration::from_secs(1);
@@ -73,6 +78,8 @@ pub struct SessionManager {
     ids: SharedIds,
     shutdown: watch::Sender<bool>,
     tasks: std::sync::Mutex<Vec<JoinHandle<()>>>,
+    /// The provider report of `station.info`, probed once per process.
+    providers: tokio::sync::OnceCell<Vec<StationProvider>>,
 }
 
 impl std::fmt::Debug for SessionManager {
@@ -119,6 +126,7 @@ impl SessionManager {
             ids,
             shutdown,
             tasks: std::sync::Mutex::new(tasks),
+            providers: tokio::sync::OnceCell::new(),
         })
     }
 
@@ -136,6 +144,42 @@ impl SessionManager {
     #[must_use]
     pub fn new_id<I: From<String>>(&self) -> I {
         fleetdeck_core::new_id(self.ids.as_ref())
+    }
+
+    /// The configured provider instances with the version and sign-in state
+    /// of one probe each (`station.info`, M2 P4-2). The first call probes,
+    /// each probe bounded by [`PROBE_TIMEOUT`]; later calls reuse the
+    /// result for the life of the station process (DL-059). An instance
+    /// without an adapter, or a failed probe, reports no version and
+    /// `unknown` sign-in.
+    pub async fn providers(&self) -> Vec<StationProvider> {
+        self.providers
+            .get_or_init(|| async {
+                let mut out = Vec::new();
+                for (instance, kind) in self.policy.instances() {
+                    let probe = match self.target.adapter(instance) {
+                        Some(adapter) => tokio::time::timeout(PROBE_TIMEOUT, adapter.probe())
+                            .await
+                            .ok()
+                            .and_then(std::result::Result::ok),
+                        None => None,
+                    };
+                    let auth = match probe.as_ref().map(|p| &p.auth) {
+                        Some(AuthState::SignedIn { .. }) => "signed_in",
+                        Some(AuthState::SignedOut) => "signed_out",
+                        Some(AuthState::Unknown) | None => "unknown",
+                    };
+                    out.push(StationProvider {
+                        instance: instance.clone(),
+                        provider: *kind,
+                        version: probe.and_then(|p| p.version),
+                        auth: auth.to_owned(),
+                    });
+                }
+                out
+            })
+            .await
+            .clone()
     }
 
     /// The number of sessions with a live provider process.

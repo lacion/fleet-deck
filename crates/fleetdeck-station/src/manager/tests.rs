@@ -541,3 +541,59 @@ fn the_policy_and_the_adapters_come_from_station_toml() {
         vec![claude.into()]
     );
 }
+
+#[tokio::test]
+async fn station_info_providers_are_probed_once_with_versions() {
+    let st = Station::new(3).await;
+    let providers = st.manager.providers().await;
+    let report: Vec<_> = providers
+        .iter()
+        .map(|p| {
+            (
+                p.instance.as_str().to_owned(),
+                p.provider,
+                p.version.clone(),
+                p.auth.clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        report,
+        vec![
+            (
+                "claude".to_owned(),
+                ProviderKind::Claude,
+                Some("2.1.999".to_owned()),
+                // Scenario `sim` fails `auth status`: the state is unknown.
+                "unknown".to_owned()
+            ),
+            // No Codex adapter before Phase 5: no version.
+            (
+                "codex".to_owned(),
+                ProviderKind::Codex,
+                None,
+                "unknown".to_owned()
+            ),
+        ]
+    );
+    assert_eq!(st.manager.providers().await, providers, "cached");
+    assert_eq!(st.manager.policy().max_sessions(), 3);
+    st.manager.shutdown(StopMode::Kill).await;
+}
+
+#[tokio::test]
+async fn a_started_session_records_the_branch_of_its_workspace() {
+    let missing = Path::new("/nonexistent/fleetdeck/claude").to_path_buf();
+    let mut st = Station::with_program(4, missing).await;
+    let ws = st.workspace();
+    std::fs::create_dir_all(Path::new(&ws).join(".git")).unwrap();
+    std::fs::write(
+        Path::new(&ws).join(".git/HEAD"),
+        "ref: refs/heads/fd/feature-1\n",
+    )
+    .unwrap();
+    let s = st.start(&ws, None).await;
+    let summary = st.manager.store().summary(s).await.unwrap().unwrap();
+    assert_eq!(summary.branch.as_deref(), Some("fd/feature-1"));
+    st.manager.shutdown(StopMode::Kill).await;
+}

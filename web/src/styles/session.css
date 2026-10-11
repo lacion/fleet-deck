@@ -1,0 +1,86 @@
+/* M2 P4-3: the session view, the needs-you rail and the subagent tree. */
+.fd-session,
+.fd-rail {
+  padding: var(--sp-4);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.fd-rail {
+  border-bottom: 1px solid var(--border);
+}
+.fd-rail ul,
+.fd-requests ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--sp-2);
+}
+.fd-rail li,
+.fd-requests li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  background: var(--act-bg);
+  border: 1px solid var(--act);
+  border-radius: var(--r-panel);
+  padding: var(--sp-2);
+}
+.fd-details {
+  width: 100%;
+  margin: 0;
+  white-space: pre-wrap;
+  font-size: var(--fs-micro);
+  background: var(--code);
+  padding: var(--sp-2);
+}
+.fd-options,
+.fd-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin: var(--sp-2) 0;
+}
+.fd-modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+  border: 1px solid var(--border);
+  border-radius: var(--r-panel);
+}
+.fd-modes button[aria-pressed="true"] {
+  border-color: var(--act);
+}
+.fd-composer {
+  display: grid;
+  gap: var(--sp-1);
+}
+.fd-composer textarea {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--code);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+.fd-items {
+  margin: 0;
+  padding-left: var(--sp-3);
+  display: grid;
+  gap: var(--sp-1);
+}
+.fd-subagent {
+  border-left: 2px solid var(--border);
+  padding-left: var(--sp-2);
+}
+.fd-subagent [data-subagent-status] {
+  color: var(--act);
+}
+.fd-notice-error,
+.fd-outcome[role="alert"] {
+  color: var(--hazard);
+}
+.fd-subagents {
+  color: var(--act);
+}

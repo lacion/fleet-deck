@@ -90,12 +90,18 @@ async fn fixture() -> Fixture {
     tokio::spawn(link::serve(ctx, at_deck));
     let mut station = fleetdeck_link::start(&station_node, d.unwrap());
 
-    // The deck asks for a replay first; the fake station accepts it.
-    let Some(Inbound::Request(req)) = tokio::time::timeout(T, station.inbound.recv())
-        .await
-        .expect("the replay request")
-    else {
-        panic!("expected a request");
+    // The deck asks for a replay; the fake station accepts it. It leaves the
+    // deck's `station.info` request (P4-2) unanswered.
+    let req = loop {
+        let Some(Inbound::Request(req)) = tokio::time::timeout(T, station.inbound.recv())
+            .await
+            .expect("the replay request")
+        else {
+            panic!("expected a request");
+        };
+        if req.method != "station.info" {
+            break req;
+        }
     };
     assert_eq!(req.method, "events.replay");
     let start = StreamStart {

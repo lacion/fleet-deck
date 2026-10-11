@@ -78,6 +78,7 @@ pub async fn serve(
     let tailnet = config.tailnet_hostname.clone();
     let board_store = store.clone();
     let board_link = Arc::clone(node.link());
+    let board_node = Arc::clone(&node);
     let tls_dir = deck_dir.clone();
     let board = BoardServer::bind(
         &config.listen,
@@ -90,6 +91,7 @@ pub async fn serve(
                 limiter: LoginLimiter::default(),
                 tickets: crate::http::ws::Tickets::default(),
                 ws_recheck: crate::http::ws::RECHECK,
+                pairing: Some(board_node),
             });
             Ok((board, tls))
         },

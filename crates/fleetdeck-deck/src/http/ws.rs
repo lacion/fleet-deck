@@ -161,7 +161,7 @@ async fn view(store: &DeckStore) -> Result<(Vec<StationView>, Vec<DeckSession>),
         .stations()
         .await?
         .iter()
-        .map(|st| station_view(st, store.is_reachable(&st.station_id)))
+        .map(|st| station_view(st, store))
         .collect();
     Ok((stations, store.sessions().await?))
 }

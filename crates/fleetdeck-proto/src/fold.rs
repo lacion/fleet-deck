@@ -15,7 +15,8 @@
 
 use crate::event::{Event, EventEnvelope, SessionState, Usage};
 use crate::session::{
-    Activity, MAX_RUNNING_TOOLS, OpenRequest, RunningTool, SessionError, SessionSummary,
+    Activity, MAX_RUNNING_TOOLS, OpenRequest, RunningTool, SUBAGENT_TASK_KINDS, SessionError,
+    SessionSummary,
 };
 
 impl SessionSummary {
@@ -125,6 +126,11 @@ impl SessionSummary {
             Event::UsageUpdated { usage, .. } => add_usage(&mut self.usage, usage),
             Event::BackgroundUpdated { tasks } => {
                 self.background_tasks = tasks.iter().map(|t| t.task_id.clone()).collect();
+                let agents = tasks
+                    .iter()
+                    .filter(|t| SUBAGENT_TASK_KINDS.contains(&t.task_kind.as_str()))
+                    .count();
+                self.background_agents = u32::try_from(agents).unwrap_or(u32::MAX);
             }
             Event::Error {
                 code,
@@ -144,6 +150,7 @@ impl SessionSummary {
                 self.current_run = None;
                 self.current_turn = None;
                 self.background_tasks.clear();
+                self.background_agents = 0;
                 self.running_tools.clear();
             }
             Event::MessageDelta { .. }

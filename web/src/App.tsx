@@ -1,19 +1,53 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { FleetBoard } from './board/FleetBoard';
+import { NeedsYouRail } from './board/NeedsYouRail';
 import { ALL, emptyFilter, filterFleet, type FleetFilter, stationName } from './board/fleet';
+import type { StationActions } from './board/pairing';
 import { StationsPanel } from './board/StationsPanel';
-import type { DeckSession, StationView } from './gen';
-import type { Freshness } from './runtime/state';
+import type { DeckSession, SessionKey, StationView } from './gen';
+import { type Freshness, sessionKey, type Timeline } from './runtime/state';
+import type { SessionActions } from './session/commands';
+import { SessionView } from './session/SessionView';
 
 type Props = {
   readonly sessions?: readonly DeckSession[];
   readonly stations?: readonly StationView[];
   readonly freshness?: Freshness;
+  readonly actions?: StationActions | undefined;
+  readonly timelines?: Readonly<Record<string, Timeline>>;
+  /** Opens the live timeline of a session; returns the cancel function. */
+  readonly watch?: ((key: SessionKey) => () => void) | undefined;
+  readonly sessionActions?: ((key: SessionKey) => SessionActions) | undefined;
+  /** The session open at the first render (tests). */
+  readonly initialSession?: SessionKey | null;
 };
 
 /** Screens read the same runtime snapshot; filters never open another connection. */
-export function App({ sessions = [], stations = [], freshness = 'stale' }: Props) {
+export function App({
+  sessions = [],
+  stations = [],
+  freshness = 'stale',
+  actions,
+  timelines = {},
+  watch,
+  sessionActions,
+  initialSession = null,
+}: Props) {
   const [screen, setScreen] = useState<'fleet' | 'stations'>('fleet');
+  const [open, setOpen] = useState<SessionKey | null>(initialSession);
+  const openId = open === null ? null : sessionKey(open);
+  // `openId` identifies the session; a new `open` object with the same key
+  // must not reopen the timeline.
+  useEffect(() => {
+    if (open === null || watch === undefined) return undefined;
+    return watch(open);
+  }, [openId, watch]);
+  const selected =
+    open === null
+      ? undefined
+      : sessions.find(
+          (s) => s.station_id === open.station_id && s.summary.session_id === open.session_id,
+        );
   const [filter, setFilter] = useState<FleetFilter>(emptyFilter);
   const visible = filterFleet(sessions, stations, filter);
   const stationIds = [
@@ -27,21 +61,42 @@ export function App({ sessions = [], stations = [], freshness = 'stale' }: Props
           <button
             type="button"
             aria-pressed={screen === 'fleet'}
-            onClick={() => setScreen('fleet')}
+            onClick={() => {
+              setOpen(null);
+              setScreen('fleet');
+            }}
           >
             Fleet
           </button>
           <button
             type="button"
             aria-pressed={screen === 'stations'}
-            onClick={() => setScreen('stations')}
+            onClick={() => {
+              setOpen(null);
+              setScreen('stations');
+            }}
           >
             Stations ({stations.length})
           </button>
         </nav>
       </header>
-      {screen === 'stations' ? (
-        <StationsPanel stations={stations} sessions={sessions} freshness={freshness} />
+      {selected !== undefined && open !== null && openId !== null ? (
+        <SessionView
+          key={openId}
+          session={selected}
+          stations={stations}
+          timeline={timelines[openId]}
+          freshness={freshness}
+          actions={sessionActions?.(open)}
+          onBack={() => setOpen(null)}
+        />
+      ) : screen === 'stations' ? (
+        <StationsPanel
+          stations={stations}
+          sessions={sessions}
+          freshness={freshness}
+          actions={actions}
+        />
       ) : (
         <>
           <form
@@ -94,7 +149,13 @@ export function App({ sessions = [], stations = [], freshness = 'stale' }: Props
               {visible.length} of {sessions.length} sessions
             </output>
           </form>
-          <FleetBoard sessions={visible} stations={stations} freshness={freshness} />
+          <NeedsYouRail sessions={sessions} stations={stations} onOpen={setOpen} />
+          <FleetBoard
+            sessions={visible}
+            stations={stations}
+            freshness={freshness}
+            onOpen={setOpen}
+          />
         </>
       )}
     </div>

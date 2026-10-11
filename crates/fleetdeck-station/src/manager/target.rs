@@ -71,6 +71,12 @@ impl SessionTarget {
         }
     }
 
+    /// The adapter of a provider instance, if this station has one.
+    #[must_use]
+    pub fn adapter(&self, instance: &ProviderInstanceId) -> Option<Arc<dyn ProviderAdapter>> {
+        self.adapters.get(instance).cloned()
+    }
+
     /// The number of sessions with a live process in this station process.
     #[must_use]
     pub fn live_count(&self) -> usize {

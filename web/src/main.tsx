@@ -6,6 +6,7 @@ import { RuntimeApp } from './runtime/RuntimeApp';
 import './styles/tokens.css';
 import './styles/app.css';
 import './styles/runtime.css';
+import './styles/session.css';
 
 const root = document.getElementById('root');
 if (root === null) {

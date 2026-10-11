@@ -311,3 +311,45 @@ fn plan_mode_and_file_edits_reach_the_canonical_stream() {
     assert!(kinds(&replay_named("plan_capture")).contains(&"plan.proposed".to_owned()));
     assert!(kinds(&replay_named("file_edit")).contains(&"file.changed".to_owned()));
 }
+
+/// The board's session-view fixtures (M2 P4-3, PLAN D15): the canonical
+/// events of recorded fixtures as the deck sends them on a timeline, in
+/// `web/src/testing/fixtures/claude-<scenario>.events.json`. The web tests
+/// read them, so a change of the core that changes the board input fails
+/// here first. `FD_UPDATE_FIXTURES=1` rewrites the files.
+#[test]
+fn the_board_timeline_fixtures_equal_the_canonical_replay() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../web/src/testing/fixtures");
+    let update = std::env::var_os("FD_UPDATE_FIXTURES").is_some();
+    for scenario in ["subagent", "tool_call_approve"] {
+        let envelopes: Vec<fleetdeck_proto::EventEnvelope> = replay_named(scenario)
+            .into_iter()
+            .enumerate()
+            .map(|(i, event)| {
+                let n = i as u64 + 1;
+                fleetdeck_proto::EventEnvelope {
+                    station_seq: 100 + n,
+                    session_id: format!("claude-{scenario}").into(),
+                    session_seq: n,
+                    at: 1_760_000_000_000 + 1000 * n as i64,
+                    proto_version: 1,
+                    raw_ref: None,
+                    event: event.into(),
+                }
+            })
+            .collect();
+        let text = serde_json::to_string_pretty(&envelopes).unwrap() + "\n";
+        let path = dir.join(format!("claude-{scenario}.events.json"));
+        if update {
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(&path, &text).unwrap();
+        } else {
+            let found = std::fs::read_to_string(&path).unwrap_or_default();
+            assert!(
+                found == text,
+                "{} is stale: run FD_UPDATE_FIXTURES=1 cargo test -p fleetdeck-providers --test claude_core_replay",
+                path.display()
+            );
+        }
+    }
+}

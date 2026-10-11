@@ -29,6 +29,7 @@ fn new_session(id: &str) -> NewSession {
         provider_instance: "claude".into(),
         cwd: "/w".to_owned(),
         worktree: None,
+        branch: None,
         mode: Some("default".to_owned()),
         title: Some("t".to_owned()),
         offline_approval_policy: OfflineApprovalPolicy::Wait,

@@ -35,6 +35,7 @@ pub(super) fn insert_session(conn: &Connection, s: &NewSession, now: i64) -> Res
     summary.provider = Some(s.provider);
     summary.provider_instance = Some(s.provider_instance.clone());
     summary.cwd = Some(s.cwd.clone());
+    summary.branch.clone_from(&s.branch);
     summary.title.clone_from(&s.title);
     summary.mode.clone_from(&s.mode);
     summary.updated_at = now;

@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
-use crate::event::EventEnvelope;
-use crate::ids::{CommandId, IncarnationId};
+use crate::event::{EventEnvelope, ProviderKind};
+use crate::ids::{CommandId, IncarnationId, ProviderInstanceId};
 use crate::session::SessionSummary;
 
 /// The largest control frame in bytes (ADR-004 §2.6).
@@ -106,6 +106,11 @@ pub struct SessionSnapshot {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[ts(export_to = "link/")]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "a frame lives only between decode and dispatch; boxing every event \
+              and snapshot would add an allocation per frame (DL-059)"
+)]
 pub enum ControlFrame {
     Request {
         /// Unique per direction, chosen by the sender.
@@ -205,6 +210,31 @@ pub struct StationInfo {
     /// The committed head `station_seq`.
     pub head: u64,
     pub live_sessions: u64,
+    /// The station build version (M2 P4-2). Absent from a station built
+    /// before P4-2 (L16: new fields are optional).
+    #[serde(default)]
+    pub version: Option<String>,
+    /// `max_sessions` of `station.toml`: the session capacity.
+    #[serde(default)]
+    pub max_sessions: Option<u32>,
+    /// The configured provider instances with their probed versions.
+    #[serde(default)]
+    pub providers: Vec<StationProvider>,
+}
+
+/// One configured provider instance of a station (`[[provider_instance]]`,
+/// L10) as `station.info` reports it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "link/")]
+pub struct StationProvider {
+    pub instance: ProviderInstanceId,
+    pub provider: ProviderKind,
+    /// The CLI version from the provider probe; `None` when the probe
+    /// failed or the station has no adapter for the provider yet.
+    pub version: Option<String>,
+    /// The sign-in state of the probe: `signed_in`, `signed_out` or
+    /// `unknown`.
+    pub auth: String,
 }
 
 /// `command.receipt` params.

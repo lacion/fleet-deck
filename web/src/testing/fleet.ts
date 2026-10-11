@@ -19,6 +19,8 @@ export function station(id = 'station-a', extra: Partial<StationView> = {}): Sta
     reachable: true,
     last_seen: null,
     cursor: 0,
+    info: null,
+    info_at: null,
     ...extra,
   };
 }

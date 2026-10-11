@@ -78,6 +78,9 @@ async fn read(ctx: &StationLink, req: InboundRequest) -> Outcome {
             incarnation: store.incarnation().clone(),
             head: store.head(),
             live_sessions: ctx.manager.live_sessions() as u64,
+            version: Some(env!("CARGO_PKG_VERSION").to_owned()),
+            max_sessions: Some(ctx.manager.policy().max_sessions()),
+            providers: ctx.manager.providers().await,
         }),
         "session.list" => match store.snapshot().await {
             Ok(s) => ok(s.sessions),

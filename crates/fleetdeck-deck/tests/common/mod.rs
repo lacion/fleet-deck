@@ -118,6 +118,9 @@ pub async fn next_request(station: &mut LiveLink) -> InboundRequest {
             .await
             .expect("a request")
         {
+            // The deck asks every new link for `station.info` (P4-2) on its
+            // own task; a fake station leaves it unanswered.
+            Some(Inbound::Request(req)) if req.method == "station.info" => {}
             Some(Inbound::Request(req)) => return req,
             Some(Inbound::Frame(_)) => {}
             None => panic!("the link ended"),
@@ -130,6 +133,7 @@ pub async fn no_request(station: &mut LiveLink, wait: Duration) {
     let got = tokio::time::timeout(wait, async {
         loop {
             match station.inbound.recv().await {
+                Some(Inbound::Request(req)) if req.method == "station.info" => {}
                 Some(Inbound::Request(req)) => return Some(req),
                 Some(Inbound::Frame(_)) => {}
                 None => return None,

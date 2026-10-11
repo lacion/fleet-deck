@@ -54,6 +54,11 @@ pub struct SessionSummary {
     pub provider_instance: Option<ProviderInstanceId>,
     pub provider_version: Option<String>,
     pub cwd: Option<String>,
+    /// The git branch of the workspace when the session started (M2 P4-2);
+    /// `None` outside a repository or with a detached HEAD. Absent in a
+    /// summary stored before P4-2.
+    #[serde(default)]
+    pub branch: Option<String>,
     pub title: Option<String>,
     pub state: SessionState,
     pub activity: Activity,
@@ -65,6 +70,11 @@ pub struct SessionSummary {
     pub open_requests: Vec<OpenRequest>,
     /// Ids of running background tasks (L7).
     pub background_tasks: Vec<String>,
+    /// How many of `background_tasks` are subagents
+    /// ([`SUBAGENT_TASK_KINDS`]): a subagent that runs on after its tool
+    /// call completed (D15). Absent in a summary stored before M2 P4-3.
+    #[serde(default)]
+    pub background_agents: u32,
     /// Tools that started and did not complete yet, oldest first, at most
     /// [`MAX_RUNNING_TOOLS`]. The deck derives `verifying` from them (§7.2).
     /// Absent in a summary stored before M2 P3-6.
@@ -90,6 +100,7 @@ impl SessionSummary {
             provider_instance: None,
             provider_version: None,
             cwd: None,
+            branch: None,
             title: None,
             state: SessionState::Starting,
             activity: Activity::Idle,
@@ -100,6 +111,7 @@ impl SessionSummary {
             current_turn: None,
             open_requests: Vec::new(),
             background_tasks: Vec::new(),
+            background_agents: 0,
             running_tools: Vec::new(),
             usage: Usage::default(),
             last_error: None,
@@ -111,6 +123,10 @@ impl SessionSummary {
 
 /// The most running tools that a summary keeps; the oldest goes first.
 pub const MAX_RUNNING_TOOLS: usize = 32;
+
+/// Background task kinds that are subagents (D15): Claude reports a
+/// backgrounded `Agent`/`Task` call as `local_agent`.
+pub const SUBAGENT_TASK_KINDS: &[&str] = &["local_agent", "remote_agent"];
 
 /// A tool call that runs now.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

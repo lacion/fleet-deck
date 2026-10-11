@@ -87,6 +87,12 @@ impl Policy {
         self.offline
     }
 
+    /// Every configured provider instance with its kind.
+    #[must_use]
+    pub fn instances(&self) -> &BTreeMap<ProviderInstanceId, ProviderKind> {
+        &self.instances
+    }
+
     /// The provider kind of a configured instance.
     #[must_use]
     pub fn instance(&self, id: &ProviderInstanceId) -> Option<ProviderKind> {

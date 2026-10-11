@@ -290,3 +290,33 @@ fn a_summary_stored_without_running_tools_still_loads() {
     let s: SessionSummary = serde_json::from_value(v).unwrap();
     assert!(s.running_tools.is_empty());
 }
+
+#[test]
+fn background_subagents_are_counted_apart_from_other_background_work() {
+    let mut f = Feed::new();
+    f.push(started());
+    let task = |id: &str, kind: &str| BackgroundTask {
+        task_id: id.to_owned(),
+        task_kind: kind.to_owned(),
+    };
+    let s = f.push(Event::BackgroundUpdated {
+        tasks: vec![
+            task("b1", "local_bash"),
+            task("a1", "local_agent"),
+            task("a2", "remote_agent"),
+        ],
+    });
+    assert_eq!((s.background_tasks.len(), s.background_agents), (3, 2));
+    let s = f.push(Event::BackgroundUpdated {
+        tasks: vec![task("b1", "local_bash")],
+    });
+    assert_eq!(s.background_agents, 0);
+    f.push(Event::BackgroundUpdated {
+        tasks: vec![task("a1", "local_agent")],
+    });
+    let s = f.push(Event::SessionEnded {
+        reason: "process_exit".to_owned(),
+        exit_code: Some(0),
+    });
+    assert_eq!((s.background_tasks.len(), s.background_agents), (0, 0));
+}

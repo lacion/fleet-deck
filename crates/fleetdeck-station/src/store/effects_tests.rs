@@ -31,6 +31,7 @@ fn session(policy: OfflineApprovalPolicy) -> NewSession {
         provider_instance: "claude".into(),
         cwd: "/w".to_owned(),
         worktree: None,
+        branch: None,
         mode: Some("default".to_owned()),
         title: None,
         offline_approval_policy: policy,

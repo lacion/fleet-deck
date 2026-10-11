@@ -15,11 +15,23 @@ import type { SessionError } from "./SessionError";
 /**
  * The projection of one session.
  */
-export type SessionSummary = { session_id: SessionId, provider: ProviderKind | null, provider_instance: ProviderInstanceId | null, provider_version: string | null, cwd: string | null, title: string | null, state: SessionState, activity: Activity, mode: string | null, model: string | null, capabilities: Capabilities | null, current_run: RunId | null, current_turn: TurnId | null, open_requests: Array<OpenRequest>, 
+export type SessionSummary = { session_id: SessionId, provider: ProviderKind | null, provider_instance: ProviderInstanceId | null, provider_version: string | null, cwd: string | null, 
+/**
+ * The git branch of the workspace when the session started (M2 P4-2);
+ * `None` outside a repository or with a detached HEAD. Absent in a
+ * summary stored before P4-2.
+ */
+branch: string | null, title: string | null, state: SessionState, activity: Activity, mode: string | null, model: string | null, capabilities: Capabilities | null, current_run: RunId | null, current_turn: TurnId | null, open_requests: Array<OpenRequest>, 
 /**
  * Ids of running background tasks (L7).
  */
 background_tasks: Array<string>, 
+/**
+ * How many of `background_tasks` are subagents
+ * ([`SUBAGENT_TASK_KINDS`]): a subagent that runs on after its tool
+ * call completed (D15). Absent in a summary stored before M2 P4-3.
+ */
+background_agents: number, 
 /**
  * Tools that started and did not complete yet, oldest first, at most
  * [`MAX_RUNNING_TOOLS`]. The deck derives `verifying` from them (§7.2).

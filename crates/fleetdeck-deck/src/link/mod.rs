@@ -155,7 +155,7 @@ pub async fn serve(ctx: Arc<DeckLink>, link: LiveLink) -> Closing {
         tracing::warn!(error = %e, "station last_seen");
     }
     tracing::info!(station = %station.name, "station link up");
-    adopt_name(&ctx, &control, &id, &station.name, &peer.fingerprint());
+    fetch_info(&ctx, &control, &id, &station.name, &peer.fingerprint());
     let mut sync = Sync {
         ctx: Arc::clone(&ctx),
         control: control.clone(),
@@ -402,16 +402,17 @@ impl Sync {
 /// A station paired without a name (`deck invite`) gets the default name
 /// of its fingerprint; the deck adopts the name of `station.toml` when it
 /// is free.
-fn adopt_name(
+/// Asks the station for `station.info` once per link and keeps it for the
+/// board (version, capacity, providers, M2 P4-2). A station paired under its
+/// short fingerprint (it dialed the deck) takes its `station.toml` name.
+fn fetch_info(
     ctx: &Arc<DeckLink>,
     control: &Control,
     id: &StationId,
     name: &str,
     fingerprint: &Fingerprint,
 ) {
-    if name != fingerprint.short() {
-        return;
-    }
+    let rename = name == fingerprint.short();
     let (ctx, control, id) = (Arc::clone(ctx), control.clone(), id.clone());
     tokio::spawn(async move {
         let Ok(Outcome::Ok(v)) = control.request("station.info", None, json!({})).await else {
@@ -420,8 +421,13 @@ fn adopt_name(
         let Ok(info) = serde_json::from_value::<StationInfo>(v) else {
             return;
         };
-        match ctx.store.rename_station(id, info.name.clone()).await {
-            Ok(()) => tracing::info!(name = %info.name, "station named"),
+        let station_name = info.name.clone();
+        ctx.store.set_station_info(&id, info);
+        if !rename {
+            return;
+        }
+        match ctx.store.rename_station(id, station_name.clone()).await {
+            Ok(()) => tracing::info!(name = %station_name, "station named"),
             Err(e) => tracing::info!(error = %e, "station keeps its default name"),
         }
     });

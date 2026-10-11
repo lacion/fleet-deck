@@ -39,5 +39,6 @@ jobs:
           cargo fetch --locked
           cargo deny fetch
           bun install --cwd web --frozen-lockfile --ignore-scripts
+          (cd web && bunx playwright install --with-deps chromium-headless-shell)
       - name: make check
         run: make check

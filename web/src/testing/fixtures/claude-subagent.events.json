@@ -1,0 +1,474 @@
+[
+  {
+    "station_seq": 101,
+    "session_id": "claude-subagent",
+    "session_seq": 1,
+    "at": 1760000001000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "session.started",
+      "provider": "claude",
+      "provider_instance": "claude",
+      "provider_version": "2.1.289",
+      "model": "claude-haiku-4-5-20251001",
+      "cwd": "/w",
+      "mode": "default",
+      "capabilities": {
+        "resume": true,
+        "fork": true,
+        "requests_survive_restart": false,
+        "interrupt": true,
+        "steer": true,
+        "native_follow_up": true,
+        "terminal_status": "strong",
+        "live_deltas": true,
+        "file_changes": true,
+        "approvals": true,
+        "response_channels": [
+          "rpc_reply"
+        ],
+        "edit_input": true,
+        "modes": [
+          "default",
+          "plan",
+          "acceptEdits",
+          "dontAsk",
+          "auto"
+        ],
+        "set_mode": true,
+        "set_model": true,
+        "plan_capture": true,
+        "subagents": true,
+        "background_work": "pushed",
+        "native_turn_ids": false,
+        "usage": {
+          "tokens": true,
+          "cost": true
+        }
+      },
+      "resumed": null,
+      "provider_refs": {
+        "session_id": "7333d019-4acf-4ac8-8348-002830961a4c"
+      }
+    }
+  },
+  {
+    "station_seq": 102,
+    "session_id": "claude-subagent",
+    "session_seq": 2,
+    "at": 1760000002000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "input.updated",
+      "input_id": "00000000-0003-45fb-8000-559856d5a04b",
+      "turn_id": null,
+      "state": "received"
+    }
+  },
+  {
+    "station_seq": 103,
+    "session_id": "claude-subagent",
+    "session_seq": 3,
+    "at": 1760000003000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "run.started",
+      "run_id": "run-1",
+      "input_summary": "Use the Task tool to start a general-purpose subagent with this prompt: 'Do not use any tools. Reply with exactly: sub-o…",
+      "origin": "board"
+    }
+  },
+  {
+    "station_seq": 104,
+    "session_id": "claude-subagent",
+    "session_seq": 4,
+    "at": 1760000004000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "turn.started",
+      "run_id": "run-1",
+      "turn_id": "turn-1",
+      "provider_refs": {
+        "command_uuid": "00000000-0003-45fb-8000-559856d5a04b"
+      }
+    }
+  },
+  {
+    "station_seq": 105,
+    "session_id": "claude-subagent",
+    "session_seq": 5,
+    "at": 1760000005000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "input.updated",
+      "input_id": "00000000-0003-45fb-8000-559856d5a04b",
+      "turn_id": "turn-1",
+      "state": "started"
+    }
+  },
+  {
+    "station_seq": 106,
+    "session_id": "claude-subagent",
+    "session_seq": 6,
+    "at": 1760000006000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "tool.started",
+      "node_id": "node-2",
+      "parent_node_id": null,
+      "tool_kind": "subagent",
+      "title": "Agent",
+      "input_summary": "Test subagent",
+      "files": [],
+      "provider_refs": {
+        "tool_use_id": "toolu_01TvKBs1MANWCEmWcRCzwT5j"
+      }
+    }
+  },
+  {
+    "station_seq": 107,
+    "session_id": "claude-subagent",
+    "session_seq": 7,
+    "at": 1760000007000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "background.updated",
+      "tasks": [
+        {
+          "task_id": "aec7cbebd3902b8ce",
+          "task_kind": "local_agent"
+        }
+      ]
+    }
+  },
+  {
+    "station_seq": 108,
+    "session_id": "claude-subagent",
+    "session_seq": 8,
+    "at": 1760000008000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "tool.completed",
+      "node_id": "node-2",
+      "status": "ok",
+      "files": [],
+      "exit_code": null
+    }
+  },
+  {
+    "station_seq": 109,
+    "session_id": "claude-subagent",
+    "session_seq": 9,
+    "at": 1760000009000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "message.delta",
+      "turn_id": "turn-1",
+      "parent_node_id": null,
+      "text": "The"
+    }
+  },
+  {
+    "station_seq": 110,
+    "session_id": "claude-subagent",
+    "session_seq": 10,
+    "at": 1760000010000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "message.delta",
+      "turn_id": "turn-1",
+      "parent_node_id": null,
+      "text": " sub"
+    }
+  },
+  {
+    "station_seq": 111,
+    "session_id": "claude-subagent",
+    "session_seq": 11,
+    "at": 1760000011000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "message.delta",
+      "turn_id": "turn-1",
+      "parent_node_id": null,
+      "text": "agent is running"
+    }
+  },
+  {
+    "station_seq": 112,
+    "session_id": "claude-subagent",
+    "session_seq": 12,
+    "at": 1760000012000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "message.delta",
+      "turn_id": "turn-1",
+      "parent_node_id": null,
+      "text": " in the background."
+    }
+  },
+  {
+    "station_seq": 113,
+    "session_id": "claude-subagent",
+    "session_seq": 13,
+    "at": 1760000013000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "message.delta",
+      "turn_id": "turn-1",
+      "parent_node_id": null,
+      "text": " I'll wait for"
+    }
+  },
+  {
+    "station_seq": 114,
+    "session_id": "claude-subagent",
+    "session_seq": 14,
+    "at": 1760000014000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "message.delta",
+      "turn_id": "turn-1",
+      "parent_node_id": null,
+      "text": " it to complete."
+    }
+  },
+  {
+    "station_seq": 115,
+    "session_id": "claude-subagent",
+    "session_seq": 15,
+    "at": 1760000015000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "message.completed",
+      "turn_id": "turn-1",
+      "parent_node_id": null,
+      "text": "The subagent is running in the background. I'll wait for it to complete."
+    }
+  },
+  {
+    "station_seq": 116,
+    "session_id": "claude-subagent",
+    "session_seq": 16,
+    "at": 1760000016000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "usage.updated",
+      "usage": {
+        "input_tokens": 18,
+        "output_tokens": 517,
+        "cost_usd": 0.0144198
+      },
+      "rate_limits": []
+    }
+  },
+  {
+    "station_seq": 117,
+    "session_id": "claude-subagent",
+    "session_seq": 17,
+    "at": 1760000017000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "turn.completed",
+      "turn_id": "turn-1",
+      "status": "done",
+      "usage": {
+        "input_tokens": 18,
+        "output_tokens": 517,
+        "cost_usd": 0.0144198
+      }
+    }
+  },
+  {
+    "station_seq": 118,
+    "session_id": "claude-subagent",
+    "session_seq": 18,
+    "at": 1760000018000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "run.completed",
+      "run_id": "run-1",
+      "status": "done",
+      "background_pending": true
+    }
+  },
+  {
+    "station_seq": 119,
+    "session_id": "claude-subagent",
+    "session_seq": 19,
+    "at": 1760000019000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "input.updated",
+      "input_id": "00000000-0003-45fb-8000-559856d5a04b",
+      "turn_id": "turn-1",
+      "state": "completed"
+    }
+  },
+  {
+    "station_seq": 120,
+    "session_id": "claude-subagent",
+    "session_seq": 20,
+    "at": 1760000020000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "background.updated",
+      "tasks": []
+    }
+  },
+  {
+    "station_seq": 121,
+    "session_id": "claude-subagent",
+    "session_seq": 21,
+    "at": 1760000021000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "run.started",
+      "run_id": "run-2",
+      "input_summary": "provider turn",
+      "origin": "provider"
+    }
+  },
+  {
+    "station_seq": 122,
+    "session_id": "claude-subagent",
+    "session_seq": 22,
+    "at": 1760000022000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "turn.started",
+      "run_id": "run-2",
+      "turn_id": "turn-3",
+      "provider_refs": {
+        "origin": "provider",
+        "session_id": "7333d019-4acf-4ac8-8348-002830961a4c"
+      }
+    }
+  },
+  {
+    "station_seq": 123,
+    "session_id": "claude-subagent",
+    "session_seq": 23,
+    "at": 1760000023000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "message.delta",
+      "turn_id": "turn-3",
+      "parent_node_id": null,
+      "text": "sub"
+    }
+  },
+  {
+    "station_seq": 124,
+    "session_id": "claude-subagent",
+    "session_seq": 24,
+    "at": 1760000024000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "message.delta",
+      "turn_id": "turn-3",
+      "parent_node_id": null,
+      "text": "-ok"
+    }
+  },
+  {
+    "station_seq": 125,
+    "session_id": "claude-subagent",
+    "session_seq": 25,
+    "at": 1760000025000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "message.completed",
+      "turn_id": "turn-3",
+      "parent_node_id": null,
+      "text": "sub-ok"
+    }
+  },
+  {
+    "station_seq": 126,
+    "session_id": "claude-subagent",
+    "session_seq": 26,
+    "at": 1760000026000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "usage.updated",
+      "usage": {
+        "input_tokens": 10,
+        "output_tokens": 57,
+        "cost_usd": 0.043495450000000005
+      },
+      "rate_limits": []
+    }
+  },
+  {
+    "station_seq": 127,
+    "session_id": "claude-subagent",
+    "session_seq": 27,
+    "at": 1760000027000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "turn.completed",
+      "turn_id": "turn-3",
+      "status": "done",
+      "usage": {
+        "input_tokens": 10,
+        "output_tokens": 57,
+        "cost_usd": 0.043495450000000005
+      }
+    }
+  },
+  {
+    "station_seq": 128,
+    "session_id": "claude-subagent",
+    "session_seq": 28,
+    "at": 1760000028000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "run.completed",
+      "run_id": "run-2",
+      "status": "done",
+      "background_pending": false
+    }
+  },
+  {
+    "station_seq": 129,
+    "session_id": "claude-subagent",
+    "session_seq": 29,
+    "at": 1760000029000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "session.ended",
+      "reason": "process_exit",
+      "exit_code": 0
+    }
+  }
+]

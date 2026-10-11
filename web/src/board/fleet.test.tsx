@@ -11,6 +11,7 @@ import {
   usageText,
 } from './fleet';
 import { FleetBoard } from './FleetBoard';
+import { stationActions } from './pairing';
 import { StationsPanel } from './StationsPanel';
 
 describe('fleet projections', () => {
@@ -158,7 +159,9 @@ describe('station projections', () => {
     const html = renderToStaticMarkup(
       <StationsPanel stations={[station()]} sessions={cards} freshness="live" />,
     );
-    expect(html).toContain('Observed providers are not the configured provider inventory.');
+    // Observed providers stay apart from the configured inventory.
+    expect(html).toContain('<h4>Providers observed in sessions</h4>');
+    expect(html).toContain('Not reported until the station links to this deck.');
     expect(html).not.toContain('Codex');
   });
   test('active counts exclude exited and lost processes but include starting and stopping processes', () => {
@@ -173,6 +176,71 @@ describe('station projections', () => {
       <StationsPanel stations={[station()]} sessions={cards} freshness="live" />,
     );
     expect(html).toContain('<dt>Observed active sessions</dt><dd>3</dd>');
+  });
+  test('a station report shows version, capacity and configured providers with their sign-in state', () => {
+    const html = renderToStaticMarkup(
+      <StationsPanel
+        stations={[
+          station('station-a', {
+            info: {
+              name: 'alpha-host',
+              incarnation: 'inc',
+              head: 9,
+              live_sessions: 1,
+              version: '0.2.0',
+              max_sessions: 4,
+              providers: [
+                { instance: 'personal', provider: 'claude', version: '2.1.5', auth: 'signed_in' },
+                { instance: 'work', provider: 'codex', version: null, auth: 'unknown' },
+              ],
+            },
+            info_at: 0,
+          }),
+        ]}
+        sessions={[]}
+        freshness="live"
+      />,
+    );
+    for (const text of [
+      '1 live of 4 sessions',
+      '0.2.0',
+      'alpha-host',
+      'personal · claude · 2.1.5 · signed in',
+      'work · codex · version unknown · sign-in unknown',
+    ])
+      expect(html).toContain(text);
+    expect(html).not.toContain('Not reported until the station links');
+  });
+  test('pairing controls appear only for an admin login on a live board', () => {
+    const actions = (canAdmin: boolean) => stationActions(async () => ({}), canAdmin);
+    const render = (canAdmin: boolean, freshness: 'live' | 'stale') =>
+      renderToStaticMarkup(
+        <StationsPanel
+          stations={[station()]}
+          sessions={[]}
+          freshness={freshness}
+          actions={actions(canAdmin)}
+        />,
+      );
+    expect(render(true, 'live')).toContain('Add station');
+    expect(render(true, 'live')).toContain('Remove station');
+    expect(render(true, 'stale')).toMatch(/<button[^>]*disabled=""[^>]*>Add station/);
+    expect(render(false, 'live')).toContain('Pairing needs the admin scope.');
+    expect(render(false, 'live')).not.toContain('Remove station');
+    expect(
+      renderToStaticMarkup(<StationsPanel stations={[]} sessions={[]} freshness="live" />),
+    ).not.toContain('Add station');
+  });
+  test('cards show the reported branch or an explicit unknown', () => {
+    const html = renderToStaticMarkup(
+      <FleetBoard
+        sessions={[card('a', 'working', 'station-a', { branch: 'fd/feature-1' }), card('b')]}
+        stations={[station()]}
+        freshness="live"
+      />,
+    );
+    expect(html).toContain('Branch: fd/feature-1');
+    expect(html).toContain('Branch: not reported');
   });
   test('an empty panel reports no paired stations', () => {
     expect(

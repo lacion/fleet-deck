@@ -195,6 +195,7 @@ fn start(
         ));
     }
     spec.cwd = cwd.to_string_lossy().into_owned();
+    let branch = fleetdeck_core::git::current_branch(&cwd);
     let session_id: SessionId = d.new_id();
     d.create_session(&NewSession {
         session_id: session_id.clone(),
@@ -202,6 +203,7 @@ fn start(
         provider_instance: spec.provider_instance.clone(),
         cwd: spec.cwd.clone(),
         worktree: None,
+        branch,
         mode: spec.mode.clone(),
         title: spec.title.clone(),
         offline_approval_policy: policy.offline(),

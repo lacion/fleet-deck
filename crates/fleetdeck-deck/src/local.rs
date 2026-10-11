@@ -23,7 +23,7 @@ pub use fleetdeck_core::localsock::InvitationText;
 use crate::link::{CommandKind, DeckNode};
 use crate::local_auth::{self, AuthRequest, AuthResponse, LOCAL_ACTOR};
 use crate::store::{
-    AuditResult, DeckCommand, DeckError, DeckSession, Direction, NewAudit, StationRecord,
+    AuditResult, DeckCommand, DeckError, DeckSession, DeckStore, Direction, NewAudit, StationRecord,
 };
 
 /// What the socket serves.
@@ -79,9 +79,11 @@ pub const COMMAND_WAIT: Duration = Duration::from_secs(15);
 
 pub use fleetdeck_proto::board::StationView;
 
-/// The view of a station record.
+/// The view of a station record with its reachability and last
+/// `station.info` from `store`.
 #[must_use]
-pub fn station_view(st: &StationRecord, reachable: bool) -> StationView {
+pub fn station_view(st: &StationRecord, store: &DeckStore) -> StationView {
+    let info = store.station_info(&st.station_id);
     StationView {
         station_id: st.station_id.clone(),
         name: st.name.clone(),
@@ -92,9 +94,11 @@ pub fn station_view(st: &StationRecord, reachable: bool) -> StationView {
         }
         .to_owned(),
         dial_url: st.dial_url.clone(),
-        reachable,
+        reachable: store.is_reachable(&st.station_id),
         last_seen: st.last_seen,
         cursor: st.cursor,
+        info_at: info.as_ref().map(|(_, at)| *at),
+        info: info.map(|(i, _)| i),
     }
 }
 
@@ -222,17 +226,14 @@ async fn handle(deck: &LocalDeck, request: DeckRequest) -> DeckResponse {
             audit(node, "station.add", "", &r).await;
             match r {
                 Ok(st) => DeckResponse::Paired {
-                    station: station_view(&st, store.is_reachable(&st.station_id)),
+                    station: station_view(&st, store),
                 },
                 Err(e) => error(e.to_string()),
             }
         }
         DeckRequest::Stations => match store.stations().await {
             Ok(list) => DeckResponse::Stations {
-                stations: list
-                    .iter()
-                    .map(|st| station_view(st, store.is_reachable(&st.station_id)))
-                    .collect(),
+                stations: list.iter().map(|st| station_view(st, store)).collect(),
             },
             Err(e) => error(e.to_string()),
         },
@@ -245,7 +246,7 @@ async fn handle(deck: &LocalDeck, request: DeckRequest) -> DeckResponse {
         .await
         {
             Ok(st) => DeckResponse::Removed {
-                station: station_view(&st, false),
+                station: station_view(&st, store),
             },
             Err(e) => error(e.to_string()),
         },

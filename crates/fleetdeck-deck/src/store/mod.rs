@@ -24,13 +24,14 @@ pub mod read_model;
 pub mod schema;
 pub mod stations;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use fleetdeck_core::clock::SharedClock;
 use fleetdeck_core::db::{Db, DbError};
 use fleetdeck_core::ids::{SharedIds, new_id};
+use fleetdeck_proto::link::StationInfo;
 use fleetdeck_proto::{EventEnvelope, IncarnationId, StationId};
 use rusqlite::{Connection, OptionalExtension};
 use tokio::sync::{broadcast, watch};
@@ -111,6 +112,9 @@ struct Inner {
     live: broadcast::Sender<Arc<LiveEvents>>,
     /// The stations with a live link (§7.2 `unreachable`).
     reachable: Mutex<BTreeSet<StationId>>,
+    /// The last `station.info` of each station with its Unix ms, in this
+    /// deck process (M2 P4-2: version, capacity, providers).
+    infos: Mutex<BTreeMap<StationId, (StationInfo, i64)>>,
 }
 
 /// The deck store. Clones share one database thread.
@@ -187,6 +191,7 @@ impl DeckStore {
                 board: watch::channel(0).0,
                 live: broadcast::channel(LIVE_BUFFER).0,
                 reachable: Mutex::default(),
+                infos: Mutex::default(),
             }),
         })
     }
@@ -244,6 +249,35 @@ impl DeckStore {
     pub(crate) fn publish_live(&self, live: LiveEvents) {
         // No receiver is not an error.
         let _ = self.inner.live.send(Arc::new(live));
+    }
+
+    /// Keeps the `station.info` answer of `station` for the board.
+    pub fn set_station_info(&self, station: &StationId, info: StationInfo) {
+        let at = self.now_ms();
+        let changed = {
+            let mut infos = self
+                .inner
+                .infos
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let same = infos.get(station).is_some_and(|(old, _)| *old == info);
+            infos.insert(station.clone(), (info, at));
+            !same
+        };
+        if changed {
+            self.board_changed();
+        }
+    }
+
+    /// The last `station.info` of `station` and when it came.
+    #[must_use]
+    pub fn station_info(&self, station: &StationId) -> Option<(StationInfo, i64)> {
+        self.inner
+            .infos
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(station)
+            .cloned()
     }
 
     /// True while the link to `station` is up.

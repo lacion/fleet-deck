@@ -13,8 +13,8 @@ use std::path::{Path, PathBuf};
 use ts_rs::{Config, TS};
 
 use crate::board::{
-    BoardClientMessage, BoardServerMessage, CommandRequest, DeckCommand, DeckSession, SessionKey,
-    StationView, WsTicket,
+    AddStationRequest, BoardClientMessage, BoardServerMessage, CommandRequest, DeckCommand,
+    DeckSession, PairingInvitation, SessionKey, StationView, WsTicket,
 };
 use crate::capability::{Capabilities, Operation, Unsupported};
 use crate::command::{CommandEnvelope, DeckCommandState, Receipt};
@@ -56,6 +56,8 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         BoardServerMessage::export_all(&cfg),
         BoardClientMessage::export_all(&cfg),
         WsTicket::export_all(&cfg),
+        PairingInvitation::export_all(&cfg),
+        AddStationRequest::export_all(&cfg),
         ControlFrame::export_all(&cfg),
         Scope::export_all(&cfg),
         ReplayParams::export_all(&cfg),

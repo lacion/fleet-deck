@@ -1,5 +1,8 @@
-import { useState, useSyncExternalStore } from 'react';
+import { useMemo, useState, useSyncExternalStore } from 'react';
 import { App } from '../App';
+import { stationActions } from '../board/pairing';
+import type { SessionKey } from '../gen';
+import { sessionActions } from '../session/commands';
 import type { Connection } from './connection';
 
 export function RuntimeApp({ connection }: { readonly connection: Connection }) {
@@ -11,6 +14,19 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [logoutError, setLogoutError] = useState<string | null>(null);
+  const canAdmin = state.login?.scopes.includes('admin') === true;
+  const actions = useMemo(
+    () => stationActions((path, body) => connection.post(path, body), canAdmin),
+    [connection, canAdmin],
+  );
+  // A new login object with the same scopes keeps the same actions.
+  const scopeText = (state.login?.scopes ?? []).join(' ');
+  const commands = useMemo(() => {
+    const scopes = scopeText.split(' ');
+    return (key: SessionKey) =>
+      sessionActions((path, body) => connection.post(path, body), key, scopes);
+  }, [connection, scopeText]);
+  const watch = useMemo(() => (key: SessionKey) => connection.watch(key), [connection]);
   if (state.login === null) {
     return (
       <main className="fd-login">
@@ -80,7 +96,15 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
           {state.error}
         </p>
       ) : null}
-      <App sessions={state.sessions} stations={state.stations} freshness={state.freshness} />
+      <App
+        sessions={state.sessions}
+        stations={state.stations}
+        freshness={state.freshness}
+        actions={actions}
+        timelines={state.timelines}
+        watch={watch}
+        sessionActions={commands}
+      />
     </>
   );
 }

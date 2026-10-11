@@ -8,6 +8,7 @@ use ts_rs::TS;
 use crate::command::{DeckCommandState, Receipt, SessionCommand};
 use crate::event::EventEnvelope;
 use crate::ids::{CommandId, IncarnationId, SessionId, StationId};
+use crate::link::StationInfo;
 use crate::session::{CardStatus, SessionSummary};
 
 /// The longest client-chosen command id.
@@ -91,6 +92,37 @@ pub struct StationView {
     pub last_seen: Option<i64>,
     /// The last `station_seq` folded into the read model (freshness).
     pub cursor: u64,
+    /// The last `station.info` answer of this deck process: version,
+    /// capacity and provider instances (M2 P4-2). `None` until a link of
+    /// this deck process asked; it stays when the link drops (last known).
+    pub info: Option<StationInfo>,
+    /// Unix ms of [`Self::info`].
+    pub info_at: Option<i64>,
+}
+
+/// `POST /api/stations/invite`: an invitation for a station that dials the
+/// deck (`fleetdeck station join`). The text is a secret: it is shown once
+/// and never stored or audited.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "board/")]
+pub struct PairingInvitation {
+    pub invitation: String,
+    /// Unix ms.
+    pub expires_at: i64,
+    /// The command to run on the station (it reads the invitation from a
+    /// prompt or stdin, G12).
+    pub join_command: String,
+}
+
+/// `POST /api/stations`: pair with a listening station (`fleetdeck station
+/// invite` printed `invitation`) and dial it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "board/")]
+pub struct AddStationRequest {
+    pub invitation: String,
+    /// The station name; without it the deck uses the station's own name.
+    pub name: Option<String>,
 }
 
 /// A session of a station.

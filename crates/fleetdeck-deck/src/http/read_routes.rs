@@ -20,7 +20,7 @@ pub async fn stations(State(board): State<Arc<Board>>) -> Result<Json<Vec<Statio
     let list = board.store.stations().await.map_err(ApiError::internal)?;
     Ok(Json(
         list.iter()
-            .map(|st| station_view(st, board.store.is_reachable(&st.station_id)))
+            .map(|st| station_view(st, &board.store))
             .collect(),
     ))
 }

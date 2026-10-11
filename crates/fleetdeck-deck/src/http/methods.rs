@@ -68,6 +68,27 @@ pub const API: &[ApiMethod] = &[
         false,
     ),
     m(
+        "stations.add",
+        Method::POST,
+        "/api/stations",
+        Some(Scope::Admin),
+        true,
+    ),
+    m(
+        "stations.invite",
+        Method::POST,
+        "/api/stations/invite",
+        Some(Scope::Admin),
+        true,
+    ),
+    m(
+        "stations.remove",
+        Method::POST,
+        "/api/stations/{station}/remove",
+        Some(Scope::Admin),
+        true,
+    ),
+    m(
         "sessions.list",
         Method::GET,
         "/api/sessions",
