@@ -126,6 +126,8 @@ impl FakeAgent {
 ///   `auth:signed-in` / `auth:signed-out`, else fail.
 /// - Scenario `env` prints its environment (`NAME=value`, sorted) and exits 0
 ///   (for the environment scrub tests).
+/// - `fake-codex app-server` under scenario `sim` or `auth:<state>` runs
+///   [`crate::sim_codex`].
 /// - Scenario `fixture:<path>#<process>` plays one process of a recorded
 ///   fixture ([`crate::script`]).
 /// - Every other scenario is an error (exit 2).
@@ -166,6 +168,12 @@ pub fn fake_main(agent: FakeAgent) -> std::process::ExitCode {
         }
         "echo" => return echo_lines(),
         "sim" if agent == FakeAgent::Claude => return crate::sim_claude::run(),
+        "sim" | "auth:signed-in" | "auth:signed-out"
+            if agent == FakeAgent::Codex
+                && args.first().map(String::as_str) == Some("app-server") =>
+        {
+            return crate::sim_codex::run(&scenario);
+        }
         "deaf" => loop {
             std::thread::park();
         },

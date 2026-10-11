@@ -62,7 +62,7 @@ Sources: PLAN §14 Phases 1–5, GATE-M1 G1–G14, goal acceptance. G13 is P1-5.
 ### Phase 5 — Codex
 
 - [x] **P5-1 Codex core.** Sans-IO core from `spikes/s2-codex` (vendored schema) mapped to proto events; replays of all Codex fixtures. *(round 34, DL-063)*
-- [ ] **P5-2 Codex driver and fake-codex.** Background polling (DL-024), station integration.
+- [x] **P5-2 Codex driver and fake-codex.** Background polling (DL-024), station integration. *(round 35, DL-064)*
 - [ ] **P5-3 Capability matrix tests + capability-driven UI.** Every §6.2 row covered for both providers; controls only when capabilities allow them.
 - [ ] **P5-4 Codex board flows.** The Playwright flows for Claude and Codex.
 - [ ] **P5-5 Live smoke tests.** One per provider (real CLI, tiny prompt, temp dir) behind `FD_LIVE_SMOKE=1`, documented; not in the default run.
@@ -459,6 +459,26 @@ Sources: PLAN §14 Phases 1–5, GATE-M1 G1–G14, goal acceptance. G13 is P1-5.
   - `codex::rpc::tests` (4, incl. proptests).
 - Commands/results: `cargo nextest run -p fleetdeck-providers` → 138/138; `cargo clippy -p fleetdeck-providers --all-targets -- -D warnings` clean; `bun run --cwd web e2e:real` → 6/6; `make check` → all 14 commands passed: fmt, clippy `-D warnings`, nextest 783/783, cargo deny, `ts_drift` 2/2, frozen offline `bun install`, web typecheck, biome lint (48 files), web test 70/70, web build, scripted Playwright e2e, real-process Playwright e2e:real 6/6, Claude replay 29, Codex replay 18.
 - Status: P5-1 complete; this round's changes remain uncommitted for review. Next: P5-2 Codex driver (process host, background polling DL-024) with `fake-codex` and station integration, then P5-3 capability matrix and capability-driven UI, P5-4 Codex board flows, P5-5 opt-in live smoke tests, close-out. No push, PR, main merge, release, v0 change or agent permission change occurred.
+
+### M2 round 35: P5-2 Codex driver, fake Codex app-server and station integration (P5-2 complete)
+
+- Start: round-34 work verified (`make check` all 14 commands passed, nextest 783/783) and committed as d4cb545.
+- Implemented (DL-064):
+  - `crates/fleetdeck-providers/src/stdio.rs`: the shared stdio helpers of both drivers (`Write`, `flush`, `now_ms`, `write_failed`); `claude/driver.rs` uses them.
+  - `crates/fleetdeck-providers/src/codex/driver.rs`: `CodexAdapterConfig` (instance, program, env, `allow_full_access`, effort, client, `background_poll` default 5 s, raw log, stop policy, delivery grace, open timeout 30 s, probe timeout 10 s), `Origin` (new/resume/fork), `CodexAdapter` (`ProviderAdapter`: probe, start, resume; `start_session` returns after `initialize` and the thread open; a mode outside the instance's Codex modes fails with `InvalidMode` before any process), `CodexSession` (`LiveSession`, raw-frame log, background poll task that wakes on `turn.completed` and repeats while terminals stay open).
+  - `crates/fleetdeck-providers/src/codex/probe.rs`: `parse_version`, `parse_account`, `account()` (`account/read` through a short `app-server` run; only a definite answer is `signed_in`/`signed_out`, trap 9).
+  - `crates/fleetdeck-providers/src/codex/core.rs`: `is_opening()`.
+  - `crates/fleetdeck-testkit/src/sim_codex.rs`: `fake-codex app-server` scenario `sim` (reactive JSON-RPC: `ask`, `wait`, `bg`, echo; steer, interrupt, approvals, background list) and `auth:signed-in` / `auth:signed-out`; `script.rs` replaces `<workdir>` in recorded host frames.
+  - `crates/fleetdeck-station/src/manager/mod.rs`: `adapters_from_config` builds a Codex adapter for every `driver = "codex"` instance.
+- Named tests:
+  - `crates/fleetdeck-providers/tests/codex_driver_replay.rs`: `every_recorded_codex_fixture_replays_through_the_production_adapter` (18 fixtures, 21 processes through `fake-codex` and the real process host; events equal the sans-IO core's; raw-log host frames byte-exact).
+  - `crates/fleetdeck-providers/tests/codex_driver_sim.rs` (6): `probe_reports_the_version_and_a_definite_sign_in_only`, `a_session_is_open_when_start_returns_and_runs_turns`, `approvals_steer_and_interrupt_reach_the_app_server`, `the_driver_polls_background_terminals_until_they_finish`, `resume_and_fork_open_the_named_thread`, `a_failed_handshake_fails_the_start`.
+  - `codex::probe::tests` (2): `version_of_codex_cli`, `account_answers`.
+  - `fleetdeck_testkit::sim_codex` tests (4) and `script::tests::with_workdir_replaces_the_placeholder_in_nested_strings`.
+  - `crates/fleetdeck-station/src/manager/codex_tests.rs` (2): `a_codex_session_runs_approvals_steer_interrupt_and_background_work` (effects start, answer, prompt, steer, prompt, interrupt, prompt, stop all `confirmed` from Codex evidence; background listed then cleared; session `exited`), `a_codex_start_with_an_unknown_mode_spawns_nothing` (start `retired_not_dispatched`, `start_failed` names the mode, session `exited`).
+  - Updated: `manager::tests` config test expects a Codex adapter; `station_info_providers_are_probed_once_with_versions` expects Codex `0.160.999` `signed_in`.
+- Commands/results: `cargo nextest run -p fleetdeck-providers --test codex_driver_sim` → 6/6; `cargo nextest run -p fleetdeck-station manager::` → 17/17; `cargo clippy --workspace --all-targets -- -D warnings` clean; `make check` → all 14 commands passed: fmt, clippy, nextest 799/799, cargo deny, `ts_drift` 2/2, frozen offline `bun install`, web typecheck, lint, web test, web build, scripted e2e, real-process e2e:real, Claude replay, Codex replay.
+- Status: P5-2 complete; this round's changes remain uncommitted for review. Next: P5-3 capability matrix tests (every §6.2 row for both providers) and capability-driven UI (spawn-form modes from the station's reported capabilities instead of the `MODES` table, DL-061), then P5-4 Codex board flows, P5-5 opt-in live smoke tests, close-out. No push, PR, main merge, release, v0 change or agent permission change occurred.
 
 ## M1 checklist (complete)
 

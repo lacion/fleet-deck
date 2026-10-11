@@ -3,7 +3,8 @@
 //!
 //! - `spawn`: the arguments must equal the recorded ones (else exit 4);
 //! - `in`: the fake reads one stdin line; it must be the same JSON as the
-//!   recorded frame (else exit 3);
+//!   recorded frame (else exit 3). The recorder wrote its workspace as
+//!   [`WORKDIR`]; the fake expects its own working directory there;
 //! - `out`: the fake writes the recorded frame as one line;
 //! - `note` with the text `host closed stdin`: the fake reads stdin to its end;
 //! - `exit`: the fake reads stdin to its end and exits with the recorded code.
@@ -20,6 +21,9 @@ use serde_json::Value;
 
 /// The scenario prefix.
 pub const FIXTURE_PREFIX: &str = "fixture:";
+
+/// The placeholder of the recorder's workspace path in the fixtures.
+pub const WORKDIR: &str = "<workdir>";
 
 /// The note that marks the point where the recorder closed stdin.
 pub const STDIN_CLOSED_NOTE: &str = "host closed stdin";
@@ -94,6 +98,10 @@ pub fn play(name: &str, spec: &str) -> ExitCode {
             }
             Some("in") => {
                 let want = record.get("frame").cloned().unwrap_or(Value::Null);
+                let want = match std::env::current_dir() {
+                    Ok(dir) => with_workdir(&want, &dir),
+                    Err(_) => want,
+                };
                 let mut line = String::new();
                 match stdin.read_line(&mut line) {
                     Ok(0) | Err(_) => {
@@ -146,6 +154,23 @@ pub fn play(name: &str, spec: &str) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// `frame` with every [`WORKDIR`] in its strings replaced by `dir`.
+#[must_use]
+pub fn with_workdir(frame: &Value, dir: &Path) -> Value {
+    match frame {
+        Value::String(s) if s.contains(WORKDIR) => {
+            Value::String(s.replace(WORKDIR, &dir.to_string_lossy()))
+        }
+        Value::Array(items) => Value::Array(items.iter().map(|v| with_workdir(v, dir)).collect()),
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(k, v)| (k.clone(), with_workdir(v, dir)))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
 fn drain(stdin: &mut impl BufRead) {
     let mut sink = Vec::new();
     let _ = std::io::Read::read_to_end(stdin, &mut sink);
@@ -180,5 +205,19 @@ mod tests {
         let exit = first.iter().find(|r| dir_of(r) == Some("exit")).unwrap();
         assert!(exit["code"].is_null());
         assert!(process_records(&path, 2).is_err());
+    }
+
+    #[test]
+    fn with_workdir_replaces_the_placeholder_in_nested_strings() {
+        let frame = serde_json::json!({
+            "cwd": "<workdir>",
+            "roots": ["<workdir>/src", "/tmp"],
+            "n": 3,
+        });
+        let got = with_workdir(&frame, Path::new("/w s"));
+        assert_eq!(
+            got,
+            serde_json::json!({"cwd": "/w s", "roots": ["/w s/src", "/tmp"], "n": 3})
+        );
     }
 }

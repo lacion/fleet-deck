@@ -777,3 +777,18 @@ Format: context, options, choice, reason, owner review.
   - `codex::capabilities(allow_full_access)`: the §6.2 Codex column; the mode list is `approvalPolicy/sandbox`, ordered most restrictive first, and `danger-full-access` modes appear only when the station allows them.
 - Reason: the spike's replay-proven logic stays the same, so the 18 recorded fixtures replay byte-exact through the production core, and new behaviour is limited to the production event fields. Reading the fixtures and schema in place avoids a second copy that could drift.
 - Owner review: pending
+
+## DL-064: Codex driver, fake Codex app-server and station integration (M2 round 35, P5-2)
+
+- Context: P5-2 asks for the Codex driver over the P5-1 core, a fake Codex, the background poll of DL-024 and the station integration. The plan does not fix when a start returns, how the probe gets a definite sign-in state (ADR-002 trap 9), the poll interval default, the fake's behaviour, or what a start with a mode that Codex does not offer does.
+- Options for the start: (a) return the session as soon as the process runs and let the first prompt wait; (b) return only after `initialize` and the thread open (`thread/start|resume|fork`) completed. Options for an unknown mode: (a) the core's safest-mode fallback (L8) only; (b) refuse the start before any process.
+- Choice:
+  - `CodexAdapter::start_session` returns after the handshake and the thread open (b), within `open_timeout` 30 s; a failure kills the process and fails the start (`start_failed`, not dispatched). The station sends the first prompt at once after `start`, so it needs an open thread.
+  - The shared stdio helpers of both drivers (`Write`, `flush`, `now_ms`, `write_failed`) moved to `crates/fleetdeck-providers/src/stdio.rs`.
+  - Probe: `codex --version` for the version, then one short `codex app-server` run with `initialize` + `account/read {refreshToken:false}`. An account object → `signed_in` (method = account type); `account: null` with `requiresOpenaiAuth: true` → `signed_out`; any other answer, an error, or a timeout (10 s) → `unknown`.
+  - Background poll (DL-024): a poll task per session wakes after each `turn.completed` and after a non-empty `background.updated`, calls `thread/backgroundTerminals/list`, and repeats every `background_poll` (default 5 s) while the list or a background tool is open. The interval is an adapter setting; `station.toml` does not expose it in M2 (the default fits a phone view), and the fixture replay turns it off so that recorded host writes stay exact.
+  - A start whose mode is not in the instance's Codex mode list fails with `InvalidMode` before any process (b): the effect retires as not dispatched and the session ends with `start_failed`. The core fallback stays as the last guard.
+  - Fake: `fake-codex app-server` scenario `sim` (`crates/fleetdeck-testkit/src/sim_codex.rs`) is a reactive JSON-RPC app-server with the recorded wire shapes: `ask <cmd>` → command item + approval request; `wait <x>` → streams `waiting` until `turn/steer` or `turn/interrupt`; `bg <cmd>` → a background terminal that the first list shows and the second list completes; other text → `echo: <text>`. Scenarios `auth:signed-in` / `auth:signed-out` answer `account/read`. Recorded scenarios replace `<workdir>` in host frames with the fake's working directory.
+  - The station builds a Codex adapter for each `driver = "codex"` instance (`adapters_from_config`).
+- Reason: (b) for the start keeps the station's start → prompt order valid without a second wait path. (b) for the mode prevents a session that runs in a mode the owner did not choose, and the owner sees the error. The probe follows trap 9: only a definite provider answer is `signed_out`.
+- Owner review: pending

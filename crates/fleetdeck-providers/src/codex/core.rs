@@ -207,6 +207,18 @@ impl CodexCore {
         self.initialized
     }
 
+    /// True while a `thread/start`, `thread/resume` or `thread/fork` waits
+    /// for its reply.
+    #[must_use]
+    pub fn is_opening(&self) -> bool {
+        self.host_requests.values().any(|k| {
+            matches!(
+                k,
+                HostRequest::ThreadStart | HostRequest::ThreadResume | HostRequest::ThreadFork
+            )
+        })
+    }
+
     #[must_use]
     pub fn thread_id(&self) -> Option<&str> {
         self.thread_id.as_deref()

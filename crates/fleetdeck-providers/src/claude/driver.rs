@@ -15,7 +15,7 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use fleetdeck_core::ChildEnv;
@@ -24,7 +24,7 @@ use fleetdeck_proto::event::{ProviderKind, RawRef};
 use fleetdeck_proto::{Capabilities, Operation, ProviderInstanceId};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
-use tokio::sync::{Mutex, mpsc, oneshot, watch};
+use tokio::sync::{Mutex, mpsc, watch};
 use tokio::task::JoinHandle;
 
 use super::core::{ClaudeCore, CoreConfig, Output};
@@ -34,13 +34,14 @@ use crate::adapter::{
     Answer, ControlId, EventSink, HostInput, LiveSession, ModelId, NativeSessionId, PermissionMode,
     ProviderAdapter, ProviderError, ProviderProbe, Result, canonical_workspace, require,
 };
-use crate::host::{HostError, ProcessControl, ProcessSpec, SessionHost, StopPolicy};
+use crate::host::{ProcessControl, ProcessSpec, SessionHost, StopPolicy};
 
 /// How long a host command waits until its frames are in the stdin pipe.
 /// A process that stops reading stdin fills the pipe; the command then
 /// fails with an unknown outcome instead of blocking the station.
 const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 use crate::rawlog::{RawDir, RawFrameLog, RawLogLimits};
+use crate::stdio::{Write, flush, now_ms, write_failed};
 
 /// Where the raw-frame logs of the sessions go.
 #[derive(Debug, Clone)]
@@ -277,16 +278,6 @@ impl ClaudeAdapter {
     }
 }
 
-/// One item of the write queue.
-#[derive(Debug)]
-enum Write {
-    Frame(Value),
-    /// Close stdin after the frames before it (a graceful stop).
-    Close,
-    /// Acknowledges that every frame before it is written to stdin.
-    Flush(oneshot::Sender<()>),
-}
-
 /// The state that the session, its reader and its writer share.
 #[derive(Debug)]
 struct Shared {
@@ -349,12 +340,6 @@ impl Shared {
         }
         Ok(())
     }
-}
-
-fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }
 
 /// Token deltas do not go to the raw-frame log (L12).
@@ -638,31 +623,6 @@ impl Drop for ClaudeSession {
             writer.abort();
         }
     }
-}
-
-/// Returns when every frame queued before it is in the stdin pipe, so a
-/// host command returns after its write, not before it (PLAN §6.4: the
-/// station records `sent` only after the I/O). Call it only after frames
-/// were queued: every failure then can follow a partial write, so it is a
-/// host write error (`outcome_unknown`), never "nothing was sent".
-async fn flush(writes: &mpsc::UnboundedSender<Write>, limit: Duration) -> Result<()> {
-    let (ack, done) = oneshot::channel();
-    if writes.send(Write::Flush(ack)).is_err() {
-        // The writer ended after it took (some of) the frames.
-        return Err(write_failed("the stdin writer stopped"));
-    }
-    match tokio::time::timeout(limit, done).await {
-        Ok(Ok(())) => Ok(()),
-        Ok(Err(_)) => Err(write_failed("the stdin writer stopped")),
-        Err(_) => Err(write_failed("the process does not read stdin")),
-    }
-}
-
-fn write_failed(why: &str) -> ProviderError {
-    ProviderError::Host(HostError::Write(std::io::Error::new(
-        std::io::ErrorKind::BrokenPipe,
-        why,
-    )))
 }
 
 #[cfg(test)]

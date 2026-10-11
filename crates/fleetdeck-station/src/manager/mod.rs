@@ -22,10 +22,11 @@ use fleetdeck_core::config::{Driver, StationConfig};
 use fleetdeck_core::{ChildEnv, SharedIds};
 use fleetdeck_proto::command::{CommandEnvelope, StopMode};
 use fleetdeck_proto::link::StationProvider;
-use fleetdeck_providers::AuthState;
 use fleetdeck_providers::claude::{ClaudeAdapter, ClaudeAdapterConfig, RawLogSettings};
+use fleetdeck_providers::codex::{CodexAdapter, CodexAdapterConfig};
 use fleetdeck_providers::host::SessionHost;
 use fleetdeck_providers::rawlog::RawLogLimits;
+use fleetdeck_providers::{AuthState, ProviderAdapter};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
@@ -41,9 +42,8 @@ pub const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 /// How often the manager applies the offline approval policy.
 pub const DENY_TICK: Duration = Duration::from_secs(1);
 
-/// Builds the adapters of the configured provider instances. Codex comes in
-/// Phase 5; its instances get no adapter yet, so a start for them retires
-/// as not dispatched.
+/// Builds the adapters of the configured provider instances: one Claude or
+/// Codex adapter per instance, with the raw-frame log under `raw_root`.
 ///
 /// # Errors
 /// An instance `env` table that cannot go into a child environment.
@@ -53,20 +53,29 @@ pub fn adapters_from_config(
     raw_root: Option<PathBuf>,
 ) -> std::result::Result<Adapters, fleetdeck_core::childenv::ChildEnvError> {
     let mut out = Adapters::new();
-    for instance in &config.provider_instances {
-        if instance.driver != Driver::Claude {
-            continue;
-        }
-        let env = ChildEnv::for_instance(ChildEnv::from_process(), instance)?;
-        let mut cfg = ClaudeAdapterConfig::new(instance.id.clone(), instance.binary.clone(), env);
-        cfg.raw_log = raw_root.as_ref().map(|root| RawLogSettings {
+    let raw_log = || {
+        raw_root.as_ref().map(|root| RawLogSettings {
             root: root.clone(),
             limits: RawLogLimits::default(),
-        });
-        out.insert(
-            instance.id.clone(),
-            Arc::new(ClaudeAdapter::new(cfg, Arc::clone(host))),
-        );
+        })
+    };
+    for instance in &config.provider_instances {
+        let env = ChildEnv::for_instance(ChildEnv::from_process(), instance)?;
+        let adapter: Arc<dyn ProviderAdapter> = match instance.driver {
+            Driver::Claude => {
+                let mut cfg =
+                    ClaudeAdapterConfig::new(instance.id.clone(), instance.binary.clone(), env);
+                cfg.raw_log = raw_log();
+                Arc::new(ClaudeAdapter::new(cfg, Arc::clone(host)))
+            }
+            Driver::Codex => {
+                let mut cfg =
+                    CodexAdapterConfig::new(instance.id.clone(), instance.binary.clone(), env);
+                cfg.raw_log = raw_log();
+                Arc::new(CodexAdapter::new(cfg, Arc::clone(host)))
+            }
+        };
+        out.insert(instance.id.clone(), adapter);
     }
     Ok(out)
 }

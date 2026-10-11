@@ -15,8 +15,10 @@
 //! - Server request ids are per-process integers that restart at 0.
 
 mod core;
+mod driver;
 mod host_cmd;
 mod map;
+mod probe;
 mod requests;
 pub mod rpc;
 #[cfg(test)]
@@ -30,8 +32,12 @@ use fleetdeck_proto::{Capabilities, ProviderInstanceId};
 use serde_json::{Value, json};
 
 pub use self::core::{CodexCore, Output};
+pub use driver::{
+    CodexAdapter, CodexAdapterConfig, CodexSession, Origin, TOKEN_DELTAS, is_token_delta,
+};
 pub use host_cmd::HostCmd;
 pub use map::{HANDLED_NOTIFICATIONS, IGNORED_NOTIFICATIONS};
+pub use probe::{parse_account, parse_version};
 pub use requests::{DECLINED_REQUESTS, HANDLED_REQUESTS};
 
 /// Codex collaboration modes (`ModeKind` of the 0.160.0 schema).

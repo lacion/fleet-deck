@@ -17,6 +17,7 @@ use fleetdeck_proto::{
     CommandEnvelope, CommandId, Event, EventBody, EventEnvelope, RejectCode, RequestId, SessionId,
 };
 use fleetdeck_providers::claude::{ClaudeAdapter, ClaudeAdapterConfig};
+use fleetdeck_providers::codex::{CodexAdapter, CodexAdapterConfig};
 use fleetdeck_providers::host::{DirectChildHost, StopPolicy};
 use fleetdeck_testkit::fake::SCENARIO_ENV;
 use fleetdeck_testkit::{Det, FakeAgent};
@@ -45,6 +46,20 @@ fn adapter(program: PathBuf) -> Arc<dyn fleetdeck_providers::ProviderAdapter> {
     Arc::new(ClaudeAdapter::new(config, Arc::new(DirectChildHost::new())))
 }
 
+fn codex_adapter() -> Arc<dyn fleetdeck_providers::ProviderAdapter> {
+    let mut env = ChildEnv::from_process();
+    env.set(SCENARIO_ENV, "sim").unwrap();
+    let mut config =
+        CodexAdapterConfig::new("codex".into(), FakeAgent::Codex.locate().unwrap(), env);
+    config.background_poll = Some(Duration::from_millis(50));
+    config.stop = StopPolicy {
+        grace: Duration::from_millis(500),
+        term_grace: Duration::from_millis(300),
+    };
+    config.delivery_grace = Duration::from_millis(500);
+    Arc::new(CodexAdapter::new(config, Arc::new(DirectChildHost::new())))
+}
+
 impl Station {
     async fn new(max_sessions: u32) -> Self {
         Self::with_program(max_sessions, FakeAgent::Claude.locate().unwrap()).await
@@ -67,7 +82,10 @@ impl Station {
                 ("codex".into(), ProviderKind::Codex),
             ]),
         );
-        let adapters = Adapters::from([("claude".into(), adapter(program))]);
+        let adapters = Adapters::from([
+            ("claude".into(), adapter(program)),
+            ("codex".into(), codex_adapter()),
+        ]);
         let manager = SessionManager::start(store, policy, adapters, det.ids())
             .await
             .unwrap();
@@ -115,9 +133,13 @@ impl Station {
     }
 
     async fn start(&mut self, cwd: &str, prompt: Option<&str>) -> SessionId {
+        self.start_with(spec(cwd, "claude"), prompt).await
+    }
+
+    async fn start_with(&mut self, spec: SessionSpec, prompt: Option<&str>) -> SessionId {
         let d = self
             .accepted(SessionCommand::Start {
-                spec: spec(cwd, "claude"),
+                spec,
                 prompt: prompt.map(text),
             })
             .await;
@@ -535,10 +557,16 @@ fn the_policy_and_the_adapters_come_from_station_toml() {
     ));
     let host: Arc<dyn fleetdeck_providers::host::SessionHost> = Arc::new(DirectChildHost::new());
     let adapters = adapters_from_config(&config, &host, None).unwrap();
-    // Codex gets its adapter in Phase 5.
+    let kinds: Vec<_> = adapters
+        .iter()
+        .map(|(id, a)| (id.as_str().to_owned(), a.kind()))
+        .collect();
     assert_eq!(
-        adapters.keys().cloned().collect::<Vec<_>>(),
-        vec![claude.into()]
+        kinds,
+        vec![
+            (claude.to_owned(), ProviderKind::Claude),
+            (codex.to_owned(), ProviderKind::Codex),
+        ]
     );
 }
 
@@ -567,12 +595,12 @@ async fn station_info_providers_are_probed_once_with_versions() {
                 // Scenario `sim` fails `auth status`: the state is unknown.
                 "unknown".to_owned()
             ),
-            // No Codex adapter before Phase 5: no version.
+            // `account/read` of the Codex sim answers signed in.
             (
                 "codex".to_owned(),
                 ProviderKind::Codex,
-                None,
-                "unknown".to_owned()
+                Some("0.160.999".to_owned()),
+                "signed_in".to_owned()
             ),
         ]
     );
@@ -597,3 +625,6 @@ async fn a_started_session_records_the_branch_of_its_workspace() {
     assert_eq!(summary.branch.as_deref(), Some("fd/feature-1"));
     st.manager.shutdown(StopMode::Kill).await;
 }
+
+#[path = "codex_tests.rs"]
+mod codex;

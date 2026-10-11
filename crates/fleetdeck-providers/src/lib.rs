@@ -8,6 +8,7 @@ pub mod claude;
 pub mod codex;
 pub mod host;
 pub mod rawlog;
+mod stdio;
 
 pub use adapter::{
     Answer, AuthState, ControlId, Emitted, EventSink, HostInput, LiveSession, ModelId,
