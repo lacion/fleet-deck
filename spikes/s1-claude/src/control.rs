@@ -3,14 +3,16 @@
 
 use serde_json::{Value, json};
 
-/// A user message (a prompt, a follow-up, or a steer during a turn).
+/// A user message (a prompt, a follow-up, or a steer during a turn). The client
+/// `uuid` makes the CLI report the input's fate in `command_lifecycle` frames.
 #[must_use]
-pub fn user_message(text: &str, session_id: &str) -> Value {
+pub fn user_message(text: &str, session_id: &str, uuid: &str) -> Value {
     json!({
         "type": "user",
         "message": {"role": "user", "content": text},
         "parent_tool_use_id": null,
         "session_id": session_id,
+        "uuid": uuid,
     })
 }
 

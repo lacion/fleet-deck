@@ -7,10 +7,10 @@ Rules for this file: one checklist item per M1 deliverable, in PLAN order. Each 
 ## M1 checklist
 
 - [x] **P0-1 Scaffold.** Root Cargo workspace (spike members only, DL-001), `deny.toml`, lint policy (`unsafe_code = forbid`, `clippy::unwrap_used = deny` outside tests), `spike-canon` (canonical event subset of §6.3), `docs/v2/DECISIONS-LOG.md`, `spikes/README.md`, this file. *(round 1)*
-- [~] **S1-1 Claude protocol core.** Frame parser (never panics, unknown frames kept, proptest), host control frames, sans-IO adapter core: init, prompt, partial deltas, `can_use_tool` with native option ids + edited input, idempotent answers, fail-closed unknown requests, interrupt, set mode (native modes only), exit expiry. *(round 1: core done; the live process driver moves to S1-2)*
-- [ ] **S1-2 Claude live driver + fixture format + `record-claude`.** tokio process driver around the core; JSONL fixture format (`in`/`out`/`exit` records + header, scrubbed of account data and home paths); `record-claude` binary; live recordings (cheap model, temp dir) of the §13 shared scenarios `simple`, `multi_turn`, `queued_turn`, `turn_interrupt`, `message_steering`, `provider_thread_resume`, `tool_call_approve`, `tool_call_deny`, plus edited input, interrupt during a tool, set permission mode.
+- [x] **S1-1 Claude protocol core.** Frame parser (never panics, unknown frames kept, proptest), host control frames, sans-IO adapter core: init, prompt, partial deltas, `can_use_tool` with native option ids + edited input, idempotent answers, fail-closed unknown requests, interrupt, set mode (native modes only), exit expiry. *(round 1; round 2 review fix: a prompt is confirmed only by `command_lifecycle` `started` with the matching uuid, DL-006)*
+- [x] **S1-2 Claude live driver + fixture format + `record-claude`.** tokio process driver around the core; JSONL fixture format (`spawn`/`host`/`in`/`out`/`raw`/`exit`/`note` records + header, scrubbed); `record-claude`; live recordings (haiku, `--safe-mode`, temp dir) of all 8 §13 shared scenarios plus `tool_call_edit_input`, `interrupt_during_tool`, `set_permission_mode`, `approval_restart`. *(round 2; an early replay harness + `replay-claude` is pulled forward from S1-4)*
 - [ ] **S1-3 TypeScript SDK reference recordings.** `spikes/s1-claude/sdk-recorder/` (bun + `@anthropic-ai/claude-agent-sdk`, a tee wrapper as `pathToClaudeCodeExecutable`); SDK fixtures for the same scenarios.
-- [ ] **S1-4 Claude replay + evidence.** Replay harness (infers host commands from `in` records, compares the adapter's writes, maps request ids); `replay-claude` offline command; `insta` snapshots for every Rust and SDK fixture; evidence: "prompt confirmed", restart survival of open requests, native option ids, steer/queue timing.
+- [~] **S1-4 Claude replay + evidence.** *(round 2: `replay` module, `replay-claude`, `tests/replay_fixtures.rs` for the Rust fixtures.)* Remaining: replay of the SDK fixtures (after S1-3), `insta` snapshots of the canonical event stream of every fixture, evidence write-up for "prompt confirmed", restart survival, native option ids, steer/queue timing.
 - [ ] **S1-5 ADR-001** (Proposed): native Claude adapter design, effect states and crash boundaries (§6.4), fixture set, unsupported scenarios with reasons.
 - [ ] **S2-1 Codex protocol core.** ADR-002 option evaluation (git pin of `codex-app-server-protocol` vs codegen from `codex app-server generate-json-schema`); JSON-RPC framing; sans-IO core: initialize, `thread/start`, `turn/start`, both approval requests, questions (L4), `turn/interrupt`, `thread/resume`, diff notifications.
 - [ ] **S2-2 Codex live driver + `record-codex` + fixtures** for the §13 shared scenarios Codex supports (unsupported ones listed with reasons); restart survival experiment.
@@ -40,3 +40,27 @@ Rules for this file: one checklist item per M1 deliverable, in PLAN order. Each 
   - `cargo deny check` → advisories ok, bans ok, licenses ok, sources ok
   - `web/` checks and TS-types drift check → not applicable in M1 (no `web/`, no `ts-rs` types yet; Phase 1 adds them)
 - Next: S1-2.
+
+### Round 2 (2026-10-11)
+
+- Committed round 1 as `4973896 feat(spikes): scaffold v2 workspace and S1 Claude protocol core`.
+- Review fix: a pending prompt is confirmed only by `command_lifecycle` `started` with the same `command_uuid` (a client UUID on each user message). `system/*`, stream, and assistant frames never confirm an input. A turn without host input (a background task finished, trap 4) gets `origin: provider`. Regression tests in `spikes/s1-claude/src/adapter/tests.rs`: `unrelated_frames_never_confirm_a_pending_prompt`, `provider_turn_does_not_confirm_a_pending_prompt`, `only_the_matching_uuid_confirms`, `replay_echo_is_ignored_once_lifecycle_frames_exist`, `unknown_lifecycle_state_is_counted_not_applied`, `input_started_during_a_turn_folds_into_it`. DL-006.
+- S1-2 files: `spikes/s1-claude/src/driver.rs` (`LiveSession`), `spikes/spike-canon/src/fixture.rs` (format + scrubber), `spikes/s1-claude/src/record/` (12 scenarios), `src/bin/record-claude.rs`, `src/replay.rs`, `src/bin/replay-claude.rs`, `tests/replay_fixtures.rs`, 12 fixtures in `spikes/s1-claude/fixtures/rust/`.
+- Live recordings: `record-claude --scenario <name>` for all 12 → all `ok` (haiku, `--safe-mode`, about $0.03–0.06 each). The first attempt failed for 7 scenarios: a plain `echo` is read-only and needs no approval in `default` mode (fixed: `touch fd-approve.txt && echo approve-ok`); haiku used the Write tool for the long-text prompt (fixed: "Do not use any tools"); `sleep 30` was blocked and the model moved it to the background (fixed: a foreground `python3 -c "import time; time.sleep(40)"`). The background run gave trap-4 evidence: `system/task_notification` started a new turn with no host input.
+- Evidence (input for S1-4 and ADR-001):
+  - Prompt confirmed = `command_lifecycle` `started`. `queued` arrives first; `completed` arrives after the turn's `result`. The `cancelled` frame of an interrupted input arrives only when the next input is written (`turn_interrupt`).
+  - Queue: a second prompt during a turn runs as its own turn (`queued_turn`: 2 turns).
+  - Steer: a prompt during a running tool joins the running turn after the tool result (`message_steering`: 1 turn; the reply ends with "banana").
+  - Interrupt: `control_response` `{"still_queued":[]}`, then `result` `error_during_execution` with `terminal_reason` `aborted_streaming` (text) or `aborted_tools` (tool). After `aborted_tools` the CLI exits with code 1 when stdin closes.
+  - Restart: an open `can_use_tool` request does not survive a kill. The resumed process reports `pending_permission_requests: []` and does not ask again without input. After a new prompt the model calls the tool again, and the CLI sends a new request with a new native id (`approval_restart`).
+  - Native ids: the `can_use_tool` `request_id` is a UUID. Options: `allow`, `deny`, plus `allow_always` when `permission_suggestions` is not empty. The CLI echoes the host's `control_response` on stdout; the core ignores it.
+  - Modes: the wire name is `default` for the flag `manual` (DL-003 update).
+- Decisions: DL-003 updated, DL-005 (`--safe-mode` recordings), DL-006 (prompt confirmation).
+- Commands and results:
+  - `cargo run -p s1-claude --bin replay-claude` → 12 fixtures ok, unknown=0
+  - `cargo fmt --all --check` → pass
+  - `cargo clippy --workspace --all-targets -- -D warnings` → pass
+  - `cargo nextest run --workspace` → 33 passed
+  - `cargo deny check` → advisories ok, bans ok, licenses ok, sources ok
+  - `web/` checks and TS-types drift check → not applicable in M1
+- Next: S1-3 (TypeScript SDK reference recordings).

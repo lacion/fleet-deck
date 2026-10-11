@@ -2,8 +2,8 @@
 
 use serde_json::{Map, Value};
 use spike_canon::{
-    ApprovalOption, CanonEvent, FileChange, ProviderRefs, RequestKind, ResponseChannel, ToolKind,
-    ToolStatus, TurnStatus, Usage,
+    ApprovalOption, CanonEvent, FileChange, InputState, ProviderRefs, RequestKind, ResponseChannel,
+    ToolKind, ToolStatus, TurnStatus, Usage,
 };
 
 use super::{ClaudeCore, HostRequest, Output, RuntimeRequest, ToolNode};
@@ -80,6 +80,10 @@ pub(super) fn on_frame(core: &mut ClaudeCore, frame: CliFrame) -> Vec<Output> {
                 _ => Vec::new(),
             }
         }
+        CliFrame::CommandLifecycle {
+            command_uuid,
+            state,
+        } => on_lifecycle(core, &command_uuid, &state),
         CliFrame::Unknown(_) => {
             core.unknown_frames += 1;
             Vec::new()
@@ -106,34 +110,69 @@ fn on_system(core: &mut ClaudeCore, subtype: &str, body: &Map<String, Value>) ->
                 provider_refs: refs(&[("session_id", get("session_id").as_deref())]),
             })]
         }
-        // `status: requesting` is the first sign that the CLI works on an input.
-        "status" => start_turn_if_pending(core),
+        // `status`, `ui_invalidate`, hook frames, ... never confirm an input: only a
+        // frame that names the input's client uuid does (ADR-001 "prompt confirmed").
         _ => Vec::new(),
     }
 }
 
-/// Starts a turn when an input is pending and no turn runs.
-fn start_turn_if_pending(core: &mut ClaudeCore) -> Vec<Output> {
-    if core.turn.is_some() || core.pending_inputs.is_empty() {
-        return Vec::new();
-    }
-    core.pending_inputs.remove(0);
-    let turn_id = core.ids.next("turn");
-    core.turn = Some(turn_id.clone());
-    let session = core.native_session_id.clone();
-    vec![Output::Emit(CanonEvent::TurnStarted {
-        turn_id,
-        provider_refs: refs(&[("session_id", session.as_deref())]),
-    })]
+fn input_state(native: &str) -> Option<InputState> {
+    Some(match native {
+        "queued" => InputState::Received,
+        "started" => InputState::Started,
+        "completed" => InputState::Completed,
+        "cancelled" => InputState::Cancelled,
+        "discarded" => InputState::Discarded,
+        "refused" => InputState::Refused,
+        _ => return None,
+    })
 }
 
-fn text_of(blocks: &[Value]) -> String {
-    blocks
-        .iter()
-        .filter(|b| b.get("type").and_then(Value::as_str) == Some("text"))
-        .filter_map(|b| b.get("text").and_then(Value::as_str))
-        .collect::<Vec<_>>()
-        .join("")
+/// `command_lifecycle`: the CLI reports the fate of an input with a client uuid.
+fn on_lifecycle(core: &mut ClaudeCore, command_uuid: &str, native: &str) -> Vec<Output> {
+    core.lifecycle_seen = true;
+    let Some(state) = input_state(native) else {
+        core.unknown_frames += 1;
+        return Vec::new();
+    };
+    set_input_state(core, command_uuid, state)
+}
+
+/// Records a reported input state. `Started` starts a turn when none runs; during a
+/// running turn the input is folded into that turn (a steer, ADR-001).
+fn set_input_state(core: &mut ClaudeCore, input_id: &str, state: InputState) -> Vec<Output> {
+    let Some(idx) = core.inputs.iter().position(|i| i.id == input_id) else {
+        // Not an input of this process (for example a Remote Control client): ignore.
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    if state == InputState::Started && core.inputs[idx].turn.is_none() {
+        let turn_id = match core.turn.clone() {
+            Some(t) => t,
+            None => {
+                let t = core.ids.next("turn");
+                core.turn = Some(t.clone());
+                let session = core.native_session_id.clone();
+                out.push(Output::Emit(CanonEvent::TurnStarted {
+                    turn_id: t.clone(),
+                    provider_refs: refs(&[
+                        ("session_id", session.as_deref()),
+                        ("command_uuid", Some(input_id)),
+                    ]),
+                }));
+                t
+            }
+        };
+        core.inputs[idx].turn = Some(turn_id);
+    }
+    let entry = &mut core.inputs[idx];
+    entry.state = Some(state);
+    out.push(Output::Emit(CanonEvent::InputUpdated {
+        input_id: input_id.to_owned(),
+        turn_id: entry.turn.clone(),
+        state,
+    }));
+    out
 }
 
 fn on_user(core: &mut ClaudeCore, msg: &MessageFrame) -> Vec<Output> {
@@ -143,10 +182,18 @@ fn on_user(core: &mut ClaudeCore, msg: &MessageFrame) -> Vec<Output> {
         .filter(|b| b.get("type").and_then(Value::as_str) == Some("tool_result"))
         .collect();
     if results.is_empty() {
-        // A replayed user message (`--replay-user-messages`): the CLI read the input.
-        // This is "prompt confirmed" for Claude (ADR-001).
-        let _ = text_of(&blocks);
-        return start_turn_if_pending(core);
+        // Fallback for a CLI without `command_lifecycle`: the replay echo of an input
+        // with our client uuid means that the input went into a turn.
+        let fallback = !core.lifecycle_seen && msg.is_replay;
+        let pending = msg.uuid.as_deref().filter(|u| {
+            core.inputs
+                .iter()
+                .any(|i| i.id == *u && i.state.is_none_or(|s| s == InputState::Received))
+        });
+        return match (fallback, pending) {
+            (true, Some(id)) => set_input_state(core, id, InputState::Started),
+            _ => Vec::new(),
+        };
     }
     let mut out = Vec::new();
     for block in results {
@@ -184,8 +231,27 @@ fn on_user(core: &mut ClaudeCore, msg: &MessageFrame) -> Vec<Output> {
     out
 }
 
+/// Starts a turn that no host input started: the CLI works on its own, for example
+/// after a background task finished (`system/task_notification`, trap 4). Such a
+/// turn never confirms a pending host input.
+fn ensure_provider_turn(core: &mut ClaudeCore, is_child: bool) -> Vec<Output> {
+    if core.turn.is_some() || is_child {
+        return Vec::new();
+    }
+    let t = core.ids.next("turn");
+    core.turn = Some(t.clone());
+    let session = core.native_session_id.clone();
+    vec![Output::Emit(CanonEvent::TurnStarted {
+        turn_id: t,
+        provider_refs: refs(&[
+            ("session_id", session.as_deref()),
+            ("origin", Some("provider")),
+        ]),
+    })]
+}
+
 fn on_assistant(core: &mut ClaudeCore, msg: &MessageFrame) -> Vec<Output> {
-    let mut out = start_turn_if_pending(core);
+    let mut out = ensure_provider_turn(core, msg.parent_tool_use_id.is_some());
     let Some(turn_id) = core.turn.clone() else {
         return out;
     };
@@ -252,7 +318,11 @@ fn on_assistant(core: &mut ClaudeCore, msg: &MessageFrame) -> Vec<Output> {
 }
 
 fn on_stream_event(core: &mut ClaudeCore, event: &Value, is_child: bool) -> Vec<Output> {
-    let mut out = start_turn_if_pending(core);
+    let mut out = if event.get("type").and_then(Value::as_str) == Some("message_start") {
+        ensure_provider_turn(core, is_child)
+    } else {
+        Vec::new()
+    };
     let Some(turn_id) = core.turn.clone() else {
         return out;
     };
@@ -298,9 +368,7 @@ fn usage_of(res: &ResultFrame) -> Usage {
 }
 
 fn on_result(core: &mut ClaudeCore, res: &ResultFrame) -> Vec<Output> {
-    // A result can arrive for an input that never produced a status frame (an interrupt
-    // before the model call). Start the turn first so every turn has both ends.
-    let mut out = start_turn_if_pending(core);
+    let mut out = Vec::new();
     let usage = usage_of(res);
     let terminal_reason = res.body.get("terminal_reason").and_then(Value::as_str);
     let status = if core.interrupt_requested

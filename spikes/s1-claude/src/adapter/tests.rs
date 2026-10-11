@@ -1,5 +1,5 @@
 use serde_json::json;
-use spike_canon::{CanonEvent, ToolStatus, TurnStatus};
+use spike_canon::{CanonEvent, InputState, ToolStatus, TurnStatus};
 
 use super::*;
 use crate::frames::parse_value;
@@ -26,6 +26,23 @@ fn feed(core: &mut ClaudeCore, v: Value) -> Vec<Output> {
     core.on_frame(parse_value(v).unwrap())
 }
 
+const IN1: &str = "00000000-0000-4000-8000-000000000001";
+const IN2: &str = "00000000-0000-4000-8000-000000000002";
+
+fn lifecycle(core: &mut ClaudeCore, id: &str, state: &str) -> Vec<CanonEvent> {
+    emits(&feed(
+        core,
+        json!({"type":"command_lifecycle","command_uuid":id,"state":state,"uuid":"x","session_id":"S"}),
+    ))
+}
+
+/// Writes a prompt and lets the CLI start it.
+fn run_prompt(core: &mut ClaudeCore, text: &str, id: &str) {
+    core.prompt(text, id);
+    lifecycle(core, id, "queued");
+    lifecycle(core, id, "started");
+}
+
 fn started_core() -> ClaudeCore {
     let mut core = ClaudeCore::new();
     feed(
@@ -39,7 +56,7 @@ fn started_core() -> ClaudeCore {
 fn cli_args_always_pass_a_native_mode() {
     let args = cli_args(&SessionSpec::default());
     let i = args.iter().position(|a| a == "--permission-mode").unwrap();
-    assert_eq!(args[i + 1], "manual");
+    assert_eq!(args[i + 1], "default");
     let args = cli_args(&SessionSpec {
         mode: Some("yolo".into()),
         resume: Some("abc".into()),
@@ -59,16 +76,24 @@ fn cli_args_always_pass_a_native_mode() {
 #[test]
 fn simple_turn_maps_to_canonical_events() {
     let mut core = started_core();
-    let out = core.prompt("hi");
+    let out = core.prompt("hi", IN1);
     assert_eq!(writes(&out)[0]["type"], "user");
+    assert_eq!(writes(&out)[0]["uuid"], IN1);
     assert!(
         core.current_turn().is_none(),
         "a turn starts only when the CLI confirms it"
     );
-    let ev = emits(&feed(
-        &mut core,
-        json!({"type":"user","message":{"role":"user","content":"hi"}}),
-    ));
+    let ev = lifecycle(&mut core, IN1, "queued");
+    assert_eq!(
+        ev,
+        vec![CanonEvent::InputUpdated {
+            input_id: IN1.into(),
+            turn_id: None,
+            state: InputState::Received
+        }]
+    );
+    assert!(core.current_turn().is_none(), "queued is not started");
+    let ev = lifecycle(&mut core, IN1, "started");
     assert!(matches!(ev[0], CanonEvent::TurnStarted { .. }));
     let ev = emits(&feed(
         &mut core,
@@ -104,16 +129,146 @@ fn simple_turn_maps_to_canonical_events() {
         })
     ));
     assert!(core.current_turn().is_none());
+    let ev = lifecycle(&mut core, IN1, "completed");
+    assert_eq!(
+        ev,
+        vec![CanonEvent::InputUpdated {
+            input_id: IN1.into(),
+            turn_id: Some("turn-1".into()),
+            state: InputState::Completed
+        }]
+    );
+}
+
+#[test]
+fn unrelated_frames_never_confirm_a_pending_prompt() {
+    let mut core = started_core();
+    core.prompt("hi", IN1);
+    // Status, ui frames, hooks, stream events, assistant text, and results are not
+    // confirmations: none of them names the input.
+    for frame in [
+        json!({"type":"system","subtype":"status","status":"requesting"}),
+        json!({"type":"system","subtype":"status","status":"compacting"}),
+        json!({"type":"system","subtype":"ui_invalidate","event":"ui.render"}),
+        json!({"type":"system","subtype":"hook_started"}),
+        json!({"type":"system","subtype":"task_notification","status":"completed"}),
+        json!({"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"x"}}}),
+        json!({"type":"result","subtype":"success","is_error":false}),
+    ] {
+        let ev = emits(&feed(&mut core, frame.clone()));
+        assert!(
+            !ev.iter().any(|e| matches!(
+                e,
+                CanonEvent::TurnStarted { .. } | CanonEvent::TurnCompleted { .. }
+            )),
+            "{frame} must not start or end a turn: {ev:?}"
+        );
+        assert!(core.current_turn().is_none());
+    }
+    assert_eq!(core.pending_inputs(), 1);
+    assert_eq!(core.input_state(IN1), None);
+}
+
+#[test]
+fn provider_turn_does_not_confirm_a_pending_prompt() {
+    let mut core = started_core();
+    core.prompt("hi", IN1);
+    // A background task finished: the CLI starts a turn on its own (trap 4).
+    let ev = emits(&feed(
+        &mut core,
+        json!({"type":"stream_event","event":{"type":"message_start","message":{}}}),
+    ));
+    let CanonEvent::TurnStarted { provider_refs, .. } = &ev[0] else {
+        panic!("{ev:?}")
+    };
+    assert_eq!(
+        provider_refs.get("origin").and_then(Value::as_str),
+        Some("provider")
+    );
+    assert_eq!(
+        core.input_state(IN1),
+        None,
+        "the host input is still pending"
+    );
+    assert_eq!(core.pending_inputs(), 1);
+    let ev = emits(&feed(
+        &mut core,
+        json!({"type":"result","subtype":"success","is_error":false}),
+    ));
+    assert!(matches!(ev.last(), Some(CanonEvent::TurnCompleted { .. })));
+    assert!(!core.is_idle());
+}
+
+#[test]
+fn only_the_matching_uuid_confirms() {
+    let mut core = started_core();
+    core.prompt("hi", IN1);
+    // A replay echo with another uuid does not confirm (fallback path).
+    let ev = emits(&feed(
+        &mut core,
+        json!({"type":"user","isReplay":true,"uuid":IN2,"message":{"role":"user","content":"hi"}}),
+    ));
+    assert!(ev.is_empty());
+    // A user message with our uuid that is not a replay echo does not confirm either.
+    let ev = emits(&feed(
+        &mut core,
+        json!({"type":"user","uuid":IN1,"message":{"role":"user","content":"hi"}}),
+    ));
+    assert!(ev.is_empty());
+    assert!(core.current_turn().is_none());
+    // The replay echo with our uuid confirms when the CLI sends no lifecycle frames.
+    let ev = emits(&feed(
+        &mut core,
+        json!({"type":"user","isReplay":true,"uuid":IN1,"message":{"role":"user","content":"hi"}}),
+    ));
+    assert!(matches!(ev[0], CanonEvent::TurnStarted { .. }));
+    // A lifecycle frame for an input of another client is ignored.
+    assert!(lifecycle(&mut core, IN2, "started").is_empty());
+    assert_eq!(core.current_turn(), Some("turn-1"));
+}
+
+#[test]
+fn replay_echo_is_ignored_once_lifecycle_frames_exist() {
+    let mut core = started_core();
+    core.prompt("a", IN1);
+    lifecycle(&mut core, IN1, "queued");
+    let ev = emits(&feed(
+        &mut core,
+        json!({"type":"user","isReplay":true,"uuid":IN1,"message":{"role":"user","content":"a"}}),
+    ));
+    assert!(ev.is_empty(), "lifecycle is authoritative: {ev:?}");
+    assert!(core.current_turn().is_none());
+}
+
+#[test]
+fn unknown_lifecycle_state_is_counted_not_applied() {
+    let mut core = started_core();
+    core.prompt("a", IN1);
+    assert!(lifecycle(&mut core, IN1, "teleported").is_empty());
+    assert_eq!(core.unknown_frames(), 1);
+    assert_eq!(core.input_state(IN1), None);
+}
+
+#[test]
+fn input_started_during_a_turn_folds_into_it() {
+    let mut core = started_core();
+    run_prompt(&mut core, "a", IN1);
+    core.prompt("b", IN2);
+    let ev = lifecycle(&mut core, IN2, "started");
+    assert_eq!(
+        ev,
+        vec![CanonEvent::InputUpdated {
+            input_id: IN2.into(),
+            turn_id: Some("turn-1".into()),
+            state: InputState::Started
+        }]
+    );
 }
 
 #[test]
 fn approval_answer_is_idempotent_and_uses_native_ids() {
     let mut core = started_core();
-    core.prompt("run ls");
-    feed(
-        &mut core,
-        json!({"type":"system","subtype":"status","status":"requesting"}),
-    );
+    run_prompt(&mut core, "run ls", IN1);
     feed(
         &mut core,
         json!({"type":"assistant","message":{"content":[{"type":"tool_use","id":"tu1","name":"Bash","input":{"command":"ls"}}]}}),
@@ -175,11 +330,7 @@ fn approval_answer_is_idempotent_and_uses_native_ids() {
 #[test]
 fn denied_tool_completes_as_denied() {
     let mut core = started_core();
-    core.prompt("x");
-    feed(
-        &mut core,
-        json!({"type":"system","subtype":"status","status":"requesting"}),
-    );
+    run_prompt(&mut core, "x", IN1);
     feed(
         &mut core,
         json!({"type":"assistant","message":{"content":[{"type":"tool_use","id":"tu1","name":"Write","input":{"file_path":"/t/a"}}]}}),
@@ -230,11 +381,7 @@ fn unknown_control_request_fails_closed() {
 fn interrupt_needs_a_turn_and_marks_it_interrupted() {
     let mut core = started_core();
     assert_eq!(core.interrupt().unwrap_err(), AdapterError::NoTurn);
-    core.prompt("long task");
-    feed(
-        &mut core,
-        json!({"type":"system","subtype":"status","status":"requesting"}),
-    );
+    run_prompt(&mut core, "long task", IN1);
     let (_, out) = core.interrupt().unwrap();
     assert_eq!(writes(&out)[0]["request"]["subtype"], "interrupt");
     let ev = emits(&feed(
@@ -253,11 +400,7 @@ fn interrupt_needs_a_turn_and_marks_it_interrupted() {
 #[test]
 fn exit_expires_open_requests() {
     let mut core = started_core();
-    core.prompt("x");
-    feed(
-        &mut core,
-        json!({"type":"system","subtype":"status","status":"requesting"}),
-    );
+    run_prompt(&mut core, "x", IN1);
     feed(
         &mut core,
         json!({"type":"control_request","request_id":"N9","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{}}}),
@@ -273,7 +416,7 @@ fn exit_expires_open_requests() {
 fn set_mode_accepts_only_native_modes() {
     let mut core = started_core();
     assert!(matches!(
-        core.set_mode("default"),
+        core.set_mode("manual"),
         Err(AdapterError::UnsupportedMode(_))
     ));
     let (id, _) = core.set_mode("plan").unwrap();

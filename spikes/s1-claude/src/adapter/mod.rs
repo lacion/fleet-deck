@@ -5,20 +5,24 @@
 //! process driver and the replay harness both wrap this core, so a replay runs
 //! the real mapping code (PLAN §13, L20).
 
+mod host;
 mod map;
+
+pub use host::HostCmd;
 
 use std::collections::BTreeMap;
 
 use serde_json::Value;
-use spike_canon::{ApprovalOption, CanonEvent, OrdinalIds};
+use spike_canon::{ApprovalOption, CanonEvent, InputState, OrdinalIds};
 
 use crate::control::{self, PermissionDecision};
 use crate::frames::CliFrame;
 
-/// Native Claude permission modes that `claude` 2.1.289 accepts
-/// (`claude --help`, `--permission-mode`). The station offers only these (L8).
+/// Native Claude permission modes as `claude` 2.1.289 names them on the wire
+/// (`system/init.permissionMode`, `set_permission_mode`). The station offers only
+/// these (L8). `--permission-mode manual` is a CLI alias of `default` (DL-003).
 pub const NATIVE_MODES: &[&str] = &[
-    "manual",
+    "default",
     "acceptEdits",
     "plan",
     "auto",
@@ -27,7 +31,7 @@ pub const NATIVE_MODES: &[&str] = &[
 ];
 
 /// The most restrictive native mode: the fallback for an unknown stored mode (L8).
-pub const SAFEST_MODE: &str = "manual";
+pub const SAFEST_MODE: &str = "default";
 
 /// One output of the core.
 #[derive(Debug, Clone, PartialEq)]
@@ -77,6 +81,8 @@ pub struct SessionSpec {
     pub mode: Option<String>,
     pub resume: Option<String>,
     pub fork: bool,
+    /// More arguments (for example `--safe-mode` for recordings).
+    pub extra_args: Vec<String>,
 }
 
 /// The `claude` argument list for a driven session.
@@ -113,6 +119,7 @@ pub fn cli_args(spec: &SessionSpec) -> Vec<String> {
             args.push("--fork-session".to_owned());
         }
     }
+    args.extend(spec.extra_args.iter().cloned());
     args
 }
 
@@ -136,6 +143,22 @@ enum HostRequest {
     SetModel,
 }
 
+/// A host input and its fate as the CLI reported it.
+#[derive(Debug, Clone)]
+struct InputEntry {
+    /// The client uuid sent with the user message.
+    id: String,
+    /// `None` until the CLI reports the input (written, not confirmed).
+    state: Option<InputState>,
+    turn: Option<String>,
+}
+
+impl InputEntry {
+    fn is_pending(&self) -> bool {
+        matches!(self.state, None | Some(InputState::Received))
+    }
+}
+
 /// A tool node of the current session.
 #[derive(Debug, Clone)]
 struct ToolNode {
@@ -153,8 +176,11 @@ pub struct ClaudeCore {
     native_session_id: Option<String>,
     started: bool,
     mode: Option<String>,
-    /// Inputs written but not yet confirmed by the CLI (FIFO).
-    pending_inputs: Vec<String>,
+    /// Every input written in this process, in order.
+    inputs: Vec<InputEntry>,
+    /// True after the first `command_lifecycle` frame: the CLI reports input fates,
+    /// so the replay echo is not used as a fallback confirmation.
+    lifecycle_seen: bool,
     /// App id of the running turn.
     turn: Option<String>,
     interrupt_requested: bool,
@@ -182,6 +208,27 @@ impl ClaudeCore {
     #[must_use]
     pub fn unknown_frames(&self) -> usize {
         self.unknown_frames
+    }
+
+    /// Number of written inputs that the CLI did not confirm yet.
+    #[must_use]
+    pub fn pending_inputs(&self) -> usize {
+        self.inputs.iter().filter(|i| i.is_pending()).count()
+    }
+
+    /// The reported fate of an input (`None` while it is only written).
+    #[must_use]
+    pub fn input_state(&self, input_id: &str) -> Option<InputState> {
+        self.inputs
+            .iter()
+            .find(|i| i.id == input_id)
+            .and_then(|i| i.state)
+    }
+
+    /// True when no turn runs and no input waits for confirmation.
+    #[must_use]
+    pub fn is_idle(&self) -> bool {
+        self.turn.is_none() && self.pending_inputs() == 0
     }
 
     /// App id of the running turn.
@@ -236,10 +283,19 @@ impl ClaudeCore {
 
     /// Writes a user message. During a running turn this is a mid-turn message
     /// (steer or queue, see ADR-001). The turn starts when the CLI confirms it.
-    pub fn prompt(&mut self, text: &str) -> Vec<Output> {
-        self.pending_inputs.push(text.to_owned());
+    ///
+    /// `input_id` must be a UUID that is unique in the session, also across a
+    /// resume: the CLI reports the input's fate under it (`command_lifecycle`).
+    pub fn prompt(&mut self, text: &str, input_id: &str) -> Vec<Output> {
+        self.inputs.push(InputEntry {
+            id: input_id.to_owned(),
+            state: None,
+            turn: None,
+        });
         let session = self.native_session_id.clone().unwrap_or_default();
-        vec![Output::Write(control::user_message(text, &session))]
+        vec![Output::Write(control::user_message(
+            text, &session, input_id,
+        ))]
     }
 
     /// Requests an interrupt. The terminal state arrives later with `result` (trap 10).
@@ -247,7 +303,7 @@ impl ClaudeCore {
     /// # Errors
     /// [`AdapterError::NoTurn`] when no turn runs and no input is pending (trap 3).
     pub fn interrupt(&mut self) -> Result<(String, Vec<Output>), AdapterError> {
-        if self.turn.is_none() && self.pending_inputs.is_empty() {
+        if self.is_idle() {
             return Err(AdapterError::NoTurn);
         }
         self.interrupt_requested = true;

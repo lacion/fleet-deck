@@ -4,6 +4,8 @@
 //! events, so the replay tests can compare both providers with one shape. The
 //! product version lives in `fleetdeck-proto` (Phase 1); this crate never ships.
 
+pub mod fixture;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -153,6 +155,14 @@ pub enum CanonEvent {
     },
     #[serde(rename = "mode.changed")]
     ModeChanged { mode: String },
+    /// The provider reported the fate of a host input (PLAN §6.4 input dispatch).
+    #[serde(rename = "input.updated")]
+    InputUpdated {
+        input_id: String,
+        /// The turn that consumed the input, when it started.
+        turn_id: Option<String>,
+        state: InputState,
+    },
     #[serde(rename = "error")]
     Error { code: String, message: String },
     #[serde(rename = "session.ended")]
@@ -182,10 +192,31 @@ impl CanonEvent {
             Self::UsageUpdated { .. } => "usage.updated",
             Self::TurnCompleted { .. } => "turn.completed",
             Self::ModeChanged { .. } => "mode.changed",
+            Self::InputUpdated { .. } => "input.updated",
             Self::Error { .. } => "error",
             Self::SessionEnded { .. } => "session.ended",
         }
     }
+}
+
+/// The fate of a host input as the provider reports it.
+///
+/// ADR-001/ADR-002 map these provider facts to the PLAN §6.4 effect states.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InputState {
+    /// The provider received the input (it waits in the provider's queue).
+    Received,
+    /// The input went into a turn (a new turn, or folded into the running turn).
+    Started,
+    /// The turn that consumed the input ended.
+    Completed,
+    /// The input was removed or its turn was aborted before it was answered.
+    Cancelled,
+    /// The session ended while the input was still queued.
+    Discarded,
+    /// The provider declined the input.
+    Refused,
 }
 
 /// Allocates app ids by ordinal (L6), so replays are deterministic.

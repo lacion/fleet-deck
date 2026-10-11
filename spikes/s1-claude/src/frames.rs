@@ -46,6 +46,9 @@ pub enum CliFrame {
     ControlResponse(ControlResponse),
     /// The CLI cancels one of its own control requests.
     ControlCancelRequest { request_id: String },
+    /// Fate of a host input that carried a client `uuid` (`msg_lifecycle_v1`):
+    /// `queued`, `started`, `completed`, `cancelled`, `discarded`, `refused`.
+    CommandLifecycle { command_uuid: String, state: String },
     /// A frame type that this adapter does not know. Logged and ignored.
     Unknown(Value),
 }
@@ -56,6 +59,8 @@ pub struct MessageFrame {
     pub session_id: Option<String>,
     pub parent_tool_use_id: Option<String>,
     pub uuid: Option<String>,
+    /// True for a user message that the CLI echoes back (`--replay-user-messages`).
+    pub is_replay: bool,
     /// The Anthropic message object (`role`, `content`, `id`, `model`, `usage`).
     pub message: Value,
 }
@@ -114,6 +119,9 @@ pub struct ControlResponse {
     pub ok: bool,
     pub response: Value,
     pub error: Option<String>,
+    /// `can_use_tool` requests that this CLI process issued and did not resolve
+    /// (Claude Code 2.1.268 or later). `None` on an older CLI.
+    pub pending_permission_requests: Option<Vec<Value>>,
 }
 
 fn opt_str(map: &Map<String, Value>, key: &str) -> Option<String> {
@@ -153,6 +161,7 @@ pub fn parse_value(value: Value) -> Result<CliFrame, ParseError> {
                 session_id: opt_str(&map, "session_id"),
                 parent_tool_use_id: opt_str(&map, "parent_tool_use_id"),
                 uuid: opt_str(&map, "uuid"),
+                is_replay: map.get("isReplay").and_then(Value::as_bool) == Some(true),
                 message: map.get("message").cloned().unwrap_or(Value::Null),
             };
             if kind == "assistant" {
@@ -182,6 +191,13 @@ pub fn parse_value(value: Value) -> Result<CliFrame, ParseError> {
         "control_response" => parse_control_response(&map),
         "control_cancel_request" => CliFrame::ControlCancelRequest {
             request_id: str_or_empty(&map, "request_id"),
+        },
+        "command_lifecycle" => match (opt_str(&map, "command_uuid"), opt_str(&map, "state")) {
+            (Some(command_uuid), Some(state)) => CliFrame::CommandLifecycle {
+                command_uuid,
+                state,
+            },
+            _ => CliFrame::Unknown(Value::Object(map)),
         },
         _ => CliFrame::Unknown(Value::Object(map)),
     };
@@ -246,6 +262,10 @@ fn parse_control_response(map: &Map<String, Value>) -> CliFrame {
         ok: resp.get("subtype").and_then(Value::as_str) == Some("success"),
         response: resp.get("response").cloned().unwrap_or(Value::Null),
         error: opt_str(&resp, "error"),
+        pending_permission_requests: resp
+            .get("pending_permission_requests")
+            .and_then(Value::as_array)
+            .cloned(),
     })
 }
 
