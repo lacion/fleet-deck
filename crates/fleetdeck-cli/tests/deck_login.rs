@@ -8,42 +8,23 @@
 
 mod common;
 
-use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::net::SocketAddr;
 
 use common::deck::Deck;
 use common::fleetdeck;
 use serde_json::{Value, json};
 
-/// One HTTP/1.1 request to the deck's board; returns (status, headers, body).
+/// One HTTPS request to the deck's board; returns (status, head, body).
 fn http(
     deck: &Deck,
+    board: SocketAddr,
     method: &str,
     path: &str,
     headers: &[(&str, &str)],
     body: Option<Value>,
 ) -> (u16, String, Value) {
-    let mut s = TcpStream::connect(("127.0.0.1", deck.board_port)).unwrap();
-    let body = body.map(|b| b.to_string()).unwrap_or_default();
-    let mut text = format!(
-        "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\nContent-Length: {}\r\nContent-Type: application/json\r\n",
-        body.len()
-    );
-    for (k, v) in headers {
-        text.push_str(&format!("{k}: {v}\r\n"));
-    }
-    text.push_str("\r\n");
-    text.push_str(&body);
-    s.write_all(text.as_bytes()).unwrap();
-    let mut raw = String::new();
-    s.read_to_string(&mut raw).unwrap();
-    let (head, body) = raw.split_once("\r\n\r\n").unwrap();
-    let status = head.split(' ').nth(1).unwrap().parse().unwrap();
-    (
-        status,
-        head.to_owned(),
-        serde_json::from_str(body).unwrap_or(Value::Null),
-    )
+    let r = deck.https(board, method, path, headers, body);
+    (r.status, r.head, r.body)
 }
 
 fn cookie_of(head: &str) -> String {
@@ -65,21 +46,30 @@ fn cookie_of(head: &str) -> String {
 fn fleetdeck_open_logs_in_once_and_the_loopback_board_refuses_anonymous_requests() {
     let mut deck = Deck::start();
 
+    // `fleetdeck open` prints an https URL; the token is in the fragment,
+    // and the certificate fingerprint goes to stderr.
+    let out = deck.cli(&["open"]);
+    assert!(out.status.success());
+    let note = String::from_utf8_lossy(&out.stderr);
+    assert!(note.contains("SHA-256 fingerprint"), "{note}");
+    let url = String::from_utf8(out.stdout).unwrap();
+    let rest = url
+        .trim()
+        .strip_prefix("https://127.0.0.1:")
+        .expect("an https URL");
+    let (port, token) = rest.split_once("/#login=").expect("a login link");
+    let board: SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
+
     // Loopback is no exception: no login, no data.
-    let (status, _, body) = http(&deck, "GET", "/api/sessions", &[], None);
+    let (status, _, body) = http(&deck, board, "GET", "/api/sessions", &[], None);
     assert_eq!(
         (status, body["error"].as_str()),
         (401, Some("login_required"))
     );
 
-    // `fleetdeck open` prints the URL; the token is in the fragment.
-    let url = deck.ok(&["open"]);
-    let url = url.trim();
-    let prefix = format!("http://127.0.0.1:{}/#login=", deck.board_port);
-    assert!(url.starts_with(&prefix), "{url}");
-    let token = &url[prefix.len()..];
     let (status, head, body) = http(
         &deck,
+        board,
         "POST",
         "/api/auth/link",
         &[],
@@ -87,10 +77,18 @@ fn fleetdeck_open_logs_in_once_and_the_loopback_board_refuses_anonymous_requests
     );
     assert_eq!(status, 200, "{body}");
     let cookie = cookie_of(&head);
-    let (status, _, _) = http(&deck, "GET", "/api/sessions", &[("Cookie", &cookie)], None);
+    let (status, _, _) = http(
+        &deck,
+        board,
+        "GET",
+        "/api/sessions",
+        &[("Cookie", &cookie)],
+        None,
+    );
     assert_eq!(status, 200);
     let (status, _, _) = http(
         &deck,
+        board,
         "POST",
         "/api/auth/link",
         &[],
@@ -103,10 +101,18 @@ fn fleetdeck_open_logs_in_once_and_the_loopback_board_refuses_anonymous_requests
     assert!(!short.status.success());
     assert!(String::from_utf8_lossy(&short.stderr).contains("12"));
     deck.ok_stdin(&["deck", "password", "--stdin"], "correct horse battery");
-    let (status, _, _) = http(&deck, "GET", "/api/sessions", &[("Cookie", &cookie)], None);
+    let (status, _, _) = http(
+        &deck,
+        board,
+        "GET",
+        "/api/sessions",
+        &[("Cookie", &cookie)],
+        None,
+    );
     assert_eq!(status, 401, "a new password ends every login");
     let (status, _, _) = http(
         &deck,
+        board,
         "POST",
         "/api/auth/login",
         &[],
@@ -119,6 +125,7 @@ fn fleetdeck_open_logs_in_once_and_the_loopback_board_refuses_anonymous_requests
     let bearer = format!("Bearer {}", read.trim());
     let (status, _, _) = http(
         &deck,
+        board,
         "GET",
         "/api/stations",
         &[("Authorization", &bearer)],
@@ -127,6 +134,7 @@ fn fleetdeck_open_logs_in_once_and_the_loopback_board_refuses_anonymous_requests
     assert_eq!(status, 200);
     let (status, _, _) = http(
         &deck,
+        board,
         "GET",
         "/api/audit",
         &[("Authorization", &bearer)],
@@ -139,6 +147,7 @@ fn fleetdeck_open_logs_in_once_and_the_loopback_board_refuses_anonymous_requests
     deck.ok(&["deck", "token", "revoke", "phone"]);
     let (status, _, _) = http(
         &deck,
+        board,
         "GET",
         "/api/stations",
         &[("Authorization", &bearer)],

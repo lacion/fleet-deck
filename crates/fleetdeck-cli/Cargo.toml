@@ -31,6 +31,7 @@ tracing.workspace = true
 fleetdeck-station = { path = "../fleetdeck-station", features = ["fault-injection"] }
 fleetdeck-testkit = { path = "../fleetdeck-testkit" }
 fleetdeck-link = { path = "../fleetdeck-link" }
+rustls.workspace = true
 tempfile.workspace = true
 
 [lints]

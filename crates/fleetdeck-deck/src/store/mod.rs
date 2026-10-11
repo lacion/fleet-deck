@@ -66,6 +66,8 @@ pub enum DeckError {
     NotSynced(String),
     #[error("unknown command {0}")]
     UnknownCommand(String),
+    #[error("command id {0} is in use for another command")]
+    CommandIdReused(String),
     #[error("{0}")]
     Invalid(String),
     #[error("password hashing: {0}")]

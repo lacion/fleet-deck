@@ -1,162 +1,47 @@
-//! The board API guard over real loopback TCP (M2 P3-8; PLAN §9, A13,
-//! L15): login is required also on loopback; the one-time login link; the
+//! The board API guard over real loopback HTTPS (M2 P3-8; PLAN §9, A13,
+//! L15, DL-054): plain HTTP gets no answer; login is required also on loopback; the one-time login link; the
 //! password login with its failure limit; the strict cookie; CSRF on
 //! mutating cookie requests; the Origin check; bearer tokens with
 //! per-method scopes; the audit log of refusals.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+mod common;
+
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
+use common::board::{BoardClient, board};
 use fleetdeck_core::Secret;
-use fleetdeck_deck::DeckStore;
-use fleetdeck_deck::http::{Board, BoardServer, LoginLimiter, Origins};
 use fleetdeck_deck::store::AuditResult;
 use fleetdeck_proto::link::Scope;
 use fleetdeck_testkit::Det;
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use tokio::sync::watch;
-
-struct Http {
-    status: u16,
-    headers: Vec<(String, String)>,
-    body: Value,
-}
-
-impl Http {
-    fn header(&self, name: &str) -> Option<&str> {
-        self.headers
-            .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case(name))
-            .map(|(_, v)| v.as_str())
-    }
-
-    fn code(&self) -> &str {
-        self.body["error"].as_str().unwrap_or("")
-    }
-}
 
 struct Fixture {
     det: Det,
-    store: DeckStore,
-    addr: std::net::SocketAddr,
-    _server: BoardServer,
-    _stop: watch::Sender<bool>,
+    client: BoardClient,
+    _station: common::Fixture,
+}
+
+impl std::ops::Deref for Fixture {
+    type Target = BoardClient;
+    fn deref(&self) -> &BoardClient {
+        &self.client
+    }
 }
 
 async fn fixture() -> Fixture {
-    let det = Det::new();
-    let store = DeckStore::open_in_memory(det.clock(), det.ids())
-        .await
-        .unwrap();
-    let (stop, rx) = watch::channel(false);
-    let s = store.clone();
-    let server = BoardServer::bind(
-        &["127.0.0.1:0".parse().unwrap()],
-        move |bound| {
-            Arc::new(Board {
-                store: s,
-                origins: Origins::new(bound, Some("deck.tail1234.ts.net")),
-                limiter: LoginLimiter::default(),
-            })
-        },
-        rx,
-    )
-    .await
-    .unwrap();
+    let station = common::fixture().await;
+    let det = station.det.clone();
+    let client = board(Arc::clone(&station.ctx)).await;
     Fixture {
         det,
-        store,
-        addr: server.addrs[0],
-        _server: server,
-        _stop: stop,
-    }
-}
-
-impl Fixture {
-    async fn req(
-        &self,
-        method: &str,
-        path: &str,
-        headers: &[(&str, &str)],
-        body: Option<Value>,
-    ) -> Http {
-        let mut s = TcpStream::connect(self.addr).await.unwrap();
-        let body = body.map(|b| b.to_string()).unwrap_or_default();
-        let mut text = format!(
-            "{method} {path} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\nContent-Length: {}\r\n",
-            self.addr,
-            body.len()
-        );
-        if !body.is_empty() {
-            text.push_str("Content-Type: application/json\r\n");
-        }
-        for (k, v) in headers {
-            text.push_str(&format!("{k}: {v}\r\n"));
-        }
-        text.push_str("\r\n");
-        text.push_str(&body);
-        s.write_all(text.as_bytes()).await.unwrap();
-        let mut raw = Vec::new();
-        tokio::time::timeout(Duration::from_secs(10), s.read_to_end(&mut raw))
-            .await
-            .expect("a response")
-            .unwrap();
-        let raw = String::from_utf8(raw).unwrap();
-        let (head, body) = raw.split_once("\r\n\r\n").unwrap();
-        let mut lines = head.lines();
-        let status = lines
-            .next()
-            .unwrap()
-            .split(' ')
-            .nth(1)
-            .unwrap()
-            .parse()
-            .unwrap();
-        let headers = lines
-            .filter_map(|l| l.split_once(": "))
-            .map(|(k, v)| (k.to_owned(), v.to_owned()))
-            .collect();
-        Http {
-            status,
-            headers,
-            body: serde_json::from_str(body).unwrap_or(Value::Null),
-        }
-    }
-
-    async fn get(&self, path: &str, headers: &[(&str, &str)]) -> Http {
-        self.req("GET", path, headers, None).await
-    }
-
-    async fn post(&self, path: &str, headers: &[(&str, &str)], body: Value) -> Http {
-        self.req("POST", path, headers, Some(body)).await
-    }
-
-    /// Logs in with a fresh login link; returns (cookie header, csrf).
-    async fn login(&self) -> (String, String) {
-        let token = self.store.create_login_link().await.unwrap();
-        let r = self
-            .post("/api/auth/link", &[], json!({ "token": token.expose() }))
-            .await;
-        assert_eq!(r.status, 200, "{}", r.body);
-        let set = r.header("set-cookie").unwrap();
-        let pair = set.split(';').next().unwrap().to_owned();
-        (pair, r.body["csrf"].as_str().unwrap().to_owned())
-    }
-
-    async fn audited(&self, action: &str, result: AuditResult) -> Vec<Option<String>> {
-        self.store
-            .audit_log(100)
-            .await
-            .unwrap()
-            .into_iter()
-            .filter(|e| e.action == action && e.result == result)
-            .map(|e| e.detail)
-            .collect()
+        client,
+        _station: station,
     }
 }
 
@@ -299,10 +184,9 @@ async fn only_the_origins_of_the_board_addresses_and_the_tailnet_name_are_allowe
     let (cookie, _) = f.login().await;
     let port = f.addr.port();
     for origin in [
-        format!("http://127.0.0.1:{port}"),
-        format!("http://localhost:{port}"),
+        format!("https://127.0.0.1:{port}"),
+        format!("https://localhost:{port}"),
         format!("https://deck.tail1234.ts.net:{port}"),
-        "https://deck.tail1234.ts.net".to_owned(),
     ] {
         let r = f
             .get("/api/sessions", &[("Cookie", &cookie), ("Origin", &origin)])
@@ -311,7 +195,10 @@ async fn only_the_origins_of_the_board_addresses_and_the_tailnet_name_are_allowe
     }
     for origin in [
         "http://evil.example".to_owned(),
-        format!("http://127.0.0.1:{}", port.wrapping_add(1)),
+        // The board serves HTTPS only; port 443 is not the board's port.
+        format!("http://127.0.0.1:{port}"),
+        "https://deck.tail1234.ts.net".to_owned(),
+        format!("https://127.0.0.1:{}", port.wrapping_add(1)),
         "null".to_owned(),
     ] {
         let r = f
@@ -396,4 +283,31 @@ async fn bearer_tokens_hold_per_method_scopes_and_never_fall_back_to_the_cookie(
             .status,
         401
     );
+}
+
+#[tokio::test]
+async fn plain_http_gets_no_answer_and_the_cookie_is_secure() {
+    let f = fixture().await;
+    let mut s = TcpStream::connect(f.addr).await.unwrap();
+    s.write_all(b"GET /api/sessions HTTP/1.1\r\nHost: x\r\n\r\n")
+        .await
+        .unwrap();
+    let mut raw = Vec::new();
+    let _ = tokio::time::timeout(Duration::from_secs(10), s.read_to_end(&mut raw))
+        .await
+        .expect("the board closes the connection");
+    assert!(
+        !String::from_utf8_lossy(&raw).starts_with("HTTP/"),
+        "a plain HTTP request got an HTTP answer"
+    );
+
+    let token = f.store.create_login_link().await.unwrap();
+    let r = f
+        .post("/api/auth/link", &[], json!({ "token": token.expose() }))
+        .await;
+    assert_eq!(r.status, 200);
+    let cookie = r.header("set-cookie").unwrap();
+    for attr in ["HttpOnly", "Secure", "SameSite=Strict", "Path=/"] {
+        assert!(cookie.contains(attr), "{cookie}");
+    }
 }

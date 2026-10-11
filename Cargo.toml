@@ -54,6 +54,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io
 tracing = "0.1"
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "matched-path", "query", "tokio", "ws"] }
 argon2 = { version = "0.5", features = ["std"] }
+hyper = { version = "1", default-features = false, features = ["server", "http1"] }
+hyper-util = { version = "0.1", default-features = false, features = ["tokio", "service"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 [workspace.lints.rust]

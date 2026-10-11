@@ -19,9 +19,23 @@ async fn auth(dirs: &NodeDirs, auth: AuthRequest) -> anyhow::Result<AuthResponse
 
 /// `fleetdeck open`: prints a one-time login URL of the board.
 pub async fn open(dirs: &NodeDirs) -> anyhow::Result<()> {
-    let AuthResponse::LoginLink { url, .. } = auth(dirs, AuthRequest::LoginLink).await? else {
+    let AuthResponse::LoginLink {
+        url,
+        certificate_sha256,
+        self_signed,
+        ..
+    } = auth(dirs, AuthRequest::LoginLink).await?
+    else {
         bail!("unexpected answer from the deck");
     };
+    if self_signed {
+        eprintln!(
+            "the board uses the deck's self-signed certificate; your browser warns once.\n\
+             accept it only if its SHA-256 fingerprint is\n  {certificate_sha256}"
+        );
+    } else {
+        eprintln!("board certificate SHA-256: {certificate_sha256}");
+    }
     eprintln!("single-use login link, valid for 5 minutes; open it in your browser:");
     println!("{}", url.0);
     Ok(())

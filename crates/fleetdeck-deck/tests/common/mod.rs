@@ -27,6 +27,8 @@ use fleetdeck_proto::{CommandId, IncarnationId, Receipt, RejectCode, StationId};
 use fleetdeck_testkit::Det;
 use serde_json::json;
 
+pub mod board;
+
 pub const T: Duration = Duration::from_secs(10);
 
 pub struct Fixture {

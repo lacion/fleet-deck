@@ -48,6 +48,10 @@ pub enum AuthResponse {
     LoginLink {
         url: InvitationText,
         expires_at: i64,
+        /// The SHA-256 of the board certificate, for the browser check.
+        certificate_sha256: String,
+        /// The certificate is the deck's self-signed one.
+        self_signed: bool,
     },
     PasswordSet,
     /// A new token; its value is shown once.
@@ -102,15 +106,24 @@ async fn audited<T>(
     r.map_err(|e| e.to_string())
 }
 
+/// The first board listener, for login links.
+#[derive(Debug, Clone)]
+pub struct BoardEndpoint {
+    /// `https://<addr>`.
+    pub url: String,
+    pub certificate_sha256: String,
+    pub self_signed: bool,
+}
+
 /// Handles one auth request.
 pub async fn handle(
     store: &DeckStore,
-    board_url: Option<&str>,
+    board: Option<&BoardEndpoint>,
     request: AuthRequest,
 ) -> Result<AuthResponse, String> {
     match request {
         AuthRequest::LoginLink => {
-            let Some(board) = board_url else {
+            let Some(board) = board else {
                 return Err("the deck serves no board listener".to_owned());
             };
             let token = audited(
@@ -121,8 +134,10 @@ pub async fn handle(
             )
             .await?;
             Ok(AuthResponse::LoginLink {
-                url: InvitationText(login_url(board, &token).expose().clone()),
+                url: InvitationText(login_url(&board.url, &token).expose().clone()),
                 expires_at: store.now_ms() + LOGIN_LINK_TTL_MS,
+                certificate_sha256: board.certificate_sha256.clone(),
+                self_signed: board.self_signed,
             })
         }
         AuthRequest::SetPassword { password } => {

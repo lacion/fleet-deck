@@ -31,8 +31,8 @@ use crate::store::{
 #[derive(Debug)]
 pub struct LocalDeck {
     pub node: Arc<DeckNode>,
-    /// The URL of the first board listener (login links), if any.
-    pub board_url: Option<String>,
+    /// The first board listener (login links), if any.
+    pub board: Option<crate::local_auth::BoardEndpoint>,
 }
 
 /// The socket's file name in the deck directory.
@@ -224,7 +224,7 @@ async fn handle(deck: &LocalDeck, request: DeckRequest) -> DeckResponse {
     let store = &node.link().store;
     match request {
         DeckRequest::Auth { auth } => {
-            local_auth::respond(local_auth::handle(store, deck.board_url.as_deref(), auth).await)
+            local_auth::respond(local_auth::handle(store, deck.board.as_ref(), auth).await)
         }
         DeckRequest::Invite => match audited(node, "station.invite", "", node.invite()).await {
             Ok(text) => DeckResponse::Invitation {

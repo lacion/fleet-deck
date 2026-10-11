@@ -79,23 +79,21 @@ pub struct Origins(BTreeSet<String>);
 
 impl Origins {
     /// The origins of the bound board addresses and the tailnet host name.
+    /// The board serves HTTPS only (DL-054), so every origin is `https`.
     #[must_use]
     pub fn new(addrs: &[SocketAddr], tailnet_hostname: Option<&str>) -> Self {
         let mut set = BTreeSet::new();
         for addr in addrs {
-            for scheme in ["http", "https"] {
-                set.insert(format!("{scheme}://{addr}"));
-                if addr.ip().is_loopback() {
-                    set.insert(format!("{scheme}://localhost:{}", addr.port()));
-                }
-                if let Some(host) = tailnet_hostname {
-                    set.insert(format!("{scheme}://{host}:{}", addr.port()));
+            set.insert(format!("https://{addr}"));
+            if addr.ip().is_loopback() {
+                set.insert(format!("https://localhost:{}", addr.port()));
+            }
+            if let Some(host) = tailnet_hostname {
+                set.insert(format!("https://{host}:{}", addr.port()));
+                if addr.port() == 443 {
+                    set.insert(format!("https://{host}"));
                 }
             }
-        }
-        // `tailscale serve` publishes the board on port 443.
-        if let Some(host) = tailnet_hostname {
-            set.insert(format!("https://{host}"));
         }
         Self(set)
     }

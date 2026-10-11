@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 
 use ts_rs::{Config, TS};
 
+use crate::board::{CommandRequest, DeckCommand};
 use crate::capability::{Capabilities, Operation, Unsupported};
 use crate::command::{CommandEnvelope, DeckCommandState, Receipt};
 use crate::event::{Event, EventEnvelope};
@@ -44,6 +45,8 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         CoordinatorCallEnvelope::export_all(&cfg),
         Receipt::export_all(&cfg),
         DeckCommandState::export_all(&cfg),
+        CommandRequest::export_all(&cfg),
+        DeckCommand::export_all(&cfg),
         ControlFrame::export_all(&cfg),
         Scope::export_all(&cfg),
         ReplayParams::export_all(&cfg),

@@ -66,7 +66,7 @@ impl DeckLink {
         // The attempt ends no later than the item: nothing is sent, or
         // resent, after `expires_at`.
         let cmd = self
-            .build_until(item.station_id.clone(), origin, kind, item.expires_at)
+            .build_until(item.station_id.clone(), origin, kind, item.expires_at, None)
             .await?;
         self.store
             .start_attempt(item.outbox_id.clone(), cmd)

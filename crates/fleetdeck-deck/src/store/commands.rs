@@ -23,31 +23,11 @@ use fleetdeck_core::ids::new_id;
 use fleetdeck_proto::command::{DeckCommandState, ReceiptState};
 use fleetdeck_proto::{CommandId, Receipt, RejectCode, StationId};
 use rusqlite::{Connection, OptionalExtension, Row, params};
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{DeckError, DeckStore, Result, call};
 
-/// One routed command.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct DeckCommand {
-    pub command_id: CommandId,
-    pub station_id: StationId,
-    pub method: String,
-    /// `board`, `mail`, `coordinator` or `owner` (configure).
-    pub origin: String,
-    /// The stored envelope (the request params).
-    pub envelope: Value,
-    pub retry_until: i64,
-    pub state: DeckCommandState,
-    pub attempts: u32,
-    pub sent_at: Option<i64>,
-    pub receipt: Option<Receipt>,
-    /// Why a command is `failed` or `ambiguous`.
-    pub reason: Option<String>,
-    pub created_at: i64,
-    pub updated_at: i64,
-}
+pub use fleetdeck_proto::board::DeckCommand;
 
 /// A command to store as `pending`.
 #[derive(Debug, Clone)]
@@ -287,6 +267,42 @@ impl DeckStore {
         })
         .await?;
         self.commands_changed();
+        Ok(out)
+    }
+
+    /// [`DeckStore::insert_command`] for a command id chosen by the client
+    /// (the board): a resend of the same command (same station, method and
+    /// `command` payload) returns the stored command and `false`; the id
+    /// with another command is [`DeckError::CommandIdReused`]. One
+    /// transaction, so two concurrent resends store one command.
+    ///
+    /// # Errors
+    /// [`DeckError::CommandIdReused`], [`DeckError::UnknownStation`], a
+    /// database error.
+    pub async fn insert_or_existing(&self, cmd: NewCommand) -> Result<(DeckCommand, bool)> {
+        let now = self.now_ms();
+        let out = call(&self.inner.db, move |conn| {
+            let tx = conn.transaction()?;
+            if let Some(old) = get(&tx, &cmd.command_id)? {
+                let same = old.station_id == cmd.station_id
+                    && old.method == cmd.method
+                    && old.envelope.get("command") == cmd.envelope.get("command")
+                    && old.envelope.get("change") == cmd.envelope.get("change");
+                if !same {
+                    return Err(DeckError::CommandIdReused(cmd.command_id.0.clone()));
+                }
+                return Ok((old, false));
+            }
+            insert(&tx, &cmd, now)?;
+            let stored = get(&tx, &cmd.command_id)?
+                .ok_or_else(|| DeckError::Corrupt("an inserted command is gone".to_owned()))?;
+            tx.commit()?;
+            Ok((stored, true))
+        })
+        .await?;
+        if out.1 {
+            self.commands_changed();
+        }
         Ok(out)
     }
 

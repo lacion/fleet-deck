@@ -12,7 +12,8 @@ pub struct ApiMethod {
     /// The audit name, for example `auth.login`.
     pub name: &'static str,
     pub method: Method,
-    /// The axum route pattern.
+    /// The axum route pattern; for a command method the method name
+    /// (see [`route_of`]).
     pub path: &'static str,
     /// `None`: no login needed (the login methods only).
     pub scope: Option<Scope>,
@@ -83,12 +84,65 @@ pub const API: &[ApiMethod] = &[
         Some(Scope::Admin),
         false,
     ),
+    m(
+        "commands.get",
+        Method::GET,
+        "/api/commands/{command_id}",
+        Some(Scope::Read),
+        false,
+    ),
+    cmd("session.start", Scope::Drive),
+    cmd("session.resume", Scope::Drive),
+    cmd("session.prompt", Scope::Drive),
+    cmd("session.steer", Scope::Drive),
+    cmd("session.follow_up", Scope::Drive),
+    cmd("session.interrupt", Scope::Drive),
+    cmd("session.set_mode", Scope::Drive),
+    cmd("session.set_model", Scope::Drive),
+    cmd("session.fork", Scope::Drive),
+    cmd("session.stop", Scope::Drive),
+    cmd("approval.answer", Scope::Approve),
 ];
+
+/// The route prefix of the command methods.
+pub const COMMAND_PREFIX: &str = "/api/commands/";
+
+/// A command method: `POST /api/commands/<method>` with the scope of the
+/// link method of the same name (checked by a test). Its `path` is the
+/// method name; [`route_of`] adds [`COMMAND_PREFIX`].
+const fn cmd(name: &'static str, scope: Scope) -> ApiMethod {
+    ApiMethod {
+        name,
+        method: Method::POST,
+        path: name,
+        scope: Some(scope),
+        mutating: true,
+    }
+}
+
+/// The axum route of a table entry.
+#[must_use]
+pub fn route_of(api: &ApiMethod) -> String {
+    if api.path.starts_with('/') {
+        api.path.to_owned()
+    } else {
+        format!("{COMMAND_PREFIX}{}", api.path)
+    }
+}
+
+/// The command methods of the table.
+pub fn command_methods() -> impl Iterator<Item = &'static ApiMethod> {
+    API.iter().filter(|a| !a.path.starts_with('/'))
+}
 
 /// The table entry of a matched route.
 #[must_use]
 pub fn find(method: &Method, path: &str) -> Option<&'static ApiMethod> {
-    API.iter().find(|m| m.method == *method && m.path == path)
+    let key = path
+        .strip_prefix(COMMAND_PREFIX)
+        .filter(|k| !k.starts_with('{'));
+    API.iter()
+        .find(|m| m.method == *method && (m.path == path || key.is_some_and(|k| m.path == k)))
 }
 
 #[cfg(test)]
@@ -114,5 +168,27 @@ mod tests {
             Some(Some(Scope::Admin))
         );
         assert_eq!(find(&Method::POST, "/api/audit"), None);
+        assert_eq!(
+            find(&Method::POST, "/api/commands/approval.answer").map(|m| m.scope),
+            Some(Some(Scope::Approve))
+        );
+        assert_eq!(
+            find(&Method::GET, "/api/commands/{command_id}").map(|m| m.name),
+            Some("commands.get")
+        );
+        assert_eq!(find(&Method::POST, "/api/commands/session.nope"), None);
+    }
+
+    #[test]
+    fn every_command_method_has_the_scope_of_its_link_method() {
+        let mut n = 0;
+        for api in command_methods() {
+            let link = fleetdeck_link::methods::method(api.name)
+                .unwrap_or_else(|| panic!("{} is not a link method", api.name));
+            assert_eq!(api.scope, Some(link.scope), "{}", api.name);
+            assert!(api.mutating);
+            n += 1;
+        }
+        assert_eq!(n, 11);
     }
 }

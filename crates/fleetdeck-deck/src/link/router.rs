@@ -115,7 +115,8 @@ impl DeckLink {
         origin: CommandOrigin,
         kind: CommandKind,
     ) -> Result<NewCommand, DeckError> {
-        self.build_until(station, origin, kind, i64::MAX).await
+        self.build_until(station, origin, kind, i64::MAX, None)
+            .await
     }
 
     /// [`DeckLink::build`] with `retry_until` capped at `latest` (an outbox
@@ -129,6 +130,7 @@ impl DeckLink {
         origin: CommandOrigin,
         kind: CommandKind,
         latest: i64,
+        command_id: Option<CommandId>,
     ) -> Result<NewCommand, DeckError> {
         let rec = self
             .store
@@ -138,7 +140,7 @@ impl DeckLink {
         let target = rec
             .incarnation
             .ok_or_else(|| DeckError::NotSynced(rec.name.clone()))?;
-        let command_id = self.store.new_command_id();
+        let command_id = command_id.unwrap_or_else(|| self.store.new_command_id());
         let retry_until = (self.store.now_ms() + RETRY_WINDOW_MS).min(latest);
         let (method, envelope) = match kind {
             CommandKind::Session { command } => (
@@ -189,6 +191,33 @@ impl DeckLink {
         let id = cmd.command_id.clone();
         tokio::spawn(async move { ctx.send(&id).await });
         Ok(cmd)
+    }
+
+    /// [`DeckLink::submit`] with a command id chosen by the client: a resend
+    /// after a lost response stores and sends nothing new and returns the
+    /// stored command (`false`), so a board retry never duplicates a
+    /// command.
+    ///
+    /// # Errors
+    /// [`DeckError::CommandIdReused`] and the errors of
+    /// [`DeckLink::submit`].
+    pub async fn submit_as(
+        self: &Arc<Self>,
+        station: StationId,
+        origin: CommandOrigin,
+        kind: CommandKind,
+        command_id: CommandId,
+    ) -> Result<(DeckCommand, bool), DeckError> {
+        let new = self
+            .build_until(station, origin, kind, i64::MAX, Some(command_id))
+            .await?;
+        let (cmd, new) = self.store.insert_or_existing(new).await?;
+        if new {
+            let ctx = Arc::clone(self);
+            let id = cmd.command_id.clone();
+            tokio::spawn(async move { ctx.send(&id).await });
+        }
+        Ok((cmd, new))
     }
 
     /// Sends the `pending` commands of `station` in their order.
