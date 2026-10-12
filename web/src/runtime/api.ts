@@ -66,7 +66,9 @@ export function authView(value: unknown): AuthView {
   ) {
     throw new Error('Invalid login response');
   }
-  return value as AuthView;
+  const { deck_version: version, ...rest } = value as AuthView & { deck_version?: unknown };
+  // The version is for display only: anything but a string is dropped.
+  return (typeof version === 'string' ? { ...rest, deck_version: version } : rest) as AuthView;
 }
 
 /** Strip a one-time login secret before a request, render, or navigation. */

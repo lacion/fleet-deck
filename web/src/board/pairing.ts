@@ -1,5 +1,11 @@
 import type { ShellActions } from '../shell/shell';
-import type { AddStationRequest, PairingInvitation, StationView } from '../gen';
+import type {
+  AddStationRequest,
+  PairingInvitation,
+  StationView,
+  WorktreeInfo,
+  WorktreeList,
+} from '../gen';
 
 /** The pairing calls of the stations screen (admin scope). */
 export type StationActions = {
@@ -9,9 +15,12 @@ export type StationActions = {
   remove(name: string): Promise<StationView>;
   /** The owner's station shells (PLAN §6.8); admin scope. */
   readonly shells?: ShellActions | undefined;
+  /** The read-only worktree inventory of a station (DL-142); owner only: admin scope. */
+  readonly worktrees?: ((station: string) => Promise<WorktreeList>) | undefined;
 };
 
 type Post = (path: string, body: unknown) => Promise<unknown>;
+type Get = (path: string) => Promise<unknown>;
 
 const record = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -46,6 +55,33 @@ export function stationActions(post: Post, canAdmin: boolean): StationActions {
     remove: async (name) =>
       stationResult(await post(`/api/stations/${encodeURIComponent(name)}/remove`, {})),
   };
+}
+
+/** `GET /api/stations/{station}/worktrees` (DL-142). */
+export function worktreeLoader(get: Get): (station: string) => Promise<WorktreeList> {
+  return async (station) => {
+    const v = await get(`/api/stations/${encodeURIComponent(station)}/worktrees`);
+    if (!record(v) || !Array.isArray(v['worktrees'])) {
+      throw new Error('The deck sent an invalid worktree list.');
+    }
+    return v as WorktreeList;
+  };
+}
+
+/** Single-quotes a value for a POSIX shell: `'` becomes `'\''`. */
+const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+
+/**
+ * The command that removes one worktree (and a branch that starts with `fd/`).
+ * The board never runs it: the person copies it. `null` when it does not apply.
+ */
+export function removeCommand(w: WorktreeInfo): string | null {
+  if (!w.exists || w.live || w.main === null) return null;
+  const main = shellQuote(w.main);
+  const remove = `git -C ${main} worktree remove ${shellQuote(w.path)}`;
+  return w.branch?.startsWith('fd/') === true
+    ? `${remove} && git -C ${main} branch -d ${shellQuote(w.branch)}`
+    : remove;
 }
 
 /** A name for the deck to use: trimmed, or `null` for the station's own name. */

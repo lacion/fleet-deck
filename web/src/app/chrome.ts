@@ -8,4 +8,6 @@ export type Chrome = {
   readonly freshness: Freshness;
   readonly onLogout: () => void;
   readonly notices: readonly Notice[];
+  /** The deck's version (DL-142), when the login answer carries it. */
+  readonly version?: string | undefined;
 };

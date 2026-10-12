@@ -344,9 +344,16 @@ export function Sidebar({
           </nav>
           <PrefsRow />
           {chrome === undefined ? null : (
-            <button type="button" className="fd-ghost fd-sm" onClick={chrome.onLogout}>
-              <Icon of={LogOut} size={14} /> Log out
-            </button>
+            <div className="fd-sidebar-foot">
+              {chrome.version === undefined ? null : (
+                <span className="fd-sidebar-version" title="Deck version">
+                  deck {chrome.version}
+                </span>
+              )}
+              <button type="button" className="fd-ghost fd-sm" onClick={chrome.onLogout}>
+                <Icon of={LogOut} size={14} /> Log out
+              </button>
+            </div>
           )}
         </div>
       ) : null}
