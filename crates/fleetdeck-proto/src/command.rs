@@ -34,6 +34,21 @@ pub struct SessionSpec {
     pub title: Option<String>,
 }
 
+/// How a start gets its workspace (PLAN §6.6, M3 6-1, DL-200). The station
+/// does the Git work in the start effect, never in the decision.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[ts(export_to = "command/")]
+pub enum WorkspaceRequest {
+    /// A new worktree `<repo>--fd-<callsign>` beside the repository at
+    /// `spec.cwd`, on the new branch `fd/<callsign>` (v0 naming). Batch and
+    /// `Nx` spawns always use it (forced isolation).
+    Worktree,
+    /// Clone `url` into the new directory `spec.cwd` with the station's own
+    /// Git credentials. A URL with credentials is refused.
+    Clone { url: String },
+}
+
 /// User text for a prompt, a steer, or a follow-up.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export_to = "command/")]
@@ -71,6 +86,11 @@ pub enum SessionCommand {
     Start {
         spec: SessionSpec,
         prompt: Option<UserInput>,
+        /// Where the session's workspace comes from (M3 6-1, DL-200):
+        /// absent = `spec.cwd` as it is.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        workspace: Option<WorkspaceRequest>,
     },
     Resume {
         session_id: SessionId,

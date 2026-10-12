@@ -176,6 +176,10 @@ impl SessionSummary {
                 });
             }
             Event::SessionRenamed { title } => self.title.clone_from(title),
+            Event::SessionNamed { callsign, worktree } => {
+                self.callsign = Some(callsign.clone());
+                self.worktree.clone_from(worktree);
+            }
             Event::AutoContinueChanged { enabled } => self.auto_continue = *enabled,
             Event::AutoContinueSkipped { .. } => {}
             Event::SessionEnded { .. } => {

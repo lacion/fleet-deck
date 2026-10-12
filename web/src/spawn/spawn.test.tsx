@@ -4,7 +4,14 @@ import { App } from '../App';
 import type { StationInfo, StationView, WorkspaceListing } from '../gen';
 import { claudeCaps, codexCaps } from '../testing/capabilities';
 import { station } from '../testing/fleet';
-import { listingView, providerLabel, spawnActions, spawnModes, spawnTargets } from './spawn';
+import {
+  batchPrompts,
+  listingView,
+  providerLabel,
+  spawnActions,
+  spawnModes,
+  spawnTargets,
+} from './spawn';
 
 const info = (extra: Partial<StationInfo> = {}): StationInfo => ({
   name: 'Alpha',
@@ -208,5 +215,47 @@ describe('spawn form (P4-4)', () => {
     });
     expect(broken.list('a', null)).rejects.toThrow('Invalid directory listing');
     expect(() => listingView({ ...listing, entries: [{ name: 1 }] })).toThrow();
+  });
+
+  test('a batch starts one session per line and Nx repeats a task (M3 6-1)', () => {
+    expect(batchPrompts('3x fix the tests\n\n  write docs  \n2X lint')).toEqual([
+      'fix the tests',
+      'fix the tests',
+      'fix the tests',
+      'write docs',
+      'lint',
+      'lint',
+    ]);
+    // Out of range counts stay one literal prompt.
+    expect(batchPrompts('0x a\n11x b')).toEqual(['0x a', '11x b']);
+    expect(batchPrompts('  ')).toEqual([]);
+  });
+
+  test('a worktree or clone start sends the workspace request (M3 6-1)', async () => {
+    const posts: unknown[] = [];
+    const actions = spawnActions(
+      async () => listing,
+      async (_path, body) => {
+        posts.push(body);
+        return { state: 'done', receipt: { state: 'accepted', result: null, reject: null } };
+      },
+      ['drive'],
+      () => 'c1',
+    );
+    const spec = {
+      provider_instance: 'claude',
+      cwd: '/r/app',
+      mode: null,
+      model: null,
+      title: null,
+    };
+    await actions.start('a', spec, 'go', { kind: 'worktree' });
+    await actions.start('a', spec, 'go', { kind: 'clone', url: 'https://h/o/r.git' });
+    await actions.start('a', spec, 'go');
+    expect(JSON.stringify(posts[0])).toContain('"workspace":{"kind":"worktree"}');
+    expect(JSON.stringify(posts[1])).toContain(
+      '"workspace":{"kind":"clone","url":"https://h/o/r.git"}',
+    );
+    expect(JSON.stringify(posts[2])).not.toContain('workspace');
   });
 });

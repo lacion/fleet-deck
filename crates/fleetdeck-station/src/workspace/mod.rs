@@ -6,6 +6,7 @@ pub mod boundary;
 pub mod checkpoint;
 pub mod files;
 pub mod git;
+pub mod provision;
 pub mod restore;
 pub mod settle;
 

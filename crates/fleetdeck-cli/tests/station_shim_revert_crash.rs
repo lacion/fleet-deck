@@ -171,6 +171,7 @@ impl Rig {
                 title: None,
             },
             prompt: None,
+            workspace: None,
         });
         let session = receipt.result.and_then(|r| r.session_id).unwrap();
         self.wait("the thread opens", &session, |s| {

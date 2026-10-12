@@ -60,6 +60,13 @@ pub struct SessionSummary {
     /// summary stored before P4-2.
     #[serde(default)]
     pub branch: Option<String>,
+    /// The station's callsign (M3 6-1, DL-200): unique on its station; the
+    /// mail and task address of the session. Absent before M3.
+    #[serde(default)]
+    pub callsign: Option<String>,
+    /// The worktree that the station created for the session (M3 6-1).
+    #[serde(default)]
+    pub worktree: Option<String>,
     pub title: Option<String>,
     pub state: SessionState,
     pub activity: Activity,
@@ -116,6 +123,8 @@ impl SessionSummary {
             provider_version: None,
             cwd: None,
             branch: None,
+            callsign: None,
+            worktree: None,
             title: None,
             state: SessionState::Starting,
             activity: Activity::Idle,

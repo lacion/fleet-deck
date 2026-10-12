@@ -226,6 +226,7 @@ impl Rig {
                 prompt: Some(UserInput {
                     text: "hello".to_owned(),
                 }),
+                workspace: None,
             })
             .await;
         let result = d.receipt.result.unwrap();

@@ -278,6 +278,21 @@ pub struct WorkspaceEntry {
     pub path: String,
     /// The directory holds a `.git` entry.
     pub repository: bool,
+    /// Repo catalog (M3 6-1, DL-201): the `origin` URL without credentials,
+    /// query or fragment; `None` without an origin.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub origin: Option<String>,
+    /// The default branch (`origin/HEAD`, else the current branch).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub default_branch: Option<String>,
+    /// The conflict-radar group: the owner's `repo_groups` choice, else the
+    /// normalized origin of a repository with exactly one remote; `None`
+    /// for several or no remotes (PLAN §6.6: a heuristic, not an identity).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub group: Option<String>,
 }
 
 /// `command.receipt` params.

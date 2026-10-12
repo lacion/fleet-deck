@@ -5,6 +5,8 @@ import { planActions } from '../board/plans';
 import type { SessionKey } from '../gen';
 import { sessionActions } from '../session/commands';
 import { spawnActions } from '../spawn/spawn';
+import { assignActions } from '../assign/assign';
+import { fleetActions } from '../fleet/fleet';
 import type { Connection } from './connection';
 
 export function RuntimeApp({ connection }: { readonly connection: Connection }) {
@@ -41,6 +43,23 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
         (path, body) => connection.post(path, body),
         scopeText.split(' '),
       ),
+    [connection, scopeText],
+  );
+  const assign = useMemo(
+    () =>
+      scopeText.split(' ').includes('drive')
+        ? assignActions((path, body) => connection.post(path, body))
+        : undefined,
+    [connection, scopeText],
+  );
+  const fleet = useMemo(
+    () =>
+      scopeText.split(' ').includes('drive')
+        ? fleetActions(
+            (path) => connection.get(path),
+            (path, body) => connection.post(path, body),
+          )
+        : undefined,
     [connection, scopeText],
   );
   const plans = useMemo(
@@ -131,6 +150,8 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
         watch={watch}
         sessionActions={commands}
         spawn={spawn}
+        assign={assign}
+        fleet={fleet}
         feed={state.feed}
         plans={plans}
       />

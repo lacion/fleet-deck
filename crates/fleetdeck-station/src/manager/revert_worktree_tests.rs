@@ -181,6 +181,7 @@ async fn an_open_revert_holds_the_worktree_against_other_sessions() {
         SessionCommand::Start {
             spec: spec(&ws, "claude"),
             prompt: Some(text("hello")),
+            workspace: None,
         },
     )
     .await;

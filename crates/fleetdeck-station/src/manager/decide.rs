@@ -3,7 +3,7 @@
 //! in the command's transaction. Nothing here touches a provider.
 
 use fleetdeck_proto::command::{
-    ApprovalDecision, CommandOrigin, CommandResult, SessionCommand, SessionSpec,
+    ApprovalDecision, CommandOrigin, CommandResult, SessionCommand, SessionSpec, WorkspaceRequest,
 };
 use fleetdeck_proto::event::{
     ProviderKind, RequestKind, ResolvedBy, ResponseChannel, RunOrigin, SessionState,
@@ -14,8 +14,9 @@ use fleetdeck_providers::codex::validate_question_answer;
 use super::policy::{Policy, WorkspaceError};
 use crate::store::{
     AnswerClaim, DecideError, Decision, EffectPayload, InputRecord, NewSession, RequestState,
-    RuntimeRequest,
+    RuntimeRequest, WorkspacePlan,
 };
+use crate::workspace::provision;
 
 /// The run origin of an input from `origin` (PLAN §6.3).
 #[must_use]
@@ -55,7 +56,11 @@ pub fn decide(
 ) -> Result<CommandResult, DecideError> {
     let origin_run = run_origin(origin);
     match command {
-        SessionCommand::Start { spec, prompt } => start(d, policy, origin_run, spec, prompt),
+        SessionCommand::Start {
+            spec,
+            prompt,
+            workspace,
+        } => start(d, policy, origin_run, spec, prompt, workspace),
         SessionCommand::Resume { session_id } => {
             super::resume::decide_resume(d, policy, &session_id)
         }
@@ -293,6 +298,7 @@ fn start(
     origin: RunOrigin,
     mut spec: SessionSpec,
     prompt: Option<fleetdeck_proto::command::UserInput>,
+    workspace: Option<WorkspaceRequest>,
 ) -> Result<CommandResult, DecideError> {
     let provider = policy.instance(&spec.provider_instance).ok_or_else(|| {
         reject(
@@ -303,11 +309,31 @@ fn start(
             ),
         )
     })?;
-    let cwd = policy.workspace(&spec.cwd).map_err(|e| match e {
-        WorkspaceError::Missing(_) => reject(RejectCode::InvalidCommand, e.to_string()),
-        WorkspaceError::Outside(_) => reject(RejectCode::Forbidden, e.to_string()),
-    })?;
-    if d.active_sessions()? >= u64::from(policy.max_sessions()) {
+    let canonical_inside = |p: &std::path::Path| policy.workspace(&p.to_string_lossy()).ok();
+    let refused = |r: provision::Refused| {
+        let code = if r.forbidden {
+            RejectCode::Forbidden
+        } else {
+            RejectCode::InvalidCommand
+        };
+        reject(code, r.message)
+    };
+    let (mut cwd, mut plan) = match &workspace {
+        Some(WorkspaceRequest::Clone { url }) => {
+            let (plan, path) =
+                provision::clone_plan(url, &spec.cwd, canonical_inside).map_err(refused)?;
+            (path, Some(plan))
+        }
+        _ => (
+            policy.workspace(&spec.cwd).map_err(|e| match e {
+                WorkspaceError::Missing(_) => reject(RejectCode::InvalidCommand, e.to_string()),
+                WorkspaceError::Outside(_) => reject(RejectCode::Forbidden, e.to_string()),
+            })?,
+            None,
+        ),
+    };
+    let active = d.active_sessions()?;
+    if active >= u64::from(policy.max_sessions()) {
         return Err(reject(
             RejectCode::Forbidden,
             format!(
@@ -315,6 +341,17 @@ fn start(
                 policy.max_sessions()
             ),
         ));
+    }
+    let session_id: SessionId = d.new_id();
+    let callsign = new_callsign(d, &session_id, active)?;
+    let mut worktree = None;
+    if matches!(workspace, Some(WorkspaceRequest::Worktree)) {
+        let (worktree_plan, path) =
+            provision::worktree_plan(&cwd, &callsign, |p| canonical_inside(p).is_some())
+                .map_err(refused)?;
+        worktree = Some(path.to_string_lossy().into_owned());
+        plan = Some(worktree_plan);
+        cwd = path;
     }
     spec.cwd = cwd.to_string_lossy().into_owned();
     if let Some(other) = d.open_revert_over(&spec.cwd)? {
@@ -326,27 +363,55 @@ fn start(
             ),
         ));
     }
-    let branch = fleetdeck_core::git::current_branch(&cwd);
-    let session_id: SessionId = d.new_id();
+    let branch = match &plan {
+        Some(WorkspacePlan::Worktree { branch, .. }) => Some(branch.clone()),
+        Some(WorkspacePlan::Clone { .. }) => None,
+        None => fleetdeck_core::git::current_branch(&cwd),
+    };
     d.create_session(&NewSession {
         session_id: session_id.clone(),
         provider,
         provider_instance: spec.provider_instance.clone(),
         cwd: spec.cwd.clone(),
-        worktree: None,
+        worktree: worktree.clone(),
         branch,
         mode: spec.mode.clone(),
         title: spec.title.clone(),
         offline_approval_policy: policy.offline(),
     })?;
+    d.append(
+        &session_id,
+        fleetdeck_proto::event::Event::SessionNamed { callsign, worktree }.into(),
+    )?;
     let prompt = prompt.map(|input| InputRecord {
         input_id: d.new_id(),
         origin,
         input,
     });
     let input_id = prompt.as_ref().map(|p| p.input_id.clone());
-    d.enqueue(&session_id, EffectPayload::Start { spec, prompt })?;
+    d.enqueue(
+        &session_id,
+        EffectPayload::Start {
+            spec,
+            prompt,
+            workspace: plan,
+        },
+    )?;
     Ok(result(&session_id, input_id))
+}
+
+/// The first free callsign of the station for a new session (DL-200).
+fn new_callsign(
+    d: &Decision<'_>,
+    session_id: &SessionId,
+    start: u64,
+) -> Result<String, DecideError> {
+    for candidate in provision::callsign_candidates(session_id.as_str(), start) {
+        if !d.callsign_taken(&candidate)? {
+            return Ok(candidate);
+        }
+    }
+    Err(reject(RejectCode::InvalidState, "no free callsign"))
 }
 
 /// The session's projection, if it can take `op` now: it exists, has not

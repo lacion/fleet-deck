@@ -483,6 +483,7 @@ fn start_effect() -> EffectPayload {
             title: None,
         },
         prompt: None,
+        workspace: None,
     }
 }
 
