@@ -11,6 +11,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use fleetdeck_core::ChildEnv;
+use fleetdeck_proto::command::{
+    CommandEnvelope, CommandOrigin, CommandResult, RETRY_WINDOW_MS, SessionCommand,
+};
 use fleetdeck_proto::event::{OutputGapReason, ProviderKind};
 use fleetdeck_proto::{Event, EventBody};
 use fleetdeck_providers::adapter::ProviderError;
@@ -20,7 +23,10 @@ use fleetdeck_providers::host::shim::host::{AckMode, ShimHost, ShimHostConfig};
 use fleetdeck_station::manager::durable::{
     DurableCore, DurableDriver, REASON_OUTPUT_FRAME_TOO_LARGE, Steps,
 };
+use fleetdeck_station::manager::shim_station::{Configs, recover_station};
 use fleetdeck_station::manager::shims::launch_shim;
+use fleetdeck_station::store::shim_gaps::REASON_ADAPTER_STATE_GAP;
+use fleetdeck_station::store::{Caller, EffectState};
 use fleetdeck_station::store::{
     Effect, NewSession, OfflineApprovalPolicy, ReadResult, Store, StoreConfig,
 };
@@ -299,4 +305,178 @@ async fn complete_lines_have_no_gap() {
     assert_eq!(lines(&events), vec!["one".to_owned(), "two".to_owned()]);
     assert!(gaps(&events).is_empty(), "{events:?}");
     assert_eq!(rig.cursor(&shim_id).await, 8);
+}
+
+// ADR-005 §4.2 (review sa-9c1141b8 MAJOR 2; DL-122): an owner that
+// acknowledged output the station never committed leaves the shim without
+// the bytes above the committed cursor. The next owner commits the
+// `below_floor` gap at once, while the provider still runs: the adapter
+// checkpoint is invalidated, claimed effects become `outcome_unknown`,
+// input is blocked, no later line is parsed, and a later station start
+// restores no driver from that state.
+#[tokio::test]
+async fn a_below_floor_gap_invalidates_the_adapter_state_at_once_while_the_provider_runs() {
+    let rig = Rig::new().await;
+    rig.store
+        .process_started("s1".into(), "proc-1".to_owned().into(), None)
+        .await
+        .unwrap();
+    let (driver, shim_id, pid) = rig
+        .drive("echo one; sleep 1; echo two; echo three; sleep 30")
+        .await;
+    let deadline = Instant::now() + WAIT;
+    while rig.cursor(&shim_id).await < 4 {
+        assert!(Instant::now() < deadline, "`one` was never committed");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    driver.abandon().await;
+    drop(driver);
+    // A claimed command whose outcome only the lost state could prove.
+    let fence = rig.store.register_worker().await.unwrap();
+    let envelope = CommandEnvelope {
+        command_id: "cmd-1".into(),
+        target_incarnation: None,
+        retry_until: i64::try_from(rig._det.now_ms()).unwrap() + RETRY_WINDOW_MS,
+        origin: CommandOrigin::Board,
+        command: SessionCommand::Interrupt {
+            session_id: "s1".into(),
+        },
+    };
+    rig.store
+        .decide(envelope, Caller::local(), |d| {
+            d.enqueue(
+                &"s1".into(),
+                fleetdeck_station::store::EffectPayload::Interrupt,
+            )?;
+            Ok(CommandResult {
+                session_id: Some("s1".into()),
+                input_id: None,
+            })
+        })
+        .await
+        .unwrap();
+    let claimed = rig.store.claim_next(fence).await.unwrap().unwrap();
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+
+    // A rogue owner acknowledges `two` and `three` and commits nothing.
+    let record = rig
+        .store
+        .shim(shim_id.clone())
+        .await
+        .unwrap()
+        .unwrap()
+        .record();
+    let generation = rig
+        .store
+        .shim_next_generation(shim_id.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    let rogue = rig
+        .host()
+        .attach(&record, generation, AckMode::Manual, false)
+        .await
+        .unwrap();
+    assert!(rogue.process.ack(14).await);
+    drop(rogue);
+
+    let record = rig
+        .store
+        .shim(shim_id.clone())
+        .await
+        .unwrap()
+        .unwrap()
+        .record();
+    assert_eq!(record.cursor, 4);
+    let generation = rig
+        .store
+        .shim_next_generation(shim_id.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    let attached = rig
+        .host()
+        .attach(&record, generation, AckMode::Manual, false)
+        .await
+        .unwrap();
+    assert_eq!(attached.floor, 14);
+    let started = Instant::now();
+    let driver = DurableDriver::<Lines>::restore(&rig.store, attached, (), Duration::from_secs(1))
+        .await
+        .unwrap();
+    assert!(driver.has_adapter_gap());
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "committed without waiting for an EOF"
+    );
+    let events = rig.events().await;
+    assert_eq!(
+        gaps(&events),
+        vec![(4, 14, OutputGapReason::BelowFloor)],
+        "{events:?}"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Event::Error { code, .. } if code == REASON_ADAPTER_STATE_GAP)),
+        "{events:?}"
+    );
+    assert_eq!(
+        lines(&events),
+        vec!["one".to_owned()],
+        "nothing after the gap is parsed"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, Event::SessionEnded { .. }))
+    );
+    assert!(alive(pid), "the provider still runs");
+    assert_eq!(
+        rig.store
+            .shim_input_blocked("s1".into())
+            .await
+            .unwrap()
+            .as_deref(),
+        Some(REASON_ADAPTER_STATE_GAP)
+    );
+    assert!(
+        rig.store
+            .shim_checkpoint(shim_id.clone())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let effect = rig
+        .store
+        .effect(claimed.effect_id.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (effect.state, effect.reason.as_deref()),
+        (EffectState::OutcomeUnknown, Some(REASON_ADAPTER_STATE_GAP))
+    );
+    // A command after the gap goes nowhere.
+    assert!(matches!(
+        driver.apply(&claimed).await,
+        fleetdeck_station::store::Dispatch::NotDispatched(_)
+    ));
+    driver.abandon().await;
+    drop(driver);
+
+    // A later station start restores no driver from the invalidated state.
+    let configs = Configs {
+        claude: Box::new(|_| None),
+        codex: Box::new(|_| None),
+    };
+    let start = recover_station(&rig.store, &rig.host(), &configs, Duration::from_secs(1))
+        .await
+        .unwrap();
+    assert!(start.restored.is_empty());
+    assert_eq!(
+        start.ended,
+        vec![(shim_id, REASON_ADAPTER_STATE_GAP.to_owned())]
+    );
+    assert!(alive(pid), "the shim and its provider are left alone");
 }

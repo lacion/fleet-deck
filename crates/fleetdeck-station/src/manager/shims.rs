@@ -248,6 +248,12 @@ async fn unreadable_checkpoint(store: &Store, row: &ShimRow) -> Result<Option<&'
 
 /// Settles every open row of this incarnation, `starting` rows first.
 ///
+/// The bounded waits of different shims (the `starting` socket wait and the
+/// §4.3 in-flight write waits) run concurrently, so they do not add up:
+/// every `starting` row settles in one concurrent phase, then every
+/// `running` row in a second one (ADR-005 §3.2, §4.3; DL-122). The result
+/// keeps the order of [`Store::shims_to_recover`].
+///
 /// # Errors
 /// A database error.
 pub async fn recover_shims(
@@ -256,10 +262,21 @@ pub async fn recover_shims(
     mode: AckMode,
     in_flight_wait: Duration,
 ) -> Result<Vec<(ShimRow, Recovered)>> {
+    let rows = store.shims_to_recover().await?;
+    let (starting, rest): (Vec<ShimRow>, Vec<ShimRow>) = rows
+        .into_iter()
+        .partition(|row| row.state == ShimState::Starting);
     let mut done = Vec::new();
-    for row in store.shims_to_recover().await? {
-        let outcome = recover_shim(store, host, &row, mode, in_flight_wait).await?;
-        done.push((row, outcome));
+    for phase in [starting, rest] {
+        let outcomes = futures_util::future::join_all(
+            phase
+                .iter()
+                .map(|row| recover_shim(store, host, row, mode, in_flight_wait)),
+        )
+        .await;
+        for (row, outcome) in phase.into_iter().zip(outcomes) {
+            done.push((row, outcome?));
+        }
     }
     Ok(done)
 }

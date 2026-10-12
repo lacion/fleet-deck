@@ -270,3 +270,54 @@ async fn the_checkpoint_is_stored_only_by_an_accepted_claim_or_output_commit() {
     assert_eq!(old, OutputCommit::StaleGeneration);
     assert_eq!(stored(&s).await, Some(checkpoint(2)));
 }
+
+#[tokio::test]
+async fn a_proven_unwritten_shim_answer_reopens_the_request_with_its_original_deadline() {
+    use fleetdeck_providers::host::shim::settle::{EffectResult, SHIM_NOT_RECEIVED};
+    let det = Det::new();
+    let s = running(&det, OfflineApprovalPolicy::DenyAfter { after_ms: 10_000 }).await;
+    shim(&s).await;
+    emit(&s, approval("req-1", "n1", &["allow", "deny"])).await;
+    let before = s.runtime_request("req-1".into()).await.unwrap().unwrap();
+    det.advance(Duration::from_secs(2));
+    assert_eq!(
+        claim(&s, &det, "c1", "req-1", "allow").await,
+        AnswerClaim::First
+    );
+    let claimed = s.runtime_request("req-1".into()).await.unwrap().unwrap();
+    assert!(claimed.receipt.is_some());
+    assert_eq!(claimed.deny_at, None, "an answered request has no deadline");
+    let fence = s.register_worker().await.unwrap();
+    let effect = s.claim_next(fence).await.unwrap().unwrap();
+    s.shim_claim_write(SHIM.to_owned(), 1, Some(effect.effect_id.clone()), 0, 1)
+        .await
+        .unwrap()
+        .unwrap();
+    // Recovery: the shim proves that no byte of the frame was received.
+    assert!(
+        s.shim_settle_write(
+            SHIM.to_owned(),
+            effect.effect_id.clone(),
+            EffectResult::Retired(SHIM_NOT_RECEIVED),
+        )
+        .await
+        .unwrap()
+    );
+    let e = s.effect(effect.effect_id.clone()).await.unwrap().unwrap();
+    assert_eq!(e.state, EffectState::RetiredNotDispatched);
+    let after = s.runtime_request("req-1".into()).await.unwrap().unwrap();
+    assert_eq!(after.state, RequestState::Open);
+    assert!(after.receipt.is_none(), "the answer slot is open again");
+    assert_eq!(after.deny_at, before.deny_at, "the original deadline");
+    // The first command keeps its receipt; a new command can answer.
+    let repeat = s
+        .decide(envelope(&det, "c1"), Caller::local(), |_| Ok(accepted()))
+        .await
+        .unwrap();
+    assert!(repeat.duplicate, "the first command keeps its receipt");
+    assert!(repeat.effects.is_empty());
+    assert_eq!(
+        claim(&s, &det, "c2", "req-1", "deny").await,
+        AnswerClaim::First
+    );
+}

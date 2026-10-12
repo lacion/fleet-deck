@@ -379,21 +379,7 @@ pub(super) fn settle(
             // The live worker proved that no answer reached the provider:
             // the request's answer slot opens again for a new command
             // (never a retry of this one).
-            if let EffectPayload::Answer {
-                request_id,
-                decision,
-                by,
-            } = &found.payload
-            {
-                requests::release_unsent_answer(
-                    conn,
-                    &found,
-                    request_id,
-                    &decision.option_id,
-                    *by,
-                    now,
-                )?;
-            }
+            requests::release_if_answer(conn, &found, now)?;
         }
         Dispatch::Unknown(reason) => {
             transition(conn, &found, EffectState::OutcomeUnknown, reason, now, out)?;

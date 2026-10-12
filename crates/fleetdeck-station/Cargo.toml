@@ -17,6 +17,7 @@ fleetdeck-core = { path = "../fleetdeck-core" }
 fleetdeck-link = { path = "../fleetdeck-link" }
 fleetdeck-providers = { path = "../fleetdeck-providers" }
 async-trait = { workspace = true }
+futures-util = { workspace = true }
 ring = { workspace = true }
 rusqlite = { workspace = true }
 rustix = { workspace = true, features = ["process", "fs"] }

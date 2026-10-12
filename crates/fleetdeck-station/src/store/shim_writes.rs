@@ -289,6 +289,13 @@ impl Store {
                 EffectResult::Sent | EffectResult::AskAgain => return Ok(false),
             };
             effects::transition(conn, &effect, to, reason, now, out)?;
+            if to == EffectState::RetiredNotDispatched {
+                // The shim proved that no byte of the answer reached the
+                // provider: the request's answer slot opens again with its
+                // original deadline; the command receipt stays (ADR-005 §6,
+                // PLAN §6.4; DL-122).
+                super::requests::release_if_answer(conn, &effect, now)?;
+            }
             Ok(true)
         })
         .await

@@ -359,6 +359,20 @@ pub(super) fn claim_answer(
 /// Anything else changes nothing. `deny_at` returns to the request's own
 /// deadline (`requested_at` plus the session's `deny_after`), not a new one.
 /// The command's receipt and the retired effect stay as they are.
+/// [`release_unsent_answer`] for an answer effect that was proven not
+/// dispatched; any other effect changes nothing.
+pub(super) fn release_if_answer(conn: &Connection, effect: &Effect, now: i64) -> Result<bool> {
+    let EffectPayload::Answer {
+        request_id,
+        decision,
+        by,
+    } = &effect.payload
+    else {
+        return Ok(false);
+    };
+    release_unsent_answer(conn, effect, request_id, &decision.option_id, *by, now)
+}
+
 pub(super) fn release_unsent_answer(
     conn: &Connection,
     effect: &Effect,

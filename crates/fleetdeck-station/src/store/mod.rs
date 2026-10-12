@@ -35,6 +35,7 @@ pub mod reverts;
 pub mod schema;
 mod sharing;
 pub mod shim_driver;
+pub mod shim_gaps;
 pub mod shim_writes;
 pub mod shims;
 mod turn_checkpoints;

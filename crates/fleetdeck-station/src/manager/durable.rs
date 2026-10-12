@@ -41,6 +41,7 @@ use fleetdeck_proto::event::OutputGapReason;
 use fleetdeck_providers::host::shim::wire::GapReason;
 
 use super::shim_stdin::{self, send_input};
+use crate::store::shim_gaps::REASON_ADAPTER_STATE_GAP;
 use crate::store::{
     Dispatch, Effect, FrameState, InputRecord, NewEvent, OutputCommit, OutputMeta, RequestTime,
     Store, StoreError,
@@ -83,6 +84,9 @@ pub struct DurableDriver<C: DurableCore> {
     gate: RwLock<()>,
     changed: watch::Sender<u64>,
     pump: StdMutex<Option<JoinHandle<()>>>,
+    /// Set after a committed `below_floor` gap: the adapter state cannot
+    /// follow the provider any more (ADR-005 §4.2; DL-122).
+    adapter_gap: std::sync::atomic::AtomicBool,
 }
 
 impl<C: DurableCore> std::fmt::Debug for DurableDriver<C> {
@@ -163,6 +167,7 @@ impl<C: DurableCore> DurableDriver<C> {
             gate: RwLock::new(()),
             changed: watch::channel(0).0,
             pump: StdMutex::new(None),
+            adapter_gap: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -218,6 +223,11 @@ impl<C: DurableCore> DurableDriver<C> {
             drop(core.command(&t.effect));
         }
         let this = Self::new(store, &attached, config, core);
+        if this.below_floor(&attached).await? {
+            // No frame goes out from an adapter state that missed output.
+            this.start_pump(attached);
+            return Ok(this);
+        }
         this.settle_frames(in_flight_wait).await?;
         let guard = this.core.lock().await;
         this.flush(&guard).await?;
@@ -288,6 +298,9 @@ impl<C: DurableCore> DurableDriver<C> {
         &self,
         op: impl FnOnce(&mut C) -> Result<Steps, ProviderError>,
     ) -> Result<(), DriverError> {
+        if self.has_adapter_gap() {
+            return Err(ProviderError::NotReady(REASON_ADAPTER_STATE_GAP).into());
+        }
         let mut core = self.core.lock().await;
         let (events, frames) = op(&mut core)?;
         let checkpoint = snapshot(&*core)?;
@@ -315,7 +328,9 @@ impl<C: DurableCore> DurableDriver<C> {
                 events,
                 OutputMeta {
                     read_at,
-                    checkpoint: Some(checkpoint),
+                    // After an adapter state gap no checkpoint is stored:
+                    // the state is incomplete (§4.2).
+                    checkpoint: (!self.has_adapter_gap()).then_some(checkpoint),
                     frames,
                 },
             )
@@ -434,6 +449,11 @@ impl<C: DurableCore> DurableDriver<C> {
     }
 
     async fn apply_inner(&self, effect: &Effect) -> Result<Dispatch, DriverError> {
+        if self.has_adapter_gap() {
+            // Proven not sent: nothing goes to the provider from an
+            // incomplete adapter state.
+            return Ok(Dispatch::NotDispatched(REASON_ADAPTER_STATE_GAP.to_owned()));
+        }
         let mut core = self.core.lock().await;
         let before = snapshot(&*core)?;
         let (events, frames) = match core.command(effect) {
@@ -513,9 +533,30 @@ impl<C: DurableCore> DurableDriver<C> {
             let read = reader.read_until(b'\n', &mut line).await;
             let line_start = offset;
             let line_end = line_start + line.len() as u64;
+            let gaps = self.process.gaps();
+            if !self.has_adapter_gap()
+                && let Some((from, to, _)) = gaps
+                    .iter()
+                    .find(|(_, _, reason)| *reason == GapReason::BelowFloor)
+                && !self.adapter_gap_at(*from, *to).await
+            {
+                return;
+            }
+            if self.has_adapter_gap() {
+                // Read and acknowledge without parsing, so the provider is
+                // never blocked on a full pipe (§4.2).
+                match read {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {}
+                }
+                offset = line_end;
+                if !self.skip_to(offset).await {
+                    return;
+                }
+                continue;
+            }
             // A gap reported by the shim ends the parsing at its start: the
             // bytes around it are not one provider line (ADR-005 §4.2).
-            let gaps = self.process.gaps();
             if gaps.iter().any(|(from, _, _)| *from < line_end) {
                 match self.commit_gaps(&mut reader, offset, &gaps).await {
                     Some(cursor) => offset = cursor,
@@ -698,3 +739,6 @@ impl<C: DurableCore> DurableDriver<C> {
         &self.process
     }
 }
+
+#[path = "durable_gap.rs"]
+mod gap;

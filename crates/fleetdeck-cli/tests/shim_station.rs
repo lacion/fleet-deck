@@ -627,3 +627,88 @@ async fn a_station_crash_during_a_launch_is_fenced_or_resolved_by_the_launch_loc
     );
     assert_eq!(rig.session_state().await, SessionState::Lost);
 }
+
+// ADR-005 §3.2 step 3, §4.5 (review sa-9c1141b8 MAJOR 3; DL-122): a valid
+// exit report of a shim that ended while the station was down ends the
+// session `exited`, with the unacknowledged output as an explicit gap.
+#[tokio::test]
+async fn a_persisted_exit_report_ends_the_session_exited_with_a_gap_for_unacknowledged_output() {
+    use fleetdeck_proto::event::OutputGapReason;
+    use fleetdeck_providers::host::shim::wire::ExitState;
+
+    let rig = Rig::new().await;
+    let driver = rig.open().await;
+    let shim_id = rig.shim_id().await;
+    let claimed = rig.claimed(prompt("in-1", "hello")).await;
+    driver.abandon().await;
+    drop(driver);
+    let committed = rig
+        .store
+        .shim(shim_id.clone())
+        .await
+        .unwrap()
+        .unwrap()
+        .cursor;
+    let pid = shim_reaper::shim_pid(&shim_id).unwrap();
+    shim_reaper::kill9(pid);
+    let deadline = tokio::time::Instant::now() + WAIT;
+    while alive(pid) {
+        assert!(tokio::time::Instant::now() < deadline, "the shim lives");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    // The exit file that the shim published before it ended: 100 bytes
+    // were never acknowledged by a station.
+    let exit = ExitState {
+        termination: "signal:9".to_owned(),
+        cause: "killed".to_owned(),
+        stderr_tail: String::new(),
+        descendants_remaining: 0,
+        final_offset: committed + 100,
+    };
+    ShimFiles::new(&rig.host().config().shims_dir(), &shim_id)
+        .write_exit(&exit)
+        .unwrap();
+
+    let start = recover_station(&rig.store, &rig.host(), &rig.configs(), IN_FLIGHT)
+        .await
+        .unwrap();
+    assert!(start.restored.is_empty());
+    assert_eq!(start.ended, vec![(shim_id.clone(), "exited".to_owned())]);
+    assert_eq!(start.report.lost_sessions, 0, "a known exit is not a loss");
+    assert_eq!(rig.session_state().await, SessionState::Exited);
+    let events = rig.events().await;
+    let gap = events.iter().position(|e| {
+        matches!(e, Event::OutputGap { from, to, reason: OutputGapReason::BelowFloor }
+            if *from == committed && *to == committed + 100)
+    });
+    let ended = events.iter().position(|e| {
+        matches!(
+            e,
+            Event::SessionEnded {
+                exit_code: None,
+                ..
+            }
+        )
+    });
+    assert!(gap.is_some() && ended.is_some(), "{events:?}");
+    assert!(gap < ended, "the gap is committed before the end");
+    assert!(
+        !events.iter().any(|e| matches!(
+            e,
+            Event::SessionStateChanged {
+                state: SessionState::Lost,
+                ..
+            }
+        )),
+        "{events:?}"
+    );
+    let row = rig.store.shim(shim_id).await.unwrap().unwrap();
+    assert_eq!(row.cursor, committed + 100, "the final offset");
+    assert_eq!(row.reason.as_deref(), Some("exited"));
+    assert_eq!(
+        rig.effect_state(&claimed).await.0,
+        EffectState::OutcomeUnknown,
+        "an unproven claim stays unknown"
+    );
+    assert!(rig.store.live_process("s1".into()).await.unwrap().is_none());
+}

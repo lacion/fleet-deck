@@ -151,6 +151,14 @@ pub async fn recover_station(
     let mut ended = Vec::new();
     for (row, outcome) in recover_shims(store, host, AckMode::Manual, in_flight_wait).await? {
         let Recovered::Reattached(attached) = outcome else {
+            if let Recovered::Exited(exit) = &outcome {
+                // A valid exit report ends the durable session before the
+                // generic recovery would call it lost (§3.2 step 3, §4.5).
+                let events = super::shim_exit::exit_events(store, &row, configs, exit).await?;
+                store
+                    .shim_record_exit(row.shim_id.clone(), exit.final_offset, events)
+                    .await?;
+            }
             if matches!(outcome, Recovered::NeverStarted) {
                 // The intact journal proves that no provider was spawned:
                 // the start effect was not dispatched (§3.2 step 1). Every
@@ -202,6 +210,18 @@ async fn restore_one(
     let Some(process) = store.live_process(session_id.clone()).await? else {
         return Ok(Err(REASON_NO_PROCESS.to_owned()));
     };
+    if store
+        .shim_input_blocked(session_id.clone())
+        .await?
+        .as_deref()
+        == Some(crate::store::shim_gaps::REASON_ADAPTER_STATE_GAP)
+    {
+        // The stored adapter state was invalidated by an output gap
+        // (§4.2): no driver is restored from it.
+        return Ok(Err(
+            crate::store::shim_gaps::REASON_ADAPTER_STATE_GAP.to_owned()
+        ));
+    }
     let Some(summary) = store.summary(session_id.clone()).await? else {
         return Ok(Err(REASON_NO_DRIVER.to_owned()));
     };

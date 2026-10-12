@@ -18,6 +18,7 @@ pub mod revert;
 pub mod revert_run;
 pub mod shim_claude;
 pub mod shim_codex;
+pub mod shim_exit;
 pub mod shim_station;
 pub mod shim_stdin;
 pub mod shims;
