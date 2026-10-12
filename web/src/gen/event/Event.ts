@@ -75,7 +75,7 @@ checkpoint: TurnCheckpoint | null,
 /**
  * Set when both checkpoint sides are available.
  */
-diff_summary: DiffSummary | null, } | { "kind": "revert.updated", revert_id: string, turn_id: TurnId, turns: number, state: RevertState, reason: string | null, } | { "kind": "session.renamed", title: string | null, } | { "kind": "session.output_gap", from: number, to: number, reason: OutputGapReason, } | { "kind": "run.completed", run_id: RunId, status: TurnStatus, 
+diff_summary: DiffSummary | null, } | { "kind": "revert.updated", revert_id: string, turn_id: TurnId, turns: number, state: RevertState, reason: string | null, } | { "kind": "session.renamed", title: string | null, } | { "kind": "session.named", callsign: string, worktree: string | null, } | { "kind": "session.output_gap", from: number, to: number, reason: OutputGapReason, } | { "kind": "run.completed", run_id: RunId, status: TurnStatus, 
 /**
  * Background work still runs; the session is not idle (L7).
  */

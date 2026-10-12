@@ -15,6 +15,7 @@ pub mod fold;
 pub mod ids;
 pub mod link;
 pub mod mutation;
+pub mod orchestration;
 pub mod session;
 pub mod status;
 pub mod ts;

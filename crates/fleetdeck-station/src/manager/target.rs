@@ -375,7 +375,21 @@ impl SessionTarget {
 impl EffectTarget for SessionTarget {
     async fn dispatch(&self, effect: &Effect) -> Dispatch {
         match &effect.payload {
-            EffectPayload::Start { spec, prompt } => {
+            EffectPayload::Start {
+                spec,
+                prompt,
+                workspace,
+            } => {
+                // The Git work of the start (M3 6-1, DL-200) runs in the
+                // effect, before the provider starts.
+                if let Some(plan) = workspace
+                    && let Err(e) =
+                        crate::workspace::provision::provision(plan, &self.git.program).await
+                {
+                    let text = format!("the workspace was not created: {e}");
+                    self.start_failed(&effect.session_id, &text).await;
+                    return Dispatch::NotDispatched("workspace_failed".into());
+                }
                 self.start(effect, spec, prompt.as_ref(), None).await
             }
             EffectPayload::Resume {

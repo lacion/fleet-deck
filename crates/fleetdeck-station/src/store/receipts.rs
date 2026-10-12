@@ -174,6 +174,14 @@ impl Decision<'_> {
         log::insert_session(self.conn, session, self.now)
     }
 
+    /// Whether a session of this station has `callsign` already.
+    ///
+    /// # Errors
+    /// A database error.
+    pub fn callsign_taken(&self, callsign: &str) -> Result<bool> {
+        log::callsign_taken(self.conn, callsign)
+    }
+
     /// Appends one event in the decision's transaction.
     ///
     /// # Errors

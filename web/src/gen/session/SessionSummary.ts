@@ -22,7 +22,16 @@ export type SessionSummary = { session_id: SessionId, provider: ProviderKind | n
  * `None` outside a repository or with a detached HEAD. Absent in a
  * summary stored before P4-2.
  */
-branch: string | null, title: string | null, state: SessionState, activity: Activity, mode: string | null, model: string | null, capabilities: Capabilities | null, current_run: RunId | null, current_turn: TurnId | null, open_requests: Array<OpenRequest>, 
+branch: string | null, 
+/**
+ * The station's callsign (M3 6-1, DL-200): unique on its station; the
+ * mail and task address of the session. Absent before M3.
+ */
+callsign: string | null, 
+/**
+ * The worktree that the station created for the session (M3 6-1).
+ */
+worktree: string | null, title: string | null, state: SessionState, activity: Activity, mode: string | null, model: string | null, capabilities: Capabilities | null, current_run: RunId | null, current_turn: TurnId | null, open_requests: Array<OpenRequest>, 
 /**
  * Ids of running background tasks (L7).
  */

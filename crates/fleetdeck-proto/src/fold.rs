@@ -173,6 +173,10 @@ impl SessionSummary {
                 });
             }
             Event::SessionRenamed { title } => self.title.clone_from(title),
+            Event::SessionNamed { callsign, worktree } => {
+                self.callsign = Some(callsign.clone());
+                self.worktree.clone_from(worktree);
+            }
             Event::SessionEnded { .. } => {
                 if !matches!(self.state, SessionState::Lost) {
                     self.state = SessionState::Exited;

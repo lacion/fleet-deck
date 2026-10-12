@@ -11,4 +11,19 @@ path: string,
 /**
  * The directory holds a `.git` entry.
  */
-repository: boolean, };
+repository: boolean, 
+/**
+ * Repo catalog (M3 6-1, DL-201): the `origin` URL without credentials,
+ * query or fragment; `None` without an origin.
+ */
+origin?: string, 
+/**
+ * The default branch (`origin/HEAD`, else the current branch).
+ */
+default_branch?: string, 
+/**
+ * The conflict-radar group: the owner's `repo_groups` choice, else the
+ * normalized origin of a repository with exactly one remote; `None`
+ * for several or no remotes (PLAN §6.6: a heuristic, not an identity).
+ */
+group?: string, };

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { SessionKey, StationView, WorkspaceListing } from '../gen';
 import type { Freshness } from '../runtime/state';
 import {
+  batchPrompts,
   providerLabel,
   type SpawnActions,
   type SpawnOutcome,
@@ -34,6 +35,10 @@ export function SpawnForm({ stations, freshness, actions, onOpen, initialListing
   const [model, setModel] = useState('');
   const [title, setTitle] = useState('');
   const [prompt, setPrompt] = useState('');
+  const [place, setPlace] = useState<'here' | 'worktree' | 'clone'>('here');
+  const [cloneUrl, setCloneUrl] = useState('');
+  const [cloneName, setCloneName] = useState('');
+  const [batch, setBatch] = useState(false);
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<SpawnOutcome | null>(null);
 
@@ -56,8 +61,15 @@ export function SpawnForm({ stations, freshness, actions, onOpen, initialListing
     });
   };
   const modes = spawnModes(provider);
+  const cloneReady = place !== 'clone' || (cloneUrl.trim() !== '' && cloneName.trim() !== '');
   const ready =
-    live && canDrive && !busy && station !== undefined && provider !== undefined && cwd !== null;
+    live &&
+    canDrive &&
+    !busy &&
+    station !== undefined &&
+    provider !== undefined &&
+    cwd !== null &&
+    cloneReady;
 
   return (
     <section className="fd-spawn" aria-label="New session">
@@ -83,20 +95,41 @@ export function SpawnForm({ stations, freshness, actions, onOpen, initialListing
             }
             setBusy(true);
             setOutcome(null);
+            const target = place === 'clone' ? `${cwd}/${cloneName.trim()}` : cwd;
             const spec = {
               provider_instance: provider.instance,
-              cwd,
+              cwd: target,
               mode: modes.includes(mode) ? mode : null,
               model: model.trim() === '' ? null : model.trim(),
               title: title.trim() === '' ? null : title.trim(),
             };
-            void actions
-              .start(station.station_id, spec, prompt)
-              .then((result) => {
-                setOutcome(result);
-                if (result.ok) setPrompt('');
-              })
-              .finally(() => setBusy(false));
+            // A batch forces a worktree per session (v0); a clone is one
+            // session.
+            const workspace =
+              place === 'clone'
+                ? { kind: 'clone' as const, url: cloneUrl.trim() }
+                : place === 'worktree' || batch
+                  ? { kind: 'worktree' as const }
+                  : null;
+            const prompts = batch && place !== 'clone' ? batchPrompts(prompt) : [prompt];
+            const id = station.station_id;
+            void (async () => {
+              let last: SpawnOutcome | null = null;
+              let started = 0;
+              for (const p of prompts) {
+                last = await actions.start(id, spec, p, workspace);
+                if (!last.ok) break;
+                started += 1;
+              }
+              if (last !== null && prompts.length > 1) {
+                last = {
+                  ...last,
+                  text: `${started} of ${prompts.length} sessions started. ${last.text}`,
+                };
+              }
+              setOutcome(last);
+              if (last?.ok === true) setPrompt('');
+            })().finally(() => setBusy(false));
           }}
         >
           <label>
@@ -177,6 +210,38 @@ export function SpawnForm({ stations, freshness, actions, onOpen, initialListing
             )}
             {browseError === null ? null : <p role="alert">{browseError}</p>}
           </fieldset>
+          <label>
+            Workspace
+            <select
+              value={place}
+              onChange={(event) => setPlace(event.target.value as 'here' | 'worktree' | 'clone')}
+            >
+              <option value="here">Work in this directory</option>
+              <option value="worktree">A new worktree on its own branch</option>
+              <option value="clone">Clone a URL into a new directory here</option>
+            </select>
+          </label>
+          {place === 'clone' ? (
+            <>
+              <label>
+                Clone URL
+                <input value={cloneUrl} onChange={(event) => setCloneUrl(event.target.value)} />
+              </label>
+              <label>
+                New directory name
+                <input value={cloneName} onChange={(event) => setCloneName(event.target.value)} />
+              </label>
+            </>
+          ) : (
+            <label className="fd-check">
+              <input
+                type="checkbox"
+                checked={batch}
+                onChange={(event) => setBatch(event.target.checked)}
+              />
+              Batch: one session in its own worktree for each line (3x task starts three)
+            </label>
+          )}
           <label>
             Permission mode
             <select value={mode} onChange={(event) => setMode(event.target.value)}>

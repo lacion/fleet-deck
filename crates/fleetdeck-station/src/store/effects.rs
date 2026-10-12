@@ -76,7 +76,7 @@ text_id!(
     ProcessIncarnation
 );
 
-pub use super::payload::{EffectPayload, InputRecord};
+pub use super::payload::{EffectPayload, InputRecord, WorkspacePlan};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

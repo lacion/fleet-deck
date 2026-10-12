@@ -7,8 +7,14 @@ import type { RevertResolution } from "./RevertResolution";
 import type { SessionSpec } from "./SessionSpec";
 import type { StopMode } from "./StopMode";
 import type { UserInput } from "./UserInput";
+import type { WorkspaceRequest } from "./WorkspaceRequest";
 
 /**
  * One mutating operation on a station. The tag is `op`.
  */
-export type SessionCommand = { "op": "start", spec: SessionSpec, prompt: UserInput | null, } | { "op": "resume", session_id: SessionId, } | { "op": "prompt", session_id: SessionId, input: UserInput, } | { "op": "steer", session_id: SessionId, input: UserInput, } | { "op": "follow_up", session_id: SessionId, input: UserInput, } | { "op": "interrupt", session_id: SessionId, } | { "op": "answer", session_id: SessionId, request_id: RequestId, decision: ApprovalDecision, } | { "op": "set_mode", session_id: SessionId, mode: string, } | { "op": "set_model", session_id: SessionId, model: string, } | { "op": "fork", session_id: SessionId, } | { "op": "stop", session_id: SessionId, how: StopMode, } | { "op": "revert", session_id: SessionId, turn_id: TurnId, } | { "op": "rename", session_id: SessionId, title: string | null, } | { "op": "resolve_revert", session_id: SessionId, revert_id: string, resolution: RevertResolution, };
+export type SessionCommand = { "op": "start", spec: SessionSpec, prompt: UserInput | null, 
+/**
+ * Where the session's workspace comes from (M3 6-1, DL-200):
+ * absent = `spec.cwd` as it is.
+ */
+workspace?: WorkspaceRequest, } | { "op": "resume", session_id: SessionId, } | { "op": "prompt", session_id: SessionId, input: UserInput, } | { "op": "steer", session_id: SessionId, input: UserInput, } | { "op": "follow_up", session_id: SessionId, input: UserInput, } | { "op": "interrupt", session_id: SessionId, } | { "op": "answer", session_id: SessionId, request_id: RequestId, decision: ApprovalDecision, } | { "op": "set_mode", session_id: SessionId, mode: string, } | { "op": "set_model", session_id: SessionId, model: string, } | { "op": "fork", session_id: SessionId, } | { "op": "stop", session_id: SessionId, how: StopMode, } | { "op": "revert", session_id: SessionId, turn_id: TurnId, } | { "op": "rename", session_id: SessionId, title: string | null, } | { "op": "resolve_revert", session_id: SessionId, revert_id: string, resolution: RevertResolution, };

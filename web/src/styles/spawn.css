@@ -60,3 +60,9 @@
   border-radius: var(--r-panel);
   padding: 0 var(--sp-1);
 }
+/* M3 6-1: the batch checkbox of the spawn form. */
+.fd-check {
+  display: flex;
+  gap: var(--sp-1);
+  align-items: center;
+}

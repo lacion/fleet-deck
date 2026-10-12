@@ -142,6 +142,7 @@ impl Station {
             .accepted(SessionCommand::Start {
                 spec,
                 prompt: prompt.map(text),
+                workspace: None,
             })
             .await;
         d.receipt.result.unwrap().session_id.unwrap()
@@ -404,8 +405,12 @@ async fn the_station_policy_decides_in_the_command_transaction() {
     ];
     for (spec, code) in cases {
         assert_eq!(
-            st.rejected(SessionCommand::Start { spec, prompt: None })
-                .await,
+            st.rejected(SessionCommand::Start {
+                spec,
+                prompt: None,
+                workspace: None
+            })
+            .await,
             code
         );
     }
@@ -416,6 +421,7 @@ async fn the_station_policy_decides_in_the_command_transaction() {
         st.rejected(SessionCommand::Start {
             spec: spec(&link.to_string_lossy(), "claude"),
             prompt: None,
+            workspace: None,
         })
         .await,
         RejectCode::Forbidden
@@ -426,6 +432,7 @@ async fn the_station_policy_decides_in_the_command_transaction() {
         st.rejected(SessionCommand::Start {
             spec: spec(&ws, "claude"),
             prompt: None,
+            workspace: None,
         })
         .await,
         RejectCode::Forbidden,
@@ -656,6 +663,9 @@ mod revert_wired;
 
 #[path = "rename_tests.rs"]
 mod rename;
+
+#[path = "workspace_tests.rs"]
+mod workspace_provision;
 
 #[path = "resume_tests.rs"]
 mod resume;

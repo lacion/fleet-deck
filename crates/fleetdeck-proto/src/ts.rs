@@ -28,6 +28,9 @@ use crate::link::{
     WorkspaceListing, WorkspaceQuery,
 };
 use crate::mutation::{CoordinatorCallEnvelope, KeyRotationEnvelope, StationConfigureEnvelope};
+use crate::orchestration::{
+    AssignOutcome, AssignRequest, MailRequest, MailView, TaskCompletion, TaskRequest, TaskView,
+};
 use crate::session::{CardStatus, SessionSummary};
 use crate::version::{Negotiated, VersionOffer};
 
@@ -84,6 +87,13 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         CardStatus::export_all(&cfg),
         VersionOffer::export_all(&cfg),
         Negotiated::export_all(&cfg),
+        AssignRequest::export_all(&cfg),
+        AssignOutcome::export_all(&cfg),
+        MailRequest::export_all(&cfg),
+        MailView::export_all(&cfg),
+        TaskRequest::export_all(&cfg),
+        TaskCompletion::export_all(&cfg),
+        TaskView::export_all(&cfg),
     ];
     for result in results {
         result.map_err(io::Error::other)?;

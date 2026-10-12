@@ -29,6 +29,8 @@ pub struct Policy {
     max_sessions: u32,
     offline: OfflineApprovalPolicy,
     instances: BTreeMap<ProviderInstanceId, ProviderKind>,
+    /// Canonical repository path → the owner's group (DL-201).
+    repo_groups: BTreeMap<PathBuf, String>,
 }
 
 impl Policy {
@@ -55,7 +57,25 @@ impl Policy {
                 .iter()
                 .map(|i| (i.id.clone(), i.driver.kind()))
                 .collect(),
+            repo_groups: BTreeMap::new(),
         }
+        .with_repo_groups(&config.repo_groups)
+    }
+
+    /// Sets the owner's repo groups (paths are resolved like the roots).
+    #[must_use]
+    pub fn with_repo_groups(mut self, groups: &BTreeMap<PathBuf, String>) -> Self {
+        self.repo_groups = groups
+            .iter()
+            .map(|(p, g)| (p.canonicalize().unwrap_or_else(|_| p.clone()), g.clone()))
+            .collect();
+        self
+    }
+
+    /// The owner's group of a canonical repository path.
+    #[must_use]
+    pub fn repo_group(&self, repo: &Path) -> Option<&str> {
+        self.repo_groups.get(repo).map(String::as_str)
     }
 
     /// A policy for tests and the all-in-one mode.
@@ -74,6 +94,7 @@ impl Policy {
             max_sessions,
             offline,
             instances,
+            repo_groups: BTreeMap::new(),
         }
     }
 

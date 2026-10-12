@@ -216,3 +216,71 @@ test('a read-only login cannot browse or start', async ({ page }) => {
   await expect(form.getByRole('button', { name: 'Start session' })).toBeDisabled();
   expect(deck.calls.filter((c) => c.path.includes('/workspaces'))).toHaveLength(0);
 });
+
+test('a batch starts one worktree session per line with Nx (M3 6-1)', async ({ page }) => {
+  const deck = new FakeDeck();
+  deck.stations = [alpha];
+  picker(deck);
+  let n = 0;
+  deck.on('/api/commands/session.start', () => {
+    n += 1;
+    return {
+      status: 200,
+      body: {
+        state: 'done',
+        receipt: {
+          state: 'accepted',
+          result: { session_id: `s-${n}`, input_id: `i-${n}` },
+          reject: null,
+        },
+      },
+    };
+  });
+  await deck.install(page);
+  await logIn(page);
+  await chooseApp(page);
+  const form = page.getByRole('region', { name: 'New session' });
+  await form.getByLabel(/Batch: one session/).check();
+  await form.getByLabel('First prompt (optional)').fill('2x fix the tests\nwrite docs');
+  expect(await fitsWidth(page)).toBe(true);
+  await form.getByRole('button', { name: 'Start session' }).click();
+  await expect(page.getByRole('status')).toContainText('3 of 3 sessions started.');
+  const starts = deck.calls.filter((c) => c.path === '/api/commands/session.start');
+  expect(
+    starts.map((c) => (c.body as { command: { prompt: { text: string } } }).command.prompt.text),
+  ).toEqual(['fix the tests', 'fix the tests', 'write docs']);
+  for (const s of starts) {
+    expect(s.body).toMatchObject({ command: { workspace: { kind: 'worktree' } } });
+  }
+  // Each start has its own command id.
+  expect(new Set(starts.map((c) => (c.body as { command_id: string }).command_id)).size).toBe(3);
+});
+
+test('a clone start sends the URL and the new directory (M3 6-1)', async ({ page }) => {
+  const deck = new FakeDeck();
+  deck.stations = [alpha];
+  picker(deck);
+  deck.on('/api/commands/session.start', () => ({
+    status: 200,
+    body: {
+      state: 'done',
+      receipt: { state: 'accepted', result: { session_id: 's-c', input_id: null }, reject: null },
+    },
+  }));
+  await deck.install(page);
+  await logIn(page);
+  await chooseApp(page);
+  const form = page.getByRole('region', { name: 'New session' });
+  await form.getByLabel('Workspace').selectOption('clone');
+  await form.getByLabel('Clone URL').fill('https://github.com/acme/app.git');
+  await form.getByLabel('New directory name').fill('app-copy');
+  await form.getByRole('button', { name: 'Start session' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Done.' })).toBeVisible();
+  const starts = deck.calls.filter((c) => c.path === '/api/commands/session.start');
+  expect(starts[0]?.body).toMatchObject({
+    command: {
+      spec: { cwd: `${ROOT}/app/app-copy` },
+      workspace: { kind: 'clone', url: 'https://github.com/acme/app.git' },
+    },
+  });
+});

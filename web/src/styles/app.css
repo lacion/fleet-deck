@@ -231,3 +231,62 @@ body {
     padding: var(--sp-2);
   }
 }
+/* M3 6-1: the callsign of a session that has a title. */
+.fd-callsign {
+  font-size: var(--fs-micro);
+  color: var(--muted, inherit);
+}
+
+/* M3 6-3: assign auto on the fleet screen. */
+.fd-assign {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: end;
+  margin: 0.5rem 0;
+}
+
+.fd-assign label {
+  display: flex;
+  flex: 1 1 10rem;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.fd-assign p {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+/* M3 6-2 / 6-4: fleet mail and tasks. */
+.fd-fleet form {
+  display: grid;
+  gap: 0.5rem;
+  margin-block: 0.75rem;
+}
+.fd-fleet label {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 0;
+}
+.fd-fleet select,
+.fd-fleet textarea {
+  max-width: 100%;
+}
+.fd-fleet-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.fd-fleet ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.fd-fleet li {
+  overflow-wrap: anywhere;
+  padding-block: 0.25rem;
+}
+.fd-task-state {
+  opacity: 0.8;
+}

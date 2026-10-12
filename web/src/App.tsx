@@ -1,6 +1,10 @@
 import { useEffect, useState } from 'react';
 import { Feed } from './board/FeedPanel';
+import type { FleetActions } from './fleet/fleet';
+import { FleetPanel } from './fleet/FleetPanel';
 import type { FeedItem } from './board/feed';
+import type { AssignActions } from './assign/assign';
+import { AssignBar } from './assign/AssignBar';
 import { FleetBoard } from './board/FleetBoard';
 import { NeedsYouRail } from './board/NeedsYouRail';
 import { ALL, emptyFilter, filterFleet, type FleetFilter, stationName } from './board/fleet';
@@ -23,6 +27,10 @@ type Props = {
   readonly watch?: ((key: SessionKey) => () => void) | undefined;
   readonly sessionActions?: ((key: SessionKey) => SessionActions) | undefined;
   readonly spawn?: SpawnActions | undefined;
+  /** `assign auto` (M3 6-3). */
+  readonly assign?: AssignActions | undefined;
+  /** Fleet mail and tasks (M3 6-2 / 6-4). */
+  readonly fleet?: FleetActions | undefined;
   /** The session open at the first render (tests). */
   readonly initialSession?: SessionKey | null;
   /** The screen at the first render (tests). */
@@ -45,6 +53,8 @@ export function App({
   watch,
   sessionActions,
   spawn,
+  assign,
+  fleet,
   initialSession = null,
   initialScreen = 'fleet',
   initialListing = null,
@@ -187,7 +197,9 @@ export function App({
               {visible.length} of {sessions.length} sessions
             </output>
           </form>
+          <AssignBar actions={assign} onSpawn={() => setScreen('spawn')} />
           <NeedsYouRail sessions={sessions} stations={stations} onOpen={setOpen} />
+          <FleetPanel actions={fleet} sessions={sessions} />
           <FleetBoard
             sessions={visible}
             stations={stations}

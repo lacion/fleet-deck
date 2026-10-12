@@ -190,6 +190,41 @@ pub(crate) fn drop_station(conn: &Connection, station: &StationId, now: i64) -> 
     )?)
 }
 
+/// Inserts one `queued` item in the caller's transaction (mail and tasks
+/// store their own row in the same transaction, M3 6-2/6-4).
+pub(crate) fn insert_item(
+    conn: &Connection,
+    id: &str,
+    item: &NewOutboxItem,
+    now: i64,
+) -> Result<OutboxItem> {
+    let known = conn
+        .query_row(
+            "SELECT 1 FROM stations WHERE station_id = ?1",
+            [item.station_id.as_str()],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    if !known {
+        return Err(DeckError::UnknownStation(item.station_id.0.clone()));
+    }
+    conn.execute(
+        "INSERT INTO outbox (outbox_id, station_id, kind, origin, payload, state,
+             next_at, expires_at, created_at, updated_at)
+         VALUES (?1, ?2, 'command', ?3, ?4, 'queued', ?5, ?6, ?5, ?5)",
+        params![
+            id,
+            item.station_id.as_str(),
+            item.origin,
+            serde_json::to_string(&item.payload)?,
+            now,
+            item.expires_at
+        ],
+    )?;
+    get(conn, id)?.ok_or_else(|| DeckError::Corrupt("an inserted outbox item is gone".to_owned()))
+}
+
 /// The wire name of a reject code.
 fn reject_code(code: fleetdeck_proto::RejectCode) -> String {
     serde_json::to_value(code)
@@ -250,32 +285,7 @@ impl DeckStore {
         let id: String = new_id(self.inner.ids.as_ref());
         call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
-            let known = tx
-                .query_row(
-                    "SELECT 1 FROM stations WHERE station_id = ?1",
-                    [item.station_id.as_str()],
-                    |_| Ok(()),
-                )
-                .optional()?
-                .is_some();
-            if !known {
-                return Err(DeckError::UnknownStation(item.station_id.0));
-            }
-            tx.execute(
-                "INSERT INTO outbox (outbox_id, station_id, kind, origin, payload, state,
-                     next_at, expires_at, created_at, updated_at)
-                 VALUES (?1, ?2, 'command', ?3, ?4, 'queued', ?5, ?6, ?5, ?5)",
-                params![
-                    id,
-                    item.station_id.as_str(),
-                    item.origin,
-                    serde_json::to_string(&item.payload)?,
-                    now,
-                    item.expires_at
-                ],
-            )?;
-            let stored = get(&tx, &id)?
-                .ok_or_else(|| DeckError::Corrupt("an inserted outbox item is gone".to_owned()))?;
+            let stored = insert_item(&tx, &id, &item, now)?;
             tx.commit()?;
             Ok(stored)
         })

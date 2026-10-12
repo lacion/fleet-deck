@@ -211,6 +211,7 @@ impl Rig {
                         title: None,
                     },
                     prompt: Some(text(first)),
+                    workspace: None,
                 },
             )
             .await;
