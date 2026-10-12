@@ -404,6 +404,101 @@ async fn a_git_search_covers_tracked_and_untracked_files_but_not_ignored_ones() 
     assert!(none.hits.is_empty() && !none.truncated);
 }
 
+/// A Git search while the root's ancestor is exchanged with a symlink to
+/// another repository outside the allowed roots: Git runs in the directory
+/// that the root descriptor holds, so it never searches the other
+/// repository (DL-092).
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_git_search_never_runs_in_a_repository_swapped_in_above_the_root() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let det = Det::new();
+    let top = tempfile::tempdir().unwrap();
+    let top_path = std::fs::canonicalize(top.path()).unwrap();
+    for (dir, text) in [
+        ("base/ws", "needle inside\n"),
+        ("evil/ws", "needle OUTSIDE\n"),
+    ] {
+        let dir = top_path.join(dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        git(&dir, &["init", "-q", "-b", "main"]);
+        std::fs::write(dir.join("a.txt"), text).unwrap();
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-q", "-m", "init"]);
+    }
+    std::os::unix::fs::symlink(top_path.join("evil"), top_path.join("baselink")).unwrap();
+    let root = top_path.join("base/ws");
+    let s = store_with_session(&det, &root).await;
+    // Only `base` is allowed; `evil` is outside the roots.
+    let p = policy(&top_path.join("base"));
+    let stop = Arc::new(AtomicBool::new(false));
+    let swapper = {
+        let (a, b, stop) = (
+            top_path.join("base"),
+            top_path.join("baselink"),
+            Arc::clone(&stop),
+        );
+        std::thread::spawn(move || {
+            let mut swaps = 0u64;
+            while !stop.load(Ordering::Relaxed) {
+                rustix::fs::renameat_with(
+                    rustix::fs::CWD,
+                    &a,
+                    rustix::fs::CWD,
+                    &b,
+                    rustix::fs::RenameFlags::EXCHANGE,
+                )
+                .unwrap();
+                swaps += 1;
+            }
+            swaps
+        })
+    };
+    let git_options = GitOptions::isolated();
+    let (mut answers, mut rounds) = (0u32, 0u32);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
+    while std::time::Instant::now() < deadline || rounds < 30 {
+        rounds += 1;
+        let query = FileSearchQuery {
+            root: session(),
+            query: "needle".into(),
+            mode: SearchMode::Content,
+            max_hits: None,
+        };
+        match search(&s, &p, &git_options, query).await {
+            Ok(found) => {
+                for hit in &found.hits {
+                    let text = hit.text.as_deref().unwrap_or_default();
+                    assert!(
+                        !text.contains("OUTSIDE"),
+                        "searched the swapped-in repository"
+                    );
+                }
+                if found.backend == SearchBackend::Git && !found.hits.is_empty() {
+                    answers += 1;
+                }
+            }
+            Err(e) => assert!(
+                [
+                    code::NOT_FOUND,
+                    code::OUTSIDE_ROOTS,
+                    code::MISSING_WORKSPACE,
+                    "internal"
+                ]
+                .contains(&e.code),
+                "{e}"
+            ),
+        }
+    }
+    stop.store(true, Ordering::Relaxed);
+    let swaps = swapper.join().unwrap();
+    assert!(swaps > 100, "only {swaps} swaps");
+    assert!(
+        answers > 0,
+        "no Git answer from the real root in {rounds} rounds"
+    );
+}
+
 #[tokio::test]
 async fn a_turn_diff_comes_from_the_checkpoint_refs_and_fails_closed() {
     let det = Det::new();

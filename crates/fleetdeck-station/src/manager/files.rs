@@ -162,18 +162,28 @@ pub async fn search(
         timeout: SEARCH_TIMEOUT,
         ..git.clone()
     };
-    let git = Git::new(&root, options);
-    if is_worktree(&git).await {
-        let found =
-            tokio::time::timeout(SEARCH_TIMEOUT, git_search(&git, &query.query, content, max))
-                .await
-                .map_err(|_| FileError::new(code::TIMEOUT, "the search took too long"))??;
-        return Ok(FileSearch {
-            hits: found.hits,
-            truncated: found.truncated,
-            backend: SearchBackend::Git,
-        });
+    // Git runs in the directory that the root descriptor holds, never in
+    // the root by name: a rename of the root or an ancestor during the
+    // search cannot move it (DL-092). Without a pinned path (macOS) the
+    // search uses the descriptor walk.
+    let base = files::open_root(&root)
+        .map_err(|_| FileError::new(code::NOT_FOUND, "the root is not found"))?;
+    if let Some(pinned) = files::pinned_dir(&base) {
+        let git = Git::new(pinned, options);
+        if is_worktree(&git).await {
+            let found =
+                tokio::time::timeout(SEARCH_TIMEOUT, git_search(&git, &query.query, content, max))
+                    .await
+                    .map_err(|_| FileError::new(code::TIMEOUT, "the search took too long"))??;
+            drop(base);
+            return Ok(FileSearch {
+                hits: found.hits,
+                truncated: found.truncated,
+                backend: SearchBackend::Git,
+            });
+        }
     }
+    drop(base);
     let needle = query.query.to_lowercase();
     let found = blocking(SEARCH_TIMEOUT, move || {
         Ok(walk_search(&root, &needle, content, max))
