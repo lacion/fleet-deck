@@ -14,20 +14,18 @@ The repository side of the cutover (PLAN Phase 7, item 7-7) happens on the `v2` 
 | Re-armed questions. | Not needed: the request stays open in the protocol; the offline approval policy covers a deck outage. |
 | Revive. | Native resume. |
 | Adopt or take over a terminal session. | Import the native session id as a driven session (`session.import`, DL-308). |
-| The `/fleet` slash command and the fleet-doctrine skill. | A coordinator session with a scoped coordinator MCP grant and a deck-served control skill (ADR-006, item 6-5 in progress: the grant at an owner start and the control skill are in (DL-217); every coordinator start still fails with `handoff_unverified` until the coordinator live smoke records a verified context handoff, so keep v1 `/fleet` for coordination until then). |
+| The `/fleet` slash command and the fleet-doctrine skill. | A coordinator session with a scoped coordinator MCP grant and a deck-served control skill (ADR-006, DL-217, DL-219). A Claude coordinator starts from version 2.1.296, which the coordinator live smoke verified. A Codex coordinator start still fails with `handoff_unverified`. |
 | Share the board on the LAN with a URL token. | Board login (owner password, one-time URL, API tokens) on loopback, the private LAN or the tailnet. |
 | Coder support, remote control through claude.ai. | Dropped. |
 
 The full parity table is PLAN §16.
 
-Open parity checks (item 6-13 is not done yet). These v1 behaviours have no automated v2 test yet. 6-13 adds a test or records a deferral for each one:
+Item 6-13 records the test for each parity row in [PARITY.md](./PARITY.md). Four v1 behaviours have no v2 equivalent yet; they are deferred for an owner decision (DL-131):
 
 - the terminal grid (v2: a session grid)
-- Shift+Enter for a new line in the message box
-- the model badge after a model change in a running session
-- revive from the board (v2: an owner resume from the board)
-- station discovery on the LAN
-
+- a resume button on the board (native resume works through the station and the deck API)
+- station discovery on the LAN (add dial targets by hand)
+- a minimum CLI version per provider (the probe reports the version)
 
 ## 2. Before you start
 

@@ -1502,3 +1502,11 @@ Format: context, options, choice, reason, owner review.
 - Choice: (a). Test `manager::tests::drain::a_draining_station_refuses_an_import`; `docs/v2/operations.md` §9 lists import among the refused commands.
 - Reason: an import starts a provider process exactly like a start or a resume; a drain must refuse all new work (PLAN Phase 7).
 - Owner review: pending.
+
+## DL-131 — 6-13 Parity: four v0 parity rows deferred for an owner decision (lane A round 102)
+
+- Context: item 6-13 maps every Keep row of PLAN §4.1 and every row of the parity table (PLAN §16) to a named automated test (`docs/v2/PARITY.md`). After all four lanes merged, four rows had no v2 implementation: the session grid (v0 terminal grid), a board resume button for an ended session (v0 revive), LAN station discovery (mDNS), and a per-provider minimum CLI version that refuses an older CLI. Two rows had code but no test; 6-13 added `fold::tests::a_model_change_moves_the_model_badge_to_the_new_model` and `web/e2e/parity.spec.ts` "Shift+Enter in the composer adds a newline and sends nothing (v0 parity)".
+- Options: (a) build the four rows now, after the 16:20 time box; (b) defer them as "deferred: owner decision needed" (approved deferral form, owner answers DL-073) and keep the v1 workaround documented in `docs/v2/cutover.md` §1.
+- Choice: (b). Native resume works through the station and the deck API `session.resume` (test `row_resume_reopens_the_same_native_session_with_its_memory`); owners add dial targets by hand; the probe reports each provider version (`station_info_providers_are_probed_once_with_versions`); one session view at a time replaces the grid.
+- Reason: the owner asked for a usable M3 and feedback from real use before polish; none of the four rows is a safety or data-integrity contract, and each has a documented workaround.
+- Owner review: pending (approved deferral form; the owner decides whether and when to build each row).

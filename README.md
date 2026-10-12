@@ -4,7 +4,7 @@
 
 Fleet Deck v2 is a Rust rewrite of Fleet Deck. Version 1 (v0 in the plan) observed the Claude Code sessions of one machine through hooks. Version 2 starts and drives the agent sessions itself, through the native protocols of the providers, on each machine that you pair with the deck. You watch and control all of them from one web board, also from a phone.
 
-> **Status:** branch `v2`, milestone M3 (fleet features and hardening). The 2.0.0 release and the merge to `main` are owner steps. The v1 README is in [docs/v0/README.md](docs/v0/README.md). Before you move from v1, read the open parity checks in [the cutover guide](docs/v2/cutover.md).
+> **Status:** branch `v2`, milestone M3 (fleet features and hardening). The 2.0.0 release and the merge to `main` are owner steps. The v1 README is in [docs/v0/README.md](docs/v0/README.md). Before you move from v1, read [the cutover guide](docs/v2/cutover.md) and the parity record [docs/v2/PARITY.md](docs/v2/PARITY.md).
 
 ## The parts
 
@@ -24,7 +24,7 @@ One binary, `fleetdeck`, contains the deck and the station. The deck embeds the 
 - **Checkpoints and revert.** The station takes a checkpoint at each turn boundary. You can revert a session to an earlier turn; the conversation and the files go back together. A rejected revert changes nothing. When the station cannot prove the result of a revert, the session needs reconciliation, and input stays blocked until you resolve it on the board.
 - **Fleet features.** Callsigns, mail between sessions, tasks with waitable completions, `assign auto` routing without a model call, a plan library, a conflict radar across stations, usage meters (unknown usage is never shown as zero), image paste and notifications.
 - **Import a CLI session.** Continue a Claude Code or Codex conversation that you started in a terminal as a driven session, by its native session id (operations guide, §7.1).
-- **Coordinator sessions (ADR-006, in progress: item 6-5).** The owner can grant a session a scoped coordinator MCP API to start and steer other sessions, with spawn caps, renewal and revocation. Current limit: every coordinator start fails with `handoff_unverified` until the coordinator live smoke verifies the context handoff for a provider version (see [operations §7.2](docs/v2/operations.md)).
+- **Coordinator sessions (ADR-006).** The owner can grant a session a scoped coordinator MCP API to start and steer other sessions, with spawn caps, renewal and revocation. Current limit: only Claude 2.1.296 and later is verified; a Codex coordinator start fails with `handoff_unverified` (see [operations §7.2](docs/v2/operations.md)).
 - **Human shell.** A PTY shell on a station, in the board, when the station policy allows it.
 - **Durable sessions (opt-in).** With `host = "shim"` in `station.toml`, the agents keep running through a station restart or upgrade, and the new station reattaches them.
 - **Auto-continue (opt-in, default off).** After a station restart, a session that was in a turn can continue with a fixed station message, when every safety rule of ADR-007 holds. This release supports it only with the direct host (see the operations guide, §10).
