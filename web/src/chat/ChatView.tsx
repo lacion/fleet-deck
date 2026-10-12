@@ -118,11 +118,16 @@ function SubagentView(props: { item: Subagent; onOpenChanges: OpenChanges }) {
   const { item } = props;
   const live = item.status === 'running' || item.status === 'background';
   return (
-    <div className="fd-chat-card fd-chat-subagent" data-status={item.status}>
+    <div
+      className="fd-chat-card fd-chat-subagent"
+      data-status={item.status}
+      data-subagent={item.node_id}
+    >
       <div className="fd-chat-card-head">
         <span className="fd-chat-chip">{subagentLabel(item.status)}</span>
         <span className="fd-chat-card-title">{item.title}</span>
       </div>
+      {item.input ? <p className="fd-chat-subagent-task">{item.input}</p> : null}
       <details open={live ? true : undefined}>
         <summary>{`${item.items.length} ${item.items.length === 1 ? 'entry' : 'entries'}`}</summary>
         <div className="fd-chat-nested">
