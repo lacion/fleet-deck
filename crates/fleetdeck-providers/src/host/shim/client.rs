@@ -211,6 +211,43 @@ impl Attachment {
     }
 }
 
+impl Attachment {
+    /// Splits the attachment into its two directions, so that one task can
+    /// read frames while another sends them.
+    #[must_use]
+    pub fn into_split(self) -> (FrameReader, FrameWriter) {
+        (FrameReader { r: self.r }, FrameWriter { w: self.w })
+    }
+}
+
+/// The read direction of an [`Attachment`].
+#[derive(Debug)]
+pub struct FrameReader {
+    r: OwnedReadHalf,
+}
+
+impl FrameReader {
+    /// The next frame, without a time limit; `None` when the shim closed
+    /// the connection.
+    pub async fn next(&mut self) -> Result<Option<(FromShim, Vec<u8>)>, ClientError> {
+        Ok(read_frame::<_, FromShim>(&mut self.r).await?)
+    }
+}
+
+/// The write direction of an [`Attachment`].
+#[derive(Debug)]
+pub struct FrameWriter {
+    w: OwnedWriteHalf,
+}
+
+impl FrameWriter {
+    /// Sends one frame.
+    pub async fn send(&mut self, frame: &ToShim, payload: &[u8]) -> Result<(), ClientError> {
+        write_frame(&mut self.w, frame, payload).await?;
+        Ok(())
+    }
+}
+
 /// The socket path of a spec, for callers that only hold the spec.
 #[must_use]
 pub fn socket_of(spec: &LaunchSpec) -> PathBuf {

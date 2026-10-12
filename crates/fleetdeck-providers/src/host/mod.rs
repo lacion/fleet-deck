@@ -132,6 +132,9 @@ pub enum HostError {
     StdinClosed,
     #[error("write to the process failed: {0}")]
     Write(#[source] std::io::Error),
+    /// The shim connection or attach failed (ADR-005).
+    #[error("shim: {0}")]
+    Shim(String),
 }
 
 /// A started process: its stdout (read by the adapter driver) and its control.

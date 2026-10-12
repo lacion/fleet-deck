@@ -552,7 +552,13 @@ impl Shim {
         {
             return;
         }
-        self.lock().cause.get_or_insert(forced);
+        {
+            // The grace passed: the stop escalates. A kill keeps its cause.
+            let mut state = self.lock();
+            if state.cause != Some("killed") {
+                state.cause = Some(forced);
+            }
+        }
         signal_group(self.pid(), rustix::process::Signal::TERM);
         if tokio::time::timeout(term_grace, exited.wait_for(|e| *e))
             .await

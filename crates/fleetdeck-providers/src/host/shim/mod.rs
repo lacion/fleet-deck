@@ -15,6 +15,7 @@
 //! stays `direct` (ADR-005 §2 "Selection").
 
 pub mod client;
+pub mod host;
 pub mod identity;
 pub mod journal;
 pub mod launch;
