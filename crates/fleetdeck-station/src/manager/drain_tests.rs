@@ -79,3 +79,16 @@ fn only_the_commands_that_create_work_are_refused_while_draining() {
     assert!(drain::guard(true, &resume).is_err());
     assert!(drain::guard(false, &resume).is_ok());
 }
+
+/// An import resumes a native session in a new process: it is new work, so a
+/// drain refuses it (6-12 merge review r50, DL-130).
+#[test]
+fn a_draining_station_refuses_an_import() {
+    let import = SessionCommand::Import {
+        spec: spec("/w", "claude"),
+        native_session_id: "cli-session-7".to_owned(),
+        prompt: None,
+    };
+    assert!(drain::guard(true, &import).is_err());
+    assert!(drain::guard(false, &import).is_ok());
+}

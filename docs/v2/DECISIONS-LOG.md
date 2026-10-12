@@ -1494,3 +1494,11 @@ Format: context, options, choice, reason, owner review.
 - Choice: (b). The guides are `docs/v2/operations.md` (configuration, pairing, offline use, backup, drain and upgrade, auto-continue, troubleshooting, owner steps), `docs/v2/cutover.md` (v1 → v2 for the owner, plus the repository checklist of 7-7) and `docs/v2/internals.md` (glossary, crate map, data flow, link summary, durability rules, versions, test map). The guides describe the features that are merged now; 7-8 updates them for the items that merge later.
 - Reason: the v2 branch must show the v2 product; the v1 text stays available and unchanged in content (only its image paths move). A test (`crates/fleetdeck-cli/tests/docs_commands.rs`) checks every documented `fleetdeck` command and flag against the build, so the docs cannot drift from the CLI without a failure.
 - Owner review: pending.
+
+## DL-130 — A drain refuses `session.import` (lane A round 56, 6-12 merge fix)
+
+- Context: the merge of lane C's 6-12 Import added `session.import`, which resumes a native session in a new provider process. The 7-3 drain guard (`manager/drain.rs` `creates_work`) did not list it, so an import passed a drain (review r50 follow-up).
+- Options: (a) add `SessionCommand::Import` to the commands that create work; (b) leave it and document the gap.
+- Choice: (a). Test `manager::tests::drain::a_draining_station_refuses_an_import`; `docs/v2/operations.md` §9 lists import among the refused commands.
+- Reason: an import starts a provider process exactly like a start or a resume; a drain must refuse all new work (PLAN Phase 7).
+- Owner review: pending.

@@ -122,7 +122,7 @@ The station resumes the native session with the permission mode that you select 
 
 > **Caution:** do not copy a new binary over the running one. Use the steps below; they keep a snapshot and a rollback path.
 
-1. Drain the station: `fleetdeck station drain [--timeout-secs 600]`. The station refuses new work (start, resume, fork, prompt, follow-up, steer, revert) and waits until no session has an open turn. Answers, interrupts and stops still work. The command fails and names the busy sessions when the time ends.
+1. Drain the station: `fleetdeck station drain [--timeout-secs 600]`. The station refuses new work (start, resume, import, fork, prompt, follow-up, steer, revert) and waits until no session has an open turn. Answers, interrupts and stops still work. The command fails and names the busy sessions when the time ends.
 2. Stop the station service.
 3. Prepare the update: `fleetdeck station upgrade prepare --binary <new fleetdeck> --to-version <version>`. This step:
    - takes a snapshot of `station.db` with its WAL and SHM files,
