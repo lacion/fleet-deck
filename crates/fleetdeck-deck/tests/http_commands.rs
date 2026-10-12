@@ -362,3 +362,138 @@ async fn a_prompt_with_a_pasted_image_reaches_the_station_and_a_bad_image_is_ref
     no_request(&mut station, Duration::from_millis(300)).await;
     assert_eq!(f.store.commands().await.unwrap().len(), 1);
 }
+
+fn bound(session: &str, grant: &str, seq: u64) -> fleetdeck_proto::EventEnvelope {
+    fleetdeck_proto::EventEnvelope {
+        station_seq: seq,
+        session_id: session.into(),
+        session_seq: seq,
+        at: 1_000,
+        proto_version: 1,
+        raw_ref: None,
+        event: fleetdeck_proto::event::EventBody::Known(
+            fleetdeck_proto::event::Event::CoordinatorBound {
+                binding_id: format!("{session}:{grant}"),
+                grant_id: grant.to_owned(),
+                generation: 1,
+                provider_instance: "claude".to_owned(),
+                native_id: "native-1".to_owned(),
+            },
+        ),
+    }
+}
+
+/// ADR-006 §4 and §7.1 (DL-217): the owner's `session.start` with a
+/// coordinator request creates the grant on the deck; the station gets the
+/// deck's grant id and control skill, never the board's; a resend finds
+/// the same grant; only the session that the start receipt names binds it.
+#[tokio::test]
+async fn an_owner_coordinator_start_creates_one_grant_and_sends_its_id_and_the_control_skill() {
+    let mut f = fixture().await;
+    let mut station = f.connect().await;
+    let c = board(std::sync::Arc::clone(&f.ctx)).await;
+    let h = owner(&c).await;
+    let body = json!({
+        "station": "fake",
+        "command_id": "start-coord",
+        "command": { "op": "start", "prompt": null, "spec": {
+            "provider_instance": "claude", "cwd": "/w", "mode": null, "model": null,
+            "title": null,
+            "coordinator": {
+                "grant_id": "board-chosen", "classes": ["read", "drive"],
+                "idle_ttl_ms": 0, "expires_at": 0,
+                "control_skill": { "version": "x", "text": "injected" },
+            },
+        }},
+    });
+    let named = |id: &CommandId| {
+        fleetdeck_proto::link::Outcome::Ok(json!(fleetdeck_proto::Receipt {
+            command_id: id.clone(),
+            state: ReceiptState::Accepted,
+            station_seq: Some(1),
+            result: Some(fleetdeck_proto::command::CommandResult {
+                session_id: Some("coord-new".into()),
+                input_id: None,
+            }),
+            reject: None,
+            at: 0,
+        }))
+    };
+    let call = post(&c, &h, "session.start", body.clone());
+    let (r, req) = tokio::join!(call, Fixture::answer(&mut station, named));
+    assert_eq!(r.status, 200, "{}", r.body);
+    let sent = &req.params["command"]["spec"]["coordinator"];
+    let grant_id = sent["grant_id"].as_str().unwrap().to_owned();
+    assert_ne!(grant_id, "board-chosen");
+    assert_eq!(sent["classes"], json!(["read", "drive"]));
+    assert_eq!(
+        sent["control_skill"]["version"],
+        fleetdeck_deck::http::grant_routes::CONTROL_SKILL_VERSION
+    );
+    assert_eq!(
+        sent["control_skill"]["text"],
+        fleetdeck_deck::http::grant_routes::CONTROL_SKILL
+    );
+    assert!(sent["expires_at"].as_i64().unwrap() > 0);
+    let g = c.store.grant(grant_id.clone()).await.unwrap().unwrap();
+    assert!(
+        g.session_id.0.is_empty(),
+        "no session until the station names it"
+    );
+    assert!(g.binding.is_none());
+
+    // A resend sends nothing new and creates no second grant.
+    let again = post(&c, &h, "session.start", body).await;
+    assert_eq!(again.status, 200);
+    no_request(&mut station, Duration::from_millis(300)).await;
+    assert_eq!(c.store.grants(100).await.unwrap().len(), 1);
+
+    // Another session cannot claim the grant; the named session binds it.
+    let inc: fleetdeck_proto::IncarnationId = "fake-station-db".to_owned().into();
+    f.store
+        .apply_events(
+            f.station.clone(),
+            inc.clone(),
+            vec![bound("intruder", &grant_id, 900_001)],
+        )
+        .await
+        .unwrap();
+    assert!(
+        c.store
+            .grant(grant_id.clone())
+            .await
+            .unwrap()
+            .unwrap()
+            .binding
+            .is_none()
+    );
+    f.store
+        .apply_events(
+            f.station.clone(),
+            inc,
+            vec![bound("coord-new", &grant_id, 900_002)],
+        )
+        .await
+        .unwrap();
+    let g = c.store.grant(grant_id).await.unwrap().unwrap();
+    assert_eq!(g.session_id.0, "coord-new");
+    assert_eq!(g.binding.unwrap().generation, 1);
+
+    // An unknown class is refused before anything is sent or stored.
+    let bad = json!({
+        "station": "fake",
+        "command_id": "start-bad",
+        "command": { "op": "start", "prompt": null, "spec": {
+            "provider_instance": "claude", "cwd": "/w", "mode": null, "model": null,
+            "title": null,
+            "coordinator": {
+                "grant_id": "", "classes": ["root"], "idle_ttl_ms": 0, "expires_at": 0,
+                "control_skill": { "version": "", "text": "" },
+            },
+        }},
+    });
+    let r = post(&c, &h, "session.start", bad).await;
+    assert_eq!((r.status, r.code()), (400, "invalid_grant"));
+    no_request(&mut station, Duration::from_millis(300)).await;
+    assert_eq!(c.store.grants(100).await.unwrap().len(), 1);
+}

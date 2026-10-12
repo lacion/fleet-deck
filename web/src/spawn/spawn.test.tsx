@@ -106,6 +106,12 @@ describe('spawn form (P4-4)', () => {
     expect(html).toMatch(/<button type="submit" disabled="">Start session<\/button>/);
   });
 
+  test('the owner can make a coordinator session; it starts off (ADR-006 §4, DL-217)', () => {
+    const html = form([reported()]);
+    expect(html).toContain('Coordinator: this session may read the fleet');
+    expect(html).not.toMatch(/<input type="checkbox" checked=""\/>Coordinator/);
+  });
+
   test('the modes come from the capabilities that the station reports (P5-3)', () => {
     const [claude, codex] = info().providers;
     expect(spawnModes(claude)).toEqual(['default', 'plan', 'acceptEdits', 'dontAsk', 'auto']);

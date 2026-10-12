@@ -177,6 +177,77 @@ async fn queue(
     Ok(())
 }
 
+/// The version of the deck-served control skill (ADR-006 §7.1).
+pub const CONTROL_SKILL_VERSION: &str = "1";
+/// The deck-served control skill: the MCP `instructions` of a coordinator
+/// session. It holds no secret and no grant data.
+pub const CONTROL_SKILL: &str = include_str!("../control_skill.md");
+
+/// The owner's coordinator start (ADR-006 §4, §7.1; DL-217): the board's
+/// `session.start` with a `coordinator` request creates the grant on the
+/// deck in this call, and the deck fills in the grant id, the expiry and
+/// its control skill. Whatever grant id or skill the board sent is
+/// replaced. A resend of the same `command_id` finds the same grant.
+///
+/// # Errors
+/// 400 `invalid_grant` for an unknown class, no class or a limit out of
+/// range; 500 for a database error.
+pub(super) async fn owner_start(
+    board: &Board,
+    station: &fleetdeck_proto::StationId,
+    command_id: &fleetdeck_proto::CommandId,
+    spec: &mut fleetdeck_proto::command::CoordinatorSpec,
+) -> Result<(), ApiError> {
+    let invalid = |m: String| ApiError::new(StatusCode::BAD_REQUEST, "invalid_grant", m);
+    let mut classes = std::collections::BTreeSet::new();
+    for name in &spec.classes {
+        let class: GrantClass = serde_json::from_value(serde_json::Value::String(name.clone()))
+            .map_err(|_| invalid(format!("unknown grant class `{name}`")))?;
+        classes.insert(class);
+    }
+    if classes.is_empty() {
+        return Err(invalid("a coordinator grant needs a class".to_owned()));
+    }
+    let mut grant = crate::store::NewGrant::new(station.clone(), "".into());
+    grant.classes = classes;
+    grant.start_command_id = Some(command_id.to_string());
+    if spec.idle_ttl_ms > 0 {
+        grant.idle_ttl_ms = i64::try_from(spec.idle_ttl_ms).unwrap_or(i64::MAX);
+    }
+    if spec.expires_at > 0 {
+        grant.ttl_ms = spec.expires_at.saturating_sub(board.store.now_ms());
+    }
+    let g = board.store.create_grant(grant).await.map_err(|e| match e {
+        crate::store::DeckError::Invalid(m) => invalid(m),
+        e => ApiError::internal(e),
+    })?;
+    // The station relays coordinator calls with the link scope `coordinate`
+    // that the grant added; the link's grant cache follows (DL-211).
+    board
+        .link
+        .peers
+        .refresh(station.clone())
+        .await
+        .map_err(ApiError::internal)?;
+    spec.grant_id = g.grant_id;
+    spec.idle_ttl_ms = u64::try_from(g.idle_ttl_ms).unwrap_or(0);
+    spec.expires_at = g.expires_at;
+    spec.classes = view_classes(&g.classes);
+    spec.control_skill = fleetdeck_proto::command::ControlSkill {
+        version: CONTROL_SKILL_VERSION.to_owned(),
+        text: CONTROL_SKILL.to_owned(),
+    };
+    Ok(())
+}
+
+fn view_classes(classes: &std::collections::BTreeSet<GrantClass>) -> Vec<String> {
+    classes
+        .iter()
+        .filter_map(|c| serde_json::to_value(c).ok())
+        .filter_map(|v| v.as_str().map(str::to_owned))
+        .collect()
+}
+
 async fn current_grant(board: &Board, grant_id: &str) -> Result<Grant, ApiError> {
     board
         .store

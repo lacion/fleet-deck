@@ -274,6 +274,15 @@ CREATE INDEX lineage_by_session ON coordinator_lineage (station_id, session_id);
 /// `coordinator.bound`. `NULL` when no renewal waits.
 const V10: &str = "ALTER TABLE tokens ADD COLUMN renew_generation INTEGER;";
 
+/// The owner's start command of a grant (ADR-006 §4, DL-217): a grant
+/// created with a session start has no session id until the station
+/// names the session; a resend of the same start finds the same grant.
+const V11: &str = "
+ALTER TABLE tokens ADD COLUMN start_command_id TEXT;
+CREATE UNIQUE INDEX tokens_by_start_command ON tokens (start_command_id)
+    WHERE start_command_id IS NOT NULL;
+";
+
 /// The `deck.db` migrations.
 #[must_use]
 pub fn migrations() -> Migrations<'static> {
@@ -288,6 +297,7 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V8),
         M::up(V9),
         M::up(V10),
+        M::up(V11),
     ])
 }
 

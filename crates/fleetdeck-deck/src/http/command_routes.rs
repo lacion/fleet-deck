@@ -140,9 +140,17 @@ async fn route(
         ));
     };
     let station = Some(rec.station_id.0.clone());
-    let kind = CommandKind::Session {
-        command: req.command,
-    };
+    let mut command = req.command;
+    // An owner start with a coordinator request: the deck creates the grant
+    // and fills in its id and the control skill (ADR-006 §4, DL-217).
+    if let SessionCommand::Start { spec, .. } = &mut command
+        && let Some(coordinator) = spec.coordinator.as_deref_mut()
+    {
+        super::grant_routes::owner_start(board, &rec.station_id, &req.command_id, coordinator)
+            .await
+            .map_err(|e| (station.clone(), id.clone(), e))?;
+    }
+    let kind = CommandKind::Session { command };
     board
         .link
         .submit_as(rec.station_id, CommandOrigin::Board, kind, req.command_id)

@@ -50,6 +50,7 @@ export function SpawnForm({
   const [cloneUrl, setCloneUrl] = useState('');
   const [cloneName, setCloneName] = useState('');
   const [batch, setBatch] = useState(false);
+  const [coordinator, setCoordinator] = useState(false);
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<SpawnOutcome | null>(null);
 
@@ -113,18 +114,31 @@ export function SpawnForm({
             setOutcome(null);
             const target =
               place === 'clone' && importId.trim() === '' ? `${cwd}/${cloneName.trim()}` : cwd;
+            // An import continues a native session in this directory: it
+            // ignores the workspace and batch choices (DL-308). A batch
+            // forces a worktree per session (v0); a clone is one session.
+            const native = importId.trim();
+            const importing = native !== '';
             const spec = {
               provider_instance: provider.instance,
               cwd: target,
               mode: modes.includes(mode) ? mode : null,
               model: model.trim() === '' ? null : model.trim(),
               title: title.trim() === '' ? null : title.trim(),
+              // The deck creates the grant and fills in its id, expiry and
+              // control skill (ADR-006 §4, DL-217); 0 means its default.
+              ...(coordinator && !importing
+                ? {
+                    coordinator: {
+                      grant_id: '',
+                      classes: ['read', 'mail', 'drive'],
+                      idle_ttl_ms: 0,
+                      expires_at: 0,
+                      control_skill: { version: '', text: '' },
+                    },
+                  }
+                : {}),
             };
-            // An import continues a native session in this directory: it
-            // ignores the workspace and batch choices (DL-308). A batch
-            // forces a worktree per session (v0); a clone is one session.
-            const native = importId.trim();
-            const importing = native !== '';
             const workspace = importing
               ? null
               : place === 'clone'
@@ -267,6 +281,14 @@ export function SpawnForm({
               Batch: one session in its own worktree for each line (3x task starts three)
             </label>
           )}
+          <label className="fd-check">
+            <input
+              type="checkbox"
+              checked={coordinator}
+              onChange={(event) => setCoordinator(event.target.checked)}
+            />
+            Coordinator: this session may read the fleet, send mail and drive the sessions it starts
+          </label>
           <label>
             Permission mode
             <select value={mode} onChange={(event) => setMode(event.target.value)}>

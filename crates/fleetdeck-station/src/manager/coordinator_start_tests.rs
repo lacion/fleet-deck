@@ -24,7 +24,8 @@ use fleetdeck_testkit::{Det, FakeAgent};
 use super::tests::coordinator_spec;
 use super::*;
 use crate::coordinator::{BindingState, Bindings, digest};
-use crate::store::{Caller, OfflineApprovalPolicy, StoreConfig};
+use crate::store::{Caller, OfflineApprovalPolicy, ReadResult, StoreConfig};
+use fleetdeck_proto::{Event, EventBody};
 
 const URL: &str = "http://127.0.0.1:41234/mcp";
 
@@ -106,7 +107,7 @@ async fn a_deck_start_with_a_grant_hands_the_credential_to_the_child_environment
         origin: CommandOrigin::Board,
         command: SessionCommand::Start {
             spec,
-            prompt: None,
+            prompt: Some(super::tests::text("hello")),
             workspace: None,
         },
     };
@@ -152,12 +153,105 @@ async fn a_deck_start_with_a_grant_hands_the_credential_to_the_child_environment
     assert!(argv.contains("Bearer ${FLEETDECK_COORDINATOR_TOKEN}"));
     assert!(argv.contains(URL));
 
-    // The binding is pending under the digest of the credential.
+    // The binding is under the digest of the credential: pending at
+    // generation 0 until `session.started` names the native identity.
     assert!(bindings.has_digest(&digest(&token)));
     let binding = bindings.find(&session, "grant-1").unwrap();
-    assert_eq!(binding.state, BindingState::Pending);
-    assert_eq!(binding.generation, 0);
+    assert!(matches!(
+        (binding.state, binding.generation),
+        (BindingState::Pending, 0) | (BindingState::Active, 1)
+    ));
     assert_eq!(binding.control_skill, "You coordinate the fleet.");
+
+    // DL-217: the native identity of `session.started` binds it
+    // (generation 1, `coordinator.bound`); the process end revokes it.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let bound = loop {
+        let b = bindings.find(&session, "grant-1").unwrap();
+        if b.state == BindingState::Active {
+            break b;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the binding never became active"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    assert_eq!(bound.generation, 1);
+    let native = bound.native_id.clone().unwrap();
+    let lifecycle = |events: Vec<fleetdeck_proto::EventEnvelope>| -> Vec<Event> {
+        events
+            .into_iter()
+            .filter_map(|e| match e.event {
+                EventBody::Known(
+                    e @ (Event::CoordinatorBound { .. } | Event::CoordinatorEnded { .. }),
+                ) => Some(e),
+                _ => None,
+            })
+            .collect()
+    };
+    let read = || async {
+        match manager.store().read_after(0, 100_000).await.unwrap() {
+            ReadResult::Events { events, .. } => events,
+            ReadResult::SnapshotRequired { .. } => panic!("snapshot required"),
+        }
+    };
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let facts = loop {
+        let facts = lifecycle(read().await);
+        if !facts.is_empty() {
+            break facts;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "no coordinator.bound"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    assert!(matches!(
+        &facts[0],
+        Event::CoordinatorBound { grant_id, generation: 1, native_id, .. }
+            if grant_id == "grant-1" && native_id == &native
+    ));
+
+    let stop = CommandEnvelope {
+        command_id: CommandId::from("cmd-stop".to_owned()),
+        target_incarnation: None,
+        retry_until: i64::try_from(det.now_ms()).unwrap() + RETRY_WINDOW_MS,
+        origin: CommandOrigin::Board,
+        command: SessionCommand::Stop {
+            session_id: session.clone(),
+            how: StopMode::Kill,
+        },
+    };
+    let command = stop.command.clone();
+    let decide_policy = policy.clone();
+    manager
+        .store()
+        .decide(stop, Caller::deck("k"), move |d| {
+            decide::decide(d, &decide_policy, CommandOrigin::Board, command)
+        })
+        .await
+        .unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let facts = lifecycle(read().await);
+        if facts.iter().any(|e| {
+            matches!(e, Event::CoordinatorEnded { reason, generation: 1, .. }
+                if reason == coordinator_start::REASON_PROCESS_EXIT)
+        }) {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "no coordinator.ended"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(
+        bindings.find(&session, "grant-1").unwrap().state,
+        BindingState::Revoked
+    );
 
     manager.shutdown(StopMode::Kill).await;
     // No station store file holds the credential (database, WAL).
