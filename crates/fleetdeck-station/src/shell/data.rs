@@ -61,12 +61,7 @@ pub async fn serve(
     }
 }
 
-async fn forward(
-    handle: Data,
-    stream: u32,
-    backlog: Vec<u8>,
-    mut live: mpsc::UnboundedReceiver<Vec<u8>>,
-) {
+async fn forward(handle: Data, stream: u32, backlog: Vec<u8>, mut live: mpsc::Receiver<Vec<u8>>) {
     if !backlog.is_empty() && handle.write(stream, backlog).await.is_err() {
         return;
     }

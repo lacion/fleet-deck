@@ -35,6 +35,7 @@ pub mod resumes;
 pub mod reverts;
 pub mod schema;
 mod sharing;
+pub mod shell_effects;
 pub mod shim_driver;
 pub mod shim_gaps;
 pub mod shim_writes;

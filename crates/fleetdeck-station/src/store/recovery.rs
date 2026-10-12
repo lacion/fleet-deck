@@ -99,6 +99,15 @@ pub(super) fn recover(
         }
     }
     (report.retired, report.unknown) = effects::recover_effects(conn, now, out)?;
+    // DL-405: a shell effect of an earlier process is never dispatched.
+    let (shell_retired, shell_unknown) = super::shell_effects::recover(conn, now)?;
+    if shell_retired + shell_unknown > 0 {
+        tracing::info!(
+            retired = shell_retired,
+            unknown = shell_unknown,
+            "shell effects of the earlier process"
+        );
+    }
     report.expired_requests = requests::expire_open(
         conn,
         "process_incarnation IS NULL OR process_incarnation IN
