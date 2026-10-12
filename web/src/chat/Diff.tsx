@@ -1,4 +1,4 @@
-import { diffLineKind } from './diff';
+import { diffLineKind } from './diffLines';
 
 /** A unified diff with colored lines (UI-DESIGN §2.5). */
 export function Diff({
