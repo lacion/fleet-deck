@@ -1,8 +1,8 @@
 # ADR-007 — Restart auto-continuation (L19)
 
-- **Status:** Proposed. M3 round 39, 2026-10-12; DL-118. Not implemented. Wiring waits for an adversary DESIGN REVIEW PASS recorded by the architect.
+- **Status:** Accepted (owner pre-approval, 2026-10-12; DL-127). Written in M3 round 39 (DL-118); implemented in M3 lane A round 46 with the deviations of DL-127.
 - **Date:** 2026-10-12
-- **Deciders:** architect (goal loop, M3); adversary DESIGN REVIEW (pending)
+- **Deciders:** architect (goal loop, M3); owner pre-approval (DL-073 owner answers, DL-127); the adversary DESIGN REVIEW was not possible in the loop (no subagents) and is part of the architect PRE-PR REVIEW
 - **Implements:** PLAN A10 L19, Phase 7 item 7-2 and the ADR-005 "Auto-continue integration" bullet; ADR-005 §6 (reattach is not resume, resume eligibility); ADR-004 §9.3 envelopes and §9.6 method table (one new row, §4)
 - **Depends on:** `session.resume` (DL-118: an owner-requested native resume of an ended session, with the admission rules of `crates/fleetdeck-station/src/manager/resume.rs`)
 

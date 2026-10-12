@@ -162,6 +162,26 @@ CREATE TABLE audit (
 ) STRICT;
 ";
 
+/// The plan library (M3 6-6, DL-301): one row for each folded
+/// `plan.proposed` event. No foreign key to `stations`: a plan is fleet
+/// intent and stays when its station is removed or gets a new incarnation.
+const V6: &str = "
+CREATE TABLE plans (
+    plan_key       TEXT    PRIMARY KEY,
+    station_id     TEXT    NOT NULL,
+    session_id     TEXT    NOT NULL,
+    plan_id        TEXT    NOT NULL,
+    turn_id        TEXT,
+    session_title  TEXT,
+    markdown       TEXT    NOT NULL,
+    truncated      INTEGER NOT NULL CHECK (truncated IN (0, 1)),
+    status         TEXT    NOT NULL CHECK (status IN ('proposed', 'executed', 'archived')),
+    proposed_at    INTEGER NOT NULL,
+    updated_at     INTEGER NOT NULL
+) STRICT;
+CREATE INDEX plans_by_time ON plans (proposed_at DESC);
+";
+
 /// The `deck.db` migrations.
 #[must_use]
 pub fn migrations() -> Migrations<'static> {
@@ -171,6 +191,7 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V3),
         M::up(V4),
         M::up(V5),
+        M::up(V6),
     ])
 }
 

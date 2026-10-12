@@ -1,8 +1,9 @@
 import { defineConfig } from '@playwright/test';
 
 // Browser tests at a phone viewport (PLAN P4-5). They run offline against
-// the built board (`bun run build`) served by `vite preview`.
-const PORT = 4179;
+// the built board (`bun run build`) served by `vite preview`. Parallel
+// lanes set FD_E2E_PORT to a free port (DL-302).
+const PORT = Number(process.env['FD_E2E_PORT'] ?? 4179);
 
 export default defineConfig({
   testDir: 'e2e',

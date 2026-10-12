@@ -9,6 +9,7 @@ pub mod command_routes;
 pub mod file_routes;
 pub mod guard;
 pub mod methods;
+pub mod plan_routes;
 pub mod read_routes;
 pub mod shell_routes;
 pub mod station_routes;
@@ -98,6 +99,8 @@ pub fn router(board: Arc<Board>) -> Router {
             "/api/stations/{station}/sessions/{session}/turns/{turn}/diff",
             get(file_routes::diff),
         )
+        .route("/api/plans", get(plan_routes::list))
+        .route("/api/plans/mark", post(plan_routes::mark))
         .route("/api/sessions", get(read_routes::sessions))
         .route("/api/commands", get(read_routes::commands))
         .route(

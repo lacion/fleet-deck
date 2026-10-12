@@ -15,6 +15,7 @@ pub mod fold;
 pub mod ids;
 pub mod link;
 pub mod mutation;
+pub mod plans;
 pub mod session;
 pub mod shell;
 pub mod status;

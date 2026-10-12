@@ -18,6 +18,7 @@ mod checkpoint;
 mod core;
 mod driver;
 mod host_cmd;
+mod limits;
 mod map;
 mod probe;
 mod requests;

@@ -245,10 +245,19 @@
     "proto_version": 1,
     "raw_ref": null,
     "event": {
-      "kind": "message.delta",
-      "turn_id": "turn-1",
-      "parent_node_id": null,
-      "text": "blue"
+      "kind": "usage.updated",
+      "usage": {
+        "input_tokens": null,
+        "output_tokens": null,
+        "cost_usd": null
+      },
+      "rate_limits": [
+        {
+          "scope": "codex.primary",
+          "used_percent": 30.0,
+          "resets_at": 1792149381000
+        }
+      ]
     }
   },
   {
@@ -259,7 +268,7 @@
     "proto_version": 1,
     "raw_ref": null,
     "event": {
-      "kind": "message.completed",
+      "kind": "message.delta",
       "turn_id": "turn-1",
       "parent_node_id": null,
       "text": "blue"
@@ -273,13 +282,10 @@
     "proto_version": 1,
     "raw_ref": null,
     "event": {
-      "kind": "usage.updated",
-      "usage": {
-        "input_tokens": 13925,
-        "output_tokens": 5,
-        "cost_usd": null
-      },
-      "rate_limits": []
+      "kind": "message.completed",
+      "turn_id": "turn-1",
+      "parent_node_id": null,
+      "text": "blue"
     }
   },
   {
@@ -290,10 +296,13 @@
     "proto_version": 1,
     "raw_ref": null,
     "event": {
-      "kind": "input.updated",
-      "input_id": "fd-in-1",
-      "turn_id": "turn-1",
-      "state": "completed"
+      "kind": "usage.updated",
+      "usage": {
+        "input_tokens": 13925,
+        "output_tokens": 5,
+        "cost_usd": null
+      },
+      "rate_limits": []
     }
   },
   {
@@ -304,10 +313,19 @@
     "proto_version": 1,
     "raw_ref": null,
     "event": {
-      "kind": "turn.completed",
-      "turn_id": "turn-1",
-      "status": "done",
-      "usage": null
+      "kind": "usage.updated",
+      "usage": {
+        "input_tokens": null,
+        "output_tokens": null,
+        "cost_usd": null
+      },
+      "rate_limits": [
+        {
+          "scope": "codex.primary",
+          "used_percent": 30.0,
+          "resets_at": 1792149381000
+        }
+      ]
     }
   },
   {
@@ -318,10 +336,10 @@
     "proto_version": 1,
     "raw_ref": null,
     "event": {
-      "kind": "run.completed",
-      "run_id": "run-1",
-      "status": "done",
-      "background_pending": false
+      "kind": "input.updated",
+      "input_id": "fd-in-1",
+      "turn_id": "turn-1",
+      "state": "completed"
     }
   },
   {
@@ -329,6 +347,34 @@
     "session_id": "codex-question_rpc",
     "session_seq": 17,
     "at": 1760000017000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "turn.completed",
+      "turn_id": "turn-1",
+      "status": "done",
+      "usage": null
+    }
+  },
+  {
+    "station_seq": 218,
+    "session_id": "codex-question_rpc",
+    "session_seq": 18,
+    "at": 1760000018000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "run.completed",
+      "run_id": "run-1",
+      "status": "done",
+      "background_pending": false
+    }
+  },
+  {
+    "station_seq": 219,
+    "session_id": "codex-question_rpc",
+    "session_seq": 19,
+    "at": 1760000019000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
