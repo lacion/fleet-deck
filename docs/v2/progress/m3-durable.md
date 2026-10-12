@@ -28,6 +28,14 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 67 (2026-10-12, 16:19–)
+
+- Committed round 66 as 9a653cf.
+- Lanes: no new commits on `m3/orchestration`, `m3/board`, `m3/ops`. `m3-orchestration.md` has no LANE COMPLETE (6-5 open); 6-13, 7-7 and 7-8 still wait. The time-box status table of round 65 stays valid.
+- 7-6 docs: `docs/v2/operations.md` §11 troubleshooting row for `feature_not_negotiated` (version skew, `coordinator.v1`).
+- Tests: `cargo nextest run -p fleetdeck-cli --test docs_commands` → 1 passed.
+- Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
+
 ## Round 66 (2026-10-12, 16:18–)
 
 - Committed round 65 as 49b1f67.

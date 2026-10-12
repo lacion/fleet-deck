@@ -157,6 +157,7 @@ Limits of this release (DL-127, follow-ups in `docs/v2/progress/m3-durable.md`):
 | The station is not on the board | Check the link: the station log, the `listen`/`link_listen` addresses, and the pairing. `fleetdeck deck stations` shows the link state. |
 | Usage shows "unknown" | The provider did not report usage for that window. Fleet Deck never shows unknown usage as zero. |
 | The board refuses a WebSocket | Set `tailnet_hostname` when you open the board by its tailnet name. |
+| A link call fails with `feature_not_negotiated` | The deck and the station do not share the feature of that method (for example `coordinator.v1` for coordinator sessions). Upgrade the older side; an N−1 peer keeps the shared features. |
 
 ## 12. Owner steps that this repository cannot test
 
