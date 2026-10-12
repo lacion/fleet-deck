@@ -1069,3 +1069,13 @@ Format: context, options, choice, reason, owner review.
 - Choice: ADR-005 status "Accepted (revision 3; adversary DESIGN REVIEW PASS sa-34468515 ...; DL-090)". The contract text is unchanged. The ShimHost implementation (7-1) may start and follows revision 3 exactly, including tests 26-50.
 - Reason: the approval was recorded by the architect, not by the executor; the executor only applies the recorded result.
 - Owner review: covered by DL-073 (owner pre-approval) and the architect's recorded PASS.
+
+## DL-091: The file service walks paths with directory descriptors (M3 round 12)
+
+- Context: the round-11 review: "Fix intermediate-directory symlink races in crates/fleetdeck-station/src/workspace/files.rs with descriptor-relative traversal and swap-race tests; O_NOFOLLOW currently protects only the final component." The DL-088 code checked each component with `lstat` by path and then opened the full path by name; a directory swapped for a symlink between the check and the open redirected the open outside the root.
+- Options: (a) descriptor-relative traversal with `openat(parent, name, O_NOFOLLOW | ...)` for every component; (b) Linux `openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS)`. Option (b) is Linux-only (macOS has no equivalent) and needs a fallback anyway.
+- Choice: (a) on Linux and macOS. The root opens once (`O_DIRECTORY | O_NOFOLLOW`); every component below it opens relative to its parent's descriptor (`O_DIRECTORY | O_NOFOLLOW` for directories; `O_NOFOLLOW | O_NONBLOCK | O_NOCTTY` for files, then `fstat` must be a regular file). The last component is first checked with `statat(AT_SYMLINK_NOFOLLOW)` in the opened parent (a symlink is `not_found`, a FIFO or directory `wrong_kind` without an open). Listings read the directory through its descriptor and `statat` each entry. The walk search reopens each queued directory from the root descriptor component by component. No path is resolved by name after the root.
+- Reason: a descriptor that the service holds cannot be redirected by a later rename; `O_NOFOLLOW` on each step refuses a swapped-in symlink at any depth.
+- Limit: the root path itself is opened by name once; its ancestors are the canonical policy root chosen by the station (the allowed roots), not a query path.
+- Tests: `crates/fleetdeck-station/src/workspace/files_race_tests.rs` (swap race with `RENAME_EXCHANGE` on Linux; symlink at any depth; symlinked root). They fail on the round-11 code and pass now.
+- Owner review: not needed (a security fix inside DL-088; no contract change).

@@ -6,21 +6,28 @@
 //! - the root is canonical and inside the allowed roots (the caller resolves
 //!   it); every query path is relative and validated lexically first
 //!   ([`fleetdeck_proto::files::path_segments`]);
-//! - no symlink is ever followed: every component below the root is checked
-//!   with `lstat`, and a file opens with `O_NOFOLLOW | O_NONBLOCK`, so a
-//!   symlink or a FIFO swapped in at the last moment is refused too;
+//! - no symlink is ever followed, also when one is swapped in while a query
+//!   runs: the root opens once as a directory descriptor, and every
+//!   component below it opens relative to its parent's descriptor with
+//!   `O_NOFOLLOW` (directories with `O_DIRECTORY`, files with `O_NONBLOCK`,
+//!   so a FIFO never blocks). A path is never resolved again by name, so a
+//!   directory replaced by a symlink after a check cannot redirect a later
+//!   step (M3 round 12; the review found that the earlier `lstat` walk
+//!   protected only the final component);
 //! - `.git` and credential directories are never listed, opened or searched;
 //! - every walk and read is bounded, and each cut is reported.
 
+use std::ffi::CStr;
 use std::fs::File;
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::os::fd::{AsFd, OwnedFd};
+use std::path::Path;
 
 use fleetdeck_proto::files::{
     FileContent, FileEntry, FileKind, FileListing, MAX_HIT_CHARS, MAX_LIST_ENTRIES, MAX_READ_BYTES,
     SearchHit, code, hidden_name, path_segments,
 };
-use rustix::fs::{CWD, Mode, OFlags};
+use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags, Stat};
 
 /// The most directory entries read from one directory.
 pub const MAX_SCANNED: usize = 20_000;
@@ -70,40 +77,103 @@ fn not_found(path: &str) -> FileError {
     FileError::new(code::NOT_FOUND, format!("`{path}` is not found"))
 }
 
-/// Resolves a relative `path` below `root` without following a symlink.
-/// Returns the absolute path and the `lstat` of its last component (`None`
-/// for the root itself).
-fn resolve(root: &Path, path: &str) -> Result<(PathBuf, Option<std::fs::Metadata>), FileError> {
-    let segments = path_segments(path).map_err(|c| {
+fn dir_flags() -> OFlags {
+    OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC
+}
+
+fn file_flags() -> OFlags {
+    OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC | OFlags::NOCTTY
+}
+
+/// Opens the (canonical) root as a directory descriptor.
+fn open_root(root: &Path) -> rustix::io::Result<OwnedFd> {
+    rustix::fs::open(root, dir_flags(), Mode::empty())
+}
+
+/// Opens the directory `segments` below `base`, one component at a time,
+/// each relative to its parent's descriptor and without following a
+/// symlink.
+fn descend(base: &OwnedFd, segments: &[&str]) -> rustix::io::Result<OwnedFd> {
+    let mut dir = rustix::fs::openat(base, c".", dir_flags(), Mode::empty())?;
+    for segment in segments {
+        dir = rustix::fs::openat(&dir, *segment, dir_flags(), Mode::empty())?;
+    }
+    Ok(dir)
+}
+
+/// The `lstat` of `name` in the directory `dir`.
+fn stat_at(dir: &OwnedFd, name: &str) -> rustix::io::Result<Stat> {
+    rustix::fs::statat(dir, name, AtFlags::SYMLINK_NOFOLLOW)
+}
+
+fn kind_of(file_type: FileType) -> FileKind {
+    match file_type {
+        FileType::Symlink => FileKind::Symlink,
+        FileType::Directory => FileKind::Dir,
+        FileType::RegularFile => FileKind::File,
+        _ => FileKind::Other,
+    }
+}
+
+fn kind_of_stat(stat: &Stat) -> FileKind {
+    kind_of(FileType::from_raw_mode(stat.st_mode))
+}
+
+fn size_of(stat: &Stat) -> u64 {
+    u64::try_from(stat.st_size).unwrap_or(0)
+}
+
+/// Splits a validated query path into its segments.
+fn segments_of(path: &str) -> Result<Vec<&str>, FileError> {
+    path_segments(path).map_err(|c| {
         if c == code::NOT_FOUND {
             not_found(path)
         } else {
             FileError::new(c, "a path is relative, without `.` or `..`, NUL or `\\`")
         }
-    })?;
-    let mut abs = root.to_path_buf();
-    let mut last = None;
-    for segment in segments {
-        abs.push(segment);
-        let meta = std::fs::symlink_metadata(&abs).map_err(|_| not_found(path))?;
-        if meta.file_type().is_symlink() {
-            return Err(not_found(path));
-        }
-        last = Some(meta);
-    }
-    Ok((abs, last))
+    })
 }
 
-fn kind_of(file_type: std::fs::FileType) -> FileKind {
-    if file_type.is_symlink() {
-        FileKind::Symlink
-    } else if file_type.is_dir() {
-        FileKind::Dir
-    } else if file_type.is_file() {
-        FileKind::File
-    } else {
-        FileKind::Other
+/// Opens the parent directory of the last segment and checks the last
+/// segment's kind without following it. `None` for the root itself.
+fn parent_and_last<'p>(
+    root: &OwnedFd,
+    segments: &[&'p str],
+    path: &str,
+) -> Result<Option<(OwnedFd, &'p str, FileKind)>, FileError> {
+    let Some((last, parents)) = segments.split_last() else {
+        return Ok(None);
+    };
+    let parent = descend(root, parents).map_err(|_| not_found(path))?;
+    let stat = stat_at(&parent, last).map_err(|_| not_found(path))?;
+    match kind_of_stat(&stat) {
+        FileKind::Symlink => Err(not_found(path)),
+        kind => Ok(Some((parent, last, kind))),
     }
+}
+
+/// The names in the directory `dir` (without `.` and `..` and without
+/// names that are not UTF-8), at most `max + 1` of them; true when the
+/// directory has more.
+fn names_in(dir: &OwnedFd, max: usize) -> (Vec<String>, bool) {
+    let Ok(entries) = Dir::read_from(dir) else {
+        return (Vec::new(), false);
+    };
+    let mut names = Vec::new();
+    for entry in entries {
+        let Ok(entry) = entry else { continue };
+        let name: &CStr = entry.file_name();
+        if name == c"." || name == c".." {
+            continue;
+        }
+        if names.len() >= max {
+            return (names, true);
+        }
+        if let Ok(name) = name.to_str() {
+            names.push(name.to_owned());
+        }
+    }
+    (names, false)
 }
 
 /// Lists the directory `path` below `root`: directories first, then by
@@ -112,36 +182,32 @@ fn kind_of(file_type: std::fs::FileType) -> FileKind {
 /// # Errors
 /// [`FileError`] with `invalid_path`, `not_found` or `wrong_kind`.
 pub fn list(root: &Path, path: &str) -> Result<FileListing, FileError> {
-    let (dir, meta) = resolve(root, path)?;
-    if meta.is_some_and(|m| !m.is_dir()) {
-        return Err(FileError::new(
-            code::WRONG_KIND,
-            format!("`{path}` is not a directory"),
-        ));
-    }
-    let mut entries = Vec::new();
-    let mut truncated = false;
-    let items = std::fs::read_dir(&dir).map_err(|_| not_found(path))?;
-    for (n, item) in items.enumerate() {
-        if n >= MAX_SCANNED {
-            truncated = true;
-            break;
+    let segments = segments_of(path)?;
+    let base = open_root(root).map_err(|_| not_found(path))?;
+    let dir = match parent_and_last(&base, &segments, path)? {
+        None => descend(&base, &[]).map_err(|_| not_found(path))?,
+        Some((_, _, kind)) if kind != FileKind::Dir => {
+            return Err(FileError::new(
+                code::WRONG_KIND,
+                format!("`{path}` is not a directory"),
+            ));
         }
-        let Ok(item) = item else { continue };
-        let Ok(name) = item.file_name().into_string() else {
-            continue;
-        };
+        Some((parent, last, _)) => descend(&parent, &[last]).map_err(|_| not_found(path))?,
+    };
+    let (names, mut truncated) = names_in(&dir, MAX_SCANNED);
+    let mut entries = Vec::new();
+    for name in names {
         if hidden_name(&name) {
             continue;
         }
-        let Ok(meta) = std::fs::symlink_metadata(item.path()) else {
+        let Ok(stat) = stat_at(&dir, &name) else {
             continue;
         };
-        let kind = kind_of(meta.file_type());
+        let kind = kind_of_stat(&stat);
         entries.push(FileEntry {
             name,
             kind,
-            size: (kind == FileKind::File).then_some(meta.len()),
+            size: (kind == FileKind::File).then(|| size_of(&stat)),
         });
     }
     entries.sort_by(|a, b| {
@@ -161,20 +227,19 @@ pub fn list(root: &Path, path: &str) -> Result<FileListing, FileError> {
     })
 }
 
-/// Opens a regular file without following a symlink and without blocking
-/// on a FIFO.
-fn open_file(abs: &Path, path: &str) -> Result<(File, u64), FileError> {
-    let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC;
-    let fd = rustix::fs::openat(CWD, abs, flags, Mode::empty()).map_err(|_| not_found(path))?;
-    let file = File::from(fd);
-    let meta = file.metadata().map_err(|_| not_found(path))?;
-    if !meta.is_file() {
+/// Opens the regular file `name` in the directory `dir` without following
+/// a symlink and without blocking on a FIFO.
+fn open_file(dir: &OwnedFd, name: &str, path: &str) -> Result<(File, u64), FileError> {
+    let fd =
+        rustix::fs::openat(dir, name, file_flags(), Mode::empty()).map_err(|_| not_found(path))?;
+    let stat = rustix::fs::fstat(fd.as_fd()).map_err(|_| not_found(path))?;
+    if kind_of_stat(&stat) != FileKind::File {
         return Err(FileError::new(
             code::WRONG_KIND,
             format!("`{path}` is not a regular file"),
         ));
     }
-    Ok((file, meta.len()))
+    Ok((File::from(fd), size_of(&stat)))
 }
 
 /// Reads at most `max_bytes` (capped at [`MAX_READ_BYTES`]) of the file
@@ -186,8 +251,18 @@ pub fn read(root: &Path, path: &str, max_bytes: Option<u64>) -> Result<FileConte
     if path.is_empty() {
         return Err(FileError::new(code::WRONG_KIND, "the root is a directory"));
     }
-    let (abs, _) = resolve(root, path)?;
-    let (file, size) = open_file(&abs, path)?;
+    let segments = segments_of(path)?;
+    let base = open_root(root).map_err(|_| not_found(path))?;
+    let Some((parent, last, kind)) = parent_and_last(&base, &segments, path)? else {
+        return Err(FileError::new(code::WRONG_KIND, "the root is a directory"));
+    };
+    if kind != FileKind::File {
+        return Err(FileError::new(
+            code::WRONG_KIND,
+            format!("`{path}` is not a regular file"),
+        ));
+    }
+    let (file, size) = open_file(&parent, last, path)?;
     let limit = max_bytes.unwrap_or(MAX_READ_BYTES).min(MAX_READ_BYTES);
     let mut buf = Vec::new();
     file.take(limit)
@@ -238,37 +313,47 @@ impl Found {
 /// `needle` is lower case already.
 pub fn walk_search(root: &Path, needle: &str, content: bool, max: usize) -> Found {
     let mut found = Found::default();
+    let Ok(base) = open_root(root) else {
+        return found;
+    };
     let mut queue = std::collections::VecDeque::from([(String::new(), 0usize)]);
     let (mut seen, mut opened) = (0usize, 0usize);
     while let Some((rel, depth)) = queue.pop_front() {
-        let dir = if rel.is_empty() {
-            root.to_path_buf()
+        // Each directory opens again from the root descriptor, one
+        // component at a time without following a symlink: a directory
+        // that became a symlink after it was queued is skipped.
+        let segments: Vec<&str> = if rel.is_empty() {
+            Vec::new()
         } else {
-            root.join(&rel)
+            rel.split('/').collect()
         };
-        let Ok(items) = std::fs::read_dir(&dir) else {
+        let Ok(dir) = descend(&base, &segments) else {
             continue;
         };
-        let mut names: Vec<(String, std::fs::FileType)> = items
-            .filter_map(Result::ok)
-            .filter_map(|i| Some((i.file_name().into_string().ok()?, i.file_type().ok()?)))
-            .collect();
-        names.sort_by(|a, b| a.0.cmp(&b.0));
-        for (name, file_type) in names {
+        let (mut names, more) = names_in(&dir, WALK_ENTRY_MAX);
+        names.sort();
+        if more {
+            found.truncated = true;
+        }
+        for name in names {
             seen += 1;
             if seen > WALK_ENTRY_MAX {
                 found.truncated = true;
                 return found;
             }
-            if hidden_name(&name) || file_type.is_symlink() {
+            if hidden_name(&name) {
                 continue;
             }
+            let Ok(stat) = stat_at(&dir, &name) else {
+                continue;
+            };
+            let kind = kind_of_stat(&stat);
             let path = if rel.is_empty() {
                 name.clone()
             } else {
                 format!("{rel}/{name}")
             };
-            if file_type.is_dir() {
+            if kind == FileKind::Dir {
                 if SEARCH_PRUNED.iter().any(|p| p.eq_ignore_ascii_case(&name)) {
                     continue;
                 }
@@ -279,7 +364,7 @@ pub fn walk_search(root: &Path, needle: &str, content: bool, max: usize) -> Foun
                 }
                 continue;
             }
-            if !file_type.is_file() {
+            if kind != FileKind::File {
                 continue;
             }
             if !content {
@@ -302,7 +387,7 @@ pub fn walk_search(root: &Path, needle: &str, content: bool, max: usize) -> Foun
                 found.truncated = true;
                 return found;
             }
-            if !grep_file(root, &path, needle, max, &mut found) {
+            if !grep_file(&dir, &name, &path, needle, max, &mut found) {
                 return found;
             }
         }
@@ -311,8 +396,15 @@ pub fn walk_search(root: &Path, needle: &str, content: bool, max: usize) -> Foun
 }
 
 /// Adds the content hits of one file; false when the hit limit is reached.
-fn grep_file(root: &Path, path: &str, needle: &str, max: usize, found: &mut Found) -> bool {
-    let Ok((file, size)) = open_file(&root.join(path), path) else {
+fn grep_file(
+    dir: &OwnedFd,
+    name: &str,
+    path: &str,
+    needle: &str,
+    max: usize,
+    found: &mut Found,
+) -> bool {
+    let Ok((file, size)) = open_file(dir, name, path) else {
         return true;
     };
     if size > WALK_FILE_BYTES {
@@ -345,3 +437,7 @@ fn grep_file(root: &Path, path: &str, needle: &str, max: usize, found: &mut Foun
     }
     true
 }
+
+#[cfg(test)]
+#[path = "files_race_tests.rs"]
+mod race_tests;
