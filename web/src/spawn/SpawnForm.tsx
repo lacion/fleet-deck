@@ -86,6 +86,18 @@ export function SpawnForm({
     provider !== undefined &&
     cwd !== null &&
     cloneReady;
+  // Say why the start button is off: a disabled button alone looks like a
+  // button that does nothing (owner report after M3).
+  const missing = [
+    live ? null : 'the board must be live',
+    canDrive ? null : 'your login needs the drive scope',
+    station === undefined ? 'choose a station' : null,
+    provider === undefined ? 'choose a provider' : null,
+    cwd === null
+      ? 'choose a directory (Browse the station, open a folder, then Use this directory)'
+      : null,
+    cloneReady ? null : 'enter the clone URL and the new directory name',
+  ].filter((m): m is string => m !== null);
 
   return (
     <section className="fd-spawn" aria-label="New session">
@@ -326,7 +338,16 @@ export function SpawnForm({
             An import runs in the chosen directory and ignores the workspace and batch choices.
           </p>
           {importProblem === null ? null : <p role="alert">{importProblem}</p>}
-          <button type="submit" disabled={!ready || importProblem !== null}>
+          {busy || missing.length === 0 ? null : (
+            <p className="fd-note" id="fd-spawn-missing" data-missing>
+              To start: {missing.join('; ')}.
+            </p>
+          )}
+          <button
+            type="submit"
+            disabled={!ready || importProblem !== null}
+            aria-describedby={missing.length === 0 ? undefined : 'fd-spawn-missing'}
+          >
             {busy ? 'Starting…' : importId.trim() === '' ? 'Start session' : 'Import session'}
           </button>
         </form>

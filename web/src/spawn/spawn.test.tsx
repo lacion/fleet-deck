@@ -102,8 +102,20 @@ describe('spawn form (P4-4)', () => {
     expect(html).toContain('<option value="" selected="">Station default</option>');
     expect(html).toContain('<option value="plan">plan</option>');
     expect(html).toContain('No directory chosen.');
-    // No directory yet: the start button is off.
-    expect(html).toMatch(/<button type="submit" disabled="">Start session<\/button>/);
+    // No directory yet: the start button is off and the form says why.
+    expect(html).toMatch(
+      /<button type="submit" disabled="" aria-describedby="fd-spawn-missing">Start session<\/button>/,
+    );
+    expect(html).toContain(
+      'To start: choose a directory (Browse the station, open a folder, then Use this directory).',
+    );
+  });
+
+  test('a form that is off lists every missing step', () => {
+    const html = form([reported()], ['read'], 'stale');
+    expect(html).toContain(
+      'To start: the board must be live; your login needs the drive scope; choose a directory',
+    );
   });
 
   test('the owner can make a coordinator session; it starts off (ADR-006 §4, DL-217)', () => {
