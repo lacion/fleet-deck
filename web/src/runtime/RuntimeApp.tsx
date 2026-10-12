@@ -10,7 +10,9 @@ import { spawnActions } from '../spawn/spawn';
 import { assignActions } from '../assign/assign';
 import { fleetActions } from '../fleet/fleet';
 import type { Chrome, Notice } from '../app/chrome';
-import { createTerminalStore } from '../terminal/store';
+import { createTerminalStore, type TermTab } from '../terminal/store';
+import { handoverFlow } from '../session/handoverFlow';
+import type { Outcome } from '../session/commands';
 import type { Watch } from '../terminal/handover';
 import type { Connection } from './connection';
 
@@ -27,10 +29,13 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
   const actions = useMemo(
     () => ({
       ...stationActions((path, body) => connection.post(path, body), canAdmin),
-      shells: shellActions(
-        (path) => connection.get(path),
-        (path, body) => connection.post(path, body),
-      ),
+      // The deck's shell routes are owner-only: no admin scope, no terminals.
+      shells: canAdmin
+        ? shellActions(
+            (path) => connection.get(path),
+            (path, body) => connection.post(path, body),
+          )
+        : undefined,
     }),
     [connection, canAdmin],
   );
@@ -106,6 +111,22 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
         subscribe: connection.subscribe,
       }),
     [connection],
+  );
+  const returnTerminal = useMemo(
+    () =>
+      async (tab: TermTab): Promise<Outcome> => {
+        if (tab.session === null || actions.shells === undefined)
+          return { ok: false, text: 'This terminal holds no session.' };
+        return handoverFlow({
+          key: tab.session,
+          title: tab.title,
+          watch: summaryWatch(tab.session),
+          actions: commands(tab.session),
+          shells: actions.shells,
+          terminals,
+        }).back();
+      },
+    [actions, commands, summaryWatch, terminals],
   );
   if (state.login === null) {
     return (
@@ -186,6 +207,7 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
       chrome={chrome}
       terminals={terminals}
       summaryWatch={summaryWatch}
+      onReturnTerminal={returnTerminal}
     />
   );
 }

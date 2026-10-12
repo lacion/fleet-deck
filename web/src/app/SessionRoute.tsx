@@ -82,16 +82,5 @@ export function SessionRoute({ summaryWatch, ...props }: Props) {
     [summaryWatch, station, id],
   );
   const paneProps = buildPaneProps({ ...props, watch });
-  // DL-140 merge: spread paneProps once the new SessionView lands.
-  return (
-    <SessionView
-      key={`${station}/${id}`}
-      session={paneProps.session}
-      stations={paneProps.stations}
-      timeline={paneProps.timeline}
-      freshness={paneProps.freshness}
-      actions={paneProps.actions}
-      onBack={paneProps.onBack ?? (() => props.navigate({ name: 'home' }))}
-    />
-  );
+  return <SessionView key={`${station}/${id}`} {...paneProps} />;
 }
