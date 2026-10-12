@@ -1,5 +1,16 @@
-import { type KeyboardEvent, type PointerEvent, useRef, useState } from 'react';
+import { type KeyboardEvent, type PointerEvent, type ReactNode, useRef, useState } from 'react';
 import type { ShellActions } from '../shell/shell';
+import {
+  ChevronDown,
+  ChevronUp,
+  Ellipsis,
+  Icon,
+  MessageSquare,
+  Plus,
+  SquareTerminal,
+  Undo2,
+  X,
+} from '../ui/icons';
 import { Terminal } from './Terminal';
 import { MIN_HEIGHT, type TermTab, type TerminalStore, useDock } from './store';
 
@@ -22,6 +33,40 @@ const message = (e: unknown) => (e instanceof Error ? e.message : 'Request faile
 const maxHeight = (): number =>
   typeof window === 'undefined' ? 640 : Math.max(MIN_HEIGHT, Math.floor(window.innerHeight * 0.7));
 
+/** A `<details>` popover that closes on Escape. The body gets a `close` function. */
+function Menu(props: {
+  readonly summary: ReactNode;
+  readonly label: string;
+  readonly onClosed?: () => void;
+  readonly children: (close: () => void) => ReactNode;
+}) {
+  const ref = useRef<HTMLDetailsElement>(null);
+  const close = () => {
+    if (ref.current) ref.current.open = false;
+  };
+  const onKeyDown = (event: KeyboardEvent<HTMLDetailsElement>) => {
+    if (event.key !== 'Escape' || !ref.current?.open) return;
+    event.stopPropagation();
+    close();
+    ref.current.querySelector('summary')?.focus();
+  };
+  return (
+    <details
+      className="fd-menu"
+      ref={ref}
+      onKeyDown={onKeyDown}
+      onToggle={(event) => {
+        if (!event.currentTarget.open) props.onClosed?.();
+      }}
+    >
+      <summary className="fd-iconbtn" aria-label={props.label} title={props.label}>
+        {props.summary}
+      </summary>
+      <div className="fd-menu-body">{props.children(close)}</div>
+    </details>
+  );
+}
+
 /**
  * The terminals of the board (DL-140): shell and TUI tabs that live in a store, so that
  * navigation and a hidden dock never close a shell. Every terminal stays mounted.
@@ -41,7 +86,7 @@ export function TerminalDock({
   const tabRefs = useRef(new Map<string, HTMLButtonElement>());
   const drag = useRef<{ y: number; height: number } | null>(null);
 
-  if (dock.tabs.length === 0 && onNewShell === undefined) return null;
+  if (dock.tabs.length === 0) return null;
 
   const current = dock.tabs.find((t) => t.id === dock.active) ?? dock.tabs[0] ?? null;
   const visible = dock.open && dock.tabs.length > 0;
@@ -61,14 +106,16 @@ export function TerminalDock({
     tabRefs.current.get(next.id)?.focus();
   };
 
-  const closeShell = async (tab: TermTab) => {
+  const closeShell = async (tab: TermTab): Promise<boolean> => {
     try {
       await actions.close(tab.station, tab.shellId);
       setConfirming(null);
       setFailure(null);
       store.remove(tab.id);
+      return true;
     } catch (e) {
       setFailure({ tab: tab.id, text: `Not closed: ${message(e)}` });
+      return false;
     }
   };
 
@@ -138,22 +185,18 @@ export function TerminalDock({
                   onClick={() => store.activate(tab.id)}
                   onKeyDown={(e) => moveFocus(e, index)}
                 >
-                  {tab.kind === 'shell' ? (
-                    <span className="fd-tdock-kind" aria-hidden="true">
-                      {'>_'}
-                    </span>
-                  ) : null}
+                  <Icon of={tab.kind === 'shell' ? SquareTerminal : MessageSquare} size={14} />
                   <span className="fd-tdock-title">{tab.title}</span>
                   <span className="fd-tdock-station">{stationName(tab.station)}</span>
                 </button>
                 <button
                   type="button"
-                  className="fd-tdock-detach"
+                  className="fd-iconbtn fd-sm fd-tdock-detach"
                   aria-label={`Detach ${tab.title}`}
                   tabIndex={selected ? 0 : -1}
                   onClick={() => store.remove(tab.id)}
                 >
-                  ×
+                  <Icon of={X} size={14} />
                 </button>
               </div>
             );
@@ -161,58 +204,78 @@ export function TerminalDock({
         </div>
         <div className="fd-tdock-tools">
           {onNewShell === undefined ? null : (
-            <button type="button" onClick={onNewShell}>
-              Open shell in workspace
+            <button
+              type="button"
+              className="fd-iconbtn"
+              aria-label="Open shell in workspace"
+              title="Open shell in workspace"
+              onClick={onNewShell}
+            >
+              <Icon of={Plus} />
             </button>
           )}
           {current === null ? null : current.kind === 'tui' ? (
-            <button type="button" onClick={() => onReturn(current)}>
-              Return to board control
+            <button type="button" className="fd-sm" onClick={() => onReturn(current)}>
+              <Icon of={Undo2} size={14} /> Return to board control
             </button>
           ) : (
-            <button
-              type="button"
-              className="fd-tdock-danger"
-              onClick={() => {
-                setFailure(null);
-                setConfirming(current.id);
-              }}
+            <Menu
+              summary={<Icon of={Ellipsis} />}
+              label="Terminal menu"
+              onClosed={() => setConfirming(null)}
             >
-              Close shell
-            </button>
+              {(close) =>
+                confirming === current.id ? (
+                  <>
+                    <p className="fd-menu-text">Close the shell? Its process ends.</p>
+                    <button
+                      type="button"
+                      className="fd-danger"
+                      onClick={() =>
+                        void closeShell(current).then((closed) => {
+                          if (closed) close();
+                        })
+                      }
+                    >
+                      Close shell
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setConfirming(null);
+                        setFailure(null);
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    className="fd-danger"
+                    onClick={() => {
+                      setFailure(null);
+                      setConfirming(current.id);
+                    }}
+                  >
+                    Close shell
+                  </button>
+                )
+              }
+            </Menu>
           )}
-          {dock.tabs.length === 0 ? null : (
-            <button
-              type="button"
-              aria-expanded={dock.open}
-              onClick={() => store.setOpen(!dock.open)}
-            >
-              {dock.open ? 'Hide terminals' : 'Show terminals'}
-            </button>
-          )}
+          <button
+            type="button"
+            className="fd-iconbtn"
+            aria-expanded={dock.open}
+            aria-label={dock.open ? 'Hide terminals' : 'Show terminals'}
+            title={dock.open ? 'Hide terminals' : 'Show terminals'}
+            onClick={() => store.setOpen(!dock.open)}
+          >
+            <Icon of={dock.open ? ChevronDown : ChevronUp} />
+          </button>
         </div>
       </div>
-      {current !== null && current.kind === 'shell' && confirming === current.id ? (
-        <div className="fd-tdock-confirm">
-          <p>Close the shell? Its process ends.</p>
-          <button
-            type="button"
-            className="fd-tdock-danger"
-            onClick={() => void closeShell(current)}
-          >
-            Close shell
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setConfirming(null);
-              setFailure(null);
-            }}
-          >
-            Cancel
-          </button>
-        </div>
-      ) : null}
       {current !== null && failure !== null && failure.tab === current.id ? (
         <p className="fd-tdock-error" role="alert">
           {failure.text}

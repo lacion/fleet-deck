@@ -1,4 +1,4 @@
-/* The terminal layer (DL-140): xterm view, touch key bar, terminal dock. */
+/* The terminal layer (DL-141, UI-DESIGN §6): xterm view, touch key bar, terminal dock. */
 
 /* terminal */
 .fd-term {
@@ -14,7 +14,7 @@
   flex: 1;
   min-height: 0;
   min-width: 0;
-  padding: var(--sp-1);
+  padding: 6px 8px;
 }
 .fd-term-overlay {
   position: absolute;
@@ -36,65 +36,28 @@
   display: flex;
   gap: var(--sp-2);
 }
-.fd-term-actions button,
-.fd-tdock button {
-  min-height: 28px;
-  padding: var(--sp-1) var(--sp-3);
-  border: 1px solid var(--border);
-  border-radius: var(--r-ctl);
-  background: var(--raised);
-  color: var(--text);
-  font-family: var(--font-ui);
-  font-size: var(--fs-body);
-  cursor: pointer;
-  transition: border-color var(--t-fast);
-}
-.fd-term-actions button:hover,
-.fd-tdock button:hover {
-  border-color: var(--dim);
-}
-.fd-term-actions button:focus-visible,
-.fd-tdock button:focus-visible,
-.fd-keybar-key:focus-visible,
-.fd-tdock-handle:focus-visible {
-  outline: 2px solid var(--act);
-  outline-offset: 2px;
-}
 
 /* key bar */
 .fd-keybar {
   display: flex;
-  gap: var(--sp-1);
-  padding: var(--sp-1) var(--sp-2);
-  border-top: 1px solid var(--border);
+  gap: 6px;
+  padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--border-soft);
   background: var(--surface);
   overflow-x: auto;
 }
 .fd-keybar-key {
   flex: 1 0 auto;
   min-width: 40px;
+  height: 36px;
   min-height: 36px;
-  padding: var(--sp-1) var(--sp-3);
-  border: 1px solid var(--border);
-  border-radius: var(--r-ctl);
-  background: var(--raised);
-  color: var(--text);
+  padding: 0 var(--sp-3);
   font-family: var(--font-data);
-  font-size: var(--fs-body);
-  cursor: pointer;
+  font-size: 12px;
 }
 .fd-keybar-key[aria-pressed="true"] {
   border-color: var(--text);
   background: var(--border);
-}
-@media (pointer: coarse) {
-  .fd-keybar-key,
-  .fd-tdock button {
-    min-height: var(--tap-min);
-  }
-  .fd-keybar-key {
-    min-width: var(--tap-min);
-  }
 }
 
 /* dock */
@@ -105,19 +68,17 @@
   /* Under the route in a column: the route shrinks, never the dock bar. */
   flex: 0 0 auto;
   min-height: 0;
-  background: var(--surface);
-  border-top: 1px solid var(--border);
-  font-family: var(--font-ui);
-  font-size: var(--fs-body);
+  background: var(--code);
   color: var(--text);
 }
 .fd-tdock[data-layout="full"] {
   height: 100%;
-  border-top: 0;
 }
 .fd-tdock [hidden] {
   display: none;
 }
+
+/* resize handle: a 6 px hit area, a 2 px amber line on hover and focus */
 .fd-tdock-handle {
   position: absolute;
   top: -3px;
@@ -126,47 +87,76 @@
   height: 6px;
   cursor: row-resize;
   touch-action: none;
-  z-index: 1;
+  z-index: 2;
+  outline: none;
 }
-.fd-tdock-handle:hover {
-  background: var(--border);
+.fd-tdock-handle::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 2px;
+  height: 2px;
+  background: var(--act);
+  opacity: 0;
+  transition: opacity var(--t-fast);
 }
+.fd-tdock-handle:hover::after,
+.fd-tdock-handle:focus-visible::after {
+  opacity: 1;
+}
+
+/* bar */
 .fd-tdock-bar {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-2);
-  padding: var(--sp-1) var(--sp-2);
-  border-bottom: 1px solid var(--border-soft);
+  align-items: stretch;
+  height: 34px;
+  background: var(--surface);
+  border-top: 1px solid var(--border-soft);
+}
+.fd-tdock[data-layout="full"] .fd-tdock-bar {
+  height: var(--tap-min);
+  border-top: 0;
 }
 .fd-tdock-tabs {
   display: flex;
-  gap: var(--sp-1);
+  flex: 1 1 auto;
   min-width: 0;
   overflow-x: auto;
+  scrollbar-width: none;
+}
+.fd-tdock-tabs::-webkit-scrollbar {
+  display: none;
 }
 .fd-tdock-tabwrap {
+  position: relative;
   display: flex;
   align-items: center;
   flex: 0 0 auto;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--r-ctl);
-  background: var(--surface);
+  padding: 0 6px 0 10px;
+  color: var(--dim);
+  font-family: var(--font-data);
+  font-size: 12px;
 }
 .fd-tdock-tabwrap[data-selected="true"] {
-  border-color: var(--border);
-  background: var(--raised);
+  background: var(--code);
+  color: var(--text);
+  box-shadow: inset 0 2px 0 var(--act);
 }
 .fd-tdock-tab {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
+  align-self: stretch;
   max-width: 220px;
-}
-.fd-tdock-kind {
-  font-family: var(--font-data);
-  font-size: var(--fs-data);
-  color: var(--dim);
+  height: auto;
+  min-height: 0;
+  padding: 0;
+  gap: var(--sp-2);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: 400;
 }
 .fd-tdock-title {
   overflow: hidden;
@@ -174,66 +164,67 @@
   white-space: nowrap;
 }
 .fd-tdock-station {
-  color: var(--dim);
-  font-size: var(--fs-data);
+  color: var(--faint);
+  font-size: 11px;
   white-space: nowrap;
 }
 .fd-tdock-detach {
-  padding-inline: var(--sp-2);
-  color: var(--dim);
+  margin-left: 4px;
+  opacity: 0;
 }
+.fd-tdock-tabwrap:hover .fd-tdock-detach,
+.fd-tdock-tabwrap[data-selected="true"] .fd-tdock-detach,
+.fd-tdock-detach:focus-visible {
+  opacity: 1;
+}
+@media (pointer: coarse) {
+  .fd-tdock-detach {
+    opacity: 1;
+  }
+  .fd-tdock-bar {
+    height: var(--tap-min);
+  }
+}
+
+/* tools */
 .fd-tdock-tools {
   display: flex;
   flex: 0 0 auto;
-  gap: var(--sp-2);
-}
-.fd-tdock .fd-tdock-tab,
-.fd-tdock .fd-tdock-detach {
-  border-color: transparent;
-  background: transparent;
-}
-.fd-tdock .fd-tdock-danger {
-  border-color: var(--hazard);
-  color: var(--hazard);
-}
-.fd-tdock-confirm {
-  display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: var(--sp-2);
-  padding: var(--sp-2) var(--sp-3);
-  background: var(--hazard-bg);
-  border-bottom: 1px solid var(--border-soft);
+  gap: var(--sp-1);
+  padding: 0 6px;
 }
-.fd-tdock-confirm p {
-  margin: 0;
-  flex: 1 1 auto;
+/* The bar sits at the bottom of the window, so the menu opens upward. */
+.fd-tdock[data-layout="dock"] .fd-menu-body {
+  top: auto;
+  bottom: calc(100% + 4px);
 }
+
+/* error strip */
 .fd-tdock-error {
+  display: flex;
+  align-items: center;
+  height: 28px;
   margin: 0;
-  padding: var(--sp-2) var(--sp-3);
+  padding: 0 var(--sp-3);
   background: var(--hazard-bg);
   color: var(--hazard);
+  font-size: 12px;
 }
+
+/* body */
 .fd-tdock-body {
   flex: 1;
   min-height: 0;
+  background: var(--code);
 }
 .fd-tdock-pane {
   height: 100%;
   min-height: 0;
 }
-.fd-tdock[data-layout="full"] .fd-tdock-tabs {
-  overflow-x: auto;
-  scrollbar-width: thin;
-}
-.fd-tdock[data-layout="full"] .fd-tdock-bar {
-  flex-wrap: wrap;
-}
 
 @media (prefers-reduced-motion: reduce) {
-  .fd-term-actions button,
-  .fd-tdock button {
+  .fd-tdock-handle::after {
     transition: none;
   }
 }
