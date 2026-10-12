@@ -42,10 +42,11 @@ test('an admin sees the station report and makes an invitation for a dialing sta
   await logIn(page);
   await openMore(page, 'Stations');
   const card = page.locator('[data-station="st-alpha"]');
-  await expect(card).toContainText('1 live of 4 sessions');
-  await expect(card).toContainText('0.2.0');
-  await expect(card).toContainText('personal · claude · 2.1.5 · signed in');
-  await expect(card).toContainText('work · codex · version unknown · sign-in unknown');
+  await expect(card).toContainText('Link up');
+  await expect(card).toContainText('0 / 4');
+  await expect(card.locator('.fd-badge', { hasText: '0.2.0' })).toBeVisible();
+  await expect(card.locator('[data-instance="personal"]')).toHaveText('Claude 2.1.5 · signed in');
+  await expect(card.locator('[data-instance="work"]')).toHaveText('Codex · sign-in unknown');
   expect(await fitsWidth(page)).toBe(true);
 
   await page.getByRole('button', { name: 'Add station' }).click();
@@ -115,7 +116,7 @@ test('an admin pairs a listening station, sees a refusal, and removes a station'
   const box = page.locator('[data-station="st-box"]');
   await expect(box).toContainText('Deck dials station');
   await expect(box).toContainText('192.168.1.20:7443');
-  await expect(box).toContainText('Not reported until the station links to this deck.');
+  await expect(box).toContainText('Reported when the station links to this deck.');
 
   const alpha = page.locator('[data-station="st-alpha"]');
   await alpha.getByRole('button', { name: 'Remove station' }).click();
@@ -145,5 +146,5 @@ test('a login without the admin scope sees the report but no pairing controls', 
   await expect(page.getByText('Pairing needs the admin scope.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Add station' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Remove station' })).toHaveCount(0);
-  await expect(page.locator('[data-station="st-alpha"]')).toContainText('1 live of 4 sessions');
+  await expect(page.locator('[data-station="st-alpha"]')).toContainText('0 / 4');
 });

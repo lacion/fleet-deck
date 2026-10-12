@@ -1,5 +1,6 @@
 import { stationName } from '../board/fleet';
 import type { CardStatus, DeckSession, StationView } from '../gen';
+import { sessionRef } from '../ui/localSet';
 
 /** Statuses of a session that runs or waits, in the order the sidebar lists them. */
 const LIVE_ORDER: readonly CardStatus[] = ['needs_you', 'working', 'verifying', 'queued', 'idle'];
@@ -52,23 +53,45 @@ export type StationGroup = {
 export type SidebarModel = {
   readonly needs: readonly DeckSession[];
   readonly groups: readonly StationGroup[];
+  /** Ended or lost sessions that the owner cleared; they are not in the groups or the counts. */
+  readonly archived: readonly DeckSession[];
 };
 
-/** The sidebar groups: needs you, then one group per station sorted by name. */
+/** The per-browser sets of the sidebar (DL-141): starred sessions and archived sessions. */
+export type SidebarSets = {
+  readonly starred: ReadonlySet<string>;
+  readonly archived: ReadonlySet<string>;
+};
+
+const NO_SETS: SidebarSets = { starred: new Set(), archived: new Set() };
+
+const refOf = (card: DeckSession) => sessionRef(card.station_id, card.summary.session_id);
+
+/** An archived session hides only while it is ended or lost; any other status shows it. */
+export const isHidden = (card: DeckSession, archived: ReadonlySet<string>): boolean =>
+  (card.status === 'ended' || card.status === 'lost') && archived.has(refOf(card));
+
+/** The sidebar groups: needs you, then one group per station sorted by name. Starred rows first. */
 export function sidebarModel(
   sessions: readonly DeckSession[],
   stations: readonly StationView[],
   query: string,
+  sets: SidebarSets = NO_SETS,
 ): SidebarModel {
-  const shown = sessions.filter((c) => matchesQuery(c, query));
+  const matching = sessions.filter((c) => matchesQuery(c, query));
+  const shown = matching.filter((c) => !isHidden(c, sets.archived));
+  const starFirst = (a: DeckSession, b: DeckSession) =>
+    Number(sets.starred.has(refOf(b))) - Number(sets.starred.has(refOf(a)));
   const ids = [
     ...new Set([...stations.map((s) => s.station_id), ...sessions.map((s) => s.station_id)]),
   ];
   const groups = ids
     .map((id): StationGroup => {
       const own = shown.filter((c) => c.station_id === id);
-      const live = own.filter(isLive).sort((a, b) => rank(a) - rank(b) || byNewest(a, b));
-      const ended = own.filter((c) => !isLive(c)).sort(byNewest);
+      const live = own
+        .filter(isLive)
+        .sort((a, b) => starFirst(a, b) || rank(a) - rank(b) || byNewest(a, b));
+      const ended = own.filter((c) => !isLive(c)).sort((a, b) => starFirst(a, b) || byNewest(a, b));
       return {
         id,
         name: stationName(id, stations),
@@ -80,7 +103,13 @@ export function sidebarModel(
     })
     .filter((g) => query.trim() === '' || g.count > 0)
     .sort((a, b) => a.name.localeCompare(b.name));
-  return { needs: shown.filter((c) => c.status === 'needs_you').sort(byNewest), groups };
+  return {
+    needs: shown
+      .filter((c) => c.status === 'needs_you')
+      .sort((a, b) => starFirst(a, b) || byNewest(a, b)),
+    groups,
+    archived: matching.filter((c) => isHidden(c, sets.archived)).sort(byNewest),
+  };
 }
 
 /** The live sessions in the order of the station groups, each once (the j/k order). */

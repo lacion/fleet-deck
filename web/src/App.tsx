@@ -28,6 +28,7 @@ import { SpawnForm } from './spawn/SpawnForm';
 import type { Watch } from './terminal/handover';
 import { TerminalDock } from './terminal/TerminalDock';
 import { type TermTab, type TerminalStore, tabId } from './terminal/store';
+import { archived, priority } from './ui/localSet';
 
 type Props = {
   readonly sessions?: readonly DeckSession[];
@@ -148,15 +149,37 @@ export function App({
 
   // The first prompt of the spawn form when a plan starts a session.
   const [planPrompt, setPlanPrompt] = useState('');
+  const [spawnStation, setSpawnStation] = useState<string | null>(null);
   useEffect(() => {
-    if (route.name !== 'new') setPlanPrompt('');
+    if (route.name !== 'new') {
+      setPlanPrompt('');
+      setSpawnStation(null);
+    }
   }, [route.name]);
+  // The `c` key asks the fleet home to open its panel on Mail & tasks.
+  const [panelRequest, setPanelRequest] = useState<
+    { readonly tab: 'mail'; readonly seq: number } | undefined
+  >(undefined);
+  const starred = priority.use();
+  const cleared = archived.use();
 
   // Overlays. The drawer belongs to the route it was opened on: navigation closes it.
   const [drawerAt, setDrawerAt] = useState<string | null>(null);
   const drawerOpen = layout === 'tablet' && drawerAt === routeKey;
   const [help, setHelp] = useState(false);
   const [palette, setPalette] = useState(false);
+  // The first time the owner sees a live board, the help opens once.
+  const live = chrome?.freshness === 'live';
+  useEffect(() => {
+    if (!live) return;
+    try {
+      if (localStorage.getItem('fd-help-seen') === '1') return;
+      localStorage.setItem('fd-help-seen', '1');
+    } catch {
+      return;
+    }
+    setHelp(true);
+  }, [live]);
 
   // A notice of this screen (a shell that did not open, the outcome of "Return …").
   const [local, setLocal] = useState<{ notice: Notice; at: string } | null>(null);
@@ -168,7 +191,7 @@ export function App({
 
   const open = (key: SessionKey) => navigate(sessionRoute(key));
   const toTerminals = () => navigate({ name: 'terminals' });
-  const order = sidebarOrder(sidebarModel(sessions, stations, ''));
+  const order = sidebarOrder(sidebarModel(sessions, stations, '', { starred, archived: cleared }));
   const step = (by: 1 | -1) => {
     if (order.length === 0) return;
     const at =
@@ -208,6 +231,10 @@ export function App({
     }),
     new: unlessModal(() => navigate({ name: 'new' })),
     fleet: unlessModal(() => navigate({ name: 'fleet' })),
+    compose: unlessModal(() => {
+      navigate({ name: 'fleet' });
+      setPanelRequest((r) => ({ tab: 'mail', seq: (r?.seq ?? 0) + 1 }));
+    }),
     terminals: unlessModal(toggleDock),
     help: () => {
       if (!palette) setHelp(true);
@@ -291,6 +318,7 @@ export function App({
       terminalCount={tabCount}
       onNavigate={(next) => {
         setPlanPrompt('');
+        setSpawnStation(null);
         navigate(next);
       }}
       onOpenTerminals={() => {
@@ -315,6 +343,13 @@ export function App({
       sessionActions={sessionActions}
       onOpen={open}
       onSpawn={() => navigate({ name: 'new' })}
+      panelRequest={panelRequest}
+      onHelp={() => setHelp(true)}
+      onSpawnWith={(station, prompt) => {
+        setPlanPrompt(prompt);
+        setSpawnStation(station);
+        navigate({ name: 'new' });
+      }}
     />
   );
 
@@ -329,8 +364,10 @@ export function App({
         return (
           <div className="fd-screen">
             <SpawnForm
-              key={planPrompt}
+              key={`${planPrompt}|${spawnStation ?? ''}`}
               initialPrompt={planPrompt}
+              initialStation={spawnStation ?? undefined}
+              sessions={sessions}
               stations={stations}
               freshness={freshness}
               actions={spawn}
@@ -344,12 +381,17 @@ export function App({
           <div className="fd-screen">
             <PlanLibrary
               stations={stations}
+              sessions={sessions}
               actions={plans}
               live={freshness === 'live'}
               initial={initialPlans}
               onOpen={open}
+              onAssign={
+                fleet === undefined ? undefined : (target, text) => fleet.mail(target, text, false)
+              }
               onExecute={(plan) => {
                 setPlanPrompt(plan.markdown);
+                setSpawnStation(null);
                 navigate({ name: 'new' });
               }}
             />

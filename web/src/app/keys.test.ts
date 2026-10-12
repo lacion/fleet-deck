@@ -37,6 +37,7 @@ describe('keyAction', () => {
       '/': 'focus',
       n: 'new',
       f: 'fleet',
+      c: 'compose',
       t: 'terminals',
       '?': 'help',
       Escape: 'escape',

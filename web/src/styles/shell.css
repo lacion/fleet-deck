@@ -388,6 +388,56 @@ body:has(.fd-app[data-layout="tablet"]) {
   justify-self: start;
 }
 
+/* Theme choice and compact cards, above Log out. */
+.fd-sidebar-prefs {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.fd-segmented {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctl);
+}
+
+.fd-sidebar-prefs .fd-iconbtn[aria-pressed="true"] {
+  background: var(--border-soft);
+  color: var(--text);
+}
+
+.fd-more .fd-sidebar-prefs {
+  margin-bottom: var(--sp-3);
+}
+
+/* A starred row shows a filled star after its title. */
+.fd-srow-star {
+  display: inline-flex;
+  margin-left: 6px;
+  vertical-align: -1px;
+  color: var(--act);
+}
+
+.fd-srow-star .fd-icon {
+  fill: currentColor;
+}
+
+.fd-sidebar-archived,
+.fd-sended-clear {
+  margin: var(--sp-1) 0 0 var(--sp-2);
+}
+
+/* Compact density: one line per session. */
+:root[data-density="compact"] .fd-srow {
+  padding: 4px 10px;
+}
+
+:root[data-density="compact"] .fd-srow-meta {
+  display: none;
+}
+
 /* ---------- Top bar (tablet; phone terminals) ---------- */
 
 .fd-topbar {
@@ -585,6 +635,32 @@ body:has(.fd-app[data-layout="tablet"]) {
   background: var(--raised);
 }
 
+.fd-help h3,
+.fd-help h4 {
+  margin: var(--sp-3) 0 var(--sp-1);
+}
+
+.fd-help section > h3:first-child {
+  margin-top: 0;
+}
+
+.fd-help-terms {
+  display: grid;
+  gap: var(--sp-2);
+  margin: 0;
+}
+
+.fd-help-terms dt {
+  font-weight: 600;
+  font-size: var(--fs-body);
+}
+
+.fd-help-terms dd {
+  margin: 0;
+  color: var(--dim);
+  font-size: var(--fs-body);
+}
+
 .fd-overlay .fd-palette {
   gap: 0;
   padding: 0;
@@ -743,6 +819,22 @@ body:has(.fd-app[data-layout="tablet"]) {
   color: var(--dim);
 }
 
+.fd-plan-assign {
+  display: grid;
+  gap: var(--sp-2);
+}
+
+.fd-plan-assign label {
+  display: grid;
+  gap: var(--sp-1);
+  font-size: var(--fs-body);
+  color: var(--dim);
+}
+
+.fd-plan-assign p {
+  margin: 0;
+}
+
 .fd-plan-text {
   margin: var(--sp-2) 0 0;
   padding: 8px 10px;
@@ -776,64 +868,116 @@ body:has(.fd-app[data-layout="tablet"]) {
 }
 
 .fd-station {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-3);
+  align-content: start;
   min-width: 0;
   padding: var(--sp-4);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r-panel);
   overflow-wrap: anywhere;
+}
+
+.fd-station-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
 }
 
 .fd-station h3 {
   margin: 0;
-  font-size: var(--fs-title);
+  font-size: 15px;
   font-weight: 600;
 }
 
 .fd-station h4 {
-  margin: var(--sp-3) 0 var(--sp-1);
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--dim);
+  margin: 0;
+  font-family: var(--font-data);
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  color: var(--faint);
 }
 
-.fd-station p,
-.fd-station ul {
-  margin: var(--sp-1) 0;
+.fd-station p {
+  margin: 0;
 }
 
-.fd-station .fd-health {
-  margin: var(--sp-1) 0 var(--sp-2);
+/* Facts: a compact two-column grid; a label is faint, a value is mono. */
+.fd-station .fd-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--sp-1) var(--sp-3);
+  margin: 0;
+}
+
+.fd-station .fd-facts dt {
   font-family: var(--font-data);
   font-size: var(--fs-data);
+  color: var(--faint);
 }
 
-.fd-station .fd-health[data-health="up"] {
-  color: var(--ok);
-}
-
-.fd-station dl {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
-  gap: var(--sp-1) var(--sp-3);
-  margin: var(--sp-2) 0 0;
-}
-
-.fd-station dt {
-  color: var(--dim);
-  font-size: 12px;
-}
-
-.fd-station dd {
+.fd-station .fd-facts dd {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  min-width: 0;
   margin: 0;
   font-family: var(--font-data);
   font-size: var(--fs-data);
 }
 
-@media (max-width: 640px) {
-  .fd-station dl {
-    grid-template-columns: 1fr;
-  }
+.fd-station .fd-facts dd .fd-iconbtn {
+  flex: none;
+}
+
+.fd-providers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fd-shells {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-2);
+}
+
+.fd-shells p {
+  margin: 0;
+}
+
+.fd-shells form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.fd-shells form label {
+  display: flex;
+  flex: 1 1 14rem;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.fd-shells form input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.fd-station-foot {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.fd-station-foot p {
+  text-align: right;
 }
 
 /* The human shell (PLAN §6.8): a terminal that fits a phone width. */

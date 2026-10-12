@@ -79,6 +79,24 @@ describe('plan library (DL-301)', () => {
     expect(html).toMatch(/<button type="button" disabled="">Start a session with this plan/);
   });
 
+  test('a proposed plan offers an assignment only when the board can send mail', () => {
+    const render = (onAssign?: () => Promise<{ ok: boolean; text: string }>) =>
+      renderToStaticMarkup(
+        <PlanLibrary
+          stations={[station()]}
+          actions={undefined}
+          live
+          initial={[deckPlan('p1'), deckPlan('p2', { status: 'executed' })]}
+          onOpen={() => {}}
+          onExecute={() => {}}
+          onAssign={onAssign}
+        />,
+      );
+    expect(render()).not.toContain('Assign to a session');
+    const html = render(async () => ({ ok: true, text: '' }));
+    expect(html.match(/Assign to a session…/g)?.length).toBe(1);
+  });
+
   test('an empty library says how plans arrive, and the board has a Plans screen', () => {
     const html = renderToStaticMarkup(
       <App initialRoute={{ name: 'plans' }} initialPlans={[]} freshness="live" />,

@@ -3,6 +3,8 @@ import { createRoot } from 'react-dom/client';
 import { takeLoginLink } from './runtime/api';
 import { browserEnvironment, Connection } from './runtime/connection';
 import { RuntimeApp } from './runtime/RuntimeApp';
+import { initDensity } from './ui/density';
+import { initTheme } from './ui/theme';
 import '@fontsource/ibm-plex-sans/latin-400.css';
 import '@fontsource/ibm-plex-sans/latin-500.css';
 import '@fontsource/ibm-plex-sans/latin-600.css';
@@ -20,6 +22,8 @@ import './styles/chat.css';
 import './styles/terminal.css';
 import './styles/spawn.css';
 
+initTheme();
+initDensity();
 const root = document.getElementById('root');
 if (root === null) {
   throw new Error('index.html has no #root element');

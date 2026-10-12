@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
+import type { ShellActions } from '../shell/shell';
 import { card, station } from '../testing/fleet';
 import { archived, priority } from '../ui/localSet';
 import {
@@ -138,8 +139,11 @@ describe('fleet projections', () => {
   });
 });
 
+// The static render never calls a shell action.
+const shellActions = {} as ShellActions;
+
 describe('station projections', () => {
-  test('live stations show link direction, fingerprint, cursor and last seen without invented capacity', () => {
+  test('live stations show link direction, fingerprint and last seen without invented capacity', () => {
     const html = renderToStaticMarkup(
       <StationsPanel
         stations={[
@@ -162,11 +166,12 @@ describe('station projections', () => {
       'fingerprint',
       '1970-01-01T00:00:00.000Z',
       'Unreachable',
-      'Configured capacity',
-      'Not reported',
-      'Never',
+      'Dial-only (no stored address)',
+      '<dt>Last seen</dt><dd>—</dd>',
+      '<dt>Sessions</dt><dd>0</dd>',
     ])
       expect(html).toContain(text);
+    expect(html).not.toContain('Not reported');
   });
   test('stale station metadata never labels a cached link as currently up', () => {
     const html = renderToStaticMarkup(
@@ -191,8 +196,8 @@ describe('station projections', () => {
       <StationsPanel stations={[station()]} sessions={cards} freshness="live" />,
     );
     // Observed providers stay apart from the configured inventory.
-    expect(html).toContain('<h4>Providers observed in sessions</h4>');
-    expect(html).toContain('Not reported until the station links to this deck.');
+    expect(html).not.toContain('Providers observed in sessions');
+    expect(html).toContain('Reported when the station links to this deck.');
     expect(html).not.toContain('Codex');
   });
   test('active counts exclude exited and lost processes but include starting and stopping processes', () => {
@@ -206,7 +211,7 @@ describe('station projections', () => {
     const html = renderToStaticMarkup(
       <StationsPanel stations={[station()]} sessions={cards} freshness="live" />,
     );
-    expect(html).toContain('<dt>Observed active sessions</dt><dd>3</dd>');
+    expect(html).toContain('<dt>Sessions</dt><dd>3</dd>');
   });
   test('a station report shows version, capacity and configured providers with their sign-in state', () => {
     const html = renderToStaticMarkup(
@@ -246,14 +251,51 @@ describe('station projections', () => {
       />,
     );
     for (const text of [
-      '1 live of 4 sessions',
-      '0.2.0',
-      'alpha-host',
-      'personal · claude · 2.1.5 · signed in',
-      'work · codex · version unknown · sign-in unknown',
+      '<dt>Sessions</dt><dd>0 / 4</dd>',
+      '<span class="fd-badge">0.2.0</span>',
+      'data-instance="personal" data-tone="ok" title="personal">Claude 2.1.5 · signed in',
+      'data-instance="work" data-tone="muted" title="work">Codex · sign-in unknown',
     ])
       expect(html).toContain(text);
-    expect(html).not.toContain('Not reported until the station links');
+    expect(html).not.toContain('Reported when the station links');
+  });
+  test('the key fingerprint is shortened with the full value in a title and a copy button', () => {
+    const html = renderToStaticMarkup(
+      <StationsPanel
+        stations={[station('station-a', { key: 'abcdef0123456789abcdef' })]}
+        sessions={[]}
+        freshness="live"
+      />,
+    );
+    expect(html).toContain('<span title="abcdef0123456789abcdef">abcdef012345…</span>');
+    expect(html).toContain('aria-label="Copy the key fingerprint"');
+  });
+  test('a station without shells says so and offers no directory field', () => {
+    const base = {
+      name: 'alpha-host',
+      incarnation: 'inc',
+      head: 9,
+      live_sessions: 0,
+      version: null,
+      max_sessions: null,
+      providers: [],
+    };
+    const render = (allow: boolean | null) =>
+      renderToStaticMarkup(
+        <StationsPanel
+          stations={[station('station-a', { info: { ...base, allow_shell: allow } })]}
+          sessions={[]}
+          freshness="live"
+          actions={{ ...stationActions(async () => ({}), true), shells: shellActions }}
+        />,
+      );
+    const off = render(false);
+    expect(off).toContain(
+      'Shells are off on this station. Set allow_shell = true in station.toml.',
+    );
+    expect(off).not.toContain('Open shell');
+    expect(off).toContain('No provider configured.');
+    expect(render(null)).toContain('Open shell');
   });
   test('pairing controls appear only for an admin login on a live board', () => {
     const actions = (canAdmin: boolean) => stationActions(async () => ({}), canAdmin);
