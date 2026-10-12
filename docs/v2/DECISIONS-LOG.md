@@ -2267,3 +2267,11 @@ Format: context, options, choice, reason, owner review.
 - Verification: `cargo check --workspace --all-targets --target aarch64-apple-darwin` and the same with `--release` give no errors (cross-check on Linux with a stub C compiler; no linking). Linux: clippy `-D warnings`, transport and files tests 43/43.
 - Not done: a macOS CI job (owner step; operations §12 lists the macOS host). Test-only warnings for macOS remain in Linux-only tests.
 - Owner review: pending.
+
+## DL-140 — Board UI rebuild and TUI handover (owner request, 2026-10-12)
+
+- Context: The owner found the v2 board unusable: the session screen is a form, the timeline has no markdown and no auto-scroll, Stop and Resume are missing, and the shell is hidden in the Stations screen. The owner wants terminals into each station, a chat way to drive the agent, a phone UI that is mostly chat (like T3 Code), and the TUI too. The owner asked for all of it now, on `v2`, with no phases.
+- Options for the agent view: (a) the provider TUI as the main view; (b) our own chat view of the canonical events, with an explicit TUI handover. (a) is not possible under D3: a second process on a driven native session corrupts its history.
+- Choice: (b). The full design is `docs/v2/UI-PLAN.md`. Summary: chat view first; desktop, tablet and phone layouts; hash routes; `react-markdown` + `remark-gfm` without raw HTML; one session controller; a board-level terminal dock; slash commands from `session.started`. The TUI handover is station-authoritative: new shell changes `shell.handover` and `shell.release` (feature `shell.handover.v1`), a durable `session.terminal` event folded into `SessionSummary.terminal`, the hold taken at admission in the same transaction, and released only when the TUI process is gone. Resume, auto-continue, import and a second handover refuse while a hold exists.
+- Advisor review (gpt-6.1-sol): adopted in full. The hold starts at admission, covers other sessions with the same native id, is durable, and is not released on PTY EOF or a close request alone. After a station restart, a hold whose process still runs stays until the owner releases it.
+- Owner review: approved the direction (all features, no phases).
