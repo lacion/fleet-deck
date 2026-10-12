@@ -189,6 +189,15 @@ pub const API: &[ApiMethod] = &[
         false,
     ),
     m(WS_METHOD, Method::GET, "/api/ws", Some(Scope::Read), false),
+    // The worktree inventory (DL-142): `admin`, and the handler also
+    // requires the owner's board login (DL-138).
+    m(
+        "stations.worktrees",
+        Method::GET,
+        "/api/stations/{station}/worktrees",
+        Some(Scope::Admin),
+        false,
+    ),
     // The human shell (PLAN §6.8, DL-404): `admin`, and the handlers also
     // require the owner's board login (DL-138).
     m(

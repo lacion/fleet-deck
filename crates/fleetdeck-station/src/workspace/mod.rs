@@ -9,6 +9,7 @@ pub mod git;
 pub mod provision;
 pub mod restore;
 pub mod settle;
+pub mod worktrees;
 
 pub use checkpoint::{
     Captured, Checkpoint, CheckpointError, CheckpointKey, Limits, Phase, REF_ROOT, SCOPE_TRACKED,
@@ -27,3 +28,6 @@ mod checkpoint_tests;
 #[cfg(test)]
 #[path = "settle_tests.rs"]
 mod settle_tests;
+#[cfg(test)]
+#[path = "worktrees_tests.rs"]
+mod worktrees_tests;

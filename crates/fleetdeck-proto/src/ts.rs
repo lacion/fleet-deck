@@ -26,7 +26,7 @@ use crate::files::{
 };
 use crate::link::{
     ControlFrame, ReceiptQuery, ReplayParams, Scope, StationInfo, StreamMode, StreamStart,
-    WorkspaceListing, WorkspaceQuery,
+    WorkspaceListing, WorkspaceQuery, WorktreeList, WorktreesQuery,
 };
 use crate::mutation::{
     CoordinatorCallEnvelope, CoordinatorQueryEnvelope, KeyRotationEnvelope,
@@ -85,6 +85,8 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         StationInfo::export_all(&cfg),
         WorkspaceQuery::export_all(&cfg),
         WorkspaceListing::export_all(&cfg),
+        WorktreesQuery::export_all(&cfg),
+        WorktreeList::export_all(&cfg),
         ReceiptQuery::export_all(&cfg),
         FileListQuery::export_all(&cfg),
         FileListing::export_all(&cfg),

@@ -46,6 +46,9 @@ pub mod feature {
     /// `coordinator.call` (ADR-006 §6.1 `coordinator_v1`, M3 DL-212,
     /// DL-214).
     pub const COORDINATOR: &str = "coordinator.v1";
+    /// `workspace.worktrees`: the read-only inventory of the worktrees that
+    /// the station created for sessions (DL-142).
+    pub const WORKTREES: &str = "workspace.worktrees.v1";
 
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
@@ -61,6 +64,7 @@ pub mod feature {
         COORDINATOR,
         AUTO_CONTINUE,
         IMPORT,
+        WORKTREES,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];

@@ -15,7 +15,9 @@ use fleetdeck_link::control::{Control, InboundRequest};
 use fleetdeck_link::methods::code;
 use fleetdeck_link::revoke::{RotateError, check_rotation, finish_rotation};
 use fleetdeck_proto::command::{CommandResult, ReceiptState};
-use fleetdeck_proto::link::{Outcome, ReceiptQuery, StationInfo, WireError, WorkspaceQuery};
+use fleetdeck_proto::link::{
+    Outcome, ReceiptQuery, StationInfo, WireError, WorkspaceQuery, WorktreesQuery,
+};
 use fleetdeck_proto::mutation::Mutation;
 use fleetdeck_proto::{Receipt, Reject, RejectCode};
 use serde::Serialize;
@@ -68,6 +70,25 @@ async fn workspaces(ctx: &StationLink, params: serde_json::Value) -> Outcome {
             "timeout",
             "the directory took too long to read",
         )),
+    }
+}
+
+/// `workspace.worktrees` (DL-142): the read-only inventory of the session
+/// worktrees. It runs no Git command that writes.
+async fn worktrees(ctx: &StationLink, params: serde_json::Value) -> Outcome {
+    use crate::workspace::worktrees;
+    if let Err(e) = serde_json::from_value::<WorktreesQuery>(params) {
+        return bad_params(e);
+    }
+    match worktrees::inventory(
+        ctx.manager.store(),
+        ctx.manager.policy(),
+        &worktrees::git_options(),
+    )
+    .await
+    {
+        Ok(list) => ok(list),
+        Err(e) => internal(e),
     }
 }
 
@@ -154,6 +175,7 @@ async fn read(ctx: &StationLink, req: InboundRequest) -> Outcome {
             providers: ctx.manager.providers().await,
         }),
         "workspace.list" => workspaces(ctx, req.params).await,
+        "workspace.worktrees" => worktrees(ctx, req.params).await,
         "files.list" | "files.read" | "files.search" | "files.diff" => {
             file_method(ctx, &req.method, req.params).await
         }

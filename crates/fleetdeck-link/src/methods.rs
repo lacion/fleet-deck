@@ -99,6 +99,14 @@ pub const METHODS: &[MethodSpec] = &[
     // The spawn form's directory picker (M2 P4-4, DL-061): a read with the
     // drive scope, because only a caller that may start a session needs it.
     m("workspace.list", DeckToStation, Scope::Drive, None, false),
+    // The read-only inventory of the session worktrees (DL-142).
+    m(
+        "workspace.worktrees",
+        DeckToStation,
+        Scope::Drive,
+        Some(feature::WORKTREES),
+        false,
+    ),
     m(
         "files.list",
         DeckToStation,
