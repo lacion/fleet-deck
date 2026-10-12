@@ -863,3 +863,48 @@ async fn after_a_restart_a_failed_handover_with_a_hold_keeps_it() {
         Some("the station restarted; a terminal process may still use this session")
     );
 }
+
+#[tokio::test]
+async fn a_shell_id_that_holds_a_session_is_not_used_again() {
+    let mut rig = Rig::new("exec cat").await;
+    let a = rig.ended("s-a", "native-a").await;
+    let b = rig.ended("s-b", "native-b").await;
+    let d = rig.handover("tui-1", &a).await;
+    accepted(&d);
+    let effect = rig.store.claim_shell_effect().await.unwrap().unwrap();
+    rig.store
+        .finish_shell_effect(effect.effect_id, Err("shell task: panic".into()))
+        .await
+        .unwrap();
+    let mut rig = rig.restarted().await;
+    recover_holds(&rig.store).await.unwrap();
+    assert!(rig.summary(&a).await.terminal.is_some(), "the hold stays");
+
+    let refused = "shell `tui-1` holds session `s-a`; release it first";
+    assert_eq!(rejected(&rig.handover("tui-1", &b).await), refused);
+    let open = ShellChange::Open {
+        shell_id: "tui-1".to_owned(),
+        cwd: rig.root.to_string_lossy().into_owned(),
+        cols: 80,
+        rows: 24,
+    };
+    assert_eq!(rejected(&rig.shell("open", open).await), refused);
+    assert!(rig.summary(&b).await.terminal.is_none());
+}
+
+#[tokio::test]
+async fn the_recovery_reads_only_the_handover_of_the_held_session() {
+    let mut rig = Rig::new("exec cat").await;
+    let a = rig.ended("s-a", "native-a").await;
+    let b = rig.ended("s-b", "native-b").await;
+    accepted(&rig.handover("tui-1", &a).await);
+    let effect = rig.store.claim_shell_effect().await.unwrap().unwrap();
+    rig.store
+        .finish_shell_effect(effect.effect_id, Err("shell task: panic".into()))
+        .await
+        .unwrap();
+
+    let state = |s: &SessionId| rig.store.handover_effect_state("tui-1".into(), s.clone());
+    assert_eq!(state(&a).await.unwrap().as_deref(), Some("failed"));
+    assert_eq!(state(&b).await.unwrap(), None);
+}

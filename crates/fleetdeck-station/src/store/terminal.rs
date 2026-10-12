@@ -209,17 +209,23 @@ impl Store {
     }
 
     /// The state of the newest shell effect that is a handover of
-    /// `shell_id`.
+    /// `session` by `shell_id`: a handover of another session by the same
+    /// id never decides this hold.
     ///
     /// # Errors
     /// A database error.
-    pub async fn handover_effect_state(&self, shell_id: String) -> Result<Option<String>> {
+    pub async fn handover_effect_state(
+        &self,
+        shell_id: String,
+        session: SessionId,
+    ) -> Result<Option<String>> {
         call(&self.inner.db, move |conn| {
             Ok(conn
                 .query_row(
                     "SELECT state FROM shell_effects WHERE shell_id = ?1 AND op = 'handover'
+                     AND json_extract(change, '$.session_id') = ?2
                      ORDER BY created_at DESC, effect_id DESC LIMIT 1",
-                    [shell_id],
+                    [shell_id, session.as_str().to_owned()],
                     |r| r.get(0),
                 )
                 .optional()?)

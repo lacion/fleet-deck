@@ -75,6 +75,25 @@ impl Decision<'_> {
             .map(SessionId::from))
     }
 
+    /// The session that the terminal of shell `shell_id` holds
+    /// (`summary.terminal.shell_id`, DL-140): a new shell with that id would
+    /// make the hold's recovery read the wrong handover.
+    ///
+    /// # Errors
+    /// A database error.
+    pub fn shell_holds(&self, shell_id: &str) -> Result<Option<SessionId>> {
+        Ok(self
+            .connection()
+            .query_row(
+                "SELECT session_id FROM sessions \
+                 WHERE json_extract(summary, '$.terminal.shell_id') = ?1 LIMIT 1",
+                [shell_id],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()?
+            .map(SessionId::from))
+    }
+
     /// The native resume identity that the provider reported in
     /// `session.started` (Claude `session_id`, Codex `thread_id`).
     ///

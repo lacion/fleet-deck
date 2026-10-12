@@ -123,6 +123,21 @@ fn invalid_state(message: impl Into<String>) -> DecideError {
     DecideError::Reject(Reject::new(RejectCode::InvalidState, message))
 }
 
+/// A new shell (`shell.open` or `shell.handover`) never takes the id of a
+/// shell whose terminal holds a session: the hold's recovery reads the
+/// handover effects of that id.
+///
+/// # Errors
+/// A stored rejection, or a database error.
+pub(super) fn free_of_holds(d: &Decision<'_>, shell_id: &str) -> Result<(), DecideError> {
+    match d.shell_holds(shell_id)? {
+        Some(other) => Err(invalid_state(format!(
+            "shell `{shell_id}` holds session `{other}`; release it first"
+        ))),
+        None => Ok(()),
+    }
+}
+
 /// The decision of `shell.handover` after [`Shells::check`]: the session is
 /// resumable (the checks of `session.resume`), nothing holds it or its
 /// native session, nothing else drives the native session, and the
@@ -391,7 +406,9 @@ pub async fn recover_holds(store: &Store) -> Result<(), StoreError> {
                 }
             },
             None => {
-                let state = store.handover_effect_state(shell.clone()).await?;
+                let state = store
+                    .handover_effect_state(shell.clone(), session.clone())
+                    .await?;
                 if matches!(state.as_deref(), None | Some("retired_not_dispatched")) {
                     let reason = "the station restarted before the terminal started".to_owned();
                     store.release_terminal(session, shell, reason).await?;

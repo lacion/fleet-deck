@@ -685,11 +685,15 @@ pub fn decide(
     let pending = shell_effects::pending(d.connection())?;
     shells.check(&envelope.change, policy, &pending)?;
     match &envelope.change {
+        ShellChange::Open { shell_id, .. } => handover::free_of_holds(d, shell_id)?,
         ShellChange::Handover {
             shell_id,
             session_id,
             ..
-        } => handover::admit(d, policy, &shells.config.instances, session_id, shell_id)?,
+        } => {
+            handover::free_of_holds(d, shell_id)?;
+            handover::admit(d, policy, &shells.config.instances, session_id, shell_id)?;
+        }
         ShellChange::Release { shell_id } => {
             handover::decide_release(d, shells, &pending, shell_id)?;
             return Ok(CommandResult::default());
