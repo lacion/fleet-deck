@@ -4,7 +4,7 @@
 
 Fleet Deck v2 is a Rust rewrite of Fleet Deck. Version 1 (v0 in the plan) observed the Claude Code sessions of one machine through hooks. Version 2 starts and drives the agent sessions itself, through the native protocols of the providers, on each machine that you pair with the deck. You watch and control all of them from one web board, also from a phone.
 
-> **Status:** branch `v2`, milestone M3 (fleet features and hardening). The 2.0.0 release and the merge to `main` are owner steps. The v1 README is in [docs/v0/README.md](docs/v0/README.md).
+> **Status:** branch `v2`, milestone M3 (fleet features and hardening). The 2.0.0 release and the merge to `main` are owner steps. The v1 README is in [docs/v0/README.md](docs/v0/README.md). Before you move from v1, read the open parity checks in [the cutover guide](docs/v2/cutover.md).
 
 ## The parts
 

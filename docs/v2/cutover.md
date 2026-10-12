@@ -20,6 +20,15 @@ The repository side of the cutover (PLAN Phase 7, item 7-7) happens on the `v2` 
 
 The full parity table is PLAN §16.
 
+Open parity checks (item 6-13 is not done yet). These v1 behaviours have no automated v2 test yet. 6-13 adds a test or records a deferral for each one:
+
+- the terminal grid (v2: a session grid)
+- Shift+Enter for a new line in the message box
+- the model badge after a model change in a running session
+- revive from the board (v2: an owner resume from the board)
+- station discovery on the LAN
+
+
 ## 2. Before you start
 
 1. Finish or stop the work of the v1 sessions. v2 does not take over a running v1 session.
