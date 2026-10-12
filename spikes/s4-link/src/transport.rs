@@ -34,7 +34,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use rustix::fs::{CWD, Mode, mkfifoat};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, ReadBuf};
 use tokio::net::unix::pipe;
 use tokio::net::{TcpListener, TcpStream};
@@ -117,8 +116,38 @@ fn is_no_reader(e: &io::Error) -> bool {
     e.raw_os_error() == Some(rustix::io::Errno::NXIO.raw_os_error())
 }
 
+/// The FIFO transport is a test fallback for Linux sandboxes that deny IP
+/// sockets. Other systems (macOS) build it but refuse to use it.
+#[cfg(target_os = "linux")]
 fn make_fifo(path: &Path) -> io::Result<()> {
+    use rustix::fs::{CWD, Mode, mkfifoat};
     mkfifoat(CWD, path, Mode::from_raw_mode(0o600)).map_err(io::Error::from)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn make_fifo(_path: &Path) -> io::Result<()> {
+    Err(fifo_unsupported())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn fifo_unsupported() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::Unsupported,
+        "the fifo link transport needs Linux; use FD_LINK_TRANSPORT=tcp",
+    )
+}
+
+/// Opens the accept FIFO read-write, so it never reports EOF between dialers.
+#[cfg(target_os = "linux")]
+fn open_accept(accept: &Path) -> io::Result<pipe::Receiver> {
+    pipe::OpenOptions::new()
+        .read_write(true)
+        .open_receiver(accept)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn open_accept(_accept: &Path) -> io::Result<pipe::Receiver> {
+    Err(fifo_unsupported())
 }
 
 fn connection_id() -> String {
@@ -384,15 +413,13 @@ fn claim(conn_dir: &Path) -> io::Result<pipe::Receiver> {
     } else {
         make_fifo(&accept)?;
     }
-    // Read-write open: the accept FIFO never reports EOF between dialers.
-    pipe::OpenOptions::new()
-        .read_write(true)
-        .open_receiver(&accept)
+    open_accept(&accept)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "linux")]
     use tokio::io::AsyncReadExt;
 
     #[test]
@@ -422,6 +449,7 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn fifo_pairs_connect_carry_bytes_both_ways_and_end_with_eof() {
         let dir = tempfile::tempdir().unwrap();
@@ -458,6 +486,7 @@ mod tests {
         assert!(bind_fifo(dir.path(), "10.0.0.5:0".parse().unwrap()).is_err());
     }
 
+    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn an_accept_fifo_of_a_killed_listener_is_taken_over() {
         let dir = tempfile::tempdir().unwrap();

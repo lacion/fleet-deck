@@ -62,12 +62,14 @@ fn tree() -> (tempfile::TempDir, PathBuf, tempfile::TempDir) {
     .unwrap();
     std::os::unix::fs::symlink(outside.path().join("secret.txt"), root.join("link.txt")).unwrap();
     std::os::unix::fs::symlink(outside.path(), root.join("linkdir")).unwrap();
-    rustix::fs::mkfifoat(
-        rustix::fs::CWD,
-        root.join("pipe"),
-        rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
-    )
-    .unwrap();
+    // `mkfifo(1)` exists on Linux and macOS; rustix has no `mkfifoat` on macOS.
+    let made = std::process::Command::new("mkfifo")
+        .arg("-m")
+        .arg("600")
+        .arg(root.join("pipe"))
+        .status()
+        .unwrap();
+    assert!(made.success());
     std::fs::create_dir_all(root.join(".ssh")).unwrap();
     std::fs::write(root.join(".ssh/id_hello"), "hello key\n").unwrap();
     std::fs::create_dir_all(root.join(".GIT")).unwrap();

@@ -2258,3 +2258,12 @@ Format: context, options, choice, reason, owner review.
 - Tests: `board_shell::an_attached_shell_socket_closes_after_a_logout_and_a_token_revocation` (an admin token's ticket attach gets 403, list and open get 403 `owner_only`, the shell list is unchanged), `board_pairing::pairing_needs_admin_csrf_a_listener_and_a_node` (an all-scope token gets 403 `owner_only` on invite, add and remove; the station list is unchanged; audit rows), `http::methods::tests::every_command_method_has_the_scope_of_its_link_method` (16 generic command routes).
 - Not changed (adversary note N2): semantic config errors still quote the rejected value of non-secret keys (policy text, durations, instance ids, paths, hostnames); provider `env` values never appear. DL-137's "value-free" means TOML parser errors.
 - Owner review: pending.
+
+## DL-139 — macOS build: the FIFO test transport is Linux-only (owner testing)
+
+- Context: `cargo build` failed on the owner's macOS machine. `crates/fleetdeck-link/src/transport.rs` (and its spike copy `spikes/s4-link/src/transport.rs`) used `rustix::fs::mkfifoat`, which rustix does not offer on macOS, and tokio's `pipe::OpenOptions::read_write`, which exists only on Linux. A files test fixture also used `mkfifoat`. CI and `make check` run only on Linux, so nothing caught it.
+- Options: (a) a macOS FIFO implementation (`mkfifo` through libc, and a second open for the accept FIFO); (b) keep the FIFO transport Linux-only, because it is only a test fallback for Linux sandboxes that deny IP sockets (`FD_LINK_TRANSPORT=fifo:<dir>` or `auto`), and refuse it elsewhere.
+- Choice: (b). `make_fifo` and the new `open_accept` are `cfg(target_os = "linux")`; on other systems they return `io::ErrorKind::Unsupported` ("the fifo link transport needs Linux; use FD_LINK_TRANSPORT=tcp"). The two FIFO I/O tests run on Linux only. The files fixture makes its FIFO with `mkfifo(1)`, which exists on both systems, so its tests still run on macOS.
+- Verification: `cargo check --workspace --all-targets --target aarch64-apple-darwin` and the same with `--release` give no errors (cross-check on Linux with a stub C compiler; no linking). Linux: clippy `-D warnings`, transport and files tests 43/43.
+- Not done: a macOS CI job (owner step; operations §12 lists the macOS host). Test-only warnings for macOS remain in Linux-only tests.
+- Owner review: pending.
