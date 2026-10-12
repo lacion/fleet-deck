@@ -17,11 +17,20 @@ type Props = {
   readonly onOpen: (key: SessionKey) => void;
   /** The listing shown at the first render (tests). */
   readonly initialListing?: WorkspaceListing | null;
+  /** The first prompt at the first render (a plan from the library, DL-301). */
+  readonly initialPrompt?: string;
 };
 
 /** PLAN §11 spawn form for M2: station, provider, directory picker, mode,
  * model, title and first prompt. One button press sends one command. */
-export function SpawnForm({ stations, freshness, actions, onOpen, initialListing = null }: Props) {
+export function SpawnForm({
+  stations,
+  freshness,
+  actions,
+  onOpen,
+  initialListing = null,
+  initialPrompt = '',
+}: Props) {
   const targets = spawnTargets(stations);
   const [stationId, setStationId] = useState(targets[0]?.station_id ?? '');
   const station = targets.find((s) => s.station_id === stationId);
@@ -34,7 +43,7 @@ export function SpawnForm({ stations, freshness, actions, onOpen, initialListing
   const [mode, setMode] = useState('');
   const [model, setModel] = useState('');
   const [title, setTitle] = useState('');
-  const [prompt, setPrompt] = useState('');
+  const [prompt, setPrompt] = useState(initialPrompt);
   const [place, setPlace] = useState<'here' | 'worktree' | 'clone'>('here');
   const [cloneUrl, setCloneUrl] = useState('');
   const [cloneName, setCloneName] = useState('');

@@ -124,6 +124,20 @@ pub const API: &[ApiMethod] = &[
         false,
     ),
     m(
+        "plans.list",
+        Method::GET,
+        "/api/plans",
+        Some(Scope::Read),
+        false,
+    ),
+    m(
+        "plans.mark",
+        Method::POST,
+        "/api/plans/mark",
+        Some(Scope::Drive),
+        true,
+    ),
+    m(
         "sessions.list",
         Method::GET,
         "/api/sessions",
@@ -221,6 +235,7 @@ pub const API: &[ApiMethod] = &[
     cmd("session.revert", Scope::Drive),
     cmd("session.rename", Scope::Drive),
     cmd("session.resolve_revert", Scope::Drive),
+    cmd("session.set_auto_continue", Scope::Drive),
     cmd("approval.answer", Scope::Approve),
 ];
 
@@ -309,6 +324,6 @@ mod tests {
             assert!(api.mutating);
             n += 1;
         }
-        assert_eq!(n, 14);
+        assert_eq!(n, 15);
     }
 }

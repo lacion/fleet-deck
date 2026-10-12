@@ -69,6 +69,10 @@ pub fn decide(
             "fork is not part of this station build yet (DL-037)",
         )),
         SessionCommand::Rename { session_id, title } => rename(d, &session_id, title),
+        SessionCommand::SetAutoContinue {
+            session_id,
+            enabled,
+        } => super::auto_continue::decide_set(d, origin, &session_id, enabled),
         SessionCommand::Prompt { session_id, input } => {
             let s = live_session(d, &session_id, Operation::Prompt)?;
             input_effect(d, &s, origin_run, input, |input| EffectPayload::Prompt {

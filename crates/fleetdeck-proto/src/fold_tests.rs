@@ -183,6 +183,38 @@ fn usage_sums_known_parts_and_keeps_unknown_parts_unknown() {
 }
 
 #[test]
+fn rate_limit_windows_merge_by_scope_and_a_sparse_update_keeps_the_others() {
+    let mut f = Feed::new();
+    f.push(started());
+    let limits = |l: &[(&str, Option<f64>)]| Event::UsageUpdated {
+        usage: Usage::default(),
+        rate_limits: l
+            .iter()
+            .map(|(scope, used)| RateLimit {
+                scope: (*scope).to_owned(),
+                used_percent: *used,
+                resets_at: Some(1_000),
+            })
+            .collect(),
+    };
+    assert!(f.summary.rate_limits.is_empty(), "no window: unknown");
+    f.push(limits(&[("weekly", Some(10.0)), ("five_hour", Some(40.0))]));
+    let s = f.push(limits(&[("five_hour", None)]));
+    let got: Vec<_> = s
+        .rate_limits
+        .iter()
+        .map(|r| (r.scope.as_str(), r.used_percent))
+        .collect();
+    assert_eq!(got, [("five_hour", None), ("weekly", Some(10.0))]);
+    // A rate-limit update leaves the token usage unknown, not zero.
+    assert_eq!(s.usage, Usage::default());
+    let many: Vec<_> = (0..40).map(|i| (format!("s{i:02}"), Some(1.0))).collect();
+    let many: Vec<_> = many.iter().map(|(s, u)| (s.as_str(), *u)).collect();
+    let s = f.push(limits(&many));
+    assert_eq!(s.rate_limits.len(), MAX_RATE_LIMITS);
+}
+
+#[test]
 fn expiry_closes_a_request_and_errors_are_kept() {
     let mut f = Feed::new();
     f.push(started());

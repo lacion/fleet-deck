@@ -395,8 +395,13 @@ impl EffectTarget for SessionTarget {
             EffectPayload::Resume {
                 native_session_id,
                 spec,
+                prompt,
+                ..
             } => {
-                self.start(effect, spec, None, Some(native_session_id))
+                if let Some(code) = super::auto_continue::recheck(&self.store, effect).await {
+                    return Dispatch::NotDispatched(code);
+                }
+                self.start(effect, spec, prompt.as_ref(), Some(native_session_id))
                     .await
             }
             _ => self.operate(effect).await,

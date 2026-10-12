@@ -1436,3 +1436,37 @@ Format: context, options, choice, reason, owner review.
 - Reason: (a) loses the earlier reason that the owner needs for reconciliation; (c) is more schema for no current need. A flag makes the invalidation independent of every input-block reason. V14 backfills `adapter_gap = 1` for every row whose `input_blocked` is `adapter_state_gap` (a gap committed before V14 without an earlier reason); a pre-V14 gap behind an earlier reason left no trace and cannot be recovered, but such a row still blocks input.
 - Owner review: not required (implementation inside the accepted ADR-005 revision 3).
 
+
+## DL-125 — Fast rounds and parallel lanes for M3 (owner decision, approved)
+
+- Context: the owner wants a usable M3 soon and gives feedback from real use (owner change, 2026-10-12; time box 16:20 CEST).
+- Options: (a) keep one loop with a full check and repeated reviews per item; (b) four parallel goal loops (lanes A durable, B orchestration, C board, D ops) with one review per item, format and lint checks only in normal rounds, review findings collected as "Review follow-ups (after M3)", and one full `make check` on a clean checkout at the end in lane A.
+- Choice: (b), as the owner stated it. Lane A owns branch v2, this file (DL-125 to DL-199), the merges of the other lanes, and items 7-1, 7-2, 7-3, 7-6, then 6-13, 7-7 and 7-8. Lane logs and follow-up lists live in `docs/v2/progress/m3-<lane>.md`.
+- Reason: owner instruction.
+- Owner review: approved (owner decision, 2026-10-12).
+
+## DL-126 — 7-1 ShimHost is closed with the direct host as the default (lane A round 46)
+
+- Context: 7-1 kept two open points: the default host and the ADR-005 §9 tests not yet named. ADR-005 is accepted under the owner pre-approval (DL-073 owner answers). The code reviews part A and B (DL-121 to DL-124) are fixed.
+- Options: (a) make `host = "shim"` the default now; (b) keep `host = "direct"` as the default and ship the shim host as the opt-in setting of station.toml; (c) keep 7-1 open until every §9 test has its exact name.
+- Choice: (b), and 7-1 is closed. The §9 map is in `docs/v2/progress/m3-durable.md`. New this round: ADR test 4 `a_partial_line_is_never_acknowledged` and test 39 `an_unterminated_last_line_at_eof_is_committed_as_malformed_before_the_exit_is_acknowledged` in `crates/fleetdeck-cli/tests/shim_gap.rs`. Tests 20, 21, 22 and 48 (upgrade, drain, N-1) move to 7-3; test 24 (auto-continue under the shim) to 7-2 (DL-127); tests 3 (the named fault point), 16 (stale socket), 44 (exit file on ENOSPC) and 45 (ack_exit fault points) go to the review follow-ups.
+- Reason: the shim host has had no real-use hours; a default change without owner feedback is not consistent with the doctrine "fail closed, owner in control" (PLAN §3). The opt-in gives the owner the feature now and the default change is a one-line decision later. The four uncovered tests cover failure paths that the existing tests reach through other faults; they do not block use.
+- Owner review: pending (default host change after real use).
+
+## DL-127 — ADR-007 auto-continue accepted and implemented with documented deviations (lane A round 46)
+
+- Context: ADR-007 (status Proposed) needed an adversary DESIGN REVIEW before wiring. The loop forbids subagents, and the owner pre-approved the M3 ADRs (DL-073 owner answers) and asked for no questions.
+- Options: (a) leave 7-2 open until an architect review; (b) accept ADR-007 under the owner pre-approval, implement the smallest version that meets the §5 tests, and log every deviation for the PRE-PR REVIEW.
+- Choice: (b). ADR-007 status "Accepted (owner pre-approval, 2026-10-12; DL-127)". Implementation: `session.set_auto_continue` (feature `auto_continue.v1`, scope drive, ADR-004 rows), events `session.auto_continue_changed` / `session.auto_continue_skipped`, `RunOrigin::Continuation`, `SessionSummary.auto_continue` (serde default false), `crates/fleetdeck-station/src/store/auto_continue.rs` (facts) and `crates/fleetdeck-station/src/manager/auto_continue.rs` (preference, eligibility at the station start before commands, intent, dispatch recheck), board toggle and timeline in `web/src/session/`.
+- Deviations from ADR-007:
+  1. Enable is allowed only for a paired deck caller with the origin `board`; the local socket (any origin), a coordinator and mail are refused `forbidden`. Disable is allowed for every caller.
+  2. A session with `auto_continue` off gets no `session.auto_continue_skipped { disabled }` event (off is the default; an event for every lost session is noise). Every other skip reason is stored.
+  3. The intent is the `session.resume` outbox effect itself, admitted through the same `admit_resume` rules, with the command id `continue:<session_id>:<lost turn id>` (receipt deduplication makes a second start find it) and the continuation input as the resume's first input. Claude reports `session.started` only after its first input, so there is no separate `resumed` step: a claimed continuation that a crash interrupts is `outcome_unknown` by the ordinary effect recovery and is never dispatched again and never resent.
+  4. The dispatch recheck covers rules 2 (stored native id), 3, 5, 6 and 9 (`continue_by`); rule 10 (workspace, slot) is checked at the intent only.
+  5. Rule 11 (`input_outcome_unknown`) is checked before the `session.resume` admission, so its code wins over `not_resumable`.
+  6. A maintenance turn is a run whose input starts with `/compact`.
+  7. Sessions under the shim host skip with `unsupported` (shim-host resume stays refused, DL-118); ADR-005 test 24 is therefore not built.
+  8. ADR-007 test 15 (a resume that reports another native identity ends the new process with `outcome_unknown`) is not built; it is a review follow-up.
+- Tests: 16 of the 17 §5 names in `crates/fleetdeck-station/src/manager/auto_continue_tests.rs` (including one end-to-end continuation through `fake-claude sim`), and the board tests "auto-continue (ADR-007, DL-127)" in `web/src/session/session.test.tsx`.
+- Reason: the owner wants a usable M3 by 16:20; every deviation fails closed (a doubtful session stays `lost`, nothing is resent).
+- Owner review: pending (deviations 1-8; the architect PRE-PR REVIEW replaces the skipped design review).

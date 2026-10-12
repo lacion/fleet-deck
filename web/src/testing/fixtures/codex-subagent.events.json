@@ -140,6 +140,29 @@
     "proto_version": 1,
     "raw_ref": null,
     "event": {
+      "kind": "usage.updated",
+      "usage": {
+        "input_tokens": null,
+        "output_tokens": null,
+        "cost_usd": null
+      },
+      "rate_limits": [
+        {
+          "scope": "codex.primary",
+          "used_percent": 31.0,
+          "resets_at": 1792149381000
+        }
+      ]
+    }
+  },
+  {
+    "station_seq": 208,
+    "session_id": "codex-subagent",
+    "session_seq": 8,
+    "at": 1760000008000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
       "kind": "tool.started",
       "node_id": "node-2",
       "parent_node_id": null,
@@ -154,10 +177,10 @@
     }
   },
   {
-    "station_seq": 208,
+    "station_seq": 209,
     "session_id": "codex-subagent",
-    "session_seq": 8,
-    "at": 1760000008000,
+    "session_seq": 9,
+    "at": 1760000009000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -169,10 +192,10 @@
     }
   },
   {
-    "station_seq": 209,
+    "station_seq": 210,
     "session_id": "codex-subagent",
-    "session_seq": 9,
-    "at": 1760000009000,
+    "session_seq": 10,
+    "at": 1760000010000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -186,10 +209,33 @@
     }
   },
   {
-    "station_seq": 210,
+    "station_seq": 211,
     "session_id": "codex-subagent",
-    "session_seq": 10,
-    "at": 1760000010000,
+    "session_seq": 11,
+    "at": 1760000011000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "usage.updated",
+      "usage": {
+        "input_tokens": null,
+        "output_tokens": null,
+        "cost_usd": null
+      },
+      "rate_limits": [
+        {
+          "scope": "codex.primary",
+          "used_percent": 31.0,
+          "resets_at": 1792149381000
+        }
+      ]
+    }
+  },
+  {
+    "station_seq": 212,
+    "session_id": "codex-subagent",
+    "session_seq": 12,
+    "at": 1760000012000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -207,10 +253,10 @@
     }
   },
   {
-    "station_seq": 211,
+    "station_seq": 213,
     "session_id": "codex-subagent",
-    "session_seq": 11,
-    "at": 1760000011000,
+    "session_seq": 13,
+    "at": 1760000013000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -221,10 +267,33 @@
     }
   },
   {
-    "station_seq": 212,
+    "station_seq": 214,
     "session_id": "codex-subagent",
-    "session_seq": 12,
-    "at": 1760000012000,
+    "session_seq": 14,
+    "at": 1760000014000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "usage.updated",
+      "usage": {
+        "input_tokens": null,
+        "output_tokens": null,
+        "cost_usd": null
+      },
+      "rate_limits": [
+        {
+          "scope": "codex.primary",
+          "used_percent": 31.0,
+          "resets_at": 1792149381000
+        }
+      ]
+    }
+  },
+  {
+    "station_seq": 215,
+    "session_id": "codex-subagent",
+    "session_seq": 15,
+    "at": 1760000015000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -236,10 +305,10 @@
     }
   },
   {
-    "station_seq": 213,
+    "station_seq": 216,
     "session_id": "codex-subagent",
-    "session_seq": 13,
-    "at": 1760000013000,
+    "session_seq": 16,
+    "at": 1760000016000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -253,10 +322,33 @@
     }
   },
   {
-    "station_seq": 214,
+    "station_seq": 217,
     "session_id": "codex-subagent",
-    "session_seq": 14,
-    "at": 1760000014000,
+    "session_seq": 17,
+    "at": 1760000017000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "usage.updated",
+      "usage": {
+        "input_tokens": null,
+        "output_tokens": null,
+        "cost_usd": null
+      },
+      "rate_limits": [
+        {
+          "scope": "codex.primary",
+          "used_percent": 31.0,
+          "resets_at": 1792149381000
+        }
+      ]
+    }
+  },
+  {
+    "station_seq": 218,
+    "session_id": "codex-subagent",
+    "session_seq": 18,
+    "at": 1760000018000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -267,10 +359,10 @@
     }
   },
   {
-    "station_seq": 215,
+    "station_seq": 219,
     "session_id": "codex-subagent",
-    "session_seq": 15,
-    "at": 1760000015000,
+    "session_seq": 19,
+    "at": 1760000019000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -281,10 +373,10 @@
     }
   },
   {
-    "station_seq": 216,
+    "station_seq": 220,
     "session_id": "codex-subagent",
-    "session_seq": 16,
-    "at": 1760000016000,
+    "session_seq": 20,
+    "at": 1760000020000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -295,10 +387,10 @@
     }
   },
   {
-    "station_seq": 217,
+    "station_seq": 221,
     "session_id": "codex-subagent",
-    "session_seq": 17,
-    "at": 1760000017000,
+    "session_seq": 21,
+    "at": 1760000021000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -312,10 +404,33 @@
     }
   },
   {
-    "station_seq": 218,
+    "station_seq": 222,
     "session_id": "codex-subagent",
-    "session_seq": 18,
-    "at": 1760000018000,
+    "session_seq": 22,
+    "at": 1760000022000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "usage.updated",
+      "usage": {
+        "input_tokens": null,
+        "output_tokens": null,
+        "cost_usd": null
+      },
+      "rate_limits": [
+        {
+          "scope": "codex.primary",
+          "used_percent": 31.0,
+          "resets_at": 1792149381000
+        }
+      ]
+    }
+  },
+  {
+    "station_seq": 223,
+    "session_id": "codex-subagent",
+    "session_seq": 23,
+    "at": 1760000023000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -326,10 +441,10 @@
     }
   },
   {
-    "station_seq": 219,
+    "station_seq": 224,
     "session_id": "codex-subagent",
-    "session_seq": 19,
-    "at": 1760000019000,
+    "session_seq": 24,
+    "at": 1760000024000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -340,10 +455,10 @@
     }
   },
   {
-    "station_seq": 220,
+    "station_seq": 225,
     "session_id": "codex-subagent",
-    "session_seq": 20,
-    "at": 1760000020000,
+    "session_seq": 25,
+    "at": 1760000025000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -354,10 +469,10 @@
     }
   },
   {
-    "station_seq": 221,
+    "station_seq": 226,
     "session_id": "codex-subagent",
-    "session_seq": 21,
-    "at": 1760000021000,
+    "session_seq": 26,
+    "at": 1760000026000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {

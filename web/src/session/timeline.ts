@@ -217,6 +217,17 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
         endAll(e.state === 'lost' ? 'session lost' : 'session ended');
         break;
       }
+      // ADR-007 §2.5: a skipped restart continuation shows its reason.
+      case 'session.auto_continue_skipped': {
+        const e = event as Extract<Event, { kind: 'session.auto_continue_skipped' }>;
+        root.push({
+          type: 'notice',
+          key,
+          text: `Auto-continue skipped: ${e.reason.replaceAll('_', ' ')}`,
+          tone: 'info',
+        });
+        break;
+      }
       case 'approval.requested': {
         const e = event as Extract<Event, { kind: 'approval.requested' }>;
         const parentList = (e.node_id && where.get(e.node_id)) || root;

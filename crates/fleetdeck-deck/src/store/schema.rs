@@ -6,7 +6,8 @@
 //! and the condensed timeline. V2: link epochs (G1). V3 (P3-7): the
 //! command router's `commands` table (G3). V4 (P3-7b): the outbox of
 //! deck-owned intent (A5) and the receipts of `coordinator.call` (G7). Auth
-//! and audit tables follow in P3-8 (V5). V6 (M3 6-2, 6-4): mail and tasks.
+//! and audit tables follow in P3-8 (V5). V6 (M3 6-6): the plan
+//! library. V7 (M3 6-2, 6-4): mail and tasks.
 
 use rusqlite_migration::{M, Migrations};
 
@@ -162,10 +163,30 @@ CREATE TABLE audit (
 ) STRICT;
 ";
 
+/// The plan library (M3 6-6, DL-301): one row for each folded
+/// `plan.proposed` event. No foreign key to `stations`: a plan is fleet
+/// intent and stays when its station is removed or gets a new incarnation.
+const V6: &str = "
+CREATE TABLE plans (
+    plan_key       TEXT    PRIMARY KEY,
+    station_id     TEXT    NOT NULL,
+    session_id     TEXT    NOT NULL,
+    plan_id        TEXT    NOT NULL,
+    turn_id        TEXT,
+    session_title  TEXT,
+    markdown       TEXT    NOT NULL,
+    truncated      INTEGER NOT NULL CHECK (truncated IN (0, 1)),
+    status         TEXT    NOT NULL CHECK (status IN ('proposed', 'executed', 'archived')),
+    proposed_at    INTEGER NOT NULL,
+    updated_at     INTEGER NOT NULL
+) STRICT;
+CREATE INDEX plans_by_time ON plans (proposed_at DESC);
+";
+
 /// Fleet mail (M3 6-2) and tasks with waitable completions (6-4). Each row
 /// names the outbox item that delivers its text; the item is inserted in
-/// the same transaction (A5). `client_id` is the sender's idempotency key.
-const V6: &str = "
+/// the same transaction (A5).
+const V7: &str = "
 CREATE TABLE mail (
     mail_id    TEXT PRIMARY KEY,
     sender     TEXT NOT NULL,
@@ -203,6 +224,7 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V4),
         M::up(V5),
         M::up(V6),
+        M::up(V7),
     ])
 }
 

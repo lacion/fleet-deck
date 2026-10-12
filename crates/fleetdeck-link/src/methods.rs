@@ -152,6 +152,13 @@ pub const METHODS: &[MethodSpec] = &[
         true,
     ),
     m(
+        "session.set_auto_continue",
+        DeckToStation,
+        Scope::Drive,
+        Some(feature::AUTO_CONTINUE),
+        true,
+    ),
+    m(
         "session.rename",
         DeckToStation,
         Scope::Drive,

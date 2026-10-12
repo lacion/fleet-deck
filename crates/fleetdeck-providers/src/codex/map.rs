@@ -34,7 +34,6 @@ pub const IGNORED_NOTIFICATIONS: &[&str] = &[
     "item/reasoning/summaryPartAdded",
     "item/mcpToolCall/progress",
     "account/updated",
-    "account/rateLimits/updated",
     "account/login/completed",
     "mcpServer/startupStatus/updated",
     "mcpServer/oauthLogin/completed",
@@ -336,6 +335,13 @@ impl CodexCore {
                 })]
             }
             "thread/tokenUsage/updated" => Vec::new(),
+            "account/rateLimits/updated" => match super::limits::rate_limits(p) {
+                limits if limits.is_empty() => Vec::new(),
+                rate_limits => vec![Output::Emit(Event::UsageUpdated {
+                    usage: Usage::default(),
+                    rate_limits,
+                })],
+            },
             "error" => {
                 let info = p.pointer("/error/codexErrorInfo");
                 let code = match info.and_then(Value::as_str) {

@@ -25,6 +25,8 @@ export type SessionActions = {
   setModel(model: string): Promise<Outcome>;
   /** The board title (DL-095); `null` clears it. Allowed on an ended session too. */
   rename(title: string | null): Promise<Outcome>;
+  /** The restart auto-continuation preference (ADR-007); default off. */
+  setAutoContinue(enabled: boolean): Promise<Outcome>;
   /** Roll back the conversation, then restore the files, to the start of the turn (PLAN §6.6). */
   revert(turnId: string): Promise<Outcome>;
   /** The owner's resolution of a revert in `reconciliation_required` (DL-097). */
@@ -50,6 +52,7 @@ const METHODS: Record<SessionCommand['op'], string> = {
   stop: 'session.stop',
   revert: 'session.revert',
   rename: 'session.rename',
+  set_auto_continue: 'session.set_auto_continue',
   resolve_revert: 'session.resolve_revert',
 };
 
@@ -124,6 +127,7 @@ export function sessionActions(
     setMode: (mode) => run({ op: 'set_mode', session_id, mode }),
     setModel: (model) => run({ op: 'set_model', session_id, model }),
     rename: (title) => run({ op: 'rename', session_id, title }),
+    setAutoContinue: (enabled) => run({ op: 'set_auto_continue', session_id, enabled }),
     revert: (turn_id) => run({ op: 'revert', session_id, turn_id }),
     resolveRevert: (revert_id, resolution) =>
       run({ op: 'resolve_revert', session_id, revert_id, resolution }),

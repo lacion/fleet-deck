@@ -124,7 +124,8 @@ fn commands() -> Vec<SessionCommand> {
             | SessionCommand::Stop { .. }
             | SessionCommand::Revert { .. }
             | SessionCommand::Rename { .. }
-            | SessionCommand::ResolveRevert { .. } => {}
+            | SessionCommand::ResolveRevert { .. }
+            | SessionCommand::SetAutoContinue { .. } => {}
         }
     }
     commands

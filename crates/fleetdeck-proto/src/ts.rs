@@ -31,6 +31,7 @@ use crate::mutation::{CoordinatorCallEnvelope, KeyRotationEnvelope, StationConfi
 use crate::orchestration::{
     AssignOutcome, AssignRequest, MailRequest, MailView, TaskCompletion, TaskRequest, TaskView,
 };
+use crate::plans::{DeckPlan, PlanMarkRequest, PlanStatus};
 use crate::session::{CardStatus, SessionSummary};
 use crate::version::{Negotiated, VersionOffer};
 
@@ -94,6 +95,9 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         TaskRequest::export_all(&cfg),
         TaskCompletion::export_all(&cfg),
         TaskView::export_all(&cfg),
+        DeckPlan::export_all(&cfg),
+        PlanStatus::export_all(&cfg),
+        PlanMarkRequest::export_all(&cfg),
     ];
     for result in results {
         result.map_err(io::Error::other)?;
