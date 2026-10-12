@@ -133,12 +133,11 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  min-width: 900px;
 }
 .fd-colheads,
 .fd-swim-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(170px, 1fr));
+  grid-template-columns: var(--fd-cols, repeat(5, minmax(170px, 1fr)));
   gap: 10px;
 }
 .fd-colheads {
@@ -238,15 +237,23 @@
   min-width: 0;
 }
 .fd-card-title {
+  display: -webkit-box;
   flex: 1;
   min-width: 0;
   overflow: hidden;
   font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
 }
-.fd-card-head .fd-badge {
+.fd-card-head .fd-dot {
+  align-self: flex-start;
+  margin-top: 5px;
+}
+.fd-card-where .fd-badge {
   flex: none;
+  margin-left: auto;
 }
 .fd-card-where {
   display: flex;
@@ -763,4 +770,11 @@
 }
 .fd-home[data-layout="phone"] .fd-lanes-empty {
   padding: 32px 12px;
+}
+
+/* A radar that cannot load is not an alarm: one quiet line. */
+.fd-confstrip[data-state="error"] {
+  background: transparent;
+  border-bottom-color: var(--border-soft);
+  color: var(--faint);
 }

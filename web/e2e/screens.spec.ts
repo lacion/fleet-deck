@@ -140,6 +140,7 @@ async function shot(page: Page, name: string) {
   await page.screenshot({
     path: `test-results/screens/${test.info().project.name}-${name}.png`,
     fullPage: true,
+    animations: 'disabled',
   });
 }
 

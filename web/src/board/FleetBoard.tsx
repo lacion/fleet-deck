@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react';
 import { basename, relativeAge } from '../app/sessions';
 import { formatHash } from '../app/routes';
 import type { CardStatus, DeckSession, StationView } from '../gen';
@@ -122,16 +123,14 @@ export function FleetCard({
         <span className="fd-card-head">
           <span className="fd-dot" data-status={card.status} aria-hidden="true" />
           <span className="fd-card-title">{s.title ?? s.callsign ?? s.session_id}</span>
+        </span>
+        <span className="fd-card-where">
+          {station}
+          {where}
           <span className="fd-badge" data-family={modelFamily(s.model) ?? undefined}>
             {shortModel(s.model)}
           </span>
         </span>
-        {where === null && !showStation ? null : (
-          <span className="fd-card-where">
-            {station}
-            {where}
-          </span>
-        )}
         <CardNote card={card} />
         <span className="fd-card-foot">
           {subagents > 0 ? (
@@ -177,8 +176,12 @@ export function FleetBoard({ sessions, stations, freshness, now: given }: Props)
   const now = useNow(given, 30000);
   const groups = statusGroups(sessions);
   const counts = COLUMNS.map((column) => columnCards(groups, column.statuses).length);
+  // An empty column stays visible but narrow, so the cards get the width.
+  const cols = counts.map((n) => (n > 0 ? 'minmax(190px, 1fr)' : 'minmax(96px, 0.4fr)'));
+  const minWidth = counts.reduce((sum, n) => sum + (n > 0 ? 190 : 96), 10 * (COLUMNS.length - 1));
+  const style = { '--fd-cols': cols.join(' '), minWidth } as CSSProperties;
   return (
-    <main className="fd-board" aria-label="Fleet board">
+    <main className="fd-board" aria-label="Fleet board" style={style}>
       <div className="fd-colheads">
         {COLUMNS.map((column, i) => (
           <span key={column.id} className="fd-colhead">

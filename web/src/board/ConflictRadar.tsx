@@ -32,10 +32,14 @@ export function ConflictRadar({ load, version, onOpen }: Props) {
   const list = conflicts ?? [];
   if (problem === null && list.length === 0) return null;
   return (
-    <section className="fd-confstrip" aria-label="Conflict radar">
+    <section
+      className="fd-confstrip"
+      aria-label="Conflict radar"
+      data-state={list.length === 0 ? 'error' : undefined}
+    >
       {problem !== null ? (
-        <p className="fd-confstrip-line" role="alert">
-          Conflict radar: {problem}
+        <p className="fd-confstrip-line" title={problem}>
+          Conflict radar unavailable
         </p>
       ) : null}
       <ul className="fd-confstrip-lines">
