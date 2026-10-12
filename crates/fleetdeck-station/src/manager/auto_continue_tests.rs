@@ -141,6 +141,7 @@ impl Rig {
             provider_refs: refs,
             title: None,
             branch: None,
+            repo: None,
         }];
         if auto {
             events.push(Event::AutoContinueChanged { enabled: true });
@@ -272,9 +273,7 @@ fn follow_up(text: &str) -> EffectPayload {
         input: InputRecord {
             input_id: format!("in-{text}").into(),
             origin: RunOrigin::Board,
-            input: UserInput {
-                text: text.to_owned(),
-            },
+            input: UserInput::new(text),
         },
     }
 }
