@@ -172,6 +172,26 @@ Items, in order: 6-1 Workspaces, 6-3 Assign auto, 6-4 Tasks, 6-2 Mail,
     §8.4), snapshot projection (25e), grant creation at an owner start
     with the control skill, live smoke §8.5, and the round-4 follow-ups.
 
+### Round 6 (2026-10-12, from 16:13 CEST, time box end 16:20)
+
+- Committed round 5 (a3ead68); `git merge --no-edit v2` merged cleanly
+  (6dcf602; lane A docs and log; no proto change, so no `make ts-types`).
+- Review of round 5 (test 26): no new findings. The reviewer again
+  reported that its format and lint commands were blocked in its
+  environment.
+- 6-5 stays open. The next slice (the coordinator spec on `session.start`,
+  test 13 `a_station_local_start_with_a_coordinator_spec_is_rejected`, and
+  the §8.2 handoff wiring) changes the proto command, the station decision
+  and the provider start path; it does not fit in the 7 minutes before
+  the time box, so this round starts no partial code.
+- Status at the time box (16:20):
+  - Done: 6-1 Workspaces, 6-3 Assign auto, 6-4 Tasks, 6-2 Mail.
+  - Open: 6-5 Coordinator. Remaining: the coordinator spec on
+    `session.start` and the handoff wiring with the §8.2 secrecy tests
+    (10–13), the durable station coordinator outbox (§6.5, §8.4), snapshot
+    projection (25e), grant creation at an owner start with the control
+    skill, live smoke §8.5, and the review follow-ups.
+
 ## Review follow-ups (after M3)
 
 Review of round 1 (items 6-1, 6-3, 6-4, 6-2), recorded in round 2:
