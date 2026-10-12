@@ -28,6 +28,13 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 71 (2026-10-12, 16:24–)
+
+- Committed round 70 as 6566386.
+- Lanes: no new commits on `m3/orchestration`, `m3/board`, `m3/ops`. `m3-orchestration.md` has no LANE COMPLETE (6-5 open); 6-13, 7-7 and 7-8 still wait.
+- Pre-PR review preparation: new section "Phase 7 acceptance evidence map" in this file. Each Phase 7 acceptance line names its tests or target (test names read from the test files).
+- Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
+
 ## Round 70 (2026-10-12, 16:21–)
 
 - Committed round 69 as 0d4bbcd.
@@ -227,6 +234,24 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
 - Test: `crates/fleetdeck-cli/tests/docs_commands.rs` `every_documented_fleetdeck_command_and_flag_exists` → PASS.
 - Recorded the round-48 review findings on 7-3 as follow-ups.
 - Lanes: only `m3-ops` says LANE COMPLETE; 6-13, 7-7 and 7-8 wait.
+
+## Phase 7 acceptance evidence map (pre-PR review preparation)
+
+This map is for the architect's adversary PRE-PR REVIEW. It is not a claim of that review. Every row names the test or the target that proves the acceptance line of the M3 goal.
+
+| Acceptance line | Evidence |
+| --- | --- |
+| ShimHost: survive a station restart and upgrade, fencing, exclusive reattachment, output cursor recovery, explicit exit state, socket permissions, update and restart failures | The ADR-005 §9 test map below; `crates/fleetdeck-cli/tests/shim_*.rs`, `station_shim_sigkill.rs`, `station_shim_revert_crash.rs`, `host::shim::tests`. |
+| Auto-continue default OFF with the A10 rechecks (ADR-007) | `crates/fleetdeck-station/src/manager/auto_continue_tests.rs`: `auto_continue_is_off_by_default_and_a_restart_never_continues_a_session_without_it`, `a_coordinator_or_the_local_socket_cannot_enable_auto_continue`, `a_session_lost_with_execution_unknown_is_never_continued`, `an_input_with_an_unknown_outcome_prevents_the_continuation_and_is_never_resent`, `a_changed_provider_instance_or_native_identity_prevents_the_continuation`, `a_crash_after_the_resume_before_the_input_never_starts_a_second_process_and_never_resends`, `the_continued_session_runs_with_the_stored_mode_never_a_more_permissive_one` and 9 more. |
+| Station drain | `crates/fleetdeck-station/src/manager/drain_tests.rs`: `a_draining_station_refuses_new_work_and_reports_the_busy_sessions`, `only_the_commands_that_create_work_are_refused_while_draining`, `a_draining_station_refuses_an_import`. |
+| Self-upgrade and rollback | `crates/fleetdeck-cli/tests/station_upgrade.rs`: `a_drained_station_upgrades_and_rolls_back_binary_only_after_it_went_live`, `a_rollback_before_the_new_station_ran_restores_the_snapshot_with_a_new_incarnation`. |
+| N-1 version skew | `crates/fleetdeck-link/tests/version_skew.rs`: `a_deck_and_a_station_one_build_apart_negotiate_the_shared_features`, `a_method_of_the_newer_build_is_refused_by_an_older_peer_and_the_shared_ones_work`, `an_event_of_a_newer_build_is_kept_as_unknown_and_written_back_unchanged`, `a_stored_event_and_summary_of_the_previous_build_decode_with_defaults`. |
+| Performance bars of PLAN §13 | `make perf` (`crates/fleetdeck-cli/tests/perf.rs`, ignored tests, release build); results in the 7-4 line of `docs/v2/PROGRESS.md` (lane D, DL-401). |
+| cargo-dist, systemd, launchd, container file | `crates/fleetdeck-cli/tests/packaging.rs`: `the_cargo_dist_config_releases_fleetdeck_for_linux_and_macos_with_the_packaging_files`, `the_systemd_units_start_real_commands_and_the_station_unit_keeps_its_agents`, `the_launchd_agents_are_well_formed_and_start_real_commands`, `the_container_file_builds_a_non_root_station_image_with_pinned_versions`, `the_offline_built_binary_reports_its_version`. Image build, macOS and tailnet: owner steps (`docs/v2/operations.md` §12). |
+| README, internals, operations guide | `README.md`, `docs/v2/internals.md`, `docs/v2/operations.md`, `docs/v2/cutover.md`; `crates/fleetdeck-cli/tests/docs_commands.rs` checks the documented commands. |
+| Live smoke per provider (opt-in) | `make smoke-live` (`FD_LIVE_SMOKE=1`, `crates/fleetdeck-providers/tests/live_smoke.rs`), documented in `docs/v2/LIVE-SMOKE.md`. |
+| GATE-M2 §6 | P2-a, P2-b and SIGKILL survival lines of `docs/v2/PROGRESS.md`; `crates/fleetdeck-cli/tests/station_sigkill.rs::providers_of_a_sigkilled_station_exit_and_the_restarted_station_reports_them_lost`. |
+| v0 cutover, final `make check` | Open: items 7-7 and 7-8 (wait for lane B). |
 
 ## ADR-005 §9 test map (7-1 close)
 
