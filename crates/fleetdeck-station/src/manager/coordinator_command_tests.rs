@@ -42,7 +42,26 @@ impl Station {
         self.manager.submit(envelope, caller).await.unwrap()
     }
 
-    fn bind(&self, session: &SessionId, grant: &str, state: BindingState, generation: u32) {
+    /// The native identity of `session.started` of a session: a binding
+    /// with another identity is revoked at once (DL-217, §5.6).
+    async fn native(&self, session: &SessionId) -> String {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            for e in self.events().await {
+                if &e.session_id == session
+                    && let EventBody::Known(Event::SessionStarted { provider_refs, .. }) = &e.event
+                    && let Some(id) = provider_refs.get("session_id").and_then(|v| v.as_str())
+                {
+                    return id.to_owned();
+                }
+            }
+            assert!(tokio::time::Instant::now() < deadline, "no session.started");
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    }
+
+    async fn bind(&self, session: &SessionId, grant: &str, state: BindingState, generation: u32) {
+        let native = self.native(session).await;
         self.manager.policy().coordinator_bindings().insert(
             format!("digest-{grant}"),
             Binding {
@@ -50,7 +69,7 @@ impl Station {
                 grant_id: grant.to_owned(),
                 session_id: session.clone(),
                 provider_instance: "claude".to_owned(),
-                native_id: Some("native-1".to_owned()),
+                native_id: Some(native),
                 generation,
                 classes: [ToolClass::Read].into_iter().collect(),
                 state,
@@ -101,7 +120,7 @@ async fn a_duplicate_renew_or_revoke_command_returns_the_stored_receipt_and_appl
     let mut st = Station::new(4).await;
     let s = st.start(&st.workspace(), Some("hello")).await;
     let deck = st.deck().await;
-    st.bind(&s, "g-1", BindingState::Expired, 1);
+    st.bind(&s, "g-1", BindingState::Expired, 1).await;
     let first = st
         .lifecycle(
             "renew-1",
@@ -185,7 +204,7 @@ async fn a_renew_or_revoke_whose_grant_belongs_to_another_session_is_a_stored_re
     let a = st.start(&st.workspace(), Some("hello")).await;
     let b = st.start(&st.workspace(), Some("hello")).await;
     let deck = st.deck().await;
-    st.bind(&a, "g-a", BindingState::Expired, 1);
+    st.bind(&a, "g-a", BindingState::Expired, 1).await;
     for (n, command) in [revoke(&b, "g-a"), renew(&b, "g-a", 2)]
         .into_iter()
         .enumerate()
@@ -213,7 +232,7 @@ async fn a_station_local_request_or_a_coordinator_operation_cannot_create_renew_
     let mut st = Station::new(4).await;
     let s = st.start(&st.workspace(), Some("hello")).await;
     let deck = st.deck().await;
-    st.bind(&s, "g-1", BindingState::Expired, 1);
+    st.bind(&s, "g-1", BindingState::Expired, 1).await;
     let mut n = 0;
     // The local socket, whatever origin it names.
     for origin in [

@@ -224,7 +224,7 @@ fn spec(cwd: &str, instance: &str) -> SessionSpec {
     }
 }
 
-fn text(t: &str) -> UserInput {
+pub(super) fn text(t: &str) -> UserInput {
     UserInput::new(t.to_owned())
 }
 

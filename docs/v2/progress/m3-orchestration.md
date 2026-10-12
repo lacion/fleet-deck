@@ -236,6 +236,14 @@ Items, in order: 6-1 Workspaces, 6-3 Assign auto, 6-4 Tasks, 6-2 Mail,
   revocation at process exit, the durable station coordinator outbox
   (§6.5, §8.4), snapshot projection 25e, live smoke §8.5.
 
+### Round 9 (2026-10-12, from 16:32 CEST)
+
+- Start: committed round 8 as 046dea1; `git merge --no-edit v2` → f895574 (lane A docs only, no proto change, no `make ts-types`).
+- Review of round 8: "continue: implement deck owner grant/control-skill start and binding lifecycle; record that target.rs does not revoke the pending binding when process_started fails." Recorded below; the lifecycle work of this round revokes the bindings there too.
+- 6-5 slice (DL-217): owner coordinator start on the deck (schema V11 `tokens.start_command_id`, `http::grant_routes::owner_start`, `CONTROL_SKILL` in `crates/fleetdeck-deck/src/control_skill.md`, `record_lifecycle` claim by start receipt), station binding lifecycle (`Bindings::session_native`, `Bindings::end_session`, `manager::coordinator_start::{bound_events, ended_events}`, pump wiring in `manager/target.rs`), spawn form toggle "Coordinator" (`web/src/spawn/SpawnForm.tsx`).
+- Tests run: `cargo nextest run -p fleetdeck-station -E 'test(coordinator_start) | test(coordinator_command)'` → 5 passed; `cargo nextest run -p fleetdeck-deck -E 'test(an_owner_coordinator_start) | test(the_migrations_are_valid) | test(lifecycle)'` → 8 passed; `bun test src/spawn/spawn.test.tsx` → 11 pass.
+- Checks: see the round summary.
+
 ## Review follow-ups (after M3)
 
 Review of round 1 (items 6-1, 6-3, 6-4, 6-2), recorded in round 2:
@@ -273,4 +281,9 @@ Review of round 4 (item 6-5, renewal 25b), recorded in round 5:
 | 6-5 | §8.2 test 10 covers the station store bytes (DL-216) but not the deck store, the deck audit log or the station and deck log output (tracing) for the credential. Add a scan of the deck database and of captured logs. | `crates/fleetdeck-station/src/manager/coordinator_start_tests.rs`, `crates/fleetdeck-deck/tests/` |
 | 6-5 | §8.2 test 12 asks the deck to refuse a coordinator spec `unsupported`; only the station decision refuses it (DL-215). Add the deck-side check and its test. | `crates/fleetdeck-deck/src/http/` |
 | 6-5 | The Codex adapter has no `start_coordinated`; a Codex coordinator start fails `handoff_unverified` even after a live smoke (DL-216). | `crates/fleetdeck-providers/src/codex/` |
-| 6-5 | Nothing calls `Bindings::native_identity` or revokes a binding at process exit yet; a coordinator binding stays `pending` (ADR-006 §5.5, §5.6). | `crates/fleetdeck-station/src/manager/target.rs` |
+| 6-5 | Nothing calls `Bindings::native_identity` or revokes a binding at process exit yet; a coordinator binding stays `pending` (ADR-006 §5.5, §5.6). Done in round 9 (DL-217). | `crates/fleetdeck-station/src/manager/target.rs` |
+| 6-5 | `target.rs` did not revoke the pending binding when `process_started` failed (round 8 review). Round 9 revokes it there (DL-217); no test injects that store failure. | `crates/fleetdeck-station/src/manager/target.rs` |
+| 6-5 | A grant of an owner start whose start command is rejected or fails stays `active` with an empty session until it expires; revoke it when the receipt is a rejection. | `crates/fleetdeck-deck/src/store/grants.rs` |
+| 6-5 | The first `coordinator.bound` can name the session of an owner-start grant before the deck has the start receipt (DL-217); the station is trusted for that window. | `crates/fleetdeck-deck/src/store/grants.rs` |
+| 6-5 | The spawn form toggle has fixed classes (read, mail, drive) and deck defaults; no inputs for classes, target stations, spawn cap, mode ceilings or expiry (ADR-006 §4). | `web/src/spawn/SpawnForm.tsx` |
+| 6-5 | A pending binding that never bound sends `coordinator.ended` at generation 0, which the deck ignores; its grant stays `active` until expiry. | `crates/fleetdeck-station/src/manager/coordinator_start.rs` |

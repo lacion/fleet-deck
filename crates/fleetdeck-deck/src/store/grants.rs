@@ -61,6 +61,10 @@ pub struct NewGrant {
     pub idle_ttl_ms: i64,
     /// The lifetime from creation.
     pub ttl_ms: i64,
+    /// The owner's session start that creates the grant (DL-217): the
+    /// session id stays empty until the station names the session, and a
+    /// resend of the same start returns the same grant.
+    pub start_command_id: Option<String>,
 }
 
 impl NewGrant {
@@ -77,6 +81,7 @@ impl NewGrant {
             max_modes: BTreeMap::new(),
             idle_ttl_ms: DEFAULT_IDLE_TTL_MS,
             ttl_ms: DEFAULT_TTL_MS,
+            start_command_id: None,
         }
     }
 }
@@ -220,6 +225,19 @@ impl DeckStore {
         let grant_id: String = new_id(self.inner.ids.as_ref());
         call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
+            if let Some(start) = grant.start_command_id.as_deref() {
+                let found: Option<String> = tx
+                    .query_row(
+                        "SELECT grant_id FROM tokens WHERE start_command_id = ?1",
+                        [start],
+                        |r| r.get(0),
+                    )
+                    .optional()?;
+                if let Some(id) = found {
+                    return get_grant(&tx, &id)?
+                        .ok_or_else(|| DeckError::Corrupt("a found grant is gone".to_owned()));
+                }
+            }
             // The owner's grant lets the caller's station relay coordinator
             // calls: it gets the link scope `coordinate` in the same
             // transaction (DL-211). Pairing alone never grants it.
@@ -241,8 +259,9 @@ impl DeckStore {
             }
             tx.execute(
                 "INSERT INTO tokens (grant_id, station_id, session_id, classes, stations,
-                     spawn_cap, max_modes, idle_ttl_ms, created_at, expires_at, state)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'active')",
+                     spawn_cap, max_modes, idle_ttl_ms, created_at, expires_at, state,
+                     start_command_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'active', ?11)",
                 params![
                     grant_id,
                     grant.station_id.as_str(),
@@ -253,7 +272,8 @@ impl DeckStore {
                     serde_json::to_string(&grant.max_modes)?,
                     grant.idle_ttl_ms,
                     now,
-                    now.saturating_add(grant.ttl_ms)
+                    now.saturating_add(grant.ttl_ms),
+                    grant.start_command_id
                 ],
             )?;
             let stored = get_grant(&tx, &grant_id)?
@@ -476,7 +496,9 @@ pub(super) fn record_lifecycle(
             let Some(grant) = get_grant(tx, grant_id)? else {
                 return Ok(());
             };
-            let ours = &grant.station_id == station && grant.session_id == e.session_id;
+            let ours = &grant.station_id == station
+                && (grant.session_id == e.session_id
+                    || claims_start(tx, grant_id, &grant.session_id, &e.session_id)?);
             // A first binding needs no renewal; a higher generation of a
             // bound grant needs the owner's matching pending renewal (25b).
             let renewal = renew_generation(tx, grant_id)? == Some(i64::from(*generation));
@@ -491,7 +513,8 @@ pub(super) fn record_lifecycle(
                 tx.execute(
                     "UPDATE tokens SET bound_generation = ?2, bound_native_id = ?3,
                          bound_provider_instance = ?4, binding_id = ?5, last_used_at = ?6,
-                         state = 'active', revoked_reason = NULL, renew_generation = NULL
+                         state = 'active', revoked_reason = NULL, renew_generation = NULL,
+                         session_id = ?7
                      WHERE grant_id = ?1 AND state != 'revoked'",
                     params![
                         grant_id,
@@ -499,7 +522,8 @@ pub(super) fn record_lifecycle(
                         native_id,
                         provider_instance,
                         binding_id,
-                        e.at
+                        e.at,
+                        e.session_id.0
                     ],
                 )?;
             }
@@ -524,4 +548,32 @@ pub(super) fn record_lifecycle(
         _ => {}
     }
     Ok(())
+}
+
+/// True if the first `coordinator.bound` of an owner-start grant may name
+/// its session (DL-217): the grant has no session yet, and the deck's
+/// receipt of its start command names no other session. The station
+/// binds only the grant id that the deck put into the start command.
+fn claims_start(
+    tx: &Connection,
+    grant_id: &str,
+    grant_session: &SessionId,
+    session: &SessionId,
+) -> Result<bool> {
+    if !grant_session.0.is_empty() {
+        return Ok(false);
+    }
+    let receipt: Option<Option<String>> = tx
+        .query_row(
+            "SELECT json_extract(c.receipt, '$.result.session_id')
+             FROM tokens t LEFT JOIN commands c ON c.command_id = t.start_command_id
+             WHERE t.grant_id = ?1 AND t.start_command_id IS NOT NULL",
+            [grant_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(match receipt {
+        None => false,
+        Some(named) => named.is_none_or(|s| s == session.0),
+    })
 }

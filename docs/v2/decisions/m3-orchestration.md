@@ -442,3 +442,54 @@ reason, owner review.
   no byte of the station database or WAL holds it),
   `manager::coordinator_start_tests::the_start_effect_rechecks_the_handoff_and_the_endpoint`.
 - Owner review: pending
+
+## DL-217 — Owner coordinator start on the deck and the station binding lifecycle (6-5)
+
+- Date: 2026-10-12 (lane B round 9)
+- Context: ADR-006 §4 says the owner creates the grant as part of a
+  session start, and §7.1 says the deck puts its control skill into
+  `CoordinatorSpec.control_skill`. The station assigns the session id in
+  its decision, so the deck cannot know the session of the grant when it
+  creates it. The station bindings stayed `pending` (DL-216 follow-up),
+  and a failed `process_started` did not revoke the binding (round 8
+  review).
+- Options for the session id: (a) the deck chooses the session id (no:
+  the station owns the id, M2); (b) create the grant with an empty
+  session id and its start `command_id`, and let the first
+  `coordinator.bound` name the session when the deck's receipt of that
+  start names no other session; (c) create the grant only after the
+  receipt (no: the credential must be in the child environment at
+  process start, §5.4).
+- Choice: (b).
+  - Deck schema V11: `tokens.start_command_id` (unique when set).
+    `NewGrant.start_command_id`; `create_grant` returns the existing grant
+    for the same start command (a resend creates no second grant).
+  - `POST /api/commands/session.start` with `spec.coordinator`:
+    `http::grant_routes::owner_start` creates the grant (classes from the
+    request, unknown → 400 `invalid_grant`; `idle_ttl_ms`/`expires_at` 0 →
+    deck defaults), refreshes the link grants, and replaces the board's
+    grant id, classes, expiry and control skill with the deck's
+    (`CONTROL_SKILL_VERSION` "1", `CONTROL_SKILL` from
+    `crates/fleetdeck-deck/src/control_skill.md`).
+  - `record_lifecycle`: a grant with an empty session id accepts the first
+    `coordinator.bound` of its station when the start receipt names no
+    session or this session, and stores that session id.
+  - Station: `session.started` of a session binds each binding of the
+    session (`Bindings::session_native`): `pending` → `active` generation 1
+    with `coordinator.bound`; another root identity → `revoked` with
+    `coordinator.ended`. The pump revokes every binding at the process end
+    (`Bindings::end_session`, `coordinator.ended` reason `process_exit`).
+    A failed `process_started` revokes the session's bindings.
+  - Board: spawn form toggle "Coordinator" (classes read, mail, drive;
+    deck defaults for TTLs); not sent with an import.
+- Reason: the station keeps its session ids; the station binds only the
+  grant id that the deck put into the start, and the deck still checks the
+  station and the start receipt (PLAN §3: the deck is the authority).
+- Tests: `fleetdeck-deck::http_commands::an_owner_coordinator_start_creates_one_grant_and_sends_its_id_and_the_control_skill`,
+  `fleetdeck-station manager::coordinator_start_tests::a_deck_start_with_a_grant_hands_the_credential_to_the_child_environment_only`
+  (extended: `coordinator.bound` generation 1 with the native id, then
+  `coordinator.ended` `process_exit` after a stop),
+  `manager::tests::coordinator_command::*` (helper binds with the real
+  native id), `store::schema::tests::the_migrations_are_valid`,
+  `web/src/spawn/spawn.test.tsx` coordinator toggle test.
+- Owner review: pending

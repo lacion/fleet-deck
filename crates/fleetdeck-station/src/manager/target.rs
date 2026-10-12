@@ -216,6 +216,7 @@ impl SessionTarget {
             Arc::clone(&turns),
             rx,
             ready_rx,
+            self.coordinator.clone(),
         ));
         let started = match (resume, coordinator) {
             (Some(native), _) => {
@@ -242,6 +243,9 @@ impl SessionTarget {
         {
             tracing::error!(error = %e, "the process could not be recorded; stopping it");
             drop(ready_tx);
+            // No process means no binding: its credential dies with the
+            // child (review round 8, DL-217).
+            self.coordinator.revoke_session(&session_id);
             let _ = session.stop(StopMode::Kill).await;
             return Dispatch::Unknown(format!("store: {e}"));
         }
@@ -469,6 +473,7 @@ async fn pump(
     turns: Arc<SessionTurns>,
     mut rx: mpsc::Receiver<fleetdeck_providers::adapter::Emitted>,
     ready: oneshot::Receiver<ProcessIncarnation>,
+    coordinator: crate::coordinator::Bindings,
 ) {
     // Hold the events until the process is recorded, so that its end cannot
     // come first. A failed start drops `ready`: the pump still stores what
@@ -492,6 +497,13 @@ async fn pump(
         }
         // The events are in the log first: `turn.completed` never waits for
         // a checkpoint (L13).
+        let bound = super::coordinator_start::bound_events(&coordinator, &session_id, &observed);
+        if !bound.is_empty()
+            && let Err(e) = store.append(session_id.clone(), bound).await
+        {
+            tracing::error!(error = %e, "coordinator binding facts not stored; closing the session");
+            break;
+        }
         if turns.observe(&observed).await {
             tokio::spawn(Arc::clone(&turns).capture_due());
         }
@@ -500,6 +512,13 @@ async fn pump(
         }
     }
     drop(rx);
+    // The process is gone: its coordinator credential ends with it (§5.5).
+    let gone = super::coordinator_start::ended_events(&coordinator, &session_id);
+    if !gone.is_empty()
+        && let Err(e) = store.append(session_id.clone(), gone).await
+    {
+        tracing::error!(error = %e, "coordinator binding end not stored");
+    }
     if let Some(process) = process {
         if let Ok(mut map) = sessions.lock() {
             map.remove(&session_id);

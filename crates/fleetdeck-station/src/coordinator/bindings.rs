@@ -257,6 +257,40 @@ impl Bindings {
         out
     }
 
+    /// Binds the native identity of each binding of a session that is not
+    /// revoked (DL-217). Returns the bindings whose state changed: a
+    /// pending binding became `active` (generation 1), an active binding
+    /// with another root identity became `revoked` (§5.6).
+    pub fn session_native(&self, session_id: &SessionId, native_id: &str) -> Vec<Binding> {
+        let ids: Vec<(String, BindingState)> = self
+            .lock()
+            .values()
+            .filter(|e| {
+                &e.binding.session_id == session_id && e.binding.state != BindingState::Revoked
+            })
+            .map(|e| (e.binding.binding_id.clone(), e.binding.state))
+            .collect();
+        ids.into_iter()
+            .filter_map(|(id, before)| {
+                let after = self.native_identity(&id, native_id)?;
+                (after != before).then(|| self.get(&id)).flatten()
+            })
+            .collect()
+    }
+
+    /// Revokes every binding of a session at its process end and returns
+    /// the bindings that were not revoked before (DL-217).
+    pub fn end_session(&self, session_id: &SessionId) -> Vec<Binding> {
+        let mut out = Vec::new();
+        for e in self.lock().values_mut() {
+            if &e.binding.session_id == session_id && e.binding.state != BindingState::Revoked {
+                e.binding.state = BindingState::Revoked;
+                out.push(e.binding.clone());
+            }
+        }
+        out
+    }
+
     /// Revoke every binding of a session (process exit, stop; §5.5).
     pub fn revoke_session(&self, session_id: &SessionId) {
         for e in self.lock().values_mut() {
