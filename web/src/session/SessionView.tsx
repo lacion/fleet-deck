@@ -328,7 +328,10 @@ function ItemView({ item }: { item: Item }) {
         </p>
       );
     case 'turn':
-      return <p className="fd-note">Turn {item.status}.</p>;
+      return item.status === 'done' ? null : <p className="fd-note">Turn {item.status}.</p>;
+    case 'reasoning':
+    case 'plan':
+      return null;
     case 'notice':
       return item.tone === 'error' ? (
         <p className="fd-notice-error">{item.text}</p>

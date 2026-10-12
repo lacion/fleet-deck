@@ -6,6 +6,7 @@ import {
   buildTimeline,
   type Item,
   runningSubagents,
+  slashCommands,
   type Subagent,
   subagentLabel,
 } from './timeline';
@@ -293,5 +294,141 @@ describe('session timeline tree (PLAN D15)', () => {
       background_agents: 2,
     });
     expect(runningSubagents(s)).toBe(3);
+  });
+});
+
+const toolStarted = (node_id: string, files: string[] = []): Event => ({
+  kind: 'tool.started',
+  node_id,
+  parent_node_id: null,
+  tool_kind: 'edit',
+  title: 'Edit',
+  input_summary: 'x',
+  files,
+  provider_refs: {},
+});
+
+describe('chat timeline items (DL-140)', () => {
+  test('reasoning deltas of one turn merge and end when another item follows', () => {
+    const reasoning = (turn_id: string, text: string): Event => ({
+      kind: 'reasoning.delta',
+      turn_id,
+      text,
+    });
+    const open = buildTimeline(envelopes('r', [reasoning('t1', 'a'), reasoning('t1', 'b')]));
+    expect(open.items).toEqual([
+      { type: 'reasoning', key: '1', turn_id: 't1', text: 'ab', done: false },
+    ]);
+    const closed = buildTimeline(
+      envelopes('r', [reasoning('t1', 'a'), toolStarted('n1'), reasoning('t1', 'b')]),
+    );
+    expect(closed.items.map((i) => i.type)).toEqual(['reasoning', 'tool', 'reasoning']);
+    expect(closed.items[0]).toMatchObject({ text: 'a', done: true });
+    expect(closed.items[2]).toMatchObject({ text: 'b', done: false });
+    const ended = buildTimeline(
+      envelopes('r', [reasoning('t1', 'a'), { kind: 'session.ended', reason: 'exit' } as Event]),
+    );
+    expect(ended.items[0]).toMatchObject({ type: 'reasoning', done: true });
+  });
+
+  test('a plan proposal is a plan item', () => {
+    const tree = buildTimeline(
+      envelopes('p', [
+        { kind: 'plan.proposed', plan_id: 'plan-1', turn_id: null, markdown: '# Go' },
+      ]),
+    );
+    expect(tree.items).toEqual([{ type: 'plan', key: '1', plan_id: 'plan-1', markdown: '# Go' }]);
+  });
+
+  test('tool files merge from started, completed and file.changed; exit code is kept', () => {
+    const tree = buildTimeline(
+      envelopes('f', [
+        toolStarted('n1', ['a.ts', 'b.ts']),
+        { kind: 'file.changed', path: 'c.ts', change: 'added', node_id: 'n1' },
+        { kind: 'file.changed', path: 'a.ts', change: 'modified', node_id: 'n1' },
+        {
+          kind: 'tool.completed',
+          node_id: 'n1',
+          status: 'failed',
+          files: ['b.ts', 'd.ts'],
+          exit_code: 2,
+        },
+      ]),
+    );
+    expect(tree.items).toHaveLength(1);
+    expect(tree.items[0]).toMatchObject({
+      type: 'tool',
+      files: ['a.ts', 'b.ts', 'c.ts', 'd.ts'],
+      exit_code: 2,
+      status: 'failed',
+    });
+  });
+
+  test('turn.finalized sets the diff on an existing turn item', () => {
+    const diff = { files_changed: 2, insertions: 5, deletions: 1 };
+    const tree = buildTimeline(
+      envelopes('d', [
+        { kind: 'turn.completed', turn_id: 't1', status: 'failed', usage: null },
+        { kind: 'turn.finalized', turn_id: 't1', checkpoint: null, diff_summary: diff },
+      ]),
+    );
+    expect(tree.items).toEqual([{ type: 'turn', key: '1', status: 'failed', turn_id: 't1', diff }]);
+  });
+
+  test('turn.finalized for a missing turn adds a done turn item', () => {
+    const diff = { files_changed: 1, insertions: 1, deletions: 0 };
+    const tree = buildTimeline(
+      envelopes('d', [
+        { kind: 'turn.completed', turn_id: 't1', status: 'done', usage: null },
+        { kind: 'turn.finalized', turn_id: 't1', checkpoint: null, diff_summary: diff },
+        { kind: 'turn.finalized', turn_id: 't2', checkpoint: null, diff_summary: null },
+      ]),
+    );
+    expect(tree.items).toMatchObject([
+      { type: 'turn', status: 'done', turn_id: 't1', diff },
+      { type: 'turn', status: 'done', turn_id: 't2', diff: null },
+    ]);
+  });
+
+  test('file.changed without a known node is a notice', () => {
+    const tree = buildTimeline(
+      envelopes('n', [
+        { kind: 'file.changed', path: 'x.ts', change: 'deleted', node_id: null },
+        { kind: 'file.changed', path: 'y.ts', change: 'added', node_id: 'ghost' },
+      ]),
+    );
+    expect(tree.items).toMatchObject([
+      { type: 'notice', text: 'x.ts deleted', tone: 'info' },
+      { type: 'notice', text: 'y.ts added', tone: 'info' },
+    ]);
+  });
+
+  test('model.changed, output_gap and session.terminal are notices', () => {
+    const tree = buildTimeline(
+      envelopes('n', [
+        { kind: 'model.changed', model: 'opus' },
+        { kind: 'session.output_gap', from: 4, to: 9, reason: 'below_floor' },
+        { kind: 'session.terminal', shell_id: 'sh-1', pid: 7 },
+        { kind: 'session.terminal', reason: 'tui exited' },
+        { kind: 'session.terminal' },
+      ]),
+    );
+    expect(tree.items.map((i) => (i.type === 'notice' ? i.text : i.type))).toEqual([
+      'Model changed to opus',
+      'Some output is missing here (events 4–9).',
+      'Opened in a terminal.',
+      'Returned to board control: tui exited',
+      'Returned to board control',
+    ]);
+  });
+
+  test('slashCommands reads the newest event, else null', () => {
+    expect(slashCommands(envelopes('s', [{ kind: 'model.changed', model: 'm' }]))).toBeNull();
+    const events = envelopes('s', [
+      { kind: 'session.slash_commands', commands: ['old'] },
+      { kind: 'model.changed', model: 'm' },
+      { kind: 'session.slash_commands', commands: ['init', 'review'] },
+    ]);
+    expect(slashCommands(events)).toEqual(['init', 'review']);
   });
 });

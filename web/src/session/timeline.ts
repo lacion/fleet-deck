@@ -5,7 +5,14 @@
 // nest to any depth. A subagent that the provider moves to the background
 // completes its tool call at once; the next unbound subagent task of
 // `background.updated` belongs to it until the task leaves the list (DL-060).
-import type { ApprovalOption, Event, EventEnvelope, ToolKind, TurnStatus } from '../gen';
+import type {
+  ApprovalOption,
+  DiffSummary,
+  Event,
+  EventEnvelope,
+  ToolKind,
+  TurnStatus,
+} from '../gen';
 
 export type SubagentStatus = 'running' | 'background' | 'done' | 'failed' | 'ended';
 
@@ -21,7 +28,12 @@ export type Item =
       input: string;
       output: string;
       status: 'running' | 'ok' | 'failed' | 'denied' | 'ended';
+      /** Files of the call: deduplicated, first-seen order. */
+      files: string[];
+      exit_code: number | null;
     }
+  | { type: 'reasoning'; key: string; turn_id: string; text: string; done: boolean }
+  | { type: 'plan'; key: string; plan_id: string; markdown: string }
   | Subagent
   | {
       type: 'approval';
@@ -33,7 +45,7 @@ export type Item =
       state: 'open' | 'answered' | 'expired';
       outcome: string | null;
     }
-  | { type: 'turn'; key: string; status: TurnStatus }
+  | { type: 'turn'; key: string; status: TurnStatus; turn_id: string; diff: DiffSummary | null }
   | { type: 'notice'; key: string; text: string; tone: 'info' | 'error' };
 
 export type Subagent = {
@@ -60,6 +72,17 @@ export const SUBAGENT_TASK_KINDS: readonly string[] = ['local_agent', 'remote_ag
 
 type Open = { item: Extract<Item, { type: 'message' }>; turn: string };
 
+/** The commands of the newest `session.slash_commands` event, or null. */
+export function slashCommands(events: readonly EventEnvelope[]): readonly string[] | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i]?.event as Event | { kind: string } | undefined;
+    if (event?.kind === 'session.slash_commands') {
+      return (event as Extract<Event, { kind: 'session.slash_commands' }>).commands;
+    }
+  }
+  return null;
+}
+
 /** Builds the tree from a timeline in `session_seq` order. */
 export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline {
   const root: Item[] = [];
@@ -69,6 +92,9 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
   const messages = new Map<string, Open>(); // container node id ('' = root) → open message
   const approvals = new Map<string, Extract<Item, { type: 'approval' }>>();
   const allMessages: Extract<Item, { type: 'message' }>[] = [];
+  const allReasoning: Extract<Item, { type: 'reasoning' }>[] = [];
+  const openReasoning = new Map<Item[], Extract<Item, { type: 'reasoning' }>>(); // list → open item
+  const turns = new Map<string, Extract<Item, { type: 'turn' }>>();
   let tasks: string[] = []; // the current subagent task ids
   // Background subagents that the previous event finished by an empty task
   // list. An old station recovery wrote that list just before the loss, so
@@ -85,11 +111,23 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
         node.status = 'ended';
     }
     for (const message of allMessages) message.done = true;
+    for (const reasoning of allReasoning) reasoning.done = true;
     messages.clear();
+    openReasoning.clear();
     for (const a of approvals.values()) {
       if (a.state === 'open') Object.assign(a, { state: 'expired', outcome: requestOutcome });
     }
     tasks = [];
+  };
+
+  // Any item that joins a list after open reasoning ends that reasoning.
+  const add = (target: Item[], item: Item) => {
+    const open = openReasoning.get(target);
+    if (open) {
+      open.done = true;
+      openReasoning.delete(target);
+    }
+    target.push(item);
   };
 
   const list = (parent: string | null): Item[] => {
@@ -106,7 +144,7 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
     switch (event.kind) {
       case 'run.started': {
         const e = event as Extract<Event, { kind: 'run.started' }>;
-        root.push({
+        add(root, {
           type: 'run',
           key,
           run_id: e.run_id,
@@ -123,7 +161,7 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
         let open = messages.get(container);
         if (!open || open.turn !== e.turn_id || open.item.done) {
           const item = { type: 'message' as const, key, text: '', done: false };
-          list(e.parent_node_id).push(item);
+          add(list(e.parent_node_id), item);
           allMessages.push(item);
           open = { item, turn: e.turn_id };
           messages.set(container, open);
@@ -153,7 +191,7 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
           };
           nodes.set(e.node_id, sub);
           subagents.push(sub);
-          parent.push(sub);
+          add(parent, sub);
         } else {
           const tool = {
             type: 'tool' as const,
@@ -164,9 +202,11 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
             input: e.input_summary,
             output: '',
             status: 'running' as const,
+            files: [...new Set(e.files)],
+            exit_code: null,
           };
           nodes.set(e.node_id, tool);
-          parent.push(tool);
+          add(parent, tool);
         }
         where.set(e.node_id, parent);
         break;
@@ -180,7 +220,11 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
       case 'tool.completed': {
         const e = event as Extract<Event, { kind: 'tool.completed' }>;
         const node = nodes.get(e.node_id);
-        if (node?.type === 'tool') node.status = e.status;
+        if (node?.type === 'tool') {
+          node.status = e.status;
+          node.exit_code = e.exit_code;
+          node.files = [...new Set([...node.files, ...e.files])];
+        }
         if (node?.type === 'subagent' && node.status === 'running') {
           const bound = new Set(subagents.map((s) => s.task_id));
           const task = e.status === 'ok' ? tasks.find((t) => !bound.has(t)) : undefined;
@@ -220,7 +264,7 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
       // ADR-007 §2.5: a skipped restart continuation shows its reason.
       case 'session.auto_continue_skipped': {
         const e = event as Extract<Event, { kind: 'session.auto_continue_skipped' }>;
-        root.push({
+        add(root, {
           type: 'notice',
           key,
           text: `Auto-continue skipped: ${e.reason.replaceAll('_', ' ')}`,
@@ -242,7 +286,7 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
           outcome: null,
         };
         approvals.set(e.request_id, item);
-        parentList.push(item);
+        add(parentList, item);
         break;
       }
       case 'approval.resolved': {
@@ -265,12 +309,97 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
       }
       case 'turn.completed': {
         const e = event as Extract<Event, { kind: 'turn.completed' }>;
-        if (e.status !== 'done') root.push({ type: 'turn', key, status: e.status });
+        const known = turns.get(e.turn_id);
+        if (known) {
+          known.status = e.status;
+        } else if (e.status !== 'done') {
+          const item = {
+            type: 'turn' as const,
+            key,
+            status: e.status,
+            turn_id: e.turn_id,
+            diff: null,
+          };
+          turns.set(e.turn_id, item);
+          add(root, item);
+        }
+        break;
+      }
+      case 'turn.finalized': {
+        const e = event as Extract<Event, { kind: 'turn.finalized' }>;
+        const known = turns.get(e.turn_id);
+        if (known) {
+          known.diff = e.diff_summary;
+        } else {
+          const item = {
+            type: 'turn' as const,
+            key,
+            status: 'done' as const,
+            turn_id: e.turn_id,
+            diff: e.diff_summary,
+          };
+          turns.set(e.turn_id, item);
+          add(root, item);
+        }
+        break;
+      }
+      case 'reasoning.delta': {
+        const e = event as Extract<Event, { kind: 'reasoning.delta' }>;
+        const open = openReasoning.get(root);
+        if (open && open.turn_id === e.turn_id) {
+          open.text += e.text;
+        } else {
+          const item = {
+            type: 'reasoning' as const,
+            key,
+            turn_id: e.turn_id,
+            text: e.text,
+            done: false,
+          };
+          add(root, item);
+          allReasoning.push(item);
+          openReasoning.set(root, item);
+        }
+        break;
+      }
+      case 'plan.proposed': {
+        const e = event as Extract<Event, { kind: 'plan.proposed' }>;
+        add(root, { type: 'plan', key, plan_id: e.plan_id, markdown: e.markdown });
+        break;
+      }
+      case 'file.changed': {
+        const e = event as Extract<Event, { kind: 'file.changed' }>;
+        const node = e.node_id === null ? undefined : nodes.get(e.node_id);
+        if (node?.type === 'tool') {
+          if (!node.files.includes(e.path)) node.files.push(e.path);
+        } else {
+          add(root, { type: 'notice', key, text: `${e.path} ${e.change}`, tone: 'info' });
+        }
+        break;
+      }
+      case 'model.changed': {
+        const e = event as Extract<Event, { kind: 'model.changed' }>;
+        add(root, { type: 'notice', key, text: `Model changed to ${e.model}`, tone: 'info' });
+        break;
+      }
+      case 'session.output_gap': {
+        const e = event as Extract<Event, { kind: 'session.output_gap' }>;
+        const text = `Some output is missing here (events ${e.from}–${e.to}).`;
+        add(root, { type: 'notice', key, text, tone: 'info' });
+        break;
+      }
+      case 'session.terminal': {
+        const e = event as Extract<Event, { kind: 'session.terminal' }>;
+        const text =
+          e.shell_id == null
+            ? `Returned to board control${e.reason ? `: ${e.reason}` : ''}`
+            : 'Opened in a terminal.';
+        add(root, { type: 'notice', key, text, tone: 'info' });
         break;
       }
       case 'mode.changed': {
         const e = event as Extract<Event, { kind: 'mode.changed' }>;
-        root.push({ type: 'notice', key, text: `Mode: ${e.mode}`, tone: 'info' });
+        add(root, { type: 'notice', key, text: `Mode: ${e.mode}`, tone: 'info' });
         break;
       }
       case 'interrupt.result': {
@@ -278,17 +407,17 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
         const text = e.accepted
           ? 'Interrupt accepted.'
           : `Interrupt refused${e.message ? `: ${e.message}` : '.'}`;
-        root.push({ type: 'notice', key, text, tone: e.accepted ? 'info' : 'error' });
+        add(root, { type: 'notice', key, text, tone: e.accepted ? 'info' : 'error' });
         break;
       }
       case 'error': {
         const e = event as Extract<Event, { kind: 'error' }>;
-        root.push({ type: 'notice', key, text: `${e.code}: ${e.message}`, tone: 'error' });
+        add(root, { type: 'notice', key, text: `${e.code}: ${e.message}`, tone: 'error' });
         break;
       }
       case 'session.ended': {
         endAll('session ended');
-        root.push({ type: 'notice', key, text: 'The session ended.', tone: 'info' });
+        add(root, { type: 'notice', key, text: 'The session ended.', tone: 'info' });
         break;
       }
       default:
