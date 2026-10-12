@@ -163,3 +163,6 @@ Limits of this release (DL-127, follow-ups in `docs/v2/progress/m3-durable.md`):
 - A container image build (`docker build`) and a run of the image.
 - A real tailnet, a macOS host (launchd) and a physical phone.
 - The release download and signature check (cargo-dist).
+- `dist generate` and the commit of its release workflow, and the Homebrew tap repository (7-5, `packaging/README.md`).
+- The approval round trip from the board to an agent across a real LAN between two hosts; `make perf` measures loopback only (7-4).
+- The live smoke tests against the real `claude` and `codex` CLIs: `make smoke-live` (opt-in, network, a small number of tokens; [LIVE-SMOKE.md](./LIVE-SMOKE.md)).
