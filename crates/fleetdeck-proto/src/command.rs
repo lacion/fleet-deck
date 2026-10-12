@@ -33,6 +33,37 @@ pub struct SessionSpec {
     pub mode: Option<String>,
     pub model: Option<String>,
     pub title: Option<String>,
+    /// The coordinator grant of the new session (M3 6-5, ADR-006 §4); only
+    /// an owner start through the deck may carry one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub coordinator: Option<Box<CoordinatorSpec>>,
+}
+
+/// The coordinator grant that a session starts with (ADR-006 §4). It holds
+/// no credential: the station mints the credential in the start effect.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "command/")]
+#[serde(deny_unknown_fields)]
+pub struct CoordinatorSpec {
+    pub grant_id: String,
+    /// Grant classes (`observe`, `message`, `spawn`, ...).
+    pub classes: Vec<String>,
+    #[ts(type = "number")]
+    pub idle_ttl_ms: u64,
+    #[ts(type = "number")]
+    pub expires_at: i64,
+    pub control_skill: ControlSkill,
+}
+
+/// The versioned control skill that the coordinator MCP endpoint serves as
+/// its `instructions` (PLAN §7.1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "command/")]
+#[serde(deny_unknown_fields)]
+pub struct ControlSkill {
+    pub version: String,
+    pub text: String,
 }
 
 /// How a start gets its workspace (PLAN §6.6, M3 6-1, DL-200). The station

@@ -184,6 +184,7 @@ fn spawn(station: &StationId, instance: &str, mode: Option<&str>) -> Coordinator
             mode: mode.map(str::to_owned),
             model: None,
             title: None,
+            coordinator: None,
         },
         prompt: Some(UserInput::new("go")),
     }

@@ -57,6 +57,7 @@ fn spec(root: &std::path::Path) -> SessionSpec {
         mode: Some("default".to_owned()),
         model: Some("haiku".to_owned()),
         title: None,
+        coordinator: None,
     }
 }
 

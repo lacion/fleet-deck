@@ -304,6 +304,7 @@ pub(crate) fn decide(
                 mode: None,
                 model: None,
                 title: None,
+                coordinator: None,
             };
             let prompt = Some(UserInput::new(format!(
                 "{ASSIGNMENT_PREFIX}{}",

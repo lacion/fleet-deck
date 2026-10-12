@@ -43,6 +43,7 @@ fn codex_spec(cwd: &str) -> SessionSpec {
         mode: None,
         model: None,
         title: None,
+        coordinator: None,
     }
 }
 

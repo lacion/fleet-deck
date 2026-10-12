@@ -169,6 +169,7 @@ impl Rig {
                 mode: None,
                 model: None,
                 title: None,
+                coordinator: None,
             },
             prompt: None,
             workspace: None,

@@ -219,6 +219,7 @@ impl Rig {
             mode: Some("default".to_owned()),
             model: None,
             title: None,
+            coordinator: None,
         };
         let d = self
             .accepted(SessionCommand::Start {

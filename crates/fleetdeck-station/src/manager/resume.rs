@@ -135,6 +135,7 @@ pub fn admit_resume(
         mode: s.mode.clone(),
         model: s.model.clone(),
         title: s.title.clone(),
+        coordinator: None,
     };
     let input_id = prompt.as_ref().map(|p| p.input_id.clone());
     d.enqueue(

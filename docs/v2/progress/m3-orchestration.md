@@ -192,6 +192,27 @@ Items, in order: 6-1 Workspaces, 6-3 Assign auto, 6-4 Tasks, 6-2 Mail,
     projection (25e), grant creation at an owner start with the control
     skill, live smoke §8.5, and the review follow-ups.
 
+### Round 7 (2026-10-12, from 16:14 CEST)
+
+- Committed round 6 (42b27a9); `git merge --no-edit v2`: already up to date.
+- Review of round 6: "continue: 6-5" with no findings on code.
+- 6-5 slice (DL-215): `SessionSpec.coordinator` (`CoordinatorSpec`,
+  `ControlSkill`) in crates/fleetdeck-proto/src/command.rs, `make ts-types`
+  (web/src/gen/command/{CoordinatorSpec,ControlSkill,SessionSpec}.ts);
+  every `SessionSpec` literal gets `coordinator: None`. Station start
+  checks in crates/fleetdeck-station/src/manager/coordinator_command.rs
+  (`guard` for the local socket, `check_spec` from
+  crates/fleetdeck-station/src/manager/decide.rs `start`). Credential
+  handoff value in crates/fleetdeck-station/src/coordinator/handoff.rs
+  (`Handoff::prepare`, `Handoff::apply`).
+- Tests (all passed):
+  `cargo nextest run -p fleetdeck-station -E 'test(coordinator_spec) | test(a_station_local_start_with_a_coordinator_spec_is_rejected)'` -> 3 passed;
+  `cargo nextest run -p fleetdeck-cli --test coordinator_secret` -> 2 passed.
+- 6-5 still open: start effect wiring of `Handoff` (binding insert,
+  env, args) and the deck owner start with a grant and the control skill
+  (§7.1), the durable station coordinator outbox (§6.5, §8.4), snapshot
+  projection 25e, live smoke §8.5.
+
 ## Review follow-ups (after M3)
 
 Review of round 1 (items 6-1, 6-3, 6-4, 6-2), recorded in round 2:
@@ -225,3 +246,4 @@ Review of round 4 (item 6-5, renewal 25b), recorded in round 5:
 |---|---|---|
 | 6-5 | The renewal (`renew_grant`) and its `session.coordinator_renew` outbox item are written in two transactions, as for revoke; a crash between them leaves a pending renewal that the station never receives. Write both in one transaction (A5). | `crates/fleetdeck-deck/src/http/grant_routes.rs`, `crates/fleetdeck-deck/src/store/grants.rs` |
 | 6-5 | No test covers the successful path from `POST /api/coordinator/grants/{id}/renew` through the link to the station and back to an active grant (`coordinator.bound` of the renewal generation); the HTTP test checks only 403, 409 and 404. | `crates/fleetdeck-deck/tests/board_fleet.rs` |
+| 6-5 | The deck does not refuse a coordinator spec itself from the station capability; the station decision refuses it (`unsupported`, `handoff_unverified`) and the deck relays the stored receipt (DL-215). Add the deck-side capability check for an earlier board message. | `crates/fleetdeck-deck/src/http/` |

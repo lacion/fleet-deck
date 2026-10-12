@@ -479,6 +479,7 @@ fn start_effect() -> EffectPayload {
             mode: None,
             model: None,
             title: None,
+            coordinator: None,
         },
         prompt: None,
         workspace: None,

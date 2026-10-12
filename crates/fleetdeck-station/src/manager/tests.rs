@@ -220,6 +220,7 @@ fn spec(cwd: &str, instance: &str) -> SessionSpec {
         mode: Some("default".to_owned()),
         model: None,
         title: None,
+        coordinator: None,
     }
 }
 
@@ -678,3 +679,39 @@ mod import_tests;
 
 #[path = "coordinator_command_tests.rs"]
 mod coordinator_command;
+
+/// A coordinator spec for the start checks (ADR-006 §4).
+pub(super) fn coordinator_spec() -> fleetdeck_proto::command::CoordinatorSpec {
+    fleetdeck_proto::command::CoordinatorSpec {
+        grant_id: "grant-1".to_owned(),
+        classes: vec!["observe".to_owned()],
+        idle_ttl_ms: 60_000,
+        expires_at: 4_102_444_800_000,
+        control_skill: fleetdeck_proto::command::ControlSkill {
+            version: "1".to_owned(),
+            text: "You coordinate the fleet.".to_owned(),
+        },
+    }
+}
+
+/// ADR-006 §8.2 test 13: the station-local socket (DL-038) never starts a
+/// session with a coordinator grant, and the refusal starts nothing.
+#[tokio::test]
+async fn a_station_local_start_with_a_coordinator_spec_is_rejected() {
+    let mut st = Station::new(1).await;
+    let ws = st.workspace();
+    let mut granted = spec(&ws, "claude");
+    granted.coordinator = Some(Box::new(coordinator_spec()));
+    assert_eq!(
+        st.rejected(SessionCommand::Start {
+            spec: granted,
+            prompt: None,
+            workspace: None,
+        })
+        .await,
+        RejectCode::InvalidCommand
+    );
+    // The refusal used no session slot: a plain start still fits.
+    st.start(&ws, None).await;
+    st.manager.shutdown(StopMode::Kill).await;
+}
