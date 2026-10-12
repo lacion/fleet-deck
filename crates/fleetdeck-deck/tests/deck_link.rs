@@ -336,3 +336,124 @@ async fn a_deck_without_a_link_listener_cannot_invite_the_first_sync_is_a_snapsh
     })
     .await;
 }
+
+/// ADR-006 §5 and §6.1 end to end (DL-211): the station node serves the
+/// loopback coordinator endpoint; an authenticated tool call goes over the
+/// paired link to the deck, which decides it against the owner's grant.
+#[tokio::test]
+async fn a_bound_coordinator_reaches_the_deck_through_the_station_endpoint() {
+    use fleetdeck_deck::store::NewGrant;
+    use fleetdeck_proto::mutation::CoordinatorBinding;
+    use fleetdeck_station::coordinator::{Binding, BindingState, ToolClass, mint};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    async fn post(url: &str, token: Option<&str>, body: &str) -> (u16, String) {
+        let addr: SocketAddr = url
+            .trim_start_matches("http://")
+            .trim_end_matches("/mcp")
+            .parse()
+            .unwrap();
+        let auth = token.map_or(String::new(), |t| format!("Authorization: Bearer {t}\r\n"));
+        let req = format!(
+            "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nContent-Type: application/json\r\n{auth}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            addr.port(),
+            body.len()
+        );
+        let mut s = tokio::net::TcpStream::connect(addr).await.unwrap();
+        s.write_all(req.as_bytes()).await.unwrap();
+        let mut buf = Vec::new();
+        let _ = tokio::time::timeout(Duration::from_secs(10), s.read_to_end(&mut buf)).await;
+        let text = String::from_utf8_lossy(&buf).into_owned();
+        let (head, body) = text.split_once("\r\n\r\n").unwrap_or((&text, ""));
+        let status = head
+            .split(' ')
+            .nth(1)
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        (status, body.to_owned())
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let identity = Arc::new(Identity::generate().unwrap());
+    let d = deck(dir.path(), &identity, &[]).await;
+    let st = station("alpha").await;
+    st.session("coord-1").await;
+    st.session("worker-1").await;
+    let head = st.run("worker-1", 1).await;
+    let inv = st
+        .node
+        .invite("127.0.0.1:0".parse().unwrap())
+        .await
+        .unwrap();
+    d.node
+        .add_station(&inv, Some("lab".to_owned()))
+        .await
+        .unwrap();
+    d.synced("lab", head).await;
+    let station_id = d
+        .store
+        .find_station("lab".to_owned())
+        .await
+        .unwrap()
+        .unwrap()
+        .station_id;
+
+    let url = st.node.coordinator_url();
+    // No credential: the uniform 401.
+    let (status, _) = post(
+        &url,
+        None,
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#,
+    )
+    .await;
+    assert_eq!(status, 401);
+
+    // The owner's grant, bound to the caller's native session.
+    let grant = d
+        .node
+        .create_grant(NewGrant::new(station_id.clone(), "coord-1".into()))
+        .await
+        .unwrap();
+    assert!(
+        d.store
+            .bind_grant(CoordinatorBinding {
+                binding_id: "b-1".to_owned(),
+                grant_id: grant.grant_id.clone(),
+                generation: 1,
+                provider_instance: "claude".into(),
+                native_id: "native-1".to_owned(),
+            })
+            .await
+            .unwrap()
+    );
+    let (token, digest) = mint().unwrap();
+    st.node.coordinator_bindings().insert(
+        digest,
+        Binding {
+            binding_id: "b-1".to_owned(),
+            grant_id: grant.grant_id.clone(),
+            session_id: "coord-1".into(),
+            provider_instance: "claude".to_owned(),
+            native_id: Some("native-1".to_owned()),
+            generation: 1,
+            classes: [ToolClass::Read, ToolClass::Mail].into_iter().collect(),
+            state: BindingState::Active,
+            control_skill: "skill".to_owned(),
+        },
+    );
+    let call = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+        "params": {"name": "send_mail", "arguments": {
+            "to": {"station": station_id.as_str(), "session_id": "worker-1"},
+            "text": "hello from the coordinator"}}
+    });
+    let (status, body) = post(&url, Some(token.expose()), &call.to_string()).await;
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["result"]["isError"], false, "{body}");
+    // The deck decided the call once and stored the mail for the worker.
+    let mails = d.store.mails(10).await.unwrap();
+    assert_eq!(mails.len(), 1, "{body}");
+    assert_eq!(mails[0].session_id.as_str(), "worker-1");
+    assert_eq!(d.store.coordinator_receipts().await.unwrap(), 1);
+}

@@ -44,6 +44,9 @@ pub struct StationLink {
     pub name: String,
     /// The human shells (PLAN §6.8); they outlive every link.
     pub shells: Arc<crate::shell::Shells>,
+    /// The deck side of the coordinator endpoint (M3 6-5): it follows the
+    /// current deck link.
+    pub coordinator: crate::coordinator::LinkForward,
 }
 
 /// Serves `link` until it ends; returns why it ended.
@@ -53,8 +56,10 @@ pub async fn serve(ctx: Arc<StationLink>, link: LiveLink) -> Closing {
         control,
         mut inbound,
         data,
+        peer_incarnation,
         ..
     } = link;
+    let coordinator = ctx.coordinator.connect(control.clone(), peer_incarnation);
     let data = data.map(|d| {
         let handle = d.handle.clone();
         tokio::spawn(crate::shell::data::serve(
@@ -86,6 +91,7 @@ pub async fn serve(ctx: Arc<StationLink>, link: LiveLink) -> Closing {
         }
     }
     drop(stream);
+    ctx.coordinator.disconnect(coordinator);
     control.closed().await
 }
 

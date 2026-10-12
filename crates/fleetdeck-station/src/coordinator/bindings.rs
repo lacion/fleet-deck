@@ -120,6 +120,14 @@ pub struct Bindings {
     inner: Arc<Mutex<HashMap<String, Entry>>>,
 }
 
+impl std::fmt::Debug for Bindings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Bindings")
+            .field("count", &self.lock().len())
+            .finish()
+    }
+}
+
 /// The result of an authentication.
 pub(crate) enum Auth {
     /// Missing, malformed, unknown, expired or revoked: one answer (§5.3).
@@ -186,6 +194,14 @@ impl Bindings {
                 e.binding.state = BindingState::Revoked;
             }
         }
+    }
+
+    /// A copy of the binding of `session_id` under `grant_id`.
+    pub fn find(&self, session_id: &SessionId, grant_id: &str) -> Option<Binding> {
+        self.lock()
+            .values()
+            .find(|e| &e.binding.session_id == session_id && e.binding.grant_id == grant_id)
+            .map(|e| e.binding.clone())
     }
 
     /// A copy of a binding by id.

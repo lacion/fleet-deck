@@ -104,6 +104,7 @@ Every step after TLS has the bound `NodeConfig::handshake_timeout` (default 10 s
 | `rename.v1` | `session.rename` (M3, DL-095; the board title of a session, event `session.renamed`) |
 | `auto_continue.v1` | `session.set_auto_continue` (M3, ADR-007, DL-127; the per-session restart auto-continuation preference, events `session.auto_continue_changed` and `session.auto_continue_skipped`, input origin `continuation`) |
 | `import.v1` | `session.import` (M3, DL-308; a new driven session that continues an existing native CLI session id) |
+| `coordinator.v1` | `session.coordinator_renew`, `session.coordinator_revoke` (M3, ADR-006 §6.1 `coordinator_v1`, DL-212; the owner's renewal and revocation of a coordinator binding) |
 | `files.v1` | `files.list`, `files.read`, `files.search`, `files.diff` (M3, DL-088; PLAN §6.6 file browse, search, read and per-turn diffs) |
 
 A method whose feature was not negotiated gets the error `feature_not_negotiated`. Behaviour depends on the negotiated features, not only on the version.
@@ -310,7 +311,7 @@ Per link (these values replace §2.7 "at most 256 open streams"):
 
 | Methods | `params` type | Payload field | Holder |
 | --- | --- | --- | --- |
-| `session.start`, `session.resume`, `session.import`, `session.fork`, `session.prompt`, `session.steer`, `session.follow_up`, `session.interrupt`, `session.set_mode`, `session.set_model`, `session.stop`, `session.revert`, `session.rename`, `session.resolve_revert`, `session.set_auto_continue`, `approval.answer` | `CommandEnvelope` | `command` | station |
+| `session.start`, `session.resume`, `session.import`, `session.fork`, `session.prompt`, `session.steer`, `session.follow_up`, `session.interrupt`, `session.set_mode`, `session.set_model`, `session.stop`, `session.revert`, `session.rename`, `session.resolve_revert`, `session.set_auto_continue`, `session.coordinator_renew`, `session.coordinator_revoke`, `approval.answer` | `CommandEnvelope` | `command` | station |
 | `station.configure` | `StationConfigureEnvelope` | `change` | station |
 | `link.rotate_key` | `KeyRotationEnvelope` | `rotation` | receiver |
 | `shell.open`, `shell.resize`, `shell.close` | `ShellEnvelope` | `change` | station |
@@ -391,6 +392,8 @@ close             { reason, detail }
 | `session.rename` | deck → station | drive | `rename.v1` | yes |
 | `session.set_auto_continue` | deck → station | drive | `auto_continue.v1` | yes |
 | `session.import` | deck → station | drive | `import.v1` | yes |
+| `session.coordinator_renew` | deck → station | drive | `coordinator.v1` | yes |
+| `session.coordinator_revoke` | deck → station | drive | `coordinator.v1` | yes |
 | `approval.answer` | deck → station | approve | — | yes |
 | `station.configure` | deck → station | admin | — | yes |
 | `link.rotate_key` | either → either | admin | — | yes |

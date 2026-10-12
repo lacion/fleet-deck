@@ -62,6 +62,8 @@ pub enum NodeError {
     Listen { addr: SocketAddr, reason: String },
     #[error(transparent)]
     Store(#[from] StoreError),
+    #[error("the coordinator endpoint did not start: {0}")]
+    Coordinator(std::io::Error),
 }
 
 /// The running link node of a station.
@@ -72,6 +74,10 @@ pub struct StationNode {
     listening: tokio::sync::Mutex<BTreeMap<SocketAddr, SocketAddr>>,
     tasks: Mutex<Vec<JoinHandle<()>>>,
     backoff: BackoffPolicy,
+    /// The loopback coordinator MCP endpoint (ADR-006 §5, DL-211). Its
+    /// tool calls go to the current deck link.
+    coordinator: crate::coordinator::Ingress,
+    bindings: crate::coordinator::Bindings,
 }
 
 impl std::fmt::Debug for StationNode {
@@ -122,6 +128,15 @@ impl StationNode {
         .with_store(Arc::clone(&peers))
         .with_invitations(Arc::clone(&invitations));
         let paired = peers.pin_all(&node.pins).await?;
+        let forward = crate::coordinator::LinkForward::default();
+        let bindings = manager.policy().coordinator_bindings().clone();
+        let coordinator = crate::coordinator::Ingress::start(
+            bindings.clone(),
+            Arc::new(forward.clone()),
+            crate::coordinator::Limits::default(),
+        )
+        .await
+        .map_err(NodeError::Coordinator)?;
         let this = Arc::new(Self {
             ctx: Arc::new(StationLink {
                 manager,
@@ -129,11 +144,14 @@ impl StationNode {
                 peers,
                 name,
                 shells,
+                coordinator: forward,
             }),
             invitations,
             listening: tokio::sync::Mutex::default(),
             tasks: Mutex::default(),
             backoff,
+            coordinator,
+            bindings,
         });
         let mut addrs = listen.to_vec();
         addrs.extend(store.listen_addrs().await?);
@@ -154,6 +172,18 @@ impl StationNode {
     #[must_use]
     pub fn link(&self) -> &Arc<StationLink> {
         &self.ctx
+    }
+
+    /// The MCP URL of the loopback coordinator endpoint.
+    #[must_use]
+    pub fn coordinator_url(&self) -> String {
+        self.coordinator.url()
+    }
+
+    /// The coordinator bindings that the endpoint authenticates against.
+    #[must_use]
+    pub fn coordinator_bindings(&self) -> &crate::coordinator::Bindings {
+        &self.bindings
     }
 
     /// The bound addresses of the listeners.

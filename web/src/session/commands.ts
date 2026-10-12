@@ -56,6 +56,8 @@ const METHODS: Record<SessionCommand['op'], string> = {
   rename: 'session.rename',
   set_auto_continue: 'session.set_auto_continue',
   resolve_revert: 'session.resolve_revert',
+  coordinator_renew: 'session.coordinator_renew',
+  coordinator_revoke: 'session.coordinator_revoke',
 };
 
 /** A command id: `b` and 24 random base-36 characters (`[0-9A-Za-z_-]{1,64}`). */

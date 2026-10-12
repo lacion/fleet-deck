@@ -70,11 +70,42 @@ pub async fn revoke(
     Path(grant_id): Path<String>,
 ) -> Result<Json<GrantView>, ApiError> {
     let result = async {
+        let before = board
+            .store
+            .grant(grant_id.clone())
+            .await
+            .map_err(ApiError::internal)?;
         board
             .store
             .revoke_grant(grant_id.clone(), "owner".to_owned())
             .await
             .map_err(ApiError::internal)?;
+        // The deck refuses at once; the station learns it through
+        // `session.coordinator_revoke` when its link is up (ADR-006 §7,
+        // DL-212). A second revoke sends nothing.
+        if let Some(g) = before.filter(|g| g.state != GrantState::Revoked) {
+            let command = fleetdeck_proto::SessionCommand::CoordinatorRevoke {
+                session_id: g.session_id.clone(),
+                grant_id: g.grant_id.clone(),
+            };
+            board
+                .store
+                .enqueue(crate::store::NewOutboxItem {
+                    station_id: g.station_id.clone(),
+                    origin: crate::link::router::origin_name(
+                        fleetdeck_proto::command::CommandOrigin::Board,
+                    )
+                    .to_owned(),
+                    payload: serde_json::to_value(crate::link::CommandKind::Session { command })
+                        .map_err(ApiError::internal)?,
+                    expires_at: board
+                        .store
+                        .now_ms()
+                        .saturating_add(super::fleet_routes::DELIVERY_TTL_MS),
+                })
+                .await
+                .map_err(ApiError::internal)?;
+        }
         board
             .store
             .grant(grant_id.clone())

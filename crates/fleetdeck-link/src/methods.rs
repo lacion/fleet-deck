@@ -194,6 +194,20 @@ pub const METHODS: &[MethodSpec] = &[
         true,
     ),
     m(
+        "session.coordinator_renew",
+        DeckToStation,
+        Scope::Drive,
+        Some(feature::COORDINATOR),
+        true,
+    ),
+    m(
+        "session.coordinator_revoke",
+        DeckToStation,
+        Scope::Drive,
+        Some(feature::COORDINATOR),
+        true,
+    ),
+    m(
         "session.import",
         DeckToStation,
         Scope::Drive,
@@ -382,6 +396,40 @@ mod tests {
 
     fn code_of(r: Result<&MethodSpec, WireError>) -> String {
         r.map_or_else(|e| e.code, |_| "ok".to_owned())
+    }
+
+    /// ADR-006 §8.3a 26b (DL-212).
+    #[test]
+    fn coordinator_renew_and_revoke_from_the_wrong_role_without_the_feature_or_without_drive_are_refused()
+     {
+        let (d, s) = (Role::Deck, Role::Station);
+        let drive = scopes(&[Scope::Drive]);
+        let read = scopes(&[Scope::Read]);
+        let without = negotiated(&[feature::CONTROL, feature::COMMAND_RECEIPTS]);
+        for name in ["session.coordinator_renew", "session.coordinator_revoke"] {
+            // The deck sends it to a station: accepted with drive.
+            assert_eq!(
+                code_of(authorize(name, d, s, Some("c"), &all(), Some(&drive))),
+                "ok"
+            );
+            // A station cannot send it.
+            assert_eq!(
+                code_of(authorize(name, s, d, Some("c"), &all(), Some(&drive))),
+                "wrong_role"
+            );
+            assert_eq!(
+                code_of(authorize(name, d, s, Some("c"), &without, Some(&drive))),
+                code::FEATURE_NOT_NEGOTIATED
+            );
+            assert_eq!(
+                code_of(authorize(name, d, s, Some("c"), &all(), Some(&read))),
+                code::FORBIDDEN
+            );
+            assert_eq!(
+                code_of(authorize(name, d, s, None, &all(), Some(&drive))),
+                code::MISSING_COMMAND_ID
+            );
+        }
     }
 
     #[test]

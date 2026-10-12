@@ -94,6 +94,7 @@ async fn fixture() -> Fixture {
         shells: Arc::new(fleetdeck_station::shell::Shells::new(
             fleetdeck_station::shell::ShellConfig::default(),
         )),
+        coordinator: fleetdeck_station::coordinator::LinkForward::default(),
     });
     Fixture {
         _det: det,

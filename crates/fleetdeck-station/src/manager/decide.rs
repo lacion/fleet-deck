@@ -90,6 +90,17 @@ pub fn decide(
             session_id,
             enabled,
         } => super::auto_continue::decide_set(d, origin, &session_id, enabled),
+        SessionCommand::CoordinatorRenew {
+            session_id,
+            grant_id,
+            generation,
+        } => {
+            super::coordinator_command::renew(d, policy, origin, &session_id, &grant_id, generation)
+        }
+        SessionCommand::CoordinatorRevoke {
+            session_id,
+            grant_id,
+        } => super::coordinator_command::revoke(d, policy, origin, &session_id, &grant_id),
         SessionCommand::Prompt { session_id, input } => {
             let s = live_session(d, &session_id, Operation::Prompt)?;
             input_effect(d, &s, origin_run, input, |input| EffectPayload::Prompt {

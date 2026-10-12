@@ -1,0 +1,293 @@
+//! The link side of the coordinator endpoint (M3 6-5, ADR-006 §6.1, §6.6):
+//! an authorized tool call goes to the connected deck as `coordinator.call`
+//! (a mutation with a new `command_id`, decided once by the deck) or
+//! `coordinator.query` (a read, no receipt). The envelope targets the
+//! database incarnation that the deck's `hello` named.
+//!
+//! Without a connected deck the call fails at once with `deck_unreachable`;
+//! the durable station coordinator outbox of §6.5 is still open (DL-209).
+
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use async_trait::async_trait;
+use fleetdeck_link::control::Control;
+use fleetdeck_proto::link::Outcome;
+use fleetdeck_proto::mutation::{
+    CoordinatorBinding, CoordinatorCall, CoordinatorCallEnvelope, CoordinatorQuery,
+    CoordinatorQueryEnvelope,
+};
+use fleetdeck_proto::{CommandId, IncarnationId, ProviderInstanceId};
+use ring::rand::{SecureRandom, SystemRandom};
+use serde_json::Value;
+
+use super::bindings::Caller;
+use super::ingress::Forward;
+use super::tools::to_op;
+
+/// How long a forwarded call may be retried (`retry_until`).
+pub const CALL_RETRY: Duration = Duration::from_secs(30);
+/// The deadline of a query; `wait_task` waits at most [`WAIT_LIMIT`].
+pub const QUERY_LIMIT: Duration = Duration::from_secs(25);
+pub const WAIT_LIMIT: Duration = Duration::from_secs(55);
+
+/// The deck link that carries coordinator traffic, when one is connected.
+#[derive(Clone)]
+struct DeckLink {
+    control: Control,
+    incarnation: IncarnationId,
+    serial: u64,
+}
+
+/// The clock of the envelopes (Unix ms).
+pub type Clock = Arc<dyn Fn() -> i64 + Send + Sync>;
+
+/// Forwards tool calls over the current deck link.
+#[derive(Clone)]
+pub struct LinkForward {
+    current: Arc<Mutex<Option<DeckLink>>>,
+    serial: Arc<std::sync::atomic::AtomicU64>,
+    clock: Clock,
+}
+
+impl Default for LinkForward {
+    fn default() -> Self {
+        Self::with_clock(Arc::new(now_ms))
+    }
+}
+
+impl std::fmt::Debug for LinkForward {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LinkForward")
+            .field("connected", &self.link().is_some())
+            .finish()
+    }
+}
+
+fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+}
+
+fn ms(d: Duration) -> i64 {
+    i64::try_from(d.as_millis()).unwrap_or(i64::MAX)
+}
+
+fn new_id(prefix: &str) -> Result<String, String> {
+    let mut bytes = [0u8; 16];
+    SystemRandom::new()
+        .fill(&mut bytes)
+        .map_err(|_| "internal: no randomness".to_owned())?;
+    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    Ok(format!("{prefix}{hex}"))
+}
+
+fn binding(caller: &Caller) -> CoordinatorBinding {
+    CoordinatorBinding {
+        binding_id: caller.binding_id.clone(),
+        grant_id: caller.grant_id.clone(),
+        generation: caller.generation,
+        provider_instance: ProviderInstanceId(caller.provider_instance.clone()),
+        native_id: caller.native_id.clone(),
+    }
+}
+
+/// The query of a read tool.
+fn query(tool: &str, args: &Value) -> Result<(CoordinatorQuery, Duration), String> {
+    match tool {
+        "list_sessions" => Ok((CoordinatorQuery::ListSessions, QUERY_LIMIT)),
+        "wait_task" => {
+            let task_id = args
+                .get("task_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "invalid_params: `task_id` is required".to_owned())?;
+            Ok((
+                CoordinatorQuery::WaitTask {
+                    task_id: task_id.to_owned(),
+                },
+                WAIT_LIMIT,
+            ))
+        }
+        other => Err(format!("invalid_params: no read tool `{other}`")),
+    }
+}
+
+impl LinkForward {
+    /// A forwarder whose envelopes use `clock` (tests use the deck's).
+    #[must_use]
+    pub fn with_clock(clock: Clock) -> Self {
+        Self {
+            current: Arc::default(),
+            serial: Arc::default(),
+            clock,
+        }
+    }
+
+    /// A deck link came up: coordinator traffic goes to it. Returns the
+    /// serial that [`Self::disconnect`] takes.
+    pub fn connect(&self, control: Control, incarnation: IncarnationId) -> u64 {
+        let serial = self
+            .serial
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            + 1;
+        *self.current.lock().unwrap_or_else(PoisonError::into_inner) = Some(DeckLink {
+            control,
+            incarnation,
+            serial,
+        });
+        serial
+    }
+
+    /// The deck link of `serial` ended; a newer link stays.
+    pub fn disconnect(&self, serial: u64) {
+        let mut current = self.current.lock().unwrap_or_else(PoisonError::into_inner);
+        if current.as_ref().is_some_and(|l| l.serial == serial) {
+            *current = None;
+        }
+    }
+
+    fn link(&self) -> Option<DeckLink> {
+        self.current
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// The envelope and method of one tool call.
+    ///
+    /// # Errors
+    /// `invalid_params` for arguments that do not map to an operation.
+    pub fn envelope(
+        caller: &Caller,
+        tool: &str,
+        args: &Value,
+        incarnation: &IncarnationId,
+        now: i64,
+    ) -> Result<(&'static str, Option<CommandId>, Value), String> {
+        match to_op(tool, args)? {
+            Some(op) => {
+                let command_id = CommandId::from(new_id("coord-")?);
+                let envelope = CoordinatorCallEnvelope {
+                    command_id: command_id.clone(),
+                    target_incarnation: incarnation.clone(),
+                    retry_until: now + ms(CALL_RETRY),
+                    call: CoordinatorCall {
+                        caller: caller.session_id.clone(),
+                        binding: binding(caller),
+                        idempotency_key: None,
+                        op,
+                    },
+                };
+                let v = serde_json::to_value(envelope).map_err(|e| format!("internal: {e}"))?;
+                Ok(("coordinator.call", Some(command_id), v))
+            }
+            None => {
+                let (query, limit) = query(tool, args)?;
+                let envelope = CoordinatorQueryEnvelope {
+                    query_id: new_id("q-")?,
+                    target_incarnation: incarnation.clone(),
+                    caller: caller.session_id.clone(),
+                    binding: binding(caller),
+                    deadline: now + ms(limit),
+                    query,
+                };
+                let v = serde_json::to_value(envelope).map_err(|e| format!("internal: {e}"))?;
+                Ok(("coordinator.query", None, v))
+            }
+        }
+    }
+}
+
+#[async_trait]
+impl Forward for LinkForward {
+    async fn call(&self, caller: Caller, tool: &str, args: Value) -> Result<Value, String> {
+        let Some(link) = self.link() else {
+            return Err("deck_unreachable: no deck is connected".to_owned());
+        };
+        let (method, command_id, params) =
+            Self::envelope(&caller, tool, &args, &link.incarnation, (self.clock)())?;
+        match link
+            .control
+            .request(method, command_id.as_ref(), params)
+            .await
+        {
+            Ok(Outcome::Ok(v)) => Ok(v),
+            Ok(Outcome::Err(e)) => Err(format!("{}: {}", e.code, e.message)),
+            Err(e) => Err(format!("deck_unreachable: {e}")),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use super::*;
+    use serde_json::json;
+
+    fn caller() -> Caller {
+        Caller {
+            binding_id: "b-1".to_owned(),
+            grant_id: "g-1".to_owned(),
+            session_id: "coord-1".into(),
+            provider_instance: "claude".to_owned(),
+            native_id: "native-1".to_owned(),
+            generation: 2,
+        }
+    }
+
+    #[test]
+    fn a_mutating_tool_becomes_a_call_envelope_and_a_read_tool_a_query_of_the_deck_incarnation() {
+        let inc: IncarnationId = "deck-inc".to_owned().into();
+        let args = json!({"to": {"station": "st", "session_id": "s1"}, "text": "hi"});
+        let (method, id, v) =
+            LinkForward::envelope(&caller(), "send_mail", &args, &inc, 1_000).unwrap();
+        assert_eq!(method, "coordinator.call");
+        let env: CoordinatorCallEnvelope = serde_json::from_value(v).unwrap();
+        assert_eq!(Some(env.command_id.clone()), id);
+        assert!(env.command_id.as_str().starts_with("coord-"));
+        assert_eq!(env.target_incarnation, inc);
+        assert_eq!(env.retry_until, 31_000);
+        assert_eq!(env.call.caller.as_str(), "coord-1");
+        assert_eq!(env.call.binding.generation, 2);
+        assert_eq!(env.call.binding.native_id, "native-1");
+
+        let (method, id, v) = LinkForward::envelope(
+            &caller(),
+            "wait_task",
+            &json!({"task_id": "t1"}),
+            &inc,
+            1_000,
+        )
+        .unwrap();
+        assert_eq!(method, "coordinator.query");
+        assert!(id.is_none());
+        let q: CoordinatorQueryEnvelope = serde_json::from_value(v).unwrap();
+        assert_eq!(
+            q.query,
+            CoordinatorQuery::WaitTask {
+                task_id: "t1".into()
+            }
+        );
+        assert_eq!(q.deadline, 56_000);
+        assert_eq!(q.target_incarnation, inc);
+        // Two calls never share a command id.
+        let a = LinkForward::envelope(&caller(), "send_mail", &args, &inc, 1)
+            .unwrap()
+            .1;
+        let b = LinkForward::envelope(&caller(), "send_mail", &args, &inc, 1)
+            .unwrap()
+            .1;
+        assert_ne!(a, b);
+        // A missing task id is refused before anything is sent.
+        assert!(LinkForward::envelope(&caller(), "wait_task", &json!({}), &inc, 1).is_err());
+    }
+
+    #[tokio::test]
+    async fn without_a_deck_a_call_fails_at_once_as_unreachable() {
+        let f = LinkForward::default();
+        let r = f.call(caller(), "list_sessions", json!({})).await;
+        assert!(r.unwrap_err().starts_with("deck_unreachable"));
+    }
+}

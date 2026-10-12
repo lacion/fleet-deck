@@ -224,3 +224,94 @@ reason, owner review.
   provider. No coordinator traffic can reach the deck without a binding, so
   the open parts fail closed.
 - Owner review: pending
+
+## DL-210: the station forwards coordinator tool calls over its deck link
+
+- Context: DL-209 named the missing `Forward` over the link. The station
+  did not know the deck's database incarnation, which every
+  `coordinator.call` and `coordinator.query` envelope must target
+  (ADR-004 §9.3, ADR-006 §6.1). The `hello` of both sides already carries
+  the sender's incarnation, but `fleetdeck-link` dropped it after the
+  handshake.
+- Options: (a) a new link method that asks the deck for its incarnation;
+  (b) a new field in `events.replay` params (`deny_unknown_fields`, breaks
+  an N-1 station); (c) keep the peer's `hello` incarnation on `OpenLink`
+  and `LiveLink` (`peer_incarnation`).
+- Choice: (c). No wire change, no new round trip; ADR-004 §9.3 already
+  says that each side learns the value to target from the `hello`.
+- `crates/fleetdeck-station/src/coordinator/forward.rs` `LinkForward`:
+  follows the current deck link (`StationLink.coordinator`, set in
+  `link::serve`, cleared by serial when that link ends), maps a mutating
+  tool to a `coordinator.call` envelope with a new random `command_id` and
+  `retry_until` = now + 30 s, and a read tool to a `coordinator.query`
+  envelope (deadline now + 25 s, `wait_task` now + 55 s). Without a deck
+  link the call fails at once with `deck_unreachable`; the durable station
+  coordinator outbox (§6.5) stays open (DL-209).
+- Tests: `coordinator::forward::tests::*` (2) and
+  `fleetdeck-deck::coordinator::a_station_forwards_tool_calls_to_the_deck_incarnation_of_its_link`
+  (real link, stored receipt, query answer, stale binding, disconnect).
+- Owner review: pending
+
+## DL-211: the station node serves the coordinator endpoint; a grant adds `coordinate`; spawned sessions join the lineage
+
+- Context: the ingress (DL-208) and the forwarder (DL-210) were not
+  started by the station runtime, a paired station holds only `admin`
+  (DL-050), so every real `coordinator.call` failed at the link layer
+  with "needs scope coordinate", and a spawned session never got its
+  session id into `coordinator_lineage` (round-2 review finding).
+- Options for `coordinate`: (a) give every paired station `coordinate`
+  at pairing; (b) a separate owner switch per station; (c) the owner's
+  grant creation adds `coordinate` to the caller's station in the same
+  transaction and refreshes the link's grant cache.
+- Choice: (c). The owner's grant is the explicit owner action of
+  ADR-006 §4; pairing alone still grants nothing (G5), and the decision
+  transaction keeps checking both the scope and the grant.
+  `DeckNode::create_grant` = `DeckStore::create_grant` + `DeckPeers::refresh`.
+- `StationNode` starts the loopback `Ingress` with the `LinkForward` of
+  its link context (`coordinator_url()`, `coordinator_bindings()`); an
+  endpoint start failure is `NodeError::Coordinator`.
+- Lineage: a lineage row with `session_id IS NULL` matches a target
+  session when the receipt of its start command (outbox item → command
+  → `receipt.result.session_id`) names it. No new column, no new write
+  path.
+- Tests: `fleetdeck-deck::deck_link::a_bound_coordinator_reaches_the_deck_through_the_station_endpoint`
+  (real station node, real link, 401 without a credential, accepted
+  `send_mail` stored as mail and receipt),
+  `store::coordinator::tests::lifecycle::a_spawned_session_joins_the_lineage_when_its_start_receipt_names_it`.
+- Owner review: pending
+
+## DL-212: renew and revoke link methods (ADR-006 §6.1, §7, tests 26a–26e)
+
+- Context: ADR-006 §6.1 adds `session.coordinator_renew` and
+  `session.coordinator_revoke` (mutating, `drive`, deck → station,
+  feature `coordinator_v1`). The repository names features `<name>.v1`
+  (`revert.v1`, `auto_continue.v1`).
+- Choice: feature `coordinator.v1` (the ADR's `coordinator_v1` in the
+  repository's spelling; ADR-004 feature table, envelope table and §9.6
+  rows added). `SessionCommand::CoordinatorRenew { session_id, grant_id,
+  generation }` and `CoordinatorRevoke { session_id, grant_id }`.
+- Station (`crates/fleetdeck-station/src/manager/coordinator_command.rs`):
+  the station-local socket is refused before the decision (`guard`), and a
+  non-board origin is refused in it (`forbidden`, stored). A binding of
+  another session or grant is a stored `invalid_command`. Revoke marks the
+  binding `revoked` and appends `coordinator.ended { reason: "revoked" }`
+  once; renew needs an idle-`expired` binding at `generation - 1`, makes
+  it `active` at `generation` and appends `coordinator.bound`. The
+  bindings now live in the station `Policy` (`coordinator_bindings()`),
+  shared with the `StationNode` ingress.
+- Deck: the owner's revoke route (`POST /api/coordinator/grants/{id}/revoke`)
+  commits `revoked` first and then queues `session.coordinator_revoke` in
+  the outbox for the grant's station (a second revoke queues nothing).
+  Board renewal (§7, test 25b) stays open.
+- Deviation: the deck's revoke outbox item is a separate transaction
+  after the grant update (follow-up: one transaction, A5). The station's
+  in-memory binding changes inside the decision closure, before the
+  commit; a failed commit can leave a binding revoked (fail closed) or
+  renewed without its event (follow-up).
+- Tests: `fleetdeck-link methods::tests::coordinator_renew_and_revoke_from_the_wrong_role_without_the_feature_or_without_drive_are_refused` (26b);
+  26a through `adr_revision2::every_session_command_is_a_mutating_deck_to_station_method_of_the_adr_table`,
+  `method_table::the_code_method_table_equals_the_adr_method_table`,
+  `mutation::tests::session_methods_are_exactly_the_session_command_methods`
+  and `http::methods::tests::every_command_method_has_the_scope_of_its_link_method`;
+  `manager::tests::coordinator_command::*` (26c, 26d, 26e).
+- Owner review: pending

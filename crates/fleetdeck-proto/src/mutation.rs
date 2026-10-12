@@ -69,6 +69,8 @@ pub const SESSION_METHODS: &[&str] = &[
     "session.rename",
     "session.resolve_revert",
     "session.set_auto_continue",
+    "session.coordinator_renew",
+    "session.coordinator_revoke",
     "approval.answer",
 ];
 
