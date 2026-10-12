@@ -113,14 +113,22 @@ fn station_error(e: impl std::fmt::Display) -> ApiError {
     ApiError::new(StatusCode::BAD_GATEWAY, "station_error", e.to_string())
 }
 
+/// Shells are owner-only (PLAN §9, DL-138): the `admin` scope of a token
+/// is not the owner's board login.
+fn owner_only(principal: &Principal) -> Result<(), ApiError> {
+    super::guard::owner_only(principal, "uses a station shell")
+}
+
 /// `GET /api/stations/{station}/shells`.
 ///
 /// # Errors
 /// 404 `unknown_station`; 409 `station_unreachable`; 502; 504.
 pub async fn list(
     State(board): State<Arc<Board>>,
+    Extension(principal): Extension<Principal>,
     Path(name): Path<String>,
 ) -> Result<Json<Vec<ShellInfo>>, ApiError> {
+    owner_only(&principal)?;
     let rec = station(&board, &name).await?;
     let control = board
         .link
@@ -144,7 +152,10 @@ pub async fn command(
 ) -> Result<Json<Receipt>, ApiError> {
     let method = body.change.method();
     let command_id = body.command_id.clone();
-    let result = decide(&board, &name, body).await;
+    let result = match owner_only(&principal) {
+        Ok(()) => decide(&board, &name, body).await,
+        Err(e) => Err(e),
+    };
     let (outcome, detail) = match &result {
         Ok(_) => (AuditResult::Ok, None),
         Err(e) => (AuditResult::Refused, Some(e.code)),
@@ -219,6 +230,7 @@ pub async fn attach(
     Path((name, shell_id)): Path<(String, String)>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, ApiError> {
+    owner_only(&principal)?;
     let rec = station(&board, &name).await?;
     let (control, hub) = board
         .link

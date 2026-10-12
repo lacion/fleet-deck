@@ -75,7 +75,9 @@ pub async fn invite(
     State(board): State<Arc<Board>>,
     Extension(principal): Extension<Principal>,
 ) -> Result<Json<PairingInvitation>, ApiError> {
-    let r = node(&board).and_then(|n| n.invite().map_err(|e| refusal(&e)));
+    let r = owner_only(&principal)
+        .and_then(|()| node(&board))
+        .and_then(|n| n.invite().map_err(|e| refusal(&e)));
     audit(&board, &principal, "stations.invite", "", r.as_ref().err()).await;
     let text = r?;
     let expires_at = board
@@ -89,6 +91,12 @@ pub async fn invite(
     }))
 }
 
+/// Only the owner pairs, configures or removes stations (PLAN §9 "Only the
+/// owner configures targets", DL-138).
+fn owner_only(principal: &Principal) -> Result<(), ApiError> {
+    super::guard::owner_only(principal, "pairs, adds or removes stations")
+}
+
 /// `POST /api/stations`: pairs with a listening station from its
 /// invitation and dials it.
 ///
@@ -100,7 +108,11 @@ pub async fn add(
     Extension(principal): Extension<Principal>,
     body: Result<Json<AddStationRequest>, JsonRejection>,
 ) -> Result<Json<StationView>, ApiError> {
-    let r = add_station(&board, body).await;
+    // The owner check comes before the body (and its invitation) is read.
+    let r = match owner_only(&principal) {
+        Ok(()) => add_station(&board, body).await,
+        Err(e) => Err(e),
+    };
     let target = r.as_ref().map(|v| v.name.clone()).unwrap_or_default();
     audit(
         &board,
@@ -155,7 +167,7 @@ pub async fn remove(
     Extension(principal): Extension<Principal>,
     Path(station): Path<String>,
 ) -> Result<Json<StationView>, ApiError> {
-    let r = match node(&board) {
+    let r = match owner_only(&principal).and_then(|()| node(&board)) {
         Ok(n) => n
             .remove_station(&station)
             .await

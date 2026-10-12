@@ -414,7 +414,8 @@ async fn an_attached_shell_socket_closes_after_a_logout_and_a_token_revocation()
     let path = "/api/stations/alpha/shells/main/attach";
     assert_eq!(board.ws(path, &o.socket()).await.err(), Some(401));
 
-    // An admin token attaches with a ticket and is revoked.
+    // An admin token is not the owner's board login (DL-138): its ticket,
+    // its list and its open command are refused, and nothing changes.
     let day = 86_400_000;
     let token = board
         .store
@@ -430,14 +431,22 @@ async fn an_attached_shell_socket_closes_after_a_logout_and_a_token_revocation()
     let t = board.post("/api/ws/ticket", &h, json!({})).await;
     assert_eq!(t.status, 200, "{}", t.body);
     let with_ticket = format!("{path}?ticket={}", t.body["ticket"].as_str().unwrap());
-    let mut ws = board
-        .ws(&with_ticket, &[])
-        .await
-        .expect("a ticket attaches");
-    // The scrollback shows that the shell survived the first socket.
-    read_until(&mut ws, "before-42").await;
-    assert!(board.store.revoke_token("ops".into()).await.unwrap());
-    closed_for_login(&mut ws).await;
+    assert_eq!(board.ws(&with_ticket, &[]).await.err(), Some(403));
+    let r = board.get("/api/stations/alpha/shells", &h).await;
+    expect(&r, 403, "owner_only");
+    let r = board
+        .post(
+            "/api/stations/alpha/shells",
+            &h,
+            json!({ "command_id": "sh-token-1", "change": { "op": "open", "shell_id": "other", "cwd": root.to_str().unwrap(), "cols": 80, "rows": 24 } }),
+        )
+        .await;
+    expect(&r, 403, "owner_only");
+    let refused = board.audited("shell.open", AuditResult::Refused).await;
+    assert!(
+        refused.contains(&Some("owner_only".to_owned())),
+        "{refused:?}"
+    );
 
     // The shell itself keeps running on the station.
     let (cookie, csrf) = board.login().await;
@@ -448,6 +457,10 @@ async fn an_attached_shell_socket_closes_after_a_logout_and_a_token_revocation()
     };
     let r = board.get("/api/stations/alpha/shells", &o.read()).await;
     assert_eq!(r.body[0]["state"], "running", "{}", r.body);
+    assert_eq!(r.body.as_array().map(Vec::len), Some(1), "{}", r.body);
+    // The scrollback shows that the shell survived the first socket.
+    let mut ws = attach(&board, &o, "main").await;
+    read_until(&mut ws, "before-42").await;
     st.shutdown();
     node.shutdown();
 }

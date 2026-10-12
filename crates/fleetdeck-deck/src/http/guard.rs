@@ -120,6 +120,25 @@ impl Origins {
     }
 }
 
+/// Refuses everything but the owner's board login (PLAN §9, ADR-006 §3,
+/// DL-137, DL-138): a bearer token gets 403 `owner_only`, whatever its
+/// scopes, and a WebSocket ticket keeps the identity it was made for.
+/// `action` completes "only the owner's board login …".
+///
+/// # Errors
+/// 403 `owner_only` for a token principal.
+pub fn owner_only(principal: &Principal, action: &str) -> Result<(), ApiError> {
+    if matches!(principal, Principal::Owner(_)) {
+        Ok(())
+    } else {
+        Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "owner_only",
+            format!("only the owner's board login {action}"),
+        ))
+    }
+}
+
 /// The value of one cookie in the `Cookie` headers.
 #[must_use]
 pub fn cookie(headers: &HeaderMap, name: &str) -> Option<Secret<String>> {

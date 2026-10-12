@@ -357,6 +357,42 @@ async fn pairing_needs_admin_csrf_a_listener_and_a_node() {
     let r = d.board.get("/api/stations", &refs(&bearer)).await;
     assert_eq!(r.status, 200, "read stays open to `read`");
 
+    // An admin token is not the owner's board login (PLAN §9, DL-138).
+    let (_, admin) = d
+        .board
+        .store
+        .create_token(
+            "ops".into(),
+            BTreeSet::from([Scope::Read, Scope::Drive, Scope::Approve, Scope::Admin]),
+            day,
+        )
+        .await
+        .unwrap();
+    let bearer = vec![(
+        "Authorization".to_owned(),
+        format!("Bearer {}", admin.expose()),
+    )];
+    let before = d.board.get("/api/stations", &refs(&bearer)).await.body;
+    for path in [
+        "/api/stations/invite",
+        "/api/stations",
+        "/api/stations/x/remove",
+    ] {
+        let r = post(&d.board, &bearer, path, json!({ "invitation": "x" })).await;
+        expect(&r, 403, "owner_only");
+    }
+    assert_eq!(
+        d.board.get("/api/stations", &refs(&bearer)).await.body,
+        before
+    );
+    for method in ["stations.invite", "stations.add", "stations.remove"] {
+        let failed = d.board.audited(method, AuditResult::Failed).await;
+        assert!(
+            failed.contains(&Some("owner_only".to_owned())),
+            "{method}: {failed:?}"
+        );
+    }
+
     // A board without a link node answers 503.
     let plain = board(Arc::clone(d.node.link())).await;
     let h = owner(&plain).await;

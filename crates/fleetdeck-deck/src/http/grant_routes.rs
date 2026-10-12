@@ -254,15 +254,7 @@ fn view_classes(classes: &std::collections::BTreeSet<GrantClass>) -> Vec<String>
 /// DL-137): a bearer token is refused before anything is read or written,
 /// whatever its scopes.
 fn owner_only(principal: &Principal) -> Result<(), ApiError> {
-    if matches!(principal, Principal::Owner(_)) {
-        Ok(())
-    } else {
-        Err(ApiError::new(
-            StatusCode::FORBIDDEN,
-            "owner_only",
-            "only the owner's board login revokes or renews a coordinator grant".to_owned(),
-        ))
-    }
+    super::guard::owner_only(principal, "revokes or renews a coordinator grant")
 }
 
 async fn current_grant(board: &Board, grant_id: &str) -> Result<Grant, ApiError> {

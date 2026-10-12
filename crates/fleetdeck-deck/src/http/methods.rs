@@ -182,7 +182,8 @@ pub const API: &[ApiMethod] = &[
         false,
     ),
     m(WS_METHOD, Method::GET, "/api/ws", Some(Scope::Read), false),
-    // The human shell (PLAN §6.8, DL-404): owner-only, so `admin`.
+    // The human shell (PLAN §6.8, DL-404): `admin`, and the handlers also
+    // require the owner's board login (DL-138).
     m(
         "shells.list",
         Method::GET,
@@ -296,8 +297,8 @@ pub const API: &[ApiMethod] = &[
     cmd("session.rename", Scope::Drive),
     cmd("session.resolve_revert", Scope::Drive),
     cmd("session.set_auto_continue", Scope::Drive),
-    cmd("session.coordinator_renew", Scope::Drive),
-    cmd("session.coordinator_revoke", Scope::Drive),
+    // `session.coordinator_renew` / `_revoke` have no generic route: only
+    // the owner-checked grant routes send them (ADR-006 §3, DL-138).
     cmd("approval.answer", Scope::Approve),
 ];
 
@@ -386,6 +387,6 @@ mod tests {
             assert!(api.mutating);
             n += 1;
         }
-        assert_eq!(n, 18);
+        assert_eq!(n, 16);
     }
 }
