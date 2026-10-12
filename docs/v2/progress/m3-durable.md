@@ -28,6 +28,13 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 70 (2026-10-12, 16:21–)
+
+- Committed round 69 as 0d4bbcd.
+- Lanes: no new commits on `m3/orchestration`, `m3/board`, `m3/ops`. `m3-orchestration.md` has no LANE COMPLETE (6-5 open); 6-13, 7-7 and 7-8 still wait.
+- 7-6 docs link check (script over README, internals, operations, cutover, LIVE-SMOKE and packaging README): every relative Markdown link and every `crates/…`, `web/…`, `docs/…`, `packaging/…` path exists. The §8 table of `docs/v2/internals.md` had three crate paths without the `crates/` prefix; they now have it.
+- Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
+
 ## Round 69 (2026-10-12, 16:21–)
 
 - Committed round 68 as ff86800.

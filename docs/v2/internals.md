@@ -100,10 +100,10 @@ Use this table to find the code of a feature. The tests of a feature are next to
 | --- | --- | --- | --- |
 | Workspaces (worktree, clone, batch) | `workspace/provision.rs`, `manager/workspaces.rs` | `http/workspace_routes.rs` | `web/src/spawn/`, `e2e/workspace.spec.ts`, `e2e/spawn.spec.ts` |
 | Assign, tasks, mail | — | `store/fleet.rs`, `http/assign_routes.rs`, `http/fleet_routes.rs` | `web/src/assign/`, `web/src/fleet/`, `e2e/assign.spec.ts`, `e2e/fleet.spec.ts` |
-| Coordinator MCP (ADR-006) | `coordinator/` (MCP ingress, bindings, tools, `forward.rs` link forward; `coordinator.query` and `coordinator.call` are gated by `coordinator.v1` in `fleetdeck-link/src/methods.rs`), `manager/coordinator_command.rs` (`session.coordinator_renew`, `session.coordinator_revoke`) | `store/coordinator.rs`, `store/coordinator_ops.rs`, `store/grants.rs`, `http/grant_routes.rs` | `web/src/session/commands.ts`, `web/src/fleet/FleetPanel.tsx` (grant renewal; in progress, lane B 6-5) |
+| Coordinator MCP (ADR-006) | `coordinator/` (MCP ingress, bindings, tools, `forward.rs` link forward; `coordinator.query` and `coordinator.call` are gated by `coordinator.v1` in `crates/fleetdeck-link/src/methods.rs`), `manager/coordinator_command.rs` (`session.coordinator_renew`, `session.coordinator_revoke`) | `store/coordinator.rs`, `store/coordinator_ops.rs`, `store/grants.rs`, `http/grant_routes.rs` | `web/src/session/commands.ts`, `web/src/fleet/FleetPanel.tsx` (grant renewal; in progress, lane B 6-5) |
 | Plans | — | `store/plans.rs`, `http/plan_routes.rs` | `board/PlanLibrary.tsx`, `e2e/plans.spec.ts` |
-| Usage meters | provider limits (`fleetdeck-providers/src/codex/limits.rs`) | read model | `board/UsageMeters.tsx`, `e2e/usage.spec.ts` |
-| Images and notifications | image input (`fleetdeck-proto/src/input.rs`; Claude `control.rs`, Codex `rpc.rs`) | — | `session/` (images), `board/notify.ts`, `e2e/images.spec.ts` |
+| Usage meters | provider limits (`crates/fleetdeck-providers/src/codex/limits.rs`) | read model | `board/UsageMeters.tsx`, `e2e/usage.spec.ts` |
+| Images and notifications | image input (`crates/fleetdeck-proto/src/input.rs`; Claude `control.rs`, Codex `rpc.rs`) | — | `session/` (images), `board/notify.ts`, `e2e/images.spec.ts` |
 | Conflict radar | — (the deck reads the file touches from the events) | `store/conflicts.rs` | `board/ConflictRadar.tsx`, `e2e/conflicts.spec.ts` |
 | Files, checkpoints, revert | `workspace/checkpoint.rs`, `workspace/restore.rs`, `manager/revert*.rs`, `manager/files.rs` | `http/file_routes.rs` | `web/src/session/`, `e2e/revert.spec.ts` |
 | Import a CLI session | `manager/decide.rs` (`session.import`) | method table | `web/src/spawn/`, `e2e/spawn.spec.ts` |
