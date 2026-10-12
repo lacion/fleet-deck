@@ -62,7 +62,8 @@ pub fn run() -> ExitCode {
     let model = flag_value("--model").unwrap_or_else(|| SIM_MODEL.to_owned());
     let mut sim = Sim {
         out: stdout.lock(),
-        session_id: format!("sim-{}", std::process::id()),
+        // `--resume <id>` continues that native session (DL-118).
+        session_id: flag_value("--resume").unwrap_or_else(|| format!("sim-{}", std::process::id())),
         mode,
         model,
         started: false,

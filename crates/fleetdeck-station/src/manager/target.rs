@@ -22,8 +22,8 @@ use fleetdeck_proto::command::{SessionSpec, StopMode};
 use fleetdeck_proto::{Event, ProviderInstanceId, SessionId};
 use fleetdeck_providers::host::HostError;
 use fleetdeck_providers::{
-    Answer, ControlId, EventSink, HostInput, LiveSession, ModelId, PermissionMode, ProviderAdapter,
-    ProviderError,
+    Answer, ControlId, EventSink, HostInput, LiveSession, ModelId, NativeSessionId, PermissionMode,
+    ProviderAdapter, ProviderError,
 };
 use tokio::sync::{Mutex, mpsc, oneshot};
 
@@ -143,11 +143,14 @@ impl SessionTarget {
         self.sessions.lock().ok()?.get(session_id).cloned()
     }
 
+    /// Starts a provider process for the session: a new native session, or
+    /// with `resume` a native resume of that session (DL-118).
     async fn start(
         &self,
         effect: &Effect,
         spec: &SessionSpec,
         prompt: Option<&InputRecord>,
+        resume: Option<&str>,
     ) -> Dispatch {
         let session_id = effect.session_id.clone();
         let Some(adapter) = self.adapters.get(&spec.provider_instance).cloned() else {
@@ -155,6 +158,13 @@ impl SessionTarget {
                 .await;
             return Dispatch::NotDispatched("unknown_provider".into());
         };
+        if resume.is_some() && self.shims.is_some() {
+            // A shim-host resume needs the ADR-005 §6 termination evidence
+            // and a durable resume launch; neither is built (DL-118).
+            self.start_failed(&session_id, "resume is not supported on the shim host yet")
+                .await;
+            return Dispatch::NotDispatched(REASON_RESUME_UNSUPPORTED.into());
+        }
         if let Some((shims, launch)) = self.durable_launch(&adapter, spec) {
             return self
                 .start_durable(effect, spec, prompt, &shims, launch)
@@ -180,7 +190,14 @@ impl SessionTarget {
             rx,
             ready_rx,
         ));
-        let mut session = match adapter.start(spec.clone(), sink).await {
+        let started = match resume {
+            Some(native) => {
+                let native = NativeSessionId(native.to_owned());
+                adapter.resume(&native, spec.clone(), sink).await
+            }
+            None => adapter.start(spec.clone(), sink).await,
+        };
+        let mut session = match started {
             Ok(session) => session,
             Err(e) => {
                 drop(ready_tx);
@@ -359,10 +376,14 @@ impl EffectTarget for SessionTarget {
     async fn dispatch(&self, effect: &Effect) -> Dispatch {
         match &effect.payload {
             EffectPayload::Start { spec, prompt } => {
-                self.start(effect, spec, prompt.as_ref()).await
+                self.start(effect, spec, prompt.as_ref(), None).await
             }
-            EffectPayload::Resume { .. } => {
-                Dispatch::NotDispatched("resume is not built yet (DL-037)".into())
+            EffectPayload::Resume {
+                native_session_id,
+                spec,
+            } => {
+                self.start(effect, spec, None, Some(native_session_id))
+                    .await
             }
             _ => self.operate(effect).await,
         }
@@ -446,6 +467,9 @@ async fn pump(
 
 #[path = "shim_target.rs"]
 mod shim_target;
+
+/// The dispatch reason of a resume on the shim host (DL-118).
+pub const REASON_RESUME_UNSUPPORTED: &str = "resume_not_supported_on_the_shim_host";
 
 pub use shim_target::{REASON_REVERT_UNSUPPORTED, ShimSettings};
 

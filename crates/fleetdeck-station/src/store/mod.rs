@@ -30,6 +30,7 @@ pub mod peers;
 mod receipts;
 mod recovery;
 pub mod requests;
+pub mod resumes;
 pub mod reverts;
 pub mod schema;
 mod sharing;

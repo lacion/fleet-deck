@@ -146,6 +146,19 @@ pub(super) fn append_at(
             now,
         ],
     )?;
+    // The native resume identity (Claude `session_id`, Codex `thread_id`)
+    // that a later `session.resume` continues (DL-118).
+    if let EventBody::Known(Event::SessionStarted { provider_refs, .. }) = &envelope.event
+        && let Some(native) = provider_refs
+            .get("session_id")
+            .or_else(|| provider_refs.get("thread_id"))
+            .and_then(serde_json::Value::as_str)
+    {
+        conn.execute(
+            "UPDATE sessions SET native_session_id = ?2 WHERE session_id = ?1",
+            params![session_id.as_str(), native],
+        )?;
+    }
     // The request table first: an answer is confirmed through its node.
     super::requests::observe(conn, &envelope, now, time)?;
     super::effects::observe(conn, &envelope, now)?;

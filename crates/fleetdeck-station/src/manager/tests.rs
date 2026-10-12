@@ -453,8 +453,16 @@ async fn the_station_policy_decides_in_the_command_transaction() {
         .await,
         RejectCode::InvalidCommand
     );
+    // A running session is not resumed (DL-118); fork is not built.
     assert_eq!(
         st.rejected(SessionCommand::Resume {
+            session_id: s.clone()
+        })
+        .await,
+        RejectCode::InvalidState
+    );
+    assert_eq!(
+        st.rejected(SessionCommand::Fork {
             session_id: s.clone()
         })
         .await,
@@ -648,3 +656,6 @@ mod revert_wired;
 
 #[path = "rename_tests.rs"]
 mod rename;
+
+#[path = "resume_tests.rs"]
+mod resume;

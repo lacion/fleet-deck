@@ -13,6 +13,7 @@ pub mod decide;
 pub mod durable;
 pub mod files;
 pub mod policy;
+pub mod resume;
 pub mod revert;
 pub mod revert_run;
 pub mod shim_claude;

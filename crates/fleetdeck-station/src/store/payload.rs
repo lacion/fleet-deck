@@ -23,8 +23,12 @@ pub enum EffectPayload {
         spec: SessionSpec,
         prompt: Option<InputRecord>,
     },
+    /// A native resume of an ended session (DL-118): a new provider
+    /// process continues `native_session_id` with `spec` (the stored
+    /// provider instance, workspace and mode).
     Resume {
         native_session_id: String,
+        spec: SessionSpec,
     },
     Prompt {
         input: InputRecord,

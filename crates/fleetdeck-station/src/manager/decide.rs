@@ -56,9 +56,12 @@ pub fn decide(
     let origin_run = run_origin(origin);
     match command {
         SessionCommand::Start { spec, prompt } => start(d, policy, origin_run, spec, prompt),
-        SessionCommand::Resume { .. } | SessionCommand::Fork { .. } => Err(reject(
+        SessionCommand::Resume { session_id } => {
+            super::resume::decide_resume(d, policy, &session_id)
+        }
+        SessionCommand::Fork { .. } => Err(reject(
             RejectCode::Unsupported,
-            "resume and fork are not part of this station build yet (DL-037)",
+            "fork is not part of this station build yet (DL-037)",
         )),
         SessionCommand::Rename { session_id, title } => rename(d, &session_id, title),
         SessionCommand::Prompt { session_id, input } => {
