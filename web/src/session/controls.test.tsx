@@ -158,7 +158,10 @@ describe('session header (DL-140)', () => {
     const html = header(session());
     expect(html).toContain('aria-label="Session header"');
     expect(html).toContain('Interrupt');
-    expect(html).toContain('>Stop<');
+    // Stop and Force stop are items of the session menu
+    expect(html).toContain('aria-label="Session menu"');
+    expect(html).toMatch(/<button[^>]*>(<svg[\s\S]*?<\/svg>)? Stop<\/button>/);
+    expect(html).toContain('Force stop…');
     expect(html).toContain('Fix login');
     expect(html).toContain('Alpha');
     expect(html).not.toContain('Resume');
@@ -167,7 +170,8 @@ describe('session header (DL-140)', () => {
   test('an ended session offers Resume and no Stop', () => {
     const html = header(ended());
     expect(html).toContain('Resume');
-    expect(html).not.toContain('>Stop<');
+    expect(html).not.toMatch(/ Stop<\/button>/);
+    expect(html).not.toContain('Force stop');
     expect(html).not.toContain('Interrupt');
   });
 
@@ -184,6 +188,30 @@ describe('session header (DL-140)', () => {
     expect(header(ended(), { terminal: { available: true } })).toContain('Open in terminal');
     expect(header(session(), { terminal: { available: false } })).not.toContain('Open in terminal');
     expect(header(session(), { terminal: null })).not.toContain('Open in terminal');
+  });
+
+  test('a station with shells off gives no Open in terminal and says why in the menu', () => {
+    const html = header(session(), { terminal: { available: false } });
+    expect(html).not.toContain('aria-label="Open in terminal"');
+    expect(html).toContain(
+      'Shells are off on this station. Set allow_shell = true in station.toml to open a terminal.',
+    );
+    // an available terminal does not show the text
+    expect(header(session(), { terminal: { available: true } })).not.toContain('Shells are off');
+    // a board without the admin scope has no terminal: no control and no text
+    expect(header(session(), { terminal: null })).not.toContain('Shells are off');
+  });
+
+  test('the mode badge shows the mode with its tone, and is absent without a mode', () => {
+    const badge = (mode: string) =>
+      new RegExp(
+        `<span class="fd-badge" data-tone="([a-z]+)" title="Permission mode">${mode}</span>`,
+      );
+    const tone = (mode: string) => badge(mode).exec(header(session({ mode })))?.[1];
+    expect(tone('plan')).toBe('plan');
+    expect(tone('dontAsk')).toBe('hazard');
+    expect(tone('default')).toBe('muted');
+    expect(header(session({ mode: null }))).not.toContain('Permission mode');
   });
 
   test('the title falls back to the callsign, the model to "default model"', () => {
@@ -215,7 +243,7 @@ describe('session header (DL-140)', () => {
     expect(html).not.toContain('Interrupt');
   });
 
-  test('the outcome has a role and a Dismiss button', () => {
+  test('the outcome has a role and a Dismiss icon button', () => {
     const html = renderToStaticMarkup(
       <SessionHeader
         session={session()}
@@ -227,12 +255,14 @@ describe('session header (DL-140)', () => {
     );
     expect(html).toContain('role="alert"');
     expect(html).toContain('Refused: no');
-    expect(html).toContain('Dismiss');
+    expect(html).toContain('aria-label="Dismiss"');
+    expect(html).not.toContain('>Dismiss<');
   });
 
   test('the settings menu holds mode, model and auto-continue', () => {
     const html = header(session());
-    expect(html).toContain('aria-label="Session settings"');
+    expect(html).toContain('aria-label="Session menu"');
+    expect(html).not.toContain('aria-label="Session settings"');
     expect(html).toContain('Mode (most restrictive first)');
     expect(html).toContain('Set model');
     expect(html).toContain('Continue after a station restart');
@@ -310,8 +340,9 @@ describe('composer (DL-140)', () => {
   });
 
   test('the buttons keep their texts and the textarea keeps its label', () => {
-    expect(composer()).toContain('>Send<');
+    expect(composer()).toMatch(/<\/svg> Send<\/button>/);
     expect(composer()).toContain('>Message</label>');
+    expect(composer()).toContain('Add image');
     const working = composer({ working: true, steer: true, nativeQueue: false });
     expect(working).toContain('Steer now');
     expect(working).toContain('Queue follow-up');

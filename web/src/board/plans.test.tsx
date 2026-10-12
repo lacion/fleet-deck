@@ -84,6 +84,6 @@ describe('plan library (DL-301)', () => {
       <App initialRoute={{ name: 'plans' }} initialPlans={[]} freshness="live" />,
     );
     expect(html).toContain('No plans yet');
-    expect(html).toMatch(/aria-current="page"[^>]*>Plans</);
+    expect(html).toMatch(/aria-current="page"[^>]*>(<svg[\s\S]*?<\/svg>)?Plans</);
   });
 });

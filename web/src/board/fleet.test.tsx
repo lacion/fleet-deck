@@ -22,8 +22,8 @@ describe('fleet projections', () => {
       <FleetBoard sessions={cards} stations={[station(), station('station-b')]} freshness="live" />,
     );
     expect(html.match(/data-session="same"/g)?.length).toBe(2);
-    expect(html).toContain('Alpha');
-    expect(html).toContain('Beta');
+    expect(html).toContain('aria-label="Station Alpha"');
+    expect(html).toContain('aria-label="Station Beta"');
   });
   test('the deck status overrides the summary activity for verifying, unreachable and lost', () => {
     const cards = [card('v', 'verifying'), card('u', 'unreachable'), card('l', 'lost')];
@@ -35,7 +35,18 @@ describe('fleet projections', () => {
     const html = renderToStaticMarkup(
       <FleetBoard sessions={cards} stations={[]} freshness="live" />,
     );
-    expect(html).toContain('Last activity: working');
+    // the card shows the deck status, not the activity "working" of the summary
+    for (const [id, status, note] of [
+      ['v', 'verifying', 'Verifying'],
+      ['u', 'unreachable', 'Station unreachable'],
+      ['l', 'lost', 'Lost'],
+    ])
+      expect(html).toMatch(
+        new RegExp(
+          `data-session="${id}"[^>]*data-status="${status}"[\\s\\S]*?data-note="${status}">${note}<`,
+        ),
+      );
+    expect(html).not.toContain('data-note="working"');
   });
   test('status lanes sort by update time with station-scoped deterministic ties without mutating input', () => {
     const a = card('same', 'queued', 'station-a');
@@ -82,7 +93,7 @@ describe('fleet projections', () => {
       cards.slice(0, 2),
     );
   });
-  test('stale fleet cards retain their workspace and tools with an explicit cached marker', () => {
+  test('stale fleet cards retain their workspace and tools with an explicit Stale badge', () => {
     const html = renderToStaticMarkup(
       <FleetBoard
         sessions={[card('a', 'working', 'station-a', { cwd: '/work', background_tasks: ['bg'] })]}
@@ -90,10 +101,14 @@ describe('fleet projections', () => {
         freshness="stale"
       />,
     );
-    expect(html).toContain('Cached · stale');
-    expect(html).toContain('/work');
-    expect(html).toContain('Background tasks: 1');
-    expect(html).toContain('Branch: not reported');
+    expect(html).toContain('<span class="fd-badge" data-tone="muted">Stale</span>');
+    // with no branch the card shows the directory
+    expect(html).toMatch(/fd-card-where">[\s\S]*?<\/svg> work</);
+    expect(html).toMatch(/title="Background tasks">[\s\S]*?<\/svg> 1<\/span>/);
+    const live = renderToStaticMarkup(
+      <FleetBoard sessions={[card('a')]} stations={[]} freshness="live" />,
+    );
+    expect(live).not.toContain('Stale');
   });
   test('zero usage remains zero and missing usage remains unknown', () => {
     expect(usageText(card('a'))).toBe('Input unknown · Output unknown · Cost unknown');
@@ -244,16 +259,21 @@ describe('station projections', () => {
       renderToStaticMarkup(<StationsPanel stations={[]} sessions={[]} freshness="live" />),
     ).not.toContain('Add station');
   });
-  test('cards show the reported branch or an explicit unknown', () => {
+  test('cards show the reported branch, else the directory, else no place', () => {
     const html = renderToStaticMarkup(
       <FleetBoard
-        sessions={[card('a', 'working', 'station-a', { branch: 'fd/feature-1' }), card('b')]}
+        sessions={[
+          card('a', 'working', 'station-a', { branch: 'fd/feature-1', cwd: '/repos/deck' }),
+          card('b'),
+        ]}
         stations={[station()]}
         freshness="live"
       />,
     );
-    expect(html).toContain('Branch: fd/feature-1');
-    expect(html).toContain('Branch: not reported');
+    expect(html).toMatch(/<\/svg> fd\/feature-1</);
+    expect(html).not.toContain('>deck<');
+    // a card without a branch and a directory has only its model badge in the place line
+    expect(html).toMatch(/data-session="b"[\s\S]*?fd-card-where"><span class="fd-badge"/);
   });
   test('an empty panel reports no paired stations', () => {
     expect(

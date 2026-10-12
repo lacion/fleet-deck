@@ -454,9 +454,16 @@ describe('TerminalDock', () => {
       />,
     );
 
-  test('renders nothing without tabs and without a new-shell action', () => {
+  test('renders no bar without tabs, also when a new-shell action is given', () => {
     expect(render(createTerminalStore(null))).toBe('');
-    expect(render(createTerminalStore(null), () => undefined)).toContain('Open shell in workspace');
+    expect(render(createTerminalStore(null), () => undefined)).toBe('');
+  });
+
+  test('the new-shell icon button shows with tabs only when an action is given', () => {
+    const store = createTerminalStore(null);
+    store.add(tab('a'));
+    expect(render(store)).not.toContain('Open shell in workspace');
+    expect(render(store, () => undefined)).toContain('aria-label="Open shell in workspace"');
   });
 
   test('a tui tab offers Return to board control and a Detach button', () => {
@@ -469,7 +476,7 @@ describe('TerminalDock', () => {
     expect(html).toContain('aria-label="Detach a"');
     expect(html).toContain('aria-label="Detach fix login"');
     expect(html).toContain('Return to board control');
-    expect(html).not.toContain('>Close shell<');
+    expect(html).not.toContain('Close shell');
     expect(html).toContain('Station st');
     expect(html).toContain('Hide terminals');
     expect(html).toContain('aria-label="Resize terminals"');
@@ -479,10 +486,13 @@ describe('TerminalDock', () => {
     const store = createTerminalStore(null);
     store.add(tab('a'));
     const html = render(store);
-    expect(html).toContain('>Close shell<');
+    // Close shell is an item of the terminal menu
+    expect(html).toContain('aria-label="Terminal menu"');
+    expect(html).toContain('>Close shell</button>');
     expect(html).not.toContain('Return to board control');
     expect(html).not.toContain('Close the shell? Its process ends.');
-    expect(html).toContain('&gt;_');
+    expect(html).toContain('lucide-square-terminal');
+    expect(html).not.toContain('&gt;_');
   });
 
   test('a hidden dock keeps the terminals mounted and offers Show terminals', () => {

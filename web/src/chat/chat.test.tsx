@@ -40,9 +40,9 @@ describe('Markdown', () => {
     expect(html).toContain('rel="noopener noreferrer"');
   });
 
-  test('a code block has a Copy button', () => {
+  test('a code block has a Copy code icon button', () => {
     const html = md('```\nls -la\n```');
-    expect(html).toContain('>Copy</button>');
+    expect(html).toContain('aria-label="Copy code"');
     expect(html).toContain('ls -la');
   });
 });
@@ -87,8 +87,11 @@ describe('ChatView', () => {
     ];
     const html = view({ items });
     expect(html).toContain('Station continuation');
-    expect(html).toContain('>You<');
+    // a board run has no label: the bubble is the owner's own message
+    expect(html).not.toContain('>You<');
+    expect(html.match(/fd-chat-run-label/g)?.length).toBe(1);
     expect(html).toContain('fix it');
+    expect(html).toContain('again');
   });
 
   test('three tools in a row form one group', () => {
@@ -108,8 +111,11 @@ describe('ChatView', () => {
         diff: { files_changed: 2, insertions: 5, deletions: 1 },
       },
     ];
-    expect(view({ items })).toContain('2 files changed · +5 −1');
-    expect(view({ items })).not.toContain('Review changes');
+    const html = view({ items });
+    expect(html).toContain('<span>2 files changed</span>');
+    expect(html).toContain('<span class="fd-add">+5</span>');
+    expect(html).toContain('<span class="fd-del">−1</span>');
+    expect(html).not.toContain('Review changes');
     expect(view({ items, onOpenChanges: () => {} })).toContain('Review changes');
   });
 
@@ -125,7 +131,7 @@ describe('ChatView', () => {
     expect(view({ items: [turn('failed')] })).toContain('Turn failed');
   });
 
-  test('an open approval shows Waiting for your answer.', () => {
+  test('an open approval is one line: Waiting for your answer · title', () => {
     const items: Item[] = [
       {
         type: 'approval',
@@ -139,8 +145,7 @@ describe('ChatView', () => {
       },
     ];
     const html = view({ items });
-    expect(html).toContain('Waiting for your answer.');
-    expect(html).toContain('Bash rm -rf dist');
+    expect(html).toContain('Waiting for your answer · Bash rm -rf dist');
   });
 
   test('an answered approval is one line with the outcome', () => {
@@ -158,7 +163,7 @@ describe('ChatView', () => {
     ];
     const html = view({ items });
     expect(html).toContain('Bash ls · Allow (by owner)');
-    expect(html).not.toContain('Waiting for your answer.');
+    expect(html).not.toContain('Waiting for your answer');
   });
 
   test('Working… shows unless an unfinished message is last', () => {

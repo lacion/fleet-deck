@@ -1,9 +1,17 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { App } from '../App';
-import type { DeckSession, Event, EventEnvelope, ShellInfo } from '../gen';
+import type {
+  DeckSession,
+  Event,
+  EventEnvelope,
+  ShellInfo,
+  StationInfo,
+  StationView,
+} from '../gen';
 import type { Freshness, Timeline } from '../runtime/state';
 import type { ShellActions } from '../shell/shell';
+import { createTerminalStore } from '../terminal/store';
 import { claudeCaps, codexCaps, minimalCaps } from '../testing/capabilities';
 import { station } from '../testing/fleet';
 import { summary } from '../testing/summary';
@@ -47,15 +55,21 @@ type ViewOptions = {
   readonly freshness?: Freshness;
   readonly tab?: PaneTab;
   readonly shells?: ShellActions;
-  /** Offer the file service (the Files tab). */
+  /** Offer the file service (the Files tab, or the side panel on a desktop). */
   readonly files?: boolean;
+  /** The side panel is only on the desktop layout; the tablet has the Files tab. */
+  readonly layout?: 'desktop' | 'tablet' | 'phone';
+  /** The stations the board knows (default: one station without a report). */
+  readonly stations?: readonly StationView[];
+  /** Give the view the terminal features of an admin board (needs `shells`). */
+  readonly terminals?: boolean;
 };
 
 const view = (s: DeckSession, t?: Timeline, options: ViewOptions = {}) =>
   renderToStaticMarkup(
     <SessionView
       session={s}
-      stations={[station()]}
+      stations={options.stations ?? [station()]}
       freshness={options.freshness ?? 'live'}
       timeline={t}
       actions={sessionActions(
@@ -66,6 +80,9 @@ const view = (s: DeckSession, t?: Timeline, options: ViewOptions = {}) =>
         options.files ? async () => ({}) : undefined,
       )}
       shells={options.shells}
+      terminals={options.terminals ? createTerminalStore(null) : undefined}
+      watch={options.terminals ? { get: () => null, subscribe: () => () => {} } : undefined}
+      layout={options.layout ?? 'desktop'}
       tab={options.tab ?? 'chat'}
     />,
   );
@@ -113,8 +130,24 @@ describe('session pane (DL-140)', () => {
     expect(html).toContain('role="tabpanel"');
     // Files needs the file service of the actions.
     expect(html).not.toContain('>Files</button>');
-    const withFiles = view(session(), timeline(), { files: true });
+    const withFiles = view(session(), timeline(), { files: true, layout: 'tablet' });
     expect(withFiles).toContain('>Files</button>');
+    expect(withFiles).not.toContain('aria-label="Files panel"');
+  });
+
+  test('on a desktop the Files side panel replaces the Files tab and has a toggle', () => {
+    const html = view(session(), timeline(), { files: true });
+    expect(html).toContain('<aside class="fd-pane-side" aria-label="Files panel">');
+    expect(html).toMatch(/<button[^>]*aria-label="Files"[^>]*aria-pressed="true"/);
+    expect(html).not.toMatch(/role="tab"[^>]*>Files</);
+    // without the file service there is neither a panel nor a toggle
+    const none = view(session(), timeline());
+    expect(none).not.toContain('aria-label="Files panel"');
+    expect(none).not.toContain('aria-label="Files"');
+    // the phone and the tablet have no side panel
+    expect(view(session(), timeline(), { files: true, layout: 'phone' })).not.toContain(
+      'aria-label="Files panel"',
+    );
   });
 
   test('the Changes tab shows the count of finalized turns', () => {
@@ -131,7 +164,7 @@ describe('session pane (DL-140)', () => {
     });
     const events = envelopes('nested', [finalized('t1'), finalized('t2')]);
     const html = view(session({ capabilities: codexCaps() }), timeline(events));
-    expect(html).toContain('>Changes · 2</button>');
+    expect(html).toMatch(/>Changes <span class="fd-count">2<\/span><\/button>/);
     const changes = view(session({ capabilities: codexCaps() }), timeline(events), {
       tab: 'changes',
     });
@@ -157,7 +190,13 @@ describe('session pane (DL-140)', () => {
   test('the Files tab says when the board is not live or the drive scope is missing', () => {
     const note = 'Files are available when the board is live and you have the drive scope.';
     const withFiles = (freshness: Freshness, scopes: string[]) =>
-      view(session(), timeline(), { freshness, scopes, files: true, tab: 'files' });
+      view(session(), timeline(), {
+        freshness,
+        scopes,
+        files: true,
+        tab: 'files',
+        layout: 'tablet',
+      });
     const ready = withFiles('live', ['read', 'drive']);
     expect(ready).toContain('aria-label="Files"');
     expect(ready).not.toContain(note);
@@ -187,6 +226,35 @@ describe('session pane (DL-140)', () => {
     expect(view(session(), timeline(), { shells: shells() })).not.toContain('Release the hold');
   });
 
+  test('a station with allow_shell = false gives no Open in terminal and says why (DL-141)', () => {
+    const info = (allowShell: boolean | null): StationInfo => ({
+      name: 'Alpha',
+      incarnation: 'inc',
+      head: 0,
+      live_sessions: 0,
+      version: '0.2.0',
+      max_sessions: 4,
+      allow_shell: allowShell,
+      providers: [],
+    });
+    const open = (allowShell: boolean | null) =>
+      view(session(), timeline(), {
+        shells: shells(),
+        terminals: true,
+        stations: [station('station-a', { info: info(allowShell), info_at: 1 })],
+      });
+    const off = open(false);
+    expect(off).not.toContain('aria-label="Open in terminal"');
+    expect(off).toContain(
+      'Shells are off on this station. Set allow_shell = true in station.toml to open a terminal.',
+    );
+    for (const allowed of [true, null]) {
+      const html = open(allowed);
+      expect(html).toContain('aria-label="Open in terminal"');
+      expect(html).not.toContain('Shells are off');
+    }
+  });
+
   test('an ended session says how to send prompts again', () => {
     const html = view(session({ state: 'exited', current_run: null }), timeline());
     expect(html).toContain('The session ended. Resume it to send prompts.');
@@ -214,7 +282,9 @@ describe('session pane (DL-140)', () => {
   test('the chat nests the subagents and shows the open approval', () => {
     const html = view(session(), timeline());
     expect(html).toContain('aria-label="Conversation"');
-    expect(html).toMatch(/fd-chat-subagent[\s\S]*fd-chat-subagent[\s\S]*Waiting for your answer\./);
+    expect(html).toMatch(
+      /fd-chat-subagent[\s\S]*fd-chat-subagent[\s\S]*Waiting for your answer · /,
+    );
     expect(html.match(/fd-chat-subagent/g)?.length).toBeGreaterThanOrEqual(3);
   });
 
@@ -231,7 +301,7 @@ describe('session pane (DL-140)', () => {
 
     const idle = view(session({ current_run: null }), timeline());
     expect(idle).not.toContain('Steer now');
-    expect(idle).toContain('>Send</button>');
+    expect(idle).toMatch(/<\/svg> Send<\/button>/);
 
     const none = view(session({ capabilities: null }), timeline());
     expect(none).not.toContain('Steer now');
@@ -284,7 +354,9 @@ describe('session pane (DL-140)', () => {
     expect(codex).toMatch(/type="radio"[^>]*value="Red"/);
     expect(codex).toContain('Other answer');
     // Nothing is chosen yet: the answer cannot be sent.
-    expect(codex).toMatch(/<button type="submit" disabled="">Send answer<\/button>/);
+    expect(codex).toMatch(
+      /<button type="submit" class="fd-primary" disabled="">Send answer<\/button>/,
+    );
     expect(codex).not.toContain('>Answer</button>');
     const claude = view(session({ open_requests: [recordedRequest('ask_user_question')] }));
     expect(claude).toContain('<legend>Color: Which color?</legend>');
@@ -341,8 +413,11 @@ describe('session pane (DL-140)', () => {
         freshness="live"
       />,
     );
-    expect(html.indexOf('Run early')).toBeLessThan(html.indexOf('Run late'));
-    expect(html).toContain('aria-label="Answer Run early in Review"');
+    // the card shows the first request; the rail orders by age
+    const rail = html.slice(html.indexOf('aria-label="Needs you rail"'));
+    expect(rail.indexOf('Run early')).toBeGreaterThan(-1);
+    expect(rail.indexOf('Run early')).toBeLessThan(rail.indexOf('Run late'));
+    expect(rail).toContain('aria-label="Answer Run early in Review"');
     const empty = renderToStaticMarkup(<App sessions={[session()]} freshness="live" />);
     expect(empty).toContain('Nothing waits for you.');
   });

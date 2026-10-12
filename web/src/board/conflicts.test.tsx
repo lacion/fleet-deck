@@ -44,11 +44,10 @@ describe('conflict radar', () => {
     expect(agoText(0, 5 * 60_000)).toBe('5 min ago');
   });
 
-  test('the panel starts empty until the first answer', () => {
+  test('the radar renders nothing until the first answer, and nothing without conflicts', () => {
     const html = renderToStaticMarkup(
-      <ConflictRadar load={async () => []} stations={[]} version="0" onOpen={() => {}} />,
+      <ConflictRadar load={async () => [conflict]} stations={[]} version="0" onOpen={() => {}} />,
     );
-    expect(html).toContain('aria-label="Conflict radar"');
-    expect(html).not.toContain('src/lib.rs');
+    expect(html).toBe('');
   });
 });

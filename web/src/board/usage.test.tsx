@@ -55,7 +55,7 @@ describe('usage meters (DL-303)', () => {
     ]);
   });
 
-  test('the fleet screen shows the usage panel; an unknown window has no meter bar', () => {
+  test('the usage panel shows the meters; an unknown window has no meter bar', () => {
     const sessions = [
       card('a', 'working', 'station-a', {
         provider_instance: 'personal',
@@ -69,7 +69,15 @@ describe('usage meters (DL-303)', () => {
     expect(html).toContain('use unknown');
     expect(html).toContain('<dd>unknown</dd>');
     expect(html).not.toContain('>0<');
-    const empty = renderToStaticMarkup(<App sessions={[]} freshness="live" />);
+    const empty = renderToStaticMarkup(<UsageMeters sessions={[]} stations={[]} />);
     expect(empty).toContain('No provider reported a rate limit yet.');
+  });
+
+  test('the fleet home has a Usage tab in its bottom panel', () => {
+    const html = renderToStaticMarkup(<App sessions={[]} freshness="live" />);
+    expect(html).toContain('role="tablist" aria-label="Fleet panels"');
+    expect(html).toMatch(/role="tab"[^>]*>Usage<\/button>/);
+    // only the active tab (Activity) has its content
+    expect(html).not.toContain('aria-label="Usage"');
   });
 });

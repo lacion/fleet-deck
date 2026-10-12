@@ -62,9 +62,11 @@ const view = (
   events: Event[],
   scopes = ['read', 'drive', 'approve'],
   tab: PaneTab = 'changes',
+  layout: 'desktop' | 'tablet' = 'tablet',
 ) =>
   renderToStaticMarkup(
     <SessionView
+      layout={layout}
       session={s}
       stations={[station()]}
       freshness="live"
@@ -131,14 +133,25 @@ describe('turns and reverts (DL-097)', () => {
   test('a Codex session shows its turns with a diff and a revert control', () => {
     const html = view(codex(), [finalized('t1'), finalized('t2', ok('s'), gone('queued_input'))]);
     expect(html).toContain('aria-label="Turns"');
-    expect(html).toMatch(/data-turn="t1" data-reverted="false"><span>Turn 1 · 1 files, \+2 −1/);
-    expect(html).toContain('Turn 2 · no completion checkpoint: queued_input');
+    expect(html).toMatch(
+      /data-turn="t1" data-reverted="false"><span class="fd-turn-name">Turn 1<\/span><span class="fd-turn-stat">1 files <span class="fd-add">\+2<\/span> <span class="fd-del">−1<\/span><\/span>/,
+    );
+    expect(html).toContain('<span class="fd-turn-name">Turn 2</span>');
+    expect(html).toContain(
+      '<span class="fd-turn-stat">no completion checkpoint: queued_input</span>',
+    );
     expect(html).toContain('Show the diff');
-    expect(html).toMatch(/<button type="button">Revert to here<\/button>/);
+    expect(html).toMatch(/<button type="button" class="fd-sm">Revert to here<\/button>/);
     expect(html).not.toContain('cannot roll back its conversation, so the board');
     expect(html).not.toContain('aria-label="Files"');
     const files = view(codex(), [finalized('t1')], undefined, 'files');
     expect(files).toContain('aria-label="Files"');
+  });
+
+  test('a reverted turn says so', () => {
+    const html = view(codex(), [finalized('t1'), reverted('t1', 'succeeded')]);
+    expect(html).toContain('data-turn="t1" data-reverted="true"');
+    expect(html).toContain('<span class="fd-turn-stat">reverted</span>');
   });
 
   test('a Claude session gets no revert control and says why', () => {
@@ -155,7 +168,9 @@ describe('turns and reverts (DL-097)', () => {
 
   test('read-only scopes and a running turn disable the revert; a read-only board has no files', () => {
     const readOnly = view(codex(), [finalized('t1')], ['read']);
-    expect(readOnly).toMatch(/<button type="button" disabled="">Revert to here<\/button>/);
+    expect(readOnly).toMatch(
+      /<button type="button" class="fd-sm" disabled="">Revert to here<\/button>/,
+    );
     const files = view(codex(), [finalized('t1')], ['read'], 'files');
     expect(files).not.toContain('aria-label="Files"');
     expect(files).toContain(
@@ -170,11 +185,13 @@ describe('turns and reverts (DL-097)', () => {
     expect(html).toContain('data-revert-state="reconciliation_required"');
     expect(html).toContain('role="alert">The revert needs reconciliation');
     expect(html).toContain('Reason: workspace_changed.');
-    expect(html).toMatch(/<button type="button">Retry the file restore<\/button>/);
-    expect(html).toMatch(/<button type="button">Mark as reconciled<\/button>/);
+    expect(html).toMatch(/<button type="button" class="fd-sm">Retry the file restore<\/button>/);
+    expect(html).toMatch(/<button type="button" class="fd-sm">Mark as reconciled<\/button>/);
     expect(html).toContain('A revert holds the session; no new revert starts.');
     const readOnly = view(codex({ revert: recon }), [finalized('t1')], ['read']);
-    expect(readOnly).toMatch(/<button type="button" disabled="">Mark as reconciled<\/button>/);
+    expect(readOnly).toMatch(
+      /<button type="button" class="fd-sm" disabled="">Mark as reconciled<\/button>/,
+    );
     const done = view(codex({ revert: { ...recon, state: 'succeeded', reason: null } }), []);
     expect(done).toContain('role="status">The revert succeeded');
     expect(done).not.toContain('Mark as reconciled');
