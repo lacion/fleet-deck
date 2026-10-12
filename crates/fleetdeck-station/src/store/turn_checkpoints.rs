@@ -235,7 +235,7 @@ fn decode(cols: [Option<String>; 13], seq: Option<i64>) -> Result<TurnCheckpoint
     })
 }
 
-fn select(
+pub(super) fn select(
     conn: &Connection,
     filter: &str,
     args: &[&dyn rusqlite::ToSql],

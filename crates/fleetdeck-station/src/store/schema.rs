@@ -196,6 +196,37 @@ CREATE UNIQUE INDEX turn_checkpoints_turn
 CREATE INDEX turn_checkpoints_open ON turn_checkpoints(state) WHERE state = 'open';
 ";
 
+const V7: &str = "
+-- DL-087: one row per revert (PLAN §6.6). The row is the durable revert
+-- fence: the partial unique index admits one active revert per session, and
+-- each external step (conversation rollback, file restore) is committed
+-- before and after its I/O so recovery works from evidence.
+CREATE TABLE reverts (
+    revert_id         TEXT PRIMARY KEY,
+    session_id        TEXT NOT NULL REFERENCES sessions(session_id),
+    process           TEXT NOT NULL,
+    turn_id           TEXT NOT NULL,
+    -- The first reverted app turn: its start checkpoint is the target.
+    app_turn          TEXT NOT NULL REFERENCES turn_checkpoints(app_turn),
+    -- The last finalized app turn: its completion checkpoint is the
+    -- workspace state that the revert expects before the restore.
+    current_app_turn  TEXT NOT NULL REFERENCES turn_checkpoints(app_turn),
+    turns             INTEGER NOT NULL,
+    target_commit     TEXT NOT NULL,
+    current_commit    TEXT NOT NULL,
+    worktree_root     TEXT NOT NULL,
+    step              TEXT NOT NULL CHECK (step IN ('admitted', 'rollback_sent',
+        'rolled_back', 'restoring', 'succeeded', 'failed', 'reconciliation_required')),
+    reason            TEXT,
+    created_at        INTEGER NOT NULL,
+    updated_at        INTEGER NOT NULL
+) STRICT;
+CREATE UNIQUE INDEX reverts_active ON reverts(session_id) WHERE step IN
+    ('admitted', 'rollback_sent', 'rolled_back', 'restoring', 'reconciliation_required');
+-- The revert that removed the turn from the conversation and the workspace.
+ALTER TABLE turn_checkpoints ADD COLUMN reverted_by TEXT;
+";
+
 /// The `station.db` migrations. V4 is the link epochs table of
 /// `fleetdeck-link` (G1).
 #[must_use]
@@ -207,5 +238,6 @@ pub fn migrations() -> Migrations<'static> {
         M::up(fleetdeck_link::LINK_EPOCHS_SQL),
         M::up(V5),
         M::up(V6),
+        M::up(V7),
     ])
 }

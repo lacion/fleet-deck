@@ -595,7 +595,7 @@ impl CodexSession {
 
     /// Waits until `ready` holds for the core, the process ends, or the
     /// deadline passes.
-    async fn wait_until(
+    pub(super) async fn wait_until(
         &mut self,
         deadline: tokio::time::Instant,
         ready: impl Fn(&CodexCore) -> bool,
@@ -627,8 +627,13 @@ impl CodexSession {
         }
     }
 
+    /// Reads the core under its lock.
+    pub(super) async fn with_core<T>(&self, read: impl FnOnce(&CodexCore) -> T + Send) -> T {
+        read(&*self.shared.core.lock().await)
+    }
+
     /// Runs one core command and dispatches its output.
-    async fn run(
+    pub(super) async fn run(
         &self,
         op: impl FnOnce(&mut CodexCore) -> Result<Vec<Output>> + Send,
     ) -> Result<()> {
@@ -719,6 +724,12 @@ impl LiveSession for CodexSession {
             .await
             .map(NativeSessionId)
             .ok_or(ProviderError::NotReady("thread id"))
+    }
+
+    /// `thread/rollback`, then the answer (DL-087).
+    async fn rollback(&mut self, turns: u32) -> Result<()> {
+        require(&self.caps, Operation::Revert)?;
+        self.roll_back(turns).await
     }
 
     /// Graceful: write the queued frames, close stdin (the app-server then

@@ -11,6 +11,8 @@
 
 pub mod decide;
 pub mod policy;
+pub mod revert;
+pub mod revert_run;
 pub mod target;
 pub mod turns;
 pub mod workspaces;
@@ -126,6 +128,18 @@ impl SessionManager {
                 abandoned = settled.abandoned.len(),
                 "settled turn checkpoints after restart"
             );
+        }
+        // Reverts that a stop interrupted end from their stored step before
+        // any command (DL-087); a claimed rollback is never repeated.
+        let git = crate::workspace::GitOptions::isolated();
+        let env = revert_run::RevertEnv {
+            store: &store,
+            git: &git,
+            limits: crate::workspace::Limits::default(),
+        };
+        let recovered = revert_run::recover(env).await?;
+        if recovered > 0 {
+            tracing::info!(recovered, "recovered interrupted reverts");
         }
         let target = Arc::new(SessionTarget::new(
             store.clone(),

@@ -109,6 +109,13 @@ pub const METHODS: &[MethodSpec] = &[
     drive("session.set_mode"),
     drive("session.set_model"),
     drive("session.stop"),
+    m(
+        "session.revert",
+        DeckToStation,
+        Scope::Drive,
+        Some(feature::REVERT),
+        true,
+    ),
     m("approval.answer", DeckToStation, Scope::Approve, None, true),
     m("station.configure", DeckToStation, Scope::Admin, None, true),
     m("link.rotate_key", Either, Scope::Admin, None, true),

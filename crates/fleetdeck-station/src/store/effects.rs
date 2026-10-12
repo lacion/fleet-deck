@@ -23,9 +23,8 @@
 //! `input.updated { refused }` retires a prompt as not dispatched (ADR-002).
 
 use fleetdeck_core::{IdSource, new_id};
-use fleetdeck_proto::command::{ApprovalDecision, SessionSpec, StopMode, UserInput};
-use fleetdeck_proto::event::{InputState, ResolvedBy, RunOrigin};
-use fleetdeck_proto::{CommandId, Event, EventBody, EventEnvelope, InputId, RequestId, SessionId};
+use fleetdeck_proto::event::InputState;
+use fleetdeck_proto::{CommandId, Event, EventBody, EventEnvelope, SessionId};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
@@ -77,99 +76,7 @@ text_id!(
     ProcessIncarnation
 );
 
-/// A host input as the effect carries it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct InputRecord {
-    pub input_id: InputId,
-    pub origin: RunOrigin,
-    pub input: UserInput,
-}
-
-/// What an effect does.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum EffectPayload {
-    Start {
-        spec: SessionSpec,
-        prompt: Option<InputRecord>,
-    },
-    Resume {
-        native_session_id: String,
-    },
-    Prompt {
-        input: InputRecord,
-    },
-    Steer {
-        input: InputRecord,
-    },
-    FollowUp {
-        input: InputRecord,
-    },
-    Interrupt,
-    Answer {
-        request_id: RequestId,
-        decision: ApprovalDecision,
-        by: ResolvedBy,
-    },
-    SetMode {
-        mode: String,
-    },
-    SetModel {
-        model: String,
-    },
-    Stop {
-        how: StopMode,
-    },
-}
-
-impl EffectPayload {
-    #[must_use]
-    pub fn kind(&self) -> &'static str {
-        match self {
-            Self::Start { .. } => "start",
-            Self::Resume { .. } => "resume",
-            Self::Prompt { .. } => "prompt",
-            Self::Steer { .. } => "steer",
-            Self::FollowUp { .. } => "follow_up",
-            Self::Interrupt => "interrupt",
-            Self::Answer { .. } => "answer",
-            Self::SetMode { .. } => "set_mode",
-            Self::SetModel { .. } => "set_model",
-            Self::Stop { .. } => "stop",
-        }
-    }
-
-    /// True for effects that act on a running process (all but start/resume).
-    #[must_use]
-    pub fn needs_process(&self) -> bool {
-        !matches!(self, Self::Start { .. } | Self::Resume { .. })
-    }
-
-    /// The host input that the effect delivers.
-    #[must_use]
-    pub fn input(&self) -> Option<&InputRecord> {
-        match self {
-            Self::Prompt { input } | Self::Steer { input } | Self::FollowUp { input } => {
-                Some(input)
-            }
-            Self::Start { prompt, .. } => prompt.as_ref(),
-            _ => None,
-        }
-    }
-
-    /// The key that the confirming evidence carries.
-    fn correlation(&self) -> Option<String> {
-        match self {
-            Self::Prompt { input } | Self::Steer { input } | Self::FollowUp { input } => {
-                Some(input.input_id.0.clone())
-            }
-            Self::Answer { request_id, .. } => Some(request_id.0.clone()),
-            Self::SetMode { mode } => Some(mode.clone()),
-            Self::SetModel { model } => Some(model.clone()),
-            _ => None,
-        }
-    }
-}
+pub use super::payload::{EffectPayload, InputRecord};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

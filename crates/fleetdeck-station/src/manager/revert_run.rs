@@ -1,0 +1,339 @@
+//! The revert executor and its start recovery (PLAN §6.6, L13; DL-087).
+//!
+//! Order of the external steps, each one durable before its I/O:
+//!
+//! 1. Under the session's workspace fence: recheck the row, the process,
+//!    the checkpoint refs and the workspace (its tracked content must equal
+//!    the completion checkpoint of the latest turn). A failed check ends the
+//!    revert `failed` with nothing changed.
+//! 2. Commit `rollback_sent`, then ask the provider to roll back its
+//!    conversation. A refusal ends `failed` (nothing changed); an uncertain
+//!    answer ends `reconciliation_required`.
+//! 3. Commit `rolled_back` (the conversation matches the target), then
+//!    `restoring`, then restore the tracked files from the start checkpoint.
+//!    Only a workspace that exactly matches the target ends `succeeded`;
+//!    a changed workspace or a partial restore ends
+//!    `reconciliation_required`. A filesystem-only restore is never
+//!    reported as a conversation rollback.
+//!
+//! Start recovery works from the stored step and never repeats a rollback:
+//! `admitted` → `failed` (nothing was sent), `rollback_sent` →
+//! `reconciliation_required`, `rolled_back`/`restoring` → finish the file
+//! restore from the refs.
+
+use std::path::Path;
+
+use fleetdeck_providers::{LiveSession, ProviderError};
+
+use super::turns::SessionTurns;
+use crate::store::{
+    Dispatch, ProcessIncarnation, RevertRow, RevertStep, RowState, Store, StoreError,
+};
+use crate::workspace::{Checkpoint, CheckpointKey, GitOptions, Limits, Phase, Worktree};
+
+/// The station services that a revert uses.
+#[derive(Clone, Copy)]
+pub struct RevertEnv<'a> {
+    pub store: &'a Store,
+    pub git: &'a GitOptions,
+    pub limits: Limits,
+}
+
+/// Why a revert ended.
+pub mod reason {
+    pub const PROCESS_CHANGED: &str = "process_changed";
+    pub const NOT_ADMITTED: &str = "revert_not_admitted";
+    pub const TURNS_CHANGED: &str = "turns_changed";
+    pub const WORKTREE_MISSING: &str = "worktree_missing";
+    pub const CHECKPOINT_CHANGED: &str = "checkpoint_changed";
+    pub const WORKSPACE_CHANGED: &str = "workspace_changed";
+    pub const ROLLBACK_REFUSED: &str = "rollback_refused";
+    pub const ROLLBACK_UNCERTAIN: &str = "rollback_uncertain";
+    pub const RESTORE_FAILED: &str = "restore_failed";
+    pub const RESTORE_INCOMPLETE: &str = "restore_incomplete";
+    pub const STATION_RESTART: &str = "station_restart";
+}
+
+/// Runs an admitted revert on the live session.
+pub async fn run(
+    env: RevertEnv<'_>,
+    turns: &SessionTurns,
+    session: &mut dyn LiveSession,
+    process: &ProcessIncarnation,
+    revert_id: &str,
+) -> Dispatch {
+    let _fence = turns.fence().await;
+    match execute(env, session, process, revert_id).await {
+        Ok(dispatch) => dispatch,
+        Err(e) => {
+            tracing::error!(error = %e, revert_id, "revert store failure");
+            Dispatch::Unknown(format!("store: {e}"))
+        }
+    }
+}
+
+async fn execute(
+    env: RevertEnv<'_>,
+    session: &mut dyn LiveSession,
+    process: &ProcessIncarnation,
+    revert_id: &str,
+) -> Result<Dispatch, StoreError> {
+    let Some(row) = env.store.revert(revert_id.to_owned()).await? else {
+        return Ok(Dispatch::NotDispatched(reason::NOT_ADMITTED.into()));
+    };
+    if row.step != RevertStep::Admitted {
+        return Ok(Dispatch::NotDispatched(reason::NOT_ADMITTED.into()));
+    }
+    if let Err(why) = check(env, &row, process).await? {
+        return fail(env, revert_id, why).await;
+    }
+    if !step(
+        env,
+        revert_id,
+        &[RevertStep::Admitted],
+        RevertStep::RollbackSent,
+        None,
+    )
+    .await?
+    {
+        return Ok(Dispatch::NotDispatched(reason::NOT_ADMITTED.into()));
+    }
+    match session.rollback(row.revert.turns).await {
+        Ok(()) => {}
+        Err(ProviderError::Uncertain(detail)) => {
+            tracing::warn!(revert_id, %detail, "rollback outcome unknown");
+            let why = reason::ROLLBACK_UNCERTAIN;
+            step(
+                env,
+                revert_id,
+                &[RevertStep::RollbackSent],
+                RevertStep::ReconciliationRequired,
+                Some(why),
+            )
+            .await?;
+            return Ok(Dispatch::Unknown(why.into()));
+        }
+        Err(e) => {
+            let why = format!("{}: {e}", reason::ROLLBACK_REFUSED);
+            step(
+                env,
+                revert_id,
+                &[RevertStep::RollbackSent],
+                RevertStep::Failed,
+                Some(&why),
+            )
+            .await?;
+            return Ok(Dispatch::NotDispatched(why));
+        }
+    }
+    step(
+        env,
+        revert_id,
+        &[RevertStep::RollbackSent],
+        RevertStep::RolledBack,
+        None,
+    )
+    .await?;
+    restore(env, &row).await
+}
+
+/// Finishes the file restore of a revert whose conversation rollback was
+/// confirmed (`rolled_back` or `restoring`).
+///
+/// # Errors
+/// A store error.
+pub async fn restore(env: RevertEnv<'_>, row: &RevertRow) -> Result<Dispatch, StoreError> {
+    let id = row.revert.revert_id.as_str();
+    let moved = step(
+        env,
+        id,
+        &[RevertStep::RolledBack, RevertStep::Restoring],
+        RevertStep::Restoring,
+        None,
+    )
+    .await?;
+    if !moved {
+        return Ok(Dispatch::NotDispatched(reason::NOT_ADMITTED.into()));
+    }
+    let outcome = restore_files(env, row).await;
+    let (to, why) = match outcome {
+        Ok(()) => (RevertStep::Succeeded, None),
+        Err(why) => (RevertStep::ReconciliationRequired, Some(why)),
+    };
+    step(env, id, &[RevertStep::Restoring], to, why).await?;
+    Ok(match why {
+        None => Dispatch::Confirmed,
+        Some(why) => Dispatch::Unknown(why.into()),
+    })
+}
+
+async fn restore_files(env: RevertEnv<'_>, row: &RevertRow) -> Result<(), &'static str> {
+    let worktree = Worktree::open(Path::new(&row.revert.worktree_root), env.git.clone())
+        .await
+        .map_err(|_| reason::WORKTREE_MISSING)?;
+    let target = read(env, &worktree, row, Phase::Start, &row.revert.app_turn.0).await?;
+    if target.commit != row.revert.target_commit {
+        return Err(reason::CHECKPOINT_CHANGED);
+    }
+    let current = read(
+        env,
+        &worktree,
+        row,
+        Phase::Completion,
+        &row.revert.current_app_turn.0,
+    )
+    .await?;
+    let plan = match worktree.plan_restore(&target, env.limits).await {
+        Ok(Ok(plan)) => plan,
+        Ok(Err(_)) | Err(_) => return Err(reason::RESTORE_FAILED),
+    };
+    if plan.current_tree == target.tree {
+        // A restore that a crash interrupted after its last write.
+        return Ok(());
+    }
+    if plan.current_tree != current.tree {
+        return Err(reason::WORKSPACE_CHANGED);
+    }
+    match worktree.apply_restore(&plan).await {
+        Ok(report) if report.matches => Ok(()),
+        Ok(_) => Err(reason::RESTORE_INCOMPLETE),
+        Err(_) => Err(reason::RESTORE_FAILED),
+    }
+}
+
+/// The checks of step 1; `Ok(Err(reason))` for a refused revert.
+async fn check(
+    env: RevertEnv<'_>,
+    row: &RevertRow,
+    process: &ProcessIncarnation,
+) -> Result<Result<(), &'static str>, StoreError> {
+    if &row.revert.process != process {
+        return Ok(Err(reason::PROCESS_CHANGED));
+    }
+    let rows = env
+        .store
+        .turn_checkpoints(row.revert.session_id.clone())
+        .await?;
+    let Some(at) = rows.iter().position(|r| r.app_turn == row.revert.app_turn) else {
+        return Ok(Err(reason::TURNS_CHANGED));
+    };
+    let later = &rows[at..];
+    let last = later.iter().rev().find(|r| r.state == RowState::Finalized);
+    if later.iter().any(|r| r.state == RowState::Open)
+        || last.map(|r| &r.app_turn) != Some(&row.revert.current_app_turn)
+    {
+        return Ok(Err(reason::TURNS_CHANGED));
+    }
+    let Ok(worktree) = Worktree::open(Path::new(&row.revert.worktree_root), env.git.clone()).await
+    else {
+        return Ok(Err(reason::WORKTREE_MISSING));
+    };
+    let target = match read(env, &worktree, row, Phase::Start, &row.revert.app_turn.0).await {
+        Ok(cp) if cp.commit == row.revert.target_commit => cp,
+        Ok(_) | Err(_) => return Ok(Err(reason::CHECKPOINT_CHANGED)),
+    };
+    let current = match read(
+        env,
+        &worktree,
+        row,
+        Phase::Completion,
+        &row.revert.current_app_turn.0,
+    )
+    .await
+    {
+        Ok(cp) if cp.commit == row.revert.current_commit => cp,
+        Ok(_) | Err(_) => return Ok(Err(reason::CHECKPOINT_CHANGED)),
+    };
+    match worktree.plan_restore(&target, env.limits).await {
+        Ok(Ok(plan)) if plan.current_tree == current.tree => Ok(Ok(())),
+        Ok(Ok(_)) => Ok(Err(reason::WORKSPACE_CHANGED)),
+        Ok(Err(rejected)) => Ok(Err(rejected.code())),
+        Err(_) => Ok(Err(reason::RESTORE_FAILED)),
+    }
+}
+
+async fn read(
+    env: RevertEnv<'_>,
+    worktree: &Worktree,
+    row: &RevertRow,
+    phase: Phase,
+    app_turn: &str,
+) -> Result<Checkpoint, &'static str> {
+    let key = CheckpointKey {
+        incarnation: env.store.incarnation().as_str().to_owned(),
+        session: row.revert.session_id.as_str().to_owned(),
+        turn: app_turn.to_owned(),
+        phase,
+    };
+    match worktree.read(&key).await {
+        Ok(Some(cp)) => Ok(cp),
+        Ok(None) | Err(_) => Err(reason::CHECKPOINT_CHANGED),
+    }
+}
+
+async fn fail(env: RevertEnv<'_>, revert_id: &str, why: &str) -> Result<Dispatch, StoreError> {
+    step(
+        env,
+        revert_id,
+        &[RevertStep::Admitted],
+        RevertStep::Failed,
+        Some(why),
+    )
+    .await?;
+    Ok(Dispatch::NotDispatched(why.to_owned()))
+}
+
+async fn step(
+    env: RevertEnv<'_>,
+    revert_id: &str,
+    from: &'static [RevertStep],
+    to: RevertStep,
+    why: Option<&str>,
+) -> Result<bool, StoreError> {
+    env.store
+        .advance_revert(revert_id.to_owned(), from, to, why.map(str::to_owned))
+        .await
+}
+
+/// Start recovery of the reverts that a station stop interrupted.
+///
+/// # Errors
+/// A store error.
+pub async fn recover(env: RevertEnv<'_>) -> Result<usize, StoreError> {
+    let running = env.store.running_reverts().await?;
+    let n = running.len();
+    for row in running {
+        let id = row.revert.revert_id.as_str();
+        match row.step {
+            RevertStep::Admitted => {
+                step(
+                    env,
+                    id,
+                    &[RevertStep::Admitted],
+                    RevertStep::Failed,
+                    Some(reason::STATION_RESTART),
+                )
+                .await?;
+            }
+            RevertStep::RollbackSent => {
+                step(
+                    env,
+                    id,
+                    &[RevertStep::RollbackSent],
+                    RevertStep::ReconciliationRequired,
+                    Some(reason::ROLLBACK_UNCERTAIN),
+                )
+                .await?;
+            }
+            RevertStep::RolledBack | RevertStep::Restoring => {
+                restore(env, &row).await?;
+            }
+            RevertStep::Succeeded | RevertStep::Failed | RevertStep::ReconciliationRequired => {}
+        }
+    }
+    Ok(n)
+}
+
+#[cfg(test)]
+#[path = "revert_tests.rs"]
+mod revert_tests;

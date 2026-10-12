@@ -21,9 +21,9 @@ use crate::store::{
 };
 use crate::workspace::{CheckpointKey, GitOptions, Limits, Phase, Worktree};
 
-const S1: &str = "s1";
+pub(crate) const S1: &str = "s1";
 
-fn git(dir: &Path, args: &[&str]) {
+pub(crate) fn git(dir: &Path, args: &[&str]) {
     let out = Command::new("git")
         .current_dir(dir)
         .args(args)
@@ -38,7 +38,7 @@ fn git(dir: &Path, args: &[&str]) {
     assert!(out.status.success(), "git {args:?}");
 }
 
-fn repo() -> (tempfile::TempDir, PathBuf) {
+pub(crate) fn repo() -> (tempfile::TempDir, PathBuf) {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join("repo");
     std::fs::create_dir(&dir).unwrap();
@@ -50,7 +50,7 @@ fn repo() -> (tempfile::TempDir, PathBuf) {
     (tmp, dir)
 }
 
-async fn setup(det: &Det, cwd: &Path) -> (Store, Arc<SessionTurns>) {
+pub(crate) async fn setup(det: &Det, cwd: &Path) -> (Store, Arc<SessionTurns>) {
     let s = Store::open_in_memory(det.clock(), det.ids(), StoreConfig::default())
         .await
         .unwrap();
@@ -81,7 +81,7 @@ async fn setup(det: &Det, cwd: &Path) -> (Store, Arc<SessionTurns>) {
     (s, turns)
 }
 
-fn started(turn: &str) -> Event {
+pub(crate) fn started(turn: &str) -> Event {
     Event::TurnStarted {
         run_id: "run-1".into(),
         turn_id: turn.into(),
@@ -89,7 +89,7 @@ fn started(turn: &str) -> Event {
     }
 }
 
-fn completed(turn: &str) -> Event {
+pub(crate) fn completed(turn: &str) -> Event {
     Event::TurnCompleted {
         turn_id: turn.into(),
         status: TurnStatus::Done,
@@ -97,7 +97,7 @@ fn completed(turn: &str) -> Event {
     }
 }
 
-fn input(id: &str, turn: Option<&str>, state: InputState) -> Event {
+pub(crate) fn input(id: &str, turn: Option<&str>, state: InputState) -> Event {
     Event::InputUpdated {
         input_id: id.into(),
         turn_id: turn.map(TurnId::from),
@@ -124,13 +124,13 @@ fn ended() -> Event {
 }
 
 /// The dispatch of a prompt: fence, start capture, then the write.
-async fn dispatch(turns: &SessionTurns, id: &str) {
+pub(crate) async fn dispatch(turns: &SessionTurns, id: &str) {
     let fence = turns.fence().await;
     turns.begin_input(&fence, &InputId::from(id)).await;
     turns.input_sent(&InputId::from(id));
 }
 
-async fn rows(s: &Store) -> Vec<TurnCheckpointRow> {
+pub(crate) async fn rows(s: &Store) -> Vec<TurnCheckpointRow> {
     s.turn_checkpoints(S1.into()).await.unwrap()
 }
 
@@ -161,7 +161,7 @@ async fn finalized(
         .collect()
 }
 
-fn key(s: &Store, row: &TurnCheckpointRow, phase: Phase) -> CheckpointKey {
+pub(crate) fn key(s: &Store, row: &TurnCheckpointRow, phase: Phase) -> CheckpointKey {
     CheckpointKey {
         incarnation: s.incarnation().as_str().to_owned(),
         session: S1.to_owned(),

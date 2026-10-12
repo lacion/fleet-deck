@@ -15,7 +15,11 @@
 //!   answers end the turn with `answered: <answers>`;
 //! - `bg ...`: a command that outlives its turn; the first
 //!   `thread/backgroundTerminals/list` lists it, the second completes it;
+//! - `set-rollback <mode>`: sets how the next `thread/rollback` behaves
+//!   (`ok`, `refuse`, `hang` or `exit`), then echoes;
 //! - anything else: a reply `echo: <text>`.
+//!
+//! `thread/rollback` drops `numTurns` completed turns when no turn runs.
 //!
 //! `account/read` answers signed in, except under scenario
 //! `auth:signed-out`. End of stdin ends the process with exit code 0.
@@ -67,6 +71,12 @@ struct Sim<W: Write> {
     seq: u64,
     turn: Option<Turn>,
     background: Vec<Background>,
+    /// Completed turns of the thread; `thread/rollback` drops from the end.
+    turns: u32,
+    /// How the next `thread/rollback` behaves: `ok`, `refuse`, `hang` (no
+    /// reply) or `exit` (the process ends without a reply). A prompt
+    /// `set-rollback <mode>` sets it (DL-087).
+    rollback: String,
 }
 
 /// Runs the model until stdin ends. `scenario` is `sim` or `auth:<state>`.
@@ -83,6 +93,8 @@ pub fn run(scenario: &str) -> ExitCode {
         seq: 0,
         turn: None,
         background: Vec::new(),
+        turns: 0,
+        rollback: "ok".to_owned(),
     };
     let mut log = std::env::var_os(crate::fake::STDIN_LOG_ENV).and_then(|path| {
         std::fs::OpenOptions::new()
@@ -194,6 +206,7 @@ impl<W: Write> Sim<W> {
             Some("turn/steer") => self.on_steer(&id, &params),
             Some("turn/interrupt") => self.on_interrupt(&id),
             Some("thread/backgroundTerminals/list") => self.on_list(&id),
+            Some("thread/rollback") => self.on_rollback(&id, &params),
             Some(_) if !id.is_null() => self.error(&id, "method not supported by the sim"),
             Some(_) => Ok(()),
         }
@@ -230,6 +243,25 @@ impl<W: Write> Sim<W> {
         self.notify("thread/started", json!({"thread": info}))
     }
 
+    fn on_rollback(&mut self, id: &Value, params: &Value) -> std::io::Result<()> {
+        let n = params.get("numTurns").and_then(Value::as_u64).unwrap_or(0);
+        if self.turn.is_some() {
+            return self.error(id, "a turn is running");
+        }
+        match self.rollback.as_str() {
+            "refuse" => return self.error(id, "rollback refused by the sim"),
+            "hang" => return Ok(()),
+            "exit" => return Err(std::io::Error::other("sim exits during a rollback")),
+            _ => {}
+        }
+        if n == 0 || n > u64::from(self.turns) {
+            return self.error(id, "numTurns is out of range");
+        }
+        self.turns -= u32::try_from(n).unwrap_or(u32::MAX);
+        let info = json!({"id": self.thread_id(), "cwd": self.cwd, "model": self.model});
+        self.reply(id, json!({"thread": info}))
+    }
+
     fn on_turn_start(&mut self, id: &Value, params: &Value) -> std::io::Result<()> {
         if self.turn.is_some() {
             return self.error(id, "a turn is already running");
@@ -244,6 +276,9 @@ impl<W: Write> Sim<W> {
         self.reply(id, json!({"turn": shape}))?;
         self.notify("turn/started", json!({"turn": shape}))?;
         self.user_message(&turn, client, &text)?;
+        if let Some(mode) = text.strip_prefix("set-rollback ") {
+            mode.trim().clone_into(&mut self.rollback);
+        }
         if let Some(command) = text.strip_prefix("ask ") {
             let request = self.next();
             let item = format!("exec-sim-{request}");
@@ -358,6 +393,7 @@ impl<W: Write> Sim<W> {
     }
 
     fn complete(&mut self, turn: &str, status: &str, items: Vec<Value>) -> std::io::Result<()> {
+        self.turns += 1;
         self.turn = None;
         self.notify(
             "turn/completed",
@@ -526,6 +562,8 @@ mod tests {
             seq: 0,
             turn: None,
             background: Vec::new(),
+            turns: 0,
+            rollback: "ok".to_owned(),
         }
     }
 

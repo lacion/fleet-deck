@@ -10,7 +10,9 @@ use serde_json::Value;
 use ts_rs::TS;
 
 use crate::capability::Unsupported;
-use crate::ids::{CommandId, IncarnationId, InputId, ProviderInstanceId, RequestId, SessionId};
+use crate::ids::{
+    CommandId, IncarnationId, InputId, ProviderInstanceId, RequestId, SessionId, TurnId,
+};
 
 /// The deck retries a command for at most this long after it accepted it (G3).
 pub const RETRY_WINDOW_MS: i64 = 15 * 60 * 1000;
@@ -108,6 +110,12 @@ pub enum SessionCommand {
         session_id: SessionId,
         how: StopMode,
     },
+    /// Roll back the native conversation, then restore the workspace, to the
+    /// start of `turn_id` (PLAN §6.6). The turn and every later turn go away.
+    Revert {
+        session_id: SessionId,
+        turn_id: TurnId,
+    },
 }
 
 impl SessionCommand {
@@ -126,6 +134,7 @@ impl SessionCommand {
             Self::SetModel { .. } => "session.set_model",
             Self::Fork { .. } => "session.fork",
             Self::Stop { .. } => "session.stop",
+            Self::Revert { .. } => "session.revert",
         }
     }
 
@@ -143,7 +152,8 @@ impl SessionCommand {
             | Self::SetMode { session_id, .. }
             | Self::SetModel { session_id, .. }
             | Self::Fork { session_id }
-            | Self::Stop { session_id, .. } => Some(session_id),
+            | Self::Stop { session_id, .. }
+            | Self::Revert { session_id, .. } => Some(session_id),
         }
     }
 }

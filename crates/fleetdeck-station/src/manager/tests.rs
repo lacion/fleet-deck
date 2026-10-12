@@ -641,3 +641,6 @@ mod codex;
 
 #[path = "checkpoint_wired_tests.rs"]
 mod checkpoint_wired;
+
+#[path = "revert_wired_tests.rs"]
+mod revert_wired;

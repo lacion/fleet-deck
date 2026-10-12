@@ -20,6 +20,7 @@ mod host_cmd;
 mod map;
 mod probe;
 mod requests;
+mod rollback;
 pub mod rpc;
 #[cfg(test)]
 mod tests;
@@ -158,6 +159,8 @@ pub fn capabilities(allow_full_access: bool) -> Capabilities {
             tokens: true,
             cost: false,
         },
+        // `thread/rollback` drops whole turns of the thread (DL-087).
+        rollback: true,
     }
 }
 

@@ -16,7 +16,7 @@
 use crate::event::{Event, EventEnvelope, SessionState, Usage};
 use crate::session::{
     Activity, MAX_RUNNING_TOOLS, OpenRequest, RunningTool, SUBAGENT_TASK_KINDS, SessionError,
-    SessionSummary,
+    SessionRevert, SessionSummary,
 };
 
 impl SessionSummary {
@@ -156,6 +156,20 @@ impl SessionSummary {
                     code: code.clone(),
                     message: message.clone(),
                     retry_at: *retry_at,
+                });
+            }
+            Event::RevertUpdated {
+                revert_id,
+                turn_id,
+                state,
+                reason,
+                ..
+            } => {
+                self.revert = Some(SessionRevert {
+                    revert_id: revert_id.clone(),
+                    turn_id: turn_id.clone(),
+                    state: *state,
+                    reason: reason.clone(),
                 });
             }
             Event::SessionEnded { .. } => {

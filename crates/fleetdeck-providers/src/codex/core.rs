@@ -100,6 +100,8 @@ pub(super) enum HostRequest {
     },
     /// With the host's control id, echoed in `interrupt.result`.
     Interrupt(Option<String>),
+    /// `thread/rollback` (DL-087).
+    Rollback,
 }
 
 /// The sans-IO Codex adapter core of one app-server process.
@@ -138,6 +140,8 @@ pub struct CodexCore {
     /// A held interrupt and its control id (trap 3).
     pub(super) interrupt_pending: Option<Option<String>>,
     pub(super) interrupt_requested: bool,
+    /// The last `thread/rollback` and its answer (DL-087).
+    pub(super) rollback: Option<super::rollback::RollbackState>,
     pub(super) follow_ups: VecDeque<(InputId, String)>,
     pub(super) inputs: Vec<InputEntry>,
     pub(super) tools: BTreeMap<String, ToolNode>,
@@ -178,6 +182,7 @@ impl CodexCore {
             turn_input: None,
             interrupt_pending: None,
             interrupt_requested: false,
+            rollback: None,
             follow_ups: VecDeque::new(),
             inputs: Vec::new(),
             tools: BTreeMap::new(),
@@ -307,7 +312,7 @@ impl CodexCore {
         open.into_iter().map(|n| n.node_id.clone()).collect()
     }
 
-    fn host_id(&mut self, kind: HostRequest) -> String {
+    pub(super) fn host_id(&mut self, kind: HostRequest) -> String {
         self.next_host_id += 1;
         let id = format!("fd-{}", self.next_host_id);
         self.host_requests.insert(id.clone(), kind);
@@ -321,7 +326,7 @@ impl CodexCore {
         Ok(())
     }
 
-    fn thread(&self) -> Result<String> {
+    pub(super) fn thread(&self) -> Result<String> {
         self.live()?;
         self.thread_id
             .clone()

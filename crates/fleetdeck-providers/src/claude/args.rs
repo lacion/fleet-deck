@@ -59,6 +59,9 @@ pub fn capabilities(allow_bypass: bool) -> Capabilities {
             tokens: true,
             cost: true,
         },
+        // stream-json has no conversation rollback: a revert is rejected
+        // before any file change (PLAN §6.6, DL-087).
+        rollback: false,
     }
 }
 

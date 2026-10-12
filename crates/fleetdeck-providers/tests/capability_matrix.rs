@@ -658,13 +658,13 @@ fn every_operation_is_supported_or_degrades_as_the_matrix_says() {
                 }
             }
         }
-        // The only operation that one provider lacks and the other has.
+        // The only operations that one provider lacks and the other has.
         let missing: Vec<Operation> = Operation::ALL
             .into_iter()
             .filter(|op| !c.supports(*op))
             .collect();
         let expected = match p {
-            P::Claude => vec![],
+            P::Claude => vec![Operation::Revert],
             P::Codex => vec![Operation::EditInput],
         };
         assert_eq!(missing, expected, "{p:?}");

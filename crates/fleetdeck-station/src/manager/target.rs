@@ -254,6 +254,7 @@ impl SessionTarget {
             return Dispatch::Sent;
         }
         let turns = Arc::clone(&live.turns);
+        let process = live.process.clone();
         let Some(session) = live.session.as_mut() else {
             return Dispatch::NotDispatched("stopping".into());
         };
@@ -301,6 +302,15 @@ impl SessionTarget {
             }
             EffectPayload::SetMode { mode } => session.set_mode(PermissionMode(mode.clone())).await,
             EffectPayload::SetModel { model } => session.set_model(ModelId(model.clone())).await,
+            EffectPayload::Revert { revert_id, .. } => {
+                let env = super::revert_run::RevertEnv {
+                    store: &self.store,
+                    git: &self.git,
+                    limits: self.limits,
+                };
+                return super::revert_run::run(env, &turns, session.as_mut(), &process, revert_id)
+                    .await;
+            }
             EffectPayload::Start { .. }
             | EffectPayload::Resume { .. }
             | EffectPayload::Stop { .. } => {

@@ -19,6 +19,7 @@ import type { RateLimit } from "./RateLimit";
 import type { RequestKind } from "./RequestKind";
 import type { ResolvedBy } from "./ResolvedBy";
 import type { ResponseChannel } from "./ResponseChannel";
+import type { RevertState } from "./RevertState";
 import type { RunOrigin } from "./RunOrigin";
 import type { SessionState } from "./SessionState";
 import type { ToolKind } from "./ToolKind";
@@ -73,7 +74,7 @@ checkpoint: TurnCheckpoint | null,
 /**
  * Set when both checkpoint sides are available.
  */
-diff_summary: DiffSummary | null, } | { "kind": "run.completed", run_id: RunId, status: TurnStatus, 
+diff_summary: DiffSummary | null, } | { "kind": "revert.updated", revert_id: string, turn_id: TurnId, turns: number, state: RevertState, reason: string | null, } | { "kind": "run.completed", run_id: RunId, status: TurnStatus, 
 /**
  * Background work still runs; the session is not idle (L7).
  */

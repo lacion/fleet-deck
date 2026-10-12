@@ -9,6 +9,7 @@ export function claudeCaps(): Capabilities {
   return {
     resume: true,
     fork: true,
+    rollback: false,
     requests_survive_restart: false,
     interrupt: true,
     steer: true,
@@ -34,6 +35,7 @@ export function codexCaps(): Capabilities {
   return {
     resume: true,
     fork: true,
+    rollback: true,
     requests_survive_restart: false,
     interrupt: true,
     steer: true,
@@ -67,6 +69,7 @@ export function minimalCaps(): Capabilities {
   return {
     resume: false,
     fork: false,
+    rollback: false,
     requests_survive_restart: false,
     interrupt: false,
     steer: false,

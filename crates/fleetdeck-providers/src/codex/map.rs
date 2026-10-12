@@ -238,6 +238,7 @@ impl CodexCore {
                 self.background.clone_from(&tasks);
                 vec![Output::Emit(Event::BackgroundUpdated { tasks })]
             }
+            (HostRequest::Rollback, result) => self.on_rollback(result),
             (_, Err((code, message))) => vec![rpc_error(code, message)],
         }
     }

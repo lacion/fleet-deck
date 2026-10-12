@@ -47,7 +47,8 @@
         "usage": {
           "tokens": true,
           "cost": false
-        }
+        },
+        "rollback": true
       },
       "resumed": null,
       "provider_refs": {

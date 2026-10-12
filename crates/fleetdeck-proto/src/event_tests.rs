@@ -175,6 +175,13 @@ fn samples() -> Vec<Event> {
             reason: "stopped".into(),
             exit_code: Some(0),
         },
+        Event::RevertUpdated {
+            revert_id: "rv-1".into(),
+            turn_id: "turn-1".into(),
+            turns: 2,
+            state: crate::event::RevertState::ReconciliationRequired,
+            reason: Some("rollback_uncertain".into()),
+        },
     ]
 }
 

@@ -606,7 +606,8 @@ fn input_ids_become_stable_v4_uuids() {
 fn claude_capabilities_match_the_matrix() {
     let caps = capabilities(false);
     for op in Operation::ALL {
-        assert!(caps.supports(op), "{op:?}");
+        // Claude stream-json has no conversation rollback (DL-087).
+        assert_eq!(caps.supports(op), op != Operation::Revert, "{op:?}");
     }
     assert!(!caps.requests_survive_restart);
     assert!(!caps.native_turn_ids);

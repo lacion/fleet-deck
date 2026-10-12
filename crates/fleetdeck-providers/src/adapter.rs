@@ -139,6 +139,14 @@ pub enum ProviderError {
     },
     #[error("probe failed: {0}")]
     Probe(String),
+    /// The provider refused the operation definitely; nothing changed
+    /// (for example a refused `thread/rollback`, DL-087).
+    #[error("the provider refused: {0}")]
+    Refused(String),
+    /// The request may have reached the provider, and its outcome is not
+    /// known (for example no rollback answer before the deadline, DL-087).
+    #[error("the outcome is not known: {0}")]
+    Uncertain(String),
     #[error(transparent)]
     Host(#[from] HostError),
 }
@@ -259,6 +267,15 @@ pub trait LiveSession: Send {
     /// The native id to fork from: the station passes it to
     /// [`ProviderAdapter::fork`] (DL-033).
     async fn fork(&mut self) -> Result<NativeSessionId>;
+    /// Rolls back the last `turns` whole turns of the native conversation
+    /// and returns after the provider confirmed it (PLAN §6.6, DL-087). It
+    /// never touches the workspace. `Ok` is a confirmed rollback;
+    /// [`ProviderError::Uncertain`] means the request may have had an
+    /// effect; every other error means nothing was rolled back.
+    async fn rollback(&mut self, turns: u32) -> Result<()> {
+        let _ = turns;
+        Err(Unsupported::new(Operation::Revert).into())
+    }
     /// Stops the process within the stop policy. A sink that stays full
     /// cannot hold `stop`: it then returns [`ProviderError::EventsUndelivered`]
     /// after the process is stopped.

@@ -23,9 +23,12 @@ pub mod feature {
     pub const COMMAND_RECEIPTS: &str = "command_receipts.v1";
     /// Snapshot batches when event replay is not possible (G4).
     pub const SNAPSHOTS: &str = "snapshots.v1";
+    /// `session.revert`: conversation rollback plus workspace restore (PLAN
+    /// §6.6, M3 DL-087). A peer without it never gets the method.
+    pub const REVERT: &str = "revert.v1";
 
     /// Every feature that this build offers.
-    pub const ALL: &[&str] = &[CONTROL, DATA_STREAMS, COMMAND_RECEIPTS, SNAPSHOTS];
+    pub const ALL: &[&str] = &[CONTROL, DATA_STREAMS, COMMAND_RECEIPTS, SNAPSHOTS, REVERT];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];
 }

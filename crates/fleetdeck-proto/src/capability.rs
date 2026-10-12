@@ -76,6 +76,11 @@ pub struct Capabilities {
     pub background_work: BackgroundReporting,
     pub native_turn_ids: bool,
     pub usage: UsageReporting,
+    /// The provider rolls back its native conversation by whole turns
+    /// (Codex `thread/rollback`). Without it a revert is rejected before any
+    /// file changes (PLAN §6.6, L13). Absent in older stored events: false.
+    #[serde(default)]
+    pub rollback: bool,
 }
 
 impl Capabilities {
@@ -106,6 +111,7 @@ impl Capabilities {
                 tokens: false,
                 cost: false,
             },
+            rollback: false,
         }
     }
 
@@ -124,6 +130,7 @@ impl Capabilities {
             Operation::EditInput => self.approvals && self.edit_input,
             Operation::SetMode => self.set_mode && !self.modes.is_empty(),
             Operation::SetModel => self.set_model,
+            Operation::Revert => self.rollback,
         }
     }
 
@@ -169,11 +176,13 @@ pub enum Operation {
     Fork,
     Resume,
     Stop,
+    /// Roll back the conversation and the workspace to a turn start (§6.6).
+    Revert,
 }
 
 impl Operation {
     /// Every operation, for exhaustive tests.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::Prompt,
         Self::Steer,
         Self::FollowUp,
@@ -185,6 +194,7 @@ impl Operation {
         Self::Fork,
         Self::Resume,
         Self::Stop,
+        Self::Revert,
     ];
 
     /// The degradation policy of the matrix row of this operation (PLAN §6.2).
@@ -199,7 +209,7 @@ impl Operation {
             Self::Answer => Degradation::NoApprovalControls,
             Self::EditInput => Degradation::AllowDenyOnly,
             Self::SetMode => Degradation::MostRestrictiveMode,
-            Self::SetModel | Self::Prompt | Self::Stop => Degradation::Hide,
+            Self::SetModel | Self::Prompt | Self::Stop | Self::Revert => Degradation::Hide,
         }
     }
 }

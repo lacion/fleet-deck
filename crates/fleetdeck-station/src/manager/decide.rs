@@ -38,7 +38,7 @@ pub fn resolved_by(origin: CommandOrigin) -> ResolvedBy {
     }
 }
 
-fn reject(code: RejectCode, message: impl Into<String>) -> DecideError {
+pub(super) fn reject(code: RejectCode, message: impl Into<String>) -> DecideError {
     DecideError::Reject(Reject::new(code, message))
 }
 
@@ -170,6 +170,10 @@ pub fn decide(
             live_session(d, &session_id, Operation::SetModel)?;
             plain_effect(d, &session_id, EffectPayload::SetModel { model })
         }
+        SessionCommand::Revert {
+            session_id,
+            turn_id,
+        } => super::revert::decide_revert(d, policy, &session_id, &turn_id),
         SessionCommand::Stop { session_id, how } => {
             live_session(d, &session_id, Operation::Stop)?;
             plain_effect(d, &session_id, EffectPayload::Stop { how })
@@ -241,7 +245,7 @@ fn admit_answer(
 /// The option id of a Codex free answer (`codex/requests.rs`).
 const CODEX_FREE_ANSWER: &str = "answer";
 
-fn result(session_id: &SessionId, input_id: Option<InputId>) -> CommandResult {
+pub(super) fn result(session_id: &SessionId, input_id: Option<InputId>) -> CommandResult {
     CommandResult {
         session_id: Some(session_id.clone()),
         input_id,
@@ -304,7 +308,7 @@ fn start(
 /// The session's projection, if it can take `op` now: it exists, has not
 /// ended, has a live process, and supports `op` once the provider told its
 /// capabilities (`session.started`).
-fn live_session(
+pub(super) fn live_session(
     d: &Decision<'_>,
     session_id: &SessionId,
     op: Operation,
@@ -317,6 +321,22 @@ fn live_session(
     }
     if let Some(caps) = &s.capabilities {
         caps.check(op).map_err(Reject::from)?;
+    }
+    // A revert holds the session from admission through reconciliation
+    // (PLAN §6.6): no new input, no answer, no mode change; a stop stays
+    // possible.
+    if op != Operation::Stop
+        && let Some(revert) = s.revert.as_ref().filter(|r| r.blocks_input())
+    {
+        return Err(reject(
+            RejectCode::InvalidState,
+            match revert.state {
+                fleetdeck_proto::event::RevertState::ReconciliationRequired => {
+                    "a revert needs reconciliation: the session takes no input"
+                }
+                _ => "a revert runs: the session takes no input",
+            },
+        ));
     }
     if d.live_process(session_id)?.is_none() {
         return Err(reject(

@@ -239,6 +239,25 @@ pub struct DiffSummary {
     pub deletions: u64,
 }
 
+/// The state of one revert (PLAN §6.6, DL-087).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "event/")]
+pub enum RevertState {
+    /// Admitted under the session fence; nothing external happened yet.
+    Admitted,
+    /// The provider confirmed the conversation rollback; the workspace
+    /// restore comes next.
+    ConversationRolledBack,
+    /// The conversation and the workspace both match the turn start.
+    Succeeded,
+    /// Nothing changed: neither the conversation nor the workspace.
+    Failed,
+    /// The conversation and the workspace can differ; session input stays
+    /// blocked until the owner reconciles the session.
+    ReconciliationRequired,
+}
+
 /// Where a raw provider frame of an event is in the diagnostic log (L12).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export_to = "event/")]
@@ -396,6 +415,18 @@ pub enum Event {
         /// Set when both checkpoint sides are available.
         diff_summary: Option<DiffSummary>,
     },
+    /// A revert changed state (PLAN §6.6, DL-087). `turn_id` is the turn
+    /// whose start is the target; `turns` is the count of whole turns that
+    /// the provider rolls back. `reason` is a stable code for `failed` and
+    /// `reconciliation_required`.
+    #[serde(rename = "revert.updated")]
+    RevertUpdated {
+        revert_id: String,
+        turn_id: TurnId,
+        turns: u32,
+        state: RevertState,
+        reason: Option<String>,
+    },
     #[serde(rename = "run.completed")]
     RunCompleted {
         run_id: RunId,
@@ -443,7 +474,7 @@ pub enum Event {
 
 impl Event {
     /// Every known kind name, in declaration order.
-    pub const KINDS: [&'static str; 26] = [
+    pub const KINDS: [&'static str; 27] = [
         "session.started",
         "session.state",
         "run.started",
@@ -470,6 +501,7 @@ impl Event {
         "background.updated",
         "error",
         "session.ended",
+        "revert.updated",
     ];
 
     /// The dotted kind name.
@@ -502,6 +534,7 @@ impl Event {
             Self::BackgroundUpdated { .. } => "background.updated",
             Self::Error { .. } => "error",
             Self::SessionEnded { .. } => "session.ended",
+            Self::RevertUpdated { .. } => "revert.updated",
         }
     }
 

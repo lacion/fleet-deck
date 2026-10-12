@@ -11,6 +11,7 @@ import type { Activity } from "./Activity";
 import type { OpenRequest } from "./OpenRequest";
 import type { RunningTool } from "./RunningTool";
 import type { SessionError } from "./SessionError";
+import type { SessionRevert } from "./SessionRevert";
 
 /**
  * The projection of one session.
@@ -46,6 +47,12 @@ usage: Usage,
  * The last error, for example `usage_limit` with its retry time.
  */
 last_error: SessionError | null, 
+/**
+ * The latest revert of the session (PLAN §6.6, DL-087). While it is
+ * `admitted`, `conversation_rolled_back` or `reconciliation_required`,
+ * the station refuses new input. Absent in a summary stored before M3.
+ */
+revert: SessionRevert | null, 
 /**
  * The highest `session_seq` folded into this summary.
  */

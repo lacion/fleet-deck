@@ -25,10 +25,12 @@
 pub mod effects;
 mod log;
 mod outbox;
+mod payload;
 pub mod peers;
 mod receipts;
 mod recovery;
 pub mod requests;
+pub mod reverts;
 pub mod schema;
 mod turn_checkpoints;
 
@@ -58,6 +60,7 @@ pub use effects::{
 pub use receipts::{Caller, DecideError, Decided, Decision};
 pub use recovery::RecoveryReport;
 pub use requests::{AnswerClaim, AnswerReceipt, RequestState, RuntimeRequest};
+pub use reverts::{NewRevert, RevertRow, RevertStep};
 pub use turn_checkpoints::{
     AppTurnId, Finalized, NewTurnCheckpoint, RowSide, RowState, TurnCheckpointRow, Which,
 };

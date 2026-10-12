@@ -230,3 +230,45 @@ async fn a_command_for_an_unreachable_station_waits_pending_and_goes_out_once_on
     no_request(&mut station, Duration::from_millis(500)).await;
     assert_eq!(f.store.commands().await.unwrap().len(), 1);
 }
+
+#[tokio::test]
+async fn a_rejected_revert_returns_the_station_receipt_is_audited_and_a_repeat_sends_nothing() {
+    let mut f = fixture().await;
+    let mut station = f.connect().await;
+    let c = board(std::sync::Arc::clone(&f.ctx)).await;
+    let h = owner(&c).await;
+    let body = json!({
+        "station": "fake",
+        "command_id": "rv1",
+        "command": { "op": "revert", "session_id": "s1", "turn_id": "turn-1" },
+    });
+    let call = post(&c, &h, "session.revert", body.clone());
+    let (r, req) = tokio::join!(
+        call,
+        Fixture::answer(&mut station, |id| rejected(id, RejectCode::Unsupported))
+    );
+    assert_eq!(req.method, "session.revert");
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert_eq!(r.body["receipt"]["state"], "rejected");
+    assert_eq!(r.body["receipt"]["reject"]["code"], "unsupported");
+    let again = post(&c, &h, "session.revert", body).await;
+    assert_eq!(again.body, r.body);
+    no_request(&mut station, Duration::from_millis(300)).await;
+    let audited = c.audited("session.revert", AuditResult::Ok).await;
+    assert_eq!(audited.len(), 2, "{audited:?}");
+    // `read` cannot revert.
+    let read = token(&c, "viewer", &[Scope::Read]).await;
+    let r = post(
+        &c,
+        &read,
+        "session.revert",
+        json!({
+            "station": "fake",
+            "command_id": "rv2",
+            "command": { "op": "revert", "session_id": "s1", "turn_id": "turn-1" },
+        }),
+    )
+    .await;
+    assert_eq!((r.status, r.code()), (403, "forbidden"));
+    no_request(&mut station, Duration::from_millis(300)).await;
+}

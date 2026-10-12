@@ -8,7 +8,8 @@ use ts_rs::TS;
 
 use crate::capability::Capabilities;
 use crate::event::{
-    ApprovalOption, ProviderKind, RequestKind, ResponseChannel, SessionState, ToolKind, Usage,
+    ApprovalOption, ProviderKind, RequestKind, ResponseChannel, RevertState, SessionState,
+    ToolKind, Usage,
 };
 use crate::ids::{NodeId, ProviderInstanceId, RequestId, RunId, SessionId, TurnId};
 
@@ -84,6 +85,11 @@ pub struct SessionSummary {
     pub usage: Usage,
     /// The last error, for example `usage_limit` with its retry time.
     pub last_error: Option<SessionError>,
+    /// The latest revert of the session (PLAN §6.6, DL-087). While it is
+    /// `admitted`, `conversation_rolled_back` or `reconciliation_required`,
+    /// the station refuses new input. Absent in a summary stored before M3.
+    #[serde(default)]
+    pub revert: Option<SessionRevert>,
     /// The highest `session_seq` folded into this summary.
     pub session_seq: u64,
     /// Unix ms of the last folded event.
@@ -115,6 +121,7 @@ impl SessionSummary {
             running_tools: Vec::new(),
             usage: Usage::default(),
             last_error: None,
+            revert: None,
             session_seq: 0,
             updated_at: 0,
         }
@@ -166,4 +173,27 @@ pub struct SessionError {
     pub code: String,
     pub message: String,
     pub retry_at: Option<i64>,
+}
+
+/// The latest revert of a session, as the board shows it (DL-087).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "session/")]
+pub struct SessionRevert {
+    pub revert_id: String,
+    pub turn_id: TurnId,
+    pub state: RevertState,
+    pub reason: Option<String>,
+}
+
+impl SessionRevert {
+    /// True while the revert blocks new session input.
+    #[must_use]
+    pub fn blocks_input(&self) -> bool {
+        matches!(
+            self.state,
+            RevertState::Admitted
+                | RevertState::ConversationRolledBack
+                | RevertState::ReconciliationRequired
+        )
+    }
 }

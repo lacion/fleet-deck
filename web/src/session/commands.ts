@@ -35,6 +35,7 @@ const METHODS: Record<SessionCommand['op'], string> = {
   set_model: 'session.set_model',
   fork: 'session.fork',
   stop: 'session.stop',
+  revert: 'session.revert',
 };
 
 /** A command id: `b` and 24 random base-36 characters (`[0-9A-Za-z_-]{1,64}`). */
