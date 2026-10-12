@@ -14,6 +14,7 @@ The repository side of the cutover (PLAN Phase 7, item 7-7) happens on the `v2` 
 | Re-armed questions. | Not needed: the request stays open in the protocol; the offline approval policy covers a deck outage. |
 | Revive. | Native resume. |
 | Adopt or take over a terminal session. | Import the native session id as a driven session (`session.import`, DL-308). |
+| The `/fleet` slash command and the fleet-doctrine skill. | A coordinator session with a scoped coordinator MCP grant and a deck-served control skill (ADR-006, item 6-5 in progress). |
 | Share the board on the LAN with a URL token. | Board login (owner password, one-time URL, API tokens) on loopback, the private LAN or the tailnet. |
 | Coder support, remote control through claude.ai. | Dropped. |
 

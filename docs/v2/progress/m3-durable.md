@@ -28,6 +28,38 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 62 (2026-10-12, 16:12–)
+
+- Committed round 61 as ae42039.
+- Lanes: no new commits on `m3/orchestration`, `m3/board`, `m3/ops`. `m3-orchestration.md` has no LANE COMPLETE (6-5 open); 6-13, 7-7 and 7-8 still wait.
+- 7-6 docs: `docs/v2/cutover.md` §1 maps the v1 `/fleet` slash command and fleet-doctrine skill to the v2 coordinator grant and deck-served control skill (PLAN §16 row; marked in progress until 6-5 closes).
+- Tests: `cargo nextest run -p fleetdeck-cli --test docs_commands` → 1 passed.
+- Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
+
+## Round 61 (2026-10-12, 16:11–)
+
+- Committed round 60 as 5b7654c.
+- Lanes: no new commits on `m3/orchestration`, `m3/board`, `m3/ops`. `m3-orchestration.md` has no LANE COMPLETE (6-5 open); 6-13, 7-7 and 7-8 still wait.
+- 7-6 docs: `README.md` "What you can do" lists the import of a CLI session (6-12) and coordinator sessions (ADR-006, marked in progress until 6-5 closes).
+- Tests: `cargo nextest run -p fleetdeck-cli --test docs_commands` → 1 passed.
+- Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
+
+## Round 60 (2026-10-12, 16:09–)
+
+- Committed round 59 as b8176c8.
+- Merged `m3/orchestration` ee38ccd (6-5 partial: the owner renewal waits for the station acknowledgment, ADR-006 25b; deck schema and grant routes; board fleet panel) without conflicts. `m3/board`, `m3/ops`: no new commits. No proto change, so no `make ts-types`.
+- Merge validation: `cargo nextest run -p fleetdeck-deck -E 'test(/coordinator/) | test(/grant/) | test(/schema/) | test(/migration/) | binary(board_fleet)'` → 31 passed.
+- 7-6 docs: the internals coordinator row names `web/src/fleet/FleetPanel.tsx` (grant renewal).
+- Lanes: `m3-orchestration.md` still has no LANE COMPLETE (6-5 open); 6-13, 7-7 and 7-8 still wait.
+- Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean; `bun run --cwd web lint` → clean (94 files).
+
+## Round 59 (2026-10-12, 16:07–)
+
+- Committed round 58 as 48518f8.
+- Lanes: no new commits on `m3/orchestration`, `m3/board`, `m3/ops`. `m3-orchestration.md` has no LANE COMPLETE (6-5 open); 6-13, 7-7 and 7-8 still wait.
+- 7-6 docs: `docs/v2/operations.md` §12 (owner steps) now also lists lane D's owner steps (`dist generate` + tap repository, the LAN approval round trip on two hosts) and the opt-in live smoke tests (`make smoke-live`, `LIVE-SMOKE.md`). The doc-command test (`docs_commands`) is unaffected: the new text names only `make` targets.
+- Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
+
 ## Round 58 (2026-10-12, 16:05–)
 
 - Committed round 57 as bb7df4a (`docs(v2): round 57 log, internals coordinator row`).
