@@ -13,6 +13,8 @@
 //! - `question ...`: a question with the options Red and Blue
 //!   (`item/tool/requestUserInput`, question id `choice`); the reply's
 //!   answers end the turn with `answered: <answers>`;
+//! - `slow <ms> <text>`: the turn runs `ms` without output, then answers
+//!   `echo: <text>` (a turn that ends while nobody reads stdout);
 //! - `bg ...`: a command that outlives its turn; the first
 //!   `thread/backgroundTerminals/list` lists it, the second completes it;
 //! - `set-rollback <mode>`: sets how the next `thread/rollback` behaves
@@ -353,6 +355,13 @@ impl<W: Write> Sim<W> {
                 wait: Wait::Host,
             });
             Ok(())
+        } else if let Some(rest) = text.strip_prefix("slow ") {
+            // `slow <ms> <text>`: the turn runs for `ms` without output,
+            // then answers (a turn that ends while nobody reads stdout).
+            let (ms, said) = rest.split_once(' ').unwrap_or((rest, ""));
+            let ms: u64 = ms.parse().unwrap_or(1000);
+            std::thread::sleep(std::time::Duration::from_millis(ms));
+            self.answer(&turn, &format!("echo: {said}"), "completed")
         } else if let Some(command) = text.strip_prefix("bg ") {
             let n = self.next();
             let item = format!("exec-sim-{n}");

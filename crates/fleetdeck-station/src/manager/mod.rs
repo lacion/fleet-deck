@@ -152,9 +152,21 @@ impl SessionManager {
         ids: SharedIds,
         shims: Option<target::ShimSettings>,
     ) -> Result<Self> {
+        // Turn checkpoint rows that a crash left open are settled from
+        // their refs before any command (DL-082). With shims they are
+        // settled before the restored drivers replay buffered output, so a
+        // replayed turn never races its own row (DL-114).
+        if shims.is_some() {
+            settle_turn_rows(&store).await?;
+        }
+        // The observers of restored sessions start at the head before the
+        // restoration: every turn and exit event that a restored driver
+        // commits while it replays buffered output is observed (DL-114).
+        let restore_from = *store.subscribe().borrow();
         let restored = match &shims {
             None => {
                 store.recover(Vec::new()).await?;
+                settle_turn_rows(&store).await?;
                 Vec::new()
             }
             Some(settings) => {
@@ -171,18 +183,6 @@ impl SessionManager {
                 start.restored
             }
         };
-        // Turn checkpoint rows that a crash left open are settled from
-        // their refs before any command (DL-082).
-        let settled =
-            crate::workspace::settle_unsettled(&store, crate::workspace::GitOptions::isolated())
-                .await?;
-        if !settled.finalized.is_empty() || !settled.abandoned.is_empty() {
-            tracing::info!(
-                finalized = settled.finalized.len(),
-                abandoned = settled.abandoned.len(),
-                "settled turn checkpoints after restart"
-            );
-        }
         // Reverts that a stop interrupted end from their stored step before
         // any command (DL-087); a claimed rollback is never repeated.
         let git = crate::workspace::GitOptions::isolated();
@@ -201,7 +201,11 @@ impl SessionManager {
         }
         let target = Arc::new(target);
         target
-            .adopt(restored, fleetdeck_providers::host::StopPolicy::default())
+            .adopt(
+                restored,
+                fleetdeck_providers::host::StopPolicy::default(),
+                restore_from,
+            )
             .await;
         let worker = EffectWorker::register(store.clone(), Arc::clone(&target) as Arc<_>).await?;
         let (shutdown, rx) = watch::channel(false);
@@ -315,9 +319,24 @@ impl SessionManager {
     }
 }
 
+/// Settles the turn checkpoint rows that a crash left open (DL-082).
+async fn settle_turn_rows(store: &Store) -> Result<()> {
+    let settled =
+        crate::workspace::settle_unsettled(store, crate::workspace::GitOptions::isolated()).await?;
+    if !settled.finalized.is_empty() || !settled.abandoned.is_empty() {
+        tracing::info!(
+            finalized = settled.finalized.len(),
+            abandoned = settled.abandoned.len(),
+            "settled turn checkpoints after restart"
+        );
+    }
+    Ok(())
+}
+
 /// The adapter configs of restored shim sessions: each session's adapter
 /// builds its durable launch from the stored summary.
-fn durable_configs(adapters: &Adapters) -> shim_station::Configs {
+#[must_use]
+pub fn durable_configs(adapters: &Adapters) -> shim_station::Configs {
     fn launch(
         adapters: &Adapters,
         summary: &fleetdeck_proto::SessionSummary,

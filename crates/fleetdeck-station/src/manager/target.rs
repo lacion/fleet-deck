@@ -117,6 +117,7 @@ impl SessionTarget {
             Err(_) => return,
         };
         for live in all {
+            Self::detach_durable(&mut *live.lock().await).await;
             let session = live.lock().await.session.take();
             if let Some(mut session) = session
                 && let Err(e) = session.stop(how).await

@@ -25,6 +25,7 @@ use std::time::Duration;
 
 use fleetdeck_core::new_id;
 use fleetdeck_proto::command::{SessionSpec, StopMode};
+use fleetdeck_proto::event::SessionState;
 use fleetdeck_proto::{Event, EventBody, SessionId};
 use fleetdeck_providers::ProviderAdapter;
 use fleetdeck_providers::durable::{DurableConfig, DurableLaunch};
@@ -60,6 +61,8 @@ pub struct ShimSettings {
 pub(super) struct DurableLive {
     pub(super) driver: Durable,
     pub(super) stop: StopPolicy,
+    /// The session's event observer; a station stop aborts it.
+    pub(super) observer: tokio::task::AbortHandle,
 }
 
 impl SessionTarget {
@@ -83,16 +86,31 @@ impl SessionTarget {
     }
 
     /// Takes over the sessions that a station start restored.
-    pub async fn adopt(&self, restored: Vec<Restored>, stop: StopPolicy) {
+    pub async fn adopt(&self, restored: Vec<Restored>, stop: StopPolicy, from: u64) {
         for r in restored {
-            let cwd = match self.store.summary(r.session_id.clone()).await {
-                Ok(Some(summary)) => summary.cwd.unwrap_or_default(),
-                _ => String::new(),
-            };
+            let summary = self
+                .store
+                .summary(r.session_id.clone())
+                .await
+                .ok()
+                .flatten();
+            let cwd = summary
+                .as_ref()
+                .and_then(|s| s.cwd.clone())
+                .unwrap_or_default();
             let turns = self.turns(&r.session_id, Path::new(&cwd)).await;
             turns.set_process(r.process.clone());
-            let head = *self.store.subscribe().borrow();
-            self.insert_durable(&r.session_id, r.process, turns, r.driver, stop, head);
+            // A session that ended before the restoration (its exit was
+            // committed, the cleanup was not): end it now. The restored
+            // driver only acknowledges the exit to its shim.
+            if summary.is_some_and(|s| matches!(s.state, SessionState::Exited | SessionState::Lost))
+            {
+                end_observed(&self.store, &self.sessions, &r.session_id, r.process).await;
+                continue;
+            }
+            // `from` is the head before the restoration: the observer sees
+            // every event that the driver committed while it replayed.
+            self.insert_durable(&r.session_id, r.process, turns, r.driver, stop, from);
         }
     }
 
@@ -118,25 +136,43 @@ impl SessionTarget {
         stop: StopPolicy,
         from: u64,
     ) {
-        if let Ok(mut map) = self.sessions.lock() {
-            map.insert(
-                session_id.clone(),
-                Arc::new(Mutex::new(Live {
-                    process: process.clone(),
-                    session: None,
-                    turns: Arc::clone(&turns),
-                    durable: Some(DurableLive { driver, stop }),
-                })),
-            );
-        }
-        tokio::spawn(observe(
+        // The observer is spawned while this lock is held: its removal of
+        // the entry at the session's end takes the same lock, so it never
+        // runs before the entry exists.
+        let Ok(mut map) = self.sessions.lock() else {
+            return;
+        };
+        let observer = tokio::spawn(observe(
             self.store.clone(),
             Arc::clone(&self.sessions),
             session_id.clone(),
-            process,
-            turns,
+            process.clone(),
+            Arc::clone(&turns),
             from,
-        ));
+        ))
+        .abort_handle();
+        map.insert(
+            session_id.clone(),
+            Arc::new(Mutex::new(Live {
+                process,
+                session: None,
+                turns,
+                durable: Some(DurableLive {
+                    driver,
+                    stop,
+                    observer,
+                }),
+            })),
+        );
+    }
+
+    /// A station stop leaves every session under a shim running: its
+    /// driver and observer stop, its shim and provider do not (ADR-005).
+    pub(super) async fn detach_durable(live: &mut Live) {
+        if let Some(durable) = live.durable.as_ref() {
+            durable.observer.abort();
+            durable.driver.abandon().await;
+        }
     }
 
     /// Starts a session under a shim and writes its first input.
@@ -356,8 +392,19 @@ async fn observe(
             return;
         }
     }
+    end_observed(&store, &sessions, &session_id, process).await;
+}
+
+/// The end of a session under a shim: it leaves the live set, its process
+/// ends, and its open shim rows are `exited`.
+async fn end_observed(
+    store: &Store,
+    sessions: &Sessions,
+    session_id: &SessionId,
+    process: ProcessIncarnation,
+) {
     if let Ok(mut map) = sessions.lock() {
-        map.remove(&session_id);
+        map.remove(session_id);
     }
     if let Err(e) = store
         .process_ended(process, REASON_PROCESS_EXIT.to_owned())

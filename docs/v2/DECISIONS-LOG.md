@@ -1334,3 +1334,12 @@ Format: context, options, choice, reason, owner review.
 - Not done: the station binary's host setting (`serve.rs`), revert on the shim host, the other ADR-005 §9 tests.
 - Owner review: not required (implementation inside the accepted ADR-005 revision 3; the new event kind follows the §4.2 contract).
 
+## DL-114 — Restored shim sessions are observed from the head before the restoration (ADR-005 §3.2; M3 round 34)
+
+- Context: round-33 review feedback: `shim_target::adopt` started each observer at the current head, so turn and exit events that restored drivers committed while they replayed buffered output (between `recover_station` and the adoption) were never given to the turn checkpoints, and an exit replayed in that window never ended the session.
+- Options: (a) start the restored pumps only after the adoption; (b) pass the head read before the restoration into `adopt`; (c) make the observer read the whole session history.
+- Choice: (b), plus two ordering rules. `SessionManager` settles open turn rows, reads the head, runs `recover_station`, and adopts with that head. `adopt` ends a session whose stored state is already `exited` or `lost`. A station stop detaches the durable pump and observer of each shim session.
+- Reason: (a) would delay the stdin settlement and the frame flush that ADR-005 §3.2 and §4.3 order before commands; (c) re-observes turns that settled rows already finalized. Settling the rows first makes the replayed events the only source for the turns that run across the restart, so each turn is finalized once. The detach is needed because a stopped station in the same process otherwise kept committing output that the next station also reads.
+- Not done: revert on the shim host; the `fleetdeck station` host setting; the other ADR-005 §9 tests.
+- Owner review: not required (implementation inside the accepted ADR-005 revision 3).
+
