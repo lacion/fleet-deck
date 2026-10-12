@@ -1,4 +1,15 @@
 import { type ReactNode, useRef } from 'react';
+import {
+  ChevronLeft,
+  Ellipsis,
+  Icon,
+  LayoutGrid,
+  type LucideIcon,
+  MessagesSquare,
+  PanelLeft,
+  Plus,
+  Zap,
+} from '../ui/icons';
 import type { Notice } from './chrome';
 import { trapTab, useFocusReturn } from './focus';
 import type { Route } from './routes';
@@ -43,11 +54,16 @@ export function Notices({ notices }: { readonly notices: readonly Notice[] }) {
 const BAR_ROUTES: readonly Route['name'][] = ['home', 'fleet', 'new', 'plans', 'stations', 'more'];
 
 function BottomBar({ route }: { readonly route: Route }) {
-  const items: readonly { href: string; label: string; on: readonly Route['name'][] }[] = [
-    { href: '#/', label: 'Sessions', on: ['home'] },
-    { href: '#/fleet', label: 'Fleet', on: ['fleet'] },
-    { href: '#/new', label: 'New', on: ['new'] },
-    { href: '#/more', label: 'More', on: ['more', 'plans', 'stations'] },
+  const items: readonly {
+    href: string;
+    label: string;
+    icon: LucideIcon;
+    on: readonly Route['name'][];
+  }[] = [
+    { href: '#/', label: 'Sessions', icon: MessagesSquare, on: ['home'] },
+    { href: '#/fleet', label: 'Fleet', icon: LayoutGrid, on: ['fleet'] },
+    { href: '#/new', label: 'New', icon: Plus, on: ['new'] },
+    { href: '#/more', label: 'More', icon: Ellipsis, on: ['more', 'plans', 'stations'] },
   ];
   return (
     <nav className="fd-bottombar" aria-label="Board">
@@ -57,7 +73,8 @@ function BottomBar({ route }: { readonly route: Route }) {
           href={item.href}
           aria-current={item.on.includes(route.name) ? 'page' : undefined}
         >
-          {item.label}
+          <Icon of={item.icon} size={20} />
+          <span>{item.label}</span>
         </a>
       ))}
     </nav>
@@ -126,20 +143,28 @@ export function Layout({
         <header className="fd-topbar">
           <button
             type="button"
+            className="fd-iconbtn"
+            aria-label="Sessions"
             aria-expanded={drawerOpen}
             aria-controls="fd-drawer"
             onClick={() => onDrawer(!drawerOpen)}
           >
-            Sessions
+            <Icon of={PanelLeft} />
           </button>
+          <Icon of={Zap} />
           <span className="fd-wordmark">FLEET DECK</span>
         </header>
       ) : null}
       <div className="fd-main">
         {layout === 'phone' && route.name === 'terminals' ? (
           <header className="fd-topbar">
-            <button type="button" aria-label="Back" onClick={onTerminalsBack}>
-              Back
+            <button
+              type="button"
+              className="fd-iconbtn"
+              aria-label="Back"
+              onClick={onTerminalsBack}
+            >
+              <Icon of={ChevronLeft} />
             </button>
             <h1 className="fd-topbar-title">Terminals</h1>
           </header>
