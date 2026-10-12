@@ -659,3 +659,6 @@ mod rename;
 
 #[path = "resume_tests.rs"]
 mod resume;
+
+#[path = "import_tests.rs"]
+mod import_tests;

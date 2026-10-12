@@ -30,6 +30,9 @@ pub mod feature {
     pub const RENAME: &str = "rename.v1";
     /// `session.set_auto_continue` (L19, ADR-007, M3 DL-127).
     pub const AUTO_CONTINUE: &str = "auto_continue.v1";
+    /// `session.import`: a driven session that continues an existing native
+    /// CLI session (M3 6-12, DL-308).
+    pub const IMPORT: &str = "import.v1";
     /// `files.list`, `files.read`, `files.search` and `files.diff`: the
     /// read-only file service (PLAN §6.6, M3 DL-088).
     pub const FILES: &str = "files.v1";
@@ -44,6 +47,7 @@ pub mod feature {
         RENAME,
         FILES,
         AUTO_CONTINUE,
+        IMPORT,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];

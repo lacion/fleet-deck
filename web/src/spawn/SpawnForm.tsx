@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { SessionKey, StationView, WorkspaceListing } from '../gen';
 import type { Freshness } from '../runtime/state';
 import {
+  importIdProblem,
   providerLabel,
   type SpawnActions,
   type SpawnOutcome,
@@ -43,6 +44,7 @@ export function SpawnForm({
   const [model, setModel] = useState('');
   const [title, setTitle] = useState('');
   const [prompt, setPrompt] = useState(initialPrompt);
+  const [importId, setImportId] = useState('');
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<SpawnOutcome | null>(null);
 
@@ -65,6 +67,7 @@ export function SpawnForm({
     });
   };
   const modes = spawnModes(provider);
+  const importProblem = importId.trim() === '' ? null : importIdProblem(importId.trim());
   const ready =
     live && canDrive && !busy && station !== undefined && provider !== undefined && cwd !== null;
 
@@ -86,7 +89,8 @@ export function SpawnForm({
               actions === undefined ||
               station === undefined ||
               provider === undefined ||
-              cwd === null
+              cwd === null ||
+              importProblem !== null
             ) {
               return;
             }
@@ -100,10 +104,13 @@ export function SpawnForm({
               title: title.trim() === '' ? null : title.trim(),
             };
             void actions
-              .start(station.station_id, spec, prompt)
+              .start(station.station_id, spec, prompt, importId.trim())
               .then((result) => {
                 setOutcome(result);
-                if (result.ok) setPrompt('');
+                if (result.ok) {
+                  setPrompt('');
+                  setImportId('');
+                }
               })
               .finally(() => setBusy(false));
           }}
@@ -209,8 +216,21 @@ export function SpawnForm({
             First prompt (optional)
             <textarea rows={4} value={prompt} onChange={(event) => setPrompt(event.target.value)} />
           </label>
-          <button type="submit" disabled={!ready}>
-            {busy ? 'Starting…' : 'Start session'}
+          <label>
+            Import CLI session id (optional)
+            <input
+              value={importId}
+              spellCheck={false}
+              autoCapitalize="off"
+              onChange={(event) => setImportId(event.target.value)}
+            />
+          </label>
+          <p className="fd-note">
+            Continue a Claude or Codex session that you started in a terminal. Close it there first.
+          </p>
+          {importProblem === null ? null : <p role="alert">{importProblem}</p>}
+          <button type="submit" disabled={!ready || importProblem !== null}>
+            {busy ? 'Starting…' : importId.trim() === '' ? 'Start session' : 'Import session'}
           </button>
         </form>
       )}

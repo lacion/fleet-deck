@@ -69,6 +69,14 @@ pub enum SessionCommand {
     Resume {
         session_id: SessionId,
     },
+    /// A new driven session that continues an existing native CLI session
+    /// (Claude `session_id`, Codex `thread_id`) in `spec.cwd` (M3 6-12,
+    /// DL-308). It needs the `import.v1` feature.
+    Import {
+        spec: SessionSpec,
+        native_session_id: String,
+        prompt: Option<UserInput>,
+    },
     Prompt {
         session_id: SessionId,
         input: UserInput,
@@ -169,6 +177,31 @@ pub fn normalize_title(title: Option<&str>) -> Result<Option<String>, &'static s
     Ok(Some(title.to_owned()))
 }
 
+/// The longest native session id that `session.import` accepts.
+pub const MAX_NATIVE_SESSION_ID: usize = 128;
+
+/// Checks a native session id for `session.import`: 1 to
+/// [`MAX_NATIVE_SESSION_ID`] ASCII letters, digits, `-`, `_` or `.`, and an
+/// alphanumeric first character, so that it can never read as a CLI flag.
+///
+/// # Errors
+/// The reason for a refused id.
+pub fn check_native_session_id(id: &str) -> Result<(), &'static str> {
+    if id.is_empty() || id.len() > MAX_NATIVE_SESSION_ID {
+        return Err("the session id must have 1 to 128 characters");
+    }
+    if !id.starts_with(|c: char| c.is_ascii_alphanumeric()) {
+        return Err("the session id must start with a letter or a digit");
+    }
+    if !id
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    {
+        return Err("the session id may hold only letters, digits, `-`, `_` and `.`");
+    }
+    Ok(())
+}
+
 impl SessionCommand {
     /// The link method that carries this command (ADR-004 §9.6 method table).
     #[must_use]
@@ -176,6 +209,7 @@ impl SessionCommand {
         match self {
             Self::Start { .. } => "session.start",
             Self::Resume { .. } => "session.resume",
+            Self::Import { .. } => "session.import",
             Self::Prompt { .. } => "session.prompt",
             Self::Steer { .. } => "session.steer",
             Self::FollowUp { .. } => "session.follow_up",
@@ -196,7 +230,7 @@ impl SessionCommand {
     #[must_use]
     pub fn session_id(&self) -> Option<&SessionId> {
         match self {
-            Self::Start { .. } => None,
+            Self::Start { .. } | Self::Import { .. } => None,
             Self::Resume { session_id }
             | Self::Prompt { session_id, .. }
             | Self::Steer { session_id, .. }
@@ -518,5 +552,31 @@ mod tests {
             session_id: "s1".into(),
         };
         assert_ne!(a.canonical_payload(), b.canonical_payload());
+    }
+
+    #[test]
+    fn an_import_carries_a_native_id_that_can_never_read_as_a_flag() {
+        let cmd: SessionCommand = serde_json::from_value(json!({
+            "op": "import",
+            "spec": {"provider_instance": "claude", "cwd": "/w", "mode": null, "model": null, "title": null},
+            "native_session_id": "0b6c1d2e-aaaa-4bbb-8ccc-123456789abc",
+            "prompt": null,
+        }))
+        .unwrap();
+        assert_eq!(cmd.method(), "session.import");
+        assert_eq!(cmd.session_id(), None);
+        assert!(check_native_session_id("0b6c1d2e-aaaa-4bbb-8ccc-123456789abc").is_ok());
+        assert!(check_native_session_id("thr_01.x").is_ok());
+        for bad in [
+            "",
+            "-r",
+            "--resume",
+            "a b",
+            "a/../b",
+            "a;rm",
+            &"a".repeat(129),
+        ] {
+            assert!(check_native_session_id(bad).is_err(), "{bad}");
+        }
     }
 }

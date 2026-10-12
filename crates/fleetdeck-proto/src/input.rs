@@ -103,7 +103,7 @@ impl SessionCommand {
     #[must_use]
     pub fn user_input(&self) -> Option<&UserInput> {
         match self {
-            Self::Start { prompt, .. } => prompt.as_ref(),
+            Self::Start { prompt, .. } | Self::Import { prompt, .. } => prompt.as_ref(),
             Self::Prompt { input, .. }
             | Self::Steer { input, .. }
             | Self::FollowUp { input, .. } => Some(input),

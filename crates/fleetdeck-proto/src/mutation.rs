@@ -54,6 +54,7 @@ pub struct EnvelopeKind {
 pub const SESSION_METHODS: &[&str] = &[
     "session.start",
     "session.resume",
+    "session.import",
     "session.fork",
     "session.prompt",
     "session.steer",

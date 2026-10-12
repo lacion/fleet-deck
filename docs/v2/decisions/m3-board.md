@@ -54,3 +54,22 @@ Lane C numbers its decisions DL-300 to DL-399 (parallel lanes, owner change of 2
   - `GET /api/conflicts` (`read`): every file that two or more sessions touched in the last 30 minutes, newest first, at most 200. The board shows the "Conflict radar" panel on the fleet screen; it loads again when the fleet changes; a session of a conflict opens from the panel.
 - Not done (follow-up): the explicit owner choice to group repositories without one origin (no owner setting yet, so they never group across stations); no mail or in-context warning to the two sessions (v0 whisper); ended sessions still count inside the window.
 - Owner review: pending (executor decision, M3 round 2)
+
+## DL-307: The open part of 6-8 is two review steps (M3 round 3, 6-8)
+
+- Context: the software of 6-8 (file browse, search and read, rename, event feed, checkpoint diffs, `turn.finalized`, fenced revert, board `FilesPanel`, `TurnsPanel` and rename form, with their Rust, web unit and Playwright tests `web/e2e/revert.spec.ts` and `web/e2e/workspace.spec.ts`) was done in M3 rounds 3 to 29 of the single-lane loop. The checklist line kept two open steps: a re-review PASS of `files.v1` after DL-103 and DL-109, and a DESIGN REVIEW of the `rename.v1` contract. Both are adversary reviews that the architect starts. This loop may not start subagents.
+- Options: (a) keep 6-8 open until the reviews happen; (b) mark 6-8 done on its software evidence (the M3 checklist rule: "`[x]` = software evidence present and checked by the executor; review by the architect and the adversary is separate") and record the two reviews as architect steps before the PRE-PR REVIEW.
+- Choice: (b). No code changes in this round for 6-8. The two reviews are listed as architect steps in the lane log and in the 6-8 checklist line.
+- Owner review: pending (executor decision, M3 round 3)
+
+## DL-308: Import of a native CLI session (M3 round 3, 6-12)
+
+- Context: PLAN Phase 6 "Import an existing CLI session as a driven session", §4.1 "Import resumes an existing CLI session id as a driven session", §16 "Adopt / takeover a terminal session | Replaced by 'import session id'". D11: no v0 data import, no terminal observation. The station can already resume an ended session natively (`session.resume`, DL-118: Claude `--resume <session_id>`, Codex `thread/resume`).
+- Options: (a) an optional `import` field on `session.start`; (b) a new command `session.import` behind a new feature `import.v1`.
+- Choice: (b). With (a), an N-1 station that does not know the field ignores it and starts a new, empty conversation without an error. With (b), a peer without `import.v1` never gets the method (`feature_not_negotiated`).
+  - Wire: `SessionCommand::Import { spec: SessionSpec, native_session_id, prompt }`, method `session.import`, drive scope, feature `import.v1` (ADR-004 feature, method and envelope tables updated; deck command route `POST /api/commands/session.import`).
+  - Id check `check_native_session_id` (proto, used by the deck with `400 invalid_session_id` and again by the station with `invalid_command`): 1 to 128 ASCII letters, digits, `-`, `_`, `.`, first character a letter or a digit. The id goes into the provider command line, so an id can never read as a flag.
+  - Station: the same admission as `session.start` (provider instance, workspace inside the allowed roots, free slot, no revert over the worktree). It also refuses an id that a session of the station that has not ended already drives (`invalid_state`). It creates a new session, stores the native id, and queues the native resume effect (`EffectPayload::Resume`, no continuation deadline). The provider continues the conversation; the board shows `session.started { resumed: true }` with the imported id. The new session has the station's offline approval policy and the requested mode (L8: an unknown mode runs as the most restrictive one).
+  - Board: the spawn form has the field "Import CLI session id (optional)". With an id, the button is "Import session" and the form sends `session.import`; the form checks the id with the same rule first.
+- Not done (follow-up): the station does not list the native sessions of a workspace (the owner types the id); the station cannot see if a terminal CLI still runs the same conversation (the form tells the owner to close it first); no capability check before the spawn (both providers report `resume`; an unknown id ends as `start_failed`); the station test uses `fake-claude sim` only.
+- Owner review: pending (executor decision, M3 round 3)

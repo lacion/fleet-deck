@@ -55,7 +55,16 @@ pub fn decide(
 ) -> Result<CommandResult, DecideError> {
     let origin_run = run_origin(origin);
     match command {
-        SessionCommand::Start { spec, prompt } => start(d, policy, origin_run, spec, prompt),
+        SessionCommand::Start { spec, prompt } => start(d, policy, origin_run, spec, prompt, None),
+        SessionCommand::Import {
+            spec,
+            native_session_id,
+            prompt,
+        } => {
+            fleetdeck_proto::command::check_native_session_id(&native_session_id)
+                .map_err(|why| reject(RejectCode::InvalidCommand, why))?;
+            start(d, policy, origin_run, spec, prompt, Some(native_session_id))
+        }
         SessionCommand::Resume { session_id } => {
             super::resume::decide_resume(d, policy, &session_id)
         }
@@ -293,6 +302,7 @@ fn start(
     origin: RunOrigin,
     mut spec: SessionSpec,
     prompt: Option<fleetdeck_proto::command::UserInput>,
+    import: Option<String>,
 ) -> Result<CommandResult, DecideError> {
     let provider = policy.instance(&spec.provider_instance).ok_or_else(|| {
         reject(
@@ -326,6 +336,14 @@ fn start(
             ),
         ));
     }
+    if let Some(native) = &import
+        && let Some(other) = d.native_session_in_use(native)?
+    {
+        return Err(reject(
+            RejectCode::InvalidState,
+            format!("session `{other}` already drives this native session"),
+        ));
+    }
     let branch = fleetdeck_core::git::current_branch(&cwd);
     let session_id: SessionId = d.new_id();
     d.create_session(&NewSession {
@@ -345,7 +363,21 @@ fn start(
         input,
     });
     let input_id = prompt.as_ref().map(|p| p.input_id.clone());
-    d.enqueue(&session_id, EffectPayload::Start { spec, prompt })?;
+    let payload = match import {
+        // An import is a native resume of a session that this station
+        // never ran (DL-308): the provider continues the conversation.
+        Some(native) => {
+            d.set_native_session_id(&session_id, &native)?;
+            EffectPayload::Resume {
+                native_session_id: native,
+                spec,
+                prompt,
+                continue_by: None,
+            }
+        }
+        None => EffectPayload::Start { spec, prompt },
+    };
+    d.enqueue(&session_id, payload)?;
     Ok(result(&session_id, input_id))
 }
 
