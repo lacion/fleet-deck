@@ -334,6 +334,86 @@ pub struct WorkspaceEntry {
     pub group: Option<String>,
 }
 
+/// `workspace.worktrees` params (DL-142): none.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "link/")]
+pub struct WorktreesQuery {}
+
+/// One worktree that the station created for a session (DL-142). Read only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "link/")]
+pub struct WorktreeInfo {
+    pub session_id: SessionId,
+    #[serde(default)]
+    pub title: Option<String>,
+    /// The path recorded in the session summary.
+    pub path: String,
+    /// `git rev-parse --abbrev-ref HEAD` in the path; `None` when Git failed
+    /// or HEAD is detached.
+    #[serde(default)]
+    pub branch: Option<String>,
+    /// The main checkout: the first entry of `git worktree list --porcelain`.
+    #[serde(default)]
+    pub main: Option<String>,
+    pub exists: bool,
+    /// `git worktree list --porcelain` names this path.
+    pub registered: bool,
+    /// Changed and untracked entries (`git status --porcelain=v1 -z
+    /// --untracked-files=all`).
+    #[serde(default)]
+    pub dirty: Option<u32>,
+    /// Ignored entries (`git status --porcelain=v1 -z --ignored=matching`,
+    /// the entries that start with `!!`).
+    #[serde(default)]
+    pub ignored: Option<u32>,
+    /// Commits of the branch on no fetched remote ref (`git rev-list --count
+    /// HEAD --not --remotes`); without any remote ref: commits that are not
+    /// on the HEAD of the main checkout.
+    #[serde(default)]
+    pub unpushed: Option<u32>,
+    /// `remotes` or `main`: what `unpushed` compares with.
+    #[serde(default)]
+    pub compared_with: Option<String>,
+    #[serde(default)]
+    pub last_commit: Option<WorktreeCommit>,
+    /// The session has a process, a current run, or a terminal hold.
+    pub live: bool,
+    pub verdict: WorktreeVerdict,
+    /// Why the verdict is `unknown`: the Git error, a timeout, `outside the
+    /// allowed roots`.
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+/// The newest commit of a worktree.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "link/")]
+pub struct WorktreeCommit {
+    pub subject: String,
+    /// Unix ms.
+    pub at: i64,
+}
+
+/// What the station knows about the work in a worktree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "link/")]
+pub enum WorktreeVerdict {
+    Missing,
+    Live,
+    HasWork,
+    Clean,
+    Unknown,
+}
+
+/// The `workspace.worktrees` answer: newest session first.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "link/")]
+pub struct WorktreeList {
+    pub worktrees: Vec<WorktreeInfo>,
+}
+
 /// `command.receipt` params.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields)]

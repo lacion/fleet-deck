@@ -18,6 +18,7 @@ pub mod shell_routes;
 pub mod station_routes;
 pub mod tls;
 pub mod workspace_routes;
+pub mod worktree_routes;
 pub mod ws;
 
 use std::io;
@@ -83,6 +84,10 @@ pub fn router(board: Arc<Board>) -> Router {
         .route(
             "/api/stations/{station}/workspaces",
             get(workspace_routes::list),
+        )
+        .route(
+            "/api/stations/{station}/worktrees",
+            get(worktree_routes::list),
         )
         .route(
             "/api/stations/{station}/shells",
