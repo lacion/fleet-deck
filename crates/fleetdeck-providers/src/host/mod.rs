@@ -30,6 +30,7 @@ use fleetdeck_core::ChildEnv;
 use tokio::io::AsyncRead;
 
 mod direct;
+pub mod shim;
 
 pub use direct::DirectChildHost;
 

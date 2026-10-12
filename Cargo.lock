@@ -744,6 +744,7 @@ dependencies = [
  "fleetdeck-proto",
  "fleetdeck-testkit",
  "proptest",
+ "ring",
  "rustix",
  "serde",
  "serde_json",
