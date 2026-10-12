@@ -448,26 +448,18 @@ pub fn walk_search(root: &Path, needle: &str, content: bool, max: usize) -> Foun
 }
 
 /// True when the canonical `root` is a private directory or lies inside
-/// one: a segment of `root` below the allowed root that holds it is a
-/// hidden name (case-insensitive). A root that no allowed root holds is
-/// private too (fail closed). The longest allowed root counts, so an
-/// allowed root that the owner set inside a private directory stays
-/// usable for its own subdirectories only when no further private
-/// segment follows.
-#[must_use]
+/// one: any segment of the whole `root` path is a hidden name
+/// (case-insensitive), including the segments of the allowed root that
+/// holds it, so an allowed-root entry never masks a private directory
+/// (finding 1 of sa-fbed2a6d). A root that no allowed root holds is
+/// private too (fail closed).
 pub fn private_root(root: &Path, allowed: &[std::path::PathBuf]) -> bool {
-    let Some(holder) = allowed
-        .iter()
-        .filter(|a| root.starts_with(a))
-        .max_by_key(|a| a.components().count())
-    else {
+    if !allowed.iter().any(|a| root.starts_with(a)) {
         return true;
-    };
-    let Ok(below) = root.strip_prefix(holder) else {
-        return true;
-    };
-    below.components().any(|c| match c {
+    }
+    root.components().any(|c| match c {
         std::path::Component::Normal(name) => name.to_str().is_none_or(hidden_name),
+        std::path::Component::RootDir => false,
         _ => true,
     })
 }
@@ -507,6 +499,10 @@ pub fn grep_paths(base: &OwnedFd, paths: &[String], needle: &str, max: usize) ->
 }
 
 /// Adds the content hits of one file; false when the hit limit is reached.
+/// Only the first [`WALK_FILE_BYTES`] of a file are searched; a larger file
+/// or a read error marks the search `truncated`, so a match past the limit
+/// is never silently missing (finding 2 of sa-fbed2a6d). A binary file is
+/// skipped (as `git grep -I` does).
 fn grep_file(
     dir: &OwnedFd,
     name: &str,
@@ -518,14 +514,21 @@ fn grep_file(
     let Ok((file, size)) = open_file(dir, name, path) else {
         return true;
     };
-    if size > WALK_FILE_BYTES {
+    let mut buf = Vec::new();
+    if file.take(WALK_FILE_BYTES).read_to_end(&mut buf).is_err() {
+        found.truncated = true;
         return true;
     }
-    let mut buf = Vec::new();
-    if file.take(WALK_FILE_BYTES).read_to_end(&mut buf).is_err()
-        || buf[..buf.len().min(BINARY_SNIFF_BYTES)].contains(&0)
-    {
+    if buf[..buf.len().min(BINARY_SNIFF_BYTES)].contains(&0) {
         return true;
+    }
+    let cut = size > WALK_FILE_BYTES || buf.len() as u64 >= WALK_FILE_BYTES;
+    if cut {
+        found.truncated = true;
+        // The last line of the prefix may be cut: search complete lines.
+        if let Some(end) = buf.iter().rposition(|b| *b == b'\n') {
+            buf.truncate(end + 1);
+        }
     }
     let text = String::from_utf8_lossy(&buf);
     let mut in_file = 0;

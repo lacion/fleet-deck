@@ -190,9 +190,16 @@ fn a_private_root_check_uses_the_segments_below_the_allowed_root() {
     assert!(private_root(Path::new("/home/u/p/.Git"), &allowed));
     // No allowed root holds the path: fail closed.
     assert!(private_root(Path::new("/srv/x"), &allowed));
-    // A hidden name above the allowed root does not count.
+    // A public dot directory above the allowed root does not count.
     let inner = vec![Path::new("/home/u/.config/work").to_path_buf()];
     assert!(!private_root(Path::new("/home/u/.config/work/app"), &inner));
+    // A private allowed root, or one inside a private directory, never
+    // masks it (finding 1 of sa-fbed2a6d).
+    let private = vec![Path::new("/home/u/.SSH").to_path_buf()];
+    assert!(private_root(Path::new("/home/u/.SSH"), &private));
+    assert!(private_root(Path::new("/home/u/.SSH/keys"), &private));
+    let below = vec![Path::new("/home/u/.ssh/work").to_path_buf()];
+    assert!(private_root(Path::new("/home/u/.ssh/work/app"), &below));
 }
 
 /// Checkpoints for one turn that changes `a.txt`, a tracked private file,
