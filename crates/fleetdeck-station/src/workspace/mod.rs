@@ -4,6 +4,7 @@
 
 pub mod boundary;
 pub mod checkpoint;
+pub mod files;
 pub mod git;
 pub mod restore;
 pub mod settle;

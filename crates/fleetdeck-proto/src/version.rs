@@ -26,9 +26,19 @@ pub mod feature {
     /// `session.revert`: conversation rollback plus workspace restore (PLAN
     /// §6.6, M3 DL-087). A peer without it never gets the method.
     pub const REVERT: &str = "revert.v1";
+    /// `files.list`, `files.read`, `files.search` and `files.diff`: the
+    /// read-only file service (PLAN §6.6, M3 DL-088).
+    pub const FILES: &str = "files.v1";
 
     /// Every feature that this build offers.
-    pub const ALL: &[&str] = &[CONTROL, DATA_STREAMS, COMMAND_RECEIPTS, SNAPSHOTS, REVERT];
+    pub const ALL: &[&str] = &[
+        CONTROL,
+        DATA_STREAMS,
+        COMMAND_RECEIPTS,
+        SNAPSHOTS,
+        REVERT,
+        FILES,
+    ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];
 }

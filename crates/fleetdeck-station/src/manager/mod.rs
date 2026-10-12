@@ -10,6 +10,7 @@
 //!    evidence in those events confirms the effects.
 
 pub mod decide;
+pub mod files;
 pub mod policy;
 pub mod revert;
 pub mod revert_run;

@@ -19,6 +19,10 @@ use crate::board::{
 use crate::capability::{Capabilities, Operation, Unsupported};
 use crate::command::{CommandEnvelope, DeckCommandState, Receipt};
 use crate::event::{Event, EventEnvelope};
+use crate::files::{
+    FileContent, FileListQuery, FileListing, FileReadQuery, FileSearch, FileSearchQuery, TurnDiff,
+    TurnDiffQuery,
+};
 use crate::link::{
     ControlFrame, ReceiptQuery, ReplayParams, Scope, StationInfo, StreamMode, StreamStart,
     WorkspaceListing, WorkspaceQuery,
@@ -68,6 +72,14 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         WorkspaceQuery::export_all(&cfg),
         WorkspaceListing::export_all(&cfg),
         ReceiptQuery::export_all(&cfg),
+        FileListQuery::export_all(&cfg),
+        FileListing::export_all(&cfg),
+        FileReadQuery::export_all(&cfg),
+        FileContent::export_all(&cfg),
+        FileSearchQuery::export_all(&cfg),
+        FileSearch::export_all(&cfg),
+        TurnDiffQuery::export_all(&cfg),
+        TurnDiff::export_all(&cfg),
         SessionSummary::export_all(&cfg),
         CardStatus::export_all(&cfg),
         VersionOffer::export_all(&cfg),

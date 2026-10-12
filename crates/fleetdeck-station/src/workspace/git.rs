@@ -208,6 +208,66 @@ impl Git {
     }
 }
 
+impl Git {
+    /// Runs `git <args>` and keeps at most `max_bytes` of stdout; with more
+    /// output the process is killed. Returns `(exit code, stdout, cut)`; a
+    /// killed process gives the code -1. Stderr is discarded.
+    pub async fn bounded(
+        &self,
+        args: &[&str],
+        max_bytes: usize,
+    ) -> Result<(i32, Vec<u8>, bool), GitError> {
+        use tokio::io::AsyncReadExt;
+        let mut cmd = Command::new(&self.options.program);
+        cmd.current_dir(&self.dir)
+            .args(SAFE_CONFIG)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true);
+        for name in REDIRECTING_VARS {
+            cmd.env_remove(name);
+        }
+        cmd.env("GIT_TERMINAL_PROMPT", "0")
+            .env("GIT_OPTIONAL_LOCKS", "0")
+            .env("LC_ALL", "C");
+        if self.options.isolated {
+            cmd.env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("GIT_CONFIG_GLOBAL", "/dev/null");
+        }
+        let mut child = cmd.spawn().map_err(GitError::Spawn)?;
+        let Some(stdout) = child.stdout.take() else {
+            return Err(GitError::Spawn(std::io::Error::other("no stdout pipe")));
+        };
+        let limit = u64::try_from(max_bytes)
+            .unwrap_or(u64::MAX)
+            .saturating_add(1);
+        let timeout = || GitError::Timeout {
+            args: args.join(" "),
+            secs: self.options.timeout.as_secs(),
+        };
+        let work = async {
+            let mut out = Vec::new();
+            stdout
+                .take(limit)
+                .read_to_end(&mut out)
+                .await
+                .map_err(GitError::Spawn)?;
+            let cut = out.len() > max_bytes;
+            if cut {
+                out.truncate(max_bytes);
+                let _ = child.start_kill();
+            }
+            let status = child.wait().await.map_err(GitError::Spawn)?;
+            Ok::<_, GitError>((status.code().unwrap_or(-1), out, cut))
+        };
+        tokio::time::timeout(self.options.timeout, work)
+            .await
+            .map_err(|_| timeout())?
+    }
+}
+
 /// Splits NUL-terminated `-z` output into its fields.
 #[must_use]
 pub fn nul_fields(out: &[u8]) -> Vec<&[u8]> {

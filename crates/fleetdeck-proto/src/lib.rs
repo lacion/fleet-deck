@@ -10,6 +10,7 @@ pub mod board;
 pub mod capability;
 pub mod command;
 pub mod event;
+pub mod files;
 pub mod fold;
 pub mod ids;
 pub mod link;

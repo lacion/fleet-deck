@@ -6,6 +6,7 @@
 pub mod assets;
 pub mod auth_routes;
 pub mod command_routes;
+pub mod file_routes;
 pub mod guard;
 pub mod methods;
 pub mod read_routes;
@@ -77,6 +78,16 @@ pub fn router(board: Arc<Board>) -> Router {
         .route(
             "/api/stations/{station}/workspaces",
             get(workspace_routes::list),
+        )
+        .route("/api/stations/{station}/files/list", get(file_routes::list))
+        .route("/api/stations/{station}/files/read", get(file_routes::read))
+        .route(
+            "/api/stations/{station}/files/search",
+            get(file_routes::search),
+        )
+        .route(
+            "/api/stations/{station}/sessions/{session}/turns/{turn}/diff",
+            get(file_routes::diff),
         )
         .route("/api/sessions", get(read_routes::sessions))
         .route("/api/commands", get(read_routes::commands))

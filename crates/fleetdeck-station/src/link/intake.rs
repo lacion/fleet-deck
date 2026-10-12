@@ -71,6 +71,46 @@ async fn workspaces(ctx: &StationLink, params: serde_json::Value) -> Outcome {
     }
 }
 
+/// The `files.v1` methods (M3 DL-088). A [`FileError`] keeps its code.
+///
+/// [`FileError`]: crate::workspace::files::FileError
+async fn file_method(ctx: &StationLink, method: &str, params: serde_json::Value) -> Outcome {
+    use crate::manager::files;
+    use crate::workspace::GitOptions;
+    use crate::workspace::files::FileError;
+    fn done<T: Serialize>(r: Result<T, FileError>) -> Outcome {
+        match r {
+            Ok(v) => ok(v),
+            Err(e) => Outcome::Err(WireError::new(e.code, e.message)),
+        }
+    }
+    let store = ctx.manager.store();
+    let policy = ctx.manager.policy();
+    let git = GitOptions::isolated();
+    match method {
+        "files.list" => match serde_json::from_value(params) {
+            Ok(q) => done(files::list(store, policy, q).await),
+            Err(e) => bad_params(e),
+        },
+        "files.read" => match serde_json::from_value(params) {
+            Ok(q) => done(files::read(store, policy, q).await),
+            Err(e) => bad_params(e),
+        },
+        "files.search" => match serde_json::from_value(params) {
+            Ok(q) => done(files::search(store, policy, &git, q).await),
+            Err(e) => bad_params(e),
+        },
+        "files.diff" => match serde_json::from_value(params) {
+            Ok(q) => done(files::diff(store, policy, &git, q).await),
+            Err(e) => bad_params(e),
+        },
+        other => Outcome::Err(WireError::new(
+            NOT_IMPLEMENTED,
+            format!("`{other}` is not served by this station build"),
+        )),
+    }
+}
+
 /// Answers a request that is not `events.replay` or `session.snapshot`
 /// (the stream handles those).
 pub(super) async fn handle(
@@ -113,6 +153,9 @@ async fn read(ctx: &StationLink, req: InboundRequest) -> Outcome {
             providers: ctx.manager.providers().await,
         }),
         "workspace.list" => workspaces(ctx, req.params).await,
+        "files.list" | "files.read" | "files.search" | "files.diff" => {
+            file_method(ctx, &req.method, req.params).await
+        }
         "session.list" => match store.snapshot().await {
             Ok(s) => ok(s.sessions),
             Err(e) => internal(e),
