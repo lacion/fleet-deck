@@ -28,6 +28,14 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 91 (2026-10-12, 17:03–)
+
+- Round start: committed round 90 as 708fdd4. `git log v2..m3/orchestration`, `v2..m3/board`, `v2..m3/ops`: no new commits; `m3-orchestration.md` has no "LANE COMPLETE", so 6-13, 7-7 and 7-8 stay blocked.
+- 6-13 preparation (no checklist change): the "Gap to check" column of the round-88 draft table was checked with `grep` over `web/src`, `web/e2e` and `crates`:
+  - Confirmed present: `Nx` batch (`web/src/spawn/spawn.test.tsx` "a batch starts one session per line and Nx repeats a task (M3 6-1)"; `web/e2e/spawn.spec.ts` "a batch starts one worktree session per line with Nx (M3 6-1)"); board approvals (`web/e2e/session.spec.ts` "an approval is answered from the needs-you rail"); rename (`web/e2e/workspace.spec.ts` "a session is renamed from the board, also after it ended"; `web/src/session/session.test.tsx` "rename works on an ended session and needs drive and a live board (DL-095)"); event feed (`web/e2e/workspace.spec.ts` "the event feed shows fleet changes newest first, filters them and opens a session"; `web/src/board/feed.test.ts`).
+  - Confirmed gaps (6-13 must add a test or a deferral entry): session grid (no grid test in `web/`); composer newline (no Shift+Enter or newline test; the composer has no key handler in `web/src/session/`); model badge update after a model change (no test that a model change event updates the card); owner resume from the board (only the import form refuses `--resume`); station discovery on the LAN (no discovery code or test in `crates/`; tailnet stays an owner step).
+- Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` (docs only, no test run).
+
 ## Round 90 (2026-10-12, 17:01–)
 
 - Round start: committed round 89 as 615de04. `git log v2..m3/*`: no new commits on m3/orchestration, m3/board or m3/ops; nothing to merge. `m3-orchestration.md` still has no "LANE COMPLETE", so 6-13, 7-7 and 7-8 stay blocked.
