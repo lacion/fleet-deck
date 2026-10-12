@@ -24,6 +24,9 @@ This document is the map of the v2 code for a developer and a reviewer. It gives
 | **lost** | A session whose process the station cannot account for after a restart. |
 | **checkpoint** | A snapshot of the workspace at a turn boundary, for revert (PLAN §6.6). |
 | **callsign** | A short session name, unique on its station; the address for mail and tasks. |
+| **workspace** | The directory where a session works: the repository itself, a new git worktree, or a clone. The station provisions it (`workspace/provision.rs`). |
+| **mail / task** | Deck-side fleet records: a message from one session to another (delivered as input through the outbox), and a unit of work that the deck assigns to a session. |
+| **coordinator grant** | A scoped, expiring permission that lets one session start and steer other sessions through the coordinator MCP API (ADR-006). The owner renews or revokes it. |
 | **drain** | A station mode that refuses new work before an upgrade (DL-128). |
 | **auto-continue** | An opt-in per-session preference: after a station restart, continue a lost turn with a fixed station message when every ADR-007 rule holds. |
 
