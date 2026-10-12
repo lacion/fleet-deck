@@ -28,6 +28,17 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 55 (2026-10-12, 15:47–)
+
+- Committed round 54 as 65df80d.
+- `m3/orchestration`: no new commits; no LANE COMPLETE (6-5 Coordinator still partial).
+- Merged `m3/board` 7fa38ad (`make test-lint`, DL-309, lane C close-out notes) without conflicts.
+- Merged `m3/ops` 749df03 (6-11 review fixes, DL-405) as e2914ef. Conflicts:
+  - `crates/fleetdeck-station/src/store/schema.rs`: both lanes added station schema V15. Lane A's V15 (`shims.protocol`, DL-128) came first; lane D's `shell_effects` table is now V16 (`M::up(V16)` added, comment says it was renumbered). Unreleased versions need no data compatibility.
+  - `docs/v2/PROGRESS.md`: kept the `[x]` lines of 6-10 and 6-12; took lane D's updated 6-11 line.
+- Checks after the merge: workspace build clean; station tests `shell | schema | upgrade` 13 pass; `make ts-types` no change; fmt, clippy and web lint clean.
+- `docs/v2/internals.md` §8: the human-shell row names `store/shell_effects.rs` (schema V16).
+
 ## Round 54 (2026-10-12, 15:44–)
 
 - Committed round 53 as 7cb013c.

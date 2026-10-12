@@ -104,7 +104,7 @@ Use this table to find the code of a feature. The tests of a feature are next to
 | Conflict radar | — (the deck reads the file touches from the events) | `store/conflicts.rs` | `board/ConflictRadar.tsx`, `e2e/conflicts.spec.ts` |
 | Files, checkpoints, revert | `workspace/checkpoint.rs`, `workspace/restore.rs`, `manager/revert*.rs`, `manager/files.rs` | `http/file_routes.rs` | `web/src/session/`, `e2e/revert.spec.ts` |
 | Import a CLI session | `manager/decide.rs` (`session.import`) | method table | `web/src/spawn/`, `e2e/spawn.spec.ts` |
-| Human shell | `shell/` | `http/shell_routes.rs` | `web/src/shell/`, `e2e/shell.spec.ts` |
+| Human shell | `shell/`, `store/shell_effects.rs` (schema V16) | `http/shell_routes.rs` | `web/src/shell/`, `e2e/shell.spec.ts` |
 | ShimHost | `manager/shim*.rs`, `store/shims.rs` | — | — |
 | Auto-continue | `manager/auto_continue.rs`, `store/auto_continue.rs` | method table | `web/src/session/SessionView.tsx` |
 | Drain and upgrade | `manager/drain.rs`, `upgrade.rs`, `local.rs` | — | — (CLI: `fleetdeck station drain`, `fleetdeck station upgrade`) |
