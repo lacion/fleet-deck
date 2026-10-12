@@ -65,6 +65,7 @@ fn info(name: &str) -> StationInfo {
         live_sessions: 2,
         version: None,
         max_sessions: Some(8),
+        allow_shell: None,
         providers: vec![
             provider("claude", ProviderKind::Claude),
             provider("codex", ProviderKind::Codex),

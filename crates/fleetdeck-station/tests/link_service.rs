@@ -27,6 +27,7 @@ use fleetdeck_proto::mutation::{KeyRotationEnvelope, StationChange, StationConfi
 use fleetdeck_proto::{CommandEnvelope, CommandId, IncarnationId, Receipt, RejectCode};
 use fleetdeck_station::link::{self, NOT_IMPLEMENTED, StationLink, StationPeers};
 use fleetdeck_station::manager::{Adapters, Policy, SessionManager};
+use fleetdeck_station::shell::ShellConfig;
 use fleetdeck_station::store::peers::PairedKey;
 use fleetdeck_station::store::{NewEvent, NewSession, OfflineApprovalPolicy, Store, StoreConfig};
 use fleetdeck_testkit::Det;
@@ -54,7 +55,7 @@ fn deck_node(identity: Arc<Identity>, station: &Identity) -> NodeConfig {
     node
 }
 
-async fn fixture() -> Fixture {
+async fn fixture(shells: ShellConfig) -> Fixture {
     let det = Det::new();
     let store = Store::open_in_memory(det.clock(), det.ids(), StoreConfig::default())
         .await
@@ -91,9 +92,7 @@ async fn fixture() -> Fixture {
         node,
         peers,
         name: "box".to_owned(),
-        shells: Arc::new(fleetdeck_station::shell::Shells::new(
-            fleetdeck_station::shell::ShellConfig::default(),
-        )),
+        shells: Arc::new(fleetdeck_station::shell::Shells::new(shells)),
         coordinator: fleetdeck_station::coordinator::LinkForward::default(),
     });
     Fixture {
@@ -219,7 +218,7 @@ fn start(o: Outcome) -> StreamStart {
 
 #[tokio::test]
 async fn a_replay_sends_the_events_after_the_cursor_then_live_events_and_acks_keep_the_link() {
-    let mut f = fixture().await;
+    let mut f = fixture(ShellConfig::default()).await;
     f.session("s1").await;
     let first = f.event("s1", 1).await;
     let second = f.event("s1", 2).await;
@@ -264,7 +263,24 @@ async fn a_replay_sends_the_events_after_the_cursor_then_live_events_and_acks_ke
         serde_json::from_value(ok(call(&deck.control, "station.info", json!({})).await)).unwrap();
     assert_eq!((info.name.as_str(), info.head), ("box", third));
     assert_eq!(info.incarnation, f.inc());
+    assert_eq!(info.allow_shell, Some(true));
     assert!(deck.control.ended().is_none(), "a valid ack keeps the link");
+}
+
+#[tokio::test]
+async fn station_info_reports_allow_shell() {
+    for allow in [false, true] {
+        let mut f = fixture(ShellConfig {
+            allow,
+            ..ShellConfig::default()
+        })
+        .await;
+        let deck = f.connect().await;
+        let info: StationInfo =
+            serde_json::from_value(ok(call(&deck.control, "station.info", json!({})).await))
+                .unwrap();
+        assert_eq!(info.allow_shell, Some(allow));
+    }
 }
 
 async fn expect_snapshot(
@@ -320,7 +336,7 @@ async fn expect_snapshot_with(
 #[tokio::test]
 async fn a_forced_snapshot_carries_the_coordinator_binding_projection_without_the_credential() {
     use fleetdeck_station::coordinator::{Binding, BindingState};
-    let mut f = fixture().await;
+    let mut f = fixture(ShellConfig::default()).await;
     f.session("s1").await;
     let head = f.event("s1", 1).await;
     let bindings = f.ctx.manager.policy().coordinator_bindings().clone();
@@ -359,7 +375,7 @@ async fn a_forced_snapshot_carries_the_coordinator_binding_projection_without_th
 
 #[tokio::test]
 async fn another_incarnation_a_cursor_ahead_or_session_snapshot_gets_a_snapshot_batch() {
-    let mut f = fixture().await;
+    let mut f = fixture(ShellConfig::default()).await;
     f.session("s1").await;
     f.session("s2").await;
     let head = f.event("s2", 1).await;
@@ -415,7 +431,7 @@ async fn another_incarnation_a_cursor_ahead_or_session_snapshot_gets_a_snapshot_
 
 #[tokio::test]
 async fn an_ack_above_the_delivered_watermark_or_of_another_incarnation_closes_the_link() {
-    let mut f = fixture().await;
+    let mut f = fixture(ShellConfig::default()).await;
     f.session("s1").await;
     let head = f.event("s1", 1).await;
     let inc = f.inc();
@@ -445,7 +461,7 @@ async fn an_ack_above_the_delivered_watermark_or_of_another_incarnation_closes_t
 
 #[tokio::test]
 async fn commands_follow_the_receipt_rules_and_need_target_incarnation_over_a_link() {
-    let mut f = fixture().await;
+    let mut f = fixture(ShellConfig::default()).await;
     let deck = f.connect().await;
     let c = &deck.control;
     let inc = f.inc();
@@ -505,7 +521,7 @@ async fn commands_follow_the_receipt_rules_and_need_target_incarnation_over_a_li
 
 #[tokio::test]
 async fn a_command_queued_after_forget_deck_is_forbidden_and_the_link_closes_within_one_second() {
-    let mut f = fixture().await;
+    let mut f = fixture(ShellConfig::default()).await;
     let deck = f.connect().await;
     let inc = f.inc();
 
@@ -531,7 +547,7 @@ async fn a_command_queued_after_forget_deck_is_forbidden_and_the_link_closes_wit
 
 #[tokio::test]
 async fn a_key_rotation_moves_role_and_grants_in_one_transaction_and_the_new_key_links() {
-    let mut f = fixture().await;
+    let mut f = fixture(ShellConfig::default()).await;
     let deck = f.connect().await;
     let new = Arc::new(Identity::generate().unwrap());
     let station = f.ctx.node.identity.public_key();

@@ -177,6 +177,13 @@ impl Shells {
         }
     }
 
+    /// `allow_shell` of the station config: shells and TUI handovers are
+    /// allowed.
+    #[must_use]
+    pub fn allowed(&self) -> bool {
+        self.config.allow
+    }
+
     /// The reports that a TUI process ended (first call only). The station
     /// releases the hold of the session for each (DL-140).
     pub fn take_exits(&self) -> Option<mpsc::UnboundedReceiver<TerminalExit>> {

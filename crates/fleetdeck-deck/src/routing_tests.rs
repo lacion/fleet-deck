@@ -33,6 +33,7 @@ fn station(name: &str, reachable: bool, max: Option<u32>, live: u64, auth: &str)
             live_sessions: live,
             version: None,
             max_sessions: max,
+            allow_shell: None,
             providers: vec![StationProvider {
                 instance: "claude".to_owned().into(),
                 provider: ProviderKind::Claude,

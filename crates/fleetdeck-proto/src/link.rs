@@ -253,6 +253,10 @@ pub struct StationInfo {
     /// `max_sessions` of `station.toml`: the session capacity.
     #[serde(default)]
     pub max_sessions: Option<u32>,
+    /// `allow_shell` of `station.toml`: the human shell and the TUI
+    /// handover are allowed (DL-141). Absent from an older station.
+    #[serde(default)]
+    pub allow_shell: Option<bool>,
     /// The configured provider instances with their probed versions.
     #[serde(default)]
     pub providers: Vec<StationProvider>,
