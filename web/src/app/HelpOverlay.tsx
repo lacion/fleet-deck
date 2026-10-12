@@ -44,7 +44,7 @@ export function HelpOverlay({ onClose }: { readonly onClose: () => void }) {
             {SHORTCUTS.map((row) => (
               <tr key={row.keys}>
                 <td>
-                  <kbd>{row.keys}</kbd>
+                  <kbd className="fd-kbd">{row.keys}</kbd>
                 </td>
                 <td>{row.does}</td>
               </tr>

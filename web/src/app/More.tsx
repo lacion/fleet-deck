@@ -1,3 +1,4 @@
+import { FileText, Icon, LogOut, Server, SquareTerminal } from '../ui/icons';
 import type { Chrome } from './chrome';
 
 type Props = {
@@ -14,23 +15,31 @@ export function More({ stationCount, terminalCount, chrome }: Props) {
       <nav aria-label="More pages">
         <ul className="fd-more-links">
           <li>
-            <a href="#/plans">Plans</a>
+            <a href="#/plans">
+              <Icon of={FileText} />
+              Plans
+            </a>
           </li>
           <li>
-            <a href="#/stations">Stations · {stationCount}</a>
+            <a href="#/stations">
+              <Icon of={Server} />
+              Stations
+              <span className="fd-count">{stationCount}</span>
+            </a>
           </li>
           <li>
-            <a href="#/terminals">Terminals · {terminalCount}</a>
+            <a href="#/terminals">
+              <Icon of={SquareTerminal} />
+              Terminals
+              <span className="fd-count">{terminalCount}</span>
+            </a>
           </li>
         </ul>
       </nav>
       {chrome === undefined ? null : (
-        <div className="fd-sidebar-conn" data-freshness={chrome.freshness}>
-          <span role="status">{chrome.label}</span>
-          <button type="button" onClick={chrome.onLogout}>
-            Log out
-          </button>
-        </div>
+        <button type="button" className="fd-ghost fd-sm" onClick={chrome.onLogout}>
+          <Icon of={LogOut} size={14} /> Log out
+        </button>
       )}
     </section>
   );
