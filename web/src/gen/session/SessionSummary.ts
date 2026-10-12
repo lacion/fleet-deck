@@ -14,6 +14,7 @@ import type { RepoInfo } from "./RepoInfo";
 import type { RunningTool } from "./RunningTool";
 import type { SessionError } from "./SessionError";
 import type { SessionRevert } from "./SessionRevert";
+import type { TerminalHold } from "./TerminalHold";
 
 /**
  * The projection of one session.
@@ -79,6 +80,10 @@ revert: SessionRevert | null,
  * default, also for a summary stored before it existed.
  */
 auto_continue: boolean, 
+/**
+ * The TUI that holds the session (DL-140). Absent in older summaries.
+ */
+terminal?: TerminalHold, 
 /**
  * The highest `session_seq` folded into this summary.
  */

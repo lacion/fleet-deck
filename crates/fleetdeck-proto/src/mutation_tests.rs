@@ -42,6 +42,11 @@ pub(crate) fn sample(method: &str) -> Value {
             json!({"op": "resize", "shell_id": "main", "cols": 100, "rows": 30}),
         ),
         "shell.close" => with("change", json!({"op": "close", "shell_id": "main"})),
+        "shell.handover" => with(
+            "change",
+            json!({"op": "handover", "shell_id": "tui-1", "session_id": "s1", "cols": 80, "rows": 24}),
+        ),
+        "shell.release" => with("change", json!({"op": "release", "shell_id": "tui-1"})),
         "coordinator.call" => with(
             "call",
             json!({"caller": s, "binding": {"binding_id": "b", "grant_id": "g",
@@ -106,7 +111,7 @@ fn every_mutating_method_parses_its_envelope_and_names_its_method() {
             count += 1;
         }
     }
-    assert_eq!(count, 24);
+    assert_eq!(count, 26);
 }
 
 #[test]

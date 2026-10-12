@@ -109,6 +109,10 @@ pub struct SessionSummary {
     /// default, also for a summary stored before it existed.
     #[serde(default)]
     pub auto_continue: bool,
+    /// The TUI that holds the session (DL-140). Absent in older summaries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub terminal: Option<TerminalHold>,
     /// The highest `session_seq` folded into this summary.
     pub session_seq: u64,
     /// Unix ms of the last folded event.
@@ -146,10 +150,26 @@ impl SessionSummary {
             last_error: None,
             revert: None,
             auto_continue: false,
+            terminal: None,
             session_seq: 0,
             updated_at: 0,
         }
     }
+}
+
+/// A provider TUI that holds the session (DL-140). While it exists the
+/// station refuses resume, auto-continue, import and a second handover.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "session/")]
+pub struct TerminalHold {
+    pub shell_id: String,
+    /// The TUI process, once it runs.
+    pub pid: Option<u32>,
+    /// Unix ms of the first `session.terminal` of this hold.
+    #[ts(type = "number")]
+    pub since: i64,
+    /// The reason of the newest `session.terminal` of this hold.
+    pub reason: Option<String>,
 }
 
 /// The most running tools that a summary keeps; the oldest goes first.

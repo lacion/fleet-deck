@@ -211,6 +211,14 @@ fn samples() -> Vec<Event> {
             generation: 1,
             reason: "idle".into(),
         },
+        Event::SessionTerminal {
+            shell_id: Some("tui-1".into()),
+            pid: Some(4242),
+            reason: Some("handover requested".into()),
+        },
+        Event::SlashCommands {
+            commands: vec!["review".into(), "compact".into()],
+        },
     ]
 }
 

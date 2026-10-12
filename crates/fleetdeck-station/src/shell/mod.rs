@@ -203,6 +203,10 @@ impl Shells {
                     Err(unknown(shell_id))
                 }
             }
+            ShellChange::Handover { .. } | ShellChange::Release { .. } => Err(reject(
+                RejectCode::Unsupported,
+                "the terminal handover is not part of this station build yet (DL-140)",
+            )),
         }
     }
 
@@ -248,6 +252,9 @@ impl Shells {
                 tracing::info!(shell = %shell_id, "shell closed");
                 Ok(())
             }
+            ShellChange::Handover { .. } | ShellChange::Release { .. } => Err(
+                "the terminal handover is not part of this station build yet (DL-140)".to_owned(),
+            ),
         }
     }
 
@@ -342,6 +349,7 @@ impl Shells {
                 rows,
                 created_at: now,
                 exit_code: None,
+                session_id: None,
             }),
             master: Mutex::new(pair.master),
             writer: Mutex::new(writer),

@@ -189,3 +189,19 @@ fn a_reattached_board_gets_the_scrollback_and_the_shell_survives_a_detach() {
         std::thread::sleep(Duration::from_millis(5));
     }
 }
+
+#[test]
+fn a_handover_is_refused_until_the_station_supports_it() {
+    let root = tempfile::tempdir().expect("root");
+    let p = policy(root.path());
+    let s = shells(true, 2);
+    let handover = ShellChange::Handover {
+        shell_id: "tui".to_owned(),
+        session_id: "s1".into(),
+        cols: 80,
+        rows: 24,
+    };
+    let e = s.apply(&handover, &p, 1).expect_err("handover");
+    assert_eq!(e.code, RejectCode::Unsupported);
+    assert!(s.list().is_empty());
+}

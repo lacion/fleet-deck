@@ -1,7 +1,8 @@
 //! The human shell (PLAN §6.8, D10; M3 item 6-11, DL-404).
 //!
 //! The owner opens a PTY shell on a station from the board. `shell.open`,
-//! `shell.resize` and `shell.close` are mutating link methods with a
+//! `shell.resize`, `shell.close`, `shell.handover` and `shell.release` are
+//! mutating link methods with a
 //! [`ShellEnvelope`] (audited, with a `command_id`); `shell.list` reads the
 //! shells; `shell.attach` returns a stream token for the data channel. The
 //! bytes of a shell (output and keystrokes) travel only on that data
@@ -10,7 +11,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::ids::{CommandId, IncarnationId};
+use crate::ids::{CommandId, IncarnationId, SessionId};
 
 /// The most lines that the scrollback of a shell keeps.
 pub const SCROLLBACK_LINES: usize = 5_000;
@@ -43,6 +44,17 @@ pub enum ShellChange {
     },
     /// Ends the shell (SIGHUP to its process group) and drops its scrollback.
     Close { shell_id: String },
+    /// Runs the provider TUI on an ended session in a new PTY (DL-140). The
+    /// station holds the session from admission until the TUI process is gone.
+    Handover {
+        shell_id: String,
+        session_id: SessionId,
+        cols: u16,
+        rows: u16,
+    },
+    /// Clears a terminal hold whose process the station cannot see after a
+    /// restart (DL-140). The owner checks the process first.
+    Release { shell_id: String },
 }
 
 impl ShellChange {
@@ -53,6 +65,8 @@ impl ShellChange {
             Self::Open { .. } => "shell.open",
             Self::Resize { .. } => "shell.resize",
             Self::Close { .. } => "shell.close",
+            Self::Handover { .. } => "shell.handover",
+            Self::Release { .. } => "shell.release",
         }
     }
 
@@ -61,7 +75,9 @@ impl ShellChange {
         match self {
             Self::Open { shell_id, .. }
             | Self::Resize { shell_id, .. }
-            | Self::Close { shell_id } => shell_id,
+            | Self::Close { shell_id }
+            | Self::Handover { shell_id, .. }
+            | Self::Release { shell_id } => shell_id,
         }
     }
 
@@ -81,7 +97,9 @@ impl ShellChange {
             return Err("a shell id has 1 to 64 characters: letters, digits, `-`, `_`");
         }
         match self {
-            Self::Open { cols, rows, .. } | Self::Resize { cols, rows, .. } => {
+            Self::Open { cols, rows, .. }
+            | Self::Resize { cols, rows, .. }
+            | Self::Handover { cols, rows, .. } => {
                 if *cols == 0
                     || *rows == 0
                     || *cols > MAX_TERMINAL_CELLS
@@ -91,12 +109,13 @@ impl ShellChange {
                 }
                 Ok(())
             }
-            Self::Close { .. } => Ok(()),
+            Self::Close { .. } | Self::Release { .. } => Ok(()),
         }
     }
 }
 
-/// The envelope of `shell.open`, `shell.resize` and `shell.close`.
+/// The envelope of `shell.open`, `shell.resize`, `shell.close`,
+/// `shell.handover` and `shell.release`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export_to = "shell/")]
 pub struct ShellEnvelope {
@@ -130,6 +149,10 @@ pub struct ShellInfo {
     pub created_at: i64,
     /// The exit code once the shell ended (`None` for a signal).
     pub exit_code: Option<u32>,
+    /// The session that this shell runs the TUI of (a handover, DL-140).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub session_id: Option<SessionId>,
 }
 
 /// The params of `shell.attach`.

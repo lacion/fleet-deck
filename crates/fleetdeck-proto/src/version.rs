@@ -39,6 +39,8 @@ pub mod feature {
     /// `shell.open`, `shell.resize`, `shell.close`, `shell.list` and
     /// `shell.attach`: the human shell (PLAN §6.8, M3 DL-404).
     pub const SHELL: &str = "shell.v1";
+    /// `shell.handover` and `shell.release`: the TUI handover (DL-140).
+    pub const SHELL_HANDOVER: &str = "shell.handover.v1";
     /// `session.coordinator_renew` and `session.coordinator_revoke` (the
     /// deck's binding lifecycle commands) and `coordinator.query` and
     /// `coordinator.call` (ADR-006 §6.1 `coordinator_v1`, M3 DL-212,
@@ -55,6 +57,7 @@ pub mod feature {
         RENAME,
         FILES,
         SHELL,
+        SHELL_HANDOVER,
         COORDINATOR,
         AUTO_CONTINUE,
         IMPORT,

@@ -16,7 +16,7 @@
 use crate::event::{Event, EventEnvelope, RateLimit, SessionState, Usage};
 use crate::session::{
     Activity, MAX_RUNNING_TOOLS, OpenRequest, RunningTool, SUBAGENT_TASK_KINDS, SessionError,
-    SessionRevert, SessionSummary,
+    SessionRevert, SessionSummary, TerminalHold,
 };
 
 impl SessionSummary {
@@ -185,9 +185,26 @@ impl SessionSummary {
                 self.worktree.clone_from(worktree);
             }
             Event::AutoContinueChanged { enabled } => self.auto_continue = *enabled,
+            Event::SessionTerminal {
+                shell_id: Some(shell_id),
+                pid,
+                reason,
+            } => {
+                let same = self.terminal.as_ref().filter(|h| &h.shell_id == shell_id);
+                let since = same.map_or(at, |h| h.since);
+                let pid = pid.or_else(|| same.and_then(|h| h.pid));
+                self.terminal = Some(TerminalHold {
+                    shell_id: shell_id.clone(),
+                    pid,
+                    since,
+                    reason: reason.clone(),
+                });
+            }
+            Event::SessionTerminal { shell_id: None, .. } => self.terminal = None,
             Event::AutoContinueSkipped { .. }
             | Event::CoordinatorBound { .. }
-            | Event::CoordinatorEnded { .. } => {}
+            | Event::CoordinatorEnded { .. }
+            | Event::SlashCommands { .. } => {}
             Event::SessionEnded { .. } => {
                 if !matches!(self.state, SessionState::Lost) {
                     self.state = SessionState::Exited;

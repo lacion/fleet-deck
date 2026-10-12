@@ -551,3 +551,51 @@ fn a_model_change_moves_the_model_badge_to_the_new_model() {
     assert_eq!(s.model.as_deref(), Some("opus"));
     assert_eq!(f.push(run("run-1")).model.as_deref(), Some("opus"));
 }
+
+fn terminal(shell_id: Option<&str>, pid: Option<u32>, reason: Option<&str>) -> Event {
+    Event::SessionTerminal {
+        shell_id: shell_id.map(str::to_owned),
+        pid,
+        reason: reason.map(str::to_owned),
+    }
+}
+
+#[test]
+fn a_terminal_hold_is_set_updated_and_cleared_by_session_terminal() {
+    let mut f = Feed::new();
+    f.push(started());
+    // (a) The first event sets the hold; `since` is the envelope time.
+    let s = f.push(terminal(Some("tui-1"), None, Some("handover requested")));
+    let first = s.terminal.clone().expect("hold");
+    assert_eq!(first.shell_id, "tui-1");
+    assert_eq!(first.pid, None);
+    assert_eq!(first.since, s.updated_at);
+    assert_eq!(first.reason.as_deref(), Some("handover requested"));
+    // (b) The same shell with a pid keeps `since` and takes pid and reason.
+    let s = f.push(terminal(Some("tui-1"), Some(7), Some("running")));
+    let hold = s.terminal.clone().expect("hold");
+    assert_eq!(hold.since, first.since);
+    assert_ne!(s.updated_at, first.since);
+    assert_eq!(hold.pid, Some(7));
+    assert_eq!(hold.reason.as_deref(), Some("running"));
+    // (c) The same shell without a pid keeps the known pid.
+    let s = f.push(terminal(Some("tui-1"), None, Some("resized")));
+    let hold = s.terminal.clone().expect("hold");
+    assert_eq!(hold.pid, Some(7));
+    assert_eq!(hold.since, first.since);
+    assert_eq!(hold.reason.as_deref(), Some("resized"));
+    // (d) No shell id ends the hold.
+    let s = f.push(terminal(None, None, Some("tui exited")));
+    assert_eq!(s.terminal, None);
+}
+
+#[test]
+fn a_summary_decodes_without_terminal_and_encodes_none_without_the_key() {
+    // (e)
+    let mut v = serde_json::to_value(SessionSummary::new(SessionId::from("s1"))).unwrap();
+    let object = v.as_object_mut().unwrap();
+    assert!(!object.contains_key("terminal"), "None is not serialized");
+    object.remove("terminal");
+    let s: SessionSummary = serde_json::from_value(v).unwrap();
+    assert_eq!(s.terminal, None);
+}

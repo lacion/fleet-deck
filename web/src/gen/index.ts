@@ -139,6 +139,7 @@ export * from "./session/RunningTool";
 export * from "./session/SessionError";
 export * from "./session/SessionRevert";
 export * from "./session/SessionSummary";
+export * from "./session/TerminalHold";
 export * from "./shell/ShellAttach";
 export * from "./shell/ShellChange";
 export * from "./shell/ShellEnvelope";

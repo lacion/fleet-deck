@@ -95,7 +95,13 @@ pub const ENVELOPES: &[EnvelopeKind] = &[
         holder: Holder::Receiver,
     },
     EnvelopeKind {
-        methods: &["shell.open", "shell.resize", "shell.close"],
+        methods: &[
+            "shell.open",
+            "shell.resize",
+            "shell.close",
+            "shell.handover",
+            "shell.release",
+        ],
         params: "ShellEnvelope",
         payload: "change",
         holder: Holder::Station,

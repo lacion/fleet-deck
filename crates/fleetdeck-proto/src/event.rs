@@ -502,6 +502,23 @@ pub enum Event {
         to: u64,
         reason: OutputGapReason,
     },
+    /// A provider TUI holds the session (`shell_id` set), or the hold ended
+    /// (`shell_id` absent) (DL-140). `pid` is the TUI process once it runs.
+    #[serde(rename = "session.terminal")]
+    SessionTerminal {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        shell_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        pid: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        reason: Option<String>,
+    },
+    /// The slash commands that the provider offers in this session (DL-140).
+    #[serde(rename = "session.slash_commands")]
+    SlashCommands { commands: Vec<String> },
     #[serde(rename = "run.completed")]
     RunCompleted {
         run_id: RunId,
@@ -549,7 +566,7 @@ pub enum Event {
 
 impl Event {
     /// Every known kind name, in declaration order.
-    pub const KINDS: [&'static str; 34] = [
+    pub const KINDS: [&'static str; 36] = [
         "session.started",
         "session.state",
         "run.started",
@@ -584,6 +601,8 @@ impl Event {
         "session.auto_continue_skipped",
         "coordinator.bound",
         "coordinator.ended",
+        "session.terminal",
+        "session.slash_commands",
     ];
 
     /// The dotted kind name.
@@ -624,6 +643,8 @@ impl Event {
             Self::CoordinatorBound { .. } => "coordinator.bound",
             Self::CoordinatorEnded { .. } => "coordinator.ended",
             Self::OutputGap { .. } => "session.output_gap",
+            Self::SessionTerminal { .. } => "session.terminal",
+            Self::SlashCommands { .. } => "session.slash_commands",
         }
     }
 

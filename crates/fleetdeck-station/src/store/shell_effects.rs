@@ -45,6 +45,8 @@ fn op(change: &ShellChange) -> &'static str {
         ShellChange::Open { .. } => "open",
         ShellChange::Resize { .. } => "resize",
         ShellChange::Close { .. } => "close",
+        ShellChange::Handover { .. } => "handover",
+        ShellChange::Release { .. } => "release",
     }
 }
 

@@ -4,6 +4,7 @@ import type { IncarnationId } from "../ids/IncarnationId";
 import type { ShellChange } from "./ShellChange";
 
 /**
- * The envelope of `shell.open`, `shell.resize` and `shell.close`.
+ * The envelope of `shell.open`, `shell.resize`, `shell.close`,
+ * `shell.handover` and `shell.release`.
  */
 export type ShellEnvelope = { command_id: CommandId, target_incarnation: IncarnationId, retry_until: number, change: ShellChange, };
