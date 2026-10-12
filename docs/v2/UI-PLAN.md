@@ -24,7 +24,7 @@
 6. **One session controller** owns the session actions, the pending command and the last outcome. The header, the composer, the approval dock and the terminal dock use it. No component orchestrates stop/resume/handover by itself.
 7. **Terminal dock:** shells and TUI tabs live in a board-level store, not in a screen. Navigation and a hidden dock do not close a shell. Three different actions: *Detach* (remove the tab, the PTY runs on), *Close shell* (end the PTY, with a confirm), *Return to board control* (TUI tabs only).
 8. **Global keys** never fire inside an input, a textarea, a select, a contenteditable element, a terminal, or during IME composition. Esc only closes the top overlay.
-9. **Slash commands:** the Claude `init` frame lists them. `session.started` carries `slash_commands` (minus the TUI-only `terminal_slash_commands`). The composer palette reads the newest `session.started` in the timeline. Without a list, the owner can still type a command. A slash command is sent as a normal prompt.
+9. **Slash commands:** the Claude `init` frame lists them. The event `session.slash_commands { commands }` carries them (minus the TUI-only `terminal_slash_commands`). It is not folded; the composer palette reads the newest one from the timeline. Without a list, the owner can still type a command. A slash command is sent as a normal prompt.
 
 ## 3. TUI handover (station-authoritative)
 
@@ -36,7 +36,7 @@
 - `ShellInfo.session_id: Option<SessionId>`: set for a TUI shell.
 - New event `session.terminal { shell_id: Option<String>, pid: Option<u32>, reason: Option<String> }`. `Some(shell_id)` = a TUI holds the session. `None` = the hold is released.
 - `SessionSummary.terminal: Option<TerminalHold { shell_id, pid, since }>`, folded from `session.terminal` in `fleetdeck-proto/src/fold.rs`. This is the single source of truth for the board.
-- `session.started` gets `slash_commands: Vec<String>` (serde default, not serialized when empty).
+- New event `session.slash_commands { commands: Vec<String> }`, emitted after the first Claude `init`. It is not folded into the summary; the board reads the newest one from the timeline.
 - All new fields are optional with serde defaults (L16: old stored events and summaries still decode).
 
 ### 3.2 Admission (one store transaction)
@@ -64,7 +64,7 @@ In the same transaction the station appends `session.terminal { shell_id: Some, 
 ### 3.5 Program
 
 - Claude: `<binary> --resume <native id> --permission-mode <mode>` (+ `--model <m>` when the stored model is set and not `default`). `<mode>` is the stored mode when it is a native Claude mode, else the safest mode (L8: never more permissive).
-- Codex: `<binary> -c approval_policy="<p>" -c sandbox_mode="<s>" [-c model="<m>"] resume <thread id>`. `<p>/<s>` come from the stored mode via `codex::Mode::parse`, else `Mode::safest()`.
+- Codex: `<binary> resume -a <policy> -s <sandbox> [-m <model>] <thread>`. `<p>/<s>` come from the stored mode via `codex::Mode::parse`, else `Mode::safest()`.
 - Env: `ChildEnv::for_instance(ChildEnv::from_process(), instance)` (the instance config home), plus `TERM=xterm-256color`. cwd: the session cwd, checked against the roots.
 - The board warns before handover: "In the terminal, the board does not see approvals or prompts. The station holds this session until you return it."
 
