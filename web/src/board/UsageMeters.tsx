@@ -12,25 +12,33 @@ export function UsageMeters({ sessions, stations }: Props) {
   const meters = rateMeters(sessions, stations);
   return (
     <section className="fd-usage-meters" aria-label="Usage">
-      <h2>Usage</h2>
-      <dl>
-        <dt>Input tokens</dt>
-        <dd>{totalText(usage.input, tokens)}</dd>
-        <dt>Output tokens</dt>
-        <dd>{totalText(usage.output, tokens)}</dd>
-        <dt>Cost</dt>
-        <dd>{totalText(usage.cost, dollars)}</dd>
+      <h2 className="fd-vh">Usage</h2>
+      <dl className="fd-usage-stats">
+        <div className="fd-usage-stat">
+          <dt className="fd-label">Input tokens</dt>
+          <dd>{totalText(usage.input, tokens)}</dd>
+        </div>
+        <div className="fd-usage-stat">
+          <dt className="fd-label">Output tokens</dt>
+          <dd>{totalText(usage.output, tokens)}</dd>
+        </div>
+        <div className="fd-usage-stat">
+          <dt className="fd-label">Cost</dt>
+          <dd>{totalText(usage.cost, dollars)}</dd>
+        </div>
       </dl>
       {meters.length === 0 ? (
         <p className="fd-note">No provider reported a rate limit yet.</p>
       ) : (
-        <ul>
+        <ul className="fd-usage-meterlist">
           {meters.map((m) => (
-            <li key={m.key}>
-              <span>
+            <li key={m.key} className="fd-usage-meter">
+              <span className="fd-usage-name">
                 {m.label} · {m.scope}
-              </span>{' '}
-              {m.usedPercent === null ? null : (
+              </span>
+              {m.usedPercent === null ? (
+                <span />
+              ) : (
                 <meter
                   min={0}
                   max={100}
@@ -38,8 +46,8 @@ export function UsageMeters({ sessions, stations }: Props) {
                   value={m.usedPercent}
                   aria-label={`${m.label} ${m.scope}`}
                 />
-              )}{' '}
-              <span>{meterText(m)}</span>
+              )}
+              <span className="fd-usage-text">{meterText(m)}</span>
             </li>
           ))}
         </ul>
