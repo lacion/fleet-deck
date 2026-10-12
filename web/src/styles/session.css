@@ -1,28 +1,4 @@
-/* DL-140: the session pane (header, notice, tabs, chat column) and the needs-you rail. */
-.fd-rail {
-  padding: var(--sp-4);
-  overflow-wrap: anywhere;
-  min-width: 0;
-  border-bottom: 1px solid var(--border);
-}
-.fd-rail ul {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: grid;
-  gap: var(--sp-2);
-}
-.fd-rail li {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-2);
-  background: var(--act-bg);
-  border: 1px solid var(--act);
-  border-radius: var(--r-panel);
-  padding: var(--sp-2);
-}
+/* DL-140: the session pane (header, notice, tabs, chat column). */
 .fd-details {
   width: 100%;
   margin: 0;
@@ -49,9 +25,6 @@
 }
 .fd-outcome[role="alert"] {
   color: var(--hazard);
-}
-.fd-subagents {
-  color: var(--act);
 }
 
 .fd-pane {
@@ -187,33 +160,6 @@
   gap: var(--sp-2);
   margin: var(--sp-2) 0;
 }
-.fd-feed {
-  padding: var(--sp-4);
-  border-top: 1px solid var(--border);
-  overflow-wrap: anywhere;
-  min-width: 0;
-}
-.fd-feed-filters {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-1);
-  margin-bottom: var(--sp-2);
-}
-.fd-feed-filters button[aria-pressed="true"] {
-  border-color: var(--act);
-}
-.fd-feed ol {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: grid;
-  gap: var(--sp-1);
-  font-size: var(--fs-micro);
-}
-.fd-feed time {
-  font-variant-numeric: tabular-nums;
-  color: var(--dim);
-}
 .fd-link {
   background: none;
   border: none;
@@ -279,72 +225,6 @@
   font-size: var(--fs-micro);
 }
 
-/* The plan library (DL-301). */
-.fd-plans {
-  display: grid;
-  gap: 8px;
-}
-.fd-plan-tools,
-.fd-plan-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-}
-.fd-plan-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 12px;
-}
-.fd-plan-list article {
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 8px;
-  min-width: 0;
-}
-.fd-plan-list h3 {
-  margin: 0 0 4px;
-  overflow-wrap: anywhere;
-}
-.fd-plan-meta {
-  margin: 0 0 4px;
-  overflow-wrap: anywhere;
-}
-.fd-plan-text {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  max-height: 50vh;
-  overflow: auto;
-}
-
-/* Usage and rate-limit meters (DL-303). */
-.fd-usage-meters dl {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 2px 12px;
-  margin: 0 0 8px;
-}
-.fd-usage-meters dd {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-.fd-usage-meters ul {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 6px;
-}
-.fd-usage-meters li {
-  overflow-wrap: anywhere;
-}
-.fd-usage-meters meter {
-  width: 96px;
-  vertical-align: middle;
-}
-
 /* M3 6-10: pasted images in the composer. */
 .fd-images {
   display: flex;
@@ -371,21 +251,408 @@
   max-width: 100%;
 }
 
-/* M3 6-7: the conflict radar. */
-.fd-conflicts ul {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+/* DL-140: the session controls: header (fd-sh), menus (fd-menu), the approval
+   dock (fd-dock-approvals) and the composer (fd-composer). Wave 2 imports this file. */
+
+/* ── session header ─────────────────────────────────────────────── */
+.fd-sh-block {
   display: grid;
-  gap: 6px;
+  gap: var(--sp-2);
 }
-.fd-conflicts li {
+.fd-sh {
+  display: grid;
+  gap: var(--sp-1);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.fd-sh-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.fd-sh-title {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: var(--fs-heading);
+  min-width: 0;
   overflow-wrap: anywhere;
 }
-.fd-conflicts li ul {
-  padding-left: 12px;
-  gap: 2px;
+.fd-sh-icon,
+.fd-sh-back {
+  padding: var(--sp-1) var(--sp-2);
 }
-.fd-conflicts .fd-dim {
+.fd-sh-status,
+.fd-sh-chip,
+.fd-sh-badge {
+  font-size: var(--fs-micro);
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--r-pill);
+  white-space: nowrap;
+}
+.fd-sh-status {
   color: var(--dim);
+  border: 1px solid var(--border);
+}
+.fd-sh-status[data-status="needs_you"] {
+  color: var(--act);
+  border-color: var(--act);
+}
+.fd-sh-status[data-status="unreachable"],
+.fd-sh-status[data-status="lost"] {
+  color: var(--hazard);
+  border-color: var(--hazard);
+}
+.fd-sh-status[data-status="working"] {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+.fd-sh-chip {
+  color: var(--p-unknown);
+  background: var(--p-unknown-bg);
+  border-radius: var(--r-chip);
+}
+.fd-sh-chip[data-provider="claude"] {
+  color: var(--p-claude);
+  background: var(--p-claude-bg);
+}
+.fd-sh-chip[data-provider="codex"] {
+  color: var(--p-codex);
+  background: var(--p-codex-bg);
+}
+.fd-sh-model {
+  font-family: var(--font-data);
+  color: var(--dim);
+  background: var(--raised);
+}
+.fd-sh-badge {
+  color: var(--act-ink);
+  background: var(--act);
+  font-weight: 600;
+}
+.fd-sh-place {
+  margin: 0;
+  color: var(--dim);
+  font-size: var(--fs-micro);
+  font-family: var(--font-data);
+  overflow-wrap: anywhere;
+}
+.fd-sh-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+}
+.fd-sh-confirm {
+  display: grid;
+  gap: var(--sp-2);
+  max-width: 36ch;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--r-panel);
+}
+.fd-sh-confirm p {
+  margin: 0;
+  font-size: var(--fs-body);
+}
+.fd-sh-off {
+  margin: 0;
+  color: var(--dim);
+  font-size: var(--fs-micro);
+}
+.fd-sh-outcome {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctl);
+  font-size: var(--fs-body);
+}
+.fd-sh-outcome[role="alert"] {
+  color: var(--hazard);
+  background: var(--hazard-bg);
+  border-color: var(--hazard);
+}
+.fd-sh-outcome[role="status"] {
+  color: var(--ok);
+}
+.fd-sh button,
+.fd-sh-outcome button,
+.fd-composer button,
+.fd-dock-approvals button {
+  font: inherit;
+  font-size: var(--fs-body);
+  color: var(--text);
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctl);
+  padding: var(--sp-1) var(--sp-3);
+  cursor: pointer;
+  transition: border-color var(--t-fast);
+}
+.fd-sh button:disabled,
+.fd-sh-outcome button:disabled,
+.fd-composer button:disabled,
+.fd-dock-approvals button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+.fd-sh .fd-danger,
+.fd-menu .fd-danger {
+  color: var(--hazard);
+  border-color: var(--hazard);
+  background: var(--hazard-bg);
+}
+/* ── menus ──────────────────────────────────────────────────────── */
+.fd-menu-body .fd-modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+  margin: 0;
+  padding: var(--sp-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctl);
+}
+.fd-menu-body .fd-modes legend {
+  font-size: var(--fs-micro);
+  color: var(--dim);
+}
+.fd-menu-body .fd-modes button[aria-pressed="true"] {
+  border-color: var(--act);
+}
+.fd-menu-body form {
+  display: grid;
+  gap: var(--sp-1);
+}
+.fd-menu-body label {
+  font-size: var(--fs-body);
+}
+.fd-menu-body input[type="text"],
+.fd-menu-body input:not([type]) {
+  font: inherit;
+  color: var(--text);
+  background: var(--code);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctl);
+  padding: var(--sp-1) var(--sp-2);
+}
+.fd-sh summary:focus-visible,
+.fd-sh button:focus-visible,
+.fd-sh input:focus-visible,
+.fd-sh-outcome button:focus-visible,
+.fd-dock-approvals button:focus-visible,
+.fd-dock-approvals input:focus-visible,
+.fd-dock-approvals summary:focus-visible,
+.fd-composer button:focus-visible,
+.fd-composer textarea:focus-visible,
+.fd-attach:focus-within {
+  outline: 2px solid var(--act);
+  outline-offset: 2px;
+}
+
+/* ── approval dock ──────────────────────────────────────────────── */
+.fd-dock-approvals {
+  display: grid;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--act);
+  border-radius: var(--r-panel);
+}
+.fd-dock-approvals h3 {
+  margin: 0;
+  font-size: var(--fs-body);
+  color: var(--act);
+}
+.fd-dock-approvals ul {
+  display: grid;
+  gap: var(--sp-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.fd-dock-approvals li {
+  display: grid;
+  gap: var(--sp-2);
+}
+.fd-dock-approvals strong {
+  font-size: var(--fs-title);
+  overflow-wrap: anywhere;
+}
+.fd-dock-approvals summary {
+  cursor: pointer;
+  color: var(--dim);
+  font-size: var(--fs-micro);
+}
+.fd-dock-approvals .fd-details {
+  max-height: 200px;
+  overflow: auto;
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+  background: var(--code);
+  border-radius: var(--r-ctl);
+}
+.fd-dock-approvals .fd-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+.fd-dock-approvals .fd-primary {
+  color: var(--act-ink);
+  background: var(--act);
+  border-color: var(--act);
+  font-weight: 600;
+}
+.fd-dock-approvals .fd-note {
+  margin: 0;
+  color: var(--dim);
+  font-size: var(--fs-micro);
+}
+
+/* ── composer ───────────────────────────────────────────────────── */
+.fd-composer {
+  position: relative;
+  display: grid;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-panel);
+}
+.fd-composer-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+.fd-composer textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: none;
+  font: inherit;
+  font-size: var(--fs-body);
+  line-height: 1.45;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  padding: var(--sp-1) 0;
+  overflow-y: hidden;
+}
+.fd-composer textarea:focus-visible {
+  outline: none;
+}
+.fd-composer:focus-within {
+  border-color: var(--act);
+}
+.fd-composer-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+.fd-composer-send {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-left: auto;
+}
+.fd-composer .fd-primary {
+  color: var(--act-ink);
+  background: var(--act);
+  border-color: var(--act);
+  font-weight: 600;
+}
+.fd-attach {
+  position: relative;
+  font-size: var(--fs-body);
+  color: var(--dim);
+  cursor: pointer;
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--r-ctl);
+}
+.fd-attach input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  width: 100%;
+  cursor: pointer;
+}
+.fd-composer-note,
+.fd-composer-problem {
+  margin: 0;
+  font-size: var(--fs-micro);
+  color: var(--dim);
+}
+.fd-composer-problem {
+  color: var(--hazard);
+}
+.fd-composer-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  z-index: 10;
+  display: grid;
+  margin-bottom: var(--sp-1);
+  padding: var(--sp-1);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-panel);
+  max-height: 16rem;
+  overflow-y: auto;
+}
+.fd-composer-menu [role="option"] {
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--r-chip);
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+  color: var(--text);
+  cursor: pointer;
+}
+.fd-composer-menu [role="option"][aria-selected="true"] {
+  background: var(--raised);
+  box-shadow: inset 2px 0 0 var(--act);
+}
+
+/* Touch screens: every control meets the minimum tap size. */
+@media (pointer: coarse) {
+  .fd-sh button,
+  .fd-sh-outcome button,
+  .fd-dock-approvals button,
+  .fd-composer button,
+  .fd-attach {
+    min-height: var(--tap-min);
+    min-width: var(--tap-min);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .fd-composer-menu [role="option"] {
+    min-height: var(--tap-min);
+    display: flex;
+    align-items: center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fd-sh button,
+  .fd-sh-outcome button,
+  .fd-composer button,
+  .fd-dock-approvals button {
+    transition: none;
+  }
 }

@@ -121,3 +121,25 @@
   --tap-min: 44px; /* minimum touch target */
   --bp-phone: 640px; /* reference only; media queries use the literal value */
 }
+
+/* DL-141: board visual foundation (UI-DESIGN.md §2.4). */
+:root {
+  --ctl-h: 30px; /* control height, fine pointer */
+  --ctl-h-sm: 24px;
+  --header-h: 52px;
+  --sidebar-w: 264px;
+  --rail-w: 320px;
+  --chat-w: 760px;
+  --fs-ui: 13px;
+  --fs-chat: 14px;
+  --free-bg: #0e2a1e;
+  --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.45);
+  --add-bg: rgba(87, 185, 138, 0.1);
+  --del-bg: rgba(255, 107, 84, 0.1);
+}
+[data-theme="light"] {
+  --free-bg: #dff2e7;
+  --shadow-pop: 0 12px 32px rgba(20, 30, 50, 0.16);
+  --add-bg: rgba(30, 122, 78, 0.1);
+  --del-bg: rgba(179, 48, 28, 0.08);
+}

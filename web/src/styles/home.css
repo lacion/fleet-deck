@@ -1,0 +1,340 @@
+/* The fleet home (DL-140): lanes, cards, the needs-you rail, the feed. Colors, type, space and motion come from tokens.css. */
+.fd-board {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+}
+
+.fd-lane {
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-panel);
+  padding: var(--sp-3);
+}
+
+.fd-lane[data-lane="needs_you"] {
+  border-color: var(--act);
+}
+
+.fd-lane-title {
+  margin: 0 0 var(--sp-2);
+  font-size: var(--fs-micro);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.fd-cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--sp-2);
+}
+
+.fd-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+}
+
+.fd-title {
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+}
+
+.fd-model {
+  font-family: var(--font-data);
+  font-size: var(--fs-micro);
+  color: var(--dim);
+}
+.fd-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4);
+}
+.fd-filters label {
+  display: grid;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+.fd-filters output {
+  padding: var(--sp-2);
+}
+.fd-card {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.fd-card-line,
+.fd-tools {
+  width: 100%;
+  margin: 0;
+  font-size: var(--fs-micro);
+}
+.fd-tools {
+  padding-left: var(--sp-4);
+}
+.fd-usage {
+  color: var(--dim);
+}
+.fd-station-badge {
+  border: 1px solid var(--border);
+  border-radius: var(--r-chip);
+  padding: var(--sp-1);
+  font-size: var(--fs-micro);
+}
+.fd-health[data-health="down"],
+.fd-health[data-health="stale"] {
+  color: var(--act);
+}
+@media (max-width: 640px) {
+  .fd-filters label {
+    width: 100%;
+  }
+}
+/* M3 6-1: the callsign of a session that has a title. */
+.fd-callsign {
+  font-size: var(--fs-micro);
+  color: var(--muted, inherit);
+}
+
+/* M3 6-3: assign auto on the fleet screen. */
+.fd-assign {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: end;
+  margin: 0.5rem 0;
+}
+
+.fd-assign label {
+  display: flex;
+  flex: 1 1 10rem;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.fd-assign p {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+/* M3 6-2 / 6-4: fleet mail and tasks. */
+.fd-fleet form {
+  display: grid;
+  gap: 0.5rem;
+  margin-block: 0.75rem;
+}
+.fd-fleet label {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 0;
+}
+.fd-fleet select,
+.fd-fleet textarea {
+  max-width: 100%;
+}
+.fd-fleet-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.fd-fleet ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.fd-fleet li {
+  overflow-wrap: anywhere;
+  padding-block: 0.25rem;
+}
+.fd-task-state {
+  opacity: 0.8;
+}
+
+/* ---------- Fleet home ---------- */
+
+.fd-home {
+  display: grid;
+  align-content: start;
+}
+
+.fd-home-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-3);
+  padding: var(--sp-4) var(--sp-4) 0;
+}
+
+.fd-home-counts {
+  margin: 0;
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+  color: var(--dim);
+}
+
+.fd-home-grid {
+  display: grid;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+}
+
+.fd-home-card {
+  min-width: 0;
+  padding: var(--sp-3);
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-panel);
+}
+
+.fd-home-card-title {
+  margin: 0 0 var(--sp-2);
+  font-size: var(--fs-micro);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+/* The panel inside a card brings its own heading: the card title replaces it for the eye. */
+.fd-home-card > section > h2:first-child {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (min-width: 1280px) {
+  .fd-home-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* Phone: lanes scroll sideways, "Needs you" first. */
+@media (max-width: 640px) {
+  .fd-board {
+    display: flex;
+    gap: var(--sp-2);
+    padding: var(--sp-2);
+    overflow-x: auto;
+    scroll-snap-type: x proximity;
+  }
+
+  .fd-board > .fd-lane {
+    flex: 0 0 min(280px, 85%);
+    scroll-snap-align: start;
+  }
+} /* DL-140: the session pane (header, notice, tabs, chat column) and the needs-you rail. */
+.fd-rail {
+  padding: var(--sp-4);
+  overflow-wrap: anywhere;
+  min-width: 0;
+  border-bottom: 1px solid var(--border);
+}
+.fd-rail ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--sp-2);
+}
+.fd-rail li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  background: var(--act-bg);
+  border: 1px solid var(--act);
+  border-radius: var(--r-panel);
+  padding: var(--sp-2);
+}
+.fd-subagents {
+  color: var(--act);
+}
+.fd-feed {
+  padding: var(--sp-4);
+  border-top: 1px solid var(--border);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.fd-feed-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+  margin-bottom: var(--sp-2);
+}
+.fd-feed-filters button[aria-pressed="true"] {
+  border-color: var(--act);
+}
+.fd-feed ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--sp-1);
+  font-size: var(--fs-micro);
+}
+.fd-feed time {
+  font-variant-numeric: tabular-nums;
+  color: var(--dim);
+}
+
+/* Usage and rate-limit meters (DL-303). */
+.fd-usage-meters dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 12px;
+  margin: 0 0 8px;
+}
+.fd-usage-meters dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.fd-usage-meters ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.fd-usage-meters li {
+  overflow-wrap: anywhere;
+}
+.fd-usage-meters meter {
+  width: 96px;
+  vertical-align: middle;
+}
+
+/* M3 6-7: the conflict radar. */
+.fd-conflicts ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.fd-conflicts li {
+  overflow-wrap: anywhere;
+}
+.fd-conflicts li ul {
+  padding-left: 12px;
+  gap: 2px;
+}
+.fd-conflicts .fd-dim {
+  color: var(--dim);
+}

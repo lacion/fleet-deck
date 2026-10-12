@@ -3,16 +3,22 @@ import { createRoot } from 'react-dom/client';
 import { takeLoginLink } from './runtime/api';
 import { browserEnvironment, Connection } from './runtime/connection';
 import { RuntimeApp } from './runtime/RuntimeApp';
+import '@fontsource/ibm-plex-sans/latin-400.css';
+import '@fontsource/ibm-plex-sans/latin-500.css';
+import '@fontsource/ibm-plex-sans/latin-600.css';
+import '@fontsource/ibm-plex-sans/latin-700.css';
+import '@fontsource/ibm-plex-mono/latin-400.css';
+import '@fontsource/ibm-plex-mono/latin-500.css';
+import '@fontsource/ibm-plex-mono/latin-600.css';
 import '@xterm/xterm/css/xterm.css';
 import './styles/tokens.css';
-import './styles/app.css';
-import './styles/layout.css';
-import './styles/runtime.css';
+import './styles/base.css';
+import './styles/shell.css';
+import './styles/home.css';
 import './styles/session.css';
-import './styles/spawn.css';
 import './styles/chat.css';
-import './styles/controls.css';
 import './styles/terminal.css';
+import './styles/spawn.css';
 
 const root = document.getElementById('root');
 if (root === null) {
