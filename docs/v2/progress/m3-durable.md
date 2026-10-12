@@ -28,6 +28,15 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 75 (2026-10-12, 16:33–)
+
+- Round start: committed round 74 as a1786dc.
+- Sync: merged m3/orchestration 046dea1 (6-5 slice, DL-216: the start effect mints the coordinator credential and hands it to the child environment, `crates/fleetdeck-station/src/manager/coordinator_start.rs`) as 3df2a77. No board or ops commits. `crates/fleetdeck-proto` unchanged, so `make ts-types` was not needed.
+- Merge validation: `cargo nextest run -p fleetdeck-station -E 'test(coordinator_start)'` → 2 passed.
+- 7-6 Docs: `docs/v2/internals.md` §8 coordinator row names `manager/coordinator_start.rs` and its start-effect checks (DL-216).
+- Lane B `m3-orchestration.md` still has no "LANE COMPLETE"; 6-13, 7-7 and 7-8 stay blocked.
+- Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
+
 ## Round 74 (2026-10-12, 16:31–)
 
 - Round start: committed round 73 as 32d3170. No new commits on m3/orchestration, m3/board or m3/ops. Lane B still has no "LANE COMPLETE", so 6-13, 7-7 and 7-8 stay blocked.
