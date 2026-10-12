@@ -28,6 +28,52 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 87 (2026-10-12, 16:55–)
+
+- Round start: committed round 86 as 12df9f5. `git log v2..m3/orchestration`, `v2..m3/board`, `v2..m3/ops`: no new commits; `m3-orchestration.md` has no "LANE COMPLETE", so 6-13, 7-7 and 7-8 stay blocked.
+- 7-6 owner-step list: `docs/v2/operations.md` §12 lacked two items. Added the real GitHub Actions run of `.github/workflows/v2.yml` (owner step recorded since M2, `docs/v2/PROGRESS.md` line 222) and the open coordinator live smoke (ADR-006 §8.5, item 6-5) with its `handoff_unverified` effect.
+- Checks: `cargo nextest run -p fleetdeck-cli --test docs_commands`, `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`.
+
+## Round 86 (2026-10-12, 16:53–)
+
+- Round start: committed round 85 as 2991ef1. `git log v2..m3/orchestration`, `v2..m3/board`, `v2..m3/ops`: no new commits; `m3-orchestration.md` has no "LANE COMPLETE", so 6-13, 7-7 and 7-8 stay blocked.
+- 7-6 consistency with the r84 finding: `docs/v2/cutover.md` §1 `/fleet` row was stale (it said the grant and the control skill were not in; DL-217 added them). The row now names DL-217 and the `handoff_unverified` limit, and tells the owner to keep v1 `/fleet` until the coordinator live smoke passes. README "What you can do" coordinator bullet names the same limit and links operations §7.2.
+- Checks: `cargo nextest run -p fleetdeck-cli --test docs_commands`, `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`.
+
+## Round 85 (2026-10-12, 16:51–)
+
+- Round start: committed round 84 as 1bed9ce.
+- Sync: no new commits on m3/orchestration, m3/board or m3/ops.
+- Review finding of round 84 (operations §7.2 did not say that all providers refuse a coordinator start with `handoff_unverified`): checked against `crates/fleetdeck-providers/src/coordinator.rs` (`handoff` returns `Err(UNVERIFIED)` for Claude and Codex; test `the_capability_stays_off_until_the_live_smoke_passes`). The guide was wrong for the current build, so this round fixed it: §7.2 has a "Current limit" paragraph, and the §11 row names `handoff_unverified`. Follow-up row added as FIXED.
+- Lane B `m3-orchestration.md` still has no "LANE COMPLETE"; 6-13, 7-7 and 7-8 stay blocked.
+- Checks: `cargo nextest run -p fleetdeck-cli --test docs_commands` → passed; `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
+
+## Round 84 (2026-10-12, 16:50–)
+
+- Round start: committed round 83 as 4c49703.
+- Sync: no new commits on m3/orchestration, m3/board or m3/ops.
+- 7-6 Docs: new `docs/v2/operations.md` §7.2 "Start a coordinator session": the owner steps on the board (spawn form "Coordinator", the "Coordinator grants" list of the "Mail and tasks" panel, "Revoke" and "Renew"), a caution before the steps, the classes `read`, `mail`, `drive` that the form asks for (`web/src/spawn/SpawnForm.tsx`), the control skill and the start refusals (DL-216, DL-217). It states the open 6-5 parts (no durable coordinator outbox, no coordinator live smoke).
+- Lane B `m3-orchestration.md` still has no "LANE COMPLETE"; 6-13, 7-7 and 7-8 stay blocked.
+- Checks: `cargo nextest run -p fleetdeck-cli --test docs_commands` → passed; `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
+
+## Round 83 (2026-10-12, 16:47–)
+
+- Round start: committed round 82 as 9b62718.
+- Sync: merged m3/orchestration d3ac028/6232db8 as 5b7e1dd without conflicts (6-5 slice DL-217: owner coordinator start creates the grant with the control skill `crates/fleetdeck-deck/src/control_skill.md`, deck schema V11 `tokens.start_command_id`, station binding lifecycle in `crates/fleetdeck-station/src/manager/coordinator_start.rs` and `manager/target.rs`, spawn form toggle "Coordinator" in `web/src/spawn/SpawnForm.tsx`). crates/fleetdeck-proto did not change, so `make ts-types` was not needed. m3/board and m3/ops had no new commits.
+- Merge validation: `cargo nextest run -p fleetdeck-deck -p fleetdeck-station -E 'test(coordinator) | test(owner_start) | test(grant)'` → 58 passed.
+- Review finding of round 82: MD033 inline HTML on `<reason>` in `docs/v2/operations.md` §10. Fixed now (it breaks a lint check): the text is `&lt;reason&gt;`. `markdownlint-cli2 docs/v2/operations.md` reports no MD033 (only MD013 line-length notices, which the repository does not enforce).
+- 7-6 Docs: `docs/v2/internals.md` §8 coordinator row names the binding lifecycle (`bound_events`, `ended_events`) and `owner_start` with the control skill (DL-217).
+- Lane B `m3-orchestration.md` still has no "LANE COMPLETE"; 6-13, 7-7 and 7-8 stay blocked.
+- Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean; `bun run --cwd web lint` → clean (web changed in the merge).
+
+## Round 82 (2026-10-12, 16:46–)
+
+- Round start: committed round 81 as 5c4bb26.
+- Sync: no new commits on m3/orchestration, m3/board or m3/ops.
+- 7-6 Docs: `docs/v2/operations.md` §7.1 has a caution before the step that enters the native session id. Do not import the id of an earlier session that is `lost` with a shim host until its timeline shows the exit, because the station checks only the sessions that drive the id now (open follow-up of review r50, `crates/fleetdeck-station/src/manager/decide.rs`). The follow-up row names the caution; the code check stays open.
+- Lane B `m3-orchestration.md` still has no "LANE COMPLETE"; 6-13, 7-7 and 7-8 stay blocked.
+- Checks: `cargo nextest run -p fleetdeck-cli --test docs_commands` → passed (the guide still names only real commands); `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
+
 ## Round 81 (2026-10-12, 16:44–)
 
 - Round start: committed round 80 as c131df9.
@@ -410,7 +456,8 @@ Limits of this map (review of round 71). Two rows above claim more than the test
 | 7-6 (review r49) | FIXED (commit 8798ac2): operations §10 lists the five rules that the dispatch rechecks and the rules that it does not. The docs present the auto-continue rechecks as complete; the dispatch recheck covers only part of the A10 rules (see the 7-2 follow-ups) | `docs/v2/operations.md` §10, `docs/v2/internals.md` |
 | 7-6 (review r49) | FIXED (commit 8798ac2): `README.md` names the reconciliation state. The README says a revert changes nothing on failure; a revert that cannot be proven needs reconciliation and blocks input (PLAN §6.6) | `README.md` |
 | 6-12 merge (review r50) | FIXED round 56 (DL-130, `a_draining_station_refuses_an_import`): `session.import` is not in the drain guard's list of commands that create work, so an import passes a drain | `crates/fleetdeck-station/src/manager/drain.rs` |
-| 6-12 merge (review r50) | An import of a native session whose earlier session is `lost` with an unresolved shim can run that conversation twice (no unended-execution check for the native id) | `crates/fleetdeck-station/src/manager/decide.rs` |
+| 6-12 merge (review r50) | An import of a native session whose earlier session is `lost` with an unresolved shim can run that conversation twice (no unended-execution check for the native id). Round 82: documented as a caution in `docs/v2/operations.md` §7.1; the code check stays open. | `crates/fleetdeck-station/src/manager/decide.rs` |
 | 6-12 merge (review r50) | The board keeps the clone place and directory choices while an import id is set; the import ignores them without a visible note | `web/src/spawn/SpawnForm.tsx` |
 | 7-6 (review r50) | FIXED (commit 8798ac2): §7.1 says the import uses the mode of the spawn form. `docs/v2/operations.md` §7.1 says the import uses "the stored mode of the provider instance"; a provider instance has no stored permission mode (the import uses the mode of the spawn form) | `docs/v2/operations.md` |
+| 7-6 (review r84) | FIXED in round 85: `docs/v2/operations.md` §7.2 gave the coordinator start steps without saying that every provider refuses the start with `handoff_unverified` now (`crates/fleetdeck-providers/src/coordinator.rs::handoff`). §7.2 and the §11 row state the limit now. The steps stay valid for a verified provider version. | `docs/v2/operations.md` |
 | 7-8 prep (review r78) | The round-78 log said the 700-line probe lists two files; it lists 17, including the 798-line `host.rs`. Corrected in the round-78 entry. Add a test that runs `tools/module-size.sh` with a lower limit, so the probe count is evidence and not a hand count. Closed in round 80: `crates/fleetdeck-cli/tests/module_size.rs`. | `tools/module-size.sh`, `docs/v2/progress/m3-durable.md` |
