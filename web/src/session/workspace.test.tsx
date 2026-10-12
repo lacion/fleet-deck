@@ -15,6 +15,7 @@ import {
   parentPath,
   revertBlock,
   revertText,
+  workspaceFiles,
 } from './workspace';
 
 const key = { station_id: 'station-a', session_id: 's1' };
@@ -232,6 +233,33 @@ describe('workspace actions', () => {
     expect(parentPath('a')).toBe('');
     expect(joinPath('', 'a')).toBe('a');
     expect(joinPath('a', 'b')).toBe('a/b');
+  });
+
+  test('a folder of a station is read with workspace= and has no turns', async () => {
+    const asked: string[] = [];
+    const answers: Record<string, unknown> = {
+      list: { path: '', entries: [], truncated: false },
+      read: { path: 'a.txt', size: 1, binary: false, text: 'x', truncated: false },
+      search: { hits: [], truncated: false, backend: 'walk' },
+    };
+    const files = workspaceFiles(
+      async (path) => {
+        asked.push(path);
+        return answers[path.match(/files\/(\w+)/)?.[1] ?? ''];
+      },
+      'station-a',
+      '/home/me/my app',
+    );
+    await files.list('src');
+    await files.read('a b.txt');
+    await files.search('fn main', 'name');
+    expect(asked).toEqual([
+      '/api/stations/station-a/files/list?workspace=%2Fhome%2Fme%2Fmy%20app&path=src',
+      '/api/stations/station-a/files/read?workspace=%2Fhome%2Fme%2Fmy%20app&path=a%20b.txt',
+      '/api/stations/station-a/files/search?workspace=%2Fhome%2Fme%2Fmy%20app&q=fn%20main&mode=name',
+    ]);
+    await expect(files.diff('t1')).rejects.toThrow('A folder has no turns.');
+    expect(asked).toHaveLength(3);
   });
 
   test('revert and the two resolutions post one command each', async () => {
