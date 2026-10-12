@@ -83,6 +83,9 @@ pub struct CodexAdapterConfig {
     pub stop: StopPolicy,
     /// How long `stop` waits for the reader to deliver the last events.
     pub delivery_grace: Duration,
+    /// How long a `thread/rollback` waits for its answer (default
+    /// [`super::rollback::ROLLBACK_TIMEOUT`]).
+    pub rollback_timeout: Duration,
     /// The limit of the handshake: `initialize` and the thread reply.
     pub open_timeout: Duration,
     /// The time limit of each probe.
@@ -105,6 +108,7 @@ impl CodexAdapterConfig {
             raw_log: None,
             stop: StopPolicy::default(),
             delivery_grace: Duration::from_secs(5),
+            rollback_timeout: super::rollback::ROLLBACK_TIMEOUT,
             open_timeout: Duration::from_secs(30),
             probe_timeout: Duration::from_secs(10),
         }
@@ -219,6 +223,7 @@ impl CodexAdapter {
             frames: frames_rx,
             stop: self.config.stop,
             delivery_grace: self.config.delivery_grace,
+            rollback_timeout: self.config.rollback_timeout,
             raw_dir,
         };
         let (resume, fork) = match origin {
@@ -525,6 +530,7 @@ pub struct CodexSession {
     frames: watch::Receiver<u64>,
     stop: StopPolicy,
     delivery_grace: Duration,
+    pub(super) rollback_timeout: Duration,
     raw_dir: Option<PathBuf>,
 }
 

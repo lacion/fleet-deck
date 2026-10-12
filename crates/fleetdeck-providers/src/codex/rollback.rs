@@ -49,6 +49,21 @@ impl CodexCore {
         Ok(())
     }
 
+    /// Refuses conversation input while a rollback has no answer: a late
+    /// answer could still drop turns, so nothing may enter the thread
+    /// until the answer arrives or the process ends (review sa-56b1636a).
+    ///
+    /// # Errors
+    /// [`ProviderError::Refused`] while a rollback is on its way.
+    pub(super) fn no_rollback_outstanding(&self) -> Result<()> {
+        if matches!(self.rollback, Some(RollbackState::Sent)) {
+            return Err(ProviderError::Refused(
+                "a conversation rollback has no answer yet".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
     /// The `thread/rollback` frame for the last `turns` turns.
     ///
     /// # Errors
@@ -76,7 +91,7 @@ impl CodexCore {
         Vec::new()
     }
 
-    fn rollback_answered(&self) -> bool {
+    pub(super) fn rollback_answered(&self) -> bool {
         matches!(self.rollback, Some(RollbackState::Done(_)))
     }
 }
@@ -89,7 +104,7 @@ impl CodexSession {
         self.with_core(|c| c.check_rollback(turns)).await?;
         let uncertain = |e: ProviderError| ProviderError::Uncertain(e.to_string());
         self.run(|c| c.rollback(turns)).await.map_err(uncertain)?;
-        let deadline = tokio::time::Instant::now() + ROLLBACK_TIMEOUT;
+        let deadline = tokio::time::Instant::now() + self.rollback_timeout;
         self.wait_until(deadline, CodexCore::rollback_answered)
             .await
             .map_err(|e| match e {

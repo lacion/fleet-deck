@@ -417,6 +417,7 @@ impl CodexCore {
     /// No thread yet, an ended session, or an empty or reused input id.
     pub fn prompt(&mut self, input: &HostInput) -> Result<Vec<Output>> {
         let thread = self.thread()?;
+        self.no_rollback_outstanding()?;
         self.track(input)?;
         let text = input.input.text.clone();
         if self.turn.is_some() || self.turn_requested || !self.follow_ups.is_empty() {
@@ -479,6 +480,7 @@ impl CodexCore {
     /// [`ProviderError::NoTurn`] before the native turn id is known.
     pub fn steer(&mut self, input: &HostInput) -> Result<Vec<Output>> {
         let thread = self.thread()?;
+        self.no_rollback_outstanding()?;
         let turn = self.native_turn.clone().ok_or(ProviderError::NoTurn)?;
         self.track(input)?;
         let id = self.host_id(HostRequest::TurnSteer {

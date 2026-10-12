@@ -57,6 +57,7 @@ fn codex_adapter() -> Arc<dyn fleetdeck_providers::ProviderAdapter> {
         term_grace: Duration::from_millis(300),
     };
     config.delivery_grace = Duration::from_millis(500);
+    config.rollback_timeout = Duration::from_millis(500);
     Arc::new(CodexAdapter::new(config, Arc::new(DirectChildHost::new())))
 }
 

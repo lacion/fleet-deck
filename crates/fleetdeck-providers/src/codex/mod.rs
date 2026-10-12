@@ -26,6 +26,8 @@ pub mod rpc;
 mod tests;
 #[cfg(test)]
 mod tests_review;
+#[cfg(test)]
+mod tests_rollback;
 
 use fleetdeck_proto::capability::{BackgroundReporting, TerminalStatusQuality, UsageReporting};
 use fleetdeck_proto::event::ResponseChannel;

@@ -181,7 +181,10 @@ pub const OWNER_RECONCILED: &str = "owner_reconciled";
 /// `reconciliation_required`.
 ///
 /// - `reconciled`: the owner checked the conversation and the files and
-///   accepts them. The revert ends `reconciled`, the session takes input
+///   accepts them. While the provider process of the revert runs and its
+///   rollback has no confirmed answer, the owner must stop the session
+///   first: a late answer could still drop turns. The session (if it runs)
+///   and every other session of the worktree must be quiet. The revert ends `reconciled`, the session takes input
 ///   again, and every turn from before the reconciliation leaves the
 ///   revertable history (the station no longer knows how many turns the
 ///   conversation holds). This works on an ended or lost session too.
@@ -223,6 +226,26 @@ pub fn decide_resolve(
     }
     match resolution {
         RevertResolution::Reconciled => {
+            // The fence stays until nothing can still change the
+            // conversation or the files (review sa-56b1636a).
+            let ended = matches!(s.state, SessionState::Exited | SessionState::Lost);
+            let live = d.live_process(session_id)?;
+            let same_process = !ended && live.as_ref() == Some(&row.revert.process);
+            if same_process && !row.rolled_back {
+                return Err(reject(
+                    RejectCode::InvalidState,
+                    "the provider has not answered the conversation rollback, and a late answer could still change the conversation: stop the session, then reconcile",
+                ));
+            }
+            if !ended && live.is_some() && busy(&s) {
+                return Err(reject(
+                    RejectCode::InvalidState,
+                    "the session is busy: a turn, request or background task is pending",
+                ));
+            }
+            if let Some(why) = d.worktree_conflict(&row.revert.worktree_root, session_id)? {
+                return Err(reject(RejectCode::InvalidState, why));
+            }
             d.advance_revert(
                 revert_id,
                 &[RevertStep::ReconciliationRequired],
@@ -246,12 +269,7 @@ pub fn decide_resolve(
                     "the provider process of the revert is gone",
                 ));
             }
-            let busy = s.state != SessionState::Running
-                || s.current_turn.is_some()
-                || s.current_run.is_some()
-                || !s.open_requests.is_empty()
-                || !s.background_tasks.is_empty();
-            if busy || d.pending_input_effects(session_id)? > 0 {
+            if busy(&s) || d.pending_input_effects(session_id)? > 0 {
                 return Err(reject(
                     RejectCode::InvalidState,
                     "the session is busy: a turn, input, request or background task is pending",
@@ -283,6 +301,16 @@ pub fn decide_resolve(
         }
     }
     Ok(result(session_id, None))
+}
+
+/// A live session that is not quiet: a turn, a run, a request or
+/// background work.
+fn busy(s: &fleetdeck_proto::session::SessionSummary) -> bool {
+    s.state != SessionState::Running
+        || s.current_turn.is_some()
+        || s.current_run.is_some()
+        || !s.open_requests.is_empty()
+        || !s.background_tasks.is_empty()
 }
 
 fn side_reason(side: &RowSide) -> &str {

@@ -248,3 +248,61 @@ async fn an_unconfirmed_rollback_cannot_be_retried_but_can_be_reconciled_after_t
     assert_eq!(read(&dir), "one\nedited\n");
     st.manager.shutdown(StopMode::Kill).await;
 }
+
+#[tokio::test]
+async fn a_reconciliation_while_the_rollback_has_no_answer_keeps_the_fence_until_the_session_stops()
+{
+    let mut st = Station::new(4).await;
+    // The sim never answers the rollback; the adapter gives up after 500 ms.
+    let (s, dir, revert_id) = reconciling(&mut st, "hang", "rollback_uncertain").await;
+    let d = st
+        .send(resolve(&s, &revert_id, RevertResolution::Reconciled))
+        .await;
+    let reject = d.receipt.reject.unwrap();
+    assert_eq!(reject.code, RejectCode::InvalidState);
+    assert!(
+        reject.message.contains("stop the session"),
+        "{}",
+        reject.message
+    );
+    assert_eq!(states(&st, &s).await.len(), 2);
+    // The fence still holds: the session takes no input, and no session
+    // starts in the worktree.
+    let ws = st.workspace();
+    assert_eq!(
+        st.rejected(SessionCommand::Prompt {
+            session_id: s.clone(),
+            input: text("hello"),
+        })
+        .await,
+        RejectCode::InvalidState
+    );
+    assert_eq!(
+        st.rejected(SessionCommand::Start {
+            spec: spec(&ws, "claude"),
+            prompt: Some(text("hello")),
+        })
+        .await,
+        RejectCode::InvalidState
+    );
+    // The owner stops the session; then the reconciliation is accepted.
+    st.accepted(SessionCommand::Stop {
+        session_id: s.clone(),
+        how: StopMode::Kill,
+    })
+    .await;
+    st.wait_for("the end", |e| {
+        matches!(e, Event::SessionEnded { .. }).then_some(())
+    })
+    .await;
+    st.accepted(resolve(&s, &revert_id, RevertResolution::Reconciled))
+        .await;
+    assert_eq!(
+        wait_states(&st, &s, 3).await[2],
+        (RevertState::Reconciled, Some("owner_reconciled".to_owned()))
+    );
+    assert_eq!(read(&dir), "one\nedited\n");
+    // The worktree is free again.
+    st.start(&ws, Some("hello")).await;
+    st.manager.shutdown(StopMode::Kill).await;
+}
