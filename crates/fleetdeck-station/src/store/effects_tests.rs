@@ -57,9 +57,7 @@ fn envelope(det: &Det, id: &str) -> CommandEnvelope {
         origin: CommandOrigin::Board,
         command: SessionCommand::Prompt {
             session_id: S1.into(),
-            input: UserInput {
-                text: id.to_owned(),
-            },
+            input: UserInput::new(id.to_owned()),
         },
     }
 }
@@ -76,9 +74,7 @@ fn prompt(input: &str) -> EffectPayload {
         input: InputRecord {
             input_id: input.into(),
             origin: RunOrigin::Board,
-            input: UserInput {
-                text: "hi".to_owned(),
-            },
+            input: UserInput::new("hi".to_owned()),
         },
     }
 }

@@ -250,3 +250,48 @@
   width: 96px;
   vertical-align: middle;
 }
+
+/* M3 6-10: pasted images in the composer. */
+.fd-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  list-style: none;
+  margin: 0.5rem 0;
+  padding: 0;
+}
+.fd-images li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  align-items: flex-start;
+}
+.fd-images img {
+  max-width: 6rem;
+  max-height: 6rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.fd-attach input {
+  display: block;
+  max-width: 100%;
+}
+
+/* M3 6-7: the conflict radar. */
+.fd-conflicts ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.fd-conflicts li {
+  overflow-wrap: anywhere;
+}
+.fd-conflicts li ul {
+  padding-left: 12px;
+  gap: 2px;
+}
+.fd-conflicts .fd-dim {
+  color: var(--dim);
+}

@@ -102,7 +102,7 @@ async fn requests_get_one_response_each_on_the_same_connection() {
             command_id: Some("local-1".into()),
             command: SessionCommand::Prompt {
                 session_id: SessionId::from("nope"),
-                input: UserInput { text: "hi".into() },
+                input: UserInput::new("hi"),
             },
         })
         .await

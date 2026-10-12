@@ -224,7 +224,7 @@ fn spec(cwd: &str, instance: &str) -> SessionSpec {
 }
 
 fn text(t: &str) -> UserInput {
-    UserInput { text: t.to_owned() }
+    UserInput::new(t.to_owned())
 }
 
 fn kinds(events: &[EventEnvelope]) -> Vec<String> {

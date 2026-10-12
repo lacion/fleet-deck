@@ -29,3 +29,28 @@ Lane C numbers its decisions DL-300 to DL-399 (parallel lanes, owner change of 2
 - Choice: (b). `SessionSummary.rate_limits` (`#[serde(default)]`, so an N-1 summary without it reads as "no window", not zero), merged by scope (a sparse update keeps the other scopes), at most 16 scopes. Codex: `account/rateLimits/updated` maps to `usage.updated` with all usage parts unknown and the windows `<limitId>.primary|secondary` (`usedPercent`, `resetsAt` seconds → ms; a missing window is not reported). Board: a "Usage" panel on the fleet screen with the totals of the shown sessions ("unknown" when no session reported a part, "at least N (k sessions unknown)" when some did not) and one meter per window; a window with an unknown percentage shows "use unknown" and no bar.
 - Not done (follow-up): rate limits are per provider account, but the board keys them by station and provider instance (the station does not expose the account id). A rate-limit-only `usage.updated` changes the summary's `updated_at`.
 - Owner review: pending (executor decision, M3 round 1)
+
+## DL-304: Image paste into prompts (M3 round 2, 6-10)
+
+- Context: PLAN Phase 6 "Screenshot/image paste into prompts" and §16 "Shift+Enter, Ctrl+V screenshot paste → composer newline; image paste into prompts". `UserInput` carried text only. Both providers accept images in a user turn: Claude stream-json `image` content blocks with a base64 `source`; Codex app-server `turn/start` / `turn/steer` input items `{"type":"image","url":"data:..."}`.
+- Options: (a) upload the image to the station first (a new file method and storage) and send a path; (b) send the image inline as base64 inside the command.
+- Choice: (b), the smallest change that reaches both providers without new storage. `UserInput.images: Vec<ImageInput { media_type, data }>` with `#[serde(default, skip_serializing_if = "Vec::is_empty")]`, so an input without images keeps the old wire form and an N-1 peer reads it. Limits in `crates/fleetdeck-proto/src/input.rs`: at most 4 images, at most 768 KiB of base64 together (the command goes to the station in one control frame of at most 1 MiB), PNG/JPEG/GIF/WebP only, standard base64. The deck refuses an input above the limits with `400 invalid_input` before it stores or sends anything. The board checks the same limits first, draws a large image again as JPEG (long side 1600 px) when the browser can, and offers an "Add image" file picker for phones next to the paste. The textarea keeps Enter as a newline (Shift+Enter parity); the Send button sends.
+- Not done (follow-up): the recorded Claude/Codex host commands (`HostCmd::Prompt`) keep the text only, so a replay of a recorded scenario has no images; no live smoke test with an image.
+- Owner review: pending (executor decision, M3 round 2)
+
+## DL-305: Needs-you notifications in the browser (M3 round 2, 6-10)
+
+- Context: PLAN Phase 6 "notifications". The v0 board has no push service; v2 has no service worker.
+- Choice: the board shows a browser `Notification` ("Needs you: <session>", body = the request title, tag = `station/session/request`) for each open request that appears while notifications are on. The owner turns them on with "Notify me" in the needs-you rail (the browser permission prompt); the setting stays in this browser (`localStorage` `fleetdeck.notify`). Requests that are open at page load or at the turn-on make no notification, so a reload makes no storm. A click focuses the board and opens the session. A browser without the API or with a denied permission shows a note instead of the button.
+- Not done (follow-up): no Web Push / service worker, so a phone with the board closed gets nothing; no notification for a failed or finished turn.
+- Owner review: pending (executor decision, M3 round 2)
+
+## DL-306: Conflict radar across stations (M3 round 2, 6-7)
+
+- Context: PLAN §16 "Conflict radar | Keep, across stations", §10 `file_touches` (conflict radar input), §6.6 "a normalized origin URL is a heuristic, not an identity. Repos with several remotes or no remote are grouped only by explicit owner choice." v0 (`src/daemon/ledger.ts`) records each edit and reports a rival edit of the same file in 30 minutes.
+- Choice:
+  - The station records the repository of the workspace when it creates a session: `RepoInfo { root, origin }` (`fleetdeck_core::git::repo_of`, no `git` process; `commondir` of a linked worktree is followed). `origin` is the normalized URL (`host/path`, host in lower case, no user, port or `.git`) only when the repository has exactly one remote. It goes into `SessionSummary.repo` and the `session.started` event (optional field, an N-1 peer ignores it).
+  - The deck folds `file.changed` paths and the `files` of `tool.completed` into `file_touches` (schema V7), in the same transaction as the event, with the latest touch per (group, file, station, session). Group: `origin:<origin>` across stations; else `root:<station>:<root>` (one work tree on one station); a file outside the repository is grouped by station with its absolute path. A relative path is relative to the session's `cwd`. Rows older than two windows are deleted.
+  - `GET /api/conflicts` (`read`): every file that two or more sessions touched in the last 30 minutes, newest first, at most 200. The board shows the "Conflict radar" panel on the fleet screen; it loads again when the fleet changes; a session of a conflict opens from the panel.
+- Not done (follow-up): the explicit owner choice to group repositories without one origin (no owner setting yet, so they never group across stations); no mail or in-context warning to the two sessions (v0 whisper); ended sessions still count inside the window.
+- Owner review: pending (executor decision, M3 round 2)

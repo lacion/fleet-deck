@@ -8,7 +8,9 @@ import { AssignBar } from './assign/AssignBar';
 import { FleetBoard } from './board/FleetBoard';
 import { NeedsYouRail } from './board/NeedsYouRail';
 import { PlanLibrary } from './board/PlanLibrary';
+import { ConflictRadar } from './board/ConflictRadar';
 import { UsageMeters } from './board/UsageMeters';
+import type { ConflictLoader } from './board/conflicts';
 import type { PlanActions } from './board/plans';
 import { ALL, emptyFilter, filterFleet, type FleetFilter, stationName } from './board/fleet';
 import type { StationActions } from './board/pairing';
@@ -44,6 +46,8 @@ type Props = {
   readonly feed?: readonly FeedItem[];
   /** The plan library (DL-301). */
   readonly plans?: PlanActions | undefined;
+  /** The conflict radar (M3 6-7); absent in tests without a deck. */
+  readonly conflicts?: ConflictLoader | undefined;
   /** The plan library at the first render (tests). */
   readonly initialPlans?: readonly DeckPlan[] | null;
 };
@@ -67,6 +71,7 @@ export function App({
   initialListing = null,
   feed = [],
   plans,
+  conflicts,
   initialPlans = null,
 }: Props) {
   const [screen, setScreen] = useState<Screen>(initialScreen);
@@ -246,9 +251,24 @@ export function App({
             onOpen={setOpen}
           />
           <UsageMeters sessions={visible} stations={stations} />
+          {conflicts === undefined ? null : (
+            <ConflictRadar
+              load={conflicts}
+              stations={stations}
+              version={fleetVersion(sessions)}
+              onOpen={setOpen}
+            />
+          )}
           <Feed items={feed} onOpen={setOpen} />
         </>
       )}
     </div>
   );
+}
+
+/** Changes when any session changes, so derived panels load again. */
+function fleetVersion(sessions: readonly DeckSession[]): string {
+  let newest = 0;
+  for (const s of sessions) newest = Math.max(newest, s.summary.updated_at);
+  return `${sessions.length}/${newest}`;
 }

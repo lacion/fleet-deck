@@ -260,9 +260,7 @@ async fn a_shim_session_keeps_its_turn_checkpoints_and_survives_a_station_restar
                     model: None,
                     title: None,
                 },
-                prompt: Some(UserInput {
-                    text: "hello".to_owned(),
-                }),
+                prompt: Some(UserInput::new("hello".to_owned())),
                 workspace: None,
             },
         )
@@ -294,9 +292,7 @@ async fn a_shim_session_keeps_its_turn_checkpoints_and_survives_a_station_restar
         &second,
         SessionCommand::Prompt {
             session_id: session.clone(),
-            input: UserInput {
-                text: "again".to_owned(),
-            },
+            input: UserInput::new("again".to_owned()),
         },
     )
     .await;
@@ -338,9 +334,7 @@ async fn start_session(rig: &mut Rig, station: &Station, prompt: &str) -> Sessio
                     model: None,
                     title: None,
                 },
-                prompt: Some(UserInput {
-                    text: prompt.to_owned(),
-                }),
+                prompt: Some(UserInput::new(prompt.to_owned())),
                 workspace: None,
             },
         )
@@ -401,9 +395,7 @@ async fn slow_turn_and(rig: &mut Rig, follow_up: &str) -> (SessionId, Store) {
         &first,
         SessionCommand::Prompt {
             session_id: session.clone(),
-            input: UserInput {
-                text: format!("slow {SLOW_MS} one"),
-            },
+            input: UserInput::new(format!("slow {SLOW_MS} one")),
         },
     )
     .await;
@@ -415,9 +407,7 @@ async fn slow_turn_and(rig: &mut Rig, follow_up: &str) -> (SessionId, Store) {
         &first,
         SessionCommand::FollowUp {
             session_id: session.clone(),
-            input: UserInput {
-                text: follow_up.to_owned(),
-            },
+            input: UserInput::new(follow_up.to_owned()),
         },
     )
     .await;
@@ -523,9 +513,7 @@ async fn turns_that_end_and_start_while_the_station_is_down_are_finalized_after_
         &second,
         SessionCommand::Prompt {
             session_id: session.clone(),
-            input: UserInput {
-                text: "again".to_owned(),
-            },
+            input: UserInput::new("again".to_owned()),
         },
     )
     .await;
@@ -793,9 +781,7 @@ async fn a_live_shim_exit_with_a_surviving_child_keeps_the_evidence_and_resume_s
         &station,
         SessionCommand::Prompt {
             session_id: session.clone(),
-            input: UserInput {
-                text: "exit-leaving-child bye".to_owned(),
-            },
+            input: UserInput::new("exit-leaving-child bye".to_owned()),
         },
     )
     .await;
@@ -860,9 +846,7 @@ async fn a_live_shim_exit_without_survivors_is_a_proven_end() {
         &station,
         SessionCommand::Prompt {
             session_id: session.clone(),
-            input: UserInput {
-                text: "exit-after bye".to_owned(),
-            },
+            input: UserInput::new("exit-after bye".to_owned()),
         },
     )
     .await;

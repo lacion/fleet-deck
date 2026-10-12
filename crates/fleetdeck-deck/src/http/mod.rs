@@ -92,6 +92,7 @@ pub fn router(board: Arc<Board>) -> Router {
             "/api/stations/{station}/sessions/{session}/turns/{turn}/diff",
             get(file_routes::diff),
         )
+        .route("/api/conflicts", get(plan_routes::conflicts))
         .route("/api/plans", get(plan_routes::list))
         .route("/api/plans/mark", post(plan_routes::mark))
         .route("/api/sessions", get(read_routes::sessions))

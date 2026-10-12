@@ -26,6 +26,7 @@ fn samples() -> Vec<Event> {
             provider_refs: refs(),
             title: None,
             branch: None,
+            repo: None,
         },
         Event::SessionStateChanged {
             state: SessionState::Running,

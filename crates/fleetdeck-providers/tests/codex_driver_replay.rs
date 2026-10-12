@@ -139,7 +139,7 @@ fn board_input(text: String, input_id: &str) -> HostInput {
     HostInput {
         id: InputId::new(input_id),
         origin: RunOrigin::Board,
-        input: UserInput { text },
+        input: UserInput::new(text),
     }
 }
 

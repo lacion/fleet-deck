@@ -124,6 +124,13 @@ pub const API: &[ApiMethod] = &[
         false,
     ),
     m(
+        "conflicts.list",
+        Method::GET,
+        "/api/conflicts",
+        Some(Scope::Read),
+        false,
+    ),
+    m(
         "plans.list",
         Method::GET,
         "/api/plans",

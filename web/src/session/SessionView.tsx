@@ -3,7 +3,8 @@ import { stationName } from '../board/fleet';
 import { providerLabel } from '../board/lanes';
 import type { DeckSession, OpenRequest, StationView } from '../gen';
 import type { Freshness, Timeline } from '../runtime/state';
-import type { InputKind, Outcome, SessionActions } from './commands';
+import type { Outcome, SessionActions } from './commands';
+import { Composer } from './Composer';
 import { QuestionAnswer } from './QuestionAnswer';
 import { questionForm, type Reply } from './question';
 import { FilesPanel } from './FilesPanel';
@@ -112,7 +113,7 @@ export function SessionView({ session, stations, timeline, freshness, actions, o
         working={working}
         steer={caps?.steer === true}
         nativeQueue={caps?.native_follow_up === true}
-        onSend={(kind, text) => actions && act(() => actions.send(kind, text))}
+        onSend={(kind, text, images) => actions && act(() => actions.send(kind, text, images))}
       />
       {outcome ? (
         <p role={outcome.ok ? 'status' : 'alert'} className="fd-outcome">
@@ -262,67 +263,6 @@ function ModelPicker(props: {
       <button type="submit" disabled={!props.enabled || value === ''}>
         Set model
       </button>
-    </form>
-  );
-}
-
-function Composer(props: {
-  enabled: boolean;
-  working: boolean;
-  steer: boolean;
-  nativeQueue: boolean;
-  onSend: (kind: InputKind, text: string) => void;
-}) {
-  const [text, setText] = useState('');
-  const send = (kind: InputKind) => {
-    const value = text.trim();
-    if (value === '') return;
-    setText('');
-    props.onSend(kind, value);
-  };
-  const empty = text.trim() === '';
-  return (
-    <form
-      className="fd-composer"
-      aria-label="Composer"
-      onSubmit={(event) => {
-        event.preventDefault();
-        send(props.working ? 'follow_up' : 'prompt');
-      }}
-    >
-      <label htmlFor="fd-composer-text">Message</label>
-      <textarea
-        id="fd-composer-text"
-        rows={3}
-        value={text}
-        disabled={!props.enabled}
-        onChange={(event) => setText(event.target.value)}
-      />
-      <div className="fd-options">
-        {props.working ? (
-          <>
-            {props.steer ? (
-              <button
-                type="button"
-                disabled={!props.enabled || empty}
-                onClick={() => send('steer')}
-              >
-                Steer now
-              </button>
-            ) : null}
-            <button type="submit" disabled={!props.enabled || empty}>
-              Queue follow-up
-            </button>
-            {props.nativeQueue ? null : (
-              <p className="fd-note">The station holds a follow-up until the turn ends.</p>
-            )}
-          </>
-        ) : (
-          <button type="submit" disabled={!props.enabled || empty}>
-            Send
-          </button>
-        )}
-      </div>
     </form>
   );
 }

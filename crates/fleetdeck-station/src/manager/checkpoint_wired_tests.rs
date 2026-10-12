@@ -187,9 +187,7 @@ async fn a_follow_up_queued_behind_a_running_turn_gets_explicit_unavailable_side
     streaming(&st, 0).await;
     st.accepted(SessionCommand::FollowUp {
         session_id: s.clone(),
-        input: UserInput {
-            text: "echo after".to_owned(),
-        },
+        input: UserInput::new("echo after".to_owned()),
     })
     .await;
     st.wait_for("queued follow-up", |e| {

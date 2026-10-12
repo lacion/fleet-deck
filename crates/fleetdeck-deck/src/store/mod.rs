@@ -18,6 +18,7 @@
 pub mod audit;
 pub mod auth;
 pub mod commands;
+pub mod conflicts;
 pub mod coordinator;
 pub mod fleet;
 pub mod outbox;

@@ -18,6 +18,7 @@ use crate::board::{
 };
 use crate::capability::{Capabilities, Operation, Unsupported};
 use crate::command::{CommandEnvelope, DeckCommandState, Receipt};
+use crate::conflicts::FileConflict;
 use crate::event::{Event, EventEnvelope};
 use crate::files::{
     FileContent, FileListQuery, FileListing, FileReadQuery, FileSearch, FileSearchQuery, TurnDiff,
@@ -96,6 +97,7 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         TaskCompletion::export_all(&cfg),
         TaskView::export_all(&cfg),
         DeckPlan::export_all(&cfg),
+        FileConflict::export_all(&cfg),
         PlanStatus::export_all(&cfg),
         PlanMarkRequest::export_all(&cfg),
     ];

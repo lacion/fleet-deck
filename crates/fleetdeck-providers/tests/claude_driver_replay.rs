@@ -95,7 +95,7 @@ async fn apply(session: &mut ClaudeSession, cmd: HostCmd) {
                 .prompt(HostInput {
                     id: InputId::new(input_id.as_str()),
                     origin: RunOrigin::Board,
-                    input: UserInput { text },
+                    input: UserInput::new(text),
                 })
                 .await
         }

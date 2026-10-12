@@ -264,9 +264,7 @@ fn envelope(det: &Det, id: &str, text: &str) -> CommandEnvelope {
         origin: CommandOrigin::Board,
         command: SessionCommand::Prompt {
             session_id: "s1".into(),
-            input: UserInput {
-                text: text.to_owned(),
-            },
+            input: UserInput::new(text.to_owned()),
         },
     }
 }
@@ -598,6 +596,7 @@ async fn the_started_event_carries_the_title_and_branch_of_the_session() {
         provider_refs: fleetdeck_proto::event::ProviderRefs::new(),
         title: None,
         branch: None,
+        repo: None,
     }
     .into();
     s.append("s1".into(), vec![started]).await.unwrap();
@@ -612,4 +611,45 @@ async fn the_started_event_carries_the_title_and_branch_of_the_session() {
     deck_view.apply(&events[0]);
     assert_eq!(deck_view.title.as_deref(), Some("t"));
     assert_eq!(deck_view.branch.as_deref(), Some("fd/feature"));
+}
+
+#[tokio::test]
+async fn the_started_event_carries_the_repository_of_the_workspace() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join(".git")).unwrap();
+    std::fs::write(dir.path().join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+    std::fs::write(
+        dir.path().join(".git/config"),
+        "[remote \"origin\"]\n\turl = https://github.com/o/app.git\n",
+    )
+    .unwrap();
+    std::fs::create_dir(dir.path().join("src")).unwrap();
+    let det = Det::new();
+    let s = store(&det).await;
+    let mut new = new_session("s1");
+    new.cwd = dir.path().join("src").to_string_lossy().into_owned();
+    s.create_session(new.clone()).await.unwrap();
+    let started: NewEvent = Event::SessionStarted {
+        provider: ProviderKind::Claude,
+        provider_instance: "claude".into(),
+        provider_version: None,
+        model: None,
+        cwd: new.cwd.clone(),
+        mode: None,
+        capabilities: Box::new(fleetdeck_proto::capability::Capabilities::minimal()),
+        resumed: None,
+        provider_refs: fleetdeck_proto::event::ProviderRefs::new(),
+        title: None,
+        branch: None,
+        repo: None,
+    }
+    .into();
+    s.append("s1".into(), vec![started]).await.unwrap();
+    let events = read_all(&s, 0).await;
+    let EventBody::Known(Event::SessionStarted { repo, .. }) = &events[0].event else {
+        panic!("{events:?}");
+    };
+    let repo = repo.clone().unwrap();
+    assert_eq!(repo.root, dir.path().to_string_lossy());
+    assert_eq!(repo.origin.as_deref(), Some("github.com/o/app"));
 }

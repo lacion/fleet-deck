@@ -49,9 +49,7 @@ fn input(id: &str, text: &str) -> HostInput {
     HostInput {
         id: InputId::new(id),
         origin: RunOrigin::Board,
-        input: UserInput {
-            text: text.to_owned(),
-        },
+        input: UserInput::new(text.to_owned()),
     }
 }
 
