@@ -1420,3 +1420,11 @@ Format: context, options, choice, reason, owner review.
 - Reason: these are the review's required behaviours; (2)(a) parses bytes the adapter cannot interpret and (2)(c) kills work the owner may still want. Each fix has a regression that fails when the fix alone is undone.
 - Owner review: not required (fixes inside the accepted ADR-005 revision 3).
 
+## DL-123 — The adapter state gap fences every claim in the store (review of DL-122; ADR-005 §4.2; M3 round 44)
+
+- Context: the review of round 43 found that `internal` and `apply_inner` read the in-memory gap flag before they took the core lock, and that generated-frame claims were not fenced: a dispatch waiting for the lock, or a frame flushed by another path, could still send bytes from an invalidated adapter state.
+- Options: (a) recheck the flag under the core lock only; (b) also fence in the store, so the claim transaction itself refuses after a gap; (c) kill the provider at a gap.
+- Choice: (a) and (b). The store helper `shim_gaps::has_adapter_gap` (input blocked with `adapter_state_gap`) is checked in the same transaction as the generation check in `shim_claim_frame`, `shim_begin_transition` and `shim_claim_write`; `Store::shim_has_adapter_gap` lets the driver name the reason and set its flag when a transition is refused. (c) is not chosen for the reason in DL-122.
+- Reason: the store fence holds for every path and every owner, including one whose memory is stale; the recheck under the lock keeps the driver from computing a command at all. The race regression fails without the store fence.
+- Owner review: not required (fix inside the accepted ADR-005 revision 3).
+

@@ -29,7 +29,29 @@ pub const REASON_ADAPTER_STATE_GAP: &str = "adapter_state_gap";
 /// The process end reason after an exit report read at recovery.
 pub const REASON_EXITED: &str = "exited";
 
+/// True when the adapter state of `shim_id` was invalidated by a gap: no
+/// generated frame, command transition or stdin frame may be claimed for
+/// it any more, whatever the caller's memory says (review of DL-122).
+pub(super) fn has_adapter_gap(conn: &rusqlite::Connection, shim_id: &str) -> Result<bool> {
+    let blocked: Option<Option<String>> = conn
+        .query_row(
+            "SELECT input_blocked FROM shims WHERE shim_id = ?1",
+            [shim_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(blocked.flatten().as_deref() == Some(REASON_ADAPTER_STATE_GAP))
+}
+
 impl Store {
+    /// True when the adapter state of `shim_id` was invalidated by a gap.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn shim_has_adapter_gap(&self, shim_id: String) -> Result<bool> {
+        super::call(&self.inner.db, move |conn| has_adapter_gap(conn, &shim_id)).await
+    }
+
     /// Commits a `below_floor` gap `[from, to)` of the current `generation`
     /// (see the module documentation). `false` for a stale generation or an
     /// ended row; then nothing changes.

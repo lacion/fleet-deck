@@ -17,6 +17,13 @@ impl<C: DurableCore> DurableDriver<C> {
         self.adapter_gap.load(Ordering::SeqCst)
     }
 
+    /// Records a gap that the store reported (committed by another path or
+    /// owner) so this driver dispatches nothing more.
+    pub(super) fn note_adapter_gap(&self) {
+        self.adapter_gap.store(true, Ordering::SeqCst);
+        self.changed.send_modify(|n| *n += 1);
+    }
+
     /// Commits the `below_floor` gap of an attachment whose replay starts
     /// above the committed cursor. `true` when there was one.
     pub(super) async fn below_floor(&self, attached: &Attached) -> Result<bool, StoreError> {
@@ -61,5 +68,14 @@ impl<C: DurableCore> DurableDriver<C> {
                 .await,
             Ok(true)
         ) && self.process.ack(cursor).await
+    }
+}
+
+impl<C: DurableCore> DurableDriver<C> {
+    /// Test hook: holds the core lock, so a dispatch waits for it (a race
+    /// point between a gap commit and a command).
+    #[doc(hidden)]
+    pub async fn hold_core(&self) -> tokio::sync::MutexGuard<'_, C> {
+        self.core.lock().await
     }
 }

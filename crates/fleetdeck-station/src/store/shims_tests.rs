@@ -371,3 +371,58 @@ async fn frame_state_changes_are_fenced_by_the_owner_generation_and_the_current_
             .unwrap()
     );
 }
+
+// Review of DL-122: after an adapter state gap the store refuses every
+// claim that could send bytes from the invalidated state, whatever the
+// caller's memory says.
+#[tokio::test]
+async fn after_an_adapter_state_gap_no_frame_transition_or_stdin_claim_is_accepted() {
+    let det = Det::new();
+    let s = store(&det).await;
+    s.shim_starting(shim("a")).await.unwrap();
+    assert!(s.shim_running("a".into(), identity(9)).await.unwrap());
+    assert_eq!(s.shim_next_generation("a".into()).await.unwrap(), Some(1));
+    let meta = OutputMeta {
+        frames: vec![
+            "{\"method\":\"fd/one\"}".to_owned(),
+            "{\"method\":\"fd/two\"}".to_owned(),
+        ],
+        ..OutputMeta::default()
+    };
+    s.shim_commit_output_with("a".into(), 1, 0, Vec::new(), meta)
+        .await
+        .unwrap();
+    let frames = s.shim_open_frames("a".into()).await.unwrap();
+    // Before the gap a claim is accepted.
+    assert!(
+        s.shim_claim_frame("a".into(), 1, frames[0].frame_seq)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(!s.shim_has_adapter_gap("a".into()).await.unwrap());
+
+    assert!(s.shim_adapter_gap("a".into(), 1, 0, 10).await.unwrap());
+    assert!(s.shim_has_adapter_gap("a".into()).await.unwrap());
+    assert_eq!(
+        s.shim_claim_frame("a".into(), 1, frames[1].frame_seq)
+            .await
+            .unwrap(),
+        None,
+        "a generated frame"
+    );
+    assert_eq!(
+        s.shim_claim_write("a".into(), 1, None, 0, 1).await.unwrap(),
+        None,
+        "a stdin frame"
+    );
+    assert_eq!(
+        s.shim_begin_transition("a".into(), 1, "e-1".into(), 1, Vec::new())
+            .await
+            .unwrap(),
+        None,
+        "a command transition"
+    );
+    // A stale generation cannot commit a second gap.
+    assert!(!s.shim_adapter_gap("a".into(), 7, 0, 10).await.unwrap());
+}

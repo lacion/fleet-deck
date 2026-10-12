@@ -83,8 +83,9 @@ impl DurableCore for Lines {
         (vec![event.into()], Vec::new())
     }
 
+    /// Every command is one stdin line `cmd`.
     fn command(&mut self, _effect: &Effect) -> Result<Steps, ProviderError> {
-        Err(ProviderError::NotReady("no commands"))
+        Ok((Vec::new(), vec!["cmd".to_owned()]))
     }
 
     fn ended(&self) -> bool {
@@ -479,4 +480,95 @@ async fn a_below_floor_gap_invalidates_the_adapter_state_at_once_while_the_provi
         vec![(shim_id, REASON_ADAPTER_STATE_GAP.to_owned())]
     );
     assert!(alive(pid), "the shim and its provider are left alone");
+}
+
+// Review of DL-122: a dispatch that waited for the core lock while a gap
+// was committed sends nothing. The gap here is committed by the store (as
+// another path or owner would), so only the store fences and the recheck
+// under the core lock can stop the command.
+#[tokio::test]
+async fn a_dispatch_racing_an_adapter_state_gap_sends_nothing() {
+    let rig = Rig::new().await;
+    rig.store
+        .process_started("s1".into(), "proc-1".to_owned().into(), None)
+        .await
+        .unwrap();
+    let out = rig.tmp.path().join("stdin.out");
+    let (driver, shim_id, pid) = rig.drive(&format!("cat > '{}'", out.display())).await;
+    let fence = rig.store.register_worker().await.unwrap();
+    let envelope = CommandEnvelope {
+        command_id: "cmd-1".into(),
+        target_incarnation: None,
+        retry_until: i64::try_from(rig._det.now_ms()).unwrap() + RETRY_WINDOW_MS,
+        origin: CommandOrigin::Board,
+        command: SessionCommand::Interrupt {
+            session_id: "s1".into(),
+        },
+    };
+    rig.store
+        .decide(envelope, Caller::local(), |d| {
+            d.enqueue(
+                &"s1".into(),
+                fleetdeck_station::store::EffectPayload::Interrupt,
+            )?;
+            Ok(CommandResult {
+                session_id: Some("s1".into()),
+                input_id: None,
+            })
+        })
+        .await
+        .unwrap();
+    let claimed = rig.store.claim_next(fence).await.unwrap().unwrap();
+
+    let guard = driver.hold_core().await;
+    let racing = {
+        let driver = Arc::clone(&driver);
+        let effect = claimed.clone();
+        tokio::spawn(async move { driver.apply(&effect).await })
+    };
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        !racing.is_finished(),
+        "the dispatch waits for the core lock"
+    );
+    let generation = rig
+        .store
+        .shim(shim_id.clone())
+        .await
+        .unwrap()
+        .unwrap()
+        .generation;
+    assert!(
+        rig.store
+            .shim_adapter_gap(shim_id.clone(), generation, 0, 0)
+            .await
+            .unwrap()
+    );
+    drop(guard);
+
+    let dispatch = racing.await.unwrap();
+    assert!(
+        matches!(
+            &dispatch,
+            fleetdeck_station::store::Dispatch::NotDispatched(reason)
+                if reason == REASON_ADAPTER_STATE_GAP
+        ),
+        "{dispatch:?}"
+    );
+    assert!(driver.has_adapter_gap());
+    assert!(
+        rig.store
+            .shim_transitions(shim_id.clone())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(
+        std::fs::read(&out).unwrap_or_default(),
+        Vec::<u8>::new(),
+        "no byte reached the provider"
+    );
+    assert!(alive(pid));
+    driver.abandon().await;
 }

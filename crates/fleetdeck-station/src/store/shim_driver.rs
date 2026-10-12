@@ -138,7 +138,7 @@ impl Store {
             let Some((current, session)) = open_row(conn, &shim_id)? else {
                 return Ok(None);
             };
-            if current != generation {
+            if current != generation || super::shim_gaps::has_adapter_gap(conn, &shim_id)? {
                 return Ok(None);
             }
             let state: Option<String> = conn
@@ -293,7 +293,7 @@ impl Store {
             let Some((current, session)) = open_row(conn, &shim_id)? else {
                 return Ok(None);
             };
-            if current != generation {
+            if current != generation || super::shim_gaps::has_adapter_gap(conn, &shim_id)? {
                 return Ok(None);
             }
             let seq: i64 = conn.query_row(

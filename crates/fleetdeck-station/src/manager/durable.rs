@@ -298,10 +298,12 @@ impl<C: DurableCore> DurableDriver<C> {
         &self,
         op: impl FnOnce(&mut C) -> Result<Steps, ProviderError>,
     ) -> Result<(), DriverError> {
+        let mut core = self.core.lock().await;
+        // Checked under the core lock: a gap commit holds the same lock, so
+        // a gap committed while this call waited is seen here.
         if self.has_adapter_gap() {
             return Err(ProviderError::NotReady(REASON_ADAPTER_STATE_GAP).into());
         }
-        let mut core = self.core.lock().await;
         let (events, frames) = op(&mut core)?;
         let checkpoint = snapshot(&*core)?;
         let cursor = self.process.acked();
@@ -449,12 +451,14 @@ impl<C: DurableCore> DurableDriver<C> {
     }
 
     async fn apply_inner(&self, effect: &Effect) -> Result<Dispatch, DriverError> {
+        let mut core = self.core.lock().await;
+        // Checked under the core lock (see `internal`); the store also
+        // refuses the transition and every frame claim after a gap.
         if self.has_adapter_gap() {
             // Proven not sent: nothing goes to the provider from an
             // incomplete adapter state.
             return Ok(Dispatch::NotDispatched(REASON_ADAPTER_STATE_GAP.to_owned()));
         }
-        let mut core = self.core.lock().await;
         let before = snapshot(&*core)?;
         let (events, frames) = match core.command(effect) {
             Ok(steps) => steps,
@@ -485,6 +489,14 @@ impl<C: DurableCore> DurableDriver<C> {
             .await?
         else {
             *core = rebuild(&self.config, &before)?;
+            if self
+                .store
+                .shim_has_adapter_gap(self.shim_id.clone())
+                .await?
+            {
+                self.note_adapter_gap();
+                return Ok(Dispatch::NotDispatched(REASON_ADAPTER_STATE_GAP.to_owned()));
+            }
             return Ok(Dispatch::NotDispatched("stale_shim_generation".into()));
         };
         if bytes.is_empty() {

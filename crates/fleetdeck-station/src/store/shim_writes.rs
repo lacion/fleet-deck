@@ -139,7 +139,9 @@ impl Store {
                     "frame {ordinal} of an effect with {frames} frames"
                 )));
             }
-            if current_generation(conn, &shim_id)? != Some(generation) {
+            if current_generation(conn, &shim_id)? != Some(generation)
+                || super::shim_gaps::has_adapter_gap(conn, &shim_id)?
+            {
                 return Ok(None);
             }
             if let Some(effect) = &effect_id {
