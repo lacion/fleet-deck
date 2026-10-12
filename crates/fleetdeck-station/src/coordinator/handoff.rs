@@ -10,7 +10,7 @@
 use fleetdeck_core::childenv::ChildEnvError;
 use fleetdeck_core::{ChildEnv, Secret};
 use fleetdeck_proto::event::ProviderKind;
-pub use fleetdeck_providers::coordinator::TOKEN_ENV;
+pub use fleetdeck_providers::coordinator::{CoordinatorLaunch, TOKEN_ENV};
 
 use super::bindings;
 
@@ -58,5 +58,14 @@ impl Handoff {
     /// [`ChildEnvError`] for an invalid value.
     pub fn apply(&self, env: &mut ChildEnv) -> Result<(), ChildEnvError> {
         env.set(TOKEN_ENV, self.token.expose())
+    }
+
+    /// The adapter form of the handoff: the arguments and the credential.
+    #[must_use]
+    pub fn into_launch(self) -> CoordinatorLaunch {
+        CoordinatorLaunch {
+            args: self.args,
+            token: self.token,
+        }
     }
 }

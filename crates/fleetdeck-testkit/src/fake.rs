@@ -21,6 +21,10 @@ pub const SCENARIO_ENV: &str = "FLEETDECK_FAKE_SCENARIO";
 /// stdin line to it, so fault tests can count what reached the provider
 /// (after one `PID_LINE` with its process id).
 pub const STDIN_LOG_ENV: &str = "FLEETDECK_FAKE_STDIN_LOG";
+/// Environment variable with a file path: a fake agent writes its
+/// arguments there, one per line, then `env:` and the value of
+/// `FLEETDECK_COORDINATOR_TOKEN` (coordinator handoff tests, DL-216).
+pub const LAUNCH_LOG_ENV: &str = "FLEETDECK_FAKE_LAUNCH_LOG";
 /// Environment variable that overrides the directory of the fake binaries.
 pub const BIN_DIR_ENV: &str = "FLEETDECK_FAKE_BIN_DIR";
 
@@ -148,6 +152,14 @@ pub fn fake_main(agent: FakeAgent) -> std::process::ExitCode {
     }
     let scenario = std::env::var(SCENARIO_ENV).unwrap_or_default();
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(path) = std::env::var_os(LAUNCH_LOG_ENV) {
+        let token = std::env::var("FLEETDECK_COORDINATOR_TOKEN").unwrap_or_default();
+        let log = format!("{}\nenv:{token}\n", args.join("\n"));
+        if std::fs::write(&path, log).is_err() {
+            eprintln!("{name}: cannot write the launch log");
+            return ExitCode::from(2);
+        }
+    }
     if args.iter().map(String::as_str).eq(["auth", "status"]) {
         return auth_status(&scenario);
     }

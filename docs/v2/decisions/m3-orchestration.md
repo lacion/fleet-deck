@@ -407,3 +407,38 @@ reason, owner review.
   `manager::coordinator_spec_tests::only_an_owner_start_may_carry_a_complete_coordinator_spec`,
   `manager::tests::a_station_local_start_with_a_coordinator_spec_is_rejected` (13).
 - Owner review: pending
+
+## DL-216: Coordinator handoff in the start effect (ADR-006 §5.4)
+
+- Context: DL-215 added the coordinator spec and the `Handoff` value, but
+  the start effect did not use it. The ingress URL is known only after the
+  link runtime starts the ingress; the adapter trait had no way to pass
+  extra arguments and a credential for one start.
+- Options: (a) put the credential into `SessionSpec` (no: the spec is
+  stored in effects and receipts); (b) a new adapter method
+  `start_coordinated(spec, sink, CoordinatorLaunch)` with a refusing
+  default, and the station prepares the launch in the start effect.
+- Choice: (b).
+  - `fleetdeck_providers::coordinator::CoordinatorLaunch { args, token:
+    Secret<String> }`; `ProviderAdapter::start_coordinated` defaults to
+    `ProviderError::CoordinatorHandoff("handoff_unverified")`. The Claude
+    adapter implements it (arguments after the configured extra
+    arguments, credential only in the child `ChildEnv`). The Codex adapter
+    keeps the refusing default (follow-up).
+  - `Bindings` keeps the ingress URL (`set_endpoint`, set by the link
+    runtime after `Ingress::start`) and the handoff check
+    (`Bindings::handoff`, the provider answer; station tests may set a
+    verified check).
+  - `manager::coordinator_start::prepare` rechecks the handoff and the
+    endpoint, refuses a resume and a shim-hosted start, mints the
+    credential and inserts a `pending` binding (generation 0, binding id
+    `<session>:<grant>`) under its digest. A refused prepare fails the
+    start (`session.ended`); an adapter start failure revokes the binding.
+- Reason: the credential never enters a stored record; fail closed when any
+  piece of the handoff is missing (PLAN §3).
+- Tests: `fleetdeck-station manager::coordinator_start_tests::a_deck_start_with_a_grant_hands_the_credential_to_the_child_environment_only`
+  (real fake-Claude child: argv names the variable and holds no credential,
+  the child environment holds it, the pending binding has its digest, and
+  no byte of the station database or WAL holds it),
+  `manager::coordinator_start_tests::the_start_effect_rechecks_the_handoff_and_the_endpoint`.
+- Owner review: pending

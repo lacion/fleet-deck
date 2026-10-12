@@ -65,6 +65,8 @@ pub struct SessionTarget {
     limits: Limits,
     fences: super::turns::Fences,
     shims: Option<shim_target::ShimSettings>,
+    /// The coordinator bindings that a coordinator start adds to (DL-216).
+    coordinator: crate::coordinator::Bindings,
 }
 
 impl std::fmt::Debug for SessionTarget {
@@ -87,7 +89,15 @@ impl SessionTarget {
             limits: Limits::default(),
             fences: super::turns::Fences::default(),
             shims: None,
+            coordinator: crate::coordinator::Bindings::default(),
         }
+    }
+
+    /// The coordinator bindings of the station (ADR-006 §5.4).
+    #[must_use]
+    pub fn with_coordinator(mut self, bindings: crate::coordinator::Bindings) -> Self {
+        self.coordinator = bindings;
+        self
     }
 
     /// The Git runner and the limits of the turn checkpoints.
@@ -165,6 +175,23 @@ impl SessionTarget {
                 .await;
             return Dispatch::NotDispatched(REASON_RESUME_UNSUPPORTED.into());
         }
+        let coordinator = match spec.coordinator.as_deref() {
+            None => None,
+            Some(c) => match super::coordinator_start::prepare(
+                &self.coordinator,
+                adapter.kind(),
+                &session_id,
+                spec,
+                c,
+                resume.is_some() || self.shims.is_some(),
+            ) {
+                Ok(launch) => Some(launch),
+                Err(why) => {
+                    self.start_failed(&session_id, &why).await;
+                    return Dispatch::NotDispatched(format!("coordinator: {why}"));
+                }
+            },
+        };
         if let Some((shims, launch)) = self.durable_launch(&adapter, spec) {
             return self
                 .start_durable(effect, spec, prompt, &shims, launch)
@@ -190,17 +217,19 @@ impl SessionTarget {
             rx,
             ready_rx,
         ));
-        let started = match resume {
-            Some(native) => {
+        let started = match (resume, coordinator) {
+            (Some(native), _) => {
                 let native = NativeSessionId(native.to_owned());
                 adapter.resume(&native, spec.clone(), sink).await
             }
-            None => adapter.start(spec.clone(), sink).await,
+            (None, Some(launch)) => adapter.start_coordinated(spec.clone(), sink, launch).await,
+            (None, None) => adapter.start(spec.clone(), sink).await,
         };
         let mut session = match started {
             Ok(session) => session,
             Err(e) => {
                 drop(ready_tx);
+                self.coordinator.revoke_session(&session_id);
                 self.start_failed(&session_id, &e.to_string()).await;
                 return Dispatch::NotDispatched(format!("start_failed: {e}"));
             }

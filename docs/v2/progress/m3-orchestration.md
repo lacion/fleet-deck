@@ -213,6 +213,29 @@ Items, in order: 6-1 Workspaces, 6-3 Assign auto, 6-4 Tasks, 6-2 Mail,
   (§7.1), the durable station coordinator outbox (§6.5, §8.4), snapshot
   projection 25e, live smoke §8.5.
 
+### Round 8 (2026-10-12, from 16:25 CEST)
+
+- Committed round 7 (8771bf4); `git merge --no-edit v2` -> 0cc328f (lane A
+  docs only; no proto change, no `make ts-types`).
+- Review of round 7: "wire Handoff into session start" and two coverage
+  findings (test 10 storage and log scans on station and deck; test 12
+  deck-side rejection); recorded in the follow-up table.
+- 6-5 slice (DL-216): the start effect hands the coordinator credential to
+  the child. `ProviderAdapter::start_coordinated` and `CoordinatorLaunch`
+  (crates/fleetdeck-providers/src/adapter.rs, coordinator.rs), Claude
+  implementation (crates/fleetdeck-providers/src/claude/driver.rs),
+  `Bindings` endpoint and handoff check
+  (crates/fleetdeck-station/src/coordinator/bindings.rs), link runtime sets
+  the endpoint (crates/fleetdeck-station/src/link/runtime.rs),
+  crates/fleetdeck-station/src/manager/coordinator_start.rs and its call
+  in crates/fleetdeck-station/src/manager/target.rs; fake agent launch log
+  `FLEETDECK_FAKE_LAUNCH_LOG` (crates/fleetdeck-testkit/src/fake.rs).
+- Tests: `cargo nextest run -p fleetdeck-station -E 'test(coordinator_start) | test(coordinator_spec) | test(a_station_local_start_with_a_coordinator)'` -> 5 passed.
+- 6-5 still open: deck owner start with a grant and the control skill
+  (§7.1, board toggle), binding activation from the native identity and
+  revocation at process exit, the durable station coordinator outbox
+  (§6.5, §8.4), snapshot projection 25e, live smoke §8.5.
+
 ## Review follow-ups (after M3)
 
 Review of round 1 (items 6-1, 6-3, 6-4, 6-2), recorded in round 2:
@@ -247,3 +270,7 @@ Review of round 4 (item 6-5, renewal 25b), recorded in round 5:
 | 6-5 | The renewal (`renew_grant`) and its `session.coordinator_renew` outbox item are written in two transactions, as for revoke; a crash between them leaves a pending renewal that the station never receives. Write both in one transaction (A5). | `crates/fleetdeck-deck/src/http/grant_routes.rs`, `crates/fleetdeck-deck/src/store/grants.rs` |
 | 6-5 | No test covers the successful path from `POST /api/coordinator/grants/{id}/renew` through the link to the station and back to an active grant (`coordinator.bound` of the renewal generation); the HTTP test checks only 403, 409 and 404. | `crates/fleetdeck-deck/tests/board_fleet.rs` |
 | 6-5 | The deck does not refuse a coordinator spec itself from the station capability; the station decision refuses it (`unsupported`, `handoff_unverified`) and the deck relays the stored receipt (DL-215). Add the deck-side capability check for an earlier board message. | `crates/fleetdeck-deck/src/http/` |
+| 6-5 | §8.2 test 10 covers the station store bytes (DL-216) but not the deck store, the deck audit log or the station and deck log output (tracing) for the credential. Add a scan of the deck database and of captured logs. | `crates/fleetdeck-station/src/manager/coordinator_start_tests.rs`, `crates/fleetdeck-deck/tests/` |
+| 6-5 | §8.2 test 12 asks the deck to refuse a coordinator spec `unsupported`; only the station decision refuses it (DL-215). Add the deck-side check and its test. | `crates/fleetdeck-deck/src/http/` |
+| 6-5 | The Codex adapter has no `start_coordinated`; a Codex coordinator start fails `handoff_unverified` even after a live smoke (DL-216). | `crates/fleetdeck-providers/src/codex/` |
+| 6-5 | Nothing calls `Bindings::native_identity` or revokes a binding at process exit yet; a coordinator binding stays `pending` (ADR-006 §5.5, §5.6). | `crates/fleetdeck-station/src/manager/target.rs` |

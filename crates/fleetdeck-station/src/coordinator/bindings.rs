@@ -10,6 +10,7 @@ use std::time::Instant;
 
 use fleetdeck_core::secret::Secret;
 use fleetdeck_proto::SessionId;
+use fleetdeck_proto::event::ProviderKind;
 use ring::rand::{SecureRandom, SystemRandom};
 use tokio::sync::Semaphore;
 
@@ -114,10 +115,18 @@ struct Entry {
     window: (Instant, u32),
 }
 
+/// The handoff check of a provider version (ADR-006 §5.4).
+pub type HandoffCheck = fn(ProviderKind, Option<&str>) -> Result<(), &'static str>;
+
 /// The bindings of a station, keyed by credential digest.
 #[derive(Clone, Default)]
 pub struct Bindings {
     inner: Arc<Mutex<HashMap<String, Entry>>>,
+    /// The loopback URL of the ingress, once it listens (DL-216).
+    endpoint: Arc<Mutex<Option<String>>>,
+    /// `None`: [`fleetdeck_providers::coordinator::handoff`]. Tests set a
+    /// verified check to drive the wiring before a live smoke passed.
+    handoff: Option<HandoffCheck>,
 }
 
 impl std::fmt::Debug for Bindings {
@@ -140,7 +149,68 @@ pub(crate) enum Auth {
     },
 }
 
+impl ToolClass {
+    /// The class of a grant class name (`read`, `mail`, `drive`, `spawn`).
+    #[must_use]
+    pub fn parse(name: &str) -> Option<Self> {
+        Some(match name {
+            "read" => Self::Read,
+            "mail" => Self::Mail,
+            "drive" => Self::Drive,
+            "spawn" => Self::Spawn,
+            _ => return None,
+        })
+    }
+}
+
 impl Bindings {
+    /// Records the loopback URL of the listening ingress.
+    pub fn set_endpoint(&self, url: String) {
+        *self
+            .endpoint
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(url);
+    }
+
+    /// The loopback URL of the ingress, if it listens.
+    #[must_use]
+    pub fn endpoint(&self) -> Option<String> {
+        self.endpoint
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Whether the credential handoff is verified for a provider version:
+    /// `Err` with the capability reason (`handoff_unverified`).
+    ///
+    /// # Errors
+    /// The capability reason.
+    pub fn handoff(
+        &self,
+        provider: ProviderKind,
+        version: Option<&str>,
+    ) -> Result<(), &'static str> {
+        match self.handoff {
+            Some(check) => check(provider, version),
+            None => fleetdeck_providers::coordinator::handoff(provider, version),
+        }
+    }
+
+    /// The same bindings with another handoff check (station tests).
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn with_handoff(mut self, check: HandoffCheck) -> Self {
+        self.handoff = Some(check);
+        self
+    }
+
+    /// True if a binding has this credential digest.
+    #[must_use]
+    pub fn has_digest(&self, digest: &str) -> bool {
+        self.lock().contains_key(digest)
+    }
+
     /// Add a binding for a credential digest.
     pub fn insert(&self, digest: String, binding: Binding) {
         let entry = Entry {

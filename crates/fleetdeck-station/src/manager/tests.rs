@@ -684,7 +684,7 @@ mod coordinator_command;
 pub(super) fn coordinator_spec() -> fleetdeck_proto::command::CoordinatorSpec {
     fleetdeck_proto::command::CoordinatorSpec {
         grant_id: "grant-1".to_owned(),
-        classes: vec!["observe".to_owned()],
+        classes: vec!["read".to_owned()],
         idle_ttl_ms: 60_000,
         expires_at: 4_102_444_800_000,
         control_skill: fleetdeck_proto::command::ControlSkill {

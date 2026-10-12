@@ -164,6 +164,7 @@ pub(super) fn check_spec(
     provider: ProviderKind,
     spec: &CoordinatorSpec,
     import: bool,
+    bindings: &crate::coordinator::Bindings,
 ) -> Result<(), DecideError> {
     match origin {
         RunOrigin::Board => {}
@@ -188,14 +189,19 @@ pub(super) fn check_spec(
     }
     if spec.grant_id.trim().is_empty()
         || spec.classes.is_empty()
+        || spec
+            .classes
+            .iter()
+            .any(|c| crate::coordinator::ToolClass::parse(c).is_none())
         || spec.idle_ttl_ms == 0
         || spec.control_skill.version.trim().is_empty()
     {
         return Err(reject(
             RejectCode::InvalidCommand,
-            "a coordinator spec needs a grant id, classes, an idle TTL and a control skill version",
+            "a coordinator spec needs a grant id, known classes, an idle TTL and a control skill version",
         ));
     }
-    fleetdeck_providers::coordinator::handoff(provider, None)
+    bindings
+        .handoff(provider, None)
         .map_err(|reason| reject(RejectCode::Unsupported, reason))
 }
