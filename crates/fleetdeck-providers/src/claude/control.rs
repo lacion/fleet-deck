@@ -1,15 +1,33 @@
 //! Builders for the frames that the host writes to the CLI's stdin in
 //! `--input-format stream-json` mode (host → CLI).
 
+use fleetdeck_proto::command::UserInput;
 use serde_json::{Value, json};
 
 /// A user message (a prompt, a follow-up, or a steer during a turn). The client
 /// `uuid` makes the CLI report the input's fate in `command_lifecycle` frames.
+/// Pasted images go before the text as base64 `image` blocks (DL-304); an
+/// input without images keeps the plain string content.
 #[must_use]
-pub fn user_message(text: &str, session_id: &str, uuid: &str) -> Value {
+pub fn user_message(input: &UserInput, session_id: &str, uuid: &str) -> Value {
+    let content = if input.images.is_empty() {
+        Value::String(input.text.clone())
+    } else {
+        let mut blocks: Vec<Value> = input
+            .images
+            .iter()
+            .map(|i| {
+                json!({"type": "image", "source": {
+                    "type": "base64", "media_type": i.media_type, "data": i.data,
+                }})
+            })
+            .collect();
+        blocks.push(json!({"type": "text", "text": input.text}));
+        Value::Array(blocks)
+    };
     json!({
         "type": "user",
-        "message": {"role": "user", "content": text},
+        "message": {"role": "user", "content": content},
         "parent_tool_use_id": null,
         "session_id": session_id,
         "uuid": uuid,
@@ -102,6 +120,26 @@ pub fn permission_response(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fleetdeck_proto::command::ImageInput;
+
+    #[test]
+    fn a_claude_prompt_with_images_sends_image_blocks_before_the_text() {
+        let plain = user_message(&UserInput::new("hi"), "s", "u");
+        assert_eq!(plain["message"]["content"], json!("hi"));
+        let mut input = UserInput::new("what is this?");
+        input.images.push(ImageInput {
+            media_type: "image/png".to_owned(),
+            data: "iVBORw0KGgo=".to_owned(),
+        });
+        let v = user_message(&input, "s", "u");
+        assert_eq!(
+            v["message"]["content"],
+            json!([
+                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "iVBORw0KGgo="}},
+                {"type": "text", "text": "what is this?"},
+            ])
+        );
+    }
 
     #[test]
     fn control_request_merges_fields() {

@@ -26,6 +26,7 @@ license = "MIT"
 publish = false
 
 [workspace.dependencies]
+portable-pty = "0.9"
 anyhow = "1"
 clap = { version = "4", features = ["derive", "env"] }
 insta = { version = "1", features = ["json"] }

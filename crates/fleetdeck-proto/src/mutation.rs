@@ -13,6 +13,7 @@ use ts_rs::TS;
 use crate::command::{CommandEnvelope, Reject, RejectCode, SessionSpec, UserInput, admit};
 use crate::event::ProviderKind;
 use crate::ids::{CommandId, IncarnationId, ProviderInstanceId, SessionId, StationId};
+use crate::shell::ShellEnvelope;
 
 /// Domain separation of a key rotation signature (ADR-004 §9.5).
 pub const ROTATION_CONTEXT: &str = "fleetdeck-rotate-key-v1";
@@ -55,6 +56,7 @@ pub struct EnvelopeKind {
 pub const SESSION_METHODS: &[&str] = &[
     "session.start",
     "session.resume",
+    "session.import",
     "session.fork",
     "session.prompt",
     "session.steer",
@@ -89,6 +91,12 @@ pub const ENVELOPES: &[EnvelopeKind] = &[
         params: "KeyRotationEnvelope",
         payload: "rotation",
         holder: Holder::Receiver,
+    },
+    EnvelopeKind {
+        methods: &["shell.open", "shell.resize", "shell.close"],
+        params: "ShellEnvelope",
+        payload: "change",
+        holder: Holder::Station,
     },
     EnvelopeKind {
         methods: &["coordinator.call"],
@@ -322,6 +330,7 @@ pub enum Mutation {
     Configure(StationConfigureEnvelope),
     RotateKey(KeyRotationEnvelope),
     Coordinator(CoordinatorCallEnvelope),
+    Shell(ShellEnvelope),
 }
 
 fn invalid(message: impl Into<String>) -> Reject {
@@ -347,6 +356,7 @@ impl Mutation {
             "CommandEnvelope" => Self::Session(decode(method, params)?),
             "StationConfigureEnvelope" => Self::Configure(decode(method, params)?),
             "KeyRotationEnvelope" => Self::RotateKey(decode(method, params)?),
+            "ShellEnvelope" => Self::Shell(decode(method, params)?),
             _ => Self::Coordinator(decode(method, params)?),
         };
         if parsed.method() != method {
@@ -371,6 +381,7 @@ impl Mutation {
             Self::Configure(_) => "station.configure",
             Self::RotateKey(_) => "link.rotate_key",
             Self::Coordinator(_) => "coordinator.call",
+            Self::Shell(e) => e.change.method(),
         }
     }
 
@@ -381,6 +392,7 @@ impl Mutation {
             Self::Configure(e) => &e.command_id,
             Self::RotateKey(e) => &e.command_id,
             Self::Coordinator(e) => &e.command_id,
+            Self::Shell(e) => &e.command_id,
         }
     }
 
@@ -392,6 +404,7 @@ impl Mutation {
             Self::Configure(e) => (Some(&e.target_incarnation), e.retry_until),
             Self::RotateKey(e) => (Some(&e.target_incarnation), e.retry_until),
             Self::Coordinator(e) => (Some(&e.target_incarnation), e.retry_until),
+            Self::Shell(e) => (Some(&e.target_incarnation), e.retry_until),
         };
         admit(target, retry_until, now, incarnation)
     }
@@ -404,6 +417,7 @@ impl Mutation {
             Self::Configure(e) => serde_json::to_string(&e.change),
             Self::RotateKey(e) => serde_json::to_string(&e.rotation),
             Self::Coordinator(e) => serde_json::to_string(&e.call),
+            Self::Shell(e) => serde_json::to_string(&e.change),
         };
         payload.unwrap_or_default()
     }

@@ -120,6 +120,7 @@ fn on_system(core: &mut ClaudeCore, subtype: &str, body: &Map<String, Value>) ->
                 provider_refs: refs(&[("session_id", get("session_id").as_deref())]),
                 title: None,
                 branch: None,
+                repo: None,
             })]
         }
         "background_tasks_changed" => {

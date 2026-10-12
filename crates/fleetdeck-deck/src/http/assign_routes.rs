@@ -117,9 +117,7 @@ pub async fn assign(
         }));
     };
     let session_id = target.summary.session_id.clone();
-    let input = UserInput {
-        text: format!("{ASSIGNMENT_PREFIX}{text}"),
-    };
+    let input = UserInput::new(format!("{ASSIGNMENT_PREFIX}{text}"));
     let command = if target.status == CardStatus::Idle {
         SessionCommand::Prompt { session_id, input }
     } else {

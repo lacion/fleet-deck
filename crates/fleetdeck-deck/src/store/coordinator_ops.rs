@@ -166,9 +166,7 @@ pub(crate) fn decide(
             if let Some(d) = check_text(text) {
                 return Ok(d);
             }
-            let input = UserInput {
-                text: mail_frame(&sender, text.trim()),
-            };
+            let input = UserInput::new(mail_frame(&sender, text.trim()));
             let session_id = to.session_id.clone();
             let (command, name) = match delivery {
                 CoordinatorDelivery::FollowUp => {
@@ -307,9 +305,10 @@ pub(crate) fn decide(
                 model: None,
                 title: None,
             };
-            let prompt = Some(UserInput {
-                text: format!("{ASSIGNMENT_PREFIX}{}", task.trim()),
-            });
+            let prompt = Some(UserInput::new(format!(
+                "{ASSIGNMENT_PREFIX}{}",
+                task.trim()
+            )));
             start(tx, grant, ctx, &station, spec, prompt, command_id, now)
         }
     }
@@ -348,9 +347,7 @@ fn assign_to(
 ) -> Result<()> {
     let command = SessionCommand::FollowUp {
         session_id: session.clone(),
-        input: UserInput {
-            text: task_frame(command_id, task.trim()),
-        },
+        input: UserInput::new(task_frame(command_id, task.trim())),
     };
     enqueue(tx, ctx, station, command, now)?;
     tx.execute(

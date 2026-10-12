@@ -146,9 +146,7 @@ fn decide_lost(
     let prompt = InputRecord {
         input_id: d.new_id(),
         origin: RunOrigin::Continuation,
-        input: UserInput {
-            text: CONTINUATION_TEXT.to_owned(),
-        },
+        input: UserInput::new(CONTINUATION_TEXT),
     };
     let by = w.last_at.saturating_add(WINDOW_MS);
     match super::resume::admit_resume(d, policy, session_id, Some(prompt), Some(by)) {

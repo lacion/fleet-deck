@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
+use fleetdeck_proto::command::UserInput;
 use fleetdeck_proto::event::{
     BackgroundTask, ExpiredReason, InputState, ProviderKind, RunOrigin, TurnStatus,
 };
@@ -146,7 +147,7 @@ pub struct CodexCore {
     pub(super) interrupt_requested: bool,
     /// The last `thread/rollback` and its answer (DL-087).
     pub(super) rollback: Option<super::rollback::RollbackState>,
-    pub(super) follow_ups: VecDeque<(InputId, String)>,
+    pub(super) follow_ups: VecDeque<(InputId, UserInput)>,
     pub(super) inputs: Vec<InputEntry>,
     pub(super) tools: BTreeMap<String, ToolNode>,
     pub(super) tool_order: u64,
@@ -423,24 +424,24 @@ impl CodexCore {
         let thread = self.thread()?;
         self.no_rollback_outstanding()?;
         self.track(input)?;
-        let text = input.input.text.clone();
         if self.turn.is_some() || self.turn_requested || !self.follow_ups.is_empty() {
-            self.follow_ups.push_back((input.id.clone(), text));
+            self.follow_ups
+                .push_back((input.id.clone(), input.input.clone()));
             return Ok(Vec::new());
         }
-        Ok(self.turn_start(&thread, &text, &input.id))
+        Ok(self.turn_start(&thread, &input.input, &input.id))
     }
 
     pub(super) fn turn_start(
         &mut self,
         thread: &str,
-        text: &str,
+        input: &UserInput,
         input_id: &InputId,
     ) -> Vec<Output> {
         let mut params = serde_json::Map::new();
         params.insert("threadId".into(), thread.into());
         params.insert("clientUserMessageId".into(), input_id.as_str().into());
-        params.insert("input".into(), json!([{"type": "text", "text": text}]));
+        params.insert("input".into(), rpc::input_items(input));
         if let Some(e) = &self.spec.effort {
             params.insert("effort".into(), e.clone().into());
         }
@@ -497,7 +498,7 @@ impl CodexCore {
                 "threadId": thread,
                 "expectedTurnId": turn,
                 "clientUserMessageId": input.id.as_str(),
-                "input": [{"type": "text", "text": input.input.text}],
+                "input": rpc::input_items(&input.input),
             }),
         ))])
     }
@@ -777,12 +778,12 @@ impl CodexCore {
         if self.turn.is_some() || self.turn_requested {
             return Vec::new();
         }
-        let (Some(thread), Some((input_id, text))) =
+        let (Some(thread), Some((input_id, input))) =
             (self.thread_id.clone(), self.follow_ups.pop_front())
         else {
             return Vec::new();
         };
-        self.turn_start(&thread, &text, &input_id)
+        self.turn_start(&thread, &input, &input_id)
     }
 
     pub(super) fn tool_order(&mut self) -> u64 {

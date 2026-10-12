@@ -147,9 +147,7 @@ impl Rig {
             origin: CommandOrigin::Board,
             command: SessionCommand::Prompt {
                 session_id: "s1".into(),
-                input: UserInput {
-                    text: format!("prompt {n}"),
-                },
+                input: UserInput::new(format!("prompt {n}")),
             },
         };
         self.store
@@ -160,9 +158,7 @@ impl Rig {
                         input: InputRecord {
                             input_id: InputId::from(format!("in-{n}").as_str()),
                             origin: RunOrigin::Board,
-                            input: UserInput {
-                                text: format!("prompt {n}"),
-                            },
+                            input: UserInput::new(format!("prompt {n}")),
                         },
                     },
                 )?;

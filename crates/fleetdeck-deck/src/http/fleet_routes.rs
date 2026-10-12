@@ -147,9 +147,7 @@ pub async fn send_mail(
         let station = target(&board, &req.station, &req.session_id).await?;
         let sender = principal.actor();
         let delivery = req.delivery.unwrap_or(MailDelivery::FollowUp);
-        let input = UserInput {
-            text: mail_frame(&sender, req.text.trim()),
-        };
+        let input = UserInput::new(mail_frame(&sender, req.text.trim()));
         let session_id = req.session_id.clone();
         let command = match delivery {
             MailDelivery::FollowUp => SessionCommand::FollowUp { session_id, input },
@@ -206,9 +204,7 @@ pub async fn create_task(
         let station = target(&board, &req.station, &req.session_id).await?;
         let command = SessionCommand::FollowUp {
             session_id: req.session_id.clone(),
-            input: UserInput {
-                text: task_frame(&req.task_id, req.title.trim()),
-            },
+            input: UserInput::new(task_frame(&req.task_id, req.title.trim())),
         };
         let item = intent(&board, station, command)?;
         let task = NewTask {

@@ -185,9 +185,7 @@ fn spawn(station: &StationId, instance: &str, mode: Option<&str>) -> Coordinator
             model: None,
             title: None,
         },
-        prompt: Some(UserInput {
-            text: "go".to_owned(),
-        }),
+        prompt: Some(UserInput::new("go")),
     }
 }
 

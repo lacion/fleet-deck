@@ -353,7 +353,7 @@ impl ClaudeCore {
         });
         let session = self.native_session_id.clone().unwrap_or_default();
         Ok(vec![Output::Write(control::user_message(
-            &input.input.text,
+            &input.input,
             &session,
             &uuid,
         ))])

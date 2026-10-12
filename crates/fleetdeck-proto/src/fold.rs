@@ -46,8 +46,12 @@ impl SessionSummary {
                 capabilities,
                 title,
                 branch,
+                repo,
                 ..
             } => {
+                if repo.is_some() {
+                    self.repo = repo.as_deref().cloned();
+                }
                 if title.is_some() {
                     self.title.clone_from(title);
                 }

@@ -41,6 +41,15 @@ const fn m(
 /// The board WebSocket: the guard authenticates it by ticket or by a
 /// cookie with an `Origin` header (P3-9b).
 pub const WS_METHOD: &str = "board.ws";
+/// The WebSocket of one human shell (PLAN §6.8).
+pub const SHELL_WS_METHOD: &str = "shells.attach";
+
+/// True for a WebSocket method: its login is a ticket or a cookie with an
+/// `Origin` of this deck's board.
+#[must_use]
+pub fn is_socket(name: &str) -> bool {
+    name == WS_METHOD || name == SHELL_WS_METHOD
+}
 
 /// Every board-API method.
 pub const API: &[ApiMethod] = &[
@@ -124,6 +133,13 @@ pub const API: &[ApiMethod] = &[
         false,
     ),
     m(
+        "conflicts.list",
+        Method::GET,
+        "/api/conflicts",
+        Some(Scope::Read),
+        false,
+    ),
+    m(
         "plans.list",
         Method::GET,
         "/api/plans",
@@ -166,6 +182,28 @@ pub const API: &[ApiMethod] = &[
         false,
     ),
     m(WS_METHOD, Method::GET, "/api/ws", Some(Scope::Read), false),
+    // The human shell (PLAN §6.8, DL-404): owner-only, so `admin`.
+    m(
+        "shells.list",
+        Method::GET,
+        "/api/stations/{station}/shells",
+        Some(Scope::Admin),
+        false,
+    ),
+    m(
+        "shells.command",
+        Method::POST,
+        "/api/stations/{station}/shells",
+        Some(Scope::Admin),
+        true,
+    ),
+    m(
+        SHELL_WS_METHOD,
+        Method::GET,
+        "/api/stations/{station}/shells/{shell}/attach",
+        Some(Scope::Admin),
+        false,
+    ),
     m(
         "board.ws_ticket",
         Method::POST,
@@ -238,6 +276,7 @@ pub const API: &[ApiMethod] = &[
     ),
     cmd("session.start", Scope::Drive),
     cmd("session.resume", Scope::Drive),
+    cmd("session.import", Scope::Drive),
     cmd("session.prompt", Scope::Drive),
     cmd("session.steer", Scope::Drive),
     cmd("session.follow_up", Scope::Drive),
@@ -338,6 +377,6 @@ mod tests {
             assert!(api.mutating);
             n += 1;
         }
-        assert_eq!(n, 15);
+        assert_eq!(n, 16);
     }
 }

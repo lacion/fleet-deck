@@ -92,8 +92,23 @@ impl DeckLink {
         live.get(station)
             .into_iter()
             .flatten()
-            .map(|(_, c)| c.clone())
+            .map(|(_, c, _)| c.clone())
             .find(|c| c.ended().is_none())
+    }
+
+    /// A live link of `station` with a data channel: its control channel
+    /// and its streams (a stream token is valid only on the link that
+    /// issued it).
+    pub(crate) fn data_for(
+        &self,
+        station: &StationId,
+    ) -> Option<(Control, Arc<super::streams::DataHub>)> {
+        let live = self.live.lock().unwrap_or_else(PoisonError::into_inner);
+        live.get(station)
+            .into_iter()
+            .flatten()
+            .filter(|(_, c, _)| c.ended().is_none())
+            .find_map(|(_, c, d)| d.as_ref().map(|d| (c.clone(), Arc::clone(d))))
     }
 
     /// The stations with a live link.

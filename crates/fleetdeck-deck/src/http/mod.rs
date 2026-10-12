@@ -14,6 +14,7 @@ pub mod guard;
 pub mod methods;
 pub mod plan_routes;
 pub mod read_routes;
+pub mod shell_routes;
 pub mod station_routes;
 pub mod tls;
 pub mod workspace_routes;
@@ -83,6 +84,14 @@ pub fn router(board: Arc<Board>) -> Router {
             "/api/stations/{station}/workspaces",
             get(workspace_routes::list),
         )
+        .route(
+            "/api/stations/{station}/shells",
+            get(shell_routes::list).post(shell_routes::command),
+        )
+        .route(
+            "/api/stations/{station}/shells/{shell}/attach",
+            get(shell_routes::attach),
+        )
         .route("/api/stations/{station}/files/list", get(file_routes::list))
         .route("/api/stations/{station}/files/read", get(file_routes::read))
         .route(
@@ -93,6 +102,7 @@ pub fn router(board: Arc<Board>) -> Router {
             "/api/stations/{station}/sessions/{session}/turns/{turn}/diff",
             get(file_routes::diff),
         )
+        .route("/api/conflicts", get(plan_routes::conflicts))
         .route("/api/plans", get(plan_routes::list))
         .route("/api/plans/mark", post(plan_routes::mark))
         .route("/api/sessions", get(read_routes::sessions))

@@ -97,6 +97,7 @@ pub struct RunningStation {
     server: tokio::task::JoinHandle<()>,
     shutdown: watch::Sender<bool>,
     socket: PathBuf,
+    shells: Arc<crate::shell::Shells>,
 }
 
 impl RunningStation {
@@ -111,6 +112,11 @@ impl RunningStation {
             path: station_dir.clone(),
             source,
         })?;
+        // From here the live database advances: a rollback of an activated
+        // update is binary-only (ADR-005 §3.3, DL-128).
+        if let Err(e) = crate::upgrade::mark_live(&station_dir.join("upgrades")) {
+            tracing::warn!(error = %e, "could not mark the activated update live");
+        }
         let clock: SharedClock = Arc::new(SystemClock);
         let ids: SharedIds = Arc::new(UlidSource::new(Arc::clone(&clock)));
         let store = Store::open(
@@ -133,12 +139,20 @@ impl RunningStation {
             }
         });
         let identity = Arc::new(Identity::load_or_create(&station_dir)?);
-        let node = StationNode::start(
+        // A station restart ends every shell (PLAN §6.8, A10): the PTYs
+        // close with the process.
+        let shells = Arc::new(crate::shell::Shells::new(crate::shell::ShellConfig {
+            allow: config.allow_shell,
+            max_shells: config.max_shells,
+            program: None,
+        }));
+        let node = StationNode::start_with_shells(
             Arc::clone(&manager),
             Arc::clone(&identity),
             config.name.clone(),
             &config.listen,
             BackoffPolicy::default(),
+            Arc::clone(&shells),
         )
         .await?;
         tracing::info!(
@@ -162,6 +176,7 @@ impl RunningStation {
             server,
             shutdown,
             socket,
+            shells,
         })
     }
 
@@ -172,6 +187,7 @@ impl RunningStation {
         let _ = self.shutdown.send(true);
         let _ = self.server.await;
         self.node.shutdown();
+        self.shells.close_all();
         self.manager.shutdown(StopMode::Graceful).await;
         // The pumps store the last events of each process (`session.ended`).
         let deadline = tokio::time::Instant::now() + PUMP_GRACE;

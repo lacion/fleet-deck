@@ -18,6 +18,7 @@ use crate::board::{
 };
 use crate::capability::{Capabilities, Operation, Unsupported};
 use crate::command::{CommandEnvelope, DeckCommandState, Receipt};
+use crate::conflicts::FileConflict;
 use crate::event::{Event, EventEnvelope};
 use crate::files::{
     FileContent, FileListQuery, FileListing, FileReadQuery, FileSearch, FileSearchQuery, TurnDiff,
@@ -60,6 +61,9 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         KeyRotationEnvelope::export_all(&cfg),
         CoordinatorCallEnvelope::export_all(&cfg),
         CoordinatorQueryEnvelope::export_all(&cfg),
+        crate::shell::ShellEnvelope::export_all(&cfg),
+        crate::shell::ShellInfo::export_all(&cfg),
+        crate::shell::ShellAttach::export_all(&cfg),
         Receipt::export_all(&cfg),
         DeckCommandState::export_all(&cfg),
         CommandRequest::export_all(&cfg),
@@ -102,6 +106,7 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         TaskView::export_all(&cfg),
         GrantView::export_all(&cfg),
         DeckPlan::export_all(&cfg),
+        FileConflict::export_all(&cfg),
         PlanStatus::export_all(&cfg),
         PlanMarkRequest::export_all(&cfg),
     ];

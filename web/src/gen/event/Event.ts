@@ -8,6 +8,7 @@ import type { RequestId } from "../ids/RequestId";
 import type { RunId } from "../ids/RunId";
 import type { TurnId } from "../ids/TurnId";
 import type { JsonValue } from "../serde_json/JsonValue";
+import type { RepoInfo } from "../session/RepoInfo";
 import type { ApprovalOption } from "./ApprovalOption";
 import type { BackgroundTask } from "./BackgroundTask";
 import type { DiffSummary } from "./DiffSummary";
@@ -47,7 +48,13 @@ resumed: boolean | null, provider_refs: { [key in string]: JsonValue },
  * them out; the station's store fills them in, so the deck's read
  * model has them without a snapshot.
  */
-title?: string, branch?: string, } | { "kind": "session.state", state: SessionState, detail: string | null, } | { "kind": "run.started", run_id: RunId, input_summary: string, origin: RunOrigin, } | { "kind": "turn.started", run_id: RunId, turn_id: TurnId, provider_refs: { [key in string]: JsonValue }, } | { "kind": "message.delta", turn_id: TurnId, 
+title?: string, branch?: string, 
+/**
+ * The repository of `cwd` that the station recorded (M3 6-7,
+ * DL-306); the conflict radar groups file touches by it.
+ * Boxed to keep the event small (clippy `large_enum_variant`).
+ */
+repo?: RepoInfo, } | { "kind": "session.state", state: SessionState, detail: string | null, } | { "kind": "run.started", run_id: RunId, input_summary: string, origin: RunOrigin, } | { "kind": "turn.started", run_id: RunId, turn_id: TurnId, provider_refs: { [key in string]: JsonValue }, } | { "kind": "message.delta", turn_id: TurnId, 
 /**
  * The subagent tool call that produced the text, if any (L7).
  */

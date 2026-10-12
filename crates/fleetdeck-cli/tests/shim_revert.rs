@@ -274,7 +274,7 @@ impl Rig {
 }
 
 fn text(t: &str) -> UserInput {
-    UserInput { text: t.to_owned() }
+    UserInput::new(t.to_owned())
 }
 
 async fn events(store: &Store, session: &SessionId) -> Vec<Event> {

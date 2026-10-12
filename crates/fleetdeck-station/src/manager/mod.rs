@@ -11,6 +11,7 @@
 
 pub mod auto_continue;
 pub mod decide;
+pub mod drain;
 pub mod durable;
 pub mod files;
 pub mod policy;
@@ -103,6 +104,7 @@ pub struct SessionManager {
     tasks: std::sync::Mutex<Vec<JoinHandle<()>>>,
     /// The provider report of `station.info`, probed once per process.
     providers: tokio::sync::OnceCell<Vec<StationProvider>>,
+    draining: std::sync::atomic::AtomicBool,
 }
 
 impl std::fmt::Debug for SessionManager {
@@ -235,6 +237,7 @@ impl SessionManager {
             shutdown,
             tasks: std::sync::Mutex::new(tasks),
             providers: tokio::sync::OnceCell::new(),
+            draining: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -305,7 +308,8 @@ impl SessionManager {
         let policy = Arc::clone(&self.policy);
         let origin = envelope.origin;
         let command = envelope.command.clone();
-        let guard = auto_continue::guard(&command, &caller);
+        let guard = auto_continue::guard(&command, &caller)
+            .and_then(|()| drain::guard(self.draining(), &command));
         self.store
             .decide(envelope, caller, move |d| {
                 guard?;

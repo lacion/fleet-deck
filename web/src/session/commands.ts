@@ -4,7 +4,7 @@
 // command by itself: the deck owns retries, and an `ambiguous` command is
 // shown as such (A9, PLAN §8). The station answers a refused command with a
 // receipt; its message is shown as is.
-import type { DeckCommand, RevertResolution, SessionCommand, SessionKey } from '../gen';
+import type { DeckCommand, ImageInput, RevertResolution, SessionCommand, SessionKey } from '../gen';
 import type { Reply } from './question';
 import { type FileActions, fileActions } from './workspace';
 
@@ -17,7 +17,8 @@ export type InputKind = 'prompt' | 'steer' | 'follow_up';
 export type SessionActions = {
   readonly canDrive: boolean;
   readonly canApprove: boolean;
-  send(kind: InputKind, text: string): Promise<Outcome>;
+  /** Pasted images go with the text (M3 6-10, DL-304). */
+  send(kind: InputKind, text: string, images?: readonly ImageInput[]): Promise<Outcome>;
   interrupt(): Promise<Outcome>;
   /** `reply` carries the answers of a question (DL-068); `null` for a plain option. */
   answer(requestId: string, optionId: string, reply?: Reply | null): Promise<Outcome>;
@@ -41,6 +42,7 @@ export const MAX_TITLE_CHARS = 80;
 const METHODS: Record<SessionCommand['op'], string> = {
   start: 'session.start',
   resume: 'session.resume',
+  import: 'session.import',
   prompt: 'session.prompt',
   steer: 'session.steer',
   follow_up: 'session.follow_up',
@@ -111,7 +113,12 @@ export function sessionActions(
   return {
     canDrive: scopes.includes('drive'),
     canApprove: scopes.includes('approve'),
-    send: (kind, text) => run({ op: kind, session_id, input: { text } }),
+    send: (kind, text, images = []) =>
+      run({
+        op: kind,
+        session_id,
+        input: images.length > 0 ? { text, images: [...images] } : { text },
+      }),
     interrupt: () => run({ op: 'interrupt', session_id }),
     answer: (request_id, option_id, reply = null) =>
       run({

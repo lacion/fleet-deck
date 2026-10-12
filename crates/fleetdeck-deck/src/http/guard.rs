@@ -196,7 +196,7 @@ pub async fn check(
     let Some(scope) = api.scope else {
         return Ok(None);
     };
-    let principal = if api.name == methods::WS_METHOD {
+    let principal = if methods::is_socket(api.name) {
         ws_principal(board, headers, query).await
     } else {
         authenticate(board, headers).await

@@ -7,7 +7,7 @@
 //! command router's `commands` table (G3). V4 (P3-7b): the outbox of
 //! deck-owned intent (A5) and the receipts of `coordinator.call` (G7). Auth
 //! and audit tables follow in P3-8 (V5). V6 (M3 6-6): the plan
-//! library. V7 (M3 6-2, 6-4): mail and tasks.
+//! library. V7 (M3 6-2, 6-4): mail and tasks. V8 (M3 6-7): file touches.
 
 use rusqlite_migration::{M, Migrations};
 
@@ -214,11 +214,29 @@ CREATE TABLE tasks (
 CREATE INDEX tasks_by_session ON tasks (station_id, session_id, created_at);
 ";
 
+/// The conflict radar input (M3 6-7, DL-306; PLAN §10 `file_touches`): the
+/// latest touch of a file by a session, keyed by the repository group.
+/// Renumbered from V7 to V8 at the lane A merge (mail and tasks came first).
+const V8: &str = "
+CREATE TABLE file_touches (
+    group_key      TEXT    NOT NULL,
+    file           TEXT    NOT NULL,
+    repo           TEXT,
+    station_id     TEXT    NOT NULL,
+    session_id     TEXT    NOT NULL,
+    session_title  TEXT,
+    path           TEXT    NOT NULL,
+    touched_at     INTEGER NOT NULL,
+    PRIMARY KEY (group_key, file, station_id, session_id)
+) STRICT;
+CREATE INDEX file_touches_by_time ON file_touches (touched_at);
+";
+
 /// Coordinator grants (M3 6-5, ADR-006 §4, PLAN §10 table `tokens`) and the
 /// lineage of the sessions that a grant started (§6.3 `interrupt`/`stop`).
 /// `spawn_used` is a durable lifetime counter (§6.4): receipt pruning never
-/// changes it.
-const V8: &str = "
+/// changes it. Renumbered from V8 to V9 at the merge of lane C's V8.
+const V9: &str = "
 CREATE TABLE tokens (
     grant_id                TEXT    PRIMARY KEY,
     station_id              TEXT    NOT NULL,
@@ -263,6 +281,7 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V6),
         M::up(V7),
         M::up(V8),
+        M::up(V9),
     ])
 }
 

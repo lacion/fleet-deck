@@ -50,7 +50,7 @@ impl ClaudeCore {
             HostCmd::Prompt { text, input_id } => self.prompt(&HostInput {
                 id: InputId::new(input_id.as_str()),
                 origin: RunOrigin::Board,
-                input: UserInput { text: text.clone() },
+                input: UserInput::new(text.clone()),
             }),
             HostCmd::Answer {
                 request_id,

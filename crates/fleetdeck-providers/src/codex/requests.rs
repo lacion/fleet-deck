@@ -407,7 +407,7 @@ impl CodexCore {
                 self.prompt(&HostInput {
                     id: answer_input_id(&answer.request),
                     origin: RunOrigin::Board,
-                    input: UserInput { text },
+                    input: UserInput::new(text),
                 })?
             }
             (ResponseChannel::RpcReply, RequestKind::Question) => {

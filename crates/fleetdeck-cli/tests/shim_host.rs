@@ -389,9 +389,7 @@ async fn a_claude_session_runs_a_turn_through_the_shim_host() {
         .prompt(HostInput {
             id: InputId::new("01J00000000000000000000001"),
             origin: RunOrigin::Board,
-            input: UserInput {
-                text: "hello".to_owned(),
-            },
+            input: UserInput::new("hello".to_owned()),
         })
         .await
         .unwrap();

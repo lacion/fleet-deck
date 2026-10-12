@@ -224,7 +224,7 @@ fn spec(cwd: &str, instance: &str) -> SessionSpec {
 }
 
 fn text(t: &str) -> UserInput {
-    UserInput { text: t.to_owned() }
+    UserInput::new(t.to_owned())
 }
 
 fn kinds(events: &[EventEnvelope]) -> Vec<String> {
@@ -669,3 +669,9 @@ mod workspace_provision;
 
 #[path = "resume_tests.rs"]
 mod resume;
+
+#[path = "drain_tests.rs"]
+mod drain;
+
+#[path = "import_tests.rs"]
+mod import_tests;

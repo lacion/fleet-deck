@@ -44,9 +44,7 @@ fn prompt(session: &str, text: &str) -> LocalRequest {
         command_id: Some(CommandId::from(SECOND.to_owned())),
         command: SessionCommand::Prompt {
             session_id: session.to_owned().into(),
-            input: UserInput {
-                text: text.to_owned(),
-            },
+            input: UserInput::new(text.to_owned()),
         },
     }
 }

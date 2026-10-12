@@ -7,7 +7,22 @@
 //! The parser never panics: a line that is not JSON is an error, and a JSON
 //! value that is not a valid JSON-RPC frame becomes [`Incoming::Unknown`].
 
+use fleetdeck_proto::command::UserInput;
 use serde_json::{Map, Value, json};
+
+/// The `input` items of `turn/start` and `turn/steer`: the text, then each
+/// pasted image as a `data:` URL item (DL-304).
+#[must_use]
+pub fn input_items(input: &UserInput) -> Value {
+    let mut items = vec![json!({"type": "text", "text": input.text})];
+    items.extend(
+        input
+            .images
+            .iter()
+            .map(|i| json!({"type": "image", "url": i.data_url()})),
+    );
+    Value::Array(items)
+}
 
 /// One frame from the app-server.
 #[derive(Debug, Clone, PartialEq)]
@@ -107,7 +122,28 @@ pub const REFUSED: i64 = -32601;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fleetdeck_proto::command::ImageInput;
     use proptest::prelude::*;
+
+    #[test]
+    fn a_codex_turn_input_carries_images_as_data_url_items() {
+        assert_eq!(
+            input_items(&UserInput::new("hi")),
+            json!([{"type": "text", "text": "hi"}])
+        );
+        let mut input = UserInput::new("look");
+        input.images.push(ImageInput {
+            media_type: "image/jpeg".to_owned(),
+            data: "/9j/".to_owned(),
+        });
+        assert_eq!(
+            input_items(&input),
+            json!([
+                {"type": "text", "text": "look"},
+                {"type": "image", "url": "data:image/jpeg;base64,/9j/"},
+            ])
+        );
+    }
 
     #[test]
     fn classifies_frames() {

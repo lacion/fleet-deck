@@ -1,0 +1,45 @@
+# cargo-dist configuration of Fleet Deck v2 (PLAN §12 "Release", Phase 7
+# "Packaging"; DL-400). One binary, `fleetdeck`, runs the deck, the station
+# and `up`. The release workflow is generated from this file with
+# `dist generate` (owner step: it needs the `dist` tool and network access).
+# The packaging test `crates/fleetdeck-cli/tests/packaging.rs` checks this file
+# statically in `make check`.
+
+[workspace]
+members = ["cargo:."]
+
+[dist]
+# The cargo-dist version that `dist generate` pins in the release workflow.
+cargo-dist-version = "0.30.0"
+ci = "github"
+# A shell installer (curl | sh) and a Homebrew formula (PLAN §12).
+installers = ["shell", "homebrew"]
+tap = "lacion/homebrew-tap"
+publish-jobs = ["homebrew"]
+formula = "fleetdeck"
+# Linux and macOS only (A11).
+targets = [
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-unknown-linux-gnu",
+]
+# The shell installer puts `fleetdeck` into `$CARGO_HOME/bin` (default
+# `~/.cargo/bin`); the service units start it from there.
+install-path = "CARGO_HOME"
+install-updater = false
+# The deck embeds the built board (`web/dist`, rust-embed): the build setup
+# builds it before `cargo build`.
+github-build-setup = "../build-setup.yml"
+# The service units, the container file and the operations notes go into
+# every archive.
+include = [
+    "packaging/README.md",
+    "packaging/systemd/fleetdeck-station.service",
+    "packaging/systemd/fleetdeck-deck.service",
+    "packaging/launchd/dev.fleetdeck.station.plist",
+    "packaging/launchd/dev.fleetdeck.deck.plist",
+    "packaging/container/Containerfile",
+]
+precise-builds = true
+pr-run-mode = "plan"

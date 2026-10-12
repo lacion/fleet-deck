@@ -91,6 +91,9 @@ async fn fixture() -> Fixture {
         node,
         peers,
         name: "box".to_owned(),
+        shells: Arc::new(fleetdeck_station::shell::Shells::new(
+            fleetdeck_station::shell::ShellConfig::default(),
+        )),
     });
     Fixture {
         _det: det,
@@ -163,9 +166,7 @@ impl Fixture {
             origin: CommandOrigin::Board,
             command: SessionCommand::Prompt {
                 session_id: "nope".into(),
-                input: UserInput {
-                    text: "hi".to_owned(),
-                },
+                input: UserInput::new("hi".to_owned()),
             },
         }
     }

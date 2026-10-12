@@ -21,6 +21,40 @@ use super::receipts::Decision;
 pub const PROVEN_EXIT: &str = "exited";
 
 impl Decision<'_> {
+    /// Stores the native session id that `session.import` continues
+    /// (DL-308); the provider confirms it in `session.started`.
+    ///
+    /// # Errors
+    /// A database error.
+    pub fn set_native_session_id(&mut self, session: &SessionId, native: &str) -> Result<()> {
+        self.with_log(|conn, _, _| {
+            conn.execute(
+                "UPDATE sessions SET native_session_id = ?2 WHERE session_id = ?1",
+                [session.as_str(), native],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// A session of this station that has not ended and continues the
+    /// native session `native`: a second import of it would run two
+    /// processes on one conversation.
+    ///
+    /// # Errors
+    /// A database error.
+    pub fn native_session_in_use(&self, native: &str) -> Result<Option<SessionId>> {
+        Ok(self
+            .connection()
+            .query_row(
+                "SELECT session_id FROM sessions WHERE native_session_id = ?1 \
+                 AND state NOT IN ('exited', 'lost') LIMIT 1",
+                [native],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()?
+            .map(SessionId::from))
+    }
+
     /// The native resume identity that the provider reported in
     /// `session.started` (Claude `session_id`, Codex `thread_id`).
     ///

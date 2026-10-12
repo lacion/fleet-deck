@@ -195,6 +195,51 @@ pub enum StationCommand {
         /// Session id.
         session: String,
     },
+    /// Refuse new work and wait until no session has open work (before an
+    /// upgrade). Fails when sessions are still busy at the timeout.
+    Drain {
+        /// The most seconds to wait.
+        #[arg(long, default_value_t = 600)]
+        timeout_secs: u64,
+    },
+    /// Self-upgrade: prepare (snapshot and trial), activate, roll back.
+    Upgrade {
+        #[command(subcommand)]
+        command: UpgradeCommand,
+    },
+}
+
+/// `fleetdeck station upgrade` (M3 7-3, DL-128).
+#[derive(Debug, Subcommand)]
+pub enum UpgradeCommand {
+    /// With the station stopped: snapshot `station.db`, run the trial of the
+    /// new build on a copy, and install the release. Prints the update id.
+    Prepare {
+        /// The new `fleetdeck` binary.
+        #[arg(long)]
+        binary: PathBuf,
+        /// The version of the new binary.
+        #[arg(long)]
+        to_version: String,
+    },
+    /// Run by the new build: migrate a copy of the snapshot and check the
+    /// shim protocols. Never touches the live database.
+    Trial {
+        /// The snapshot directory of `prepare`.
+        #[arg(long)]
+        snapshot: PathBuf,
+    },
+    /// Point the stable launcher at the release of a trialed update.
+    Activate {
+        /// Update id.
+        update: String,
+    },
+    /// With the station stopped: go back to the previous release. Restores
+    /// the snapshot only when no live state advanced and no shim is live.
+    Rollback {
+        /// Update id.
+        update: String,
+    },
 }
 
 /// Where an invitation comes from. Never from argv (G12).
