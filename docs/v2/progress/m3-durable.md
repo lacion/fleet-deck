@@ -28,6 +28,12 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 95 (2026-10-12, 17:08–)
+
+- Round start: committed round 94 as af07393. `git log v2..m3/orchestration`, `v2..m3/board`, `v2..m3/ops`: no new commits; `m3-orchestration.md` has no "LANE COMPLETE", so 6-13, 7-7 and 7-8 stay blocked.
+- 7-6 README: the status note at the top of `README.md` now points a v1 user to the open parity checks in `docs/v2/cutover.md` §1 (added in round 92) before the move from v1.
+- Checks: `cargo nextest run -p fleetdeck-cli --test docs_commands`, `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`.
+
 ## Round 94 (2026-10-12, 17:07–)
 
 - Round start: committed round 93 as ad64fa3. `git log v2..m3/orchestration`, `v2..m3/board`, `v2..m3/ops`: no new commits; `m3-orchestration.md` has no "LANE COMPLETE", so 6-13, 7-7 and 7-8 stay blocked.
