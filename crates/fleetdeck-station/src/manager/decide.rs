@@ -175,6 +175,11 @@ pub fn decide(
             session_id,
             turn_id,
         } => super::revert::decide_revert(d, policy, &session_id, &turn_id),
+        SessionCommand::ResolveRevert {
+            session_id,
+            revert_id,
+            resolution,
+        } => super::revert::decide_resolve(d, policy, &session_id, &revert_id, resolution),
         SessionCommand::Stop { session_id, how } => {
             live_session(d, &session_id, Operation::Stop)?;
             plain_effect(d, &session_id, EffectPayload::Stop { how })

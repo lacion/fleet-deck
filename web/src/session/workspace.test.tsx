@@ -1,0 +1,238 @@
+import { describe, expect, test } from 'bun:test';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { App } from '../App';
+import type { CheckpointSide, DeckSession, Event, SessionRevert } from '../gen';
+import type { Timeline } from '../runtime/state';
+import { claudeCaps, codexCaps } from '../testing/capabilities';
+import { station } from '../testing/fleet';
+import { summary } from '../testing/summary';
+import { envelopes } from '../testing/timeline';
+import { sessionActions } from './commands';
+import {
+  fileActions,
+  finalizedTurns,
+  joinPath,
+  parentPath,
+  revertBlock,
+  revertText,
+} from './workspace';
+
+const key = { station_id: 'station-a', session_id: 's1' };
+const ok = (commit: string): CheckpointSide => ({ state: 'available', commit });
+const gone = (reason: string): CheckpointSide => ({ state: 'unavailable', reason });
+
+function finalized(turn: string, start = ok(`${turn}-start`), end = ok(`${turn}-end`)): Event {
+  return {
+    kind: 'turn.finalized',
+    turn_id: turn,
+    checkpoint: { worktree_id: 'wt', scope: 'tracked', start, end },
+    diff_summary:
+      end.state === 'available' ? { files_changed: 1, insertions: 2, deletions: 1 } : null,
+  };
+}
+
+function reverted(turn: string, state: 'succeeded' | 'reconciled' | 'failed'): Event {
+  return {
+    kind: 'revert.updated',
+    revert_id: 'rv-1',
+    turn_id: turn,
+    turns: 1,
+    state,
+    reason: null,
+  };
+}
+
+const codex = (extra: Partial<DeckSession['summary']> = {}): DeckSession => ({
+  station_id: 'station-a',
+  status: 'idle',
+  summary: summary('s1', 'idle', 1, { provider: 'codex', capabilities: codexCaps(), ...extra }),
+});
+
+const timeline = (events: Event[]): Timeline => ({
+  incarnation: 'inc',
+  cursor: 0,
+  events: envelopes('s1', events),
+  freshness: 'live',
+  error: null,
+  ready: true,
+});
+
+const view = (s: DeckSession, events: Event[], scopes = ['read', 'drive', 'approve']) =>
+  renderToStaticMarkup(
+    <App
+      sessions={[s]}
+      stations={[station()]}
+      freshness="live"
+      timelines={{ [JSON.stringify(['station-a', 's1'])]: timeline(events) }}
+      sessionActions={(k) =>
+        sessionActions(
+          async () => ({}),
+          k,
+          scopes,
+          undefined,
+          async () => ({}),
+        )
+      }
+      initialSession={key}
+    />,
+  );
+
+const recon: SessionRevert = {
+  revert_id: 'rv-1',
+  turn_id: 't2',
+  state: 'reconciliation_required',
+  reason: 'workspace_changed',
+};
+
+describe('turns and reverts (DL-097)', () => {
+  test('finalized turns apply a successful revert to the target and the later turns', () => {
+    const events = [finalized('t1'), finalized('t2'), finalized('t3'), reverted('t2', 'succeeded')];
+    expect(finalizedTurns(envelopes('s1', events)).map((t) => [t.turnId, t.reverted])).toEqual([
+      ['t1', false],
+      ['t2', true],
+      ['t3', true],
+    ]);
+    // A failed revert changes nothing; a reconciliation removes every turn.
+    const failed = finalizedTurns(envelopes('s1', [finalized('t1'), reverted('t1', 'failed')]));
+    expect(failed[0]?.reverted).toBe(false);
+    const all = finalizedTurns(
+      envelopes('s1', [finalized('t1'), finalized('t2'), reverted('t2', 'reconciled')]),
+    );
+    expect(all.every((t) => t.reverted)).toBe(true);
+  });
+
+  test('a revert is offered only with rollback, a start checkpoint and a quiet session', () => {
+    const [turn] = finalizedTurns(envelopes('s1', [finalized('t1')]));
+    if (!turn) throw new Error('no turn');
+    const quiet = codex().summary;
+    expect(revertBlock(turn, quiet, codexCaps())).toBeNull();
+    expect(revertBlock(turn, quiet, claudeCaps())).toBe(
+      'The provider cannot roll back its conversation.',
+    );
+    expect(revertBlock(turn, quiet, null)).toBe('The provider cannot roll back its conversation.');
+    expect(revertBlock({ ...turn, reverted: true }, quiet, codexCaps())).toBe(
+      'The turn is reverted.',
+    );
+    expect(revertBlock({ ...turn, start: gone('queued_input') }, quiet, codexCaps())).toBe(
+      'No start checkpoint: queued_input.',
+    );
+    expect(revertBlock(turn, { ...quiet, revert: recon }, codexCaps())).toBe(
+      'Another revert holds the session.',
+    );
+    expect(revertBlock(turn, { ...quiet, current_turn: 't9' }, codexCaps())).toBe('A turn runs.');
+    expect(revertText('reconciliation_required', 'rollback_uncertain')).toContain(
+      'Reason: rollback_uncertain.',
+    );
+  });
+
+  test('a Codex session shows its turns with a diff and a revert control', () => {
+    const html = view(codex(), [finalized('t1'), finalized('t2', ok('s'), gone('queued_input'))]);
+    expect(html).toContain('aria-label="Turns"');
+    expect(html).toMatch(/data-turn="t1" data-reverted="false"><span>Turn 1 · 1 files, \+2 −1/);
+    expect(html).toContain('Turn 2 · no completion checkpoint: queued_input');
+    expect(html).toContain('Show the diff');
+    expect(html).toMatch(/<button type="button">Revert to here<\/button>/);
+    expect(html).not.toContain('cannot roll back its conversation, so the board');
+    expect(html).toContain('aria-label="Files"');
+  });
+
+  test('a Claude session gets no revert control and says why', () => {
+    const s: DeckSession = {
+      station_id: 'station-a',
+      status: 'idle',
+      summary: summary('s1', 'idle', 1, { capabilities: claudeCaps() }),
+    };
+    const html = view(s, [finalized('t1')]);
+    expect(html).toContain('This provider cannot roll back its conversation');
+    expect(html).toContain('A file-only restore is not a revert.');
+    expect(html).not.toContain('Revert to here');
+  });
+
+  test('read-only scopes and a running turn disable the revert; a read-only board has no files', () => {
+    const readOnly = view(codex(), [finalized('t1')], ['read']);
+    expect(readOnly).toMatch(/<button type="button" disabled="">Revert to here<\/button>/);
+    expect(readOnly).not.toContain('aria-label="Files"');
+    const running = view(codex({ current_turn: 't2', activity: 'working' }), [finalized('t1')]);
+    expect(running).toMatch(/disabled="" title="A turn runs.">Revert to here/);
+  });
+
+  test('a revert that needs reconciliation shows the owner actions', () => {
+    const html = view(codex({ revert: recon }), [finalized('t1'), finalized('t2')]);
+    expect(html).toContain('data-revert-state="reconciliation_required"');
+    expect(html).toContain('role="alert">The revert needs reconciliation');
+    expect(html).toContain('Reason: workspace_changed.');
+    expect(html).toMatch(/<button type="button">Retry the file restore<\/button>/);
+    expect(html).toMatch(/<button type="button">Mark as reconciled<\/button>/);
+    expect(html).toContain('A revert holds the session; no new revert starts.');
+    const readOnly = view(codex({ revert: recon }), [finalized('t1')], ['read']);
+    expect(readOnly).toMatch(/<button type="button" disabled="">Mark as reconciled<\/button>/);
+    const done = view(codex({ revert: { ...recon, state: 'succeeded', reason: null } }), []);
+    expect(done).toContain('role="status">The revert succeeded');
+    expect(done).not.toContain('Mark as reconciled');
+  });
+});
+
+describe('workspace actions', () => {
+  test('the file service and the diff use the session paths', async () => {
+    const asked: string[] = [];
+    const answers: Record<string, unknown> = {
+      list: { root: { session: 's1' }, path: 'src', entries: [], truncated: false },
+      read: { path: 'a b.txt', size: 3, binary: false, text: 'one', truncated: false },
+      search: { hits: [], truncated: false, backend: 'git' },
+      diff: {
+        summary: { files_changed: 0, insertions: 0, deletions: 0 },
+        patch: '',
+        truncated: false,
+      },
+    };
+    const files = fileActions(async (path) => {
+      asked.push(path);
+      const kind = path.includes('/turns/') ? 'diff' : (path.match(/files\/(\w+)/)?.[1] ?? '');
+      return answers[kind];
+    }, key);
+    await files.list('src');
+    await files.read('a b.txt');
+    await files.search('fn main', 'content');
+    await files.diff('turn/1');
+    expect(asked).toEqual([
+      '/api/stations/station-a/files/list?session=s1&path=src',
+      '/api/stations/station-a/files/read?session=s1&path=a%20b.txt',
+      '/api/stations/station-a/files/search?session=s1&q=fn%20main&mode=content',
+      '/api/stations/station-a/sessions/s1/turns/turn%2F1/diff',
+    ]);
+    const bad = fileActions(async () => ({ entries: [] }), key);
+    await expect(bad.list('')).rejects.toThrow('The deck sent an invalid directory listing.');
+    expect(parentPath('a/b/c')).toBe('a/b');
+    expect(parentPath('a')).toBe('');
+    expect(joinPath('', 'a')).toBe('a');
+    expect(joinPath('a', 'b')).toBe('a/b');
+  });
+
+  test('revert and the two resolutions post one command each', async () => {
+    const posted: [string, unknown][] = [];
+    let n = 0;
+    const actions = sessionActions(
+      async (path, body) => {
+        posted.push([path, body]);
+        return { receipt: { state: 'accepted', reject: null } };
+      },
+      key,
+      ['read', 'drive'],
+      () => `cmd-${++n}`,
+    );
+    expect(actions.files).toBeNull();
+    await actions.revert('t1');
+    await actions.resolveRevert('rv-1', 'retry_restore');
+    await actions.resolveRevert('rv-1', 'reconciled');
+    expect(posted.map(([path]) => path)).toEqual([
+      '/api/commands/session.revert',
+      '/api/commands/session.resolve_revert',
+      '/api/commands/session.resolve_revert',
+    ]);
+    expect(posted.map(([, body]) => (body as { command: unknown }).command)).toEqual([
+      { op: 'revert', session_id: 's1', turn_id: 't1' },
+      { op: 'resolve_revert', session_id: 's1', revert_id: 'rv-1', resolution: 'retry_restore' },
+      { op: 'resolve_revert', session_id: 's1', revert_id: 'rv-1', resolution: 'reconciled' },
+    ]);
+  });
+});

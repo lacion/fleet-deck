@@ -103,6 +103,7 @@ fn commands() -> Vec<SessionCommand> {
         json!({"op": "stop", "session_id": s, "how": "graceful"}),
         json!({"op": "revert", "session_id": s, "turn_id": "turn-1"}),
         json!({"op": "rename", "session_id": s, "title": "docs"}),
+        json!({"op": "resolve_revert", "session_id": s, "revert_id": "rv-1", "resolution": "retry_restore"}),
     ];
     let commands: Vec<SessionCommand> = samples
         .into_iter()
@@ -122,7 +123,8 @@ fn commands() -> Vec<SessionCommand> {
             | SessionCommand::Fork { .. }
             | SessionCommand::Stop { .. }
             | SessionCommand::Revert { .. }
-            | SessionCommand::Rename { .. } => {}
+            | SessionCommand::Rename { .. }
+            | SessionCommand::ResolveRevert { .. } => {}
         }
     }
     commands
@@ -132,7 +134,7 @@ fn commands() -> Vec<SessionCommand> {
 fn every_session_command_is_a_mutating_deck_to_station_method_of_the_adr_table() {
     let table = method_table();
     let commands = commands();
-    assert_eq!(commands.len(), 13);
+    assert_eq!(commands.len(), 14);
     for c in &commands {
         let r = row(&table, c.method());
         assert!(r.mutating, "`{}` must be mutating", c.method());

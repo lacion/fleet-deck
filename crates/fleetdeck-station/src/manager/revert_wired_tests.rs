@@ -334,3 +334,6 @@ async fn a_revert_of_a_busy_session_is_rejected_before_any_change() {
 
 #[path = "revert_worktree_tests.rs"]
 mod worktree;
+
+#[path = "revert_resolve_tests.rs"]
+mod resolve;

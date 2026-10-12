@@ -660,3 +660,62 @@ async fn a_second_open_revert_of_the_session_is_refused_by_the_store() {
     );
     assert!(rig.store.revert("rv-2".into()).await.unwrap().is_none());
 }
+
+#[tokio::test]
+async fn a_retried_restore_from_another_process_or_with_changed_files_writes_nothing() {
+    let rig = Rig::new().await;
+    rig.admit().await;
+    let (mut session, calls) = Scripted::new(Rollback::OkWhileWriting(rig.dir.join("a.txt")));
+    rig.run(&mut session).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    let retry = || async {
+        assert!(
+            rig.store
+                .advance_revert(
+                    "rv-1".into(),
+                    &[RevertStep::ReconciliationRequired],
+                    RevertStep::RolledBack,
+                    None,
+                )
+                .await
+                .unwrap()
+        );
+    };
+    // Another provider process: the retry stops before any file.
+    retry().await;
+    let other = revert_run::run(
+        rig.env(),
+        &rig.turns,
+        &mut session,
+        &"proc-2".to_owned().into(),
+        "rv-1",
+    )
+    .await;
+    assert_eq!(
+        other,
+        Dispatch::NotDispatched(reason::PROCESS_CHANGED.into())
+    );
+    assert_eq!(
+        rig.step().await,
+        (
+            RevertStep::ReconciliationRequired,
+            Some(reason::PROCESS_CHANGED.into())
+        )
+    );
+    // The files still differ from both checkpoints: nothing is written.
+    retry().await;
+    assert_eq!(
+        rig.run(&mut session).await,
+        Dispatch::Unknown(reason::WORKSPACE_CHANGED.into())
+    );
+    assert_eq!(rig.file("a.txt"), "a writer\n");
+    // The files equal the completion checkpoint again: the restore runs,
+    // and the conversation rollback is never sent again.
+    std::fs::write(rig.dir.join("a.txt"), "one\nT1\n").unwrap();
+    retry().await;
+    assert_eq!(rig.run(&mut session).await, Dispatch::Confirmed);
+    assert_eq!(rig.step().await, (RevertStep::Succeeded, None));
+    assert_eq!(rig.file("a.txt"), "one\n");
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(rig.reverted().await, vec![Some("rv-1".to_owned()); 2]);
+}

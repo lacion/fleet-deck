@@ -145,6 +145,13 @@ pub const METHODS: &[MethodSpec] = &[
         true,
     ),
     m(
+        "session.resolve_revert",
+        DeckToStation,
+        Scope::Drive,
+        Some(feature::REVERT),
+        true,
+    ),
+    m(
         "session.rename",
         DeckToStation,
         Scope::Drive,

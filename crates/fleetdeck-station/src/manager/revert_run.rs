@@ -20,6 +20,10 @@
 //! `admitted` → `failed` (nothing was sent), `rollback_sent` →
 //! `reconciliation_required`, `rolled_back`/`restoring` → finish the file
 //! restore from the refs.
+//!
+//! The owner's `retry_restore` (DL-097) sends a `reconciliation_required`
+//! revert with a confirmed rollback back to `rolled_back`; its effect runs
+//! the file restore again with the same rules.
 
 use std::path::Path;
 
@@ -82,6 +86,11 @@ async fn execute(
     let Some(row) = env.store.revert(revert_id.to_owned()).await? else {
         return Ok(Dispatch::NotDispatched(reason::NOT_ADMITTED.into()));
     };
+    if row.step == RevertStep::RolledBack {
+        // The owner's retry of the file restore (DL-097): the rollback is
+        // confirmed; the restore runs again under the same rules.
+        return retry_restore(env, &row, process).await;
+    }
     if row.step != RevertStep::Admitted {
         return Ok(Dispatch::NotDispatched(reason::NOT_ADMITTED.into()));
     }
@@ -166,6 +175,44 @@ pub async fn restore(env: RevertEnv<'_>, row: &RevertRow) -> Result<Dispatch, St
         None => Dispatch::Confirmed,
         Some(why) => Dispatch::Unknown(why.into()),
     })
+}
+
+/// The owner's retry of a file restore after a confirmed rollback. A
+/// changed process or a busy worktree sends the revert back to
+/// `reconciliation_required` with nothing written.
+async fn retry_restore(
+    env: RevertEnv<'_>,
+    row: &RevertRow,
+    process: &ProcessIncarnation,
+) -> Result<Dispatch, StoreError> {
+    let id = row.revert.revert_id.as_str();
+    let why = if *process != row.revert.process {
+        Some(reason::PROCESS_CHANGED)
+    } else if env
+        .store
+        .worktree_conflict(
+            row.revert.worktree_root.clone(),
+            row.revert.session_id.clone(),
+        )
+        .await?
+        .is_some()
+    {
+        Some(reason::WORKTREE_BUSY)
+    } else {
+        None
+    };
+    if let Some(why) = why {
+        step(
+            env,
+            id,
+            &[RevertStep::RolledBack],
+            RevertStep::ReconciliationRequired,
+            Some(why),
+        )
+        .await?;
+        return Ok(Dispatch::NotDispatched(why.into()));
+    }
+    restore(env, row).await
 }
 
 async fn restore_files(env: RevertEnv<'_>, row: &RevertRow) -> Result<(), &'static str> {
@@ -350,7 +397,10 @@ pub async fn recover(env: RevertEnv<'_>) -> Result<usize, StoreError> {
             RevertStep::RolledBack | RevertStep::Restoring => {
                 restore(env, &row).await?;
             }
-            RevertStep::Succeeded | RevertStep::Failed | RevertStep::ReconciliationRequired => {}
+            RevertStep::Succeeded
+            | RevertStep::Failed
+            | RevertStep::ReconciliationRequired
+            | RevertStep::Reconciled => {}
         }
     }
     Ok(n)

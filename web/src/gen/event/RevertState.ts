@@ -3,4 +3,4 @@
 /**
  * The state of one revert (PLAN §6.6, DL-087).
  */
-export type RevertState = "admitted" | "conversation_rolled_back" | "succeeded" | "failed" | "reconciliation_required";
+export type RevertState = "admitted" | "conversation_rolled_back" | "succeeded" | "failed" | "reconciliation_required" | "reconciled";

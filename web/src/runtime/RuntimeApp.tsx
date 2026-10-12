@@ -25,7 +25,13 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
   const commands = useMemo(() => {
     const scopes = scopeText.split(' ');
     return (key: SessionKey) =>
-      sessionActions((path, body) => connection.post(path, body), key, scopes);
+      sessionActions(
+        (path, body) => connection.post(path, body),
+        key,
+        scopes,
+        undefined,
+        (path) => connection.get(path),
+      );
   }, [connection, scopeText]);
   const spawn = useMemo(
     () =>

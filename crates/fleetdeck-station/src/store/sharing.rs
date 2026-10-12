@@ -90,11 +90,13 @@ fn conflict(conn: &Connection, root: &str, except: &SessionId) -> Result<Option<
 /// The open revert (not `succeeded` or `failed`) of any session whose
 /// worktree overlaps `cwd`.
 fn open_revert_over(conn: &Connection, cwd: &str) -> Result<Option<RevertRow>> {
-    Ok(
-        reverts::select(conn, "step NOT IN ('succeeded', 'failed')", &[])?
-            .into_iter()
-            .find(|r| overlaps(&r.revert.worktree_root, cwd)),
-    )
+    Ok(reverts::select(
+        conn,
+        "step NOT IN ('succeeded', 'failed', 'reconciled')",
+        &[],
+    )?
+    .into_iter()
+    .find(|r| overlaps(&r.revert.worktree_root, cwd)))
 }
 
 impl Decision<'_> {

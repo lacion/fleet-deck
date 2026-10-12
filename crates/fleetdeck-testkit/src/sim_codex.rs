@@ -16,7 +16,8 @@
 //! - `bg ...`: a command that outlives its turn; the first
 //!   `thread/backgroundTerminals/list` lists it, the second completes it;
 //! - `set-rollback <mode>`: sets how the next `thread/rollback` behaves
-//!   (`ok`, `refuse`, `hang` or `exit`), then echoes;
+//!   (`ok`, `refuse`, `hang`, `exit`, or `ok-write`: a writer changes
+//!   `a.txt` in the thread's cwd during an `ok` rollback), then echoes;
 //! - anything else: a reply `echo: <text>`.
 //!
 //! `thread/rollback` drops `numTurns` completed turns when no turn runs.
@@ -258,6 +259,9 @@ impl<W: Write> Sim<W> {
             return self.error(id, "numTurns is out of range");
         }
         self.turns -= u32::try_from(n).unwrap_or(u32::MAX);
+        if self.rollback == "ok-write" {
+            std::fs::write(std::path::Path::new(&self.cwd).join("a.txt"), "a writer\n")?;
+        }
         let info = json!({"id": self.thread_id(), "cwd": self.cwd, "model": self.model});
         self.reply(id, json!({"thread": info}))
     }

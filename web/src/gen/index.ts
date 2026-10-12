@@ -25,6 +25,7 @@ export * from "./command/Receipt";
 export * from "./command/ReceiptState";
 export * from "./command/Reject";
 export * from "./command/RejectCode";
+export * from "./command/RevertResolution";
 export * from "./command/SessionCommand";
 export * from "./command/SessionSpec";
 export * from "./command/StopMode";

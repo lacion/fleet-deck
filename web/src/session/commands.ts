@@ -4,10 +4,12 @@
 // command by itself: the deck owns retries, and an `ambiguous` command is
 // shown as such (A9, PLAN §8). The station answers a refused command with a
 // receipt; its message is shown as is.
-import type { DeckCommand, SessionCommand, SessionKey } from '../gen';
+import type { DeckCommand, RevertResolution, SessionCommand, SessionKey } from '../gen';
 import type { Reply } from './question';
+import { type FileActions, fileActions } from './workspace';
 
 type Post = (path: string, body: unknown) => Promise<unknown>;
+type Get = (path: string) => Promise<unknown>;
 
 export type Outcome = { readonly ok: boolean; readonly text: string };
 export type InputKind = 'prompt' | 'steer' | 'follow_up';
@@ -23,6 +25,12 @@ export type SessionActions = {
   setModel(model: string): Promise<Outcome>;
   /** The board title (DL-095); `null` clears it. Allowed on an ended session too. */
   rename(title: string | null): Promise<Outcome>;
+  /** Roll back the conversation, then restore the files, to the start of the turn (PLAN §6.6). */
+  revert(turnId: string): Promise<Outcome>;
+  /** The owner's resolution of a revert in `reconciliation_required` (DL-097). */
+  resolveRevert(revertId: string, resolution: RevertResolution): Promise<Outcome>;
+  /** The file service of the session; `null` without a reader (tests). */
+  readonly files: FileActions | null;
 };
 
 /** The longest title, in characters (the station refuses a longer one). */
@@ -42,6 +50,7 @@ const METHODS: Record<SessionCommand['op'], string> = {
   stop: 'session.stop',
   revert: 'session.revert',
   rename: 'session.rename',
+  resolve_revert: 'session.resolve_revert',
 };
 
 /** A command id: `b` and 24 random base-36 characters (`[0-9A-Za-z_-]{1,64}`). */
@@ -85,6 +94,7 @@ export function sessionActions(
   key: SessionKey,
   scopes: readonly string[],
   newId: () => string = commandId,
+  get: Get | null = null,
 ): SessionActions {
   const run = async (command: SessionCommand): Promise<Outcome> => {
     try {
@@ -114,5 +124,9 @@ export function sessionActions(
     setMode: (mode) => run({ op: 'set_mode', session_id, mode }),
     setModel: (model) => run({ op: 'set_model', session_id, model }),
     rename: (title) => run({ op: 'rename', session_id, title }),
+    revert: (turn_id) => run({ op: 'revert', session_id, turn_id }),
+    resolveRevert: (revert_id, resolution) =>
+      run({ op: 'resolve_revert', session_id, revert_id, resolution }),
+    files: get ? fileActions(get, key) : null,
   };
 }

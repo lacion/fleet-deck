@@ -256,6 +256,10 @@ pub enum RevertState {
     /// The conversation and the workspace can differ; session input stays
     /// blocked until the owner reconciles the session.
     ReconciliationRequired,
+    /// The owner resolved a revert in `reconciliation_required` and accepted
+    /// the state of the conversation and the files (DL-097). The session
+    /// takes input again; no earlier turn can be reverted.
+    Reconciled,
 }
 
 /// Where a raw provider frame of an event is in the diagnostic log (L12).

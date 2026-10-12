@@ -13,7 +13,10 @@
 //! - **Terminal steps.** `succeeded` (the conversation and the workspace
 //!   both match the target), `failed` (nothing changed) and
 //!   `reconciliation_required` (uncertain or partial; the session refuses
-//!   input until an owner reconciles it).
+//!   input until an owner resolves it), and `reconciled` (the owner
+//!   accepted the state, DL-097). An owner can also send a
+//!   `reconciliation_required` revert whose rollback is confirmed back to
+//!   `rolled_back` for one more file restore.
 
 use fleetdeck_proto::event::RevertState;
 use fleetdeck_proto::{Event, EventEnvelope, SessionId, TurnId};
@@ -36,6 +39,8 @@ pub enum RevertStep {
     Succeeded,
     Failed,
     ReconciliationRequired,
+    /// The owner resolved a `reconciliation_required` revert (DL-097).
+    Reconciled,
 }
 
 impl RevertStep {
@@ -49,6 +54,7 @@ impl RevertStep {
             Self::Succeeded => "succeeded",
             Self::Failed => "failed",
             Self::ReconciliationRequired => "reconciliation_required",
+            Self::Reconciled => "reconciled",
         }
     }
 
@@ -61,6 +67,7 @@ impl RevertStep {
             "succeeded" => Self::Succeeded,
             "failed" => Self::Failed,
             "reconciliation_required" => Self::ReconciliationRequired,
+            "reconciled" => Self::Reconciled,
             other => return Err(StoreError::Corrupt(format!("revert step {other}"))),
         })
     }
@@ -83,6 +90,7 @@ impl RevertStep {
             Self::Succeeded => Some(RevertState::Succeeded),
             Self::Failed => Some(RevertState::Failed),
             Self::ReconciliationRequired => Some(RevertState::ReconciliationRequired),
+            Self::Reconciled => Some(RevertState::Reconciled),
             Self::RollbackSent | Self::Restoring => None,
         }
     }
@@ -113,12 +121,16 @@ pub struct RevertRow {
     pub revert: NewRevert,
     pub step: RevertStep,
     pub reason: Option<String>,
+    /// True once the provider confirmed the conversation rollback.
+    pub rolled_back: bool,
 }
 
 const COLUMNS: &str = "revert_id, session_id, process, turn_id, app_turn, current_app_turn, \
-     turns, target_commit, current_commit, worktree_root, step, reason";
+     turns, target_commit, current_commit, worktree_root, step, reason, rolled_back_at";
 
-fn decode(r: &rusqlite::Row<'_>) -> rusqlite::Result<(Vec<String>, i64, Option<String>)> {
+type Decoded = (Vec<String>, i64, Option<String>, Option<i64>);
+
+fn decode(r: &rusqlite::Row<'_>) -> rusqlite::Result<Decoded> {
     let mut text = Vec::with_capacity(10);
     for i in 0..6 {
         text.push(r.get(i)?);
@@ -127,10 +139,10 @@ fn decode(r: &rusqlite::Row<'_>) -> rusqlite::Result<(Vec<String>, i64, Option<S
     for i in 7..11 {
         text.push(r.get(i)?);
     }
-    Ok((text, turns, r.get(11)?))
+    Ok((text, turns, r.get(11)?, r.get(12)?))
 }
 
-fn build((text, turns, reason): (Vec<String>, i64, Option<String>)) -> Result<RevertRow> {
+fn build((text, turns, reason, rolled_back_at): Decoded) -> Result<RevertRow> {
     let [
         id,
         session,
@@ -161,6 +173,7 @@ fn build((text, turns, reason): (Vec<String>, i64, Option<String>)) -> Result<Re
         },
         step: RevertStep::parse(&step)?,
         reason,
+        rolled_back: rolled_back_at.is_some(),
     })
 }
 
@@ -209,31 +222,43 @@ fn advance(
     if !from.contains(&found.step) {
         return Ok(false);
     }
+    let rolled_back = found.rolled_back || to == RevertStep::RolledBack;
     conn.execute(
-        "UPDATE reverts SET step = ?2, reason = ?3, updated_at = ?4 WHERE revert_id = ?1",
-        params![revert_id, to.as_str(), reason, now],
+        "UPDATE reverts SET step = ?2, reason = ?3, updated_at = ?4, \
+         rolled_back_at = COALESCE(rolled_back_at, ?5) WHERE revert_id = ?1",
+        params![
+            revert_id,
+            to.as_str(),
+            reason,
+            now,
+            (to == RevertStep::RolledBack).then_some(now)
+        ],
     )?;
-    if to == RevertStep::Succeeded {
+    let rows = revertable(conn, &found.revert.session_id)?;
+    let removed = match to {
         // The reverted turns leave the revertable history: the target turn
         // and every later turn of the session.
-        let rows = revertable(conn, &found.revert.session_id)?;
-        if let Some(at) = rows
+        RevertStep::Succeeded => rows
             .iter()
             .position(|r| r.app_turn == found.revert.app_turn)
-        {
-            for row in &rows[at..] {
-                conn.execute(
-                    "UPDATE turn_checkpoints SET reverted_by = ?2, updated_at = ?3 \
-                     WHERE app_turn = ?1",
-                    params![row.app_turn.as_str(), revert_id, now],
-                )?;
-            }
-        }
+            .map_or(&rows[..0], |at| &rows[at..]),
+        // After an owner reconciliation the station no longer knows how
+        // many turns the conversation holds, so no earlier turn stays
+        // revertable (DL-097).
+        RevertStep::Reconciled => &rows[..],
+        _ => &rows[..0],
+    };
+    for row in removed {
+        conn.execute(
+            "UPDATE turn_checkpoints SET reverted_by = ?2, updated_at = ?3 WHERE app_turn = ?1",
+            params![row.app_turn.as_str(), revert_id, now],
+        )?;
     }
     if let Some(state) = to.wire() {
         let row = RevertRow {
             step: to,
             reason: reason.map(str::to_owned),
+            rolled_back,
             ..found
         };
         let ev = event(&row, state);
@@ -288,14 +313,15 @@ impl Decision<'_> {
         pending_inputs(self.connection(), session)
     }
 
-    /// The session's revert that is not `succeeded` or `failed`, if any.
+    /// The session's revert that has not ended (`succeeded`, `failed` or
+    /// `reconciled`), if any.
     ///
     /// # Errors
     /// A database error.
     pub fn open_revert(&self, session: &SessionId) -> Result<Option<RevertRow>> {
         Ok(select(
             self.connection(),
-            "session_id = ?1 AND step NOT IN ('succeeded', 'failed')",
+            "session_id = ?1 AND step NOT IN ('succeeded', 'failed', 'reconciled')",
             &[&session.as_str()],
         )?
         .pop())
@@ -329,9 +355,34 @@ impl Decision<'_> {
             revert: new.clone(),
             step: RevertStep::Admitted,
             reason: None,
+            rolled_back: false,
         };
         self.append(&new.session_id, event(&row, RevertState::Admitted).into())?;
         Ok(())
+    }
+
+    /// One revert.
+    ///
+    /// # Errors
+    /// A database error.
+    pub fn revert(&self, revert_id: &str) -> Result<Option<RevertRow>> {
+        get(self.connection(), revert_id)
+    }
+
+    /// Moves a revert from one of `from` to `to` with its event, in the
+    /// decision's transaction (the owner's resolution, DL-097); `false`
+    /// when the row was in another step.
+    ///
+    /// # Errors
+    /// A database error, or an unknown revert.
+    pub fn advance_revert(
+        &mut self,
+        revert_id: &str,
+        from: &[RevertStep],
+        to: RevertStep,
+        reason: Option<&str>,
+    ) -> Result<bool> {
+        self.with_log(|conn, now, out| advance(conn, revert_id, from, to, reason, now, out))
     }
 }
 

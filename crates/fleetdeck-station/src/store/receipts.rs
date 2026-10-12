@@ -186,6 +186,15 @@ impl Decision<'_> {
             .ok_or_else(|| StoreError::Corrupt("the appended event is missing".to_owned()))
     }
 
+    /// Runs a store helper that appends events in the decision's
+    /// transaction; the events become part of the decision.
+    pub(super) fn with_log<T>(
+        &mut self,
+        write: impl FnOnce(&Connection, i64, &mut Vec<EventEnvelope>) -> Result<T>,
+    ) -> Result<T> {
+        write(self.conn, self.now, &mut self.events)
+    }
+
     /// The live provider process of a session, if any.
     ///
     /// # Errors

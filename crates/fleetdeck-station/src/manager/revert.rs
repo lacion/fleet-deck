@@ -20,14 +20,15 @@
 //! The admitted revert is a row (the durable fence), a
 //! `revert.updated {admitted}` event and one revert effect.
 
-use fleetdeck_proto::command::CommandResult;
+use fleetdeck_proto::command::{CommandResult, RevertResolution};
 use fleetdeck_proto::event::SessionState;
 use fleetdeck_proto::{Operation, RejectCode, SessionId, TurnId};
 
 use super::decide::{live_session, reject, result};
 use super::policy::Policy;
 use crate::store::{
-    DecideError, Decision, EffectPayload, NewRevert, RowSide, RowState, TurnCheckpointRow,
+    DecideError, Decision, EffectPayload, NewRevert, RevertStep, RowSide, RowState,
+    TurnCheckpointRow,
 };
 
 /// Decides `session.revert`.
@@ -170,6 +171,117 @@ pub fn decide_revert(
             turns,
         },
     )?;
+    Ok(result(session_id, None))
+}
+
+/// The reason of a revert that the owner reconciled.
+pub const OWNER_RECONCILED: &str = "owner_reconciled";
+
+/// Decides `session.resolve_revert` (DL-097): the owner's way out of
+/// `reconciliation_required`.
+///
+/// - `reconciled`: the owner checked the conversation and the files and
+///   accepts them. The revert ends `reconciled`, the session takes input
+///   again, and every turn from before the reconciliation leaves the
+///   revertable history (the station no longer knows how many turns the
+///   conversation holds). This works on an ended or lost session too.
+/// - `retry_restore`: only for a revert whose conversation rollback the
+///   provider confirmed. The revert goes back to `rolled_back` and one more
+///   revert effect restores the files; the executor applies the same strict
+///   rules (the workspace must still equal the completion or the target
+///   checkpoint). It needs the same live process and a quiet worktree.
+///
+/// # Errors
+/// A stored rejection, or a store error.
+pub fn decide_resolve(
+    d: &mut Decision<'_>,
+    policy: &Policy,
+    session_id: &SessionId,
+    revert_id: &str,
+    resolution: RevertResolution,
+) -> Result<CommandResult, DecideError> {
+    let s = d
+        .summary(session_id)?
+        .ok_or_else(|| reject(RejectCode::UnknownSession, "no such session"))?;
+    let row = d
+        .revert(revert_id)?
+        .filter(|r| r.revert.session_id == *session_id)
+        .ok_or_else(|| {
+            reject(
+                RejectCode::InvalidCommand,
+                "the session has no revert with that id",
+            )
+        })?;
+    if row.step != RevertStep::ReconciliationRequired {
+        return Err(reject(
+            RejectCode::InvalidState,
+            format!(
+                "the revert is `{}`, not `reconciliation_required`",
+                row.step.as_str()
+            ),
+        ));
+    }
+    match resolution {
+        RevertResolution::Reconciled => {
+            d.advance_revert(
+                revert_id,
+                &[RevertStep::ReconciliationRequired],
+                RevertStep::Reconciled,
+                Some(OWNER_RECONCILED),
+            )?;
+        }
+        RevertResolution::RetryRestore => {
+            if !row.rolled_back {
+                return Err(reject(
+                    RejectCode::InvalidState,
+                    "the conversation rollback is not confirmed, so the files are not restored",
+                ));
+            }
+            if matches!(s.state, SessionState::Exited | SessionState::Lost) {
+                return Err(reject(RejectCode::InvalidState, "the session has ended"));
+            }
+            if d.live_process(session_id)?.as_ref() != Some(&row.revert.process) {
+                return Err(reject(
+                    RejectCode::InvalidState,
+                    "the provider process of the revert is gone",
+                ));
+            }
+            let busy = s.state != SessionState::Running
+                || s.current_turn.is_some()
+                || s.current_run.is_some()
+                || !s.open_requests.is_empty()
+                || !s.background_tasks.is_empty();
+            if busy || d.pending_input_effects(session_id)? > 0 {
+                return Err(reject(
+                    RejectCode::InvalidState,
+                    "the session is busy: a turn, input, request or background task is pending",
+                ));
+            }
+            if policy.workspace(&row.revert.worktree_root).is_err() {
+                return Err(reject(
+                    RejectCode::Forbidden,
+                    "the worktree is outside the allowed roots",
+                ));
+            }
+            if let Some(why) = d.worktree_conflict(&row.revert.worktree_root, session_id)? {
+                return Err(reject(RejectCode::InvalidState, why));
+            }
+            d.advance_revert(
+                revert_id,
+                &[RevertStep::ReconciliationRequired],
+                RevertStep::RolledBack,
+                None,
+            )?;
+            d.enqueue(
+                session_id,
+                EffectPayload::Revert {
+                    revert_id: revert_id.to_owned(),
+                    app_turn: row.revert.app_turn.0.clone(),
+                    turns: row.revert.turns,
+                },
+            )?;
+        }
+    }
     Ok(result(session_id, None))
 }
 

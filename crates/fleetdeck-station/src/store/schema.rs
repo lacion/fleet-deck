@@ -227,6 +227,46 @@ CREATE UNIQUE INDEX reverts_active ON reverts(session_id) WHERE step IN
 ALTER TABLE turn_checkpoints ADD COLUMN reverted_by TEXT;
 ";
 
+const V8: &str = "
+-- DL-097: the owner's resolution of a revert in `reconciliation_required`.
+-- The step list gains `reconciled` (terminal), and `rolled_back_at` records
+-- that the provider confirmed the conversation rollback, so a retried file
+-- restore never depends on a reason text. SQLite cannot change a CHECK, so
+-- the table is rebuilt; no other table references it.
+CREATE TABLE reverts_v8 (
+    revert_id         TEXT PRIMARY KEY,
+    session_id        TEXT NOT NULL REFERENCES sessions(session_id),
+    process           TEXT NOT NULL,
+    turn_id           TEXT NOT NULL,
+    app_turn          TEXT NOT NULL REFERENCES turn_checkpoints(app_turn),
+    current_app_turn  TEXT NOT NULL REFERENCES turn_checkpoints(app_turn),
+    turns             INTEGER NOT NULL,
+    target_commit     TEXT NOT NULL,
+    current_commit    TEXT NOT NULL,
+    worktree_root     TEXT NOT NULL,
+    step              TEXT NOT NULL CHECK (step IN ('admitted', 'rollback_sent',
+        'rolled_back', 'restoring', 'succeeded', 'failed', 'reconciliation_required',
+        'reconciled')),
+    reason            TEXT,
+    rolled_back_at    INTEGER,
+    created_at        INTEGER NOT NULL,
+    updated_at        INTEGER NOT NULL
+) STRICT;
+-- Before V8 only `rollback_uncertain` left a revert in
+-- `reconciliation_required` without a confirmed rollback.
+INSERT INTO reverts_v8 SELECT revert_id, session_id, process, turn_id, app_turn,
+    current_app_turn, turns, target_commit, current_commit, worktree_root, step, reason,
+    CASE WHEN step IN ('rolled_back', 'restoring', 'succeeded')
+        OR (step = 'reconciliation_required' AND reason IS NOT 'rollback_uncertain')
+        THEN updated_at END,
+    created_at, updated_at
+    FROM reverts;
+DROP TABLE reverts;
+ALTER TABLE reverts_v8 RENAME TO reverts;
+CREATE UNIQUE INDEX reverts_active ON reverts(session_id) WHERE step IN
+    ('admitted', 'rollback_sent', 'rolled_back', 'restoring', 'reconciliation_required');
+";
+
 /// The `station.db` migrations. V4 is the link epochs table of
 /// `fleetdeck-link` (G1).
 #[must_use]
@@ -239,5 +279,6 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V5),
         M::up(V6),
         M::up(V7),
+        M::up(V8),
     ])
 }

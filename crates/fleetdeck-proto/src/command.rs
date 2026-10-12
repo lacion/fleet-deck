@@ -123,6 +123,28 @@ pub enum SessionCommand {
         session_id: SessionId,
         title: Option<String>,
     },
+    /// The owner's resolution of a revert in `reconciliation_required`
+    /// (PLAN §6.6, DL-097).
+    ResolveRevert {
+        session_id: SessionId,
+        revert_id: String,
+        resolution: RevertResolution,
+    },
+}
+
+/// How the owner resolves a revert that needs reconciliation (DL-097).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "command/")]
+pub enum RevertResolution {
+    /// The owner checked the conversation and the files and accepts their
+    /// state. The revert ends; the session takes input again. No turn from
+    /// before the reconciliation can be reverted after it, because the
+    /// station no longer knows the conversation's turn count.
+    Reconciled,
+    /// The conversation rollback is confirmed; restore the files again. The
+    /// files must still equal the completion or the target checkpoint.
+    RetryRestore,
 }
 
 /// The longest session title, in characters (DL-095).
@@ -165,6 +187,7 @@ impl SessionCommand {
             Self::Stop { .. } => "session.stop",
             Self::Revert { .. } => "session.revert",
             Self::Rename { .. } => "session.rename",
+            Self::ResolveRevert { .. } => "session.resolve_revert",
         }
     }
 
@@ -184,7 +207,8 @@ impl SessionCommand {
             | Self::Fork { session_id }
             | Self::Stop { session_id, .. }
             | Self::Revert { session_id, .. }
-            | Self::Rename { session_id, .. } => Some(session_id),
+            | Self::Rename { session_id, .. }
+            | Self::ResolveRevert { session_id, .. } => Some(session_id),
         }
     }
 }

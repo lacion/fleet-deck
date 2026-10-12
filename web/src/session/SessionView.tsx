@@ -6,8 +6,11 @@ import type { Freshness, Timeline } from '../runtime/state';
 import type { InputKind, Outcome, SessionActions } from './commands';
 import { QuestionAnswer } from './QuestionAnswer';
 import { questionForm, type Reply } from './question';
+import { FilesPanel } from './FilesPanel';
 import { RenameForm } from './RenameForm';
 import { buildTimeline, type Item, subagentLabel } from './timeline';
+import { RevertStatus, TurnsPanel } from './TurnsPanel';
+import { finalizedTurns } from './workspace';
 
 type Props = {
   readonly session: DeckSession;
@@ -27,6 +30,7 @@ export function SessionView({ session, stations, timeline, freshness, actions, o
   const drive = live && !ended && actions?.canDrive === true;
   const working = s.current_run !== null;
   const tree = buildTimeline(timeline?.events ?? []);
+  const turns = finalizedTurns(timeline?.events ?? []);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
   const [busy, setBusy] = useState(false);
   const act = (call: () => Promise<Outcome>) => {
@@ -101,6 +105,25 @@ export function SessionView({ session, stations, timeline, freshness, actions, o
           {outcome.text}
         </p>
       ) : null}
+      <RevertStatus
+        summary={s}
+        turns={turns}
+        actions={actions}
+        drive={drive}
+        live={live}
+        busy={busy}
+        act={act}
+      />
+      <TurnsPanel
+        summary={s}
+        turns={turns}
+        actions={actions}
+        drive={drive}
+        live={live}
+        busy={busy}
+        act={act}
+      />
+      <FilesPanel files={live && actions?.canDrive === true ? (actions.files ?? null) : null} />
       <section className="fd-timeline" aria-label="Timeline">
         <h3>
           Timeline · subagents running: <span data-running-subagents>{tree.running}</span>
