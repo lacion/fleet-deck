@@ -277,6 +277,52 @@ async fn filters_skip_worktree_entries_and_size_limits_make_the_checkpoint_unava
     assert!(wt.read(&k).await.unwrap().is_none());
 }
 
+/// Regression (round-3 review): Git does not look at an assume-unchanged
+/// file, so `add -u` would silently leave out its unstaged edit and the
+/// checkpoint would claim content that is not on disk.
+#[tokio::test]
+async fn an_assume_unchanged_entry_makes_the_checkpoint_unavailable_instead_of_dropping_its_edit() {
+    let (_t, dir) = repo();
+    let wt = open(&dir).await;
+    let k = key("T1", Phase::Start);
+
+    git(&dir, &["update-index", "--assume-unchanged", "a.txt"]);
+    write(&dir, "a.txt", "edited but hidden from git\n");
+    // The precondition of the bug: Git itself reports no change.
+    assert_eq!(git(&dir, &["status", "--porcelain", "--", "a.txt"]), "");
+    let before = index_bytes(&dir);
+
+    let got = wt.capture(&k, Limits::default()).await.unwrap();
+    assert_eq!(
+        got,
+        Captured::Unavailable(Unavailable::AssumeUnchanged("a.txt".into()))
+    );
+    assert_eq!(got_code(&got), Some("assume_unchanged"));
+    assert!(wt.read(&k).await.unwrap().is_none(), "nothing is published");
+    assert_eq!(index_bytes(&dir), before, "the real index is untouched");
+
+    // A combined skip-worktree + assume-unchanged entry (`s`) also fails.
+    git(&dir, &["update-index", "--skip-worktree", "a.txt"]);
+    assert_eq!(
+        wt.capture(&k, Limits::default()).await.unwrap(),
+        Captured::Unavailable(Unavailable::SkipWorktree("a.txt".into()))
+    );
+
+    // Without the flags the same edit is in the checkpoint.
+    git(&dir, &["update-index", "--no-skip-worktree", "a.txt"]);
+    git(&dir, &["update-index", "--no-assume-unchanged", "a.txt"]);
+    let cp = published(&wt, &k).await;
+    let shown = git(&dir, &["show", &format!("{}:a.txt", cp.commit)]);
+    assert_eq!(shown, "edited but hidden from git\n");
+}
+
+fn got_code(c: &Captured) -> Option<&'static str> {
+    match c {
+        Captured::Unavailable(why) => Some(why.code()),
+        _ => None,
+    }
+}
+
 #[tokio::test]
 async fn the_diff_between_start_and_completion_comes_from_the_checkpoints() {
     let (_t, dir) = repo();

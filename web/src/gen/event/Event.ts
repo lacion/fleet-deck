@@ -10,6 +10,7 @@ import type { TurnId } from "../ids/TurnId";
 import type { JsonValue } from "../serde_json/JsonValue";
 import type { ApprovalOption } from "./ApprovalOption";
 import type { BackgroundTask } from "./BackgroundTask";
+import type { DiffSummary } from "./DiffSummary";
 import type { ExpiredReason } from "./ExpiredReason";
 import type { FileChange } from "./FileChange";
 import type { InputState } from "./InputState";
@@ -22,6 +23,7 @@ import type { RunOrigin } from "./RunOrigin";
 import type { SessionState } from "./SessionState";
 import type { ToolKind } from "./ToolKind";
 import type { ToolStatus } from "./ToolStatus";
+import type { TurnCheckpoint } from "./TurnCheckpoint";
 import type { TurnStatus } from "./TurnStatus";
 import type { Usage } from "./Usage";
 
@@ -63,7 +65,15 @@ request_kind: RequestKind, title: string, details: string,
 /**
  * The tool input that an allow can edit (only with `edit_input`).
  */
-input: JsonValue | null, options: Array<ApprovalOption>, response: ResponseChannel, provider_refs: { [key in string]: JsonValue }, } | { "kind": "approval.resolved", request_id: RequestId, option_id: string, by: ResolvedBy, } | { "kind": "approval.expired", request_id: RequestId, reason: ExpiredReason, } | { "kind": "plan.proposed", plan_id: PlanId, turn_id: TurnId | null, markdown: string, } | { "kind": "usage.updated", usage: Usage, rate_limits: Array<RateLimit>, } | { "kind": "turn.completed", turn_id: TurnId, status: TurnStatus, usage: Usage | null, } | { "kind": "run.completed", run_id: RunId, status: TurnStatus, 
+input: JsonValue | null, options: Array<ApprovalOption>, response: ResponseChannel, provider_refs: { [key in string]: JsonValue }, } | { "kind": "approval.resolved", request_id: RequestId, option_id: string, by: ResolvedBy, } | { "kind": "approval.expired", request_id: RequestId, reason: ExpiredReason, } | { "kind": "plan.proposed", plan_id: PlanId, turn_id: TurnId | null, markdown: string, } | { "kind": "usage.updated", usage: Usage, rate_limits: Array<RateLimit>, } | { "kind": "turn.completed", turn_id: TurnId, status: TurnStatus, usage: Usage | null, } | { "kind": "turn.finalized", turn_id: TurnId, 
+/**
+ * Always set by a station with the workspace service.
+ */
+checkpoint: TurnCheckpoint | null, 
+/**
+ * Set when both checkpoint sides are available.
+ */
+diff_summary: DiffSummary | null, } | { "kind": "run.completed", run_id: RunId, status: TurnStatus, 
 /**
  * Background work still runs; the session is not idle (L7).
  */

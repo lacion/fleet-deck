@@ -9,7 +9,8 @@
 //!   including tracked edits that are not staged. Untracked and ignored
 //!   files are out of scope. The snapshot uses a private copy of the index;
 //!   the real index is never written.
-//! - **Unavailable.** Submodules, unmerged or skip-worktree entries, clean or
+//! - **Unavailable.** Submodules, unmerged, skip-worktree or assume-unchanged
+//!   entries (Git would silently leave out their unstaged edits), clean or
 //!   encoding filters, non-UTF-8 paths and the size limits make a checkpoint
 //!   unavailable with an explicit reason ([`Unavailable`]); nothing is
 //!   published then.
@@ -59,10 +60,26 @@ pub enum Unavailable {
     Submodule(String),
     Unmerged(String),
     SkipWorktree(String),
-    Filter { path: String, attribute: String },
+    /// `git update-index --assume-unchanged` (or `core.ignoreStat`): Git
+    /// does not look at the working-tree file, so its edits would be left out.
+    AssumeUnchanged(String),
+    /// An index entry with a status tag that this code does not know.
+    UnknownIndexEntry {
+        path: String,
+        tag: String,
+    },
+    Filter {
+        path: String,
+        attribute: String,
+    },
     NonUtf8Path,
-    FileTooLarge { path: String, bytes: u64 },
-    TooLarge { bytes: u64 },
+    FileTooLarge {
+        path: String,
+        bytes: u64,
+    },
+    TooLarge {
+        bytes: u64,
+    },
     TooManyFiles(usize),
 }
 
@@ -74,6 +91,8 @@ impl Unavailable {
             Self::Submodule(_) => "submodule",
             Self::Unmerged(_) => "unmerged",
             Self::SkipWorktree(_) => "skip_worktree",
+            Self::AssumeUnchanged(_) => "assume_unchanged",
+            Self::UnknownIndexEntry { .. } => "unknown_index_entry",
             Self::Filter { .. } => "filter",
             Self::NonUtf8Path => "non_utf8_path",
             Self::FileTooLarge { .. } => "file_too_large",
@@ -374,8 +393,21 @@ impl Worktree {
             if stage != "0" {
                 return Ok(Err(Unavailable::Unmerged(path.to_owned())));
             }
-            if tag == "S" || tag == "s" {
-                return Ok(Err(Unavailable::SkipWorktree(path.to_owned())));
+            // `ls-files -v` tags: `H` an ordinary cached entry, `S`
+            // skip-worktree; a lower-case tag marks assume-unchanged (`s` is
+            // both). Any other tag fails closed.
+            match tag {
+                "H" => {}
+                "S" | "s" => return Ok(Err(Unavailable::SkipWorktree(path.to_owned()))),
+                t if t.chars().any(|c| c.is_ascii_lowercase()) => {
+                    return Ok(Err(Unavailable::AssumeUnchanged(path.to_owned())));
+                }
+                t => {
+                    return Ok(Err(Unavailable::UnknownIndexEntry {
+                        path: path.to_owned(),
+                        tag: t.to_owned(),
+                    }));
+                }
             }
             paths.push(path.to_owned());
         }

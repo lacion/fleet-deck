@@ -125,6 +125,20 @@ fn samples() -> Vec<Event> {
                 cost_usd: None,
             }),
         },
+        Event::TurnFinalized {
+            turn_id: turn.clone(),
+            checkpoint: Some(TurnCheckpoint {
+                worktree_id: Some("0f".into()),
+                scope: "tracked".into(),
+                start: CheckpointSide::Available {
+                    commit: "abc".into(),
+                },
+                end: CheckpointSide::Unavailable {
+                    reason: "queued_input".into(),
+                },
+            }),
+            diff_summary: None,
+        },
         Event::RunCompleted {
             run_id: "run-1".into(),
             status: TurnStatus::Interrupted,

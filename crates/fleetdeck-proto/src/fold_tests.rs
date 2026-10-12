@@ -434,3 +434,51 @@ fn a_normal_run_completion_keeps_background_work() {
     });
     assert_eq!(s.background_agents, 1);
 }
+
+/// L13: `turn.finalized` comes after `turn.completed` and never brings the
+/// turn back or keeps the card working.
+#[test]
+fn a_late_turn_finalized_changes_neither_the_turn_nor_the_activity() {
+    use crate::event::{CheckpointSide, TurnCheckpoint};
+    let mut f = Feed::new();
+    f.push(started());
+    f.push(run("run-1"));
+    f.push(Event::TurnStarted {
+        run_id: "run-1".into(),
+        turn_id: "turn-1".into(),
+        provider_refs: ProviderRefs::new(),
+    });
+    f.push(Event::TurnCompleted {
+        turn_id: "turn-1".into(),
+        status: TurnStatus::Done,
+        usage: None,
+    });
+    let before = f
+        .push(Event::RunCompleted {
+            run_id: "run-1".into(),
+            status: TurnStatus::Done,
+            background_pending: false,
+        })
+        .clone();
+    let after = f
+        .push(Event::TurnFinalized {
+            turn_id: "turn-1".into(),
+            checkpoint: Some(TurnCheckpoint {
+                worktree_id: None,
+                scope: "tracked".into(),
+                start: CheckpointSide::Unavailable {
+                    reason: "not_a_git_worktree".into(),
+                },
+                end: CheckpointSide::Unavailable {
+                    reason: "not_a_git_worktree".into(),
+                },
+            }),
+            diff_summary: None,
+        })
+        .clone();
+    assert_eq!(after.activity, Activity::Idle);
+    assert_eq!(after.current_turn, None);
+    assert_eq!(after.current_run, None);
+    assert_eq!(after.usage, before.usage);
+    assert_eq!(after.open_requests, before.open_requests);
+}

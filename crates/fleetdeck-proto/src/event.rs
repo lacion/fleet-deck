@@ -204,6 +204,41 @@ pub struct BackgroundTask {
     pub task_kind: String,
 }
 
+/// One side (start or completion) of a turn checkpoint (PLAN §6.6, L13).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "state", rename_all = "snake_case")]
+#[ts(export_to = "event/")]
+pub enum CheckpointSide {
+    /// A hidden ref points at this checkpoint commit.
+    Available { commit: String },
+    /// No checkpoint; `reason` is a stable code (for example
+    /// `queued_input`, `background_writers`, `submodule`).
+    Unavailable { reason: String },
+}
+
+/// The checkpoints of one finalized turn (PLAN §6.6, L13). A revert to the
+/// turn start needs `start` available; a diff needs both sides.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "event/")]
+pub struct TurnCheckpoint {
+    /// The canonical worktree identity; `None` when the session directory
+    /// is not a Git worktree.
+    pub worktree_id: Option<String>,
+    /// The snapshot scope (`tracked`).
+    pub scope: String,
+    pub start: CheckpointSide,
+    pub end: CheckpointSide,
+}
+
+/// The size of a turn diff, computed from the two checkpoints.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "event/")]
+pub struct DiffSummary {
+    pub files_changed: u32,
+    pub insertions: u64,
+    pub deletions: u64,
+}
+
 /// Where a raw provider frame of an event is in the diagnostic log (L12).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export_to = "event/")]
@@ -350,6 +385,17 @@ pub enum Event {
         status: TurnStatus,
         usage: Option<Usage>,
     },
+    /// The checkpoint record of a completed turn (PLAN §6.3, §6.6, L13).
+    /// It comes after `turn.completed`, at most once per app turn, and never
+    /// changes the turn's duration or the session activity.
+    #[serde(rename = "turn.finalized")]
+    TurnFinalized {
+        turn_id: TurnId,
+        /// Always set by a station with the workspace service.
+        checkpoint: Option<TurnCheckpoint>,
+        /// Set when both checkpoint sides are available.
+        diff_summary: Option<DiffSummary>,
+    },
     #[serde(rename = "run.completed")]
     RunCompleted {
         run_id: RunId,
@@ -397,7 +443,7 @@ pub enum Event {
 
 impl Event {
     /// Every known kind name, in declaration order.
-    pub const KINDS: [&'static str; 25] = [
+    pub const KINDS: [&'static str; 26] = [
         "session.started",
         "session.state",
         "run.started",
@@ -415,6 +461,7 @@ impl Event {
         "plan.proposed",
         "usage.updated",
         "turn.completed",
+        "turn.finalized",
         "run.completed",
         "mode.changed",
         "model.changed",
@@ -446,6 +493,7 @@ impl Event {
             Self::PlanProposed { .. } => "plan.proposed",
             Self::UsageUpdated { .. } => "usage.updated",
             Self::TurnCompleted { .. } => "turn.completed",
+            Self::TurnFinalized { .. } => "turn.finalized",
             Self::RunCompleted { .. } => "run.completed",
             Self::ModeChanged { .. } => "mode.changed",
             Self::ModelChanged { .. } => "model.changed",
