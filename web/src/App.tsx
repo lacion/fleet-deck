@@ -17,6 +17,7 @@ import type {
   WorkspaceListing,
 } from './gen';
 import type { Chrome, Notice } from './app/chrome';
+import { FilesPage } from './app/FilesPage';
 import { FleetHome } from './app/FleetHome';
 import { HelpOverlay } from './app/HelpOverlay';
 import { useGlobalKeys } from './app/keys';
@@ -30,6 +31,7 @@ import { Sidebar } from './app/Sidebar';
 import { type Layout as LayoutName, useLayout, useTouch } from './app/viewport';
 import type { Freshness, Timeline } from './runtime/state';
 import type { Outcome, SessionActions } from './session/commands';
+import type { FileActions } from './session/workspace';
 import type { SpawnActions } from './spawn/spawn';
 import { SpawnForm } from './spawn/SpawnForm';
 import type { Watch } from './terminal/handover';
@@ -46,6 +48,8 @@ type Props = {
   /** Opens the live timeline of a session; returns the cancel function. */
   readonly watch?: ((key: SessionKey) => () => void) | undefined;
   readonly sessionActions?: ((key: SessionKey) => SessionActions) | undefined;
+  /** DL-141: the file service of any folder of a station (the Files page). */
+  readonly filesFor?: ((station: string, workspace: string) => FileActions) | undefined;
   readonly spawn?: SpawnActions | undefined;
   /** `assign auto` (M3 6-3). */
   readonly assign?: AssignActions | undefined;
@@ -106,6 +110,7 @@ export function App({
   timelines = {},
   watch,
   sessionActions,
+  filesFor,
   spawn,
   assign,
   fleet,
@@ -419,6 +424,8 @@ export function App({
             />
           </div>
         );
+      case 'files':
+        return <FilesPage stations={stations} sessions={sessions} filesFor={filesFor} />;
       case 'more':
         return <More stationCount={stations.length} terminalCount={tabCount} chrome={chrome} />;
       case 'terminals':

@@ -18,7 +18,7 @@ describe('routes', () => {
   });
 
   test('the plain pages parse and format back', () => {
-    for (const name of ['fleet', 'new', 'plans', 'stations', 'terminals', 'more'] as const) {
+    for (const name of ['fleet', 'new', 'plans', 'stations', 'files', 'terminals', 'more'] as const) {
       expect(parseHash(`#/${name}`)).toEqual({ name });
       expect(formatHash({ name })).toBe(`#/${name}`);
     }

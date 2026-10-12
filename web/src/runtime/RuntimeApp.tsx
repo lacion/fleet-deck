@@ -2,6 +2,7 @@ import { useMemo, useState, useSyncExternalStore } from 'react';
 import { App } from '../App';
 import { stationActions, worktreeLoader } from '../board/pairing';
 import { conflictLoader } from '../board/conflicts';
+import { workspaceFiles } from '../session/workspace';
 import { planActions } from '../board/plans';
 import type { FleetExtras, SessionKey } from '../gen';
 import { sessionActions } from '../session/commands';
@@ -90,6 +91,11 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
     [connection, scopeText],
   );
   const conflicts = useMemo(() => conflictLoader((path) => connection.get(path)), [connection]);
+  const filesFor = useMemo(
+    () => (station: string, workspace: string) =>
+      workspaceFiles((path) => connection.get(path), station, workspace),
+    [connection],
+  );
   const extras = useMemo(
     () => async (): Promise<FleetExtras> => {
       const v = await connection.get('/api/fleet/extras');
@@ -211,6 +217,7 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
       timelines={state.timelines}
       watch={watch}
       sessionActions={commands}
+      filesFor={filesFor}
       spawn={spawn}
       assign={assign}
       fleet={fleet}

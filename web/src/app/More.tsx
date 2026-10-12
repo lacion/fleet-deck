@@ -1,4 +1,4 @@
-import { FileText, Icon, LogOut, Server, SquareTerminal } from '../ui/icons';
+import { FileText, Folder, Icon, LogOut, Server, SquareTerminal } from '../ui/icons';
 import type { Chrome } from './chrome';
 import { PrefsRow } from './Prefs';
 
@@ -19,6 +19,12 @@ export function More({ stationCount, terminalCount, chrome }: Props) {
             <a href="#/plans">
               <Icon of={FileText} />
               Plans
+            </a>
+          </li>
+          <li>
+            <a href="#/files">
+              <Icon of={Folder} />
+              Files
             </a>
           </li>
           <li>

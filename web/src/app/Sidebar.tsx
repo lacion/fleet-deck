@@ -329,6 +329,10 @@ export function Sidebar({
               <Icon of={FileText} />
               Plans
             </a>
+            <a href="#/files" aria-current={route.name === 'files' ? 'page' : undefined}>
+              <Icon of={Folder} />
+              Files
+            </a>
             <a href="#/stations" aria-current={route.name === 'stations' ? 'page' : undefined}>
               <Icon of={Server} />
               Stations
