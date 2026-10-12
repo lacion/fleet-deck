@@ -28,6 +28,12 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 73 (2026-10-12, 16:28–)
+
+- Round start: committed round 72 as ff0800a. No new commits on m3/orchestration, m3/board or m3/ops. Lane B still has no "LANE COMPLETE", so 6-13, 7-7 and 7-8 stay blocked.
+- 7-6 docs for the merged DL-215 slice: `docs/v2/internals.md` §8 coordinator row names `check_spec` in `manager/coordinator_command.rs` (owner start only, unverified handoff refused) and `coordinator/handoff.rs`.
+- Checks: `cargo fmt --all --check` clean; `cargo clippy --workspace --all-targets -- -D warnings` clean. Docs only: no tests run.
+
 ## Round 72 (2026-10-12, 16:25–)
 
 - Round start: committed round 71 as 0a2b7ac. Merged m3/orchestration 8771bf4 (lane B 6-5 slice: `SessionSpec.coordinator`, station start checks, credential handoff, DL-215) as 63a7ec1. `crates/fleetdeck-proto` changed: `make ts-types` regenerated `web/src/gen` (no diff after the merge). m3/board and m3/ops: no new commits.
