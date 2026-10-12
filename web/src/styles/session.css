@@ -115,14 +115,6 @@
   background: var(--hazard-bg);
   color: var(--hazard);
 }
-/* A menu row keeps its own look next to the menu rows of base.css. */
-.fd-menu-body > .fd-danger {
-  color: var(--hazard);
-}
-.fd-menu-body > .fd-danger:hover:not(:disabled) {
-  background: var(--hazard-bg);
-  color: var(--hazard);
-}
 /* The icon button that also is the primary action (Resume on the phone). */
 .fd-sh .fd-iconbtn.fd-primary:not(:disabled),
 .fd-sh .fd-iconbtn.fd-primary:hover:not(:disabled) {
