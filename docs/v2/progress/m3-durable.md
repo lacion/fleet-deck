@@ -28,6 +28,13 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 58 (2026-10-12, 16:05–)
+
+- Committed round 57 as bb7df4a (`docs(v2): round 57 log, internals coordinator row`).
+- Lanes: no new commits on `m3/orchestration`, `m3/board`, `m3/ops`; nothing to merge. `m3-orchestration.md` has no LANE COMPLETE (6-5 open); 6-13, 7-7 and 7-8 still wait.
+- Merge validation of 860d919 (lane B 6-5 partial on top of lane A's drain, auto-continue and import): `cargo nextest run -p fleetdeck-station -p fleetdeck-deck -E 'test(/coordinator/) | test(/grant/)'` → 51 passed (incl. `a_coordinator_or_the_local_socket_cannot_enable_auto_continue` and the three `coordinator_command` tests). No merge fix needed.
+- Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
+
 ## Round 57 (2026-10-12, 16:04–)
 
 - Committed round 56 as 3d57be1 (`fix(station): a drain refuses session.import (DL-130)`).
