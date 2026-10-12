@@ -50,10 +50,24 @@ fn unavailable(r: &str) -> Side {
     Side::Unavailable(r.into())
 }
 
-/// Starts a quiet prompt with a captured start checkpoint.
+/// Starts a quiet prompt with a captured start checkpoint and writes it.
 fn quiet_prompt(b: &mut Boundary, id: &str, commit: &str) {
     assert_eq!(b.begin_input(InputId::from(id)), StartPlan::Capture);
     b.record_start(&InputId::from(id), avail(commit));
+    b.input_sent(&InputId::from(id));
+}
+
+/// Runs one quiet turn to its completion, with the capture due.
+fn completed_quiet_turn(b: &mut Boundary) {
+    quiet_prompt(b, "in-1", "c0");
+    b.on_event(&started("turn-1"));
+    b.on_event(&input("in-1", Some("turn-1"), InputState::Started));
+    assert_eq!(
+        b.on_event(&completed("turn-1")),
+        vec![Next::CaptureEnd {
+            turn: "turn-1".into()
+        }]
+    );
 }
 
 #[test]
@@ -77,6 +91,15 @@ fn a_quiet_turn_has_both_checkpoints_and_the_capture_waits_for_the_fence() {
     assert!(b.is_due(&"turn-1".into()));
     assert_eq!(b.take_due(), Some("turn-1".into()));
     assert_eq!(b.take_due(), None);
+    assert!(b.is_capturing(&"turn-1".into()));
+    assert_eq!(
+        b.end_captured(&"turn-1".into(), avail("c1")),
+        Some(Next::Finalize {
+            turn: "turn-1".into(),
+            end: avail("c1"),
+        })
+    );
+    assert_eq!(b.end_captured(&"turn-1".into(), avail("c1")), None);
     assert_eq!(b.finalized(&"turn-1".into()), Some(avail("c0")));
     // A repeated `turn.completed` decides nothing again.
     assert!(b.on_event(&completed("turn-1")).is_empty());
@@ -114,6 +137,7 @@ fn a_natively_queued_input_makes_both_boundaries_unavailable() {
         b.begin_input(InputId::from("in-2")),
         StartPlan::Unavailable(REASON_TURN_RUNNING)
     );
+    b.input_sent(&InputId::from("in-2"));
     b.on_event(&input("in-2", None, InputState::Received));
     assert_eq!(
         b.on_event(&completed("turn-1")),
@@ -242,4 +266,108 @@ fn the_end_of_the_process_finalizes_a_running_turn_without_a_completion_checkpoi
     });
     assert!(next.is_empty());
     assert!(b.is_due(&"turn-1".into()));
+}
+
+/// Review regression (round 4): a provider-initiated turn that starts after
+/// `turn.completed` but before the due capture runs invalidates it.
+#[test]
+fn a_provider_initiated_turn_invalidates_a_due_completion_capture() {
+    let mut b = Boundary::new();
+    completed_quiet_turn(&mut b);
+    assert_eq!(
+        b.on_event(&started("turn-2")),
+        vec![
+            Next::Finalize {
+                turn: "turn-1".into(),
+                end: unavailable(REASON_PROVIDER_INITIATED),
+            },
+            Next::TurnStarted {
+                turn: "turn-2".into(),
+                start: unavailable(REASON_PROVIDER_INITIATED),
+            },
+        ]
+    );
+    assert!(!b.is_due(&"turn-1".into()));
+    assert_eq!(b.take_due(), None, "the late capture task finds nothing");
+}
+
+/// The same race while the capture already runs: its result is dropped.
+#[test]
+fn a_provider_initiated_turn_during_a_completion_capture_drops_its_result() {
+    let mut b = Boundary::new();
+    completed_quiet_turn(&mut b);
+    assert_eq!(b.take_due(), Some("turn-1".into()));
+    let next = b.on_event(&started("turn-2"));
+    assert_eq!(
+        next.first(),
+        Some(&Next::Finalize {
+            turn: "turn-1".into(),
+            end: unavailable(REASON_PROVIDER_INITIATED),
+        })
+    );
+    assert!(!b.is_capturing(&"turn-1".into()));
+    assert_eq!(b.end_captured(&"turn-1".into(), avail("c1")), None);
+}
+
+/// Review regression (round 4): background work that starts after
+/// `turn.completed` but before the capture invalidates it, due or running.
+#[test]
+fn a_background_writer_invalidates_a_due_or_running_completion_capture() {
+    let mut b = Boundary::new();
+    completed_quiet_turn(&mut b);
+    assert_eq!(
+        b.on_event(&background(1)),
+        vec![Next::Finalize {
+            turn: "turn-1".into(),
+            end: unavailable(REASON_BACKGROUND_WRITERS),
+        }]
+    );
+    assert_eq!(b.take_due(), None);
+
+    let mut b = Boundary::new();
+    completed_quiet_turn(&mut b);
+    assert_eq!(b.take_due(), Some("turn-1".into()));
+    assert_eq!(
+        b.on_event(&background(2)),
+        vec![Next::Finalize {
+            turn: "turn-1".into(),
+            end: unavailable(REASON_BACKGROUND_WRITERS),
+        }]
+    );
+    assert_eq!(b.end_captured(&"turn-1".into(), avail("c1")), None);
+    // A background list that becomes empty invalidates nothing.
+    assert!(b.on_event(&background(0)).is_empty());
+}
+
+/// The same races for a start capture of an input that is not written yet:
+/// the turn is the provider's, and the late start result is ignored.
+#[test]
+fn a_provider_turn_or_background_work_invalidates_a_running_start_capture() {
+    let mut b = Boundary::new();
+    assert_eq!(b.begin_input(InputId::from("in-1")), StartPlan::Capture);
+    assert_eq!(
+        b.on_event(&started("turn-1")),
+        vec![Next::TurnStarted {
+            turn: "turn-1".into(),
+            start: unavailable(REASON_PROVIDER_INITIATED),
+        }]
+    );
+    b.record_start(&InputId::from("in-1"), avail("c0"));
+    assert_eq!(
+        b.waiting_start(&InputId::from("in-1")),
+        Some(&unavailable(REASON_TURN_RUNNING))
+    );
+
+    let mut b = Boundary::new();
+    assert_eq!(b.begin_input(InputId::from("in-1")), StartPlan::Capture);
+    assert!(b.on_event(&background(1)).is_empty());
+    b.record_start(&InputId::from("in-1"), avail("c0"));
+    b.input_sent(&InputId::from("in-1"));
+    assert_eq!(
+        b.on_event(&started("turn-1")),
+        vec![Next::TurnStarted {
+            turn: "turn-1".into(),
+            start: unavailable(REASON_BACKGROUND_WRITERS),
+        }]
+    );
 }

@@ -10,8 +10,9 @@
 //!   has not joined a turn, no background work. Otherwise it is unavailable
 //!   (`turn_running`, `queued_input`, `background_writers`).
 //! - **Turn start.** A turn takes the start checkpoint of the oldest input
-//!   that is still waiting. A turn with no waiting input was started by the
-//!   provider itself: its start is unavailable (`provider_initiated`).
+//!   that was written and is still waiting. A turn with no such input was
+//!   started by the provider itself: its start is unavailable
+//!   (`provider_initiated`).
 //! - **Completion.** At `turn.completed` the completion checkpoint is due
 //!   only if no dispatched input waits (Claude queues turns natively) and no
 //!   background work runs; otherwise it is unavailable (`queued_input`,
@@ -19,6 +20,16 @@
 //!   next input's dispatch takes the fence and runs a due capture first, so
 //!   writes of a later turn never enter an earlier checkpoint. Nothing here
 //!   delays `turn.completed`.
+//! - **Invalidation.** Work that the station did not dispatch cannot be
+//!   fenced. When a turn starts or background work starts while a capture
+//!   is due or running, that capture is invalid: the completion side becomes
+//!   unavailable (`provider_initiated`, `queued_input`, `background_writers`)
+//!   at once, and the later capture result is dropped
+//!   ([`Boundary::end_captured`] returns nothing). A start capture of an
+//!   input that is not written yet becomes unavailable in the same way
+//!   (`turn_running`, `background_writers`), and its late result is ignored.
+//!   Residual window: a provider event that is still in the stdout pipe when
+//!   a capture result is recorded cannot be seen (DL-079).
 //! - **Process end.** A turn that never completed has no completion
 //!   checkpoint (`session_ended`).
 
@@ -89,6 +100,8 @@ pub enum Next {
 struct Waiting {
     input: InputId,
     start: Side,
+    /// The input was written to the provider.
+    sent: bool,
 }
 
 /// The boundary state of one session.
@@ -98,6 +111,8 @@ pub struct Boundary {
     waiting: VecDeque<Waiting>,
     background: bool,
     due: Option<TurnId>,
+    /// The completion capture that a caller took and has not recorded.
+    capturing: Option<TurnId>,
     /// Turns that started and are not finalized: the start side, and true
     /// once the completion side is decided.
     open: BTreeMap<TurnId, (Side, bool)>,
@@ -110,15 +125,60 @@ impl Boundary {
     }
 
     /// The completed turn whose completion capture is due, if any. The
-    /// caller holds the fence and captures it before anything else.
+    /// caller holds the fence, captures it before anything else and records
+    /// the result with [`Boundary::end_captured`].
     pub fn take_due(&mut self) -> Option<TurnId> {
-        self.due.take()
+        let turn = self.due.take()?;
+        self.capturing = Some(turn.clone());
+        Some(turn)
     }
 
-    /// True while a completion capture is due.
+    /// True while a completion capture is due and no caller took it.
     #[must_use]
     pub fn is_due(&self, turn: &TurnId) -> bool {
         self.due.as_ref() == Some(turn)
+    }
+
+    /// True while a caller runs the completion capture of `turn`.
+    #[must_use]
+    pub fn is_capturing(&self, turn: &TurnId) -> bool {
+        self.capturing.as_ref() == Some(turn)
+    }
+
+    /// The result of a completion capture taken with
+    /// [`Boundary::take_due`]. Returns the finalization, or nothing when
+    /// the capture was invalidated meanwhile (the turn was already
+    /// finalized with an unavailable completion side).
+    pub fn end_captured(&mut self, turn: &TurnId, end: Side) -> Option<Next> {
+        if self.capturing.as_ref() != Some(turn) {
+            return None;
+        }
+        self.capturing = None;
+        Some(Next::Finalize {
+            turn: turn.clone(),
+            end,
+        })
+    }
+
+    /// Makes a due or running completion capture invalid.
+    fn invalidate_end(&mut self, reason: &str) -> Vec<Next> {
+        [self.due.take(), self.capturing.take()]
+            .into_iter()
+            .flatten()
+            .map(|turn| Next::Finalize {
+                turn,
+                end: Side::unavailable(reason),
+            })
+            .collect()
+    }
+
+    /// Makes running start captures of inputs that are not written invalid.
+    fn invalidate_starts(&mut self, reason: &str) {
+        for w in self.waiting.iter_mut().filter(|w| !w.sent) {
+            if w.start == Side::Capturing {
+                w.start = Side::unavailable(reason);
+            }
+        }
     }
 
     /// The dispatch of a workspace-modifying input, under the fence and
@@ -137,14 +197,38 @@ impl Boundary {
             StartPlan::Capture => Side::Capturing,
             StartPlan::Unavailable(reason) => Side::unavailable(reason),
         };
-        self.waiting.push_back(Waiting { input, start });
+        self.waiting.push_back(Waiting {
+            input,
+            start,
+            sent: false,
+        });
         plan
     }
 
-    /// The result of a start capture of [`StartPlan::Capture`].
+    /// The result of a start capture of [`StartPlan::Capture`]. A capture
+    /// that was invalidated meanwhile keeps its unavailable side.
     pub fn record_start(&mut self, input: &InputId, start: Side) {
-        if let Some(w) = self.waiting.iter_mut().find(|w| &w.input == input) {
+        if let Some(w) = self.waiting.iter_mut().find(|w| &w.input == input)
+            && w.start == Side::Capturing
+        {
             w.start = start;
+        }
+    }
+
+    /// The start side recorded for an input that waits for its turn.
+    #[must_use]
+    pub fn waiting_start(&self, input: &InputId) -> Option<&Side> {
+        self.waiting
+            .iter()
+            .find(|w| &w.input == input)
+            .map(|w| &w.start)
+    }
+
+    /// The input was written to the provider (after its start side was
+    /// recorded). Only written inputs can start a turn.
+    pub fn input_sent(&mut self, input: &InputId) {
+        if let Some(w) = self.waiting.iter_mut().find(|w| &w.input == input) {
+            w.sent = true;
         }
     }
 
@@ -164,6 +248,9 @@ impl Boundary {
         if self.due.as_ref() == Some(turn) {
             self.due = None;
         }
+        if self.capturing.as_ref() == Some(turn) {
+            self.capturing = None;
+        }
         self.open.remove(turn).map(|(start, _)| start)
     }
 
@@ -171,16 +258,24 @@ impl Boundary {
     pub fn on_event(&mut self, event: &Event) -> Vec<Next> {
         match event {
             Event::TurnStarted { turn_id, .. } => {
+                let sent = self.waiting.iter().position(|w| w.sent);
+                let mut next = self.invalidate_end(if sent.is_some() {
+                    REASON_QUEUED_INPUT
+                } else {
+                    REASON_PROVIDER_INITIATED
+                });
+                self.invalidate_starts(REASON_TURN_RUNNING);
                 self.running = Some(turn_id.clone());
-                let start = match self.waiting.pop_front() {
+                let start = match sent.and_then(|i| self.waiting.remove(i)) {
                     Some(w) => w.start,
                     None => Side::unavailable(REASON_PROVIDER_INITIATED),
                 };
                 self.open.insert(turn_id.clone(), (start.clone(), false));
-                vec![Next::TurnStarted {
+                next.push(Next::TurnStarted {
                     turn: turn_id.clone(),
                     start,
-                }]
+                });
+                next
             }
             Event::InputUpdated {
                 input_id, state, ..
@@ -192,7 +287,11 @@ impl Boundary {
             }
             Event::BackgroundUpdated { tasks } => {
                 self.background = !tasks.is_empty();
-                Vec::new()
+                if !self.background {
+                    return Vec::new();
+                }
+                self.invalidate_starts(REASON_BACKGROUND_WRITERS);
+                self.invalidate_end(REASON_BACKGROUND_WRITERS)
             }
             Event::TurnCompleted { turn_id, .. } => {
                 if self.running.as_ref() == Some(turn_id) {
