@@ -28,6 +28,26 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 65 (2026-10-12, 16:17–)
+
+- Committed round 64 as a86a08c.
+- Lanes: no new commits on `m3/orchestration`, `m3/board`, `m3/ops`. `m3-orchestration.md` has no LANE COMPLETE (6-5 open).
+
+### M3 status at the 16:20 time box
+
+| Item | State | Evidence |
+| --- | --- | --- |
+| P2-a, P2-b, SIGKILL child survival | Done | Named regression tests (rounds 1-3 of this log). |
+| 6-1 Workspaces, 6-2 Mail, 6-3 Assign auto, 6-4 Tasks | Done (lane B) | `docs/v2/progress/m3-orchestration.md`. |
+| 6-5 Coordinator | Open (lane B, partial) | ADR-006 tests up to 26 merged (9b27b2e); no LANE COMPLETE. |
+| 6-6 to 6-10, 6-12 | Done (lane C, LANE COMPLETE) | `docs/v2/progress/m3-board.md`. |
+| 6-11 Human shell, 7-4 Performance, 7-5 Packaging | Done (lane D, LANE COMPLETE) | `docs/v2/progress/m3-ops.md`. |
+| 7-1 ShimHost, 7-2 Auto-continue, 7-3 Drain and self-upgrade, 7-6 Docs | Done (lane A) | This log. |
+| 6-13 Parity, 7-7 Cutover, 7-8 Final checks | Open (lane A) | Wait for lane B LANE COMPLETE and its merge. |
+
+- Owner steps (unchanged): Docker image build, real tailnet, macOS launchd, physical phone, cargo-dist release (`docs/v2/operations.md` §12).
+- Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
+
 ## Round 64 (2026-10-12, 16:15–)
 
 - Committed round 63 as dc177bd.
