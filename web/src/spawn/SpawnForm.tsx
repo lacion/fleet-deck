@@ -20,6 +20,8 @@ type Props = {
   readonly initialListing?: WorkspaceListing | null;
   /** The first prompt at the first render (a plan from the library, DL-301). */
   readonly initialPrompt?: string;
+  /** DL-141: the station chosen at the first render (an unrouted task). */
+  readonly initialStation?: string | undefined;
 };
 
 /** PLAN §11 spawn form for M2: station, provider, directory picker, mode,

@@ -36,6 +36,14 @@ type Props = {
   readonly sessionActions?: ((key: SessionKey) => SessionActions) | undefined;
   readonly onOpen: (key: SessionKey) => void;
   readonly onSpawn: () => void;
+  /** DL-141: open the bottom panel on `tab`; a new `seq` asks again (the `c` key). */
+  readonly panelRequest?:
+    | { readonly tab: 'activity' | 'mail' | 'assign' | 'usage'; readonly seq: number }
+    | undefined;
+  /** DL-141: open the help overlay (the empty board's "What is this?"). */
+  readonly onHelp?: (() => void) | undefined;
+  /** DL-141: start a session with this first prompt on this station (an unrouted task). */
+  readonly onSpawnWith?: ((station: string | null, prompt: string) => void) | undefined;
 };
 
 /** Changes when any session changes, so derived panels load again. */
