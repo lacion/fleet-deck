@@ -527,6 +527,38 @@ fn a_failed_control_request_is_an_error_and_unknown_responses_are_ignored() {
 }
 
 #[test]
+fn a_control_answer_before_init_is_released_at_once() {
+    let mut core = ClaudeCore::new(config(false));
+    let w = writes(&core.initialize().unwrap());
+    let id = w[0]["request_id"].as_str().unwrap().to_owned();
+    let held = feed(
+        &mut core,
+        json!({"type":"control_response","response":{"subtype":"success","request_id":id,
+               "response":{"current_permission_mode":"default","models":[]}}}),
+    );
+    assert!(emits(&held).is_empty());
+    let id = writes(&core.set_mode("plan").unwrap())[0]["request_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let ev = emits(&feed(
+        &mut core,
+        json!({"type":"control_response","response":{"subtype":"success","request_id":id,"response":{}}}),
+    ));
+    assert!(matches!(&ev[..], [Event::ModeChanged { mode }] if mode == "plan"));
+}
+
+#[test]
+fn other_frames_before_init_stay_held() {
+    let mut core = ClaudeCore::new(config(false));
+    core.prompt(&input(1, "x")).unwrap();
+    assert!(lifecycle(&mut core, 1, "queued").is_empty());
+    let ev = init(&mut core);
+    assert_eq!(kinds(&ev)[0], "session.started");
+    assert!(kinds(&ev).contains(&"input.updated".to_owned()));
+}
+
+#[test]
 fn cli_args_always_pass_a_native_mode() {
     let caps = capabilities(false);
     let args = cli_args(&Launch::default(), &caps);

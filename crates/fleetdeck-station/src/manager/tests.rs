@@ -503,6 +503,54 @@ async fn the_station_policy_decides_in_the_command_transaction() {
 }
 
 #[tokio::test]
+async fn a_mode_change_before_the_first_prompt_is_confirmed_at_once() {
+    // The Claude CLI (and the sim) sends `system/init` only after the first
+    // user message; the answer to `set_permission_mode` must not wait for it
+    // (DL-141).
+    let mut st = Station::new(4).await;
+    let ws = st.workspace();
+    let s = st.start(&ws, None).await;
+    // The command is rejected until the provider process runs.
+    let deadline = tokio::time::Instant::now() + WAIT;
+    loop {
+        let d = st
+            .send(SessionCommand::SetMode {
+                session_id: s.clone(),
+                mode: "plan".into(),
+            })
+            .await;
+        if d.receipt.state == ReceiptState::Accepted {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "set_mode never accepted: {:?}",
+            d.receipt
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    st.wait_for("mode changed", |e| match e {
+        Event::ModeChanged { mode } if mode == "plan" => Some(()),
+        _ => None,
+    })
+    .await;
+    let states = st.settled(&s).await;
+    assert!(
+        states.contains(&("set_mode", EffectState::Confirmed)),
+        "{states:?}"
+    );
+    let summary = st
+        .manager
+        .store()
+        .summary(s.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(summary.mode.as_deref(), Some("plan"));
+    st.manager.shutdown(StopMode::Kill).await;
+}
+
+#[tokio::test]
 async fn a_start_that_gets_no_process_ends_the_session() {
     let missing = Path::new("/nonexistent/fleetdeck/claude").to_path_buf();
     let mut st = Station::with_program(4, missing).await;

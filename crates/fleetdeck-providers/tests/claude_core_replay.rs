@@ -124,9 +124,22 @@ fn collect(out: Vec<Output>, report: &mut Report, queue: &mut VecDeque<Value>) {
 
 /// The lifecycle invariants of one replayed fixture.
 fn check_invariants(name: &str, events: &[Event]) {
+    // Only the answers to the host's own control requests come before
+    // `session.started` (DL-141).
+    let opens = events
+        .iter()
+        .position(|e| matches!(e, Event::SessionStarted { .. }))
+        .unwrap_or_else(|| panic!("{name}: the stream has no session.started"));
     assert!(
-        matches!(events.first(), Some(Event::SessionStarted { .. })),
-        "{name}: the stream opens with session.started"
+        events[..opens].iter().all(|e| matches!(
+            e,
+            Event::ModeChanged { .. }
+                | Event::ModelChanged { .. }
+                | Event::InterruptResult { .. }
+                | Event::Error { .. }
+        )),
+        "{name}: only the control answers (mode.changed, model.changed, interrupt.result, error) \
+         come before session.started"
     );
     let mut open_turns = BTreeSet::new();
     let mut open_runs = BTreeSet::new();
