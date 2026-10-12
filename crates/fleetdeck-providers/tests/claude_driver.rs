@@ -25,7 +25,7 @@ use fleetdeck_providers::{
     AuthState, Emitted, EventSink, HostInput, LiveSession, ProviderAdapter, ProviderError,
 };
 use fleetdeck_testkit::FakeAgent;
-use fleetdeck_testkit::fake::SCENARIO_ENV;
+use fleetdeck_testkit::fake::{LINGER_ENV, SCENARIO_ENV};
 use tokio::sync::mpsc;
 
 const WAIT: Duration = Duration::from_secs(20);
@@ -299,4 +299,112 @@ async fn graceful_stop_is_bounded_when_an_undrained_sink_is_full() {
 #[tokio::test]
 async fn kill_is_bounded_when_an_undrained_sink_is_full() {
     assert_bounded_stop(StopMode::Kill).await;
+}
+
+/// A `sim` session whose process lingers `linger_ms` after stdin EOF (an
+/// async user hook, DL-141), with the given grace times.
+async fn lingering_sim(
+    root: &std::path::Path,
+    linger_ms: u64,
+    grace: Duration,
+    idle_grace: Duration,
+) -> (ClaudeSession, mpsc::Receiver<Emitted>) {
+    let mut env = ChildEnv::from_process();
+    env.set(SCENARIO_ENV, "sim").unwrap();
+    env.set(LINGER_ENV, linger_ms.to_string()).unwrap();
+    let mut config =
+        ClaudeAdapterConfig::new("claude".into(), FakeAgent::Claude.locate().unwrap(), env);
+    config.extra_args = vec!["--safe-mode".to_owned()];
+    config.stop = StopPolicy {
+        grace,
+        term_grace: Duration::from_millis(300),
+    };
+    config.idle_grace = idle_grace;
+    config.delivery_grace = Duration::from_millis(300);
+    let (sink, rx) = EventSink::channel(256);
+    let session = ClaudeAdapter::new(config, Arc::new(DirectChildHost::new()))
+        .start_session(spec(root), sink, Origin::New)
+        .await
+        .unwrap();
+    (session, rx)
+}
+
+async fn send_prompt(session: &mut ClaudeSession, id: &str, text: &str) {
+    session
+        .prompt(HostInput {
+            id: InputId::new(id),
+            origin: RunOrigin::Board,
+            input: UserInput::new(text.to_owned()),
+        })
+        .await
+        .unwrap();
+}
+
+/// Reads events until one matches `done`.
+async fn wait_for(rx: &mut mpsc::Receiver<Emitted>, done: impl Fn(&Event) -> bool) {
+    while !done(&next_event(rx).await) {}
+}
+
+#[tokio::test]
+async fn a_graceful_stop_of_an_idle_session_uses_the_idle_grace() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (mut session, mut rx) = lingering_sim(
+        tmp.path(),
+        20_000,
+        Duration::from_secs(10),
+        Duration::from_millis(300),
+    )
+    .await;
+    send_prompt(&mut session, "01K70000000000000000000001", "hello").await;
+    wait_for(&mut rx, |e| matches!(e, Event::TurnCompleted { .. })).await;
+    let started = Instant::now();
+    tokio::time::timeout(WAIT, session.stop(StopMode::Graceful))
+        .await
+        .expect("stop keeps its deadline")
+        .unwrap();
+    // idle grace 300 ms + term grace 300 ms + the settle time of the host,
+    // far below the 10 s grace and the 20 s linger.
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "{:?}",
+        started.elapsed()
+    );
+    println!("idle stop took {:?}", started.elapsed());
+}
+
+#[tokio::test]
+async fn a_graceful_stop_of_a_busy_session_keeps_the_full_grace() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (mut session, mut rx) = lingering_sim(
+        tmp.path(),
+        1_000,
+        Duration::from_secs(5),
+        Duration::from_millis(100),
+    )
+    .await;
+    // `wait` holds the turn open until an interrupt.
+    send_prompt(&mut session, "01K70000000000000000000001", "wait").await;
+    wait_for(&mut rx, |e| matches!(e, Event::TurnStarted { .. })).await;
+    let started = Instant::now();
+    tokio::time::timeout(WAIT, session.stop(StopMode::Graceful))
+        .await
+        .expect("stop keeps its deadline")
+        .unwrap();
+    // The idle grace (100 ms) would end the lingering process with a signal;
+    // the full grace lets it exit by itself after 1 s.
+    assert!(
+        started.elapsed() >= Duration::from_millis(900),
+        "{:?}",
+        started.elapsed()
+    );
+    wait_for(&mut rx, |e| {
+        matches!(
+            e,
+            Event::SessionEnded {
+                exit_code: Some(0),
+                ..
+            }
+        )
+    })
+    .await;
 }
