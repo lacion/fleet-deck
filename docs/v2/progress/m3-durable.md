@@ -28,6 +28,15 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 57 (2026-10-12, 16:04–)
+
+- Committed round 56 as 3d57be1 (`fix(station): a drain refuses session.import (DL-130)`).
+- Merged `m3/orchestration` 69833de (6-5 partial: station link forward, lineage from the start receipt, `session.coordinator_renew` / `session.coordinator_revoke` link methods) as 860d919, without conflicts. `m3/board` and `m3/ops`: no new commits.
+- Merge check: the two new commands create no provider work, so the drain guard (`manager/drain.rs`) stays unchanged. `make ts-types` → no change (lane B committed the generated `SessionCommand.ts`).
+- `docs/v2/internals.md` §8: the coordinator row names `coordinator/forward.rs`, `manager/coordinator_command.rs`, `http/grant_routes.rs` and the board command file.
+- Lanes: `m3-orchestration.md` still has no LANE COMPLETE (6-5 open), so 6-13, 7-7 and 7-8 still wait.
+- Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean; `bun run --cwd web lint` → clean (94 files).
+
 ## Round 56 (2026-10-12, 16:01–)
 
 - Committed round 55 as the round-start commit (`docs(v2): round 55 log and internals touch-up`).
