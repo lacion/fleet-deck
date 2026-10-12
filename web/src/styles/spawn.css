@@ -1,17 +1,24 @@
-/* The spawn form and its directory picker (DL-141, UI-DESIGN §3.4): one panel, labels above fields. */
+/* The spawn form and its directory picker (DL-141, UI-DESIGN §3.4): a column of panels, labels above fields. */
 .fd-spawn {
   display: grid;
   gap: var(--sp-3);
   min-width: 0;
+  max-width: 760px;
   overflow-wrap: anywhere;
 }
 .fd-spawn form {
   display: grid;
   gap: var(--sp-3);
+}
+.fd-spawn form > .fd-panel {
+  display: grid;
+  gap: var(--sp-3);
+  min-width: 0;
   padding: var(--sp-4);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r-panel);
+}
+.fd-spawn .fd-panel > .fd-label {
+  margin: 0;
+  font-weight: 500;
 }
 .fd-spawn label {
   display: grid;
@@ -45,6 +52,19 @@
 .fd-picker p {
   margin: 0;
 }
+.fd-chosen {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.fd-chosen > p {
+  min-width: 0;
+}
+.fd-chosen > button {
+  flex: none;
+}
 .fd-picker ul {
   margin: 0;
   padding: 0;
@@ -77,10 +97,112 @@
   font-family: var(--font-data);
   font-size: var(--fs-micro);
 }
-/* The batch and coordinator checkboxes: the box sits left of its text. */
-.fd-spawn .fd-check {
+/* Pinned and recent directories: one chip row under the picker. */
+.fd-recent {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.fd-recent .fd-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  border-color: var(--border-soft);
+  color: var(--dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fd-recent .fd-chip:hover {
+  border-color: var(--dim);
+  color: var(--text);
+}
+.fd-recent .fd-chip[data-pinned] .fd-icon {
+  fill: currentColor;
+}
+/* The batch and coordinator checkboxes: option rows, the box left of its text. */
+.fd-spawn .fd-spawn-opt {
   display: flex;
   gap: var(--sp-2);
   align-items: flex-start;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctl);
+  font-size: var(--fs-body);
   color: var(--text);
+  cursor: pointer;
+}
+.fd-spawn .fd-spawn-opt:hover {
+  border-color: var(--act);
+}
+.fd-spawn .fd-spawn-opt:has(input:checked) {
+  border-color: var(--act);
+  background: var(--act-bg);
+}
+.fd-spawn .fd-spawn-opt:has(input:focus-visible) {
+  outline: 2px solid var(--act);
+  outline-offset: 2px;
+}
+.fd-spawn .fd-spawn-opt input {
+  margin-top: 2px;
+}
+/* The batch preview: the exact list, counted, before the start. */
+.fd-batch-preview {
+  display: grid;
+  gap: var(--sp-2);
+  min-width: 0;
+  padding: var(--sp-3);
+  background: var(--code);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-ctl);
+}
+.fd-batch-preview > p {
+  margin: 0;
+}
+.fd-batch-preview ol {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding-left: 22px;
+  font-family: var(--font-data);
+  font-size: 12px;
+  color: var(--dim);
+}
+.fd-batch-preview li {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* The submit row: status at the left, the primary button at the right. */
+.fd-spawn-submit {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+.fd-spawn-status {
+  display: grid;
+  gap: var(--sp-2);
+  flex: 1;
+  min-width: 0;
+}
+.fd-spawn-status p {
+  margin: 0;
+}
+.fd-spawn-submit > button {
+  flex: none;
+}
+.fd-outcome {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+@media (max-width: 480px) {
+  .fd-spawn-submit {
+    flex-direction: column;
+    align-items: stretch;
+  }
 }

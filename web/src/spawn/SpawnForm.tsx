@@ -1,14 +1,20 @@
 import { useEffect, useState } from 'react';
 import type { DeckSession, SessionKey, StationView, WorkspaceListing } from '../gen';
 import type { Freshness } from '../runtime/state';
+import { Icon, Pin, PinOff } from '../ui/icons';
 import {
   batchPrompts,
   importIdProblem,
+  lastParts,
   providerLabel,
+  readPins,
+  recentDirs,
   type SpawnActions,
   type SpawnOutcome,
   spawnModes,
   spawnTargets,
+  togglePin,
+  writePins,
 } from './spawn';
 
 type Props = {
@@ -35,9 +41,15 @@ export function SpawnForm({
   onOpen,
   initialListing = null,
   initialPrompt = '',
+  initialStation,
+  sessions = [],
 }: Props) {
   const targets = spawnTargets(stations);
-  const [stationId, setStationId] = useState(targets[0]?.station_id ?? '');
+  const [stationId, setStationId] = useState(
+    targets.some((s) => s.station_id === initialStation)
+      ? (initialStation ?? '')
+      : (targets[0]?.station_id ?? ''),
+  );
   const station = targets.find((s) => s.station_id === stationId);
   const providers = station?.info?.providers ?? [];
   const [instance, setInstance] = useState(providers[0]?.instance ?? '');
@@ -57,6 +69,7 @@ export function SpawnForm({
   const [coordinator, setCoordinator] = useState(false);
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<SpawnOutcome | null>(null);
+  const [pins, setPins] = useState(readPins);
 
   // A station that goes away (or the first one that appears) resets the
   // choice; a directory belongs to its station.
@@ -77,6 +90,16 @@ export function SpawnForm({
     });
   };
   const modes = spawnModes(provider);
+  const pinned = pins[stationId] ?? [];
+  const recent = recentDirs(sessions, stationId, pinned);
+  const batchLines = batchPrompts(prompt);
+  const importing = importId.trim() !== '';
+  // A clone is one session and an import ignores the batch (DL-308): no preview then.
+  const previewing = batch && place !== 'clone' && !importing && batchLines.length >= 2;
+  const chooseDir = (path: string) => {
+    setCwd(path);
+    browse(path);
+  };
   const importProblem = importId.trim() === '' ? null : importIdProblem(importId.trim());
   const cloneReady =
     place !== 'clone' ||
@@ -134,7 +157,6 @@ export function SpawnForm({
             // ignores the workspace and batch choices (DL-308). A batch
             // forces a worktree per session (v0); a clone is one session.
             const native = importId.trim();
-            const importing = native !== '';
             const spec = {
               provider_instance: provider.instance,
               cwd: target,
@@ -162,8 +184,7 @@ export function SpawnForm({
                 : place === 'worktree' || batch
                   ? { kind: 'worktree' as const }
                   : null;
-            const prompts =
-              batch && place !== 'clone' && !importing ? batchPrompts(prompt) : [prompt];
+            const prompts = batch && place !== 'clone' && !importing ? batchLines : [prompt];
             const id = station.station_id;
             void (async () => {
               let last: SpawnOutcome | null = null;
@@ -191,189 +212,284 @@ export function SpawnForm({
             })().finally(() => setBusy(false));
           }}
         >
-          <label>
-            Station
-            <select
-              value={stationId}
-              onChange={(event) => {
-                setStationId(event.target.value);
-                setListing(null);
-                setCwd(null);
-                setMode('');
-              }}
-            >
-              {targets.map((s) => (
-                <option key={s.station_id} value={s.station_id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Provider
-            <select
-              value={instance}
-              onChange={(event) => {
-                setInstance(event.target.value);
-                setMode('');
-              }}
-            >
-              {providers.map((p) => (
-                <option key={p.instance} value={p.instance}>
-                  {providerLabel(p)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <fieldset className="fd-picker" aria-label="Directory">
-            <legend>Directory</legend>
-            <p data-cwd>{cwd === null ? 'No directory chosen.' : `Chosen: ${cwd}`}</p>
-            {listing === null ? (
-              <button type="button" disabled={!live || !canDrive} onClick={() => browse(null)}>
-                Browse the station
-              </button>
-            ) : (
-              <>
-                <p className="fd-path">{listing.path ?? 'Allowed roots'}</p>
-                <div className="fd-picker-actions">
-                  {listing.path === null ? null : (
-                    <button type="button" onClick={() => browse(listing.parent)}>
-                      {listing.parent === null ? 'Back to the roots' : 'Up one level'}
-                    </button>
-                  )}
-                  {listing.path === null ? null : (
-                    <button type="button" onClick={() => setCwd(listing.path)}>
-                      Use this directory
-                    </button>
-                  )}
-                </div>
-                {listing.entries.length === 0 ? <p>No sub-directories.</p> : null}
-                <ul>
-                  {listing.entries.map((entry) => (
-                    <li key={entry.path}>
-                      <button
-                        type="button"
-                        aria-label={`Open ${entry.name}`}
-                        onClick={() => browse(entry.path)}
-                      >
-                        {entry.name}
-                        {entry.repository ? <span className="fd-tag">git</span> : null}
+          <div className="fd-panel">
+            <h3 className="fd-label">Where</h3>
+            <label>
+              Station
+              <select
+                value={stationId}
+                onChange={(event) => {
+                  setStationId(event.target.value);
+                  setListing(null);
+                  setCwd(null);
+                  setMode('');
+                }}
+              >
+                {targets.map((s) => (
+                  <option key={s.station_id} value={s.station_id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <fieldset className="fd-picker" aria-label="Directory">
+              <legend>Directory</legend>
+              <div className="fd-chosen">
+                <p data-cwd>{cwd === null ? 'No directory chosen.' : `Chosen: ${cwd}`}</p>
+                {cwd === null ? null : (
+                  <button
+                    type="button"
+                    className="fd-iconbtn fd-sm"
+                    aria-label={
+                      pinned.includes(cwd) ? 'Unpin this directory' : 'Pin this directory'
+                    }
+                    title={pinned.includes(cwd) ? 'Unpin this directory' : 'Pin this directory'}
+                    onClick={() => {
+                      const next = togglePin(pins, stationId, cwd);
+                      setPins(next);
+                      writePins(next);
+                    }}
+                  >
+                    <Icon of={pinned.includes(cwd) ? PinOff : Pin} />
+                  </button>
+                )}
+              </div>
+              {listing === null ? (
+                <button type="button" disabled={!live || !canDrive} onClick={() => browse(null)}>
+                  Browse the station
+                </button>
+              ) : (
+                <>
+                  <p className="fd-path">{listing.path ?? 'Allowed roots'}</p>
+                  <div className="fd-picker-actions">
+                    {listing.path === null ? null : (
+                      <button type="button" onClick={() => browse(listing.parent)}>
+                        {listing.parent === null ? 'Back to the roots' : 'Up one level'}
                       </button>
+                    )}
+                    {listing.path === null ? null : (
+                      <button type="button" onClick={() => setCwd(listing.path)}>
+                        Use this directory
+                      </button>
+                    )}
+                  </div>
+                  {listing.entries.length === 0 ? <p>No sub-directories.</p> : null}
+                  <ul>
+                    {listing.entries.map((entry) => (
+                      <li key={entry.path}>
+                        <button
+                          type="button"
+                          aria-label={`Open ${entry.name}`}
+                          onClick={() => browse(entry.path)}
+                        >
+                          {entry.name}
+                          {entry.repository ? <span className="fd-tag">git</span> : null}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                  {listing.truncated ? (
+                    <p className="fd-note">The station shows only the first entries.</p>
+                  ) : null}
+                </>
+              )}
+              {browseError === null ? null : <p role="alert">{browseError}</p>}
+            </fieldset>
+            {pinned.length === 0 && recent.length === 0 ? null : (
+              <div className="fd-recent" aria-label="Recent directories">
+                <span className="fd-label">
+                  {pinned.length > 0 ? 'Pinned and recent' : 'Recent'}
+                </span>
+                {pinned.map((path) => (
+                  <button
+                    key={`pin:${path}`}
+                    type="button"
+                    className="fd-chip"
+                    data-pinned
+                    title={path}
+                    onClick={() => chooseDir(path)}
+                  >
+                    <Icon of={Pin} size={12} />
+                    {lastParts(path)}
+                  </button>
+                ))}
+                {recent.map((path) => (
+                  <button
+                    key={path}
+                    type="button"
+                    className="fd-chip"
+                    title={path}
+                    onClick={() => chooseDir(path)}
+                  >
+                    {lastParts(path)}
+                  </button>
+                ))}
+              </div>
+            )}
+            <label>
+              Workspace
+              <select
+                value={place}
+                onChange={(event) => setPlace(event.target.value as 'here' | 'worktree' | 'clone')}
+              >
+                <option value="here">Work in this directory</option>
+                <option value="worktree">A new worktree on its own branch</option>
+                <option value="clone">Clone a URL into a new directory here</option>
+              </select>
+            </label>
+            {place === 'clone' ? (
+              <>
+                <label>
+                  Clone URL
+                  <input value={cloneUrl} onChange={(event) => setCloneUrl(event.target.value)} />
+                </label>
+                <label>
+                  New directory name
+                  <input value={cloneName} onChange={(event) => setCloneName(event.target.value)} />
+                </label>
+              </>
+            ) : null}
+          </div>
+          <div className="fd-panel">
+            <h3 className="fd-label">Agent</h3>
+            <label>
+              Provider
+              <select
+                value={instance}
+                onChange={(event) => {
+                  setInstance(event.target.value);
+                  setMode('');
+                }}
+              >
+                {providers.map((p) => (
+                  <option key={p.instance} value={p.instance}>
+                    {providerLabel(p)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Permission mode
+              <select value={mode} onChange={(event) => setMode(event.target.value)}>
+                <option value="">Station default</option>
+                {modes.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Model (optional)
+              <input value={model} onChange={(event) => setModel(event.target.value)} />
+            </label>
+          </div>
+          <div className="fd-panel">
+            <h3 className="fd-label">Task</h3>
+            <label>
+              Title (optional)
+              <input value={title} onChange={(event) => setTitle(event.target.value)} />
+            </label>
+            <label>
+              First prompt (optional)
+              <textarea
+                rows={6}
+                value={prompt}
+                onChange={(event) => setPrompt(event.target.value)}
+              />
+            </label>
+            {place === 'clone' ? null : (
+              <label className="fd-spawn-opt">
+                <input
+                  type="checkbox"
+                  checked={batch}
+                  onChange={(event) => setBatch(event.target.checked)}
+                />
+                Batch: one session in its own worktree for each line (3x task starts three)
+              </label>
+            )}
+            {previewing ? (
+              <div className="fd-batch-preview" aria-label="Sessions to start">
+                <p className="fd-label">{batchLines.length} sessions, each in its own worktree</p>
+                <ol>
+                  {batchLines.map((line, i) => (
+                    <li key={i} title={line}>
+                      {line}
                     </li>
                   ))}
-                </ul>
-                {listing.truncated ? (
-                  <p className="fd-note">The station shows only the first entries.</p>
-                ) : null}
-              </>
-            )}
-            {browseError === null ? null : <p role="alert">{browseError}</p>}
-          </fieldset>
-          <label>
-            Workspace
-            <select
-              value={place}
-              onChange={(event) => setPlace(event.target.value as 'here' | 'worktree' | 'clone')}
-            >
-              <option value="here">Work in this directory</option>
-              <option value="worktree">A new worktree on its own branch</option>
-              <option value="clone">Clone a URL into a new directory here</option>
-            </select>
-          </label>
-          {place === 'clone' ? (
-            <>
-              <label>
-                Clone URL
-                <input value={cloneUrl} onChange={(event) => setCloneUrl(event.target.value)} />
-              </label>
-              <label>
-                New directory name
-                <input value={cloneName} onChange={(event) => setCloneName(event.target.value)} />
-              </label>
-            </>
-          ) : (
-            <label className="fd-check">
+                </ol>
+              </div>
+            ) : null}
+          </div>
+          <div className="fd-panel">
+            <h3 className="fd-label">Options</h3>
+            <label className="fd-spawn-opt">
               <input
                 type="checkbox"
-                checked={batch}
-                onChange={(event) => setBatch(event.target.checked)}
+                checked={coordinator}
+                onChange={(event) => setCoordinator(event.target.checked)}
               />
-              Batch: one session in its own worktree for each line (3x task starts three)
+              Coordinator: this session may read the fleet, send mail and drive the sessions it
+              starts
             </label>
-          )}
-          <label className="fd-check">
-            <input
-              type="checkbox"
-              checked={coordinator}
-              onChange={(event) => setCoordinator(event.target.checked)}
-            />
-            Coordinator: this session may read the fleet, send mail and drive the sessions it starts
-          </label>
-          <label>
-            Permission mode
-            <select value={mode} onChange={(event) => setMode(event.target.value)}>
-              <option value="">Station default</option>
-              {modes.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Model (optional)
-            <input value={model} onChange={(event) => setModel(event.target.value)} />
-          </label>
-          <label>
-            Title (optional)
-            <input value={title} onChange={(event) => setTitle(event.target.value)} />
-          </label>
-          <label>
-            First prompt (optional)
-            <textarea rows={4} value={prompt} onChange={(event) => setPrompt(event.target.value)} />
-          </label>
-          <label>
-            Import CLI session id (optional)
-            <input
-              value={importId}
-              spellCheck={false}
-              autoCapitalize="off"
-              onChange={(event) => setImportId(event.target.value)}
-            />
-          </label>
-          <p className="fd-note">
-            Continue a Claude or Codex session that you started in a terminal. Close it there first.
-            An import runs in the chosen directory and ignores the workspace and batch choices.
-          </p>
-          {importProblem === null ? null : <p role="alert">{importProblem}</p>}
-          {busy || missing.length === 0 ? null : (
-            <p className="fd-note" id="fd-spawn-missing" data-missing>
-              To start: {missing.join('; ')}.
+            <label>
+              Import CLI session id (optional)
+              <input
+                value={importId}
+                spellCheck={false}
+                autoCapitalize="off"
+                onChange={(event) => setImportId(event.target.value)}
+              />
+            </label>
+            <p className="fd-note">
+              Continue a Claude or Codex session that you started in a terminal. Close it there
+              first. An import runs in the chosen directory and ignores the workspace and batch
+              choices.
             </p>
-          )}
-          <button
-            type="submit"
-            disabled={!ready || importProblem !== null}
-            aria-describedby={missing.length === 0 ? undefined : 'fd-spawn-missing'}
-          >
-            {busy ? 'Starting…' : importId.trim() === '' ? 'Start session' : 'Import session'}
-          </button>
-        </form>
-      )}
-      {outcome === null ? null : (
-        <div className="fd-outcome">
-          <p role={outcome.ok ? 'status' : 'alert'}>{outcome.text}</p>
-          {outcome.sessionId !== null && station !== undefined ? (
+            {importProblem === null ? null : <p role="alert">{importProblem}</p>}
+          </div>
+          <div className="fd-spawn-submit">
+            <div className="fd-spawn-status">
+              {busy || missing.length === 0 ? null : (
+                <p className="fd-note" id="fd-spawn-missing" data-missing>
+                  To start: {missing.join('; ')}.
+                </p>
+              )}
+              {outcome === null ? null : (
+                <div className="fd-outcome">
+                  <p role={outcome.ok ? 'status' : 'alert'}>{outcome.text}</p>
+                  {outcome.sessionId !== null && station !== undefined ? (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onOpen({
+                          station_id: station.station_id,
+                          session_id: outcome.sessionId ?? '',
+                        })
+                      }
+                    >
+                      Open the new session
+                    </button>
+                  ) : null}
+                </div>
+              )}
+            </div>
             <button
-              type="button"
-              onClick={() =>
-                onOpen({ station_id: station.station_id, session_id: outcome.sessionId ?? '' })
-              }
+              type="submit"
+              className="fd-primary"
+              disabled={!ready || importProblem !== null}
+              aria-describedby={missing.length === 0 ? undefined : 'fd-spawn-missing'}
             >
-              Open the new session
+              {busy
+                ? 'Starting…'
+                : importing
+                  ? 'Import session'
+                  : previewing
+                    ? `Start ${batchLines.length} sessions`
+                    : 'Start session'}
             </button>
-          ) : null}
-        </div>
+          </div>
+        </form>
       )}
     </section>
   );

@@ -1,17 +1,21 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { App } from '../App';
+import { SpawnForm } from './SpawnForm';
 import type { StationInfo, StationView, WorkspaceListing } from '../gen';
 import { claudeCaps, codexCaps } from '../testing/capabilities';
-import { station } from '../testing/fleet';
+import { card, station } from '../testing/fleet';
 import {
   batchPrompts,
   importIdProblem,
+  lastParts,
   listingView,
   providerLabel,
+  recentDirs,
   spawnActions,
   spawnModes,
   spawnTargets,
+  togglePin,
 } from './spawn';
 
 const info = (extra: Partial<StationInfo> = {}): StationInfo => ({
@@ -105,7 +109,7 @@ describe('spawn form (P4-4)', () => {
     expect(html).toContain('No directory chosen.');
     // No directory yet: the start button is off and the form says why.
     expect(html).toMatch(
-      /<button type="submit" disabled="" aria-describedby="fd-spawn-missing">Start session<\/button>/,
+      /<button type="submit" class="fd-primary" disabled="" aria-describedby="fd-spawn-missing">Start session<\/button>/,
     );
     expect(html).toContain(
       'To start: choose a directory (Browse the station, open a folder, then Use this directory).',
@@ -317,5 +321,85 @@ describe('spawn form (P4-4)', () => {
       '"workspace":{"kind":"clone","url":"https://h/o/r.git"}',
     );
     expect(JSON.stringify(posts[2])).not.toContain('workspace');
+  });
+
+  test('the form is a column of panels with a head each and a primary submit button (DL-141)', () => {
+    const html = form([reported()]);
+    for (const head of ['Where', 'Agent', 'Task', 'Options']) {
+      expect(html).toContain(`<h3 class="fd-label">${head}</h3>`);
+    }
+    expect(html).toContain('<textarea rows="6">');
+    expect(html).toContain('<label class="fd-spawn-opt"><input type="checkbox"/>Batch:');
+    expect(html).not.toContain('fd-batch-preview');
+    expect(html).not.toContain('fd-recent');
+  });
+
+  test('the initial station is chosen at the first render (DL-141)', () => {
+    const stations = [reported('station-a'), reported('station-b')];
+    const render = (initialStation?: string) =>
+      renderToStaticMarkup(
+        <SpawnForm
+          stations={stations}
+          freshness="live"
+          onOpen={() => {}}
+          initialStation={initialStation}
+        />,
+      );
+    expect(render('station-b')).toContain('<option value="station-b" selected="">Beta</option>');
+    expect(render('station-a')).toContain('<option value="station-a" selected="">Alpha</option>');
+    expect(render('nowhere')).toContain('<option value="station-a" selected="">Alpha</option>');
+    expect(render()).toContain('<option value="station-a" selected="">Alpha</option>');
+  });
+
+  test('the recent directories are the newest cwd of the station, once each, not pinned', () => {
+    const at = (id: string, cwd: string | null, updated: number, st = 'station-a') =>
+      card(id, 'idle', st, { cwd, updated_at: updated });
+    const fleet = [
+      at('a', '/w/one', 10),
+      at('b', '/w/two', 30),
+      at('c', '/w/one', 20),
+      at('d', null, 99),
+      at('e', '/w/other', 50, 'station-b'),
+      at('f', '/w/pinned', 40),
+    ];
+    expect(recentDirs(fleet, 'station-a', [])).toEqual(['/w/pinned', '/w/two', '/w/one']);
+    expect(recentDirs(fleet, 'station-a', ['/w/pinned'])).toEqual(['/w/two', '/w/one']);
+    const many = Array.from({ length: 9 }, (_, i) => at(`m${i}`, `/m/${i}`, i));
+    expect(recentDirs(many, 'station-a', [])).toEqual([
+      '/m/8',
+      '/m/7',
+      '/m/6',
+      '/m/5',
+      '/m/4',
+      '/m/3',
+    ]);
+    const html = renderToStaticMarkup(
+      <SpawnForm stations={[reported()]} freshness="live" onOpen={() => {}} sessions={fleet} />,
+    );
+    expect(html).toContain('aria-label="Recent directories"');
+    expect(html).toContain('<span class="fd-label">Recent</span>');
+    expect(html).toContain('title="/w/two"');
+    expect(html).toContain('>w/two</button>');
+    expect(html).not.toContain('/w/other');
+  });
+
+  test('a path shows its last two parts', () => {
+    expect(lastParts('/home/me/projects/app')).toBe('projects/app');
+    expect(lastParts('/home')).toBe('home');
+    expect(lastParts('/')).toBe('/');
+    expect(lastParts('/a/b/')).toBe('a/b');
+  });
+
+  test('a pin goes to the front, a second toggle removes it, 20 at most, by station', () => {
+    let pins = togglePin({}, 'a', '/x');
+    pins = togglePin(pins, 'a', '/y');
+    expect(pins['a']).toEqual(['/y', '/x']);
+    expect(togglePin(pins, 'a', '/x')['a']).toEqual(['/y']);
+    expect(togglePin(pins, 'b', '/z')['b']).toEqual(['/z']);
+    let full = {};
+    for (let i = 0; i < 25; i += 1) full = togglePin(full, 'a', `/p/${i}`);
+    const list = (full as Record<string, string[]>)['a'] ?? [];
+    expect(list).toHaveLength(20);
+    expect(list[0]).toBe('/p/24');
   });
 });
