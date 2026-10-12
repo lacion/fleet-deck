@@ -293,6 +293,10 @@ input[type="radio"] {
 
 /* ── badges ─────────────────────────────────────────────────────── */
 .fd-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  line-height: 1.5;
   padding: 1px 7px;
   border-radius: var(--r-chip);
   background: var(--border-soft);
