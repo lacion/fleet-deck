@@ -67,7 +67,17 @@ export class FakeDeck {
     return release;
   }
 
-  async install(page: Page): Promise<void> {
+  /** `firstRun: true` keeps the help overlay of a first visit (every other test has seen it). */
+  async install(page: Page, options: { firstRun?: boolean } = {}): Promise<void> {
+    if (options.firstRun !== true) {
+      await page.addInitScript(() => {
+        try {
+          localStorage.setItem('fd-help-seen', '1');
+        } catch {
+          // The overlay may open; the test sees it.
+        }
+      });
+    }
     await page.route('**/api/**', async (route) => {
       const request = route.request();
       const reply = this.answer(request);

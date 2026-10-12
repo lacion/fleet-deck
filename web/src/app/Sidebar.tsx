@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { STATUS_LANES } from '../board/fleet';
 import type { DeckSession, StationView } from '../gen';
 import {
+  Archive,
   Folder,
   GitBranch,
   Icon,
@@ -12,11 +13,14 @@ import {
   Search,
   Server,
   SquareTerminal,
+  Star,
   TriangleAlert,
   Zap,
 } from '../ui/icons';
 import { shortModel } from '../ui/format';
+import { archived as archivedSet, priority, sessionRef } from '../ui/localSet';
 import type { Chrome } from './chrome';
+import { PrefsRow } from './Prefs';
 import { formatHash, type Route } from './routes';
 import { basename, relativeAge, type SidebarModel, sessionTitle, sidebarModel } from './sessions';
 
@@ -48,7 +52,17 @@ function useNow(given: number | undefined, ms: number): number {
   return given ?? now;
 }
 
-function Row({ card, route, now }: { card: DeckSession; route: Route; now: number }) {
+function Row({
+  card,
+  route,
+  now,
+  starred,
+}: {
+  card: DeckSession;
+  route: Route;
+  now: number;
+  starred: boolean;
+}) {
   const s = card.summary;
   const open =
     route.name === 'session' && route.station === card.station_id && route.session === s.session_id;
@@ -70,6 +84,11 @@ function Row({ card, route, now }: { card: DeckSession; route: Route; now: numbe
         <span className="fd-srow-title">
           <span className="fd-vh">{statusLabel(card)}: </span>
           {sessionTitle(card)}
+          {starred ? (
+            <span className="fd-srow-star" role="img" aria-label="Starred">
+              <Icon of={Star} size={12} />
+            </span>
+          ) : null}
           {s.terminal != null ? (
             <span className="fd-badge" data-tone="act">
               In terminal
@@ -98,17 +117,23 @@ function Row({ card, route, now }: { card: DeckSession; route: Route; now: numbe
   );
 }
 
-function Rows({ cards, route, now }: { cards: readonly DeckSession[]; route: Route; now: number }) {
+function Rows({
+  cards,
+  route,
+  now,
+  starred,
+}: {
+  cards: readonly DeckSession[];
+  route: Route;
+  now: number;
+  starred: ReadonlySet<string>;
+}) {
   return (
     <ul className="fd-srows">
-      {cards.map((card) => (
-        <Row
-          key={`${card.station_id}/${card.summary.session_id}`}
-          card={card}
-          route={route}
-          now={now}
-        />
-      ))}
+      {cards.map((card) => {
+        const ref = sessionRef(card.station_id, card.summary.session_id);
+        return <Row key={ref} card={card} route={route} now={now} starred={starred.has(ref)} />;
+      })}
     </ul>
   );
 }
@@ -118,18 +143,21 @@ function Groups({
   route,
   now,
   withNeeds,
+  starred,
 }: {
   model: SidebarModel;
   route: Route;
   now: number;
   withNeeds: boolean;
+  starred: ReadonlySet<string>;
 }) {
+  const [showArchived, setShowArchived] = useState(false);
   return (
     <>
       {withNeeds && model.needs.length > 0 ? (
         <section className="fd-sgroup" data-group="needs" aria-label="Needs you">
           <h3 className="fd-sgroup-title fd-label">Needs you · {model.needs.length}</h3>
-          <Rows cards={model.needs} route={route} now={now} />
+          <Rows cards={model.needs} route={route} now={now} starred={starred} />
         </section>
       ) : null}
       {model.groups.map((group) => (
@@ -149,15 +177,44 @@ function Groups({
             <span className="fd-vh">{group.reachable ? 'reachable' : 'unreachable'}</span>
             <span className="fd-count">{group.count}</span>
           </h3>
-          <Rows cards={group.live} route={route} now={now} />
+          <Rows cards={group.live} route={route} now={now} starred={starred} />
           {group.ended.length > 0 ? (
             <details className="fd-sended">
               <summary className="fd-label">Ended · {group.ended.length}</summary>
-              <Rows cards={group.ended} route={route} now={now} />
+              <Rows cards={group.ended} route={route} now={now} starred={starred} />
+              <button
+                type="button"
+                className="fd-ghost fd-sm fd-sended-clear"
+                aria-label={`Archive the ended sessions of ${group.name}`}
+                onClick={() =>
+                  archivedSet.add(
+                    group.ended
+                      .filter((c) => c.status === 'ended' || c.status === 'lost')
+                      .map((c) => sessionRef(c.station_id, c.summary.session_id)),
+                  )
+                }
+              >
+                <Icon of={Archive} size={14} /> Clear
+              </button>
             </details>
           ) : null}
         </section>
       ))}
+      {model.archived.length > 0 ? (
+        <section className="fd-sgroup" data-group="archived" aria-label="Archived">
+          <button
+            type="button"
+            className="fd-ghost fd-sm fd-sidebar-archived"
+            aria-expanded={showArchived}
+            onClick={() => setShowArchived(!showArchived)}
+          >
+            <Icon of={Archive} size={14} /> Archived ({model.archived.length})
+          </button>
+          {showArchived ? (
+            <Rows cards={model.archived} route={route} now={now} starred={starred} />
+          ) : null}
+        </section>
+      ) : null}
     </>
   );
 }
@@ -176,9 +233,12 @@ export function Sidebar({
 }: Props) {
   const [query, setQuery] = useState('');
   const now = useNow(givenNow, 30000);
-  const model = sidebarModel(sessions, stations, query);
+  const starred = priority.use();
+  const archived = archivedSet.use();
+  const model = sidebarModel(sessions, stations, query, { starred, archived });
   const empty = sessions.length === 0;
-  const nothingFound = !empty && model.groups.length === 0 && model.needs.length === 0;
+  const nothingFound =
+    !empty && model.groups.length === 0 && model.needs.length === 0 && model.archived.length === 0;
   const full = variant === 'full';
   const first = model.needs[0];
   return (
@@ -255,7 +315,7 @@ export function Sidebar({
         ) : nothingFound ? (
           <p className="fd-empty">No matching sessions.</p>
         ) : (
-          <Groups model={model} route={route} now={now} withNeeds={!full} />
+          <Groups model={model} route={route} now={now} withNeeds={!full} starred={starred} />
         )}
       </div>
       {full ? (
@@ -282,6 +342,7 @@ export function Sidebar({
               </button>
             ) : null}
           </nav>
+          <PrefsRow />
           {chrome === undefined ? null : (
             <button type="button" className="fd-ghost fd-sm" onClick={chrome.onLogout}>
               <Icon of={LogOut} size={14} /> Log out

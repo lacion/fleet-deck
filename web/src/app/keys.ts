@@ -16,6 +16,7 @@ export type KeyAction =
   | 'focus'
   | 'new'
   | 'fleet'
+  | 'compose'
   | 'terminals'
   | 'help'
   | 'palette'
@@ -45,6 +46,7 @@ const KEYS: Readonly<Record<string, KeyAction>> = {
   '/': 'focus',
   n: 'new',
   f: 'fleet',
+  c: 'compose',
   t: 'terminals',
   '?': 'help',
   Escape: 'escape',

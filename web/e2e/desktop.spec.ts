@@ -2,7 +2,8 @@
 // with its tabs, the keyboard (j/k, Ctrl+K, ?, arrows on the tabs).
 import { expect, type Page, test } from '@playwright/test';
 import { logIn } from './fake-deck';
-import { ALPHA, BETA, threeSessionDeck, threeSessions } from './scenes';
+import { ALPHA, BETA, NOW, threeSessionDeck, threeSessions } from './scenes';
+import { summary } from '../src/testing/summary';
 
 async function setUp(page: Page) {
   const deck = threeSessionDeck();
@@ -96,10 +97,10 @@ test('Ctrl+K opens the palette, typing filters and Enter opens the match', async
   ).toHaveText('Fix the build');
 });
 
-test('? shows the keyboard shortcuts and Escape closes them', async ({ page }) => {
+test('? shows the keyboard and help dialog and Escape closes it', async ({ page }) => {
   await setUp(page);
   await page.keyboard.press('?');
-  const help = page.getByRole('dialog', { name: 'Keyboard shortcuts' });
+  const help = page.getByRole('dialog', { name: 'Keyboard and help' });
   await expect(help).toBeVisible();
   await expect(help).toContainText('Next session');
   await page.keyboard.press('Escape');
@@ -192,4 +193,64 @@ test('the Files side panel lists the root at once, opens folders, and its toggle
   await expect(pane.getByRole('complementary', { name: 'Files panel' })).toHaveCount(0);
   await pane.getByRole('button', { name: 'Files' }).click();
   await expect(pane.getByRole('complementary', { name: 'Files panel' })).toBeVisible();
+});
+
+test('the sidebar footer has the theme and compact switches', async ({ page }) => {
+  const { sidebar } = await setUp(page);
+  const theme = sidebar.getByRole('group', { name: 'Theme' });
+  await theme.getByRole('button', { name: 'Light theme' }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  await theme.getByRole('button', { name: 'Dark theme' }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await sidebar.getByRole('button', { name: 'Compact cards' }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-density', 'compact');
+  await expect(sidebar.locator('.fd-srow-meta').first()).toBeHidden();
+});
+
+// The panel request (`panelRequest`, tab Mail & tasks) is read by the fleet home of worker H;
+// this spec asserts the route that the key opens.
+test('c opens the fleet page', async ({ page }) => {
+  await setUp(page);
+  await page.keyboard.press('c');
+  await expect(page).toHaveURL(/#\/fleet$/);
+});
+
+test('a starred session sorts first and ended sessions are cleared into Archived', async ({
+  page,
+}) => {
+  const deck = threeSessionDeck();
+  const done = (id: string, title: string, status: 'ended' | 'lost') => ({
+    station_id: ALPHA,
+    status,
+    summary: summary(id, 'idle', NOW - 5, { title, state: 'exited' }),
+  });
+  deck.sessions = [
+    ...threeSessions(),
+    done('s4', 'Old job', 'ended'),
+    done('s5', 'Lost job', 'lost'),
+  ];
+  await page.addInitScript(() => {
+    localStorage.setItem('fd-priority', JSON.stringify(['st-alpha/s2']));
+  });
+  await deck.install(page);
+  await logIn(page);
+  const sidebar = page.getByRole('complementary', { name: 'Sessions' });
+  const alpha = sidebar.getByRole('region', { name: 'Station Alpha' });
+  // The needs-you session ranks first by status unless starred; the star puts s2 above it.
+  await expect(alpha.locator('a.fd-srow').first()).toContainText('Write the docs');
+  await expect(
+    alpha.locator('a.fd-srow').first().getByRole('img', { name: 'Starred' }),
+  ).toBeVisible();
+
+  await alpha.locator('details.fd-sended > summary').click();
+  await alpha.getByRole('button', { name: 'Archive the ended sessions of Alpha' }).click();
+  await expect(alpha.locator('details.fd-sended')).toHaveCount(0);
+  const toggle = sidebar.getByRole('button', { name: /^Archived \(2\)/ });
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  const archived = sidebar.getByRole('region', { name: 'Archived' });
+  await expect(archived).toContainText('Old job');
+  await expect(archived).toContainText('Lost job');
+  expect(await page.evaluate(() => localStorage.getItem('fd-archived'))).toContain('st-alpha/s4');
 });

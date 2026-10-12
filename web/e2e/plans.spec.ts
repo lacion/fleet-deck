@@ -5,6 +5,7 @@ import { expect, test } from '@playwright/test';
 import type { DeckPlan } from '../src/gen';
 import { claudeCaps } from '../src/testing/capabilities';
 import { FakeDeck, fitsWidth, logIn, openMore, stationView } from './fake-deck';
+import { threeSessionDeck } from './scenes';
 
 const ST = 'st-alpha';
 
@@ -104,4 +105,59 @@ test('without drive scope the plan actions are disabled', async ({ page }) => {
   const p1 = page.getByRole('article', { name: 'Plan Cache plan p1' });
   await expect(p1.getByRole('button', { name: 'Archive' })).toBeDisabled();
   await expect(p1.getByRole('button', { name: 'Start a session with this plan' })).toBeDisabled();
+});
+
+test('a plan is assigned to a live session as mail, then marked executed', async ({ page }) => {
+  const deck = threeSessionDeck();
+  let plans = [plan('p1', 'proposed', 1)];
+  deck.on('/api/plans', () => ({ status: 200, body: plans }));
+  deck.on('/api/plans/mark', (body) => {
+    const b = body as { id: string; status: DeckPlan['status'] };
+    plans = plans.map((p) => (p.id === b.id ? { ...p, status: b.status } : p));
+    return { status: 200, body: plans[0] };
+  });
+  deck.on('/api/mail', () => ({ status: 200, body: {} }));
+  await deck.install(page);
+  await logIn(page);
+  await openMore(page, 'Plans');
+  const p1 = page.getByRole('article', { name: 'Plan Cache plan p1' });
+  await p1.getByRole('button', { name: 'Assign to a session…' }).click();
+  const form = p1.locator('form');
+  await expect(form.getByLabel('Session')).toHaveValue(`${ST}/s1`);
+  await form.getByLabel('Session').selectOption(`${ST}/s2`);
+  await form.getByLabel('Instructions (optional)').fill('Start with the tests.');
+  await form.getByRole('button', { name: 'Send as mail' }).click();
+  await expect(p1.getByRole('status')).toHaveText('Sent to Write the docs.');
+  await expect(p1).toContainText('Executed');
+
+  const mails = deck.calls.filter((c) => c.path === '/api/mail');
+  expect(mails).toHaveLength(1);
+  expect(mails[0]?.body).toMatchObject({
+    station: ST,
+    session_id: 's2',
+    delivery: 'follow_up',
+    text: `A plan from the library for you to execute.\n\n${plan('p1', 'proposed', 1).markdown}\n\nInstructions: Start with the tests.`,
+  });
+  const marks = deck.calls.filter((c) => c.path === '/api/plans/mark').map((c) => c.body);
+  expect(marks).toEqual([{ id: `${ST}/s1/p1`, status: 'executed' }]);
+});
+
+test('a refused mail keeps the form open with the reason', async ({ page }) => {
+  const deck = threeSessionDeck();
+  deck.on('/api/plans', () => ({ status: 200, body: [plan('p1', 'proposed', 1)] }));
+  deck.on('/api/mail', () => ({
+    status: 409,
+    body: { code: 'session_ended', message: 'The session ended.' },
+  }));
+  await deck.install(page);
+  await logIn(page);
+  await openMore(page, 'Plans');
+  const p1 = page.getByRole('article', { name: 'Plan Cache plan p1' });
+  await p1.getByRole('button', { name: 'Assign to a session…' }).click();
+  await p1.getByRole('button', { name: 'Send as mail' }).click();
+  await expect(p1.getByRole('alert')).toContainText('The session ended.');
+  await expect(p1.locator('form')).toBeVisible();
+  expect(deck.calls.some((c) => c.path === '/api/plans/mark')).toBe(false);
+  await p1.getByRole('button', { name: 'Cancel' }).click();
+  await expect(p1.locator('form')).toHaveCount(0);
 });

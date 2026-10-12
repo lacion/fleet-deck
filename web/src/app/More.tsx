@@ -1,5 +1,6 @@
 import { FileText, Icon, LogOut, Server, SquareTerminal } from '../ui/icons';
 import type { Chrome } from './chrome';
+import { PrefsRow } from './Prefs';
 
 type Props = {
   readonly stationCount: number;
@@ -36,6 +37,7 @@ export function More({ stationCount, terminalCount, chrome }: Props) {
           </li>
         </ul>
       </nav>
+      <PrefsRow />
       {chrome === undefined ? null : (
         <button type="button" className="fd-ghost fd-sm" onClick={chrome.onLogout}>
           <Icon of={LogOut} size={14} /> Log out
