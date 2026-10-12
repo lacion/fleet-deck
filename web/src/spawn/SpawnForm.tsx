@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { SessionKey, StationView, WorkspaceListing } from '../gen';
+import type { DeckSession, SessionKey, StationView, WorkspaceListing } from '../gen';
 import type { Freshness } from '../runtime/state';
 import {
   batchPrompts,
@@ -22,6 +22,8 @@ type Props = {
   readonly initialPrompt?: string;
   /** DL-141: the station chosen at the first render (an unrouted task). */
   readonly initialStation?: string | undefined;
+  /** DL-141: the fleet, for the recent directories of a station. */
+  readonly sessions?: readonly DeckSession[] | undefined;
 };
 
 /** PLAN §11 spawn form for M2: station, provider, directory picker, mode,
