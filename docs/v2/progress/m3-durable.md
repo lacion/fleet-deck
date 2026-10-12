@@ -28,6 +28,12 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 100 (2026-10-12, 17:13–)
+
+- Round start: committed round 99 as 66e79d6. `git log v2..m3/orchestration`, `v2..m3/board`, `v2..m3/ops`: no new commits; `m3-orchestration.md` has no "LANE COMPLETE", so 6-13, 7-7 and 7-8 stay blocked. Lane B's last commit is still 560032c (16:56); its worktree has 28 changed paths (read only).
+- Sync-only round: no lane A item is open before 6-13, and no merge needed a fix.
+- Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` (docs only, no test run).
+
 ## Round 99 (2026-10-12, 17:12–)
 
 - Round start: committed round 98 as d0db8b7. `git log v2..m3/orchestration`, `v2..m3/board`, `v2..m3/ops`: no new commits; `m3-orchestration.md` has no "LANE COMPLETE", so 6-13, 7-7 and 7-8 stay blocked. Lane B's last commit is still 560032c (16:56); its worktree has 28 changed paths (read only).
