@@ -28,6 +28,16 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 74 (2026-10-12, 16:31–)
+
+- Round start: committed round 73 as 32d3170. No new commits on m3/orchestration, m3/board or m3/ops. Lane B still has no "LANE COMPLETE", so 6-13, 7-7 and 7-8 stay blocked.
+- Module size fix (rule "modules stay under 800 lines"): a scan of `crates/**/*.rs` found two lane A test files over the limit, `crates/fleetdeck-cli/tests/shim_manager.rs` (863 lines) and `crates/fleetdeck-cli/tests/shim_stdin.rs` (818 lines). The tail of each moved into a child module with `#[path]` and `use super::*` (no behaviour change, same test binary):
+  - `crates/fleetdeck-cli/tests/shim_manager_parts/live_exit.rs`: `ended_row`, `resume`, `a_live_shim_exit_with_a_surviving_child_keeps_the_evidence_and_resume_stays_refused`, `a_live_shim_exit_without_survivors_is_a_proven_end`.
+  - `crates/fleetdeck-cli/tests/shim_stdin_parts/parallel_recovery.rs`: `recovery_waits_for_blocked_writes_of_several_shims_in_parallel`.
+  - Now: `shim_manager.rs` 729, `shim_stdin.rs` 771 lines; the largest file in `crates/` has 798 lines. The ADR-005 §9 map row 40 names the new module.
+- Tests: `cargo nextest run -p fleetdeck-cli --test shim_manager --test shim_stdin -E 'test(live_exit::) | test(parallel_recovery::)'` → 3 passed.
+- Checks: `cargo fmt --all --check` clean; `cargo clippy --workspace --all-targets -- -D warnings` clean.
+
 ## Round 73 (2026-10-12, 16:28–)
 
 - Round start: committed round 72 as ff0800a. No new commits on m3/orchestration, m3/board or m3/ops. Lane B still has no "LANE COMPLETE", so 6-13, 7-7 and 7-8 stay blocked.
@@ -290,7 +300,7 @@ Limits of this map (review of round 71). Two rows above claim more than the test
 | 25 | covered | `shim_station.rs` `uncertain_inputs_are_settled_before_commands_are_admitted_after_a_station_start` |
 | 26–29, 34 | covered | `shim_stdin.rs` |
 | 39 | covered (round 46) | `shim_gap.rs` `an_unterminated_last_line_at_eof_is_committed_as_malformed_before_the_exit_is_acknowledged` |
-| 40 | partial | `shim_manager.rs` `a_live_shim_exit_with_a_surviving_child_keeps_the_evidence_and_resume_stays_refused`, `manager::tests::resume` |
+| 40 | partial | `shim_manager.rs` (module `live_exit`) `a_live_shim_exit_with_a_surviving_child_keeps_the_evidence_and_resume_stays_refused`, `manager::tests::resume` |
 | 44 | open | exit file on ENOSPC → follow-up |
 | 45 | open | `ack_exit` fault points → follow-up |
 
