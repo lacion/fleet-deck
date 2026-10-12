@@ -42,30 +42,45 @@ function shaped<T>(v: unknown, fields: readonly string[], what: string): T {
   return v as T;
 }
 
-/** The file service of one session (`GET /api/stations/<id>/files/...`). */
-export function fileActions(get: Get, key: SessionKey): FileActions {
-  const station = `/api/stations/${encodeURIComponent(key.station_id)}`;
-  const root = `session=${encodeURIComponent(key.session_id)}`;
+/** The file calls of one root: `root` is the query part that names it (`session=…` or `workspace=…`). */
+function rootActions(
+  get: Get,
+  station: string,
+  root: string,
+  diff: FileActions['diff'],
+): FileActions {
+  const base = `/api/stations/${encodeURIComponent(station)}`;
   return {
     list: async (path) =>
       shaped<FileListing>(
-        await get(`${station}/files/list?${root}&path=${encodeURIComponent(path)}`),
+        await get(`${base}/files/list?${root}&path=${encodeURIComponent(path)}`),
         ['path', 'entries', 'truncated'],
         'directory listing',
       ),
     read: async (path) =>
       shaped<FileContent>(
-        await get(`${station}/files/read?${root}&path=${encodeURIComponent(path)}`),
+        await get(`${base}/files/read?${root}&path=${encodeURIComponent(path)}`),
         ['path', 'size', 'binary', 'text', 'truncated'],
         'file',
       ),
     search: async (query, mode) =>
       shaped<FileSearch>(
-        await get(`${station}/files/search?${root}&q=${encodeURIComponent(query)}&mode=${mode}`),
+        await get(`${base}/files/search?${root}&q=${encodeURIComponent(query)}&mode=${mode}`),
         ['hits', 'truncated', 'backend'],
         'search answer',
       ),
-    diff: async (turnId) =>
+    diff,
+  };
+}
+
+/** The file service of one session (`GET /api/stations/<id>/files/...`). */
+export function fileActions(get: Get, key: SessionKey): FileActions {
+  const station = `/api/stations/${encodeURIComponent(key.station_id)}`;
+  return rootActions(
+    get,
+    key.station_id,
+    `session=${encodeURIComponent(key.session_id)}`,
+    async (turnId) =>
       shaped<TurnDiff>(
         await get(
           `${station}/sessions/${encodeURIComponent(key.session_id)}/turns/${encodeURIComponent(turnId)}/diff`,
@@ -73,7 +88,14 @@ export function fileActions(get: Get, key: SessionKey): FileActions {
         ['summary', 'patch', 'truncated'],
         'diff',
       ),
-  };
+  );
+}
+
+/** The file service of one folder of a station (`workspace=<absolute dir>`); a folder has no turns. */
+export function workspaceFiles(get: Get, station: string, workspace: string): FileActions {
+  return rootActions(get, station, `workspace=${encodeURIComponent(workspace)}`, async () => {
+    throw new Error('A folder has no turns.');
+  });
 }
 
 /** The parent of a relative directory path (`''` is the root). */
