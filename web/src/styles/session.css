@@ -87,6 +87,45 @@
   white-space: normal;
   overflow-wrap: anywhere;
 }
+/* The facts of a session, first in the session menu. */
+.fd-sh-details {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 2px 12px;
+  margin: 0;
+  padding: 6px 10px;
+  font-family: var(--font-data);
+  font-size: 11px;
+}
+.fd-sh-details > div {
+  display: contents;
+}
+.fd-sh-details dt {
+  align-self: center;
+  color: var(--faint);
+}
+/* The copy button keeps its tap size but does not grow the row. */
+.fd-sh-details dd .fd-iconbtn {
+  margin-block: -8px;
+}
+.fd-sh-details dd {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  margin: 0;
+  color: var(--dim);
+  overflow-wrap: anywhere;
+}
+/* The priority star after the title. */
+.fd-sh-star {
+  display: inline-flex;
+  flex: none;
+  color: var(--act);
+}
+.fd-sh-star .fd-icon {
+  fill: currentColor;
+}
 /* A confirm inside a menu: its buttons look like the rows of the menu. */
 .fd-sh-confirm {
   display: flex;
@@ -154,6 +193,14 @@
   background: var(--m-comet-bg);
   border-bottom-color: var(--m-comet);
   color: var(--m-comet);
+}
+.fd-sh-strip[data-tone="hazard"] {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--hazard-bg);
+  border-bottom-color: var(--hazard);
+  color: var(--hazard);
 }
 .fd-pane-notice {
   display: flex;
@@ -755,6 +802,19 @@ fieldset:disabled .fd-opt {
 .fd-files .fd-path .fd-link {
   margin-left: 8px;
   color: var(--m-comet);
+}
+.fd-files-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.fd-files-tools .fd-iconbtn {
+  margin-left: auto;
+}
+.fd-files-md {
+  max-width: 760px;
+  font-size: 13.5px;
 }
 .fd-files-error {
   margin: 0;

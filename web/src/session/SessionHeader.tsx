@@ -1,25 +1,33 @@
 // DL-140: the header of a session: title, status, provider, model, where it
 // runs, and the actions (interrupt, resume, terminal) with one overflow menu (DL-141).
-import { type KeyboardEvent, type ReactNode, useRef, useState } from 'react';
+import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from 'react';
+import { relativeAge } from '../app/sessions';
 import { stationName } from '../board/fleet';
 import { providerLabel } from '../board/lanes';
 import type { DeckSession, StationView } from '../gen';
 import { modelFamily, shortModel } from '../ui/format';
 import {
+  Archive,
+  ArchiveRestore,
   Check,
   ChevronLeft,
+  Copy,
   Ellipsis,
   Folder,
   Icon,
   Pencil,
   Play,
   Power,
+  Send,
   Square,
   SquareTerminal,
+  Star,
   TriangleAlert,
   Undo2,
   X,
 } from '../ui/icons';
+import { archived, priority, sessionRef } from '../ui/localSet';
+import { useNow } from '../ui/useNow';
 import type { Outcome, SessionActions } from './commands';
 import type { Controller } from './controller';
 import { RenameForm } from './RenameForm';
@@ -45,6 +53,12 @@ type Props = {
   readonly filesPanel?: { readonly open: boolean; readonly toggle: () => void };
 };
 
+/** The status update that "Ask for a status update" sends. */
+const NUDGE =
+  'Give a short status update: what you finished, what you do now, and what blocks you.';
+
+const COPIED_MS = 1500;
+
 /** The longest path the header shows, in characters. */
 const MAX_PATH_CHARS = 48;
 
@@ -56,6 +70,77 @@ function shortenMiddle(text: string, max: number): string {
   const head = Math.ceil(keep / 2);
   const tail = keep - head;
   return `${chars.slice(0, head).join('')}…${chars.slice(chars.length - tail).join('')}`;
+}
+
+/** An icon button that copies `text`; it shows a check for 1.5 s. */
+export function CopyButton({ text, label }: { readonly text: string; readonly label: string }) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), COPIED_MS);
+    return () => clearTimeout(timer);
+  }, [copied]);
+  return (
+    <button
+      type="button"
+      className="fd-iconbtn fd-sm"
+      aria-label={label}
+      title={label}
+      onClick={() => {
+        navigator.clipboard
+          .writeText(text)
+          .then(() => setCopied(true))
+          .catch(() => setCopied(false));
+      }}
+    >
+      <Icon of={copied ? Check : Copy} size={14} />
+    </button>
+  );
+}
+
+/** "retry in 3 min" (rounded up), or "retry in 40 s" under a minute; `null` when the time is past. */
+function retryText(retryAt: number | null, now: number): string | null {
+  if (retryAt === null || retryAt <= now) return null;
+  const ms = retryAt - now;
+  return ms < 60_000
+    ? `retry in ${Math.ceil(ms / 1000)} s`
+    : `retry in ${Math.ceil(ms / 60_000)} min`;
+}
+
+/** The facts of a session: its id (with a copy button), callsign, worktree, age and event count. */
+function Details({ session, now }: { readonly session: DeckSession; readonly now: number }) {
+  const s = session.summary;
+  return (
+    <dl className="fd-sh-details">
+      <div>
+        <dt>Session</dt>
+        <dd>
+          <span>{s.session_id}</span>
+          <CopyButton text={s.session_id} label="Copy the session id" />
+        </dd>
+      </div>
+      {s.callsign ? (
+        <div>
+          <dt>Callsign</dt>
+          <dd>{s.callsign}</dd>
+        </div>
+      ) : null}
+      {s.worktree ? (
+        <div>
+          <dt>Worktree</dt>
+          <dd>{s.worktree}</dd>
+        </div>
+      ) : null}
+      <div>
+        <dt>Updated</dt>
+        <dd>{relativeAge(s.updated_at, now)}</dd>
+      </div>
+      <div>
+        <dt>Events</dt>
+        <dd>{s.session_seq}</dd>
+      </div>
+    </dl>
+  );
 }
 
 /** A `<details>` menu. Escape closes it and returns the focus to its summary. */
@@ -211,6 +296,14 @@ export function SessionHeader({
     s.cwd ? shortenMiddle(s.cwd, MAX_PATH_CHARS) : null,
   ].filter((part): part is string => part !== null && part !== '');
   const outcome = controller.outcome;
+  const now = useNow(undefined, 30000);
+  const ref = sessionRef(session.station_id, s.session_id);
+  const starred = priority.use().has(ref);
+  const isArchived = archived.use().has(ref);
+  const canArchive = session.status === 'ended' || session.status === 'lost';
+  const retry = retryText(s.last_error?.retry_at ?? null, now);
+  const showError =
+    s.last_error != null && (s.state === 'exited' || s.state === 'lost' || s.current_run === null);
 
   /** The confirm of "Open in terminal", inside a menu. */
   const openConfirm = (close: () => void, open: () => void) => (
@@ -278,6 +371,26 @@ export function SessionHeader({
             Force stop…
           </button>
         </>
+      ) : null}
+      {flags.drive ? (
+        <button
+          type="button"
+          disabled={busy !== null}
+          onClick={() => {
+            close();
+            run('nudge', (a) => a.send(s.current_run === null ? 'prompt' : 'follow_up', NUDGE));
+          }}
+        >
+          <Icon of={Send} /> Ask for a status update
+        </button>
+      ) : null}
+      <button type="button" onClick={() => priority.toggle(ref)}>
+        <Icon of={Star} /> {starred ? 'Unstar' : 'Star'}
+      </button>
+      {canArchive ? (
+        <button type="button" onClick={() => archived.toggle(ref)}>
+          <Icon of={isArchived ? ArchiveRestore : Archive} /> {isArchived ? 'Unarchive' : 'Archive'}
+        </button>
       ) : null}
       {hasModes || hasModel || hasAuto ? (
         <>
@@ -380,6 +493,8 @@ export function SessionHeader({
               <Place parts={place} cwd={s.cwd} />
             </div>
             <div className="fd-menu-sep" />
+            <Details session={session} now={now} />
+            <div className="fd-menu-sep" />
             {flags.held && terminal ? (
               <button
                 type="button"
@@ -397,7 +512,12 @@ export function SessionHeader({
               </button>
             ) : null}
           </>
-        ) : null}
+        ) : (
+          <>
+            <Details session={session} now={now} />
+            <div className="fd-menu-sep" />
+          </>
+        )}
         {menuItems(close)}
       </>
     );
@@ -436,6 +556,11 @@ export function SessionHeader({
             ) : (
               <>
                 <h2 className="fd-sh-title">{title}</h2>
+                {starred ? (
+                  <span className="fd-sh-star" aria-hidden="true">
+                    <Icon of={Star} size={14} />
+                  </span>
+                ) : null}
                 {phone ? null : (
                   <button
                     type="button"
@@ -552,6 +677,12 @@ export function SessionHeader({
       {busy === 'return' ? (
         <p className="fd-sh-strip" data-tone="info" role="status">
           Ending the terminal, then resuming the session…
+        </p>
+      ) : null}
+      {showError && s.last_error ? (
+        <p className="fd-sh-strip" data-tone="hazard" role="status">
+          <Icon of={TriangleAlert} size={14} /> {s.last_error.code}: {s.last_error.message}
+          {retry ? ` · ${retry}` : ''}
         </p>
       ) : null}
       {outcome ? (

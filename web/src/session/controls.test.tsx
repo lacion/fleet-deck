@@ -267,6 +267,58 @@ describe('session header (DL-140)', () => {
     expect(html).toContain('Set model');
     expect(html).toContain('Continue after a station restart');
   });
+
+  test('the details block lists the facts of the session', () => {
+    const html = header(
+      session({ callsign: 'falcon', worktree: '/wt/fix', session_seq: 42, updated_at: Date.now() }),
+    );
+    expect(html).toContain('class="fd-sh-details"');
+    expect(html).toContain('<dt>Session</dt><dd><span>s1</span>');
+    expect(html).toContain('aria-label="Copy the session id"');
+    expect(html).toContain('<dt>Callsign</dt><dd>falcon</dd>');
+    expect(html).toContain('<dt>Worktree</dt><dd>/wt/fix</dd>');
+    expect(html).toContain('<dt>Updated</dt><dd>now</dd>');
+    expect(html).toContain('<dt>Events</dt><dd>42</dd>');
+    const bare = header(session());
+    expect(bare).not.toContain('<dt>Callsign</dt>');
+    expect(bare).not.toContain('<dt>Worktree</dt>');
+  });
+
+  test('the menu offers a status update, Star and (when ended) Archive', () => {
+    const html = header(session());
+    expect(html).toMatch(/<button[^>]*>(<svg[\s\S]*?<\/svg>)? Ask for a status update<\/button>/);
+    expect(html).toMatch(/<button[^>]*>(<svg[\s\S]*?<\/svg>)? Star<\/button>/);
+    expect(html).not.toContain('Archive');
+    expect(html).not.toContain('fd-sh-star');
+    const done = header(ended());
+    expect(done).not.toContain('Ask for a status update');
+    expect(done).toMatch(/<button[^>]*>(<svg[\s\S]*?<\/svg>)? Archive<\/button>/);
+    expect(header(session({}, 'lost'))).toContain(' Archive</button>');
+    expect(header(session(), { actions: readOnly })).not.toContain('Ask for a status update');
+  });
+
+  test('the last error shows when the session ended or has no run', () => {
+    const error = { code: 'usage_limit', message: 'The limit is reached', retry_at: null };
+    const strip = 'data-tone="hazard" role="status"';
+    expect(header(ended())).not.toContain(strip);
+    const shown = header(
+      session({ state: 'exited', current_run: null, last_error: error }, 'ended'),
+    );
+    expect(shown).toContain(strip);
+    expect(shown).toContain('usage_limit: The limit is reached');
+    expect(shown).not.toContain('retry in');
+    expect(header(session({ current_run: null, last_error: error }, 'idle'))).toContain(strip);
+    // a running session with a run hides an old error
+    expect(header(session({ last_error: error }))).not.toContain(strip);
+  });
+
+  test('the last error tells when a retry is possible', () => {
+    const at = (ms: number) => ({ code: 'rate', message: 'slow down', retry_at: Date.now() + ms });
+    const text = (ms: number) => header(session({ current_run: null, last_error: at(ms) }, 'idle'));
+    expect(text(5 * 60_000 + 30_000)).toContain('slow down · retry in 6 min');
+    expect(text(40_000)).toMatch(/slow down · retry in \d+ s/);
+    expect(text(-1000)).not.toContain('retry in');
+  });
 });
 
 function request(id: string): OpenRequest {

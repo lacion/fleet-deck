@@ -117,7 +117,17 @@ test('the files of a session are browsed, read and searched; a symlink is not op
   await files.getByRole('button', { name: 'docs/' }).click();
   // a file row names its size
   await files.getByRole('button', { name: /^guide\.md\s*6 B$/ }).click();
+  // a Markdown file shows rendered; the Raw chip shows its text
+  await expect(files.locator('.fd-files-md h1')).toHaveText('Guide');
+  await expect(files.getByRole('button', { name: 'Rendered' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await files.getByRole('button', { name: 'Raw' }).click();
   await expect(files.locator('.fd-file-text')).toHaveText('# Guide');
+  await expect(files.locator('.fd-files-md')).toHaveCount(0);
+  await files.getByRole('button', { name: 'Rendered' }).click();
+  await expect(files.locator('.fd-files-md h1')).toHaveText('Guide');
   await files.getByRole('button', { name: 'Back to the folder' }).click();
   await files.getByRole('button', { name: '..' }).click();
   await files.getByRole('button', { name: /^a\.txt\s*4 B$/ }).click();
@@ -197,5 +207,48 @@ test('a turn diff is shown, a revert is confirmed, and a reconciliation is resol
     { op: 'revert', session_id: 's1', turn_id: 't2' },
     { op: 'resolve_revert', session_id: 's1', revert_id: 'rv-1', resolution: 'reconciled' },
   ]);
+  expect(await fitsWidth(page)).toBe(true);
+});
+
+test('a file name of a diff opens the file in the Files tab', async ({ page }) => {
+  const deck = new FakeDeck();
+  deck.sessions = [session(1)];
+  deck.on(`/api/stations/${ST}/files/list`, (_b, q) => ({
+    status: 200,
+    body: { root: { session: 's1' }, path: q.get('path') ?? '', entries: [], truncated: false },
+  }));
+  deck.on(`/api/stations/${ST}/sessions/s1/turns/t2/diff`, () => ({
+    status: 200,
+    body: {
+      session_id: 's1',
+      turn_id: 't2',
+      from_commit: 't2-start',
+      to_commit: 't2-end',
+      summary: { files_changed: 1, insertions: 1, deletions: 0 },
+      patch: 'diff --git a/src/a.txt b/src/a.txt\n+edited',
+      truncated: false,
+    },
+  }));
+  const reads: string[] = [];
+  deck.on(`/api/stations/${ST}/files/read`, (_b, q) => {
+    const path = q.get('path') ?? '';
+    reads.push(path);
+    return {
+      status: 200,
+      body: { path, size: 6, binary: false, text: 'edited', truncated: false },
+    };
+  });
+  const view = await setUp(page, deck);
+  await view.getByRole('tab', { name: /^Changes/ }).click();
+  const t2 = view.getByRole('region', { name: 'Turns' }).locator('[data-turn="t2"]');
+  await t2.getByRole('button', { name: 'Show the diff' }).click();
+  await t2.locator('[data-diff="t2"]').getByRole('button', { name: 'src/a.txt' }).click();
+  await expect(view.getByRole('tab', { name: 'Files' })).toHaveAttribute('aria-selected', 'true');
+  const files = view.getByRole('region', { name: 'Files' });
+  await expect(files.locator('[data-file="src/a.txt"] .fd-file-text')).toHaveText('edited');
+  await expect(files.getByRole('navigation', { name: 'Folder path' })).toContainText('src');
+  // the root listing did not replace the file that the request opened
+  expect(reads).toEqual(['src/a.txt']);
+  expect(deck.calls.filter((c) => c.path === `/api/stations/${ST}/files/list`)).toHaveLength(0);
   expect(await fitsWidth(page)).toBe(true);
 });

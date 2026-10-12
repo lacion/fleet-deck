@@ -1,6 +1,8 @@
 // DL-140: the desktop layout (1440x900): the session sidebar, the session pane
 // with its tabs, the keyboard (j/k, Ctrl+K, ?, arrows on the tabs).
 import { expect, type Page, test } from '@playwright/test';
+import type { Event } from '../src/gen';
+import { envelopes } from '../src/testing/timeline';
 import { logIn } from './fake-deck';
 import { ALPHA, BETA, threeSessionDeck, threeSessions } from './scenes';
 
@@ -192,4 +194,72 @@ test('the Files side panel lists the root at once, opens folders, and its toggle
   await expect(pane.getByRole('complementary', { name: 'Files panel' })).toHaveCount(0);
   await pane.getByRole('button', { name: 'Files' }).click();
   await expect(pane.getByRole('complementary', { name: 'Files panel' })).toBeVisible();
+});
+
+test('a file name of a diff opens the file in the Files side panel, rendered or raw', async ({
+  page,
+}) => {
+  const deck = threeSessionDeck();
+  deck.on(`/api/stations/${ALPHA}/files/list`, (_body, query) => ({
+    status: 200,
+    body: { root: { session: 's2' }, path: query.get('path') ?? '', entries: [], truncated: false },
+  }));
+  deck.on(`/api/stations/${ALPHA}/sessions/s2/turns/t1/diff`, () => ({
+    status: 200,
+    body: {
+      session_id: 's2',
+      turn_id: 't1',
+      from_commit: 't1-start',
+      to_commit: 't1-end',
+      summary: { files_changed: 1, insertions: 1, deletions: 0 },
+      patch: 'diff --git a/docs/guide.md b/docs/guide.md\n+# Guide',
+      truncated: false,
+    },
+  }));
+  const reads: string[] = [];
+  deck.on(`/api/stations/${ALPHA}/files/read`, (_body, query) => {
+    const path = query.get('path') ?? '';
+    reads.push(path);
+    return {
+      status: 200,
+      body: { path, size: 7, binary: false, text: '# Guide', truncated: false },
+    };
+  });
+  const finalized: Event = {
+    kind: 'turn.finalized',
+    turn_id: 't1',
+    checkpoint: {
+      worktree_id: 'wt',
+      scope: 'tracked',
+      start: { state: 'available', commit: 't1-start' },
+      end: { state: 'available', commit: 't1-end' },
+    },
+    diff_summary: { files_changed: 1, insertions: 1, deletions: 0 },
+  };
+  await deck.install(page);
+  await logIn(page);
+  deck.emit(ALPHA, 's2', envelopes('s2', [finalized]));
+  await page
+    .getByRole('complementary', { name: 'Sessions' })
+    .getByRole('region', { name: 'Station Alpha' })
+    .getByRole('link', { name: /Write the docs/ })
+    .click();
+  const pane = page.getByRole('region', { name: 'Session' });
+  const side = pane.getByRole('complementary', { name: 'Files panel' });
+  await pane.getByRole('tab', { name: /^Changes/ }).click();
+  await pane.getByRole('button', { name: 'Show the diff' }).click();
+  await pane.locator('[data-diff="t1"]').getByRole('button', { name: 'docs/guide.md' }).click();
+  // the file opens in the side panel, in its folder
+  await expect(side.locator('[data-file="docs/guide.md"]')).toBeVisible();
+  await expect(side.locator('.fd-files-md h1')).toHaveText('Guide');
+  await expect(side.getByRole('navigation', { name: 'Folder path' })).toContainText('docs');
+  await expect(side.getByRole('button', { name: 'Copy the path' })).toBeVisible();
+  expect(reads).toEqual(['docs/guide.md']);
+  await side.getByRole('button', { name: 'Raw' }).click();
+  await expect(side.locator('.fd-file-text')).toHaveText('# Guide');
+  // the Changes tab stays: the click did not change the tab
+  await expect(pane.getByRole('tab', { name: /^Changes/ })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
 });

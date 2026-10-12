@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
+import { Markdown } from '../chat/Markdown';
 import type { FileContent, FileListing, FileSearch } from '../gen';
 import { FileText, Folder, Icon } from '../ui/icons';
+import { CopyButton } from './SessionHeader';
 import { type FileActions, joinPath, parentPath, type SearchModeName } from './workspace';
 
 type View =
@@ -10,6 +12,64 @@ type View =
   | { readonly kind: 'listing'; readonly listing: FileListing }
   | { readonly kind: 'file'; readonly file: FileContent }
   | { readonly kind: 'search'; readonly search: FileSearch };
+
+/** A Markdown file shows rendered or raw; a path copy is always there. */
+export function FileView({
+  file,
+  root,
+  onBack,
+}: {
+  readonly file: FileContent;
+  readonly root: string | null;
+  readonly onBack: () => void;
+}) {
+  const [rendered, setRendered] = useState(true);
+  const markdown = /\.(md|markdown)$/i.test(file.path);
+  const showRendered = markdown && rendered && !file.binary;
+  return (
+    <div data-file={file.path}>
+      <p className="fd-path">
+        {file.size} B{' '}
+        <button type="button" className="fd-link" onClick={onBack}>
+          Back to the folder
+        </button>
+      </p>
+      <div className="fd-files-tools">
+        {markdown ? (
+          <>
+            <button
+              type="button"
+              className="fd-chip"
+              aria-pressed={rendered}
+              onClick={() => setRendered(true)}
+            >
+              Rendered
+            </button>
+            <button
+              type="button"
+              className="fd-chip"
+              aria-pressed={!rendered}
+              onClick={() => setRendered(false)}
+            >
+              Raw
+            </button>
+          </>
+        ) : null}
+        <CopyButton text={root ? `${root}/${file.path}` : file.path} label="Copy the path" />
+      </div>
+      {file.binary ? (
+        <p className="fd-note">A binary file is not shown.</p>
+      ) : showRendered ? (
+        <div className="fd-files-md">
+          <Markdown text={file.text ?? ''} />
+        </div>
+      ) : (
+        <pre className="fd-code fd-file-text">{file.text}</pre>
+      )}
+      {file.truncated ? <p className="fd-note">The file is cut at the size limit.</p> : null}
+    </div>
+  );
+}
 
 const message = (e: unknown) => (e instanceof Error ? e.message : 'The request failed.');
 
@@ -21,9 +81,15 @@ const message = (e: unknown) => (e instanceof Error ? e.message : 'The request f
 export function FilesPanel({
   files,
   variant = 'tab',
+  request,
+  root = null,
 }: {
   readonly files: FileActions | null;
   readonly variant?: 'tab' | 'side';
+  /** Opens `path` (in its folder) each time `seq` changes. */
+  readonly request?: { readonly path: string; readonly seq: number } | undefined;
+  /** The session directory; "Copy the path" puts it before the path. */
+  readonly root?: string | null;
 }) {
   const [view, setView] = useState<View>(files ? { kind: 'loading' } : { kind: 'idle' });
   /** The last requested folder; the crumbs show it. */
@@ -34,9 +100,13 @@ export function FilesPanel({
   const latest = useRef(files);
   latest.current = files;
   const has = files !== null;
+  const requested = useRef(request);
+  requested.current = request;
   useEffect(() => {
     const current = latest.current;
     if (!has || !current) return;
+    // A request that is there at the start opens its file instead of the root.
+    if (requested.current) return;
     setFolder('');
     setView({ kind: 'loading' });
     void current.list('').then(
@@ -44,6 +114,18 @@ export function FilesPanel({
       (e: unknown) => setView({ kind: 'error', text: message(e) }),
     );
   }, [has]);
+  const seq = request?.seq;
+  useEffect(() => {
+    const current = latest.current;
+    const wanted = requested.current;
+    if (seq === undefined || !wanted || !current) return;
+    setFolder(parentPath(wanted.path));
+    setView({ kind: 'loading' });
+    void current.read(wanted.path).then(
+      (file) => setView({ kind: 'file', file }),
+      (e: unknown) => setView({ kind: 'error', text: message(e) }),
+    );
+  }, [seq]);
   if (!files) return null;
   const load = <T,>(call: Promise<T>, done: (value: T) => View) => {
     setView({ kind: 'loading' });
@@ -187,26 +269,12 @@ export function FilesPanel({
         </div>
       ) : null}
       {view.kind === 'file' ? (
-        <div data-file={view.file.path}>
-          <p className="fd-path">
-            {view.file.size} B{' '}
-            <button
-              type="button"
-              className="fd-link"
-              onClick={() => open(parentPath(view.file.path))}
-            >
-              Back to the folder
-            </button>
-          </p>
-          {view.file.binary ? (
-            <p className="fd-note">A binary file is not shown.</p>
-          ) : (
-            <pre className="fd-code fd-file-text">{view.file.text}</pre>
-          )}
-          {view.file.truncated ? (
-            <p className="fd-note">The file is cut at the size limit.</p>
-          ) : null}
-        </div>
+        <FileView
+          key={view.file.path}
+          file={view.file}
+          root={root}
+          onBack={() => open(parentPath(view.file.path))}
+        />
       ) : null}
       {view.kind === 'search' ? (
         <div data-search={view.search.backend}>

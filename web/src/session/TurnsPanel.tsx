@@ -14,6 +14,8 @@ type Props = {
   readonly live: boolean;
   readonly busy: boolean;
   readonly act: (call: () => Promise<Outcome>) => void;
+  /** A file name of a diff opens that file in the Files panel. */
+  readonly onOpenFile?: ((path: string) => void) | undefined;
 };
 
 /** The latest revert, and the owner's resolution of one that needs reconciliation (DL-097). */
@@ -57,7 +59,7 @@ export function RevertStatus({ summary, actions, live, busy, act }: Props) {
 
 /** The finalized turns: a diff from the checkpoints, and a revert to the turn start. */
 export function TurnsPanel(props: Props) {
-  const { summary, turns, actions, drive, busy, act } = props;
+  const { summary, turns, actions, drive, busy, act, onOpenFile } = props;
   const [confirm, setConfirm] = useState<string | null>(null);
   const [diffs, setDiffs] = useState<Record<string, TurnDiff | string>>({});
   if (turns.length === 0) return null;
@@ -138,7 +140,12 @@ export function TurnsPanel(props: Props) {
               ) : null}
               {typeof diff === 'string' ? <p role="alert">{diff}</p> : null}
               {diff && typeof diff !== 'string' ? (
-                <Diff patch={diff.patch} truncated={diff.truncated} id={t.turnId} />
+                <Diff
+                  patch={diff.patch}
+                  truncated={diff.truncated}
+                  id={t.turnId}
+                  onOpenFile={onOpenFile}
+                />
               ) : null}
             </li>
           );

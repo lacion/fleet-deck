@@ -368,3 +368,93 @@ test('an idle session with the drive scope sends a prompt', async ({ page }) => 
     input: { text: 'hello' },
   });
 });
+
+test('the menu lists the session facts, asks for a status update, and stars the session', async ({
+  page,
+}) => {
+  const deck = new FakeDeck();
+  deck.sessions = [
+    session({
+      callsign: 'falcon',
+      worktree: '/wt/review',
+      session_seq: 42,
+      updated_at: Date.now(),
+    }),
+  ];
+  deck.on('/api/commands/session.follow_up', (body) => ({
+    status: 200,
+    body: receipt(idOf(body), 'done'),
+  }));
+  await setUp(page, deck);
+  await openSession(page, 'Review the repo');
+  const view = page.getByRole('region', { name: 'Session' });
+  const menu = view.locator('summary[aria-label="Session menu"]');
+  await menu.click();
+  const details = view.locator('.fd-sh-details');
+  await expect(details).toContainText('Session');
+  await expect(details).toContainText(ID);
+  await expect(details).toContainText('falcon');
+  await expect(details).toContainText('/wt/review');
+  await expect(details).toContainText('42');
+  await expect(details.getByRole('button', { name: 'Copy the session id' })).toBeVisible();
+  expect(await fitsWidth(page)).toBe(true);
+  // Star fills the star of the title; the item then reads Unstar
+  await expect(view.locator('.fd-sh-star')).toHaveCount(0);
+  await view.getByRole('button', { name: 'Star', exact: true }).click();
+  await expect(view.locator('.fd-sh-star')).toHaveCount(1);
+  await expect(view.getByRole('button', { name: 'Unstar' })).toBeVisible();
+  await view.getByRole('button', { name: 'Unstar' }).click();
+  await expect(view.locator('.fd-sh-star')).toHaveCount(0);
+  // a running session gets the nudge as a follow-up
+  await view.getByRole('button', { name: 'Ask for a status update' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Done.' })).toBeVisible();
+  const call = deck.calls.find((c) => c.path === '/api/commands/session.follow_up');
+  expect((call?.body as { command: unknown } | undefined)?.command).toEqual({
+    op: 'follow_up',
+    session_id: ID,
+    input: {
+      text: 'Give a short status update: what you finished, what you do now, and what blocks you.',
+    },
+  });
+});
+
+test('the last error shows under the header of an ended session, with the retry time', async ({
+  page,
+}) => {
+  const deck = new FakeDeck();
+  deck.sessions = [
+    session(
+      {
+        state: 'exited',
+        current_run: null,
+        last_error: {
+          code: 'usage_limit',
+          message: 'The limit is reached',
+          retry_at: Date.now() + 3 * 60_000,
+        },
+      },
+      'ended',
+    ),
+  ];
+  await setUp(page, deck);
+  await openSession(page, 'Review the repo');
+  const strip = page
+    .getByRole('region', { name: 'Session' })
+    .locator('.fd-sh-strip[data-tone="hazard"]');
+  await expect(strip).toContainText('usage_limit: The limit is reached · retry in');
+  expect(await fitsWidth(page)).toBe(true);
+});
+
+test('an ended session can be archived from the menu', async ({ page }) => {
+  const deck = new FakeDeck();
+  deck.sessions = [session({ state: 'exited', current_run: null }, 'ended')];
+  await setUp(page, deck);
+  await openSession(page, 'Review the repo');
+  const view = page.getByRole('region', { name: 'Session' });
+  await view.locator('summary[aria-label="Session menu"]').click();
+  await expect(view.getByRole('button', { name: 'Ask for a status update' })).toHaveCount(0);
+  await view.getByRole('button', { name: 'Archive', exact: true }).click();
+  await expect(view.getByRole('button', { name: 'Unarchive' })).toBeVisible();
+  await view.getByRole('button', { name: 'Unarchive' }).click();
+  await expect(view.getByRole('button', { name: 'Archive', exact: true })).toBeVisible();
+});
