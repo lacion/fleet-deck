@@ -1,23 +1,45 @@
 import { useEffect, useState } from 'react';
-import type { DeckSession, GrantView, TaskView } from '../gen';
+import { repoName, repoNames, stationName } from '../board/fleet';
+import type { DeckSession, GrantView, StationView, TaskView } from '../gen';
 import { type FleetActions, type FleetResult, grantStatus, taskStatus } from './fleet';
 
 type Props = {
   readonly actions: FleetActions | undefined;
   readonly sessions: readonly DeckSession[];
+  readonly stations: readonly StationView[];
+};
+
+/** Who gets the mail: one session, a station, a repository, or everyone. */
+type Audience = 'one' | 'station' | 'repo' | 'all';
+const AUDIENCES: readonly { readonly id: Audience; readonly label: string }[] = [
+  { id: 'one', label: 'One session' },
+  { id: 'station', label: 'Station' },
+  { id: 'repo', label: 'Repo' },
+  { id: 'all', label: 'Everyone' },
+];
+const NOT_LIVE: readonly DeckSession['status'][] = ['ended', 'lost', 'unreachable'];
+
+type ManyResult = {
+  readonly ok: number;
+  readonly total: number;
+  readonly failures: readonly { readonly title: string; readonly text: string }[];
 };
 
 const keyOf = (s: DeckSession) => `${s.station_id}/${s.summary.session_id}`;
 const nameOf = (s: DeckSession) => s.summary.callsign ?? s.summary.title ?? s.summary.session_id;
 
 /** Mail and tasks for one session of the fleet (M3 6-2 / 6-4). */
-export function FleetPanel({ actions, sessions }: Props) {
+export function FleetPanel({ actions, sessions, stations }: Props) {
   const live = sessions.filter((s) => s.status !== 'ended');
   const [target, setTarget] = useState('');
   const [text, setText] = useState('');
   const [steer, setSteer] = useState(false);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<FleetResult | null>(null);
+  const [audience, setAudience] = useState<Audience>('one');
+  const [stationPick, setStationPick] = useState('');
+  const [repoPick, setRepoPick] = useState('');
+  const [many, setMany] = useState<ManyResult | null>(null);
   const [tasks, setTasks] = useState<readonly TaskView[]>([]);
   const [grants, setGrants] = useState<readonly GrantView[]>([]);
   useEffect(() => {
@@ -35,6 +57,44 @@ export function FleetPanel({ actions, sessions }: Props) {
   }, [actions]);
   if (actions === undefined) return null;
   const chosen = live.find((s) => keyOf(s) === target) ?? live[0];
+  const reachable = sessions.filter((s) => !NOT_LIVE.includes(s.status));
+  const stationIds = stations.map((s) => s.station_id);
+  const stationId = stationIds.includes(stationPick) ? stationPick : (stationIds[0] ?? '');
+  const repos = repoNames(reachable);
+  const repo = repos.includes(repoPick) ? repoPick : (repos[0] ?? '');
+  const targets =
+    audience === 'station'
+      ? reachable.filter((s) => s.station_id === stationId)
+      : audience === 'repo'
+        ? reachable.filter((s) => repoName(s) === repo)
+        : audience === 'all'
+          ? reachable
+          : [];
+  const pick = (next: Audience) => {
+    setAudience(next);
+    setMany(null);
+    setResult(null);
+  };
+  const sendMany = async () => {
+    if (targets.length === 0 || text.trim() === '' || busy) return;
+    setBusy(true);
+    setMany(null);
+    let ok = 0;
+    const failures: { title: string; text: string }[] = [];
+    for (const t of targets) {
+      const to = { stationId: t.station_id, sessionId: t.summary.session_id };
+      try {
+        const r = await actions.mail(to, text.trim(), steer);
+        if (r.ok) ok += 1;
+        else failures.push({ title: nameOf(t), text: r.text });
+      } catch (e) {
+        failures.push({ title: nameOf(t), text: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    setMany({ ok, total: targets.length, failures });
+    if (failures.length === 0) setText('');
+    setBusy(false);
+  };
   const run = (send: (to: { stationId: string; sessionId: string }) => Promise<FleetResult>) => {
     if (chosen === undefined || text.trim() === '' || busy) return;
     setBusy(true);
@@ -52,22 +112,63 @@ export function FleetPanel({ actions, sessions }: Props) {
         className="fd-fleet-form"
         onSubmit={(event) => {
           event.preventDefault();
-          run((to) => actions.mail(to, text.trim(), steer));
+          if (audience === 'one') run((to) => actions.mail(to, text.trim(), steer));
+          else void sendMany();
         }}
       >
-        <label>
-          Session
-          <select
-            value={chosen === undefined ? '' : keyOf(chosen)}
-            onChange={(e) => setTarget(e.target.value)}
-          >
-            {live.map((s) => (
-              <option key={keyOf(s)} value={keyOf(s)}>
-                {nameOf(s)}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="fd-fleet-to" role="group" aria-label="To">
+          <span className="fd-label">To</span>
+          {AUDIENCES.map((a) => (
+            <button
+              key={a.id}
+              type="button"
+              className="fd-chip"
+              aria-pressed={audience === a.id}
+              onClick={() => pick(a.id)}
+            >
+              {a.label}
+            </button>
+          ))}
+        </div>
+        {audience === 'station' ? (
+          <label>
+            Station
+            <select value={stationId} onChange={(e) => setStationPick(e.target.value)}>
+              {stationIds.map((id) => (
+                <option key={id} value={id}>
+                  {stationName(id, stations)}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        {audience === 'repo' ? (
+          <label>
+            Repo
+            <select value={repo} onChange={(e) => setRepoPick(e.target.value)}>
+              {repos.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        {audience !== 'one' ? null : (
+          <label>
+            Session
+            <select
+              value={chosen === undefined ? '' : keyOf(chosen)}
+              onChange={(e) => setTarget(e.target.value)}
+            >
+              {live.map((s) => (
+                <option key={keyOf(s)} value={keyOf(s)}>
+                  {nameOf(s)}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <label>
           Text
           <textarea value={text} onChange={(event) => setText(event.target.value)} rows={2} />
@@ -77,21 +178,44 @@ export function FleetPanel({ actions, sessions }: Props) {
           Steer now (mail only)
         </label>
         <div className="fd-fleet-actions">
-          <button type="submit" disabled={busy || chosen === undefined || text.trim() === ''}>
-            Send mail
+          <button
+            type="submit"
+            disabled={
+              busy ||
+              text.trim() === '' ||
+              (audience === 'one' ? chosen === undefined : targets.length === 0)
+            }
+          >
+            {audience === 'one' ? 'Send mail' : `Send to ${targets.length}`}
           </button>
           <button
             type="button"
-            disabled={busy || chosen === undefined || text.trim() === ''}
+            disabled={busy || chosen === undefined || text.trim() === '' || audience !== 'one'}
+            title={audience === 'one' ? undefined : 'Tasks go to one session'}
             onClick={() => run((to) => actions.task(to, text.trim()))}
           >
             Create task
           </button>
         </div>
+        {audience !== 'one' && targets.length === 0 ? (
+          <p className="fd-note">No live session matches.</p>
+        ) : null}
         {result === null ? null : (
           <p className="fd-note" role="status">
             {result.text}
           </p>
+        )}
+        {many === null ? null : (
+          <>
+            <p className="fd-note" role="status">
+              Sent to {many.ok} of {many.total}.
+            </p>
+            {many.failures.map((f, i) => (
+              <p key={`${f.title}/${i}`} className="fd-note fd-fleet-failed" role="alert">
+                {f.title}: {f.text}
+              </p>
+            ))}
+          </>
         )}
       </form>
       {tasks.length === 0 ? null : (

@@ -1,16 +1,22 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { card, station } from '../testing/fleet';
+import { archived, priority } from '../ui/localSet';
 import {
+  archivedHidden,
   cardKey,
+  contestedBy,
   emptyFilter,
   filterFleet,
   lastSeen,
+  NO_REPO,
   observedProviders,
+  repoName,
+  repoNames,
   statusGroups,
   usageText,
 } from './fleet';
-import { FleetBoard } from './FleetBoard';
+import { COLUMNS, columnCards, FleetBoard } from './FleetBoard';
 import { stationActions } from './pairing';
 import { StationsPanel } from './StationsPanel';
 
@@ -63,10 +69,20 @@ describe('fleet projections', () => {
       card('b', 'idle', 'station-b', { provider: 'codex' }),
     ] as const;
     expect(
-      filterFleet(cards, stations, { station: 'station-b', provider: 'codex', search: ' BETA ' }),
+      filterFleet(cards, stations, {
+        station: 'station-b',
+        provider: 'codex',
+        repo: '',
+        search: ' BETA ',
+      }),
     ).toEqual([cards[1]]);
     expect(
-      filterFleet(cards, stations, { station: 'station-a', provider: 'codex', search: '' }),
+      filterFleet(cards, stations, {
+        station: 'station-a',
+        provider: 'codex',
+        repo: '',
+        search: '',
+      }),
     ).toEqual([]);
     expect(filterFleet(cards, stations, { ...emptyFilter, search: 'DECK' })).toEqual([cards[0]]);
     expect(filterFleet(cards, stations, emptyFilter)).toEqual([...cards]);
@@ -284,5 +300,170 @@ describe('station projections', () => {
     expect(lastSeen(null)).toBe('Never');
     expect(lastSeen(0)).toBe('1970-01-01T00:00:00.000Z');
     expect(lastSeen(Number.NaN)).toBe('Unknown');
+  });
+});
+
+describe('repo names, archive and contested sessions', () => {
+  const inRepo = (id: string, origin: string | null, root: string, status = 'working' as const) =>
+    card(id, status, 'station-a', { repo: { root, origin } });
+
+  test('the repo name is the last two parts of the origin, else the folder of the root', () => {
+    expect(repoName(inRepo('a', 'git@github.com:org/app.git', '/w/app'))).toBe('org/app');
+    expect(repoName(inRepo('a', 'https://github.com/org/app.git', '/w/app'))).toBe('org/app');
+    expect(repoName(inRepo('a', 'github.com/org/app', '/w/app'))).toBe('org/app');
+    expect(repoName(inRepo('a', null, '/home/me/projects/deck'))).toBe('deck');
+    expect(repoName(card('a'))).toBe(NO_REPO);
+  });
+
+  test('repo names are sorted with "No repository" last', () => {
+    const cards = [
+      card('n'),
+      inRepo('b', null, '/w/zeta'),
+      inRepo('c', null, '/w/alpha'),
+      inRepo('d', null, '/w/alpha'),
+    ];
+    expect(repoNames(cards)).toEqual(['alpha', 'zeta', NO_REPO]);
+  });
+
+  test('the repo filter matches the repo name', () => {
+    const cards = [inRepo('a', null, '/w/alpha'), inRepo('b', null, '/w/beta'), card('c')] as const;
+    expect(filterFleet(cards, [], { ...emptyFilter, repo: 'beta' })).toEqual([cards[1]]);
+    expect(filterFleet(cards, [], { ...emptyFilter, repo: NO_REPO })).toEqual([cards[2]]);
+  });
+
+  test('an archived session is hidden only while it is ended or lost', () => {
+    const refs = new Set(['station-a/e', 'station-a/w']);
+    expect(archivedHidden(card('e', 'ended'), refs)).toBe(true);
+    expect(archivedHidden(card('w', 'working'), refs)).toBe(false);
+    expect(archivedHidden(card('x', 'ended'), refs)).toBe(false);
+  });
+
+  test('a session is contested with the other sessions that touch the same file', () => {
+    const touch = (station_id: string, session_id: string, session_title: string | null) => ({
+      station_id,
+      session_id,
+      session_title,
+      path: 'lib.rs',
+      touched_at: 1,
+    });
+    const map = contestedBy([
+      {
+        repo: null,
+        file: 'src/lib.rs',
+        touches: [touch('station-a', 's1', 'One'), touch('station-b', 's2', null)],
+      },
+    ]);
+    expect(map.get('station-a/s1')).toEqual({ with: ['s2'], files: ['src/lib.rs'] });
+    expect(map.get('station-b/s2')).toEqual({ with: ['One'], files: ['src/lib.rs'] });
+    expect(map.get('station-a/s3')).toBeUndefined();
+  });
+});
+
+describe('fleet cards, DL-141', () => {
+  const html = (cards: ReturnType<typeof card>[], extra = {}) =>
+    renderToStaticMarkup(
+      <FleetBoard sessions={cards} stations={[station()]} freshness="live" {...extra} />,
+    );
+
+  test('every column head carries its hint', () => {
+    const out = html([card('a')]);
+    for (const c of COLUMNS) expect(out).toContain(`title="${c.hint}"`);
+    expect(out).toContain('title="Accepted by the station, not started yet"');
+    expect(out).toContain('title="Ended, lost, or its station is unreachable"');
+  });
+
+  test('a contested card is marked and names the others', () => {
+    const contested = new Map([['station-a/a', { with: ['Beta fix', 'Gamma'], files: ['x.rs'] }]]);
+    const out = html([card('a'), card('b')], { contested });
+    expect(out).toMatch(/data-session="a"[^>]*data-contested="true"/);
+    expect(out).toContain('contested with Beta fix, Gamma</span>');
+    expect(out.match(/data-contested/g)).toHaveLength(1);
+  });
+
+  test('the bypass modes show a hazard badge, other modes none', () => {
+    const out = html([
+      card('a', 'working', 'station-a', { mode: 'bypassPermissions' }),
+      card('b', 'working', 'station-a', { mode: 'dontAsk' }),
+      card('c', 'working', 'station-a', { mode: 'default' }),
+    ]);
+    expect(out.match(/data-tone="hazard" title="Permission mode"/g)).toHaveLength(2);
+    expect(out).toContain('>bypassPermissions<');
+    expect(out).not.toContain('Permission mode">default');
+  });
+
+  test('the last error replaces the status text of an idle, ended or lost card only', () => {
+    const last_error = { code: 'rate_limit', message: 'Try later', retry_at: null };
+    const out = html([
+      card('i', 'idle', 'station-a', { last_error }),
+      card('w', 'working', 'station-a', { last_error }),
+      card('q', 'idle', 'station-a', {
+        last_error,
+        open_requests: [
+          {
+            request_id: 'r',
+            node_id: null,
+            request_kind: 'tool',
+            title: 'Ask',
+            details: '',
+            input: null,
+            options: [],
+            response: 'rpc_reply',
+            requested_at: 1,
+          },
+        ],
+      }),
+    ]);
+    expect(out.match(/fd-card-error">rate_limit: Try later</g)).toHaveLength(1);
+    expect(out).toMatch(/data-session="i"[\s\S]*?fd-card-error/);
+    expect(out).toContain('Working</span>');
+  });
+
+  test('a starred card sorts first in its column and shows a star', () => {
+    const groups = statusGroups([card('a'), card('b', 'working', 'station-a', { updated_at: 5 })]);
+    const working = COLUMNS[1];
+    expect(columnCards(groups, working?.statuses ?? []).map((c) => c.summary.session_id)).toEqual([
+      'b',
+      'a',
+    ]);
+    const starred = new Set(['station-a/a']);
+    expect(
+      columnCards(groups, working?.statuses ?? [], starred).map((c) => c.summary.session_id),
+    ).toEqual(['a', 'b']);
+    priority.add(['station-a/a']);
+    const out = html([card('a'), card('b')]);
+    priority.remove(['station-a/a']);
+    expect(out.match(/class="fd-card-star"/g)).toHaveLength(1);
+  });
+
+  test('an offline column shows Resume all and Clear; a cleared card shows its Archived badge', () => {
+    const ended = card('e', 'ended');
+    const none = html([card('a')]);
+    expect(none).not.toContain('Resume all');
+    const out = html([ended]);
+    expect(out).toContain('Resume all (0)');
+    expect(out).toContain('Clear (1)');
+    expect(out).not.toContain('Restore all');
+    archived.add(['station-a/e']);
+    const shown = html([ended]);
+    archived.remove(['station-a/e']);
+    expect(shown).toContain('data-archived="true"');
+    expect(shown).toContain('data-tone="muted">Archived<');
+    expect(shown).toContain('Clear (0)');
+    expect(shown).toContain('Restore all');
+  });
+
+  test('repo grouping makes one lane for each repo and shows the station on the cards', () => {
+    const cards = [
+      card('a', 'working', 'station-a', { repo: { root: '/w/alpha', origin: null } }),
+      card('b', 'working', 'station-a', { repo: { root: '/w/alpha', origin: null } }),
+      card('n'),
+    ];
+    const contested = new Map([['station-a/a', { with: ['b'], files: ['f'] }]]);
+    const out = html(cards, { group: 'repo', contested });
+    expect(out).toContain('aria-label="Repository alpha"');
+    expect(out).toContain('aria-label="Repository No repository"');
+    expect(out).not.toContain('aria-label="Station Alpha"');
+    expect(out).toContain('▲ 1 contested');
+    expect(out).toContain('Alpha');
   });
 });

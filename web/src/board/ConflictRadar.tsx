@@ -4,32 +4,40 @@ import { Icon, TriangleAlert } from '../ui/icons';
 import { agoText, type ConflictLoader } from './conflicts';
 
 type Props = {
-  readonly load: ConflictLoader;
+  readonly list: readonly FileConflict[] | null;
+  readonly problem: string | null;
   readonly stations: readonly StationView[];
-  /** Changes when the fleet changes, so the radar loads again. */
-  readonly version: string;
   readonly onOpen: (key: SessionKey) => void;
 };
 
 /** How many conflicts get their own line in the strip. */
 const SHOWN = 3;
 
-/** Files that sessions on any station changed at the same time (DL-306). */
-export function ConflictRadar({ load, version, onOpen }: Props) {
-  const [conflicts, setConflicts] = useState<FileConflict[] | null>(null);
+/** Loads the conflicts again when `version` changes (the fleet changed). */
+export function useConflicts(
+  load: ConflictLoader | undefined,
+  version: string,
+): { readonly list: FileConflict[] | null; readonly problem: string | null } {
+  const [list, setList] = useState<FileConflict[] | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const refresh = useCallback(() => {
+    if (load === undefined) return;
     load().then(
-      (list) => {
-        setConflicts(list);
+      (next) => {
+        setList(next);
         setProblem(null);
       },
       (e: unknown) => setProblem(e instanceof Error ? e.message : String(e)),
     );
   }, [load]);
   useEffect(refresh, [refresh, version]);
+  return { list, problem };
+}
+
+/** Files that sessions on any station changed at the same time (DL-306). */
+export function ConflictRadar({ list: given, problem, onOpen }: Props) {
   const now = Date.now();
-  const list = conflicts ?? [];
+  const list = given ?? [];
   if (problem === null && list.length === 0) return null;
   return (
     <section

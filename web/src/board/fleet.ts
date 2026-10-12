@@ -1,13 +1,77 @@
-import type { CardStatus, DeckSession, ProviderKind, StationView } from '../gen';
+import { basename } from '../app/sessions';
+import type { CardStatus, DeckSession, FileConflict, ProviderKind, StationView } from '../gen';
 import { sessionKey } from '../runtime/state';
+import { sessionRef } from '../ui/localSet';
 
 export type FleetFilter = {
   readonly station: string;
   readonly provider: string;
+  readonly repo: string;
   readonly search: string;
 };
 export const ALL = '';
-export const emptyFilter: FleetFilter = { station: ALL, provider: ALL, search: '' };
+export const emptyFilter: FleetFilter = { station: ALL, provider: ALL, repo: ALL, search: '' };
+
+/** The repo name of a session without a repository. */
+export const NO_REPO = 'No repository';
+
+/** `git@github.com:org/app.git` and `https://github.com/org/app.git` → `org/app`; no origin → the root's folder. */
+export function repoName(card: DeckSession): string {
+  const repo = card.summary.repo;
+  if (repo === null || repo === undefined) return NO_REPO;
+  if (repo.origin !== null && repo.origin !== '') {
+    const parts = repo.origin
+      .replace(/\.git$/, '')
+      .split(/[/:]/)
+      .filter((p) => p !== '');
+    if (parts.length > 0) return parts.slice(-2).join('/');
+  }
+  return basename(repo.root);
+}
+
+/** The distinct repo names of `sessions`, sorted, with "No repository" last. */
+export function repoNames(sessions: readonly DeckSession[]): string[] {
+  const names = [...new Set(sessions.map(repoName))];
+  return names.sort((a, b) =>
+    a === b ? 0 : a === NO_REPO ? 1 : b === NO_REPO ? -1 : a.localeCompare(b),
+  );
+}
+
+/** An ended or lost session that the owner cleared is hidden; a session in any other status shows. */
+export function archivedHidden(card: DeckSession, refs: ReadonlySet<string>): boolean {
+  return (
+    (card.status === 'ended' || card.status === 'lost') &&
+    refs.has(sessionRef(card.station_id, card.summary.session_id))
+  );
+}
+
+/** Who a session shares files with: the other sessions' titles and the files. */
+export type Contested = { readonly with: readonly string[]; readonly files: readonly string[] };
+
+/** The contested sessions of a conflict list, by `sessionRef`. */
+export function contestedBy(list: readonly FileConflict[]): ReadonlyMap<string, Contested> {
+  const found = new Map<string, { with: Set<string>; files: Set<string> }>();
+  for (const conflict of list) {
+    for (const touch of conflict.touches) {
+      const ref = sessionRef(touch.station_id, touch.session_id);
+      const entry = found.get(ref) ?? { with: new Set<string>(), files: new Set<string>() };
+      let others = 0;
+      for (const other of conflict.touches) {
+        if (other.station_id === touch.station_id && other.session_id === touch.session_id)
+          continue;
+        entry.with.add(other.session_title ?? other.session_id);
+        others += 1;
+      }
+      if (others > 0) {
+        entry.files.add(conflict.file);
+        found.set(ref, entry);
+      }
+    }
+  }
+  return new Map(
+    [...found].map(([ref, e]) => [ref, { with: [...e.with], files: [...e.files] }] as const),
+  );
+}
 
 const labels = {
   needs_you: 'Needs you',
@@ -40,6 +104,7 @@ export function filterFleet(
     const s = card.summary;
     if (filter.station && card.station_id !== filter.station) return false;
     if (filter.provider && (s.provider ?? 'unknown') !== filter.provider) return false;
+    if (filter.repo && repoName(card) !== filter.repo) return false;
     const text = [
       s.title,
       s.session_id,

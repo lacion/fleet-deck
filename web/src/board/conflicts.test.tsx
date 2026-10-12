@@ -46,7 +46,7 @@ describe('conflict radar', () => {
 
   test('the radar renders nothing until the first answer, and nothing without conflicts', () => {
     const html = renderToStaticMarkup(
-      <ConflictRadar load={async () => [conflict]} stations={[]} version="0" onOpen={() => {}} />,
+      <ConflictRadar list={null} problem={null} stations={[]} onOpen={() => {}} />,
     );
     expect(html).toBe('');
   });

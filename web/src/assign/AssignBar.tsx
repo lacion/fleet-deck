@@ -3,8 +3,8 @@ import type { AssignActions, AssignResult } from './assign';
 
 type Props = {
   readonly actions: AssignActions | undefined;
-  /** Opens the spawn form for an unrouted task. */
-  readonly onSpawn: (stationId: string) => void;
+  /** Opens the spawn form for an unrouted task, with the task text as the first prompt. */
+  readonly onSpawn: (stationId: string, text: string) => void;
 };
 
 /** `assign auto: <task>` on the fleet screen (M3 6-3, DL-204). */
@@ -54,7 +54,10 @@ export function AssignBar({ actions, onSpawn }: Props) {
         <p className="fd-note" role="status">
           {result.text}{' '}
           {result.spawnOn === null ? null : (
-            <button type="button" onClick={() => onSpawn(result.spawnOn?.stationId ?? '')}>
+            <button
+              type="button"
+              onClick={() => onSpawn(result.spawnOn?.stationId ?? '', task.trim())}
+            >
               Spawn on {result.spawnOn.name}
             </button>
           )}

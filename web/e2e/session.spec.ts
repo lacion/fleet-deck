@@ -224,6 +224,87 @@ test('a refused answer from the rail shows its text and the buttons work again',
   });
 });
 
+/** Two waiting sessions on the fleet screen; the older request is first in the rail. */
+function twoWaiting(): DeckSession[] {
+  const first = session({ open_requests: [request], activity: 'needs_you' }, 'needs_you');
+  const second: DeckSession = {
+    station_id: ST,
+    status: 'needs_you',
+    summary: {
+      ...first.summary,
+      session_id: 'second',
+      title: 'Write the docs',
+      open_requests: [
+        {
+          ...request,
+          request_id: 'req-7',
+          title: 'Edit',
+          requested_at: request.requested_at + 1,
+        },
+      ],
+    },
+  };
+  return [first, second];
+}
+
+test('the a key answers the selected request of the rail with its first option', async ({
+  page,
+}) => {
+  const deck = new FakeDeck();
+  deck.sessions = twoWaiting();
+  deck.on('/api/commands/approval.answer', (body) => ({
+    status: 200,
+    body: receipt(idOf(body), 'done'),
+  }));
+  await setUp(page, deck);
+  await openFleet(page);
+  const rail = page.getByRole('region', { name: 'Needs you rail' });
+  await expect(rail.locator('[data-request="req-6"]')).toHaveAttribute('data-selected', 'true');
+  await page.keyboard.press('a');
+  await expect
+    .poll(() => deck.calls.filter((c) => c.path === '/api/commands/approval.answer').length)
+    .toBe(1);
+  const call = deck.calls.find((c) => c.path === '/api/commands/approval.answer');
+  expect(call?.body).toMatchObject({
+    command: {
+      session_id: ID,
+      request_id: 'req-6',
+      decision: { option_id: 'allow' },
+    },
+  });
+});
+
+test('the bracket keys move the selection and d answers with the last option', async ({ page }) => {
+  const deck = new FakeDeck();
+  deck.sessions = twoWaiting();
+  deck.on('/api/commands/approval.answer', (body) => ({
+    status: 200,
+    body: receipt(idOf(body), 'done'),
+  }));
+  await setUp(page, deck);
+  await openFleet(page);
+  const rail = page.getByRole('region', { name: 'Needs you rail' });
+  const first = rail.locator('[data-request="req-6"]');
+  const second = rail.locator('[data-request="req-7"]');
+  await expect(first).toHaveAttribute('data-selected', 'true');
+  await page.keyboard.press(']');
+  await expect(second).toHaveAttribute('data-selected', 'true');
+  await expect(first).not.toHaveAttribute('data-selected', 'true');
+  await page.keyboard.press(']');
+  await expect(second).toHaveAttribute('data-selected', 'true');
+  await page.keyboard.press('[');
+  await expect(first).toHaveAttribute('data-selected', 'true');
+  await page.keyboard.press(']');
+  await page.keyboard.press('d');
+  await expect
+    .poll(() => deck.calls.filter((c) => c.path === '/api/commands/approval.answer').length)
+    .toBe(1);
+  const call = deck.calls.find((c) => c.path === '/api/commands/approval.answer');
+  expect(call?.body).toMatchObject({
+    command: { session_id: 'second', request_id: 'req-7', decision: { option_id: 'deny' } },
+  });
+});
+
 test('an approval is answered from the dock of its session', async ({ page }) => {
   const deck = new FakeDeck();
   deck.sessions = [session({ open_requests: [request], activity: 'needs_you' }, 'needs_you')];
