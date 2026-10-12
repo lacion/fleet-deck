@@ -73,7 +73,13 @@ pub struct SessionView {
     /// The CSRF token of a cookie login (send it as `X-CSRF-Token`).
     pub csrf: Option<String>,
     pub expires_at: i64,
+    /// The version of this deck (DL-141).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deck_version: Option<String>,
 }
+
+/// The version of this deck.
+const DECK_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn set_cookie(value: &str, max_age_s: i64) -> HeaderValue {
     let text =
@@ -88,6 +94,7 @@ fn logged_in(login: &NewLogin) -> Response {
         scopes: crate::store::auth::OWNER_SCOPES.to_vec(),
         csrf: Some(login.csrf.clone()),
         expires_at: login.expires_at,
+        deck_version: Some(DECK_VERSION.to_owned()),
     };
     let mut res = Json(view).into_response();
     res.headers_mut().insert(
@@ -216,6 +223,7 @@ pub async fn session(Extension(principal): Extension<Principal>) -> Json<Session
         scopes: principal.scopes().into_iter().collect(),
         csrf,
         expires_at,
+        deck_version: Some(DECK_VERSION.to_owned()),
     })
 }
 

@@ -22,6 +22,7 @@ pub mod conflicts;
 pub mod coordinator;
 pub(crate) mod coordinator_ops;
 pub mod coordinator_query;
+pub mod extras;
 pub mod fleet;
 pub mod grants;
 pub mod outbox;

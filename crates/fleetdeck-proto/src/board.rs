@@ -75,6 +75,29 @@ pub struct DeckSession {
     pub status: CardStatus,
 }
 
+/// `GET /api/fleet/extras` (DL-141): what the cards show besides the summary.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "board/")]
+pub struct FleetExtras {
+    pub sessions: Vec<SessionExtras>,
+}
+
+/// The extras of one session card.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "board/")]
+pub struct SessionExtras {
+    pub station_id: StationId,
+    pub session_id: SessionId,
+    /// Mails to the session that are not delivered and not dead yet.
+    pub mail_pending: u32,
+    /// The newest distinct files that the session touched (at most 4, newest first),
+    /// from the conflict radar's touches inside its window.
+    pub files: Vec<String>,
+}
+
+/// The most files per session in [`SessionExtras::files`].
+pub const MAX_EXTRAS_FILES: usize = 4;
+
 /// A paired station as the board and the CLI show it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export_to = "board/")]

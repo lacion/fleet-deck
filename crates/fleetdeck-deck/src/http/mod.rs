@@ -106,6 +106,7 @@ pub fn router(board: Arc<Board>) -> Router {
         .route("/api/plans", get(plan_routes::list))
         .route("/api/plans/mark", post(plan_routes::mark))
         .route("/api/sessions", get(read_routes::sessions))
+        .route("/api/fleet/extras", get(read_routes::fleet_extras))
         .route("/api/assign", post(assign_routes::assign))
         .route(
             "/api/mail",

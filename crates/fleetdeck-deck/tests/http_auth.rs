@@ -251,6 +251,7 @@ async fn bearer_tokens_hold_per_method_scopes_and_never_fall_back_to_the_cookie(
         .await;
     assert_eq!(r.body["actor"], "token:phone");
     assert_eq!(r.body["csrf"], Value::Null);
+    assert_eq!(r.body["deck_version"], env!("CARGO_PKG_VERSION"));
 
     // A bad bearer value is refused even with a valid cookie.
     let r = f

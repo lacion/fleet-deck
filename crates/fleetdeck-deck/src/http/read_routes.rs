@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::State;
+use fleetdeck_proto::board::FleetExtras;
 
 use super::Board;
 use super::guard::ApiError;
@@ -29,6 +30,17 @@ pub async fn stations(State(board): State<Arc<Board>>) -> Result<Json<Vec<Statio
 pub async fn sessions(State(board): State<Arc<Board>>) -> Result<Json<Vec<DeckSession>>, ApiError> {
     Ok(Json(
         board.store.sessions().await.map_err(ApiError::internal)?,
+    ))
+}
+
+/// `GET /api/fleet/extras`: the pending mail and the recent files of the cards.
+pub async fn fleet_extras(State(board): State<Arc<Board>>) -> Result<Json<FleetExtras>, ApiError> {
+    Ok(Json(
+        board
+            .store
+            .fleet_extras()
+            .await
+            .map_err(ApiError::internal)?,
     ))
 }
 
