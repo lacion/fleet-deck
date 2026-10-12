@@ -61,6 +61,7 @@ pub struct SessionTarget {
     sessions: Sessions,
     git: GitOptions,
     limits: Limits,
+    fences: super::turns::Fences,
 }
 
 impl std::fmt::Debug for SessionTarget {
@@ -81,6 +82,7 @@ impl SessionTarget {
             sessions: Arc::default(),
             git: GitOptions::isolated(),
             limits: Limits::default(),
+            fences: super::turns::Fences::default(),
         }
     }
 
@@ -141,6 +143,7 @@ impl SessionTarget {
             Arc::clone(&self.ids),
             self.git.clone(),
             self.limits,
+            &self.fences,
             session_id.clone(),
             Path::new(&spec.cwd),
         )

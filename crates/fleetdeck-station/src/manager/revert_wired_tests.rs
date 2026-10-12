@@ -331,3 +331,6 @@ async fn a_revert_of_a_busy_session_is_rejected_before_any_change() {
     );
     st.manager.shutdown(StopMode::Kill).await;
 }
+
+#[path = "revert_worktree_tests.rs"]
+mod worktree;

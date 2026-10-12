@@ -12,7 +12,10 @@
 //!    `available` start checkpoint, every later row is finalized or
 //!    abandoned, and the latest finalized turn has an `available`
 //!    completion checkpoint (the expected workspace before the restore);
-//! 4. the worktree is still inside an allowed root.
+//! 4. the worktree is still inside an allowed root;
+//! 5. no other live session whose directory overlaps the worktree is busy
+//!    (turn, run, request, background work, pending input, start), and no
+//!    revert of any session is open there (DL-093).
 //!
 //! The admitted revert is a row (the durable fence), a
 //! `revert.updated {admitted}` event and one revert effect.
@@ -132,6 +135,17 @@ pub fn decide_revert(
             RejectCode::Forbidden,
             "the worktree is outside the allowed roots",
         ));
+    }
+    // The fence covers the worktree, not only this session (DL-093): no
+    // other session in it may be busy, and no other revert may be open.
+    if d.open_revert_over(&root)?.is_some() {
+        return Err(reject(
+            RejectCode::InvalidState,
+            "another revert is open in this worktree",
+        ));
+    }
+    if let Some(why) = d.worktree_conflict(&root, session_id)? {
+        return Err(reject(RejectCode::InvalidState, why));
     }
     let turns = u32::try_from(finalized.len())
         .map_err(|_| reject(RejectCode::InvalidCommand, "too many turns"))?;

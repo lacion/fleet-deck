@@ -164,7 +164,7 @@ fn build((text, turns, reason): (Vec<String>, i64, Option<String>)) -> Result<Re
     })
 }
 
-fn select(
+pub(super) fn select(
     conn: &Connection,
     filter: &str,
     args: &[&dyn rusqlite::ToSql],
@@ -247,6 +247,19 @@ fn advance(
     Ok(true)
 }
 
+/// The number of a session's effects that can still write input to the
+/// provider: queued effects, and claimed input or revert effects.
+pub(super) fn pending_inputs(conn: &Connection, session: &SessionId) -> Result<u64> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM effects WHERE session_id = ?1 AND (state = 'queued' \
+         OR (state = 'claimed' AND kind IN ('start', 'prompt', 'steer', 'follow_up', \
+         'revert')))",
+        [session.as_str()],
+        |r| r.get(0),
+    )?;
+    Ok(u64::try_from(n).unwrap_or(0))
+}
+
 /// The turn checkpoint rows of a session that no revert removed.
 fn revertable(conn: &Connection, session: &SessionId) -> Result<Vec<TurnCheckpointRow>> {
     turn_checkpoints::select(
@@ -272,14 +285,7 @@ impl Decision<'_> {
     /// # Errors
     /// A database error.
     pub fn pending_input_effects(&self, session: &SessionId) -> Result<u64> {
-        let n: i64 = self.connection().query_row(
-            "SELECT COUNT(*) FROM effects WHERE session_id = ?1 AND (state = 'queued' \
-             OR (state = 'claimed' AND kind IN ('start', 'prompt', 'steer', 'follow_up', \
-             'revert')))",
-            [session.as_str()],
-            |r| r.get(0),
-        )?;
-        Ok(u64::try_from(n).unwrap_or(0))
+        pending_inputs(self.connection(), session)
     }
 
     /// The session's revert that is not `succeeded` or `failed`, if any.
@@ -381,6 +387,18 @@ impl super::Store {
             select(conn, "session_id = ?1", &[&session.as_str()])
         })
         .await
+    }
+
+    /// The session's turn checkpoint rows that no revert removed, oldest
+    /// first: the same history as the admission (DL-093).
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn revertable_turn_checkpoints(
+        &self,
+        session: SessionId,
+    ) -> Result<Vec<TurnCheckpointRow>> {
+        super::call(&self.inner.db, move |conn| revertable(conn, &session)).await
     }
 
     /// The revert id that removed an app turn, if any.

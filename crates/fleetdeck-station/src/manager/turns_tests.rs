@@ -73,6 +73,7 @@ pub(crate) async fn setup(det: &Det, cwd: &Path) -> (Store, Arc<SessionTurns>) {
         det.ids(),
         GitOptions::isolated(),
         Limits::default(),
+        &super::Fences::default(),
         S1.into(),
         cwd,
     )
@@ -408,4 +409,44 @@ async fn a_directory_outside_git_finalizes_every_turn_as_not_a_git_worktree() {
     assert_eq!(done[0].2, unavailable("not_a_git_worktree"));
     let row = row_of_input(&s, "in-1").await;
     assert_eq!(row.worktree_id, None);
+}
+
+#[tokio::test]
+async fn sessions_in_one_worktree_share_one_fence() {
+    // DL-093: the fence is per worktree, not per session.
+    let det = Det::new();
+    let (_tmp, dir) = repo();
+    let other = tempfile::tempdir().unwrap();
+    let (store, _) = setup(&det, &dir).await;
+    let fences = super::Fences::default();
+    let open = |cwd: std::path::PathBuf, id: &'static str| {
+        let (store, fences, ids) = (store.clone(), fences.clone(), det.ids());
+        async move {
+            SessionTurns::open(
+                store,
+                ids,
+                GitOptions::isolated(),
+                Limits::default(),
+                &fences,
+                id.into(),
+                &cwd,
+            )
+            .await
+        }
+    };
+    let a = open(dir.clone(), "s-a").await;
+    // B works in a subdirectory: the worktree root is the same.
+    std::fs::create_dir(dir.join("sub")).unwrap();
+    let b = open(dir.join("sub"), "s-b").await;
+    let c = open(other.path().to_path_buf(), "s-c").await;
+    let held = a.fence().await;
+    let wait = std::time::Duration::from_millis(200);
+    assert!(
+        tokio::time::timeout(wait, b.fence()).await.is_err(),
+        "a second session in the worktree waits for the fence"
+    );
+    // A directory outside Git has its own fence.
+    assert!(tokio::time::timeout(wait, c.fence()).await.is_ok());
+    drop(held);
+    assert!(tokio::time::timeout(wait, b.fence()).await.is_ok());
 }

@@ -282,6 +282,15 @@ fn start(
         ));
     }
     spec.cwd = cwd.to_string_lossy().into_owned();
+    if let Some(other) = d.open_revert_over(&spec.cwd)? {
+        return Err(reject(
+            RejectCode::InvalidState,
+            format!(
+                "a revert of session `{}` holds this worktree",
+                other.revert.session_id
+            ),
+        ));
+    }
     let branch = fleetdeck_core::git::current_branch(&cwd);
     let session_id: SessionId = d.new_id();
     d.create_session(&NewSession {
@@ -336,6 +345,28 @@ pub(super) fn live_session(
                 }
                 _ => "a revert runs: the session takes no input",
             },
+        ));
+    }
+    // A revert of another session in the same worktree holds it too
+    // (DL-093): no input and no answer that would start writes there.
+    if matches!(
+        op,
+        Operation::Prompt
+            | Operation::Steer
+            | Operation::FollowUp
+            | Operation::Answer
+            | Operation::EditInput
+            | Operation::Revert
+    ) && let Some(cwd) = s.cwd.as_deref()
+        && let Some(other) = d.open_revert_over(cwd)?
+        && other.revert.session_id != *session_id
+    {
+        return Err(reject(
+            RejectCode::InvalidState,
+            format!(
+                "a revert of session `{}` holds this worktree: the session takes no input",
+                other.revert.session_id
+            ),
         ));
     }
     if d.live_process(session_id)?.is_none() {

@@ -37,6 +37,33 @@ enum Rollback {
     Uncertain,
     /// Confirms, but a writer changes a tracked file meanwhile.
     OkWhileWriting(std::path::PathBuf),
+    /// Confirms, but a writer changes `a.txt` and points the completion
+    /// ref of the latest turn at a snapshot of that change (finding 3 of
+    /// sa-3491e52e).
+    OkWhileRepointing {
+        dir: std::path::PathBuf,
+        end_ref: String,
+    },
+}
+
+/// Changes `a.txt` and points `end_ref` at a commit of that workspace,
+/// so the reread completion checkpoint matches the changed files.
+fn repoint(dir: &std::path::Path, end_ref: &str) {
+    std::fs::write(dir.join("a.txt"), "a writer\n").unwrap();
+    let out = std::process::Command::new("git")
+        .current_dir(dir)
+        .args(["stash", "create"])
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_AUTHOR_NAME", "t")
+        .env("GIT_AUTHOR_EMAIL", "t@t")
+        .env("GIT_COMMITTER_NAME", "t")
+        .env("GIT_COMMITTER_EMAIL", "t@t")
+        .output()
+        .unwrap();
+    let commit = String::from_utf8(out.stdout).unwrap().trim().to_owned();
+    assert!(!commit.is_empty(), "stash create made no commit");
+    git(dir, &["update-ref", end_ref, &commit]);
 }
 
 struct Scripted {
@@ -105,6 +132,10 @@ impl LiveSession for Scripted {
                 std::fs::write(path, "a writer\n").unwrap();
                 Ok(())
             }
+            Rollback::OkWhileRepointing { dir, end_ref } => {
+                repoint(dir, end_ref);
+                Ok(())
+            }
         }
     }
     async fn stop(&mut self, _: StopMode) -> ProviderResult<()> {
@@ -170,31 +201,37 @@ impl Rig {
 
     /// Admits a revert of `turn-1` (both turns) directly in the store.
     async fn admit(&self) -> String {
+        self.admit_with("rv-1", "turn-1", 0, 1).await
+    }
+
+    /// Admits revert `id` of the turn at `target` up to the turn at
+    /// `current` (indexes into the session's rows) directly in the store.
+    async fn admit_with(&self, id: &str, turn: &str, target: usize, current: usize) -> String {
         let rows = self.rows().await;
         let commit = |side: &RowSide| match side {
             RowSide::Available(c) => c.clone(),
             other => panic!("{other:?}"),
         };
         let new = NewRevert {
-            revert_id: "rv-1".into(),
+            revert_id: id.into(),
             session_id: S1.into(),
             process: "proc-1".to_owned().into(),
-            turn_id: "turn-1".into(),
-            app_turn: rows[0].app_turn.clone(),
-            current_app_turn: rows[1].app_turn.clone(),
-            turns: 2,
-            target_commit: commit(&rows[0].start),
-            current_commit: commit(&rows[1].end),
+            turn_id: turn.into(),
+            app_turn: rows[target].app_turn.clone(),
+            current_app_turn: rows[current].app_turn.clone(),
+            turns: u32::try_from(current - target + 1).unwrap(),
+            target_commit: commit(&rows[target].start),
+            current_commit: commit(&rows[current].end),
             worktree_root: self.dir.display().to_string(),
         };
         let envelope = CommandEnvelope {
-            command_id: CommandId::from("c-revert"),
+            command_id: CommandId::from(format!("c-{id}").as_str()),
             target_incarnation: None,
             retry_until: i64::try_from(self.det.now_ms()).unwrap() + 60_000,
             origin: CommandOrigin::Board,
             command: SessionCommand::Revert {
                 session_id: S1.into(),
-                turn_id: "turn-1".into(),
+                turn_id: turn.into(),
             },
         };
         self.store
@@ -207,18 +244,35 @@ impl Rig {
             })
             .await
             .unwrap();
-        "rv-1".into()
+        id.into()
     }
 
-    async fn run(&self, session: &mut Scripted) -> Dispatch {
+    async fn run_id(&self, session: &mut Scripted, id: &str) -> Dispatch {
         revert_run::run(
             self.env(),
             &self.turns,
             session,
             &"proc-1".to_owned().into(),
-            "rv-1",
+            id,
         )
         .await
+    }
+
+    async fn run(&self, session: &mut Scripted) -> Dispatch {
+        self.run_id(session, "rv-1").await
+    }
+
+    /// The completion ref of the latest turn.
+    async fn end_ref(&self) -> String {
+        let row = self.rows().await.remove(1);
+        Worktree::open(&self.dir, GitOptions::isolated())
+            .await
+            .unwrap()
+            .read(&key(&self.store, &row, Phase::Completion))
+            .await
+            .unwrap()
+            .unwrap()
+            .ref_name
     }
 
     async fn step(&self) -> (RevertStep, Option<String>) {
@@ -400,8 +454,60 @@ async fn a_writer_during_the_rollback_stops_the_restore_with_reconciliation() {
     );
 }
 
+#[tokio::test]
+async fn a_workspace_change_with_a_repointed_completion_ref_during_the_rollback_needs_reconciliation()
+ {
+    let rig = Rig::new().await;
+    rig.admit().await;
+    let end_ref = rig.end_ref().await;
+    let (mut session, calls) = Scripted::new(Rollback::OkWhileRepointing {
+        dir: rig.dir.clone(),
+        end_ref,
+    });
+    assert_eq!(
+        rig.run(&mut session).await,
+        Dispatch::Unknown(reason::CHECKPOINT_CHANGED.into())
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    // The writer's change stays; the restore wrote nothing.
+    assert_eq!(rig.file("a.txt"), "a writer\n");
+    assert_eq!(rig.file("b.txt"), "two\nT2\n");
+    assert_eq!(
+        rig.step().await,
+        (
+            RevertStep::ReconciliationRequired,
+            Some(reason::CHECKPOINT_CHANGED.into())
+        )
+    );
+    assert_eq!(rig.reverted().await, vec![None, None]);
+}
+
+#[tokio::test]
+async fn recovery_after_a_confirmed_rollback_with_a_repointed_completion_ref_needs_reconciliation()
+{
+    let rig = Rig::new().await;
+    let end_ref = rig.end_ref().await;
+    rig.admit().await;
+    repoint(&rig.dir, &end_ref);
+    recover_from_admitted(&rig, RevertStep::RolledBack).await;
+    assert_eq!(
+        rig.step().await,
+        (
+            RevertStep::ReconciliationRequired,
+            Some(reason::CHECKPOINT_CHANGED.into())
+        )
+    );
+    assert_eq!(rig.file("a.txt"), "a writer\n");
+    assert_eq!(rig.file("b.txt"), "two\nT2\n");
+}
+
 async fn recover_from(rig: &Rig, at: RevertStep) {
     rig.admit().await;
+    recover_from_admitted(rig, at).await;
+}
+
+/// Advances an admitted `rv-1` to `at`, then runs start recovery.
+async fn recover_from_admitted(rig: &Rig, at: RevertStep) {
     let path: &'static [RevertStep] = match at {
         RevertStep::Admitted => &[],
         RevertStep::RollbackSent => &[RevertStep::RollbackSent],
@@ -488,6 +594,26 @@ async fn recovery_during_the_restore_finishes_a_complete_one_and_stops_a_partial
         )
     );
     assert_eq!(rig.file("b.txt"), "two\nT2\n");
+}
+
+#[tokio::test]
+async fn a_second_revert_after_a_successful_one_ignores_the_reverted_turns() {
+    // Finding 2 of sa-3491e52e: revert T2, then T1.
+    let rig = Rig::new().await;
+    rig.admit_with("rv-a", "turn-2", 1, 1).await;
+    let (mut session, calls) = Scripted::new(Rollback::Ok);
+    assert_eq!(rig.run_id(&mut session, "rv-a").await, Dispatch::Confirmed);
+    assert_eq!(rig.file("b.txt"), "two\n");
+    assert_eq!(rig.file("a.txt"), "one\nT1\n");
+    rig.admit_with("rv-b", "turn-1", 0, 0).await;
+    assert_eq!(rig.run_id(&mut session, "rv-b").await, Dispatch::Confirmed);
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(rig.file("a.txt"), "one\n");
+    assert_eq!(rig.file("b.txt"), "two\n");
+    assert_eq!(
+        rig.reverted().await,
+        vec![Some("rv-b".to_owned()), Some("rv-a".to_owned())]
+    );
 }
 
 #[tokio::test]

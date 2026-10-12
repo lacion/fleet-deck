@@ -316,6 +316,45 @@ async fn an_assume_unchanged_entry_makes_the_checkpoint_unavailable_instead_of_d
     assert_eq!(shown, "edited but hidden from git\n");
 }
 
+/// Sets the modification time of `path` to `at`.
+fn touch(path: &Path, at: std::time::SystemTime) {
+    std::fs::File::options()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_modified(at)
+        .unwrap();
+}
+
+/// DL-094: a same-size edit in the second of the entry's last stat is in
+/// the snapshot. Git compares whole seconds and rechecks the content of an
+/// entry that is not older than the index file, so the private copy keeps
+/// the time of the real index. A copy with a new time lost this edit (once
+/// in about 300 runs of the test above; every time here).
+#[tokio::test]
+async fn a_same_size_edit_in_the_second_of_the_index_entry_is_in_the_checkpoint() {
+    let (_t, dir) = repo();
+    // ctime changes with every write; only mtime, size and inode remain.
+    git(&dir, &["config", "core.trustctime", "false"]);
+    let second = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+    let entry_time = second + std::time::Duration::from_millis(100);
+    touch(&dir.join("a.txt"), entry_time);
+    git(&dir, &["update-index", "--really-refresh"]);
+    // The real index was written in the same second as the entry.
+    touch(
+        &dir.join(".git/index"),
+        second + std::time::Duration::from_millis(200),
+    );
+    let before = index_bytes(&dir);
+    write(&dir, "a.txt", "two\n");
+    touch(&dir.join("a.txt"), entry_time);
+    let wt = open(&dir).await;
+    let cp = published(&wt, &key("T1", Phase::Completion)).await;
+    let shown = git(&dir, &["show", &format!("{}:a.txt", cp.commit)]);
+    assert_eq!(shown, "two\n", "the snapshot has the edit");
+    assert_eq!(index_bytes(&dir), before, "the real index is untouched");
+}
+
 fn got_code(c: &Captured) -> Option<&'static str> {
     match c {
         Captured::Unavailable(why) => Some(why.code()),

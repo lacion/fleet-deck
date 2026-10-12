@@ -24,8 +24,8 @@
 //!   just before the event is committed.
 
 use std::collections::HashMap;
-use std::path::Path;
-use std::sync::{Arc, Mutex as StdMutex, MutexGuard as StdGuard};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex as StdMutex, MutexGuard as StdGuard, Weak};
 
 use fleetdeck_core::{SharedIds, new_id};
 use fleetdeck_proto::{Event, InputId, SessionId, TurnId};
@@ -42,8 +42,32 @@ use crate::workspace::{
     Captured, CheckpointKey, GitOptions, Limits, Phase, SCOPE_TRACKED, Worktree, settle,
 };
 
-/// The workspace fence of one session, held over an input write.
+/// The workspace fence, held over an input write, a completion capture and
+/// a whole revert.
 pub type Fence<'a> = MutexGuard<'a, ()>;
+
+/// The workspace fences of the station, one per canonical worktree root
+/// (DL-093): every session in the same worktree takes the same fence, so a
+/// revert of one session excludes the input writes and the checkpoint
+/// captures of all of them. A session outside Git has its own fence.
+#[derive(Debug, Clone, Default)]
+pub struct Fences(Arc<StdMutex<HashMap<PathBuf, Weak<Mutex<()>>>>>);
+
+impl Fences {
+    /// The fence of the worktree at `root`; one shared value while any
+    /// session holds it.
+    #[must_use]
+    pub fn for_worktree(&self, root: &Path) -> Arc<Mutex<()>> {
+        let mut map = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        map.retain(|_, fence| fence.strong_count() > 0);
+        if let Some(fence) = map.get(root).and_then(Weak::upgrade) {
+            return fence;
+        }
+        let fence = Arc::new(Mutex::new(()));
+        map.insert(root.to_path_buf(), Arc::downgrade(&fence));
+        fence
+    }
+}
 
 #[derive(Debug, Default)]
 struct State {
@@ -62,7 +86,7 @@ pub struct SessionTurns {
     limits: Limits,
     session_id: SessionId,
     worktree: Option<Worktree>,
-    fence: Mutex<()>,
+    fence: Arc<Mutex<()>>,
     state: StdMutex<State>,
 }
 
@@ -83,16 +107,23 @@ fn log_store(what: &str, result: Result<impl Sized, StoreError>) {
 impl SessionTurns {
     /// Opens the checkpoint state of a session in `cwd`. A directory that
     /// is not inside a Git worktree is valid: every side is then
-    /// `unavailable {not_a_git_worktree}`.
+    /// `unavailable {not_a_git_worktree}`. The fence comes from `fences`
+    /// by the worktree root.
+    #[allow(clippy::too_many_arguments)]
     pub async fn open(
         store: Store,
         ids: SharedIds,
         options: GitOptions,
         limits: Limits,
+        fences: &Fences,
         session_id: SessionId,
         cwd: &Path,
     ) -> Arc<Self> {
         let worktree = Worktree::open(cwd, options.clone()).await.ok();
+        let fence = worktree.as_ref().map_or_else(
+            || Arc::new(Mutex::new(())),
+            |w| fences.for_worktree(w.root()),
+        );
         Arc::new(Self {
             store,
             ids,
@@ -100,7 +131,7 @@ impl SessionTurns {
             limits,
             session_id,
             worktree,
-            fence: Mutex::new(()),
+            fence,
             state: StdMutex::new(State::default()),
         })
     }

@@ -32,6 +32,7 @@ mod recovery;
 pub mod requests;
 pub mod reverts;
 pub mod schema;
+mod sharing;
 mod turn_checkpoints;
 
 use std::path::Path;

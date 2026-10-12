@@ -485,13 +485,28 @@ pub(super) struct PrivateIndex(PathBuf);
 impl PrivateIndex {
     /// A copy of the real index, or an empty private index when the
     /// repository has none yet.
+    ///
+    /// The copy keeps the modification time of the real index. Git compares
+    /// file times in whole seconds (it is usually built without
+    /// `USE_NSEC`), and its "racy entry" protection rechecks the content of
+    /// every entry that is not older than the index file. A copy with a new
+    /// time would lose that protection: a same-size edit in the second of
+    /// the entry's last stat would look clean, and the snapshot would miss
+    /// it (DL-094). The time is read before the copy, so a concurrent
+    /// rewrite of the real index can only make the copy older (more
+    /// rechecks), never newer.
     pub(super) fn copy_of(git_dir: &Path) -> Result<Self> {
-        let path = Self::fresh(git_dir);
+        let index = Self(Self::fresh(git_dir));
         let real = git_dir.join("index");
         if real.exists() {
-            std::fs::copy(&real, &path)?;
+            let modified = std::fs::metadata(&real)?.modified()?;
+            std::fs::copy(&real, &index.0)?;
+            std::fs::File::options()
+                .write(true)
+                .open(&index.0)?
+                .set_modified(modified)?;
         }
-        Ok(Self(path))
+        Ok(index)
     }
 
     /// An empty private index.

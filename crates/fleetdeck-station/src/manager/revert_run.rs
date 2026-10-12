@@ -47,6 +47,7 @@ pub mod reason {
     pub const WORKTREE_MISSING: &str = "worktree_missing";
     pub const CHECKPOINT_CHANGED: &str = "checkpoint_changed";
     pub const WORKSPACE_CHANGED: &str = "workspace_changed";
+    pub const WORKTREE_BUSY: &str = "worktree_busy";
     pub const ROLLBACK_REFUSED: &str = "rollback_refused";
     pub const ROLLBACK_UNCERTAIN: &str = "rollback_uncertain";
     pub const RESTORE_FAILED: &str = "restore_failed";
@@ -183,6 +184,12 @@ async fn restore_files(env: RevertEnv<'_>, row: &RevertRow) -> Result<(), &'stat
         &row.revert.current_app_turn.0,
     )
     .await?;
+    // The completion ref must still be the admitted one: a repointed ref
+    // would make a changed workspace look expected (DL-093). Checked before
+    // any file changes, also in recovery.
+    if current.commit != row.revert.current_commit {
+        return Err(reason::CHECKPOINT_CHANGED);
+    }
     let plan = match worktree.plan_restore(&target, env.limits).await {
         Ok(Ok(plan)) => plan,
         Ok(Err(_)) | Err(_) => return Err(reason::RESTORE_FAILED),
@@ -210,9 +217,24 @@ async fn check(
     if &row.revert.process != process {
         return Ok(Err(reason::PROCESS_CHANGED));
     }
+    // Another session in the worktree became busy after the admission
+    // (DL-093); the shared worktree fence keeps it from starting a write
+    // while the revert runs.
+    if env
+        .store
+        .worktree_conflict(
+            row.revert.worktree_root.clone(),
+            row.revert.session_id.clone(),
+        )
+        .await?
+        .is_some()
+    {
+        return Ok(Err(reason::WORKTREE_BUSY));
+    }
+    // The same non-reverted history as the admission (DL-093).
     let rows = env
         .store
-        .turn_checkpoints(row.revert.session_id.clone())
+        .revertable_turn_checkpoints(row.revert.session_id.clone())
         .await?;
     let Some(at) = rows.iter().position(|r| r.app_turn == row.revert.app_turn) else {
         return Ok(Err(reason::TURNS_CHANGED));
