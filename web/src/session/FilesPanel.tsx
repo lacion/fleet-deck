@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { FileContent, FileListing, FileSearch } from '../gen';
+import { FileText, Folder, Icon } from '../ui/icons';
 import { type FileActions, joinPath, parentPath, type SearchModeName } from './workspace';
 
 type View =
@@ -17,10 +18,32 @@ const message = (e: unknown) => (e instanceof Error ? e.message : 'The request f
  * The station refuses paths outside the root, symlinks, hidden credential
  * directories and `.git`; the board shows its refusal text.
  */
-export function FilesPanel({ files }: { readonly files: FileActions | null }) {
-  const [view, setView] = useState<View>({ kind: 'idle' });
+export function FilesPanel({
+  files,
+  variant = 'tab',
+}: {
+  readonly files: FileActions | null;
+  readonly variant?: 'tab' | 'side';
+}) {
+  const [view, setView] = useState<View>(files ? { kind: 'loading' } : { kind: 'idle' });
+  /** The last requested folder; the crumbs show it. */
+  const [folder, setFolder] = useState('');
   const [query, setQuery] = useState('');
   const [mode, setMode] = useState<SearchModeName>('name');
+  // The actions object changes on every render of the parent; the effect keys on "has files".
+  const latest = useRef(files);
+  latest.current = files;
+  const has = files !== null;
+  useEffect(() => {
+    const current = latest.current;
+    if (!has || !current) return;
+    setFolder('');
+    setView({ kind: 'loading' });
+    void current.list('').then(
+      (listing) => setView({ kind: 'listing', listing }),
+      (e: unknown) => setView({ kind: 'error', text: message(e) }),
+    );
+  }, [has]);
   if (!files) return null;
   const load = <T,>(call: Promise<T>, done: (value: T) => View) => {
     setView({ kind: 'loading' });
@@ -29,16 +52,20 @@ export function FilesPanel({ files }: { readonly files: FileActions | null }) {
       (e: unknown) => setView({ kind: 'error', text: message(e) }),
     );
   };
-  const open = (path: string) =>
+  const open = (path: string) => {
+    setFolder(path);
     load(files.list(path), (listing) => ({ kind: 'listing', listing }));
-  const read = (path: string) => load(files.read(path), (file) => ({ kind: 'file', file }));
+  };
+  const read = (path: string) => {
+    setFolder(parentPath(path));
+    load(files.read(path), (file) => ({ kind: 'file', file }));
+  };
+  const segments = folder === '' ? [] : folder.split('/');
+  const fileName = view.kind === 'file' ? (view.file.path.split('/').pop() ?? '') : null;
   return (
-    <section className="fd-files" aria-label="Files">
-      <h3 className="fd-label">Files</h3>
+    <section className="fd-files" aria-label="Files" data-variant={variant}>
+      <h3 className={variant === 'side' ? 'fd-vh' : 'fd-label'}>Files</h3>
       <div className="fd-files-bar">
-        <button type="button" className="fd-sm" onClick={() => open('')}>
-          Browse
-        </button>
         <form
           aria-label="Search the files"
           onSubmit={(event) => {
@@ -46,10 +73,13 @@ export function FilesPanel({ files }: { readonly files: FileActions | null }) {
             load(files.search(query.trim(), mode), (search) => ({ kind: 'search', search }));
           }}
         >
-          <label htmlFor="fd-file-query">Search</label>
+          <label htmlFor="fd-file-query" className="fd-vh">
+            Search
+          </label>
           <input
             id="fd-file-query"
             className="fd-sm"
+            placeholder="Search files"
             value={query}
             minLength={2}
             maxLength={256}
@@ -69,52 +99,97 @@ export function FilesPanel({ files }: { readonly files: FileActions | null }) {
           </button>
         </form>
       </div>
-      {view.kind === 'loading' ? <p role="status">Loading…</p> : null}
-      {view.kind === 'error' ? <p role="alert">{view.text}</p> : null}
+      <nav className="fd-files-crumbs" aria-label="Folder path">
+        <button type="button" className="fd-files-crumb" onClick={() => open('')}>
+          <Icon of={Folder} size={14} /> root
+        </button>
+        {segments.map((segment, n) => {
+          const path = segments.slice(0, n + 1).join('/');
+          return (
+            <span key={path} className="fd-files-crumb-item">
+              <span className="fd-files-sep" aria-hidden="true">
+                /
+              </span>
+              <button type="button" className="fd-files-crumb" onClick={() => open(path)}>
+                {segment}
+              </button>
+            </span>
+          );
+        })}
+        {fileName !== null ? (
+          <span className="fd-files-crumb-item">
+            <span className="fd-files-sep" aria-hidden="true">
+              /
+            </span>
+            <span className="fd-files-file">{fileName}</span>
+          </span>
+        ) : null}
+      </nav>
+      {view.kind === 'loading' ? (
+        <p role="status" className="fd-note">
+          Loading…
+        </p>
+      ) : null}
+      {view.kind === 'error' ? (
+        <p role="alert" className="fd-files-error">
+          {view.text}
+        </p>
+      ) : null}
       {view.kind === 'listing' ? (
         <div data-listing={view.listing.path}>
-          <p className="fd-path">/{view.listing.path}</p>
           <ul>
             {view.listing.path === '' ? null : (
               <li>
                 <button
                   type="button"
-                  className="fd-link"
+                  className="fd-files-row"
                   onClick={() => open(parentPath(view.listing.path))}
                 >
-                  ..
+                  <Icon of={Folder} size={14} />
+                  <span className="fd-files-name">..</span>
                 </button>
               </li>
             )}
             {view.listing.entries.map((e) => {
               const path = joinPath(view.listing.path, e.name);
+              const size = e.size !== null ? <span className="fd-size"> {e.size} B</span> : null;
               return (
                 <li key={e.name} data-entry-kind={e.kind}>
                   {e.kind === 'dir' || e.kind === 'file' ? (
                     <button
                       type="button"
-                      className="fd-link"
+                      className="fd-files-row"
                       onClick={() => (e.kind === 'dir' ? open(path) : read(path))}
                     >
-                      {e.kind === 'dir' ? `${e.name}/` : e.name}
+                      <Icon of={e.kind === 'dir' ? Folder : FileText} size={14} />
+                      <span className="fd-files-name">
+                        {e.kind === 'dir' ? `${e.name}/` : e.name}
+                      </span>
+                      {size}
                     </button>
                   ) : (
-                    <span>
-                      {e.name} ({e.kind}, not opened)
-                    </span>
+                    <div className="fd-files-row" data-disabled>
+                      <Icon of={FileText} size={14} />
+                      <span className="fd-files-name">
+                        {e.name} ({e.kind}, not opened)
+                      </span>
+                      {size}
+                    </div>
                   )}
-                  {e.size !== null ? <span className="fd-size"> {e.size} B</span> : null}
                 </li>
               );
             })}
           </ul>
+          {view.listing.entries.length === 0 ? (
+            <p className="fd-empty">This folder is empty.</p>
+          ) : null}
           {view.listing.truncated ? <p className="fd-note">The list is cut at its limit.</p> : null}
         </div>
       ) : null}
       {view.kind === 'file' ? (
         <div data-file={view.file.path}>
           <p className="fd-path">
-            /{view.file.path} · {view.file.size} B{' '}
+            {view.file.size} B{' '}
             <button
               type="button"
               className="fd-link"

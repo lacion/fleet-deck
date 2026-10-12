@@ -9,6 +9,7 @@ import {
   Check,
   ChevronLeft,
   Ellipsis,
+  Folder,
   Icon,
   Pencil,
   Play,
@@ -40,6 +41,8 @@ type Props = {
   readonly layout?: 'desktop' | 'tablet' | 'phone';
   /** Opens a shell in the workspace; the menu offers it when given. */
   readonly onNewShell?: (() => void) | undefined;
+  /** The Files side panel: the header shows its toggle when given. */
+  readonly filesPanel?: { readonly open: boolean; readonly toggle: () => void };
 };
 
 /** The longest path the header shows, in characters. */
@@ -107,9 +110,35 @@ function statusTone(status: string): 'act' | 'ok' | 'info' | 'hazard' | 'muted' 
   }
 }
 
-/** The status, model and provider badges of a session. */
-function Badges({ session }: { readonly session: DeckSession }) {
+/** The tone of the permission mode badge. */
+function modeTone(mode: string): 'plan' | 'info' | 'hazard' | 'muted' {
+  switch (mode) {
+    case 'plan':
+      return 'plan';
+    case 'acceptEdits':
+      return 'info';
+    case 'bypassPermissions':
+    case 'dontAsk':
+      return 'hazard';
+    default:
+      return 'muted';
+  }
+}
+
+/** The status, model, mode and provider badges of a session (the phone menu puts the mode last). */
+function Badges({
+  session,
+  modeLast = false,
+}: {
+  readonly session: DeckSession;
+  readonly modeLast?: boolean;
+}) {
   const s = session.summary;
+  const mode = s.mode ? (
+    <span className="fd-badge" data-tone={modeTone(s.mode)} title="Permission mode">
+      {s.mode}
+    </span>
+  ) : null;
   return (
     <>
       <span className="fd-badge" data-tone={statusTone(session.status)}>
@@ -122,9 +151,11 @@ function Badges({ session }: { readonly session: DeckSession }) {
       >
         {shortModel(s.model)}
       </span>
+      {modeLast ? null : mode}
       <span className="fd-badge" data-provider={s.provider}>
         {providerLabel(s.provider)}
       </span>
+      {modeLast ? mode : null}
     </>
   );
 }
@@ -152,6 +183,7 @@ export function SessionHeader({
   terminal,
   layout = 'desktop',
   onNewShell,
+  filesPanel,
 }: Props) {
   const s = session.summary;
   const caps = s.capabilities;
@@ -329,7 +361,7 @@ export function SessionHeader({
           <>
             <div className="fd-menu-text">
               <div className="fd-sh-badges">
-                <Badges session={session} />
+                <Badges session={session} modeLast />
                 {flags.held ? (
                   <span className="fd-badge" data-tone="act">
                     In terminal
@@ -483,6 +515,18 @@ export function SessionHeader({
               {(close) => openConfirm(close, terminal.onOpen)}
             </Menu>
           ) : null}
+          {filesPanel ? (
+            <button
+              type="button"
+              className="fd-iconbtn"
+              aria-label="Files"
+              title="Files"
+              aria-pressed={filesPanel.open}
+              onClick={filesPanel.toggle}
+            >
+              <Icon of={Folder} />
+            </button>
+          ) : null}
           {overflow}
         </div>
       </header>
@@ -491,6 +535,16 @@ export function SessionHeader({
           Controls are off until the board and the station are live.
         </p>
       )}
+      {busy === 'handover' ? (
+        <p className="fd-sh-strip" data-tone="info" role="status">
+          Stopping the session, then starting its terminal…
+        </p>
+      ) : null}
+      {busy === 'return' ? (
+        <p className="fd-sh-strip" data-tone="info" role="status">
+          Ending the terminal, then resuming the session…
+        </p>
+      ) : null}
       {outcome ? (
         <div role={outcome.ok ? 'status' : 'alert'} className="fd-sh-outcome" data-ok={outcome.ok}>
           <Icon of={outcome.ok ? Check : TriangleAlert} size={14} />

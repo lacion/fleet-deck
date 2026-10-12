@@ -1,6 +1,15 @@
 // DL-140: the session pane: header, the notice of a terminal hold, the tabs
 // (Chat | Changes | Files), the chat with the approval dock and the composer.
-import { type KeyboardEvent, type ReactNode, useId, useMemo, useRef, useState } from 'react';
+import {
+  type KeyboardEvent,
+  type ReactNode,
+  useCallback,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import { ChatView } from '../chat/ChatView';
 import type { DeckSession, StationView } from '../gen';
 import type { Freshness, Timeline } from '../runtime/state';
@@ -43,6 +52,44 @@ export type SessionViewProps = {
 
 const noop = () => {};
 
+const WIDE = '(min-width: 1280px)';
+const PANEL_KEY = 'fd-files-panel';
+
+/** True while the window is at least 1280 px wide (the Files side panel needs it). */
+function useWide(): boolean {
+  return useSyncExternalStore(
+    (notify) => {
+      const query = window.matchMedia(WIDE);
+      query.addEventListener('change', notify);
+      return () => query.removeEventListener('change', notify);
+    },
+    () => window.matchMedia(WIDE).matches,
+    () => true,
+  );
+}
+
+/** The open state of the Files side panel, kept in `localStorage`; unreadable means open. */
+function useFilesOpen(): readonly [boolean, () => void] {
+  const [open, setOpen] = useState(() => {
+    try {
+      return localStorage.getItem(PANEL_KEY) !== '0';
+    } catch {
+      return true;
+    }
+  });
+  const toggle = useCallback(() => {
+    setOpen((now) => {
+      try {
+        localStorage.setItem(PANEL_KEY, now ? '0' : '1');
+      } catch {
+        // the choice stays in memory
+      }
+      return !now;
+    });
+  }, []);
+  return [open, toggle];
+}
+
 function disabledReason(
   flags: { live: boolean; held: boolean; ended: boolean },
   actions: SessionActions | undefined,
@@ -71,7 +118,12 @@ export function SessionView(props: SessionViewProps) {
   const tree = buildTimeline(events);
   const turns = finalizedTurns(events);
   const filesOffered = actions?.files != null;
-  const tab: PaneTab = props.tab === 'files' && !filesOffered ? 'chat' : (props.tab ?? 'chat');
+  const wide = useWide();
+  const [filesOpen, toggleFiles] = useFilesOpen();
+  const sidePanel = layout === 'desktop' && wide && filesOffered;
+  const sideOpen = sidePanel && filesOpen;
+  const tabsOffered = filesOffered && !sideOpen;
+  const tab: PaneTab = props.tab === 'files' && !tabsOffered ? 'chat' : (props.tab ?? 'chat');
   const flow =
     actions && shells && terminals && watch
       ? handoverFlow({ key, title: s.title ?? s.session_id, watch, actions, shells, terminals })
@@ -92,7 +144,7 @@ export function SessionView(props: SessionViewProps) {
   const [confirmRelease, setConfirmRelease] = useState(false);
   const ids = useId();
   const tabs = useRef<Record<string, HTMLButtonElement | null>>({});
-  const order: PaneTab[] = filesOffered ? ['chat', 'changes', 'files'] : ['chat', 'changes'];
+  const order: PaneTab[] = tabsOffered ? ['chat', 'changes', 'files'] : ['chat', 'changes'];
   const labels: Record<PaneTab, ReactNode> = {
     chat: 'Chat',
     changes:
@@ -133,6 +185,7 @@ export function SessionView(props: SessionViewProps) {
         terminal={terminal}
         layout={layout}
         onNewShell={onNewShell}
+        {...(sidePanel ? { filesPanel: { open: filesOpen, toggle: toggleFiles } } : {})}
       />
       {hold ? (
         <div className="fd-pane-notice" role="note">
@@ -203,81 +256,98 @@ export function SessionView(props: SessionViewProps) {
           </button>
         ))}
       </div>
-      <div
-        className={tab === 'chat' ? 'fd-pane-chat' : 'fd-pane-body'}
-        role="tabpanel"
-        id={`${ids}-panel`}
-        aria-labelledby={`${ids}-tab-${tab}`}
-        data-tab={tab}
-      >
-        {tab === 'chat' ? (
-          <>
-            <ChatView
-              items={tree.items}
-              working={s.current_run !== null}
-              ready={timeline?.ready === true}
-              error={timeline?.error ?? null}
-              onOpenChanges={() => onTab('changes')}
-            />
-            <div className="fd-pane-foot">
-              <ApprovalDock
-                requests={s.open_requests}
-                answerable={caps?.approvals === true}
-                enabled={flags.approve && busy === null}
-                busy={busy !== null}
-                onAnswer={(request, option, reply) =>
-                  actions && controller.act('answer', () => actions.answer(request, option, reply))
-                }
-              />
-              <Composer
-                enabled={flags.drive && busy === null}
-                working={s.current_run !== null}
-                steer={caps?.steer === true}
-                nativeQueue={caps?.native_follow_up === true}
-                onSend={(kind, text, images) =>
-                  actions && controller.act('send', () => actions.send(kind, text, images))
-                }
-                disabledReason={disabledReason(flags, actions)}
-                slashCommands={slashCommands(events)}
-                draftKey={`${session.station_id}/${s.session_id}`}
-              />
-            </div>
-          </>
-        ) : null}
-        {tab === 'changes' ? (
-          s.revert || turns.length > 0 ? (
+      <div className="fd-pane-split">
+        <div
+          className={tab === 'chat' ? 'fd-pane-chat' : 'fd-pane-body'}
+          role="tabpanel"
+          id={`${ids}-panel`}
+          aria-labelledby={`${ids}-tab-${tab}`}
+          data-tab={tab}
+        >
+          {tab === 'chat' ? (
             <>
-              <RevertStatus
-                summary={s}
-                turns={turns}
-                actions={actions}
-                drive={flags.drive}
-                live={flags.live}
-                busy={busy !== null}
-                act={panelAct}
+              <ChatView
+                items={tree.items}
+                working={s.current_run !== null}
+                ready={timeline?.ready === true}
+                error={timeline?.error ?? null}
+                onOpenChanges={() => onTab('changes')}
               />
-              <TurnsPanel
-                summary={s}
-                turns={turns}
-                actions={actions}
-                drive={flags.drive}
-                live={flags.live}
-                busy={busy !== null}
-                act={panelAct}
-              />
+              <div className="fd-pane-foot">
+                <ApprovalDock
+                  requests={s.open_requests}
+                  answerable={caps?.approvals === true}
+                  enabled={flags.approve && busy === null}
+                  busy={busy !== null}
+                  onAnswer={(request, option, reply) =>
+                    actions &&
+                    controller.act('answer', () => actions.answer(request, option, reply))
+                  }
+                />
+                <Composer
+                  enabled={flags.drive && busy === null}
+                  working={s.current_run !== null}
+                  steer={caps?.steer === true}
+                  nativeQueue={caps?.native_follow_up === true}
+                  onSend={(kind, text, images) =>
+                    actions && controller.act('send', () => actions.send(kind, text, images))
+                  }
+                  disabledReason={disabledReason(flags, actions)}
+                  slashCommands={slashCommands(events)}
+                  draftKey={`${session.station_id}/${s.session_id}`}
+                />
+              </div>
             </>
-          ) : (
-            <p className="fd-note">No finished turns yet. Changes appear here when a turn ends.</p>
-          )
-        ) : null}
-        {tab === 'files' ? (
-          filesReady ? (
-            <FilesPanel files={actions?.files ?? null} />
-          ) : (
-            <p className="fd-note">
-              Files are available when the board is live and you have the drive scope.
-            </p>
-          )
+          ) : null}
+          {tab === 'changes' ? (
+            s.revert || turns.length > 0 ? (
+              <>
+                <RevertStatus
+                  summary={s}
+                  turns={turns}
+                  actions={actions}
+                  drive={flags.drive}
+                  live={flags.live}
+                  busy={busy !== null}
+                  act={panelAct}
+                />
+                <TurnsPanel
+                  summary={s}
+                  turns={turns}
+                  actions={actions}
+                  drive={flags.drive}
+                  live={flags.live}
+                  busy={busy !== null}
+                  act={panelAct}
+                />
+              </>
+            ) : (
+              <p className="fd-note">
+                No finished turns yet. Changes appear here when a turn ends.
+              </p>
+            )
+          ) : null}
+          {tab === 'files' ? (
+            filesReady ? (
+              <FilesPanel files={actions?.files ?? null} />
+            ) : (
+              <p className="fd-note">
+                Files are available when the board is live and you have the drive scope.
+              </p>
+            )
+          ) : null}
+        </div>
+
+        {sideOpen ? (
+          <aside className="fd-pane-side" aria-label="Files panel">
+            {filesReady ? (
+              <FilesPanel files={actions?.files ?? null} variant="side" />
+            ) : (
+              <p className="fd-note">
+                Files are available when the board is live and you have the drive scope.
+              </p>
+            )}
+          </aside>
         ) : null}
       </div>
     </section>

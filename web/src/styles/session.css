@@ -142,6 +142,11 @@
   color: var(--act);
   font-size: 12.5px;
 }
+.fd-sh-strip[data-tone="info"] {
+  background: var(--m-comet-bg);
+  border-bottom-color: var(--m-comet);
+  color: var(--m-comet);
+}
 .fd-pane-notice {
   display: flex;
   flex-wrap: wrap;
@@ -655,25 +660,83 @@ fieldset:disabled .fd-opt {
   padding: 0;
   list-style: none;
 }
-.fd-files li {
+.fd-files-row {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
+  width: 100%;
+  height: auto;
+  min-width: 0;
   padding: 3px 8px;
+  background: none;
+  border: 0;
   border-radius: 5px;
+  color: var(--text);
+  font-family: var(--font-data);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  text-align: left;
+}
+.fd-files-row:hover:not(:disabled) {
+  background: var(--raised);
+  border-color: transparent;
+}
+.fd-files-row > .fd-icon {
+  flex: none;
+  color: var(--faint);
+}
+.fd-files-row[data-disabled] {
+  color: var(--faint);
+}
+.fd-files-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fd-size {
+  margin-left: auto;
+  color: var(--faint);
+  font-family: var(--font-data);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.fd-files-crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
   font-family: var(--font-data);
   font-size: 12px;
 }
-.fd-files li:hover {
-  background: var(--raised);
+.fd-files-crumb-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
 }
-.fd-files li .fd-link {
-  color: var(--text);
-  text-align: left;
-  text-decoration: none;
-}
-.fd-files li code {
+.fd-files-crumb {
+  height: auto;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 0;
   color: var(--dim);
+  font: inherit;
+}
+.fd-files-crumb:hover:not(:disabled) {
+  border-color: transparent;
+  color: var(--text);
+}
+.fd-files-sep {
+  color: var(--faint);
+}
+.fd-files-file {
+  color: var(--text);
+  overflow-wrap: anywhere;
 }
 .fd-files .fd-path {
   margin: 0;
@@ -685,17 +748,49 @@ fieldset:disabled .fd-opt {
   margin-left: 8px;
   color: var(--m-comet);
 }
-.fd-size {
-  margin-left: auto;
-  color: var(--faint);
-  font-size: 11px;
+.fd-files-error {
+  margin: 0;
+  color: var(--hazard);
+  font-size: 12.5px;
 }
 .fd-files .fd-file-text {
+  width: 100%;
   max-height: 60vh;
 }
-.fd-files-bar label {
-  color: var(--dim);
-  font-size: 12px;
+.fd-files[data-variant="side"] .fd-file-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.fd-files-bar form {
+  flex-wrap: nowrap;
+}
+.fd-files-bar input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* the Files side panel (desktop, window ≥ 1280 px) */
+.fd-pane-split {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.fd-pane-split > [role="tabpanel"] {
+  flex: 1;
+  min-width: 0;
+}
+.fd-pane-side {
+  flex: none;
+  width: 360px;
+  min-height: 0;
+  padding: 12px;
+  overflow-y: auto;
+  background: var(--surface);
+  border-left: 1px solid var(--border-soft);
+}
+.fd-pane-side .fd-files {
+  margin-bottom: 0;
 }
 
 /* the session menu: mode ladder, model picker, auto-continue */
