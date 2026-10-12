@@ -142,7 +142,7 @@ Shim-hosted agents keep running through the whole sequence; the new station reat
 
 ## 10. Auto-continue
 
-Auto-continue is off for each session by default. Turn it on in the session view ("Continue after a station restart"). Only the owner on the board can turn it on; a coordinator or the local socket cannot. After a station restart, the station continues a lost session only when every rule of ADR-007 holds. Otherwise the session stays `lost`, and the timeline shows "Auto-continue skipped: <reason>".
+Auto-continue is off for each session by default. Turn it on in the session view ("Continue after a station restart"). Only the owner on the board can turn it on; a coordinator or the local socket cannot. After a station restart, the station continues a lost session only when every rule of ADR-007 holds. Otherwise the session stays `lost`, and the timeline shows "Auto-continue skipped: &lt;reason&gt;".
 
 Limits of this release (DL-127, follow-ups in `docs/v2/progress/m3-durable.md`):
 

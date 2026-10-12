@@ -28,6 +28,16 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 83 (2026-10-12, 16:47–)
+
+- Round start: committed round 82 as 9b62718.
+- Sync: merged m3/orchestration d3ac028/6232db8 as 5b7e1dd without conflicts (6-5 slice DL-217: owner coordinator start creates the grant with the control skill `crates/fleetdeck-deck/src/control_skill.md`, deck schema V11 `tokens.start_command_id`, station binding lifecycle in `crates/fleetdeck-station/src/manager/coordinator_start.rs` and `manager/target.rs`, spawn form toggle "Coordinator" in `web/src/spawn/SpawnForm.tsx`). crates/fleetdeck-proto did not change, so `make ts-types` was not needed. m3/board and m3/ops had no new commits.
+- Merge validation: `cargo nextest run -p fleetdeck-deck -p fleetdeck-station -E 'test(coordinator) | test(owner_start) | test(grant)'` → 58 passed.
+- Review finding of round 82: MD033 inline HTML on `<reason>` in `docs/v2/operations.md` §10. Fixed now (it breaks a lint check): the text is `&lt;reason&gt;`. `markdownlint-cli2 docs/v2/operations.md` reports no MD033 (only MD013 line-length notices, which the repository does not enforce).
+- 7-6 Docs: `docs/v2/internals.md` §8 coordinator row names the binding lifecycle (`bound_events`, `ended_events`) and `owner_start` with the control skill (DL-217).
+- Lane B `m3-orchestration.md` still has no "LANE COMPLETE"; 6-13, 7-7 and 7-8 stay blocked.
+- Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean; `bun run --cwd web lint` → clean (web changed in the merge).
+
 ## Round 82 (2026-10-12, 16:46–)
 
 - Round start: committed round 81 as 5c4bb26.
