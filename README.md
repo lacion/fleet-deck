@@ -48,7 +48,7 @@ One binary, `fleetdeck`, contains the deck and the station. The deck embeds the 
    ```
 
 4. Set the owner password of the board: `fleetdeck deck password`.
-5. Open the board. `fleetdeck open` prints a one-time login URL. The default address is `http://127.0.0.1:7420`.
+5. Open the board. `fleetdeck open` prints a one-time login URL. The default address is `https://127.0.0.1:7420`, with a self-signed certificate; `fleetdeck open` prints its fingerprint.
 
 The station runs sessions only inside `allowed_roots` of `station.toml`. With no file, the station uses the defaults. See the [operations guide](docs/v2/operations.md) for the configuration, more machines, services and upgrades.
 
@@ -73,6 +73,7 @@ A station behind NAT dials the deck. A deck can also dial a station that listens
 
 ## Documentation
 
+- [Try it on your machines](docs/v2/TESTING.md): build, one machine, two machines, what to test.
 - [Operations guide](docs/v2/operations.md): configuration, services, pairing, backups, drain and upgrade, troubleshooting.
 - [Migration and cutover guide](docs/v2/cutover.md): from Fleet Deck v1 (v0) to v2.
 - [Internals](docs/v2/internals.md): glossary, crate map, data flow, link protocol.
