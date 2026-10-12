@@ -11,13 +11,18 @@ pub mod forward;
 pub mod handoff;
 pub mod ingress;
 mod jsonrpc;
+pub mod outbox;
 pub mod tools;
 
 pub use bindings::{Binding, BindingState, Bindings, Caller, ToolClass, digest, mint};
-pub use forward::LinkForward;
+pub use forward::{LinkForward, Transport};
 pub use handoff::{Handoff, HandoffError};
 pub use ingress::{Forward, Ingress, Limits};
+pub use outbox::CallOutbox;
 
 #[cfg(test)]
 #[path = "ingress_tests.rs"]
 mod ingress_tests;
+#[cfg(test)]
+#[path = "outbox_tests.rs"]
+mod outbox_tests;

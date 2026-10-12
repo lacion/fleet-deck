@@ -4,8 +4,10 @@
 //! `coordinator.query` (a read, no receipt). The envelope targets the
 //! database incarnation that the deck's `hello` named.
 //!
-//! Without a connected deck the call fails at once with `deck_unreachable`;
-//! the durable station coordinator outbox of §6.5 is still open (DL-209).
+//! With a store ([`LinkForward::with_outbox`], DL-218) a call goes through
+//! the durable station coordinator outbox of §6.5 (`super::outbox`).
+//! Without one, and for every query, a missing deck fails at once with
+//! `deck_unreachable`.
 
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -25,17 +27,43 @@ use super::bindings::Caller;
 use super::ingress::Forward;
 use super::tools::to_op;
 
-/// How long a forwarded call may be retried (`retry_until`).
-pub const CALL_RETRY: Duration = Duration::from_secs(30);
+/// How long a forwarded call may be retried (`retry_until`, §6.5).
+pub const CALL_RETRY: Duration = Duration::from_secs(15 * 60);
 /// The deadline of a query; `wait_task` waits at most [`WAIT_LIMIT`].
 pub const QUERY_LIMIT: Duration = Duration::from_secs(25);
 pub const WAIT_LIMIT: Duration = Duration::from_secs(55);
 
+/// The request path of a deck link (a [`Control`]; tests use a fake).
+#[async_trait]
+pub trait Transport: Send + Sync {
+    /// Sends one request and waits for its outcome.
+    async fn request(
+        &self,
+        method: &str,
+        command_id: Option<&CommandId>,
+        params: Value,
+    ) -> Result<Outcome, String>;
+}
+
+#[async_trait]
+impl Transport for Control {
+    async fn request(
+        &self,
+        method: &str,
+        command_id: Option<&CommandId>,
+        params: Value,
+    ) -> Result<Outcome, String> {
+        Control::request(self, method, command_id, params)
+            .await
+            .map_err(|e| e.to_string())
+    }
+}
+
 /// The deck link that carries coordinator traffic, when one is connected.
 #[derive(Clone)]
-struct DeckLink {
-    control: Control,
-    incarnation: IncarnationId,
+pub(super) struct DeckLink {
+    pub(super) transport: Arc<dyn Transport>,
+    pub(super) incarnation: IncarnationId,
     serial: u64,
 }
 
@@ -46,8 +74,11 @@ pub type Clock = Arc<dyn Fn() -> i64 + Send + Sync>;
 #[derive(Clone)]
 pub struct LinkForward {
     current: Arc<Mutex<Option<DeckLink>>>,
+    /// The incarnation of the last deck link; an offline intake targets it.
+    pub(super) last_incarnation: Arc<Mutex<Option<IncarnationId>>>,
     serial: Arc<std::sync::atomic::AtomicU64>,
-    clock: Clock,
+    pub(super) clock: Clock,
+    pub(super) outbox: Option<super::outbox::CallOutbox>,
 }
 
 impl Default for LinkForward {
@@ -119,20 +150,35 @@ impl LinkForward {
     pub fn with_clock(clock: Clock) -> Self {
         Self {
             current: Arc::default(),
+            last_incarnation: Arc::default(),
             serial: Arc::default(),
             clock,
+            outbox: None,
         }
     }
 
     /// A deck link came up: coordinator traffic goes to it. Returns the
     /// serial that [`Self::disconnect`] takes.
     pub fn connect(&self, control: Control, incarnation: IncarnationId) -> u64 {
+        self.connect_transport(Arc::new(control), incarnation)
+    }
+
+    /// [`Self::connect`] over any [`Transport`].
+    pub fn connect_transport(
+        &self,
+        transport: Arc<dyn Transport>,
+        incarnation: IncarnationId,
+    ) -> u64 {
+        *self
+            .last_incarnation
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(incarnation.clone());
         let serial = self
             .serial
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
             + 1;
         *self.current.lock().unwrap_or_else(PoisonError::into_inner) = Some(DeckLink {
-            control,
+            transport,
             incarnation,
             serial,
         });
@@ -147,7 +193,7 @@ impl LinkForward {
         }
     }
 
-    fn link(&self) -> Option<DeckLink> {
+    pub(super) fn link(&self) -> Option<DeckLink> {
         self.current
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -202,13 +248,18 @@ impl LinkForward {
 #[async_trait]
 impl Forward for LinkForward {
     async fn call(&self, caller: Caller, tool: &str, args: Value) -> Result<Value, String> {
+        if let Some(outbox) = &self.outbox
+            && to_op(tool, &without_key(&args))?.is_some()
+        {
+            return self.durable_call(outbox, caller, tool, args).await;
+        }
         let Some(link) = self.link() else {
             return Err("deck_unreachable: no deck is connected".to_owned());
         };
         let (method, command_id, params) =
             Self::envelope(&caller, tool, &args, &link.incarnation, (self.clock)())?;
         match link
-            .control
+            .transport
             .request(method, command_id.as_ref(), params)
             .await
         {
@@ -217,6 +268,15 @@ impl Forward for LinkForward {
             Err(e) => Err(format!("deck_unreachable: {e}")),
         }
     }
+}
+
+/// The arguments without the outbox parameter `idempotency_key`.
+pub(super) fn without_key(args: &Value) -> Value {
+    let mut args = args.clone();
+    if let Some(obj) = args.as_object_mut() {
+        obj.remove("idempotency_key");
+    }
+    args
 }
 
 #[cfg(test)]
@@ -248,7 +308,7 @@ mod tests {
         assert_eq!(Some(env.command_id.clone()), id);
         assert!(env.command_id.as_str().starts_with("coord-"));
         assert_eq!(env.target_incarnation, inc);
-        assert_eq!(env.retry_until, 31_000);
+        assert_eq!(env.retry_until, 901_000);
         assert_eq!(env.call.caller.as_str(), "coord-1");
         assert_eq!(env.call.binding.generation, 2);
         assert_eq!(env.call.binding.native_id, "native-1");
