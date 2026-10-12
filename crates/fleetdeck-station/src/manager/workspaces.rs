@@ -8,6 +8,7 @@ use std::path::Path;
 use fleetdeck_proto::link::{WorkspaceEntry, WorkspaceListing, WorkspaceQuery};
 
 use super::policy::{Policy, WorkspaceError};
+use crate::workspace::provision;
 
 /// The most entries in one answer.
 pub const MAX_ENTRIES: usize = 500;
@@ -24,7 +25,7 @@ pub fn list(policy: &Policy, query: &WorkspaceQuery) -> Result<WorkspaceListing,
             .allowed_roots()
             .iter()
             .filter(|r| r.is_dir())
-            .filter_map(|r| entry(r.to_str()?.to_owned(), r))
+            .filter_map(|r| entry(policy, r.to_str()?.to_owned(), r))
             .collect();
         entries.sort_by(|a, b| a.path.cmp(&b.path));
         return Ok(WorkspaceListing {
@@ -60,7 +61,7 @@ pub fn list(policy: &Policy, query: &WorkspaceQuery) -> Result<WorkspaceListing,
         };
         if resolved.is_dir()
             && inside(&resolved)
-            && let Some(e) = entry(name, &resolved)
+            && let Some(e) = entry(policy, name, &resolved)
         {
             entries.push(e);
         }
@@ -78,11 +79,26 @@ pub fn list(policy: &Policy, query: &WorkspaceQuery) -> Result<WorkspaceListing,
     })
 }
 
-fn entry(name: String, resolved: &Path) -> Option<WorkspaceEntry> {
+fn entry(policy: &Policy, name: String, resolved: &Path) -> Option<WorkspaceEntry> {
+    let repository = resolved.join(".git").exists();
+    // Repo catalog (M3 6-1, DL-201): facts of a main checkout, from files.
+    let facts = if resolved.join(".git").is_dir() {
+        provision::repo_facts(resolved)
+    } else {
+        provision::RepoFacts::default()
+    };
+    let group = policy.repo_group(resolved).map(str::to_owned).or_else(|| {
+        (facts.remotes == 1)
+            .then(|| facts.origin.as_deref().map(provision::normalize_origin))
+            .flatten()
+    });
     Some(WorkspaceEntry {
         name,
         path: resolved.to_str()?.to_owned(),
-        repository: resolved.join(".git").exists(),
+        repository,
+        origin: facts.origin,
+        default_branch: facts.default_branch,
+        group,
     })
 }
 

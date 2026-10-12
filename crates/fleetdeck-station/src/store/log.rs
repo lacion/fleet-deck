@@ -344,3 +344,13 @@ pub(super) fn prune(conn: &mut Connection, now: i64, config: StoreConfig) -> Res
     tx.commit()?;
     Ok(report)
 }
+
+/// Whether a session of this station has `callsign` already.
+pub(super) fn callsign_taken(conn: &Connection, callsign: &str) -> Result<bool> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sessions WHERE json_extract(summary, '$.callsign') = ?1",
+        [callsign],
+        |r| r.get(0),
+    )?;
+    Ok(n > 0)
+}

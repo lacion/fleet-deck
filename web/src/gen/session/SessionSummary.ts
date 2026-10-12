@@ -26,6 +26,15 @@ export type SessionSummary = { session_id: SessionId, provider: ProviderKind | n
  */
 branch: string | null, 
 /**
+ * The station's callsign (M3 6-1, DL-200): unique on its station; the
+ * mail and task address of the session. Absent before M3.
+ */
+callsign: string | null, 
+/**
+ * The worktree that the station created for the session (M3 6-1).
+ */
+worktree: string | null, 
+/**
  * The repository of `cwd` (M3 6-7, DL-306). Absent before M3.
  */
 repo: RepoInfo | null, title: string | null, state: SessionState, activity: Activity, mode: string | null, model: string | null, capabilities: Capabilities | null, current_run: RunId | null, current_turn: TurnId | null, open_requests: Array<OpenRequest>, 

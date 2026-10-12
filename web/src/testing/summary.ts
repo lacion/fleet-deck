@@ -15,6 +15,8 @@ export function summary(
     provider_version: null,
     cwd: null,
     branch: null,
+    callsign: null,
+    worktree: null,
     title: null,
     state: 'running',
     activity,

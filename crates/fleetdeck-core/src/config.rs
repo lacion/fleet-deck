@@ -191,6 +191,10 @@ pub struct StationConfig {
     pub host: HostChoice,
     /// `shim_buffer_mib`: the shim output buffer, 1–256 MiB.
     pub shim_buffer_mib: u32,
+    /// Explicit repo groups for the conflict radar (PLAN §6.6, M3 6-1,
+    /// DL-201): repository path → group name, the owner's choice for repos
+    /// with several or no remotes.
+    pub repo_groups: BTreeMap<PathBuf, String>,
 }
 
 #[derive(Deserialize)]
@@ -207,6 +211,7 @@ struct RawStation {
     provider_instance: Option<Vec<RawInstance>>,
     host: Option<String>,
     shim_buffer_mib: Option<u32>,
+    repo_groups: Option<BTreeMap<String, String>>,
 }
 
 #[derive(Deserialize)]
@@ -282,6 +287,23 @@ impl StationConfig {
                 ProviderInstance::default_for(Driver::Codex),
             ],
         };
+        let mut repo_groups = BTreeMap::new();
+        for (path, group) in raw.repo_groups.unwrap_or_default() {
+            let field = format!("repo_groups.{path}");
+            let group = group.trim().to_owned();
+            if group.is_empty()
+                || group.chars().count() > 200
+                || group.chars().any(char::is_control)
+            {
+                return Err(invalid(
+                    &field,
+                    "give a group name of 1 to 200 printable characters",
+                ));
+            }
+            let path =
+                expand_path(&path, home).map_err(|source| ConfigError::Path { field, source })?;
+            repo_groups.insert(path, group);
+        }
         Ok(Self {
             name,
             allowed_roots,
@@ -294,6 +316,7 @@ impl StationConfig {
             provider_instances,
             host,
             shim_buffer_mib,
+            repo_groups,
         })
     }
 

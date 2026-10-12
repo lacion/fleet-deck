@@ -3,9 +3,16 @@
 // The directory picker reads `GET /api/stations/<id>/workspaces?path=` (the
 // station lists its allowed roots through the link; drive scope). A start is
 // one `session.start` command with a fresh command id; the board never
-// resends it (A9). Station "auto", worktrees, batch and Nx are Phase 6
-// (DL-061).
-import type { SessionSpec, StationProvider, StationView, WorkspaceListing } from '../gen';
+// resends it (A9). M3 6-1 (DL-200, DL-202): a start can ask for a new
+// worktree or a clone, and a batch starts one session for each line
+// (`3x task` starts three), each in its own worktree.
+import type {
+  SessionSpec,
+  StationProvider,
+  StationView,
+  WorkspaceListing,
+  WorkspaceRequest,
+} from '../gen';
 import { commandId, type Outcome, outcomeOf } from '../session/commands';
 
 type Get = (path: string) => Promise<unknown>;
@@ -21,6 +28,7 @@ export type SpawnActions = {
     stationId: string,
     spec: SessionSpec,
     prompt: string,
+    workspace?: WorkspaceRequest | null,
     importId?: string,
   ): Promise<SpawnOutcome>;
 };
@@ -40,6 +48,30 @@ export function importIdProblem(id: string): string | null {
     return 'The session id may hold only letters, digits, "-", "_" and ".", and starts with a letter or a digit.';
   }
   return null;
+}
+
+/** The most sessions that one batch line can ask for (`10x`). */
+export const MAX_BATCH = 10;
+
+/**
+ * The prompts of a batch (v0 batch spawn, PLAN §16): one session for each
+ * non-empty line; `Nx task` (N from 1 to 10) repeats the task N times.
+ */
+export function batchPrompts(text: string): string[] {
+  const prompts: string[] = [];
+  for (const raw of text.split('\n')) {
+    const line = raw.trim();
+    if (line === '') continue;
+    const m = /^(\d{1,2})\s*[xX×]\s+(.+)$/.exec(line);
+    const n = m === null ? 1 : Number(m[1]);
+    const task = m === null ? line : (m[2] ?? '').trim();
+    if (n < 1 || n > MAX_BATCH || task === '') {
+      prompts.push(line);
+      continue;
+    }
+    for (let i = 0; i < n; i += 1) prompts.push(task);
+  }
+  return prompts;
 }
 
 /**
@@ -100,12 +132,12 @@ export function spawnActions(
         await get(`/api/stations/${encodeURIComponent(stationId)}/workspaces${query}`),
       );
     },
-    start: async (stationId, spec, prompt, importId) => {
+    start: async (stationId, spec, prompt, workspace = null, importId) => {
       const first = prompt.trim() === '' ? null : { text: prompt };
       const native = importId?.trim() ?? '';
       const command =
         native === ''
-          ? { op: 'start', spec, prompt: first }
+          ? { op: 'start', spec, prompt: first, ...(workspace === null ? {} : { workspace }) }
           : { op: 'import', spec, native_session_id: native, prompt: first };
       const body = { station: stationId, command_id: newId(), command };
       try {

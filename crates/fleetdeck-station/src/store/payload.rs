@@ -15,6 +15,21 @@ pub struct InputRecord {
     pub input: UserInput,
 }
 
+/// The Git work of a start effect (M3 6-1, DL-200): decided and checked
+/// in the command transaction, done by the effect worker.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum WorkspacePlan {
+    /// `git worktree add -b <branch> <path>` in `repo`.
+    Worktree {
+        repo: String,
+        path: String,
+        branch: String,
+    },
+    /// `git clone <url> <path>`.
+    Clone { url: String, path: String },
+}
+
 /// What an effect does.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -22,6 +37,9 @@ pub enum EffectPayload {
     Start {
         spec: SessionSpec,
         prompt: Option<InputRecord>,
+        /// Git work before the provider starts (M3 6-1, DL-200).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        workspace: Option<WorkspacePlan>,
     },
     /// A native resume of an ended session (DL-118): a new provider
     /// process continues `native_session_id` with `spec` (the stored

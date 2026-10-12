@@ -186,6 +186,10 @@ fn samples() -> Vec<Event> {
         Event::SessionRenamed {
             title: Some("docs".into()),
         },
+        Event::SessionNamed {
+            callsign: "otter-ab12".into(),
+            worktree: Some("/r/app--fd-otter-ab12".into()),
+        },
         Event::OutputGap {
             from: 10,
             to: 65_546,

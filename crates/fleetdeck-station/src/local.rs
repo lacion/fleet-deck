@@ -64,6 +64,9 @@ pub enum LocalRequest {
     Join { invitation: InvitationText },
     /// `station forget-deck`: revoke every deck key.
     ForgetDeck,
+    /// `station drain`: refuse new work and wait until no session has open
+    /// work, at most `timeout_ms` (M3 7-3, DL-128).
+    Drain { timeout_ms: u64 },
 }
 
 pub use fleetdeck_core::localsock::InvitationText;
@@ -90,6 +93,10 @@ pub enum LocalResponse {
     /// [`LocalRequest::ForgetDeck`] revoked this many deck keys.
     Forgotten {
         count: usize,
+    },
+    /// The result of [`LocalRequest::Drain`].
+    Drained {
+        report: crate::manager::drain::DrainReport,
     },
     /// The station could not decide the request (bad line, database error).
     Error {
@@ -215,6 +222,15 @@ async fn handle(
     let (command_id, command) = match request {
         LocalRequest::Invite { .. } | LocalRequest::Join { .. } | LocalRequest::ForgetDeck => {
             return pairing(node, request).await;
+        }
+        LocalRequest::Drain { timeout_ms } => {
+            return match manager
+                .drain(std::time::Duration::from_millis(timeout_ms))
+                .await
+            {
+                Ok(report) => LocalResponse::Drained { report },
+                Err(e) => error(e.to_string()),
+            };
         }
         LocalRequest::Sessions => {
             return match manager.store().snapshot().await {

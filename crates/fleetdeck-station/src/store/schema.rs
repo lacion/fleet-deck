@@ -374,6 +374,13 @@ WHERE input_blocked = 'adapter_state_gap' OR EXISTS (
 );
 ";
 
+const V15: &str = "
+-- M3 7-3 (DL-128): the shim protocol version that each shim row speaks, so
+-- that an upgrade trial reads it without an attach (ADR-005 §3.3, §5.3).
+-- Every row before this version speaks protocol 1.
+ALTER TABLE shims ADD COLUMN protocol INTEGER NOT NULL DEFAULT 1;
+";
+
 /// The `station.db` migrations. V4 is the link epochs table of
 /// `fleetdeck-link` (G1).
 #[must_use]
@@ -393,5 +400,6 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V12),
         M::up(V13),
         M::up(V14),
+        M::up(V15),
     ])
 }

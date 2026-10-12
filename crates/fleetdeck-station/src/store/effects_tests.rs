@@ -216,6 +216,7 @@ async fn an_effect_needs_a_live_process_and_a_failed_enqueue_stores_nothing() {
             title: None,
         },
         prompt: None,
+        workspace: None,
     };
     let e = queue(&s, &det, "c2", start).await;
     assert_eq!(e.process_incarnation, None);

@@ -1,7 +1,7 @@
 # Fleet Deck v2 checks. `make check` is the one acceptance command (goal-mode
 # reviewers may run `make check` and `cargo test`, but not other cargo tools).
 # It is offline: see tools/check.sh for the one-time cache fill.
-.PHONY: check check-spikes test test-web ts-types smoke-live
+.PHONY: check check-spikes test test-web ts-types smoke-live package-check perf
 # Every check of the M2 goal: fmt, clippy, nextest, deny, TS-types drift,
 # web typecheck + lint + test + build, and every recorded replay (G13).
 check:
@@ -26,3 +26,14 @@ ts-types:
 # needs signed-in CLIs and network. See docs/v2/LIVE-SMOKE.md.
 smoke-live:
 	FD_LIVE_SMOKE=1 timeout 900 cargo test -p fleetdeck-providers --test live_smoke -- --ignored --nocapture --test-threads 1
+# Packaging (M3 7-5, DL-400): static checks of dist-workspace.toml, the
+# systemd and launchd units and the container file, plus the offline smoke
+# test of the built binary. Also part of `make check` (workspace tests).
+package-check:
+	cargo test -p fleetdeck-cli --test packaging
+# Performance bars of PLAN §13 (M3 7-4, DL-401): one deck and ten stations
+# on loopback with the offline fake agent, release profile. Writes
+# target/perf/report.md and fails when a bar fails. Not part of `make check`.
+perf:
+	cargo build --release --offline -p fleetdeck-testkit --bins
+	timeout 900 cargo test --release --offline -p fleetdeck-cli --test perf -- --ignored --nocapture --test-threads 1

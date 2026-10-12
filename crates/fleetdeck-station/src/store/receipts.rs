@@ -180,6 +180,14 @@ impl Decision<'_> {
         log::insert_session(self.conn, session, self.now)
     }
 
+    /// Whether a session of this station has `callsign` already.
+    ///
+    /// # Errors
+    /// A database error.
+    pub fn callsign_taken(&self, callsign: &str) -> Result<bool> {
+        log::callsign_taken(self.conn, callsign)
+    }
+
     /// Appends one event in the decision's transaction.
     ///
     /// # Errors
@@ -458,5 +466,6 @@ fn target_of(mutation: &Mutation) -> Option<&IncarnationId> {
         Mutation::Configure(e) => Some(&e.target_incarnation),
         Mutation::RotateKey(e) => Some(&e.target_incarnation),
         Mutation::Coordinator(e) => Some(&e.target_incarnation),
+        Mutation::Shell(e) => Some(&e.target_incarnation),
     }
 }

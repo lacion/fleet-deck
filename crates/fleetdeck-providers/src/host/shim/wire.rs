@@ -27,11 +27,15 @@ pub const MAX_HEADER: usize = 64 * 1024;
 /// The highest version that both sides speak.
 #[must_use]
 pub fn pick_protocol(offered: &[u32]) -> Option<u32> {
-    PROTOCOLS
-        .iter()
-        .copied()
-        .filter(|v| offered.contains(v))
-        .max()
+    pick_common(PROTOCOLS, offered)
+}
+
+/// The highest protocol in both `ours` and `offered`: a station and a shim
+/// of builds N and N−1 agree on the highest version they share (ADR-005
+/// §5.3, DL-128).
+#[must_use]
+pub fn pick_common(ours: &[u32], offered: &[u32]) -> Option<u32> {
+    ours.iter().copied().filter(|v| offered.contains(v)).max()
 }
 
 /// The identity of a provider process (ADR-005 §3.1). A PID alone is never

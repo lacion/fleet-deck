@@ -36,6 +36,9 @@ pub mod feature {
     /// `files.list`, `files.read`, `files.search` and `files.diff`: the
     /// read-only file service (PLAN §6.6, M3 DL-088).
     pub const FILES: &str = "files.v1";
+    /// `shell.open`, `shell.resize`, `shell.close`, `shell.list` and
+    /// `shell.attach`: the human shell (PLAN §6.8, M3 DL-404).
+    pub const SHELL: &str = "shell.v1";
 
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
@@ -46,6 +49,7 @@ pub mod feature {
         REVERT,
         RENAME,
         FILES,
+        SHELL,
         AUTO_CONTINUE,
         IMPORT,
     ];

@@ -42,12 +42,15 @@ export function FleetBoard({ sessions, stations, freshness, onOpen }: Props) {
                       data-session={s.session_id}
                       data-station={card.station_id}
                     >
-                      <span className="fd-title">{s.title ?? s.session_id}</span>
+                      <span className="fd-title">{s.title ?? s.callsign ?? s.session_id}</span>
+                      {s.callsign != null && s.title != null ? (
+                        <span className="fd-callsign">{s.callsign}</span>
+                      ) : null}
                       {onOpen ? (
                         <button
                           type="button"
                           className="fd-open"
-                          aria-label={`Open session ${s.title ?? s.session_id}`}
+                          aria-label={`Open session ${s.title ?? s.callsign ?? s.session_id}`}
                           onClick={() =>
                             onOpen({ station_id: card.station_id, session_id: s.session_id })
                           }

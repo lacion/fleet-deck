@@ -461,6 +461,14 @@ pub enum Event {
     /// the source of the title; the title is already normalized.
     #[serde(rename = "session.renamed")]
     SessionRenamed { title: Option<String> },
+    /// The station named a new session (M3 6-1, DL-200): its callsign,
+    /// unique on the station, and the worktree that its start creates.
+    /// Older peers decode this kind as unknown.
+    #[serde(rename = "session.named")]
+    SessionNamed {
+        callsign: String,
+        worktree: Option<String>,
+    },
     /// The owner turned auto-continue on or off (ADR-007 §2.1).
     #[serde(rename = "session.auto_continue_changed")]
     AutoContinueChanged { enabled: bool },
@@ -523,7 +531,7 @@ pub enum Event {
 
 impl Event {
     /// Every known kind name, in declaration order.
-    pub const KINDS: [&'static str; 31] = [
+    pub const KINDS: [&'static str; 32] = [
         "session.started",
         "session.state",
         "run.started",
@@ -552,6 +560,7 @@ impl Event {
         "session.ended",
         "revert.updated",
         "session.renamed",
+        "session.named",
         "session.output_gap",
         "session.auto_continue_changed",
         "session.auto_continue_skipped",
@@ -589,6 +598,7 @@ impl Event {
             Self::SessionEnded { .. } => "session.ended",
             Self::RevertUpdated { .. } => "revert.updated",
             Self::SessionRenamed { .. } => "session.renamed",
+            Self::SessionNamed { .. } => "session.named",
             Self::AutoContinueChanged { .. } => "session.auto_continue_changed",
             Self::AutoContinueSkipped { .. } => "session.auto_continue_skipped",
             Self::OutputGap { .. } => "session.output_gap",

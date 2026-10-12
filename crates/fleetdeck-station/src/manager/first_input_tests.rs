@@ -224,6 +224,7 @@ impl Rig {
             .accepted(SessionCommand::Start {
                 spec,
                 prompt: Some(UserInput::new("hello".to_owned())),
+                workspace: None,
             })
             .await;
         let result = d.receipt.result.unwrap();

@@ -197,6 +197,7 @@ impl Rig {
                     title: None,
                 },
                 prompt: Some(text(prompt)),
+                workspace: None,
             })
             .await;
         d.receipt.result.unwrap().session_id.unwrap()

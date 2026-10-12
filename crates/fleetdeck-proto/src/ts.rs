@@ -29,6 +29,9 @@ use crate::link::{
     WorkspaceListing, WorkspaceQuery,
 };
 use crate::mutation::{CoordinatorCallEnvelope, KeyRotationEnvelope, StationConfigureEnvelope};
+use crate::orchestration::{
+    AssignOutcome, AssignRequest, MailRequest, MailView, TaskCompletion, TaskRequest, TaskView,
+};
 use crate::plans::{DeckPlan, PlanMarkRequest, PlanStatus};
 use crate::session::{CardStatus, SessionSummary};
 use crate::version::{Negotiated, VersionOffer};
@@ -53,6 +56,9 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         StationConfigureEnvelope::export_all(&cfg),
         KeyRotationEnvelope::export_all(&cfg),
         CoordinatorCallEnvelope::export_all(&cfg),
+        crate::shell::ShellEnvelope::export_all(&cfg),
+        crate::shell::ShellInfo::export_all(&cfg),
+        crate::shell::ShellAttach::export_all(&cfg),
         Receipt::export_all(&cfg),
         DeckCommandState::export_all(&cfg),
         CommandRequest::export_all(&cfg),
@@ -86,6 +92,13 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         CardStatus::export_all(&cfg),
         VersionOffer::export_all(&cfg),
         Negotiated::export_all(&cfg),
+        AssignRequest::export_all(&cfg),
+        AssignOutcome::export_all(&cfg),
+        MailRequest::export_all(&cfg),
+        MailView::export_all(&cfg),
+        TaskRequest::export_all(&cfg),
+        TaskCompletion::export_all(&cfg),
+        TaskView::export_all(&cfg),
         DeckPlan::export_all(&cfg),
         FileConflict::export_all(&cfg),
         PlanStatus::export_all(&cfg),

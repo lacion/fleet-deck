@@ -35,6 +35,7 @@ use tokio::task::JoinHandle;
 
 use super::{StationLink, StationPeers, serve};
 use crate::manager::SessionManager;
+use crate::shell::{ShellConfig, Shells};
 use crate::store::StoreError;
 
 /// How long an invitation of `station invite` is valid (PLAN §8.5).
@@ -94,6 +95,22 @@ impl StationNode {
         listen: &[SocketAddr],
         backoff: BackoffPolicy,
     ) -> Result<Arc<Self>, NodeError> {
+        let shells = Arc::new(Shells::new(ShellConfig::default()));
+        Self::start_with_shells(manager, identity, name, listen, backoff, shells).await
+    }
+
+    /// [`StationNode::start`] with the shell service of `station.toml`.
+    ///
+    /// # Errors
+    /// As [`StationNode::start`].
+    pub async fn start_with_shells(
+        manager: Arc<SessionManager>,
+        identity: Arc<Identity>,
+        name: String,
+        listen: &[SocketAddr],
+        backoff: BackoffPolicy,
+        shells: Arc<Shells>,
+    ) -> Result<Arc<Self>, NodeError> {
         let store = manager.store().clone();
         let peers = StationPeers::load(store.clone()).await?;
         let invitations = Invitations::new();
@@ -111,6 +128,7 @@ impl StationNode {
                 node,
                 peers,
                 name,
+                shells,
             }),
             invitations,
             listening: tokio::sync::Mutex::default(),

@@ -6,7 +6,8 @@
 //! and the condensed timeline. V2: link epochs (G1). V3 (P3-7): the
 //! command router's `commands` table (G3). V4 (P3-7b): the outbox of
 //! deck-owned intent (A5) and the receipts of `coordinator.call` (G7). Auth
-//! and audit tables follow in P3-8.
+//! and audit tables follow in P3-8 (V5). V6 (M3 6-6): the plan
+//! library. V7 (M3 6-2, 6-4): mail and tasks. V8 (M3 6-7): file touches.
 
 use rusqlite_migration::{M, Migrations};
 
@@ -182,9 +183,41 @@ CREATE TABLE plans (
 CREATE INDEX plans_by_time ON plans (proposed_at DESC);
 ";
 
+/// Fleet mail (M3 6-2) and tasks with waitable completions (6-4). Each row
+/// names the outbox item that delivers its text; the item is inserted in
+/// the same transaction (A5).
+const V7: &str = "
+CREATE TABLE mail (
+    mail_id    TEXT PRIMARY KEY,
+    sender     TEXT NOT NULL,
+    station_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    delivery   TEXT NOT NULL CHECK (delivery IN ('follow_up', 'steer')),
+    text       TEXT NOT NULL,
+    outbox_id  TEXT NOT NULL REFERENCES outbox (outbox_id),
+    created_at INTEGER NOT NULL
+) STRICT;
+CREATE INDEX mail_by_session ON mail (station_id, session_id, created_at);
+CREATE TABLE tasks (
+    task_id      TEXT PRIMARY KEY,
+    title        TEXT NOT NULL,
+    creator      TEXT NOT NULL,
+    station_id   TEXT NOT NULL,
+    session_id   TEXT NOT NULL,
+    state        TEXT NOT NULL CHECK (state IN ('open', 'done', 'failed')),
+    result       TEXT,
+    outbox_id    TEXT NOT NULL REFERENCES outbox (outbox_id),
+    created_at   INTEGER NOT NULL,
+    updated_at   INTEGER NOT NULL,
+    completed_at INTEGER
+) STRICT;
+CREATE INDEX tasks_by_session ON tasks (station_id, session_id, created_at);
+";
+
 /// The conflict radar input (M3 6-7, DL-306; PLAN §10 `file_touches`): the
 /// latest touch of a file by a session, keyed by the repository group.
-const V7: &str = "
+/// Renumbered from V7 to V8 at the lane A merge (mail and tasks came first).
+const V8: &str = "
 CREATE TABLE file_touches (
     group_key      TEXT    NOT NULL,
     file           TEXT    NOT NULL,
@@ -210,6 +243,7 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V5),
         M::up(V6),
         M::up(V7),
+        M::up(V8),
     ])
 }
 

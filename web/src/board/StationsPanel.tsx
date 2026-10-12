@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { DeckSession, StationView } from '../gen';
 import type { Freshness } from '../runtime/state';
 import { lastSeen, observedProviders } from './fleet';
+import { ShellPanel } from '../shell/ShellPanel';
 import { PairingDialog } from './PairingDialog';
 import { authLabel, type StationActions } from './pairing';
 
@@ -122,6 +123,13 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
                   ))}
                 </ul>
               )}
+              {actions?.canAdmin === true && actions.shells !== undefined ? (
+                <ShellPanel
+                  station={station.name}
+                  actions={actions.shells}
+                  disabled={!canPair || !station.reachable}
+                />
+              ) : null}
               {actions?.canAdmin === true ? (
                 confirm === station.name ? (
                   <p>

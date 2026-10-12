@@ -260,3 +260,29 @@ fn the_host_setting_and_the_shim_buffer() {
     assert!(err("shim_buffer_mib = 0").contains("1 to 256"));
     assert!(err("shim_buffer_mib = 257").contains("1 to 256"));
 }
+
+#[test]
+fn explicit_repo_groups_are_paths_with_names() {
+    let c = StationConfig::parse(
+        "[repo_groups]\n\"~/projects/app\" = \"fleet\"\n\"/w/lib\" = \" core \"",
+        &env(),
+    )
+    .unwrap();
+    assert_eq!(
+        c.repo_groups
+            .get(Path::new("/home/ana/projects/app"))
+            .map(String::as_str),
+        Some("fleet")
+    );
+    assert_eq!(
+        c.repo_groups.get(Path::new("/w/lib")).map(String::as_str),
+        Some("core")
+    );
+    assert!(err("[repo_groups]\n\"/w/a\" = \"  \"").contains("group name"));
+    assert!(
+        StationConfig::parse("", &env())
+            .unwrap()
+            .repo_groups
+            .is_empty()
+    );
+}
