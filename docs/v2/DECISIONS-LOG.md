@@ -1370,5 +1370,6 @@ Format: context, options, choice, reason, owner review.
 - Reason: (a) cannot hit the narrow window between the rollback answer and the restore reliably; (c) is not a crash. The fault hook already serves the M2 crash tests and is compiled only with the `fault-injection` feature.
 - Results: after `rolled_back` and `restoring` the restarted station restores the files and the revert succeeds without a second `thread/rollback`; after `rollback_sent` the revert needs reconciliation and the rollback is never sent. The shim session is reattached in each case (one `initialize`).
 - Withdrawn: an observer catch-up wait before shim-host inputs; its regression passed without it, so it was not kept.
+- Round 38 correction (review of round 37): the post-restart check of the two success tests waited only for an idle summary, which an undispatched prompt also gives. It now waits for the `turn/start` frame with the input's id in the provider's stdin log, checks that exactly one new `turn/start` went out, and waits for the stored `turn.completed` (`done`) of the turn that the provider opened for that input, with its answer in `message.completed`. With the prompt reported `Sent` but never written, both tests fail.
 - Owner review: not required (tests and a test-only fault point inside accepted contracts).
 

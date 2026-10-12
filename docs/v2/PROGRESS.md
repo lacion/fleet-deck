@@ -1243,3 +1243,11 @@ Each goal acceptance item maps to named, automated tests. Every test below runs 
 - Tried and withdrawn: an observer catch-up wait before shim-host inputs. A regression for it passed with and without the change, so the change was not kept (an input that races the observer gets an explicit `unavailable` start checkpoint, never a wrong one).
 
 - Evidence: `cargo fmt --all && make check` passed all 14 commands (nextest 1093 passed / 3 skipped, bun test 104 pass); `cargo clippy --workspace --all-targets -- -D warnings` clean; `station_shim_revert_crash` 3/3 in 3 runs; no shim process left after the run.
+
+### M3 round 38
+
+- Committed round-37 work as `2e8f720`.
+- Review fix (DL-117 round-38 correction): `assert_completed` in `crates/fleetdeck-cli/tests/station_shim_revert_crash.rs` no longer accepts an idle summary as proof that the post-restart prompt ran. It waits for the provider's `turn/start` frame that carries the input id, checks one new `turn/start` and one frame with the prompt text, and waits for the stored `input.updated` turn of that input to have `turn.completed { status: done }` and a `message.completed` with the answer; then one `initialize` and a station stop.
+- Trial run: with the station reporting the post-restart prompt `Sent` without writing it, both success tests fail ("the prompt never reached the provider"); restored.
+
+- Evidence: `cargo fmt --all && make check` passed all 14 commands (nextest 1093 passed / 3 skipped, bun test 104 pass); `station_shim_revert_crash` 3/3 in 3 runs; no shim process left after the run.

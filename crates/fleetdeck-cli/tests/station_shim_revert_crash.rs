@@ -26,11 +26,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use common::{Station, WAIT};
+use common::{Station, WAIT, open_store, stored_events};
 use fleetdeck_proto::command::{ReceiptState, SessionCommand, SessionSpec, UserInput};
-use fleetdeck_proto::event::{RevertState, SessionState};
+use fleetdeck_proto::event::{Event, RevertState, SessionState, TurnStatus};
 use fleetdeck_proto::session::{Activity, SessionSummary};
-use fleetdeck_proto::{Receipt, SessionId, TurnId};
+use fleetdeck_proto::{InputId, Receipt, SessionId, TurnId};
 use fleetdeck_station::local::{LocalClient, LocalRequest, LocalResponse, socket_path};
 use fleetdeck_testkit::FakeAgent;
 use fleetdeck_testkit::sim_claude::StdinLog;
@@ -232,9 +232,20 @@ fn revert_state(s: &SessionSummary) -> Option<RevertState> {
     s.revert.as_ref().map(|r| r.state)
 }
 
+/// The stdin frames of `method` whose line contains `needle`.
+fn frames_with(rig: &Rig, method: &str, needle: &str) -> usize {
+    StdinLog::read(&rig.log)
+        .lines
+        .iter()
+        .filter(|l| l.contains(&format!("\"method\":\"{method}\"")) && l.contains(needle))
+        .count()
+}
+
 /// After the restart the revert succeeds without a second rollback, and
-/// the reattached session takes input again.
-fn assert_completed(rig: &Rig, session: &SessionId) {
+/// the reattached session runs the next prompt: its `turn/start` frame
+/// with the input's id reaches the same provider, and the turn of that
+/// input completes with the provider's answer. Stops the station.
+fn assert_completed(rig: &mut Rig, session: &SessionId) {
     rig.wait("the revert succeeds", session, |s| {
         revert_state(s) == Some(RevertState::Succeeded)
     });
@@ -242,14 +253,87 @@ fn assert_completed(rig: &Rig, session: &SessionId) {
     assert_eq!(rig.frames("thread/rollback"), 1, "never sent again");
     let s = rig.summary(session);
     assert_eq!(s.state, SessionState::Running, "reattached, not lost");
-    rig.accepted(SessionCommand::Prompt {
+    let starts = rig.frames("turn/start");
+    let receipt = rig.accepted(SessionCommand::Prompt {
         session_id: session.clone(),
         input: text("after the revert"),
     });
-    rig.wait("the next turn ends", session, |s| {
-        s.activity == Activity::Idle && s.current_turn.is_none()
-    });
+    let input = receipt
+        .result
+        .and_then(|r| r.input_id)
+        .expect("an input id");
+    // The provider read the input's frame.
+    let deadline = Instant::now() + WAIT;
+    while frames_with(rig, "turn/start", input.as_str()) == 0 {
+        assert!(
+            Instant::now() < deadline,
+            "the prompt never reached the provider"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    assert_eq!(frames_with(rig, "turn/start", "after the revert"), 1);
+    assert_eq!(rig.frames("turn/start"), starts + 1, "one new turn/start");
+    // The input's turn completes with the provider's answer (the station
+    // still runs; SQLite WAL lets the test read its log).
+    let (turn, events) = wait_input_turn_completed(rig, session, &input);
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            Event::MessageCompleted { turn_id, text, .. }
+                if *turn_id == turn && text.contains("after the revert")
+        )),
+        "{events:?}"
+    );
     assert_eq!(rig.frames("initialize"), 1, "no replacement provider");
+    rig.station.stop();
+}
+
+/// The stored events of `session` (read while the station runs).
+fn session_events(rig: &Rig, session: &SessionId) -> Vec<Event> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async { stored_events(&open_store(&rig.station.db()).await).await })
+        .into_iter()
+        .filter(|(s, _)| s == session.as_str())
+        .map(|(_, e)| e)
+        .collect()
+}
+
+/// Waits until the turn that the provider opened for `input` (stored
+/// `input.updated` with a turn id) has a stored `turn.completed` with
+/// status `done`; returns the turn and the session's events.
+fn wait_input_turn_completed(
+    rig: &Rig,
+    session: &SessionId,
+    input: &InputId,
+) -> (TurnId, Vec<Event>) {
+    let deadline = Instant::now() + WAIT;
+    loop {
+        let events = session_events(rig, session);
+        let turn = events.iter().find_map(|e| match e {
+            Event::InputUpdated {
+                input_id,
+                turn_id: Some(turn),
+                ..
+            } if input_id == input => Some(turn.clone()),
+            _ => None,
+        });
+        if let Some(turn) = turn && events.iter().any(|e| {
+            matches!(
+                e,
+                Event::TurnCompleted { turn_id, status: TurnStatus::Done, .. } if *turn_id == turn
+            )
+        }) {
+            return (turn, events);
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the input's turn never completed: {events:?}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }
 
 #[test]
@@ -257,16 +341,14 @@ fn a_station_killed_after_a_confirmed_rollback_restores_the_files_after_the_rest
  {
     let mut rig = Rig::new();
     let session = rig.crash_after("rolled_back");
-    assert_completed(&rig, &session);
-    rig.station.stop();
+    assert_completed(&mut rig, &session);
 }
 
 #[test]
 fn a_station_killed_during_the_file_restore_finishes_it_after_the_restart() {
     let mut rig = Rig::new();
     let session = rig.crash_after("restoring");
-    assert_completed(&rig, &session);
-    rig.station.stop();
+    assert_completed(&mut rig, &session);
 }
 
 #[test]
