@@ -28,6 +28,17 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 104 (2026-10-12, 17:42–)
+
+- Round start: committed round 103 as dacfaf2. `m3/orchestration` had new commits (dcb94e9: live test 31 through the station for both providers and the station lifecycle acknowledgment fence, DL-220); merged as 6d75c96 without conflict. `crates/fleetdeck-proto` unchanged, so no `make ts-types`. `m3/board` and `m3/ops`: already up to date. DL-220 copied into `docs/v2/DECISIONS-LOG.md` (lane B section).
+- Review r103: "make check passes, but M3 still lacks complete A10 dispatch rechecks, shim-agent upgrade-survival coverage, and the required coordinator lifecycle-acknowledgment fence." These block the milestone acceptance, so they are fixed in this round (not follow-ups):
+  1. A10 dispatch rechecks (DL-133): `Store::continuation_recheck` and `manager::auto_continue::recheck` now also recheck the maintenance turn (rule 7), completion and session end (rule 8), the `resume` capability, a blocking revert, the session slot, the allowed root and the configured provider instance (rule 10, rule 2), and an owner resume after the intent (rule 5). `SessionTarget::with_policy` gives the worker the station policy. ADR-007 §2.4 text updated. 6 new tests in `crates/fleetdeck-station/src/manager/auto_continue_tests.rs`; `cargo nextest run -p fleetdeck-station -E 'test(/auto_continue_tests/)'` → 22 passed.
+  2. Shim-agent upgrade survival (DL-134): `crates/fleetdeck-cli/tests/station_shim_upgrade.rs::providers_under_shims_survive_a_station_upgrade_and_the_new_release_reattaches_them` (shim host, idle + busy session, stop, prepare, activate, the installed release starts and reattaches both, the busy turn takes an interrupt, no replacement process, `live_advanced`). `Station::spawn_binary` added to `crates/fleetdeck-cli/tests/common/mod.rs`. `cargo nextest run -p fleetdeck-cli --test station_shim_upgrade` → 1 passed (6.3 s).
+  3. Coordinator lifecycle acknowledgment fence: delivered by lane B (DL-220, merged this round): `coordinator::outbox_tests::a_reconnect_holds_calls_and_queries_until_the_deck_acknowledges_the_lifecycle_watermark`. This also closes the round-90 follow-up "no §6.1 lifecycle watermark ack".
+- The "Limits of this map" note of the Phase 7 evidence map is updated: both limits are closed.
+- Tests also run: `cargo nextest run -p fleetdeck-cli --test module_size --test cutover` → 5 passed.
+- Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean. `web/` unchanged.
+
 ## Round 103 (2026-10-12, 17:23–)
 
 - Round start: committed round 102 as 8ec9c46. No new lane commits (all lanes complete and merged in round 102).
@@ -534,10 +545,10 @@ This map is for the architect's adversary PRE-PR REVIEW. It is not a claim of th
 | GATE-M2 §6 | P2-a, P2-b and SIGKILL survival lines of `docs/v2/PROGRESS.md`; `crates/fleetdeck-cli/tests/station_sigkill.rs::providers_of_a_sigkilled_station_exit_and_the_restarted_station_reports_them_lost`. |
 | v0 cutover, final `make check` | Open: items 7-7 and 7-8 (wait for lane B). |
 
-Limits of this map (review of round 71). Two rows above claim more than the tests show:
+Limits of this map (review of round 71), closed in round 104:
 
-- Auto-continue: the tests cover default OFF and the dispatch rechecks of identity, proven end, newer owner work, stop and window. A session with the shim host gets `unsupported`. The map does not prove the full A10 recheck list for every host.
-- ShimHost upgrade: `crates/fleetdeck-cli/tests/station_upgrade.rs` runs with the default `direct` host. ADR-005 tests 20, 21, 22 and 48 are unit tests in `crates/fleetdeck-station/src/upgrade_tests.rs`. No end-to-end test shows a shim agent that survives a station upgrade.
+- Auto-continue: the dispatch recheck now covers every A10 rule that can change after the intent (identity and instance, proven end, newer owner work, stop, maintenance turn, completion, window, capability, revert, slot, root; DL-133, 6 tests in `crates/fleetdeck-station/src/manager/auto_continue_tests.rs`). A session with the shim host still gets `unsupported` (DL-118: no shim-host resume; a shim session is reattached, not resumed).
+- ShimHost upgrade: `crates/fleetdeck-cli/tests/station_shim_upgrade.rs` shows shim agents that survive a station upgrade and are reattached by the installed release (DL-134). `crates/fleetdeck-cli/tests/station_upgrade.rs` keeps the `direct` host flow.
 
 ## ADR-005 §9 test map (7-1 close)
 
@@ -565,7 +576,7 @@ Limits of this map (review of round 71). Two rows above claim more than the test
 
 | Item | Finding | File |
 | --- | --- | --- |
-| 7-6 | CLAIM NARROWED (round 72, "Limits of this map"); the missing A10 recheck tests stay open as 7-2 follow-ups. The Phase 7 evidence map overstated the A10 coverage: auto-continue rechecks only identity, proven end, newer owner work, stop and window, and the shim host is `unsupported`. Add the missing A10 recheck tests or narrow the claim. | `crates/fleetdeck-station/src/manager/auto_continue_tests.rs`, `docs/v2/progress/m3-durable.md` |
+| 7-6 | FIXED (round 104, DL-133: the A10 dispatch recheck tests are in). CLAIM NARROWED (round 72, "Limits of this map"); the missing A10 recheck tests stay open as 7-2 follow-ups. The Phase 7 evidence map overstated the A10 coverage: auto-continue rechecks only identity, proven end, newer owner work, stop and window, and the shim host is `unsupported`. Add the missing A10 recheck tests or narrow the claim. | `crates/fleetdeck-station/src/manager/auto_continue_tests.rs`, `docs/v2/progress/m3-durable.md` |
 | 7-6 | The Phase 7 evidence map overstated the ShimHost upgrade coverage: `station_upgrade.rs` uses the `direct` host. Add an end-to-end test where a shim agent survives a station upgrade. | `crates/fleetdeck-cli/tests/station_upgrade.rs` |
 | 7-1 | ADR-005 test 3: a named fault point between the attach and the replay | `crates/fleetdeck-cli/tests/shim_recovery.rs` |
 | 7-1 | ADR-005 test 16: a stale socket file is replaced, a live one is refused | `crates/fleetdeck-providers/src/host/shim/launch.rs` |
@@ -602,5 +613,5 @@ Limits of this map (review of round 71). Two rows above claim more than the test
 | 7-8 prep (review r78) | The round-78 log said the 700-line probe lists two files; it lists 17, including the 798-line `host.rs`. Corrected in the round-78 entry. Add a test that runs `tools/module-size.sh` with a lower limit, so the probe count is evidence and not a hand count. Closed in round 80: `crates/fleetdeck-cli/tests/module_size.rs`. | `tools/module-size.sh`, `docs/v2/progress/m3-durable.md` |
 | 6-5 (review r89, lane B code, merged f8dbc14) | No send-time expiry check: `LinkForward::flush` ends rows past `retry_until` once (`coordinator_expire`) and then sends every `pending` row; `transmit` checks only the binding fence (`fence`), not the row's own `retry_until`, so a row that passes `retry_until` during the flush loop or a slow reconnect is still sent. Check `retry_until` in `transmit` before the send and add a test with a clock that moves past it between expire and send. | `crates/fleetdeck-station/src/coordinator/outbox.rs` (`transmit`, `flush`) |
 | 6-5 (review r89, lane B code, merged f8dbc14) | The outbox tests do not prove deduplication: `a_call_sent_before_a_link_loss_is_sent_again_with_the_same_envelope_and_deduplicated` only proves that the station resends the same id and bytes to a fake deck; no test sends the duplicate to the real deck intake and proves one command and one effect. Add a deck-side test. | `crates/fleetdeck-station/src/coordinator/outbox_tests.rs` |
-| 6-5 (review r89, lane B code, merged f8dbc14) | The outbox tests do not prove lifecycle acknowledgment: `sent_rows_are_not_resent_after_a_reconnect_before_the_lifecycle_watermark_is_acknowledged` tests only the local fence; no §6.1 lifecycle watermark is sent or acknowledged (DL-218 deviation). Add the watermark acknowledgment and a test that a resend waits for it. | `crates/fleetdeck-station/src/coordinator/outbox_tests.rs`, ADR-006 §6.1 |
+| 6-5 (review r89, lane B code, merged f8dbc14) | FIXED (lane B DL-220, merged round 104: `a_reconnect_holds_calls_and_queries_until_the_deck_acknowledges_the_lifecycle_watermark`). The outbox tests do not prove lifecycle acknowledgment: `sent_rows_are_not_resent_after_a_reconnect_before_the_lifecycle_watermark_is_acknowledged` tests only the local fence; no §6.1 lifecycle watermark is sent or acknowledged (DL-218 deviation). Add the watermark acknowledgment and a test that a resend waits for it. | `crates/fleetdeck-station/src/coordinator/outbox_tests.rs`, ADR-006 §6.1 |
 | 6-13 (review r102) | PLAN §4.1 rows "No model calls in the core" and "Fake agents and test seams" had no named test. FIXED round 103: `no_crate_calls_a_model_api_directly`, `normal_tests_use_fake_agents_and_live_smoke_tests_are_opt_in`. | `crates/fleetdeck-cli/tests/cutover.rs`, `docs/v2/PARITY.md` |

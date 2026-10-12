@@ -67,6 +67,9 @@ pub struct SessionTarget {
     shims: Option<shim_target::ShimSettings>,
     /// The coordinator bindings that a coordinator start adds to (DL-216).
     coordinator: crate::coordinator::Bindings,
+    /// The station policy for the dispatch recheck of an auto-continue
+    /// (ADR-007 §2.4 rules 2 and 10, DL-133).
+    policy: Option<super::policy::Policy>,
 }
 
 impl std::fmt::Debug for SessionTarget {
@@ -90,7 +93,16 @@ impl SessionTarget {
             fences: super::turns::Fences::default(),
             shims: None,
             coordinator: crate::coordinator::Bindings::default(),
+            policy: None,
         }
+    }
+
+    /// The station policy that the dispatch recheck of an auto-continue
+    /// uses (ADR-007 §2.4 rules 2 and 10, DL-133).
+    #[must_use]
+    pub fn with_policy(mut self, policy: super::policy::Policy) -> Self {
+        self.policy = Some(policy);
+        self
     }
 
     /// The coordinator bindings of the station (ADR-006 §5.4).
@@ -431,7 +443,9 @@ impl EffectTarget for SessionTarget {
                 prompt,
                 ..
             } => {
-                if let Some(code) = super::auto_continue::recheck(&self.store, effect).await {
+                if let Some(code) =
+                    super::auto_continue::recheck(&self.store, self.policy.as_ref(), effect).await
+                {
                     return Dispatch::NotDispatched(code);
                 }
                 self.start(effect, spec, prompt.as_ref(), Some(native_session_id))

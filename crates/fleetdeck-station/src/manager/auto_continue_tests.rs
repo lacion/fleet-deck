@@ -534,7 +534,9 @@ async fn an_owner_command_after_the_intent_retires_the_undispatched_continuation
         .unwrap();
     rig.admit(&s, follow_up("new work")).await;
     assert_eq!(
-        recheck(&rig.store, &intent).await.as_deref(),
+        recheck(&rig.store, Some(&rig.policy()), &intent)
+            .await
+            .as_deref(),
         Some("newer_owner_work")
     );
     assert_eq!(rig.state(&s).await, SessionState::Lost);
@@ -631,4 +633,163 @@ async fn a_continued_session_is_shown_as_resumed_with_a_continuation_input() {
     }
     assert!(rig.skips(&s).await.is_empty());
     manager.shutdown(StopMode::Kill).await;
+}
+
+// Dispatch rechecks of ADR-007 §2.4 and A10 (DL-133): every rule that can
+// change between the stored intent and its dispatch is checked again, and
+// a failed recheck retires the intent with the rule's code.
+
+/// A stored continuation intent of a session lost in a turn.
+async fn stored_intent(rig: &Rig, name: &str) -> (SessionId, crate::store::Effect) {
+    let s = rig.session(name, true, Work::Turn).await;
+    assert_eq!(rig.restart(&rig.policy()).await, 1);
+    let intent = rig.resumes(&s).await.remove(0);
+    rig.det.advance(Duration::from_millis(5));
+    (s, intent)
+}
+
+/// Rechecks `intent` and asserts the retirement with `code`.
+async fn retired(
+    rig: &Rig,
+    policy: &Policy,
+    s: &SessionId,
+    intent: &crate::store::Effect,
+    code: &str,
+) {
+    assert_eq!(
+        recheck(&rig.store, Some(policy), intent).await.as_deref(),
+        Some(code)
+    );
+    assert_eq!(rig.state(s).await, SessionState::Lost);
+    assert_eq!(rig.skips(s).await, vec![code.to_owned()]);
+}
+
+#[tokio::test]
+async fn an_unchanged_intent_passes_the_dispatch_recheck() {
+    let rig = Rig::new().await;
+    let (_, intent) = stored_intent(&rig, "fine").await;
+    assert_eq!(
+        recheck(&rig.store, Some(&rig.policy()), &intent).await,
+        None
+    );
+}
+
+#[tokio::test]
+async fn a_maintenance_turn_after_the_intent_retires_the_undispatched_continuation() {
+    let rig = Rig::new().await;
+    let (s, intent) = stored_intent(&rig, "compact-later").await;
+    let run = Event::RunStarted {
+        run_id: "run-2".into(),
+        input_summary: "/compact".to_owned(),
+        origin: RunOrigin::Board,
+    };
+    rig.store.append(s.clone(), vec![run.into()]).await.unwrap();
+    retired(&rig, &rig.policy(), &s, &intent, "maintenance_turn").await;
+}
+
+#[tokio::test]
+async fn a_completion_after_the_intent_retires_the_undispatched_continuation() {
+    let rig = Rig::new().await;
+    let (s, intent) = stored_intent(&rig, "done-later").await;
+    let done = Event::TurnCompleted {
+        turn_id: "turn-1".into(),
+        status: TurnStatus::Done,
+        usage: None,
+    };
+    rig.store
+        .append(s.clone(), vec![done.into()])
+        .await
+        .unwrap();
+    retired(&rig, &rig.policy(), &s, &intent, "turn_completed").await;
+
+    let (s, intent) = stored_intent(&rig, "ended-later").await;
+    let ended = Event::SessionEnded {
+        reason: "exited".to_owned(),
+        exit_code: Some(0),
+    };
+    rig.store
+        .append(s.clone(), vec![ended.into()])
+        .await
+        .unwrap();
+    retired(&rig, &rig.policy(), &s, &intent, "turn_completed").await;
+}
+
+#[tokio::test]
+async fn an_expired_window_at_dispatch_retires_the_undispatched_continuation() {
+    let rig = Rig::new().await;
+    let (s, intent) = stored_intent(&rig, "late-dispatch").await;
+    rig.det
+        .advance(Duration::from_millis(u64::try_from(WINDOW_MS).unwrap() + 1));
+    retired(&rig, &rig.policy(), &s, &intent, "expired").await;
+}
+
+#[tokio::test]
+async fn a_lost_resume_capability_retires_the_undispatched_continuation() {
+    let rig = Rig::new().await;
+    let (s, intent) = stored_intent(&rig, "no-resume").await;
+    let mut capabilities = fleetdeck_providers::claude::args::capabilities(false);
+    capabilities.resume = false;
+    let mut refs = serde_json::Map::new();
+    refs.insert("session_id".into(), "native-no-resume".into());
+    let started = Event::SessionStarted {
+        provider: ProviderKind::Claude,
+        provider_instance: "claude".into(),
+        provider_version: None,
+        model: None,
+        cwd: rig.workspace(),
+        mode: Some(MODE.to_owned()),
+        capabilities: Box::new(capabilities),
+        resumed: None,
+        provider_refs: refs,
+        title: None,
+        branch: None,
+        repo: None,
+    };
+    rig.store
+        .append(s.clone(), vec![started.into()])
+        .await
+        .unwrap();
+    // The event does not move the session out of `lost` for the recheck.
+    let state = Event::SessionStateChanged {
+        state: SessionState::Lost,
+        detail: None,
+    };
+    rig.store
+        .append(s.clone(), vec![state.into()])
+        .await
+        .unwrap();
+    retired(&rig, &rig.policy(), &s, &intent, "unsupported").await;
+}
+
+#[tokio::test]
+async fn a_full_station_a_removed_root_or_a_removed_instance_retires_the_undispatched_continuation()
+{
+    let rig = Rig::new().await;
+    let (s, intent) = stored_intent(&rig, "full").await;
+    let full = Policy::new(
+        vec![rig.root.path().join("projects")],
+        0,
+        OfflineApprovalPolicy::Wait,
+        BTreeMap::from([("claude".into(), ProviderKind::Claude)]),
+    );
+    retired(&rig, &full, &s, &intent, "not_resumable").await;
+
+    let (s, intent) = stored_intent(&rig, "moved-root").await;
+    let elsewhere = tempfile::tempdir().unwrap();
+    let other_root = Policy::new(
+        vec![elsewhere.path().to_path_buf()],
+        4,
+        OfflineApprovalPolicy::Wait,
+        BTreeMap::from([("claude".into(), ProviderKind::Claude)]),
+    );
+    retired(&rig, &other_root, &s, &intent, "not_resumable").await;
+
+    let (s, intent) = stored_intent(&rig, "no-instance").await;
+    let no_instance = Policy::new(
+        vec![rig.root.path().join("projects")],
+        4,
+        OfflineApprovalPolicy::Wait,
+        BTreeMap::new(),
+    );
+    retired(&rig, &no_instance, &s, &intent, "identity_changed").await;
 }

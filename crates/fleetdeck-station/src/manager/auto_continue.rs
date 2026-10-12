@@ -233,12 +233,20 @@ pub async fn evaluate(
     Ok(stored)
 }
 
-/// The dispatch recheck of a continuation (§2.4). `Some(code)`: the
-/// effect is not dispatched, the session stays `lost` and gets the skip
-/// event.
-pub async fn recheck(store: &Store, effect: &Effect) -> Option<String> {
-    let code = match store.continuation_recheck(effect.clone()).await {
-        Ok(None) => return None,
+/// The dispatch recheck of a continuation (§2.4, DL-133): the stored
+/// rules of [`Store::continuation_recheck`], and with the station `policy`
+/// the provider instance (rule 2), the allowed workspace roots and the
+/// session limit (rule 10). `Some(code)`: the effect is not dispatched,
+/// the session stays `lost` and gets the skip event.
+pub async fn recheck(store: &Store, policy: Option<&Policy>, effect: &Effect) -> Option<String> {
+    let stored = store
+        .continuation_recheck(effect.clone(), policy.map(Policy::max_sessions))
+        .await;
+    let code = match stored {
+        Ok(None) => match policy.and_then(|p| policy_recheck(p, effect)) {
+            None => return None,
+            Some(code) => code.to_owned(),
+        },
         Ok(Some(code)) => code,
         Err(e) => {
             tracing::error!(error = %e, "the continuation recheck failed; not dispatched");
@@ -260,4 +268,20 @@ pub async fn recheck(store: &Store, effect: &Effect) -> Option<String> {
         tracing::error!(error = %e, "the continuation skip was not stored");
     }
     Some(code)
+}
+
+/// Rules 2 and 10 of a continuation against the current station policy:
+/// the provider instance is still configured, and the workspace is still
+/// inside an allowed root.
+fn policy_recheck(policy: &Policy, effect: &Effect) -> Option<&'static str> {
+    let crate::store::EffectPayload::Resume { spec, .. } = &effect.payload else {
+        return None;
+    };
+    if policy.instance(&spec.provider_instance).is_none() {
+        Some("identity_changed")
+    } else if policy.workspace(&spec.cwd).is_err() {
+        Some("not_resumable")
+    } else {
+        None
+    }
 }

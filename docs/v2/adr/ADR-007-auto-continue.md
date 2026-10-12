@@ -44,7 +44,7 @@ An ineligible session stays `lost`; the station appends `session.auto_continue_s
 
 ### 2.4 Dispatch
 
-- The worker claims the effect and, right before the external I/O, rechecks rules 2, 3, 5, 6, 9 and 10 against the committed state. A failed recheck retires the effect `retired_not_dispatched` with the rule's code; nothing is spawned.
+- The worker claims the effect and, right before the external I/O, rechecks rules 2, 3, 5, 6, 7, 8, 9 and 10 against the committed state and the station policy (rules 7 and 8 added by DL-133). A failed recheck retires the effect `retired_not_dispatched` with the rule's code; nothing is spawned.
 - Dispatch is two external steps with durable steps between them: (a) native resume (the `session.resume` start path), (b) the continuation input to the resumed process. The effect records `resumed` after (a) is confirmed by `session.started { resumed: true }` with the same native identity. A different native identity ends the new process and the effect becomes `outcome_unknown` (`identity_changed`).
 - After a crash between the steps, recovery uses the committed step: before `resumed` the effect is `outcome_unknown` (a process may have started; it is never started again); after `resumed` with the input claimed the input follows the ordinary §6.4 ambiguous-send rules and is never resent. A continuation is never retried as a new prompt.
 - Any owner command admitted for the session after the intent was stored (rule 5) makes a not-yet-dispatched continuation retire `newer_owner_work` at the recheck.

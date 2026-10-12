@@ -66,8 +66,34 @@ impl Station {
     /// Starts `fleetdeck station serve`, armed with a fault spec if given,
     /// and waits until its socket answers.
     pub fn spawn(&mut self, fault: Option<&str>) {
-        assert!(self.child.is_none(), "a station process runs already");
+        let cmd = fleetdeck(&self.node);
+        self.spawn_cmd(cmd, fault);
+    }
+
+    /// [`Self::spawn`] with another `fleetdeck` binary (an installed
+    /// release after a self-upgrade), with the node's arguments and
+    /// environment.
+    #[allow(dead_code, reason = "used by some test binaries only")]
+    pub fn spawn_binary(&mut self, binary: &Path) {
         let mut cmd = fleetdeck(&self.node);
+        let args: Vec<_> = cmd.get_args().map(ToOwned::to_owned).collect();
+        let envs: Vec<_> = cmd
+            .get_envs()
+            .map(|(k, v)| (k.to_owned(), v.map(ToOwned::to_owned)))
+            .collect();
+        cmd = Command::new(binary);
+        cmd.args(args);
+        for (k, v) in envs {
+            match v {
+                Some(v) => cmd.env(k, v),
+                None => cmd.env_remove(k),
+            };
+        }
+        self.spawn_cmd(cmd, None);
+    }
+
+    fn spawn_cmd(&mut self, mut cmd: Command, fault: Option<&str>) {
+        assert!(self.child.is_none(), "a station process runs already");
         cmd.args(["station", "serve"])
             .stdout(Stdio::null())
             .stderr(Stdio::inherit());

@@ -210,7 +210,8 @@ impl SessionManager {
             tracing::info!(continued, "stored auto-continue intents");
         }
         let mut target = SessionTarget::new(store.clone(), adapters, Arc::clone(&ids))
-            .with_coordinator(policy.coordinator_bindings().clone());
+            .with_coordinator(policy.coordinator_bindings().clone())
+            .with_policy(policy.clone());
         if let Some(settings) = shims {
             target = target.with_shims(settings);
         }

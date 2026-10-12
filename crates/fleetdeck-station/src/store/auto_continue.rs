@@ -146,6 +146,72 @@ fn stop_since(conn: &Connection, session: &SessionId, at: i64) -> Result<bool> {
     )
 }
 
+/// Another start or resume of `session` admitted at or after `at` (an
+/// owner `session.resume` after the intent is newer owner work).
+fn other_start_since(
+    conn: &Connection,
+    session: &SessionId,
+    effect_id: &super::EffectId,
+    at: i64,
+) -> Result<bool> {
+    Ok(conn
+        .query_row(
+            "SELECT 1 FROM effects WHERE session_id = ?1 AND created_at >= ?2
+             AND kind IN ('start', 'resume') AND effect_id != ?3 LIMIT 1",
+            params![session.as_str(), at, effect_id.as_str()],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some())
+}
+
+/// Rules 7 and 8 at dispatch: a maintenance run (`/compact`) started, or a
+/// turn completed or the session ended, after the intent stored at `at`.
+/// The intent follows the `lost` state of its station start, which follows
+/// the recovery events of that start; so only events after the last `lost`
+/// state committed at or before `at` are new.
+fn activity_since(conn: &Connection, session: &SessionId, at: i64) -> Result<Option<&'static str>> {
+    let lost_seq: i64 = conn.query_row(
+        "SELECT COALESCE(MAX(station_seq), 0) FROM events WHERE session_id = ?1
+         AND kind = 'session.state' AND at <= ?2
+         AND json_extract(payload, '$.state') = 'lost'",
+        params![session.as_str(), at],
+        |r| r.get(0),
+    )?;
+    let mut stmt = conn.prepare(
+        "SELECT payload FROM events WHERE session_id = ?1 AND station_seq > ?2
+         AND kind IN ('run.started', 'turn.completed', 'session.ended')
+         ORDER BY station_seq",
+    )?;
+    let rows = stmt.query_map(params![session.as_str(), lost_seq], |r| {
+        r.get::<_, String>(0)
+    })?;
+    for row in rows {
+        match serde_json::from_str::<EventBody>(&row?)? {
+            EventBody::Known(Event::RunStarted { input_summary, .. })
+                if input_summary.trim_start().starts_with("/compact") =>
+            {
+                return Ok(Some("maintenance_turn"));
+            }
+            EventBody::Known(Event::TurnCompleted { .. } | Event::SessionEnded { .. }) => {
+                return Ok(Some("turn_completed"));
+            }
+            _ => {}
+        }
+    }
+    Ok(None)
+}
+
+/// The number of sessions that have not ended (rule 10, a free slot).
+fn active_sessions(conn: &Connection) -> Result<u64> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sessions WHERE state NOT IN ('exited', 'lost')",
+        [],
+        |r| r.get(0),
+    )?;
+    Ok(u64::try_from(n).unwrap_or(0))
+}
+
 impl Decision<'_> {
     /// The sessions that a `session.state` event after `after` names.
     ///
@@ -217,16 +283,23 @@ impl Store {
         call(&self.inner.db, move |conn| lost_work(conn, &session, after)).await
     }
 
-    /// The dispatch recheck of a continuation (ADR-007 §2.4: rules 2, 3,
-    /// 5, 6 and 9 against the committed state). `None`: dispatch it;
-    /// otherwise the stable code of the failed rule. An effect that is not
-    /// a continuation is never rechecked.
+    /// The dispatch recheck of a continuation (ADR-007 §2.4 rules 2, 3,
+    /// 5, 6, 9 and 10, and the A10 maintenance and completion rechecks,
+    /// rules 7 and 8, DL-133) against the committed state. `max_sessions`
+    /// is the station's session limit (rule 10, a free slot). `None`:
+    /// dispatch it; otherwise the stable code of the failed rule. An
+    /// effect that is not a continuation is never rechecked.
     ///
     /// # Errors
     /// A database or JSON error.
-    pub async fn continuation_recheck(&self, effect: Effect) -> Result<Option<String>> {
+    pub async fn continuation_recheck(
+        &self,
+        effect: Effect,
+        max_sessions: Option<u32>,
+    ) -> Result<Option<String>> {
         let EffectPayload::Resume {
             native_session_id,
+            spec,
             continue_by: Some(continue_by),
             ..
         } = effect.payload.clone()
@@ -249,16 +322,38 @@ impl Store {
                 )
                 .optional()?
                 .flatten();
-            let code = if stored.as_deref() != Some(native_session_id.as_str()) {
+            let summary = super::log::summary(conn, session)?;
+            let code = if stored.as_deref() != Some(native_session_id.as_str())
+                || summary.as_ref().and_then(|s| s.provider_instance.as_ref())
+                    != Some(&spec.provider_instance)
+            {
                 Some("identity_changed")
             } else if super::resumes::unended_execution(conn, session)?.is_some() {
                 Some("execution_unknown")
-            } else if owner_work_after(conn, session, created_at)? {
+            } else if owner_work_after(conn, session, created_at)?
+                || other_start_since(conn, session, &effect.effect_id, created_at)?
+            {
                 Some("newer_owner_work")
             } else if stop_since(conn, session, created_at)? {
                 Some("stop_requested")
+            } else if let Some(code) = activity_since(conn, session, created_at)? {
+                Some(code)
             } else if now > continue_by {
                 Some("expired")
+            } else if !summary
+                .as_ref()
+                .and_then(|s| s.capabilities.as_ref())
+                .is_some_and(|c| c.resume)
+            {
+                Some("unsupported")
+            } else if summary
+                .as_ref()
+                .is_some_and(|s| s.revert.as_ref().is_some_and(|r| r.blocks_input()))
+                || super::sharing::open_revert_over(conn, &spec.cwd)?.is_some()
+                || max_sessions
+                    .is_some_and(|max| active_sessions(conn).is_ok_and(|n| n >= u64::from(max)))
+            {
+                Some("not_resumable")
             } else {
                 None
             };
