@@ -113,11 +113,23 @@ impl SessionTarget {
     /// Stops every live session (station shutdown).
     pub async fn stop_all(&self, how: StopMode) {
         let all: Vec<_> = match self.sessions.lock() {
-            Ok(s) => s.values().cloned().collect(),
+            Ok(s) => s
+                .iter()
+                .map(|(id, l)| (id.clone(), Arc::clone(l)))
+                .collect(),
             Err(_) => return,
         };
-        for live in all {
-            Self::detach_durable(&mut *live.lock().await).await;
+        for (session_id, live) in all {
+            let durable = live.lock().await.durable.is_some();
+            if durable {
+                // A session under a shim keeps running (ADR-005): detach its
+                // driver and observer; the next station start restores it.
+                Self::detach_durable(&mut *live.lock().await).await;
+                if let Ok(mut sessions) = self.sessions.lock() {
+                    sessions.remove(&session_id);
+                }
+                continue;
+            }
             let session = live.lock().await.session.take();
             if let Some(mut session) = session
                 && let Err(e) = session.stop(how).await

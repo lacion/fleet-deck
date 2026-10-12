@@ -4,6 +4,7 @@
 //! driver never repeats the handshake ([`DurableDriver::restore`]).
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use fleetdeck_providers::adapter::{Answer, ProviderError};
 use fleetdeck_providers::checkpoint::{AdapterCheckpoint, CheckpointError};
@@ -93,6 +94,41 @@ impl DurableCore for CodexCore {
 }
 
 impl DurableDriver<CodexCore> {
+    /// Rolls the conversation back by `turns` turns (`thread/rollback`;
+    /// DL-116), the shim-host form of the direct driver's rollback. A
+    /// refusal before the frame is committed is definite; once the
+    /// `thread/rollback` state and frame are committed, every failure is
+    /// [`ProviderError::Uncertain`] except the provider's own refusal. The
+    /// committed `Sent` state survives a station restart, so the restored
+    /// core still refuses conversation input until the answer arrives.
+    ///
+    /// # Errors
+    /// See above.
+    pub async fn rollback(&self, turns: u32, timeout: Duration) -> Result<(), ProviderError> {
+        match self.internal(|c| c.rollback(turns).map(split)).await {
+            Ok(()) => {}
+            Err(DriverError::Provider(e)) => return Err(e),
+            Err(e) => return Err(ProviderError::Uncertain(e.to_string())),
+        }
+        let deadline = tokio::time::Instant::now() + timeout;
+        if self
+            .wait_until(|c| c.rollback_answer().is_some(), deadline, "rollback")
+            .await
+            .is_err()
+        {
+            return Err(ProviderError::Uncertain(
+                "no rollback answer before the deadline or the provider ended".to_owned(),
+            ));
+        }
+        match self.with_core(CodexCore::rollback_answer).await {
+            Some(Ok(())) => Ok(()),
+            Some(Err(refusal)) => Err(ProviderError::Refused(refusal)),
+            None => Err(ProviderError::Uncertain(
+                "the rollback answer went missing".to_owned(),
+            )),
+        }
+    }
+
     /// Drives a newly launched shim: commits the first checkpoint, then the
     /// handshake and the thread (`initialize`, `thread/start`).
     ///

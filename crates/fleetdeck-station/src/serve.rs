@@ -9,17 +9,19 @@ use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use fleetdeck_core::config::StationConfig;
+use fleetdeck_core::config::{HostChoice, StationConfig};
 use fleetdeck_core::identity::{Identity, IdentityError};
 use fleetdeck_core::paths::{NodeDirs, ensure_private_dir};
 use fleetdeck_core::{SharedClock, SharedIds, SystemClock, UlidSource};
 use fleetdeck_link::reconnect::BackoffPolicy;
 use fleetdeck_proto::command::StopMode;
+use fleetdeck_providers::host::shim::host::{ShimHost, ShimHostConfig};
 use fleetdeck_providers::host::{DirectChildHost, SessionHost};
 use tokio::sync::watch;
 
 use crate::link::{NodeError, StationNode};
 use crate::local;
+use crate::manager::target::ShimSettings;
 use crate::manager::{Policy, SessionManager, adapters_from_config};
 use crate::store::{Store, StoreConfig};
 
@@ -45,6 +47,29 @@ pub enum ServeError {
     Identity(#[from] IdentityError),
     #[error("station link: {0}")]
     Link(#[from] NodeError),
+    #[error("shim host: the station executable is unknown: {0}")]
+    ShimExe(std::io::Error),
+}
+
+/// The shim host of `host = "shim"` (ADR-005 §1, §5.1): this executable
+/// is the shim (`fleetdeck shim`), the journals live in the station
+/// directory, the sockets in `$XDG_RUNTIME_DIR` (or the private temporary
+/// directory), and the output buffer is `shim_buffer_mib`.
+fn shim_settings(
+    config: &StationConfig,
+    station_dir: &std::path::Path,
+    store: &Store,
+) -> Result<ShimSettings, ServeError> {
+    let exe = std::env::current_exe().map_err(ServeError::ShimExe)?;
+    let mut host = ShimHostConfig::new(
+        exe,
+        station_dir.to_owned(),
+        store.incarnation().as_str().to_owned(),
+    );
+    host.buffer_bytes = usize::try_from(config.shim_buffer_mib)
+        .unwrap_or(usize::MAX)
+        .saturating_mul(1024 * 1024);
+    Ok(ShimSettings::new(Arc::new(ShimHost::new(host))))
 }
 
 /// Runs the station until `stop` completes.
@@ -99,9 +124,14 @@ impl RunningStation {
         let adapters = adapters_from_config(config, &host, Some(station_dir.join("raw")))?;
         let socket = local::socket_path(&station_dir);
         let listener = local::bind(&socket).await?;
-        let manager = Arc::new(
-            SessionManager::start(store, Policy::from_config(config), adapters, ids).await?,
-        );
+        let policy = Policy::from_config(config);
+        let manager = Arc::new(match config.host {
+            HostChoice::Direct => SessionManager::start(store, policy, adapters, ids).await?,
+            HostChoice::Shim => {
+                let shims = shim_settings(config, &station_dir, &store)?;
+                SessionManager::start_with_shims(store, policy, adapters, ids, shims).await?
+            }
+        });
         let identity = Arc::new(Identity::load_or_create(&station_dir)?);
         let node = StationNode::start(
             Arc::clone(&manager),

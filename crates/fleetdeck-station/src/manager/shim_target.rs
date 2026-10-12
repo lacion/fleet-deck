@@ -15,9 +15,12 @@
 //! ([`super::super::shim_station::recover_station`], then
 //! [`SessionTarget::adopt`]).
 //!
-//! Not on the shim host yet: revert (the rollback runs through the direct
-//! driver's `LiveSession`); a revert effect fails with
-//! [`REASON_REVERT_UNSUPPORTED`] before any I/O.
+//! Revert (DL-116): a Codex session under a shim runs the same revert
+//! executor as with the direct host ([`super::super::revert_run::run`]),
+//! with the durable driver's `thread/rollback` as its conversation
+//! rollback. A provider without a durable rollback (Claude has no
+//! conversation rollback, so its revert is refused at admission) fails
+//! the revert with [`REASON_REVERT_UNSUPPORTED`] before any I/O.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -55,6 +58,34 @@ pub struct ShimSettings {
     pub host: Arc<ShimHost>,
     /// How long recovery asks a shim about an in-flight stdin write.
     pub in_flight_wait: Duration,
+    /// How long a revert waits for the provider's rollback answer.
+    pub rollback_timeout: Duration,
+}
+
+impl ShimSettings {
+    /// The settings with the default waits.
+    #[must_use]
+    pub fn new(host: Arc<ShimHost>) -> Self {
+        Self {
+            host,
+            in_flight_wait: super::super::shims::IN_FLIGHT_WAIT,
+            rollback_timeout: fleetdeck_providers::codex::ROLLBACK_TIMEOUT,
+        }
+    }
+}
+
+/// The durable Codex driver's `thread/rollback` as a revert's
+/// conversation rollback.
+struct CodexRollback<'a> {
+    driver: &'a DurableCodex,
+    timeout: Duration,
+}
+
+#[async_trait::async_trait]
+impl super::super::revert_run::Rollback for CodexRollback<'_> {
+    async fn roll_back(&mut self, turns: u32) -> Result<(), fleetdeck_providers::ProviderError> {
+        self.driver.rollback(turns, self.timeout).await
+    }
 }
 
 /// The durable side of a live session.
@@ -332,6 +363,30 @@ impl SessionTarget {
                 durable.driver.apply(effect).await
             }
             EffectPayload::Revert { revert_id, .. } => {
+                if let (Durable::Codex(driver), Some(process)) =
+                    (&durable.driver, effect.process_incarnation.as_ref())
+                {
+                    let env = super::super::revert_run::RevertEnv {
+                        store: &self.store,
+                        git: &self.git,
+                        limits: self.limits,
+                    };
+                    let timeout = self
+                        .shims
+                        .as_ref()
+                        .map_or(fleetdeck_providers::codex::ROLLBACK_TIMEOUT, |s| {
+                            s.rollback_timeout
+                        });
+                    let mut rollback = CodexRollback { driver, timeout };
+                    return super::super::revert_run::run(
+                        env,
+                        turns,
+                        &mut rollback,
+                        process,
+                        revert_id,
+                    )
+                    .await;
+                }
                 if let Err(e) = self
                     .store
                     .advance_revert(

@@ -59,11 +59,27 @@ pub mod reason {
     pub const STATION_RESTART: &str = "station_restart";
 }
 
+/// The conversation rollback of a revert: the direct driver's
+/// [`LiveSession::rollback`], or the durable shim driver (DL-116).
+/// `Ok` is a confirmed rollback, [`ProviderError::Uncertain`] an unknown
+/// outcome, every other error a definite refusal (nothing rolled back).
+#[async_trait::async_trait]
+pub trait Rollback: Send {
+    async fn roll_back(&mut self, turns: u32) -> Result<(), ProviderError>;
+}
+
+#[async_trait::async_trait]
+impl<T: LiveSession + ?Sized> Rollback for T {
+    async fn roll_back(&mut self, turns: u32) -> Result<(), ProviderError> {
+        self.rollback(turns).await
+    }
+}
+
 /// Runs an admitted revert on the live session.
-pub async fn run(
+pub async fn run<R: Rollback + ?Sized>(
     env: RevertEnv<'_>,
     turns: &SessionTurns,
-    session: &mut dyn LiveSession,
+    session: &mut R,
     process: &ProcessIncarnation,
     revert_id: &str,
 ) -> Dispatch {
@@ -77,9 +93,9 @@ pub async fn run(
     }
 }
 
-async fn execute(
+async fn execute<R: Rollback + ?Sized>(
     env: RevertEnv<'_>,
-    session: &mut dyn LiveSession,
+    session: &mut R,
     process: &ProcessIncarnation,
     revert_id: &str,
 ) -> Result<Dispatch, StoreError> {
@@ -108,7 +124,7 @@ async fn execute(
     {
         return Ok(Dispatch::NotDispatched(reason::NOT_ADMITTED.into()));
     }
-    match session.rollback(row.revert.turns).await {
+    match session.roll_back(row.revert.turns).await {
         Ok(()) => {}
         Err(ProviderError::Uncertain(detail)) => {
             tracing::warn!(revert_id, %detail, "rollback outcome unknown");

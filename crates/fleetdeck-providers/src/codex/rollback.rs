@@ -91,6 +91,17 @@ impl CodexCore {
         Vec::new()
     }
 
+    /// The answer of the last `thread/rollback`: `None` while none was sent
+    /// or it has no answer yet; `Some(Err(refusal))` for the provider's
+    /// refusal (used by the station's durable driver, DL-116).
+    #[must_use]
+    pub fn rollback_answer(&self) -> Option<std::result::Result<(), String>> {
+        match &self.rollback {
+            Some(RollbackState::Done(done)) => Some(done.clone()),
+            Some(RollbackState::Sent) | None => None,
+        }
+    }
+
     pub(super) fn rollback_answered(&self) -> bool {
         matches!(self.rollback, Some(RollbackState::Done(_)))
     }

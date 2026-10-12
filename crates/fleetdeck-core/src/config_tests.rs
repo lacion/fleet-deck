@@ -243,3 +243,20 @@ fn durations() {
     assert!(parse_duration("-1m").is_err());
     assert!(parse_duration(&format!("{}h", u64::MAX)).is_err());
 }
+
+#[test]
+fn the_host_setting_and_the_shim_buffer() {
+    let c = StationConfig::parse("", &env()).unwrap();
+    assert_eq!(
+        c.host,
+        HostChoice::Direct,
+        "direct until the owner chooses shim"
+    );
+    assert_eq!(c.shim_buffer_mib, DEFAULT_SHIM_BUFFER_MIB);
+    let c = StationConfig::parse("host = \"shim\"\nshim_buffer_mib = 64", &env()).unwrap();
+    assert_eq!(c.host, HostChoice::Shim);
+    assert_eq!(c.shim_buffer_mib, 64);
+    assert!(err("host = \"docker\"").contains("\"direct\" or \"shim\""));
+    assert!(err("shim_buffer_mib = 0").contains("1 to 256"));
+    assert!(err("shim_buffer_mib = 257").contains("1 to 256"));
+}

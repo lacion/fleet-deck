@@ -1351,3 +1351,14 @@ Format: context, options, choice, reason, owner review.
 - Reason: (a) admits commands to an ended session for a short time; (c) duplicates the turn-checkpoint logic of `SessionTurns::observe`. (b) uses the same observation path as live sessions, so turns are finalized once, by the same code.
 - Owner review: not required (implementation inside the accepted ADR-005 revision 3).
 
+## DL-116 — The shim host as a station setting, station stop with shim sessions, and Codex revert under the shim (ADR-005 §1, §3; PLAN §6.6; M3 round 36)
+
+- Context: round-35 feedback asked to wire the shim host into `fleetdeck station serve` and implement revert on the shim host. DL-113 refused revert under a shim (`revert_not_supported_on_the_shim_host`), and serve always used the direct host.
+- Options for the setting: (a) the ADR-005 station setting `host`, default `direct`; (b) default `shim` now. Options for revert: (c) a second executor for shim sessions; (d) the same executor over a small `Rollback` trait.
+- Choice: (a) and (d). `host = "shim"` selects the shim host; the default stays `direct` because ADR-005 makes `shim` the default only after 7-1 passes, and 7-1 still needs the architect's acceptance and the ShimHost code review. `shim_buffer_mib` is the §4.2 buffer B. A station stop detaches shim sessions instead of stopping them (they must survive a station update, ADR-005 §1), and removes them from the live map so the stop does not wait for them. `revert_run::run` is generic over `Rollback`; the durable Codex driver's `rollback` commits `thread/rollback` with its checkpoint (the frame is claimed before it leaves, as every generated frame) and waits for the correlated answer with the configured timeout (`ROLLBACK_TIMEOUT`, 30 s).
+- Reason: one executor keeps every PLAN §6.6 rule (fence, rechecks, durable steps, recovery from evidence) in one place; the trait adds no behavior. Without the answer wait a revert would restore files after an unconfirmed rollback; the tests fail in that case.
+- Crash between the rollback and the restore: the station recovery turns `rollback_sent` into `reconciliation_required` (DL-087), the shim session is restored `running`, its input stays blocked, and the rollback is never sent again (test).
+- Test harness: `FakeAgent::locate` (crates/fleetdeck-testkit/src/fake.rs) now waits up to 2 s for the fake binary when it is missing, because another test process's `cargo build` of the fakes can be replacing it (a `make check` run failed once with `NotFound fake-codex` in `shim_manager`); a `shim_revert` crash test waited for the `thread/rollback` log line instead of reading it once (`rollback_sent` is committed before the frame leaves).
+- Not done: the default host is still `direct`; macOS runs of the shim tests are owner/platform validation.
+- Owner review: the default host change to `shim` needs the owner/architect after 7-1 is accepted.
+

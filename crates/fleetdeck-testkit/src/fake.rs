@@ -96,14 +96,19 @@ impl FakeAgent {
             build_once(&dir);
         }
         let path = dir.join(self.bin_name());
-        if path.is_file() {
-            Ok(path)
-        } else {
-            Err(FakeError::NotFound {
-                name: self.bin_name(),
-                dir,
-            })
+        // Another test process's `cargo build` can be replacing the binary
+        // at this moment (cargo removes, then links the new file): wait
+        // briefly before reporting it missing.
+        for _ in 0..100 {
+            if path.is_file() {
+                return Ok(path);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
         }
+        Err(FakeError::NotFound {
+            name: self.bin_name(),
+            dir,
+        })
     }
 
     /// A command that starts the fake with `scenario`.

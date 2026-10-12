@@ -132,6 +132,7 @@ impl Rig {
         ShimSettings {
             host: Arc::new(ShimHost::new(config)),
             in_flight_wait: Duration::from_secs(1),
+            rollback_timeout: Duration::from_millis(500),
         }
     }
 

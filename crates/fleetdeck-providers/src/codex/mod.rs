@@ -39,6 +39,7 @@ use serde_json::{Value, json};
 
 pub use self::checkpoint::{CHECKPOINT_READS, CHECKPOINT_VERSION};
 pub use self::core::{CodexCore, Output};
+pub use self::rollback::ROLLBACK_TIMEOUT;
 pub use driver::{
     CodexAdapter, CodexAdapterConfig, CodexSession, Origin, TOKEN_DELTAS, is_token_delta,
 };

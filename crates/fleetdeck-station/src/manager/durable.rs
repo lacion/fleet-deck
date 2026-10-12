@@ -390,8 +390,20 @@ impl<C: DurableCore> DurableDriver<C> {
         ready: impl Fn(&C) -> bool,
         what: &'static str,
     ) -> Result<(), DriverError> {
+        self.wait_until(ready, tokio::time::Instant::now() + OPEN_WAIT, what)
+            .await
+    }
+
+    /// Waits until `ready` holds for the core after a commit, until
+    /// `deadline`. A core that ended or a passed deadline is
+    /// [`DriverError::Handshake`] with `what`.
+    pub(super) async fn wait_until(
+        &self,
+        ready: impl Fn(&C) -> bool,
+        deadline: tokio::time::Instant,
+        what: &'static str,
+    ) -> Result<(), DriverError> {
         let mut changed = self.changed.subscribe();
-        let deadline = tokio::time::Instant::now() + OPEN_WAIT;
         loop {
             {
                 let core = self.core.lock().await;

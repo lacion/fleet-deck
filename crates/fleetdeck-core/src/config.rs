@@ -26,6 +26,29 @@ use crate::secret::Secret;
 
 pub const DEFAULT_MAX_SESSIONS: u32 = 12;
 pub const DEFAULT_MAX_SHELLS: u32 = 8;
+/// The default shim output buffer in MiB (ADR-005 §4.1).
+pub const DEFAULT_SHIM_BUFFER_MIB: u32 = 16;
+
+/// The host that runs new provider processes (ADR-005 §1 "Selection"). A
+/// session keeps the host it started with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HostChoice {
+    /// Children of the station process (M2); they end with the station.
+    #[default]
+    Direct,
+    /// Durable shims: the provider survives a station restart.
+    Shim,
+}
+
+impl HostChoice {
+    fn parse(text: &str) -> Result<Self, &'static str> {
+        match text {
+            "direct" => Ok(Self::Direct),
+            "shim" => Ok(Self::Shim),
+            _ => Err("use \"direct\" or \"shim\""),
+        }
+    }
+}
 pub const DEFAULT_BOARD_LISTEN: &str = "127.0.0.1:7420";
 pub const DEFAULT_LINK_LISTEN: &str = "127.0.0.1:7421";
 
@@ -164,6 +187,10 @@ pub struct StationConfig {
     pub offline_approval_policy: OfflineApprovalPolicy,
     pub listen: Vec<SocketAddr>,
     pub provider_instances: Vec<ProviderInstance>,
+    /// `host = "direct" | "shim"` (default `direct`, ADR-005 §1).
+    pub host: HostChoice,
+    /// `shim_buffer_mib`: the shim output buffer, 1–256 MiB.
+    pub shim_buffer_mib: u32,
 }
 
 #[derive(Deserialize)]
@@ -178,6 +205,8 @@ struct RawStation {
     offline_approval_policy: Option<String>,
     listen: Option<Vec<String>>,
     provider_instance: Option<Vec<RawInstance>>,
+    host: Option<String>,
+    shim_buffer_mib: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -238,6 +267,14 @@ impl StationConfig {
             None => OfflineApprovalPolicy::Wait,
         };
         let listen = parse_listen("listen", raw.listen.unwrap_or_default())?;
+        let host = match raw.host {
+            Some(h) => HostChoice::parse(&h).map_err(|m| invalid("host", m))?,
+            None => HostChoice::Direct,
+        };
+        let shim_buffer_mib = raw.shim_buffer_mib.unwrap_or(DEFAULT_SHIM_BUFFER_MIB);
+        if !(1..=256).contains(&shim_buffer_mib) {
+            return Err(invalid("shim_buffer_mib", "use a value from 1 to 256"));
+        }
         let provider_instances = match raw.provider_instance {
             Some(list) => parse_instances(list, home)?,
             None => vec![
@@ -255,6 +292,8 @@ impl StationConfig {
             offline_approval_policy,
             listen,
             provider_instances,
+            host,
+            shim_buffer_mib,
         })
     }
 
