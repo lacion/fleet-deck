@@ -244,7 +244,9 @@ test('a batch starts one worktree session per line with Nx (M3 6-1)', async ({ p
   await form.getByLabel('First prompt (optional)').fill('2x fix the tests\nwrite docs');
   expect(await fitsWidth(page)).toBe(true);
   await form.getByRole('button', { name: 'Start session' }).click();
-  await expect(page.getByRole('status')).toContainText('3 of 3 sessions started.');
+  await expect(
+    page.getByRole('status').filter({ hasText: '3 of 3 sessions started.' }),
+  ).toBeVisible();
   const starts = deck.calls.filter((c) => c.path === '/api/commands/session.start');
   expect(
     starts.map((c) => (c.body as { command: { prompt: { text: string } } }).command.prompt.text),

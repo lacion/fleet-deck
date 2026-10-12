@@ -45,11 +45,11 @@ export function SpawnForm({
   const [model, setModel] = useState('');
   const [title, setTitle] = useState('');
   const [prompt, setPrompt] = useState(initialPrompt);
+  const [importId, setImportId] = useState('');
   const [place, setPlace] = useState<'here' | 'worktree' | 'clone'>('here');
   const [cloneUrl, setCloneUrl] = useState('');
   const [cloneName, setCloneName] = useState('');
   const [batch, setBatch] = useState(false);
-  const [importId, setImportId] = useState('');
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<SpawnOutcome | null>(null);
 
@@ -72,8 +72,11 @@ export function SpawnForm({
     });
   };
   const modes = spawnModes(provider);
-  const cloneReady = place !== 'clone' || (cloneUrl.trim() !== '' && cloneName.trim() !== '');
   const importProblem = importId.trim() === '' ? null : importIdProblem(importId.trim());
+  const cloneReady =
+    place !== 'clone' ||
+    importId.trim() !== '' ||
+    (cloneUrl.trim() !== '' && cloneName.trim() !== '');
   const ready =
     live &&
     canDrive &&
@@ -108,7 +111,8 @@ export function SpawnForm({
             }
             setBusy(true);
             setOutcome(null);
-            const target = place === 'clone' ? `${cwd}/${cloneName.trim()}` : cwd;
+            const target =
+              place === 'clone' && importId.trim() === '' ? `${cwd}/${cloneName.trim()}` : cwd;
             const spec = {
               provider_instance: provider.instance,
               cwd: target,
@@ -116,25 +120,26 @@ export function SpawnForm({
               model: model.trim() === '' ? null : model.trim(),
               title: title.trim() === '' ? null : title.trim(),
             };
+            // An import continues a native session in this directory: it
+            // ignores the workspace and batch choices (DL-308). A batch
+            // forces a worktree per session (v0); a clone is one session.
             const native = importId.trim();
-            // A batch forces a worktree per session (v0); a clone and an
-            // import are one session.
-            const workspace =
-              native !== ''
-                ? null
-                : place === 'clone'
-                  ? { kind: 'clone' as const, url: cloneUrl.trim() }
-                  : place === 'worktree' || batch
-                    ? { kind: 'worktree' as const }
-                    : null;
+            const importing = native !== '';
+            const workspace = importing
+              ? null
+              : place === 'clone'
+                ? { kind: 'clone' as const, url: cloneUrl.trim() }
+                : place === 'worktree' || batch
+                  ? { kind: 'worktree' as const }
+                  : null;
             const prompts =
-              batch && place !== 'clone' && native === '' ? batchPrompts(prompt) : [prompt];
+              batch && place !== 'clone' && !importing ? batchPrompts(prompt) : [prompt];
             const id = station.station_id;
             void (async () => {
               let last: SpawnOutcome | null = null;
               let started = 0;
               for (const p of prompts) {
-                last = await actions.start(id, spec, p, workspace, native);
+                last = await actions.start(id, spec, p, workspace, importing ? native : undefined);
                 if (!last.ok) break;
                 started += 1;
               }
@@ -296,6 +301,7 @@ export function SpawnForm({
           </label>
           <p className="fd-note">
             Continue a Claude or Codex session that you started in a terminal. Close it there first.
+            An import runs in the chosen directory and ignores the workspace and batch choices.
           </p>
           {importProblem === null ? null : <p role="alert">{importProblem}</p>}
           <button type="submit" disabled={!ready || importProblem !== null}>

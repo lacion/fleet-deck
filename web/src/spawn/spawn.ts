@@ -33,6 +33,23 @@ export type SpawnActions = {
   ): Promise<SpawnOutcome>;
 };
 
+/** The longest native session id that `session.import` accepts (Rust mirror). */
+export const MAX_NATIVE_SESSION_ID = 128;
+
+/**
+ * Why a native CLI session id cannot be imported, or `null` (mirrors
+ * `check_native_session_id`: letters, digits, `-`, `_`, `.`; never a flag).
+ */
+export function importIdProblem(id: string): string | null {
+  if (id.length === 0 || id.length > MAX_NATIVE_SESSION_ID) {
+    return 'The session id must have 1 to 128 characters.';
+  }
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id)) {
+    return 'The session id may hold only letters, digits, "-", "_" and ".", and starts with a letter or a digit.';
+  }
+  return null;
+}
+
 /** The most sessions that one batch line can ask for (`10x`). */
 export const MAX_BATCH = 10;
 
@@ -55,23 +72,6 @@ export function batchPrompts(text: string): string[] {
     for (let i = 0; i < n; i += 1) prompts.push(task);
   }
   return prompts;
-}
-
-/** The longest native session id that `session.import` accepts (Rust mirror). */
-export const MAX_NATIVE_SESSION_ID = 128;
-
-/**
- * Why a native CLI session id cannot be imported, or `null` (mirrors
- * `check_native_session_id`: letters, digits, `-`, `_`, `.`; never a flag).
- */
-export function importIdProblem(id: string): string | null {
-  if (id.length === 0 || id.length > MAX_NATIVE_SESSION_ID) {
-    return 'The session id must have 1 to 128 characters.';
-  }
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id)) {
-    return 'The session id may hold only letters, digits, "-", "_" and ".", and starts with a letter or a digit.';
-  }
-  return null;
 }
 
 /**
@@ -132,9 +132,9 @@ export function spawnActions(
         await get(`/api/stations/${encodeURIComponent(stationId)}/workspaces${query}`),
       );
     },
-    start: async (stationId, spec, prompt, workspace = null, importId = '') => {
+    start: async (stationId, spec, prompt, workspace = null, importId) => {
       const first = prompt.trim() === '' ? null : { text: prompt };
-      const native = importId.trim();
+      const native = importId?.trim() ?? '';
       const command =
         native === ''
           ? { op: 'start', spec, prompt: first, ...(workspace === null ? {} : { workspace }) }
