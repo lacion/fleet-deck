@@ -34,6 +34,12 @@ fleetdeck-testkit = { path = "../fleetdeck-testkit" }
 fleetdeck-link = { path = "../fleetdeck-link" }
 rustls.workspace = true
 tempfile.workspace = true
+# The packaging checks parse dist-workspace.toml and Cargo.toml (7-5).
+toml.workspace = true
 
 [lints]
 workspace = true
+
+# cargo-dist builds and releases this binary (dist-workspace.toml, DL-400).
+[package.metadata.dist]
+dist = true

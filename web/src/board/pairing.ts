@@ -1,3 +1,4 @@
+import type { ShellActions } from '../shell/shell';
 import type { AddStationRequest, PairingInvitation, StationView } from '../gen';
 
 /** The pairing calls of the stations screen (admin scope). */
@@ -6,6 +7,8 @@ export type StationActions = {
   invite(): Promise<PairingInvitation>;
   add(request: AddStationRequest): Promise<StationView>;
   remove(name: string): Promise<StationView>;
+  /** The owner's station shells (PLAN §6.8); admin scope. */
+  readonly shells?: ShellActions | undefined;
 };
 
 type Post = (path: string, body: unknown) => Promise<unknown>;

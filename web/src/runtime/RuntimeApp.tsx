@@ -3,6 +3,7 @@ import { App } from '../App';
 import { stationActions } from '../board/pairing';
 import type { SessionKey } from '../gen';
 import { sessionActions } from '../session/commands';
+import { shellActions } from '../shell/shell';
 import { spawnActions } from '../spawn/spawn';
 import type { Connection } from './connection';
 
@@ -17,7 +18,13 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
   const [logoutError, setLogoutError] = useState<string | null>(null);
   const canAdmin = state.login?.scopes.includes('admin') === true;
   const actions = useMemo(
-    () => stationActions((path, body) => connection.post(path, body), canAdmin),
+    () => ({
+      ...stationActions((path, body) => connection.post(path, body), canAdmin),
+      shells: shellActions(
+        (path) => connection.get(path),
+        (path, body) => connection.post(path, body),
+      ),
+    }),
     [connection, canAdmin],
   );
   // A new login object with the same scopes keeps the same actions.

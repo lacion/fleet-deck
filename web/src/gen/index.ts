@@ -109,3 +109,8 @@ export * from "./session/RunningTool";
 export * from "./session/SessionError";
 export * from "./session/SessionRevert";
 export * from "./session/SessionSummary";
+export * from "./shell/ShellAttach";
+export * from "./shell/ShellChange";
+export * from "./shell/ShellEnvelope";
+export * from "./shell/ShellInfo";
+export * from "./shell/ShellState";

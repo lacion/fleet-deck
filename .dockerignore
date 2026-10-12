@@ -1,0 +1,8 @@
+# Build context of packaging/container/Containerfile (DL-400).
+target
+**/node_modules
+web/dist
+web/test-results
+.git
+.pi
+.codegraph

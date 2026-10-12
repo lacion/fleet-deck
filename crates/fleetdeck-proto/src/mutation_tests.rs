@@ -33,6 +33,15 @@ pub(crate) fn sample(method: &str) -> Value {
             "rotation",
             json!({"old_key": "a".repeat(64), "new_key": "b".repeat(64), "signature": "c".repeat(128)}),
         ),
+        "shell.open" => with(
+            "change",
+            json!({"op": "open", "shell_id": "main", "cwd": "/w", "cols": 80, "rows": 24}),
+        ),
+        "shell.resize" => with(
+            "change",
+            json!({"op": "resize", "shell_id": "main", "cols": 100, "rows": 30}),
+        ),
+        "shell.close" => with("change", json!({"op": "close", "shell_id": "main"})),
         "coordinator.call" => with(
             "call",
             json!({"caller": s, "token_digest": "d".repeat(64),
@@ -87,7 +96,7 @@ fn every_mutating_method_parses_its_envelope_and_names_its_method() {
             count += 1;
         }
     }
-    assert_eq!(count, 17);
+    assert_eq!(count, 20);
 }
 
 #[test]
@@ -197,6 +206,7 @@ fn every_params_type_name_is_the_rust_type() {
         std::any::type_name::<CommandEnvelope>(),
         std::any::type_name::<StationConfigureEnvelope>(),
         std::any::type_name::<KeyRotationEnvelope>(),
+        std::any::type_name::<crate::shell::ShellEnvelope>(),
         std::any::type_name::<CoordinatorCallEnvelope>(),
     ];
     for (kind, name) in ENVELOPES.iter().zip(names) {

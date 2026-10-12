@@ -27,6 +27,7 @@ mod outbox;
 mod requests;
 pub mod router;
 pub mod runtime;
+pub mod streams;
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -56,6 +57,9 @@ pub const NOT_IMPLEMENTED: &str = "not_implemented";
 /// The largest batch of events folded in one transaction.
 pub const BATCH: usize = 256;
 
+/// One open link: its token, control channel and data channel.
+type LiveEntry = (u64, Control, Option<Arc<streams::DataHub>>);
+
 /// What every link of the deck shares.
 #[derive(Debug)]
 pub struct DeckLink {
@@ -63,7 +67,7 @@ pub struct DeckLink {
     pub peers: Arc<DeckPeers>,
     pub node: NodeConfig,
     /// The open links of each station.
-    live: Mutex<HashMap<StationId, Vec<(u64, Control)>>>,
+    live: Mutex<HashMap<StationId, Vec<LiveEntry>>>,
     next_token: AtomicU64,
     inflight: router::Inflight,
 }
@@ -81,12 +85,17 @@ impl DeckLink {
         }
     }
 
-    fn up(self: &Arc<Self>, id: &StationId, control: &Control) -> LiveGuard {
+    fn up(
+        self: &Arc<Self>,
+        id: &StationId,
+        control: &Control,
+        data: Option<Arc<streams::DataHub>>,
+    ) -> LiveGuard {
         let token = self.next_token.fetch_add(1, Ordering::Relaxed);
         let mut live = self.live.lock().unwrap_or_else(PoisonError::into_inner);
         live.entry(id.clone())
             .or_default()
-            .push((token, control.clone()));
+            .push((token, control.clone(), data));
         self.store.set_reachable(id, true);
         LiveGuard {
             ctx: Arc::clone(self),
@@ -105,7 +114,7 @@ impl DeckLink {
     /// Closes every station link (deck shutdown).
     pub fn close_all(&self, reason: &str) {
         let live = self.live.lock().unwrap_or_else(PoisonError::into_inner);
-        for (_, control) in live.values().flatten() {
+        for (_, control, _) in live.values().flatten() {
             control.close(reason, "the deck stops");
         }
     }
@@ -122,7 +131,7 @@ impl Drop for LiveGuard {
     fn drop(&mut self) {
         let mut live = self.ctx.live.lock().unwrap_or_else(PoisonError::into_inner);
         let links = live.entry(self.id.clone()).or_default();
-        links.retain(|(t, _)| *t != self.token);
+        links.retain(|(t, _, _)| *t != self.token);
         if links.is_empty() {
             live.remove(&self.id);
             self.ctx.store.set_reachable(&self.id, false);
@@ -136,8 +145,10 @@ pub async fn serve(ctx: Arc<DeckLink>, link: LiveLink) -> Closing {
         peer,
         control,
         mut inbound,
+        data,
         ..
     } = link;
+    let data = data.map(streams::DataHub::start);
     let station = match ctx.store.station_by_key(peer).await {
         Ok(Some(st)) => st,
         Ok(None) => {
@@ -150,7 +161,7 @@ pub async fn serve(ctx: Arc<DeckLink>, link: LiveLink) -> Closing {
         }
     };
     let id = station.station_id.clone();
-    let _live = ctx.up(&id, &control);
+    let _live = ctx.up(&id, &control, data);
     if let Err(e) = ctx.store.touch_station(id.clone()).await {
         tracing::warn!(error = %e, "station last_seen");
     }

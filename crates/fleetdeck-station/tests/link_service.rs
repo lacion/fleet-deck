@@ -91,6 +91,9 @@ async fn fixture() -> Fixture {
         node,
         peers,
         name: "box".to_owned(),
+        shells: Arc::new(fleetdeck_station::shell::Shells::new(
+            fleetdeck_station::shell::ShellConfig::default(),
+        )),
     });
     Fixture {
         _det: det,

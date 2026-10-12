@@ -42,6 +42,8 @@ pub struct StationLink {
     pub peers: Arc<StationPeers>,
     /// The station name of `station.toml`.
     pub name: String,
+    /// The human shells (PLAN §6.8); they outlive every link.
+    pub shells: Arc<crate::shell::Shells>,
 }
 
 /// Serves `link` until it ends; returns why it ended.
@@ -50,12 +52,24 @@ pub async fn serve(ctx: Arc<StationLink>, link: LiveLink) -> Closing {
         peer,
         control,
         mut inbound,
+        data,
         ..
     } = link;
+    let data = data.map(|d| {
+        let handle = d.handle.clone();
+        tokio::spawn(crate::shell::data::serve(
+            Arc::clone(&ctx.shells),
+            d.handle,
+            d.events,
+        ));
+        handle
+    });
     let mut stream = Stream::new(ctx.manager.store().clone(), control.clone());
     while let Some(message) = inbound.recv().await {
         match message {
-            Inbound::Request(req) => request(&ctx, &control, &peer, &mut stream, req).await,
+            Inbound::Request(req) => {
+                request(&ctx, &control, &peer, &mut stream, data.as_ref(), req).await;
+            }
             Inbound::Frame(frame) => match *frame {
                 ControlFrame::Ack {
                     incarnation,
@@ -80,9 +94,16 @@ async fn request(
     control: &Control,
     peer: &PeerKey,
     stream: &mut Stream,
+    data: Option<&fleetdeck_link::data::Data>,
     req: InboundRequest,
 ) {
     match req.method.as_str() {
+        "shell.attach" => {
+            let reply = intake::shell_attach(ctx, data, req.params);
+            if let Err(e) = control.respond(req.id, reply).await {
+                tracing::debug!(error = %e, "response");
+            }
+        }
         "events.replay" => match serde_json::from_value::<ReplayParams>(req.params) {
             Ok(p) => stream.restart(
                 Start::Replay {

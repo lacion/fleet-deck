@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { takeLoginLink } from './runtime/api';
 import { browserEnvironment, Connection } from './runtime/connection';
 import { RuntimeApp } from './runtime/RuntimeApp';
+import '@xterm/xterm/css/xterm.css';
 import './styles/tokens.css';
 import './styles/app.css';
 import './styles/runtime.css';

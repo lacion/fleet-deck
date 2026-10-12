@@ -16,6 +16,7 @@ pub mod ids;
 pub mod link;
 pub mod mutation;
 pub mod session;
+pub mod shell;
 pub mod status;
 pub mod ts;
 pub mod version;
