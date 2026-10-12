@@ -1,23 +1,18 @@
-/* M2 P4-3: the session view, the needs-you rail and the subagent tree. */
-.fd-session,
+/* DL-140: the session pane (header, notice, tabs, chat column) and the needs-you rail. */
 .fd-rail {
   padding: var(--sp-4);
   overflow-wrap: anywhere;
   min-width: 0;
-}
-.fd-rail {
   border-bottom: 1px solid var(--border);
 }
-.fd-rail ul,
-.fd-requests ul {
+.fd-rail ul {
   margin: 0;
   padding: 0;
   list-style: none;
   display: grid;
   gap: var(--sp-2);
 }
-.fd-rail li,
-.fd-requests li {
+.fd-rail li {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -36,8 +31,7 @@
   background: var(--code);
   padding: var(--sp-2);
 }
-.fd-options,
-.fd-controls {
+.fd-options {
   display: flex;
   flex-wrap: wrap;
   gap: var(--sp-2);
@@ -53,36 +47,136 @@
 .fd-modes button[aria-pressed="true"] {
   border-color: var(--act);
 }
-.fd-composer {
-  display: grid;
-  gap: var(--sp-1);
-}
-.fd-composer textarea {
-  width: 100%;
-  box-sizing: border-box;
-  background: var(--code);
-  color: var(--text);
-  border: 1px solid var(--border);
-}
-.fd-items {
-  margin: 0;
-  padding-left: var(--sp-3);
-  display: grid;
-  gap: var(--sp-1);
-}
-.fd-subagent {
-  border-left: 2px solid var(--border);
-  padding-left: var(--sp-2);
-}
-.fd-subagent [data-subagent-status] {
-  color: var(--act);
-}
-.fd-notice-error,
 .fd-outcome[role="alert"] {
   color: var(--hazard);
 }
 .fd-subagents {
   color: var(--act);
+}
+
+.fd-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow-wrap: anywhere;
+  background: var(--bg);
+  color: var(--text);
+}
+.fd-pane-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  margin: var(--sp-2) var(--sp-4);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--act-bg);
+  color: var(--act-ink);
+  border: 1px solid var(--act);
+  border-radius: var(--r-panel);
+  font-size: var(--fs-body);
+}
+.fd-pane-notice p {
+  margin: 0;
+}
+.fd-pane-confirm {
+  display: grid;
+  gap: var(--sp-2);
+}
+.fd-pane-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+.fd-pane-notice button {
+  font: inherit;
+  font-size: var(--fs-body);
+  color: var(--text);
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctl);
+  padding: var(--sp-1) var(--sp-3);
+  cursor: pointer;
+}
+.fd-pane-notice button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+.fd-pane-tabs {
+  display: flex;
+  gap: var(--sp-1);
+  padding: 0 var(--sp-4);
+  border-bottom: 1px solid var(--border);
+}
+.fd-pane-tabs [role="tab"] {
+  font: inherit;
+  font-size: var(--fs-body);
+  color: var(--dim);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: var(--sp-2) var(--sp-3);
+  cursor: pointer;
+  transition: color var(--t-fast);
+}
+.fd-pane-tabs [role="tab"]:hover {
+  color: var(--text);
+}
+.fd-pane-tabs [role="tab"][aria-selected="true"] {
+  color: var(--text);
+  border-bottom-color: var(--text);
+}
+.fd-pane-tabs [role="tab"]:focus-visible,
+.fd-pane-notice button:focus-visible,
+.fd-pane-body button:focus-visible,
+.fd-pane-body input:focus-visible,
+.fd-pane-body select:focus-visible {
+  outline: 2px solid var(--act);
+  outline-offset: 2px;
+}
+.fd-pane-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--sp-2) var(--sp-4) var(--sp-4);
+}
+.fd-pane-chat {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 820px;
+  margin: 0 auto;
+  box-sizing: border-box;
+}
+.fd-pane-foot {
+  display: grid;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3) var(--sp-3);
+}
+.fd-pane[data-layout="phone"] .fd-pane-chat {
+  max-width: none;
+  margin: 0;
+}
+.fd-pane[data-layout="phone"] .fd-pane-foot {
+  position: sticky;
+  bottom: 0;
+  background: var(--bg);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+@media (pointer: coarse) {
+  .fd-pane-tabs [role="tab"],
+  .fd-pane-notice button {
+    min-height: var(--tap-min);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fd-pane-tabs [role="tab"] {
+    transition: none;
+  }
 }
 
 /* M3 6-8: the rename form and the event feed (DL-095). */

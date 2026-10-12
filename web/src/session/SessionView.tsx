@@ -1,342 +1,272 @@
-import { useState } from 'react';
-import { stationName } from '../board/fleet';
-import { providerLabel } from '../board/lanes';
-import type { DeckSession, OpenRequest, StationView } from '../gen';
+// DL-140: the session pane: header, the notice of a terminal hold, the tabs
+// (Chat | Changes | Files), the chat with the approval dock and the composer.
+import { type KeyboardEvent, useId, useMemo, useRef, useState } from 'react';
+import { ChatView } from '../chat/ChatView';
+import type { DeckSession, StationView } from '../gen';
 import type { Freshness, Timeline } from '../runtime/state';
-import type { Outcome, SessionActions } from './commands';
+import type { ShellActions } from '../shell/shell';
+import { releaseHold, type Watch } from '../terminal/handover';
+import type { TerminalStore } from '../terminal/store';
+import { ApprovalDock } from './ApprovalDock';
+import type { SessionActions } from './commands';
 import { Composer } from './Composer';
-import { QuestionAnswer } from './QuestionAnswer';
-import { questionForm, type Reply } from './question';
+import { useSessionController } from './controller';
 import { FilesPanel } from './FilesPanel';
-import { RenameForm } from './RenameForm';
-import { buildTimeline, type Item, subagentLabel } from './timeline';
+import { handoverFlow } from './handoverFlow';
+import { SessionHeader } from './SessionHeader';
+import { buildTimeline, slashCommands } from './timeline';
 import { RevertStatus, TurnsPanel } from './TurnsPanel';
 import { finalizedTurns } from './workspace';
 
-type Props = {
+export type PaneTab = 'chat' | 'changes' | 'files';
+
+export type SessionViewProps = {
   readonly session: DeckSession;
   readonly stations: readonly StationView[];
   readonly timeline: Timeline | undefined;
   readonly freshness: Freshness;
   readonly actions: SessionActions | undefined;
-  readonly onBack: () => void;
+  /** `undefined`: no admin scope, so no terminal features. */
+  readonly shells?: ShellActions | undefined;
+  readonly terminals?: TerminalStore | undefined;
+  /** The live summary of this session, for the handover flows. */
+  readonly watch?: Watch | undefined;
+  readonly layout?: 'desktop' | 'tablet' | 'phone';
+  readonly tab?: PaneTab;
+  readonly onTab?: (tab: PaneTab) => void;
+  readonly onBack?: () => void;
+  /** The phone shows the terminal screen. */
+  readonly onTerminalOpened?: () => void;
 };
 
-/** One session: approvals first, then controls, the composer and the timeline tree. */
-export function SessionView({ session, stations, timeline, freshness, actions, onBack }: Props) {
+const noop = () => {};
+
+function disabledReason(
+  flags: { live: boolean; held: boolean; ended: boolean },
+  actions: SessionActions | undefined,
+): string | null {
+  if (!flags.live) return 'Controls are off until the board and the station are live.';
+  if (flags.held)
+    return 'A terminal holds this session. Return it to board control to send prompts.';
+  if (flags.ended) return 'The session ended. Resume it to send prompts.';
+  if (actions?.canDrive !== true) return 'Sending prompts needs the drive scope.';
+  return null;
+}
+
+/** One session: header, tabs, the chat with its approval dock and composer. */
+export function SessionView(props: SessionViewProps) {
+  const { session, stations, timeline, freshness, actions, shells, terminals, watch } = props;
+  const { layout = 'desktop', onTab = noop, onBack, onTerminalOpened } = props;
   const s = session.summary;
   const caps = s.capabilities;
-  const live = freshness === 'live' && session.status !== 'unreachable';
-  const ended = s.state === 'exited' || s.state === 'lost';
-  const drive = live && !ended && actions?.canDrive === true;
-  const working = s.current_run !== null;
-  const tree = buildTimeline(timeline?.events ?? []);
-  const turns = finalizedTurns(timeline?.events ?? []);
-  const [outcome, setOutcome] = useState<Outcome | null>(null);
-  const [busy, setBusy] = useState(false);
-  const act = (call: () => Promise<Outcome>) => {
-    setBusy(true);
-    void call()
-      .then(setOutcome)
-      .finally(() => setBusy(false));
-  };
-  return (
-    <main className="fd-session" aria-label="Session">
-      <button type="button" onClick={onBack}>
-        Back to fleet
-      </button>
-      <h2>{s.title ?? s.session_id}</h2>
-      <RenameForm
-        title={s.title}
-        enabled={live && actions?.canDrive === true && !busy}
-        onRename={(t) => actions && act(() => actions.rename(t))}
-      />
-      <p className="fd-card-line">
-        {stationName(session.station_id, stations)} · {providerLabel(s.provider)} ·{' '}
-        <span data-status={session.status}>{session.status.replaceAll('_', ' ')}</span>
-        {s.mode ? ` · mode ${s.mode}` : ''}
-      </p>
-      {!live ? (
-        <p className="fd-note" role="status">
-          Controls are off until the board and the station are live.
-        </p>
-      ) : null}
-      <Requests
-        requests={s.open_requests}
-        answerable={caps?.approvals === true}
-        enabled={live && !ended && actions?.canApprove === true}
-        busy={busy}
-        onAnswer={(r, o, reply) => actions && act(() => actions.answer(r, o, reply))}
-      />
-      <section className="fd-controls" aria-label="Session controls">
-        {caps?.interrupt ? (
-          <button
-            type="button"
-            disabled={!drive || !working || busy}
-            onClick={() => actions && act(() => actions.interrupt())}
-          >
-            Interrupt
-          </button>
-        ) : null}
-        {caps?.set_mode && caps.modes.length > 0 ? (
-          <ModeLadder
-            modes={caps.modes}
-            current={s.mode}
-            enabled={drive && !busy}
-            onSet={(m) => actions && act(() => actions.setMode(m))}
-          />
-        ) : null}
-        {caps?.resume ? (
-          <label className="fd-auto-continue">
-            <input
-              type="checkbox"
-              checked={s.auto_continue}
-              disabled={!live || actions?.canDrive !== true || busy}
-              onChange={(ev) => {
-                const on = ev.currentTarget.checked;
-                if (actions) act(() => actions.setAutoContinue(on));
-              }}
-            />{' '}
-            Continue after a station restart
-          </label>
-        ) : null}
-        {caps?.set_model ? (
-          <ModelPicker
-            current={s.model}
-            enabled={drive && !busy}
-            onSet={(m) => actions && act(() => actions.setModel(m))}
-          />
-        ) : null}
-      </section>
-      <Composer
-        enabled={drive && !busy}
-        working={working}
-        steer={caps?.steer === true}
-        nativeQueue={caps?.native_follow_up === true}
-        onSend={(kind, text, images) => actions && act(() => actions.send(kind, text, images))}
-      />
-      {outcome ? (
-        <p role={outcome.ok ? 'status' : 'alert'} className="fd-outcome">
-          {outcome.text}
-        </p>
-      ) : null}
-      <RevertStatus
-        summary={s}
-        turns={turns}
-        actions={actions}
-        drive={drive}
-        live={live}
-        busy={busy}
-        act={act}
-      />
-      <TurnsPanel
-        summary={s}
-        turns={turns}
-        actions={actions}
-        drive={drive}
-        live={live}
-        busy={busy}
-        act={act}
-      />
-      <FilesPanel files={live && actions?.canDrive === true ? (actions.files ?? null) : null} />
-      <section className="fd-timeline" aria-label="Timeline">
-        <h3>
-          Timeline · subagents running: <span data-running-subagents>{tree.running}</span>
-        </h3>
-        {timeline?.error ? <p role="alert">{timeline.error}</p> : null}
-        {timeline?.ready ? null : <p className="fd-note">Loading the timeline…</p>}
-        <Items items={tree.items} />
-      </section>
-    </main>
+  const key = useMemo(
+    () => ({ station_id: session.station_id, session_id: s.session_id }),
+    [session.station_id, s.session_id],
   );
-}
+  const controller = useSessionController(session, freshness, actions ?? null);
+  const { flags, busy } = controller;
+  const events = timeline?.events ?? [];
+  const tree = buildTimeline(events);
+  const turns = finalizedTurns(events);
+  const filesOffered = actions?.files != null;
+  const tab: PaneTab = props.tab === 'files' && !filesOffered ? 'chat' : (props.tab ?? 'chat');
+  const flow =
+    actions && shells && terminals && watch
+      ? handoverFlow({ key, title: s.title ?? s.session_id, watch, actions, shells, terminals })
+      : null;
+  const terminal = flow
+    ? {
+        available: true,
+        onOpen: () =>
+          controller.act('handover', async () => {
+            const r = await flow.open();
+            if (r.ok) onTerminalOpened?.();
+            return r;
+          }),
+        onReturn: () => controller.act('return', flow.back),
+      }
+    : null;
+  const hold = s.terminal ?? null;
+  const [confirmRelease, setConfirmRelease] = useState(false);
+  const ids = useId();
+  const tabs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const order: PaneTab[] = filesOffered ? ['chat', 'changes', 'files'] : ['chat', 'changes'];
+  const labels: Record<PaneTab, string> = {
+    chat: 'Chat',
+    changes: turns.length > 0 ? `Changes · ${turns.length}` : 'Changes',
+    files: 'Files',
+  };
+  const onTabKey = (event: KeyboardEvent<HTMLDivElement>) => {
+    const at = order.indexOf(tab);
+    let next: number;
+    if (event.key === 'ArrowRight') next = (at + 1) % order.length;
+    else if (event.key === 'ArrowLeft') next = (at - 1 + order.length) % order.length;
+    else if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = order.length - 1;
+    else return;
+    event.preventDefault();
+    const target = order[next];
+    if (target === undefined) return;
+    onTab(target);
+    tabs.current[target]?.focus();
+  };
+  const panelAct = (call: Parameters<typeof controller.act>[1]) => controller.act('turns', call);
+  const filesReady = flags.live && actions?.canDrive === true;
 
-function Requests(props: {
-  requests: readonly OpenRequest[];
-  answerable: boolean;
-  enabled: boolean;
-  busy: boolean;
-  onAnswer: (request: string, option: string, reply: Reply | null) => void;
-}) {
-  if (props.requests.length === 0) return null;
   return (
-    <section className="fd-requests" aria-label="Needs you">
-      <h3>Needs you</h3>
-      <ul>
-        {props.requests.map((r) => {
-          const form = props.answerable ? questionForm(r) : null;
-          return (
-            <li key={r.request_id} data-request={r.request_id}>
-              <strong>{r.title}</strong>
-              <pre className="fd-details">{r.details}</pre>
-              {/* Without the approvals capability the provider answers under its
-                own policy: the board shows the request but no controls (§6.2). */}
-              {/* A question gets an answer form (DL-068). */}
-              {form ? (
-                <QuestionAnswer
-                  request={r}
-                  form={form}
-                  enabled={props.enabled}
-                  busy={props.busy}
-                  onAnswer={(o, reply) => props.onAnswer(r.request_id, o, reply)}
-                />
-              ) : props.answerable ? (
-                <div className="fd-options">
-                  {r.options.map((o) => (
-                    <button
-                      key={o.option_id}
-                      type="button"
-                      disabled={!props.enabled || props.busy}
-                      onClick={() => props.onAnswer(r.request_id, o.option_id, null)}
-                    >
-                      {o.label}
-                    </button>
-                  ))}
+    <section className="fd-pane" aria-label="Session" data-layout={layout}>
+      <SessionHeader
+        session={session}
+        stations={stations}
+        controller={controller}
+        actions={actions ?? null}
+        {...(onBack ? { onBack } : {})}
+        terminal={terminal}
+      />
+      {hold ? (
+        <div className="fd-pane-notice" role="note">
+          <p>
+            A terminal holds this session (shell {hold.shell_id}).
+            {hold.reason ? ` ${hold.reason}` : ''}
+          </p>
+          {shells ? (
+            confirmRelease ? (
+              <div className="fd-pane-confirm" role="group" aria-label="Release the hold">
+                <p>Only do this when no terminal process uses this session.</p>
+                <div className="fd-pane-row">
+                  <button
+                    type="button"
+                    disabled={busy !== null}
+                    onClick={() => {
+                      setConfirmRelease(false);
+                      controller.act('release', () =>
+                        flow
+                          ? flow.release(hold.shell_id)
+                          : releaseHold(() => shells.release(session.station_id, hold.shell_id)),
+                      );
+                    }}
+                  >
+                    Release the hold
+                  </button>
+                  <button type="button" onClick={() => setConfirmRelease(false)}>
+                    Cancel
+                  </button>
                 </div>
-              ) : null}
-            </li>
-          );
-        })}
-      </ul>
-      {!props.answerable ? (
-        <p className="fd-note">This provider has no approval controls.</p>
-      ) : props.enabled ? null : (
-        <p className="fd-note">Answering needs the approve scope.</p>
-      )}
+              </div>
+            ) : (
+              <button
+                type="button"
+                disabled={busy !== null}
+                onClick={() => setConfirmRelease(true)}
+              >
+                Release the hold
+              </button>
+            )
+          ) : null}
+        </div>
+      ) : null}
+      <div
+        className="fd-pane-tabs"
+        role="tablist"
+        aria-label="Session views"
+        tabIndex={-1}
+        onKeyDown={onTabKey}
+      >
+        {order.map((name) => (
+          <button
+            key={name}
+            type="button"
+            role="tab"
+            id={`${ids}-tab-${name}`}
+            aria-selected={tab === name}
+            aria-controls={`${ids}-panel`}
+            tabIndex={tab === name ? 0 : -1}
+            ref={(el) => {
+              tabs.current[name] = el;
+            }}
+            onClick={() => onTab(name)}
+          >
+            {labels[name]}
+          </button>
+        ))}
+      </div>
+      <div
+        className={tab === 'chat' ? 'fd-pane-chat' : 'fd-pane-body'}
+        role="tabpanel"
+        id={`${ids}-panel`}
+        aria-labelledby={`${ids}-tab-${tab}`}
+        data-tab={tab}
+      >
+        {tab === 'chat' ? (
+          <>
+            <ChatView
+              items={tree.items}
+              working={s.current_run !== null}
+              ready={timeline?.ready === true}
+              error={timeline?.error ?? null}
+              onOpenChanges={() => onTab('changes')}
+            />
+            <div className="fd-pane-foot">
+              <ApprovalDock
+                requests={s.open_requests}
+                answerable={caps?.approvals === true}
+                enabled={flags.approve && busy === null}
+                busy={busy !== null}
+                onAnswer={(request, option, reply) =>
+                  actions && controller.act('answer', () => actions.answer(request, option, reply))
+                }
+              />
+              <Composer
+                enabled={flags.drive && busy === null}
+                working={s.current_run !== null}
+                steer={caps?.steer === true}
+                nativeQueue={caps?.native_follow_up === true}
+                onSend={(kind, text, images) =>
+                  actions && controller.act('send', () => actions.send(kind, text, images))
+                }
+                disabledReason={disabledReason(flags, actions)}
+                slashCommands={slashCommands(events)}
+                draftKey={`${session.station_id}/${s.session_id}`}
+              />
+            </div>
+          </>
+        ) : null}
+        {tab === 'changes' ? (
+          s.revert || turns.length > 0 ? (
+            <>
+              <RevertStatus
+                summary={s}
+                turns={turns}
+                actions={actions}
+                drive={flags.drive}
+                live={flags.live}
+                busy={busy !== null}
+                act={panelAct}
+              />
+              <TurnsPanel
+                summary={s}
+                turns={turns}
+                actions={actions}
+                drive={flags.drive}
+                live={flags.live}
+                busy={busy !== null}
+                act={panelAct}
+              />
+            </>
+          ) : (
+            <p className="fd-note">No finished turns yet. Changes appear here when a turn ends.</p>
+          )
+        ) : null}
+        {tab === 'files' ? (
+          filesReady ? (
+            <FilesPanel files={actions?.files ?? null} />
+          ) : (
+            <p className="fd-note">
+              Files are available when the board is live and you have the drive scope.
+            </p>
+          )
+        ) : null}
+      </div>
     </section>
   );
-}
-
-function ModeLadder(props: {
-  modes: readonly string[];
-  current: string | null;
-  enabled: boolean;
-  onSet: (mode: string) => void;
-}) {
-  // The capability lists the modes from the most restrictive (L8).
-  return (
-    <fieldset className="fd-modes">
-      <legend>Mode (most restrictive first)</legend>
-      {props.modes.map((m) => (
-        <button
-          key={m}
-          type="button"
-          aria-pressed={m === props.current}
-          disabled={!props.enabled || m === props.current}
-          onClick={() => props.onSet(m)}
-        >
-          {m}
-        </button>
-      ))}
-    </fieldset>
-  );
-}
-
-function ModelPicker(props: {
-  current: string | null;
-  enabled: boolean;
-  onSet: (model: string) => void;
-}) {
-  // Providers accept model ids and aliases that the board cannot list, so the
-  // picker takes free text (DL-060).
-  const [model, setModel] = useState('');
-  const value = model.trim();
-  return (
-    <form
-      className="fd-options"
-      aria-label="Model"
-      onSubmit={(event) => {
-        event.preventDefault();
-        if (value === '') return;
-        setModel('');
-        props.onSet(value);
-      }}
-    >
-      <label htmlFor="fd-model-id">Model (now {props.current ?? 'unknown'})</label>
-      <input
-        id="fd-model-id"
-        value={model}
-        disabled={!props.enabled}
-        onChange={(event) => setModel(event.target.value)}
-        placeholder="Model id or alias"
-      />
-      <button type="submit" disabled={!props.enabled || value === ''}>
-        Set model
-      </button>
-    </form>
-  );
-}
-
-function Items({ items }: { items: readonly Item[] }) {
-  return (
-    <ol className="fd-items">
-      {items.map((item) => (
-        <li key={item.key} data-item={item.type}>
-          <ItemView item={item} />
-        </li>
-      ))}
-    </ol>
-  );
-}
-
-/** Who started a run; `continuation` is the station's restart input (ADR-007 §2.5). */
-function runLabel(origin: string): string {
-  if (origin === 'provider') return 'Provider turn';
-  if (origin === 'continuation') return 'Station continuation';
-  return 'You';
-}
-
-function ItemView({ item }: { item: Item }) {
-  switch (item.type) {
-    case 'run':
-      return (
-        <p className="fd-run">
-          <strong>{runLabel(item.origin)}:</strong> {item.input}
-        </p>
-      );
-    case 'message':
-      return <p className="fd-message">{item.text}</p>;
-    case 'tool':
-      return (
-        <div className="fd-tool" data-tool-status={item.status}>
-          <span>
-            {item.title} · {item.input} · {item.status}
-          </span>
-          {item.output ? <pre className="fd-details">{item.output}</pre> : null}
-        </div>
-      );
-    case 'subagent': {
-      const label = subagentLabel(item.status);
-      return (
-        <details className="fd-subagent" data-subagent={item.node_id} open>
-          <summary>
-            Subagent: {item.input || item.title} · <span data-subagent-status>{label}</span> ·{' '}
-            {item.items.length} entries
-          </summary>
-          {item.items.length === 0 ? (
-            <p className="fd-note">No events from this subagent.</p>
-          ) : (
-            <Items items={item.items} />
-          )}
-        </details>
-      );
-    }
-    case 'approval':
-      return (
-        <p className="fd-approval" data-approval={item.state}>
-          Approval: {item.title} · {item.outcome ?? 'waiting for an answer'}
-        </p>
-      );
-    case 'turn':
-      return item.status === 'done' ? null : <p className="fd-note">Turn {item.status}.</p>;
-    case 'reasoning':
-    case 'plan':
-      return null;
-    case 'notice':
-      return item.tone === 'error' ? (
-        <p className="fd-notice-error">{item.text}</p>
-      ) : (
-        <p className="fd-note">{item.text}</p>
-      );
-  }
 }

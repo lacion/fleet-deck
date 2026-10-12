@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { App } from '../App';
 import type { CheckpointSide, DeckSession, Event, SessionRevert } from '../gen';
 import type { Timeline } from '../runtime/state';
 import { claudeCaps, codexCaps } from '../testing/capabilities';
@@ -8,6 +7,7 @@ import { station } from '../testing/fleet';
 import { summary } from '../testing/summary';
 import { envelopes } from '../testing/timeline';
 import { sessionActions } from './commands';
+import { type PaneTab, SessionView } from './SessionView';
 import {
   fileActions,
   finalizedTurns,
@@ -57,23 +57,26 @@ const timeline = (events: Event[]): Timeline => ({
   ready: true,
 });
 
-const view = (s: DeckSession, events: Event[], scopes = ['read', 'drive', 'approve']) =>
+const view = (
+  s: DeckSession,
+  events: Event[],
+  scopes = ['read', 'drive', 'approve'],
+  tab: PaneTab = 'changes',
+) =>
   renderToStaticMarkup(
-    <App
-      sessions={[s]}
+    <SessionView
+      session={s}
       stations={[station()]}
       freshness="live"
-      timelines={{ [JSON.stringify(['station-a', 's1'])]: timeline(events) }}
-      sessionActions={(k) =>
-        sessionActions(
-          async () => ({}),
-          k,
-          scopes,
-          undefined,
-          async () => ({}),
-        )
-      }
-      initialSession={key}
+      timeline={timeline(events)}
+      actions={sessionActions(
+        async () => ({}),
+        key,
+        scopes,
+        undefined,
+        async () => ({}),
+      )}
+      tab={tab}
     />,
   );
 
@@ -133,7 +136,9 @@ describe('turns and reverts (DL-097)', () => {
     expect(html).toContain('Show the diff');
     expect(html).toMatch(/<button type="button">Revert to here<\/button>/);
     expect(html).not.toContain('cannot roll back its conversation, so the board');
-    expect(html).toContain('aria-label="Files"');
+    expect(html).not.toContain('aria-label="Files"');
+    const files = view(codex(), [finalized('t1')], undefined, 'files');
+    expect(files).toContain('aria-label="Files"');
   });
 
   test('a Claude session gets no revert control and says why', () => {
@@ -151,7 +156,11 @@ describe('turns and reverts (DL-097)', () => {
   test('read-only scopes and a running turn disable the revert; a read-only board has no files', () => {
     const readOnly = view(codex(), [finalized('t1')], ['read']);
     expect(readOnly).toMatch(/<button type="button" disabled="">Revert to here<\/button>/);
-    expect(readOnly).not.toContain('aria-label="Files"');
+    const files = view(codex(), [finalized('t1')], ['read'], 'files');
+    expect(files).not.toContain('aria-label="Files"');
+    expect(files).toContain(
+      'Files are available when the board is live and you have the drive scope.',
+    );
     const running = view(codex({ current_turn: 't2', activity: 'working' }), [finalized('t1')]);
     expect(running).toMatch(/disabled="" title="A turn runs.">Revert to here/);
   });

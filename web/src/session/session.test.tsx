@@ -1,18 +1,21 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { App } from '../App';
-import type { DeckSession, EventEnvelope } from '../gen';
-import type { Timeline } from '../runtime/state';
+import type { DeckSession, Event, EventEnvelope, ShellInfo } from '../gen';
+import type { Freshness, Timeline } from '../runtime/state';
+import type { ShellActions } from '../shell/shell';
 import { claudeCaps, codexCaps, minimalCaps } from '../testing/capabilities';
 import { station } from '../testing/fleet';
 import { summary } from '../testing/summary';
 import {
   claudeCapabilities,
+  envelopes,
   nestedSubagents,
   recorded,
   recordedRequest,
 } from '../testing/timeline';
 import { commandId, outcomeOf, sessionActions } from './commands';
+import { type PaneTab, SessionView } from './SessionView';
 
 const key = { station_id: 'station-a', session_id: 'nested' };
 
@@ -39,70 +42,208 @@ const timeline = (events = nestedSubagents(10)): Timeline => ({
   ready: true,
 });
 
-const view = (s: DeckSession, t?: Timeline, scopes = ['read', 'drive', 'approve']) =>
+type ViewOptions = {
+  readonly scopes?: string[];
+  readonly freshness?: Freshness;
+  readonly tab?: PaneTab;
+  readonly shells?: ShellActions;
+  /** Offer the file service (the Files tab). */
+  readonly files?: boolean;
+};
+
+const view = (s: DeckSession, t?: Timeline, options: ViewOptions = {}) =>
   renderToStaticMarkup(
-    <App
-      sessions={[s]}
+    <SessionView
+      session={s}
       stations={[station()]}
-      freshness="live"
-      timelines={t ? { [JSON.stringify(['station-a', 'nested'])]: t } : {}}
-      sessionActions={(k) => sessionActions(async () => ({}), k, scopes)}
-      initialSession={key}
+      freshness={options.freshness ?? 'live'}
+      timeline={t}
+      actions={sessionActions(
+        async () => ({}),
+        key,
+        options.scopes ?? ['read', 'drive', 'approve'],
+        undefined,
+        options.files ? async () => ({}) : undefined,
+      )}
+      shells={options.shells}
+      tab={options.tab ?? 'chat'}
     />,
   );
 
-describe('session view (P4-3)', () => {
-  test('the tree nests child timelines with their status', () => {
+const at = (n: number, event: EventEnvelope['event']): EventEnvelope => ({
+  station_seq: n,
+  session_id: 'nested',
+  session_seq: n,
+  at: n,
+  proto_version: 1,
+  raw_ref: null,
+  event,
+});
+
+const shells = (): ShellActions => ({
+  list: async (): Promise<ShellInfo[]> => [],
+  open: async () => 'shell-1',
+  resize: async () => {},
+  close: async () => {},
+  handover: async () => 'tui-1',
+  release: async () => {},
+  socketPath: () => '/x',
+});
+
+const request = (id: string, at = 1) => ({
+  request_id: id,
+  node_id: null,
+  request_kind: 'command' as const,
+  title: `Run ${id}`,
+  details: 'ls',
+  input: null,
+  options: [{ option_id: 'allow', label: 'Allow' }],
+  response: 'rpc_reply' as const,
+  requested_at: at,
+});
+
+describe('session pane (DL-140)', () => {
+  test('the header shows the title and the pane has the three views', () => {
     const html = view(session(), timeline());
-    expect(html).toContain('<h2>Review</h2>');
-    expect(html).toContain('data-running-subagents="true">3</span>');
-    expect(html).toMatch(/data-subagent="node-1".*Explore the code · .*running/);
-    // node-4 is a child of node-1; node-2 is the next sibling of node-1.
-    const one = html.indexOf('data-subagent="node-1"');
-    const four = html.indexOf('data-subagent="node-4"');
-    const two = html.indexOf('data-subagent="node-2"');
-    expect(one).toBeLessThan(four);
-    expect(four).toBeLessThan(two);
-    expect(html).toContain('Approval: Bash · waiting for an answer');
+    expect(html).toContain('<section class="fd-pane" aria-label="Session" data-layout="desktop">');
+    expect(html).toContain('<h2 class="fd-sh-title">Review</h2>');
+    expect(html).toContain('role="tablist" aria-label="Session views"');
+    expect(html).toMatch(/role="tab"[^>]*aria-selected="true"[^>]*tabindex="0">Chat</);
+    expect(html).toMatch(/role="tab"[^>]*aria-selected="false"[^>]*tabindex="-1">Changes</);
+    expect(html).toContain('role="tabpanel"');
+    // Files needs the file service of the actions.
+    expect(html).not.toContain('>Files</button>');
+    const withFiles = view(session(), timeline(), { files: true });
+    expect(withFiles).toContain('>Files</button>');
+  });
+
+  test('the Changes tab shows the count of finalized turns', () => {
+    const finalized = (turn: string): Event => ({
+      kind: 'turn.finalized',
+      turn_id: turn,
+      checkpoint: {
+        worktree_id: 'wt',
+        scope: 'tracked',
+        start: { state: 'available', commit: `${turn}-s` },
+        end: { state: 'available', commit: `${turn}-e` },
+      },
+      diff_summary: { files_changed: 1, insertions: 2, deletions: 1 },
+    });
+    const events = envelopes('nested', [finalized('t1'), finalized('t2')]);
+    const html = view(session({ capabilities: codexCaps() }), timeline(events));
+    expect(html).toContain('>Changes · 2</button>');
+    const changes = view(session({ capabilities: codexCaps() }), timeline(events), {
+      tab: 'changes',
+    });
+    expect(changes).toContain('aria-label="Turns"');
+    expect(changes).toContain('data-tab="changes"');
+    expect(changes).not.toContain('aria-label="Composer"');
+  });
+
+  test('the Changes tab says so when no turn has finished', () => {
+    const html = view(session(), timeline(), { tab: 'changes' });
+    expect(html).toContain(
+      '<p class="fd-note">No finished turns yet. Changes appear here when a turn ends.</p>',
+    );
+    expect(html).not.toContain('aria-label="Turns"');
+  });
+
+  test('the Files tab falls back to the chat without a file service', () => {
+    const html = view(session(), timeline(), { tab: 'files' });
+    expect(html).toContain('data-tab="chat"');
+    expect(html).toMatch(/aria-selected="true"[^>]*tabindex="0">Chat</);
+  });
+
+  test('the Files tab says when the board is not live or the drive scope is missing', () => {
+    const note = 'Files are available when the board is live and you have the drive scope.';
+    const withFiles = (freshness: Freshness, scopes: string[]) =>
+      view(session(), timeline(), { freshness, scopes, files: true, tab: 'files' });
+    const ready = withFiles('live', ['read', 'drive']);
+    expect(ready).toContain('aria-label="Files"');
+    expect(ready).not.toContain(note);
+    const readOnly = withFiles('live', ['read']);
+    // Without drive the file service is offered but not usable.
+    expect(readOnly).toContain(note);
+    expect(withFiles('stale', ['read', 'drive'])).toContain(note);
+  });
+
+  test('a held session shows the notice, the release button and the composer reason', () => {
+    const held = session({
+      state: 'exited',
+      current_run: null,
+      terminal: { shell_id: 'tui-7', pid: 42, since: 1, reason: 'owner handover' },
+    });
+    const html = view(held, timeline(), { shells: shells() });
+    expect(html).toContain('role="note"');
+    expect(html).toContain('A terminal holds this session (shell tui-7).');
+    expect(html).toContain('owner handover');
+    expect(html).toContain('>Release the hold</button>');
+    expect(html).toContain(
+      'A terminal holds this session. Return it to board control to send prompts.',
+    );
+    expect(html).toMatch(/<textarea id="fd-composer-text" rows="1" disabled=""/);
+    // Without the admin scope the board offers no release.
+    expect(view(held, timeline())).not.toContain('Release the hold');
+    expect(view(session(), timeline(), { shells: shells() })).not.toContain('Release the hold');
+  });
+
+  test('an ended session says how to send prompts again', () => {
+    const html = view(session({ state: 'exited', current_run: null }), timeline());
+    expect(html).toContain('The session ended. Resume it to send prompts.');
+    expect(html).toMatch(/<textarea id="fd-composer-text" rows="1" disabled=""/);
+  });
+
+  test('a stale board turns the controls off and says why', () => {
+    const html = view(session(), undefined, { freshness: 'stale' });
+    expect(html).toContain('Controls are off until the board and the station are live.');
+    expect(html).toMatch(/<textarea id="fd-composer-text" rows="1" disabled=""/);
+  });
+
+  test('a session without the drive scope says why', () => {
+    const html = view(session(), timeline(), { scopes: ['read'] });
+    expect(html).toContain('Sending prompts needs the drive scope.');
+  });
+
+  test('the slash commands of the session reach the composer', () => {
+    const events = [at(1, { kind: 'session.slash_commands', commands: ['init', 'compact'] })];
+    const html = view(session(), timeline(events));
+    expect(html).toContain('(/ for commands)');
+    expect(view(session(), timeline([]))).not.toContain('(/ for commands)');
+  });
+
+  test('the chat nests the subagents and shows the open approval', () => {
+    const html = view(session(), timeline());
+    expect(html).toContain('aria-label="Conversation"');
+    expect(html).toMatch(/fd-chat-subagent[\s\S]*fd-chat-subagent[\s\S]*Waiting for your answer\./);
+    expect(html.match(/fd-chat-subagent/g)?.length).toBeGreaterThanOrEqual(3);
   });
 
   test('a recorded background subagent shows its background state', () => {
     const events = recorded('subagent').filter((e) => e.session_seq <= 8);
     const html = view(session(), timeline(events));
     expect(html).toContain('running in the background');
-    expect(html).toContain('No events from this subagent.');
   });
 
-  test('controls follow the capabilities, the run and the scopes', () => {
+  test('the composer follows the capabilities and the run', () => {
     const working = view(session(), timeline());
     expect(working).toContain('Steer now');
     expect(working).toContain('Queue follow-up');
-    expect(working).toContain('Interrupt');
-    expect(working).toContain('Mode (most restrictive first)');
-    expect(working).toContain('Model (now unknown)');
-    expect(working).toContain('aria-pressed="true" disabled="">default</button>');
 
     const idle = view(session({ current_run: null }), timeline());
     expect(idle).not.toContain('Steer now');
     expect(idle).toContain('>Send</button>');
 
     const none = view(session({ capabilities: null }), timeline());
-    expect(none).not.toContain('Interrupt');
-    expect(none).not.toContain('Mode (most restrictive first)');
     expect(none).not.toContain('Steer now');
-    expect(none).not.toContain('Set model');
 
     const caps = { ...claudeCapabilities(), steer: false, set_mode: false };
     const noSteer = view(session({ capabilities: caps }), timeline());
     expect(noSteer).not.toContain('Steer now');
-    expect(noSteer).not.toContain('Mode (most restrictive first)');
   });
 
   test('a Codex session shows the controls of its capabilities (P5-3)', () => {
     const codex = view(session({ capabilities: codexCaps(), mode: 'untrusted/workspace-write' }));
     expect(codex).toContain('Steer now');
-    expect(codex).toContain('Interrupt');
-    expect(codex).toContain('Set model');
     expect(codex).toContain('>untrusted/read-only</button>');
     expect(codex).toContain('aria-pressed="true" disabled="">untrusted/workspace-write</button>');
     expect(codex).not.toContain('>acceptEdits</button>');
@@ -115,28 +256,20 @@ describe('session view (P4-3)', () => {
   });
 
   test('a provider without optional capabilities gets prompt and follow-up only', () => {
-    const req = {
-      request_id: 'req-1',
-      node_id: null,
-      request_kind: 'command' as const,
-      title: 'Run ls',
-      details: 'ls',
-      input: null,
-      options: [{ option_id: 'allow', label: 'Allow' }],
-      response: 'rpc_reply' as const,
-      requested_at: 1,
-    };
+    const req = request('req-1');
     const html = view(session({ capabilities: minimalCaps(), open_requests: [req] }));
-    expect(html).not.toContain('Interrupt');
     expect(html).not.toContain('Steer now');
-    expect(html).not.toContain('Mode (most restrictive first)');
     expect(html).not.toContain('Set model');
     expect(html).toContain('Queue follow-up');
-    expect(html).toContain('Run ls');
+    expect(html).toContain('Run req-1');
     expect(html).toContain('This provider has no approval controls.');
     expect(html).not.toContain('>Allow</button>');
     const answerable = view(session({ capabilities: codexCaps(), open_requests: [req] }));
     expect(answerable).toContain('>Allow</button>');
+    // The dock sits above the composer.
+    expect(answerable.indexOf('Needs you')).toBeLessThan(
+      answerable.indexOf('aria-label="Composer"'),
+    );
   });
 
   test('a question request gets an answer form for both providers (DL-068)', () => {
@@ -159,37 +292,12 @@ describe('session view (P4-3)', () => {
     expect(claude).not.toContain('>Allow once</button>');
   });
 
-  test('a stale board or an ended session disables every control', () => {
-    const stale = renderToStaticMarkup(
-      <App
-        sessions={[session()]}
-        stations={[station()]}
-        freshness="stale"
-        sessionActions={(k) => sessionActions(async () => ({}), k, ['drive'])}
-        initialSession={key}
-      />,
-    );
-    expect(stale).toContain('Controls are off until the board and the station are live.');
-    expect(stale).toContain('Loading the timeline…');
-    const ended = view(session({ state: 'exited', current_run: null }), timeline());
-    expect(ended).toMatch(/<textarea id="fd-composer-text" rows="1" disabled=""/);
-  });
-
   test('rename works on an ended session and needs drive and a live board (DL-095)', () => {
+    const rename = (html: string) => html.match(/<button[^>]*aria-label="Rename"[^>]*>/)?.[0] ?? '';
     const ended = view(session({ state: 'exited', current_run: null }), timeline());
-    expect(ended).toMatch(/<button type="button">Rename<\/button>/);
-    const readOnly = view(session(), timeline(), ['read']);
-    expect(readOnly).toMatch(/<button type="button" disabled="">Rename<\/button>/);
-    const stale = renderToStaticMarkup(
-      <App
-        sessions={[session()]}
-        stations={[station()]}
-        freshness="stale"
-        sessionActions={(k) => sessionActions(async () => ({}), k, ['drive'])}
-        initialSession={key}
-      />,
-    );
-    expect(stale).toMatch(/<button type="button" disabled="">Rename<\/button>/);
+    expect(rename(ended)).not.toContain('disabled');
+    expect(rename(view(session(), timeline(), { scopes: ['read'] }))).toContain('disabled=""');
+    expect(rename(view(session(), timeline(), { freshness: 'stale' }))).toContain('disabled=""');
   });
 
   test('a rename posts the title or a clear', async () => {
@@ -226,20 +334,9 @@ describe('session view (P4-3)', () => {
   });
 
   test('the needs-you rail lists open approvals oldest first', () => {
-    const req = (id: string, at: number) => ({
-      request_id: id,
-      node_id: null,
-      request_kind: 'command' as const,
-      title: `Run ${id}`,
-      details: 'ls',
-      input: null,
-      options: [{ option_id: 'allow', label: 'Allow' }],
-      response: 'rpc_reply' as const,
-      requested_at: at,
-    });
     const html = renderToStaticMarkup(
       <App
-        sessions={[session({ open_requests: [req('late', 9), req('early', 2)] })]}
+        sessions={[session({ open_requests: [request('late', 9), request('early', 2)] })]}
         stations={[station()]}
         freshness="live"
       />,
@@ -252,22 +349,12 @@ describe('session view (P4-3)', () => {
 });
 
 describe('auto-continue (ADR-007, DL-127)', () => {
-  const at = (n: number, event: EventEnvelope['event']): EventEnvelope => ({
-    station_seq: n,
-    session_id: 'nested',
-    session_seq: n,
-    at: n,
-    proto_version: 1,
-    raw_ref: null,
-    event,
-  });
-
   test('the toggle is off by default and needs drive and a live board', () => {
     const html = view(session(), timeline());
     expect(html).toMatch(/<input type="checkbox"\/> Continue after a station restart/);
     const on = view(session({ auto_continue: true }), timeline());
     expect(on).toMatch(/<input type="checkbox" checked=""\/> Continue after a station restart/);
-    const readOnly = view(session(), timeline(), ['read']);
+    const readOnly = view(session(), timeline(), { scopes: ['read'] });
     expect(readOnly).toMatch(
       /<input type="checkbox" disabled=""\/> Continue after a station restart/,
     );
@@ -284,7 +371,7 @@ describe('auto-continue (ADR-007, DL-127)', () => {
       at(2, { kind: 'session.auto_continue_skipped', reason: 'newer_owner_work' }),
     ];
     const html = view(session(), timeline(events));
-    expect(html).toContain('<strong>Station continuation:</strong> Continue');
+    expect(html).toContain('<span class="fd-chat-run-label">Station continuation</span>');
     expect(html).toContain('Auto-continue skipped: newer owner work');
   });
 
