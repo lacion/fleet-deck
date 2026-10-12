@@ -1343,3 +1343,11 @@ Format: context, options, choice, reason, owner review.
 - Not done: revert on the shim host; the `fleetdeck station` host setting; the other ADR-005 §9 tests.
 - Owner review: not required (implementation inside the accepted ADR-005 revision 3).
 
+## DL-115 — A session that ended during its restoration is observed before its cleanup (ADR-005 §3.2, PLAN §6.6; M3 round 35)
+
+- Context: round-34 feedback: `SessionTarget::adopt` (DL-114) ended a restored session at once when its summary was already `exited` or `lost`. A restored driver can replay buffered output that completes a turn and then the provider's exit before the adoption; that turn's events were then never given to the turn checkpoints, so it was never finalized.
+- Options: (a) skip the cleanup and insert the session as live, so the normal observer ends it at the terminal event; (b) a drain-only observer that reads from the pre-restoration head up to the current head, then ends the session; (c) finalize the remaining turn rows directly from the stored events in `adopt`.
+- Choice: (b). The observer gets a `Drain` mode: `ToTerminal` for a live session (stops at the terminal event, as before), `ToHead` for a session that ended before the adoption (stops when it has read up to the head, because its terminal event can lie before the adoption). Only then does it end the session: process ended, shim rows `exited`. The session is never inserted as live, so it takes no commands.
+- Reason: (a) admits commands to an ended session for a short time; (c) duplicates the turn-checkpoint logic of `SessionTurns::observe`. (b) uses the same observation path as live sessions, so turns are finalized once, by the same code.
+- Owner review: not required (implementation inside the accepted ADR-005 revision 3).
+

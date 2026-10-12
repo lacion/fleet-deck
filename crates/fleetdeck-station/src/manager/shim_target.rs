@@ -100,12 +100,21 @@ impl SessionTarget {
                 .unwrap_or_default();
             let turns = self.turns(&r.session_id, Path::new(&cwd)).await;
             turns.set_process(r.process.clone());
-            // A session that ended before the restoration (its exit was
-            // committed, the cleanup was not): end it now. The restored
-            // driver only acknowledges the exit to its shim.
+            // A session whose exit a restored driver already committed:
+            // its observer still reads every event from `from` (turns that
+            // the provider completed while the station was down), then ends
+            // the session when it has caught up. It takes no commands.
             if summary.is_some_and(|s| matches!(s.state, SessionState::Exited | SessionState::Lost))
             {
-                end_observed(&self.store, &self.sessions, &r.session_id, r.process).await;
+                tokio::spawn(observe(
+                    self.store.clone(),
+                    Arc::clone(&self.sessions),
+                    r.session_id.clone(),
+                    r.process,
+                    turns,
+                    from,
+                    Drain::ToHead,
+                ));
                 continue;
             }
             // `from` is the head before the restoration: the observer sees
@@ -149,6 +158,7 @@ impl SessionTarget {
             process.clone(),
             Arc::clone(&turns),
             from,
+            Drain::ToTerminal,
         ))
         .abort_handle();
         map.insert(
@@ -348,6 +358,16 @@ impl SessionTarget {
 /// checkpoints, from the store sequence `from`. When the session ends, the
 /// session leaves the live set, its process ends, and its shim row is
 /// `exited`.
+/// When an observer stops reading.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Drain {
+    /// At the session's terminal event (a live session).
+    ToTerminal,
+    /// Also when it has read up to the head (a session that ended before
+    /// its adoption; its terminal event can be older than `from`).
+    ToHead,
+}
+
 async fn observe(
     store: Store,
     sessions: Sessions,
@@ -355,6 +375,7 @@ async fn observe(
     process: ProcessIncarnation,
     turns: Arc<SessionTurns>,
     from: u64,
+    drain: Drain,
 ) {
     let mut head = store.subscribe();
     let mut cursor = from;
@@ -385,7 +406,7 @@ async fn observe(
         if !observed.is_empty() && turns.observe(&observed).await {
             tokio::spawn(Arc::clone(&turns).capture_due());
         }
-        if ended {
+        if ended || (!fetched && drain == Drain::ToHead) {
             break;
         }
         if !fetched && head.changed().await.is_err() {

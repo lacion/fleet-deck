@@ -13,6 +13,8 @@
 //! - `question ...`: a question with the options Red and Blue
 //!   (`item/tool/requestUserInput`, question id `choice`); the reply's
 //!   answers end the turn with `answered: <answers>`;
+//! - `exit-after <text>`: the turn answers and completes, then the process
+//!   exits with code 0.
 //! - `slow <ms> <text>`: the turn runs `ms` without output, then answers
 //!   `echo: <text>` (a turn that ends while nobody reads stdout);
 //! - `bg ...`: a command that outlives its turn; the first
@@ -362,6 +364,12 @@ impl<W: Write> Sim<W> {
             let ms: u64 = ms.parse().unwrap_or(1000);
             std::thread::sleep(std::time::Duration::from_millis(ms));
             self.answer(&turn, &format!("echo: {said}"), "completed")
+        } else if let Some(said) = text.strip_prefix("exit-after ") {
+            // `exit-after <text>`: the turn answers and completes, then the
+            // app-server exits with code 0 (a provider that ends after a
+            // turn while nobody reads stdout).
+            self.answer(&turn, &format!("echo: {said}"), "completed")?;
+            std::process::exit(0)
         } else if let Some(command) = text.strip_prefix("bg ") {
             let n = self.next();
             let item = format!("exec-sim-{n}");

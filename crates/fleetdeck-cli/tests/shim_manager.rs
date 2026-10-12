@@ -385,6 +385,11 @@ fn finalized_turns(events: &[Event]) -> Vec<TurnId> {
 /// the adapter holds until that turn ends; then the station stops while
 /// the slow turn still runs.
 async fn slow_turn_and_follow_up(rig: &mut Rig) -> (SessionId, Store) {
+    slow_turn_and(rig, "two").await
+}
+
+/// [`slow_turn_and_follow_up`] with the follow-up text `follow_up`.
+async fn slow_turn_and(rig: &mut Rig, follow_up: &str) -> (SessionId, Store) {
     let first = rig.station().await;
     let session = start_session(rig, &first, "hello").await;
     finalized(&first.store, &session, 1).await;
@@ -408,13 +413,14 @@ async fn slow_turn_and_follow_up(rig: &mut Rig) -> (SessionId, Store) {
         SessionCommand::FollowUp {
             session_id: session.clone(),
             input: UserInput {
-                text: "two".to_owned(),
+                text: follow_up.to_owned(),
             },
         },
     )
     .await;
-    // The driver committed the follow-up as a transition (no frame yet: the
-    // adapter holds it while the slow turn runs).
+    // The driver committed the follow-up (no frame yet: the adapter holds it
+    // while the slow turn runs): as a transition, or, after a later output
+    // line committed the state, in the stored adapter checkpoint.
     let shim_id = first
         .store
         .shims_of_session(session.clone())
@@ -423,13 +429,17 @@ async fn slow_turn_and_follow_up(rig: &mut Rig) -> (SessionId, Store) {
         .pop()
         .unwrap();
     let deadline = Instant::now() + WAIT;
-    while first
-        .store
-        .shim_transitions(shim_id.clone())
-        .await
-        .unwrap()
-        .is_empty()
-    {
+    loop {
+        let transitions = first.store.shim_transitions(shim_id.clone()).await.unwrap();
+        let checkpoint = first
+            .store
+            .shim_checkpoint(shim_id.clone())
+            .await
+            .unwrap()
+            .unwrap_or_default();
+        if !transitions.is_empty() || checkpoint.contains(follow_up) {
+            break;
+        }
         assert!(Instant::now() < deadline, "the follow-up was not committed");
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
@@ -637,5 +647,87 @@ async fn adoption_observes_the_turns_that_restored_drivers_committed_before_it()
         finalized_turns(e).contains(&third)
     })
     .await;
+    target.stop_all(StopMode::Graceful).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_buffered_turn_that_completes_before_the_provider_exits_is_finalized_by_the_adoption() {
+    let mut rig = Rig::new();
+    // The follow-up turn answers and then the app-server exits (`exit-after`).
+    let (session, _old) = slow_turn_and(&mut rig, "exit-after bye").await;
+    tokio::time::sleep(Duration::from_millis(SLOW_MS + 1500)).await;
+    let store = Store::open(
+        &rig.tmp.path().join("station.db"),
+        rig.det.clock(),
+        rig.det.ids(),
+        StoreConfig::default(),
+    )
+    .await
+    .unwrap();
+    settle_unsettled(&store, GitOptions::isolated())
+        .await
+        .unwrap();
+    let from = *store.subscribe().borrow();
+    let settings = rig.shim_settings(&store);
+    let start = recover_station(
+        &store,
+        &settings.host,
+        &durable_configs(&rig.adapters()),
+        settings.in_flight_wait,
+    )
+    .await
+    .unwrap();
+    assert_eq!(start.restored.len(), 1, "{:?}", start.ended);
+    // Before the adoption, the restored driver replays the slow turn's
+    // completion, sends the held follow-up, and commits the follow-up
+    // turn and the provider's exit.
+    wait_for(&store, &session, "the follow-up turn and the exit", |e| {
+        let started = started_turns(e);
+        started.len() == 3
+            && e.iter().any(
+                |e| matches!(e, Event::TurnCompleted { turn_id, .. } if *turn_id == started[2]),
+            )
+            && e.iter().any(|e| matches!(e, Event::SessionEnded { .. }))
+    })
+    .await;
+    assert_eq!(
+        store.summary(session.clone()).await.unwrap().unwrap().state,
+        SessionState::Exited
+    );
+    let target =
+        SessionTarget::new(store.clone(), rig.adapters(), rig.det.ids()).with_shims(settings);
+    target
+        .adopt(start.restored, StopPolicy::default(), from)
+        .await;
+    // The adoption reads the buffered turn before it ends the session: the
+    // follow-up turn is finalized, then the process ends and the shim row
+    // is `exited`.
+    let all = events(&store, &session).await;
+    let third = started_turns(&all)[2].clone();
+    wait_for(&store, &session, "the follow-up turn finalized", |e| {
+        finalized_turns(e).contains(&third)
+    })
+    .await;
+    let deadline = Instant::now() + WAIT;
+    loop {
+        let live = store.live_process(session.clone()).await.unwrap();
+        let open = store.shims_of_session(session.clone()).await.unwrap();
+        if live.is_none() && open.is_empty() {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "live {live:?}, open shim rows {open:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    // Every started turn is finalized exactly once.
+    let all = events(&store, &session).await;
+    let mut done = finalized_turns(&all);
+    done.sort();
+    let mut started = started_turns(&all);
+    started.sort();
+    assert_eq!(done, started, "{all:?}");
+    assert_eq!(rig.method_count("initialize"), 1);
     target.stop_all(StopMode::Graceful).await;
 }
