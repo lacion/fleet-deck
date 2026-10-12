@@ -392,6 +392,7 @@ export function App({
             route={route}
             navigate={back}
             onTerminalOpened={phone ? toTerminals : undefined}
+            onNewShell={newShell}
           />
         );
       }
