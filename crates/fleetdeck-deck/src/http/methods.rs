@@ -247,6 +247,13 @@ pub const API: &[ApiMethod] = &[
         true,
     ),
     m(
+        "coordinator.renew",
+        Method::POST,
+        "/api/coordinator/grants/{grant_id}/renew",
+        Some(Scope::Drive),
+        true,
+    ),
+    m(
         "tasks.list",
         Method::GET,
         "/api/tasks",

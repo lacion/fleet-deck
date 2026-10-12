@@ -88,37 +88,9 @@ pub async fn revoke(
                 session_id: g.session_id.clone(),
                 grant_id: g.grant_id.clone(),
             };
-            board
-                .store
-                .enqueue(crate::store::NewOutboxItem {
-                    station_id: g.station_id.clone(),
-                    origin: crate::link::router::origin_name(
-                        fleetdeck_proto::command::CommandOrigin::Board,
-                    )
-                    .to_owned(),
-                    payload: serde_json::to_value(crate::link::CommandKind::Session { command })
-                        .map_err(ApiError::internal)?,
-                    expires_at: board
-                        .store
-                        .now_ms()
-                        .saturating_add(super::fleet_routes::DELIVERY_TTL_MS),
-                })
-                .await
-                .map_err(ApiError::internal)?;
+            queue(&board, &g, command).await?;
         }
-        board
-            .store
-            .grant(grant_id.clone())
-            .await
-            .map_err(ApiError::internal)?
-            .map(view)
-            .ok_or_else(|| {
-                ApiError::new(
-                    StatusCode::NOT_FOUND,
-                    "unknown_grant",
-                    format!("no grant `{grant_id}`"),
-                )
-            })
+        current(&board, &grant_id).await
     }
     .await;
     audited(
@@ -130,4 +102,96 @@ pub async fn revoke(
     )
     .await
     .map(Json)
+}
+
+/// `POST /api/coordinator/grants/{grant_id}/renew` (ADR-006 §5.5, test
+/// 25b). Only an idle-expired grant inside its lifetime renews: the deck
+/// records the pending generation and sends `session.coordinator_renew`;
+/// the grant becomes active again only when the station acknowledges that
+/// generation with `coordinator.bound`.
+///
+/// # Errors
+/// 404 `unknown_grant`; 409 `not_renewable`.
+pub async fn renew(
+    State(board): State<Arc<Board>>,
+    Extension(principal): Extension<Principal>,
+    Path(grant_id): Path<String>,
+) -> Result<Json<GrantView>, ApiError> {
+    let result = async {
+        let g = current_grant(&board, &grant_id).await?;
+        let Some(generation) = board
+            .store
+            .renew_grant(grant_id.clone())
+            .await
+            .map_err(ApiError::internal)?
+        else {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "not_renewable",
+                "only an idle-expired grant inside its lifetime renews".to_owned(),
+            ));
+        };
+        let command = fleetdeck_proto::SessionCommand::CoordinatorRenew {
+            session_id: g.session_id.clone(),
+            grant_id: g.grant_id.clone(),
+            generation,
+        };
+        queue(&board, &g, command).await?;
+        current(&board, &grant_id).await
+    }
+    .await;
+    audited(
+        &board,
+        &principal,
+        "coordinator.renew",
+        Some(&grant_id),
+        result,
+    )
+    .await
+    .map(Json)
+}
+
+/// Queues a deck-only coordinator command for the grant's station.
+async fn queue(
+    board: &Board,
+    g: &Grant,
+    command: fleetdeck_proto::SessionCommand,
+) -> Result<(), ApiError> {
+    board
+        .store
+        .enqueue(crate::store::NewOutboxItem {
+            station_id: g.station_id.clone(),
+            origin: crate::link::router::origin_name(
+                fleetdeck_proto::command::CommandOrigin::Board,
+            )
+            .to_owned(),
+            payload: serde_json::to_value(crate::link::CommandKind::Session { command })
+                .map_err(ApiError::internal)?,
+            expires_at: board
+                .store
+                .now_ms()
+                .saturating_add(super::fleet_routes::DELIVERY_TTL_MS),
+        })
+        .await
+        .map_err(ApiError::internal)?;
+    Ok(())
+}
+
+async fn current_grant(board: &Board, grant_id: &str) -> Result<Grant, ApiError> {
+    board
+        .store
+        .grant(grant_id.to_owned())
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| {
+            ApiError::new(
+                StatusCode::NOT_FOUND,
+                "unknown_grant",
+                format!("no grant `{grant_id}`"),
+            )
+        })
+}
+
+async fn current(board: &Board, grant_id: &str) -> Result<GrantView, ApiError> {
+    current_grant(board, grant_id).await.map(view)
 }

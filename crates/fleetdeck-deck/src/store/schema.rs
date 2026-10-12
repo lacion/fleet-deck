@@ -269,6 +269,11 @@ CREATE TABLE coordinator_lineage (
 CREATE INDEX lineage_by_session ON coordinator_lineage (station_id, session_id);
 ";
 
+/// The owner's pending renewal of an idle-expired grant (ADR-006 §5.5,
+/// test 25b): the generation that the station must acknowledge with
+/// `coordinator.bound`. `NULL` when no renewal waits.
+const V10: &str = "ALTER TABLE tokens ADD COLUMN renew_generation INTEGER;";
+
 /// The `deck.db` migrations.
 #[must_use]
 pub fn migrations() -> Migrations<'static> {
@@ -282,6 +287,7 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V7),
         M::up(V8),
         M::up(V9),
+        M::up(V10),
     ])
 }
 

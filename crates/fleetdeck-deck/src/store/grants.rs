@@ -289,7 +289,9 @@ impl DeckStore {
                 return Ok(false);
             }
             if let Some(old) = &grant.binding
-                && old.generation >= binding.generation
+                && (old.generation >= binding.generation
+                    || renew_generation(conn, &binding.grant_id)?
+                        != Some(i64::from(binding.generation)))
             {
                 return Ok(false);
             }
@@ -307,6 +309,38 @@ impl DeckStore {
                 ],
             )?;
             Ok(n == 1)
+        })
+        .await
+    }
+
+    /// The owner renews an idle-expired grant (ADR-006 §5.5, test 25b).
+    /// Only a grant that is `expired` for `idle`, still inside its
+    /// lifetime and bound once gets a pending renewal generation (the bound
+    /// generation + 1). The grant stays expired until the station
+    /// acknowledges that generation with `coordinator.bound`. Returns the
+    /// pending generation, or `None` when the grant cannot be renewed. A
+    /// repeated renewal returns the same generation.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn renew_grant(&self, grant_id: String) -> Result<Option<u32>> {
+        let now = self.now_ms();
+        call(&self.inner.db, move |conn| {
+            let Some(grant) = get_grant(conn, &grant_id)? else {
+                return Ok(None);
+            };
+            let idle = grant.state == GrantState::Expired
+                && grant.revoked_reason.as_deref() == Some("idle");
+            let Some(binding) = grant.binding.filter(|_| idle && grant.expires_at > now) else {
+                return Ok(None);
+            };
+            let next = binding.generation.saturating_add(1);
+            conn.execute(
+                "UPDATE tokens SET renew_generation = ?2
+                 WHERE grant_id = ?1 AND state = 'expired'",
+                params![grant_id, next],
+            )?;
+            Ok(Some(next))
         })
         .await
     }
@@ -400,6 +434,18 @@ impl DeckStore {
     }
 }
 
+/// The pending renewal generation of a grant (V10), if any.
+fn renew_generation(conn: &Connection, grant_id: &str) -> Result<Option<i64>> {
+    Ok(conn
+        .query_row(
+            "SELECT renew_generation FROM tokens WHERE grant_id = ?1",
+            [grant_id],
+            |r| r.get::<_, Option<i64>>(0),
+        )
+        .optional()?
+        .flatten())
+}
+
 /// Applies a coordinator lifecycle event of `station` to its grant in the
 /// read-model transaction that folds the event (ADR-006 §6.1 watermark):
 ///
@@ -431,15 +477,22 @@ pub(super) fn record_lifecycle(
                 return Ok(());
             };
             let ours = &grant.station_id == station && grant.session_id == e.session_id;
-            let higher = grant
+            // A first binding needs no renewal; a higher generation of a
+            // bound grant needs the owner's matching pending renewal (25b).
+            let renewal = renew_generation(tx, grant_id)? == Some(i64::from(*generation));
+            let first = grant.binding.is_none() && grant.state == GrantState::Active;
+            let renewed = grant
                 .binding
                 .as_ref()
-                .is_none_or(|b| b.generation < *generation);
-            if ours && higher && grant.state == GrantState::Active {
+                .is_some_and(|b| b.generation < *generation)
+                && renewal
+                && grant.state != GrantState::Revoked;
+            if ours && (first || renewed) {
                 tx.execute(
                     "UPDATE tokens SET bound_generation = ?2, bound_native_id = ?3,
-                         bound_provider_instance = ?4, binding_id = ?5, last_used_at = ?6
-                     WHERE grant_id = ?1 AND state = 'active'",
+                         bound_provider_instance = ?4, binding_id = ?5, last_used_at = ?6,
+                         state = 'active', revoked_reason = NULL, renew_generation = NULL
+                     WHERE grant_id = ?1 AND state != 'revoked'",
                     params![
                         grant_id,
                         generation,

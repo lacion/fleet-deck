@@ -127,6 +127,32 @@ Items, in order: 6-1 Workspaces, 6-3 Assign auto, 6-4 Tasks, 6-2 Mail,
   - `cargo nextest run -p fleetdeck-deck -p fleetdeck-station -E 'binary(board_fleet) | binary(coordinator) | test(a_bound_coordinator) | binary(link_service) | test(coordinator::)'` -> all passed after the order fix in `a_grant_removed_in_the_store_refuses_a_call_in_the_decision_transaction` (the grant is created before the scope is removed, DL-211).
   - `bun run --cwd web typecheck`, `lint` -> clean; `bun test src` -> 137 pass.
 
+### Round 4 (2026-10-12, from 16:01 CEST, time box end 16:20)
+
+- Committed round 3 (dc8cc02); `git merge --no-edit v2` merged cleanly
+  (69833de; lane D shell effects, lane A/C docs; no proto change, so no
+  `make ts-types`).
+- No review feedback on round 3 was available at the round start.
+- 6-5 (still partial, DL-213): test 25b. Deck schema V10
+  `tokens.renew_generation`; `DeckStore::renew_grant`; `record_lifecycle`
+  and `bind_grant` accept a higher generation only when it equals the
+  pending renewal (closes the round-2 follow-up "unsolicited generation
+  increase"); `POST /api/coordinator/grants/{grant_id}/renew` queues
+  `session.coordinator_renew`; board "Renew" button.
+  - `cargo nextest run -p fleetdeck-deck -E 'test(renewal_needs_an_idle) | test(store::coordinator) | test(migrations) | binary(coordinator) | binary(deck_link)'` -> 31 passed.
+  - `cargo nextest run -p fleetdeck-deck -E 'binary(board_fleet) | test(methods) | test(renewal_needs)'` -> 8 passed (first run failed on the error key: the API body uses `error`, not `code`; test fixed).
+  - `bun test src/fleet` -> 6 pass; `bun run --cwd web typecheck` -> clean; `bun run --cwd web lint` -> clean (after `biome format` of the test).
+- Status at the time box:
+  - Done: 6-1 Workspaces, 6-3 Assign auto, 6-4 Tasks, 6-2 Mail.
+  - Open: 6-5 Coordinator. Remaining work (DL-209): handoff start-path
+    wiring and the §8.2 secrecy tests, the durable station coordinator
+    outbox (§6.5, §8.4), snapshot projection (25e),
+    the M2-peer test (26), grant creation at an owner start with the
+    control skill, live smoke §8.5 (gates the capability).
+- Checks after the merge: `cargo fmt --all --check`,
+  `cargo clippy --workspace --all-targets -- -D warnings` (results in the
+  round summary).
+
 ## Review follow-ups (after M3)
 
 Review of round 1 (items 6-1, 6-3, 6-4, 6-2), recorded in round 2:

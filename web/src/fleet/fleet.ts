@@ -17,6 +17,8 @@ export type FleetActions = {
   tasks(): Promise<readonly TaskView[]>;
   grants(): Promise<readonly GrantView[]>;
   revoke(grantId: string): Promise<FleetResult>;
+  /** Renews an idle-expired grant (ADR-006 test 25b). */
+  renew(grantId: string): Promise<FleetResult>;
 };
 
 const record = (v: unknown): v is Record<string, unknown> =>
@@ -109,6 +111,14 @@ export function fleetActions(get: Get, post: Post, newId: () => string = command
         return { ok: true, text: 'Grant revoked.' };
       } catch (error) {
         return failed('Grant not revoked', error);
+      }
+    },
+    renew: async (grantId) => {
+      try {
+        await post(`/api/coordinator/grants/${encodeURIComponent(grantId)}/renew`, {});
+        return { ok: true, text: 'Renewal sent; the grant is active when its station confirms.' };
+      } catch (error) {
+        return failed('Grant not renewed', error);
       }
     },
   };
