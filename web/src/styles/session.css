@@ -184,3 +184,69 @@
   color: var(--dim);
   font-size: var(--fs-micro);
 }
+
+/* The plan library (DL-301). */
+.fd-plans {
+  display: grid;
+  gap: 8px;
+}
+.fd-plan-tools,
+.fd-plan-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.fd-plan-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+.fd-plan-list article {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  min-width: 0;
+}
+.fd-plan-list h3 {
+  margin: 0 0 4px;
+  overflow-wrap: anywhere;
+}
+.fd-plan-meta {
+  margin: 0 0 4px;
+  overflow-wrap: anywhere;
+}
+.fd-plan-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 50vh;
+  overflow: auto;
+}
+
+/* Usage and rate-limit meters (DL-303). */
+.fd-usage-meters dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 12px;
+  margin: 0 0 8px;
+}
+.fd-usage-meters dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.fd-usage-meters ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.fd-usage-meters li {
+  overflow-wrap: anywhere;
+}
+.fd-usage-meters meter {
+  width: 96px;
+  vertical-align: middle;
+}

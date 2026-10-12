@@ -28,6 +28,7 @@ use crate::link::{
     WorkspaceListing, WorkspaceQuery,
 };
 use crate::mutation::{CoordinatorCallEnvelope, KeyRotationEnvelope, StationConfigureEnvelope};
+use crate::plans::{DeckPlan, PlanMarkRequest, PlanStatus};
 use crate::session::{CardStatus, SessionSummary};
 use crate::version::{Negotiated, VersionOffer};
 
@@ -84,6 +85,9 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         CardStatus::export_all(&cfg),
         VersionOffer::export_all(&cfg),
         Negotiated::export_all(&cfg),
+        DeckPlan::export_all(&cfg),
+        PlanStatus::export_all(&cfg),
+        PlanMarkRequest::export_all(&cfg),
     ];
     for result in results {
         result.map_err(io::Error::other)?;

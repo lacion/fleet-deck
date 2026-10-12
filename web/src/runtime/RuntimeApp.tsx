@@ -1,6 +1,7 @@
 import { useMemo, useState, useSyncExternalStore } from 'react';
 import { App } from '../App';
 import { stationActions } from '../board/pairing';
+import { planActions } from '../board/plans';
 import type { SessionKey } from '../gen';
 import { sessionActions } from '../session/commands';
 import { spawnActions } from '../spawn/spawn';
@@ -36,6 +37,15 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
   const spawn = useMemo(
     () =>
       spawnActions(
+        (path) => connection.get(path),
+        (path, body) => connection.post(path, body),
+        scopeText.split(' '),
+      ),
+    [connection, scopeText],
+  );
+  const plans = useMemo(
+    () =>
+      planActions(
         (path) => connection.get(path),
         (path, body) => connection.post(path, body),
         scopeText.split(' '),
@@ -122,6 +132,7 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
         sessionActions={commands}
         spawn={spawn}
         feed={state.feed}
+        plans={plans}
       />
     </>
   );

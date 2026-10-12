@@ -28,6 +28,7 @@ export function summary(
     background_agents: 0,
     running_tools: [],
     usage: { input_tokens: null, output_tokens: null, cost_usd: null },
+    rate_limits: [],
     last_error: null,
     revert: null,
     session_seq: 0,

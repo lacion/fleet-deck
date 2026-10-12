@@ -3,10 +3,13 @@ import { Feed } from './board/FeedPanel';
 import type { FeedItem } from './board/feed';
 import { FleetBoard } from './board/FleetBoard';
 import { NeedsYouRail } from './board/NeedsYouRail';
+import { PlanLibrary } from './board/PlanLibrary';
+import { UsageMeters } from './board/UsageMeters';
+import type { PlanActions } from './board/plans';
 import { ALL, emptyFilter, filterFleet, type FleetFilter, stationName } from './board/fleet';
 import type { StationActions } from './board/pairing';
 import { StationsPanel } from './board/StationsPanel';
-import type { DeckSession, SessionKey, StationView, WorkspaceListing } from './gen';
+import type { DeckPlan, DeckSession, SessionKey, StationView, WorkspaceListing } from './gen';
 import { type Freshness, sessionKey, type Timeline } from './runtime/state';
 import type { SessionActions } from './session/commands';
 import { SessionView } from './session/SessionView';
@@ -31,9 +34,13 @@ type Props = {
   readonly initialListing?: WorkspaceListing | null;
   /** The event feed since the page opened (DL-095). */
   readonly feed?: readonly FeedItem[];
+  /** The plan library (DL-301). */
+  readonly plans?: PlanActions | undefined;
+  /** The plan library at the first render (tests). */
+  readonly initialPlans?: readonly DeckPlan[] | null;
 };
 
-type Screen = 'fleet' | 'stations' | 'spawn';
+type Screen = 'fleet' | 'stations' | 'spawn' | 'plans';
 
 /** Screens read the same runtime snapshot; filters never open another connection. */
 export function App({
@@ -49,8 +56,12 @@ export function App({
   initialScreen = 'fleet',
   initialListing = null,
   feed = [],
+  plans,
+  initialPlans = null,
 }: Props) {
   const [screen, setScreen] = useState<Screen>(initialScreen);
+  // The first prompt of the spawn form when a plan starts a session.
+  const [planPrompt, setPlanPrompt] = useState('');
   const [open, setOpen] = useState<SessionKey | null>(initialSession);
   const openId = open === null ? null : sessionKey(open);
   // `openId` identifies the session; a new `open` object with the same key
@@ -100,10 +111,21 @@ export function App({
             aria-pressed={screen === 'spawn'}
             onClick={() => {
               setOpen(null);
+              setPlanPrompt('');
               setScreen('spawn');
             }}
           >
             New session
+          </button>
+          <button
+            type="button"
+            aria-pressed={screen === 'plans'}
+            onClick={() => {
+              setOpen(null);
+              setScreen('plans');
+            }}
+          >
+            Plans
           </button>
         </nav>
       </header>
@@ -119,6 +141,8 @@ export function App({
         />
       ) : screen === 'spawn' ? (
         <SpawnForm
+          key={planPrompt}
+          initialPrompt={planPrompt}
           stations={stations}
           freshness={freshness}
           actions={spawn}
@@ -126,6 +150,21 @@ export function App({
           onOpen={(key) => {
             setScreen('fleet');
             setOpen(key);
+          }}
+        />
+      ) : screen === 'plans' ? (
+        <PlanLibrary
+          stations={stations}
+          actions={plans}
+          live={freshness === 'live'}
+          initial={initialPlans}
+          onOpen={(key) => {
+            setScreen('fleet');
+            setOpen(key);
+          }}
+          onExecute={(plan) => {
+            setPlanPrompt(plan.markdown);
+            setScreen('spawn');
           }}
         />
       ) : screen === 'stations' ? (
@@ -194,6 +233,7 @@ export function App({
             freshness={freshness}
             onOpen={setOpen}
           />
+          <UsageMeters sessions={visible} stations={stations} />
           <Feed items={feed} onOpen={setOpen} />
         </>
       )}

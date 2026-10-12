@@ -20,6 +20,7 @@ pub mod auth;
 pub mod commands;
 pub mod coordinator;
 pub mod outbox;
+pub mod plans;
 pub mod read_model;
 pub mod schema;
 pub mod stations;
@@ -71,6 +72,8 @@ pub enum DeckError {
     CommandIdReused(String),
     #[error("{0}")]
     Invalid(String),
+    #[error("unknown plan {0}")]
+    UnknownPlan(String),
     #[error("password hashing: {0}")]
     Hash(String),
     #[error("corrupt store: {0}")]

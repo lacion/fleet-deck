@@ -19,7 +19,9 @@ use fleetdeck_proto::capability::{
     BackgroundReporting, Capabilities, Degradation, Operation, TerminalStatusQuality,
     UsageReporting,
 };
-use fleetdeck_proto::event::{ExpiredReason, RequestKind, ResponseChannel, ToolKind, TurnStatus};
+use fleetdeck_proto::event::{
+    ExpiredReason, RequestKind, ResponseChannel, ToolKind, TurnStatus, Usage,
+};
 use fleetdeck_providers::{ProviderError, claude, codex};
 use replay::{
     P, PROVIDERS, caps, codex_core, count, fixtures, messages, native_session, position, records,
@@ -630,6 +632,12 @@ fn row_usage_reports_tokens_for_both_and_cost_for_claude_only() {
             .all()
             .into_iter()
             .filter_map(|e| match e {
+                // A rate-limit window alone (DL-303) carries no token usage:
+                // all parts unknown, never zero.
+                Event::UsageUpdated { usage, rate_limits } if !rate_limits.is_empty() => {
+                    assert_eq!(usage, &Usage::default(), "{p:?}");
+                    None
+                }
                 Event::UsageUpdated { usage, .. } => Some(usage.clone()),
                 _ => None,
             })
