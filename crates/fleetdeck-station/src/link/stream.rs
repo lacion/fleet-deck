@@ -47,6 +47,9 @@ pub struct Stream {
     control: Control,
     delivered: Arc<AtomicU64>,
     task: Option<JoinHandle<()>>,
+    /// Set on a link with `coordinator.v1`: snapshots carry the binding
+    /// projection (ADR-006 §6.1).
+    coordinator: Option<crate::coordinator::Bindings>,
 }
 
 impl Drop for Stream {
@@ -65,7 +68,16 @@ impl Stream {
             control,
             delivered: Arc::new(AtomicU64::new(0)),
             task: None,
+            coordinator: None,
         }
+    }
+
+    /// Snapshots of this stream carry the coordinator binding projection
+    /// of `bindings` (ADR-006 §6.1, test 25e).
+    #[must_use]
+    pub fn with_coordinator(mut self, bindings: crate::coordinator::Bindings) -> Self {
+        self.coordinator = Some(bindings);
+        self
     }
 
     /// The highest `station_seq` sent on this link.
@@ -84,6 +96,7 @@ impl Stream {
             store: self.store.clone(),
             control: self.control.clone(),
             delivered: Arc::clone(&self.delivered),
+            coordinator: self.coordinator.clone(),
         };
         self.task = Some(tokio::spawn(async move {
             if let Err(e) = pump.run(start, reply).await {
@@ -97,6 +110,7 @@ struct Pump {
     store: Store,
     control: Control,
     delivered: Arc<AtomicU64>,
+    coordinator: Option<crate::coordinator::Bindings>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -220,6 +234,11 @@ impl Pump {
     async fn send_snapshot(&self, snapshot: crate::store::Snapshot) -> Result<u64, PumpError> {
         let incarnation = snapshot.incarnation;
         let watermark = snapshot.watermark;
+        // The binding projection right after the summaries were read.
+        let coordinator = self
+            .coordinator
+            .as_ref()
+            .map(crate::coordinator::Bindings::projection);
         self.control
             .send(ControlFrame::SnapshotBegin {
                 incarnation: incarnation.clone(),
@@ -239,6 +258,7 @@ impl Pump {
             .send(ControlFrame::SnapshotEnd {
                 incarnation,
                 watermark,
+                coordinator,
             })
             .await?;
         self.deliver(watermark);

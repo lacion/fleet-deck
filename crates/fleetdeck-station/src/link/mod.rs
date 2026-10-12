@@ -70,6 +70,13 @@ pub async fn serve(ctx: Arc<StationLink>, link: LiveLink) -> Closing {
         handle
     });
     let mut stream = Stream::new(ctx.manager.store().clone(), control.clone());
+    if control
+        .params()
+        .negotiated
+        .has(fleetdeck_proto::version::feature::COORDINATOR)
+    {
+        stream = stream.with_coordinator(ctx.manager.policy().coordinator_bindings().clone());
+    }
     while let Some(message) = inbound.recv().await {
         match message {
             Inbound::Request(req) => {

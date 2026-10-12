@@ -223,6 +223,7 @@ impl Fixture {
                 ControlFrame::SnapshotEnd {
                     incarnation: self.inc.clone(),
                     watermark: 0,
+                    coordinator: None,
                 },
             ] {
                 station.control.send(frame).await.unwrap();

@@ -69,3 +69,28 @@ fn only_an_owner_start_may_carry_a_complete_coordinator_spec() {
     ));
     assert_eq!(got, RejectCode::InvalidCommand);
 }
+
+/// DL-219: the handoff check uses the probed versions of the provider
+/// family; every probed instance needs a verified version, and an
+/// unprobed family stays `handoff_unverified`.
+#[test]
+fn the_handoff_check_needs_a_verified_probed_version_of_every_instance() {
+    let bindings = Bindings::default();
+    let spec = coordinator_spec();
+    let start = |b: &Bindings, p| check_spec(RunOrigin::Board, p, &spec, false, b);
+    assert_eq!(
+        start(&bindings, ProviderKind::Claude).map_err(|_| ()),
+        Err(())
+    );
+    bindings.record_version(ProviderKind::Claude, "2.1.296".to_owned());
+    bindings.record_version(ProviderKind::Codex, "0.160.0".to_owned());
+    assert!(start(&bindings, ProviderKind::Claude).is_ok());
+    let (c, m) = code(start(&bindings, ProviderKind::Codex));
+    assert_eq!(
+        (c, m.as_str()),
+        (RejectCode::Unsupported, "handoff_unverified")
+    );
+    bindings.record_version(ProviderKind::Claude, "2.1.0".to_owned());
+    let (c, _) = code(start(&bindings, ProviderKind::Claude));
+    assert_eq!(c, RejectCode::Unsupported);
+}

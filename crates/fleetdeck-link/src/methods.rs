@@ -568,6 +568,7 @@ mod tests {
         let end = ControlFrame::SnapshotEnd {
             incarnation: inc(),
             watermark: 1,
+            coordinator: None,
         };
         let ping = ControlFrame::Ping { nonce: 1 };
         let n = negotiated(&[feature::CONTROL]);

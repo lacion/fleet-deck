@@ -344,7 +344,8 @@ impl Sync {
             ControlFrame::SnapshotEnd {
                 incarnation,
                 watermark,
-            } => self.end_snapshot(incarnation, watermark).await,
+                coordinator,
+            } => self.end_snapshot(incarnation, watermark, coordinator).await,
             other => self.protocol(&format!(
                 "a deck does not take `{}` frames",
                 other.type_name()
@@ -352,7 +353,12 @@ impl Sync {
         }
     }
 
-    async fn end_snapshot(&mut self, incarnation: IncarnationId, watermark: u64) {
+    async fn end_snapshot(
+        &mut self,
+        incarnation: IncarnationId,
+        watermark: u64,
+        coordinator: Option<Vec<fleetdeck_proto::CoordinatorBindingState>>,
+    ) {
         let Some(open) = self.snapshot.take() else {
             return self.protocol("a snapshot end without its begin");
         };
@@ -365,11 +371,19 @@ impl Sync {
         let result = self
             .ctx
             .store
-            .apply_snapshot(
+            .apply_snapshot_with(
                 self.station.clone(),
                 incarnation.clone(),
                 watermark,
                 open.sessions,
+                // Only a link with `coordinator.v1` carries a projection
+                // (ADR-006 §6.1).
+                coordinator.filter(|_| {
+                    self.control
+                        .params()
+                        .negotiated
+                        .has(fleetdeck_proto::version::feature::COORDINATOR)
+                }),
             )
             .await;
         match result {

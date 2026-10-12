@@ -127,6 +127,10 @@ pub struct Bindings {
     /// `None`: [`fleetdeck_providers::coordinator::handoff`]. Tests set a
     /// verified check to drive the wiring before a live smoke passed.
     handoff: Option<HandoffCheck>,
+    /// The probed versions of each provider family (DL-219): a start
+    /// passes the handoff check only when every probed instance of its
+    /// family has a verified version.
+    versions: Arc<Mutex<HashMap<ProviderKind, Vec<String>>>>,
 }
 
 impl std::fmt::Debug for Bindings {
@@ -191,9 +195,34 @@ impl Bindings {
         provider: ProviderKind,
         version: Option<&str>,
     ) -> Result<(), &'static str> {
-        match self.handoff {
-            Some(check) => check(provider, version),
-            None => fleetdeck_providers::coordinator::handoff(provider, version),
+        let check = self
+            .handoff
+            .unwrap_or(fleetdeck_providers::coordinator::handoff);
+        if let Some(version) = version {
+            return check(provider, Some(version));
+        }
+        let probed = self
+            .versions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&provider)
+            .cloned()
+            .unwrap_or_default();
+        if probed.is_empty() {
+            return check(provider, None);
+        }
+        probed.iter().try_for_each(|v| check(provider, Some(v)))
+    }
+
+    /// Records the probed version of one provider instance (DL-219).
+    pub fn record_version(&self, provider: ProviderKind, version: String) {
+        let mut map = self
+            .versions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let list = map.entry(provider).or_default();
+        if !list.contains(&version) {
+            list.push(version);
         }
     }
 
@@ -306,6 +335,37 @@ impl Bindings {
             .values()
             .find(|e| &e.binding.session_id == session_id && e.binding.grant_id == grant_id)
             .map(|e| e.binding.clone())
+    }
+
+    /// The binding projection of a coordinator-capable snapshot (ADR-006
+    /// §6.1): every binding with its fields and lifecycle state, sorted by
+    /// binding id. No secret.
+    #[must_use]
+    pub fn projection(&self) -> Vec<fleetdeck_proto::CoordinatorBindingState> {
+        use fleetdeck_proto::CoordinatorBindingPhase as Phase;
+        let mut out: Vec<_> = self
+            .lock()
+            .values()
+            .map(|e| {
+                let b = &e.binding;
+                fleetdeck_proto::CoordinatorBindingState {
+                    binding_id: b.binding_id.clone(),
+                    grant_id: b.grant_id.clone(),
+                    session_id: b.session_id.clone(),
+                    generation: b.generation,
+                    provider_instance: b.provider_instance.clone(),
+                    native_id: b.native_id.clone(),
+                    state: match b.state {
+                        BindingState::Pending => Phase::Pending,
+                        BindingState::Active => Phase::Active,
+                        BindingState::Expired => Phase::Expired,
+                        BindingState::Revoked => Phase::Revoked,
+                    },
+                }
+            })
+            .collect();
+        out.sort_by(|a, b| a.binding_id.cmp(&b.binding_id));
+        out
     }
 
     /// A copy of a binding by id.

@@ -1,3 +1,5 @@
+LANE COMPLETE
+
 # M3 lane B (orchestration): progress log
 
 Worktree `fleet-deck-worktrees/m3-orchestration`, branch `m3/orchestration`.
@@ -253,6 +255,15 @@ Items, in order: 6-1 Workspaces, 6-3 Assign auto, 6-4 Tasks, 6-2 Mail,
 - Checks: see the round summary.
 - Open in 6-5: snapshot projection (25e), live smoke §8.5, follow-ups.
 
+### Round 11 (2026-10-12, from 16:56 CEST)
+
+- Committed round 10 as `2d661f1`; merged `v2` (`560032c`: lane A docs only; no proto change from the merge).
+- Review of round 10 recorded as follow-ups (below).
+- 6-5: coordinator snapshot projection (ADR-006 §6.1, test 25e, DL-219). Proto `ControlFrame::SnapshotEnd.coordinator` with `CoordinatorBindingState`/`CoordinatorBindingPhase` (`make ts-types`: `web/src/gen/link/CoordinatorBinding{State,Phase}.ts`). Station `Bindings::projection`, `Stream::with_coordinator` on a `coordinator.v1` link. Deck `DeckStore::apply_snapshot_with`, `grants::apply_projection` (event rules shared through `apply_bound`/`apply_ended`).
+- 6-5: opt-in live handoff smoke (ADR-006 §8.5, test 31) in `crates/fleetdeck-providers/tests/live_smoke.rs`; ran once: passed for Claude 2.1.296. `fleetdeck_providers::coordinator::VERIFIED` enables the Claude handoff from that version; the station records probed versions (`Bindings::record_version`) and probes once at start. Codex stays unverified. `docs/v2/LIVE-SMOKE.md` rows added.
+- Tests: `cargo nextest run -p fleetdeck-deck -E 'test(a_snapshot_recovery_with_an_unapplied)'` → 1 passed; `cargo nextest run -p fleetdeck-station -p fleetdeck-deck -p fleetdeck-link -p fleetdeck-proto -E 'binary(link_service) | binary(snapshot_bounds) | binary(control_link) | test(snapshot) | test(frame)'` → passed after the `link_service` expectation update (a `coordinator.v1` link sends `Some([])`); `cargo nextest run -p fleetdeck-providers -p fleetdeck-station -p fleetdeck-cli -E '…coordinator…'` → 18 passed; `test(the_handoff_check_needs)` → 1 passed; `FD_LIVE_SMOKE=1 cargo test -p fleetdeck-providers --test live_smoke -- --ignored --nocapture claude_and_codex` → 1 passed (34 s).
+- 6-5 checked. Lane B items all checked: LANE COMPLETE.
+
 ## Review follow-ups (after M3)
 
 Review of round 1 (items 6-1, 6-3, 6-4, 6-2), recorded in round 2:
@@ -304,3 +315,14 @@ Review of round 4 (item 6-5, renewal 25b), recorded in round 5:
 | 6-5 | A coordinator tool call returns after the first transmission instead of waiting up to 30 s for the receipt; there is no `command_status` tool yet (§6.5). | `crates/fleetdeck-station/src/coordinator/outbox.rs` |
 | 6-5 | An intake before the first deck link of a station process fails `deck_unreachable` (no target incarnation is known; it is not persisted). | `crates/fleetdeck-station/src/coordinator/outbox.rs` |
 | 6-5 | Terminal outbox rows are never pruned. | `crates/fleetdeck-station/src/store/coordinator_outbox.rs` |
+| 6-5 | Review r10: `CallOutbox::flush` sends rows one by one without a bound or timeout; a slow deck request blocks the flush loop. | `crates/fleetdeck-station/src/coordinator/outbox.rs` |
+| 6-5 | Review r10: an `in_flight` claim leaks when the sending future is cancelled (no drop guard). | `crates/fleetdeck-station/src/coordinator/outbox.rs` |
+| 6-5 | Review r10: revocation and send race: the fence check and `mark_sent` are not one step with the binding state. | `crates/fleetdeck-station/src/coordinator/outbox.rs` |
+| 6-5 | Review r10: a stored `forbidden` receipt of the deck is classified as nondefinitive (`failed`/`ambiguous`) instead of a definitive answer. | `crates/fleetdeck-station/src/store/coordinator_outbox.rs` |
+| 6-5 | Review r10: the outbox tests use a fake transport; they show neither the deck deduplication of a resend nor a lifecycle acknowledgment. | `crates/fleetdeck-station/src/coordinator/outbox_tests.rs` |
+| 6-5 | Codex has no `start_coordinated`; its live handoff half of test 31 does not run, so the Codex coordinator capability stays off. | `crates/fleetdeck-providers/src/codex/`, `crates/fleetdeck-providers/tests/live_smoke.rs` |
+| 6-5 | Test 31 runs the station half (pending discovery, then the native binding) offline only; a live run through the station ingress is open. | `crates/fleetdeck-providers/tests/live_smoke.rs` |
+| 6-5 | The board shows the "Coordinator" toggle for every provider; it does not hide it when the station reports `handoff_unverified`. | `web/src/spawn/SpawnForm.tsx` |
+| 6-5 | The station binding projection is read after the snapshot summaries, not at the exact watermark. | `crates/fleetdeck-station/src/link/stream.rs` |
+| 6-5 | The station does not hold coordinator traffic until the deck acknowledges a coordinator-capable snapshot or the `coordinator.ended` event (station side of the 25e/30a fence). | `crates/fleetdeck-station/src/coordinator/outbox.rs` |
+| 6-5 | `docs/v2/operations.md` §7.2 (lane A) still says every coordinator start fails with `handoff_unverified`; Claude ≥ 2.1.296 now passes (DL-219). | `docs/v2/operations.md` |

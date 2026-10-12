@@ -10,6 +10,7 @@ The file is `crates/fleetdeck-providers/tests/live_smoke.rs`. It has one test fo
 |---|---|---|---|
 | `live_claude_smoke` | `claude` (with `--safe-mode`, DL-005) | `default` | The probe gives a version and the CLI is not signed out. A session starts in a new temporary directory. One turn ends `done`, the answer contains `pong`, and no approval is requested. A graceful stop works. |
 | `live_codex_smoke` | `codex app-server` (effort `low`) | `untrusted/read-only` | The same checks for Codex. |
+| `claude_and_codex_authenticate_to_a_loopback_mcp_endpoint_with_the_env_handoff` | `claude` (with `--strict-mcp-config`, `--disable-slash-commands`, only the probe tool allowed) | `default` | The coordinator credential handoff (ADR-006 §8.5, DL-219). A loopback MCP probe records the digest of each `Authorization` header. The session finds the probe tool, calls it once and repeats its answer. Every request carries the handed-off credential, and the credential is in no command line and in no Claude settings file. Codex has no coordinated start yet: the test prints that its handoff stays unverified. A pass sets the minimum version in `fleetdeck_providers::coordinator::VERIFIED`. |
 
 The prompt is `Reply with the single word pong. Do not use any tool.` Each step has a time limit of 180 s. The temporary directory is removed after the test.
 
@@ -44,3 +45,4 @@ The prompt is `Reply with the single word pong. Do not use any tool.` Each step 
 | Date | Claude | Codex | Result |
 |---|---|---|---|
 | 2026-10-11 | 2.1.289 (`oauth_token`) | 0.160.0 (`chatgpt`) | Both passed (`make smoke-live`, 7.1 s). |
+| 2026-10-12 | 2.1.296 (`oauth_token`) | not run (no coordinated start) | Coordinator handoff test passed for Claude (34 s, DL-219). |

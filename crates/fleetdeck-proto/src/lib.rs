@@ -29,7 +29,7 @@ pub use capability::{Capabilities, Degradation, Operation, Unsupported};
 pub use command::{CommandEnvelope, Receipt, Reject, RejectCode, SessionCommand};
 pub use event::{Event, EventBody, EventEnvelope};
 pub use ids::*;
-pub use link::{ControlFrame, Scope};
+pub use link::{ControlFrame, CoordinatorBindingPhase, CoordinatorBindingState, Scope};
 pub use mutation::Mutation;
 pub use session::{CardStatus, SessionSummary};
 pub use status::card_status;

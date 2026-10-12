@@ -283,10 +283,17 @@ impl SessionManager {
                         Some(AuthState::SignedOut) => "signed_out",
                         Some(AuthState::Unknown) | None => "unknown",
                     };
+                    let version = probe.and_then(|p| p.version);
+                    if let Some(v) = &version {
+                        // The coordinator handoff check (DL-219).
+                        self.policy
+                            .coordinator_bindings()
+                            .record_version(*kind, v.clone());
+                    }
                     out.push(StationProvider {
                         instance: instance.clone(),
                         provider: *kind,
-                        version: probe.and_then(|p| p.version),
+                        version,
                         auth: auth.to_owned(),
                         capabilities: self.target.adapter(instance).map(|a| a.capabilities()),
                     });
