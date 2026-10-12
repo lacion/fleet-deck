@@ -28,6 +28,15 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 102 (2026-10-12, 17:15–)
+
+- Round start: committed round 101 as c68eff3. `m3/orchestration` had new commits (82458f7, 4faee98: 6-5 snapshot binding projection and live MCP handoff smoke, DL-219) and `m3-orchestration.md` now says "LANE COMPLETE". Merged as 853a5bd without conflict; `make ts-types` gave no extra diff. `m3-board.md` and `m3-ops.md` already say "LANE COMPLETE"; all three lanes are complete and merged, so 6-13, 7-7 and 7-8 are unblocked.
+- 6-13 Parity done (DL-131): `docs/v2/PARITY.md` maps every PLAN §4.1 Keep row and every §16 row to a named test (a script checked that every function name, test title and path in the file exists). New tests: `fleetdeck-proto` `fold::tests::a_model_change_moves_the_model_badge_to_the_new_model`; `web/e2e/parity.spec.ts` "Shift+Enter in the composer adds a newline and sends nothing (v0 parity)". Deferred, owner decision needed (DL-131): session grid, board resume button, LAN station discovery, per-provider minimum CLI version.
+- 7-6 follow-through: README coordinator bullet and status note, `docs/v2/operations.md` §7.2 (outbox, Claude 2.1.296+ verified, Codex refused), §11 coordinator row, §12 owner step, and `docs/v2/cutover.md` §1 (`/fleet` row, open parity list replaced by PARITY.md and the four deferrals).
+- Tests: `cargo nextest run -p fleetdeck-proto -E 'test(a_model_change_moves_the_model_badge)'` → 1 passed; `bunx playwright test e2e/parity.spec.ts` → 1 passed.
+- Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `bun run --cwd web lint`.
+- Next: 7-7 Cutover, then 7-8 Final checks.
+
 ## Round 101 (2026-10-12, 17:14–)
 
 - Round start: committed round 100 as bb5d641. `git log v2..m3/orchestration`, `v2..m3/board`, `v2..m3/ops`: no new commits; `m3-orchestration.md` has no "LANE COMPLETE", so 6-13, 7-7 and 7-8 stay blocked. Lane B's last commit is still 560032c (16:56); its worktree has 28 changed paths (read only).

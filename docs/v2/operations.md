@@ -116,9 +116,9 @@ The station resumes the native session with the permission mode that you select 
 
 ### 7.2 Start a coordinator session
 
-A coordinator session can read the fleet, send mail and drive the sessions that it starts (ADR-006). Item 6-5 is in progress: the station does not keep coordinator calls across a station restart yet, and no live smoke test covers a coordinator.
+A coordinator session can read the fleet, send mail and drive the sessions that it starts (ADR-006). The station keeps coordinator calls in a durable outbox (DL-218).
 
-**Current limit:** at this time, every coordinator start fails with `handoff_unverified`, for Claude and for Codex. The station gives the grant credential to a provider version only after the opt-in coordinator live smoke test (ADR-006 §8.5) recorded a passing handoff for it, and no such test has run yet (`crates/fleetdeck-providers/src/coordinator.rs`, test `the_capability_stays_off_until_the_live_smoke_passes`). The steps below apply when a provider version is verified.
+**Current limit:** the station gives the grant credential only to a provider version that the opt-in coordinator live smoke test (ADR-006 §8.5) verified (`fleetdeck_providers::coordinator::VERIFIED` in `crates/fleetdeck-providers/src/coordinator.rs`, DL-219). Claude 2.1.296 and later is verified. A Codex coordinator start fails with `handoff_unverified`, and so does a start on a station where any Claude instance has an older or unknown version.
 
 > **Caution:** A coordinator drives other sessions without a prompt from you. Revoke its grant when the work is done.
 
@@ -177,7 +177,7 @@ Limits of this release (DL-127, follow-ups in `docs/v2/progress/m3-durable.md`):
 | The board refuses a WebSocket | Set `tailnet_hostname` when you open the board by its tailnet name. |
 | A link call fails with `feature_not_negotiated` | The deck and the station do not share the feature of that method (for example `coordinator.v1` for coordinator sessions). Upgrade the older side; an N−1 peer keeps the shared features. |
 | A coordinator tool call fails `deck_unreachable` | The station has not linked to a deck since it started, so it knows no deck to send to. Check the link (row "The station is not on the board"). After the first link, the station keeps coordinator calls in its durable outbox and sends them when the deck is back, for up to 15 minutes (DL-218). |
-| A coordinator session does not start | The start fails with its reason. `a coordinator session starts only as a new direct child`: start a new session with `host = "direct"`; a resume or a shim-hosted start cannot carry the grant credential. `the coordinator endpoint does not listen`: check the station coordinator MCP ingress. `handoff_unverified`: no provider version has a verified credential handoff yet, so every coordinator start fails with this reason at this time (§7.2; DL-215, DL-216). |
+| A coordinator session does not start | The start fails with its reason. `a coordinator session starts only as a new direct child`: start a new session with `host = "direct"`; a resume or a shim-hosted start cannot carry the grant credential. `the coordinator endpoint does not listen`: check the station coordinator MCP ingress. `handoff_unverified`: the provider version has no verified credential handoff. Claude 2.1.296 and later is verified; Codex is not, so a Codex coordinator start fails with this reason (§7.2; DL-215, DL-219). |
 
 ## 12. Owner steps that this repository cannot test
 
@@ -188,4 +188,4 @@ Limits of this release (DL-127, follow-ups in `docs/v2/progress/m3-durable.md`):
 - The approval round trip from the board to an agent across a real LAN between two hosts; `make perf` measures loopback only (7-4).
 - The live smoke tests against the real `claude` and `codex` CLIs: `make smoke-live` (opt-in, network, a small number of tokens; [LIVE-SMOKE.md](./LIVE-SMOKE.md)).
 - A real GitHub Actions run of `.github/workflows/v2.yml` (it runs `make check`; this repository never pushes).
-- The coordinator live smoke of ADR-006 §8.5 is not in yet (item 6-5). Until it records a verified context handoff for a provider version, every coordinator start fails with `handoff_unverified` (§7.2).
+- The coordinator live smoke of ADR-006 §8.5 for Codex: until it records a verified context handoff, a Codex coordinator start fails with `handoff_unverified` (§7.2). Run it again for each new Claude version.

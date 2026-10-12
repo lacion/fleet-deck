@@ -538,3 +538,16 @@ fn a_rename_sets_and_clears_the_title_and_an_old_reader_skips_it() {
     let after = f.push_body(unknown);
     assert_eq!(after.title, before.title);
 }
+
+/// v0 parity (PLAN §16 "Model badge follows `/model`"): the summary that the
+/// card badge shows takes the model of the latest model change.
+#[test]
+fn a_model_change_moves_the_model_badge_to_the_new_model() {
+    let mut f = Feed::new();
+    assert_eq!(f.push(started()).model.as_deref(), Some("haiku"));
+    let s = f.push(Event::ModelChanged {
+        model: "opus".to_owned(),
+    });
+    assert_eq!(s.model.as_deref(), Some("opus"));
+    assert_eq!(f.push(run("run-1")).model.as_deref(), Some("opus"));
+}
