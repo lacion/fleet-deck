@@ -107,6 +107,8 @@ You can continue a Claude Code or Codex conversation that you started in a termi
 
 1. End the terminal CLI. One native session must have only one driver.
 2. On the board, open "New session", choose the station, the provider instance and the directory of that conversation.
+   > **Caution:** Do not import a native session id of an earlier Fleet Deck session that is `lost` with a shim host, until the timeline of that session shows its exit. The station refuses only an id that another session drives now. It does not check a lost shim process, so that conversation can run twice.
+
 3. Put the native session id into "Import CLI session id (optional)". The id has 1 to 128 letters, digits, `-`, `_` or `.`, and starts with a letter or a digit.
 4. Optionally give a first prompt, then select "Import session".
 

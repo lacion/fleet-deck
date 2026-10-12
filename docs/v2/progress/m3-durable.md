@@ -28,6 +28,14 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 82 (2026-10-12, 16:46–)
+
+- Round start: committed round 81 as 5c4bb26.
+- Sync: no new commits on m3/orchestration, m3/board or m3/ops.
+- 7-6 Docs: `docs/v2/operations.md` §7.1 has a caution before the step that enters the native session id. Do not import the id of an earlier session that is `lost` with a shim host until its timeline shows the exit, because the station checks only the sessions that drive the id now (open follow-up of review r50, `crates/fleetdeck-station/src/manager/decide.rs`). The follow-up row names the caution; the code check stays open.
+- Lane B `m3-orchestration.md` still has no "LANE COMPLETE"; 6-13, 7-7 and 7-8 stay blocked.
+- Checks: `cargo nextest run -p fleetdeck-cli --test docs_commands` → passed (the guide still names only real commands); `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
+
 ## Round 81 (2026-10-12, 16:44–)
 
 - Round start: committed round 80 as c131df9.
@@ -410,7 +418,7 @@ Limits of this map (review of round 71). Two rows above claim more than the test
 | 7-6 (review r49) | FIXED (commit 8798ac2): operations §10 lists the five rules that the dispatch rechecks and the rules that it does not. The docs present the auto-continue rechecks as complete; the dispatch recheck covers only part of the A10 rules (see the 7-2 follow-ups) | `docs/v2/operations.md` §10, `docs/v2/internals.md` |
 | 7-6 (review r49) | FIXED (commit 8798ac2): `README.md` names the reconciliation state. The README says a revert changes nothing on failure; a revert that cannot be proven needs reconciliation and blocks input (PLAN §6.6) | `README.md` |
 | 6-12 merge (review r50) | FIXED round 56 (DL-130, `a_draining_station_refuses_an_import`): `session.import` is not in the drain guard's list of commands that create work, so an import passes a drain | `crates/fleetdeck-station/src/manager/drain.rs` |
-| 6-12 merge (review r50) | An import of a native session whose earlier session is `lost` with an unresolved shim can run that conversation twice (no unended-execution check for the native id) | `crates/fleetdeck-station/src/manager/decide.rs` |
+| 6-12 merge (review r50) | An import of a native session whose earlier session is `lost` with an unresolved shim can run that conversation twice (no unended-execution check for the native id). Round 82: documented as a caution in `docs/v2/operations.md` §7.1; the code check stays open. | `crates/fleetdeck-station/src/manager/decide.rs` |
 | 6-12 merge (review r50) | The board keeps the clone place and directory choices while an import id is set; the import ignores them without a visible note | `web/src/spawn/SpawnForm.tsx` |
 | 7-6 (review r50) | FIXED (commit 8798ac2): §7.1 says the import uses the mode of the spawn form. `docs/v2/operations.md` §7.1 says the import uses "the stored mode of the provider instance"; a provider instance has no stored permission mode (the import uses the mode of the spawn form) | `docs/v2/operations.md` |
 | 7-8 prep (review r78) | The round-78 log said the 700-line probe lists two files; it lists 17, including the 798-line `host.rs`. Corrected in the round-78 entry. Add a test that runs `tools/module-size.sh` with a lower limit, so the probe count is evidence and not a hand count. Closed in round 80: `crates/fleetdeck-cli/tests/module_size.rs`. | `tools/module-size.sh`, `docs/v2/progress/m3-durable.md` |
