@@ -230,6 +230,15 @@ impl Shells {
                 _ => {}
             }
         }
+        // A closed TUI keeps its id (and its slot) until its process is
+        // reaped: its hold depends on the id.
+        self.prune_closing();
+        ids.extend(
+            lock(&self.closing)
+                .iter()
+                .filter(|(_, shell)| !*lock(&shell.reaped))
+                .map(|(id, _)| id.clone()),
+        );
         match change {
             ShellChange::Open { shell_id, cwd, .. } => {
                 policy
@@ -312,7 +321,22 @@ impl Shells {
                     if shell.session.is_some() {
                         // Out of the list and into the closing set at once:
                         // a release never sees neither.
-                        lock(&self.closing).insert(shell_id.clone(), Arc::clone(&shell));
+                        let mut closing = lock(&self.closing);
+                        let taken = closing
+                            .get(shell_id.as_str())
+                            .is_some_and(|old| !*lock(&old.reaped));
+                        // `check` and `spawn` keep a closing id from being
+                        // reused, so this cannot happen; an unreaped entry
+                        // is never overwritten.
+                        debug_assert!(!taken, "closing shell `{shell_id}` is reused");
+                        if taken {
+                            tracing::error!(
+                                shell = %shell_id,
+                                "a closing shell has this id; keeping the old entry"
+                            );
+                        } else {
+                            closing.insert(shell_id.clone(), Arc::clone(&shell));
+                        }
                     }
                     shell
                 };
@@ -444,6 +468,16 @@ impl Shells {
         let not_started =
             |code: RejectCode, message: String| StartError::NotStarted(reject(code, message));
         if shells.contains_key(shell_id) {
+            return Err(not_started(
+                RejectCode::InvalidState,
+                format!("shell `{shell_id}` exists"),
+            ));
+        }
+        // Lock order: `shells`, then `closing`.
+        if lock(&self.closing)
+            .get(shell_id)
+            .is_some_and(|old| !*lock(&old.reaped))
+        {
             return Err(not_started(
                 RejectCode::InvalidState,
                 format!("shell `{shell_id}` exists"),

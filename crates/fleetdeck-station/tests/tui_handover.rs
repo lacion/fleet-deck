@@ -799,3 +799,67 @@ async fn station_stop_kills_a_tui_that_ignores_the_hangup() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn a_closing_tui_keeps_its_shell_id_reserved() {
+    let mut rig = Rig::new(DEAF_TUI).await;
+    let a = rig.ended("s-a", "native-a").await;
+    let b = rig.ended("s-b", "native-b").await;
+    accepted(&rig.handover("tui-1", &a).await);
+    assert_eq!(rig.dispatch().await, 1);
+    let ready = rig.root.join("ready");
+    eventually("the TUI ignores the hangup", || async { ready.exists() }).await;
+
+    accepted(&rig.close("tui-1").await);
+    assert_eq!(rig.dispatch().await, 1);
+    assert!(!rig.shells.exists("tui-1"));
+
+    // The id of the closing TUI is not free for another session.
+    let d = rig.handover("tui-1", &b).await;
+    assert_eq!(rejected(&d), "shell `tui-1` exists");
+    assert!(rig.summary(&b).await.terminal.is_none());
+    let d = rig.release("tui-1").await;
+    assert_eq!(
+        rejected(&d),
+        "shell `tui-1` is closing and its process still runs; try again when it has stopped"
+    );
+    assert!(rig.summary(&a).await.terminal.is_some(), "the hold stays");
+
+    eventually("the hold ends with the process", || async {
+        released(&rig, &a).await
+    })
+    .await;
+    let reasons = rig.reasons(&a).await;
+    assert!(
+        reasons
+            .last()
+            .unwrap()
+            .starts_with("the terminal process exited"),
+        "{reasons:?}"
+    );
+}
+
+#[tokio::test]
+async fn after_a_restart_a_failed_handover_with_a_hold_keeps_it() {
+    let mut rig = Rig::new("exec cat").await;
+    let s = rig.ended("s-a", "native-a").await;
+    let d = rig.handover("tui-1", &s).await;
+    accepted(&d);
+    // Claimed and finished as failed, but the hold was not released: the
+    // start was uncertain.
+    let effect = rig.store.claim_shell_effect().await.unwrap().unwrap();
+    rig.store
+        .finish_shell_effect(effect.effect_id, Err("shell task: panic".into()))
+        .await
+        .unwrap();
+    assert_eq!(rig.effect_state(&d.receipt.command_id).await, "failed");
+
+    let rig = rig.restarted().await;
+    recover_holds(&rig.store).await.unwrap();
+    let hold = rig.summary(&s).await.terminal.expect("the hold stays");
+    assert_eq!(hold.pid, None);
+    assert_eq!(
+        hold.reason.as_deref(),
+        Some("the station restarted; a terminal process may still use this session")
+    );
+}

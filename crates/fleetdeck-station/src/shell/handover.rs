@@ -7,6 +7,9 @@
 //! report of the pump, [`spawn_exit_release`]), when the TUI never started,
 //! or when the owner clears a hold that the station cannot see after a
 //! restart (`shell.release`, [`decide_release`]; [`recover_holds`] at start).
+//! A failed handover effect with a hold and no pid is an uncertain start, so
+//! a restart keeps that hold.
+//! The station publishes the death of a TUI only after it observed it.
 //!
 //! A closed TUI stays in the closing set of [`Shells`] until its process is
 //! reaped, and `shell.release` is refused meanwhile. Every signal to the
@@ -254,9 +257,21 @@ pub(super) fn signal_group(shell: &Shell, signal: Signal) -> bool {
     }
 }
 
-/// Waits until the process of `shell` is a zombie without reaping it, then
-/// marks the shell reaped: from then on [`signal_group`] sends nothing. The
-/// caller reaps the child right after (the pid stays unusable until then).
+/// Returns when the process of `shell` has been observed to exit, and marks
+/// the shell reaped: from then on [`signal_group`] sends nothing. `reaped`
+/// is set only after an observed exit, never on an error.
+///
+/// - `waitid` waits until the process is a zombie without reaping it: the
+///   flag is set and the caller reaps the child right after (the pid stays
+///   unusable until then).
+/// - When `waitid` fails (or there is no pid), the child is polled with
+///   `try_wait`, which reaps it; the reap and the flag change happen under
+///   the same `reaped` lock, so [`signal_group`] (which holds `reaped`
+///   across the kill) never signals a reaped pid. A later `wait` of the
+///   caller returns the cached status.
+///
+/// Lock order here: `reaped`, then `child`. Nothing takes `child` and then
+/// `reaped`.
 pub(super) fn mark_exited(shell: &Shell) {
     if let Some(target) = shell.pid.and_then(pid_of) {
         loop {
@@ -265,15 +280,29 @@ pub(super) fn mark_exited(shell: &Shell) {
                 WaitIdOptions::EXITED | WaitIdOptions::NOWAIT,
             ) {
                 Err(Errno::INTR) => {}
-                Ok(_) => break,
+                Ok(_) => {
+                    *lock(&shell.reaped) = true;
+                    return;
+                }
                 Err(e) => {
-                    tracing::warn!(error = %e, pid = shell.pid, "terminal wait");
+                    tracing::warn!(error = %e, pid = shell.pid, "terminal wait failed; polling");
                     break;
                 }
             }
         }
+    } else {
+        tracing::warn!("terminal has no usable pid; polling");
     }
-    *lock(&shell.reaped) = true;
+    loop {
+        {
+            let mut reaped = lock(&shell.reaped);
+            if let Ok(Some(_)) = lock(&shell.child).try_wait() {
+                *reaped = true;
+                return;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 
 /// Hangs up the process group of a closed TUI (the TUI leads its session
@@ -328,8 +357,11 @@ pub fn spawn_exit_release(
 /// - the stored pid is gone (`ESRCH`): release;
 /// - the stored pid cannot be checked (`EPERM`, another error): keep the
 ///   hold and say why;
-/// - no pid and the handover was never dispatched (or failed): release;
-/// - no pid otherwise (the start may have happened): keep the hold.
+/// - no pid and no handover effect, or one that was retired without being
+///   dispatched: release;
+/// - no pid otherwise, a `failed` effect included (a start that did not
+///   happen releases its hold before the effect ends, so a hold that is
+///   still there means the start was uncertain): keep the hold.
 ///
 /// # Errors
 /// A store error.
@@ -360,10 +392,7 @@ pub async fn recover_holds(store: &Store) -> Result<(), StoreError> {
             },
             None => {
                 let state = store.handover_effect_state(shell.clone()).await?;
-                if matches!(
-                    state.as_deref(),
-                    None | Some("retired_not_dispatched" | "failed")
-                ) {
+                if matches!(state.as_deref(), None | Some("retired_not_dispatched")) {
                     let reason = "the station restarted before the terminal started".to_owned();
                     store.release_terminal(session, shell, reason).await?;
                 } else {
