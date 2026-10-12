@@ -1,6 +1,6 @@
 # ADR-005 — `ShimHost`: durable provider processes and reattachment
 
-- **Status:** Proposed (M3 round 2, 2026-10-12). Not implemented. The implementation starts only after the architect records an adversary DESIGN REVIEW PASS for this ADR in the "Design approvals" section of the gate-state file (M3 goal, GATE STATUS). DL-073 records an owner pre-approval; DL-074 records why the executor still waits for the review.
+- **Status:** Proposed (M3 round 2, 2026-10-12; §4.3 corrected in round 3 after the goal review, DL-076). Not implemented. The implementation starts only after the architect records an adversary DESIGN REVIEW PASS for this ADR in the "Design approvals" section of the gate-state file (M3 goal, GATE STATUS). DL-073 records an owner pre-approval; DL-074 records why the executor still waits for the review.
 - **Date:** 2026-10-12
 - **Deciders:** architect (goal loop, M3), owner (pre-approval, DL-073), adversary DESIGN REVIEW (pending)
 - **Implements:** PLAN A9, A10 (Phase 7 part, L19), Phase 7 "`ShimHost` (Revision 3 contract)" and its "Required ADR-005 decisions"; ADR-001 §host boundary (`SessionHost`, `ProcessControl` in `crates/fleetdeck-providers/src/host/mod.rs`)
@@ -65,9 +65,42 @@ Only after every row is settled does the station admit commands.
 
 ### 4.3 Stdin and duplicate writes
 
-- Each stdin write is a frame `write { generation, write_id, bytes }`. `write_id` is the station's effect id (stable across restarts). The shim writes the bytes to the pipe once and answers `written { write_id }` after the write call completes.
-- The shim keeps the result of the last 4,096 write ids. A frame with a known `write_id` is not written again; the shim answers `written` with the stored result.
-- After a reattach, for every effect in state `sent` or `outcome_unknown` that is a stdin write, the station asks `write_status { write_id }`. `written` → the effect stays `sent` and waits for provider evidence (unchanged M2 rules). `unknown_write` (never received by the shim, and the shim's id window covers the station's last attach) → the effect is `not_dispatched`, so the M2 rules may release or report it. If the id window does not cover it, the effect stays `outcome_unknown` (never resent).
+The M2 effect rules stay binding (`crates/fleetdeck-station/src/store/effects.rs`): an effect is `queued → claimed → confirmed`, or ends `retired_not_dispatched` or `outcome_unknown`; a claim is never dispatched again; a pipe write is never a confirmation. The shim adds one thing only: in narrow, proven cases it lets recovery retire a `claimed` stdin write as not dispatched instead of `outcome_unknown`. Every other case stays `outcome_unknown`. A partial or in-flight write is never `not_dispatched`.
+
+**Write sequence.** In the claim transaction (before any I/O) the station stores, on the effect, the `shim_id` and a `write_seq` taken from the `shims` row counter `next_write_seq` (incremented in the same transaction). `write_seq` is unique and strictly rising per shim. The frame is `write { generation, write_id, write_seq, bytes }`; `write_id` is the effect id.
+
+**Shim record.** The shim keeps one record per `write_id`, in memory. The record lives as long as the shim, and a shim death ends the provider (§2), so no record is lost while the provider can still read stdin. States:
+
+| State | Meaning |
+| --- | --- |
+| `received` | The complete frame was parsed. The shim creates this record **before** the first byte goes to the pipe. |
+| `writing { bytes_done }` | The write loop has started; `bytes_done` may be 0 or more. |
+| `written` | All bytes are in the pipe. |
+| `partial { bytes_done, error }` | The write stopped with an error after 1 or more bytes. |
+| `failed_unwritten { error }` | The write stopped with an error before the first byte (`bytes_done == 0`, for example `EPIPE` on the first call). |
+| `closed_unwritten` | Tombstone from a `not_received` status answer (below). |
+
+- A frame is processed only when it is complete (length prefix satisfied). An incomplete frame from a closed or replaced connection is discarded; no byte of it reaches the pipe.
+- A frame whose generation is not current is dropped and creates no record (§3 "Stale writers").
+- On a takeover the shim first finishes reading the complete frames of the old connection (each is then dropped as stale), discards its incomplete frame, and only then sends `attached`. No old frame is processed after `attached`.
+- Duplicate frame: a known `write_id` is not written again; the shim answers with the stored state. The one exception is a `closed_unwritten` tombstone, which accepts exactly one later frame with a higher `write_seq` (a new dispatch after a release).
+- Eviction: the shim keeps up to 4,096 records in a terminal state (`written`, `partial`, `failed_unwritten`, `closed_unwritten`) and never evicts `received` or `writing`. It keeps `evicted_through` = the highest `write_seq` that it ever evicted.
+- While the station is attached, the shim reports each terminal state with `write_done { write_id, state, bytes_done }`. The live worker maps it with the table below; `written` gives `Dispatch::Sent`.
+
+**Status after a reattach.** Recovery (§3.2) runs `write_status { write_id, write_seq }` for every `claimed` stdin write of the shim, **before** the generic M2 recovery turns `claimed` into `outcome_unknown`. The answer is valid only on an attachment that passed the full handshake (proof, incarnation, generation, provider identity). The shim answers `not_received` only when it has no record for the id **and** `write_seq > evicted_through`; it then stores the `closed_unwritten` tombstone in the same step, so the old frame can never be written later.
+
+| Answer | Effect result |
+| --- | --- |
+| `not_received` | `retired_not_dispatched` (reason `shim_not_received`); M2 rules may release (an answer slot opens again for a new command). |
+| `failed_unwritten` | `retired_not_dispatched` (reason `shim_write_failed`). |
+| `written` | `outcome_unknown`; provider evidence in the replayed output can still confirm it (M2 `observe`). |
+| `received` or `writing` (in flight) | The station asks again for at most 30 s. A terminal answer in this time uses this table. Else `outcome_unknown`; a later `write_done` can only move it to `confirmed` through provider evidence, never to `retired_not_dispatched`. |
+| `partial` | `outcome_unknown`, never resent. Stdin may now hold a broken line, so the session gets `input_blocked { reason: stdin_partial_write }`: the station rejects new inputs (§6.4 rejection receipt) and admits only interrupt, stop and kill. |
+| `forgotten` (`write_seq <= evicted_through`), no answer, `shim_gone`, `identity_mismatch` | `outcome_unknown`, never resent. |
+
+- The bounded waits of all shims run in parallel, so they add at most 30 s to recovery; commands are admitted only after them (§3.2).
+- An effect that is already `outcome_unknown` (for example from an earlier recovery) never goes back to `retired_not_dispatched`. Only provider evidence can settle it.
+- **Gate in the implementation.** The two `retired_not_dispatched` rows are enabled only in the same change that adds the crash-boundary tests 26–35 (§9), and only when they pass. Until then, the station maps every `write_status` answer to `outcome_unknown`.
 
 ### 4.4 Control
 
@@ -104,7 +137,7 @@ A socket file whose connect fails with `ECONNREFUSED` or `ENOENT` on the target 
 - **Order.** At recovery the station first tries to reattach (§3.2). Only a session that is `lost` can enter the L19 auto-continue path; that path stays per-session, default OFF, with all A10 identity matches and dispatch rechecks.
 - **Permission mode.** A reattached process keeps its mode; the station never sends a mode change at reattach. An L19 resume passes the stored mode, never a more permissive one; a mode that the provider does not offer at resume time runs as the most restrictive mode (L8).
 - **Approvals while detached.** An approval request that the provider opened while no station was attached arrives at replay. The station applies the station's offline approval policy and the request deadline using the request's provider timestamp and the station clock. An approval whose deadline passed is answered with the provider's deny or cancel option and recorded `approval.expired { reason: deadline }`. An expired approval never becomes an allow, also when a board answer for it arrives later.
-- **Uncertain inputs first.** Before any continuation work or new command for a reattached session, the station settles every `sent` or `outcome_unknown` stdin effect with `write_status` (§4.3). A continuation is never a new prompt for an input whose outcome is unknown.
+- **Uncertain inputs first.** Before any continuation work or new command for a reattached session, the station settles every `claimed` stdin write with `write_status` (§4.3). An input that stays `outcome_unknown` (in flight, partial, written without evidence, forgotten) is never sent again, and a continuation is never a new prompt for it.
 
 ## 7. Failure behaviour
 
@@ -112,7 +145,8 @@ A socket file whose connect fails with `ECONNREFUSED` or `ENOENT` on the target 
 | --- | --- |
 | Station SIGKILL or crash | Shims and providers keep running; output waits in the buffer (backpressure when full); recovery reattaches. |
 | Station graceful stop | The station detaches (sends nothing that stops providers). `station serve --stop-sessions` stops them explicitly. |
-| Shim crash | The provider ends (§2); the session is `lost` (`shim_gone`); no automatic replacement. |
+| Shim crash | The provider ends (§2); the session is `lost` (`shim_gone`); no automatic replacement; its `claimed` stdin writes become `outcome_unknown`. |
+| Partial stdin write | The write is `outcome_unknown`; the session is `input_blocked` (`stdin_partial_write`) and admits only interrupt, stop and kill (§4.3). |
 | Reboot | Every shim is gone; `boot_id` differs; sessions are `lost`; L19 may resume if enabled. |
 | Two station processes on one database | The local-socket lock (DL-038) stops the second; generations fence the shim if it still tries. |
 | Database replaced | Another incarnation: attaches are `foreign_station`; the old shims keep running until the owner stops them (`fleetdeck station shims --stop-foreign`, 7-1). |
@@ -139,7 +173,7 @@ Real-process tests in `crates/fleetdeck-cli/tests/shim_*.rs`, unit tests in `cra
 9. `a_peer_with_another_uid_is_refused` (unit test of the peer check with injected credentials)
 10. `a_reused_pid_with_another_start_time_or_boot_id_is_lost_not_reattached`
 11. `a_duplicate_write_id_is_written_once`
-12. `write_status_resolves_an_unknown_write_after_a_restart` (`written` → `sent`; `unknown_write` → `not_dispatched`; outside the window → `outcome_unknown`)
+12. `write_status_maps_each_answer_to_the_effect_state_of_section_4_3` (unit test of the full answer table; an effect already `outcome_unknown` never becomes `retired_not_dispatched`)
 13. `an_exit_while_the_station_was_down_is_reported_with_its_exit_state_after_reattach`
 14. `an_unacknowledged_exit_is_written_to_the_exit_file_and_read_at_recovery`
 15. `an_approval_whose_deadline_passed_while_detached_is_denied_and_never_allowed`
@@ -154,6 +188,19 @@ Real-process tests in `crates/fleetdeck-cli/tests/shim_*.rs`, unit tests in `cra
 24. `a_reattached_session_is_never_resumed_and_auto_continue_is_off_by_default`
 25. `uncertain_inputs_are_settled_before_any_command_is_admitted_after_reattach`
 
+**§4.3 crash-boundary tests.** They are a condition for the `retired_not_dispatched` rows of §4.3 (§4.3 "Gate in the implementation"). Each real-process test uses a fake provider that records every stdin byte it reads, and a test-build fault point in the station or the shim. Each asserts the effect state, the bytes that the provider read, and that no write is sent twice.
+
+26. `a_station_killed_after_the_claim_and_before_the_frame_retires_the_write_as_not_received` (the provider read no byte)
+27. `a_station_killed_in_the_middle_of_a_frame_leaves_no_byte_in_the_pipe_and_retires_the_write`
+28. `a_station_killed_after_the_full_frame_and_before_written_keeps_the_write_outcome_unknown_and_never_resends` (the shim finishes the write; the provider read the bytes exactly once; replayed evidence confirms it)
+29. `a_write_blocked_on_a_full_stdin_pipe_at_reattach_stays_outcome_unknown_after_the_bounded_wait` (a later `write_done` never retires it; only provider evidence confirms it)
+30. `a_partial_write_is_outcome_unknown_blocks_input_and_is_never_resent` (shim unit test with an injected writer that fails after k > 0 bytes; then a real-process check that the session rejects new inputs with a receipt and admits stop)
+31. `a_write_that_fails_before_the_first_byte_is_retired_as_not_dispatched` (injected `EPIPE` on the first call)
+32. `an_evicted_write_record_is_forgotten_and_stays_outcome_unknown`
+33. `a_complete_frame_of_the_old_generation_after_a_takeover_is_dropped_and_never_written` (the status is `not_received`; the provider read no byte of it)
+34. `a_shim_killed_during_a_write_leaves_the_session_lost_and_the_write_outcome_unknown`
+35. `a_not_received_tombstone_refuses_the_old_frame_and_accepts_one_new_dispatch_exactly_once`
+
 macOS runs of these tests are owner/platform validation (this machine is Linux).
 
 ## 10. Risks
@@ -164,4 +211,5 @@ macOS runs of these tests are owner/platform validation (this machine is Linux).
 
 ## 11. Open points
 
+- `input_blocked { reason }` (§4.3) is a new session condition; 7-1 adds its PLAN §7.2 read-model mapping together with the Phase 6 `reconciliation_required` state.
 - None blocks the review. Defaults (16 MiB buffer, 7-day exit retention, 4,096 write ids) are executor choices that the owner may change.

@@ -1,0 +1,226 @@
+//! A bounded `git` runner for the workspace service (PLAN §6.6).
+//!
+//! Every call has a timeout and a fixed, safe set of options:
+//!
+//! - the variables that point `git` at another repository, index or object
+//!   store (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, ...) are removed
+//!   from the inherited environment; a caller sets `GIT_INDEX_FILE` only for
+//!   a private index;
+//! - `git` never prompts (`GIT_TERMINAL_PROMPT=0`) and never takes optional
+//!   locks (`GIT_OPTIONAL_LOCKS=0`), so a read never rewrites the real index;
+//! - hooks, the file-system monitor and automatic maintenance are off;
+//! - with [`GitOptions::isolated`] the system and user configuration are not
+//!   read (checkpoints do not need credentials, signing or user aliases).
+
+use std::ffi::{OsStr, OsString};
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use std::time::Duration;
+
+use tokio::io::AsyncWriteExt;
+use tokio::process::Command;
+
+/// Variables that redirect `git` to another repository or index.
+const REDIRECTING_VARS: &[&str] = &[
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_NAMESPACE",
+    "GIT_PREFIX",
+    "GIT_CEILING_DIRECTORIES",
+    "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+    "GIT_CONFIG",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+    "GIT_EXTERNAL_DIFF",
+    "GIT_DIFF_OPTS",
+];
+
+/// Options that every call passes before the subcommand.
+const SAFE_CONFIG: &[&str] = &[
+    "-c",
+    "core.hooksPath=/dev/null",
+    "-c",
+    "core.fsmonitor=false",
+    "-c",
+    "core.quotePath=false",
+    "-c",
+    "gc.auto=0",
+    "-c",
+    "maintenance.auto=false",
+    "-c",
+    "diff.external=",
+];
+
+/// The longest stderr text kept in an error.
+const STDERR_KEEP: usize = 2048;
+
+#[derive(Debug, thiserror::Error)]
+pub enum GitError {
+    #[error("cannot start git: {0}")]
+    Spawn(#[source] std::io::Error),
+    #[error("git {args} did not end within {secs} s")]
+    Timeout { args: String, secs: u64 },
+    #[error("git {args} failed ({code}): {stderr}")]
+    Failed {
+        args: String,
+        code: String,
+        stderr: String,
+    },
+    #[error("git output is not UTF-8: {0}")]
+    Utf8(String),
+}
+
+/// How the runner starts `git`.
+#[derive(Debug, Clone)]
+pub struct GitOptions {
+    /// The `git` executable.
+    pub program: PathBuf,
+    /// The limit for one call.
+    pub timeout: Duration,
+    /// Do not read the system and user configuration.
+    pub isolated: bool,
+}
+
+impl GitOptions {
+    /// `git` from `PATH`, 60 s per call, no system or user configuration.
+    #[must_use]
+    pub fn isolated() -> Self {
+        Self {
+            program: PathBuf::from("git"),
+            timeout: Duration::from_secs(60),
+            isolated: true,
+        }
+    }
+}
+
+/// One `git` call in a working directory.
+#[derive(Debug, Clone)]
+pub struct Git {
+    dir: PathBuf,
+    options: GitOptions,
+}
+
+impl Git {
+    #[must_use]
+    pub fn new(dir: impl Into<PathBuf>, options: GitOptions) -> Self {
+        Self {
+            dir: dir.into(),
+            options,
+        }
+    }
+
+    #[must_use]
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
+    /// Runs `git <args>` and returns its stdout. A non-zero exit is an error.
+    pub async fn run(&self, args: &[&str]) -> Result<Vec<u8>, GitError> {
+        self.call(args, &[], None).await
+    }
+
+    /// Runs `git <args>` and returns its stdout as text.
+    pub async fn text(&self, args: &[&str]) -> Result<String, GitError> {
+        let out = self.run(args).await?;
+        String::from_utf8(out).map_err(|e| GitError::Utf8(e.to_string()))
+    }
+
+    /// Runs `git <args>` with extra environment variables and optional stdin.
+    pub async fn call(
+        &self,
+        args: &[&str],
+        env: &[(&str, &OsStr)],
+        stdin: Option<Vec<u8>>,
+    ) -> Result<Vec<u8>, GitError> {
+        match self.status(args, env, stdin).await? {
+            (0, out, _) => Ok(out),
+            (code, _, stderr) => Err(GitError::Failed {
+                args: args.join(" "),
+                code: code.to_string(),
+                stderr,
+            }),
+        }
+    }
+
+    /// Runs `git <args>` and returns `(exit code, stdout, stderr)`; a signal
+    /// gives the code -1.
+    pub async fn status(
+        &self,
+        args: &[&str],
+        env: &[(&str, &OsStr)],
+        stdin: Option<Vec<u8>>,
+    ) -> Result<(i32, Vec<u8>, String), GitError> {
+        let mut cmd = Command::new(&self.options.program);
+        cmd.current_dir(&self.dir)
+            .args(SAFE_CONFIG)
+            .args(args)
+            .stdin(if stdin.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        for name in REDIRECTING_VARS {
+            cmd.env_remove(name);
+        }
+        cmd.env("GIT_TERMINAL_PROMPT", "0")
+            .env("GIT_OPTIONAL_LOCKS", "0")
+            .env("LC_ALL", "C");
+        if self.options.isolated {
+            cmd.env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("GIT_CONFIG_GLOBAL", "/dev/null");
+        }
+        for (name, value) in env {
+            cmd.env(name, value);
+        }
+        let mut child = cmd.spawn().map_err(GitError::Spawn)?;
+        if let (Some(bytes), Some(mut pipe)) = (stdin, child.stdin.take()) {
+            // A writer task, so a large stdin cannot block against a full
+            // stdout pipe.
+            tokio::spawn(async move {
+                let _ = pipe.write_all(&bytes).await;
+                let _ = pipe.shutdown().await;
+            });
+        }
+        let secs = self.options.timeout.as_secs();
+        let output = tokio::time::timeout(self.options.timeout, child.wait_with_output())
+            .await
+            .map_err(|_| GitError::Timeout {
+                args: args.join(" "),
+                secs,
+            })?
+            .map_err(GitError::Spawn)?;
+        let mut stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        if stderr.len() > STDERR_KEEP {
+            let mut cut = STDERR_KEEP;
+            while !stderr.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            stderr.truncate(cut);
+        }
+        Ok((output.status.code().unwrap_or(-1), output.stdout, stderr))
+    }
+}
+
+/// Splits NUL-terminated `-z` output into its fields.
+#[must_use]
+pub fn nul_fields(out: &[u8]) -> Vec<&[u8]> {
+    let mut fields: Vec<&[u8]> = out.split(|b| *b == 0).collect();
+    if fields.last().is_some_and(|f| f.is_empty()) {
+        fields.pop();
+    }
+    fields
+}
+
+/// A path field of `-z` output as an OS string.
+#[must_use]
+pub fn os_path(field: &[u8]) -> OsString {
+    use std::os::unix::ffi::OsStrExt;
+    OsStr::from_bytes(field).to_owned()
+}

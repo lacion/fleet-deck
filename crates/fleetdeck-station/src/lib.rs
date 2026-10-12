@@ -27,3 +27,6 @@ pub mod store;
 
 /// The effect worker (PLAN §6.4).
 pub mod worker;
+
+/// The workspace service (PLAN §6.6): checkpoints, diffs, restore.
+pub mod workspace;

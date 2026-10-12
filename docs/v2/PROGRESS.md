@@ -86,7 +86,7 @@ M3 = PLAN Phases 6–7 (goal loop started 2026-10-12, round 1). Rules as for M2:
 
 ### Phase 6 — fleet features
 
-- [ ] **6-ADR6** ADR-006 coordinator MCP (ingress auth, private credential handoff, identity binding and generation, wire/authorization, tool/class matrix, spawn-cap accounting, duplicates, query expiry, lifecycle/retry/revocation) and its executable negative tests, status *Proposed*. Done (round 2): [ADR-006](./adr/ADR-006-coordinator-mcp.md) written, *Proposed*, every required decision, 31 named tests (§8), DL-075. Remaining: commit at the round-3 start, adversary DESIGN REVIEW (architect), then the §8 tests before the wiring.
+- [ ] **6-ADR6** ADR-006 coordinator MCP (ingress auth, private credential handoff, identity binding and generation, wire/authorization, tool/class matrix, spawn-cap accounting, duplicates, query expiry, lifecycle/retry/revocation) and its executable negative tests, status *Proposed*. Done (round 2): [ADR-006](./adr/ADR-006-coordinator-mcp.md) written, *Proposed*, every required decision, 31 named tests (§8), DL-075. Committed at the round-3 start (7965c6e). Remaining: adversary DESIGN REVIEW (architect), then the §8 tests before the wiring.
 - [ ] **6-1 Workspaces** Repo catalog on stations; credential-safe clone; worktrees; batch spawn and `Nx`; explicit repo grouping; provider-instance profiles; allowed-root and symlink validation; filesystem work through the effect worker. Remaining: everything.
 - [ ] **6-2 Mail** Fleet mail through the durable outbox, delivered as native follow-up/steer. Remaining: everything.
 - [ ] **6-3 Assign auto** Across stations with connected/capacity/provider/repo checks. Remaining: everything.
@@ -94,7 +94,7 @@ M3 = PLAN Phases 6–7 (goal loop started 2026-10-12, round 1). Rules as for M2:
 - [ ] **6-5 Coordinator** Scoped coordinator MCP API (after ADR-006 approval), deck-served control skill, race-safe spawn caps. Remaining: everything (blocked on the ADR-006 review).
 - [ ] **6-6 Plans** Claude `ExitPlanMode` and Codex plan-item capture; plan library. Remaining: everything.
 - [ ] **6-7 Conflict radar** across stations. Remaining: everything.
-- [ ] **6-8 Files and checkpoints** File browse/search/read/rename/event feed, diffs from checkpoints, hidden-ref turn-start/completion checkpoints, `turn.finalized`, safe revert with the §6.6 fence, rejection, race and crash tests. Remaining: everything.
+- [ ] **6-8 Files and checkpoints** File browse/search/read/rename/event feed, diffs from checkpoints, hidden-ref turn-start/completion checkpoints, `turn.finalized`, safe revert with the §6.6 fence, rejection, race and crash tests. Done (round 3): the Git layer `crates/fleetdeck-station/src/workspace/{git,checkpoint,restore}.rs` (DL-077): hidden refs `refs/fleetdeck/checkpoints/<incarnation>/<worktree id>/<session>/<turn>/<start|end>`, tracked-content snapshot through a private index, idempotent create-only publication, explicit unavailable reasons (submodule, unmerged, skip-worktree, filter/encoding, non-UTF-8 path, size/count limits), checkpoint diffs, two-step restore (check without mutation, then apply) that preserves the real index and never removes untracked/ignored files; 15 tests in `workspace::checkpoint_tests`. Remaining: the turn lifecycle (`turn.finalized` event and fenced boundary, publication recovery, boundary tests), revert command/effect with the fence and provider rollback (mixed outcomes, rejection receipt, race/crash tests), file browse/search/read/rename/event feed, wire and board.
 - [ ] **6-9 Usage meters** Usage and rate-limit meters; unknown never shown as zero. Remaining: everything.
 - [ ] **6-10 Images and notifications** Prompt image/screenshot attachments; notifications. Remaining: everything.
 - [ ] **6-11 Human shell** §6.8 PTY shell: policy checks, shell cap, scrubbed env, audited open/resize/close, data-channel bytes, 5,000 lines / 8 MiB scrollback, reconnect, deck/link-outage survival. Remaining: everything.
@@ -103,7 +103,7 @@ M3 = PLAN Phases 6–7 (goal loop started 2026-10-12, round 1). Rules as for M2:
 
 ### Phase 7 — hardening and cutover
 
-- [ ] **7-ADR5** ADR-005 `ShimHost` (attachment ownership, output recovery, platform/upgrades, auto-continue integration) and its negative tests, status *Proposed*. Done (round 2): [ADR-005](./adr/ADR-005-shim-host.md) written, *Proposed*, the four decision groups, 25 named tests (§9), DL-075. Remaining: commit at the round-3 start, adversary DESIGN REVIEW (architect), then the §9 tests before the implementation.
+- [ ] **7-ADR5** ADR-005 `ShimHost` (attachment ownership, output recovery, platform/upgrades, auto-continue integration) and its negative tests, status *Proposed*. Done (round 2): [ADR-005](./adr/ADR-005-shim-host.md) written, *Proposed*, the four decision groups, 25 named tests (§9), DL-075. Committed at the round-3 start (7965c6e). Round 3: §4.3 corrected after the goal review (partial and in-flight writes stay `outcome_unknown`; `retired_not_dispatched` only for proven zero-byte cases and only with the crash-boundary tests 26–35), DL-076; 35 named tests. Remaining: commit the correction at the round-4 start, adversary DESIGN REVIEW of the corrected ADR (architect), then the §9 tests before the implementation.
 - [ ] **7-1 ShimHost** Durable shim and reattachment; crash/restart, terminal events, requests, duplicate stdin, output cursor recovery tests. Remaining: everything (blocked on the ADR-005 review).
 - [ ] **7-2 Auto-continue** L19, per session, default OFF. Remaining: everything.
 - [ ] **7-3 Drain and self-upgrade** Stable launcher, migration/bind/activation trial, rollback-safe SQLite main/WAL/shm snapshot, update ids, N−1 wire and stored-event compatibility. Remaining: everything.
@@ -128,6 +128,14 @@ M3 = PLAN Phases 6–7 (goal loop started 2026-10-12, round 1). Rules as for M2:
 - Done: ADR-006 and ADR-005 written with status *Proposed* (DL-075); no wiring, no implementation.
 - Checks: `make check` on the round-2 tree (only docs changed after `b951beb`): all 14 commands passed (nextest 843 passed / 3 skipped, bun test 88 pass, replay-claude 29, replay-codex 18).
 - Next: commit at the round-3 start so that the architect can start the two DESIGN REVIEWs; meanwhile independent Phase 6 items (6-1 workspaces, 6-8 checkpoints).
+
+### M3 round 3 (2026-10-12)
+
+- Start: the round-2 work (ADR-005, ADR-006, DL-075, PROGRESS) is committed as `7965c6e`. Gate-state file: ADR-005 and ADR-006 not reviewed.
+- Review feedback: "Correct ADR-005 §4.3 to keep partial or in-flight stdin writes outcome_unknown, and specify crash-boundary tests before allowing write_status to report not_dispatched." Done: ADR-005 §4.3 rewritten in the M2 effect vocabulary (`claimed`, not `sent`); a partial, in-flight, written-without-evidence or forgotten write stays `outcome_unknown` and is never resent; a partial write blocks input; only `not_received` (with `write_seq > evicted_through` and a tombstone) and `failed_unwritten` retire a still-`claimed` write as not dispatched; an `outcome_unknown` effect never goes back; those two rows stay off until the new crash-boundary tests 26–35 pass (DL-076).
+- Done: 6-8 Git checkpoint layer (DL-077).
+- Checks: `make check` on the round-3 tree: all 14 commands passed (fmt, clippy `-D warnings`, nextest 858 passed / 3 skipped (15 new checkpoint tests), deny, ts_drift 2, bun test 88 pass, build, e2e, e2e:real, replay-claude 29, replay-codex 18).
+- Next: commit at the round-4 start (the corrected ADR-005 is then ready for its DESIGN REVIEW); continue 6-8 with the turn lifecycle (`turn.finalized`, fenced boundary, publication recovery) and revert admission.
 
 ## M2 acceptance evidence (M2-F)
 
