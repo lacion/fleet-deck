@@ -114,6 +114,20 @@ You can continue a Claude Code or Codex conversation that you started in a termi
 
 The station resumes the native session with the permission mode that you select in the spawn form. A provider instance stores no permission mode. The import ignores the workspace and batch choices of the form. It refuses an id that another session of the station already drives. Fleet Deck does not read the terminal and does not import v1 data.
 
+### 7.2 Start a coordinator session
+
+A coordinator session can read the fleet, send mail and drive the sessions that it starts (ADR-006). Item 6-5 is in progress: the station does not keep coordinator calls across a station restart yet, and no live smoke test covers a coordinator.
+
+> **Caution:** A coordinator drives other sessions without a prompt from you. Revoke its grant when the work is done.
+
+1. On the board, open "New session" and choose a station, a provider instance and a directory.
+2. Select "Coordinator". The import field must be empty: an imported session cannot be a coordinator.
+3. Give the first prompt and start the session.
+4. Find the grant in the "Coordinator grants" list of the "Mail and tasks" panel on the fleet screen.
+5. To stop the coordinator calls, select "Revoke" on its grant. A grant that expired after an idle time shows "Renew".
+
+The deck creates the grant with the classes `read`, `mail` and `drive` and with its default expiry. It gives the session the control skill (`crates/fleetdeck-deck/src/control_skill.md`). The start fails for a resumed session, for a shim-hosted session and for a station without the coordinator endpoint (§11).
+
 ## 8. Back up
 
 - The station event log (`station.db`) is the source of truth for sessions. The deck database (`deck.db`) is the source of truth for mail, plans, tasks, routing and settings.

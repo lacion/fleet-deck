@@ -28,6 +28,14 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 84 (2026-10-12, 16:50–)
+
+- Round start: committed round 83 as 4c49703.
+- Sync: no new commits on m3/orchestration, m3/board or m3/ops.
+- 7-6 Docs: new `docs/v2/operations.md` §7.2 "Start a coordinator session": the owner steps on the board (spawn form "Coordinator", the "Coordinator grants" list of the "Mail and tasks" panel, "Revoke" and "Renew"), a caution before the steps, the classes `read`, `mail`, `drive` that the form asks for (`web/src/spawn/SpawnForm.tsx`), the control skill and the start refusals (DL-216, DL-217). It states the open 6-5 parts (no durable coordinator outbox, no coordinator live smoke).
+- Lane B `m3-orchestration.md` still has no "LANE COMPLETE"; 6-13, 7-7 and 7-8 stay blocked.
+- Checks: `cargo nextest run -p fleetdeck-cli --test docs_commands` → passed; `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
+
 ## Round 83 (2026-10-12, 16:47–)
 
 - Round start: committed round 82 as 9b62718.
