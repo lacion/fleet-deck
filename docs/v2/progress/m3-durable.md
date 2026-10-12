@@ -28,6 +28,18 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 81 (2026-10-12, 16:44–)
+
+- Round start: committed round 80 as c131df9.
+- Sync: no new commits on m3/orchestration, m3/board or m3/ops.
+- 7-6 follow-up status: four doc follow-ups of reviews r49 and r50 were already fixed in commit 8798ac2 (15:35) but were still listed as open. Checked each against the current text and marked them FIXED in the follow-up table:
+  - `docs/v2/operations.md` §10 "Limits of this release": the shim host gets `unsupported`; the dispatch rechecks only identity, proven end, newer owner work, requested stop and the time window.
+  - `README.md` line 24: a revert that cannot be proven needs reconciliation and blocks input.
+  - `docs/v2/operations.md` §7.1: the import uses the permission mode of the spawn form; a provider instance stores no mode.
+- The round-71 evidence-map row on A10 coverage is marked "claim narrowed" (the round-72 "Limits of this map" note); the missing A10 recheck tests stay open as 7-2 follow-ups.
+- Lane B `m3-orchestration.md` still has no "LANE COMPLETE"; 6-13, 7-7 and 7-8 stay blocked.
+- Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
+
 ## Round 80 (2026-10-12, 16:41–)
 
 - Round start: committed round 79 as 3d5d586.
@@ -368,7 +380,7 @@ Limits of this map (review of round 71). Two rows above claim more than the test
 
 | Item | Finding | File |
 | --- | --- | --- |
-| 7-6 | The Phase 7 evidence map overstated the A10 coverage: auto-continue rechecks only identity, proven end, newer owner work, stop and window, and the shim host is `unsupported`. Add the missing A10 recheck tests or narrow the claim. | `crates/fleetdeck-station/src/manager/auto_continue_tests.rs`, `docs/v2/progress/m3-durable.md` |
+| 7-6 | CLAIM NARROWED (round 72, "Limits of this map"); the missing A10 recheck tests stay open as 7-2 follow-ups. The Phase 7 evidence map overstated the A10 coverage: auto-continue rechecks only identity, proven end, newer owner work, stop and window, and the shim host is `unsupported`. Add the missing A10 recheck tests or narrow the claim. | `crates/fleetdeck-station/src/manager/auto_continue_tests.rs`, `docs/v2/progress/m3-durable.md` |
 | 7-6 | The Phase 7 evidence map overstated the ShimHost upgrade coverage: `station_upgrade.rs` uses the `direct` host. Add an end-to-end test where a shim agent survives a station upgrade. | `crates/fleetdeck-cli/tests/station_upgrade.rs` |
 | 7-1 | ADR-005 test 3: a named fault point between the attach and the replay | `crates/fleetdeck-cli/tests/shim_recovery.rs` |
 | 7-1 | ADR-005 test 16: a stale socket file is replaced, a live one is refused | `crates/fleetdeck-providers/src/host/shim/launch.rs` |
@@ -394,11 +406,11 @@ Limits of this map (review of round 71). Two rows above claim more than the test
 | 7-3 (review r48) | No guard for lost shims and no adapter checkpoint compatibility check in the trial | `crates/fleetdeck-station/src/upgrade.rs` |
 | 7-3 (review r48) | The trial run of the new binary has no time bound | `crates/fleetdeck-cli/src/upgrade.rs` |
 | 7-3 (review r48) | ADR-005 tests 20/21/22/48 use store rows, not a real ShimHost of two builds; N−1 is tested at the link layer only | `crates/fleetdeck-station/src/upgrade_tests.rs` |
-| 7-6 (review r49) | The docs do not say that auto-continue is not supported on the shim host (a shim session gets `unsupported`) | `docs/v2/operations.md` §10 |
-| 7-6 (review r49) | The docs present the auto-continue rechecks as complete; the dispatch recheck covers only part of the A10 rules (see the 7-2 follow-ups) | `docs/v2/operations.md` §10, `docs/v2/internals.md` |
-| 7-6 (review r49) | The README says a revert changes nothing on failure; a revert that cannot be proven needs reconciliation and blocks input (PLAN §6.6) | `README.md` |
+| 7-6 (review r49) | FIXED (commit 8798ac2): operations §10 "Limits of this release" says the shim host gets `unsupported`. The docs do not say that auto-continue is not supported on the shim host (a shim session gets `unsupported`) | `docs/v2/operations.md` §10 |
+| 7-6 (review r49) | FIXED (commit 8798ac2): operations §10 lists the five rules that the dispatch rechecks and the rules that it does not. The docs present the auto-continue rechecks as complete; the dispatch recheck covers only part of the A10 rules (see the 7-2 follow-ups) | `docs/v2/operations.md` §10, `docs/v2/internals.md` |
+| 7-6 (review r49) | FIXED (commit 8798ac2): `README.md` names the reconciliation state. The README says a revert changes nothing on failure; a revert that cannot be proven needs reconciliation and blocks input (PLAN §6.6) | `README.md` |
 | 6-12 merge (review r50) | FIXED round 56 (DL-130, `a_draining_station_refuses_an_import`): `session.import` is not in the drain guard's list of commands that create work, so an import passes a drain | `crates/fleetdeck-station/src/manager/drain.rs` |
 | 6-12 merge (review r50) | An import of a native session whose earlier session is `lost` with an unresolved shim can run that conversation twice (no unended-execution check for the native id) | `crates/fleetdeck-station/src/manager/decide.rs` |
 | 6-12 merge (review r50) | The board keeps the clone place and directory choices while an import id is set; the import ignores them without a visible note | `web/src/spawn/SpawnForm.tsx` |
-| 7-6 (review r50) | `docs/v2/operations.md` §7.1 says the import uses "the stored mode of the provider instance"; a provider instance has no stored permission mode (the import uses the mode of the spawn form) | `docs/v2/operations.md` |
+| 7-6 (review r50) | FIXED (commit 8798ac2): §7.1 says the import uses the mode of the spawn form. `docs/v2/operations.md` §7.1 says the import uses "the stored mode of the provider instance"; a provider instance has no stored permission mode (the import uses the mode of the spawn form) | `docs/v2/operations.md` |
 | 7-8 prep (review r78) | The round-78 log said the 700-line probe lists two files; it lists 17, including the 798-line `host.rs`. Corrected in the round-78 entry. Add a test that runs `tools/module-size.sh` with a lower limit, so the probe count is evidence and not a hand count. Closed in round 80: `crates/fleetdeck-cli/tests/module_size.rs`. | `tools/module-size.sh`, `docs/v2/progress/m3-durable.md` |
