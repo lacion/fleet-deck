@@ -15,6 +15,8 @@
 //!   answers end the turn with `answered: <answers>`;
 //! - `exit-after <text>`: the turn answers and completes, then the process
 //!   exits with code 0.
+//! - `exit-leaving-child <text>`: the same, and a child of the app-server
+//!   (`sleep 30`, in its process group) is still alive at the exit;
 //! - `slow <ms> <text>`: the turn runs `ms` without output, then answers
 //!   `echo: <text>` (a turn that ends while nobody reads stdout);
 //! - `bg ...`: a command that outlives its turn; the first
@@ -364,6 +366,18 @@ impl<W: Write> Sim<W> {
             let ms: u64 = ms.parse().unwrap_or(1000);
             std::thread::sleep(std::time::Duration::from_millis(ms));
             self.answer(&turn, &format!("echo: {said}"), "completed")
+        } else if let Some(said) = text.strip_prefix("exit-leaving-child ") {
+            // `exit-leaving-child <text>`: like `exit-after`, but a child
+            // in the app-server's process group (`sleep 30`) is still alive
+            // when the app-server exits (DL-120).
+            self.answer(&turn, &format!("echo: {said}"), "completed")?;
+            let _child = std::process::Command::new("sleep")
+                .arg("30")
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()?;
+            std::process::exit(0)
         } else if let Some(said) = text.strip_prefix("exit-after ") {
             // `exit-after <text>`: the turn answers and completes, then the
             // app-server exits with code 0 (a provider that ends after a

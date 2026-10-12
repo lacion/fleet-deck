@@ -32,14 +32,14 @@ use fleetdeck_proto::event::SessionState;
 use fleetdeck_proto::{Event, EventBody, SessionId};
 use fleetdeck_providers::ProviderAdapter;
 use fleetdeck_providers::durable::{DurableConfig, DurableLaunch};
-use fleetdeck_providers::host::shim::host::{AckMode, ShimHost};
+use fleetdeck_providers::host::shim::host::{AckMode, ShimHost, ShimProcess};
 use fleetdeck_providers::host::{ProcessControl as _, StopPolicy};
 use tokio::sync::Mutex;
 
 use super::super::shim_claude::DurableClaude;
 use super::super::shim_codex::DurableCodex;
 use super::super::shim_station::{Durable, Restored};
-use super::super::shims::{LaunchError, launch_shim, reason};
+use super::super::shims::{self, LaunchError, launch_shim, reason};
 use super::super::turns::SessionTurns;
 use super::{Live, REASON_PROCESS_EXIT, SessionTarget, Sessions};
 use crate::store::{
@@ -142,6 +142,7 @@ impl SessionTarget {
                     Arc::clone(&self.sessions),
                     r.session_id.clone(),
                     r.process,
+                    r.driver.process(),
                     turns,
                     from,
                     Drain::ToHead,
@@ -187,6 +188,7 @@ impl SessionTarget {
             Arc::clone(&self.sessions),
             session_id.clone(),
             process.clone(),
+            driver.process(),
             Arc::clone(&turns),
             from,
             Drain::ToTerminal,
@@ -423,11 +425,17 @@ enum Drain {
     ToHead,
 }
 
+/// How long the end of a session waits for the shim's exit report.
+const EXIT_REPORT_WAIT: Duration = Duration::from_secs(10);
+
+// The observer task owns every value it needs; a struct would only rename them.
+#[allow(clippy::too_many_arguments)]
 async fn observe(
     store: Store,
     sessions: Sessions,
     session_id: SessionId,
     process: ProcessIncarnation,
+    shim: Arc<ShimProcess>,
     turns: Arc<SessionTurns>,
     from: u64,
     drain: Drain,
@@ -468,17 +476,26 @@ async fn observe(
             return;
         }
     }
-    end_observed(&store, &sessions, &session_id, process).await;
+    end_observed(&store, &sessions, &session_id, process, &shim).await;
 }
 
 /// The end of a session under a shim: it leaves the live set, its process
-/// ends, and its open shim rows are `exited`.
+/// ends, and its open shim rows are `exited`. The row reason keeps the
+/// shim's evidence (DL-120): `exited` only when the shim's exit report
+/// shows no surviving member of the provider's process group or session;
+/// a surviving member or a missing report is not a proven end, so a later
+/// `session.resume` stays refused.
 async fn end_observed(
     store: &Store,
     sessions: &Sessions,
     session_id: &SessionId,
     process: ProcessIncarnation,
+    shim: &ShimProcess,
 ) {
+    // The terminal event can be committed before the shim's report is
+    // read; wait for the attachment's end (bounded).
+    let _ended = tokio::time::timeout(EXIT_REPORT_WAIT, shim.wait()).await;
+    let why = shims::exit_reason(shim.exit_state().as_ref());
     if let Ok(mut map) = sessions.lock() {
         map.remove(session_id);
     }
@@ -491,7 +508,7 @@ async fn end_observed(
     if let Ok(rows) = store.shims_of_session(session_id.clone()).await {
         for shim_id in rows {
             let _ended = store
-                .shim_end(shim_id, ShimState::Exited, "exited".to_owned())
+                .shim_end(shim_id, ShimState::Exited, why.to_owned())
                 .await;
         }
     }

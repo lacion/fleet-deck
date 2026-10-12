@@ -251,6 +251,7 @@ impl ShimHost {
             delivered: AtomicU64::new(record.cursor),
             gaps: StdMutex::new(Vec::new()),
             reads: StdMutex::new(std::collections::VecDeque::new()),
+            exit_state: StdMutex::new(exit.clone()),
         });
         let (sink, stdout) = tokio::io::duplex(PIPE_BYTES);
         let start = record.cursor.max(cursor_floor);
@@ -331,6 +332,9 @@ pub(super) struct Shared {
     /// `(end offset, read_at)` of each received output chunk, oldest first;
     /// pruned below the acknowledged cursor (DL-110).
     reads: StdMutex<std::collections::VecDeque<(u64, u64)>>,
+    /// The shim's own exit report (with `descendants_remaining`), once it
+    /// arrived (DL-120).
+    exit_state: StdMutex<Option<ExitState>>,
 }
 
 impl Shared {
@@ -507,7 +511,13 @@ async fn read_loop(mut r: Reader) {
                     drop(done.send(Err(answer)));
                 }
             }
-            FromShim::Exited { exit } => r.exit = Some(exit),
+            FromShim::Exited { exit } => {
+                *r.shared
+                    .exit_state
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(exit.clone());
+                r.exit = Some(exit);
+            }
             FromShim::Hello { .. }
             | FromShim::Refused { .. }
             | FromShim::Attached { .. }
@@ -604,6 +614,19 @@ impl ShimProcess {
     #[must_use]
     pub fn acked(&self) -> u64 {
         self.shared.acked.load(Ordering::SeqCst)
+    }
+
+    /// The shim's exit report, once the shim sent it: the provider's
+    /// termination and how many members of its process group or session
+    /// were still alive at its exit (ADR-005 §4.6; DL-120). `None` before
+    /// the exit and when the attachment ended without the report.
+    #[must_use]
+    pub fn exit_state(&self) -> Option<ExitState> {
+        self.shared
+            .exit_state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     /// The stdout offset that the reader received up to.

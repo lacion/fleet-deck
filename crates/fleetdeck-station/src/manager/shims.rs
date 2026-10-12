@@ -36,6 +36,19 @@ pub const IN_FLIGHT_WAIT: Duration =
     Duration::from_millis(fleetdeck_providers::host::shim::settle::IN_FLIGHT_WAIT_MS);
 
 /// Why recovery ended a row as `lost`.
+/// The `exited` row reason of a shim exit report (ADR-005 §4.6; DL-119,
+/// DL-120): [`reason::EXITED`] only when no member of the provider's
+/// process group or session outlived the exit. A member that was still
+/// alive, or a missing report, is not a proven end.
+#[must_use]
+pub fn exit_reason(exit: Option<&ExitState>) -> &'static str {
+    match exit {
+        Some(exit) if exit.descendants_remaining == 0 => reason::EXITED,
+        Some(_) => reason::EXITED_DESCENDANTS_REMAINING,
+        None => reason::EXIT_NOT_REPORTED,
+    }
+}
+
 pub mod reason {
     /// No evidence proves that the provider stopped (ADR-005 §4.6).
     pub const EXECUTION_UNKNOWN: &str = "execution_unknown";
@@ -53,6 +66,9 @@ pub mod reason {
     /// The provider exited, and members of its process group or session
     /// were still alive (the end is not proven, DL-119).
     pub const EXITED_DESCENDANTS_REMAINING: &str = "exited_descendants_remaining";
+    /// The session ended, and no exit report of the shim arrived (the end
+    /// is not proven, DL-120).
+    pub const EXIT_NOT_REPORTED: &str = "exit_not_reported";
 }
 
 /// What recovery did with one row.
@@ -200,12 +216,7 @@ pub async fn recover_shim(
                 Some(why) => (ShimState::Lost, why),
             }
         }
-        // A member of the provider's group or session outlived the exit:
-        // the end is not proven (ADR-005 §4.6; DL-119).
-        Recovered::Exited(exit) if exit.descendants_remaining > 0 => {
-            (ShimState::Exited, reason::EXITED_DESCENDANTS_REMAINING)
-        }
-        Recovered::Exited(_) => (ShimState::Exited, reason::EXITED),
+        Recovered::Exited(exit) => (ShimState::Exited, exit_reason(Some(exit))),
         Recovered::NeverStarted => (ShimState::NeverStarted, reason::SHIM_NEVER_STARTED),
         Recovered::Lost(why) => (ShimState::Lost, *why),
     };

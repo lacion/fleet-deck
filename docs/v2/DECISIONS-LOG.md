@@ -1391,3 +1391,12 @@ Format: context, options, choice, reason, owner review.
 - Not done: the audited owner reconciliation of ADR-005 §4.6 (the way to make such a session resumable after the owner stops the remaining processes); a reboot check (`boot_id`) for shim rows.
 - Owner review: not required (a stricter reading of the accepted ADR-005).
 
+## DL-120 — A live shim exit keeps the descendant evidence (ADR-005 §4.6; M3 round 41)
+
+- Context: the round-40 review found that DL-119 applied the descendant rule only at recovery (exit file). When the station itself observed a session's end, `end_observed` wrote the shim row `exited`/`exited` unconditionally, so a provider exit that left a live child in its process group became a proven end and `session.resume` was accepted.
+- Options: (a) read `/proc` from the station at the end; (b) use the shim's own exit report (`descendants_remaining`, counted by the shim before it signals the group) for both paths.
+- Choice: (b). The shim host keeps the exit report it receives (`ShimProcess::exit_state`). `end_observed` waits up to 10 s for the attachment's end and maps the report with `shims::exit_reason`: `exited` only with zero survivors, `exited_descendants_remaining` otherwise, and `exit_not_reported` when no report arrived. Recovery uses the same function.
+- Reason: the shim counts at the exit, before it kills the group; a later station check would see the group already killed and report a false proven end. One function for both paths keeps the rule in one place, and a missing report fails closed.
+- Not done: a descendant that left the provider's session (`setsid()`) is not counted (ADR-005 §4.6 limit); the audited owner reconciliation.
+- Owner review: not required (implementation inside the accepted ADR-005 revision 3).
+- Round 41 note: the first `make check` showed that the exit report carried by the `attached` frame (a provider that ended while the station was down) was not kept, so a restarted station recorded `exit_not_reported` for a proven end. The host now keeps that report as well (`ShimProcess::exit_state`), and the existing restart test `a_provider_that_exits_while_the_station_is_down_ends_its_session_after_the_restart` checks it.
