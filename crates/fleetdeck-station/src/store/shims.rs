@@ -335,6 +335,7 @@ impl Store {
             .transpose()
             .map_err(|e| StoreError::Corrupt(e.to_string()))?;
         let time = meta.read_at;
+        let frames = meta.frames;
         let (result, out) = self
             .write(move |conn, now, out| {
                 let Some(found) = get(conn, &shim_id)? else {
@@ -353,7 +354,9 @@ impl Store {
                 }
                 if let Some(text) = &checkpoint {
                     store_checkpoint(conn, &shim_id, text, now)?;
+                    super::shim_driver::clear_transitions(conn, &shim_id)?;
                 }
+                super::shim_driver::store_frames(conn, &shim_id, &frames, now)?;
                 conn.execute(
                     "UPDATE shims SET cursor = ?2, updated_at = ?3 WHERE shim_id = ?1",
                     params![shim_id, to_i64(cursor)?, now],
@@ -454,6 +457,9 @@ pub struct OutputMeta {
     pub read_at: RequestTime,
     /// The adapter state after the output.
     pub checkpoint: Option<AdapterCheckpoint>,
+    /// Stdin frames that the output generated (JSON lines without their
+    /// newline); stored as pending frames (DL-110).
+    pub frames: Vec<String>,
 }
 
 pub(super) fn store_checkpoint(

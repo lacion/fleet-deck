@@ -250,6 +250,7 @@ impl ShimHost {
             acked: AtomicU64::new(record.cursor),
             delivered: AtomicU64::new(record.cursor),
             gaps: StdMutex::new(Vec::new()),
+            reads: StdMutex::new(std::collections::VecDeque::new()),
         });
         let (sink, stdout) = tokio::io::duplex(PIPE_BYTES);
         let start = record.cursor.max(cursor_floor);
@@ -327,6 +328,9 @@ pub(super) struct Shared {
     acked: AtomicU64,
     delivered: AtomicU64,
     gaps: StdMutex<Vec<(u64, u64, GapReason)>>,
+    /// `(end offset, read_at)` of each received output chunk, oldest first;
+    /// pruned below the acknowledged cursor (DL-110).
+    reads: StdMutex<std::collections::VecDeque<(u64, u64)>>,
 }
 
 impl Shared {
@@ -454,7 +458,9 @@ async fn read_loop(mut r: Reader) {
             return;
         };
         match frame {
-            FromShim::Output { offset, .. } => {
+            FromShim::Output {
+                offset, read_at, ..
+            } => {
                 let skip = usize::try_from(r.received.saturating_sub(offset)).unwrap_or(usize::MAX);
                 if skip >= payload.len() {
                     continue;
@@ -462,6 +468,11 @@ async fn read_loop(mut r: Reader) {
                 let start = offset.max(r.received);
                 let bytes = payload[skip..].to_vec();
                 r.received = start + bytes.len() as u64;
+                r.shared
+                    .reads
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push_back((r.received, read_at));
                 drop(r.out.send(Chunk::Bytes(start, bytes)));
             }
             FromShim::Gap { from, to, reason } => {
@@ -625,6 +636,11 @@ impl ShimProcess {
     /// ([`AckMode::Manual`]).
     pub async fn ack(&self, cursor: u64) -> bool {
         self.shared.acked.fetch_max(cursor, Ordering::SeqCst);
+        self.shared
+            .reads
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .retain(|(end, _)| *end > cursor);
         self.send(
             ToShim::Ack {
                 generation: self.generation,
@@ -633,6 +649,20 @@ impl ShimProcess {
             Vec::new(),
         )
         .await
+    }
+
+    /// The shim's read time (`read_at`, ms) of the output byte at `offset`:
+    /// the proven time of a replayed request line (ADR-005 §6; DL-110).
+    /// `None` below the acknowledged cursor or for bytes not received.
+    #[must_use]
+    pub fn read_at(&self, offset: u64) -> Option<u64> {
+        self.shared
+            .reads
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .find(|(end, _)| *end > offset)
+            .map(|(_, at)| *at)
     }
 
     /// Acknowledges the exit report after the caller committed it; the shim

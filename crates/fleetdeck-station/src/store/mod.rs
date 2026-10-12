@@ -33,6 +33,7 @@ pub mod requests;
 pub mod reverts;
 pub mod schema;
 mod sharing;
+pub mod shim_driver;
 pub mod shim_writes;
 pub mod shims;
 mod turn_checkpoints;
@@ -66,6 +67,7 @@ pub use requests::{
     AnswerClaim, AnswerReceipt, REASON_REQUEST_EXPIRED, RequestState, RequestTime, RuntimeRequest,
 };
 pub use reverts::{NewRevert, RevertRow, RevertStep};
+pub use shim_driver::{FrameState, ShimFrame, ShimTransition};
 pub use shim_writes::ClaimedWrite;
 pub use shims::{NewShim, OutputCommit, OutputMeta, ShimRow, ShimState};
 pub use turn_checkpoints::{

@@ -328,6 +328,37 @@ ALTER TABLE shims ADD COLUMN adapter_checkpoint TEXT;
 ALTER TABLE runtime_requests ADD COLUMN time_proven INTEGER NOT NULL DEFAULT 1;
 ";
 
+const V13: &str = "
+-- ADR-005 §2.1 (DL-110): the durable driver of a shim session.
+-- shim_frames: adapter-generated stdin frames (for example `initialized`,
+-- `thread/start`, a queued follow-up's `turn/start`), committed with the
+-- output transaction that generated them. A frame is claimed (a shim_writes
+-- row) before it leaves; recovery sends `pending` frames, asks the shim about
+-- `claimed` ones, and never resends a frame that may have been written.
+-- shim_transitions: the command effects applied to the adapter after its
+-- latest checkpoint, committed before their frames are claimed; an output
+-- checkpoint covers and removes them.
+CREATE TABLE shim_frames (
+    shim_id     TEXT    NOT NULL REFERENCES shims(shim_id),
+    frame_seq   INTEGER NOT NULL,
+    payload     TEXT    NOT NULL,
+    state       TEXT    NOT NULL CHECK (state IN ('pending', 'claimed', 'done')),
+    write_id    TEXT,
+    write_seq   INTEGER,
+    created_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL,
+    PRIMARY KEY (shim_id, frame_seq)
+);
+CREATE TABLE shim_transitions (
+    shim_id     TEXT    NOT NULL REFERENCES shims(shim_id),
+    seq         INTEGER NOT NULL,
+    effect_id   TEXT    NOT NULL REFERENCES effects(effect_id),
+    frames      INTEGER NOT NULL,
+    created_at  INTEGER NOT NULL,
+    PRIMARY KEY (shim_id, seq)
+);
+";
+
 /// The `station.db` migrations. V4 is the link epochs table of
 /// `fleetdeck-link` (G1).
 #[must_use]
@@ -345,5 +376,6 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V10),
         M::up(V11),
         M::up(V12),
+        M::up(V13),
     ])
 }
