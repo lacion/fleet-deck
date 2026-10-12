@@ -179,6 +179,10 @@ export function SpawnForm({
               if (last?.ok === true) {
                 setPrompt('');
                 setImportId('');
+                // One new session: go to it at once (DL-141). A batch stays on the form.
+                if (prompts.length === 1 && last.sessionId !== null) {
+                  onOpen({ station_id: id, session_id: last.sessionId });
+                }
               }
             })().finally(() => setBusy(false));
           }}

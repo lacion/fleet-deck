@@ -49,7 +49,8 @@ export async function startHandover(
     stop: () => Promise<Outcome>;
     handover: () => Promise<string>;
   },
-  timeoutMs = 20000,
+  // Longer than the station's stop grace (30 s by default) plus its TERM grace.
+  timeoutMs = 60000,
 ): Promise<Result> {
   const { watch } = deps;
   const first = watch.get();

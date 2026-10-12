@@ -3,10 +3,10 @@ import { useSyncExternalStore } from 'react';
 export type Layout = 'desktop' | 'tablet' | 'phone';
 
 const DESKTOP = '(min-width: 1024px)';
-const TABLET = '(min-width: 768px)';
+const TABLET = '(min-width: 600px)';
 const COARSE = '(pointer: coarse)';
 
-/** The layout for the two width queries (DL-140: 1024 px and 768 px). */
+/** The layout for the two width queries (DL-140: 1024 px; DL-141: 600 px). */
 export const layoutFor = (desktop: boolean, tablet: boolean): Layout =>
   desktop ? 'desktop' : tablet ? 'tablet' : 'phone';
 
@@ -34,7 +34,7 @@ const layoutNow = (): Layout => {
   return layoutFor(matches(DESKTOP), matches(TABLET));
 };
 
-/** desktop ≥ 1024 px, tablet ≥ 768 px, else phone. Without a window: desktop. */
+/** desktop ≥ 1024 px, tablet ≥ 600 px, else phone. Without a window: desktop. */
 export function useLayout(): Layout {
   return useSyncExternalStore(subscribeLayout, layoutNow, () => 'desktop');
 }
