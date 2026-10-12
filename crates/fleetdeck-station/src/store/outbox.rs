@@ -16,7 +16,7 @@ use super::{Result, Store, call};
 impl Store {
     /// Runs `f` in one transaction that may append events, then publishes
     /// the new head.
-    async fn write<R: Send + 'static>(
+    pub(super) async fn write<R: Send + 'static>(
         &self,
         f: impl FnOnce(&Connection, i64, &mut Vec<EventEnvelope>) -> Result<R> + Send + 'static,
     ) -> Result<(R, Vec<EventEnvelope>)> {

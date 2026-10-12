@@ -164,6 +164,38 @@ CREATE TABLE listen_addrs (
 ) STRICT;
 ";
 
+const V6: &str = "
+-- DL-082: one row per app turn (station ULID, the hidden ref key) with the
+-- two checkpoint sides; the row is written before a ref is published, and
+-- `turn.finalized` is committed with `state = 'finalized'` (PLAN §6.6).
+CREATE TABLE turn_checkpoints (
+    app_turn       TEXT PRIMARY KEY,
+    session_id     TEXT NOT NULL REFERENCES sessions(session_id),
+    process        TEXT,
+    input_id       TEXT,
+    turn_id        TEXT,
+    worktree_id    TEXT,
+    -- The canonical worktree root at capture time (recovery reopens it).
+    worktree_root  TEXT,
+    scope          TEXT NOT NULL,
+    start_state    TEXT NOT NULL
+        CHECK (start_state IN ('capturing', 'available', 'unavailable')),
+    start_value    TEXT,
+    end_state      TEXT NOT NULL
+        CHECK (end_state IN ('open', 'capturing', 'available', 'unavailable')),
+    end_value      TEXT,
+    state          TEXT NOT NULL CHECK (state IN ('open', 'finalized', 'abandoned')),
+    finalized_seq  INTEGER,
+    created_at     INTEGER NOT NULL,
+    updated_at     INTEGER NOT NULL
+) STRICT;
+CREATE UNIQUE INDEX turn_checkpoints_input
+    ON turn_checkpoints(session_id, input_id) WHERE input_id IS NOT NULL;
+CREATE UNIQUE INDEX turn_checkpoints_turn
+    ON turn_checkpoints(session_id, process, turn_id) WHERE turn_id IS NOT NULL;
+CREATE INDEX turn_checkpoints_open ON turn_checkpoints(state) WHERE state = 'open';
+";
+
 /// The `station.db` migrations. V4 is the link epochs table of
 /// `fleetdeck-link` (G1).
 #[must_use]
@@ -174,5 +206,6 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V3),
         M::up(fleetdeck_link::LINK_EPOCHS_SQL),
         M::up(V5),
+        M::up(V6),
     ])
 }

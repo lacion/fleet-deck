@@ -30,6 +30,7 @@ mod receipts;
 mod recovery;
 pub mod requests;
 pub mod schema;
+mod turn_checkpoints;
 
 use std::path::Path;
 use std::sync::Arc;
@@ -57,6 +58,9 @@ pub use effects::{
 pub use receipts::{Caller, DecideError, Decided, Decision};
 pub use recovery::RecoveryReport;
 pub use requests::{AnswerClaim, AnswerReceipt, RequestState, RuntimeRequest};
+pub use turn_checkpoints::{
+    AppTurnId, Finalized, NewTurnCheckpoint, RowSide, RowState, TurnCheckpointRow, Which,
+};
 
 /// The default event retention after the deck acknowledged the events.
 pub const EVENT_RETENTION_MS: i64 = 7 * 24 * 60 * 60 * 1000;
@@ -565,3 +569,6 @@ fn to_i64(v: u64) -> Result<i64> {
 mod effects_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+#[path = "turn_checkpoints_tests.rs"]
+mod turn_checkpoints_tests;

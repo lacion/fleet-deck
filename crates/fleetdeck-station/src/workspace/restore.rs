@@ -26,6 +26,7 @@ use super::checkpoint::{
     Checkpoint, CheckpointError, Limits, PrivateIndex, Result, Unavailable, Worktree,
 };
 use super::git::nul_fields;
+use fleetdeck_proto::event::DiffSummary;
 
 /// Why a restore was rejected before any mutation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -106,6 +107,38 @@ impl Worktree {
             patch.push_str("\n[diff truncated]\n");
         }
         Ok(Diff { patch, truncated })
+    }
+
+    /// The size of the diff from `from` to `to` (`diff-tree --numstat`);
+    /// a binary file counts as changed with no lines.
+    pub async fn diff_summary(&self, from: &Checkpoint, to: &Checkpoint) -> Result<DiffSummary> {
+        for c in [from, to] {
+            self.own(c)?;
+        }
+        let out = self
+            .git()
+            .text(&[
+                "diff-tree",
+                "-r",
+                "--numstat",
+                "--no-renames",
+                &from.tree,
+                &to.tree,
+            ])
+            .await?;
+        let mut summary = DiffSummary {
+            files_changed: 0,
+            insertions: 0,
+            deletions: 0,
+        };
+        for line in out.lines().filter(|l| !l.is_empty()) {
+            let mut fields = line.splitn(3, '\t');
+            let count = |f: Option<&str>| f.and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
+            summary.insertions += count(fields.next());
+            summary.deletions += count(fields.next());
+            summary.files_changed = summary.files_changed.saturating_add(1);
+        }
+        Ok(summary)
     }
 
     /// Step 1 of the module docs: checks a restore of `target` without any

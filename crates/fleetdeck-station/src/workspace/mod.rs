@@ -6,6 +6,7 @@ pub mod boundary;
 pub mod checkpoint;
 pub mod git;
 pub mod restore;
+pub mod settle;
 
 pub use checkpoint::{
     Captured, Checkpoint, CheckpointError, CheckpointKey, Limits, Phase, REF_ROOT, SCOPE_TRACKED,
@@ -13,6 +14,7 @@ pub use checkpoint::{
 };
 pub use git::{Git, GitError, GitOptions};
 pub use restore::{Diff, Rejected, RestorePlan, RestoreReport};
+pub use settle::{Resolution, SettleReport, resolve, settle_unsettled};
 
 #[cfg(test)]
 #[path = "boundary_tests.rs"]
@@ -20,3 +22,6 @@ mod boundary_tests;
 #[cfg(test)]
 #[path = "checkpoint_tests.rs"]
 mod checkpoint_tests;
+#[cfg(test)]
+#[path = "settle_tests.rs"]
+mod settle_tests;

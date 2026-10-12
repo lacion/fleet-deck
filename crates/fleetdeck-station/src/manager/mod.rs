@@ -114,6 +114,18 @@ impl SessionManager {
         ids: SharedIds,
     ) -> Result<Self> {
         store.recover(Vec::new()).await?;
+        // Turn checkpoint rows that a crash left open are settled from
+        // their refs before any command (DL-082).
+        let settled =
+            crate::workspace::settle_unsettled(&store, crate::workspace::GitOptions::isolated())
+                .await?;
+        if !settled.finalized.is_empty() || !settled.abandoned.is_empty() {
+            tracing::info!(
+                finalized = settled.finalized.len(),
+                abandoned = settled.abandoned.len(),
+                "settled turn checkpoints after restart"
+            );
+        }
         let target = Arc::new(SessionTarget::new(
             store.clone(),
             adapters,
