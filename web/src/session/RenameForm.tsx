@@ -5,6 +5,10 @@ type Props = {
   readonly title: string | null;
   readonly enabled: boolean;
   readonly onRename: (title: string | null) => void;
+  /** Open the form at mount (the header owns the button that opens it). */
+  readonly startEditing?: boolean;
+  /** Called after Save, Clear the title, or Cancel. */
+  readonly onClose?: () => void;
 };
 
 /**
@@ -12,8 +16,8 @@ type Props = {
  * station trims it and refuses a control character or more than 80
  * characters, and the board shows that refusal as the command outcome.
  */
-export function RenameForm({ title, enabled, onRename }: Props) {
-  const [editing, setEditing] = useState(false);
+export function RenameForm({ title, enabled, onRename, startEditing = false, onClose }: Props) {
+  const [editing, setEditing] = useState(startEditing);
   const [draft, setDraft] = useState(title ?? '');
   if (!editing) {
     return (
@@ -40,6 +44,7 @@ export function RenameForm({ title, enabled, onRename }: Props) {
         if (tooLong) return;
         onRename(trimmed === '' ? null : trimmed);
         setEditing(false);
+        onClose?.();
       }}
     >
       <label>
@@ -57,7 +62,13 @@ export function RenameForm({ title, enabled, onRename }: Props) {
       <button type="submit" disabled={!enabled || tooLong}>
         {trimmed === '' ? 'Clear the title' : 'Save'}
       </button>
-      <button type="button" onClick={() => setEditing(false)}>
+      <button
+        type="button"
+        onClick={() => {
+          setEditing(false);
+          onClose?.();
+        }}
+      >
         Cancel
       </button>
     </form>

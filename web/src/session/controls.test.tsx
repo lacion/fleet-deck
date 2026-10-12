@@ -1,0 +1,348 @@
+// DL-140: the session controls (controller flags, header, approval dock, composer, slash menu).
+import { describe, expect, test } from 'bun:test';
+import { renderToStaticMarkup } from 'react-dom/server';
+import type { DeckSession, OpenRequest } from '../gen';
+import { claudeCaps, minimalCaps } from '../testing/capabilities';
+import { card, station } from '../testing/fleet';
+import { ApprovalDock } from './ApprovalDock';
+import { sessionActions } from './commands';
+import { Composer } from './Composer';
+import { type Controller, sessionFlags } from './controller';
+import { SessionHeader } from './SessionHeader';
+import { matchSlash } from './slash';
+
+const key = { station_id: 'station-a', session_id: 's1' };
+const drive = sessionActions(async () => ({}), key, ['read', 'drive', 'approve']);
+const readOnly = sessionActions(async () => ({}), key, ['read']);
+
+function session(
+  extra: Partial<DeckSession['summary']> = {},
+  status: DeckSession['status'] = 'working',
+): DeckSession {
+  return card('s1', status, 'station-a', {
+    title: 'Fix login',
+    capabilities: claudeCaps(),
+    current_run: 'run-1',
+    ...extra,
+  });
+}
+
+const ended = () => session({ state: 'exited', current_run: null }, 'ended');
+const held = () =>
+  session(
+    {
+      state: 'exited',
+      current_run: null,
+      terminal: { shell_id: 'sh-1', pid: 42, since: 1, reason: null },
+    },
+    'ended',
+  );
+
+describe('session flags (DL-140)', () => {
+  test('a running live session can be driven, stopped and interrupted', () => {
+    expect(sessionFlags(session(), 'live', drive)).toEqual({
+      live: true,
+      ended: false,
+      held: false,
+      working: true,
+      drive: true,
+      approve: true,
+      canResume: false,
+      canStop: true,
+      canInterrupt: true,
+    });
+  });
+
+  test('an ended session with the resume capability can be resumed but not stopped', () => {
+    const flags = sessionFlags(ended(), 'live', drive);
+    expect(flags).toMatchObject({ ended: true, canResume: true, canStop: false, drive: false });
+    expect(sessionFlags(ended(), 'live', readOnly).canResume).toBe(false);
+    const noResume = session({ state: 'exited', capabilities: minimalCaps() }, 'ended');
+    expect(sessionFlags(noResume, 'live', drive).canResume).toBe(false);
+  });
+
+  test('a session held by a terminal cannot be driven, resumed or interrupted', () => {
+    const flags = sessionFlags(held(), 'live', drive);
+    expect(flags).toMatchObject({
+      held: true,
+      drive: false,
+      canResume: false,
+      canInterrupt: false,
+    });
+    const running = session({
+      terminal: { shell_id: 'sh-1', pid: null, since: 1, reason: null },
+    });
+    expect(sessionFlags(running, 'live', drive)).toMatchObject({ held: true, drive: false });
+  });
+
+  test('a stale board or an unreachable station turns every control off', () => {
+    for (const flags of [
+      sessionFlags(session(), 'stale', drive),
+      sessionFlags(session({}, 'unreachable'), 'live', drive),
+    ]) {
+      expect(flags).toMatchObject({
+        live: false,
+        drive: false,
+        approve: false,
+        canStop: false,
+        canResume: false,
+        canInterrupt: false,
+      });
+    }
+  });
+
+  test('a working session without the interrupt capability has no interrupt', () => {
+    const caps = { ...claudeCaps(), interrupt: false };
+    const flags = sessionFlags(session({ capabilities: caps }), 'live', drive);
+    expect(flags).toMatchObject({ working: true, drive: true, canInterrupt: false });
+  });
+});
+
+describe('slash menu matching (DL-140)', () => {
+  const commands = ['compact', 'init', 'review', 'clear', 'cost', 'pr-comments'];
+
+  test('text without a leading slash does not match', () => {
+    expect(matchSlash('hello', commands)).toBeNull();
+    expect(matchSlash('', commands)).toBeNull();
+    expect(matchSlash(' /c', commands)).toBeNull();
+  });
+
+  test('commands that start with the query come before commands that contain it', () => {
+    expect(matchSlash('/c', commands)).toEqual({
+      query: 'c',
+      options: ['compact', 'clear', 'cost', 'pr-comments'],
+    });
+    expect(matchSlash('/CO', commands)?.options).toEqual(['compact', 'cost', 'pr-comments']);
+    expect(matchSlash('/', commands)?.options).toEqual(commands);
+  });
+
+  test('at most 8 options and no duplicates', () => {
+    const many = Array.from({ length: 12 }, (_, n) => `cmd${n}`);
+    expect(matchSlash('/cmd', many)?.options).toHaveLength(8);
+    expect(matchSlash('/a', ['a', 'a', 'ab'])?.options).toEqual(['a', 'ab']);
+  });
+
+  test('a space after the command closes the match', () => {
+    expect(matchSlash('/compact ', commands)).toBeNull();
+    expect(matchSlash('/compact now', commands)).toBeNull();
+  });
+});
+
+const idle: Controller = {
+  flags: sessionFlags(session(), 'live', drive),
+  busy: null,
+  outcome: null,
+  act: () => {},
+  dismiss: () => {},
+};
+
+function header(
+  s: DeckSession,
+  extra: { terminal?: { available: boolean } | null; actions?: typeof drive | null } = {},
+) {
+  const actions = extra.actions === undefined ? drive : extra.actions;
+  const terminal = extra.terminal ? { ...extra.terminal, onOpen() {}, onReturn() {} } : null;
+  return renderToStaticMarkup(
+    <SessionHeader
+      session={s}
+      stations={[station()]}
+      controller={{ ...idle, flags: sessionFlags(s, 'live', actions) }}
+      actions={actions}
+      terminal={terminal}
+    />,
+  );
+}
+
+describe('session header (DL-140)', () => {
+  test('a running session offers Interrupt and Stop', () => {
+    const html = header(session());
+    expect(html).toContain('aria-label="Session header"');
+    expect(html).toContain('Interrupt');
+    expect(html).toContain('>Stop<');
+    expect(html).toContain('Fix login');
+    expect(html).toContain('Alpha');
+    expect(html).not.toContain('Resume');
+  });
+
+  test('an ended session offers Resume and no Stop', () => {
+    const html = header(ended());
+    expect(html).toContain('Resume');
+    expect(html).not.toContain('>Stop<');
+    expect(html).not.toContain('Interrupt');
+  });
+
+  test('a held session shows In terminal and Return to board control, no Resume', () => {
+    const html = header(held(), { terminal: { available: true } });
+    expect(html).toContain('In terminal');
+    expect(html).toContain('Return to board control');
+    expect(html).not.toContain('Resume');
+    expect(html).not.toContain('Open in terminal');
+  });
+
+  test('an available terminal offers Open in terminal', () => {
+    expect(header(session(), { terminal: { available: true } })).toContain('Open in terminal');
+    expect(header(ended(), { terminal: { available: true } })).toContain('Open in terminal');
+    expect(header(session(), { terminal: { available: false } })).not.toContain('Open in terminal');
+    expect(header(session(), { terminal: null })).not.toContain('Open in terminal');
+  });
+
+  test('the title falls back to the callsign, the model to "default model"', () => {
+    const html = header(session({ title: null, callsign: 'otter', model: null }));
+    expect(html).toContain('>otter</h2>');
+    expect(html).toContain('default model');
+  });
+
+  test('a long cwd is shortened in the middle and kept whole in the title', () => {
+    const cwd = `/home/someone/${'deep/'.repeat(20)}repo`;
+    const html = header(session({ cwd, branch: 'main' }));
+    expect(html).toContain(`title="${cwd}"`);
+    expect(html).toContain('main');
+    expect(html).toMatch(/…/);
+    expect(html).not.toContain(`>${cwd}<`);
+  });
+
+  test('a stale board says the controls are off', () => {
+    const html = renderToStaticMarkup(
+      <SessionHeader
+        session={session()}
+        stations={[station()]}
+        controller={{ ...idle, flags: sessionFlags(session(), 'stale', drive) }}
+        actions={drive}
+        terminal={null}
+      />,
+    );
+    expect(html).toContain('Controls are off until the board and the station are live.');
+    expect(html).not.toContain('Interrupt');
+  });
+
+  test('the outcome has a role and a Dismiss button', () => {
+    const html = renderToStaticMarkup(
+      <SessionHeader
+        session={session()}
+        stations={[station()]}
+        controller={{ ...idle, outcome: { ok: false, text: 'Refused: no' } }}
+        actions={drive}
+        terminal={null}
+      />,
+    );
+    expect(html).toContain('role="alert"');
+    expect(html).toContain('Refused: no');
+    expect(html).toContain('Dismiss');
+  });
+
+  test('the settings menu holds mode, model and auto-continue', () => {
+    const html = header(session());
+    expect(html).toContain('aria-label="Session settings"');
+    expect(html).toContain('Mode (most restrictive first)');
+    expect(html).toContain('Set model');
+    expect(html).toContain('Continue after a station restart');
+  });
+});
+
+function request(id: string): OpenRequest {
+  return {
+    request_id: id,
+    node_id: null,
+    request_kind: 'tool',
+    title: `Run ${id}`,
+    details: 'rm -rf dist',
+    input: null,
+    options: [
+      { option_id: 'allow', label: 'Allow', kind: 'allow_once' },
+      { option_id: 'deny', label: 'Deny', kind: 'reject_once' },
+    ],
+    response: 'rpc_reply',
+    requested_at: 1,
+  } as unknown as OpenRequest;
+}
+
+describe('approval dock (DL-140)', () => {
+  const dock = (requests: OpenRequest[], answerable = true, enabled = true) =>
+    renderToStaticMarkup(
+      <ApprovalDock
+        requests={requests}
+        answerable={answerable}
+        enabled={enabled}
+        busy={false}
+        onAnswer={() => {}}
+      />,
+    );
+
+  test('no request renders nothing', () => {
+    expect(dock([])).toBe('');
+  });
+
+  test('two requests show the count and one primary option each', () => {
+    const html = dock([request('r1'), request('r2')]);
+    expect(html).toContain('Needs you · 2');
+    expect(html).toContain('aria-label="Needs you"');
+    expect(html.match(/class="fd-primary"/g)).toHaveLength(2);
+    expect(html).toContain('Deny');
+  });
+
+  test('without the approvals capability or the scope it says why', () => {
+    expect(dock([request('r1')], false)).toContain('This provider has no approval controls.');
+    expect(dock([request('r1')], true, false)).toContain('Answering needs the approve scope.');
+  });
+});
+
+describe('composer (DL-140)', () => {
+  const composer = (extra: Partial<Parameters<typeof Composer>[0]> = {}) =>
+    renderToStaticMarkup(
+      <Composer enabled working={false} steer={false} nativeQueue onSend={() => {}} {...extra} />,
+    );
+
+  test('the placeholder mentions commands only with a command list', () => {
+    expect(composer({ slashCommands: ['init'] })).toContain(
+      'placeholder="Message the agent… (/ for commands)"',
+    );
+    expect(composer({ slashCommands: [] })).toContain('placeholder="Message the agent…"');
+    expect(composer({ slashCommands: null })).toContain('placeholder="Message the agent…"');
+    expect(composer()).toContain('placeholder="Message the agent…"');
+  });
+
+  test('a disabled composer shows its reason instead of the follow-up note', () => {
+    const reason = 'A terminal holds this session. Return it to board control to send prompts.';
+    const html = composer({ enabled: false, working: true, disabledReason: reason });
+    expect(html).toContain(reason);
+    expect(html).not.toContain('The station holds a follow-up');
+    expect(composer({ enabled: true, disabledReason: reason })).not.toContain(reason);
+  });
+
+  test('the buttons keep their texts and the textarea keeps its label', () => {
+    expect(composer()).toContain('>Send<');
+    expect(composer()).toContain('>Message</label>');
+    const working = composer({ working: true, steer: true, nativeQueue: false });
+    expect(working).toContain('Steer now');
+    expect(working).toContain('Queue follow-up');
+    expect(working).toContain('The station holds a follow-up until the turn ends.');
+  });
+});
+
+describe('stop and resume commands (DL-140)', () => {
+  test('stop posts session.stop with how, resume posts session.resume', async () => {
+    const posts: { path: string; body: { command: unknown } }[] = [];
+    const actions = sessionActions(
+      async (path, body) => {
+        posts.push({ path, body: body as { command: unknown } });
+        return { state: 'done', receipt: { state: 'accepted' } };
+      },
+      key,
+      ['drive'],
+      () => 'cmd-1',
+    );
+    expect(await actions.stop('graceful')).toEqual({ ok: true, text: 'Done.' });
+    await actions.stop('kill');
+    await actions.resume();
+    expect(posts.map((p) => p.path)).toEqual([
+      '/api/commands/session.stop',
+      '/api/commands/session.stop',
+      '/api/commands/session.resume',
+    ]);
+    expect(posts.map((p) => p.body.command)).toEqual([
+      { op: 'stop', session_id: 's1', how: 'graceful' },
+      { op: 'stop', session_id: 's1', how: 'kill' },
+      { op: 'resume', session_id: 's1' },
+    ]);
+  });
+});

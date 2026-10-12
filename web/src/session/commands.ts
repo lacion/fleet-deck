@@ -20,6 +20,10 @@ export type SessionActions = {
   /** Pasted images go with the text (M3 6-10, DL-304). */
   send(kind: InputKind, text: string, images?: readonly ImageInput[]): Promise<Outcome>;
   interrupt(): Promise<Outcome>;
+  /** End the session process: `graceful` asks it to stop, `kill` ends it at once (DL-140). */
+  stop(how: 'graceful' | 'kill'): Promise<Outcome>;
+  /** Start an ended session again with the same conversation (DL-140). */
+  resume(): Promise<Outcome>;
   /** `reply` carries the answers of a question (DL-068); `null` for a plain option. */
   answer(requestId: string, optionId: string, reply?: Reply | null): Promise<Outcome>;
   setMode(mode: string): Promise<Outcome>;
@@ -122,6 +126,8 @@ export function sessionActions(
         input: images.length > 0 ? { text, images: [...images] } : { text },
       }),
     interrupt: () => run({ op: 'interrupt', session_id }),
+    stop: (how) => run({ op: 'stop', session_id, how }),
+    resume: () => run({ op: 'resume', session_id }),
     answer: (request_id, option_id, reply = null) =>
       run({
         op: 'answer',

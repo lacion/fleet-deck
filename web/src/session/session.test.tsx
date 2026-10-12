@@ -172,7 +172,7 @@ describe('session view (P4-3)', () => {
     expect(stale).toContain('Controls are off until the board and the station are live.');
     expect(stale).toContain('Loading the timeline…');
     const ended = view(session({ state: 'exited', current_run: null }), timeline());
-    expect(ended).toMatch(/<textarea id="fd-composer-text" rows="3" disabled="">/);
+    expect(ended).toMatch(/<textarea id="fd-composer-text" rows="1" disabled=""/);
   });
 
   test('rename works on an ended session and needs drive and a live board (DL-095)', () => {
