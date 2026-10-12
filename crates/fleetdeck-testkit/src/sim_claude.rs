@@ -11,7 +11,8 @@
 //! - anything else: a reply `echo: <text>`.
 //!
 //! Inputs that arrive while a turn runs are queued and run in order.
-//! End of stdin ends the process with exit code 0.
+//! End of stdin ends the process with exit code 0, after the linger time of
+//! [`crate::fake::LINGER_ENV`] if that variable is set.
 
 use std::collections::VecDeque;
 use std::io::{BufRead, Write};
@@ -99,7 +100,22 @@ pub fn run() -> ExitCode {
             return ExitCode::from(1);
         }
     }
+    linger();
     ExitCode::SUCCESS
+}
+
+/// Waits the time of [`crate::fake::LINGER_ENV`], if it is set to a number.
+fn linger() {
+    let Ok(value) = std::env::var(crate::fake::LINGER_ENV) else {
+        return;
+    };
+    match value.trim().parse::<u64>() {
+        Ok(ms) => std::thread::sleep(std::time::Duration::from_millis(ms)),
+        Err(_) => eprintln!(
+            "fake-claude sim: {} is not a number: {value}",
+            crate::fake::LINGER_ENV
+        ),
+    }
 }
 
 fn flag_value(flag: &str) -> Option<String> {

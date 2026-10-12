@@ -17,6 +17,11 @@ use std::process::Command;
 
 /// Environment variable that selects the scenario of a fake agent.
 pub const SCENARIO_ENV: &str = "FLEETDECK_FAKE_SCENARIO";
+/// Environment variable with a number of milliseconds: the Claude `sim`
+/// scenario waits that long after stdin EOF before it exits, like a CLI
+/// that an async user hook keeps alive (DL-141). A signal still ends it at
+/// once.
+pub const LINGER_ENV: &str = "FLEETDECK_FAKE_LINGER_MS";
 /// Environment variable with a file path: the `sim` scenario appends every
 /// stdin line to it, so fault tests can count what reached the provider
 /// (after one `PID_LINE` with its process id).

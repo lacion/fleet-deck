@@ -66,6 +66,10 @@ pub struct ClaudeAdapterConfig {
     pub extra_args: Vec<String>,
     pub raw_log: Option<RawLogSettings>,
     pub stop: StopPolicy,
+    /// The grace of a graceful stop while the session is idle (no turn, no
+    /// pending input): a user's async hook can keep the CLI alive after
+    /// stdin EOF (DL-141).
+    pub idle_grace: Duration,
     /// How long `stop` waits, after the process ended, for the reader to
     /// deliver the remaining events. A full sink that nobody drains cannot
     /// hold `stop` longer than this.
@@ -76,7 +80,8 @@ pub struct ClaudeAdapterConfig {
 
 impl ClaudeAdapterConfig {
     /// A configuration with the defaults: no bypass, no raw log, the
-    /// ADR-001 stop policy, 5 s event delivery after a stop, 10 s probes.
+    /// ADR-001 stop policy, 3 s grace for an idle session, 5 s event
+    /// delivery after a stop, 10 s probes.
     #[must_use]
     pub fn new(instance: ProviderInstanceId, program: PathBuf, env: ChildEnv) -> Self {
         Self {
@@ -87,6 +92,7 @@ impl ClaudeAdapterConfig {
             extra_args: Vec::new(),
             raw_log: None,
             stop: StopPolicy::default(),
+            idle_grace: Duration::from_secs(3),
             delivery_grace: Duration::from_secs(5),
             probe_timeout: Duration::from_secs(10),
         }
@@ -217,6 +223,7 @@ impl ClaudeAdapter {
             writer: Some(writer),
             frames: frames_rx,
             stop: self.config.stop,
+            idle_grace: self.config.idle_grace,
             delivery_grace: self.config.delivery_grace,
             raw_dir,
         };
@@ -492,6 +499,7 @@ pub struct ClaudeSession {
     writer: Option<JoinHandle<()>>,
     frames: watch::Receiver<u64>,
     stop: StopPolicy,
+    idle_grace: Duration,
     delivery_grace: Duration,
     raw_dir: Option<PathBuf>,
 }
@@ -624,24 +632,30 @@ impl LiveSession for ClaudeSession {
 
     /// Graceful: write the queued frames, close stdin, wait the rest of the
     /// grace time, then signal the group (ADR-001 §2.9). The grace time
-    /// includes the queued writes. Returns after the exit events were emitted,
+    /// includes the queued writes. An idle session gets `idle_grace` (at most
+    /// the full grace) instead of the full grace. When the core is busy
+    /// (locked by the reader), the stop counts the session as not idle. Returns after the exit events were emitted,
     /// or with [`ProviderError::EventsUndelivered`] when the event sink stays
     /// full for `delivery_grace` after the process ended. The process is
     /// stopped in both cases.
     async fn stop(&mut self, how: StopMode) -> Result<()> {
         match how {
             StopMode::Graceful => {
+                let idle = self.shared.core.try_lock().is_ok_and(|core| core.is_idle());
+                let grace = if idle {
+                    self.idle_grace.min(self.stop.grace)
+                } else {
+                    self.stop.grace
+                };
                 let started = tokio::time::Instant::now();
                 let _ = self.writes.send(Write::Close);
                 if let Some(mut writer) = self.writer.take()
-                    && tokio::time::timeout(self.stop.grace, &mut writer)
-                        .await
-                        .is_err()
+                    && tokio::time::timeout(grace, &mut writer).await.is_err()
                 {
                     writer.abort();
                 }
                 let policy = StopPolicy {
-                    grace: self.stop.grace.saturating_sub(started.elapsed()),
+                    grace: grace.saturating_sub(started.elapsed()),
                     ..self.stop
                 };
                 self.control.stop(policy).await
