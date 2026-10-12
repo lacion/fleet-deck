@@ -54,7 +54,7 @@ export async function startHandover(
   const { watch } = deps;
   const first = watch.get();
   if (first === null) return { ok: false, text: 'The session is not on the board.' };
-  if (first.terminal !== undefined) {
+  if (first.terminal != null) {
     return { ok: false, text: 'A terminal holds this session already.' };
   }
   if (first.state !== 'exited' && first.state !== 'lost') {
