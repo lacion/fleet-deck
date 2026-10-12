@@ -28,6 +28,11 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 52 (2026-10-12, 15:35–)
+
+- Committed round 51 as 8798ac2. `m3/orchestration`, `m3/board`, `m3/ops`: no new commits. Lane B has no LANE COMPLETE (6-5 Coordinator: 49 uncommitted files in its worktree), so 6-13, 7-7 and 7-8 still wait.
+- 7-6 docs while waiting: `docs/v2/internals.md` §8 "Where each M3 feature lives" (feature → station, deck and board code and e2e spec). Every listed path exists (checked with a shell loop).
+
 ## Round 51 (2026-10-12, 15:34–)
 
 - Committed round 50 as b690031. `m3/orchestration`, `m3/board`, `m3/ops`: no new commits. Lane B has no LANE COMPLETE (6-5 Coordinator still uncommitted in its worktree): 6-13, 7-7 and 7-8 still wait.
