@@ -28,6 +28,39 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 88 (2026-10-12, 16:56–)
+
+- Round start: committed round 87 as 26d350a. `git log v2..m3/orchestration`, `v2..m3/board`, `v2..m3/ops`: no new commits; `m3-orchestration.md` has no "LANE COMPLETE", so 6-13, 7-7 and 7-8 stay blocked.
+- 6-13 preparation (not the item; the 6-13 checklist line is unchanged): a draft map of PLAN §16 rows to candidate tests, found with `grep` on test names in `crates/` and `web/`. 6-13 must confirm each row, add a test or a DECISIONS-LOG deferral for each gap, and do the same for PLAN §4.1.
+
+### 6-13 preparation draft: PLAN §16 parity rows (unconfirmed)
+
+| §16 row | Candidate evidence (test names) | Gap to check in 6-13 |
+| --- | --- | --- |
+| Live derived status lanes + `unreachable` / `lost` | `a_session_moves_through_the_lanes`; `a_deck_without_a_link_listener_cannot_invite_the_first_sync_is_a_snapshot_and_offline_cards_say_unreachable`; `web/src/board/fleet.test.tsx` | none found |
+| Model badge follows `/model` | `web/src/App.test.tsx` "cards show the title, station, provider badge, workspace, current tool, usage and model"; `a_busy_follow_up_and_a_mode_or_model_change_survive_a_claude_restart` | a test that a model change event updates the card |
+| Conflict radar, across stations | `the_same_file_changed_on_two_stations_is_one_conflict_inside_the_window`; `web/e2e/conflicts.spec.ts` | none found |
+| Needs-you rail: approvals from the board | `a_session_runs_asks_for_approval_is_answered_interrupted_and_stopped`; `web/e2e/session.spec.ts` | confirm the board path, not only the CLI path |
+| Re-armed questions | not needed (protocol keeps the request open); `a_station_kill_expires_the_open_approval_and_rejects_its_stale_reply` | none |
+| Mail between sessions | `a_mail_is_delivered_once_as_a_framed_follow_up_or_steer`; `web/e2e/fleet.spec.ts` | none found |
+| `assign auto` + station terms | `assign_auto_prefers_idle_then_queued_then_busy_then_least_buried`; `assign_auto_needs_the_right_repo_and_provider`; `web/e2e/assign.spec.ts` | none found |
+| Spawn, batch, `Nx`, station picker | `web/e2e/spawn.spec.ts`; `web/src/spawn/spawn.test.tsx` | confirm an `Nx` batch test name |
+| Live terminal → session view + human shell (D10) | `a_shell_runs_in_its_cwd_with_the_scrubbed_environment`; `a_reattached_board_gets_the_scrollback_and_the_shell_survives_a_detach`; `web/e2e/shell.spec.ts` | none found |
+| Terminal grid → session grid | no named grid test found | session-grid parity test (named in the 6-13 line) |
+| Shift+Enter, image paste | `a_prompt_with_a_pasted_image_reaches_the_station_and_a_bad_image_is_refused`; `web/e2e/images.spec.ts` | composer newline test |
+| Revive → native resume | resume tests in `crates/fleetdeck-cli/tests/shim_manager_parts/live_exit.rs`; `web/src/session/timeline.test.ts` | confirm an owner resume test from the board |
+| Remote control (claude.ai) | dropped by PLAN | DECISIONS-LOG reference only |
+| Plan library | `a_proposed_plan_enters_the_library_once_and_keeps_the_owner_status`; `a_plan_is_idempotent_per_input_and_a_start_is_never_open` | none found |
+| Workspace tools (files, worktrees, rename, event feed) | `a_worktree_start_creates_the_callsign_worktree_on_its_branch`; `web/e2e/workspace.spec.ts`; `web/e2e/revert.spec.ts` | confirm rename and event feed |
+| Share board on LAN → deck access + station discovery | `cookie_sockets_need_the_board_origin_and_bearer_clients_need_a_single_use_ticket`; `web/e2e/stations.spec.ts` | station discovery test; tailnet is an owner step |
+| Adopt / takeover → import session id | `an_imported_claude_session_continues_the_given_native_session`; `an_import_is_refused_for_a_bad_id_a_foreign_workspace_or_a_native_session_in_use` | none found |
+| Gateway routing → station provider profiles | `two_accounts_on_one_driver_are_two_instances`; `the_instance_adds_back_only_its_own_settings` | none found |
+| Coder support | dropped (D13) | DECISIONS-LOG reference only |
+| `/fleet` + fleet-doctrine skill → control skill | `an_owner_coordinator_start_creates_one_grant_and_sends_its_id_and_the_control_skill` | depends on 6-5 (lane B); starts fail `handoff_unverified` |
+| Plugin install + version bump → binary release | `the_cargo_dist_config_releases_fleetdeck_for_linux_and_macos_with_the_packaging_files` | release run is an owner step |
+
+- Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` (docs only, no test run).
+
 ## Round 87 (2026-10-12, 16:55–)
 
 - Round start: committed round 86 as 12df9f5. `git log v2..m3/orchestration`, `v2..m3/board`, `v2..m3/ops`: no new commits; `m3-orchestration.md` has no "LANE COMPLETE", so 6-13, 7-7 and 7-8 stay blocked.
