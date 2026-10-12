@@ -73,3 +73,12 @@ Lane C numbers its decisions DL-300 to DL-399 (parallel lanes, owner change of 2
   - Board: the spawn form has the field "Import CLI session id (optional)". With an id, the button is "Import session" and the form sends `session.import`; the form checks the id with the same rule first.
 - Not done (follow-up): the station does not list the native sessions of a workspace (the owner types the id); the station cannot see if a terminal CLI still runs the same conversation (the form tells the owner to close it first); no capability check before the spawn (both providers report `resume`; an unknown id ends as `start_failed`); the station test uses `fake-claude sim` only.
 - Owner review: pending (executor decision, M3 round 3)
+
+## DL-309: `make test-lint` for the round checks (M3 round 4, review)
+
+- Context: the review of round 3 could not run `cargo fmt`, `cargo clippy` and `bun run --cwd web lint` directly; its guard allows only read-only commands, `cargo test`, `make check`, `make test*` and `make perf`.
+- Options: (a) tell the reviewer to run `make check` (too slow for a normal round, and the goal reserves it for the end); (b) a new `make test-lint` target with exactly the three round checks.
+- Choice: (b). `test-lint` runs `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` (with a 30-minute timeout), the offline `bun install` of `make test-web` and `bun run --cwd web lint`. It is offline, like `make check`.
+- Reason: the reviewer can rerun the round checks without a new permission rule, and the target matches the commands of `tools/check.sh`.
+- Owner review: pending (Makefile row; on a merge conflict with another lane's target keep one `test-lint` with the same three checks).
+

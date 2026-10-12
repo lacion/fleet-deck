@@ -69,6 +69,9 @@ Lane C works in `fleet-deck-worktrees/m3-board` on branch `m3/board`. Items, in 
 | 6-8 | The files.v1 re-review (DL-103, DL-109) and the DESIGN REVIEW of the `rename.v1` contract are architect steps (DL-307). | `docs/v2/adr/ADR-004-link-protocol-v1.md` |
 | 6-12 | The station does not list the native sessions of a workspace; the owner types the id. | `web/src/spawn/SpawnForm.tsx` |
 | 6-12 | The station cannot see if a terminal CLI still runs the imported conversation; no capability check before the spawn; the station test covers `fake-claude sim` only. | `crates/fleetdeck-station/src/manager/decide.rs` |
+| 6-12 | Review round 3: a session whose shim is lost (state `lost`) does not count as in use, so the same native session can be imported again while the lost shim child may still run it (duplicate drivers). | `crates/fleetdeck-station/src/store/resumes.rs` |
+| 6-12 | Review round 3: with the ShimHost (lane A) an import must start its child through the shim host; check that the shim-host spawn path accepts the import resume effect instead of rejecting it, and add a test. | `crates/fleetdeck-station/src/manager/decide.rs` |
+| Round checks | Review round 3: the reviewer guard blocks direct `cargo fmt`/`cargo clippy`/`bun run lint`; now exposed as `make test-lint` (DL-309). | `Makefile` |
 
 ## Round 3 (2026-10-12)
 
@@ -88,3 +91,19 @@ Lane C works in `fleet-deck-worktrees/m3-board` on branch `m3/board`. Items, in 
   - `cd web && bun test src` → 124 passed; `bunx tsc --noEmit -p tsconfig.test.json` → clean; `bun test src/spawn` → 8 passed; `bun run build && FD_E2E_PORT=<free> bunx playwright test e2e/spawn.spec.ts` → 3 passed.
 - Checks: `cargo fmt --all --check` → ok; `cargo clippy --workspace --all-targets -- -D warnings` → ok; `bun run --cwd web lint` → ok (after `biome format` of `web/src/spawn/SpawnForm.tsx` and the `import` row in `web/src/session/commands.ts`).
 - Lane state: all lane C items are checked (LANE COMPLETE at the top of this file).
+
+## Round 4 (2026-10-12)
+
+- Start: committed round 3 as `a7f9242`; `git merge --no-edit v2` brought lanes B (workspaces, batch, clone, assign) and D (packaging, perf, human shell) and lane A drain/upgrade. Conflicts resolved so both sides keep their behaviour, committed as `cce6d03`:
+  - `crates/fleetdeck-station/src/manager/decide.rs`: `start(..., workspace, import)`; an import uses no workspace plan and still enqueues the native resume effect; a start keeps the worktree/clone plan.
+  - Table counts: `crates/fleetdeck-link/tests/method_table.rs` 36 rows, `crates/fleetdeck-proto/src/mutation_tests.rs` 22 mutating methods; `manager/tests.rs` keeps both `drain` and `import_tests`; `docs/v2/PROGRESS.md` keeps lane D's 6-11 line and lane C's 6-12 line.
+  - Board: `web/src/spawn/spawn.ts` `start(stationId, spec, prompt, workspace?, importId?)`; `web/src/spawn/SpawnForm.tsx` an import ignores the workspace and batch choices (note text says so); `web/e2e/spawn.spec.ts` keeps lane B's batch and clone tests and the import test; lane B's batch test used an ambiguous `getByRole('status')` (two status elements) and now filters by its text.
+  - `make ts-types` regenerated `web/src/gen/command/SessionCommand.ts` (start with `workspace`, plus `import`); `bun install --cwd web --frozen-lockfile --offline` added lane D's `@xterm` packages.
+- Review round 3 findings: recorded as follow-ups above (not reworked). The round-check finding is fixed: new `make test-lint` (DL-309).
+- Commands:
+  - `cargo check --workspace --all-targets` → clean.
+  - `cargo nextest run -p fleetdeck-station -p fleetdeck-proto -p fleetdeck-link -p fleetdeck-deck -E 'test(import) | binary(method_table) | test(mutation) | binary(ts_drift) | test(every_command_method) | binary(adr_revision2) | test(workspace_provision) | test(workspace_tests)'` → 28 passed.
+  - `cd web && bun test src` → 135 passed; `bunx tsc --noEmit -p tsconfig.test.json` → clean; `bun run build && FD_E2E_PORT=<free> bunx playwright test e2e/spawn.spec.ts` → 7 passed.
+
+- Checks: `make test-lint` (`cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `bun run --cwd web lint`) → ok.
+- Lane state: all lane C items stay checked (LANE COMPLETE).
