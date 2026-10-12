@@ -7,14 +7,20 @@
 //! eviction ([`writes`]), the effect table of `write_status` answers
 //! ([`settle`]) and provider identity ([`identity`]).
 //!
-//! The shim process (`fleetdeck shim --id`), its socket, the launch journal,
-//! the station's `ShimHost` and the recovery path come in later steps of
-//! 7-1. Until the real-process tests of ADR-005 §9 pass, the station host
+//! Slice 2 adds the shim process ([`server`], run by `fleetdeck shim
+//! --id`), its launch journal, lock, key and exit files and the socket
+//! placement ([`journal`]), the launch frame ([`launch`]) and the station
+//! side of the socket ([`client`]). The station's `ShimHost`, the `shims`
+//! table, adapter checkpoints and recovery come in later steps of 7-1. Until the real-process tests of ADR-005 §9 pass, the station host
 //! stays `direct` (ADR-005 §2 "Selection").
 
+pub mod client;
 pub mod identity;
+pub mod journal;
+pub mod launch;
 pub mod output;
 pub mod proof;
+pub mod server;
 pub mod settle;
 pub mod wire;
 pub mod writes;

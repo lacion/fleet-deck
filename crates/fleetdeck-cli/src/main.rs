@@ -30,6 +30,20 @@ fn main() -> ExitCode {
         }
         Err(e) => e.exit(),
     };
+    // The shim and its provider helper run with a cleared environment:
+    // they need no data directory and no logging set-up (ADR-005 §2).
+    match &cli.command {
+        Command::Shim { id } => return exit_code(fleetdeck_providers::host::shim::server::run(id)),
+        Command::ShimExec { parent, program } => {
+            let Some((program, args)) = program.split_first() else {
+                return ExitCode::from(2);
+            };
+            return exit_code(fleetdeck_providers::host::shim::server::exec_provider(
+                *parent, program, args,
+            ));
+        }
+        _ => {}
+    }
     match run(cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
@@ -61,10 +75,14 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Deck { command } => runtime()?.block_on(deck_main(command.as_ref(), &dirs)),
         Command::Up(args) => runtime()?.block_on(up::up(&dirs, &env, args)),
         Command::Open => runtime()?.block_on(auth::open(&dirs)),
-        Command::Station { .. } => {
-            anyhow::bail!("internal error: the station command was not dispatched")
+        Command::Station { .. } | Command::Shim { .. } | Command::ShimExec { .. } => {
+            anyhow::bail!("internal error: the command was not dispatched")
         }
     }
+}
+
+fn exit_code(code: i32) -> ExitCode {
+    ExitCode::from(u8::try_from(code).unwrap_or(1))
 }
 
 /// The deck commands (P3-6b).

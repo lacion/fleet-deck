@@ -631,6 +631,7 @@ dependencies = [
  "fleetdeck-deck",
  "fleetdeck-link",
  "fleetdeck-proto",
+ "fleetdeck-providers",
  "fleetdeck-station",
  "fleetdeck-testkit",
  "rustix",

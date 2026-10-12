@@ -1,0 +1,134 @@
+//! The process side of the shim: socket bind, provider spawn and exec,
+//! process-group signals, descendants and reaping.
+
+use super::*;
+
+pub(super) fn bind(spec: &LaunchSpec) -> std::io::Result<UnixListener> {
+    let dir = spec
+        .socket_path
+        .parent()
+        .ok_or_else(|| std::io::Error::other("the socket path has no directory"))?;
+    prepare_dir(dir)?;
+    // The launch lock is held: a socket file here belongs to a dead shim.
+    match std::fs::remove_file(&spec.socket_path) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e),
+    }
+    let listener = UnixListener::bind(&spec.socket_path)?;
+    std::fs::set_permissions(&spec.socket_path, std::fs::Permissions::from_mode(0o600))?;
+    Ok(listener)
+}
+
+pub(super) fn spawn_provider(spec: &LaunchSpec) -> std::io::Result<Child> {
+    let exe = std::env::current_exe()?;
+    let mut command = tokio::process::Command::new(exe);
+    command
+        .arg("shim-exec")
+        .arg("--parent")
+        .arg(std::process::id().to_string())
+        .arg("--")
+        .arg(spec.program())
+        .args(spec.args())
+        .current_dir(spec.cwd())
+        .env_clear()
+        .envs(spec.env())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(false);
+    command.spawn()
+}
+
+/// The provider side of `shim-exec`: a new session, the parent-death
+/// signal (Linux), the parent check, then `exec`. Returns only on error.
+#[must_use]
+pub fn exec_provider(parent: u32, program: &std::ffi::OsStr, args: &[std::ffi::OsString]) -> i32 {
+    use std::os::unix::process::CommandExt as _;
+    if let Err(e) = rustix::process::setsid() {
+        eprintln!("fleetdeck shim-exec: setsid: {e}");
+        return 126;
+    }
+    #[cfg(target_os = "linux")]
+    if let Err(e) =
+        rustix::process::set_parent_process_death_signal(Some(rustix::process::Signal::KILL))
+    {
+        eprintln!("fleetdeck shim-exec: parent death signal: {e}");
+        return 126;
+    }
+    // The shim may have died before the signal was armed.
+    let ppid = rustix::process::getppid().map(|p| p.as_raw_nonzero().get());
+    if u32::try_from(ppid.unwrap_or(0)).ok() != Some(parent) {
+        eprintln!("fleetdeck shim-exec: the shim is gone");
+        return 126;
+    }
+    let error = std::process::Command::new(program).args(args).exec();
+    eprintln!(
+        "fleetdeck shim-exec: {}: {error}",
+        program.to_string_lossy()
+    );
+    127
+}
+
+/// Signals the process group and session `pid` (the provider is the
+/// leader of both). A group that is gone is fine; init is never signalled.
+pub(super) fn signal_group(pid: u32, sig: rustix::process::Signal) {
+    let Some(pid) = i32::try_from(pid)
+        .ok()
+        .filter(|p| *p > 1)
+        .and_then(rustix::process::Pid::from_raw)
+    else {
+        return;
+    };
+    if let Err(e) = rustix::process::kill_process_group(pid, sig)
+        && e != rustix::io::Errno::SRCH
+    {
+        tracing::warn!(?sig, error = %e, "cannot signal the provider group");
+    }
+}
+
+/// The live members of the provider's process group or session (Linux;
+/// zombies do not count). Other platforms report 0.
+pub(super) fn group_members(leader: u32) -> u32 {
+    #[cfg(target_os = "linux")]
+    {
+        let Ok(entries) = std::fs::read_dir("/proc") else {
+            return 0;
+        };
+        let mut count = 0;
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(pid) = name.to_str().and_then(|n| n.parse::<u32>().ok()) else {
+                continue;
+            };
+            if pid == leader {
+                continue;
+            }
+            let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
+                continue;
+            };
+            let Some(rest) = stat.rfind(')').map(|i| &stat[i + 1..]) else {
+                continue;
+            };
+            let mut fields = rest.split_whitespace();
+            let state = fields.next();
+            let _ppid = fields.next();
+            let pgrp = fields.next().and_then(|f| f.parse::<u32>().ok());
+            let session = fields.next().and_then(|f| f.parse::<u32>().ok());
+            if state != Some("Z") && (pgrp == Some(leader) || session == Some(leader)) {
+                count += 1;
+            }
+        }
+        count
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = leader;
+        0
+    }
+}
+
+/// Reaps orphaned descendants that came back to the subreaper shim.
+pub(super) fn reap_orphans() {
+    while let Ok(Some(_)) = rustix::process::waitpid(None, rustix::process::WaitOptions::NOHANG) {}
+}

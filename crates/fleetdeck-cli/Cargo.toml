@@ -17,6 +17,7 @@ fleetdeck-core = { path = "../fleetdeck-core" }
 fleetdeck-station = { path = "../fleetdeck-station" }
 fleetdeck-deck = { path = "../fleetdeck-deck" }
 fleetdeck-link = { path = "../fleetdeck-link" }
+fleetdeck-providers = { path = "../fleetdeck-providers" }
 anyhow.workspace = true
 clap.workspace = true
 # Non-echoing invitation prompt (G12).

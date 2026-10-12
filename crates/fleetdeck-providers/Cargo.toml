@@ -12,11 +12,11 @@ fleetdeck-proto = { path = "../fleetdeck-proto" }
 fleetdeck-core = { path = "../fleetdeck-core" }
 async-trait = { workspace = true }
 ring = { workspace = true }
-rustix = { workspace = true, features = ["process"] }
+rustix = { workspace = true, features = ["process", "fs"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["io-std"] }
 tracing = { workspace = true }
 ulid = { workspace = true }
 

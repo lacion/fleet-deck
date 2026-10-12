@@ -46,6 +46,22 @@ pub enum Command {
     },
     /// Print a one-time board login URL (from the deck's owner-only socket).
     Open,
+    /// The durable provider shim (ADR-005 §2). The station starts it and
+    /// sends the launch frame on its stdin; it is not a user command.
+    #[command(hide = true)]
+    Shim {
+        #[arg(long)]
+        id: String,
+    },
+    /// The provider side of a shim launch (ADR-005 §2): a new session, the
+    /// parent-death signal, then `exec` of the provider.
+    #[command(hide = true)]
+    ShimExec {
+        #[arg(long)]
+        parent: u32,
+        #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
+        program: Vec<std::ffi::OsString>,
+    },
 }
 
 /// Listen options of a serving process.
