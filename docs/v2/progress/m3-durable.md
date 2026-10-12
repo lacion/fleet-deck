@@ -28,6 +28,12 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 86 (2026-10-12, 16:53–)
+
+- Round start: committed round 85 as 2991ef1. `git log v2..m3/orchestration`, `v2..m3/board`, `v2..m3/ops`: no new commits; `m3-orchestration.md` has no "LANE COMPLETE", so 6-13, 7-7 and 7-8 stay blocked.
+- 7-6 consistency with the r84 finding: `docs/v2/cutover.md` §1 `/fleet` row was stale (it said the grant and the control skill were not in; DL-217 added them). The row now names DL-217 and the `handoff_unverified` limit, and tells the owner to keep v1 `/fleet` until the coordinator live smoke passes. README "What you can do" coordinator bullet names the same limit and links operations §7.2.
+- Checks: `cargo nextest run -p fleetdeck-cli --test docs_commands`, `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`.
+
 ## Round 85 (2026-10-12, 16:51–)
 
 - Round start: committed round 84 as 1bed9ce.
