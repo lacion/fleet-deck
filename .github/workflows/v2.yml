@@ -1,13 +1,14 @@
 name: v2
-# Fleet Deck v2 (Rust workspace + web/ board). The v0 workflow is ci.yml.
+# Fleet Deck v2 (Rust workspace + web/ board). It runs for pushes and pull
+# requests to `main` (after the v2 merge) and to `v2`.
 # One job: fill the caches with network access, then run `make check`
 # (tools/check.sh), which is offline and is the same command that reviewers
 # and developers run locally (GATE-M1 G13, PLAN §14 Phase 1).
 on:
   push:
-    branches: [v2]
+    branches: [main, v2]
   pull_request:
-    branches: [v2]
+    branches: [main, v2]
 concurrency:
   group: v2-${{ github.ref }}
   cancel-in-progress: true

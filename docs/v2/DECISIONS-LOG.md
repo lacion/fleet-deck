@@ -2231,3 +2231,12 @@ Format: context, options, choice, reason, owner review.
 - Tests: `crates/fleetdeck-cli/tests/cutover.rs` (3 passed).
 - Reason: a `v2` checkout should contain only what v2 builds, tests, documents or releases; git history, `main` and the tags keep v1.
 - Owner review: requested by the owner (2026-10-12).
+
+## DL-136 — PRE-PR review fixes: owner-only coordinator starts, quiet config errors, the shell off by default, CI on `main` (after M3)
+
+- Context: the adversary PRE-PR review of `41d6bb1` (verdict FAIL) found: (1) a bearer token with the `drive` scope could create a coordinator grant through `POST /api/commands/session.start`, although ADR-006 §4 says that only the owner creates a grant; (2) a TOML syntax error in `station.toml` printed the source line, which can hold a provider secret in `env`; (3) `.github/workflows/v2.yml` ran only for pushes and pull requests to `v2`, so the `v2` → `main` pull request ran no check; (4) `deny_after(é)` panicked in `parse_duration`; (5) `allow_shell` defaulted to `true` in the code but `false` in `docs/v2/operations.md`; (6) the README quick start used `fleetdeck` without putting `target/release` on `PATH`.
+- Options for (5): (a) keep `true` and change the documentation; (b) make the code fail closed with `false`, as documented. Options for (2): (a) keep the parser text; (b) print only the line, the column and the parser message with every double-quoted value replaced by `"…"`.
+- Choice: (1) the command route gets the principal; a coordinator start from a bearer token is refused with 403 `owner_only` before any grant is stored or any command is sent, and the refusal is audited. (2) (b) for `station.toml` and `deck.toml`. (3) the workflow runs for `main` and `v2`. (4) the duration parser matches the ASCII unit suffix and parses ASCII digits only. (5) (b): the human shell is off unless `allow_shell = true`. (6) the README exports `PATH` after the build, as `docs/v2/TESTING.md` does.
+- Tests: `a_bearer_token_cannot_start_a_coordinator_or_create_a_grant` (`crates/fleetdeck-deck/tests/http_commands.rs`); `config::tests::{parse_errors_never_echo_config_values, durations, an_empty_file_gives_the_defaults}` (`crates/fleetdeck-core`).
+- Reason: authorization, secret handling and shell access must fail closed (PLAN §9, A-decisions); a check that does not run on the merge target is not a check.
+- Owner review: pending.

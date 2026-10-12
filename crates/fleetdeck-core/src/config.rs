@@ -160,19 +160,59 @@ impl OfflineApprovalPolicy {
     }
 }
 
-/// `30s`, `5m`, `2h`.
+/// `30s`, `5m`, `2h`. Any other text is an error, never a panic (DL-136).
 pub fn parse_duration(text: &str) -> Result<Duration, String> {
     let bad = || format!("`{text}` is not a duration like 30s, 5m or 2h");
-    let split = text.len().checked_sub(1).ok_or_else(bad)?;
-    let (num, unit) = text.split_at(split);
+    let (num, factor) = [("s", 1_u64), ("m", 60), ("h", 3600)]
+        .into_iter()
+        .find_map(|(unit, factor)| text.strip_suffix(unit).map(|num| (num, factor)))
+        .ok_or_else(bad)?;
+    if num.is_empty() || !num.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(bad());
+    }
     let n: u64 = num.parse().map_err(|_| bad())?;
-    let secs = match unit {
-        "s" => Some(n),
-        "m" => n.checked_mul(60),
-        "h" => n.checked_mul(3600),
-        _ => None,
-    };
-    secs.map(Duration::from_secs).ok_or_else(bad)
+    n.checked_mul(factor)
+        .map(Duration::from_secs)
+        .ok_or_else(bad)
+}
+
+/// A TOML error without the source excerpt or any quoted value: a config
+/// file can hold provider secrets in `env`, and the parser's excerpt would
+/// copy them to the terminal or the service log (DL-136).
+fn toml_error(text: &str, e: &toml::de::Error) -> ConfigError {
+    let at = e
+        .span()
+        .map(|span| {
+            let before = text.get(..span.start).unwrap_or(text);
+            let line = before.matches('\n').count() + 1;
+            let column = before.rsplit('\n').next().map_or(0, |l| l.chars().count()) + 1;
+            format!("line {line}, column {column}: ")
+        })
+        .unwrap_or_default();
+    ConfigError::Toml {
+        path: PathBuf::new(),
+        message: format!("{at}{}", redact_quoted(e.message())),
+    }
+}
+
+/// Replaces each double-quoted string in a parser message with `"…"`.
+fn redact_quoted(message: &str) -> String {
+    let mut out = String::with_capacity(message.len());
+    let mut quoted = false;
+    for c in message.chars() {
+        if c == '"' {
+            if quoted {
+                out.push_str("\"…\"");
+            }
+            quoted = !quoted;
+        } else if !quoted {
+            out.push(c);
+        }
+    }
+    if quoted {
+        out.push_str("\"…");
+    }
+    out
 }
 
 /// The validated `station.toml`.
@@ -235,10 +275,7 @@ impl StationConfig {
     }
 
     pub fn parse(text: &str, env: &Env) -> Result<Self, ConfigError> {
-        let raw: RawStation = toml::from_str(text).map_err(|e| ConfigError::Toml {
-            path: PathBuf::new(),
-            message: e.to_string(),
-        })?;
+        let raw: RawStation = toml::from_str(text).map_err(|e| toml_error(text, &e))?;
         let home = env.home.as_deref();
         let name = match raw.name {
             Some(n) => check_name("name", n)?,
@@ -309,7 +346,7 @@ impl StationConfig {
             allowed_roots,
             max_sessions,
             allow_setup_cmd: raw.allow_setup_cmd.unwrap_or(false),
-            allow_shell: raw.allow_shell.unwrap_or(true),
+            allow_shell: raw.allow_shell.unwrap_or(false),
             max_shells,
             offline_approval_policy,
             listen,
@@ -417,10 +454,7 @@ impl DeckConfig {
     }
 
     pub fn parse(text: &str) -> Result<Self, ConfigError> {
-        let raw: RawDeck = toml::from_str(text).map_err(|e| ConfigError::Toml {
-            path: PathBuf::new(),
-            message: e.to_string(),
-        })?;
+        let raw: RawDeck = toml::from_str(text).map_err(|e| toml_error(text, &e))?;
         let name = match raw.name {
             Some(n) => check_name("name", n)?,
             None => "deck".to_owned(),

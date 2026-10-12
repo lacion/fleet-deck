@@ -497,3 +497,36 @@ async fn an_owner_coordinator_start_creates_one_grant_and_sends_its_id_and_the_c
     no_request(&mut station, Duration::from_millis(300)).await;
     assert_eq!(c.store.grants(100).await.unwrap().len(), 1);
 }
+
+/// ADR-006 §4 (DL-136): only the owner creates a grant. A bearer token with
+/// the drive scope can start sessions, but a coordinator start is refused
+/// with 403 before any grant is stored or any command reaches the station.
+#[tokio::test]
+async fn a_bearer_token_cannot_start_a_coordinator_or_create_a_grant() {
+    let mut f = fixture().await;
+    let mut station = f.connect().await;
+    let c = board(std::sync::Arc::clone(&f.ctx)).await;
+    let drive = token(&c, "drive", &[Scope::Read, Scope::Drive]).await;
+    let body = json!({
+        "station": "fake",
+        "command_id": "token-coord",
+        "command": { "op": "start", "prompt": null, "spec": {
+            "provider_instance": "claude", "cwd": "/w", "mode": null, "model": null,
+            "title": null,
+            "coordinator": {
+                "grant_id": "", "classes": ["read", "drive", "spawn"],
+                "idle_ttl_ms": 0, "expires_at": 0,
+                "control_skill": { "version": "", "text": "" },
+            },
+        }},
+    });
+    let r = post(&c, &drive, "session.start", body).await;
+    assert_eq!((r.status, r.code()), (403, "owner_only"), "{}", r.body);
+    no_request(&mut station, Duration::from_millis(300)).await;
+    assert!(c.store.grants(100).await.unwrap().is_empty());
+    assert!(
+        !c.audited("session.start", AuditResult::Refused)
+            .await
+            .is_empty()
+    );
+}

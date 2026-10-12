@@ -38,13 +38,14 @@ One binary, `fleetdeck`, contains the deck and the station. The deck embeds the 
    bun install --cwd web --frozen-lockfile
    bun run --cwd web build
    cargo build --release -p fleetdeck-cli
+   export PATH="$PWD/target/release:$PATH"
    ```
 
 2. Sign in to the provider CLIs that you want to use (`claude`, `codex`).
 3. Start the deck and a local station in one process:
 
    ```sh
-   target/release/fleetdeck up
+   fleetdeck up
    ```
 
 4. Set the owner password of the board: `fleetdeck deck password`.

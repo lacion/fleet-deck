@@ -43,7 +43,8 @@ pub async fn command(
         .unwrap_or_default()
         .to_owned();
     let audit = NewAudit::new(principal.actor(), method.clone(), AuditResult::Refused);
-    match route(&board, &method, body).await {
+    let owner = matches!(principal, Principal::Owner(_));
+    match route(&board, &method, owner, body).await {
         Ok((cmd, new)) => {
             let mut row = NewAudit::new(principal.actor(), method, AuditResult::Ok)
                 .target(cmd.station_id.0.clone())
@@ -78,6 +79,7 @@ type Refusal = (Option<String>, Option<CommandId>, ApiError);
 async fn route(
     board: &Arc<Board>,
     method: &str,
+    owner: bool,
     body: Result<Json<CommandRequest>, JsonRejection>,
 ) -> Result<(DeckCommand, bool), Refusal> {
     let Json(req) = body.map_err(|e| {
@@ -142,10 +144,23 @@ async fn route(
     let station = Some(rec.station_id.0.clone());
     let mut command = req.command;
     // An owner start with a coordinator request: the deck creates the grant
-    // and fills in its id and the control skill (ADR-006 §4, DL-217).
+    // and fills in its id and the control skill (ADR-006 §4, DL-217). Only
+    // the owner creates a grant (ADR-006 §4): a bearer token is refused
+    // before anything is stored or sent (DL-136).
     if let SessionCommand::Start { spec, .. } = &mut command
         && let Some(coordinator) = spec.coordinator.as_deref_mut()
     {
+        if !owner {
+            return Err((
+                station.clone(),
+                id.clone(),
+                ApiError::new(
+                    StatusCode::FORBIDDEN,
+                    "owner_only",
+                    "only the owner's board login starts a coordinator session".to_owned(),
+                ),
+            ));
+        }
         super::grant_routes::owner_start(board, &rec.station_id, &req.command_id, coordinator)
             .await
             .map_err(|e| (station.clone(), id.clone(), e))?;

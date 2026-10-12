@@ -70,6 +70,10 @@ fn an_empty_file_gives_the_defaults() {
     assert_eq!(c.allowed_roots, vec![PathBuf::from("/home/ana")]);
     assert_eq!(c.max_sessions, DEFAULT_MAX_SESSIONS);
     assert!(!c.allow_setup_cmd);
+    assert!(
+        !c.allow_shell,
+        "the human shell is off unless the owner turns it on"
+    );
     let ids: Vec<&str> = c.provider_instances.iter().map(|i| i.id.as_str()).collect();
     assert_eq!(ids, ["claude", "codex"]);
 }
@@ -242,6 +246,11 @@ fn durations() {
     assert!(parse_duration("m").is_err());
     assert!(parse_duration("-1m").is_err());
     assert!(parse_duration(&format!("{}h", u64::MAX)).is_err());
+    // Multibyte or odd text is an error, never a panic (DL-136).
+    for bad in ["é", "5é", "€", "5 m", "+5m", "5d", "s", "1.5h"] {
+        assert!(parse_duration(bad).is_err(), "{bad}");
+    }
+    assert!(err("offline_approval_policy = \"deny_after(é)\"").contains("not a duration"));
 }
 
 #[test]
@@ -284,5 +293,29 @@ fn explicit_repo_groups_are_paths_with_names() {
             .unwrap()
             .repo_groups
             .is_empty()
+    );
+}
+
+/// DL-136: a TOML error names the file position but never echoes the
+/// source line or a quoted value, because `env` can hold provider secrets.
+#[test]
+fn parse_errors_never_echo_config_values() {
+    let canary = "SYNTHETIC_SECRET_CANARY";
+    let unclosed = format!(
+        "[[provider_instance]]\nid = \"test\"\ndriver = \"claude\"\nenv = {{ API_TOKEN = \"{canary}\",\n"
+    );
+    let wrong_type = format!("allow_shell = \"{canary}\"\n");
+    let deck = format!("name = \"{canary}\"\nlisten = [\"{canary}\"\n");
+    for text in [&unclosed, &wrong_type] {
+        let e = err(text);
+        assert!(!e.contains(canary), "{e}");
+        assert!(e.contains("line "), "{e}");
+    }
+    let e = DeckConfig::parse(&deck).unwrap_err().to_string();
+    assert!(!e.contains(canary), "{e}");
+    assert!(
+        err(&unclosed).contains("line 4, column"),
+        "{}",
+        err(&unclosed)
     );
 }
