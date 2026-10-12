@@ -14,6 +14,7 @@ import type { DiffSummary } from "./DiffSummary";
 import type { ExpiredReason } from "./ExpiredReason";
 import type { FileChange } from "./FileChange";
 import type { InputState } from "./InputState";
+import type { OutputGapReason } from "./OutputGapReason";
 import type { ProviderKind } from "./ProviderKind";
 import type { RateLimit } from "./RateLimit";
 import type { RequestKind } from "./RequestKind";
@@ -74,7 +75,7 @@ checkpoint: TurnCheckpoint | null,
 /**
  * Set when both checkpoint sides are available.
  */
-diff_summary: DiffSummary | null, } | { "kind": "revert.updated", revert_id: string, turn_id: TurnId, turns: number, state: RevertState, reason: string | null, } | { "kind": "session.renamed", title: string | null, } | { "kind": "run.completed", run_id: RunId, status: TurnStatus, 
+diff_summary: DiffSummary | null, } | { "kind": "revert.updated", revert_id: string, turn_id: TurnId, turns: number, state: RevertState, reason: string | null, } | { "kind": "session.renamed", title: string | null, } | { "kind": "session.output_gap", from: number, to: number, reason: OutputGapReason, } | { "kind": "run.completed", run_id: RunId, status: TurnStatus, 
 /**
  * Background work still runs; the session is not idle (L7).
  */

@@ -185,6 +185,11 @@ fn samples() -> Vec<Event> {
         Event::SessionRenamed {
             title: Some("docs".into()),
         },
+        Event::OutputGap {
+            from: 10,
+            to: 65_546,
+            reason: crate::event::OutputGapReason::OutputFrameTooLarge,
+        },
     ]
 }
 

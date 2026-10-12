@@ -1323,3 +1323,14 @@ Format: context, options, choice, reason, owner review.
 - Not done: `SessionManager`/`SessionTarget` do not launch or dispatch through the drivers yet; turn checkpoints for shim sessions; the station halves of tests 38, 43, 49.
 - Owner review: not required (implementation inside the accepted ADR-005 revision 3).
 
+## DL-113 — Sessions under shims in the session manager, output gaps, and launch boundaries at the station (ADR-005 §3.2, §4.2; M3 round 33)
+
+- Context: round-32 feedback asked to integrate the durable drivers into `SessionManager`/`SessionTarget` with turn checkpoints and the station halves of ADR-005 tests 38, 43 and 49. The durable driver commits provider events itself, so the direct target's event pump (which feeds `SessionTurns`) does not see them.
+- Options: (a) route durable events through the `EventSink` path; (b) an observer task per session that reads the committed log and feeds `SessionTurns`; (c) call `SessionTurns` inside the driver's output transaction.
+- Choice: (b). The observer reads `read_after` from the store head taken before the launch, feeds `turns.observe`, spawns the completion capture, and on a terminal event removes the live session, ends the process and marks the shim row `exited`. Inputs are written under the same workspace fence and `begin_input`/`input_sent` calls as with the direct host. The first input of a launch leaves as adapter-generated frames (`Durable::first_input`), because `session.started` confirms the start effect before it. A station stop does not stop shim sessions; `start_with_shims` restores and adopts them. Revert on a shim session fails before any I/O with `revert_not_supported_on_the_shim_host` (the rollback still runs only through the direct driver).
+- Output gaps: `session.output_gap { from, to, reason }` (`output_frame_too_large`, `unterminated_line`, `below_floor`) is a new event kind, decoded as unknown by older peers (ADR-005 §4.2). The pump commits each shim gap and an `error { code: output_frame_too_large }` with the cursor past the stream, and an unterminated last line as a gap with the final cursor, before the exit.
+- Launch boundaries: claimed start effects are never settled by stdin settlement (the spawn happened); recovery retires them `shim_never_started` only on `NeverStarted` from an intact journal, otherwise they become `outcome_unknown`. A session lost through its shim row names the reason in its `lost` detail (for example `execution_unknown`).
+- Reason: (a) would bypass the output transaction that makes the driver durable; (c) would put Git work inside the commit path and extend it. The observer uses only committed events, so it sees the same order after a restart.
+- Not done: the station binary's host setting (`serve.rs`), revert on the shim host, the other ADR-005 §9 tests.
+- Owner review: not required (implementation inside the accepted ADR-005 revision 3; the new event kind follows the §4.2 contract).
+

@@ -36,6 +36,10 @@ use tokio::io::{AsyncBufReadExt as _, BufReader};
 use tokio::sync::{Mutex, MutexGuard, RwLock, RwLockWriteGuard, watch};
 use tokio::task::JoinHandle;
 
+use fleetdeck_proto::Event;
+use fleetdeck_proto::event::OutputGapReason;
+use fleetdeck_providers::host::shim::wire::GapReason;
+
 use super::shim_stdin::{self, send_input};
 use crate::store::{
     Dispatch, Effect, FrameState, InputRecord, NewEvent, OutputCommit, OutputMeta, RequestTime,
@@ -49,6 +53,10 @@ pub const REASON_FRAME_UNKNOWN: &str = "internal_frame_unknown";
 const OPEN_WAIT: Duration = Duration::from_secs(15);
 /// The pause between two `write_status` questions about an in-flight frame.
 const ASK_AGAIN: Duration = Duration::from_millis(100);
+/// How long the pump waits for the shim's exit state after EOF.
+const EXIT_WAIT: Duration = Duration::from_secs(10);
+/// The `error` code of an overlong provider line (ADR-005 §4.2).
+pub const REASON_OUTPUT_FRAME_TOO_LARGE: &str = "output_frame_too_large";
 
 /// Why the driver cannot run.
 #[derive(Debug, thiserror::Error)]
@@ -156,6 +164,15 @@ impl<C: DurableCore> DurableDriver<C> {
             changed: watch::channel(0).0,
             pump: StdMutex::new(None),
         })
+    }
+
+    /// Drives a launched or reattached shim with a new core and no
+    /// handshake (for a core whose provider needs none, and for tests).
+    #[must_use]
+    pub fn attach(store: &Store, attached: Attached, config: C::Config) -> Arc<Self> {
+        let this = Self::new(store, &attached, config.clone(), C::create(config));
+        this.start_pump(attached);
+        this
     }
 
     pub(super) fn start_pump(self: &Arc<Self>, attached: Attached) {
@@ -481,15 +498,32 @@ impl<C: DurableCore> DurableDriver<C> {
         let mut line = Vec::new();
         loop {
             line.clear();
-            match reader.read_until(b'\n', &mut line).await {
+            let read = reader.read_until(b'\n', &mut line).await;
+            let line_start = offset;
+            let line_end = line_start + line.len() as u64;
+            // A gap reported by the shim ends the parsing at its start: the
+            // bytes around it are not one provider line (ADR-005 §4.2).
+            let gaps = self.process.gaps();
+            if gaps.iter().any(|(from, _, _)| *from < line_end) {
+                match self.commit_gaps(&mut reader, offset, &gaps).await {
+                    Some(cursor) => offset = cursor,
+                    None => return,
+                }
+                break;
+            }
+            match read {
                 Ok(0) | Err(_) => break,
                 Ok(_) => {}
             }
             if line.last() != Some(&b'\n') {
+                // The provider ended inside a line (EOF).
+                match self.commit_unterminated(line_start, line_end).await {
+                    Some(cursor) => offset = cursor,
+                    None => return,
+                }
                 break;
             }
-            let line_start = offset;
-            offset += line.len() as u64;
+            offset = line_end;
             let _gate = self.gate.read().await;
             let mut core = self.core.lock().await;
             let text = String::from_utf8_lossy(&line[..line.len() - 1]).into_owned();
@@ -500,43 +534,111 @@ impl<C: DurableCore> DurableDriver<C> {
                 .and_then(|t| i64::try_from(t).ok())
                 .map_or(RequestTime::Unprovable, RequestTime::Read);
             let Ok(checkpoint) = snapshot(&*core) else {
-                break;
+                return;
             };
             match self
                 .commit(offset, events, read_at, checkpoint, frames)
                 .await
             {
                 Ok(true) => {}
-                Ok(false) | Err(_) => break,
+                // Fenced by a newer owner, or a database error: this
+                // driver stops without touching the provider.
+                Ok(false) | Err(_) => return,
             }
-            if !self.process.ack(offset).await {
-                break;
-            }
-            if self.flush(&core).await.is_err() {
-                break;
+            if !self.process.ack(offset).await || self.flush(&core).await.is_err() {
+                return;
             }
         }
-        if let Some(report) = self.process.exit()
-            && !matches!(
-                report.termination,
-                fleetdeck_providers::host::Termination::Unknown
+        self.commit_exit(offset).await;
+    }
+
+    /// Commits `session.output_gap` for every reported gap and an `error`,
+    /// after the rest of the stream (the shim stops the provider); the
+    /// cursor is the end of the delivered stream. `None` when the commit
+    /// failed or was fenced.
+    async fn commit_gaps(
+        &self,
+        reader: &mut BufReader<tokio::io::DuplexStream>,
+        offset: u64,
+        gaps: &[(u64, u64, GapReason)],
+    ) -> Option<u64> {
+        // The shim stops the provider after an overlong line, so the
+        // stream ends; its bytes are not parsed.
+        let _drained = tokio::io::copy(reader, &mut tokio::io::sink()).await;
+        let gap_end = gaps.iter().map(|(_, to, _)| *to).max().unwrap_or(offset);
+        let cursor = offset.max(gap_end).max(self.process.delivered());
+        let mut events: Vec<NewEvent> = gaps
+            .iter()
+            .map(|(from, to, reason)| {
+                Event::OutputGap {
+                    from: *from,
+                    to: *to,
+                    reason: match reason {
+                        GapReason::OutputFrameTooLarge => OutputGapReason::OutputFrameTooLarge,
+                        GapReason::BelowFloor => OutputGapReason::BelowFloor,
+                    },
+                }
+                .into()
+            })
+            .collect();
+        events.push(
+            Event::Error {
+                code: REASON_OUTPUT_FRAME_TOO_LARGE.to_owned(),
+                message: "a provider output line reached the shim buffer size without a \
+                          newline; the shim stopped the provider"
+                    .to_owned(),
+                retry_at: None,
+            }
+            .into(),
+        );
+        self.commit_plain(cursor, events).await
+    }
+
+    /// Commits `session.output_gap { unterminated_line }` for the bytes
+    /// after the last newline at EOF (ADR-005 §4.2).
+    async fn commit_unterminated(&self, from: u64, to: u64) -> Option<u64> {
+        let gap = Event::OutputGap {
+            from,
+            to,
+            reason: OutputGapReason::UnterminatedLine,
+        };
+        self.commit_plain(to, vec![gap.into()]).await
+    }
+
+    async fn commit_plain(&self, cursor: u64, events: Vec<NewEvent>) -> Option<u64> {
+        let core = self.core.lock().await;
+        let checkpoint = snapshot(&*core).ok()?;
+        match self
+            .commit(cursor, events, RequestTime::Now, checkpoint, Vec::new())
+            .await
+        {
+            Ok(true) => self.process.ack(cursor).await.then_some(cursor),
+            Ok(false) | Err(_) => None,
+        }
+    }
+
+    /// After EOF: waits for the shim's exit state and commits the core's
+    /// exit events with the final cursor, then acknowledges the exit.
+    async fn commit_exit(&self, offset: u64) {
+        let known = tokio::time::timeout(EXIT_WAIT, self.process.wait()).await;
+        let Ok(report) = known else {
+            return;
+        };
+        let code = match report.termination {
+            fleetdeck_providers::host::Termination::Unknown => return,
+            fleetdeck_providers::host::Termination::Code(c) => Some(c),
+            _ => None,
+        };
+        let mut core = self.core.lock().await;
+        let (events, _) = core.exit(code);
+        if let Ok(checkpoint) = snapshot(&*core)
+            && matches!(
+                self.commit(offset, events, RequestTime::Now, checkpoint, Vec::new())
+                    .await,
+                Ok(true)
             )
         {
-            let mut core = self.core.lock().await;
-            let code = match report.termination {
-                fleetdeck_providers::host::Termination::Code(c) => Some(c),
-                _ => None,
-            };
-            let (events, _) = core.exit(code);
-            if let Ok(checkpoint) = snapshot(&*core)
-                && matches!(
-                    self.commit(offset, events, RequestTime::Now, checkpoint, Vec::new())
-                        .await,
-                    Ok(true)
-                )
-            {
-                let _acked = self.process.ack_exit().await;
-            }
+            let _acked = self.process.ack_exit().await;
         }
     }
 

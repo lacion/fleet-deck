@@ -76,7 +76,13 @@ impl DurableCore for ClaudeCore {
             }),
             EffectPayload::SetMode { mode } => self.set_mode(mode),
             EffectPayload::SetModel { model } => self.set_model(model),
-            EffectPayload::Start { .. }
+            // The first input of a launch (the start effect is claimed
+            // while it is written, DL-113).
+            EffectPayload::Start {
+                prompt: Some(input),
+                ..
+            } => self.prompt(&host_input(input)),
+            EffectPayload::Start { prompt: None, .. }
             | EffectPayload::Resume { .. }
             | EffectPayload::Stop { .. }
             | EffectPayload::Revert { .. } => Err(not_a_command()),

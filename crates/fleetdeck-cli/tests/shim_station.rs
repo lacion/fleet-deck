@@ -23,11 +23,13 @@ use fleetdeck_providers::checkpoint::{AdapterCheckpoint, REASON_UNSUPPORTED};
 use fleetdeck_providers::codex::{ClientInfo, CoreConfig, SessionSpec, capabilities};
 use fleetdeck_providers::host::ProcessSpec;
 use fleetdeck_providers::host::shim::host::{AckMode, ShimHost, ShimHostConfig};
+use fleetdeck_providers::host::shim::journal::{Record, ShimFiles};
+use fleetdeck_providers::host::shim::start::Prepared;
 use fleetdeck_station::manager::shim_codex::DurableCodex;
 use fleetdeck_station::manager::shim_station::{Configs, Durable, recover_station};
 use fleetdeck_station::manager::shims::launch_shim;
 use fleetdeck_station::store::{
-    Caller, Dispatch, Effect, EffectPayload, EffectState, InputRecord, NewSession,
+    Caller, Dispatch, Effect, EffectPayload, EffectState, InputRecord, NewSession, NewShim,
     OfflineApprovalPolicy, OutputCommit, OutputMeta, ReadResult, Store, StoreConfig,
 };
 use fleetdeck_testkit::Det;
@@ -124,7 +126,7 @@ impl Rig {
     fn configs(&self) -> Configs {
         Configs {
             claude: Box::new(|_| panic!("no Claude session in this rig")),
-            codex: Box::new(|summary| codex_config(summary.cwd.clone().unwrap_or_default())),
+            codex: Box::new(|summary| Some(codex_config(summary.cwd.clone().unwrap_or_default()))),
         }
     }
 
@@ -410,4 +412,163 @@ async fn an_unreadable_checkpoint_at_a_station_start_loses_the_session_and_leave
     let pid = shim_reaper::shim_pid(&shim_id).unwrap();
     assert!(alive(pid));
     assert_eq!(rig.method_count("initialize"), 1);
+}
+
+// ADR-005 tests 43 and 49 at the station (DL-113): a station crash during a
+// launch. The rig's session runs a launch whose claimed start effect is in
+// the store; the shim row is `starting`.
+
+fn start_effect() -> EffectPayload {
+    EffectPayload::Start {
+        spec: fleetdeck_proto::command::SessionSpec {
+            provider_instance: "codex".into(),
+            cwd: "/w".to_owned(),
+            mode: None,
+            model: None,
+            title: None,
+        },
+        prompt: None,
+    }
+}
+
+fn codex_spec(rig: &Rig) -> ProcessSpec {
+    let mut env = ChildEnv::scrubbed([("PATH".into(), "/usr/bin:/bin".into())]);
+    env.set(SCENARIO_ENV, "sim").unwrap();
+    env.set(STDIN_LOG_ENV, rig.log()).unwrap();
+    ProcessSpec {
+        program: FakeAgent::Codex.locate().unwrap(),
+        args: vec!["app-server".into()],
+        cwd: rig.tmp.path().join("w"),
+        env,
+    }
+}
+
+/// A `starting` row whose shim was prepared (journal `created`, key file)
+/// and never started.
+async fn starting_row(rig: &Rig) -> (String, ShimFiles, Prepared) {
+    let host = rig.host();
+    let prepared = host.prepare(&codex_spec(rig)).unwrap();
+    let id = prepared.record.shim_id.clone();
+    rig.store
+        .shim_starting(NewShim {
+            shim_id: id.clone(),
+            session_id: "s1".into(),
+            socket_path: prepared.record.socket_path.clone(),
+        })
+        .await
+        .unwrap();
+    (
+        id.clone(),
+        ShimFiles::new(&host.config().shims_dir(), &id),
+        prepared,
+    )
+}
+
+async fn lost_detail(rig: &Rig) -> String {
+    rig.events()
+        .await
+        .into_iter()
+        .rev()
+        .find_map(|e| match e {
+            Event::SessionStateChanged {
+                state: SessionState::Lost,
+                detail,
+            } => detail,
+            _ => None,
+        })
+        .expect("no lost state")
+}
+
+#[tokio::test]
+async fn a_launch_interrupted_after_the_provider_spawn_and_before_the_identity_commit_is_never_retired_as_not_dispatched()
+ {
+    for damage in ["spawn_attempted", "missing", "truncated"] {
+        let rig = Rig::new().await;
+        let start = rig.claimed(start_effect()).await;
+        let (id, files, _prepared) = starting_row(&rig).await;
+        match damage {
+            "spawn_attempted" => files.append(&Record::SpawnAttempted).unwrap(),
+            "missing" => std::fs::remove_file(files.journal()).unwrap(),
+            _ => {
+                let text = std::fs::read(files.journal()).unwrap();
+                std::fs::write(files.journal(), &text[..text.len() / 2]).unwrap();
+            }
+        }
+        // A reboot model: the volatile runtime files are gone.
+        let socket = rig.tmp.path().join("fd-shims");
+        if socket.exists() {
+            std::fs::remove_dir_all(&socket).unwrap();
+        }
+
+        let result = recover_station(&rig.store, &rig.host(), &rig.configs(), IN_FLIGHT)
+            .await
+            .unwrap();
+        assert!(result.restored.is_empty(), "{damage}");
+        assert_eq!(
+            result.ended,
+            vec![(id.clone(), "execution_unknown".to_owned())],
+            "{damage}"
+        );
+        assert_eq!(
+            rig.effect_state(&start).await.0,
+            EffectState::OutcomeUnknown,
+            "{damage}: never retired as not dispatched"
+        );
+        assert_eq!(rig.session_state().await, SessionState::Lost, "{damage}");
+        assert!(
+            lost_detail(&rig).await.contains("execution_unknown"),
+            "{damage}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_intact_journal_without_spawn_attempted_retires_the_start_effect_as_shim_never_started()
+{
+    let rig = Rig::new().await;
+    let start = rig.claimed(start_effect()).await;
+    let (id, files, _prepared) = starting_row(&rig).await;
+    let result = recover_station(&rig.store, &rig.host(), &rig.configs(), IN_FLIGHT)
+        .await
+        .unwrap();
+    assert_eq!(result.ended, vec![(id, "shim_never_started".to_owned())]);
+    assert!(files.is_fenced(), "a late shim start exits");
+    assert_eq!(
+        rig.effect_state(&start).await,
+        (
+            EffectState::RetiredNotDispatched,
+            Some("shim_never_started".to_owned())
+        )
+    );
+    assert_eq!(rig.method_count("initialize"), 0, "no provider ran");
+}
+
+#[tokio::test]
+async fn a_station_crash_during_a_launch_is_fenced_or_resolved_by_the_launch_lock_before_classification()
+ {
+    let rig = Rig::new().await;
+    let start = rig.claimed(start_effect()).await;
+    let (id, _files, prepared) = starting_row(&rig).await;
+    // The shim runs and holds its launch lock; the station crashed before it
+    // committed the provider identity and before any adapter state.
+    let record = rig.host().start(prepared).await.unwrap();
+    let pid = record.provider_identity.as_ref().unwrap().pid;
+
+    let result = recover_station(&rig.store, &rig.host(), &rig.configs(), IN_FLIGHT)
+        .await
+        .unwrap();
+    // Resolved through the held lock: the shim was attached and its
+    // identity committed; without adapter state it cannot be restored, so
+    // the row ends `lost` and the shim is left alone.
+    let row = rig.store.shim(id.clone()).await.unwrap().unwrap();
+    assert_eq!(row.provider_identity.as_ref().map(|i| i.pid), Some(pid));
+    assert!(result.restored.is_empty());
+    assert_eq!(result.ended.len(), 1, "{:?}", result.ended);
+    assert!(alive(pid), "recovery never kills a shim's provider");
+    assert_eq!(
+        rig.effect_state(&start).await.0,
+        EffectState::OutcomeUnknown,
+        "a launch with a live shim is never retired"
+    );
+    assert_eq!(rig.session_state().await, SessionState::Lost);
 }

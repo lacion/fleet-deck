@@ -14,7 +14,7 @@
 
 use fleetdeck_proto::event::{ExpiredReason, SessionState, TurnStatus};
 use fleetdeck_proto::{Event, EventEnvelope, SessionId};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension as _, params};
 
 use super::effects::{self, ProcessIncarnation, REASON_PROCESS_LOST};
 use super::{Result, StoreError, log, requests};
@@ -152,9 +152,24 @@ fn lose_session(
     // The loss comes before the empty background list: a reader marks the
     // background children as ended by the loss, not as done by the list
     // (M2 gate correction).
+    // A shim row that recovery ended `lost` names why (ADR-005 §3.2, for
+    // example `execution_unknown`); otherwise the direct child is gone.
+    let shim_reason: Option<String> = conn
+        .query_row(
+            "SELECT reason FROM shims WHERE session_id = ?1 AND state = 'lost'
+             ORDER BY updated_at DESC, rowid DESC LIMIT 1",
+            [session.as_str()],
+            |r| r.get(0),
+        )
+        .optional()?
+        .flatten();
+    let detail = match shim_reason {
+        Some(reason) => format!("station restart: the shim session is lost ({reason})"),
+        None => "station restart: the provider process is gone".to_owned(),
+    };
     events.push(Event::SessionStateChanged {
         state: SessionState::Lost,
-        detail: Some("station restart: the provider process is gone".to_owned()),
+        detail: Some(detail),
     });
     if had_background {
         events.push(Event::BackgroundUpdated { tasks: Vec::new() });

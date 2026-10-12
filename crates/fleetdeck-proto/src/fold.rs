@@ -187,6 +187,7 @@ impl SessionSummary {
             | Event::PlanProposed { .. }
             | Event::InterruptResult { .. }
             | Event::InputUpdated { .. }
+            | Event::OutputGap { .. }
             // A late checkpoint never changes the activity (L13).
             | Event::TurnFinalized { .. } => {}
         }

@@ -7,6 +7,7 @@ pub mod adapter;
 pub mod checkpoint;
 pub mod claude;
 pub mod codex;
+pub mod durable;
 pub mod host;
 pub mod rawlog;
 mod stdio;

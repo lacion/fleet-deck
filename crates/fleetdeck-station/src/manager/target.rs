@@ -49,6 +49,8 @@ struct Live {
     /// `None` after a stop took the session.
     session: Option<Box<dyn LiveSession>>,
     turns: Arc<SessionTurns>,
+    /// A session under a shim (DL-113); `session` is then `None`.
+    durable: Option<shim_target::DurableLive>,
 }
 
 type Sessions = Arc<StdMutex<HashMap<SessionId, Arc<Mutex<Live>>>>>;
@@ -62,6 +64,7 @@ pub struct SessionTarget {
     git: GitOptions,
     limits: Limits,
     fences: super::turns::Fences,
+    shims: Option<shim_target::ShimSettings>,
 }
 
 impl std::fmt::Debug for SessionTarget {
@@ -83,6 +86,7 @@ impl SessionTarget {
             git: GitOptions::isolated(),
             limits: Limits::default(),
             fences: super::turns::Fences::default(),
+            shims: None,
         }
     }
 
@@ -138,6 +142,11 @@ impl SessionTarget {
                 .await;
             return Dispatch::NotDispatched("unknown_provider".into());
         };
+        if let Some((shims, launch)) = self.durable_launch(&adapter, spec) {
+            return self
+                .start_durable(effect, spec, prompt, &shims, launch)
+                .await;
+        }
         let turns = SessionTurns::open(
             self.store.clone(),
             Arc::clone(&self.ids),
@@ -197,6 +206,7 @@ impl SessionTarget {
                     process: process.clone(),
                     session: Some(session),
                     turns,
+                    durable: None,
                 })),
             );
         }
@@ -241,6 +251,10 @@ impl SessionTarget {
         let mut live = live.lock().await;
         if effect.process_incarnation.as_ref() != Some(&live.process) {
             return Dispatch::NotDispatched("process_changed".into());
+        }
+        if let Some(durable) = live.durable.as_ref() {
+            let turns = Arc::clone(&live.turns);
+            return self.operate_durable(effect, durable, &turns).await;
         }
         if let EffectPayload::Stop { how } = &effect.payload {
             let Some(mut session) = live.session.take() else {
@@ -416,6 +430,11 @@ async fn pump(
         }
     }
 }
+
+#[path = "shim_target.rs"]
+mod shim_target;
+
+pub use shim_target::{REASON_REVERT_UNSUPPORTED, ShimSettings};
 
 #[cfg(test)]
 mod classify_tests {

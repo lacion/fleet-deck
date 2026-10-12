@@ -239,6 +239,10 @@ impl ProviderAdapter for ClaudeAdapter {
         Ok(Box::new(self.start_session(spec, sink, Origin::New).await?))
     }
 
+    fn durable_launch(&self, spec: &SessionSpec) -> Result<crate::durable::DurableLaunch> {
+        self.launch_durable(spec)
+    }
+
     async fn resume(
         &self,
         native_id: &NativeSessionId,
@@ -632,3 +636,6 @@ impl Drop for ClaudeSession {
 #[cfg(test)]
 #[path = "driver_tests.rs"]
 mod tests;
+
+#[path = "durable_launch.rs"]
+mod durable_launch;

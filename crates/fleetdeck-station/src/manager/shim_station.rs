@@ -23,7 +23,7 @@ use std::time::Duration;
 
 use fleetdeck_proto::event::ProviderKind;
 use fleetdeck_proto::{SessionId, SessionSummary};
-use fleetdeck_providers::host::shim::host::{AckMode, Attached, ShimHost};
+use fleetdeck_providers::host::shim::host::{AckMode, Attached, ShimHost, ShimProcess};
 use fleetdeck_providers::{claude, codex};
 
 use super::durable::DriverError;
@@ -63,6 +63,34 @@ impl Durable {
         }
     }
 
+    /// Writes the first input of a launch (the prompt of `start`) as
+    /// adapter-generated frames: the provider's `session.started` already
+    /// confirmed the start effect, so the input cannot be claimed under it.
+    /// The frames are committed with the adapter state before they leave
+    /// and settle like every generated frame after a restart (DL-113).
+    ///
+    /// # Errors
+    /// The core refused the input, or a store error.
+    pub async fn first_input(
+        &self,
+        effect: &crate::store::Effect,
+    ) -> Result<(), super::durable::DriverError> {
+        use super::durable::DurableCore as _;
+        match self {
+            Self::Claude(d) => d.internal(|c| c.command(effect)).await,
+            Self::Codex(d) => d.internal(|c| c.command(effect)).await,
+        }
+    }
+
+    /// The shim process of the driver.
+    #[must_use]
+    pub fn process(&self) -> Arc<ShimProcess> {
+        match self {
+            Self::Claude(d) => Arc::clone(d.process()),
+            Self::Codex(d) => Arc::clone(d.process()),
+        }
+    }
+
     /// Stops the driver's output pump without touching the shim (tests and
     /// station shutdown).
     pub async fn abandon(&self) {
@@ -73,10 +101,15 @@ impl Durable {
     }
 }
 
-/// The adapter configs of restored sessions, built from their summaries.
+/// Builds the core config of a restored session from its summary.
+pub type ConfigOf<T> = Box<dyn Fn(&SessionSummary) -> Option<T> + Send + Sync>;
+
+/// The adapter configs of restored sessions, built from their summaries;
+/// `None` when the station has no durable driver for the session's
+/// provider instance (the row then ends `lost`, [`REASON_NO_DRIVER`]).
 pub struct Configs {
-    pub claude: Box<dyn Fn(&SessionSummary) -> claude::CoreConfig + Send + Sync>,
-    pub codex: Box<dyn Fn(&SessionSummary) -> codex::CoreConfig + Send + Sync>,
+    pub claude: ConfigOf<claude::CoreConfig>,
+    pub codex: ConfigOf<codex::CoreConfig>,
 }
 
 impl std::fmt::Debug for Configs {
@@ -118,6 +151,18 @@ pub async fn recover_station(
     let mut ended = Vec::new();
     for (row, outcome) in recover_shims(store, host, AckMode::Manual, in_flight_wait).await? {
         let Recovered::Reattached(attached) = outcome else {
+            if matches!(outcome, Recovered::NeverStarted) {
+                // The intact journal proves that no provider was spawned:
+                // the start effect was not dispatched (§3.2 step 1). Every
+                // other outcome leaves it to the generic recovery
+                // (`outcome_unknown`).
+                store
+                    .shim_retire_start(
+                        row.session_id.clone(),
+                        super::shims::reason::SHIM_NEVER_STARTED,
+                    )
+                    .await?;
+            }
             ended.push((row.shim_id.clone(), outcome.name().to_owned()));
             continue;
         };
@@ -162,12 +207,18 @@ async fn restore_one(
     };
     let driver = match summary.provider {
         Some(ProviderKind::Claude) => {
-            DurableClaude::restore(store, attached, (configs.claude)(&summary), wait)
+            let Some(config) = (configs.claude)(&summary) else {
+                return Ok(Err(REASON_NO_DRIVER.to_owned()));
+            };
+            DurableClaude::restore(store, attached, config, wait)
                 .await
                 .map(Durable::Claude)
         }
         Some(ProviderKind::Codex) => {
-            DurableCodex::restore(store, attached, (configs.codex)(&summary), wait)
+            let Some(config) = (configs.codex)(&summary) else {
+                return Ok(Err(REASON_NO_DRIVER.to_owned()));
+            };
+            DurableCodex::restore(store, attached, config, wait)
                 .await
                 .map(Durable::Codex)
         }

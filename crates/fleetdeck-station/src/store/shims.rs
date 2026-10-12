@@ -434,6 +434,24 @@ impl Store {
         call(&self.inner.db, move |conn| get(conn, &shim_id)).await
     }
 
+    /// The ids of the open shim rows of `session`.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn shims_of_session(&self, session: SessionId) -> Result<Vec<String>> {
+        call(&self.inner.db, move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT shim_id FROM shims
+                 WHERE session_id = ?1 AND state IN ('starting', 'running')",
+            )?;
+            let rows = stmt
+                .query_map([session.as_str()], |r| r.get(0))?
+                .collect::<rusqlite::Result<Vec<String>>>()?;
+            Ok(rows)
+        })
+        .await
+    }
+
     /// The open rows of this incarnation, `starting` rows first (ADR-005
     /// §3.2).
     ///

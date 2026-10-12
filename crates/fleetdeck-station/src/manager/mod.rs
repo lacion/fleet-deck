@@ -123,7 +123,54 @@ impl SessionManager {
         adapters: Adapters,
         ids: SharedIds,
     ) -> Result<Self> {
-        store.recover(Vec::new()).await?;
+        Self::start_inner(store, policy, adapters, ids, None).await
+    }
+
+    /// [`Self::start`] for a station that hosts sessions under shims
+    /// (ADR-005, DL-113): the station start first recovers every shim row
+    /// and restores the durable drivers ([`shim_station::recover_station`]),
+    /// then runs the generic recovery with the restored processes as live;
+    /// the restored sessions stay live. New sessions whose adapter has a
+    /// durable driver launch under a shim.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn start_with_shims(
+        store: Store,
+        policy: Policy,
+        adapters: Adapters,
+        ids: SharedIds,
+        shims: target::ShimSettings,
+    ) -> Result<Self> {
+        Self::start_inner(store, policy, adapters, ids, Some(shims)).await
+    }
+
+    async fn start_inner(
+        store: Store,
+        policy: Policy,
+        adapters: Adapters,
+        ids: SharedIds,
+        shims: Option<target::ShimSettings>,
+    ) -> Result<Self> {
+        let restored = match &shims {
+            None => {
+                store.recover(Vec::new()).await?;
+                Vec::new()
+            }
+            Some(settings) => {
+                let start = shim_station::recover_station(
+                    &store,
+                    &settings.host,
+                    &durable_configs(&adapters),
+                    settings.in_flight_wait,
+                )
+                .await?;
+                if !start.ended.is_empty() {
+                    tracing::warn!(ended = ?start.ended, "shim rows ended at the station start");
+                }
+                start.restored
+            }
+        };
         // Turn checkpoint rows that a crash left open are settled from
         // their refs before any command (DL-082).
         let settled =
@@ -148,11 +195,14 @@ impl SessionManager {
         if recovered > 0 {
             tracing::info!(recovered, "recovered interrupted reverts");
         }
-        let target = Arc::new(SessionTarget::new(
-            store.clone(),
-            adapters,
-            Arc::clone(&ids),
-        ));
+        let mut target = SessionTarget::new(store.clone(), adapters, Arc::clone(&ids));
+        if let Some(settings) = shims {
+            target = target.with_shims(settings);
+        }
+        let target = Arc::new(target);
+        target
+            .adopt(restored, fleetdeck_providers::host::StopPolicy::default())
+            .await;
         let worker = EffectWorker::register(store.clone(), Arc::clone(&target) as Arc<_>).await?;
         let (shutdown, rx) = watch::channel(false);
         let mut tasks = Vec::new();
@@ -262,6 +312,37 @@ impl SessionManager {
             let _ = task.await;
         }
         self.target.stop_all(how).await;
+    }
+}
+
+/// The adapter configs of restored shim sessions: each session's adapter
+/// builds its durable launch from the stored summary.
+fn durable_configs(adapters: &Adapters) -> shim_station::Configs {
+    fn launch(
+        adapters: &Adapters,
+        summary: &fleetdeck_proto::SessionSummary,
+    ) -> Option<fleetdeck_providers::durable::DurableConfig> {
+        let instance = summary.provider_instance.clone()?;
+        let adapter = adapters.get(&instance)?;
+        let spec = fleetdeck_proto::command::SessionSpec {
+            provider_instance: instance,
+            cwd: summary.cwd.clone()?,
+            mode: summary.mode.clone(),
+            model: summary.model.clone(),
+            title: summary.title.clone(),
+        };
+        adapter.durable_launch(&spec).ok().map(|l| l.core)
+    }
+    let (a, b) = (adapters.clone(), adapters.clone());
+    shim_station::Configs {
+        claude: Box::new(move |summary| match launch(&a, summary)? {
+            fleetdeck_providers::durable::DurableConfig::Claude(config) => Some(config),
+            fleetdeck_providers::durable::DurableConfig::Codex { .. } => None,
+        }),
+        codex: Box::new(move |summary| match launch(&b, summary)? {
+            fleetdeck_providers::durable::DurableConfig::Codex { config, .. } => Some(config),
+            fleetdeck_providers::durable::DurableConfig::Claude(_) => None,
+        }),
     }
 }
 

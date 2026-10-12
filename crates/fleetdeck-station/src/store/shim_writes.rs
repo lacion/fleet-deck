@@ -210,7 +210,7 @@ impl Store {
             let mut stmt = conn.prepare(
                 "SELECT w.effect_id, w.write_id, w.write_seq, w.frames FROM shim_writes w
                  JOIN effects e ON e.effect_id = w.effect_id
-                 WHERE w.shim_id = ?1 AND e.state = 'claimed'
+                 WHERE w.shim_id = ?1 AND e.state = 'claimed' AND e.kind != 'start'
                  ORDER BY e.seq, w.write_seq",
             )?;
             let rows = stmt
@@ -293,6 +293,46 @@ impl Store {
         })
         .await
         .map(|(ok, _)| ok)
+    }
+
+    /// Retires the `claimed` start effects of `session` as
+    /// `retired_not_dispatched` with `reason` (ADR-005 §3.2 step 1: an
+    /// intact launch journal proves that no provider was spawned). Returns
+    /// how many changed.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn shim_retire_start(
+        &self,
+        session: SessionId,
+        reason: &'static str,
+    ) -> Result<usize> {
+        self.write(move |conn, now, out: &mut Vec<EventEnvelope>| {
+            let mut stmt = conn.prepare(
+                "SELECT effect_id FROM effects
+                 WHERE session_id = ?1 AND kind = 'start' AND state = 'claimed'",
+            )?;
+            let ids: Vec<String> = stmt
+                .query_map([session.as_str()], |r| r.get(0))?
+                .collect::<rusqlite::Result<_>>()?;
+            let mut changed = 0;
+            for id in ids {
+                if let Some(effect) = effects::effect(conn, &EffectId::from(id))? {
+                    effects::transition(
+                        conn,
+                        &effect,
+                        EffectState::RetiredNotDispatched,
+                        reason,
+                        now,
+                        out,
+                    )?;
+                    changed += 1;
+                }
+            }
+            Ok(changed)
+        })
+        .await
+        .map(|(n, _)| n)
     }
 
     /// The reason that blocks the session's input (see the module

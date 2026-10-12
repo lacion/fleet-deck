@@ -243,6 +243,19 @@ pub trait ProviderAdapter: Send + Sync {
         let _ = (native_id, spec, sink);
         Err(Unsupported::new(Operation::Fork).into())
     }
+    /// The launch of a new session under a durable host (DL-113): the
+    /// process and the core configuration, with the checks of
+    /// [`Self::start`] and without starting anything. Adapters without a
+    /// durable driver refuse it.
+    ///
+    /// # Errors
+    /// The checks of a start fail, or the adapter has no durable driver.
+    fn durable_launch(&self, spec: &SessionSpec) -> Result<crate::durable::DurableLaunch> {
+        let _ = spec;
+        Err(ProviderError::NotReady(
+            "this adapter has no durable driver",
+        ))
+    }
 }
 
 /// One running provider session. Every operation that the provider does not

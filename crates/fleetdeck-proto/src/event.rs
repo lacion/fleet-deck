@@ -152,6 +152,22 @@ pub enum ExpiredReason {
     CancelledByProvider,
 }
 
+/// Why provider output bytes were not parsed (ADR-005 §4.2; DL-113).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "event/")]
+pub enum OutputGapReason {
+    /// One line reached the shim buffer size without a newline; the shim
+    /// dropped it and stopped the provider.
+    OutputFrameTooLarge,
+    /// The provider ended inside a line; the bytes after the last newline
+    /// are not an event.
+    UnterminatedLine,
+    /// The bytes were freed below the shim floor before this station read
+    /// them.
+    BelowFloor,
+}
+
 /// Terminal status of a turn or a run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -435,6 +451,14 @@ pub enum Event {
     /// the source of the title; the title is already normalized.
     #[serde(rename = "session.renamed")]
     SessionRenamed { title: Option<String> },
+    /// Provider stdout bytes `[from, to)` were not parsed as events
+    /// (ADR-005 §4.2; DL-113). Older peers decode this kind as unknown.
+    #[serde(rename = "session.output_gap")]
+    OutputGap {
+        from: u64,
+        to: u64,
+        reason: OutputGapReason,
+    },
     #[serde(rename = "run.completed")]
     RunCompleted {
         run_id: RunId,
@@ -482,7 +506,7 @@ pub enum Event {
 
 impl Event {
     /// Every known kind name, in declaration order.
-    pub const KINDS: [&'static str; 28] = [
+    pub const KINDS: [&'static str; 29] = [
         "session.started",
         "session.state",
         "run.started",
@@ -511,6 +535,7 @@ impl Event {
         "session.ended",
         "revert.updated",
         "session.renamed",
+        "session.output_gap",
     ];
 
     /// The dotted kind name.
@@ -545,6 +570,7 @@ impl Event {
             Self::SessionEnded { .. } => "session.ended",
             Self::RevertUpdated { .. } => "revert.updated",
             Self::SessionRenamed { .. } => "session.renamed",
+            Self::OutputGap { .. } => "session.output_gap",
         }
     }
 

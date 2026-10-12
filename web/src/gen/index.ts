@@ -39,6 +39,7 @@ export * from "./event/EventEnvelope";
 export * from "./event/ExpiredReason";
 export * from "./event/FileChange";
 export * from "./event/InputState";
+export * from "./event/OutputGapReason";
 export * from "./event/ProviderKind";
 export * from "./event/RateLimit";
 export * from "./event/RawRef";
