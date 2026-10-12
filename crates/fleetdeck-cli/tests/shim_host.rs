@@ -19,6 +19,8 @@ use fleetdeck_providers::host::{
 };
 use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, BufReader};
 
+mod shim_reaper;
+
 const WAIT: Duration = Duration::from_secs(10);
 
 /// An echo provider: it answers every stdin line.
@@ -60,6 +62,12 @@ impl Rig {
 
     async fn launch(&self, script: &str, mode: AckMode) -> Attached {
         self.host.launch(&self.spec(script), mode).await.unwrap()
+    }
+}
+
+impl Drop for Rig {
+    fn drop(&mut self) {
+        shim_reaper::reap(&self.host.config().shims_dir());
     }
 }
 
@@ -282,6 +290,21 @@ async fn a_blocked_stdin_write_returns_stdin_closed_after_a_kill() {
     assert_eq!(report.cause, EndCause::Killed);
     let result = tokio::time::timeout(WAIT, writer).await.unwrap().unwrap();
     assert!(matches!(result, Err(HostError::StdinClosed)), "{result:?}");
+}
+
+/// A kill sent at once after the launch can reach the shim before the
+/// exec helper has called `setsid()`. It still ends the provider (the
+/// shim signals the child itself when its group does not exist yet).
+#[tokio::test]
+async fn a_kill_right_after_the_launch_ends_the_provider() {
+    let rig = Rig::new();
+    for _ in 0..10 {
+        let attached = rig.launch("sleep 60", AckMode::OnDelivery).await;
+        let report = tokio::time::timeout(Duration::from_secs(5), attached.process.kill())
+            .await
+            .expect("the kill ends the provider without a wait for its natural exit");
+        assert_eq!(report.cause, EndCause::Killed);
+    }
 }
 
 #[tokio::test]

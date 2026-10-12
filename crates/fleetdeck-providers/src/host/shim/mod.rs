@@ -14,6 +14,7 @@
 //! table, adapter checkpoints and recovery come in later steps of 7-1. Until the real-process tests of ADR-005 §9 pass, the station host
 //! stays `direct` (ADR-005 §2 "Selection").
 
+pub mod attach;
 pub mod client;
 pub mod host;
 pub mod identity;
@@ -23,6 +24,7 @@ pub mod output;
 pub mod proof;
 pub mod server;
 pub mod settle;
+pub mod start;
 pub mod wire;
 pub mod writes;
 

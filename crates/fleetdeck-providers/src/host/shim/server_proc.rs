@@ -80,10 +80,20 @@ pub(super) fn signal_group(pid: u32, sig: rustix::process::Signal) {
     else {
         return;
     };
-    if let Err(e) = rustix::process::kill_process_group(pid, sig)
-        && e != rustix::io::Errno::SRCH
-    {
-        tracing::warn!(?sig, error = %e, "cannot signal the provider group");
+    match rustix::process::kill_process_group(pid, sig) {
+        Ok(()) => {}
+        // No such group yet: the exec helper has not called `setsid()`, so
+        // the child is still in the shim's group. Signal the child itself;
+        // it has started nothing else. A signal sent here is never lost
+        // (a kill right after the launch once waited for a natural exit).
+        Err(rustix::io::Errno::SRCH) => {
+            if let Err(e) = rustix::process::kill_process(pid, sig)
+                && e != rustix::io::Errno::SRCH
+            {
+                tracing::warn!(?sig, error = %e, "cannot signal the provider");
+            }
+        }
+        Err(e) => tracing::warn!(?sig, error = %e, "cannot signal the provider group"),
     }
 }
 

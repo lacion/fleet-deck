@@ -33,6 +33,7 @@ pub mod requests;
 pub mod reverts;
 pub mod schema;
 mod sharing;
+pub mod shims;
 mod turn_checkpoints;
 
 use std::path::Path;
@@ -62,6 +63,7 @@ pub use receipts::{Caller, DecideError, Decided, Decision};
 pub use recovery::RecoveryReport;
 pub use requests::{AnswerClaim, AnswerReceipt, RequestState, RuntimeRequest};
 pub use reverts::{NewRevert, RevertRow, RevertStep};
+pub use shims::{NewShim, OutputCommit, ShimRow, ShimState};
 pub use turn_checkpoints::{
     AppTurnId, Finalized, NewTurnCheckpoint, RowSide, RowState, TurnCheckpointRow, Which,
 };

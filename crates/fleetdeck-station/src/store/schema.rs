@@ -267,6 +267,29 @@ CREATE UNIQUE INDEX reverts_active ON reverts(session_id) WHERE step IN
     ('admitted', 'rollback_sent', 'rolled_back', 'restoring', 'reconciliation_required');
 ";
 
+const V9: &str = "
+-- ADR-005 §3 (slice 4, DL-104): one row per shim. The generation is
+-- committed before each attach; the cursor is a committed stdout line
+-- boundary; a running shim always has its provider identity (JSON).
+CREATE TABLE shims (
+    shim_id              TEXT PRIMARY KEY,
+    session_id           TEXT    NOT NULL REFERENCES sessions(session_id),
+    incarnation          TEXT    NOT NULL,
+    state                TEXT    NOT NULL CHECK (state IN
+        ('starting', 'running', 'exited', 'never_started', 'lost')),
+    owner_generation     INTEGER NOT NULL DEFAULT 0,
+    socket_path          TEXT    NOT NULL,
+    provider_identity    TEXT,
+    cursor               INTEGER NOT NULL DEFAULT 0,
+    next_write_seq       INTEGER NOT NULL DEFAULT 1,
+    reason               TEXT,
+    created_at           INTEGER NOT NULL,
+    updated_at           INTEGER NOT NULL,
+    CHECK (state <> 'running' OR provider_identity IS NOT NULL)
+) STRICT;
+CREATE INDEX shims_state ON shims(state, created_at);
+";
+
 /// The `station.db` migrations. V4 is the link epochs table of
 /// `fleetdeck-link` (G1).
 #[must_use]
@@ -280,5 +303,6 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V6),
         M::up(V7),
         M::up(V8),
+        M::up(V9),
     ])
 }

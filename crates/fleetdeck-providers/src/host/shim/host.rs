@@ -26,15 +26,14 @@ use async_trait::async_trait;
 use tokio::io::{AsyncWriteExt as _, DuplexStream};
 use tokio::sync::{mpsc, oneshot, watch};
 
-use super::client::{self, AttachResult, Connection, FrameReader, FrameWriter};
+use super::attach::AttachFailure;
+use super::client::{AttachResult, Connection, FrameReader, FrameWriter};
 use super::identity::{IdentityCheck, check_identity};
-use super::journal::{self, ShimFiles, prepare_dir};
-use super::launch::{EXIT_PUBLISH_AFTER_MS, EXIT_RETRY_MS, LaunchReply, LaunchSpec};
+use super::journal::ShimFiles;
 use super::output::DEFAULT_CAPACITY;
-use super::proof::AttachKey;
 use super::server::STDIN_CLOSED;
 use super::wire::{
-    ExitState, FromShim, GapReason, MAX_PAYLOAD, ProviderIdentity, ToShim, WriteState,
+    ExitState, FromShim, GapReason, MAX_PAYLOAD, ProviderIdentity, Refusal, ToShim, WriteState,
 };
 use crate::host::{
     EndCause, ExitReport, HostError, HostKind, HostedProcess, ProcessControl, ProcessSpec,
@@ -148,61 +147,16 @@ impl ShimHost {
         &self.config
     }
 
-    /// Launches a shim for `spec` and attaches with generation 1.
+    /// Launches a shim for `spec` and attaches with generation 1, with no
+    /// store between the steps (tests and the `SessionHost` path). The
+    /// station uses [`ShimHost::prepare`] and [`ShimHost::start`] and
+    /// commits its row between them.
     pub async fn launch(&self, spec: &ProcessSpec, mode: AckMode) -> Result<Attached, HostError> {
-        let c = &self.config;
-        let spawn_error = |source: io::Error| HostError::Spawn {
-            program: spec.program.display().to_string(),
-            source,
-        };
-        let shims = c.shims_dir();
-        prepare_dir(&shims).map_err(spawn_error)?;
-        let shim_id = ulid::Ulid::new().to_string();
-        let files = ShimFiles::new(&shims, &shim_id);
-        files.create_journal(&c.incarnation).map_err(spawn_error)?;
-        let key = AttachKey::generate()
-            .map_err(|_| spawn_error(io::Error::other("no random bytes for the attach key")))?;
-        files.write_key(&key).map_err(spawn_error)?;
-        let socket_path = journal::socket_path(
-            c.runtime_dir.as_deref(),
-            &c.station_dir,
-            &c.tmp_dir,
-            &c.incarnation,
-            &shim_id,
-        )
-        .ok_or_else(|| spawn_error(io::Error::other("socket_path_too_long")))?;
-        let launch_spec = LaunchSpec {
-            shim_id: shim_id.clone(),
-            incarnation: c.incarnation.clone(),
-            shims_dir: shims,
-            socket_path: socket_path.clone(),
-            buffer_bytes: c.buffer_bytes,
-            exit_publish_after_ms: EXIT_PUBLISH_AFTER_MS,
-            exit_retry_ms: EXIT_RETRY_MS,
-            program: Vec::new(),
-            args: Vec::new(),
-            cwd: Vec::new(),
-            env: Vec::new(),
-        }
-        .provider_from(spec);
-        let launched = client::launch(&c.exe, &launch_spec, &key, c.wait)
+        let prepared = self.prepare(spec)?;
+        let record = self.start(prepared).await?;
+        self.attach(&record, 1, mode, false)
             .await
-            .map_err(|e| spawn_error(io::Error::other(e.to_string())))?;
-        let provider_identity = match launched.reply {
-            LaunchReply::Ready { provider_identity } => provider_identity,
-            other => return Err(spawn_error(io::Error::other(format!("{other:?}")))),
-        };
-        // The shim outlives this handle: tokio never kills it on drop.
-        drop(launched.child);
-        let record = ShimRecord {
-            shim_id,
-            socket_path,
-            provider_identity: Some(provider_identity),
-            generation: 0,
-            cursor: 0,
-            next_write_seq: 1,
-        };
-        self.attach_at(&record, 1, mode).await
+            .map_err(shim_error)
     }
 
     /// Takes over a shim with the next generation and replays from the
@@ -212,35 +166,48 @@ impl ShimHost {
         record: &ShimRecord,
         mode: AckMode,
     ) -> Result<Attached, HostError> {
-        self.attach_at(record, record.generation + 1, mode).await
+        self.attach(record, record.generation + 1, mode, false)
+            .await
+            .map_err(shim_error)
     }
 
-    async fn attach_at(
+    /// Attaches with `generation`, which the caller committed before
+    /// (ADR-005 §3 step 3), and replays from the record cursor. With
+    /// `first_identity`, a record without a provider identity (a `starting`
+    /// row, §3.2 step 1) accepts the identity that the shim reports; the
+    /// caller then commits it before it admits input.
+    ///
+    /// # Errors
+    /// [`AttachFailure`] in the classes of §3.2 steps 2–5.
+    pub async fn attach(
         &self,
         record: &ShimRecord,
         generation: u64,
         mode: AckMode,
-    ) -> Result<Attached, HostError> {
+        first_identity: bool,
+    ) -> Result<Attached, AttachFailure> {
         let c = &self.config;
         let files = ShimFiles::new(&c.shims_dir(), &record.shim_id);
-        let key = files
-            .read_key()
-            .ok_or_else(|| shim_error("the attach key file is missing"))?;
+        let key = files.read_key().ok_or(AttachFailure::NoKey)?;
         let conn = Connection::open(&record.socket_path, c.wait)
             .await
-            .map_err(shim_error)?;
+            .map_err(AttachFailure::of_connect)?;
         if conn.hello.shim_id != record.shim_id {
-            return Err(shim_error("the socket belongs to another shim"));
+            return Err(AttachFailure::WrongShim);
+        }
+        if super::wire::pick_protocol(&conn.hello.protocols).is_none() {
+            return Err(AttachFailure::Incompatible);
         }
         let attached = conn
             .attach(&key, &c.incarnation, generation, c.wait)
             .await
-            .map_err(shim_error)?;
+            .map_err(AttachFailure::Protocol)?;
         let (attachment, frame) = match attached {
             AttachResult::Attached { attachment, frame } => (attachment, frame),
-            AttachResult::Refused(reason) => {
-                return Err(shim_error(format!("the attach was refused: {reason:?}")));
+            AttachResult::Refused(Refusal::Incompatible) => {
+                return Err(AttachFailure::Incompatible);
             }
+            AttachResult::Refused(reason) => return Err(AttachFailure::Refused(reason)),
         };
         let FromShim::Attached {
             provider_identity,
@@ -249,14 +216,16 @@ impl ShimHost {
             ..
         } = frame
         else {
-            return Err(shim_error("the shim sent no attached frame"));
+            return Err(AttachFailure::NoAttachedFrame);
         };
-        if check_identity(
-            record.provider_identity.as_ref(),
-            provider_identity.as_ref(),
-        ) != IdentityCheck::Same
-        {
-            return Err(shim_error("identity_mismatch"));
+        let first = first_identity && record.provider_identity.is_none();
+        let stored = if first {
+            provider_identity.as_ref()
+        } else {
+            record.provider_identity.as_ref()
+        };
+        if check_identity(stored, provider_identity.as_ref()) != IdentityCheck::Same {
+            return Err(AttachFailure::IdentityMismatch);
         }
         let pid = provider_identity.as_ref().map_or(0, |p| p.pid);
         let (reader, mut writer) = attachment.into_split();
@@ -269,7 +238,7 @@ impl ShimHost {
                 &[],
             )
             .await
-            .map_err(shim_error)?;
+            .map_err(AttachFailure::Send)?;
         let (tx, rx) = mpsc::channel(QUEUE);
         tokio::spawn(write_loop(writer, rx));
         let (exit_tx, _) = watch::channel(None);
@@ -309,6 +278,7 @@ impl ShimHost {
         });
         let mut record = record.clone();
         record.generation = generation;
+        record.provider_identity = provider_identity;
         Ok(Attached {
             record,
             process,
