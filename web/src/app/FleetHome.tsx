@@ -3,6 +3,7 @@ import type { AssignActions } from '../assign/assign';
 import { AssignBar } from '../assign/AssignBar';
 import { ConflictRadar, useConflicts } from '../board/ConflictRadar';
 import type { ConflictLoader } from '../board/conflicts';
+import type { FleetExtras } from '../gen';
 import type { FeedItem } from '../board/feed';
 import { Feed } from '../board/FeedPanel';
 import {
@@ -48,6 +49,8 @@ type Props = {
   readonly onHelp?: (() => void) | undefined;
   /** DL-141: start a session with this first prompt on this station (an unrouted task). */
   readonly onSpawnWith?: ((station: string | null, prompt: string) => void) | undefined;
+  /** DL-141: loads `GET /api/fleet/extras` (the card chips); absent in tests without a deck. */
+  readonly extras?: (() => Promise<FleetExtras>) | undefined;
 };
 
 /** Changes when any session changes, so derived panels load again. */
