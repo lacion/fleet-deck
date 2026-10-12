@@ -10,6 +10,8 @@ mod host_cmd;
 mod map;
 mod requests;
 
+mod checkpoint;
+pub use checkpoint::{CHECKPOINT_READS, CHECKPOINT_VERSION};
 mod core;
 
 pub use self::core::{ClaudeCore, CoreConfig, Output};

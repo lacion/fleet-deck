@@ -317,11 +317,23 @@ pub(super) fn register_worker(
 }
 
 /// Claims the oldest queued effect for the worker with `fence`.
-pub(super) fn claim_next(conn: &Connection, fence: u64, now: i64) -> Result<Option<Effect>> {
+pub(super) fn claim_next(
+    conn: &Connection,
+    fence: u64,
+    now: i64,
+    out: &mut Vec<EventEnvelope>,
+) -> Result<Option<Effect>> {
     check_fence(conn, fence)?;
     let oldest = "seq = (SELECT MIN(seq) FROM effects WHERE state = 'queued')";
-    let Some(mut effect) = select(conn, oldest, [])?.pop() else {
-        return Ok(None);
+    let mut effect = loop {
+        let Some(effect) = select(conn, oldest, [])?.pop() else {
+            return Ok(None);
+        };
+        // ADR-005 §6 (DL-108): a queued allow of an expired request never
+        // goes out.
+        if !requests::retire_expired_allow(conn, &effect, now, out)? {
+            break effect;
+        }
     };
     conn.execute(
         "UPDATE effects SET state = 'claimed', fence_token = ?2, updated_at = ?3

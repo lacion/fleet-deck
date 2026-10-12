@@ -14,6 +14,7 @@
 //!   `clientId` is the input id that the host sent as `clientUserMessageId`.
 //! - Server request ids are per-process integers that restart at 0.
 
+mod checkpoint;
 mod core;
 mod driver;
 mod host_cmd;
@@ -25,6 +26,8 @@ pub mod rpc;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod tests_checkpoint;
+#[cfg(test)]
 mod tests_review;
 #[cfg(test)]
 mod tests_rollback;
@@ -34,6 +37,7 @@ use fleetdeck_proto::event::ResponseChannel;
 use fleetdeck_proto::{Capabilities, ProviderInstanceId};
 use serde_json::{Value, json};
 
+pub use self::checkpoint::{CHECKPOINT_READS, CHECKPOINT_VERSION};
 pub use self::core::{CodexCore, Output};
 pub use driver::{
     CodexAdapter, CodexAdapterConfig, CodexSession, Origin, TOKEN_DELTAS, is_token_delta,
@@ -73,7 +77,7 @@ pub const SAFEST_MODE: &str = "untrusted/read-only";
 pub const MAX_MODEL_CHARS: usize = 200;
 
 /// A native mode: approval policy × sandbox, written `"<policy>/<sandbox>"`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Mode {
     pub approval_policy: String,
     pub sandbox: String,
@@ -167,7 +171,7 @@ pub fn capabilities(allow_full_access: bool) -> Capabilities {
 }
 
 /// Settings of a driven thread.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SessionSpec {
     pub model: Option<String>,
     pub effort: Option<String>,

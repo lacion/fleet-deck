@@ -25,7 +25,7 @@ pub enum Output {
 
 /// Ordinal ids such as `turn-3`. Turns and nodes share one counter, the same
 /// as the spike, so recorded host commands name the same ids.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 pub(super) struct Ordinals {
     shared: u64,
     runs: u64,
@@ -50,7 +50,7 @@ impl Ordinals {
 }
 
 /// A tool item of the session.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(super) struct ToolNode {
     pub(super) node_id: NodeId,
     /// Creation order, so tools close in the order they started.
@@ -65,7 +65,7 @@ pub(super) struct ToolNode {
 }
 
 /// A host input and its fate as the app-server reported it.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(super) struct InputEntry {
     pub(super) id: InputId,
     pub(super) origin: RunOrigin,
@@ -85,7 +85,7 @@ impl InputEntry {
 }
 
 /// What a host request was for, so its reply can be mapped.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(super) enum HostRequest {
     Initialize,
     ThreadStart,
@@ -105,8 +105,11 @@ pub(super) enum HostRequest {
 }
 
 /// The sans-IO Codex adapter core of one app-server process.
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct CodexCore {
+    /// Not part of the adapter checkpoint: the restoring station passes it
+    /// again (ADR-005 §2.1; DL-108).
+    #[serde(skip, default = "super::checkpoint::placeholder_config")]
     pub(super) config: CoreConfig,
     pub(super) ids: Ordinals,
     next_host_id: u64,
@@ -138,6 +141,7 @@ pub struct CodexCore {
     /// The input whose `turn/start` opened, or will open, the next turn.
     pub(super) turn_input: Option<InputId>,
     /// A held interrupt and its control id (trap 3).
+    #[serde(with = "super::checkpoint::held")]
     pub(super) interrupt_pending: Option<Option<String>>,
     pub(super) interrupt_requested: bool,
     /// The last `thread/rollback` and its answer (DL-087).

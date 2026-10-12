@@ -33,7 +33,7 @@ use crate::adapter::{Answer, HostInput, ProviderError, Result, answer_input_id};
 /// The longest request detail text.
 const DETAIL_CHARS: usize = 2_000;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(super) struct OpenRequest {
     /// JSON-RPC id (`Value::Null` for message-channel questions).
     native_id: Value,
@@ -49,13 +49,13 @@ pub(super) struct OpenRequest {
 }
 
 /// How a request left the open set.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 enum Closed {
     Answered,
     Expired(ExpiredReason),
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 pub(super) struct Requests {
     next: u64,
     open: BTreeMap<u64, (String, OpenRequest)>,

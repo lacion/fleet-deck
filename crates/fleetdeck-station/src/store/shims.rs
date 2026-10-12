@@ -17,10 +17,12 @@
 use std::path::PathBuf;
 
 use fleetdeck_proto::{EventEnvelope, SessionId};
+use fleetdeck_providers::checkpoint::AdapterCheckpoint;
 use fleetdeck_providers::host::shim::host::ShimRecord;
 use fleetdeck_providers::host::shim::wire::ProviderIdentity;
 use rusqlite::{Connection, OptionalExtension as _, Row, params};
 
+use super::requests::RequestTime;
 use super::{NewEvent, Result, Store, StoreError, call, log, to_i64, to_u64};
 
 /// The life of a shim row.
@@ -307,6 +309,32 @@ impl Store {
         cursor: u64,
         events: Vec<NewEvent>,
     ) -> Result<OutputCommit> {
+        self.shim_commit_output_with(shim_id, generation, cursor, events, OutputMeta::default())
+            .await
+    }
+
+    /// [`Self::shim_commit_output`] with the read time of the output and
+    /// the adapter checkpoint after it, both in the same transaction
+    /// (ADR-005 §2.1 and §6; DL-108). A request that the events open gets
+    /// `meta.read_at` as its request time.
+    ///
+    /// # Errors
+    /// As [`Self::shim_commit_output`]; a checkpoint that does not
+    /// serialize is [`StoreError::Corrupt`].
+    pub async fn shim_commit_output_with(
+        &self,
+        shim_id: String,
+        generation: u64,
+        cursor: u64,
+        events: Vec<NewEvent>,
+        meta: OutputMeta,
+    ) -> Result<OutputCommit> {
+        let checkpoint = meta
+            .checkpoint
+            .map(|c| c.to_json())
+            .transpose()
+            .map_err(|e| StoreError::Corrupt(e.to_string()))?;
+        let time = meta.read_at;
         let (result, out) = self
             .write(move |conn, now, out| {
                 let Some(found) = get(conn, &shim_id)? else {
@@ -321,7 +349,10 @@ impl Store {
                     });
                 }
                 for event in events {
-                    out.push(log::append_one(conn, &found.session_id, event, now)?);
+                    out.push(log::append_at(conn, &found.session_id, event, now, time)?);
+                }
+                if let Some(text) = &checkpoint {
+                    store_checkpoint(conn, &shim_id, text, now)?;
                 }
                 conn.execute(
                     "UPDATE shims SET cursor = ?2, updated_at = ?3 WHERE shim_id = ?1",
@@ -414,3 +445,47 @@ impl Store {
 #[cfg(test)]
 #[path = "shims_tests.rs"]
 mod tests;
+
+/// The extra contents of an output transaction (DL-108).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct OutputMeta {
+    /// The read time of the output chunk (the shim's `read_at`), or
+    /// [`RequestTime::Unprovable`]; [`RequestTime::Now`] for a live read.
+    pub read_at: RequestTime,
+    /// The adapter state after the output.
+    pub checkpoint: Option<AdapterCheckpoint>,
+}
+
+pub(super) fn store_checkpoint(
+    conn: &Connection,
+    shim_id: &str,
+    text: &str,
+    now: i64,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE shims SET adapter_checkpoint = ?2, updated_at = ?3 WHERE shim_id = ?1",
+        params![shim_id, text, now],
+    )?;
+    Ok(())
+}
+
+impl Store {
+    /// The latest committed adapter checkpoint of a shim, as stored text
+    /// (the restorer decodes it and checks its version).
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn shim_checkpoint(&self, shim_id: String) -> Result<Option<String>> {
+        call(&self.inner.db, move |conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT adapter_checkpoint FROM shims WHERE shim_id = ?1",
+                    [shim_id.as_str()],
+                    |r| r.get::<_, Option<String>>(0),
+                )
+                .optional()?
+                .flatten())
+        })
+        .await
+    }
+}

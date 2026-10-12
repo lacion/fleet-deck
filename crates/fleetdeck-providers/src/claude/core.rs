@@ -43,7 +43,7 @@ pub struct CoreConfig {
 
 /// Ordinal ids such as `turn-3`. Turns, nodes and requests share one counter,
 /// the same as the spike, so recorded host commands name the same ids.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 pub(super) struct Ordinals {
     shared: u64,
     runs: u64,
@@ -68,7 +68,7 @@ impl Ordinals {
 }
 
 /// A host input and its fate as the CLI reported it.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(super) struct InputEntry {
     pub(super) id: InputId,
     /// The client uuid sent with the user message.
@@ -87,7 +87,7 @@ impl InputEntry {
 }
 
 /// The state of a runtime request.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(super) enum ReqState {
     Open,
     Answered(String),
@@ -95,7 +95,7 @@ pub(super) enum ReqState {
 }
 
 /// An open or closed runtime request.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(super) struct RuntimeRequest {
     pub(super) native_request_id: String,
     pub(super) tool_use_id: Option<String>,
@@ -107,7 +107,7 @@ pub(super) struct RuntimeRequest {
 }
 
 /// What a host control request was for, so its response can be mapped.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(super) enum HostRequest {
     Initialize,
     /// With the host's control id, echoed in `interrupt.result`.
@@ -118,7 +118,7 @@ pub(super) enum HostRequest {
 }
 
 /// A tool node of the session.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(super) struct ToolNode {
     pub(super) node_id: NodeId,
     pub(super) name: String,
@@ -129,8 +129,10 @@ pub(super) struct ToolNode {
 }
 
 /// The sans-IO Claude adapter core.
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct ClaudeCore {
+    /// Not part of the adapter checkpoint (ADR-005 §2.1; DL-108).
+    #[serde(skip, default = "super::checkpoint::placeholder_config")]
     pub(super) config: CoreConfig,
     pub(super) ids: Ordinals,
     host_ids: u64,

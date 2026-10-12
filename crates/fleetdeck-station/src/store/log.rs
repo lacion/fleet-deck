@@ -71,6 +71,24 @@ pub(super) fn append_one(
     event: NewEvent,
     now: i64,
 ) -> Result<EventEnvelope> {
+    append_at(
+        conn,
+        session_id,
+        event,
+        now,
+        super::requests::RequestTime::Now,
+    )
+}
+
+/// [`append_one`] for output with a known read time: a runtime request
+/// that the event opens gets `time` as its request time (ADR-005 §6).
+pub(super) fn append_at(
+    conn: &Connection,
+    session_id: &SessionId,
+    event: NewEvent,
+    now: i64,
+    time: super::requests::RequestTime,
+) -> Result<EventEnvelope> {
     let (last_session_seq, summary): (i64, String) = conn
         .query_row(
             "SELECT session_seq, summary FROM sessions WHERE session_id = ?1",
@@ -129,7 +147,7 @@ pub(super) fn append_one(
         ],
     )?;
     // The request table first: an answer is confirmed through its node.
-    super::requests::observe(conn, &envelope, now)?;
+    super::requests::observe(conn, &envelope, now, time)?;
     super::effects::observe(conn, &envelope, now)?;
     Ok(envelope)
 }

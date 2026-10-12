@@ -117,14 +117,9 @@ impl Store {
     /// [`super::StoreError::Fenced`] when a newer worker exists, or a
     /// database error.
     pub async fn claim_next(&self, fence: u64) -> Result<Option<Effect>> {
-        let now = self.now();
-        call(&self.inner.db, move |conn| {
-            let tx = conn.transaction()?;
-            let claimed = effects::claim_next(&tx, fence, now)?;
-            tx.commit()?;
-            Ok(claimed)
-        })
-        .await
+        self.write(move |conn, now, out| effects::claim_next(conn, fence, now, out))
+            .await
+            .map(|(claimed, _)| claimed)
     }
 
     /// Records the dispatch result of a claimed effect.

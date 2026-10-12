@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use fleetdeck_core::ChildEnv;
 use fleetdeck_proto::event::{Event, ProviderKind};
+use fleetdeck_providers::checkpoint::{AdapterCheckpoint, REASON_UNSUPPORTED};
 use fleetdeck_providers::host::shim::host::{AckMode, Attached, ShimHost, ShimHostConfig};
 use fleetdeck_providers::host::shim::journal::{Record, ShimFiles};
 use fleetdeck_providers::host::shim::proof::AttachKey;
@@ -20,8 +21,8 @@ use fleetdeck_station::manager::shims::{
     LaunchError, Recovered, launch_shim, reason, recover_shims,
 };
 use fleetdeck_station::store::{
-    NewEvent, NewSession, NewShim, OfflineApprovalPolicy, OutputCommit, ShimState, Store,
-    StoreConfig,
+    NewEvent, NewSession, NewShim, OfflineApprovalPolicy, OutputCommit, OutputMeta, RequestTime,
+    ShimState, Store, StoreConfig,
 };
 use fleetdeck_testkit::Det;
 use tokio::io::{AsyncBufReadExt as _, BufReader};
@@ -463,4 +464,73 @@ async fn a_shim_that_cannot_start_is_settled_by_recovery_as_never_started() {
     };
     assert_eq!(settled, "shim_never_started");
     assert!(rig.store.shims_to_recover().await.unwrap().is_empty());
+}
+
+/// ADR-005 test 37, station half (DL-108): the station stored an adapter
+/// checkpoint of a version that this build cannot read. Recovery attaches,
+/// finds the checkpoint unreadable, and ends the row `lost`
+/// (`adapter_checkpoint_unsupported`) without a fresh adapter; the shim and
+/// its provider stay alive for a compatible build. A readable checkpoint
+/// keeps the row running.
+#[tokio::test]
+async fn an_unsupported_adapter_checkpoint_version_makes_the_session_not_resumable_without_a_fresh_adapter()
+ {
+    let rig = Rig::new().await;
+    let first = rig.launch("sleep 30").await;
+    let id = first.record.shim_id.clone();
+    let provider = first.process.pid();
+    let readable = AdapterCheckpoint {
+        provider: ProviderKind::Claude,
+        version: fleetdeck_providers::claude::CHECKPOINT_VERSION,
+        state: serde_json::json!({}),
+    };
+    let commit = |checkpoint: AdapterCheckpoint, generation: u64| {
+        rig.store.shim_commit_output_with(
+            id.clone(),
+            generation,
+            0,
+            Vec::new(),
+            OutputMeta {
+                read_at: RequestTime::Now,
+                checkpoint: Some(checkpoint),
+            },
+        )
+    };
+    assert!(matches!(
+        commit(readable.clone(), 1).await.unwrap(),
+        OutputCommit::Committed(_)
+    ));
+    drop(first);
+    // A readable checkpoint: the row is reattached.
+    let (_, outcome) = rig.recover().await.pop().unwrap();
+    let second = reattached(outcome);
+    assert_eq!(rig.state(&id).await.0, ShimState::Running);
+    // A newer build stored version + 1, then this build starts again.
+    let newer = AdapterCheckpoint {
+        version: fleetdeck_providers::claude::CHECKPOINT_VERSION + 1,
+        ..readable
+    };
+    assert!(matches!(
+        commit(newer, second.record.generation).await.unwrap(),
+        OutputCommit::Committed(_)
+    ));
+    drop(second);
+    let (_, outcome) = rig.recover().await.pop().unwrap();
+    assert!(
+        matches!(outcome, Recovered::Lost(REASON_UNSUPPORTED)),
+        "{outcome:?}"
+    );
+    let (state, why, _) = rig.state(&id).await;
+    assert_eq!(
+        (state, why.as_deref()),
+        (ShimState::Lost, Some("adapter_checkpoint_unsupported"))
+    );
+    assert!(
+        rig.recover().await.is_empty(),
+        "the row is not recovered again"
+    );
+    assert!(alive(provider), "no fresh adapter and no kill");
+    let shim = shim_pid(&id).unwrap();
+    kill9(provider);
+    kill9(shim);
 }

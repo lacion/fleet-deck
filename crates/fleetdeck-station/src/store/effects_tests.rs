@@ -779,3 +779,6 @@ mod m2_gate;
 #[path = "answer_input_tests.rs"]
 mod answer_input;
 use interrupt::interrupted;
+
+#[path = "request_time_tests.rs"]
+mod request_time;

@@ -17,7 +17,7 @@ use crate::adapter::{ProviderError, Result};
 pub const ROLLBACK_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The last `thread/rollback` of a core.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) enum RollbackState {
     /// On the wire; no answer yet.
     Sent,

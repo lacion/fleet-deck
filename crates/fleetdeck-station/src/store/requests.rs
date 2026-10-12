@@ -60,6 +60,8 @@ pub struct RuntimeRequest {
     pub receipt: Option<AnswerReceipt>,
     pub deny_at: Option<i64>,
     pub requested_at: i64,
+    /// `requested_at` is the proven request time (DL-108).
+    pub time_proven: bool,
 }
 
 impl RuntimeRequest {
@@ -114,10 +116,11 @@ type RawRow = (
     Option<String>,
     Option<i64>,
     i64,
+    bool,
 );
 
 const COLUMNS: &str = "request_id, session_id, process_incarnation, node_id, kind, options,
-    response_channel, state, receipt, deny_at, requested_at";
+    response_channel, state, receipt, deny_at, requested_at, time_proven";
 
 fn row(r: &rusqlite::Row<'_>) -> rusqlite::Result<RawRow> {
     Ok((
@@ -132,11 +135,13 @@ fn row(r: &rusqlite::Row<'_>) -> rusqlite::Result<RawRow> {
         r.get(8)?,
         r.get(9)?,
         r.get(10)?,
+        r.get(11)?,
     ))
 }
 
 fn parse(raw: RawRow) -> Result<RuntimeRequest> {
-    let (id, session, process, node, kind, options, channel, state, receipt, deny_at, at) = raw;
+    let (id, session, process, node, kind, options, channel, state, receipt, deny_at, at, proven) =
+        raw;
     Ok(RuntimeRequest {
         request_id: id.into(),
         session_id: session.into(),
@@ -149,6 +154,7 @@ fn parse(raw: RawRow) -> Result<RuntimeRequest> {
         receipt: receipt.map(|r| serde_json::from_str(&r)).transpose()?,
         deny_at,
         requested_at: at,
+        time_proven: proven,
     })
 }
 
@@ -181,17 +187,63 @@ fn policy(conn: &Connection, session: &SessionId) -> Result<OfflineApprovalPolic
 }
 
 /// The `deny_after` deadline of a request that opened at `requested_at`.
-fn deadline(policy: OfflineApprovalPolicy, requested_at: i64) -> Result<Option<i64>> {
+/// A request without a proven time is due at once (ADR-005 §6; DL-108).
+fn deadline(policy: OfflineApprovalPolicy, requested_at: i64, proven: bool) -> Result<Option<i64>> {
     Ok(match policy {
         OfflineApprovalPolicy::Wait => None,
+        OfflineApprovalPolicy::DenyAfter { .. } if !proven => Some(requested_at),
         OfflineApprovalPolicy::DenyAfter { after_ms } => {
             Some(requested_at.saturating_add(to_i64(after_ms)?))
         }
     })
 }
 
+/// The time of the output that carried an event (ADR-005 §6; DL-108).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RequestTime {
+    /// A live read: the transaction time.
+    #[default]
+    Now,
+    /// A replayed or late commit of output that the shim read at this time.
+    Read(i64),
+    /// No proven time: a `deny_after` request is due at once.
+    Unprovable,
+}
+
+impl RequestTime {
+    /// The stored request time and whether it is proven. A read time is
+    /// never later than the transaction time.
+    fn at(self, now: i64) -> (i64, bool) {
+        match self {
+            Self::Now => (now, true),
+            Self::Read(at) => (at.min(now), true),
+            Self::Unprovable => (now, false),
+        }
+    }
+}
+
+/// True when `req` passed its own deadline at `now`, so an allow answer must
+/// not go out (ADR-005 §6: queued allows are rechecked before dispatch).
+fn past_deadline(conn: &Connection, req: &RuntimeRequest, now: i64) -> Result<bool> {
+    let due = deadline(
+        policy(conn, &req.session_id)?,
+        req.requested_at,
+        req.time_proven,
+    )?;
+    Ok(due.is_some_and(|at| at <= now))
+}
+
+fn is_deny(option_id: &str) -> bool {
+    DENY_OPTION_IDS.contains(&option_id)
+}
+
 /// Keeps the table in step with the event stream (inside the append).
-pub(super) fn observe(conn: &Connection, envelope: &EventEnvelope, now: i64) -> Result<()> {
+pub(super) fn observe(
+    conn: &Connection,
+    envelope: &EventEnvelope,
+    now: i64,
+    time: RequestTime,
+) -> Result<()> {
     let EventBody::Known(event) = &envelope.event else {
         return Ok(());
     };
@@ -205,13 +257,14 @@ pub(super) fn observe(conn: &Connection, envelope: &EventEnvelope, now: i64) -> 
             response,
             ..
         } => {
-            let deny_at = deadline(policy(conn, session)?, now)?;
+            let (requested_at, proven) = time.at(now);
+            let deny_at = deadline(policy(conn, session)?, requested_at, proven)?;
             let process = effects::live_process(conn, session)?;
             conn.execute(
                 "INSERT INTO runtime_requests (request_id, session_id, process_incarnation,
                      node_id, kind, options, response_channel, state, deny_at, requested_at,
-                     updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'open', ?8, ?9, ?9)
+                     time_proven, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'open', ?8, ?9, ?10, ?11)
                  ON CONFLICT (request_id) DO NOTHING",
                 params![
                     request_id.as_str(),
@@ -222,6 +275,8 @@ pub(super) fn observe(conn: &Connection, envelope: &EventEnvelope, now: i64) -> 
                     json(options)?,
                     enum_name(response)?,
                     deny_at,
+                    requested_at,
+                    proven,
                     now,
                 ],
             )?;
@@ -277,6 +332,10 @@ pub(super) fn claim_answer(
     if !req.options.iter().any(|o| o.option_id == option_id) {
         return Ok(AnswerClaim::UnknownOption);
     }
+    if !is_deny(option_id) && past_deadline(conn, &req, now)? {
+        // The deny sweep answers it; a late allow never goes out.
+        return Ok(AnswerClaim::Closed(RequestState::Expired));
+    }
     let receipt = AnswerReceipt {
         command_id: command_id.cloned(),
         option_id: option_id.to_owned(),
@@ -321,7 +380,11 @@ pub(super) fn release_unsent_answer(
     {
         return Ok(false);
     }
-    let deny_at = deadline(policy(conn, &req.session_id)?, req.requested_at)?;
+    let deny_at = deadline(
+        policy(conn, &req.session_id)?,
+        req.requested_at,
+        req.time_proven,
+    )?;
     conn.execute(
         "UPDATE runtime_requests SET receipt = NULL, deny_at = ?2, updated_at = ?3
          WHERE request_id = ?1 AND state = 'open'",
@@ -412,3 +475,45 @@ pub(super) fn deny_overdue(
     }
     Ok(sent)
 }
+
+/// The claim-time recheck of a queued answer effect (ADR-005 §6; DL-108):
+/// an allow for a request past its own deadline is retired as not
+/// dispatched, and its answer slot opens again so the deny sweep sends the
+/// safe deny. `true` when the effect was retired.
+pub(super) fn retire_expired_allow(
+    conn: &Connection,
+    effect: &Effect,
+    now: i64,
+    out: &mut Vec<EventEnvelope>,
+) -> Result<bool> {
+    let EffectPayload::Answer {
+        request_id,
+        decision,
+        by,
+    } = &effect.payload
+    else {
+        return Ok(false);
+    };
+    if is_deny(&decision.option_id) {
+        return Ok(false);
+    }
+    let Some(req) = request(conn, request_id)? else {
+        return Ok(false);
+    };
+    if req.state != RequestState::Open || !past_deadline(conn, &req, now)? {
+        return Ok(false);
+    }
+    effects::transition(
+        conn,
+        effect,
+        effects::EffectState::RetiredNotDispatched,
+        REASON_REQUEST_EXPIRED,
+        now,
+        out,
+    )?;
+    release_unsent_answer(conn, effect, request_id, &decision.option_id, *by, now)?;
+    Ok(true)
+}
+
+/// The reason of an allow that was not sent because its request expired.
+pub const REASON_REQUEST_EXPIRED: &str = "request_expired";

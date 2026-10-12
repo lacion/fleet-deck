@@ -4,6 +4,7 @@
 //! their processes (PLAN §6.1, A9).
 
 pub mod adapter;
+pub mod checkpoint;
 pub mod claude;
 pub mod codex;
 pub mod host;

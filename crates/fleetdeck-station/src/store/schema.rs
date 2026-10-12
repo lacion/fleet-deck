@@ -318,6 +318,16 @@ const V11: &str = "
 ALTER TABLE shim_writes ADD COLUMN frames INTEGER NOT NULL DEFAULT 1;
 ";
 
+const V12: &str = "
+-- ADR-005 §2.1 and §6 (DL-108): the latest committed adapter checkpoint of
+-- a shim, written in the claim transaction of an outbound frame and in the
+-- output transaction; and whether the request time of a runtime request is
+-- proven (live read time or the shim's read_at). An unprovable time makes a
+-- deny_after request due at once. Old rows used the live read time.
+ALTER TABLE shims ADD COLUMN adapter_checkpoint TEXT;
+ALTER TABLE runtime_requests ADD COLUMN time_proven INTEGER NOT NULL DEFAULT 1;
+";
+
 /// The `station.db` migrations. V4 is the link epochs table of
 /// `fleetdeck-link` (G1).
 #[must_use]
@@ -334,5 +344,6 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V9),
         M::up(V10),
         M::up(V11),
+        M::up(V12),
     ])
 }

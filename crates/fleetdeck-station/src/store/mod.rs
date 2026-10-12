@@ -62,10 +62,12 @@ pub use effects::{
 };
 pub use receipts::{Caller, DecideError, Decided, Decision};
 pub use recovery::RecoveryReport;
-pub use requests::{AnswerClaim, AnswerReceipt, RequestState, RuntimeRequest};
+pub use requests::{
+    AnswerClaim, AnswerReceipt, REASON_REQUEST_EXPIRED, RequestState, RequestTime, RuntimeRequest,
+};
 pub use reverts::{NewRevert, RevertRow, RevertStep};
 pub use shim_writes::ClaimedWrite;
-pub use shims::{NewShim, OutputCommit, ShimRow, ShimState};
+pub use shims::{NewShim, OutputCommit, OutputMeta, ShimRow, ShimState};
 pub use turn_checkpoints::{
     AppTurnId, Finalized, NewTurnCheckpoint, RowSide, RowState, TurnCheckpointRow, Which,
 };

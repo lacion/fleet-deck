@@ -19,6 +19,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use fleetdeck_proto::SessionId;
+use fleetdeck_proto::event::ProviderKind;
+use fleetdeck_providers::checkpoint;
 use fleetdeck_providers::host::shim::attach::AttachFailure;
 use fleetdeck_providers::host::shim::host::{AckMode, Attached, ShimHost};
 use fleetdeck_providers::host::shim::journal::{Fence, LaunchEvidence, ShimFiles};
@@ -186,7 +188,14 @@ pub async fn recover_shim(
                 in_flight_wait,
             )
             .await?;
-            return Ok(outcome);
+            // §2.1: a stored adapter checkpoint that this build cannot read
+            // makes the session `not_resumable`; the station never
+            // substitutes a fresh adapter, and the shim stays alive for a
+            // compatible build (dropping the attachment only detaches).
+            match unreadable_checkpoint(store, row).await? {
+                None => return Ok(outcome),
+                Some(why) => (ShimState::Lost, why),
+            }
         }
         Recovered::Exited(_) => (ShimState::Exited, reason::EXITED),
         Recovered::NeverStarted => (ShimState::NeverStarted, reason::SHIM_NEVER_STARTED),
@@ -195,7 +204,27 @@ pub async fn recover_shim(
     store
         .shim_end(row.shim_id.clone(), state, why.to_owned())
         .await?;
+    if matches!(outcome, Recovered::Reattached(_)) {
+        return Ok(Recovered::Lost(why));
+    }
     Ok(outcome)
+}
+
+/// The reason why the stored adapter checkpoint of `row` cannot be
+/// restored, or `None` when it can (or none is stored yet: a shim whose
+/// adapter never committed a transition has nothing to restore).
+async fn unreadable_checkpoint(store: &Store, row: &ShimRow) -> Result<Option<&'static str>> {
+    let Some(text) = store.shim_checkpoint(row.shim_id.clone()).await? else {
+        return Ok(None);
+    };
+    let provider = store
+        .summary(row.session_id.clone())
+        .await?
+        .and_then(|s| s.provider)
+        .unwrap_or(ProviderKind::Unknown);
+    Ok(checkpoint::readable(provider, &text)
+        .err()
+        .map(|e| e.reason()))
 }
 
 /// Settles every open row of this incarnation, `starting` rows first.

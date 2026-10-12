@@ -16,6 +16,7 @@
 //!   every input command and still admits interrupt and stop.
 
 use fleetdeck_proto::{EventEnvelope, SessionId};
+use fleetdeck_providers::checkpoint::AdapterCheckpoint;
 use fleetdeck_providers::host::shim::settle::EffectResult;
 use fleetdeck_providers::host::shim::stdin::WriteTag;
 use rusqlite::{Connection, OptionalExtension as _, params};
@@ -107,6 +108,31 @@ impl Store {
         ordinal: u32,
         frames: u32,
     ) -> Result<Option<WriteTag>> {
+        self.shim_claim_write_with(shim_id, generation, effect_id, ordinal, frames, None)
+            .await
+    }
+
+    /// [`Self::shim_claim_write`] that also stores `checkpoint`, the adapter
+    /// state after the transition that produced the frame, in the same
+    /// transaction (ADR-005 §2.1; DL-108). Nothing is stored when the claim
+    /// is refused.
+    ///
+    /// # Errors
+    /// As [`Self::shim_claim_write`]; a checkpoint that does not serialize
+    /// is [`StoreError::Corrupt`].
+    pub async fn shim_claim_write_with(
+        &self,
+        shim_id: String,
+        generation: u64,
+        effect_id: Option<EffectId>,
+        ordinal: u32,
+        frames: u32,
+        checkpoint: Option<AdapterCheckpoint>,
+    ) -> Result<Option<WriteTag>> {
+        let checkpoint = checkpoint
+            .map(|c| c.to_json())
+            .transpose()
+            .map_err(|e| StoreError::Corrupt(e.to_string()))?;
         self.write(move |conn, now, _| {
             if ordinal >= frames {
                 return Err(StoreError::Corrupt(format!(
@@ -163,6 +189,9 @@ impl Store {
                     frames
                 ],
             )?;
+            if let Some(text) = &checkpoint {
+                super::shims::store_checkpoint(conn, &shim_id, text, now)?;
+            }
             Ok(Some(WriteTag {
                 write_id,
                 write_seq,
