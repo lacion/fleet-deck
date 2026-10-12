@@ -5,9 +5,10 @@ use std::time::{Duration, Instant};
 use fleetdeck_core::childenv::ChildEnv;
 use fleetdeck_proto::command::RejectCode;
 use fleetdeck_proto::shell::{ShellChange, ShellState};
+use rustix::process::Signal;
 use tokio::sync::mpsc::Receiver;
 
-use super::{ShellConfig, Shells};
+use super::{Launch, ShellConfig, Shells, handover};
 use crate::manager::policy::Policy;
 use crate::store::OfflineApprovalPolicy;
 
@@ -226,4 +227,31 @@ fn a_handover_and_a_release_are_not_pty_effects_of_their_own() {
         assert_eq!(e.code, RejectCode::InvalidState);
     }
     assert!(s.list().is_empty());
+}
+
+#[test]
+fn closing_an_exited_tui_sends_no_signal() {
+    let root = tempfile::tempdir().expect("root");
+    let s = shells(true, 2);
+    let launch = Launch {
+        program: ("/bin/sh".into(), vec!["-c".into(), "exit 0".into()]),
+        env: env(),
+        session: Some("s1".into()),
+    };
+    let pid = s
+        .spawn("tui", root.path(), 80, 24, 1, launch)
+        .expect("spawn");
+    assert!(pid.is_some());
+    let shell = s.get("tui").expect("the shell is listed");
+    let t0 = Instant::now();
+    while shell.info.lock().expect("info").state != ShellState::Exited {
+        assert!(
+            t0.elapsed() < Duration::from_secs(10),
+            "the TUI did not exit"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    // Its pid may be reused by now: nothing may be sent to it.
+    assert!(!handover::signal_group(&shell, Signal::HUP));
+    assert!(!handover::signal_group(&shell, Signal::KILL));
 }

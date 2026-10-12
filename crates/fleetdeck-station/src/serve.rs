@@ -188,7 +188,11 @@ impl RunningStation {
         let _ = self.shutdown.send(true);
         let _ = self.server.await;
         self.node.shutdown();
-        self.shells.close_all();
+        // The stop waits for the terminal processes (up to the hangup grace).
+        let shells = Arc::clone(&self.shells);
+        if let Err(e) = tokio::task::spawn_blocking(move || shells.close_all()).await {
+            tracing::warn!(error = %e, "shell close");
+        }
         self.manager.shutdown(StopMode::Graceful).await;
         // The pumps store the last events of each process (`session.ended`).
         let deadline = tokio::time::Instant::now() + PUMP_GRACE;

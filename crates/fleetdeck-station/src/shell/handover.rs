@@ -7,6 +7,14 @@
 //! report of the pump, [`spawn_exit_release`]), when the TUI never started,
 //! or when the owner clears a hold that the station cannot see after a
 //! restart (`shell.release`, [`decide_release`]; [`recover_holds`] at start).
+//!
+//! A closed TUI stays in the closing set of [`Shells`] until its process is
+//! reaped, and `shell.release` is refused meanwhile. Every signal to the
+//! process group of a TUI goes through [`signal_group`], which sends nothing
+//! once the leader is reaped: while the leader is not reaped its pid (and so
+//! its group id) cannot be reused. The pump reaps the leader only after it
+//! has marked the shell reaped under the same lock. The station stop closes
+//! every TUI the same way (HUP, grace, KILL; [`Shells::close_all`]).
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -20,10 +28,13 @@ use fleetdeck_proto::command::{Reject, RejectCode};
 use fleetdeck_proto::{Event, ProviderInstanceId, SessionId};
 use fleetdeck_providers::claude::args::{NATIVE_MODES, SAFEST_MODE};
 use fleetdeck_providers::codex::Mode;
-use rustix::process::{Pid, Signal, kill_process_group, test_kill_process};
+use rustix::io::Errno;
+use rustix::process::{
+    Pid, Signal, WaitId, WaitIdOptions, kill_process_group, test_kill_process, waitid,
+};
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use super::{Shell, ShellState, Shells, lock};
+use super::{Shell, Shells, lock};
 use crate::manager::policy::Policy;
 use crate::manager::resume::{not_held, resumable};
 use crate::store::shell_effects::PendingShell;
@@ -31,7 +42,7 @@ use crate::store::{DecideError, Decision, Store, StoreError};
 
 /// How long a closed TUI gets after SIGHUP before its process group is
 /// killed.
-const HANGUP_GRACE: Duration = Duration::from_secs(3);
+pub(super) const HANGUP_GRACE: Duration = Duration::from_secs(3);
 
 /// What the station needs to start the TUI of one provider instance.
 #[derive(Clone)]
@@ -164,6 +175,11 @@ pub(super) fn decide_release(
             "shell `{shell_id}` still runs; close it first"
         )));
     }
+    if shells.holds_process(shell_id) {
+        return Err(invalid_state(format!(
+            "shell `{shell_id}` is closing and its process still runs; try again when it has stopped"
+        )));
+    }
     if pending.iter().any(|p| p.shell_id == shell_id) {
         return Err(invalid_state(format!(
             "shell `{shell_id}` has a pending change; try again when it settles"
@@ -190,45 +206,96 @@ fn pid_of(pid: u32) -> Option<Pid> {
     Pid::from_raw(i32::try_from(pid).ok()?)
 }
 
-/// True when a process with `pid` exists.
-fn process_exists(pid: u32) -> bool {
-    pid_of(pid).is_some_and(|p| test_kill_process(p).is_ok())
+/// What a probe with signal 0 says about a process id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Liveness {
+    /// The process exists and may be signalled.
+    Running,
+    /// No such process (`ESRCH`): the only answer that proves it is gone.
+    Gone,
+    /// The probe cannot tell (`EPERM`, another error, or a pid that is not
+    /// a valid process id): the caller must treat the process as possibly
+    /// alive.
+    Unknown,
+}
+
+/// Probes `pid` with signal 0. Only `ESRCH` is [`Liveness::Gone`].
+#[must_use]
+pub fn liveness(pid: u32) -> Liveness {
+    let Some(target) = pid_of(pid) else {
+        return Liveness::Unknown;
+    };
+    match test_kill_process(target) {
+        Ok(()) => Liveness::Running,
+        Err(Errno::SRCH) => Liveness::Gone,
+        Err(_) => Liveness::Unknown,
+    }
+}
+
+/// Sends `signal` to the process group of a TUI shell, unless its leader is
+/// reaped (or the shell has no pid). The lock of `reaped` is held across the
+/// send and the pump takes it before it reaps, so the group id cannot be
+/// reused between the check and the signal. True when the signal was sent.
+pub(super) fn signal_group(shell: &Shell, signal: Signal) -> bool {
+    let reaped = lock(&shell.reaped);
+    let Some(pid) = shell.pid else { return false };
+    if *reaped {
+        return false;
+    }
+    let Some(target) = pid_of(pid) else {
+        return false;
+    };
+    match kill_process_group(target, signal) {
+        Ok(()) => true,
+        Err(e) => {
+            tracing::debug!(error = %e, pid, ?signal, "terminal signal");
+            false
+        }
+    }
+}
+
+/// Waits until the process of `shell` is a zombie without reaping it, then
+/// marks the shell reaped: from then on [`signal_group`] sends nothing. The
+/// caller reaps the child right after (the pid stays unusable until then).
+pub(super) fn mark_exited(shell: &Shell) {
+    if let Some(target) = shell.pid.and_then(pid_of) {
+        loop {
+            match waitid(
+                WaitId::Pid(target),
+                WaitIdOptions::EXITED | WaitIdOptions::NOWAIT,
+            ) {
+                Err(Errno::INTR) => {}
+                Ok(_) => break,
+                Err(e) => {
+                    tracing::warn!(error = %e, pid = shell.pid, "terminal wait");
+                    break;
+                }
+            }
+        }
+    }
+    *lock(&shell.reaped) = true;
 }
 
 /// Hangs up the process group of a closed TUI (the TUI leads its session
 /// and group: the PTY spawn makes it so). After a grace time the group is
-/// killed when the pump has not reported the exit yet.
-pub(super) fn hang_up(shell: &Arc<Shell>, pid: u32) {
-    let Some(target) = pid_of(pid) else { return };
-    if let Err(e) = kill_process_group(target, Signal::HUP) {
-        tracing::debug!(error = %e, pid, "terminal hangup");
+/// killed unless the pump has reaped the leader by then.
+pub(super) fn hang_up(shell: &Arc<Shell>) {
+    if !signal_group(shell, Signal::HUP) {
         return;
     }
     let shell = Arc::clone(shell);
-    let spawned = std::thread::Builder::new()
-        .name(format!("hangup-{pid}"))
-        .spawn(move || {
-            std::thread::sleep(HANGUP_GRACE);
-            // The pid may be reused once the pump has reaped the child.
-            let running = lock(&shell.info).state == ShellState::Running;
-            if running && test_kill_process(target).is_ok() {
-                tracing::info!(pid, "the terminal ignored the hangup; killing it");
-                if let Err(e) = kill_process_group(target, Signal::KILL) {
-                    tracing::debug!(error = %e, pid, "terminal kill");
-                }
-            }
-        });
+    let name = format!("hangup-{}", shell.pid.unwrap_or_default());
+    let spawned = std::thread::Builder::new().name(name).spawn(move || {
+        std::thread::sleep(HANGUP_GRACE);
+        if signal_group(&shell, Signal::KILL) {
+            tracing::info!(
+                pid = shell.pid,
+                "the terminal ignored the hangup; killing it"
+            );
+        }
+    });
     if let Err(e) = spawned {
-        tracing::warn!(error = %e, pid, "terminal kill timer");
-    }
-}
-
-/// Hangs up a TUI at the station stop (no grace thread: the process ends).
-pub(super) fn hang_up_now(pid: u32) {
-    if let Some(target) = pid_of(pid)
-        && let Err(e) = kill_process_group(target, Signal::HUP)
-    {
-        tracing::debug!(error = %e, pid, "terminal hangup");
+        tracing::warn!(error = %e, "terminal kill timer");
     }
 }
 
@@ -258,7 +325,9 @@ pub fn spawn_exit_release(
 ///
 /// - the stored pid still runs: keep the hold and say why (the owner checks
 ///   the process, then `shell.release`);
-/// - the stored pid is gone: release;
+/// - the stored pid is gone (`ESRCH`): release;
+/// - the stored pid cannot be checked (`EPERM`, another error): keep the
+///   hold and say why;
 /// - no pid and the handover was never dispatched (or failed): release;
 /// - no pid otherwise (the start may have happened): keep the hold.
 ///
@@ -268,17 +337,27 @@ pub async fn recover_holds(store: &Store) -> Result<(), StoreError> {
     for (session, hold) in store.held_sessions().await? {
         let shell = hold.shell_id;
         match hold.pid {
-            Some(pid) if process_exists(pid) => {
-                let reason =
-                    format!("the station restarted; process {pid} may still use this session");
-                store
-                    .note_terminal(session, shell, Some(pid), reason)
-                    .await?;
-            }
-            Some(_) => {
-                let reason = "the station restarted; the terminal process is gone".to_owned();
-                store.release_terminal(session, shell, reason).await?;
-            }
+            Some(pid) => match liveness(pid) {
+                Liveness::Running => {
+                    let reason =
+                        format!("the station restarted; process {pid} may still use this session");
+                    store
+                        .note_terminal(session, shell, Some(pid), reason)
+                        .await?;
+                }
+                Liveness::Unknown => {
+                    let reason = format!(
+                        "the station restarted; it cannot check process {pid}, so the hold stays"
+                    );
+                    store
+                        .note_terminal(session, shell, Some(pid), reason)
+                        .await?;
+                }
+                Liveness::Gone => {
+                    let reason = "the station restarted; the terminal process is gone".to_owned();
+                    store.release_terminal(session, shell, reason).await?;
+                }
+            },
             None => {
                 let state = store.handover_effect_state(shell.clone()).await?;
                 if matches!(
@@ -434,5 +513,27 @@ mod tests {
         assert!(shown.contains("/bin/claude"));
         assert!(!shown.contains("sk-secret"));
         assert!(!shown.contains("ANTHROPIC"));
+    }
+
+    #[test]
+    fn liveness_tells_gone_from_unknown() {
+        assert_eq!(liveness(std::process::id()), Liveness::Running);
+
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let pid = child.id();
+        child.wait().unwrap();
+        assert_eq!(liveness(pid), Liveness::Gone);
+
+        // Not a valid process id at all.
+        assert_eq!(liveness(u32::MAX), Liveness::Unknown);
+
+        // Pid 1 exists: Running for root, otherwise `EPERM` is Unknown.
+        let one = liveness(1);
+        assert_ne!(one, Liveness::Gone);
+        if rustix::process::geteuid().is_root() {
+            assert_eq!(one, Liveness::Running);
+        } else {
+            assert_eq!(one, Liveness::Unknown);
+        }
     }
 }
