@@ -43,6 +43,11 @@ export function More({ stationCount, terminalCount, chrome }: Props) {
           <Icon of={LogOut} size={14} /> Log out
         </button>
       )}
+      {chrome?.version === undefined ? null : (
+        <p className="fd-sidebar-version" title="Deck version">
+          deck {chrome.version}
+        </p>
+      )}
     </section>
   );
 }

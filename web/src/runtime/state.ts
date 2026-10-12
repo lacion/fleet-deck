@@ -14,6 +14,8 @@ export type AuthView = {
   scopes: ('read' | 'drive' | 'approve' | 'admin')[];
   csrf: string | null;
   expires_at: number;
+  /** The deck's own version (DL-142); absent from an older deck. */
+  deck_version?: string;
 };
 export type Timeline = {
   incarnation: string | null;

@@ -8,7 +8,14 @@ import type { StationActions } from './board/pairing';
 import { PlanLibrary } from './board/PlanLibrary';
 import { StationsPanel } from './board/StationsPanel';
 import type { FleetActions } from './fleet/fleet';
-import type { DeckPlan, DeckSession, SessionKey, StationView, WorkspaceListing } from './gen';
+import type {
+  DeckPlan,
+  DeckSession,
+  FleetExtras,
+  SessionKey,
+  StationView,
+  WorkspaceListing,
+} from './gen';
 import type { Chrome, Notice } from './app/chrome';
 import { FleetHome } from './app/FleetHome';
 import { HelpOverlay } from './app/HelpOverlay';
@@ -56,6 +63,8 @@ type Props = {
   readonly plans?: PlanActions | undefined;
   /** The conflict radar (M3 6-7); absent in tests without a deck. */
   readonly conflicts?: ConflictLoader | undefined;
+  /** The fleet card extras (DL-141); absent in tests without a deck. */
+  readonly extras?: (() => Promise<FleetExtras>) | undefined;
   /** The plan library at the first render (tests). */
   readonly initialPlans?: readonly DeckPlan[] | null;
   /** The connection state, the log out button and the notices of the runtime. */
@@ -106,6 +115,7 @@ export function App({
   feed = [],
   plans,
   conflicts,
+  extras,
   initialPlans = null,
   chrome,
   terminals,
@@ -338,6 +348,7 @@ export function App({
       assign={assign}
       fleet={fleet}
       conflicts={conflicts}
+      extras={extras}
       feed={feed}
       layout={layout}
       sessionActions={sessionActions}

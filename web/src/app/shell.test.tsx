@@ -43,6 +43,36 @@ describe('preferences row (DL-141)', () => {
   });
 });
 
+describe('deck version (DL-142)', () => {
+  const chrome = {
+    label: 'Connected · Live fleet',
+    freshness: 'live' as const,
+    onLogout: () => {},
+    notices: [],
+    version: '0.9.1',
+  };
+  test('the sidebar and More show the version when it is known', () => {
+    const sidebar = renderToStaticMarkup(
+      <Sidebar
+        sessions={[]}
+        stations={[]}
+        route={{ name: 'home' }}
+        terminalCount={0}
+        chrome={chrome}
+        onNavigate={() => {}}
+        onOpenTerminals={() => {}}
+      />,
+    );
+    expect(sidebar).toContain('title="Deck version">deck 0.9.1<');
+    const more = renderToStaticMarkup(<More stationCount={0} terminalCount={0} chrome={chrome} />);
+    expect(more).toContain('title="Deck version">deck 0.9.1<');
+    const none = { ...chrome, version: undefined };
+    expect(
+      renderToStaticMarkup(<More stationCount={0} terminalCount={0} chrome={none} />),
+    ).not.toContain('Deck version');
+  });
+});
+
 describe('help overlay (DL-141)', () => {
   const html = renderToStaticMarkup(<HelpOverlay onClose={() => {}} />);
 

@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
-import { relativeAge } from '../app/sessions';
-import type { DeckSession, StationView } from '../gen';
+import { formatHash } from '../app/routes';
+import { basename, relativeAge } from '../app/sessions';
+import type { DeckSession, StationView, WorktreeInfo, WorktreeVerdict } from '../gen';
+import { ApiError } from '../runtime/api';
 import type { Freshness } from '../runtime/state';
-import { Check, Copy, Icon } from '../ui/icons';
+import { Check, Copy, Icon, RotateCcw } from '../ui/icons';
 import { useNow } from '../ui/useNow';
 import { ShellPanel } from '../shell/ShellPanel';
 import { PairingDialog } from './PairingDialog';
-import { authLabel, type StationActions } from './pairing';
+import { authLabel, removeCommand, type StationActions } from './pairing';
 
 type Props = {
   readonly stations: readonly StationView[];
@@ -44,6 +46,177 @@ function Fingerprint({ value }: { readonly value: string }) {
         <Icon of={copied ? Check : Copy} size={14} />
       </button>
     </>
+  );
+}
+
+const VERDICTS: Record<WorktreeVerdict, { label: string; tone: string }> = {
+  clean: { label: 'Clean', tone: 'ok' },
+  has_work: { label: 'Has work', tone: 'act' },
+  live: { label: 'Live', tone: 'info' },
+  missing: { label: 'Missing', tone: 'muted' },
+  unknown: { label: 'Unknown', tone: 'muted' },
+};
+
+const count = (n: number | null) => (n === null ? '?' : String(n));
+
+/** The button that copies the command that removes a worktree. The board never runs it. */
+function CopyCommand({ command }: { readonly command: string }) {
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  return (
+    <button
+      type="button"
+      className="fd-ghost fd-sm"
+      title={command}
+      onClick={() => {
+        void navigator.clipboard?.writeText(command).then(() => {
+          setCopied(true);
+          clearTimeout(timer.current);
+          timer.current = setTimeout(() => setCopied(false), 1500);
+        });
+      }}
+    >
+      <Icon of={copied ? Check : Copy} size={14} /> Copy the remove command
+    </button>
+  );
+}
+
+/** One worktree: the verdict, the evidence, and the copy command. Read only. */
+export function WorktreeRow({
+  worktree: w,
+  station,
+  now,
+}: {
+  readonly worktree: WorktreeInfo;
+  readonly station: string;
+  readonly now: number;
+}) {
+  const verdict = VERDICTS[w.verdict];
+  const command = removeCommand(w);
+  const compared = w.compared_with === 'remotes' ? 'a remote' : 'main';
+  return (
+    <li className="fd-wt-row" data-verdict={w.verdict}>
+      <div className="fd-wt-line">
+        <span className="fd-badge fd-caps" data-tone={verdict.tone}>
+          {verdict.label}
+        </span>
+        <span className="fd-wt-name" title={w.path}>
+          {basename(w.path)}
+        </span>
+        {w.branch === null ? null : <span className="fd-badge">{w.branch}</span>}
+        <a
+          className="fd-wt-session"
+          href={formatHash({
+            name: 'session',
+            station,
+            session: w.session_id,
+            tab: 'chat',
+          })}
+        >
+          {w.title ?? w.session_id}
+        </a>
+      </div>
+      <p className="fd-wt-evidence">
+        {count(w.dirty)} changed · {count(w.ignored)} ignored · {count(w.unpushed)} commits not on{' '}
+        {compared}
+        {w.last_commit === null
+          ? ''
+          : ` · last commit “${w.last_commit.subject}” ${relativeAge(w.last_commit.at, now)}`}
+      </p>
+      {w.verdict === 'unknown' && w.note !== null ? <p className="fd-wt-note">{w.note}</p> : null}
+      {!w.registered && w.exists ? (
+        <p className="fd-wt-note" data-tone="act">
+          Git does not list this worktree.
+        </p>
+      ) : null}
+      {command === null ? null : <CopyCommand command={command} />}
+    </li>
+  );
+}
+
+type WorktreeState =
+  | { readonly kind: 'idle' }
+  | { readonly kind: 'loading' }
+  | { readonly kind: 'ready'; readonly worktrees: readonly WorktreeInfo[] }
+  | { readonly kind: 'error'; readonly text: string; readonly status: number | null };
+
+const failure = (error: unknown): WorktreeState => ({
+  kind: 'error',
+  status: error instanceof ApiError ? error.status : null,
+  text: error instanceof Error ? error.message : 'The worktrees did not load.',
+});
+
+/** The read-only worktree inventory of one station (DL-142); loads on the first open. */
+function Worktrees({
+  station,
+  stationId,
+  load,
+  now,
+}: {
+  readonly station: string;
+  readonly stationId: string;
+  readonly load: (station: string) => Promise<{ readonly worktrees: readonly WorktreeInfo[] }>;
+  readonly now: number;
+}) {
+  const [state, setState] = useState<WorktreeState>({ kind: 'idle' });
+  const run = () => {
+    setState({ kind: 'loading' });
+    load(station).then(
+      (list) => setState({ kind: 'ready', worktrees: list.worktrees }),
+      (error: unknown) => setState(failure(error)),
+    );
+  };
+  return (
+    <details
+      className="fd-wt"
+      onToggle={(event) => {
+        if (event.currentTarget.open && state.kind === 'idle') run();
+      }}
+    >
+      <summary className="fd-label">
+        Worktrees{state.kind === 'ready' ? ` (${state.worktrees.length})` : ''}
+      </summary>
+      <div className="fd-wt-body">
+        <button
+          type="button"
+          className="fd-ghost fd-sm fd-wt-refresh"
+          disabled={state.kind === 'loading'}
+          onClick={run}
+        >
+          <Icon of={RotateCcw} size={14} /> Refresh
+        </button>
+        {state.kind === 'loading' ? <p className="fd-note">Loading…</p> : null}
+        {state.kind === 'error' ? (
+          state.status === 403 ? (
+            <p className="fd-note">Only the owner can see worktrees.</p>
+          ) : state.status === 502 ? (
+            <p className="fd-note">This station does not report worktrees. Update the station.</p>
+          ) : (
+            <p role="alert">{state.text}</p>
+          )
+        ) : null}
+        {state.kind === 'ready' ? (
+          state.worktrees.length === 0 ? (
+            <p className="fd-note">
+              No worktrees. A session started with “A new worktree” gets one.
+            </p>
+          ) : (
+            <>
+              <ul className="fd-wt-list">
+                {state.worktrees.map((w) => (
+                  <WorktreeRow key={w.session_id} worktree={w} station={stationId} now={now} />
+                ))}
+              </ul>
+              <p className="fd-note">
+                The board does not remove worktrees. Git refuses to remove a worktree with changes;
+                check “Has work” rows first.
+              </p>
+            </>
+          )
+        ) : null}
+      </div>
+    </details>
   );
 }
 
@@ -175,6 +348,14 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
                   />
                 )
               ) : null}
+              {actions?.worktrees === undefined ? null : (
+                <Worktrees
+                  station={station.name}
+                  stationId={station.station_id}
+                  load={actions.worktrees}
+                  now={now}
+                />
+              )}
               {actions?.canAdmin === true ? (
                 <div className="fd-station-foot">
                   {confirm === station.name ? (

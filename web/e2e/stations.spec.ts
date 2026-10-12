@@ -1,5 +1,6 @@
 // M2 P4-2: the stations screen and the pairing dialog in a phone browser.
 import { expect, test } from '@playwright/test';
+import type { WorktreeInfo } from '../src/gen';
 import { CSRF, FakeDeck, fitsWidth, logIn, openMore, stationView } from './fake-deck';
 
 const reported = stationView('st-alpha', 'Alpha', {
@@ -147,4 +148,163 @@ test('a login without the admin scope sees the report but no pairing controls', 
   await expect(page.getByRole('button', { name: 'Add station' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Remove station' })).toHaveCount(0);
   await expect(page.locator('[data-station="st-alpha"]')).toContainText('0 / 4');
+});
+
+const worktree = (extra: Partial<WorktreeInfo>): WorktreeInfo => ({
+  session_id: 's1',
+  title: 'Fix the login',
+  path: '/w/deck-wt/s1',
+  branch: 'fd/s1',
+  main: '/w/deck',
+  exists: true,
+  registered: true,
+  dirty: 0,
+  ignored: 3,
+  unpushed: 0,
+  compared_with: 'remotes',
+  last_commit: { subject: 'Fix it', at: Date.now() - 2.5 * 3_600_000 },
+  live: false,
+  verdict: 'clean',
+  note: null,
+  ...extra,
+});
+
+test('the worktree list of a station shows the evidence and copies the remove command', async ({
+  page,
+  context,
+}) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  const deck = new FakeDeck();
+  deck.stations = [reported];
+  deck.on('/api/stations/Alpha/worktrees', () => ({
+    status: 200,
+    body: {
+      worktrees: [
+        worktree({}),
+        worktree({
+          session_id: 's2',
+          title: null,
+          path: "/w/deck-wt/it's",
+          branch: 'topic',
+          dirty: 4,
+          unpushed: 2,
+          verdict: 'has_work',
+        }),
+      ],
+    },
+  }));
+  await deck.install(page);
+  await logIn(page);
+  await openMore(page, 'Stations');
+  const card = page.locator('[data-station="st-alpha"]');
+  const section = card.locator('details.fd-wt');
+  await expect(section).not.toHaveAttribute('open', '');
+  expect(deck.calls.some((c) => c.path.endsWith('/worktrees'))).toBe(false);
+  await section.locator('summary').click();
+  await expect(section.locator('summary')).toHaveText('Worktrees (2)');
+  const rows = section.locator('li.fd-wt-row');
+  await expect(rows).toHaveCount(2);
+  const clean = rows.nth(0);
+  await expect(clean).toHaveAttribute('data-verdict', 'clean');
+  await expect(clean.locator('.fd-badge').first()).toHaveText('Clean');
+  await expect(clean).toContainText('0 changed · 3 ignored · 0 commits not on a remote');
+  await expect(clean).toContainText('last commit “Fix it” 2h');
+  await expect(clean.getByRole('link', { name: 'Fix the login' })).toHaveAttribute(
+    'href',
+    '#/s/st-alpha/s1',
+  );
+  const work = rows.nth(1);
+  await expect(work).toHaveAttribute('data-verdict', 'has_work');
+  await expect(work.locator('.fd-badge').first()).toHaveText('Has work');
+  await expect(work.getByRole('link', { name: 's2' })).toBeVisible();
+  await expect(section).toContainText('The board does not remove worktrees.');
+  const copy = section.getByRole('button', { name: 'Copy the remove command' });
+  await expect(copy).toHaveCount(2);
+  await copy.first().click();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    "git -C '/w/deck' worktree remove '/w/deck-wt/s1' && git -C '/w/deck' branch -d 'fd/s1'",
+  );
+  await copy.nth(1).click();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    "git -C '/w/deck' worktree remove '/w/deck-wt/it'\\''s'",
+  );
+  expect(await fitsWidth(page)).toBe(true);
+  // Refresh loads again.
+  await section.getByRole('button', { name: 'Refresh' }).click();
+  await expect(rows).toHaveCount(2);
+  expect(deck.calls.filter((c) => c.path.endsWith('/worktrees'))).toHaveLength(2);
+});
+
+test('the worktree list says why it is empty or refused', async ({ page }) => {
+  const deck = new FakeDeck();
+  deck.stations = [reported];
+  let reply: { status: number; body: unknown } = {
+    status: 403,
+    body: { code: 'owner_only', message: 'Only the owner lists worktrees.' },
+  };
+  deck.on('/api/stations/Alpha/worktrees', () => reply);
+  await deck.install(page);
+  await logIn(page);
+  await openMore(page, 'Stations');
+  const section = page.locator('[data-station="st-alpha"] details.fd-wt');
+  await section.locator('summary').click();
+  await expect(section).toContainText('Only the owner can see worktrees.');
+  reply = { status: 502, body: { code: 'station_error', message: 'no such method' } };
+  await section.getByRole('button', { name: 'Refresh' }).click();
+  await expect(section).toContainText(
+    'This station does not report worktrees. Update the station.',
+  );
+  reply = { status: 504, body: { code: 'timeout', message: 'The station did not answer.' } };
+  await section.getByRole('button', { name: 'Refresh' }).click();
+  await expect(section.getByRole('alert')).toHaveText('The station did not answer.');
+  reply = { status: 200, body: { worktrees: [] } };
+  await section.getByRole('button', { name: 'Refresh' }).click();
+  await expect(section).toContainText(
+    'No worktrees. A session started with “A new worktree” gets one.',
+  );
+});
+
+test('a login without the admin scope has no worktree section', async ({ page }) => {
+  const deck = new FakeDeck();
+  deck.stations = [reported];
+  deck.scopes = ['read', 'drive', 'approve'];
+  await deck.install(page);
+  await logIn(page);
+  await openMore(page, 'Stations');
+  await expect(page.locator('[data-station="st-alpha"]')).toContainText('0 / 4');
+  await expect(page.locator('details.fd-wt')).toHaveCount(0);
+});
+
+test('More shows the deck version when the login answer has one', async ({ page }) => {
+  const deck = new FakeDeck();
+  deck.deckVersion = '0.7.3';
+  await deck.install(page);
+  await logIn(page);
+  await page.getByRole('navigation', { name: 'Board' }).getByRole('link', { name: 'More' }).click();
+  await expect(page.getByText('deck 0.7.3')).toHaveAttribute('title', 'Deck version');
+});
+
+test('More shows no version for an older deck', async ({ page }) => {
+  const deck = new FakeDeck();
+  await deck.install(page);
+  await logIn(page);
+  await page.getByRole('navigation', { name: 'Board' }).getByRole('link', { name: 'More' }).click();
+  await expect(page.getByRole('button', { name: 'Log out' })).toBeVisible();
+  await expect(page.getByText(/^deck \d/)).toHaveCount(0);
+});
+
+test.describe('on a wide screen', () => {
+  test.use({ viewport: { width: 1440, height: 900 }, isMobile: false, hasTouch: false });
+
+  test('the sidebar footer shows the deck version next to Log out', async ({ page }) => {
+    const deck = new FakeDeck();
+    deck.stations = [reported];
+    deck.deckVersion = '0.7.3';
+    await deck.install(page);
+    await logIn(page);
+    const sidebar = page.getByRole('complementary', { name: 'Sessions' });
+    const version = sidebar.getByText('deck 0.7.3');
+    await expect(version).toHaveAttribute('title', 'Deck version');
+    await expect(sidebar.getByRole('button', { name: 'Log out' })).toBeVisible();
+  });
 });

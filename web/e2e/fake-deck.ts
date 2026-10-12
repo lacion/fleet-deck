@@ -35,6 +35,8 @@ export class FakeDeck {
   stations: StationView[] = [];
   sessions: DeckSession[] = [];
   scopes: string[] = ['read', 'drive', 'approve', 'admin'];
+  /** The `deck_version` of the login answers; `null` leaves the field out (an older deck). */
+  deckVersion: string | null = null;
   calls: Call[] = [];
   private version = 1;
   private sockets: WebSocketRoute[] = [];
@@ -226,6 +228,7 @@ export class FakeDeck {
       scopes: this.scopes,
       csrf: CSRF,
       expires_at: Date.now() + 3_600_000,
+      ...(this.deckVersion === null ? {} : { deck_version: this.deckVersion }),
     };
     if (path === '/api/auth/session') {
       return this.signedIn

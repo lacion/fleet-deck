@@ -1,9 +1,9 @@
 import { useMemo, useState, useSyncExternalStore } from 'react';
 import { App } from '../App';
-import { stationActions } from '../board/pairing';
+import { stationActions, worktreeLoader } from '../board/pairing';
 import { conflictLoader } from '../board/conflicts';
 import { planActions } from '../board/plans';
-import type { SessionKey } from '../gen';
+import type { FleetExtras, SessionKey } from '../gen';
 import { sessionActions } from '../session/commands';
 import { shellActions } from '../shell/shell';
 import { spawnActions } from '../spawn/spawn';
@@ -36,6 +36,8 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
             (path, body) => connection.post(path, body),
           )
         : undefined,
+      // The worktree inventory is owner-only as well.
+      worktrees: canAdmin ? worktreeLoader((path) => connection.get(path)) : undefined,
     }),
     [connection, canAdmin],
   );
@@ -88,6 +90,16 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
     [connection, scopeText],
   );
   const conflicts = useMemo(() => conflictLoader((path) => connection.get(path)), [connection]);
+  const extras = useMemo(
+    () => async (): Promise<FleetExtras> => {
+      const v = await connection.get('/api/fleet/extras');
+      if (typeof v !== 'object' || v === null || !('sessions' in v) || !Array.isArray(v.sessions)) {
+        throw new Error('The deck sent invalid fleet extras.');
+      }
+      return v as FleetExtras;
+    },
+    [connection],
+  );
   const watch = useMemo(() => (key: SessionKey) => connection.watch(key), [connection]);
   // The terminals survive a reload through sessionStorage.
   const terminals = useMemo(() => {
@@ -188,6 +200,7 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
       });
     },
     notices,
+    version: state.login.deck_version,
   };
   return (
     <App
@@ -204,6 +217,7 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
       feed={state.feed}
       plans={plans}
       conflicts={conflicts}
+      extras={extras}
       chrome={chrome}
       terminals={terminals}
       summaryWatch={summaryWatch}

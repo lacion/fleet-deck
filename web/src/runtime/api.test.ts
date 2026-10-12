@@ -33,6 +33,14 @@ test('login shapes and scopes are validated before a socket opens', () => {
   }
 });
 
+test('the deck version is kept when it is a string and dropped otherwise', () => {
+  expect(authView({ ...loginView, deck_version: '0.9.1' }).deck_version).toBe('0.9.1');
+  expect(authView(loginView)).not.toHaveProperty('deck_version');
+  const odd = authView({ ...loginView, deck_version: 9 });
+  expect(odd).not.toHaveProperty('deck_version');
+  expect(odd.actor).toBe('owner');
+});
+
 test('REST errors keep status and message and successful logout needs no JSON body', async () => {
   const signal = new AbortController().signal;
   expect(

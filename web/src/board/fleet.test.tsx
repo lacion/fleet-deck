@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
+import type { WorktreeInfo } from '../gen';
 import type { ShellActions } from '../shell/shell';
 import { card, station } from '../testing/fleet';
 import { archived, priority } from '../ui/localSet';
@@ -18,8 +19,8 @@ import {
   usageText,
 } from './fleet';
 import { COLUMNS, columnCards, FleetBoard } from './FleetBoard';
-import { stationActions } from './pairing';
-import { StationsPanel } from './StationsPanel';
+import { removeCommand, stationActions, worktreeLoader } from './pairing';
+import { StationsPanel, WorktreeRow } from './StationsPanel';
 
 describe('fleet projections', () => {
   test('cards from two stations with the same session ID keep different keys and both appear', () => {
@@ -507,5 +508,109 @@ describe('fleet cards, DL-141', () => {
     expect(out).not.toContain('aria-label="Station Alpha"');
     expect(out).toContain('▲ 1 contested');
     expect(out).toContain('Alpha');
+  });
+});
+
+describe('worktree rows (DL-142)', () => {
+  const base: WorktreeInfo = {
+    session_id: 's1',
+    title: 'Fix the login',
+    path: '/w/deck-wt/s1',
+    branch: 'fd/s1',
+    main: '/w/deck',
+    exists: true,
+    registered: true,
+    dirty: 2,
+    ignored: 5,
+    unpushed: 1,
+    compared_with: 'remotes',
+    last_commit: { subject: 'wip', at: 0 },
+    live: false,
+    verdict: 'has_work',
+    note: null,
+  };
+  const row = (extra: Partial<WorktreeInfo>) =>
+    renderToStaticMarkup(
+      <WorktreeRow worktree={{ ...base, ...extra }} station="station-a" now={3 * 3_600_000} />,
+    );
+
+  test('a row shows the badge, the folder, the branch, the evidence and the session link', () => {
+    const html = row({});
+    expect(html).toContain('data-verdict="has_work"');
+    expect(html).toContain('data-tone="act">Has work<');
+    expect(html).toContain('title="/w/deck-wt/s1">s1<');
+    expect(html).toContain('>fd/s1<');
+    expect(html).toContain('href="#/s/station-a/s1"');
+    expect(html).toContain('>Fix the login<');
+    expect(html).toContain('2 changed · 5 ignored · 1 commits not on a remote');
+    expect(html).toContain('last commit “wip” 3h');
+    expect(html).toContain('Copy the remove command');
+  });
+
+  test('each verdict has its badge and the right extras', () => {
+    expect(row({ verdict: 'clean' })).toContain('data-tone="ok">Clean<');
+    expect(row({ verdict: 'live', live: true })).toContain('data-tone="info">Live<');
+    const missing = row({ verdict: 'missing', exists: false, registered: false });
+    expect(missing).toContain('data-tone="muted">Missing<');
+    expect(missing).not.toContain('Copy the remove command');
+    expect(missing).not.toContain('Git does not list');
+    expect(row({ verdict: 'live', live: true })).not.toContain('Copy the remove command');
+    const unknown = row({ verdict: 'unknown', dirty: null, note: 'git timed out', title: null });
+    expect(unknown).toContain('? changed · 5 ignored');
+    expect(unknown).toContain('git timed out');
+    expect(unknown).toContain('>s1</a>');
+    expect(row({ registered: false })).toContain('Git does not list this worktree.');
+  });
+
+  test('a null comparison names main', () => {
+    expect(row({ compared_with: 'main' })).toContain('commits not on main');
+  });
+});
+
+describe('worktree inventory calls (DL-142)', () => {
+  const worktree = (extra: Partial<WorktreeInfo> = {}): WorktreeInfo => ({
+    session_id: 's1',
+    title: null,
+    path: '/w/deck-wt/s1',
+    branch: 'main-fix',
+    main: '/w/deck',
+    exists: true,
+    registered: true,
+    dirty: 0,
+    ignored: 0,
+    unpushed: 0,
+    compared_with: 'remotes',
+    last_commit: null,
+    live: false,
+    verdict: 'clean',
+    note: null,
+    ...extra,
+  });
+
+  test('the remove command quotes the values and deletes only an fd/ branch', () => {
+    expect(removeCommand(worktree())).toBe("git -C '/w/deck' worktree remove '/w/deck-wt/s1'");
+    expect(removeCommand(worktree({ branch: 'fd/s1' }))).toBe(
+      "git -C '/w/deck' worktree remove '/w/deck-wt/s1' && git -C '/w/deck' branch -d 'fd/s1'",
+    );
+    expect(removeCommand(worktree({ path: "/w/it's here", main: "/w/o'k" }))).toBe(
+      "git -C '/w/o'\\''k' worktree remove '/w/it'\\''s here'",
+    );
+  });
+
+  test('there is no command for a missing, live or main-less worktree', () => {
+    expect(removeCommand(worktree({ exists: false }))).toBeNull();
+    expect(removeCommand(worktree({ live: true }))).toBeNull();
+    expect(removeCommand(worktree({ main: null }))).toBeNull();
+  });
+
+  test('the loader reads the station route and checks the list', async () => {
+    const paths: string[] = [];
+    const load = worktreeLoader(async (path) => {
+      paths.push(path);
+      return path.includes('bad') ? { worktrees: 1 } : { worktrees: [worktree()] };
+    });
+    expect((await load('a b')).worktrees).toHaveLength(1);
+    expect(paths).toEqual(['/api/stations/a%20b/worktrees']);
+    await expect(load('bad')).rejects.toThrow('The deck sent an invalid worktree list.');
   });
 });
