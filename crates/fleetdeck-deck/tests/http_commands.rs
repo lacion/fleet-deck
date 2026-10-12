@@ -272,3 +272,54 @@ async fn a_rejected_revert_returns_the_station_receipt_is_audited_and_a_repeat_s
     assert_eq!((r.status, r.code()), (403, "forbidden"));
     no_request(&mut station, Duration::from_millis(300)).await;
 }
+
+#[tokio::test]
+async fn a_rename_reaches_the_station_needs_drive_and_is_audited() {
+    let mut f = fixture().await;
+    let mut station = f.connect().await;
+    let c = board(std::sync::Arc::clone(&f.ctx)).await;
+    let h = owner(&c).await;
+    let body = json!({
+        "station": "fake",
+        "command_id": "rn1",
+        "command": { "op": "rename", "session_id": "s1", "title": "docs" },
+    });
+    let (r, req) = tokio::join!(
+        post(&c, &h, "session.rename", body),
+        Fixture::answer(&mut station, accepted)
+    );
+    assert_eq!(req.method, "session.rename");
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert_eq!(r.body["receipt"]["state"], "accepted");
+    assert_eq!(
+        c.audited("session.rename", AuditResult::Ok).await,
+        vec![None]
+    );
+    // A rename body on another method is refused before it is stored.
+    let wrong = post(
+        &c,
+        &h,
+        "session.interrupt",
+        json!({
+            "station": "fake",
+            "command_id": "rn2",
+            "command": { "op": "rename", "session_id": "s1", "title": "x" },
+        }),
+    )
+    .await;
+    assert_eq!(wrong.status, 400, "{}", wrong.body);
+    let read = token(&c, "viewer", &[Scope::Read]).await;
+    let r = post(
+        &c,
+        &read,
+        "session.rename",
+        json!({
+            "station": "fake",
+            "command_id": "rn3",
+            "command": { "op": "rename", "session_id": "s1", "title": "x" },
+        }),
+    )
+    .await;
+    assert_eq!((r.status, r.code()), (403, "forbidden"));
+    no_request(&mut station, Duration::from_millis(300)).await;
+}

@@ -21,7 +21,12 @@ export type SessionActions = {
   answer(requestId: string, optionId: string, reply?: Reply | null): Promise<Outcome>;
   setMode(mode: string): Promise<Outcome>;
   setModel(model: string): Promise<Outcome>;
+  /** The board title (DL-095); `null` clears it. Allowed on an ended session too. */
+  rename(title: string | null): Promise<Outcome>;
 };
+
+/** The longest title, in characters (the station refuses a longer one). */
+export const MAX_TITLE_CHARS = 80;
 
 const METHODS: Record<SessionCommand['op'], string> = {
   start: 'session.start',
@@ -36,6 +41,7 @@ const METHODS: Record<SessionCommand['op'], string> = {
   fork: 'session.fork',
   stop: 'session.stop',
   revert: 'session.revert',
+  rename: 'session.rename',
 };
 
 /** A command id: `b` and 24 random base-36 characters (`[0-9A-Za-z_-]{1,64}`). */
@@ -107,5 +113,6 @@ export function sessionActions(
       }),
     setMode: (mode) => run({ op: 'set_mode', session_id, mode }),
     setModel: (model) => run({ op: 'set_model', session_id, model }),
+    rename: (title) => run({ op: 'rename', session_id, title }),
   };
 }

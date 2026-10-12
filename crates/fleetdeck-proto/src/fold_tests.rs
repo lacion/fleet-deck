@@ -482,3 +482,26 @@ fn a_late_turn_finalized_changes_neither_the_turn_nor_the_activity() {
     assert_eq!(after.usage, before.usage);
     assert_eq!(after.open_requests, before.open_requests);
 }
+
+#[test]
+fn a_rename_sets_and_clears_the_title_and_an_old_reader_skips_it() {
+    let mut f = Feed::new();
+    f.push(started());
+    let s = f.push(Event::SessionRenamed {
+        title: Some("docs".into()),
+    });
+    assert_eq!(s.title.as_deref(), Some("docs"));
+    assert_eq!(s.activity, Activity::Idle);
+    assert_eq!(f.push(Event::SessionRenamed { title: None }).title, None);
+    // A reader of an older build gets the kind as unknown (N-1): it keeps
+    // the summary as it was.
+    let mut payload = serde_json::Map::new();
+    payload.insert("title".into(), serde_json::json!("x"));
+    let unknown = EventBody::Unknown {
+        kind: "session.renamed".into(),
+        payload,
+    };
+    let before = f.summary.clone();
+    let after = f.push_body(unknown);
+    assert_eq!(after.title, before.title);
+}

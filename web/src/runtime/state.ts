@@ -5,6 +5,7 @@ import type {
   SessionKey,
   StationView,
 } from '../gen';
+import { appendFeed, type FeedItem, feedItems } from '../board/feed';
 
 export type Freshness = 'stale' | 'live';
 export type Transport = 'stopped' | 'connecting' | 'connected' | 'reconnecting';
@@ -32,6 +33,8 @@ export type RuntimeState = {
   stations: readonly StationView[];
   sessions: readonly DeckSession[];
   timelines: Readonly<Record<string, Timeline>>;
+  /** The event feed since this page opened (DL-095), oldest first. */
+  feed: readonly FeedItem[];
   error: string | null;
 };
 export const emptyState = (): RuntimeState => ({
@@ -44,6 +47,7 @@ export const emptyState = (): RuntimeState => ({
   stations: [],
   sessions: [],
   timelines: {},
+  feed: [],
   error: null,
 });
 export const sessionKey = (key: SessionKey): string =>
@@ -69,6 +73,23 @@ export function stale(state: RuntimeState): RuntimeState {
   };
 }
 
+/** The feed of `state` with the items of the changed `cards`. */
+function changes(state: RuntimeState, cards: readonly DeckSession[]): FeedItem[] {
+  const before = new Map(
+    state.sessions.map((c) => [
+      sessionKey({ station_id: c.station_id, session_id: c.summary.session_id }),
+      c,
+    ]),
+  );
+  const items = cards.flatMap((c) =>
+    feedItems(
+      before.get(sessionKey({ station_id: c.station_id, session_id: c.summary.session_id })),
+      c,
+    ),
+  );
+  return appendFeed(state.feed, items);
+}
+
 /** One ordered socket stream. Old socket callbacks are fenced by Connection. */
 export function reduceMessage(state: RuntimeState, msg: BoardServerMessage): RuntimeState {
   switch (msg.type) {
@@ -80,6 +101,9 @@ export function reduceMessage(state: RuntimeState, msg: BoardServerMessage): Run
       if (state.freshness === 'live') return state;
       return {
         ...state,
+        // The first snapshot is the starting point; a later one (after a
+        // reconnect) adds the changes that the board missed.
+        feed: state.version === null ? state.feed : changes(state, msg.sessions),
         version: msg.version,
         stations: msg.stations,
         sessions: msg.sessions,
@@ -98,6 +122,7 @@ export function reduceMessage(state: RuntimeState, msg: BoardServerMessage): Run
           c,
         ]),
       );
+      const feed = changes(state, msg.sessions);
       for (const key of msg.removed) cards.delete(sessionKey(key));
       for (const c of msg.sessions)
         cards.set(
@@ -112,6 +137,7 @@ export function reduceMessage(state: RuntimeState, msg: BoardServerMessage): Run
         version: msg.version,
         stations: msg.stations ?? state.stations,
         sessions: [...cards.values()],
+        feed,
       };
     }
     case 'timeline_start': {

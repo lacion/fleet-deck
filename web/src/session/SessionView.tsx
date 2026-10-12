@@ -6,6 +6,7 @@ import type { Freshness, Timeline } from '../runtime/state';
 import type { InputKind, Outcome, SessionActions } from './commands';
 import { QuestionAnswer } from './QuestionAnswer';
 import { questionForm, type Reply } from './question';
+import { RenameForm } from './RenameForm';
 import { buildTimeline, type Item, subagentLabel } from './timeline';
 
 type Props = {
@@ -40,6 +41,11 @@ export function SessionView({ session, stations, timeline, freshness, actions, o
         Back to fleet
       </button>
       <h2>{s.title ?? s.session_id}</h2>
+      <RenameForm
+        title={s.title}
+        enabled={live && actions?.canDrive === true && !busy}
+        onRename={(t) => actions && act(() => actions.rename(t))}
+      />
       <p className="fd-card-line">
         {stationName(session.station_id, stations)} · {providerLabel(s.provider)} ·{' '}
         <span data-status={session.status}>{session.status.replaceAll('_', ' ')}</span>

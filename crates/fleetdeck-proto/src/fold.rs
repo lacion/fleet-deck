@@ -172,6 +172,7 @@ impl SessionSummary {
                     reason: reason.clone(),
                 });
             }
+            Event::SessionRenamed { title } => self.title.clone_from(title),
             Event::SessionEnded { .. } => {
                 if !matches!(self.state, SessionState::Lost) {
                     self.state = SessionState::Exited;

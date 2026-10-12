@@ -644,3 +644,6 @@ mod checkpoint_wired;
 
 #[path = "revert_wired_tests.rs"]
 mod revert_wired;
+
+#[path = "rename_tests.rs"]
+mod rename;

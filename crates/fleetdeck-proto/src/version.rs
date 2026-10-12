@@ -26,6 +26,8 @@ pub mod feature {
     /// `session.revert`: conversation rollback plus workspace restore (PLAN
     /// §6.6, M3 DL-087). A peer without it never gets the method.
     pub const REVERT: &str = "revert.v1";
+    /// `session.rename` (M3, DL-095).
+    pub const RENAME: &str = "rename.v1";
     /// `files.list`, `files.read`, `files.search` and `files.diff`: the
     /// read-only file service (PLAN §6.6, M3 DL-088).
     pub const FILES: &str = "files.v1";
@@ -37,6 +39,7 @@ pub mod feature {
         COMMAND_RECEIPTS,
         SNAPSHOTS,
         REVERT,
+        RENAME,
         FILES,
     ];
     /// Features without which a link is refused.

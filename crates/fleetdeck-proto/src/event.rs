@@ -427,6 +427,10 @@ pub enum Event {
         state: RevertState,
         reason: Option<String>,
     },
+    /// The owner set or cleared the board title (DL-095). The station is
+    /// the source of the title; the title is already normalized.
+    #[serde(rename = "session.renamed")]
+    SessionRenamed { title: Option<String> },
     #[serde(rename = "run.completed")]
     RunCompleted {
         run_id: RunId,
@@ -474,7 +478,7 @@ pub enum Event {
 
 impl Event {
     /// Every known kind name, in declaration order.
-    pub const KINDS: [&'static str; 27] = [
+    pub const KINDS: [&'static str; 28] = [
         "session.started",
         "session.state",
         "run.started",
@@ -502,6 +506,7 @@ impl Event {
         "error",
         "session.ended",
         "revert.updated",
+        "session.renamed",
     ];
 
     /// The dotted kind name.
@@ -535,6 +540,7 @@ impl Event {
             Self::Error { .. } => "error",
             Self::SessionEnded { .. } => "session.ended",
             Self::RevertUpdated { .. } => "revert.updated",
+            Self::SessionRenamed { .. } => "session.renamed",
         }
     }
 

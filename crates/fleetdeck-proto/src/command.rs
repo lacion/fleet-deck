@@ -116,6 +116,35 @@ pub enum SessionCommand {
         session_id: SessionId,
         turn_id: TurnId,
     },
+    /// Set the board title of a session; `None` clears it (PLAN §4.1 row
+    /// "rename", DL-095). It changes no provider state, so it works on an
+    /// ended session too. [`normalize_title`] gives the stored text.
+    Rename {
+        session_id: SessionId,
+        title: Option<String>,
+    },
+}
+
+/// The longest session title, in characters (DL-095).
+pub const MAX_TITLE_CHARS: usize = 80;
+
+/// The stored form of a session title: trimmed, `None` when empty. A title
+/// longer than [`MAX_TITLE_CHARS`] or with a control character is refused.
+///
+/// # Errors
+///
+/// The reason text when the title is refused.
+pub fn normalize_title(title: Option<&str>) -> Result<Option<String>, &'static str> {
+    let Some(title) = title.map(str::trim).filter(|t| !t.is_empty()) else {
+        return Ok(None);
+    };
+    if title.chars().count() > MAX_TITLE_CHARS {
+        return Err("the title is longer than 80 characters");
+    }
+    if title.chars().any(char::is_control) {
+        return Err("the title has a control character");
+    }
+    Ok(Some(title.to_owned()))
 }
 
 impl SessionCommand {
@@ -135,6 +164,7 @@ impl SessionCommand {
             Self::Fork { .. } => "session.fork",
             Self::Stop { .. } => "session.stop",
             Self::Revert { .. } => "session.revert",
+            Self::Rename { .. } => "session.rename",
         }
     }
 
@@ -153,7 +183,8 @@ impl SessionCommand {
             | Self::SetModel { session_id, .. }
             | Self::Fork { session_id }
             | Self::Stop { session_id, .. }
-            | Self::Revert { session_id, .. } => Some(session_id),
+            | Self::Revert { session_id, .. }
+            | Self::Rename { session_id, .. } => Some(session_id),
         }
     }
 }

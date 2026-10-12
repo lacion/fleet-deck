@@ -84,3 +84,48 @@
 .fd-subagents {
   color: var(--act);
 }
+
+/* M3 6-8: the rename form and the event feed (DL-095). */
+.fd-rename {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--sp-2);
+  margin: var(--sp-2) 0;
+}
+.fd-feed {
+  padding: var(--sp-4);
+  border-top: 1px solid var(--border);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.fd-feed-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+  margin-bottom: var(--sp-2);
+}
+.fd-feed-filters button[aria-pressed="true"] {
+  border-color: var(--act);
+}
+.fd-feed ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--sp-1);
+  font-size: var(--fs-micro);
+}
+.fd-feed time {
+  font-variant-numeric: tabular-nums;
+  color: var(--dim);
+}
+.fd-link {
+  background: none;
+  border: none;
+  padding: 0;
+  text-decoration: underline;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}

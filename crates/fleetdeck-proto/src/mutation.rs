@@ -63,6 +63,7 @@ pub const SESSION_METHODS: &[&str] = &[
     "session.set_model",
     "session.stop",
     "session.revert",
+    "session.rename",
     "approval.answer",
 ];
 

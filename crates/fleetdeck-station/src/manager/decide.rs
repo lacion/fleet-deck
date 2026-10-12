@@ -60,6 +60,7 @@ pub fn decide(
             RejectCode::Unsupported,
             "resume and fork are not part of this station build yet (DL-037)",
         )),
+        SessionCommand::Rename { session_id, title } => rename(d, &session_id, title),
         SessionCommand::Prompt { session_id, input } => {
             let s = live_session(d, &session_id, Operation::Prompt)?;
             input_effect(d, &s, origin_run, input, |input| EffectPayload::Prompt {
@@ -244,6 +245,28 @@ fn admit_answer(
 
 /// The option id of a Codex free answer (`codex/requests.rs`).
 const CODEX_FREE_ANSWER: &str = "answer";
+
+/// `session.rename` (DL-095): a station event and no effect. It changes no
+/// provider state, so an ended session or a session in a revert can be
+/// renamed. An unchanged title is accepted without an event.
+fn rename(
+    d: &mut Decision<'_>,
+    session_id: &SessionId,
+    title: Option<String>,
+) -> Result<CommandResult, DecideError> {
+    let summary = d
+        .summary(session_id)?
+        .ok_or_else(|| reject(RejectCode::UnknownSession, "no such session"))?;
+    let title = fleetdeck_proto::command::normalize_title(title.as_deref())
+        .map_err(|why| reject(RejectCode::InvalidCommand, why))?;
+    if summary.title != title {
+        d.append(
+            session_id,
+            fleetdeck_proto::event::Event::SessionRenamed { title }.into(),
+        )?;
+    }
+    Ok(result(session_id, None))
+}
 
 pub(super) fn result(session_id: &SessionId, input_id: Option<InputId>) -> CommandResult {
     CommandResult {

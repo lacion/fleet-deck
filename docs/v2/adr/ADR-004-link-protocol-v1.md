@@ -101,6 +101,7 @@ Every step after TLS has the bound `NodeConfig::handshake_timeout` (default 10 s
 | `command_receipts.v1` | `command.receipt` (§8.4 receipts, Phase 3) |
 | `snapshots.v1` | `Snapshot` frames and `session.snapshot` |
 | `revert.v1` | `session.revert` (M3, DL-087; PLAN §6.6 conversation rollback plus workspace restore) |
+| `rename.v1` | `session.rename` (M3, DL-095; the board title of a session, event `session.renamed`) |
 | `files.v1` | `files.list`, `files.read`, `files.search`, `files.diff` (M3, DL-088; PLAN §6.6 file browse, search, read and per-turn diffs) |
 
 A method whose feature was not negotiated gets the error `feature_not_negotiated`. Behaviour depends on the negotiated features, not only on the version.
@@ -307,7 +308,7 @@ Per link (these values replace §2.7 "at most 256 open streams"):
 
 | Methods | `params` type | Payload field | Holder |
 | --- | --- | --- | --- |
-| `session.start`, `session.resume`, `session.fork`, `session.prompt`, `session.steer`, `session.follow_up`, `session.interrupt`, `session.set_mode`, `session.set_model`, `session.stop`, `session.revert`, `approval.answer` | `CommandEnvelope` | `command` | station |
+| `session.start`, `session.resume`, `session.fork`, `session.prompt`, `session.steer`, `session.follow_up`, `session.interrupt`, `session.set_mode`, `session.set_model`, `session.stop`, `session.revert`, `session.rename`, `approval.answer` | `CommandEnvelope` | `command` | station |
 | `station.configure` | `StationConfigureEnvelope` | `change` | station |
 | `link.rotate_key` | `KeyRotationEnvelope` | `rotation` | receiver |
 | `coordinator.call` | `CoordinatorCallEnvelope` | `call` | deck |
@@ -383,6 +384,7 @@ close             { reason, detail }
 | `artifact.open` | deck → station | read | `data_streams.v1` | no (returns a `stream_token`) |
 | `session.start`, `session.resume`, `session.fork`, `session.prompt`, `session.steer`, `session.follow_up`, `session.interrupt`, `session.set_mode`, `session.set_model`, `session.stop` | deck → station | drive | — | yes |
 | `session.revert` | deck → station | drive | `revert.v1` | yes |
+| `session.rename` | deck → station | drive | `rename.v1` | yes |
 | `approval.answer` | deck → station | approve | — | yes |
 | `station.configure` | deck → station | admin | — | yes |
 | `link.rotate_key` | either → either | admin | — | yes |

@@ -182,6 +182,9 @@ fn samples() -> Vec<Event> {
             state: crate::event::RevertState::ReconciliationRequired,
             reason: Some("rollback_uncertain".into()),
         },
+        Event::SessionRenamed {
+            title: Some("docs".into()),
+        },
     ]
 }
 

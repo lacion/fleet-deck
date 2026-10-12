@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { Feed } from './board/FeedPanel';
+import type { FeedItem } from './board/feed';
 import { FleetBoard } from './board/FleetBoard';
 import { NeedsYouRail } from './board/NeedsYouRail';
 import { ALL, emptyFilter, filterFleet, type FleetFilter, stationName } from './board/fleet';
@@ -27,6 +29,8 @@ type Props = {
   readonly initialScreen?: Screen;
   /** The spawn form's directory listing at the first render (tests). */
   readonly initialListing?: WorkspaceListing | null;
+  /** The event feed since the page opened (DL-095). */
+  readonly feed?: readonly FeedItem[];
 };
 
 type Screen = 'fleet' | 'stations' | 'spawn';
@@ -44,6 +48,7 @@ export function App({
   initialSession = null,
   initialScreen = 'fleet',
   initialListing = null,
+  feed = [],
 }: Props) {
   const [screen, setScreen] = useState<Screen>(initialScreen);
   const [open, setOpen] = useState<SessionKey | null>(initialSession);
@@ -189,6 +194,7 @@ export function App({
             freshness={freshness}
             onOpen={setOpen}
           />
+          <Feed items={feed} onOpen={setOpen} />
         </>
       )}
     </div>

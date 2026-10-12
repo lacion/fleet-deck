@@ -175,6 +175,56 @@ describe('session view (P4-3)', () => {
     expect(ended).toMatch(/<textarea id="fd-composer-text" rows="3" disabled="">/);
   });
 
+  test('rename works on an ended session and needs drive and a live board (DL-095)', () => {
+    const ended = view(session({ state: 'exited', current_run: null }), timeline());
+    expect(ended).toMatch(/<button type="button">Rename<\/button>/);
+    const readOnly = view(session(), timeline(), ['read']);
+    expect(readOnly).toMatch(/<button type="button" disabled="">Rename<\/button>/);
+    const stale = renderToStaticMarkup(
+      <App
+        sessions={[session()]}
+        stations={[station()]}
+        freshness="stale"
+        sessionActions={(k) => sessionActions(async () => ({}), k, ['drive'])}
+        initialSession={key}
+      />,
+    );
+    expect(stale).toMatch(/<button type="button" disabled="">Rename<\/button>/);
+  });
+
+  test('a rename posts the title or a clear', async () => {
+    const posts: [string, unknown][] = [];
+    const actions = sessionActions(
+      async (path, body) => {
+        posts.push([path, body]);
+        return { state: 'done', receipt: { state: 'accepted' } };
+      },
+      key,
+      ['drive'],
+      () => 'c1',
+    );
+    await actions.rename('Docs pass');
+    await actions.rename(null);
+    expect(posts).toEqual([
+      [
+        '/api/commands/session.rename',
+        {
+          station: 'station-a',
+          command_id: 'c1',
+          command: { op: 'rename', session_id: 'nested', title: 'Docs pass' },
+        },
+      ],
+      [
+        '/api/commands/session.rename',
+        {
+          station: 'station-a',
+          command_id: 'c1',
+          command: { op: 'rename', session_id: 'nested', title: null },
+        },
+      ],
+    ]);
+  });
+
   test('the needs-you rail lists open approvals oldest first', () => {
     const req = (id: string, at: number) => ({
       request_id: id,

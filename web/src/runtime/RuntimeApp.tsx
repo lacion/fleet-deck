@@ -115,6 +115,7 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
         watch={watch}
         sessionActions={commands}
         spawn={spawn}
+        feed={state.feed}
       />
     </>
   );

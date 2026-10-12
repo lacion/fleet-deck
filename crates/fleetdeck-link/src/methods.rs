@@ -144,6 +144,13 @@ pub const METHODS: &[MethodSpec] = &[
         Some(feature::REVERT),
         true,
     ),
+    m(
+        "session.rename",
+        DeckToStation,
+        Scope::Drive,
+        Some(feature::RENAME),
+        true,
+    ),
     m("approval.answer", DeckToStation, Scope::Approve, None, true),
     m("station.configure", DeckToStation, Scope::Admin, None, true),
     m("link.rotate_key", Either, Scope::Admin, None, true),
