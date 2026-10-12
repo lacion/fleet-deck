@@ -19,7 +19,7 @@ A missing file gives the defaults. An unknown key is an error.
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `name` | the host name | The station name on the board. |
-| `allowed_roots` | (required when the file exists) | The directories where sessions, worktrees and clones may run. Give at least one. |
+| `allowed_roots` | `["~"]` (the home directory) | The directories where sessions, worktrees and clones may run. An explicit list must have at least one entry. |
 | `max_sessions` | `12` | The most sessions with a live process. A start or resume above the limit is refused. |
 | `allow_setup_cmd` | `false` | Allow a workspace setup command. |
 | `allow_shell` / `max_shells` | `false` / `8` | The human shell (PLAN §6.8). |

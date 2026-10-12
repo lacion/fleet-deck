@@ -299,3 +299,54 @@ async fn the_owner_lists_and_revokes_a_coordinator_grant_and_a_viewer_cannot_rev
             .is_empty()
     );
 }
+
+/// DL-137: revoke and renew are owner actions (ADR-006 §3). A bearer token
+/// is refused with `owner_only` whatever its scopes, and the grant stays as
+/// it was.
+#[tokio::test]
+async fn a_bearer_token_cannot_revoke_or_renew_a_coordinator_grant() {
+    let mut f = fixture().await;
+    let _station = f.connect().await;
+    let c = board(std::sync::Arc::clone(&f.ctx)).await;
+    let g = c
+        .store
+        .create_grant(fleetdeck_deck::store::NewGrant::new(
+            fleetdeck_proto::StationId::from(f.station.0.clone()),
+            "coord-1".into(),
+        ))
+        .await
+        .unwrap();
+    let scopes = [
+        BTreeSet::from([Scope::Drive]),
+        BTreeSet::from([Scope::Read, Scope::Drive]),
+        BTreeSet::from([Scope::Read, Scope::Drive, Scope::Approve, Scope::Admin]),
+    ];
+    for (n, set) in scopes.into_iter().enumerate() {
+        let (_, t) = c
+            .store
+            .create_token(format!("t{n}"), set, 24 * 60 * 60 * 1000)
+            .await
+            .unwrap();
+        let h = vec![("Authorization".to_owned(), format!("Bearer {}", t.expose()))];
+        for action in ["revoke", "renew"] {
+            let path = format!("/api/coordinator/grants/{}/{action}", g.grant_id);
+            let r = post(&c, &h, &path, json!({})).await;
+            assert_eq!(r.status, 403, "{action} with token {n}: {}", r.body);
+            assert_eq!(r.body["error"], "owner_only", "{}", r.body);
+        }
+    }
+    let after = c.store.grant(g.grant_id.clone()).await.unwrap().unwrap();
+    assert_eq!(after.state, g.state);
+    assert_eq!(after.revoked_reason, g.revoked_reason);
+    assert!(
+        c.audited("coordinator.revoke", AuditResult::Ok)
+            .await
+            .is_empty()
+    );
+    // The owner still revokes it.
+    let h = owner(&c).await;
+    let path = format!("/api/coordinator/grants/{}/revoke", g.grant_id);
+    let r = post(&c, &h, &path, json!({})).await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert_eq!(r.body["state"], "revoked");
+}

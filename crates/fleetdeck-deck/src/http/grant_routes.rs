@@ -70,6 +70,7 @@ pub async fn revoke(
     Path(grant_id): Path<String>,
 ) -> Result<Json<GrantView>, ApiError> {
     let result = async {
+        owner_only(&principal)?;
         let before = board
             .store
             .grant(grant_id.clone())
@@ -118,6 +119,7 @@ pub async fn renew(
     Path(grant_id): Path<String>,
 ) -> Result<Json<GrantView>, ApiError> {
     let result = async {
+        owner_only(&principal)?;
         let g = current_grant(&board, &grant_id).await?;
         let Some(generation) = board
             .store
@@ -246,6 +248,21 @@ fn view_classes(classes: &std::collections::BTreeSet<GrantClass>) -> Vec<String>
         .filter_map(|c| serde_json::to_value(c).ok())
         .filter_map(|v| v.as_str().map(str::to_owned))
         .collect()
+}
+
+/// Only the owner's board login revokes or renews a grant (ADR-006 §3,
+/// DL-137): a bearer token is refused before anything is read or written,
+/// whatever its scopes.
+fn owner_only(principal: &Principal) -> Result<(), ApiError> {
+    if matches!(principal, Principal::Owner(_)) {
+        Ok(())
+    } else {
+        Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "owner_only",
+            "only the owner's board login revokes or renews a coordinator grant".to_owned(),
+        ))
+    }
 }
 
 async fn current_grant(board: &Board, grant_id: &str) -> Result<Grant, ApiError> {

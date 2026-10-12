@@ -2240,3 +2240,12 @@ Format: context, options, choice, reason, owner review.
 - Tests: `a_bearer_token_cannot_start_a_coordinator_or_create_a_grant` (`crates/fleetdeck-deck/tests/http_commands.rs`); `config::tests::{parse_errors_never_echo_config_values, durations, an_empty_file_gives_the_defaults}` (`crates/fleetdeck-core`).
 - Reason: authorization, secret handling and shell access must fail closed (PLAN §9, A-decisions); a check that does not run on the merge target is not a check.
 - Owner review: pending.
+
+## DL-137 — Second PRE-PR review fixes: owner-only grant revoke and renew, value-free config errors (after M3)
+
+- Context: the adversary re-review of `781f2f8` found: (B1) the DL-136 filter hid only double-quoted values, so a TOML type error still printed a numeric or floating-point `env` value, an escaped quote let a string through, and an unknown variant showed between backticks; (B2) `POST /api/coordinator/grants/{id}/revoke` and `.../renew` needed only the `drive` scope, although ADR-006 §3 makes both owner actions; (N1) `docs/v2/operations.md` said that `allowed_roots` is required when `station.toml` exists, but the code uses `["~"]`.
+- Options for B1: (a) a better value filter on the parser message; (b) no parser text at all: the line, the column and a fixed category. Options for N1: (a) make the key required; (b) document the default.
+- Choice: B1 (b): `toml_category` maps the parser message to a fixed text (`unknown field`, `unknown variant`, `invalid type`, `invalid value`, `invalid length`, `duplicate key`, else `invalid TOML syntax`); only `missing field` keeps its name, because the name comes from this crate's schema. B2: both handlers call `owner_only` first and refuse a bearer token with 403 `owner_only`, whatever its scopes, before any read or write; the refusal is audited. N1 (b): the documentation states the `["~"]` default (no behaviour change).
+- Tests: `config::tests::parse_errors_never_echo_config_values` (numeric, floating-point, escaped-quote, unknown-variant and unknown-key canaries in Display and Debug), `a_bearer_token_cannot_revoke_or_renew_a_coordinator_grant` (`crates/fleetdeck-deck/tests/board_fleet.rs`: drive, read+drive and all-scope tokens; the grant is unchanged; the owner still revokes).
+- Reason: secrets and owner authority must fail closed; a value filter cannot know every format of the parser text.
+- Owner review: pending.

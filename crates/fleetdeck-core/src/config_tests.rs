@@ -306,6 +306,25 @@ fn parse_errors_never_echo_config_values() {
     );
     let wrong_type = format!("allow_shell = \"{canary}\"\n");
     let deck = format!("name = \"{canary}\"\nlisten = [\"{canary}\"\n");
+    let number = "[[provider_instance]]\nid = 'test'\ndriver = 'claude'\nenv = { API_TOKEN = 1234567890123456789 }\n".to_owned();
+    let float = "[[provider_instance]]\nid = 'test'\ndriver = 'claude'\nenv = { API_TOKEN = 1234567890.12345 }\n".to_owned();
+    let escaped = format!("allow_shell = 'prefix\"{canary}'\n");
+    let variant = format!("[[provider_instance]]\nid = 'test'\ndriver = '{canary}'\n");
+    let key = format!("{canary} = 1\n");
+    for text in [&number, &float] {
+        let e = err(text);
+        assert!(!e.contains("1234567890"), "{e}");
+        let debug = format!("{:?}", StationConfig::parse(text, &env()).unwrap_err());
+        assert!(!debug.contains("1234567890"), "{debug}");
+        assert!(e.contains("invalid type"), "{e}");
+    }
+    for text in [&escaped, &variant, &key] {
+        let e = err(text);
+        assert!(!e.contains(canary), "{e}");
+        let debug = format!("{:?}", StationConfig::parse(text, &env()).unwrap_err());
+        assert!(!debug.contains(canary), "{debug}");
+    }
+    assert!(err(&variant).contains("unknown variant"));
     for text in [&unclosed, &wrong_type] {
         let e = err(text);
         assert!(!e.contains(canary), "{e}");
