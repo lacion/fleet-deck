@@ -28,6 +28,15 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 93 (2026-10-12, 17:06–)
+
+- Round start: committed round 92 as 2a42aa0. `git log v2..m3/orchestration`, `v2..m3/board`, `v2..m3/ops`: no new commits; `m3-orchestration.md` has no "LANE COMPLETE", so 6-13, 7-7 and 7-8 stay blocked.
+- Pre-PR review preparation: a reference check of the two test maps in this file. A script read every backticked test name (at least three underscores) and every repository path of the "Phase 7 acceptance evidence map" and the "ADR-005 §9 test map" sections, and searched `fn <name>` under `crates/` and the path on disk.
+  - Phase 7 evidence map: 21 test names, all found; 16 paths, all found (the glob `crates/fleetdeck-cli/tests/shim_*.rs` matches 11 files).
+  - ADR-005 §9 test map: 10 test names, all found; 4 paths, all found (same glob).
+  - Result: no stale reference after the round-74 module split and the lane merges. No file change was needed.
+- Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` (docs only, no test run).
+
 ## Round 92 (2026-10-12, 17:05–)
 
 - Round start: committed round 91 as 80282d7. `git log v2..m3/orchestration`, `v2..m3/board`, `v2..m3/ops`: no new commits; `m3-orchestration.md` has no "LANE COMPLETE", so 6-13, 7-7 and 7-8 stay blocked.
