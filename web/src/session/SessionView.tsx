@@ -59,11 +59,12 @@ const PANEL_KEY = 'fd-files-panel';
 function useWide(): boolean {
   return useSyncExternalStore(
     (notify) => {
+      if (typeof window.matchMedia !== 'function') return () => {};
       const query = window.matchMedia(WIDE);
       query.addEventListener('change', notify);
       return () => query.removeEventListener('change', notify);
     },
-    () => window.matchMedia(WIDE).matches,
+    () => typeof window.matchMedia !== 'function' || window.matchMedia(WIDE).matches,
     () => true,
   );
 }
@@ -128,9 +129,12 @@ export function SessionView(props: SessionViewProps) {
     actions && shells && terminals && watch
       ? handoverFlow({ key, title: s.title ?? s.session_id, watch, actions, shells, terminals })
       : null;
+  // DL-141: a station with `allow_shell = false` refuses the TUI handover.
+  const shellsOff =
+    stations.find((st) => st.station_id === session.station_id)?.info?.allow_shell === false;
   const terminal = flow
     ? {
-        available: true,
+        available: !shellsOff,
         onOpen: () =>
           controller.act('handover', async () => {
             const r = await flow.open();

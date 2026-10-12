@@ -327,6 +327,15 @@ export function SessionHeader({
           </button>
         </>
       ) : null}
+      {terminal !== null && !terminal.available ? (
+        <>
+          <div className="fd-menu-sep" />
+          <p className="fd-menu-text">
+            Shells are off on this station. Set allow_shell = true in station.toml to open a
+            terminal.
+          </p>
+        </>
+      ) : null}
     </>
   );
 
