@@ -2,7 +2,7 @@
 
 *Written 2026-10-11 from a source read of [pingdotgg/t3code](https://github.com/pingdotgg/t3code) at `5f7294d` (2026-10-10): `docs/internals/*`, `docs/orchestration-v2/*`, `docs/user/*`, and `packages/provider-pi`. Companion to [PLAN.md](./PLAN.md).*
 
-The v0 lessons doc ([../t3code-lessons.md](../t3code-lessons.md), August 2026) rejected most of T3 Code, because v0 *observed* Claude Code and T3 Code *drives* agents. v2 now makes the same bet as T3 Code: drive agents through their structured protocols, with a server that owns execution and clients that render it. Most rows in the old "do not adopt" table are now our own decisions. This doc reads T3 Code again with that new frame.
+The v0 lessons doc (`docs/t3code-lessons.md` on `main`, August 2026) rejected most of T3 Code, because v0 *observed* Claude Code and T3 Code *drives* agents. v2 now makes the same bet as T3 Code: drive agents through their structured protocols, with a server that owns execution and clients that render it. Most rows in the old "do not adopt" table are now our own decisions. This doc reads T3 Code again with that new frame.
 
 ---
 

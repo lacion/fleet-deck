@@ -2222,3 +2222,12 @@ Format: context, options, choice, reason, owner review.
 - Tests: `shell::effects_tests::{a_shell_command_committed_before_a_crash_never_runs_after_the_restart, shell_effects_run_after_the_commit_in_order_and_a_pty_failure_is_recorded, a_slow_reader_is_cut_off_and_the_shell_keeps_running_with_its_scrollback}` (station lib), `an_attached_shell_socket_closes_after_a_logout_and_a_token_revocation` (`crates/fleetdeck-deck/tests/board_shell.rs`).
 - Supersedes the "no new table and no new schema version" line of DL-404.
 - Owner review: pending.
+
+## DL-135 — Cutover clean-up: v1 documents and the v1 changelog leave `v2` (owner request, after M3)
+
+- Context: after the 7-7 cutover (DL-132), branch `v2` still held v1 documents: `docs/v1/`, the v1 reviews and lessons in `docs/*.md`, `docs/assets/` (v1 screenshots), the v1 README in `docs/v0/README.md`, the v1 changelog and a v1 threat model in `SECURITY.md`. The owner asked to remove every file that v2 does not need.
+- Options: (a) keep the v1 documents as a record on `v2`; (b) remove them from `v2` and point to branch `main` and the `v0.*` tags, where they stay.
+- Choice: (b). Removed `docs/v1/`, `docs/assets/`, `docs/AUDIT-2026-07.md`, `docs/CODER.md`, `docs/fleetdeck-future.md`, `docs/fleetdeck-v1.0.md`, `docs/fleetdeck-v1.0-review.md`, `docs/orca-lessons.md`, `docs/t3code-lessons.md` and `docs/ux-feedback-plan.md`. `docs/v0/README.md` is now a short pointer to `main` and the tags (the cutover test keeps it). `CHANGELOG.md` starts again for 2.0 and points to the v1 changelog on `main`. `SECURITY.md` keeps the reporting process and now states the v2 threat model. PLAN §4 and `docs/v2/t3code-lessons.md` say where the v1 sources now are. `spikes/` stays, because the production replay and schema tests read its fixtures. `.claude/` stays unchanged (agent tooling configuration).
+- Tests: `crates/fleetdeck-cli/tests/cutover.rs` (3 passed).
+- Reason: a `v2` checkout should contain only what v2 builds, tests, documents or releases; git history, `main` and the tags keep v1.
+- Owner review: requested by the owner (2026-10-12).

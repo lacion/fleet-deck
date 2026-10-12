@@ -99,7 +99,7 @@ v0 had five rules. v2 changes two of them (drive, not observe; many machines, no
 
 ## 4. What we learn from v0
 
-v0 is ~30k lines of TypeScript, 44 releases, and a large body of reviews (`docs/v1/*`, `docs/*-lessons.md`, `ts-migration-bugs.md`). These are the lessons that shape v2.
+v0 is ~30k lines of TypeScript, 44 releases, and a large body of reviews (`docs/v1/*`, `docs/*-lessons.md`, `ts-migration-bugs.md`). These are the lessons that shape v2. (The 7-7 cutover removed these v0 files from `v2`. Read them on `main` or at the `v0.*` tags.)
 
 ### 4.1 Keep
 
