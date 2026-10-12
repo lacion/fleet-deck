@@ -72,6 +72,8 @@ run cargo clippy --workspace --all-targets -- -D warnings
 # shellcheck disable=SC2086 # $tests is two words on purpose
 run $tests --workspace
 run cargo deny check
+# The module size rule (fewer than 800 lines per module, M3 goal).
+run sh tools/module-size.sh
 
 # TS-types drift (PLAN §11): web/src/gen must equal a fresh export. The second
 # test of the file proves that the check fails on stale, missing and extra

@@ -28,6 +28,88 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 81 (2026-10-12, 16:44–)
+
+- Round start: committed round 80 as c131df9.
+- Sync: no new commits on m3/orchestration, m3/board or m3/ops.
+- 7-6 follow-up status: four doc follow-ups of reviews r49 and r50 were already fixed in commit 8798ac2 (15:35) but were still listed as open. Checked each against the current text and marked them FIXED in the follow-up table:
+  - `docs/v2/operations.md` §10 "Limits of this release": the shim host gets `unsupported`; the dispatch rechecks only identity, proven end, newer owner work, requested stop and the time window.
+  - `README.md` line 24: a revert that cannot be proven needs reconciliation and blocks input.
+  - `docs/v2/operations.md` §7.1: the import uses the permission mode of the spawn form; a provider instance stores no mode.
+- The round-71 evidence-map row on A10 coverage is marked "claim narrowed" (the round-72 "Limits of this map" note); the missing A10 recheck tests stay open as 7-2 follow-ups.
+- Lane B `m3-orchestration.md` still has no "LANE COMPLETE"; 6-13, 7-7 and 7-8 stay blocked.
+- Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
+
+## Round 80 (2026-10-12, 16:41–)
+
+- Round start: committed round 79 as 3d5d586.
+- Sync: no new commits on m3/orchestration, m3/board or m3/ops.
+- 7-8 preparation: the module size check now has named tests, so `make check` (through the workspace test run) proves both directions without a hand count. New `crates/fleetdeck-cli/tests/module_size.rs`:
+  - `every_module_has_fewer_than_800_lines`: `sh tools/module-size.sh` exits 0, and the largest module that the test finds in `crates/` and `web/src/` has fewer than 800 lines.
+  - `the_module_size_check_fails_and_names_the_largest_module_below_its_size`: with `FD_MODULE_LIMIT` set to the line count of the largest module, the script exits 1 and its output names that file and its line count.
+  - `cargo nextest run -p fleetdeck-cli --test module_size` → 2 passed.
+- Lane B `m3-orchestration.md` still has no "LANE COMPLETE"; 6-13, 7-7 and 7-8 stay blocked.
+- Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
+
+## Round 79 (2026-10-12, 16:40–)
+
+- Round start: committed round 78 as 8600d2a.
+- Sync: no new commits on m3/orchestration, m3/board or m3/ops.
+- Review r78: the 700-line probe count in the round-78 entry was wrong. `FD_MODULE_LIMIT=700 sh tools/module-size.sh` → exit 1 and lists 17 files, from 702 lines (`crates/fleetdeck-providers/tests/capability_matrix.rs`) to 798 lines (`crates/fleetdeck-providers/src/host/shim/host.rs`). The round-78 entry is corrected and the finding is a follow-up row.
+- Lane B `m3-orchestration.md` still has no "LANE COMPLETE"; 6-13, 7-7 and 7-8 stay blocked.
+- Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
+
+## Round 78 (2026-10-12, 16:38–)
+
+- Round start: committed round 77 as 72a8fc8.
+- Sync: no new commits on m3/orchestration, m3/board or m3/ops.
+- 7-8 preparation: the goal rules "no `unwrap()` outside tests" and "modules stay under 800 lines" are now both reachable through `make check`.
+  - `unwrap()`: already enforced. `Cargo.toml` sets `unwrap_used = "deny"`, `clippy.toml` sets `allow-unwrap-in-tests = true`, and `make check` runs clippy with `-D warnings`.
+  - Module size: was not checked. New `tools/module-size.sh` fails when a `.rs` file under `crates/` or a `.ts`/`.tsx` file under `web/src/` has 800 or more lines (`FD_MODULE_LIMIT` overrides the limit). `tools/check.sh` runs it after `cargo deny check`.
+  - `sh tools/module-size.sh` → exit 0 (largest module: `crates/fleetdeck-providers/src/host/shim/host.rs`, 798 lines); `FD_MODULE_LIMIT=700 sh tools/module-size.sh` → exit 1 and lists the files with 700 or more lines, so the check can fail (round 79 correction: it lists 17 files, among them `host.rs` with 798 lines; the round-78 text said two files because the probe output was cut by `head -3`); `sh -n tools/check.sh` → syntax ok.
+- Lane B `m3-orchestration.md` still has no "LANE COMPLETE"; 6-13, 7-7 and 7-8 stay blocked.
+- Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
+
+## Round 77 (2026-10-12, 16:37–)
+
+- Round start: committed round 76 as 73e61e5.
+- Sync: no new commits on m3/orchestration, m3/board or m3/ops.
+- 7-8 preparation (the copy itself waits for LANE COMPLETE): checked the lane decision files against `docs/v2/DECISIONS-LOG.md`.
+  - `docs/v2/decisions/m3-orchestration.md`: DL-200 to DL-216 (17 entries; DL-204 is written before DL-203).
+  - `docs/v2/decisions/m3-board.md`: DL-300 to DL-309 (10 entries).
+  - `docs/v2/decisions/m3-ops.md`: DL-400 to DL-405 (6 entries; DL-404 and DL-405 are written before DL-403).
+  - No number is defined twice across the four files. Every `DL-nnn` reference in `docs/`, `README.md`, `crates/` and `web/src/` resolves to a defined entry; the only unresolved strings are the range bounds DL-199, DL-299, DL-399 and DL-499.
+  - The 7-8 copy keeps the numbers and puts the entries in numeric order under one "M3 lane decisions" heading per lane.
+- Lane B `m3-orchestration.md` still has no "LANE COMPLETE"; 6-13, 7-7 and 7-8 stay blocked.
+- Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
+
+## Round 76 (2026-10-12, 16:35–)
+
+- Round start: committed round 75 as 5b3e375.
+- Sync: no new commits on m3/orchestration, m3/board or m3/ops.
+- 7-6 Docs: `docs/v2/operations.md` §11 troubleshooting row "A coordinator session does not start" with the exact start-effect reasons from `crates/fleetdeck-station/src/manager/coordinator_start.rs` (`a coordinator session starts only as a new direct child`, `the coordinator endpoint does not listen`) and the unverified handoff (DL-215, DL-216).
+- Lane B `m3-orchestration.md` still has no "LANE COMPLETE"; 6-13, 7-7 and 7-8 stay blocked.
+- Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
+
+## Round 75 (2026-10-12, 16:33–)
+
+- Round start: committed round 74 as a1786dc.
+- Sync: merged m3/orchestration 046dea1 (6-5 slice, DL-216: the start effect mints the coordinator credential and hands it to the child environment, `crates/fleetdeck-station/src/manager/coordinator_start.rs`) as 3df2a77. No board or ops commits. `crates/fleetdeck-proto` unchanged, so `make ts-types` was not needed.
+- Merge validation: `cargo nextest run -p fleetdeck-station -E 'test(coordinator_start)'` → 2 passed.
+- 7-6 Docs: `docs/v2/internals.md` §8 coordinator row names `manager/coordinator_start.rs` and its start-effect checks (DL-216).
+- Lane B `m3-orchestration.md` still has no "LANE COMPLETE"; 6-13, 7-7 and 7-8 stay blocked.
+- Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
+
+## Round 74 (2026-10-12, 16:31–)
+
+- Round start: committed round 73 as 32d3170. No new commits on m3/orchestration, m3/board or m3/ops. Lane B still has no "LANE COMPLETE", so 6-13, 7-7 and 7-8 stay blocked.
+- Module size fix (rule "modules stay under 800 lines"): a scan of `crates/**/*.rs` found two lane A test files over the limit, `crates/fleetdeck-cli/tests/shim_manager.rs` (863 lines) and `crates/fleetdeck-cli/tests/shim_stdin.rs` (818 lines). The tail of each moved into a child module with `#[path]` and `use super::*` (no behaviour change, same test binary):
+  - `crates/fleetdeck-cli/tests/shim_manager_parts/live_exit.rs`: `ended_row`, `resume`, `a_live_shim_exit_with_a_surviving_child_keeps_the_evidence_and_resume_stays_refused`, `a_live_shim_exit_without_survivors_is_a_proven_end`.
+  - `crates/fleetdeck-cli/tests/shim_stdin_parts/parallel_recovery.rs`: `recovery_waits_for_blocked_writes_of_several_shims_in_parallel`.
+  - Now: `shim_manager.rs` 729, `shim_stdin.rs` 771 lines; the largest file in `crates/` has 798 lines. The ADR-005 §9 map row 40 names the new module.
+- Tests: `cargo nextest run -p fleetdeck-cli --test shim_manager --test shim_stdin -E 'test(live_exit::) | test(parallel_recovery::)'` → 3 passed.
+- Checks: `cargo fmt --all --check` clean; `cargo clippy --workspace --all-targets -- -D warnings` clean.
+
 ## Round 73 (2026-10-12, 16:28–)
 
 - Round start: committed round 72 as ff0800a. No new commits on m3/orchestration, m3/board or m3/ops. Lane B still has no "LANE COMPLETE", so 6-13, 7-7 and 7-8 stay blocked.
@@ -290,7 +372,7 @@ Limits of this map (review of round 71). Two rows above claim more than the test
 | 25 | covered | `shim_station.rs` `uncertain_inputs_are_settled_before_commands_are_admitted_after_a_station_start` |
 | 26–29, 34 | covered | `shim_stdin.rs` |
 | 39 | covered (round 46) | `shim_gap.rs` `an_unterminated_last_line_at_eof_is_committed_as_malformed_before_the_exit_is_acknowledged` |
-| 40 | partial | `shim_manager.rs` `a_live_shim_exit_with_a_surviving_child_keeps_the_evidence_and_resume_stays_refused`, `manager::tests::resume` |
+| 40 | partial | `shim_manager.rs` (module `live_exit`) `a_live_shim_exit_with_a_surviving_child_keeps_the_evidence_and_resume_stays_refused`, `manager::tests::resume` |
 | 44 | open | exit file on ENOSPC → follow-up |
 | 45 | open | `ack_exit` fault points → follow-up |
 
@@ -298,7 +380,7 @@ Limits of this map (review of round 71). Two rows above claim more than the test
 
 | Item | Finding | File |
 | --- | --- | --- |
-| 7-6 | The Phase 7 evidence map overstated the A10 coverage: auto-continue rechecks only identity, proven end, newer owner work, stop and window, and the shim host is `unsupported`. Add the missing A10 recheck tests or narrow the claim. | `crates/fleetdeck-station/src/manager/auto_continue_tests.rs`, `docs/v2/progress/m3-durable.md` |
+| 7-6 | CLAIM NARROWED (round 72, "Limits of this map"); the missing A10 recheck tests stay open as 7-2 follow-ups. The Phase 7 evidence map overstated the A10 coverage: auto-continue rechecks only identity, proven end, newer owner work, stop and window, and the shim host is `unsupported`. Add the missing A10 recheck tests or narrow the claim. | `crates/fleetdeck-station/src/manager/auto_continue_tests.rs`, `docs/v2/progress/m3-durable.md` |
 | 7-6 | The Phase 7 evidence map overstated the ShimHost upgrade coverage: `station_upgrade.rs` uses the `direct` host. Add an end-to-end test where a shim agent survives a station upgrade. | `crates/fleetdeck-cli/tests/station_upgrade.rs` |
 | 7-1 | ADR-005 test 3: a named fault point between the attach and the replay | `crates/fleetdeck-cli/tests/shim_recovery.rs` |
 | 7-1 | ADR-005 test 16: a stale socket file is replaced, a live one is refused | `crates/fleetdeck-providers/src/host/shim/launch.rs` |
@@ -324,10 +406,11 @@ Limits of this map (review of round 71). Two rows above claim more than the test
 | 7-3 (review r48) | No guard for lost shims and no adapter checkpoint compatibility check in the trial | `crates/fleetdeck-station/src/upgrade.rs` |
 | 7-3 (review r48) | The trial run of the new binary has no time bound | `crates/fleetdeck-cli/src/upgrade.rs` |
 | 7-3 (review r48) | ADR-005 tests 20/21/22/48 use store rows, not a real ShimHost of two builds; N−1 is tested at the link layer only | `crates/fleetdeck-station/src/upgrade_tests.rs` |
-| 7-6 (review r49) | The docs do not say that auto-continue is not supported on the shim host (a shim session gets `unsupported`) | `docs/v2/operations.md` §10 |
-| 7-6 (review r49) | The docs present the auto-continue rechecks as complete; the dispatch recheck covers only part of the A10 rules (see the 7-2 follow-ups) | `docs/v2/operations.md` §10, `docs/v2/internals.md` |
-| 7-6 (review r49) | The README says a revert changes nothing on failure; a revert that cannot be proven needs reconciliation and blocks input (PLAN §6.6) | `README.md` |
+| 7-6 (review r49) | FIXED (commit 8798ac2): operations §10 "Limits of this release" says the shim host gets `unsupported`. The docs do not say that auto-continue is not supported on the shim host (a shim session gets `unsupported`) | `docs/v2/operations.md` §10 |
+| 7-6 (review r49) | FIXED (commit 8798ac2): operations §10 lists the five rules that the dispatch rechecks and the rules that it does not. The docs present the auto-continue rechecks as complete; the dispatch recheck covers only part of the A10 rules (see the 7-2 follow-ups) | `docs/v2/operations.md` §10, `docs/v2/internals.md` |
+| 7-6 (review r49) | FIXED (commit 8798ac2): `README.md` names the reconciliation state. The README says a revert changes nothing on failure; a revert that cannot be proven needs reconciliation and blocks input (PLAN §6.6) | `README.md` |
 | 6-12 merge (review r50) | FIXED round 56 (DL-130, `a_draining_station_refuses_an_import`): `session.import` is not in the drain guard's list of commands that create work, so an import passes a drain | `crates/fleetdeck-station/src/manager/drain.rs` |
 | 6-12 merge (review r50) | An import of a native session whose earlier session is `lost` with an unresolved shim can run that conversation twice (no unended-execution check for the native id) | `crates/fleetdeck-station/src/manager/decide.rs` |
 | 6-12 merge (review r50) | The board keeps the clone place and directory choices while an import id is set; the import ignores them without a visible note | `web/src/spawn/SpawnForm.tsx` |
-| 7-6 (review r50) | `docs/v2/operations.md` §7.1 says the import uses "the stored mode of the provider instance"; a provider instance has no stored permission mode (the import uses the mode of the spawn form) | `docs/v2/operations.md` |
+| 7-6 (review r50) | FIXED (commit 8798ac2): §7.1 says the import uses the mode of the spawn form. `docs/v2/operations.md` §7.1 says the import uses "the stored mode of the provider instance"; a provider instance has no stored permission mode (the import uses the mode of the spawn form) | `docs/v2/operations.md` |
+| 7-8 prep (review r78) | The round-78 log said the 700-line probe lists two files; it lists 17, including the 798-line `host.rs`. Corrected in the round-78 entry. Add a test that runs `tools/module-size.sh` with a lower limit, so the probe count is evidence and not a hand count. Closed in round 80: `crates/fleetdeck-cli/tests/module_size.rs`. | `tools/module-size.sh`, `docs/v2/progress/m3-durable.md` |
