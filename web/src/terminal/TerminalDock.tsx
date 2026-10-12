@@ -296,6 +296,7 @@ export function TerminalDock({
               <Terminal
                 station={tab.station}
                 shellId={tab.shellId}
+                kind={tab.kind}
                 actions={actions}
                 active={selected && visible}
                 touch={touch}

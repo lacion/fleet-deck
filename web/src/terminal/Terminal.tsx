@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ShellActions } from '../shell/shell';
 import { KeyBar, ctrlByte } from './KeyBar';
+import { oscCopyText } from './osc';
 
 type Props = {
   readonly station: string;
   readonly shellId: string;
+  /** A TUI tab: Shift+Enter sends a newline, not a submit. Missing means a shell. */
+  readonly kind?: 'shell' | 'tui';
   readonly actions: ShellActions;
   /** Only the active terminal fits and takes the focus. */
   readonly active: boolean;
@@ -31,12 +34,12 @@ function theme(): Record<string, string> {
   set('background', '--code');
   set('foreground', '--text');
   set('cursor', '--act');
-  set('selectionBackground', '--border');
+  set('selectionBackground', '--term-selection');
   return out;
 }
 
 /** An xterm.js view of one shell stream: binary frames both ways (PLAN §6.8). */
-export function Terminal({ station, shellId, actions, active, touch, onEnded }: Props) {
+export function Terminal({ station, shellId, kind, actions, active, touch, onEnded }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<Status>('connecting');
   const [attempt, setAttempt] = useState(0);
@@ -110,6 +113,48 @@ export function Terminal({ station, shellId, actions, active, touch, onEnded }: 
         if (ws.readyState === WebSocket.OPEN) ws.send(encoder.encode(bytes));
       };
       sender.current = write;
+      // Ctrl+Shift+C and Cmd+C copy the selection. In a TUI tab Shift+Enter sends
+      // ESC CR, which Claude Code's TUI reads as "newline, do not submit".
+      term.attachCustomKeyEventHandler((e) => {
+        if (e.type !== 'keydown') return true;
+        const key = e.key.toLowerCase();
+        const copy =
+          (e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && key === 'c') ||
+          (e.metaKey &&
+            !e.ctrlKey &&
+            !e.altKey &&
+            !e.shiftKey &&
+            key === 'c' &&
+            term.hasSelection());
+        if (copy) {
+          const selection = term.getSelection();
+          if (selection !== '')
+            void navigator.clipboard?.writeText(selection)?.catch(() => undefined);
+          return false;
+        }
+        if (
+          kind === 'tui' &&
+          e.key === 'Enter' &&
+          e.shiftKey &&
+          !e.ctrlKey &&
+          !e.altKey &&
+          !e.metaKey
+        ) {
+          write('\x1b\r');
+          return false;
+        }
+        return true;
+      });
+      // OSC 52: the agent copies to the clipboard. A read request gets no answer.
+      const osc = term.parser.registerOscHandler(52, (data) => {
+        const text = oscCopyText(data);
+        if (text !== null) void navigator.clipboard?.writeText(text)?.catch(() => undefined);
+        return true;
+      });
+      const onTheme = () => {
+        term.options.theme = theme();
+      };
+      window.addEventListener('fd:theme', onTheme);
       const input = term.onData((d) => {
         if (ctrlRef.current && d.length === 1) {
           setCtrl(false);
@@ -139,6 +184,8 @@ export function Terminal({ station, shellId, actions, active, touch, onEnded }: 
         if (timer !== undefined) clearTimeout(timer);
         observer.disconnect();
         input.dispose();
+        osc.dispose();
+        window.removeEventListener('fd:theme', onTheme);
         resized.dispose();
         ws.onclose = null;
         ws.close();
@@ -151,7 +198,7 @@ export function Terminal({ station, shellId, actions, active, touch, onEnded }: 
       disposed = true;
       cleanup();
     };
-  }, [station, shellId, actions, attempt]);
+  }, [station, shellId, kind, actions, attempt]);
 
   // Becoming active: fit once and take the focus.
   useEffect(() => {

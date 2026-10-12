@@ -10,6 +10,7 @@
   --text: #e7ecf5;
   --dim: #94a0b8;
   --faint: #5c6880;
+  --term-selection: rgba(240, 166, 60, 0.3); /* terminal selection */
   --act: #f0a63c; /* yours-to-act (amber) */
   --act-bg: #2a1f0c;
   --act-ink: #1a1206; /* text on amber */
@@ -41,6 +42,7 @@
   --text: #1a2230;
   --dim: #57637a;
   --faint: #8a94a8;
+  --term-selection: rgba(138, 83, 0, 0.22);
   --act: #8a5300;
   --act-bg: #fff3dc;
   --act-ink: #ffffff;
