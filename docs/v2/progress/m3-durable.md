@@ -28,6 +28,14 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 79 (2026-10-12, 16:40–)
+
+- Round start: committed round 78 as 8600d2a.
+- Sync: no new commits on m3/orchestration, m3/board or m3/ops.
+- Review r78: the 700-line probe count in the round-78 entry was wrong. `FD_MODULE_LIMIT=700 sh tools/module-size.sh` → exit 1 and lists 17 files, from 702 lines (`crates/fleetdeck-providers/tests/capability_matrix.rs`) to 798 lines (`crates/fleetdeck-providers/src/host/shim/host.rs`). The round-78 entry is corrected and the finding is a follow-up row.
+- Lane B `m3-orchestration.md` still has no "LANE COMPLETE"; 6-13, 7-7 and 7-8 stay blocked.
+- Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
+
 ## Round 78 (2026-10-12, 16:38–)
 
 - Round start: committed round 77 as 72a8fc8.
@@ -35,7 +43,7 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
 - 7-8 preparation: the goal rules "no `unwrap()` outside tests" and "modules stay under 800 lines" are now both reachable through `make check`.
   - `unwrap()`: already enforced. `Cargo.toml` sets `unwrap_used = "deny"`, `clippy.toml` sets `allow-unwrap-in-tests = true`, and `make check` runs clippy with `-D warnings`.
   - Module size: was not checked. New `tools/module-size.sh` fails when a `.rs` file under `crates/` or a `.ts`/`.tsx` file under `web/src/` has 800 or more lines (`FD_MODULE_LIMIT` overrides the limit). `tools/check.sh` runs it after `cargo deny check`.
-  - `sh tools/module-size.sh` → exit 0 (largest module: `crates/fleetdeck-providers/src/host/shim/host.rs`, 798 lines); `FD_MODULE_LIMIT=700 sh tools/module-size.sh` → exit 1 and lists the two files over 700 lines, so the check can fail; `sh -n tools/check.sh` → syntax ok.
+  - `sh tools/module-size.sh` → exit 0 (largest module: `crates/fleetdeck-providers/src/host/shim/host.rs`, 798 lines); `FD_MODULE_LIMIT=700 sh tools/module-size.sh` → exit 1 and lists the files with 700 or more lines, so the check can fail (round 79 correction: it lists 17 files, among them `host.rs` with 798 lines; the round-78 text said two files because the probe output was cut by `head -3`); `sh -n tools/check.sh` → syntax ok.
 - Lane B `m3-orchestration.md` still has no "LANE COMPLETE"; 6-13, 7-7 and 7-8 stay blocked.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
@@ -382,3 +390,4 @@ Limits of this map (review of round 71). Two rows above claim more than the test
 | 6-12 merge (review r50) | An import of a native session whose earlier session is `lost` with an unresolved shim can run that conversation twice (no unended-execution check for the native id) | `crates/fleetdeck-station/src/manager/decide.rs` |
 | 6-12 merge (review r50) | The board keeps the clone place and directory choices while an import id is set; the import ignores them without a visible note | `web/src/spawn/SpawnForm.tsx` |
 | 7-6 (review r50) | `docs/v2/operations.md` §7.1 says the import uses "the stored mode of the provider instance"; a provider instance has no stored permission mode (the import uses the mode of the spawn form) | `docs/v2/operations.md` |
+| 7-8 prep (review r78) | The round-78 log said the 700-line probe lists two files; it lists 17, including the 798-line `host.rs`. Corrected in the round-78 entry. Add a test that runs `tools/module-size.sh` with a lower limit, so the probe count is evidence and not a hand count. | `tools/module-size.sh`, `docs/v2/progress/m3-durable.md` |
