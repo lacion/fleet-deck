@@ -24,7 +24,7 @@ use fleetdeck_providers::host::shim::settle::{self, EffectResult, Facts};
 use fleetdeck_providers::host::shim::stdin::WriteOutcome;
 use fleetdeck_providers::host::shim::wire::{MAX_PAYLOAD, StatusAnswer, WriteState};
 
-use crate::store::{EffectId, Result, Store};
+use crate::store::{EffectId, Result, Store, StoreError};
 
 /// How long [`settle_writes`] waits between questions about a write in
 /// flight.
@@ -72,6 +72,8 @@ pub async fn send_input(
     effect_id: &EffectId,
     bytes: &[u8],
 ) -> Result<Sent> {
+    let frames = u32::try_from(bytes.len().div_ceil(MAX_PAYLOAD))
+        .map_err(|_| StoreError::Corrupt("a stdin effect with too many frames".to_owned()))?;
     for (ordinal, chunk) in (0u32..).zip(bytes.chunks(MAX_PAYLOAD)) {
         let Some(tag) = store
             .shim_claim_write(
@@ -79,6 +81,7 @@ pub async fn send_input(
                 process.generation(),
                 Some(effect_id.clone()),
                 ordinal,
+                frames,
             )
             .await?
         else {
@@ -250,6 +253,16 @@ pub async fn settle_writes(
         for tag in &claimed.tags {
             frames.push(settle_frame(process, tag, deadline).await);
         }
+        // Frames without a row were never claimed, so no byte of them left
+        // (DL-107). They count as unwritten: with a written frame 0 the
+        // effect is a partial input and blocks the session.
+        let missing = usize::try_from(claimed.frames)
+            .unwrap_or(usize::MAX)
+            .saturating_sub(claimed.tags.len());
+        frames.extend(std::iter::repeat_n(
+            Frame::Unwritten(settle::SHIM_NOT_RECEIVED),
+            missing,
+        ));
         let result = combine(&frames);
         let id = claimed.effect.effect_id.clone();
         if store

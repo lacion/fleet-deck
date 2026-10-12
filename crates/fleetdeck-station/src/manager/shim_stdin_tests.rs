@@ -114,7 +114,8 @@ async fn a_partial_stdin_write_blocks_input_and_still_admits_interrupt_and_stop(
             "a".to_owned(),
             generation + 1,
             Some(effect.effect_id.clone()),
-            0
+            0,
+            1
         )
         .await
         .unwrap()
@@ -126,6 +127,7 @@ async fn a_partial_stdin_write_blocks_input_and_still_admits_interrupt_and_stop(
             generation,
             Some(effect.effect_id.clone()),
             0,
+            1,
         )
         .await
         .unwrap()
@@ -162,7 +164,8 @@ async fn a_partial_stdin_write_blocks_input_and_still_admits_interrupt_and_stop(
             "a".to_owned(),
             generation,
             Some(effect.effect_id.clone()),
-            1
+            1,
+            2
         )
         .await
         .unwrap()
@@ -213,4 +216,51 @@ async fn a_partial_stdin_write_blocks_input_and_still_admits_interrupt_and_stop(
     )
     .await;
     assert_eq!(stop.state, ReceiptState::Accepted, "{stop:?}");
+}
+
+// DL-107: the complete frame count is stored with frame 0, the frames of
+// one effect are claimed in order, and the count never changes.
+#[tokio::test]
+async fn the_frame_count_is_stored_with_frame_0_and_claims_stay_in_order() {
+    let det = Det::new();
+    let (s, policy) = rig(&det).await;
+    s.shim_starting(NewShim {
+        shim_id: "a".to_owned(),
+        session_id: "s1".into(),
+        socket_path: PathBuf::from("/run/x/a.sock"),
+    })
+    .await
+    .unwrap();
+    let generation = s
+        .shim_next_generation("a".to_owned())
+        .await
+        .unwrap()
+        .unwrap();
+    let first = send(&det, &s, &policy, "c1", prompt("one")).await;
+    assert_eq!(first.state, ReceiptState::Accepted, "{first:?}");
+    let fence = s.register_worker().await.unwrap();
+    let effect = s.claim_next(fence).await.unwrap().unwrap();
+    let id = || Some(effect.effect_id.clone());
+    let claim = |ordinal: u32, frames: u32| {
+        s.shim_claim_write("a".to_owned(), generation, id(), ordinal, frames)
+    };
+    // An ordinal outside the count, or frame 1 before frame 0, is refused
+    // and writes no row.
+    assert!(claim(2, 2).await.is_err());
+    assert!(claim(1, 2).await.is_err());
+    assert!(
+        s.shim_writes_to_settle("a".to_owned())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    claim(0, 3).await.unwrap().unwrap();
+    let pending = s.shim_writes_to_settle("a".to_owned()).await.unwrap();
+    assert_eq!((pending[0].tags.len(), pending[0].frames), (1, 3));
+    // The count of frame 0 cannot change, and frame 0 cannot repeat.
+    assert!(claim(1, 2).await.is_err());
+    assert!(claim(0, 3).await.is_err());
+    claim(1, 3).await.unwrap().unwrap();
+    let pending = s.shim_writes_to_settle("a".to_owned()).await.unwrap();
+    assert_eq!((pending[0].tags.len(), pending[0].frames), (2, 3));
 }

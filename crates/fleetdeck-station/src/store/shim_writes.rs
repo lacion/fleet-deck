@@ -22,7 +22,7 @@ use rusqlite::{Connection, OptionalExtension as _, params};
 
 use super::effects::{self, Effect, EffectId, EffectState};
 use super::receipts::Decision;
-use super::{Result, Store, call, to_i64, to_u64};
+use super::{Result, Store, StoreError, call, to_i64, to_u64};
 
 /// The reason of a frame whose fate the shim cannot prove.
 pub const REASON_SHIM_UNKNOWN: &str = "shim_write_unknown";
@@ -33,7 +33,12 @@ pub const REASON_STDIN_PARTIAL: &str = "stdin_partial_write";
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClaimedWrite {
     pub effect: Effect,
+    /// The claimed frames, in sequence order.
     pub tags: Vec<WriteTag>,
+    /// The complete frame count of the effect, stored with frame 0 before
+    /// any byte left (DL-107). `frames - tags.len()` frames were never
+    /// claimed and never sent.
+    pub frames: u32,
 }
 
 fn write_id(shim_id: &str, effect_id: Option<&EffectId>, ordinal: u32, seq: u64) -> String {
@@ -85,16 +90,29 @@ impl Store {
     /// `None` for a stale generation, an ended row, or an effect that is
     /// not `claimed`; then the frame must not leave.
     ///
+    /// `frames` is the complete frame count of the effect. Every row of the
+    /// effect stores it, so the claim of frame 0 makes the count durable
+    /// before any byte leaves (DL-107). The frames of one effect are
+    /// claimed in order: `ordinal` is the number of frames claimed before.
+    ///
     /// # Errors
-    /// A database error.
+    /// A database error; [`StoreError::Corrupt`] for `ordinal >= frames`,
+    /// an out-of-order ordinal, or a frame count that differs from the one
+    /// stored with frame 0 (a caller bug: no row is written).
     pub async fn shim_claim_write(
         &self,
         shim_id: String,
         generation: u64,
         effect_id: Option<EffectId>,
         ordinal: u32,
+        frames: u32,
     ) -> Result<Option<WriteTag>> {
         self.write(move |conn, now, _| {
+            if ordinal >= frames {
+                return Err(StoreError::Corrupt(format!(
+                    "frame {ordinal} of an effect with {frames} frames"
+                )));
+            }
             if current_generation(conn, &shim_id)? != Some(generation) {
                 return Ok(None);
             }
@@ -109,6 +127,18 @@ impl Store {
                 if state.as_deref() != Some(EffectState::Claimed.as_str()) {
                     return Ok(None);
                 }
+                let (claimed, stored): (i64, Option<i64>) = conn.query_row(
+                    "SELECT COUNT(*), MAX(frames) FROM shim_writes WHERE effect_id = ?1",
+                    [effect.as_str()],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )?;
+                if to_u64(claimed)? != u64::from(ordinal)
+                    || stored.is_some_and(|n| n != i64::from(frames))
+                {
+                    return Err(StoreError::Corrupt(format!(
+                        "frame {ordinal} of {frames} after {claimed} claimed frames of {effect}"
+                    )));
+                }
             }
             let seq: i64 = conn.query_row(
                 "UPDATE shims SET next_write_seq = next_write_seq + 1, updated_at = ?2
@@ -120,8 +150,8 @@ impl Store {
             let write_id = write_id(&shim_id, effect_id.as_ref(), ordinal, write_seq);
             conn.execute(
                 "INSERT INTO shim_writes (shim_id, write_seq, write_id, effect_id, ordinal,
-                     generation, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                     generation, created_at, frames)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
                     shim_id,
                     seq,
@@ -129,7 +159,8 @@ impl Store {
                     effect_id.as_ref().map(EffectId::as_str),
                     ordinal,
                     to_i64(generation)?,
-                    now
+                    now,
+                    frames
                 ],
             )?;
             Ok(Some(WriteTag {
@@ -148,7 +179,7 @@ impl Store {
     pub async fn shim_writes_to_settle(&self, shim_id: String) -> Result<Vec<ClaimedWrite>> {
         call(&self.inner.db, move |conn| {
             let mut stmt = conn.prepare(
-                "SELECT w.effect_id, w.write_id, w.write_seq FROM shim_writes w
+                "SELECT w.effect_id, w.write_id, w.write_seq, w.frames FROM shim_writes w
                  JOIN effects e ON e.effect_id = w.effect_id
                  WHERE w.shim_id = ?1 AND e.state = 'claimed'
                  ORDER BY e.seq, w.write_seq",
@@ -159,19 +190,23 @@ impl Store {
                         r.get::<_, String>(0)?,
                         r.get::<_, String>(1)?,
                         r.get::<_, i64>(2)?,
+                        r.get::<_, i64>(3)?,
                     ))
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             let mut out: Vec<ClaimedWrite> = Vec::new();
-            for (effect_id, write_id, seq) in rows {
+            for (effect_id, write_id, seq, frames) in rows {
                 let tag = WriteTag {
                     write_id,
                     write_seq: to_u64(seq)?,
                 };
+                let frames = u32::try_from(frames)
+                    .map_err(|_| StoreError::Corrupt(format!("frame count {frames}")))?;
                 if let Some(last) = out.last_mut()
                     && last.effect.effect_id.as_str() == effect_id
                 {
                     last.tags.push(tag);
+                    last.frames = last.frames.max(frames);
                     continue;
                 }
                 let id = EffectId::from(effect_id);
@@ -179,6 +214,7 @@ impl Store {
                     out.push(ClaimedWrite {
                         effect,
                         tags: vec![tag],
+                        frames,
                     });
                 }
             }

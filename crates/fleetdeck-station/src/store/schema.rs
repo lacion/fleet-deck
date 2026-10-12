@@ -310,6 +310,14 @@ CREATE INDEX shim_writes_effect ON shim_writes(effect_id);
 ALTER TABLE shims ADD COLUMN input_blocked TEXT;
 ";
 
+const V11: &str = "
+-- ADR-005 §4.3 (DL-107): the complete frame count of the effect, stored
+-- with frame 0 before any byte leaves. Recovery treats every frame without
+-- a row as never sent, so an effect whose frame 0 was written and whose
+-- frame 1 was never claimed blocks input instead of looking complete.
+ALTER TABLE shim_writes ADD COLUMN frames INTEGER NOT NULL DEFAULT 1;
+";
+
 /// The `station.db` migrations. V4 is the link epochs table of
 /// `fleetdeck-link` (G1).
 #[must_use]
@@ -325,5 +333,6 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V8),
         M::up(V9),
         M::up(V10),
+        M::up(V11),
     ])
 }

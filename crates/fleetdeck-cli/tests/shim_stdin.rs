@@ -159,13 +159,26 @@ impl Rig {
         effect.effect_id
     }
 
+    /// Claims the only frame of a one-frame effect.
     async fn tag(&self, attached: &Attached, effect: &EffectId) -> WriteTag {
+        self.frame(attached, effect, 0, 1).await
+    }
+
+    /// Claims frame `ordinal` of an effect with `frames` frames.
+    async fn frame(
+        &self,
+        attached: &Attached,
+        effect: &EffectId,
+        ordinal: u32,
+        frames: u32,
+    ) -> WriteTag {
         self.store
             .shim_claim_write(
                 attached.record.shim_id.clone(),
                 attached.process.generation(),
                 Some(effect.clone()),
-                0,
+                ordinal,
+                frames,
             )
             .await
             .unwrap()
@@ -505,14 +518,15 @@ async fn an_evicted_record_is_forgotten_outcome_unknown_and_a_resubmission_is_re
         WriteOutcome::Done(WriteState::Written)
     );
     // More terminal records than the shim keeps.
-    for ordinal in 0..4200u32 {
+    for _ in 0..4200u32 {
         let internal = rig
             .store
             .shim_claim_write(
                 first.record.shim_id.clone(),
                 first.process.generation(),
                 None,
-                ordinal,
+                0,
+                1,
             )
             .await
             .unwrap()
@@ -659,22 +673,12 @@ async fn recovery_never_retires_an_effect_whose_first_frame_was_written_and_seco
     let rig = Rig::new().await;
     let first = rig.launch(SINK).await;
     let effect = rig.claimed(1).await;
-    let tag0 = rig.tag(&first, &effect).await;
+    let tag0 = rig.frame(&first, &effect, 0, 2).await;
     assert_eq!(
         first.process.write_tagged(&tag0, b"first\n").await.unwrap(),
         WriteOutcome::Done(WriteState::Written)
     );
-    let tag1 = rig
-        .store
-        .shim_claim_write(
-            first.record.shim_id.clone(),
-            first.process.generation(),
-            Some(effect.clone()),
-            1,
-        )
-        .await
-        .unwrap()
-        .unwrap();
+    let tag1 = rig.frame(&first, &effect, 1, 2).await;
     assert_ne!(tag0.write_id, tag1.write_id);
     // Crash before frame 1 leaves.
     drop(first);
@@ -694,6 +698,49 @@ async fn recovery_never_retires_an_effect_whose_first_frame_was_written_and_seco
             .await
             .unwrap(),
         WriteOutcome::Done(WriteState::ClosedUnwritten)
+    );
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(rig.read(), b"first\n");
+}
+
+// Review fix (DL-107): the complete frame count is stored with frame 0, so
+// a crash after frame 0 completes and before frame 1 is claimed still
+// blocks input. Without the stored count, recovery saw one written frame
+// and settled a plain `outcome_unknown` with the session open for input.
+#[tokio::test]
+async fn recovery_blocks_input_when_frame_0_was_written_and_frame_1_was_never_claimed() {
+    let rig = Rig::new().await;
+    let first = rig.launch(SINK).await;
+    let effect = rig.claimed(1).await;
+    let tag0 = rig.frame(&first, &effect, 0, 2).await;
+    assert_eq!(
+        first.process.write_tagged(&tag0, b"first\n").await.unwrap(),
+        WriteOutcome::Done(WriteState::Written)
+    );
+    let pending = rig
+        .store
+        .shim_writes_to_settle(first.record.shim_id.clone())
+        .await
+        .unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!((pending[0].tags.len(), pending[0].frames), (1, 2));
+    // Crash before frame 1 is claimed.
+    drop(first);
+    let _second = rig.recover().await;
+    assert_eq!(
+        rig.effect(&effect).await,
+        (
+            EffectState::OutcomeUnknown,
+            Some("stdin_partial_write".to_owned())
+        )
+    );
+    assert_eq!(
+        rig.store
+            .shim_input_blocked("s1".into())
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("stdin_partial_write")
     );
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(rig.read(), b"first\n");
