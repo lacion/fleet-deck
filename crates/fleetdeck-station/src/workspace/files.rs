@@ -511,23 +511,32 @@ fn grep_file(
     max: usize,
     found: &mut Found,
 ) -> bool {
-    let Ok((file, size)) = open_file(dir, name, path) else {
+    let Ok((file, _size)) = open_file(dir, name, path) else {
         return true;
     };
+    // One byte past the budget tells a file of exactly the budget, read
+    // completely, from a larger one (DL-109).
     let mut buf = Vec::new();
-    if file.take(WALK_FILE_BYTES).read_to_end(&mut buf).is_err() {
+    if file
+        .take(WALK_FILE_BYTES.saturating_add(1))
+        .read_to_end(&mut buf)
+        .is_err()
+    {
         found.truncated = true;
         return true;
     }
     if buf[..buf.len().min(BINARY_SNIFF_BYTES)].contains(&0) {
         return true;
     }
-    let cut = size > WALK_FILE_BYTES || buf.len() as u64 >= WALK_FILE_BYTES;
+    let cut = buf.len() as u64 > WALK_FILE_BYTES;
     if cut {
         found.truncated = true;
+        buf.truncate(usize::try_from(WALK_FILE_BYTES).unwrap_or(usize::MAX));
         // The last line of the prefix may be cut: search complete lines.
         if let Some(end) = buf.iter().rposition(|b| *b == b'\n') {
             buf.truncate(end + 1);
+        } else {
+            buf.clear();
         }
     }
     let text = String::from_utf8_lossy(&buf);
@@ -535,6 +544,12 @@ fn grep_file(
     for (n, line) in text.lines().enumerate() {
         if !line.to_lowercase().contains(needle) {
             continue;
+        }
+        // A further match past the per-file budget is a result that the
+        // budget cut short (DL-109).
+        if in_file >= PER_FILE_HITS {
+            found.truncated = true;
+            break;
         }
         let hit = SearchHit {
             path: path.to_owned(),
@@ -545,9 +560,6 @@ fn grep_file(
             return false;
         }
         in_file += 1;
-        if in_file >= PER_FILE_HITS {
-            break;
-        }
     }
     true
 }

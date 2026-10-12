@@ -407,3 +407,7 @@ mod files_review_tests;
 #[cfg(test)]
 #[path = "files_review2_tests.rs"]
 mod files_review2_tests;
+
+#[cfg(test)]
+#[path = "files_review3_tests.rs"]
+mod files_review3_tests;
