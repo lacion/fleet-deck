@@ -25,6 +25,9 @@ pub mod serve;
 
 pub mod store;
 
+/// Station self-upgrade: snapshot, trial, launcher, rollback (M3 7-3).
+pub mod upgrade;
+
 /// The effect worker (PLAN §6.4).
 pub mod worker;
 

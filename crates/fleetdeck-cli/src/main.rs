@@ -7,6 +7,7 @@ mod invite;
 mod pairing;
 mod station;
 mod up;
+mod upgrade;
 
 use std::process::ExitCode;
 
@@ -117,6 +118,8 @@ enum Local<'a> {
     Run(&'a cli::RunArgs),
     Approve(&'a cli::ApproveArgs),
     Interrupt(&'a str),
+    Drain(u64),
+    Upgrade(&'a cli::UpgradeCommand),
     Invite(std::net::SocketAddr),
     Join(&'a cli::InviteInput),
     ForgetDeck,
@@ -129,6 +132,8 @@ fn station_local(command: Option<&StationCommand>) -> Option<Local<'_>> {
         Some(StationCommand::Run(args)) => Local::Run(args),
         Some(StationCommand::Approve(args)) => Local::Approve(args),
         Some(StationCommand::Interrupt { session }) => Local::Interrupt(session),
+        Some(StationCommand::Drain { timeout_secs }) => Local::Drain(*timeout_secs),
+        Some(StationCommand::Upgrade { command }) => Local::Upgrade(command),
         Some(StationCommand::Invite { listen }) => Local::Invite(*listen),
         Some(StationCommand::Join(input)) => Local::Join(input),
         Some(StationCommand::ForgetDeck) => Local::ForgetDeck,
@@ -146,6 +151,8 @@ async fn local_main(
         Local::Run(args) => station::run(dirs, args).await,
         Local::Approve(args) => station::approve(dirs, args).await,
         Local::Interrupt(session) => station::interrupt(dirs, session).await,
+        Local::Drain(secs) => upgrade::drain(dirs, secs).await,
+        Local::Upgrade(command) => upgrade::run(dirs, command).await,
         Local::Invite(listen) => pairing::invite(dirs, listen).await,
         Local::Join(input) => pairing::join(dirs, input).await,
         Local::ForgetDeck => pairing::forget_deck(dirs).await,

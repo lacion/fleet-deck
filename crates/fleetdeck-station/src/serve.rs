@@ -111,6 +111,11 @@ impl RunningStation {
             path: station_dir.clone(),
             source,
         })?;
+        // From here the live database advances: a rollback of an activated
+        // update is binary-only (ADR-005 §3.3, DL-128).
+        if let Err(e) = crate::upgrade::mark_live(&station_dir.join("upgrades")) {
+            tracing::warn!(error = %e, "could not mark the activated update live");
+        }
         let clock: SharedClock = Arc::new(SystemClock);
         let ids: SharedIds = Arc::new(UlidSource::new(Arc::clone(&clock)));
         let store = Store::open(

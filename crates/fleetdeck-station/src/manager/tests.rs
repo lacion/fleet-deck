@@ -659,3 +659,6 @@ mod rename;
 
 #[path = "resume_tests.rs"]
 mod resume;
+
+#[path = "drain_tests.rs"]
+mod drain;
