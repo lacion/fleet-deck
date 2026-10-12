@@ -28,6 +28,14 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 72 (2026-10-12, 16:25–)
+
+- Round start: committed round 71 as 0a2b7ac. Merged m3/orchestration 8771bf4 (lane B 6-5 slice: `SessionSpec.coordinator`, station start checks, credential handoff, DL-215) as 63a7ec1. `crates/fleetdeck-proto` changed: `make ts-types` regenerated `web/src/gen` (no diff after the merge). m3/board and m3/ops: no new commits.
+- Merge validation: `cargo nextest run -p fleetdeck-station -E 'test(coordinator)'` → 23 passed (incl. `only_an_owner_start_may_carry_a_complete_coordinator_spec`, `a_coordinator_spec_for_an_unverified_handoff_is_refused_unsupported`). No merge fix needed.
+- Lane B still has no "LANE COMPLETE" in `docs/v2/progress/m3-orchestration.md`, so 6-13, 7-7 and 7-8 stay blocked.
+- Review of round 71: the evidence map overstated the A10 and the ShimHost upgrade coverage. Recorded as two follow-ups, and a "Limits of this map" note under the map table.
+- Checks: `cargo fmt --all --check` clean; `cargo clippy --workspace --all-targets -- -D warnings` clean; `bun run --cwd web lint` clean.
+
 ## Round 71 (2026-10-12, 16:24–)
 
 - Committed round 70 as 6566386.
@@ -253,6 +261,11 @@ This map is for the architect's adversary PRE-PR REVIEW. It is not a claim of th
 | GATE-M2 §6 | P2-a, P2-b and SIGKILL survival lines of `docs/v2/PROGRESS.md`; `crates/fleetdeck-cli/tests/station_sigkill.rs::providers_of_a_sigkilled_station_exit_and_the_restarted_station_reports_them_lost`. |
 | v0 cutover, final `make check` | Open: items 7-7 and 7-8 (wait for lane B). |
 
+Limits of this map (review of round 71). Two rows above claim more than the tests show:
+
+- Auto-continue: the tests cover default OFF and the dispatch rechecks of identity, proven end, newer owner work, stop and window. A session with the shim host gets `unsupported`. The map does not prove the full A10 recheck list for every host.
+- ShimHost upgrade: `crates/fleetdeck-cli/tests/station_upgrade.rs` runs with the default `direct` host. ADR-005 tests 20, 21, 22 and 48 are unit tests in `crates/fleetdeck-station/src/upgrade_tests.rs`. No end-to-end test shows a shim agent that survives a station upgrade.
+
 ## ADR-005 §9 test map (7-1 close)
 
 | ADR test | Status | Test |
@@ -279,6 +292,8 @@ This map is for the architect's adversary PRE-PR REVIEW. It is not a claim of th
 
 | Item | Finding | File |
 | --- | --- | --- |
+| 7-6 | The Phase 7 evidence map overstated the A10 coverage: auto-continue rechecks only identity, proven end, newer owner work, stop and window, and the shim host is `unsupported`. Add the missing A10 recheck tests or narrow the claim. | `crates/fleetdeck-station/src/manager/auto_continue_tests.rs`, `docs/v2/progress/m3-durable.md` |
+| 7-6 | The Phase 7 evidence map overstated the ShimHost upgrade coverage: `station_upgrade.rs` uses the `direct` host. Add an end-to-end test where a shim agent survives a station upgrade. | `crates/fleetdeck-cli/tests/station_upgrade.rs` |
 | 7-1 | ADR-005 test 3: a named fault point between the attach and the replay | `crates/fleetdeck-cli/tests/shim_recovery.rs` |
 | 7-1 | ADR-005 test 16: a stale socket file is replaced, a live one is refused | `crates/fleetdeck-providers/src/host/shim/launch.rs` |
 | 7-1 | ADR-005 test 44: the exit file write on ENOSPC | `crates/fleetdeck-providers/src/host/shim/server_proc.rs` |
