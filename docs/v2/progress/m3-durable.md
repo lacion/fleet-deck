@@ -28,6 +28,12 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 87 (2026-10-12, 16:55–)
+
+- Round start: committed round 86 as 12df9f5. `git log v2..m3/orchestration`, `v2..m3/board`, `v2..m3/ops`: no new commits; `m3-orchestration.md` has no "LANE COMPLETE", so 6-13, 7-7 and 7-8 stay blocked.
+- 7-6 owner-step list: `docs/v2/operations.md` §12 lacked two items. Added the real GitHub Actions run of `.github/workflows/v2.yml` (owner step recorded since M2, `docs/v2/PROGRESS.md` line 222) and the open coordinator live smoke (ADR-006 §8.5, item 6-5) with its `handoff_unverified` effect.
+- Checks: `cargo nextest run -p fleetdeck-cli --test docs_commands`, `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`.
+
 ## Round 86 (2026-10-12, 16:53–)
 
 - Round start: committed round 85 as 2991ef1. `git log v2..m3/orchestration`, `v2..m3/board`, `v2..m3/ops`: no new commits; `m3-orchestration.md` has no "LANE COMPLETE", so 6-13, 7-7 and 7-8 stay blocked.
