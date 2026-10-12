@@ -81,9 +81,9 @@ describe('plan library (DL-301)', () => {
 
   test('an empty library says how plans arrive, and the board has a Plans screen', () => {
     const html = renderToStaticMarkup(
-      <App initialScreen="plans" initialPlans={[]} freshness="live" />,
+      <App initialRoute={{ name: 'plans' }} initialPlans={[]} freshness="live" />,
     );
     expect(html).toContain('No plans yet');
-    expect(html).toMatch(/aria-pressed="true"[^>]*>Plans</);
+    expect(html).toMatch(/aria-current="page"[^>]*>Plans</);
   });
 });

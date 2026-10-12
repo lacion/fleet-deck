@@ -1,0 +1,682 @@
+/* The page frame (DL-140): sidebar, top bar, bottom bar, drawer, screens, dialogs.
+   Colors, type, space and motion come from tokens.css. Amber (--act) means "needs you". */
+
+body {
+  margin: 0;
+}
+
+/* Desktop and tablet: the page does not scroll; the route and the sidebar list do. */
+body:has(.fd-app[data-layout="desktop"]),
+body:has(.fd-app[data-layout="tablet"]) {
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.fd-app {
+  min-height: 100dvh;
+}
+
+.fd-app[data-layout="desktop"],
+.fd-app[data-layout="tablet"] {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.fd-app[data-layout="desktop"] {
+  display: grid;
+  grid-template-columns: 288px minmax(0, 1fr);
+}
+
+.fd-app[data-layout="tablet"] {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Phone: the page scrolls, except on the session and terminals screens. */
+.fd-app[data-layout="phone"][data-route="session"],
+.fd-app[data-layout="phone"][data-route="terminals"] {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.fd-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.fd-app[data-layout="desktop"] .fd-main,
+.fd-app[data-layout="tablet"] .fd-main {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.fd-route {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.fd-app[data-layout="desktop"] .fd-route,
+.fd-app[data-layout="tablet"] .fd-route,
+.fd-app[data-layout="phone"][data-route="session"] .fd-route,
+.fd-app[data-layout="phone"][data-route="terminals"] .fd-route {
+  overflow: auto;
+}
+
+/* The session pane fills the route and scrolls inside. */
+.fd-app[data-route="session"] .fd-route {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Screens: one readable column. */
+.fd-screen {
+  max-width: 1100px;
+  padding: var(--sp-4);
+  margin: 0 auto;
+}
+
+.fd-screen-title {
+  margin: 0;
+  font-size: var(--fs-heading);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.fd-more-links {
+  list-style: none;
+  margin: var(--sp-3) 0;
+  padding: 0;
+  display: grid;
+  gap: var(--sp-2);
+}
+
+.fd-more-links a {
+  display: flex;
+  align-items: center;
+  min-height: var(--tap-min);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  color: var(--text);
+  text-decoration: none;
+}
+
+/* Visually hidden, still read by screen readers. */
+.fd-vh {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---------- Sidebar ---------- */
+
+.fd-sidebar {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+}
+
+.fd-app[data-layout="desktop"] .fd-sidebar {
+  height: 100dvh;
+}
+
+.fd-sidebar[data-variant="list"] {
+  border-right: 0;
+  background: transparent;
+}
+
+.fd-sidebar-top {
+  display: grid;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.fd-sidebar-brand {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+
+.fd-sidebar .fd-primary {
+  background: var(--raised);
+  border-color: var(--border);
+  font-weight: 600;
+}
+
+.fd-sidebar-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--sp-2) var(--sp-3);
+}
+
+.fd-sgroup {
+  margin-bottom: var(--sp-3);
+}
+
+.fd-sgroup-title {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: 0 0 var(--sp-1);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.fd-sgroup[data-group="needs"] .fd-sgroup-title {
+  color: var(--act);
+}
+
+.fd-sgroup-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fd-sgroup-title .fd-count {
+  margin-left: auto;
+}
+
+.fd-srows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.fd-srow {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  min-height: var(--tap-min);
+  padding: var(--sp-2);
+  border: 1px solid transparent;
+  border-radius: var(--r-ctl);
+  color: var(--text);
+  text-decoration: none;
+  transition:
+    background var(--t-fast),
+    border-color var(--t-fast);
+}
+
+.fd-srow:hover {
+  background: var(--raised);
+}
+
+.fd-srow[aria-current="page"] {
+  background: var(--raised);
+  border-color: var(--border);
+}
+
+.fd-srow-main {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.fd-srow-title {
+  font-size: var(--fs-body);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fd-srow-mark {
+  margin-left: var(--sp-2);
+  padding: 0 var(--sp-1);
+  border: 1px solid var(--border);
+  border-radius: var(--r-chip);
+  font-size: var(--fs-micro);
+  color: var(--dim);
+}
+
+.fd-srow-meta {
+  font-family: var(--font-data);
+  font-size: var(--fs-micro);
+  color: var(--faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fd-sended {
+  margin-top: var(--sp-1);
+}
+
+.fd-sended summary {
+  display: flex;
+  align-items: center;
+  min-height: var(--tap-min);
+  padding: 0 var(--sp-2);
+  font-size: var(--fs-micro);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  color: var(--faint);
+  cursor: pointer;
+}
+
+/* Dots: status, reachability and connection. Color is never the only signal (labels are there). */
+.fd-sdot,
+.fd-rdot,
+.fd-cdot {
+  flex: none;
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  border-radius: var(--r-pill);
+  background: var(--faint);
+}
+
+.fd-rdot,
+.fd-cdot {
+  margin-top: 0;
+}
+
+.fd-srow[data-status="working"] .fd-sdot,
+.fd-srow[data-status="verifying"] .fd-sdot,
+.fd-rdot[data-reachable="true"],
+.fd-cdot[data-freshness="live"] {
+  background: var(--ok);
+}
+
+.fd-srow[data-status="needs_you"] .fd-sdot,
+.fd-cdot[data-freshness="stale"] {
+  background: var(--act);
+}
+
+.fd-srow[data-status="unreachable"] .fd-sdot,
+.fd-srow[data-status="lost"] .fd-sdot,
+.fd-rdot[data-reachable="false"] {
+  background: var(--hazard);
+}
+
+.fd-srow[data-status="ended"] .fd-sdot {
+  background: transparent;
+  border: 1px solid var(--faint);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .fd-srow[data-status="working"] .fd-sdot {
+    animation: fd-breathe var(--pulse-working) ease-in-out infinite;
+  }
+
+  .fd-srow[data-status="needs_you"] .fd-sdot {
+    animation: fd-breathe var(--pulse-needs) ease-in-out infinite;
+  }
+}
+
+@keyframes fd-breathe {
+  50% {
+    opacity: 0.4;
+  }
+}
+
+.fd-sidebar-bottom {
+  display: grid;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  border-top: 1px solid var(--border-soft);
+}
+
+.fd-sidebar-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1) var(--sp-2);
+}
+
+.fd-sidebar-links a,
+.fd-linkbtn {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap-min);
+  padding: 0 var(--sp-2);
+  border-radius: var(--r-ctl);
+  color: var(--dim);
+  text-decoration: none;
+}
+
+.fd-app .fd-linkbtn {
+  border-color: transparent;
+  background: transparent;
+  color: var(--dim);
+}
+
+.fd-sidebar-links a:hover,
+.fd-linkbtn:hover {
+  color: var(--text);
+}
+
+.fd-sidebar-links a[aria-current="page"] {
+  color: var(--text);
+  background: var(--raised);
+}
+
+.fd-sidebar-conn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  color: var(--dim);
+}
+
+.fd-sidebar-conn[data-freshness="stale"] [role="status"] {
+  color: var(--act);
+}
+
+/* ---------- Top bar (tablet; phone terminals) ---------- */
+
+.fd-topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.fd-topbar-title {
+  margin: 0;
+  font-size: var(--fs-heading);
+}
+
+/* ---------- Notices ---------- */
+
+.fd-notices {
+  display: grid;
+}
+
+.fd-notice {
+  margin: 0;
+  padding: var(--sp-2) var(--sp-4);
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--surface);
+  color: var(--dim);
+}
+
+.fd-notice[data-tone="error"] {
+  color: var(--hazard);
+  background: var(--hazard-bg);
+}
+
+/* ---------- Bottom bar (phone) ---------- */
+
+.fd-bottombar {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  padding-bottom: env(safe-area-inset-bottom);
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+
+.fd-bottombar a {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--tap-min);
+  color: var(--dim);
+  text-decoration: none;
+}
+
+.fd-bottombar a[aria-current="page"] {
+  color: var(--text);
+  box-shadow: inset 0 2px 0 var(--text);
+}
+
+/* ---------- Drawer (tablet) ---------- */
+
+.fd-drawer-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+}
+
+.fd-app .fd-drawer-backdrop {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  max-width: none;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: var(--bg);
+  opacity: 0.7;
+}
+
+.fd-drawer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  width: min(320px, 85vw);
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+}
+
+.fd-drawer .fd-sidebar {
+  flex: 1 1 auto;
+  height: 100%;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .fd-drawer {
+    animation: fd-drawer-in var(--t-drawer);
+  }
+}
+
+@keyframes fd-drawer-in {
+  from {
+    transform: translateX(-100%);
+  }
+}
+
+/* ---------- Dialogs: shortcuts and the session palette ---------- */
+
+.fd-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 12dvh var(--sp-3) var(--sp-3);
+  background: color-mix(in srgb, var(--bg) 75%, transparent);
+}
+
+.fd-dialog {
+  display: grid;
+  gap: var(--sp-3);
+  width: min(560px, 100%);
+  max-height: 100%;
+  overflow: auto;
+  padding: var(--sp-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-panel);
+}
+
+.fd-dialog h2 {
+  margin: 0;
+  font-size: var(--fs-heading);
+}
+
+.fd-keys {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.fd-keys th {
+  text-align: left;
+  font-size: var(--fs-micro);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.fd-keys th,
+.fd-keys td {
+  padding: var(--sp-1) var(--sp-2);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.fd-keys kbd {
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+  padding: 1px var(--sp-1);
+  border: 1px solid var(--border);
+  border-radius: var(--r-chip);
+  background: var(--raised);
+}
+
+.fd-palette [role="listbox"] {
+  display: grid;
+  gap: var(--sp-1);
+  max-height: 50dvh;
+  overflow-y: auto;
+}
+
+.fd-palette [role="option"] {
+  display: grid;
+  gap: 2px;
+  min-height: var(--tap-min);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid transparent;
+  border-radius: var(--r-ctl);
+  cursor: pointer;
+}
+
+.fd-palette [role="option"][aria-selected="true"] {
+  background: var(--raised);
+  border-color: var(--border);
+}
+
+.fd-palette-meta {
+  font-family: var(--font-data);
+  font-size: var(--fs-micro);
+  color: var(--faint);
+}
+
+/* ---------- Fleet home ---------- */
+
+.fd-home {
+  display: grid;
+  align-content: start;
+}
+
+.fd-home-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-3);
+  padding: var(--sp-4) var(--sp-4) 0;
+}
+
+.fd-home-counts {
+  margin: 0;
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+  color: var(--dim);
+}
+
+.fd-home-grid {
+  display: grid;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+}
+
+.fd-home-card {
+  min-width: 0;
+  padding: var(--sp-3);
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-panel);
+}
+
+.fd-home-card-title {
+  margin: 0 0 var(--sp-2);
+  font-size: var(--fs-micro);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+/* The panel inside a card brings its own heading: the card title replaces it for the eye. */
+.fd-home-card > section > h2:first-child {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (min-width: 1280px) {
+  .fd-home-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* Phone: lanes scroll sideways, "Needs you" first. */
+@media (max-width: 640px) {
+  .fd-board {
+    display: flex;
+    gap: var(--sp-2);
+    padding: var(--sp-2);
+    overflow-x: auto;
+    scroll-snap-type: x proximity;
+  }
+
+  .fd-board > .fd-lane {
+    flex: 0 0 min(280px, 85%);
+    scroll-snap-align: start;
+  }
+}
+
+/* ---------- Focus and touch ---------- */
+
+.fd-app a:focus-visible,
+.fd-app summary:focus-visible,
+.fd-app [role="option"]:focus-visible {
+  outline: 2px solid var(--act);
+  outline-offset: 2px;
+}
+
+@media (pointer: coarse) {
+  .fd-sidebar-links a,
+  .fd-linkbtn,
+  .fd-srow,
+  .fd-sended summary {
+    min-height: var(--tap-min);
+  }
+}

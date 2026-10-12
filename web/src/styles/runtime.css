@@ -1,4 +1,4 @@
-/* Owner login and the independent transport/freshness indicators. */
+/* Owner login. */
 .fd-login {
   max-width: 440px;
   margin: 8vh auto;
@@ -15,8 +15,7 @@
   margin: var(--sp-4) 0;
 }
 .fd-login input,
-.fd-login button,
-.fd-connection button {
+.fd-login button {
   font: inherit;
   min-height: var(--tap-min);
   border: 1px solid var(--border);
@@ -25,8 +24,7 @@
   background: var(--raised);
   color: var(--text);
 }
-.fd-login button,
-.fd-connection button {
+.fd-login button {
   cursor: pointer;
 }
 .fd-login button:disabled {
@@ -34,24 +32,7 @@
   cursor: wait;
 }
 .fd-login input:focus-visible,
-.fd-login button:focus-visible,
-.fd-connection button:focus-visible {
+.fd-login button:focus-visible {
   outline: 2px solid var(--act);
   outline-offset: 2px;
-}
-.fd-connection {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: var(--sp-2);
-  padding: var(--sp-2) var(--sp-4);
-  color: var(--dim);
-}
-.fd-connection[data-freshness="stale"],
-.fd-stale {
-  color: var(--act);
-}
-.fd-stale {
-  margin: 0;
-  padding: var(--sp-2) var(--sp-4);
 }

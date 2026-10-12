@@ -6,9 +6,13 @@ import { RuntimeApp } from './runtime/RuntimeApp';
 import '@xterm/xterm/css/xterm.css';
 import './styles/tokens.css';
 import './styles/app.css';
+import './styles/layout.css';
 import './styles/runtime.css';
 import './styles/session.css';
 import './styles/spawn.css';
+import './styles/chat.css';
+import './styles/controls.css';
+import './styles/terminal.css';
 
 const root = document.getElementById('root');
 if (root === null) {

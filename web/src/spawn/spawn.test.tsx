@@ -63,7 +63,7 @@ const form = (
     <App
       stations={stations}
       freshness={freshness}
-      initialScreen="spawn"
+      initialRoute={{ name: 'new' }}
       spawn={spawnActions(
         async () => listing,
         async () => ({}),

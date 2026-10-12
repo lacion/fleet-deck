@@ -11,15 +11,6 @@ body {
   font-size: var(--fs-body);
 }
 
-.fd-header {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3);
-  padding: var(--sp-3) var(--sp-4);
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-}
-
 .fd-wordmark {
   font-family: var(--font-data);
   font-weight: 600;
@@ -138,16 +129,6 @@ body {
   outline: 2px solid var(--act);
   outline-offset: 2px;
 }
-.fd-header {
-  flex-wrap: wrap;
-}
-.fd-header nav {
-  display: flex;
-  gap: var(--sp-2);
-}
-.fd-header button[aria-pressed="true"] {
-  border-color: var(--act);
-}
 .fd-filters {
   display: flex;
   flex-wrap: wrap;
@@ -225,14 +206,6 @@ body {
   }
   .fd-station dl {
     grid-template-columns: 1fr;
-  }
-}
-
-/* Phone: one column; lanes stack with "Needs you" first. */
-@media (max-width: 640px) {
-  .fd-board {
-    grid-template-columns: 1fr;
-    padding: var(--sp-2);
   }
 }
 /* M3 6-1: the callsign of a session that has a title. */

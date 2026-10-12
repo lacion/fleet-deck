@@ -9,6 +9,9 @@ import { shellActions } from '../shell/shell';
 import { spawnActions } from '../spawn/spawn';
 import { assignActions } from '../assign/assign';
 import { fleetActions } from '../fleet/fleet';
+import type { Chrome, Notice } from '../app/chrome';
+import { createTerminalStore } from '../terminal/store';
+import type { Watch } from '../terminal/handover';
 import type { Connection } from './connection';
 
 export function RuntimeApp({ connection }: { readonly connection: Connection }) {
@@ -81,6 +84,29 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
   );
   const conflicts = useMemo(() => conflictLoader((path) => connection.get(path)), [connection]);
   const watch = useMemo(() => (key: SessionKey) => connection.watch(key), [connection]);
+  // The terminals survive a reload through sessionStorage.
+  const terminals = useMemo(() => {
+    let storage: Storage | null = null;
+    try {
+      storage = window.sessionStorage;
+    } catch {
+      // blocked: the tabs live in memory only
+    }
+    return createTerminalStore(storage);
+  }, []);
+  const summaryWatch = useMemo(
+    () =>
+      (key: SessionKey): Watch => ({
+        get: () =>
+          connection
+            .getSnapshot()
+            .sessions.find(
+              (s) => s.station_id === key.station_id && s.summary.session_id === key.session_id,
+            )?.summary ?? null,
+        subscribe: connection.subscribe,
+      }),
+    [connection],
+  );
   if (state.login === null) {
     return (
       <main className="fd-login">
@@ -122,49 +148,44 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
         ? 'Connected · Live fleet'
         : 'Connected · Stale fleet'
       : 'Reconnecting · Stale fleet';
+  const notices: Notice[] = [
+    ...(state.freshness === 'stale'
+      ? [{ text: 'Cached data is read-only until the deck reconnects.', tone: 'info' as const }]
+      : []),
+    ...(state.error ? [{ text: state.error, tone: 'error' as const }] : []),
+    ...(logoutError ? [{ text: logoutError, tone: 'error' as const }] : []),
+  ];
+  const chrome: Chrome = {
+    label,
+    freshness: state.freshness,
+    onLogout: () => {
+      setPassword('');
+      void connection.logout().catch(() => {
+        setLogoutError(
+          'The deck did not confirm logout. Close the page or reconnect to try again.',
+        );
+      });
+    },
+    notices,
+  };
   return (
-    <>
-      <div className="fd-connection" data-freshness={state.freshness}>
-        <span role="status">{label}</span>
-        <button
-          type="button"
-          onClick={() => {
-            setPassword('');
-            void connection.logout().catch(() => {
-              setLogoutError(
-                'The deck did not confirm logout. Close the page or reconnect to try again.',
-              );
-            });
-          }}
-        >
-          Log out
-        </button>
-      </div>
-      {state.freshness === 'stale' ? (
-        <p className="fd-stale" role="status">
-          Cached data is read-only until the deck reconnects.
-        </p>
-      ) : null}
-      {state.error ? (
-        <p className="fd-stale" role="alert">
-          {state.error}
-        </p>
-      ) : null}
-      <App
-        sessions={state.sessions}
-        stations={state.stations}
-        freshness={state.freshness}
-        actions={actions}
-        timelines={state.timelines}
-        watch={watch}
-        sessionActions={commands}
-        spawn={spawn}
-        assign={assign}
-        fleet={fleet}
-        feed={state.feed}
-        plans={plans}
-        conflicts={conflicts}
-      />
-    </>
+    <App
+      sessions={state.sessions}
+      stations={state.stations}
+      freshness={state.freshness}
+      actions={actions}
+      timelines={state.timelines}
+      watch={watch}
+      sessionActions={commands}
+      spawn={spawn}
+      assign={assign}
+      fleet={fleet}
+      feed={state.feed}
+      plans={plans}
+      conflicts={conflicts}
+      chrome={chrome}
+      terminals={terminals}
+      summaryWatch={summaryWatch}
+    />
   );
 }

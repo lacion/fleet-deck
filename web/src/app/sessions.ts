@@ -1,0 +1,104 @@
+import { stationName } from '../board/fleet';
+import type { CardStatus, DeckSession, StationView } from '../gen';
+
+/** Statuses of a session that runs or waits, in the order the sidebar lists them. */
+const LIVE_ORDER: readonly CardStatus[] = ['needs_you', 'working', 'verifying', 'queued', 'idle'];
+
+export const isLive = (card: DeckSession): boolean => LIVE_ORDER.includes(card.status);
+
+/** The name a session goes by: title, then callsign, then session id. */
+export const sessionTitle = (card: DeckSession): string =>
+  card.summary.title ?? card.summary.callsign ?? card.summary.session_id;
+
+/** Case-insensitive match on title, callsign, session id, cwd, branch and model. */
+export function matchesQuery(card: DeckSession, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (q === '') return true;
+  const s = card.summary;
+  return [s.title, s.callsign, s.session_id, s.cwd, s.branch, s.model].some(
+    (field) => field?.toLowerCase().includes(q) === true,
+  );
+}
+
+/** "now", "5m", "3h", "2d" from a unix-ms time. */
+export function relativeAge(updatedAt: number, now: number): string {
+  const seconds = Math.max(0, Math.floor((now - updatedAt) / 1000));
+  if (seconds < 60) return 'now';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
+}
+
+/** The last path segment of a directory (the title of a shell tab). */
+export function basename(path: string): string {
+  const parts = path.split('/').filter((p) => p !== '');
+  return parts[parts.length - 1] ?? path;
+}
+
+const byNewest = (a: DeckSession, b: DeckSession) => b.summary.updated_at - a.summary.updated_at;
+const rank = (card: DeckSession) => LIVE_ORDER.indexOf(card.status);
+
+export type StationGroup = {
+  readonly id: string;
+  readonly name: string;
+  readonly reachable: boolean;
+  readonly count: number;
+  readonly live: readonly DeckSession[];
+  readonly ended: readonly DeckSession[];
+};
+
+export type SidebarModel = {
+  readonly needs: readonly DeckSession[];
+  readonly groups: readonly StationGroup[];
+};
+
+/** The sidebar groups: needs you, then one group per station sorted by name. */
+export function sidebarModel(
+  sessions: readonly DeckSession[],
+  stations: readonly StationView[],
+  query: string,
+): SidebarModel {
+  const shown = sessions.filter((c) => matchesQuery(c, query));
+  const ids = [
+    ...new Set([...stations.map((s) => s.station_id), ...sessions.map((s) => s.station_id)]),
+  ];
+  const groups = ids
+    .map((id): StationGroup => {
+      const own = shown.filter((c) => c.station_id === id);
+      const live = own.filter(isLive).sort((a, b) => rank(a) - rank(b) || byNewest(a, b));
+      const ended = own.filter((c) => !isLive(c)).sort(byNewest);
+      return {
+        id,
+        name: stationName(id, stations),
+        reachable: stations.find((s) => s.station_id === id)?.reachable === true,
+        count: own.length,
+        live,
+        ended,
+      };
+    })
+    .filter((g) => query.trim() === '' || g.count > 0)
+    .sort((a, b) => a.name.localeCompare(b.name));
+  return { needs: shown.filter((c) => c.status === 'needs_you').sort(byNewest), groups };
+}
+
+/** The live sessions in the order of the station groups, each once (the j/k order). */
+export function sidebarOrder(model: SidebarModel): readonly DeckSession[] {
+  return model.groups.flatMap((g) => g.live);
+}
+
+/** Sessions for the palette: needs you first, then the newest; at most `max`. */
+export function paletteMatches(
+  sessions: readonly DeckSession[],
+  query: string,
+  max = 12,
+): readonly DeckSession[] {
+  return sessions
+    .filter((c) => matchesQuery(c, query))
+    .sort(
+      (a, b) =>
+        Number(b.status === 'needs_you') - Number(a.status === 'needs_you') || byNewest(a, b),
+    )
+    .slice(0, max);
+}
