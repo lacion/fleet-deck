@@ -102,6 +102,8 @@
   position: relative;
   display: flex;
   flex-direction: column;
+  /* Under the route in a column: the route shrinks, never the dock bar. */
+  flex: 0 0 auto;
   min-height: 0;
   background: var(--surface);
   border-top: 1px solid var(--border);
