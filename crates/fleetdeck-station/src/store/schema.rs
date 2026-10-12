@@ -290,6 +290,26 @@ CREATE TABLE shims (
 CREATE INDEX shims_state ON shims(state, created_at);
 ";
 
+const V10: &str = "
+-- ADR-005 §4.3 (slice 5, DL-105): the durable identity of every stdin frame
+-- of a shim, claimed before the frame leaves. `effect_id` is NULL for an
+-- adapter-internal write. A session whose shim reported a partial write
+-- takes no input until the owner stops it (`input_blocked`).
+CREATE TABLE shim_writes (
+    shim_id      TEXT    NOT NULL REFERENCES shims(shim_id),
+    write_seq    INTEGER NOT NULL,
+    write_id     TEXT    NOT NULL,
+    effect_id    TEXT REFERENCES effects(effect_id),
+    ordinal      INTEGER NOT NULL,
+    generation   INTEGER NOT NULL,
+    created_at   INTEGER NOT NULL,
+    PRIMARY KEY (shim_id, write_seq),
+    UNIQUE (shim_id, write_id)
+) STRICT;
+CREATE INDEX shim_writes_effect ON shim_writes(effect_id);
+ALTER TABLE shims ADD COLUMN input_blocked TEXT;
+";
+
 /// The `station.db` migrations. V4 is the link epochs table of
 /// `fleetdeck-link` (G1).
 #[must_use]
@@ -304,5 +324,6 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V7),
         M::up(V8),
         M::up(V9),
+        M::up(V10),
     ])
 }

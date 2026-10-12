@@ -29,6 +29,9 @@ use crate::store::{NewShim, Result, ShimRow, ShimState, Store, StoreError};
 
 /// How long recovery waits for the socket of a live `starting` shim.
 pub const STARTING_WAIT: Duration = Duration::from_secs(30);
+/// How long recovery asks about a stdin write in flight (ADR-005 §4.3).
+pub const IN_FLIGHT_WAIT: Duration =
+    Duration::from_millis(fleetdeck_providers::host::shim::settle::IN_FLIGHT_WAIT_MS);
 
 /// Why recovery ended a row as `lost`.
 pub mod reason {
@@ -121,7 +124,7 @@ pub async fn launch_shim(
                 settled: reason::EXECUTION_UNKNOWN,
             });
         };
-        match recover_shim(store, host, &row, mode).await? {
+        match recover_shim(store, host, &row, mode, IN_FLIGHT_WAIT).await? {
             Recovered::Reattached(attached) => Ok(attached),
             other => Err(LaunchError::Settled {
                 error,
@@ -157,6 +160,7 @@ pub async fn recover_shim(
     host: &ShimHost,
     row: &ShimRow,
     mode: AckMode,
+    in_flight_wait: Duration,
 ) -> Result<Recovered> {
     let files = ShimFiles::new(&host.config().shims_dir(), &row.shim_id);
     let outcome = match row.state {
@@ -172,7 +176,18 @@ pub async fn recover_shim(
         }
     };
     let (state, why) = match &outcome {
-        Recovered::Reattached(_) => return Ok(outcome),
+        Recovered::Reattached(attached) => {
+            // §4.3 settlement order: the claimed stdin writes of this shim
+            // settle before the generic recovery sees them.
+            super::shim_stdin::settle_writes(
+                store,
+                &attached.process,
+                &row.shim_id,
+                in_flight_wait,
+            )
+            .await?;
+            return Ok(outcome);
+        }
         Recovered::Exited(_) => (ShimState::Exited, reason::EXITED),
         Recovered::NeverStarted => (ShimState::NeverStarted, reason::SHIM_NEVER_STARTED),
         Recovered::Lost(why) => (ShimState::Lost, *why),
@@ -191,10 +206,11 @@ pub async fn recover_shims(
     store: &Store,
     host: &ShimHost,
     mode: AckMode,
+    in_flight_wait: Duration,
 ) -> Result<Vec<(ShimRow, Recovered)>> {
     let mut done = Vec::new();
     for row in store.shims_to_recover().await? {
-        let outcome = recover_shim(store, host, &row, mode).await?;
+        let outcome = recover_shim(store, host, &row, mode, in_flight_wait).await?;
         done.push((row, outcome));
     }
     Ok(done)

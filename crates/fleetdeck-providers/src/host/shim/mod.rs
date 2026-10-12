@@ -25,6 +25,7 @@ pub mod proof;
 pub mod server;
 pub mod settle;
 pub mod start;
+pub mod stdin;
 pub mod wire;
 pub mod writes;
 

@@ -1,17 +1,18 @@
 //! The effect result of a `write_status` answer or a `write_done` frame
 //! (ADR-005 §4.3 table). The station applies it to a `claimed` stdin effect.
 //!
-//! **Gate.** The two `retired_not_dispatched` rows are enabled only in the
-//! change that adds the crash-boundary tests 26–35 and only when they pass
-//! (ADR-005 §4.3 "Gate in the implementation"). Until then
-//! [`RETIRE_ROWS_ENABLED`] is false and every answer maps to
-//! `outcome_unknown`.
+//! **Gate.** The two `retired_not_dispatched` rows are enabled only together
+//! with the crash-boundary tests 26–35 and only while they pass (ADR-005
+//! §4.3 "Gate in the implementation"). The real-process tests are in
+//! `crates/fleetdeck-cli/tests/shim_stdin.rs` (slice 5, DL-105), so
+//! [`RETIRE_ROWS_ENABLED`] is true. With the gate closed every answer maps
+//! to `outcome_unknown`.
 
 use super::wire::{StatusAnswer, WriteState};
 
 /// See the module documentation. It changes only together with the real-
 /// process tests 26–35.
-pub const RETIRE_ROWS_ENABLED: bool = false;
+pub const RETIRE_ROWS_ENABLED: bool = true;
 /// How long the station asks again about a write in flight (ADR-005 §4.3).
 pub const IN_FLIGHT_WAIT_MS: u64 = 30_000;
 

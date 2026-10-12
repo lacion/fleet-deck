@@ -33,7 +33,8 @@ use super::journal::ShimFiles;
 use super::output::DEFAULT_CAPACITY;
 use super::server::STDIN_CLOSED;
 use super::wire::{
-    ExitState, FromShim, GapReason, MAX_PAYLOAD, ProviderIdentity, Refusal, ToShim, WriteState,
+    ExitState, FromShim, GapReason, MAX_PAYLOAD, ProviderIdentity, Refusal, StatusAnswer, ToShim,
+    WriteState,
 };
 use crate::host::{
     EndCause, ExitReport, HostError, HostKind, HostedProcess, ProcessControl, ProcessSpec,
@@ -245,6 +246,7 @@ impl ShimHost {
         let shared = Arc::new(Shared {
             exit: exit_tx,
             pending: StdMutex::new(HashMap::new()),
+            statuses: StdMutex::new(HashMap::new()),
             acked: AtomicU64::new(record.cursor),
             delivered: AtomicU64::new(record.cursor),
             gaps: StdMutex::new(Vec::new()),
@@ -312,25 +314,38 @@ struct Outgoing {
     payload: Vec<u8>,
 }
 
+pub(super) type WriteAnswer = Result<WriteState, StatusAnswer>;
+
 #[derive(Debug)]
-struct Shared {
+pub(super) struct Shared {
     exit: watch::Sender<Option<ExitReport>>,
-    pending: StdMutex<HashMap<String, oneshot::Sender<WriteState>>>,
+    /// The writes waiting for `write_done` (or a `write_status` refusal of
+    /// the write frame itself), by write id.
+    pending: StdMutex<HashMap<String, oneshot::Sender<WriteAnswer>>>,
+    /// The `write_status` questions waiting for their answer, by write id.
+    pub(super) statuses: StdMutex<HashMap<String, oneshot::Sender<StatusAnswer>>>,
     acked: AtomicU64,
     delivered: AtomicU64,
     gaps: StdMutex<Vec<(u64, u64, GapReason)>>,
 }
 
 impl Shared {
-    fn pending(&self) -> std::sync::MutexGuard<'_, HashMap<String, oneshot::Sender<WriteState>>> {
+    pub(super) fn pending(
+        &self,
+    ) -> std::sync::MutexGuard<'_, HashMap<String, oneshot::Sender<WriteAnswer>>> {
         self.pending
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    /// True once the attachment ended. A waiter checks it after it
+    /// registered: [`Self::finish`] sets it before it drops the waiters, so
+    /// a waiter is either dropped or sees the end (never left waiting).
+    pub(super) fn ended(&self) -> bool {
+        self.exit.borrow().is_some()
+    }
+
     fn finish(&self, report: ExitReport) {
-        // Unanswered writes end as "stdin closed" (their senders drop).
-        self.pending().clear();
         self.exit.send_if_modified(|exit| {
             if exit.is_some() {
                 return false;
@@ -338,6 +353,12 @@ impl Shared {
             *exit = Some(report);
             true
         });
+        // Unanswered writes end as "stdin closed" (their senders drop).
+        self.pending().clear();
+        self.statuses
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
     }
 }
 
@@ -456,14 +477,29 @@ async fn read_loop(mut r: Reader) {
                 write_id, state, ..
             } => {
                 if let Some(done) = r.shared.pending().remove(&write_id) {
-                    drop(done.send(state));
+                    drop(done.send(Ok(state)));
+                }
+            }
+            FromShim::WriteStatus {
+                write_id, answer, ..
+            } => {
+                let asked = r
+                    .shared
+                    .statuses
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .remove(&write_id);
+                if let Some(asked) = asked {
+                    drop(asked.send(answer));
+                } else if let Some(done) = r.shared.pending().remove(&write_id) {
+                    // The shim refused the write frame itself.
+                    drop(done.send(Err(answer)));
                 }
             }
             FromShim::Exited { exit } => r.exit = Some(exit),
             FromShim::Hello { .. }
             | FromShim::Refused { .. }
             | FromShim::Attached { .. }
-            | FromShim::WriteStatus { .. }
             | FromShim::Status { .. } => {}
         }
     }
@@ -531,11 +567,11 @@ async fn sink_loop(mut s: Sink) {
 /// The control of one attached shim. Dropping it never stops the provider.
 pub struct ShimProcess {
     pid: u32,
-    generation: u64,
+    pub(super) generation: u64,
     tx: mpsc::Sender<Outgoing>,
-    shared: Arc<Shared>,
+    pub(super) shared: Arc<Shared>,
     next_seq: AtomicU64,
-    stdin_closed: AtomicBool,
+    pub(super) stdin_closed: AtomicBool,
 }
 
 impl fmt::Debug for ShimProcess {
@@ -581,7 +617,7 @@ impl ShimProcess {
             .clone()
     }
 
-    async fn send(&self, frame: ToShim, payload: Vec<u8>) -> bool {
+    pub(super) async fn send(&self, frame: ToShim, payload: Vec<u8>) -> bool {
         self.tx.send(Outgoing { frame, payload }).await.is_ok()
     }
 
@@ -622,21 +658,24 @@ impl ShimProcess {
             write_seq: seq,
             sent_at: 0,
         };
-        if !self.send(frame, chunk.to_vec()).await || self.shared.exit.borrow().is_some() {
+        if !self.send(frame, chunk.to_vec()).await || self.shared.ended() {
             self.shared.pending().remove(&write_id);
             return Err(HostError::StdinClosed);
         }
         match done_rx.await {
-            Ok(WriteState::Written) => Ok(()),
-            Ok(WriteState::Partial { error, .. } | WriteState::FailedUnwritten { error })
+            Ok(Ok(WriteState::Written)) => Ok(()),
+            Ok(Ok(WriteState::Partial { error, .. } | WriteState::FailedUnwritten { error }))
                 if error == STDIN_CLOSED =>
             {
                 Err(HostError::StdinClosed)
             }
-            Ok(WriteState::ClosedUnwritten) | Err(_) => Err(HostError::StdinClosed),
+            Ok(Ok(WriteState::ClosedUnwritten)) | Err(_) => Err(HostError::StdinClosed),
+            Ok(Err(answer)) => Err(HostError::Write(io::Error::other(format!(
+                "the shim refused the write: {answer:?}"
+            )))),
             // A close, stop or kill ended the write (part may be written).
-            Ok(_) if self.stdin_closed.load(Ordering::SeqCst) => Err(HostError::StdinClosed),
-            Ok(other) => Err(HostError::Write(io::Error::other(format!(
+            Ok(Ok(_)) if self.stdin_closed.load(Ordering::SeqCst) => Err(HostError::StdinClosed),
+            Ok(Ok(other)) => Err(HostError::Write(io::Error::other(format!(
                 "the shim reported {other:?}"
             )))),
         }

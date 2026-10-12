@@ -447,9 +447,9 @@ async fn a_write_that_fails_before_the_first_byte_is_retired_as_not_dispatched()
         settle(facts(Some(&answer), true)),
         EffectResult::Retired(SHIM_WRITE_FAILED)
     );
-    // The gate is closed in this build: outcome_unknown.
+    // With the gate closed the same answer is outcome_unknown.
     assert_eq!(
-        settle(facts(Some(&answer), super::settle::RETIRE_ROWS_ENABLED)),
+        settle(facts(Some(&answer), false)),
         EffectResult::Unknown { block_input: false }
     );
 }
@@ -706,6 +706,7 @@ fn write_status_maps_each_answer_to_the_effect_state_of_section_4_3() {
     let mut f = facts(Some(&writing), true);
     f.live = true;
     assert_eq!(settle(f), unknown);
-    // The gate of this build stays closed until tests 26–35 exist.
-    const { assert!(!super::settle::RETIRE_ROWS_ENABLED) };
+    // The gate opened with the real-process tests 26–35
+    // (crates/fleetdeck-cli/tests/shim_stdin.rs, DL-105).
+    const { assert!(super::settle::RETIRE_ROWS_ENABLED) };
 }

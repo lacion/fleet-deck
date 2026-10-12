@@ -14,6 +14,7 @@ pub mod files;
 pub mod policy;
 pub mod revert;
 pub mod revert_run;
+pub mod shim_stdin;
 pub mod shims;
 pub mod target;
 pub mod turns;

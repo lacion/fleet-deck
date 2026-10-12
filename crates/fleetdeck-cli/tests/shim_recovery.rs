@@ -110,12 +110,17 @@ impl Rig {
     }
 
     async fn recover(&self) -> Vec<(String, Recovered)> {
-        recover_shims(&self.store, &self.host(), AckMode::Manual)
-            .await
-            .unwrap()
-            .into_iter()
-            .map(|(row, outcome)| (row.shim_id, outcome))
-            .collect()
+        recover_shims(
+            &self.store,
+            &self.host(),
+            AckMode::Manual,
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|(row, outcome)| (row.shim_id, outcome))
+        .collect()
     }
 
     async fn state(&self, shim_id: &str) -> (ShimState, Option<String>, u64) {

@@ -212,6 +212,29 @@ impl Attachment {
 }
 
 impl Attachment {
+    /// A crash-boundary fault tool (ADR-005 test 27): writes only the first
+    /// `cut` bytes of the encoded frame and closes the connection, as a
+    /// station that dies in the middle of a frame.
+    ///
+    /// # Errors
+    /// An encoding or socket error.
+    pub async fn send_torn(
+        mut self,
+        frame: &ToShim,
+        payload: &[u8],
+        cut: usize,
+    ) -> Result<(), ClientError> {
+        let bytes = super::wire::encode(frame, payload)?;
+        let cut = cut.min(bytes.len().saturating_sub(1));
+        self.w
+            .write_all(&bytes[..cut])
+            .await
+            .map_err(ClientError::Io)?;
+        self.w.flush().await.map_err(ClientError::Io)?;
+        drop(self);
+        Ok(())
+    }
+
     /// Splits the attachment into its two directions, so that one task can
     /// read frames while another sends them.
     #[must_use]

@@ -375,6 +375,16 @@ pub(super) fn live_session(
             },
         ));
     }
+    // A partial stdin frame left the provider's input in an unknown state
+    // (ADR-005 §4.3): no new input; interrupt and stop stay possible.
+    if !matches!(op, Operation::Stop | Operation::Interrupt)
+        && let Some(reason) = d.shim_input_blocked(session_id)?
+    {
+        return Err(reject(
+            RejectCode::InvalidState,
+            format!("the session input is blocked ({reason}): interrupt or stop it"),
+        ));
+    }
     // A revert of another session in the same worktree holds it too
     // (DL-093): no input and no answer that would start writes there.
     if matches!(
