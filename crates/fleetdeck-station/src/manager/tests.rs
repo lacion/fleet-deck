@@ -638,3 +638,6 @@ async fn a_started_session_records_the_branch_of_its_workspace() {
 
 #[path = "codex_tests.rs"]
 mod codex;
+
+#[path = "checkpoint_wired_tests.rs"]
+mod checkpoint_wired;

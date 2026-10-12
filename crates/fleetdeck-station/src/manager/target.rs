@@ -6,8 +6,14 @@
 //! `NotDispatched`, a write that may have reached the provider is `Unknown`,
 //! a write that worked is `Sent` (confirmation waits for provider evidence),
 //! and a spawn that returned a live session is `Confirmed`.
+//!
+//! Each live session has its turn checkpoints ([`SessionTurns`], DL-084): a
+//! prompt or a follow-up is written under the session's workspace fence
+//! after its start checkpoint, and the pump feeds the stored events to the
+//! checkpoints after each append.
 
 use std::collections::{BTreeMap, HashMap};
+use std::path::Path;
 use std::sync::{Arc, Mutex as StdMutex};
 
 use async_trait::async_trait;
@@ -21,10 +27,12 @@ use fleetdeck_providers::{
 };
 use tokio::sync::{Mutex, mpsc, oneshot};
 
+use super::turns::SessionTurns;
 use crate::store::{
     Dispatch, Effect, EffectPayload, InputRecord, NewEvent, ProcessIncarnation, Store,
 };
 use crate::worker::EffectTarget;
+use crate::workspace::{GitOptions, Limits};
 
 /// Events that the pump appends in one transaction at most.
 const PUMP_BATCH: usize = 64;
@@ -40,6 +48,7 @@ struct Live {
     process: ProcessIncarnation,
     /// `None` after a stop took the session.
     session: Option<Box<dyn LiveSession>>,
+    turns: Arc<SessionTurns>,
 }
 
 type Sessions = Arc<StdMutex<HashMap<SessionId, Arc<Mutex<Live>>>>>;
@@ -50,6 +59,8 @@ pub struct SessionTarget {
     adapters: Adapters,
     ids: SharedIds,
     sessions: Sessions,
+    git: GitOptions,
+    limits: Limits,
 }
 
 impl std::fmt::Debug for SessionTarget {
@@ -68,7 +79,17 @@ impl SessionTarget {
             adapters,
             ids,
             sessions: Arc::default(),
+            git: GitOptions::isolated(),
+            limits: Limits::default(),
         }
+    }
+
+    /// The Git runner and the limits of the turn checkpoints.
+    #[must_use]
+    pub fn with_checkpoints(mut self, git: GitOptions, limits: Limits) -> Self {
+        self.git = git;
+        self.limits = limits;
+        self
     }
 
     /// The adapter of a provider instance, if this station has one.
@@ -115,12 +136,22 @@ impl SessionTarget {
                 .await;
             return Dispatch::NotDispatched("unknown_provider".into());
         };
+        let turns = SessionTurns::open(
+            self.store.clone(),
+            Arc::clone(&self.ids),
+            self.git.clone(),
+            self.limits,
+            session_id.clone(),
+            Path::new(&spec.cwd),
+        )
+        .await;
         let (sink, rx) = EventSink::channel(SINK_CAPACITY);
         let (ready_tx, ready_rx) = oneshot::channel();
         tokio::spawn(pump(
             self.store.clone(),
             Arc::clone(&self.sessions),
             session_id.clone(),
+            Arc::clone(&turns),
             rx,
             ready_rx,
         ));
@@ -143,9 +174,18 @@ impl SessionTarget {
             let _ = session.stop(StopMode::Kill).await;
             return Dispatch::Unknown(format!("store: {e}"));
         }
+        turns.set_process(process.clone());
         let mut sent_prompt = Ok(());
         if let Some(input) = prompt {
+            let fence = turns.fence().await;
+            turns.begin_input(&fence, &input.input_id).await;
+            turns.input_sent(&input.input_id);
             sent_prompt = session.prompt(host_input(input)).await;
+            if let Err(e) = &sent_prompt
+                && matches!(classify(e), Dispatch::NotDispatched(_))
+            {
+                turns.input_not_sent(&input.input_id).await;
+            }
         }
         if let Ok(mut map) = self.sessions.lock() {
             map.insert(
@@ -153,6 +193,7 @@ impl SessionTarget {
                 Arc::new(Mutex::new(Live {
                     process: process.clone(),
                     session: Some(session),
+                    turns,
                 })),
             );
         }
@@ -212,13 +253,34 @@ impl SessionTarget {
             });
             return Dispatch::Sent;
         }
+        let turns = Arc::clone(&live.turns);
         let Some(session) = live.session.as_mut() else {
             return Dispatch::NotDispatched("stopping".into());
         };
         let sent = match &effect.payload {
-            EffectPayload::Prompt { input } => session.prompt(host_input(input)).await,
-            EffectPayload::Steer { input } => session.steer(host_input(input)).await,
-            EffectPayload::FollowUp { input } => session.follow_up(host_input(input)).await,
+            EffectPayload::Prompt { input } | EffectPayload::FollowUp { input } => {
+                // The start checkpoint is published before the write, under
+                // the workspace fence (PLAN §6.6).
+                let fence = turns.fence().await;
+                turns.begin_input(&fence, &input.input_id).await;
+                turns.input_sent(&input.input_id);
+                let sent = if matches!(effect.payload, EffectPayload::Prompt { .. }) {
+                    session.prompt(host_input(input)).await
+                } else {
+                    session.follow_up(host_input(input)).await
+                };
+                if let Err(e) = &sent
+                    && matches!(classify(e), Dispatch::NotDispatched(_))
+                {
+                    turns.input_not_sent(&input.input_id).await;
+                }
+                sent
+            }
+            EffectPayload::Steer { input } => {
+                // A due completion capture runs before the steer can write.
+                let _fence = turns.fence().await;
+                session.steer(host_input(input)).await
+            }
             EffectPayload::Interrupt => {
                 session
                     .interrupt(Some(ControlId(effect.effect_id.as_str().to_owned())))
@@ -295,6 +357,7 @@ async fn pump(
     store: Store,
     sessions: Sessions,
     session_id: SessionId,
+    turns: Arc<SessionTurns>,
     mut rx: mpsc::Receiver<fleetdeck_providers::adapter::Emitted>,
     ready: oneshot::Receiver<ProcessIncarnation>,
 ) {
@@ -312,10 +375,16 @@ async fn pump(
             }
         }
         ended |= batch.iter().any(|e| e.event.is_terminal_for_session());
+        let observed: Vec<Event> = batch.iter().map(|e| e.event.clone()).collect();
         let events = batch.into_iter().map(NewEvent::from).collect();
         if let Err(e) = store.append(session_id.clone(), events).await {
             tracing::error!(error = %e, session = %session_id, "events not stored; closing the session");
             break;
+        }
+        // The events are in the log first: `turn.completed` never waits for
+        // a checkpoint (L13).
+        if turns.observe(&observed).await {
+            tokio::spawn(Arc::clone(&turns).capture_due());
         }
         if ended {
             break;

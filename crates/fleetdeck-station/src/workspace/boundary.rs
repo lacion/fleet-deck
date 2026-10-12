@@ -54,6 +54,11 @@ pub const REASON_STATION_RESTART: &str = "station_restart";
 pub const REASON_NOT_A_WORKTREE: &str = "not_a_git_worktree";
 /// A Git command failed during the capture.
 pub const REASON_CAPTURE_FAILED: &str = "capture_failed";
+/// The input was never written to the provider (its row is abandoned).
+pub const REASON_NOT_DISPATCHED: &str = "not_dispatched";
+/// The input left the queue without a turn of its own (discarded,
+/// refused, cancelled, or joined a running turn); its row is abandoned.
+pub const REASON_NO_TURN: &str = "no_turn";
 /// Recovery: the ref of a recorded `available` side is gone (or its
 /// worktree is gone), so the checkpoint cannot be shown or restored.
 pub const REASON_CHECKPOINT_MISSING: &str = "checkpoint_missing";
@@ -230,8 +235,15 @@ impl Boundary {
             .map(|w| &w.start)
     }
 
-    /// The input was written to the provider (after its start side was
-    /// recorded). Only written inputs can start a turn.
+    /// The inputs that wait for a turn, oldest first.
+    #[must_use]
+    pub fn waiting_inputs(&self) -> Vec<InputId> {
+        self.waiting.iter().map(|w| w.input.clone()).collect()
+    }
+
+    /// The input is written to the provider now (after its start side was
+    /// recorded, and before the write, so that a fast `turn.started` finds
+    /// it). Only written inputs can start a turn.
     pub fn input_sent(&mut self, input: &InputId) {
         if let Some(w) = self.waiting.iter_mut().find(|w| &w.input == input) {
             w.sent = true;

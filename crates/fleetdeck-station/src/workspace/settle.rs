@@ -143,6 +143,26 @@ async fn store_side(
     Ok(())
 }
 
+/// Checks the sides of a row against its refs again, stores the result and
+/// commits `turn.finalized` (idempotent per app turn). The live session
+/// manager and start recovery share this path, so `turn.finalized` never
+/// names a ref that does not exist.
+///
+/// # Errors
+/// A store error, or a row without a bound provider turn.
+pub async fn finalize_row(
+    store: &Store,
+    row: &TurnCheckpointRow,
+    options: GitOptions,
+) -> Result<crate::store::Finalized, StoreError> {
+    let incarnation = store.incarnation().as_str().to_owned();
+    let resolved = resolve(row, &incarnation, options).await;
+    let id = row.app_turn.clone();
+    store_side(store, &id, Which::Start, &row.start, resolved.start).await?;
+    store_side(store, &id, Which::End, &row.end, resolved.end).await?;
+    store.finalize_turn(id, resolved.diff_summary).await
+}
+
 /// Settles every unsettled row after a station start (module docs).
 ///
 /// # Errors
