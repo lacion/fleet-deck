@@ -179,6 +179,7 @@ impl DeckStore {
                 summary.apply(&e);
                 store_summary(&tx, &station, &summary, now)?;
                 append_timeline(&tx, &station, &e)?;
+                super::plans::record_plan(&tx, &station, &e, &summary, now)?;
                 touched.insert(e.session_id.clone());
                 cursor = e.station_seq;
                 applied += 1;

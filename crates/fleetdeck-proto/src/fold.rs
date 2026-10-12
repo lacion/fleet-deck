@@ -13,7 +13,7 @@
 //!   background work runs, else `idle`.
 //! - An unknown event kind changes only the sequence and the time (L16).
 
-use crate::event::{Event, EventEnvelope, SessionState, Usage};
+use crate::event::{Event, EventEnvelope, RateLimit, SessionState, Usage};
 use crate::session::{
     Activity, MAX_RUNNING_TOOLS, OpenRequest, RunningTool, SUBAGENT_TASK_KINDS, SessionError,
     SessionRevert, SessionSummary,
@@ -138,7 +138,10 @@ impl SessionSummary {
             }
             Event::ModeChanged { mode } => self.mode = Some(mode.clone()),
             Event::ModelChanged { model } => self.model = Some(model.clone()),
-            Event::UsageUpdated { usage, .. } => add_usage(&mut self.usage, usage),
+            Event::UsageUpdated { usage, rate_limits } => {
+                add_usage(&mut self.usage, usage);
+                merge_rate_limits(&mut self.rate_limits, rate_limits);
+            }
             Event::BackgroundUpdated { tasks } => {
                 self.background_tasks = tasks.iter().map(|t| t.task_id.clone()).collect();
                 let agents = tasks
@@ -231,6 +234,22 @@ fn add_usage(total: &mut Usage, more: &Usage) {
     total.input_tokens = add(total.input_tokens, more.input_tokens);
     total.output_tokens = add(total.output_tokens, more.output_tokens);
     total.cost_usd = add(total.cost_usd, more.cost_usd);
+}
+
+/// The most rate-limit windows that a summary keeps.
+pub const MAX_RATE_LIMITS: usize = 16;
+
+/// A reported window replaces the window of the same scope; a scope that
+/// is not reported keeps its last window (sparse updates).
+fn merge_rate_limits(kept: &mut Vec<RateLimit>, more: &[RateLimit]) {
+    for limit in more {
+        if let Some(k) = kept.iter_mut().find(|k| k.scope == limit.scope) {
+            *k = limit.clone();
+        } else if kept.len() < MAX_RATE_LIMITS {
+            kept.push(limit.clone());
+        }
+    }
+    kept.sort_by(|a, b| a.scope.cmp(&b.scope));
 }
 
 #[cfg(test)]

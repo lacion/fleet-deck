@@ -8,8 +8,8 @@ use ts_rs::TS;
 
 use crate::capability::Capabilities;
 use crate::event::{
-    ApprovalOption, ProviderKind, RequestKind, ResponseChannel, RevertState, SessionState,
-    ToolKind, Usage,
+    ApprovalOption, ProviderKind, RateLimit, RequestKind, ResponseChannel, RevertState,
+    SessionState, ToolKind, Usage,
 };
 use crate::ids::{NodeId, ProviderInstanceId, RequestId, RunId, SessionId, TurnId};
 
@@ -83,6 +83,11 @@ pub struct SessionSummary {
     pub running_tools: Vec<RunningTool>,
     /// Sum of the reported usage; `None` parts are unknown.
     pub usage: Usage,
+    /// The latest provider rate-limit windows, one per scope, sorted by
+    /// scope (M3 6-9, DL-303). Empty: no window reported (unknown, not
+    /// zero). Absent in a summary stored before M3.
+    #[serde(default)]
+    pub rate_limits: Vec<RateLimit>,
     /// The last error, for example `usage_limit` with its retry time.
     pub last_error: Option<SessionError>,
     /// The latest revert of the session (PLAN §6.6, DL-087). While it is
@@ -124,6 +129,7 @@ impl SessionSummary {
             background_agents: 0,
             running_tools: Vec::new(),
             usage: Usage::default(),
+            rate_limits: Vec::new(),
             last_error: None,
             revert: None,
             auto_continue: false,
