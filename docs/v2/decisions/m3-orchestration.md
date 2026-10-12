@@ -348,3 +348,24 @@ reason, owner review.
   (renew: 403 viewer, 409 active grant, 404 unknown),
   `web/src/fleet/fleet.test.ts` "a renew posts to the grant and a refusal says so (ADR-006 25b)".
 - Owner review: pending
+
+## DL-214: `coordinator.call` and `coordinator.query` need the `coordinator.v1` feature (ADR-006 §6.1, test 26)
+
+- Context: ADR-006 §6.1 says that a deck accepts the coordinator shapes
+  only on a link that negotiated `coordinator_v1`, and that an M2 peer
+  keeps the M2 behavior. The link method table gated only
+  `session.coordinator_renew`/`session.coordinator_revoke`;
+  `coordinator.call` and `coordinator.query` had no feature.
+- Options: (a) keep them ungated and rely on the `coordinate` scope;
+  (b) gate both with `coordinator.v1` in the code table and the ADR-004
+  §9.6 table.
+- Choice: (b). Both builds offer `coordinator.v1` (`feature::ALL`), so
+  paired M3 peers are unchanged; a peer without the feature gets
+  `feature_not_negotiated` before the scope check, as for every other
+  gated method.
+- Reason: the ADR text is binding; fail closed on links that do not know
+  the coordinator shapes.
+- Tests: `fleetdeck-link methods::tests::a_peer_without_the_coordinator_feature_gets_the_m2_behavior`,
+  `method_table::the_code_method_table_equals_the_adr_method_table`,
+  `method_table::a_changed_adr_row_breaks_the_agreement` (updated rows).
+- Owner review: pending

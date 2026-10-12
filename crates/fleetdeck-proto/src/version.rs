@@ -39,9 +39,10 @@ pub mod feature {
     /// `shell.open`, `shell.resize`, `shell.close`, `shell.list` and
     /// `shell.attach`: the human shell (PLAN §6.8, M3 DL-404).
     pub const SHELL: &str = "shell.v1";
-    /// `session.coordinator_renew` and `session.coordinator_revoke`: the
-    /// deck's binding lifecycle commands (ADR-006 §6.1 `coordinator_v1`,
-    /// M3 DL-212).
+    /// `session.coordinator_renew` and `session.coordinator_revoke` (the
+    /// deck's binding lifecycle commands) and `coordinator.query` and
+    /// `coordinator.call` (ADR-006 §6.1 `coordinator_v1`, M3 DL-212,
+    /// DL-214).
     pub const COORDINATOR: &str = "coordinator.v1";
 
     /// Every feature that this build offers.
