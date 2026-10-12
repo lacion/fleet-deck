@@ -415,7 +415,7 @@ impl ClaudeCore {
     /// Feeds one CLI frame.
     ///
     /// Frames before the first `system/init` are held, except the answers to
-    /// the host's own control requests (mode, model): they are released at
+    /// the host's own control requests (mode, model, interrupt): they are released at
     /// once (DL-141). The other events of the frames before `system/init`
     /// follow `session.started`. Writes are never held.
     pub fn on_frame(&mut self, frame: CliFrame) -> Vec<Output> {
