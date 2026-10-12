@@ -161,6 +161,13 @@ pub const API: &[ApiMethod] = &[
         false,
     ),
     m(
+        "fleet.extras",
+        Method::GET,
+        "/api/fleet/extras",
+        Some(Scope::Read),
+        false,
+    ),
+    m(
         "commands.list",
         Method::GET,
         "/api/commands",
@@ -366,6 +373,10 @@ mod tests {
             Some(Some(Scope::Admin))
         );
         assert_eq!(find(&Method::POST, "/api/audit"), None);
+        assert_eq!(
+            find(&Method::GET, "/api/fleet/extras").map(|m| (m.name, m.scope, m.mutating)),
+            Some(("fleet.extras", Some(Scope::Read), false))
+        );
         assert_eq!(
             find(&Method::POST, "/api/commands/approval.answer").map(|m| m.scope),
             Some(Some(Scope::Approve))

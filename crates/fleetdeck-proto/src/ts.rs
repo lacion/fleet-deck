@@ -14,7 +14,7 @@ use ts_rs::{Config, TS};
 
 use crate::board::{
     AddStationRequest, BoardClientMessage, BoardServerMessage, CommandRequest, DeckCommand,
-    DeckSession, PairingInvitation, SessionKey, StationView, WsTicket,
+    DeckSession, FleetExtras, PairingInvitation, SessionKey, StationView, WsTicket,
 };
 use crate::capability::{Capabilities, Operation, Unsupported};
 use crate::command::{CommandEnvelope, DeckCommandState, Receipt};
@@ -69,6 +69,7 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         CommandRequest::export_all(&cfg),
         DeckCommand::export_all(&cfg),
         DeckSession::export_all(&cfg),
+        FleetExtras::export_all(&cfg),
         StationView::export_all(&cfg),
         SessionKey::export_all(&cfg),
         BoardServerMessage::export_all(&cfg),
