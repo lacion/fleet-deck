@@ -110,7 +110,7 @@ You can continue a Claude Code or Codex conversation that you started in a termi
 3. Put the native session id into "Import CLI session id (optional)". The id has 1 to 128 letters, digits, `-`, `_` or `.`, and starts with a letter or a digit.
 4. Optionally give a first prompt, then select "Import session".
 
-The station resumes the native session with the stored mode of the provider instance. It refuses an id that another session of the station already drives. Fleet Deck does not read the terminal and does not import v1 data.
+The station resumes the native session with the permission mode that you select in the spawn form. A provider instance stores no permission mode. The import ignores the workspace and batch choices of the form. It refuses an id that another session of the station already drives. Fleet Deck does not read the terminal and does not import v1 data.
 
 ## 8. Back up
 
@@ -141,6 +141,11 @@ Shim-hosted agents keep running through the whole sequence; the new station reat
 ## 10. Auto-continue
 
 Auto-continue is off for each session by default. Turn it on in the session view ("Continue after a station restart"). Only the owner on the board can turn it on; a coordinator or the local socket cannot. After a station restart, the station continues a lost session only when every rule of ADR-007 holds. Otherwise the session stays `lost`, and the timeline shows "Auto-continue skipped: <reason>".
+
+Limits of this release (DL-127, follow-ups in `docs/v2/progress/m3-durable.md`):
+
+- Auto-continue works only with `host = "direct"`. With `host = "shim"`, the station skips a lost session with the reason `unsupported`.
+- The station checks every ADR-007 rule when it stores the continuation. Right before the dispatch, it checks again only these rules: identity, proven end of the old process, newer owner work, requested stop and the time window. It does not check again the preference, the turn state, the capability, the workspace or a free session slot.
 
 ## 11. Troubleshooting
 

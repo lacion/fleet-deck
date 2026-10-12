@@ -28,6 +28,12 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 51 (2026-10-12, 15:34–)
+
+- Committed round 50 as b690031. `m3/orchestration`, `m3/board`, `m3/ops`: no new commits. Lane B has no LANE COMPLETE (6-5 Coordinator still uncommitted in its worktree): 6-13, 7-7 and 7-8 still wait.
+- 7-6 docs corrections while waiting (the lane rules allow 7-6 work): `README.md` (revert: rejected revert changes nothing, an unproven revert needs reconciliation and blocks input; auto-continue only with the direct host), `docs/v2/operations.md` §7.1 (the import uses the mode of the spawn form; a provider instance stores no mode; the import ignores workspace and batch) and §10 (shim host → `unsupported`; the dispatch rechecks only identity, proven end, newer owner work, stop and window). These correct the documentation follow-ups of rounds 49 and 50; the code follow-ups stay open.
+- Test: `cargo nextest run -p fleetdeck-cli --test docs_commands` → 1 passed.
+
 ## Round 50 (2026-10-12, 15:32–)
 
 - Committed round 49 as c460b9b.
