@@ -55,7 +55,7 @@ This document is the map of the v2 code for a developer and a reviewer. It gives
 - Transport: TLS (rustls) with self-signed certificates from Ed25519 identity keys, pinned after pairing. A control WebSocket (JSON frames up to 1 MiB) and a data WebSocket (byte streams with credit flow control).
 - Handshake: both sides send `Hello { proto_min, proto_max, features, role, node_id, link_epoch, nonce }` and sign the transcript with the TLS exporter value. The highest common version wins; the features decide the behaviour.
 - Frames: `Request`, `Response`, `Event`, `Ack`, `SnapshotBegin`/`SnapshotSession`/`SnapshotEnd`, `Ping`/`Pong`, `Close`.
-- Each method declares its direction, scope and feature (`crates/fleetdeck-link/src/methods.rs`, ADR-004 §9.6). A method whose feature was not negotiated is refused `feature_not_negotiated`.
+- Each method declares its direction, scope and feature (`crates/fleetdeck-link/src/methods.rs`, ADR-004 §9.6). A method whose feature was not negotiated is refused `feature_not_negotiated`. Example: `coordinator.query` and `coordinator.call` need `coordinator.v1`, so an N−1 peer without it cannot reach the coordinator forward (ADR-006 test 26).
 - Commands carry `target_incarnation` and `retry_until`. The deck resends the same `command_id` after a reconnect and never after `retry_until`.
 - Network scope: loopback, private LAN and tailnet addresses only (D13).
 

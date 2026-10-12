@@ -28,6 +28,14 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 64 (2026-10-12, 16:15–)
+
+- Committed round 63 as dc177bd.
+- Lanes: merged `m3/orchestration` 42b27a9 as 9b27b2e, no conflicts (`coordinator.call` and `coordinator.query` gated by `coordinator.v1`, ADR-006 test 26). `crates/fleetdeck-proto` changed (doc comment): `make ts-types` → no change. `m3/board`, `m3/ops`: no new commits. `m3-orchestration.md` has no LANE COMPLETE (6-5 open); 6-13, 7-7 and 7-8 still wait.
+- Merge validation: `cargo nextest run -p fleetdeck-link` → 106 passed.
+- 7-6 docs: `docs/v2/internals.md` §link names the `coordinator.v1` feature gate as the example of `feature_not_negotiated`.
+- Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
+
 ## Round 63 (2026-10-12, 16:13–)
 
 - Committed round 62 as f0b3ba7.
