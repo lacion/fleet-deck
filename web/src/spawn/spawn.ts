@@ -7,6 +7,7 @@
 // worktree or a clone, and a batch starts one session for each line
 // (`3x task` starts three), each in its own worktree.
 import type {
+  DeckSession,
   SessionSpec,
   StationProvider,
   StationView,
@@ -111,6 +112,76 @@ export function listingView(v: unknown): WorkspaceListing {
 /** Stations that can start a session now: linked, with reported providers. */
 export function spawnTargets(stations: readonly StationView[]): StationView[] {
   return stations.filter((s) => s.reachable && (s.info?.providers.length ?? 0) > 0);
+}
+
+/** The most pinned directories that one station keeps. */
+export const MAX_PINS = 20;
+/** The most unpinned recent directories that the form offers. */
+export const MAX_RECENT = 6;
+const PINS_KEY = 'fd-dir-pins';
+
+export type DirPins = Readonly<Record<string, readonly string[]>>;
+
+/** The pinned directories of this browser, by station (DL-141); empty when storage fails. */
+export function readPins(): DirPins {
+  try {
+    const raw: unknown = JSON.parse(localStorage.getItem(PINS_KEY) ?? '{}');
+    if (!record(raw)) return {};
+    const out: Record<string, string[]> = {};
+    for (const [id, list] of Object.entries(raw)) {
+      if (Array.isArray(list)) out[id] = list.filter((p): p is string => typeof p === 'string');
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+export function writePins(pins: DirPins): void {
+  try {
+    localStorage.setItem(PINS_KEY, JSON.stringify(pins));
+  } catch {
+    // Storage is blocked or full: the pins live for this page only.
+  }
+}
+
+/** Pins `path` for the station (newest first, at most 20), or unpins it when it is pinned. */
+export function togglePin(pins: DirPins, stationId: string, path: string): DirPins {
+  const list = pins[stationId] ?? [];
+  const next = list.includes(path)
+    ? list.filter((p) => p !== path)
+    : [path, ...list].slice(0, MAX_PINS);
+  return { ...pins, [stationId]: next };
+}
+
+/** The last two parts of a path (`/home/me/app` gives `me/app`); `/` stays `/`. */
+export function lastParts(path: string): string {
+  const parts = path.split('/').filter((p) => p !== '');
+  return parts.length === 0 ? '/' : parts.slice(-2).join('/');
+}
+
+/**
+ * The recent directories of a station: the `cwd` of its sessions, newest
+ * `updated_at` first, each once, without the pinned ones, at most 6.
+ */
+export function recentDirs(
+  sessions: readonly DeckSession[],
+  stationId: string,
+  pinned: readonly string[],
+): string[] {
+  const seen = new Set(pinned);
+  const out: string[] = [];
+  const mine = sessions
+    .filter((s) => s.station_id === stationId && s.summary.cwd !== null && s.summary.cwd !== '')
+    .sort((a, b) => b.summary.updated_at - a.summary.updated_at);
+  for (const s of mine) {
+    const cwd = s.summary.cwd;
+    if (cwd === null || seen.has(cwd)) continue;
+    seen.add(cwd);
+    out.push(cwd);
+    if (out.length === MAX_RECENT) break;
+  }
+  return out;
 }
 
 export function providerLabel(p: StationProvider): string {

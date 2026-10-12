@@ -244,7 +244,7 @@ test('a batch starts one worktree session per line with Nx (M3 6-1)', async ({ p
   await form.getByLabel(/Batch: one session/).check();
   await form.getByLabel('First prompt (optional)').fill('2x fix the tests\nwrite docs');
   expect(await fitsWidth(page)).toBe(true);
-  await form.getByRole('button', { name: 'Start session' }).click();
+  await form.getByRole('button', { name: 'Start 3 sessions' }).click();
   await expect(
     page.getByRole('status').filter({ hasText: '3 of 3 sessions started.' }),
   ).toBeVisible();
@@ -330,4 +330,93 @@ test('a terminal CLI session is imported by its id as a driven session (6-12)', 
     },
   });
   expect(deck.calls.filter((c) => c.path === '/api/commands/session.start')).toHaveLength(0);
+});
+
+test('a batch lists its prompts and counts the sessions on the button', async ({ page }) => {
+  const deck = new FakeDeck();
+  deck.stations = [alpha];
+  picker(deck);
+  await deck.install(page);
+  await logIn(page);
+  await chooseApp(page);
+  const form = page.getByRole('region', { name: 'New session' });
+  await form.getByLabel(/Batch: one session/).check();
+  const preview = form.getByLabel('Sessions to start');
+  // one line is one session: no preview and the plain button
+  await form.getByLabel('First prompt (optional)').fill('fix the tests');
+  await expect(preview).toHaveCount(0);
+  await expect(form.getByRole('button', { name: 'Start session' })).toBeVisible();
+  await form.getByLabel('First prompt (optional)').fill('fix the tests\nwrite docs');
+  await expect(preview).toContainText('2 sessions, each in its own worktree');
+  await expect(preview.getByRole('listitem')).toHaveText(['fix the tests', 'write docs']);
+  await expect(form.getByRole('button', { name: 'Start 2 sessions' })).toBeEnabled();
+  expect(await fitsWidth(page)).toBe(true);
+  // a clone ignores the batch: the preview and the count go away
+  await form.getByLabel('Workspace').selectOption('clone');
+  await expect(preview).toHaveCount(0);
+  await expect(form.getByRole('button', { name: 'Start session' })).toBeVisible();
+});
+
+test('a recent directory chip selects its directory for the start', async ({ page }) => {
+  const deck = new FakeDeck();
+  deck.stations = [alpha];
+  deck.sessions = [
+    {
+      station_id: 'st-alpha',
+      status: 'idle',
+      summary: summary('s-old', 'idle', 1, { cwd: `${ROOT}/notes` }),
+    },
+    {
+      station_id: 'st-alpha',
+      status: 'idle',
+      summary: summary('s-new', 'idle', 5, { cwd: `${ROOT}/app` }),
+    },
+  ];
+  picker(deck);
+  deck.on('/api/commands/session.start', () => ({
+    status: 200,
+    body: {
+      state: 'done',
+      receipt: { state: 'accepted', result: { session_id: 's-r', input_id: null }, reject: null },
+    },
+  }));
+  await deck.install(page);
+  await logIn(page);
+  await page.getByRole('button', { name: 'New session' }).click();
+  const form = page.getByRole('region', { name: 'New session' });
+  const recent = form.getByLabel('Recent directories');
+  await expect(recent.getByRole('button')).toHaveText(['projects/app', 'projects/notes']);
+  await expect(recent.getByRole('button', { name: 'projects/app' })).toHaveAttribute(
+    'title',
+    `${ROOT}/app`,
+  );
+  await recent.getByRole('button', { name: 'projects/notes' }).click();
+  await expect(form).toContainText(`Chosen: ${ROOT}/notes`);
+  await form.getByRole('button', { name: 'Start session' }).click();
+  await expect(page).toHaveURL(/#\/s\/st-alpha\/s-r$/);
+  const starts = deck.calls.filter((c) => c.path === '/api/commands/session.start');
+  expect(starts[0]?.body).toMatchObject({ command: { spec: { cwd: `${ROOT}/notes` } } });
+});
+
+test('a pinned directory stays after a reload and unpins again', async ({ page }) => {
+  const deck = new FakeDeck();
+  deck.stations = [alpha];
+  picker(deck);
+  await deck.install(page);
+  await logIn(page);
+  await chooseApp(page);
+  const form = page.getByRole('region', { name: 'New session' });
+  await expect(form.getByLabel('Recent directories')).toHaveCount(0);
+  await form.getByRole('button', { name: 'Pin this directory' }).click();
+  await expect(form.getByRole('button', { name: 'Unpin this directory' })).toBeVisible();
+  await expect(form.getByLabel('Recent directories')).toContainText('Pinned and recent');
+  await page.reload();
+  const recent = page.getByRole('region', { name: 'New session' }).getByLabel('Recent directories');
+  await expect(recent.getByRole('button', { name: 'projects/app' })).toBeVisible();
+  await recent.getByRole('button', { name: 'projects/app' }).click();
+  const again = page.getByRole('region', { name: 'New session' });
+  await expect(again).toContainText(`Chosen: ${ROOT}/app`);
+  await again.getByRole('button', { name: 'Unpin this directory' }).click();
+  await expect(again.getByLabel('Recent directories')).toHaveCount(0);
+  expect(await page.evaluate(() => localStorage.getItem('fd-dir-pins'))).toBe('{"st-alpha":[]}');
 });
