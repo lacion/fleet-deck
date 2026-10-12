@@ -127,9 +127,17 @@
   }
 }
 .fd-sh[data-layout="phone"] {
-  height: 48px;
+  min-height: 48px;
   padding: 0 8px;
   gap: 4px;
+}
+/* The rename form of the phone takes the whole header; the header grows with it. */
+.fd-sh[data-layout="phone"]:has(.fd-rename) {
+  padding: 8px;
+}
+.fd-sh[data-layout="phone"] .fd-rename input {
+  flex: 1 1 140px;
+  width: auto;
 }
 
 /* ── strips under the header ────────────────────────────────────── */
