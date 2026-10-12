@@ -28,6 +28,17 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 78 (2026-10-12, 16:38–)
+
+- Round start: committed round 77 as 72a8fc8.
+- Sync: no new commits on m3/orchestration, m3/board or m3/ops.
+- 7-8 preparation: the goal rules "no `unwrap()` outside tests" and "modules stay under 800 lines" are now both reachable through `make check`.
+  - `unwrap()`: already enforced. `Cargo.toml` sets `unwrap_used = "deny"`, `clippy.toml` sets `allow-unwrap-in-tests = true`, and `make check` runs clippy with `-D warnings`.
+  - Module size: was not checked. New `tools/module-size.sh` fails when a `.rs` file under `crates/` or a `.ts`/`.tsx` file under `web/src/` has 800 or more lines (`FD_MODULE_LIMIT` overrides the limit). `tools/check.sh` runs it after `cargo deny check`.
+  - `sh tools/module-size.sh` → exit 0 (largest module: `crates/fleetdeck-providers/src/host/shim/host.rs`, 798 lines); `FD_MODULE_LIMIT=700 sh tools/module-size.sh` → exit 1 and lists the two files over 700 lines, so the check can fail; `sh -n tools/check.sh` → syntax ok.
+- Lane B `m3-orchestration.md` still has no "LANE COMPLETE"; 6-13, 7-7 and 7-8 stay blocked.
+- Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
+
 ## Round 77 (2026-10-12, 16:37–)
 
 - Round start: committed round 76 as 73e61e5.
