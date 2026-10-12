@@ -240,12 +240,17 @@ export function App({
     );
   };
   const cwd = selected?.summary.cwd ?? null;
+  // DL-141: a station that reports `allow_shell = false` refuses every shell; offer none.
+  const shellsOff =
+    selected !== undefined &&
+    stations.find((st) => st.station_id === selected.station_id)?.info?.allow_shell === false;
   const newShell =
     terminals !== undefined &&
     shells !== undefined &&
     selected !== undefined &&
     cwd !== null &&
-    freshness === 'live'
+    freshness === 'live' &&
+    !shellsOff
       ? () => {
           shells.open(selected.station_id, cwd, 120, 32).then(
             (shellId) => {
