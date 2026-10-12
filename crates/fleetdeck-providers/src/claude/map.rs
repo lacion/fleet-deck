@@ -108,7 +108,7 @@ fn on_system(core: &mut ClaudeCore, subtype: &str, body: &Map<String, Value>) ->
             }
             core.started = true;
             let config = &core.config;
-            vec![Output::Emit(Event::SessionStarted {
+            let mut out = vec![Output::Emit(Event::SessionStarted {
                 provider: core.kind(),
                 provider_instance: config.provider_instance.clone(),
                 provider_version: get("claude_code_version"),
@@ -121,7 +121,12 @@ fn on_system(core: &mut ClaudeCore, subtype: &str, body: &Map<String, Value>) ->
                 title: None,
                 branch: None,
                 repo: None,
-            })]
+            })];
+            let commands = slash_commands(body);
+            if !commands.is_empty() {
+                out.push(Output::Emit(Event::SlashCommands { commands }));
+            }
+            out
         }
         "background_tasks_changed" => {
             let tasks: Vec<BackgroundTask> = body
@@ -149,6 +154,36 @@ fn on_system(core: &mut ClaudeCore, subtype: &str, body: &Map<String, Value>) ->
         // only a frame that names the input's client uuid does (ADR-001).
         _ => Vec::new(),
     }
+}
+
+/// The strings of the array `key` of an `init` frame; a missing key, a
+/// non-array value and non-string entries count as nothing.
+fn string_list(body: &Map<String, Value>, key: &str) -> Vec<String> {
+    body.get(key)
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The slash commands that a board can send as a prompt: the `init` frame's
+/// `slash_commands` without the TUI-only `terminal_slash_commands`, in the
+/// frame order and without a leading `/` (DL-140).
+fn slash_commands(body: &Map<String, Value>) -> Vec<String> {
+    let bare = |c: String| c.strip_prefix('/').map_or(c.clone(), str::to_owned);
+    let terminal: Vec<String> = string_list(body, "terminal_slash_commands")
+        .into_iter()
+        .map(bare)
+        .collect();
+    string_list(body, "slash_commands")
+        .into_iter()
+        .map(bare)
+        .filter(|c| !terminal.contains(c))
+        .collect()
 }
 
 fn input_state(native: &str) -> Option<InputState> {

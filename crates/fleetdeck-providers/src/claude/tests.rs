@@ -634,3 +634,33 @@ fn version_output_parses() {
     assert_eq!(parse_version("error: no"), None);
     assert_eq!(parse_version(""), None);
 }
+
+#[test]
+fn the_first_init_emits_the_slash_commands_without_the_terminal_only_ones() {
+    let mut core = ClaudeCore::new(config(false));
+    let frame = json!({"type":"system","subtype":"init","session_id":"s-1",
+        "slash_commands":["compact","/doctor","review"],
+        "terminal_slash_commands":["doctor"]});
+    let events = emits(&feed(&mut core, frame.clone()));
+    assert!(matches!(events[0], Event::SessionStarted { .. }));
+    assert_eq!(
+        events[1],
+        Event::SlashCommands {
+            commands: vec!["compact".to_owned(), "review".to_owned()]
+        }
+    );
+    assert_eq!(events.len(), 2);
+    // Claude sends `init` again for each turn: nothing more is emitted.
+    assert!(emits(&feed(&mut core, frame)).is_empty());
+}
+
+#[test]
+fn an_init_without_slash_commands_emits_only_the_session_start() {
+    let mut core = ClaudeCore::new(config(false));
+    let events = init(&mut core);
+    assert_eq!(events.len(), 1);
+    let frame = json!({"type":"system","subtype":"init","session_id":"s-2",
+        "slash_commands":"compact","terminal_slash_commands":[1, null]});
+    let mut core = ClaudeCore::new(config(false));
+    assert_eq!(emits(&feed(&mut core, frame)).len(), 1);
+}
