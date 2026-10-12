@@ -28,6 +28,19 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 77 (2026-10-12, 16:37–)
+
+- Round start: committed round 76 as 73e61e5.
+- Sync: no new commits on m3/orchestration, m3/board or m3/ops.
+- 7-8 preparation (the copy itself waits for LANE COMPLETE): checked the lane decision files against `docs/v2/DECISIONS-LOG.md`.
+  - `docs/v2/decisions/m3-orchestration.md`: DL-200 to DL-216 (17 entries; DL-204 is written before DL-203).
+  - `docs/v2/decisions/m3-board.md`: DL-300 to DL-309 (10 entries).
+  - `docs/v2/decisions/m3-ops.md`: DL-400 to DL-405 (6 entries; DL-404 and DL-405 are written before DL-403).
+  - No number is defined twice across the four files. Every `DL-nnn` reference in `docs/`, `README.md`, `crates/` and `web/src/` resolves to a defined entry; the only unresolved strings are the range bounds DL-199, DL-299, DL-399 and DL-499.
+  - The 7-8 copy keeps the numbers and puts the entries in numeric order under one "M3 lane decisions" heading per lane.
+- Lane B `m3-orchestration.md` still has no "LANE COMPLETE"; 6-13, 7-7 and 7-8 stay blocked.
+- Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
+
 ## Round 76 (2026-10-12, 16:35–)
 
 - Round start: committed round 75 as 5b3e375.
