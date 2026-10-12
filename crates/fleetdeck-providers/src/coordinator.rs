@@ -11,6 +11,8 @@
 //! so [`handoff`] answers `handoff_unverified` for every provider and the
 //! `coordinator` capability stays off.
 
+use fleetdeck_core::childenv::ChildEnvError;
+use fleetdeck_core::{ChildEnv, Secret};
 use fleetdeck_proto::event::ProviderKind;
 
 /// The environment variable that carries the credential.
@@ -43,6 +45,27 @@ pub fn mcp_args(provider: ProviderKind, url: &str) -> Option<Vec<String>> {
         ],
         _ => return None,
     })
+}
+
+/// The coordinator additions of one start (ADR-006 §5.4, DL-216): the
+/// provider arguments that name [`TOKEN_ENV`] and the credential, which
+/// goes only into the child environment. `Debug` never shows the value.
+#[derive(Debug)]
+pub struct CoordinatorLaunch {
+    pub args: Vec<String>,
+    pub token: Secret<String>,
+}
+
+impl CoordinatorLaunch {
+    /// The child environment `base` plus the credential variable.
+    ///
+    /// # Errors
+    /// [`ChildEnvError`] for an invalid value.
+    pub fn child_env(&self, base: &ChildEnv) -> Result<ChildEnv, ChildEnvError> {
+        let mut env = base.clone();
+        env.set(TOKEN_ENV, self.token.expose())?;
+        Ok(env)
+    }
 }
 
 /// Whether the handoff is verified for a provider version: `Err` with the

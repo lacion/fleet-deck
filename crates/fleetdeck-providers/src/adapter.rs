@@ -125,6 +125,10 @@ pub enum ProviderError {
     NoTurn,
     #[error("the session has ended")]
     SessionEnded,
+    /// The adapter cannot hand a coordinator credential to its child
+    /// (ADR-006 §5.4); the reason is the capability reason.
+    #[error("the coordinator handoff is not available: {0}")]
+    CoordinatorHandoff(&'static str),
     #[error("the event sink is closed")]
     SinkClosed,
     /// The process stopped, but the event sink stayed full: the station did
@@ -225,6 +229,20 @@ pub trait ProviderAdapter: Send + Sync {
     /// Version and sign-in state only. A probe never opens a provider session.
     async fn probe(&self) -> Result<ProviderProbe>;
     async fn start(&self, spec: SessionSpec, sink: EventSink) -> Result<Box<dyn LiveSession>>;
+    /// [`Self::start`] with the coordinator credential handoff (ADR-006
+    /// §5.4, DL-216). An adapter without a handoff refuses: the start
+    /// never runs a coordinator session without its credential.
+    async fn start_coordinated(
+        &self,
+        spec: SessionSpec,
+        sink: EventSink,
+        launch: crate::coordinator::CoordinatorLaunch,
+    ) -> Result<Box<dyn LiveSession>> {
+        let _ = (spec, sink, launch);
+        Err(ProviderError::CoordinatorHandoff(
+            crate::coordinator::UNVERIFIED,
+        ))
+    }
     async fn resume(
         &self,
         native_id: &NativeSessionId,

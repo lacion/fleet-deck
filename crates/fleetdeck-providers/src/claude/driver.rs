@@ -34,6 +34,7 @@ use crate::adapter::{
     Answer, ControlId, EventSink, HostInput, LiveSession, ModelId, NativeSessionId, PermissionMode,
     ProviderAdapter, ProviderError, ProviderProbe, Result, canonical_workspace, require,
 };
+use crate::coordinator::CoordinatorLaunch;
 use crate::host::{ProcessControl, ProcessSpec, SessionHost, StopPolicy};
 
 /// How long a host command waits until its frames are in the stdin pipe.
@@ -124,6 +125,19 @@ impl ClaudeAdapter {
         sink: EventSink,
         origin: Origin,
     ) -> Result<ClaudeSession> {
+        self.start_session_with(spec, sink, origin, None).await
+    }
+
+    /// [`Self::start_session`] with an optional coordinator handoff: its
+    /// arguments follow the configured extra arguments, and its credential
+    /// goes into the child environment only (ADR-006 §5.4, DL-216).
+    async fn start_session_with(
+        &self,
+        spec: SessionSpec,
+        sink: EventSink,
+        origin: Origin,
+        coordinator: Option<&CoordinatorLaunch>,
+    ) -> Result<ClaudeSession> {
         let cwd = canonical_workspace(Path::new(&spec.cwd))?;
         let caps = capabilities(self.config.allow_bypass);
         let (resume, fork) = match &origin {
@@ -136,7 +150,13 @@ impl ClaudeAdapter {
             mode: spec.mode.clone(),
             resume,
             fork,
-            extra_args: self.config.extra_args.clone(),
+            extra_args: self
+                .config
+                .extra_args
+                .iter()
+                .chain(coordinator.iter().flat_map(|c| c.args.iter()))
+                .cloned()
+                .collect(),
         };
         let args: Vec<OsString> = cli_args(&launch, &caps)
             .into_iter()
@@ -158,7 +178,16 @@ impl ClaudeAdapter {
                 program: self.config.program.clone(),
                 args,
                 cwd: cwd.clone(),
-                env: self.config.env.clone(),
+                env: match coordinator {
+                    Some(c) => {
+                        c.child_env(&self.config.env)
+                            .map_err(|e| ProviderError::Workspace {
+                                path: cwd.clone(),
+                                source: std::io::Error::new(std::io::ErrorKind::InvalidInput, e),
+                            })?
+                    }
+                    None => self.config.env.clone(),
+                },
             })
             .await?;
         let mut core = ClaudeCore::new(CoreConfig {
@@ -237,6 +266,18 @@ impl ProviderAdapter for ClaudeAdapter {
 
     async fn start(&self, spec: SessionSpec, sink: EventSink) -> Result<Box<dyn LiveSession>> {
         Ok(Box::new(self.start_session(spec, sink, Origin::New).await?))
+    }
+
+    async fn start_coordinated(
+        &self,
+        spec: SessionSpec,
+        sink: EventSink,
+        launch: CoordinatorLaunch,
+    ) -> Result<Box<dyn LiveSession>> {
+        let session = self
+            .start_session_with(spec, sink, Origin::New, Some(&launch))
+            .await?;
+        Ok(Box::new(session))
     }
 
     fn durable_launch(&self, spec: &SessionSpec) -> Result<crate::durable::DurableLaunch> {

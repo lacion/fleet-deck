@@ -83,6 +83,14 @@ impl Policy {
         &self.coordinator
     }
 
+    /// The same policy with other coordinator bindings (station tests).
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn with_coordinator(mut self, bindings: crate::coordinator::Bindings) -> Self {
+        self.coordinator = bindings;
+        self
+    }
+
     /// The owner's group of a canonical repository path.
     #[must_use]
     pub fn repo_group(&self, repo: &Path) -> Option<&str> {

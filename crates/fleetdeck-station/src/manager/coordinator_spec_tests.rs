@@ -8,6 +8,7 @@ use fleetdeck_proto::event::{ProviderKind, RunOrigin};
 
 use super::coordinator_command::check_spec;
 use super::tests::coordinator_spec;
+use crate::coordinator::Bindings;
 use crate::store::DecideError;
 
 fn code(r: Result<(), DecideError>) -> (RejectCode, String) {
@@ -28,6 +29,7 @@ fn a_coordinator_spec_for_an_unverified_handoff_is_refused_unsupported() {
             provider,
             &coordinator_spec(),
             false,
+            &Bindings::default(),
         ));
         assert_eq!(code, RejectCode::Unsupported);
         assert_eq!(message, fleetdeck_providers::coordinator::UNVERIFIED);
@@ -47,7 +49,13 @@ fn only_an_owner_start_may_carry_a_complete_coordinator_spec() {
         (RunOrigin::Board, true, RejectCode::InvalidCommand),
     ];
     for (origin, import, want) in cases {
-        let (got, _) = code(check_spec(origin, ProviderKind::Claude, &spec, import));
+        let (got, _) = code(check_spec(
+            origin,
+            ProviderKind::Claude,
+            &spec,
+            import,
+            &Bindings::default(),
+        ));
         assert_eq!(got, want, "{origin:?} import={import}");
     }
     let mut empty = coordinator_spec();
@@ -57,6 +65,7 @@ fn only_an_owner_start_may_carry_a_complete_coordinator_spec() {
         ProviderKind::Claude,
         &empty,
         false,
+        &Bindings::default(),
     ));
     assert_eq!(got, RejectCode::InvalidCommand);
 }

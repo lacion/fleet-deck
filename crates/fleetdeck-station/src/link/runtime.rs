@@ -137,6 +137,8 @@ impl StationNode {
         )
         .await
         .map_err(NodeError::Coordinator)?;
+        // A coordinator start hands this URL to its child (DL-216).
+        bindings.set_endpoint(coordinator.url());
         let this = Arc::new(Self {
             ctx: Arc::new(StationLink {
                 manager,

@@ -11,6 +11,7 @@
 
 pub mod auto_continue;
 pub mod coordinator_command;
+mod coordinator_start;
 pub mod decide;
 pub mod drain;
 pub mod durable;
@@ -208,7 +209,8 @@ impl SessionManager {
         if continued > 0 {
             tracing::info!(continued, "stored auto-continue intents");
         }
-        let mut target = SessionTarget::new(store.clone(), adapters, Arc::clone(&ids));
+        let mut target = SessionTarget::new(store.clone(), adapters, Arc::clone(&ids))
+            .with_coordinator(policy.coordinator_bindings().clone());
         if let Some(settings) = shims {
             target = target.with_shims(settings);
         }
@@ -421,3 +423,7 @@ mod auto_continue_tests;
 #[cfg(test)]
 #[path = "coordinator_spec_tests.rs"]
 mod coordinator_spec_tests;
+
+#[cfg(test)]
+#[path = "coordinator_start_tests.rs"]
+mod coordinator_start_tests;
