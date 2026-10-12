@@ -244,6 +244,15 @@ Items, in order: 6-1 Workspaces, 6-3 Assign auto, 6-4 Tasks, 6-2 Mail,
 - Tests run: `cargo nextest run -p fleetdeck-station -E 'test(coordinator_start) | test(coordinator_command)'` → 5 passed; `cargo nextest run -p fleetdeck-deck -E 'test(an_owner_coordinator_start) | test(the_migrations_are_valid) | test(lifecycle)'` → 8 passed; `bun test src/spawn/spawn.test.tsx` → 11 pass.
 - Checks: see the round summary.
 
+### Round 10 (2026-10-12, from 16:46 CEST)
+
+- Committed round 9 as `d3ac028`; merged `v2` (`6232db8`: lane A module-size test and shim tests; no proto change, no `make ts-types`).
+- Review of round 9 recorded as follow-ups (below): `bound_events` misses native replacements; `owner_start` lacks the owner check, atomic grant/start persistence and validation of a replay with a changed grant.
+- 6-5: durable station coordinator outbox (DL-218). Station schema V17 `coordinator_outbox`; `crates/fleetdeck-station/src/store/coordinator_outbox.rs` (intake, `mark_sent`, `settle`, `expire`, `fence`, start recovery); `crates/fleetdeck-station/src/coordinator/outbox.rs` (intake with `idempotency_key`, fence, transmission, `flush`, `run`); `LinkForward` gained `Transport`, `with_outbox`, `connect_transport`; `link/runtime.rs` uses the outbox and runs the flush loop.
+- Tests: `cargo nextest run -p fleetdeck-station -E 'test(outbox_tests) | test(forward::tests)'` → 10 passed (8 new §8.4 tests); `cargo nextest run -p fleetdeck-station -p fleetdeck-deck -E 'test(migration) | (package(fleetdeck-deck) & binary(coordinator))'` → 6 passed.
+- Checks: see the round summary.
+- Open in 6-5: snapshot projection (25e), live smoke §8.5, follow-ups.
+
 ## Review follow-ups (after M3)
 
 Review of round 1 (items 6-1, 6-3, 6-4, 6-2), recorded in round 2:
@@ -287,3 +296,11 @@ Review of round 4 (item 6-5, renewal 25b), recorded in round 5:
 | 6-5 | The first `coordinator.bound` can name the session of an owner-start grant before the deck has the start receipt (DL-217); the station is trusted for that window. | `crates/fleetdeck-deck/src/store/grants.rs` |
 | 6-5 | The spawn form toggle has fixed classes (read, mail, drive) and deck defaults; no inputs for classes, target stations, spawn cap, mode ceilings or expiry (ADR-006 §4). | `web/src/spawn/SpawnForm.tsx` |
 | 6-5 | A pending binding that never bound sends `coordinator.ended` at generation 0, which the deck ignores; its grant stays `active` until expiry. | `crates/fleetdeck-station/src/manager/coordinator_start.rs` |
+| 6-5 | `bound_events` reads only the first `session.started` native id; a later native replacement inside the same process (for example a provider-side session switch) is not detected, so the binding is not revoked (ADR-006 §5.6). | `crates/fleetdeck-station/src/manager/coordinator_start.rs` |
+| 6-5 | `owner_start` does not check that the caller is the owner principal (any board session that can start a session can create a grant). | `crates/fleetdeck-deck/src/http/grant_routes.rs` |
+| 6-5 | `owner_start` creates the grant in its own transaction before the start command is submitted; a failed or rejected submit leaves an active grant without a session (no atomic grant/start persistence). | `crates/fleetdeck-deck/src/http/command_routes.rs` |
+| 6-5 | A replay of the same `command_id` with other grant fields (classes, expiry) returns the first grant without checking that the fields match. | `crates/fleetdeck-deck/src/store/grants.rs` |
+| 6-5 | The outbox enforces the §6.1 lifecycle watermark only through the local fence; it does not wait for the deck acknowledgment of `coordinator.ended` before sending (DL-218). | `crates/fleetdeck-station/src/coordinator/outbox.rs` |
+| 6-5 | A coordinator tool call returns after the first transmission instead of waiting up to 30 s for the receipt; there is no `command_status` tool yet (§6.5). | `crates/fleetdeck-station/src/coordinator/outbox.rs` |
+| 6-5 | An intake before the first deck link of a station process fails `deck_unreachable` (no target incarnation is known; it is not persisted). | `crates/fleetdeck-station/src/coordinator/outbox.rs` |
+| 6-5 | Terminal outbox rows are never pruned. | `crates/fleetdeck-station/src/store/coordinator_outbox.rs` |

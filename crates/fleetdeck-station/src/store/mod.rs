@@ -23,6 +23,7 @@
 //!   [`RECEIPT_RETENTION_MS`].
 
 pub mod auto_continue;
+pub mod coordinator_outbox;
 pub mod effects;
 mod log;
 mod outbox;

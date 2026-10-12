@@ -404,6 +404,34 @@ CREATE INDEX shell_effects_open ON shell_effects (state, created_at)
     WHERE state IN ('queued', 'claimed');
 ";
 
+const V17: &str = "
+-- DL-218 (M3 6-5, ADR-006 §6.5): the durable station coordinator outbox. A
+-- coordinator tool call that maps to `coordinator.call` stores its complete
+-- envelope here before any send; the envelope never changes (G3). `sent_at`
+-- commits before each network write, so recovery never takes a possibly sent
+-- row for an unsent one. `sends` counts the transmissions.
+CREATE TABLE coordinator_outbox (
+    command_id      TEXT    PRIMARY KEY,
+    binding_id      TEXT    NOT NULL,
+    generation      INTEGER NOT NULL,
+    idempotency_key TEXT,
+    args_digest     TEXT    NOT NULL,
+    envelope        TEXT    NOT NULL,
+    state           TEXT    NOT NULL CHECK (state IN ('pending', 'done', 'failed', 'ambiguous')),
+    reason          TEXT,
+    receipt         TEXT,
+    retry_until     INTEGER NOT NULL,
+    sent_at         INTEGER,
+    sends           INTEGER NOT NULL DEFAULT 0,
+    created_at      INTEGER NOT NULL,
+    updated_at      INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX coordinator_outbox_by_key ON coordinator_outbox (binding_id, idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
+CREATE INDEX coordinator_outbox_pending ON coordinator_outbox (state, created_at)
+    WHERE state = 'pending';
+";
+
 /// The `station.db` migrations. V4 is the link epochs table of
 /// `fleetdeck-link` (G1).
 #[must_use]
@@ -425,5 +453,6 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V14),
         M::up(V15),
         M::up(V16),
+        M::up(V17),
     ])
 }

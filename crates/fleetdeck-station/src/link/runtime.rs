@@ -128,8 +128,9 @@ impl StationNode {
         .with_store(Arc::clone(&peers))
         .with_invitations(Arc::clone(&invitations));
         let paired = peers.pin_all(&node.pins).await?;
-        let forward = crate::coordinator::LinkForward::default();
         let bindings = manager.policy().coordinator_bindings().clone();
+        // The durable coordinator outbox (ADR-006 §6.5, DL-218).
+        let forward = crate::coordinator::LinkForward::with_outbox(store.clone(), bindings.clone());
         let coordinator = crate::coordinator::Ingress::start(
             bindings.clone(),
             Arc::new(forward.clone()),
@@ -155,6 +156,7 @@ impl StationNode {
             coordinator,
             bindings,
         });
+        this.spawn(tokio::spawn(this.ctx.coordinator.clone().run()));
         let mut addrs = listen.to_vec();
         addrs.extend(store.listen_addrs().await?);
         for addr in addrs {

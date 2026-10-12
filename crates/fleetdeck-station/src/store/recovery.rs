@@ -131,6 +131,7 @@ pub(super) fn recover(
         lose_session(conn, &SessionId::from(session), now, out)?;
         report.lost_sessions += 1;
     }
+    super::coordinator_outbox::recover(conn, now)?;
     Ok(report)
 }
 
