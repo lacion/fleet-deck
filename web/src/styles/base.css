@@ -530,6 +530,21 @@ input[type="radio"] {
   background: var(--raised);
   border-color: transparent;
 }
+/* The variants keep their look inside a menu. */
+.fd-menu-body > button.fd-danger {
+  color: var(--hazard);
+}
+.fd-menu-body > button.fd-danger:hover:not(:disabled) {
+  background: var(--hazard-bg);
+}
+.fd-menu-body > button.fd-primary {
+  justify-content: center;
+  background: var(--act);
+  color: var(--act-ink);
+}
+.fd-menu-body > button.fd-primary:hover:not(:disabled) {
+  background: var(--act);
+}
 .fd-menu-sep {
   height: 1px;
   margin: 4px 0;
