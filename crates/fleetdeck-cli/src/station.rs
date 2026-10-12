@@ -139,6 +139,7 @@ pub async fn run(dirs: &NodeDirs, args: &RunArgs) -> anyhow::Result<()> {
                 mode: args.mode.clone(),
                 model: None,
                 title: None,
+                coordinator: None,
             },
             prompt: Some(UserInput::new(args.prompt.clone())),
             workspace: None,

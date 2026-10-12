@@ -240,6 +240,7 @@ async fn play(path: &Path, index: usize, records: &[Value], root: &Path, cwd: &P
         mode,
         model,
         title: None,
+        coordinator: None,
     };
     let mut session =
         tokio::time::timeout(WAIT, adapter.start_session(spec, sink, origin_of(&open)))

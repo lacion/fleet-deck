@@ -379,6 +379,7 @@ async fn a_claude_session_runs_a_turn_through_the_shim_host() {
         mode: Some("default".to_owned()),
         model: Some("haiku".to_owned()),
         title: None,
+        coordinator: None,
     };
     let (sink, mut rx) = EventSink::channel(256);
     let mut session = adapter

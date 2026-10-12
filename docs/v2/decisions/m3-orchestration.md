@@ -369,3 +369,41 @@ reason, owner review.
   `method_table::the_code_method_table_equals_the_adr_method_table`,
   `method_table::a_changed_adr_row_breaks_the_agreement` (updated rows).
 - Owner review: pending
+
+## DL-215: Coordinator spec on `session.start`, start checks in the station decision, and the handoff value (ADR-006 §4, §5.4, §8.2 tests 10–13)
+
+- Context: ADR-006 §4 adds `SessionSpec.coordinator`. §8.2 test 12 says
+  that the deck refuses a spec `unsupported` while the provider handoff is
+  unverified; the deck does not know the provider version, the station
+  does (`station.info` probe), and the handoff answer
+  (`fleetdeck_providers::coordinator::handoff`) lives next to the adapter.
+- Options: (a) check only in the deck with the capability of the station
+  snapshot; (b) check in the station decision, so the refusal is a stored
+  receipt that the deck relays; (c) both.
+- Choice: (b) now, (a) as a follow-up for an earlier board message.
+  `SessionSpec.coordinator: Option<Box<CoordinatorSpec { grant_id, classes,
+  idle_ttl_ms, expires_at, control_skill: ControlSkill { version, text } }>>`
+  (boxed for clippy `large_enum_variant` in `CoordinatorOp::Spawn`;
+  `serde(default, skip_serializing_if)`, so M2 peers and stored specs
+  decode unchanged). The station decision refuses a spec:
+  - from the station-local socket (`invalid_command`, caller guard and
+    origin `local`, test 13);
+  - from a coordinator or mail origin (`forbidden`, ADR-006 §4: a
+    coordinator `spawn` never passes a grant);
+  - on an import or with an incomplete spec (`invalid_command`);
+  - for a provider without a verified handoff (`unsupported`, message
+    `handoff_unverified`, test 12).
+  `fleetdeck_station::coordinator::Handoff` mints the credential
+  (`Secret<String>`), keeps its digest for the binding and puts the raw
+  value only into the child environment (`FLEETDECK_COORDINATOR_TOKEN`).
+- Reason: the station owns the child and its provider version; a stored
+  rejection is the doctrine path for refused commands (PLAN §3).
+- Not yet: the start effect does not call `Handoff` yet, because no
+  provider passes the handoff check until the §8.5 live smoke records a
+  version; the wiring into the adapter start is the next 6-5 slice.
+- Tests: `fleetdeck-cli coordinator_secret::the_coordinator_credential_reaches_the_child_only_through_its_environment` (10, real child, `/proc` argv and environ),
+  `coordinator_secret::each_provider_handoff_names_the_variable_and_needs_a_loopback_endpoint` (11),
+  `fleetdeck-station manager::coordinator_spec_tests::a_coordinator_spec_for_an_unverified_handoff_is_refused_unsupported` (12),
+  `manager::coordinator_spec_tests::only_an_owner_start_may_carry_a_complete_coordinator_spec`,
+  `manager::tests::a_station_local_start_with_a_coordinator_spec_is_rejected` (13).
+- Owner review: pending

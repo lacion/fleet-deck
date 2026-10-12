@@ -12,7 +12,8 @@
 //!   with the new generation, which the deck awaits before it commits the
 //!   renewal.
 
-use fleetdeck_proto::command::{CommandOrigin, CommandResult, SessionCommand};
+use fleetdeck_proto::command::{CommandOrigin, CommandResult, CoordinatorSpec, SessionCommand};
+use fleetdeck_proto::event::{ProviderKind, RunOrigin};
 use fleetdeck_proto::{Event, RejectCode, SessionId};
 
 use super::decide::{reject, result};
@@ -27,7 +28,8 @@ fn forbidden() -> DecideError {
     )
 }
 
-/// The caller check: the station-local socket never renews or revokes.
+/// The caller check: the station-local socket never renews or revokes,
+/// and never starts a session with a coordinator grant (§8.2 test 13).
 ///
 /// # Errors
 /// The `forbidden` rejection.
@@ -38,6 +40,18 @@ pub fn guard(command: &SessionCommand, caller: &Caller) -> Result<(), DecideErro
     );
     if lifecycle && !caller.is_peer() {
         return Err(forbidden());
+    }
+    let grant = match command {
+        SessionCommand::Start { spec, .. } | SessionCommand::Import { spec, .. } => {
+            spec.coordinator.is_some()
+        }
+        _ => false,
+    };
+    if grant && !caller.is_peer() {
+        return Err(reject(
+            RejectCode::InvalidCommand,
+            "a station-local start cannot carry a coordinator grant (ADR-006 §4)",
+        ));
     }
     Ok(())
 }
@@ -134,4 +148,54 @@ pub fn renew(
         .into(),
     )?;
     Ok(result(session_id, None))
+}
+
+/// The start check of a coordinator spec (ADR-006 §4, §5.4; DL-215). Only
+/// an owner start from the paired deck may carry a grant: the
+/// station-local socket gets `invalid_command` (§8.2 test 13), a
+/// coordinator or mail start gets `forbidden`, an import gets
+/// `invalid_command`. A provider without a verified credential handoff
+/// gets `unsupported` with the capability reason (§8.2 test 12).
+///
+/// # Errors
+/// [`DecideError::Reject`] for a refused spec.
+pub(super) fn check_spec(
+    origin: RunOrigin,
+    provider: ProviderKind,
+    spec: &CoordinatorSpec,
+    import: bool,
+) -> Result<(), DecideError> {
+    match origin {
+        RunOrigin::Board => {}
+        RunOrigin::Local => {
+            return Err(reject(
+                RejectCode::InvalidCommand,
+                "a station-local start cannot carry a coordinator grant (ADR-006 §4)",
+            ));
+        }
+        _ => {
+            return Err(reject(
+                RejectCode::Forbidden,
+                "only an owner start from the deck can carry a coordinator grant (ADR-006 §4)",
+            ));
+        }
+    }
+    if import {
+        return Err(reject(
+            RejectCode::InvalidCommand,
+            "an import cannot carry a coordinator grant",
+        ));
+    }
+    if spec.grant_id.trim().is_empty()
+        || spec.classes.is_empty()
+        || spec.idle_ttl_ms == 0
+        || spec.control_skill.version.trim().is_empty()
+    {
+        return Err(reject(
+            RejectCode::InvalidCommand,
+            "a coordinator spec needs a grant id, classes, an idle TTL and a control skill version",
+        ));
+    }
+    fleetdeck_providers::coordinator::handoff(provider, None)
+        .map_err(|reason| reject(RejectCode::Unsupported, reason))
 }

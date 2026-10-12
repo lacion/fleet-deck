@@ -8,12 +8,14 @@
 
 pub mod bindings;
 pub mod forward;
+pub mod handoff;
 pub mod ingress;
 mod jsonrpc;
 pub mod tools;
 
 pub use bindings::{Binding, BindingState, Bindings, Caller, ToolClass, digest, mint};
 pub use forward::LinkForward;
+pub use handoff::{Handoff, HandoffError};
 pub use ingress::{Forward, Ingress, Limits};
 
 #[cfg(test)]

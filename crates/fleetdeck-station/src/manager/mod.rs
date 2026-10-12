@@ -367,6 +367,7 @@ pub fn durable_configs(adapters: &Adapters) -> shim_station::Configs {
             mode: summary.mode.clone(),
             model: summary.model.clone(),
             title: summary.title.clone(),
+            coordinator: None,
         };
         adapter.durable_launch(&spec).ok().map(|l| l.core)
     }
@@ -416,3 +417,7 @@ mod first_input_tests;
 #[cfg(test)]
 #[path = "auto_continue_tests.rs"]
 mod auto_continue_tests;
+
+#[cfg(test)]
+#[path = "coordinator_spec_tests.rs"]
+mod coordinator_spec_tests;

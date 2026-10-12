@@ -338,6 +338,9 @@ fn start(
             ),
         )
     })?;
+    if let Some(coordinator) = &spec.coordinator {
+        super::coordinator_command::check_spec(origin, provider, coordinator, import.is_some())?;
+    }
     let canonical_inside = |p: &std::path::Path| policy.workspace(&p.to_string_lossy()).ok();
     let refused = |r: provision::Refused| {
         let code = if r.forbidden {

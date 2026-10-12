@@ -195,6 +195,7 @@ impl Rig {
                     mode: Some("default".to_owned()),
                     model: None,
                     title: None,
+                    coordinator: None,
                 },
                 prompt: Some(text(prompt)),
                 workspace: None,

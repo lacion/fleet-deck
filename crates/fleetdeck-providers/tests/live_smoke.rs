@@ -59,6 +59,7 @@ fn spec(instance: &str, cwd: &std::path::Path, mode: &str) -> SessionSpec {
         mode: Some(mode.to_owned()),
         model: None,
         title: None,
+        coordinator: None,
     }
 }
 

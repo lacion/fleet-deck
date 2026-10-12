@@ -214,6 +214,7 @@ async fn an_effect_needs_a_live_process_and_a_failed_enqueue_stores_nothing() {
             mode: None,
             model: None,
             title: None,
+            coordinator: None,
         },
         prompt: None,
         workspace: None,

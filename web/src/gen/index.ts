@@ -20,6 +20,8 @@ export * from "./command/ApprovalDecision";
 export * from "./command/CommandEnvelope";
 export * from "./command/CommandOrigin";
 export * from "./command/CommandResult";
+export * from "./command/ControlSkill";
+export * from "./command/CoordinatorSpec";
 export * from "./command/DeckCommandState";
 export * from "./command/ImageInput";
 export * from "./command/Receipt";
