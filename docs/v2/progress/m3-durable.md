@@ -28,6 +28,14 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 76 (2026-10-12, 16:35–)
+
+- Round start: committed round 75 as 5b3e375.
+- Sync: no new commits on m3/orchestration, m3/board or m3/ops.
+- 7-6 Docs: `docs/v2/operations.md` §11 troubleshooting row "A coordinator session does not start" with the exact start-effect reasons from `crates/fleetdeck-station/src/manager/coordinator_start.rs` (`a coordinator session starts only as a new direct child`, `the coordinator endpoint does not listen`) and the unverified handoff (DL-215, DL-216).
+- Lane B `m3-orchestration.md` still has no "LANE COMPLETE"; 6-13, 7-7 and 7-8 stay blocked.
+- Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
+
 ## Round 75 (2026-10-12, 16:33–)
 
 - Round start: committed round 74 as a1786dc.
