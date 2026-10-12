@@ -65,6 +65,9 @@ pub(super) struct DeckLink {
     pub(super) transport: Arc<dyn Transport>,
     pub(super) incarnation: IncarnationId,
     serial: u64,
+    /// The highest station sequence that the deck acknowledged on this
+    /// link; a new link starts at 0 (the lifecycle fence of ADR-006 §6.5).
+    acked: Arc<std::sync::atomic::AtomicU64>,
 }
 
 /// The clock of the envelopes (Unix ms).
@@ -181,8 +184,34 @@ impl LinkForward {
             transport,
             incarnation,
             serial,
+            acked: Arc::default(),
         });
         serial
+    }
+
+    /// The deck acknowledged the station event stream through `seq` on the
+    /// link of `serial`.
+    pub fn acknowledged(&self, serial: u64, seq: u64) {
+        if let Some(link) = self.link().filter(|l| l.serial == serial) {
+            link.acked
+                .fetch_max(seq, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    /// True while the deck of `link` has not acknowledged the last
+    /// coordinator lifecycle event (ADR-006 §6.5, 25e): after a (re)connect
+    /// no call and no query leaves before that acknowledgment. Without an
+    /// outbox (unit tests) there is no store and no fence.
+    pub(super) async fn fenced(&self, link: &DeckLink) -> Result<bool, String> {
+        let Some(outbox) = &self.outbox else {
+            return Ok(false);
+        };
+        let watermark = outbox
+            .store
+            .coordinator_lifecycle_seq()
+            .await
+            .map_err(|e| format!("internal: {e}"))?;
+        Ok(link.acked.load(std::sync::atomic::Ordering::Relaxed) < watermark)
     }
 
     /// The deck link of `serial` ended; a newer link stays.
@@ -256,6 +285,13 @@ impl Forward for LinkForward {
         let Some(link) = self.link() else {
             return Err("deck_unreachable: no deck is connected".to_owned());
         };
+        if self.fenced(&link).await? {
+            return Err(
+                "deck_syncing: the deck has not acknowledged the coordinator \
+                        lifecycle yet; call again"
+                    .to_owned(),
+            );
+        }
         let (method, command_id, params) =
             Self::envelope(&caller, tool, &args, &link.incarnation, (self.clock)())?;
         match link

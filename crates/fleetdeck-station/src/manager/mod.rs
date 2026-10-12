@@ -434,3 +434,7 @@ mod coordinator_spec_tests;
 #[cfg(test)]
 #[path = "coordinator_start_tests.rs"]
 mod coordinator_start_tests;
+
+#[cfg(test)]
+#[path = "coordinator_live_tests.rs"]
+mod coordinator_live_tests;

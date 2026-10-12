@@ -87,7 +87,9 @@ pub async fn serve(ctx: Arc<StationLink>, link: LiveLink) -> Closing {
                     incarnation,
                     station_seq,
                 } => {
-                    ack(&ctx, &control, &peer, &stream, &incarnation, station_seq).await;
+                    if ack(&ctx, &control, &peer, &stream, &incarnation, station_seq).await {
+                        ctx.coordinator.acknowledged(coordinator, station_seq);
+                    }
                 }
                 // The control channel lets only `ack` reach a station.
                 other => control.close(
@@ -147,7 +149,7 @@ async fn ack(
     stream: &Stream,
     incarnation: &fleetdeck_proto::IncarnationId,
     station_seq: u64,
-) {
+) -> bool {
     let store = ctx.manager.store();
     if incarnation != store.incarnation() {
         control.close(
@@ -157,7 +159,7 @@ async fn ack(
                 store.incarnation()
             ),
         );
-        return;
+        return false;
     }
     let delivered = stream.delivered();
     if station_seq > delivered {
@@ -165,12 +167,18 @@ async fn ack(
             code::PROTOCOL_ERROR,
             &format!("ack of {station_seq}, but only {delivered} was delivered on this link"),
         );
-        return;
+        return false;
     }
     match store.ack(key_hex(peer), station_seq).await {
-        Ok(()) => {}
+        Ok(()) => true,
         // Revoked while the link was open.
-        Err(StoreError::UnknownDeck(_)) => control.close(REVOKED, "the deck is not paired"),
-        Err(e) => tracing::warn!(error = %e, "deck ack"),
+        Err(StoreError::UnknownDeck(_)) => {
+            control.close(REVOKED, "the deck is not paired");
+            false
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "deck ack");
+            false
+        }
     }
 }

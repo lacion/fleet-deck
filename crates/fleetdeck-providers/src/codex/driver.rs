@@ -35,6 +35,7 @@ use crate::adapter::{
     ProviderAdapter, ProviderError, ProviderProbe, Result, canonical_workspace, require,
 };
 use crate::claude::RawLogSettings;
+use crate::coordinator::CoordinatorLaunch;
 use crate::host::{ProcessControl, ProcessSpec, SessionHost, StopPolicy};
 use crate::rawlog::{RawDir, RawFrameLog};
 use crate::stdio::{Write, flush, now_ms, write_failed};
@@ -150,6 +151,19 @@ impl CodexAdapter {
         sink: EventSink,
         origin: Origin,
     ) -> Result<CodexSession> {
+        self.start_session_with(spec, sink, origin, None).await
+    }
+
+    /// [`Self::start_session`] with an optional coordinator handoff
+    /// (ADR-006 §5.4): its `-c` overrides follow `app-server`; the
+    /// credential goes only into the child environment.
+    async fn start_session_with(
+        &self,
+        spec: SessionSpec,
+        sink: EventSink,
+        origin: Origin,
+        coordinator: Option<&CoordinatorLaunch>,
+    ) -> Result<CodexSession> {
         let cwd = canonical_workspace(Path::new(&spec.cwd))?;
         let caps = capabilities(self.config.allow_full_access);
         // A mode that this instance does not offer fails the start before
@@ -174,9 +188,13 @@ impl CodexAdapter {
             .host
             .spawn(ProcessSpec {
                 program: self.config.program.clone(),
-                args: app_server_args().into_iter().map(OsString::from).collect(),
+                args: app_server_args()
+                    .iter()
+                    .chain(coordinator.iter().flat_map(|c| c.args.iter()))
+                    .map(OsString::from)
+                    .collect(),
                 cwd: cwd.clone(),
-                env: self.config.env.clone(),
+                env: CoordinatorLaunch::env_for(coordinator, &self.config.env, &cwd)?,
             })
             .await?;
         let cwd_text = cwd.to_string_lossy().into_owned();
@@ -300,6 +318,16 @@ impl ProviderAdapter for CodexAdapter {
 
     async fn start(&self, spec: SessionSpec, sink: EventSink) -> Result<Box<dyn LiveSession>> {
         Ok(Box::new(self.start_session(spec, sink, Origin::New).await?))
+    }
+
+    async fn start_coordinated(
+        &self,
+        spec: SessionSpec,
+        sink: EventSink,
+        launch: CoordinatorLaunch,
+    ) -> Result<Box<dyn LiveSession>> {
+        let session = self.start_session_with(spec, sink, Origin::New, Some(&launch));
+        Ok(Box::new(session.await?))
     }
 
     fn durable_launch(&self, spec: &SessionSpec) -> Result<crate::durable::DurableLaunch> {
@@ -489,36 +517,6 @@ async fn feed_line(shared: &Shared, line: &str, writes: &mpsc::UnboundedSender<W
         shared.dispatch(out, raw_ref.as_ref(), writes).await,
         Err(ProviderError::SinkClosed)
     )
-}
-
-/// The background poll (DL-024): one `thread/backgroundTerminals/list`
-/// after each wake, then one every `every` while work is open.
-async fn poll_loop(shared: Arc<Shared>, writes: mpsc::UnboundedSender<Write>, every: Duration) {
-    loop {
-        shared.poll.notified().await;
-        loop {
-            {
-                let mut core = shared.core.lock().await;
-                if core.has_ended() {
-                    return;
-                }
-                let Ok(out) = core.list_background() else {
-                    break;
-                };
-                if shared.dispatch(out, None, &writes).await.is_err() {
-                    return;
-                }
-            }
-            tokio::time::sleep(every).await;
-            let core = shared.core.lock().await;
-            if core.has_ended() {
-                return;
-            }
-            if core.background().is_empty() && core.background_tools().is_empty() {
-                break;
-            }
-        }
-    }
 }
 
 /// One running `codex app-server` process with one thread.
@@ -788,3 +786,6 @@ impl Drop for CodexSession {
 
 #[path = "durable_launch.rs"]
 mod durable_launch;
+#[path = "driver_poll.rs"]
+mod poll;
+use poll::poll_loop;

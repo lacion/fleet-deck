@@ -40,7 +40,7 @@ const KEY_MAX: usize = 64;
 /// The store and the bindings of the outbox.
 #[derive(Clone, Debug)]
 pub struct CallOutbox {
-    store: Store,
+    pub(super) store: Store,
     bindings: Bindings,
     /// Rows with a transmission in flight; a flush does not send them again
     /// at the same time.
@@ -211,6 +211,11 @@ impl LinkForward {
         let Some(link) = self.link() else {
             return Ok(row);
         };
+        // The lifecycle fence (§6.5, 25e): the row stays pending and a
+        // later flush sends it after the acknowledgment.
+        if self.fenced(&link).await? {
+            return Ok(row);
+        }
         if !outbox.claim(&id) {
             return Ok(row);
         }
