@@ -27,7 +27,7 @@ use fleetdeck_providers::host::shim::settle::{
     EffectResult, RETIRE_ROWS_ENABLED, SHIM_NOT_RECEIVED, SHIM_WRITE_FAILED,
 };
 use fleetdeck_providers::host::shim::stdin::{WriteOutcome, WriteTag};
-use fleetdeck_providers::host::shim::wire::{StatusAnswer, ToShim, WriteState};
+use fleetdeck_providers::host::shim::wire::{MAX_PAYLOAD, StatusAnswer, ToShim, WriteState};
 use fleetdeck_station::manager::shim_stdin::{Sent, send_input, settle_live};
 use fleetdeck_station::manager::shims::{Recovered, launch_shim, reason, recover_shims};
 use fleetdeck_station::store::{
@@ -414,7 +414,11 @@ async fn a_partial_write_is_outcome_unknown_blocks_input_and_is_never_resent() {
     .await
     .unwrap();
     ready(&mut first).await;
-    let Sent::Ended(state @ WriteState::Partial { .. }) = &sent else {
+    let Sent::Ended {
+        frames_written: 0,
+        state: state @ WriteState::Partial { .. },
+    } = &sent
+    else {
         panic!("not partial: {sent:?}");
     };
     assert_eq!(
@@ -461,7 +465,13 @@ async fn an_epipe_on_the_first_write_call_retires_the_effect_as_write_failed() {
     .await
     .unwrap();
     assert!(
-        matches!(sent, Sent::Ended(WriteState::FailedUnwritten { .. })),
+        matches!(
+            sent,
+            Sent::Ended {
+                frames_written: 0,
+                state: WriteState::FailedUnwritten { .. }
+            }
+        ),
         "{sent:?}"
     );
     assert_eq!(settle_live(&sent), EffectResult::Retired(SHIM_WRITE_FAILED));
@@ -580,4 +590,111 @@ async fn a_shim_killed_during_a_write_leaves_the_session_lost_and_the_effect_out
     // The generic recovery of the lost process settles the claim.
     rig.store.recover(Vec::new()).await.unwrap();
     assert_eq!(rig.effect(&effect).await.0, EffectState::OutcomeUnknown);
+}
+
+// Review fix (DL-106): an effect of two frames whose first frame was
+// written and whose second frame failed is never retired.
+#[tokio::test]
+async fn a_later_unwritten_frame_never_retires_an_effect_whose_earlier_frame_was_written() {
+    let rig = Rig::new().await;
+    // The provider reads exactly the first frame, then closes its stdin.
+    let mut first = rig
+        .launch(&format!(
+            "head -c {MAX_PAYLOAD} > \"$OUT\"; exec 0<&-; echo ready; exec sleep 30"
+        ))
+        .await;
+    let effect = rig.claimed(1).await;
+    let sent = send_input(
+        &rig.store,
+        &first.process,
+        &first.record.shim_id,
+        &effect,
+        &vec![b'm'; MAX_PAYLOAD + 512 * 1024],
+    )
+    .await
+    .unwrap();
+    ready(&mut first).await;
+    // The second frame failed (EPIPE at once, or after a part): either way
+    // the provider read the first frame.
+    assert!(
+        matches!(
+            sent,
+            Sent::Ended {
+                frames_written: 1,
+                state: WriteState::FailedUnwritten { .. } | WriteState::Partial { .. }
+            }
+        ),
+        "{sent:?}"
+    );
+    assert_eq!(
+        settle_live(&sent),
+        EffectResult::Unknown { block_input: true }
+    );
+    assert_eq!(rig.read().len(), MAX_PAYLOAD);
+    // Station crash before the live result was settled: recovery sees
+    // frame 0 written and frame 1 unwritten, and never retires the effect.
+    drop(first);
+    let _second = rig.recover().await;
+    assert_eq!(
+        rig.effect(&effect).await,
+        (
+            EffectState::OutcomeUnknown,
+            Some("stdin_partial_write".to_owned())
+        )
+    );
+    assert_eq!(
+        rig.store
+            .shim_input_blocked("s1".into())
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("stdin_partial_write")
+    );
+}
+
+// Review fix (DL-106), recovery only: frame 0 written, frame 1 claimed but
+// never sent (`not_received`).
+#[tokio::test]
+async fn recovery_never_retires_an_effect_whose_first_frame_was_written_and_second_never_sent() {
+    let rig = Rig::new().await;
+    let first = rig.launch(SINK).await;
+    let effect = rig.claimed(1).await;
+    let tag0 = rig.tag(&first, &effect).await;
+    assert_eq!(
+        first.process.write_tagged(&tag0, b"first\n").await.unwrap(),
+        WriteOutcome::Done(WriteState::Written)
+    );
+    let tag1 = rig
+        .store
+        .shim_claim_write(
+            first.record.shim_id.clone(),
+            first.process.generation(),
+            Some(effect.clone()),
+            1,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_ne!(tag0.write_id, tag1.write_id);
+    // Crash before frame 1 leaves.
+    drop(first);
+    let second = rig.recover().await;
+    assert_eq!(
+        rig.effect(&effect).await,
+        (
+            EffectState::OutcomeUnknown,
+            Some("stdin_partial_write".to_owned())
+        )
+    );
+    // Frame 1 is tombstoned and never written later.
+    assert_eq!(
+        second
+            .process
+            .write_tagged(&tag1, b"second\n")
+            .await
+            .unwrap(),
+        WriteOutcome::Done(WriteState::ClosedUnwritten)
+    );
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(rig.read(), b"first\n");
 }
