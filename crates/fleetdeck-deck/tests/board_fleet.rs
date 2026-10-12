@@ -271,6 +271,15 @@ async fn the_owner_lists_and_revokes_a_coordinator_grant_and_a_viewer_cannot_rev
         .await
         .unwrap();
     let viewer = vec![("Authorization".to_owned(), format!("Bearer {}", t.expose()))];
+    // Renewal (ADR-006 test 25b): a viewer is refused, an active grant is
+    // not renewable, an unknown grant is 404.
+    let renew = format!("/api/coordinator/grants/{}/renew", g.grant_id);
+    assert_eq!(post(&c, &viewer, &renew, json!({})).await.status, 403);
+    let r = post(&c, &h, &renew, json!({})).await;
+    assert_eq!(r.status, 409, "{}", r.body);
+    assert_eq!(r.body["error"], "not_renewable", "{}", r.body);
+    let r = post(&c, &h, "/api/coordinator/grants/nope/renew", json!({})).await;
+    assert_eq!(r.status, 404);
     let path = format!("/api/coordinator/grants/{}/revoke", g.grant_id);
     assert_eq!(post(&c, &viewer, &path, json!({})).await.status, 403);
     let r = post(&c, &h, &path, json!({})).await;

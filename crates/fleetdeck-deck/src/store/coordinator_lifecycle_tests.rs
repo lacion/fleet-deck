@@ -268,3 +268,46 @@ async fn a_successful_query_and_an_accepted_mutation_refresh_idle_time_and_a_pin
         .unwrap();
     assert!(used().await > after_accept);
 }
+
+#[tokio::test]
+async fn renewal_needs_an_idle_expired_binding_and_the_matching_station_acknowledgment() {
+    let w = world().await;
+    let g =
+        w.s.create_grant(NewGrant::new(w.alpha.clone(), "coord-1".into()))
+            .await
+            .unwrap();
+    let inc: fleetdeck_proto::IncarnationId = "inc".to_owned().into();
+    let apply = |seq, event| {
+        w.s.apply_events(w.alpha.clone(), inc.clone(), vec![lifecycle(seq, event)])
+    };
+    let state = || async {
+        let got = w.s.grant(g.grant_id.clone()).await.unwrap().unwrap();
+        (got.state, got.binding.map(|b| b.generation))
+    };
+    // An unbound or an active grant cannot be renewed.
+    assert_eq!(w.s.renew_grant(g.grant_id.clone()).await.unwrap(), None);
+    apply(1, bound(1, "native-1", &g.grant_id)).await.unwrap();
+    assert_eq!(w.s.renew_grant(g.grant_id.clone()).await.unwrap(), None);
+    // An unsolicited higher generation of an active grant does not bind.
+    apply(2, bound(2, "native-1", &g.grant_id)).await.unwrap();
+    assert_eq!(state().await, (GrantState::Active, Some(1)));
+    // Idle expiry; a bound event without a renewal does not revive it.
+    apply(3, ended(1, "idle")).await.unwrap();
+    apply(4, bound(2, "native-1", &g.grant_id)).await.unwrap();
+    assert_eq!(state().await, (GrantState::Expired, Some(1)));
+    // The owner's renewal waits for the station's matching acknowledgment.
+    assert_eq!(w.s.renew_grant(g.grant_id.clone()).await.unwrap(), Some(2));
+    assert_eq!(w.s.renew_grant(g.grant_id.clone()).await.unwrap(), Some(2));
+    assert_eq!(state().await, (GrantState::Expired, Some(1)));
+    apply(5, bound(3, "native-1", &g.grant_id)).await.unwrap();
+    assert_eq!(state().await, (GrantState::Expired, Some(1)));
+    apply(6, bound(2, "native-1", &g.grant_id)).await.unwrap();
+    assert_eq!(state().await, (GrantState::Active, Some(2)));
+    // The acknowledgment consumed the renewal; a revoked grant never renews.
+    apply(7, bound(3, "native-1", &g.grant_id)).await.unwrap();
+    assert_eq!(state().await, (GrantState::Active, Some(2)));
+    w.s.revoke_grant(g.grant_id.clone(), "owner".to_owned())
+        .await
+        .unwrap();
+    assert_eq!(w.s.renew_grant(g.grant_id.clone()).await.unwrap(), None);
+}

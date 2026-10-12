@@ -125,6 +125,10 @@ pub fn router(board: Arc<Board>) -> Router {
             "/api/coordinator/grants/{grant_id}/revoke",
             post(grant_routes::revoke),
         )
+        .route(
+            "/api/coordinator/grants/{grant_id}/renew",
+            post(grant_routes::renew),
+        )
         .route("/api/commands", get(read_routes::commands))
         .route(
             "/api/commands/{command_id}",

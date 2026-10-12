@@ -123,6 +123,24 @@ export function FleetPanel({ actions, sessions }: Props) {
                   Revoke
                 </button>
               )}
+              {g.state === 'expired' && g.revoked_reason === 'idle' ? (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => {
+                    setBusy(true);
+                    void actions
+                      .renew(g.grant_id)
+                      .then(async (r) => {
+                        setResult(r);
+                        setGrants(await actions.grants());
+                      })
+                      .finally(() => setBusy(false));
+                  }}
+                >
+                  Renew
+                </button>
+              ) : null}
             </li>
           ))}
         </ul>

@@ -315,3 +315,36 @@ reason, owner review.
   and `http::methods::tests::every_command_method_has_the_scope_of_its_link_method`;
   `manager::tests::coordinator_command::*` (26c, 26d, 26e).
 - Owner review: pending
+
+## DL-213: the owner's renewal waits for the station's matching `coordinator.bound` (ADR-006 §5.5, test 25b)
+
+- Context: ADR-006 test 25b requires that a renewal needs an idle-expired
+  binding and the matching station acknowledgment. Before this entry the
+  deck accepted any higher generation that a station reported (review
+  follow-up of round 2), and no owner renewal route existed.
+- Options: (a) the deck sets the grant active at the owner's renew and
+  trusts the station; (b) the deck records a pending renewal generation
+  and activates the grant only when the station's `coordinator.bound`
+  carries exactly that generation.
+- Choice: (b). Deck schema V10 adds `tokens.renew_generation`.
+  `DeckStore::renew_grant` accepts only an `expired`/`idle` grant inside
+  its lifetime with a binding, and records `bound_generation + 1` (a repeat
+  returns the same value). `record_lifecycle` and `bind_grant` accept a
+  first binding of an active grant, or a higher generation only when it
+  equals the pending renewal; the acknowledgment sets `active`, clears the
+  reason and consumes the renewal. A revoked grant never renews.
+  `POST /api/coordinator/grants/{grant_id}/renew` (`coordinator.renew`,
+  drive scope, audited; 409 `not_renewable`, 404 `unknown_grant`) queues
+  `session.coordinator_renew` with the generation; the board shows
+  "Renew" on an idle-expired grant (`web/src/fleet/FleetPanel.tsx`).
+- Reason: fail closed (PLAN §3): the deck never extends authority on a
+  station claim alone, and never activates a grant that the station did not
+  rebind. This also closes the round-2 follow-up "unsolicited generation
+  increase".
+- Deviation: the renewal and its outbox item are two transactions, as for
+  revoke (DL-212 follow-up).
+- Tests: `store::coordinator::tests::lifecycle::renewal_needs_an_idle_expired_binding_and_the_matching_station_acknowledgment`,
+  `board_fleet::the_owner_lists_and_revokes_a_coordinator_grant_and_a_viewer_cannot_revoke`
+  (renew: 403 viewer, 409 active grant, 404 unknown),
+  `web/src/fleet/fleet.test.ts` "a renew posts to the grant and a refusal says so (ADR-006 25b)".
+- Owner review: pending

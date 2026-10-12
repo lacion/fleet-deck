@@ -115,4 +115,26 @@ describe('coordinator grants', () => {
     expect(await bad.grants()).toEqual([]);
     expect(await bad.revoke('g1')).toEqual({ ok: false, text: 'Grant not revoked: 403 forbidden' });
   });
+  test('a renew posts to the grant and a refusal says so (ADR-006 25b)', async () => {
+    const posts: string[] = [];
+    const ok = fleetActions(
+      async () => [grant],
+      async (path) => {
+        posts.push(path);
+        return {};
+      },
+    );
+    expect((await ok.renew('g/1')).ok).toBe(true);
+    expect(posts).toEqual(['/api/coordinator/grants/g%2F1/renew']);
+    const bad = fleetActions(
+      async () => [],
+      async () => {
+        throw new Error('409 not_renewable');
+      },
+    );
+    expect(await bad.renew('g1')).toEqual({
+      ok: false,
+      text: 'Grant not renewed: 409 not_renewable',
+    });
+  });
 });
