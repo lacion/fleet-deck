@@ -124,6 +124,12 @@ pub enum SessionCommand {
         revert_id: String,
         resolution: RevertResolution,
     },
+    /// Turn auto-continue of a session on or off (L19, ADR-007 §2.1). Off
+    /// by default; only an owner board command can turn it on.
+    SetAutoContinue {
+        session_id: SessionId,
+        enabled: bool,
+    },
 }
 
 /// How the owner resolves a revert that needs reconciliation (DL-097).
@@ -182,6 +188,7 @@ impl SessionCommand {
             Self::Revert { .. } => "session.revert",
             Self::Rename { .. } => "session.rename",
             Self::ResolveRevert { .. } => "session.resolve_revert",
+            Self::SetAutoContinue { .. } => "session.set_auto_continue",
         }
     }
 
@@ -202,7 +209,8 @@ impl SessionCommand {
             | Self::Stop { session_id, .. }
             | Self::Revert { session_id, .. }
             | Self::Rename { session_id, .. }
-            | Self::ResolveRevert { session_id, .. } => Some(session_id),
+            | Self::ResolveRevert { session_id, .. }
+            | Self::SetAutoContinue { session_id, .. } => Some(session_id),
         }
     }
 }

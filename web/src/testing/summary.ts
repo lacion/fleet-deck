@@ -32,6 +32,7 @@ export function summary(
     repo: null,
     last_error: null,
     revert: null,
+    auto_continue: false,
     session_seq: 0,
     updated_at: updatedAt,
     ...extra,

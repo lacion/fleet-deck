@@ -58,6 +58,9 @@ pub enum RunOrigin {
     Resume,
     Local,
     Provider,
+    /// The station's fixed continuation input after a restart (L19,
+    /// ADR-007 §2.3). Older peers decode it as unknown.
+    Continuation,
 }
 
 /// Kind of a tool call.
@@ -458,6 +461,13 @@ pub enum Event {
     /// the source of the title; the title is already normalized.
     #[serde(rename = "session.renamed")]
     SessionRenamed { title: Option<String> },
+    /// The owner turned auto-continue on or off (ADR-007 §2.1).
+    #[serde(rename = "session.auto_continue_changed")]
+    AutoContinueChanged { enabled: bool },
+    /// A lost session was not continued at a station start; `reason` is
+    /// the stable code of the first failed rule (ADR-007 §2.2).
+    #[serde(rename = "session.auto_continue_skipped")]
+    AutoContinueSkipped { reason: String },
     /// Provider stdout bytes `[from, to)` were not parsed as events
     /// (ADR-005 §4.2; DL-113). Older peers decode this kind as unknown.
     #[serde(rename = "session.output_gap")]
@@ -513,7 +523,7 @@ pub enum Event {
 
 impl Event {
     /// Every known kind name, in declaration order.
-    pub const KINDS: [&'static str; 29] = [
+    pub const KINDS: [&'static str; 31] = [
         "session.started",
         "session.state",
         "run.started",
@@ -543,6 +553,8 @@ impl Event {
         "revert.updated",
         "session.renamed",
         "session.output_gap",
+        "session.auto_continue_changed",
+        "session.auto_continue_skipped",
     ];
 
     /// The dotted kind name.
@@ -577,6 +589,8 @@ impl Event {
             Self::SessionEnded { .. } => "session.ended",
             Self::RevertUpdated { .. } => "revert.updated",
             Self::SessionRenamed { .. } => "session.renamed",
+            Self::AutoContinueChanged { .. } => "session.auto_continue_changed",
+            Self::AutoContinueSkipped { .. } => "session.auto_continue_skipped",
             Self::OutputGap { .. } => "session.output_gap",
         }
     }

@@ -98,6 +98,10 @@ pub struct SessionSummary {
     /// the station refuses new input. Absent in a summary stored before M3.
     #[serde(default)]
     pub revert: Option<SessionRevert>,
+    /// Auto-continue after a station restart (L19, ADR-007 §2.1). Off by
+    /// default, also for a summary stored before it existed.
+    #[serde(default)]
+    pub auto_continue: bool,
     /// The highest `session_seq` folded into this summary.
     pub session_seq: u64,
     /// Unix ms of the last folded event.
@@ -132,6 +136,7 @@ impl SessionSummary {
             rate_limits: Vec::new(),
             last_error: None,
             revert: None,
+            auto_continue: false,
             session_seq: 0,
             updated_at: 0,
         }

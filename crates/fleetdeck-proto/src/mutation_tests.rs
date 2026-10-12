@@ -53,6 +53,7 @@ pub(crate) fn sample(method: &str) -> Value {
                 "stop" => json!({"op": op, "session_id": s, "how": "graceful"}),
                 "revert" => json!({"op": op, "session_id": s, "turn_id": "turn-1"}),
                 "rename" => json!({"op": op, "session_id": s, "title": "docs"}),
+                "set_auto_continue" => json!({"op": op, "session_id": s, "enabled": true}),
                 "resolve_revert" => json!({
                     "op": op,
                     "session_id": s,
@@ -87,7 +88,7 @@ fn every_mutating_method_parses_its_envelope_and_names_its_method() {
             count += 1;
         }
     }
-    assert_eq!(count, 17);
+    assert_eq!(count, 18);
 }
 
 #[test]

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { App } from '../App';
-import type { DeckSession } from '../gen';
+import type { DeckSession, EventEnvelope } from '../gen';
 import type { Timeline } from '../runtime/state';
 import { claudeCaps, codexCaps, minimalCaps } from '../testing/capabilities';
 import { station } from '../testing/fleet';
@@ -248,6 +248,68 @@ describe('session view (P4-3)', () => {
     expect(html).toContain('aria-label="Answer Run early in Review"');
     const empty = renderToStaticMarkup(<App sessions={[session()]} freshness="live" />);
     expect(empty).toContain('Nothing waits for you.');
+  });
+});
+
+describe('auto-continue (ADR-007, DL-127)', () => {
+  const at = (n: number, event: EventEnvelope['event']): EventEnvelope => ({
+    station_seq: n,
+    session_id: 'nested',
+    session_seq: n,
+    at: n,
+    proto_version: 1,
+    raw_ref: null,
+    event,
+  });
+
+  test('the toggle is off by default and needs drive and a live board', () => {
+    const html = view(session(), timeline());
+    expect(html).toMatch(/<input type="checkbox"\/> Continue after a station restart/);
+    const on = view(session({ auto_continue: true }), timeline());
+    expect(on).toMatch(/<input type="checkbox" checked=""\/> Continue after a station restart/);
+    const readOnly = view(session(), timeline(), ['read']);
+    expect(readOnly).toMatch(
+      /<input type="checkbox" disabled=""\/> Continue after a station restart/,
+    );
+  });
+
+  test('a continuation run and a skipped continuation are shown', () => {
+    const events = [
+      at(1, {
+        kind: 'run.started',
+        run_id: 'r1',
+        input_summary: 'Continue',
+        origin: 'continuation',
+      }),
+      at(2, { kind: 'session.auto_continue_skipped', reason: 'newer_owner_work' }),
+    ];
+    const html = view(session(), timeline(events));
+    expect(html).toContain('<strong>Station continuation:</strong> Continue');
+    expect(html).toContain('Auto-continue skipped: newer owner work');
+  });
+
+  test('the toggle posts session.set_auto_continue', async () => {
+    const posts: [string, unknown][] = [];
+    const actions = sessionActions(
+      async (path, body) => {
+        posts.push([path, body]);
+        return { state: 'done', receipt: { state: 'accepted' } };
+      },
+      key,
+      ['drive'],
+      () => 'c1',
+    );
+    await actions.setAutoContinue(true);
+    expect(posts).toEqual([
+      [
+        '/api/commands/session.set_auto_continue',
+        {
+          station: 'station-a',
+          command_id: 'c1',
+          command: { op: 'set_auto_continue', session_id: 'nested', enabled: true },
+        },
+      ],
+    ]);
   });
 });
 

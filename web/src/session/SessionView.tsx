@@ -86,6 +86,20 @@ export function SessionView({ session, stations, timeline, freshness, actions, o
             onSet={(m) => actions && act(() => actions.setMode(m))}
           />
         ) : null}
+        {caps?.resume ? (
+          <label className="fd-auto-continue">
+            <input
+              type="checkbox"
+              checked={s.auto_continue}
+              disabled={!live || actions?.canDrive !== true || busy}
+              onChange={(ev) => {
+                const on = ev.currentTarget.checked;
+                if (actions) act(() => actions.setAutoContinue(on));
+              }}
+            />{' '}
+            Continue after a station restart
+          </label>
+        ) : null}
         {caps?.set_model ? (
           <ModelPicker
             current={s.model}
@@ -265,12 +279,19 @@ function Items({ items }: { items: readonly Item[] }) {
   );
 }
 
+/** Who started a run; `continuation` is the station's restart input (ADR-007 §2.5). */
+function runLabel(origin: string): string {
+  if (origin === 'provider') return 'Provider turn';
+  if (origin === 'continuation') return 'Station continuation';
+  return 'You';
+}
+
 function ItemView({ item }: { item: Item }) {
   switch (item.type) {
     case 'run':
       return (
         <p className="fd-run">
-          <strong>{item.origin === 'provider' ? 'Provider turn' : 'You'}:</strong> {item.input}
+          <strong>{runLabel(item.origin)}:</strong> {item.input}
         </p>
       );
     case 'message':
