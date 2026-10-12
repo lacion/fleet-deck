@@ -264,17 +264,19 @@ async fn mutate(
                 .await
         }
         Mutation::Shell(envelope) => {
+            // DL-405: the receipt transaction only checks and enqueues; the
+            // PTY I/O runs after the commit, claimed first.
             let shells = std::sync::Arc::clone(&ctx.shells);
             let policy = ctx.manager.policy().clone();
-            let change = envelope.change.clone();
-            store
-                .decide_mutation(Mutation::Shell(envelope), caller, move |d| {
-                    shells
-                        .apply(&change, &policy, d.now())
-                        .map(|()| CommandResult::default())
-                        .map_err(DecideError::Reject)
+            let decided = store
+                .decide_mutation(Mutation::Shell(envelope.clone()), caller, move |d| {
+                    crate::shell::decide(d, &shells, &policy, &envelope)
                 })
-                .await
+                .await;
+            if let Err(e) = crate::shell::dispatch(store, &ctx.shells, ctx.manager.policy()).await {
+                tracing::warn!(error = %e, "shell dispatch");
+            }
+            decided
         }
         // The roles of the method table never deliver it to a station.
         Mutation::Coordinator(_) => {

@@ -8,7 +8,7 @@ Lane D owns 7-5 Packaging, 7-4 Performance and 6-11 Human shell, in this order (
 
 - [x] 7-5 Packaging (round 1, DL-400)
 - [x] 7-4 Performance (round 1, DL-401; defect DL-402)
-- [x] 6-11 Human shell (round 1, DL-404)
+- [x] 6-11 Human shell (round 1, DL-404; review fixes round 2, DL-405)
 
 ## Round log
 
@@ -46,6 +46,16 @@ Lane D owns 7-5 Packaging, 7-4 Performance and 6-11 Human shell, in this order (
   - Tests: station `shell::tests::shell_policy_checks_allow_shell_the_roots_and_the_shell_cap`, `a_shell_runs_in_its_cwd_with_the_scrubbed_environment`, `a_reattached_board_gets_the_scrollback_and_the_shell_survives_a_detach`, `shell::scrollback::tests::the_scrollback_keeps_at_most_5000_lines_and_8_mib`, `a_byte_cut_keeps_the_line_count_right` → 5 passed; proto `shell::tests::shell_changes_check_their_ids_and_terminal_sizes` and the envelope table test (20 methods) → `cargo test -p fleetdeck-proto` all passed; `cargo test -p fleetdeck-link --test method_table` → 2 passed; deck `tests/board_shell.rs`: `the_board_opens_a_station_shell_and_reattaches_to_its_scrollback_after_a_link_drop` (open, echo, link drop and reattach with the scrollback, resize, refusals, close, audit rows, a drive-scope token gets 403), `a_station_with_allow_shell_off_refuses_every_shell` → 2 passed; web `bun test src` → 107 passed (3 new in `src/shell/shell.test.ts`); Playwright at the phone viewport `e2e/shell.spec.ts` (open, refusal outside the roots, typing, detach and reattach with the scrollback, close; unreachable station; no admin scope) → 3 passed; `e2e/stations.spec.ts` → 3 passed.
 - Checks: `cargo fmt --all --check` → ok; `cargo clippy --workspace --all-targets -- -D warnings` → ok; `bun run --cwd web lint` → ok; `bun run --cwd web typecheck` → ok.
 
+### Lane D round 2 (2026-10-12)
+
+- Start: committed round 1 as `3a7e777`; `git merge --no-edit v2` → `9365f52` (conflicts kept both sides: link method count 35, mutation sample count 21, `version::ALL` keeps `shell.v1` and `auto_continue.v1`); `make ts-types`; proto and method-table tests passed.
+- Review of 6-11 asked for three fixes (the review blocks the lane, so they are done now, DL-405):
+  - Durable shell effects: `crates/fleetdeck-station/src/store/shell_effects.rs` (schema V15 `shell_effects`, enqueue, claim, finish, start recovery), `crates/fleetdeck-station/src/shell/mod.rs` (`check` without I/O, `decide` enqueues in the receipt transaction, `dispatch` does the PTY I/O after the commit), `link/intake.rs` (decide, then dispatch), `store/recovery.rs` (start recovery retires shell effects).
+  - Bounded reader queues: `SUBSCRIBER_QUEUE = 256`; a full queue ends that reader only.
+  - Login end: `crates/fleetdeck-deck/src/http/shell_routes.rs` relay rechecks `principal_alive` every `ws_recheck` and closes with 4401.
+- Tests: `cargo test -p fleetdeck-station --lib shell::` → 8 passed (3 new); `cargo test -p fleetdeck-deck --test board_shell` → 3 passed (1 new).
+- Checks: `cargo fmt --all --check` → ok; `cargo clippy --workspace --all-targets -- -D warnings` → ok. web/ unchanged.
+
 ## Review follow-ups (after M3)
 
 - DL-402 (7-4): key `runtime_requests` by `(session_id, request_id)` or make request ids unique per station; regression test with two sessions that ask at the same ordinal. Files: `crates/fleetdeck-station/src/store/{schema,requests}.rs`, `crates/fleetdeck-station/src/manager/decide.rs`.
@@ -55,3 +65,6 @@ Lane D owns 7-5 Packaging, 7-4 Performance and 6-11 Human shell, in this order (
 - 6-11: the board resizes the PTY with one audited command per fit; debounce the resize. Files: `web/src/shell/ShellPanel.tsx`.
 - 6-11: a station-restart test through the real `fleetdeck station serve` process (the shell ends, the list is empty after the restart). Files: `crates/fleetdeck-cli/tests/`.
 - 6-11: measure the keystroke round trip (board → PTY echo) in `make perf`. Files: `crates/fleetdeck-cli/tests/perf.rs`.
+- 6-11 (round 2 review): the three findings (durable effects, bounded queues, socket end on logout) are fixed in round 2 (DL-405) because they blocked the lane result.
+- 6-11: a `failed` or `outcome_unknown` shell effect is visible only in the station store; show it in the board answer and the shell list. Files: `crates/fleetdeck-station/src/shell/mod.rs`, `crates/fleetdeck-deck/src/http/shell_routes.rs`.
+- 6-11: a logout ends an attached shell socket only at the next recheck (30 s); push the end at once from the logout and revoke routes. Files: `crates/fleetdeck-deck/src/http/{auth_routes,shell_routes}.rs`.

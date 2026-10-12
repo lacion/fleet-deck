@@ -359,3 +359,95 @@ async fn a_station_with_allow_shell_off_refuses_every_shell() {
     st.shutdown();
     node.shutdown();
 }
+
+/// Waits for the deck to close the shell socket with code 4401.
+async fn closed_for_login(ws: &mut Ws) {
+    loop {
+        let m = tokio::time::timeout(T, ws.0.next())
+            .await
+            .expect("the socket stays open after the login ended");
+        match m {
+            Some(Ok(Message::Close(Some(frame)))) => {
+                assert_eq!(u16::from(frame.code), 4401, "{frame:?}");
+                return;
+            }
+            Some(Ok(_)) => {}
+            other => panic!("socket ended without a 4401 close: {other:?}"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn an_attached_shell_socket_closes_after_a_logout_and_a_token_revocation() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("projects");
+    std::fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    std::fs::create_dir_all(tmp.path().join("s")).unwrap();
+    std::fs::create_dir_all(tmp.path().join("d")).unwrap();
+    let (node, board) = deck(&tmp.path().join("d")).await;
+    let st = station(&tmp.path().join("s"), root.clone(), true).await;
+    st.join(&node.invite().unwrap()).await.unwrap();
+    let (cookie, csrf) = board.login().await;
+    let o = Owner {
+        cookie,
+        csrf,
+        origin: board.origin(),
+    };
+    let r = change(
+        &board,
+        &o,
+        "sh-open-1",
+        json!({ "op": "open", "shell_id": "main", "cwd": root.to_str().unwrap(), "cols": 80, "rows": 24 }),
+    )
+    .await;
+    assert_eq!(r.status, 200, "{}", r.body);
+
+    // The owner logs out: the attached socket closes with 4401.
+    let mut ws = attach(&board, &o, "main").await;
+    keys(&mut ws, "echo before-$((40+2))\n").await;
+    read_until(&mut ws, "before-42").await;
+    let r = board.post("/api/auth/logout", &o.write(), json!({})).await;
+    assert_eq!(r.status, 204, "{}", r.body);
+    closed_for_login(&mut ws).await;
+    // The old cookie cannot attach again.
+    let path = "/api/stations/alpha/shells/main/attach";
+    assert_eq!(board.ws(path, &o.socket()).await.err(), Some(401));
+
+    // An admin token attaches with a ticket and is revoked.
+    let day = 86_400_000;
+    let token = board
+        .store
+        .create_token(
+            "ops".into(),
+            BTreeSet::from([Scope::Read, Scope::Admin]),
+            day,
+        )
+        .await
+        .unwrap();
+    let bearer = format!("Bearer {}", token.1.expose());
+    let h = [("Authorization", bearer.as_str())];
+    let t = board.post("/api/ws/ticket", &h, json!({})).await;
+    assert_eq!(t.status, 200, "{}", t.body);
+    let with_ticket = format!("{path}?ticket={}", t.body["ticket"].as_str().unwrap());
+    let mut ws = board
+        .ws(&with_ticket, &[])
+        .await
+        .expect("a ticket attaches");
+    // The scrollback shows that the shell survived the first socket.
+    read_until(&mut ws, "before-42").await;
+    assert!(board.store.revoke_token("ops".into()).await.unwrap());
+    closed_for_login(&mut ws).await;
+
+    // The shell itself keeps running on the station.
+    let (cookie, csrf) = board.login().await;
+    let o = Owner {
+        cookie,
+        csrf,
+        origin: board.origin(),
+    };
+    let r = board.get("/api/stations/alpha/shells", &o.read()).await;
+    assert_eq!(r.body[0]["state"], "running", "{}", r.body);
+    st.shutdown();
+    node.shutdown();
+}

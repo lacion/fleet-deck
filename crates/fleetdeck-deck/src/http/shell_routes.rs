@@ -13,12 +13,16 @@
 //!   board are keystrokes, binary messages to the board are the scrollback
 //!   then the live output. The keystrokes are not audited. A closed socket
 //!   closes only the stream; the shell keeps running on the station.
+//!   Like the board WebSocket, the relay checks every `ws_recheck` that the
+//!   caller's login session or API token is still valid; after a logout,
+//!   an expiry or a revocation it closes the socket with code 4401 and the
+//!   stream (DL-405).
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Json;
-use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Extension, Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -34,6 +38,7 @@ use serde_json::{Value, json};
 
 use super::Board;
 use super::guard::ApiError;
+use super::ws::CLOSE_LOGIN_ENDED;
 use crate::link::streams::DeckStream;
 use crate::store::{AuditResult, NewAudit, Principal, StationRecord};
 
@@ -210,6 +215,7 @@ async fn decide(board: &Board, name: &str, body: ShellCommand) -> Result<Receipt
 /// shell.
 pub async fn attach(
     State(board): State<Arc<Board>>,
+    Extension(principal): Extension<Principal>,
     Path((name, shell_id)): Path<(String, String)>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, ApiError> {
@@ -230,14 +236,32 @@ pub async fn attach(
     Ok(ws
         .max_message_size(MAX_INPUT_MESSAGE)
         .max_frame_size(MAX_INPUT_MESSAGE)
-        .on_upgrade(move |socket| relay(socket, stream))
+        .on_upgrade(move |socket| relay(board, principal, socket, stream))
         .into_response())
 }
 
-/// Copies bytes both ways until either side ends.
-async fn relay(mut socket: WebSocket, mut stream: DeckStream) {
+/// Copies bytes both ways until either side ends or the caller's login
+/// ends.
+async fn relay(
+    board: Arc<Board>,
+    principal: Principal,
+    mut socket: WebSocket,
+    mut stream: DeckStream,
+) {
+    let mut recheck = tokio::time::interval(board.ws_recheck);
+    recheck.tick().await;
     loop {
         tokio::select! {
+            _ = recheck.tick() => {
+                // A database error counts as an ended login (fail closed).
+                if !board.store.principal_alive(&principal).await.unwrap_or(false) {
+                    let _ = socket.send(Message::Close(Some(CloseFrame {
+                        code: CLOSE_LOGIN_ENDED,
+                        reason: "login ended".into(),
+                    }))).await;
+                    break;
+                }
+            }
             event = stream.events.recv() => match event {
                 Some(DataEvent::Data { bytes, .. }) => {
                     let n = bytes.len();
