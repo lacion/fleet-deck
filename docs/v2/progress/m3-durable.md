@@ -28,6 +28,15 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 48 (2026-10-12, 15:14–)
+
+- Committed round 47 (7-3) as 2ff7794.
+- Merged `m3/orchestration` (6-1, 6-3, 6-4, 6-2), `m3/board` (6-10, 6-7; conflicts: `UserInput` with images, `SessionCommand::Start.workspace`, deck schema V7 mail/tasks then V8 file touches) and `m3/ops` (7-5, 7-4, 6-11; PROGRESS rows of both lanes, `app.css`). `make ts-types`; fmt, clippy, biome lint and typecheck clean after `bun install --frozen-lockfile`.
+- 7-6 Docs: new `README.md` (v2), the v1 README moved to `docs/v0/README.md`, new `docs/v2/operations.md`, `docs/v2/cutover.md` and `docs/v2/internals.md` (DL-129).
+- Test: `crates/fleetdeck-cli/tests/docs_commands.rs` `every_documented_fleetdeck_command_and_flag_exists` → PASS.
+- Recorded the round-48 review findings on 7-3 as follow-ups.
+- Lanes: only `m3-ops` says LANE COMPLETE; 6-13, 7-7 and 7-8 wait.
+
 ## ADR-005 §9 test map (7-1 close)
 
 | ADR test | Status | Test |
@@ -71,3 +80,10 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
 | 7-3 | No checksum or signature check of the new binary before the trial | `crates/fleetdeck-cli/src/upgrade.rs` |
 | 7-3 | The shim launch does not write `shims.protocol` (default 1 is right until protocol 2) | `crates/fleetdeck-station/src/store/shims.rs` |
 | 7-3 | The drain flag is in memory and the board has no drain control | `crates/fleetdeck-station/src/manager/drain.rs` |
+| 7-3 (review r48) | Drain admission and queued-work races: a command admitted just before the flag, or a queued effect, can still start work during a drain | `crates/fleetdeck-station/src/manager/drain.rs` |
+| 7-3 (review r48) | The database snapshot and restore are not locked and not atomic (plain file copies) | `crates/fleetdeck-station/src/upgrade.rs` |
+| 7-3 (review r48) | The live marker fails open, and activation has crash windows between the record and the symlink swap | `crates/fleetdeck-station/src/upgrade.rs` |
+| 7-3 (review r48) | Stale or repeated rollbacks are not refused | `crates/fleetdeck-station/src/upgrade.rs` |
+| 7-3 (review r48) | No guard for lost shims and no adapter checkpoint compatibility check in the trial | `crates/fleetdeck-station/src/upgrade.rs` |
+| 7-3 (review r48) | The trial run of the new binary has no time bound | `crates/fleetdeck-cli/src/upgrade.rs` |
+| 7-3 (review r48) | ADR-005 tests 20/21/22/48 use store rows, not a real ShimHost of two builds; N−1 is tested at the link layer only | `crates/fleetdeck-station/src/upgrade_tests.rs` |

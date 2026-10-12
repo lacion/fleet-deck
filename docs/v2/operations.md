@@ -1,0 +1,149 @@
+# Fleet Deck v2 operations guide
+
+This guide tells the owner how to configure, run, pair, back up, drain, upgrade and repair a Fleet Deck v2 deck and its stations. For the install and the service units, see [packaging/README.md](../../packaging/README.md). For the move from v1, see [cutover.md](./cutover.md).
+
+## 1. Directories
+
+| What | Default | Override |
+| --- | --- | --- |
+| Configuration (`station.toml`, `deck.toml`) | `~/.config/fleetdeck/` (`$XDG_CONFIG_HOME/fleetdeck`) | `--data-dir` or `FLEETDECK_DATA_DIR` (then configuration and data share one directory) |
+| Station data: identity key, `station.db`, local socket, shim sockets, `upgrades/`, `bin/` | `~/.local/share/fleetdeck/station/` | same |
+| Deck data: identity key, `deck.db`, owner socket | `~/.local/share/fleetdeck/deck/` | same |
+
+The data directories have mode 0700. The configuration files must have mode 0600 and must not be group- or world-writable; the binary refuses a file that is.
+
+## 2. Station configuration (`station.toml`)
+
+A missing file gives the defaults. An unknown key is an error.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `name` | the host name | The station name on the board. |
+| `allowed_roots` | (required when the file exists) | The directories where sessions, worktrees and clones may run. Give at least one. |
+| `max_sessions` | `12` | The most sessions with a live process. A start or resume above the limit is refused. |
+| `allow_setup_cmd` | `false` | Allow a workspace setup command. |
+| `allow_shell` / `max_shells` | `false` / `8` | The human shell (PLAN §6.8). |
+| `offline_approval_policy` | `wait` | What happens to an approval when no deck is reachable: `wait`, or `deny_after(<n>s)` (also `m` or `h`). |
+| `listen` | (empty) | Link listen addresses when the deck dials this station. |
+| `host` | `direct` | `direct`: the agents are children of the station and stop with it. `shim`: each agent runs under a `fleetdeck shim` process and survives a station restart or upgrade (ADR-005). |
+| `shim_buffer_mib` | `16` | The shim output buffer, 1–256 MiB. |
+| `repo_groups` | (empty) | Repository path → group name, for the conflict radar. |
+| `[[provider_instance]]` | `claude` and `codex` | `id`, `driver` (`claude` or `codex`), `binary`, `config_home`, `env` (values are secrets; they never leave the station). |
+
+Example:
+
+```toml
+name = "laptop"
+allowed_roots = ["~/code"]
+max_sessions = 8
+offline_approval_policy = "deny_after(10m)"
+host = "shim"
+
+[[provider_instance]]
+id = "claude"
+driver = "claude"
+
+[[provider_instance]]
+id = "codex-work"
+driver = "codex"
+config_home = "~/.codex-work"
+```
+
+## 3. Deck configuration (`deck.toml`)
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `name` | the host name | The deck name. |
+| `listen` | `127.0.0.1:7420` | The board HTTP and WebSocket addresses. Login is always required. |
+| `link_listen` | `127.0.0.1:7421` | The link listener for stations that dial the deck. |
+| `tailnet_hostname` | (none) | The tailnet DNS name of the deck, for the WebSocket `Origin` check. |
+
+> **Caution:** use only loopback, private LAN or tailnet addresses. The deck refuses a public address. Do not forward a port from a router.
+
+## 4. Start and stop
+
+- One machine: `fleetdeck up` runs the deck and a local station in one process.
+- More machines: `fleetdeck deck` on the deck machine, `fleetdeck station` on each station machine.
+- As services: use the systemd user units or the launchd agents in `packaging/`. The station unit uses `KillMode=process` (launchd: `AbandonProcessGroup`). Keep this setting: it lets shim-hosted agents survive a station stop.
+- Logs go to standard error. `--log-format json` gives JSON lines; `FLEETDECK_LOG=debug` gives more detail.
+
+A station stop with `host = "direct"` stops every agent; the sessions become `lost` at the next start, or are continued when auto-continue is on and every recheck passes. With `host = "shim"`, the agents keep running and the next station start reattaches them.
+
+## 5. Board access
+
+1. Set the owner password: `fleetdeck deck password` (from a prompt or `--stdin`). A new password ends every login.
+2. Get a one-time login URL: `fleetdeck open`.
+3. For scripts, make an API token: `fleetdeck deck token`. A token has a scope; keep it secret.
+4. Read the audit log: `fleetdeck deck audit`.
+
+## 6. Pair a station
+
+Station dials the deck (the station is behind NAT or on a laptop):
+
+1. On the deck: `fleetdeck deck invite`. The invitation is single-use and a secret.
+2. On the station: `fleetdeck station join`. Paste the invitation at the prompt, or give `--stdin` or `--invite-file <file>` (mode 0600). Never put an invitation on the command line.
+
+Deck dials the station (the station has a fixed private address):
+
+1. On the station: set `listen` in `station.toml`, then `fleetdeck station invite`.
+2. On the deck: `fleetdeck deck add-station`.
+
+To unpair: `fleetdeck deck remove-station <station>` on the deck, or `fleetdeck station forget-deck` on the station.
+
+## 7. Work without the deck
+
+The station keeps working when the deck is down. On the station machine:
+
+- `fleetdeck station sessions [--json]` lists the sessions.
+- `fleetdeck station run --provider claude --cwd <dir> "<prompt>"` starts a session.
+- `fleetdeck station approve <request> [--option <id>]` answers an approval.
+- `fleetdeck station interrupt <session>` interrupts a turn.
+
+Approvals that wait for the deck follow `offline_approval_policy`.
+
+## 8. Back up
+
+- The station event log (`station.db`) is the source of truth for sessions. The deck database (`deck.db`) is the source of truth for mail, plans, tasks, routing and settings.
+- Stop the node, then copy the database file with its `-wal` and `-shm` files. A copy of a running database without its WAL file can lose recent events.
+- The identity keys are in the same directories. A lost station key needs a new pairing.
+
+## 9. Drain and upgrade a station
+
+> **Caution:** do not copy a new binary over the running one. Use the steps below; they keep a snapshot and a rollback path.
+
+1. Drain the station: `fleetdeck station drain [--timeout-secs 600]`. The station refuses new work (start, resume, fork, prompt, follow-up, steer, revert) and waits until no session has an open turn. Answers, interrupts and stops still work. The command fails and names the busy sessions when the time ends.
+2. Stop the station service.
+3. Prepare the update: `fleetdeck station upgrade prepare --binary <new fleetdeck> --to-version <version>`. This step:
+   - takes a snapshot of `station.db` with its WAL and SHM files,
+   - runs the new binary's trial on a separate copy (migrations, shim protocol versions),
+   - installs the release under `<station>/bin/releases/`,
+   - prints the update id (`upd-...`).
+   A failed trial leaves the old build active.
+4. Activate it: `fleetdeck station upgrade activate <update id>`. The stable launcher `<station>/bin/current` now points at the new release. Make the service start `<station>/bin/current` (edit `ExecStart` or `ProgramArguments` once).
+5. Start the station service.
+6. If the new build fails, stop the service and run `fleetdeck station upgrade rollback <update id>`:
+   - When the new station never opened the live database and no shim is live, the rollback restores the snapshot. The restored database gets a new incarnation, so the deck reloads the station's state.
+   - Otherwise the rollback restores only the previous binary and keeps the live database. If the old build cannot open the migrated database, it says so; use the new build and report the defect.
+
+Shim-hosted agents keep running through the whole sequence; the new station reattaches them when it speaks their shim protocol. An upgrade that cannot speak a running shim's protocol fails its trial.
+
+## 10. Auto-continue
+
+Auto-continue is off for each session by default. Turn it on in the session view ("Continue after a station restart"). Only the owner on the board can turn it on; a coordinator or the local socket cannot. After a station restart, the station continues a lost session only when every rule of ADR-007 holds. Otherwise the session stays `lost`, and the timeline shows "Auto-continue skipped: <reason>".
+
+## 11. Troubleshooting
+
+| Symptom | What to do |
+| --- | --- |
+| A session is `lost` | The station restarted and could not prove what happened to the agent. Read the detail in the timeline. Resume the session if the provider supports resume. |
+| A command is `outcome_unknown` | The station cannot prove whether the provider received it. It never resends it. Check the session and send a new command if needed. |
+| A revert needs reconciliation | The station could not prove the state of the files or the conversation. Read the revert card and resolve it; input stays blocked until then. |
+| The station is not on the board | Check the link: the station log, the `listen`/`link_listen` addresses, and the pairing. `fleetdeck deck stations` shows the link state. |
+| Usage shows "unknown" | The provider did not report usage for that window. Fleet Deck never shows unknown usage as zero. |
+| The board refuses a WebSocket | Set `tailnet_hostname` when you open the board by its tailnet name. |
+
+## 12. Owner steps that this repository cannot test
+
+- A container image build (`docker build`) and a run of the image.
+- A real tailnet, a macOS host (launchd) and a physical phone.
+- The release download and signature check (cargo-dist).
