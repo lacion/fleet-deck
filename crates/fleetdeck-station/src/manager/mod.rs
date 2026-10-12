@@ -10,6 +10,7 @@
 //!    evidence in those events confirms the effects.
 
 pub mod auto_continue;
+pub mod coordinator_command;
 pub mod decide;
 pub mod drain;
 pub mod durable;
@@ -309,6 +310,7 @@ impl SessionManager {
         let origin = envelope.origin;
         let command = envelope.command.clone();
         let guard = auto_continue::guard(&command, &caller)
+            .and_then(|()| coordinator_command::guard(&command, &caller))
             .and_then(|()| drain::guard(self.draining(), &command));
         self.store
             .decide(envelope, caller, move |d| {

@@ -211,6 +211,22 @@ impl DeckNode {
     ///
     /// # Errors
     /// [`NodeError::NoListener`] without a link listener.
+    /// Creates the owner's coordinator grant (ADR-006 §4). The caller's
+    /// station gets the link scope `coordinate` in the same transaction,
+    /// and the link's grant cache follows at once (DL-211).
+    ///
+    /// # Errors
+    /// An invalid grant or a database error.
+    pub async fn create_grant(
+        &self,
+        grant: crate::store::NewGrant,
+    ) -> Result<crate::store::Grant, DeckError> {
+        let station = grant.station_id.clone();
+        let created = self.ctx.store.create_grant(grant).await?;
+        self.ctx.peers.refresh(station).await?;
+        Ok(created)
+    }
+
     pub fn invite(&self) -> Result<Secret<String>, NodeError> {
         let addr = *self.listening.first().ok_or(NodeError::NoListener)?;
         let invitation = self.invitations.create(

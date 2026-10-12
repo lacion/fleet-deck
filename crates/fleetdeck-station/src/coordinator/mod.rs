@@ -7,11 +7,13 @@
 //! granted tool classes; the deck decides every operation (§6.2).
 
 pub mod bindings;
+pub mod forward;
 pub mod ingress;
 mod jsonrpc;
 pub mod tools;
 
 pub use bindings::{Binding, BindingState, Bindings, Caller, ToolClass, digest, mint};
+pub use forward::LinkForward;
 pub use ingress::{Forward, Ingress, Limits};
 
 #[cfg(test)]

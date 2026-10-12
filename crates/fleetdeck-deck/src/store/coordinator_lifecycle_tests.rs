@@ -149,3 +149,122 @@ async fn active_to_expired_and_active_to_revoked_at_the_same_generation_apply_an
             .is_none()
     );
 }
+
+/// Review follow-up (round 2): a session that the grant spawned joins its
+/// lineage once the station's start receipt names it (DL-211).
+#[tokio::test]
+async fn a_spawned_session_joins_the_lineage_when_its_start_receipt_names_it() {
+    let w = world().await;
+    let b = grant(
+        &w,
+        &[GrantClass::Spawn, GrantClass::Drive],
+        3,
+        &[("claude", "default")],
+    )
+    .await;
+    let r = decide(&w, env(&w, &b, "k1", spawn(&w.alpha, "claude", None))).await;
+    assert_eq!(r.state, ReceiptState::Accepted, "{r:?}");
+    let stop = || CoordinatorOp::Stop {
+        station: w.alpha.clone(),
+        session_id: "spawned-1".into(),
+    };
+    // No receipt yet: the new session is not known, so not in the lineage.
+    let r = decide(&w, env(&w, &b, "k2", stop())).await;
+    assert_eq!(code(&r), Some(RejectCode::Forbidden));
+    // The outbox router sent the start and stored the station's receipt.
+    let station = w.alpha.as_str().to_owned();
+    crate::store::call(&w.s.db(), move |conn| {
+        let outbox: String = conn.query_row(
+            "SELECT start_outbox_id FROM coordinator_lineage WHERE command_id = 'k1'",
+            [],
+            |r| r.get(0),
+        )?;
+        conn.execute(
+            "INSERT INTO commands (command_id, station_id, method, origin, envelope,
+                 retry_until, state, receipt, created_at, updated_at)
+             VALUES ('start-cmd', ?1, 'session.start', 'coordinator', '{}', 0, 'done',
+                 '{\"result\":{\"session_id\":\"spawned-1\"}}', 0, 0)",
+            [station],
+        )?;
+        conn.execute(
+            "UPDATE outbox SET command_id = 'start-cmd' WHERE outbox_id = ?1",
+            [outbox],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let r = decide(&w, env(&w, &b, "k3", stop())).await;
+    assert_eq!(r.state, ReceiptState::Accepted, "{r:?}");
+    // Another session id from the same start is still outside.
+    let other = CoordinatorOp::Stop {
+        station: w.alpha.clone(),
+        session_id: "spawned-2".into(),
+    };
+    let r = decide(&w, env(&w, &b, "k4", other)).await;
+    assert_eq!(code(&r), Some(RejectCode::Forbidden));
+}
+
+/// ADR-006 §8.3 test 25: a query shows only targets inside the grant.
+#[tokio::test]
+async fn queries_return_only_targets_inside_the_grant() {
+    let w = world().await;
+    let b = grant(&w, &[GrantClass::Read, GrantClass::Mail], 0, &[]).await;
+    let v = ask(&w, query(&w, &b, CoordinatorQuery::ListSessions, 5_000))
+        .await
+        .unwrap();
+    let ids: Vec<&str> = v["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["session_id"].as_str().unwrap())
+        .collect();
+    assert!(ids.contains(&"worker-1"), "{v}");
+    assert!(!ids.contains(&"other-1"), "beta is outside the grant: {v}");
+}
+
+/// ADR-006 §8.3 test 25a: a successful query and an accepted new mutation
+/// refresh the idle time; a rejection and a duplicate do not.
+#[tokio::test]
+async fn a_successful_query_and_an_accepted_mutation_refresh_idle_time_and_a_ping_a_discovery_a_rejection_or_a_duplicate_do_not()
+ {
+    let w = world().await;
+    let b = grant(&w, &[GrantClass::Read, GrantClass::Mail], 0, &[]).await;
+    let used = || async {
+        w.s.grant(b.grant_id.clone())
+            .await
+            .unwrap()
+            .unwrap()
+            .last_used_at
+    };
+    let start = used().await;
+    // An accepted mutation refreshes.
+    w.det.advance(Duration::from_secs(5));
+    let first = decide(
+        &w,
+        env(&w, &b, "k1", mail(target(&w.alpha, "worker-1"), "a")),
+    )
+    .await;
+    assert_eq!(first.state, ReceiptState::Accepted);
+    let after_accept = used().await;
+    assert!(after_accept > start, "{start:?} -> {after_accept:?}");
+    // A duplicate returns the stored receipt and does not refresh.
+    w.det.advance(Duration::from_secs(5));
+    let again = decide(
+        &w,
+        env(&w, &b, "k1", mail(target(&w.alpha, "worker-1"), "a")),
+    )
+    .await;
+    assert_eq!(again, first);
+    assert_eq!(used().await, after_accept);
+    // A stored rejection does not refresh.
+    let r = decide(&w, env(&w, &b, "k2", mail(target(&w.beta, "other-1"), "a"))).await;
+    assert_eq!(code(&r), Some(RejectCode::Forbidden));
+    assert_eq!(used().await, after_accept);
+    // A successful query refreshes.
+    w.det.advance(Duration::from_secs(5));
+    ask(&w, query(&w, &b, CoordinatorQuery::ListSessions, 5_000))
+        .await
+        .unwrap();
+    assert!(used().await > after_accept);
+}

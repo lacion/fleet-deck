@@ -412,8 +412,16 @@ fn in_lineage(
 ) -> Result<bool> {
     Ok(tx
         .query_row(
-            "SELECT 1 FROM coordinator_lineage
-             WHERE grant_id = ?1 AND station_id = ?2 AND session_id = ?3",
+            // A spawned session joins the lineage when the station's start
+            // receipt names it: the start command of the lineage row's
+            // outbox item carries `result.session_id` (DL-211).
+            "SELECT 1 FROM coordinator_lineage l
+             WHERE l.grant_id = ?1 AND l.station_id = ?2
+               AND (l.session_id = ?3
+                    OR (l.session_id IS NULL AND EXISTS (
+                        SELECT 1 FROM outbox o JOIN commands c ON c.command_id = o.command_id
+                        WHERE o.outbox_id = l.start_outbox_id
+                          AND json_extract(c.receipt, '$.result.session_id') = ?3)))",
             params![grant.grant_id, station.as_str(), session.0],
             |_| Ok(()),
         )

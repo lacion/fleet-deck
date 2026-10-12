@@ -176,8 +176,10 @@ async fn a_grant_removed_in_the_store_refuses_a_call_in_the_decision_transaction
     let mut f = fixture_with(coordinate()).await;
     let station = f.connect().await;
     let deck_inc = f.store.incarnation().clone();
-    // The stored grant loses `coordinate` while the link layer's cache
-    // still has it: the decision transaction refuses the call.
+    // The owner's grant exists first (creating it adds `coordinate`,
+    // DL-211). Then the stored station loses `coordinate` while the link
+    // layer's cache still has it: the decision transaction refuses the call.
+    let b = bound(&f).await;
     let rec = f.store.station(f.station.clone()).await.unwrap().unwrap();
     f.store
         .pin_station(NewStation {
@@ -188,9 +190,63 @@ async fn a_grant_removed_in_the_store_refuses_a_call_in_the_decision_transaction
         })
         .await
         .unwrap();
-    let b = bound(&f).await;
     let env = call_of(&f, &b, "k1", "hi", deck_inc);
     let r = receipt(send(&station.control, "k1", &env).await);
     assert_eq!(r.reject.unwrap().code, RejectCode::Forbidden);
     assert_eq!(f.store.coordinator_receipts().await.unwrap(), 0);
+}
+
+/// M3 6-5 (ADR-006 §6.1, §6.6): the station's `LinkForward` targets the
+/// deck incarnation that the deck's `hello` named; a tool call over a real
+/// link comes back as the deck's stored receipt, and a read tool as the
+/// deck's query answer.
+#[tokio::test]
+async fn a_station_forwards_tool_calls_to_the_deck_incarnation_of_its_link() {
+    use fleetdeck_station::coordinator::{Caller, Forward, LinkForward};
+    let mut f = fixture_with(coordinate()).await;
+    let station = f.connect().await;
+    assert_eq!(&station.peer_incarnation, f.store.incarnation());
+    let b = bound(&f).await;
+    let store = f.store.clone();
+    let forward = LinkForward::with_clock(std::sync::Arc::new(move || store.now_ms()));
+    let caller = Caller {
+        binding_id: b.binding_id.clone(),
+        grant_id: b.grant_id.clone(),
+        session_id: "coord-1".into(),
+        provider_instance: "claude".to_owned(),
+        native_id: b.native_id.clone(),
+        generation: b.generation,
+    };
+    let serial = forward.connect(station.control.clone(), station.peer_incarnation.clone());
+    // An unknown target: a stored `unknown_session` receipt, not an error.
+    let args = json!({"to": {"station": f.station.0, "session_id": "nobody"}, "text": "hi"});
+    let v = forward
+        .call(caller.clone(), "send_mail", args)
+        .await
+        .unwrap();
+    let r: Receipt = serde_json::from_value(v).unwrap();
+    assert_eq!(r.state, ReceiptState::Rejected);
+    let reject = r.reject.unwrap();
+    assert_eq!(reject.code, RejectCode::UnknownSession, "{reject:?}");
+    assert_eq!(f.store.coordinator_receipts().await.unwrap(), 1);
+    // A read tool: the deck's answer, filtered to the grant.
+    let v = forward
+        .call(caller.clone(), "list_sessions", json!({}))
+        .await
+        .unwrap();
+    assert!(v["sessions"].is_array(), "{v}");
+    // A stale binding generation: the deck's rejection, nothing stored.
+    let stale = Caller {
+        generation: 9,
+        ..caller.clone()
+    };
+    let v = forward
+        .call(stale, "list_sessions", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(v["reject"]["code"], "binding_stale");
+    // After the link ends, a call fails at once.
+    forward.disconnect(serial);
+    let e = forward.call(caller, "list_sessions", json!({})).await;
+    assert!(e.unwrap_err().starts_with("deck_unreachable"));
 }

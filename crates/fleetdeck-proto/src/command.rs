@@ -158,6 +158,19 @@ pub enum SessionCommand {
         session_id: SessionId,
         enabled: bool,
     },
+    /// Renew the idle-expired coordinator binding of `session_id` under
+    /// `grant_id` at `generation` (ADR-006 §7). Deck only, owner action.
+    CoordinatorRenew {
+        session_id: SessionId,
+        grant_id: String,
+        generation: u32,
+    },
+    /// Revoke the coordinator binding of `session_id` under `grant_id`
+    /// (ADR-006 §7). Deck only, owner action.
+    CoordinatorRevoke {
+        session_id: SessionId,
+        grant_id: String,
+    },
 }
 
 /// How the owner resolves a revert that needs reconciliation (DL-097).
@@ -243,6 +256,8 @@ impl SessionCommand {
             Self::Rename { .. } => "session.rename",
             Self::ResolveRevert { .. } => "session.resolve_revert",
             Self::SetAutoContinue { .. } => "session.set_auto_continue",
+            Self::CoordinatorRenew { .. } => "session.coordinator_renew",
+            Self::CoordinatorRevoke { .. } => "session.coordinator_revoke",
         }
     }
 
@@ -264,7 +279,9 @@ impl SessionCommand {
             | Self::Revert { session_id, .. }
             | Self::Rename { session_id, .. }
             | Self::ResolveRevert { session_id, .. }
-            | Self::SetAutoContinue { session_id, .. } => Some(session_id),
+            | Self::SetAutoContinue { session_id, .. }
+            | Self::CoordinatorRenew { session_id, .. }
+            | Self::CoordinatorRevoke { session_id, .. } => Some(session_id),
         }
     }
 }

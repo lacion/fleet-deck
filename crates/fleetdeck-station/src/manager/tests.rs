@@ -675,3 +675,6 @@ mod drain;
 
 #[path = "import_tests.rs"]
 mod import_tests;
+
+#[path = "coordinator_command_tests.rs"]
+mod coordinator_command;

@@ -219,7 +219,27 @@ impl DeckStore {
         let now = self.now_ms();
         let grant_id: String = new_id(self.inner.ids.as_ref());
         call(&self.inner.db, move |conn| {
-            conn.execute(
+            let tx = conn.transaction()?;
+            // The owner's grant lets the caller's station relay coordinator
+            // calls: it gets the link scope `coordinate` in the same
+            // transaction (DL-211). Pairing alone never grants it.
+            let scopes: Option<String> = tx
+                .query_row(
+                    "SELECT scopes FROM stations WHERE station_id = ?1",
+                    [grant.station_id.as_str()],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if let Some(text) = scopes {
+                let mut set: BTreeSet<fleetdeck_proto::link::Scope> = serde_json::from_str(&text)?;
+                if set.insert(fleetdeck_proto::link::Scope::Coordinate) {
+                    tx.execute(
+                        "UPDATE stations SET scopes = ?2 WHERE station_id = ?1",
+                        params![grant.station_id.as_str(), serde_json::to_string(&set)?],
+                    )?;
+                }
+            }
+            tx.execute(
                 "INSERT INTO tokens (grant_id, station_id, session_id, classes, stations,
                      spawn_cap, max_modes, idle_ttl_ms, created_at, expires_at, state)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'active')",
@@ -236,8 +256,10 @@ impl DeckStore {
                     now.saturating_add(grant.ttl_ms)
                 ],
             )?;
-            get_grant(conn, &grant_id)?
-                .ok_or_else(|| DeckError::Corrupt("an inserted grant is gone".to_owned()))
+            let stored = get_grant(&tx, &grant_id)?
+                .ok_or_else(|| DeckError::Corrupt("an inserted grant is gone".to_owned()))?;
+            tx.commit()?;
+            Ok(stored)
         })
         .await
     }

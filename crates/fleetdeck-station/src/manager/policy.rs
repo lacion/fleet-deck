@@ -31,6 +31,10 @@ pub struct Policy {
     instances: BTreeMap<ProviderInstanceId, ProviderKind>,
     /// Canonical repository path → the owner's group (DL-201).
     repo_groups: BTreeMap<PathBuf, String>,
+    /// The coordinator bindings of this station (ADR-006 §5): the ingress
+    /// authenticates against them, and the owner's renew and revoke
+    /// commands change them (DL-212). Shared, not configuration.
+    coordinator: crate::coordinator::Bindings,
 }
 
 impl Policy {
@@ -58,6 +62,7 @@ impl Policy {
                 .map(|i| (i.id.clone(), i.driver.kind()))
                 .collect(),
             repo_groups: BTreeMap::new(),
+            coordinator: crate::coordinator::Bindings::default(),
         }
         .with_repo_groups(&config.repo_groups)
     }
@@ -70,6 +75,12 @@ impl Policy {
             .map(|(p, g)| (p.canonicalize().unwrap_or_else(|_| p.clone()), g.clone()))
             .collect();
         self
+    }
+
+    /// The coordinator bindings of this station.
+    #[must_use]
+    pub fn coordinator_bindings(&self) -> &crate::coordinator::Bindings {
+        &self.coordinator
     }
 
     /// The owner's group of a canonical repository path.
@@ -95,6 +106,7 @@ impl Policy {
             offline,
             instances,
             repo_groups: BTreeMap::new(),
+            coordinator: crate::coordinator::Bindings::default(),
         }
     }
 

@@ -289,6 +289,8 @@ pub const API: &[ApiMethod] = &[
     cmd("session.rename", Scope::Drive),
     cmd("session.resolve_revert", Scope::Drive),
     cmd("session.set_auto_continue", Scope::Drive),
+    cmd("session.coordinator_renew", Scope::Drive),
+    cmd("session.coordinator_revoke", Scope::Drive),
     cmd("approval.answer", Scope::Approve),
 ];
 
@@ -377,6 +379,6 @@ mod tests {
             assert!(api.mutating);
             n += 1;
         }
-        assert_eq!(n, 16);
+        assert_eq!(n, 18);
     }
 }

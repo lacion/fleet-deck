@@ -76,6 +76,19 @@ impl DeckPeers {
     ///
     /// # Errors
     /// A database error.
+    /// Reloads the scopes of one station from the store into the grant
+    /// cache (a new coordinator grant adds `coordinate`, DL-211).
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn refresh(&self, id: fleetdeck_proto::StationId) -> Result<()> {
+        if let Some(st) = self.store.station(id).await? {
+            self.cache
+                .grant(st.key.fingerprint(), st.scopes.iter().copied());
+        }
+        Ok(())
+    }
+
     pub async fn pin_all(&self, pins: &PinSet) -> Result<Vec<StationRecord>> {
         let stations = self.store.stations().await?;
         for st in &stations {

@@ -23,6 +23,7 @@ use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 
 use fleetdeck_core::identity::{Identity, PeerKey};
+use fleetdeck_proto::IncarnationId;
 
 use crate::control::{ControlConfig, GrantSource, Grants};
 use crate::epochs::Epochs;
@@ -147,6 +148,9 @@ pub struct OpenLink {
     pub id: LinkId,
     pub side: Side,
     pub negotiated: Negotiated,
+    /// The database incarnation that the peer's `hello` named (ADR-004
+    /// §9.3): the `target_incarnation` of the envelopes that it holds.
+    pub peer_incarnation: IncarnationId,
     pub control: Ws,
     /// Present when both sides negotiated `data_streams.v1`.
     pub data: Option<Ws>,
@@ -233,7 +237,7 @@ async fn open_channel(
     config: &Arc<rustls::ClientConfig>,
     attempt: &Attempt,
     channel: Channel,
-) -> Result<(Ws, Negotiated), LinkError> {
+) -> Result<(Ws, Negotiated, IncarnationId), LinkError> {
     let (mut ws, proved, exporter) =
         ws::connect(addr, config.clone(), channel, node.handshake_timeout).await?;
     if proved != peer {
@@ -251,7 +255,7 @@ async fn open_channel(
         peer,
     )
     .await?;
-    Ok((ws, est.negotiated))
+    Ok((ws, est.negotiated, est.peer_hello.incarnation))
 }
 
 async fn dial_attempt(
@@ -262,7 +266,7 @@ async fn dial_attempt(
     attempt: &Attempt,
     fault: DialFault,
 ) -> Result<OpenLink, LinkError> {
-    let (mut control, negotiated) =
+    let (mut control, negotiated, peer_incarnation) =
         open_channel(node, addr, peer, config, attempt, Channel::Control).await?;
     if fault == DialFault::CloseBeforeReady {
         ws::close_quietly(&mut control).await;
@@ -290,7 +294,7 @@ async fn dial_attempt(
         } else {
             attempt
         };
-        let (mut data, _) =
+        let (mut data, _, _) =
             open_channel(node, addr, peer, config, data_attempt, Channel::Data).await?;
         handshake::await_ready(&mut data, node.handshake_timeout).await?;
         Some(data)
@@ -302,6 +306,7 @@ async fn dial_attempt(
         id,
         side: Side::Dialer,
         negotiated,
+        peer_incarnation,
         control,
         data,
         closing,
@@ -430,7 +435,17 @@ async fn accept_one(
             .await
             .err()
             .map(Err),
-        _ => Some(admit_control(node, ws, peer, epoch, attempt_id, est.negotiated).await),
+        _ => Some(
+            admit_control(
+                node,
+                ws,
+                peer,
+                (epoch, attempt_id),
+                est.negotiated,
+                est.peer_hello.incarnation,
+            )
+            .await,
+        ),
     }
 }
 
@@ -458,9 +473,9 @@ async fn admit_control(
     node: &NodeConfig,
     mut ws: Ws,
     peer: PeerKey,
-    epoch: u64,
-    attempt_id: String,
+    (epoch, attempt_id): (u64, String),
     negotiated: Negotiated,
+    peer_incarnation: IncarnationId,
 ) -> Result<OpenLink, LinkError> {
     let fp = peer.fingerprint();
     if let Err(min_epoch) = node.epochs.accept(&fp, epoch).await? {
@@ -518,6 +533,7 @@ async fn admit_control(
         id,
         side: Side::Listener,
         negotiated,
+        peer_incarnation,
         control: ws,
         data,
         closing,
