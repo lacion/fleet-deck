@@ -257,9 +257,20 @@ impl DurableCodex {
             };
             match state {
                 Some(state) => {
-                    self.store
-                        .shim_frame_state(self.shim_id.clone(), frame.frame_seq, state)
+                    let fenced = self
+                        .store
+                        .shim_frame_state(
+                            self.shim_id.clone(),
+                            self.process.generation(),
+                            frame.frame_seq,
+                            tag.clone(),
+                            state,
+                        )
                         .await?;
+                    if !fenced {
+                        // A newer owner took over (DL-111): it settles.
+                        return Ok(());
+                    }
                 }
                 None => {
                     self.store
@@ -347,17 +358,22 @@ impl DurableCodex {
                 _ => None,
             };
             match next {
-                Some(FrameState::Done) => {
-                    self.store
-                        .shim_frame_state(self.shim_id.clone(), frame.frame_seq, FrameState::Done)
-                        .await?;
-                }
                 Some(state) => {
-                    // Stdin is gone; the frame stays for a later attachment.
-                    self.store
-                        .shim_frame_state(self.shim_id.clone(), frame.frame_seq, state)
+                    let fenced = self
+                        .store
+                        .shim_frame_state(
+                            self.shim_id.clone(),
+                            self.process.generation(),
+                            frame.frame_seq,
+                            tag,
+                            state,
+                        )
                         .await?;
-                    return Ok(());
+                    if !fenced || state != FrameState::Done {
+                        // A newer owner took over (DL-111), or stdin is
+                        // gone and the frame stays for a later attachment.
+                        return Ok(());
+                    }
                 }
                 None => {
                     // The frame may have left: it stays claimed for recovery.

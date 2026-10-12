@@ -27,8 +27,8 @@ use fleetdeck_providers::host::shim::host::{AckMode, Attached, ShimHost, ShimHos
 use fleetdeck_station::manager::shim_codex::DurableCodex;
 use fleetdeck_station::manager::shims::{Recovered, launch_shim, recover_shims};
 use fleetdeck_station::store::{
-    Caller, Dispatch, Effect, EffectPayload, InputRecord, NewSession, OfflineApprovalPolicy,
-    ReadResult, Store, StoreConfig,
+    Caller, Dispatch, Effect, EffectPayload, FrameState, InputRecord, NewSession,
+    OfflineApprovalPolicy, OutputCommit, OutputMeta, ReadResult, Store, StoreConfig,
 };
 use fleetdeck_testkit::Det;
 use fleetdeck_testkit::fake::{FakeAgent, SCENARIO_ENV, STDIN_LOG_ENV};
@@ -442,4 +442,103 @@ async fn a_reattached_codex_session_answers_an_approval_opened_before_the_crash_
     assert_eq!(rig.method_count("initialize"), 1);
     assert_eq!(rig.method_count("thread/start"), 1);
     assert_eq!(rig.method_count("thread/resume"), 0);
+}
+
+/// DL-111: an old owner that claimed a generated frame and was delayed
+/// past a takeover cannot move the frame after the new owner settled and
+/// wrote it; the frame reaches the provider once.
+#[tokio::test]
+async fn a_delayed_old_owner_cannot_make_the_new_owner_resend_a_completed_frame() {
+    let rig = Rig::new().await;
+    let driver = rig.open().await;
+    let shim_id = rig.store.shims_to_recover().await.unwrap()[0]
+        .shim_id
+        .clone();
+    let old_generation = driver.process().generation();
+    // The old owner's pump stops; it commits a generated frame and claims
+    // it, then is delayed before the frame leaves.
+    let hold = driver.hold_output().await;
+    let cursor = rig
+        .store
+        .shim(shim_id.clone())
+        .await
+        .unwrap()
+        .unwrap()
+        .cursor;
+    let meta = OutputMeta {
+        frames: vec![r#"{"jsonrpc":"2.0","method":"fd/marker"}"#.to_owned()],
+        ..OutputMeta::default()
+    };
+    assert!(matches!(
+        rig.store
+            .shim_commit_output_with(shim_id.clone(), old_generation, cursor, Vec::new(), meta)
+            .await
+            .unwrap(),
+        OutputCommit::Committed(_)
+    ));
+    let frame = rig.store.shim_open_frames(shim_id.clone()).await.unwrap()[0].clone();
+    let old_tag = rig
+        .store
+        .shim_claim_frame(shim_id.clone(), old_generation, frame.frame_seq)
+        .await
+        .unwrap()
+        .unwrap();
+    // A takeover: the new owner proves the old claim unwritten and writes
+    // the frame with its own claim.
+    let driver = {
+        driver.abandon().await;
+        drop(hold);
+        rig.crash_and_restore(driver).await
+    };
+    assert!(driver.process().generation() > old_generation);
+    rig.wait_frames("the marker", |f| {
+        f.iter().any(|f| f["method"] == "fd/marker")
+    })
+    .await;
+    assert!(
+        rig.store
+            .shim_open_frames(shim_id.clone())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    // The delayed old owner reports its stale claim: every change is refused.
+    for state in [FrameState::Pending, FrameState::Done] {
+        assert!(
+            !rig.store
+                .shim_frame_state(
+                    shim_id.clone(),
+                    old_generation,
+                    frame.frame_seq,
+                    old_tag.clone(),
+                    state,
+                )
+                .await
+                .unwrap()
+        );
+    }
+    // The new owner flushes again after new output: the frame stays done.
+    let prompt = rig
+        .claimed(EffectPayload::Prompt {
+            input: input("in-1", "hello"),
+        })
+        .await;
+    assert_eq!(driver.apply(&prompt).await, Dispatch::Sent);
+    rig.wait_event("turn.completed", |e| {
+        matches!(e, Event::TurnCompleted { .. })
+    })
+    .await;
+    assert!(
+        rig.store
+            .shim_open_frames(shim_id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        rig.method_count("fd/marker"),
+        1,
+        "the frame was never resent"
+    );
+    assert_eq!(rig.method_count("initialize"), 1);
 }

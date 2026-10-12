@@ -179,28 +179,58 @@ impl Store {
         .map(|(tag, _)| tag)
     }
 
-    /// Moves frame `frame_seq` to `state`: `Done` after the shim reported
-    /// it written, `Pending` after the shim proved it unwritten (it is then
-    /// sent again with a new claim).
+    /// Moves claimed frame `frame_seq` to `state`: `Done` after the shim
+    /// reported it written, `Pending` after the shim proved it unwritten (it
+    /// is then sent again with a new claim).
+    ///
+    /// The change is fenced (DL-111): it applies only while `generation` is
+    /// the current owner generation of an open row, the frame is `claimed`,
+    /// and its stored claim is exactly `tag`. A delayed owner whose
+    /// attachment was taken over, or whose claim was settled and claimed
+    /// again by the new owner, changes nothing, so a completed frame never
+    /// returns to `pending` and is never sent again. `false` for such a
+    /// stale call.
     ///
     /// # Errors
-    /// A database error.
+    /// [`StoreError::Corrupt`] for a target state of `Claimed` (only
+    /// [`Store::shim_claim_frame`] claims); a database error.
     pub async fn shim_frame_state(
         &self,
         shim_id: String,
+        generation: u64,
         frame_seq: u64,
+        tag: WriteTag,
         state: FrameState,
-    ) -> Result<()> {
+    ) -> Result<bool> {
+        if state == FrameState::Claimed {
+            return Err(StoreError::Corrupt(
+                "a frame is claimed only by shim_claim_frame".to_owned(),
+            ));
+        }
         self.write(move |conn, now, _| {
-            conn.execute(
+            let Some((current, _)) = open_row(conn, &shim_id)? else {
+                return Ok(false);
+            };
+            if current != generation {
+                return Ok(false);
+            }
+            let changed = conn.execute(
                 "UPDATE shim_frames SET state = ?3, updated_at = ?4
-                 WHERE shim_id = ?1 AND frame_seq = ?2",
-                params![shim_id, to_i64(frame_seq)?, state.as_str(), now],
+                 WHERE shim_id = ?1 AND frame_seq = ?2 AND state = 'claimed'
+                   AND write_id = ?5 AND write_seq = ?6",
+                params![
+                    shim_id,
+                    to_i64(frame_seq)?,
+                    state.as_str(),
+                    now,
+                    tag.write_id,
+                    to_i64(tag.write_seq)?
+                ],
             )?;
-            Ok(())
+            Ok(changed == 1)
         })
         .await
-        .map(|((), _)| ())
+        .map(|(changed, _)| changed)
     }
 
     /// The frames of `shim_id` that are not done, in order.

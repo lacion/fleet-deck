@@ -6,6 +6,7 @@ use fleetdeck_proto::event::{Event, ProviderKind};
 use fleetdeck_testkit::Det;
 
 use super::*;
+use crate::store::shim_driver::FrameState;
 use crate::store::{NewSession, OfflineApprovalPolicy, ReadResult, StoreConfig};
 
 async fn store(det: &Det) -> Store {
@@ -248,4 +249,125 @@ async fn recovery_lists_open_rows_of_this_incarnation_starting_first() {
         .map(|r| r.shim_id)
         .collect();
     assert_eq!(ids, ["start", "run"]);
+}
+
+/// DL-111: a delayed owner whose generation was taken over, or whose claim
+/// was settled and claimed again, cannot move a frame; a completed frame
+/// never returns to `pending`.
+#[tokio::test]
+async fn frame_state_changes_are_fenced_by_the_owner_generation_and_the_current_claim() {
+    let det = Det::new();
+    let s = store(&det).await;
+    s.shim_starting(shim("a")).await.unwrap();
+    assert!(s.shim_running("a".into(), identity(9)).await.unwrap());
+    assert_eq!(s.shim_next_generation("a".into()).await.unwrap(), Some(1));
+    let meta = OutputMeta {
+        frames: vec!["{\"method\":\"fd/marker\"}".to_owned()],
+        ..OutputMeta::default()
+    };
+    assert!(matches!(
+        s.shim_commit_output_with("a".into(), 1, 0, Vec::new(), meta)
+            .await
+            .unwrap(),
+        OutputCommit::Committed(_)
+    ));
+    let seq = s.shim_open_frames("a".into()).await.unwrap()[0].frame_seq;
+    let old = s
+        .shim_claim_frame("a".into(), 1, seq)
+        .await
+        .unwrap()
+        .unwrap();
+    // A takeover; the old owner is delayed.
+    assert_eq!(s.shim_next_generation("a".into()).await.unwrap(), Some(2));
+    for state in [FrameState::Done, FrameState::Pending] {
+        assert!(
+            !s.shim_frame_state("a".into(), 1, seq, old.clone(), state)
+                .await
+                .unwrap()
+        );
+    }
+    let open = s.shim_open_frames("a".into()).await.unwrap();
+    assert_eq!(open[0].state, FrameState::Claimed);
+    // The new owner proves the old claim unwritten, claims again, and the
+    // frame is written.
+    assert!(
+        s.shim_frame_state("a".into(), 2, seq, old.clone(), FrameState::Pending)
+            .await
+            .unwrap()
+    );
+    let new = s
+        .shim_claim_frame("a".into(), 2, seq)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_ne!(new, old);
+    assert!(
+        !s.shim_frame_state("a".into(), 2, seq, old.clone(), FrameState::Done)
+            .await
+            .unwrap(),
+        "a superseded claim of the same owner changes nothing"
+    );
+    assert!(
+        s.shim_frame_state("a".into(), 2, seq, new.clone(), FrameState::Done)
+            .await
+            .unwrap()
+    );
+    // The delayed old owner reports its stale claim unwritten: refused.
+    for generation in [1, 2] {
+        assert!(
+            !s.shim_frame_state(
+                "a".into(),
+                generation,
+                seq,
+                old.clone(),
+                FrameState::Pending
+            )
+            .await
+            .unwrap()
+        );
+    }
+    assert!(
+        !s.shim_frame_state("a".into(), 2, seq, new.clone(), FrameState::Pending)
+            .await
+            .unwrap(),
+        "a done frame never returns to pending"
+    );
+    assert!(s.shim_open_frames("a".into()).await.unwrap().is_empty());
+    assert!(
+        s.shim_claim_frame("a".into(), 2, seq)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        s.shim_frame_state("a".into(), 2, seq, new, FrameState::Claimed)
+            .await
+            .is_err()
+    );
+    // After the row ends nothing moves.
+    let seq2 = {
+        let meta = OutputMeta {
+            frames: vec!["{\"method\":\"fd/two\"}".to_owned()],
+            ..OutputMeta::default()
+        };
+        s.shim_commit_output_with("a".into(), 2, 0, Vec::new(), meta)
+            .await
+            .unwrap();
+        s.shim_open_frames("a".into()).await.unwrap()[0].frame_seq
+    };
+    let tag = s
+        .shim_claim_frame("a".into(), 2, seq2)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        s.shim_end("a".into(), ShimState::Lost, "x".into())
+            .await
+            .unwrap()
+    );
+    assert!(
+        !s.shim_frame_state("a".into(), 2, seq2, tag, FrameState::Pending)
+            .await
+            .unwrap()
+    );
 }
