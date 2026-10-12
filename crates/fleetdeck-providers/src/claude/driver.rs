@@ -178,16 +178,7 @@ impl ClaudeAdapter {
                 program: self.config.program.clone(),
                 args,
                 cwd: cwd.clone(),
-                env: match coordinator {
-                    Some(c) => {
-                        c.child_env(&self.config.env)
-                            .map_err(|e| ProviderError::Workspace {
-                                path: cwd.clone(),
-                                source: std::io::Error::new(std::io::ErrorKind::InvalidInput, e),
-                            })?
-                    }
-                    None => self.config.env.clone(),
-                },
+                env: CoordinatorLaunch::env_for(coordinator, &self.config.env, &cwd)?,
             })
             .await?;
         let mut core = ClaudeCore::new(CoreConfig {

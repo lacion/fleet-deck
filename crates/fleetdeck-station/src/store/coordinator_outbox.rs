@@ -347,6 +347,25 @@ impl Store {
         .await
     }
 
+    /// The station sequence of the last coordinator lifecycle event
+    /// (`coordinator.bound`/`coordinator.ended`), 0 when none: the
+    /// lifecycle watermark of ADR-006 §6.5.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn coordinator_lifecycle_seq(&self) -> Result<u64> {
+        call(&self.inner.db, |conn| {
+            let seq: Option<i64> = conn.query_row(
+                "SELECT MAX(station_seq) FROM events
+                 WHERE kind IN ('coordinator.bound', 'coordinator.ended')",
+                [],
+                |r| r.get(0),
+            )?;
+            Ok(seq.and_then(|s| u64::try_from(s).ok()).unwrap_or(0))
+        })
+        .await
+    }
+
     /// One row.
     ///
     /// # Errors

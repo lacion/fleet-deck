@@ -357,3 +357,87 @@ async fn sent_rows_are_not_resent_after_a_reconnect_before_the_lifecycle_waterma
     assert!(err.starts_with("revoked"), "{err}");
     assert_eq!(r.deck.sent().len(), 1);
 }
+
+/// ADR-006 §6.5 and test 25e, station half (DL-220): after a (re)connect no
+/// `coordinator.call` and no `coordinator.query` leaves before the deck
+/// acknowledges the station event stream through the last coordinator
+/// lifecycle event; an acknowledgment below the watermark or of an older
+/// link does not open the fence, and each new link closes it again.
+#[tokio::test]
+async fn a_reconnect_holds_calls_and_queries_until_the_deck_acknowledges_the_lifecycle_watermark() {
+    use crate::store::{NewEvent, NewSession, OfflineApprovalPolicy};
+    use fleetdeck_proto::Event;
+    use fleetdeck_proto::event::ProviderKind;
+
+    let r = rig(Mode::Accept).await;
+    r.store
+        .create_session(NewSession {
+            session_id: "coord-1".into(),
+            provider: ProviderKind::Claude,
+            provider_instance: "claude".into(),
+            cwd: "/w".to_owned(),
+            worktree: None,
+            branch: None,
+            mode: None,
+            title: None,
+            offline_approval_policy: OfflineApprovalPolicy::Wait,
+        })
+        .await
+        .unwrap();
+    let bound = Event::CoordinatorBound {
+        binding_id: "coord-1:grant-1".to_owned(),
+        grant_id: "grant-1".to_owned(),
+        generation: 1,
+        provider_instance: "claude".to_owned(),
+        native_id: "native-1".to_owned(),
+    };
+    let appended = r
+        .store
+        .append("coord-1".into(), vec![NewEvent::from(bound)])
+        .await
+        .unwrap();
+    let watermark = appended[0].station_seq;
+    assert_eq!(
+        r.store.coordinator_lifecycle_seq().await.unwrap(),
+        watermark
+    );
+
+    let deck_inc = || IncarnationId::from("deck-inc".to_owned());
+    let serial = r.forward.connect_transport(r.deck.clone(), deck_inc());
+    let held = r.call(mail("one")).await.unwrap();
+    assert_eq!(held["state"], "pending", "{held}");
+    let id = id_of(&held);
+    let caller = super::bindings::Caller {
+        binding_id: "coord-1:grant-1".to_owned(),
+        grant_id: "grant-1".to_owned(),
+        session_id: "coord-1".into(),
+        provider_instance: "claude".to_owned(),
+        native_id: "native-1".to_owned(),
+        generation: 1,
+    };
+    let query = r
+        .forward
+        .call(caller, "wait_task", json!({"task_id": "t1"}))
+        .await
+        .unwrap_err();
+    assert!(query.starts_with("deck_syncing"), "{query}");
+
+    // Below the watermark, or on an older link: still held.
+    r.forward.acknowledged(serial, watermark - 1);
+    r.forward.acknowledged(serial - 1, watermark);
+    r.forward.flush().await.unwrap();
+    assert!(r.deck.sent().is_empty(), "nothing leaves before the ack");
+    assert_eq!(r.row(&id).await.sends, 0);
+
+    // The acknowledgment of the watermark opens the fence.
+    r.forward.acknowledged(serial, watermark);
+    r.forward.flush().await.unwrap();
+    assert_eq!(r.deck.sent().len(), 1);
+    assert_eq!(r.row(&id).await.state, OutboxState::Done);
+
+    // A new link closes it again.
+    r.forward.connect_transport(r.deck.clone(), deck_inc());
+    let again = r.call(mail("two")).await.unwrap();
+    assert_eq!(again["state"], "pending", "{again}");
+    assert_eq!(r.deck.sent().len(), 1);
+}

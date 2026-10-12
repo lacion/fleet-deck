@@ -6,8 +6,10 @@ use super::bindings::{Binding, BindingState};
 use super::ingress::Forward;
 use super::tools;
 
-/// The MCP protocol versions that the station accepts.
-pub const PROTOCOL_VERSIONS: [&str; 2] = ["2025-06-18", "2025-03-26"];
+/// The MCP protocol versions that the station accepts. `2025-11-25` is
+/// the version that Claude 2.1.296 sends (DL-220); the station uses only
+/// `initialize`, `ping` and the tools methods, which it does not change.
+pub const PROTOCOL_VERSIONS: [&str; 3] = ["2025-11-25", "2025-06-18", "2025-03-26"];
 
 /// The answer to one parsed message.
 pub enum Answer {

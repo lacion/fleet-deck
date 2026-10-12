@@ -7,9 +7,9 @@
 //! reads `bearer_token_env_var`. The endpoint is loopback only.
 //!
 //! The handoff is declared only for a provider version for which the
-//! opt-in live smoke (§8.5) recorded a passing handoff. None has run yet,
-//! so [`handoff`] answers `handoff_unverified` for every provider and the
-//! `coordinator` capability stays off.
+//! opt-in live smoke (§8.5) recorded a passing handoff ([`VERIFIED`]);
+//! [`handoff`] answers `handoff_unverified` for every other version and the
+//! `coordinator` capability stays off there.
 
 use fleetdeck_core::childenv::ChildEnvError;
 use fleetdeck_core::{ChildEnv, Secret};
@@ -21,7 +21,10 @@ pub const TOKEN_ENV: &str = "FLEETDECK_COORDINATOR_TOKEN";
 pub const UNVERIFIED: &str = "handoff_unverified";
 
 /// The extra provider arguments for the coordinator endpoint at `url`, or
-/// `None` when `url` is not a loopback MCP URL.
+/// `None` when `url` is not a loopback MCP URL. The owner-authorized grant
+/// is the authority of a coordinator tool call (ADR-006 §6): the station
+/// checks its classes and the deck its scope, so the provider asks no
+/// second, native approval for the `fleetdeck` server's tools (DL-220).
 pub fn mcp_args(provider: ProviderKind, url: &str) -> Option<Vec<String>> {
     let rest = url.strip_prefix("http://127.0.0.1:")?;
     let port = rest.strip_suffix("/mcp")?;
@@ -35,13 +38,20 @@ pub fn mcp_args(provider: ProviderKind, url: &str) -> Option<Vec<String>> {
                 "url": url,
                 "headers": {"Authorization": format!("Bearer ${{{TOKEN_ENV}}}")},
             }}});
-            vec!["--mcp-config".to_owned(), config.to_string()]
+            vec![
+                "--mcp-config".to_owned(),
+                config.to_string(),
+                "--allowedTools".to_owned(),
+                "mcp__fleetdeck".to_owned(),
+            ]
         }
         ProviderKind::Codex => vec![
             "-c".to_owned(),
             format!("mcp_servers.fleetdeck.url=\"{url}\""),
             "-c".to_owned(),
             format!("mcp_servers.fleetdeck.bearer_token_env_var=\"{TOKEN_ENV}\""),
+            "-c".to_owned(),
+            "mcp_servers.fleetdeck.default_tools_approval_mode=\"approve\"".to_owned(),
         ],
         _ => return None,
     })
@@ -66,12 +76,35 @@ impl CoordinatorLaunch {
         env.set(TOKEN_ENV, self.token.expose())?;
         Ok(env)
     }
+
+    /// The child environment of a start with an optional handoff.
+    ///
+    /// # Errors
+    /// [`crate::adapter::ProviderError::Workspace`] for an invalid value.
+    pub(crate) fn env_for(
+        launch: Option<&Self>,
+        base: &ChildEnv,
+        cwd: &std::path::Path,
+    ) -> crate::adapter::Result<ChildEnv> {
+        match launch {
+            Some(c) => c
+                .child_env(base)
+                .map_err(|e| crate::adapter::ProviderError::Workspace {
+                    path: cwd.to_path_buf(),
+                    source: std::io::Error::new(std::io::ErrorKind::InvalidInput, e),
+                }),
+            None => Ok(base.clone()),
+        }
+    }
 }
 
 /// The provider families and minimum versions for which the opt-in live
-/// smoke (ADR-006 §8.5, test 31) recorded a passing handoff (DL-219).
-/// Codex has no coordinated start yet.
-pub const VERIFIED: &[(ProviderKind, &str)] = &[(ProviderKind::Claude, "2.1.296")];
+/// smoke (ADR-006 §8.5, test 31) recorded a passing handoff (DL-219,
+/// DL-220: both providers, also through the station path).
+pub const VERIFIED: &[(ProviderKind, &str)] = &[
+    (ProviderKind::Claude, "2.1.296"),
+    (ProviderKind::Codex, "0.160.0"),
+];
 
 /// The numeric parts of a dotted version (`2.1.296 (Claude Code)` →
 /// `[2, 1, 296]`), or `None` when it does not start with a number.
@@ -106,6 +139,7 @@ mod tests {
         let url = "http://127.0.0.1:41234/mcp";
         let claude = mcp_args(ProviderKind::Claude, url).unwrap();
         assert_eq!(claude[0], "--mcp-config");
+        assert_eq!(claude[2..], ["--allowedTools", "mcp__fleetdeck"]);
         let config: serde_json::Value = serde_json::from_str(&claude[1]).unwrap();
         let server = &config["mcpServers"]["fleetdeck"];
         assert_eq!(server["type"], "http");
@@ -122,6 +156,8 @@ mod tests {
                 "mcp_servers.fleetdeck.url=\"http://127.0.0.1:41234/mcp\"",
                 "-c",
                 "mcp_servers.fleetdeck.bearer_token_env_var=\"FLEETDECK_COORDINATOR_TOKEN\"",
+                "-c",
+                "mcp_servers.fleetdeck.default_tools_approval_mode=\"approve\"",
             ]
         );
         for args in [&claude, &codex] {
@@ -141,13 +177,16 @@ mod tests {
 
     #[test]
     fn the_capability_stays_off_until_the_live_smoke_passes() {
-        for provider in [ProviderKind::Claude, ProviderKind::Codex] {
-            assert_eq!(handoff(provider, Some("2.1.0")), Err(UNVERIFIED));
+        for (provider, older) in [
+            (ProviderKind::Claude, "2.1.0"),
+            (ProviderKind::Codex, "0.159.9"),
+        ] {
+            assert_eq!(handoff(provider, Some(older)), Err(UNVERIFIED));
             assert_eq!(handoff(provider, None), Err(UNVERIFIED));
             assert_eq!(handoff(provider, Some("unknown")), Err(UNVERIFIED));
         }
-        // DL-219: the live smoke passed for Claude 2.1.296; Codex has no
-        // coordinated start.
+        // DL-219, DL-220: the live smoke passed for Claude 2.1.296 and
+        // Codex 0.160.0.
         assert_eq!(
             handoff(ProviderKind::Claude, Some("2.1.295")),
             Err(UNVERIFIED)
@@ -158,9 +197,7 @@ mod tests {
             Ok(())
         );
         assert_eq!(handoff(ProviderKind::Claude, Some("2.10.0")), Ok(()));
-        assert_eq!(
-            handoff(ProviderKind::Codex, Some("0.160.0")),
-            Err(UNVERIFIED)
-        );
+        assert_eq!(handoff(ProviderKind::Codex, Some("0.160.0")), Ok(()));
+        assert_eq!(handoff(ProviderKind::Codex, Some("0.161.2")), Ok(()));
     }
 }

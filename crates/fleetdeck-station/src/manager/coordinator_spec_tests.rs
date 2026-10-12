@@ -83,12 +83,20 @@ fn the_handoff_check_needs_a_verified_probed_version_of_every_instance() {
         Err(())
     );
     bindings.record_version(ProviderKind::Claude, "2.1.296".to_owned());
-    bindings.record_version(ProviderKind::Codex, "0.160.0".to_owned());
+    bindings.record_version(ProviderKind::Codex, "0.159.0".to_owned());
     assert!(start(&bindings, ProviderKind::Claude).is_ok());
     let (c, m) = code(start(&bindings, ProviderKind::Codex));
     assert_eq!(
         (c, m.as_str()),
         (RejectCode::Unsupported, "handoff_unverified")
+    );
+    // DL-220: Codex from 0.160.0 is verified; every probed instance counts.
+    bindings.record_version(ProviderKind::Codex, "0.160.0".to_owned());
+    let (c, _) = code(start(&bindings, ProviderKind::Codex));
+    assert_eq!(
+        c,
+        RejectCode::Unsupported,
+        "the 0.159.0 instance still blocks"
     );
     bindings.record_version(ProviderKind::Claude, "2.1.0".to_owned());
     let (c, _) = code(start(&bindings, ProviderKind::Claude));

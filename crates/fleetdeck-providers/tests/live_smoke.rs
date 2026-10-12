@@ -375,50 +375,29 @@ fn in_files(root: &std::path::Path, needle: &str) -> bool {
         && std::fs::read_dir(root).is_ok_and(|d| d.flatten().any(|e| in_files(&e.path(), needle)))
 }
 
-/// ADR-006 §8.5 test 31 (DL-067 gate, DL-219). Claude: one tiny session
-/// with the coordinator handoff of the real adapter path
-/// (`start_coordinated`) against a loopback MCP endpoint; the endpoint
-/// sees only the credential's digest, the tool runs once, and the value
-/// is in no command line and in no Claude configuration file. Codex: the
-/// adapter has no coordinated start yet, so the test records that its
-/// handoff stays unverified. The station half (pending binding, then the
-/// native binding) is covered offline by
-/// `a_deck_start_with_a_grant_hands_the_credential_to_the_child_environment_only`.
-#[tokio::test]
-#[ignore = "live: needs FD_LIVE_SMOKE=1, a signed-in `claude`, and network"]
-async fn claude_and_codex_authenticate_to_a_loopback_mcp_endpoint_with_the_env_handoff() {
+/// One handoff round of test 31 for one adapter: a tiny session with the
+/// coordinator handoff of the real adapter path (`start_coordinated`)
+/// against a loopback MCP endpoint. The endpoint sees only the
+/// credential's digest, the tool runs exactly once, and the value is in no
+/// command line and in none of `files`.
+async fn handoff_round(
+    adapter: &dyn ProviderAdapter,
+    kind: fleetdeck_proto::event::ProviderKind,
+    instance: &str,
+    mode: &str,
+    files: &[PathBuf],
+) {
     use fleetdeck_core::Secret;
-    use fleetdeck_proto::event::ProviderKind;
     use fleetdeck_providers::coordinator::{CoordinatorLaunch, mcp_args};
-    if !opted_in("claude_and_codex_authenticate_to_a_loopback_mcp_endpoint_with_the_env_handoff") {
-        return;
-    }
     let (url, seen) = mcp_probe::start().await;
     let mut raw = [0u8; 32];
     ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut raw).unwrap();
     let token: String = raw.iter().map(|b| format!("{b:02x}")).collect();
-
-    let mut config = claude::ClaudeAdapterConfig::new(
-        "claude".into(),
-        program("FD_CLAUDE_BIN", "claude"),
-        ChildEnv::from_process(),
-    );
-    // `--safe-mode` also drops `--mcp-config` servers, and the sign-in
-    // needs the user settings: this test loads the user settings, no MCP
-    // server but the probe, and no skill; only the probe tool runs without
-    // an approval.
-    config.extra_args = vec![
-        "--disable-slash-commands".to_owned(),
-        "--strict-mcp-config".to_owned(),
-        "--allowedTools".to_owned(),
-        "mcp__fleetdeck__fleet_ping".to_owned(),
-    ];
-    let adapter = claude::ClaudeAdapter::new(config, Arc::new(DirectChildHost::new()));
     let probe = adapter.probe().await.unwrap();
-    eprintln!("claude probe: {probe:?}");
+    eprintln!("{kind:?} probe: {probe:?}");
     signed_in(&probe.auth);
     let launch = CoordinatorLaunch {
-        args: mcp_args(ProviderKind::Claude, &url).unwrap(),
+        args: mcp_args(kind, &url).unwrap(),
         token: Secret::new(token.clone()),
     };
     assert!(!launch.args.iter().any(|a| a.contains(&token)));
@@ -427,11 +406,7 @@ async fn claude_and_codex_authenticate_to_a_loopback_mcp_endpoint_with_the_env_h
     let (sink, mut rx) = EventSink::channel(1024);
     let mut session = tokio::time::timeout(
         STEP,
-        adapter.start_coordinated(
-            spec("claude", tmp.path(), claude::SAFEST_MODE),
-            sink,
-            launch,
-        ),
+        adapter.start_coordinated(spec(instance, tmp.path(), mode), sink, launch),
     )
     .await
     .unwrap()
@@ -442,8 +417,8 @@ async fn claude_and_codex_authenticate_to_a_loopback_mcp_endpoint_with_the_env_h
     );
     session
         .prompt(input(
-            "Call the fleet_ping tool of the fleetdeck MCP server once. Then reply with \
-             exactly the text that it returned.",
+            "Call the fleet_ping tool of the fleetdeck MCP server exactly once. Then reply \
+             with exactly the text that it returned.",
         ))
         .await
         .unwrap();
@@ -462,9 +437,10 @@ async fn claude_and_codex_authenticate_to_a_loopback_mcp_endpoint_with_the_env_h
         methods.contains(&"initialize"),
         "{methods:?}; events: {events:#?}"
     );
-    assert!(
-        methods.contains(&"tools/call"),
-        "the tool ran: {methods:?}; events: {events:#?}"
+    assert_eq!(
+        methods.iter().filter(|m| **m == "tools/call").count(),
+        1,
+        "the tool ran exactly once: {methods:?}; events: {events:#?}"
     );
     assert!(
         seen.requests
@@ -483,21 +459,72 @@ async fn claude_and_codex_authenticate_to_a_loopback_mcp_endpoint_with_the_env_h
         answer.contains(mcp_probe::ANSWER),
         "the agent saw the tool: {answer}"
     );
-    let home = PathBuf::from(std::env::var("HOME").unwrap());
-    for place in [
-        tmp.path().to_path_buf(),
-        home.join(".claude.json"),
-        home.join(".claude").join("settings.json"),
-        home.join(".claude").join("settings.local.json"),
-    ] {
+    for place in std::iter::once(tmp.path().to_path_buf()).chain(files.iter().cloned()) {
         assert!(
             !in_files(&place, &token),
             "the credential is in {}",
             place.display()
         );
     }
-    eprintln!(
-        "claude handoff: verified for {:?}; codex handoff: unverified (no coordinated start, DL-219)",
-        probe.version
+    eprintln!("{kind:?} handoff: verified for {:?}", probe.version);
+}
+
+/// ADR-006 §8.5 test 31 (DL-067 gate, DL-219, DL-220), provider half: one
+/// [`handoff_round`] per provider. The station half (pending binding, the
+/// native binding, one call through the station ingress) is
+/// `manager::coordinator_live_tests` of `fleetdeck-station`.
+#[tokio::test]
+#[ignore = "live: needs FD_LIVE_SMOKE=1, a signed-in `claude` and `codex`, and network"]
+async fn claude_and_codex_authenticate_to_a_loopback_mcp_endpoint_with_the_env_handoff() {
+    use fleetdeck_proto::event::ProviderKind;
+    if !opted_in("claude_and_codex_authenticate_to_a_loopback_mcp_endpoint_with_the_env_handoff") {
+        return;
+    }
+    let home = PathBuf::from(std::env::var("HOME").unwrap());
+    let mut config = claude::ClaudeAdapterConfig::new(
+        "claude".into(),
+        program("FD_CLAUDE_BIN", "claude"),
+        ChildEnv::from_process(),
     );
+    // `--safe-mode` also drops `--mcp-config` servers, and the sign-in
+    // needs the user settings: this test loads the user settings, no MCP
+    // server but the probe, and no skill. The handoff arguments allow the
+    // probe's tools (DL-220).
+    config.extra_args = vec![
+        "--disable-slash-commands".to_owned(),
+        "--strict-mcp-config".to_owned(),
+    ];
+    let adapter = claude::ClaudeAdapter::new(config, Arc::new(DirectChildHost::new()));
+    let files = [
+        home.join(".claude.json"),
+        home.join(".claude").join("settings.json"),
+        home.join(".claude").join("settings.local.json"),
+    ];
+    handoff_round(
+        &adapter,
+        ProviderKind::Claude,
+        "claude",
+        claude::SAFEST_MODE,
+        &files,
+    )
+    .await;
+
+    let mut config = codex::CodexAdapterConfig::new(
+        "codex".into(),
+        program("FD_CODEX_BIN", "codex"),
+        ChildEnv::from_process(),
+    );
+    config.effort = Some("low".to_owned());
+    let adapter = codex::CodexAdapter::new(config, Arc::new(DirectChildHost::new()));
+    // `never` asks no approval; the sandbox stays read-only in the
+    // temporary directory.
+    let files = [home.join(".codex").join("config.toml")];
+    handoff_round(
+        &adapter,
+        ProviderKind::Codex,
+        "codex",
+        "never/read-only",
+        &files,
+    )
+    .await;
 }

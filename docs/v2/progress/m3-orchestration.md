@@ -264,6 +264,14 @@ Items, in order: 6-1 Workspaces, 6-3 Assign auto, 6-4 Tasks, 6-2 Mail,
 - Tests: `cargo nextest run -p fleetdeck-deck -E 'test(a_snapshot_recovery_with_an_unapplied)'` → 1 passed; `cargo nextest run -p fleetdeck-station -p fleetdeck-deck -p fleetdeck-link -p fleetdeck-proto -E 'binary(link_service) | binary(snapshot_bounds) | binary(control_link) | test(snapshot) | test(frame)'` → passed after the `link_service` expectation update (a `coordinator.v1` link sends `Some([])`); `cargo nextest run -p fleetdeck-providers -p fleetdeck-station -p fleetdeck-cli -E '…coordinator…'` → 18 passed; `test(the_handoff_check_needs)` → 1 passed; `FD_LIVE_SMOKE=1 cargo test -p fleetdeck-providers --test live_smoke -- --ignored --nocapture claude_and_codex` → 1 passed (34 s).
 - 6-5 checked. Lane B items all checked: LANE COMPLETE.
 
+### Round 12 (2026-10-12, from 17:14 CEST)
+
+- Committed round 11 as `82458f7`; merged `v2` (`4faee98`: lane A docs only; no proto change).
+- Review of round 11 (not a pass): asked for test 31 for both providers through the station binding and the station 25e fence. Its three findings are in the follow-up table.
+- 6-5 (DL-220): Codex `start_coordinated`; live test 31 through the real station path for Claude and Codex (`crates/fleetdeck-station/src/manager/coordinator_live_tests.rs`); the provider half runs both providers and asserts exactly one tool call; ingress accepts MCP `2025-11-25`; handoff arguments approve the `fleetdeck` tools; `VERIFIED` adds Codex 0.160.0; station lifecycle fence (`LinkForward::fenced`, `acknowledged`, `Store::coordinator_lifecycle_seq`).
+- Tests: `FD_LIVE_SMOKE=1 cargo test -p fleetdeck-station --lib -- --ignored --nocapture --test-threads 1 coordinator_live_tests` → 2 passed (Claude 2.1.296, Codex 0.160.0; 46 s); `FD_LIVE_SMOKE=1 cargo test -p fleetdeck-providers --test live_smoke -- --ignored --nocapture claude_and_codex` → 1 passed (both providers, 49 s); `cargo nextest run -p fleetdeck-station -E 'test(coordinator) | test(outbox) | binary(link_service)'` → 41 passed before the gate-test update; then `cargo nextest run -p fleetdeck-station -p fleetdeck-providers -E 'test(handoff) | test(capability_stays) | test(provider_arguments) | test(reconnect_holds) | binary(codex_driver_sim) | test(pending_binding_discovers)'` → 13 passed.
+- 6-5 stays checked; lane B items all checked: LANE COMPLETE.
+
 ## Review follow-ups (after M3)
 
 Review of round 1 (items 6-1, 6-3, 6-4, 6-2), recorded in round 2:
@@ -300,7 +308,7 @@ Review of round 4 (item 6-5, renewal 25b), recorded in round 5:
 | 6-5 | The deck does not refuse a coordinator spec itself from the station capability; the station decision refuses it (`unsupported`, `handoff_unverified`) and the deck relays the stored receipt (DL-215). Add the deck-side capability check for an earlier board message. | `crates/fleetdeck-deck/src/http/` |
 | 6-5 | §8.2 test 10 covers the station store bytes (DL-216) but not the deck store, the deck audit log or the station and deck log output (tracing) for the credential. Add a scan of the deck database and of captured logs. | `crates/fleetdeck-station/src/manager/coordinator_start_tests.rs`, `crates/fleetdeck-deck/tests/` |
 | 6-5 | §8.2 test 12 asks the deck to refuse a coordinator spec `unsupported`; only the station decision refuses it (DL-215). Add the deck-side check and its test. | `crates/fleetdeck-deck/src/http/` |
-| 6-5 | The Codex adapter has no `start_coordinated`; a Codex coordinator start fails `handoff_unverified` even after a live smoke (DL-216). | `crates/fleetdeck-providers/src/codex/` |
+| 6-5 | The Codex adapter has no `start_coordinated`; a Codex coordinator start fails `handoff_unverified` even after a live smoke (DL-216). | `crates/fleetdeck-providers/src/codex/` Done in round 12 (DL-220). |
 | 6-5 | Nothing calls `Bindings::native_identity` or revokes a binding at process exit yet; a coordinator binding stays `pending` (ADR-006 §5.5, §5.6). Done in round 9 (DL-217). | `crates/fleetdeck-station/src/manager/target.rs` |
 | 6-5 | `target.rs` did not revoke the pending binding when `process_started` failed (round 8 review). Round 9 revokes it there (DL-217); no test injects that store failure. | `crates/fleetdeck-station/src/manager/target.rs` |
 | 6-5 | A grant of an owner start whose start command is rejected or fails stays `active` with an empty session until it expires; revoke it when the receipt is a rejection. | `crates/fleetdeck-deck/src/store/grants.rs` |
@@ -320,9 +328,17 @@ Review of round 4 (item 6-5, renewal 25b), recorded in round 5:
 | 6-5 | Review r10: revocation and send race: the fence check and `mark_sent` are not one step with the binding state. | `crates/fleetdeck-station/src/coordinator/outbox.rs` |
 | 6-5 | Review r10: a stored `forbidden` receipt of the deck is classified as nondefinitive (`failed`/`ambiguous`) instead of a definitive answer. | `crates/fleetdeck-station/src/store/coordinator_outbox.rs` |
 | 6-5 | Review r10: the outbox tests use a fake transport; they show neither the deck deduplication of a resend nor a lifecycle acknowledgment. | `crates/fleetdeck-station/src/coordinator/outbox_tests.rs` |
-| 6-5 | Codex has no `start_coordinated`; its live handoff half of test 31 does not run, so the Codex coordinator capability stays off. | `crates/fleetdeck-providers/src/codex/`, `crates/fleetdeck-providers/tests/live_smoke.rs` |
-| 6-5 | Test 31 runs the station half (pending discovery, then the native binding) offline only; a live run through the station ingress is open. | `crates/fleetdeck-providers/tests/live_smoke.rs` |
+| 6-5 | Codex has no `start_coordinated`; its live handoff half of test 31 does not run, so the Codex coordinator capability stays off. | `crates/fleetdeck-providers/src/codex/`, `crates/fleetdeck-providers/tests/live_smoke.rs` Done in round 12 (DL-220). |
+| 6-5 | Test 31 runs the station half (pending discovery, then the native binding) offline only; a live run through the station ingress is open. | `crates/fleetdeck-providers/tests/live_smoke.rs` Done in round 12 (DL-220). |
 | 6-5 | The board shows the "Coordinator" toggle for every provider; it does not hide it when the station reports `handoff_unverified`. | `web/src/spawn/SpawnForm.tsx` |
 | 6-5 | The station binding projection is read after the snapshot summaries, not at the exact watermark. | `crates/fleetdeck-station/src/link/stream.rs` |
-| 6-5 | The station does not hold coordinator traffic until the deck acknowledges a coordinator-capable snapshot or the `coordinator.ended` event (station side of the 25e/30a fence). | `crates/fleetdeck-station/src/coordinator/outbox.rs` |
+| 6-5 | The station does not hold coordinator traffic until the deck acknowledges a coordinator-capable snapshot or the `coordinator.ended` event (station side of the 25e/30a fence). | `crates/fleetdeck-station/src/coordinator/outbox.rs` Done in round 12 (DL-220). |
 | 6-5 | `docs/v2/operations.md` §7.2 (lane A) still says every coordinator start fails with `handoff_unverified`; Claude ≥ 2.1.296 now passes (DL-219). | `docs/v2/operations.md` |
+| 6-5 | Review r11: a snapshot projection may establish an initial generation other than 1 for a grant that awaits its first binding (the initial-binding admission is not restricted to generation 1 in `apply_projection`). | `crates/fleetdeck-deck/src/store/grants.rs` |
+| 6-5 | Review r11: the handoff check counts only probed versions; an instance whose probe failed or did not run yet does not block a start of its family (unknown-instance bypass). | `crates/fleetdeck-station/src/coordinator/bindings.rs`, `crates/fleetdeck-station/src/manager/mod.rs` |
+| 6-5 | Review r11: test 31 did not assert a single tool execution. Done in round 12 (both halves assert exactly one call). | `crates/fleetdeck-providers/tests/live_smoke.rs`, `crates/fleetdeck-station/src/manager/coordinator_live_tests.rs` |
+| 6-5 | The lifecycle fence reads `MAX(station_seq)` of the lifecycle events for each call, query and flushed row; no index on `events.kind`. | `crates/fleetdeck-station/src/store/coordinator_outbox.rs` |
+| 6-5 | A fenced query answers `deck_syncing` at once; it does not wait for the acknowledgment. | `crates/fleetdeck-station/src/coordinator/forward.rs` |
+| 6-5 | ADR-006 §5.1 still lists two MCP protocol versions; the code accepts `2025-11-25` too (DL-220, owner review). | `docs/v2/adr/ADR-006-coordinator-mcp.md` |
+| 6-5 | The live station test uses a recording forward, not a deck; no live run covers the deck half of a call. | `crates/fleetdeck-station/src/manager/coordinator_live_tests.rs` |
+| 6-5 | `docs/v2/operations.md` and `docs/v2/internals.md` (lane A) do not name the Codex handoff, the approved `fleetdeck` tools or the station lifecycle fence (DL-220). | `docs/v2/operations.md`, `docs/v2/internals.md` |
