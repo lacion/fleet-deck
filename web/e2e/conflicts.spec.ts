@@ -23,7 +23,9 @@ test('two sessions on two stations that change one file show as a conflict', asy
   await logIn(page);
   await openFleet(page);
   const radar = page.getByRole('region', { name: 'Conflict radar' });
-  await expect(radar).toContainText('No file was changed by two sessions');
+  // without a conflict the radar takes no room
+  await expect(page.getByRole('region', { name: 'Fleet panel' })).toBeVisible();
+  await expect(radar).toHaveCount(0);
 
   const now = Date.now();
   answer = [
@@ -55,11 +57,33 @@ test('two sessions on two stations that change one file show as a conflict', asy
   ];
   deck.publish();
   const item = radar.getByRole('listitem', { name: 'Conflict src/lib.rs' });
-  await expect(item).toContainText('in github.com/o/app');
-  await expect(item).toContainText('on Beta, 1 min ago');
-  await expect(item).toContainText('on Alpha, 3 min ago');
+  await expect(item).toContainText('CONFLICT');
+  await expect(item).toContainText('src/lib.rs');
+  await expect(item).toContainText('github.com/o/app');
+  await expect(item).toContainText('Beta fix × Alpha fix');
+  // the strip shows the age of the newest touch
+  await expect(item).toContainText('1 min ago');
   expect(await fitsWidth(page)).toBe(true);
 
   await item.getByRole('button', { name: 'Beta fix' }).click();
   await expect(page.getByRole('form', { name: 'Composer' })).toBeVisible();
+});
+
+test('a radar that cannot load says so in one line', async ({ page }) => {
+  const deck = new FakeDeck();
+  deck.stations = [stationView('st-alpha', 'Alpha')];
+  deck.sessions = [session('st-alpha', 's1', 'Alpha fix', 1_760_000_000_000)];
+  deck.on('/api/conflicts', () => ({
+    status: 500,
+    body: { code: 'internal', message: 'The conflict index is down.' },
+  }));
+  await deck.install(page);
+  await logIn(page);
+  await openFleet(page);
+  const radar = page.getByRole('region', { name: 'Conflict radar' });
+  await expect(radar).toContainText('Conflict radar unavailable');
+  await expect(radar.getByText('Conflict radar unavailable')).toHaveAttribute(
+    'title',
+    'The conflict index is down.',
+  );
 });

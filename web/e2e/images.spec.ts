@@ -116,8 +116,10 @@ test('a new needs-you request shows a browser notification once', async ({ page 
   await setUp(page, deck);
   await openFleet(page);
   const rail = page.getByRole('region', { name: 'Needs you rail' });
-  await rail.getByRole('button', { name: 'Notify me' }).click();
-  await expect(rail.getByRole('button', { name: 'Notifications on' })).toBeVisible();
+  const bell = rail.getByRole('button', { name: 'Notifications' });
+  await expect(bell).toHaveAttribute('aria-pressed', 'false');
+  await bell.click();
+  await expect(bell).toHaveAttribute('aria-pressed', 'true');
 
   deck.sessions = [
     session({ open_requests: [request('r1', 'Bash: ls'), request('r2', 'Bash: rm build')] }),

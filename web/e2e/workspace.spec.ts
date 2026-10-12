@@ -74,7 +74,12 @@ test('a session is renamed from the board, also after it ended', async ({ page }
   await setUp(page, deck);
   await openSession(page, 'Review the repo');
   const view = page.getByRole('region', { name: 'Session' });
-  await view.getByRole('button', { name: 'Rename' }).click();
+  const rename = async () => {
+    // the phone header has no pencil: Rename is an item of the session menu
+    await view.locator('summary[aria-label="Session menu"]').click();
+    await view.getByRole('button', { name: 'Rename' }).click();
+  };
+  await rename();
   const form = view.getByRole('form', { name: 'Rename the session' });
   await form.getByLabel('Title').fill('x'.repeat(81));
   await expect(form.getByRole('alert')).toContainText('longer than 80 characters');
@@ -82,7 +87,7 @@ test('a session is renamed from the board, also after it ended', async ({ page }
   await form.getByLabel('Title').fill('bad');
   await form.getByRole('button', { name: 'Save' }).click();
   await expect(view.getByRole('alert')).toContainText('Refused: the title has a control character');
-  await view.getByRole('button', { name: 'Rename' }).click();
+  await rename();
   await form.getByLabel('Title').fill('  Docs pass  ');
   await form.getByRole('button', { name: 'Save' }).click();
   await expect(view.getByRole('heading', { level: 2 })).toHaveText('Docs pass');
@@ -94,7 +99,7 @@ test('a session is renamed from the board, also after it ended', async ({ page }
     command: { op: 'rename', session_id: 's1', title: 'Docs pass' },
   });
   // An empty title clears it: the card falls back to the session id.
-  await view.getByRole('button', { name: 'Rename' }).click();
+  await rename();
   await form.getByLabel('Title').fill('');
   await form.getByRole('button', { name: 'Clear the title' }).click();
   await expect(view.getByRole('heading', { level: 2 })).toHaveText('s1');
@@ -115,7 +120,8 @@ test('the event feed shows fleet changes newest first, filters them and opens a 
   ];
   deck.publish();
   await expect(feed.locator('li')).toHaveCount(1);
-  await expect(feed.locator('li').first()).toContainText('Write the docs joined in');
+  await expect(feed.locator('li').first()).toContainText('Write the docs');
+  await expect(feed.locator('li').first()).toContainText('joined in');
   deck.sessions = [
     session('s1', 3, {
       current_turn: null,
@@ -137,13 +143,15 @@ test('the event feed shows fleet changes newest first, filters them and opens a 
   ];
   deck.publish();
   await expect(feed.locator('li')).toHaveCount(5);
-  await expect(feed.locator('li').first()).toContainText('Docs ended');
+  await expect(feed.locator('li').first()).toContainText('Docs');
+  await expect(feed.locator('li').first()).toContainText('ended');
   await expect(feed.locator('li').last()).toContainText('joined in');
   expect(await fitsWidth(page)).toBe(true);
   await feed.getByRole('button', { name: 'Asks' }).click();
   await expect(feed.getByRole('button', { name: 'Asks' })).toHaveAttribute('aria-pressed', 'true');
   await expect(feed.locator('li')).toHaveCount(1);
-  await expect(feed.locator('li')).toContainText('Review the repo asks: Bash');
+  await expect(feed.locator('li')).toContainText('Review the repo');
+  await expect(feed.locator('li')).toContainText('asks: Bash');
   await feed.getByRole('button', { name: 'Ends' }).click();
   await feed.getByRole('button', { name: 'Docs' }).click();
   await expect(page.getByRole('region', { name: 'Session' })).toContainText('Docs');

@@ -4,7 +4,7 @@
 import { expect, test } from '@playwright/test';
 import type { DeckSession } from '../src/gen';
 import { summary } from '../src/testing/summary';
-import { FakeDeck, fitsWidth, logIn, openFleet, stationView } from './fake-deck';
+import { FakeDeck, fitsWidth, logIn, openFleet, openPanel, stationView } from './fake-deck';
 
 const ST = 'st-alpha';
 
@@ -38,12 +38,14 @@ test('the fleet shows usage totals and live rate-limit meters', async ({ page })
   await deck.install(page);
   await logIn(page);
   await openFleet(page);
+  await openPanel(page, 'Usage');
   const usage = page.getByRole('region', { name: 'Usage' });
   await expect(usage).toContainText('1,000 (1 session unknown)');
   await expect(usage.getByRole('definition').nth(1)).toHaveText('unknown');
   await expect(usage).toContainText('Alpha · personal · five_hour');
   await expect(usage).toContainText('30% used');
-  await expect(usage).toContainText('Alpha · personal · weekly use unknown');
+  await expect(usage).toContainText('Alpha · personal · weekly');
+  await expect(usage).toContainText('use unknown');
   await expect(usage.getByRole('meter')).toHaveCount(1);
   expect(await fitsWidth(page)).toBe(true);
 

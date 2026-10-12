@@ -40,11 +40,31 @@ async function setUp(page: Page, deck: FakeDeck) {
 
 const header = (page: Page) => page.getByLabel('Session header');
 
+const onPhone = () => test.info().project.name === 'phone';
+const sessionMenu = (page: Page) => header(page).locator('summary[aria-label="Session menu"]');
+
+/** The phone keeps the terminal actions in the session menu; the desktop has them in the header. */
+async function openPhoneMenu(page: Page) {
+  if (onPhone()) await sessionMenu(page).click();
+}
+
 async function confirmOpen(page: Page, text: string) {
-  await header(page).getByRole('button', { name: 'Open in terminal' }).click();
+  if (onPhone()) {
+    await sessionMenu(page).click();
+    await header(page).getByRole('button', { name: 'Open in terminal…' }).click();
+  } else {
+    await header(page).locator('summary[aria-label="Open in terminal"]').click();
+  }
   const confirm = header(page).getByRole('group', { name: 'Open in terminal' });
   await expect(confirm).toContainText(text);
   await confirm.getByRole('button', { name: 'Open in terminal' }).click();
+}
+
+/** No way to open a terminal: no header menu on the desktop, no menu item on the phone. */
+async function expectNoOpenInTerminal(page: Page) {
+  await expect(header(page).locator('summary[aria-label="Open in terminal"]')).toHaveCount(0);
+  await sessionMenu(page).click();
+  await expect(header(page).getByRole('button', { name: 'Open in terminal…' })).toHaveCount(0);
 }
 
 const WARNING =
@@ -81,18 +101,20 @@ test('a held session shows In terminal, keeps the composer off and offers no Res
   await setUp(page, deck);
   await confirmOpen(page, WARNING);
   await expect.poll(() => shells.posts.length).toBe(1);
-  if (test.info().project.name === 'phone') {
+  if (onPhone()) {
     // The phone shows the terminal on its own page; the session is one step back.
     await page.getByRole('button', { name: 'Back' }).click();
   }
   const shellId = shells.posts[0]?.change.shell_id ?? SHELL;
   deck.setSession(session({ terminal: { ...HOLD, shell_id: shellId } }));
+  await openPhoneMenu(page);
   await expect(header(page).getByText('In terminal', { exact: true })).toBeVisible();
   await expect(page.getByRole('form', { name: 'Composer' })).toContainText(
     'A terminal holds this session. Return it to board control to send prompts.',
   );
   await expect(header(page).getByRole('button', { name: 'Resume', exact: true })).toHaveCount(0);
-  await expect(header(page).getByRole('button', { name: 'Open in terminal' })).toHaveCount(0);
+  await expect(header(page).locator('summary[aria-label="Open in terminal"]')).toHaveCount(0);
+  await expect(header(page).getByRole('button', { name: 'Open in terminal…' })).toHaveCount(0);
 });
 
 test('Return to board control closes the shell, then resumes once the hold is gone', async ({
@@ -120,8 +142,15 @@ test('Return to board control closes the shell, then resumes once the hold is go
   ];
   const resumes: unknown[] = [];
   deck.accept('session.resume', ST, (command) => resumes.push(command));
+  const release = deck.hold('/api/commands/session.resume');
   await setUp(page, deck);
+  await openPhoneMenu(page);
   await header(page).getByRole('button', { name: 'Return to board control' }).click();
+  // while the flow runs, the header says what happens
+  await expect(
+    page.getByRole('status').filter({ hasText: 'Ending the terminal, then resuming the session…' }),
+  ).toBeVisible();
+  release();
   await expect.poll(() => resumes.length).toBe(1);
   expect(resumes).toEqual([{ op: 'resume', session_id: ID }]);
   expect(shells.posts).toHaveLength(1);
@@ -140,8 +169,16 @@ test('a running session is stopped gracefully before the handover', async ({ pag
     stops.push(command);
     queueMicrotask(() => deck.setSession(session({ state: 'exited', current_run: null })));
   });
+  const release = deck.hold('/api/commands/session.stop');
   await setUp(page, deck);
   await confirmOpen(page, `${WARNING} The session stops first.`);
+  // while the session stops, the header says what happens
+  await expect(
+    page
+      .getByRole('status')
+      .filter({ hasText: 'Stopping the session, then starting its terminal…' }),
+  ).toBeVisible();
+  release();
   await expect.poll(() => shells.posts.length).toBe(1);
   expect(stops).toEqual([{ op: 'stop', session_id: ID, how: 'graceful' }]);
   expect(shells.posts[0]?.change).toMatchObject({ op: 'handover', session_id: ID });
@@ -157,5 +194,5 @@ test('a login without the admin scope has no Open in terminal', async ({ page })
   deck.sessions = [session()];
   await setUp(page, deck);
   await expect(header(page).getByRole('button', { name: 'Resume', exact: true })).toBeVisible();
-  await expect(header(page).getByRole('button', { name: 'Open in terminal' })).toHaveCount(0);
+  await expectNoOpenInTerminal(page);
 });

@@ -118,15 +118,17 @@ test('the subagent tree shows each child timeline and status, and the card count
   await setUp(page, deck);
   await openFleet(page);
   const card = page.locator(`[data-session="${ID}"]`);
-  await expect(card).toContainText('Subagents running: 4');
+  await expect(card.locator('[data-running-subagents="4"]')).toBeVisible();
+  await expect(card.locator('[title="Subagents running"]')).toHaveText('4');
   expect(await fitsWidth(page)).toBe(true);
 
-  await page.getByRole('button', { name: 'Open session Review the repo' }).click();
+  // the whole card is the link to the session
+  await card.click();
   const view = page.getByRole('region', { name: 'Session' });
   const explore = view.locator('[data-subagent="node-1"]');
   const docs = explore.locator('[data-subagent="node-4"]');
   const tests = view.locator('[data-subagent="node-2"]');
-  const chip = (card: Locator) => card.locator('> .fd-chat-card-head .fd-chat-chip');
+  const chip = (card: Locator) => card.locator('> .fd-chat-card-head .fd-badge');
   const task = (card: Locator) => card.locator('> .fd-chat-subagent-task');
   await expect(view.locator('.fd-chat-subagent[data-status="running"]')).toHaveCount(3);
   await expect(task(explore)).toHaveText('Explore the code');
@@ -135,7 +137,7 @@ test('the subagent tree shows each child timeline and status, and the card count
   await expect(task(docs)).toHaveText('Read the docs');
   await expect(chip(docs)).toHaveText('running');
   await expect(docs).toContainText('Bash');
-  await expect(docs).toContainText('Waiting for your answer.');
+  await expect(docs).toContainText('Waiting for your answer · Bash');
   // The child cards stay inside their parent: two cards at the top, one nested.
   await expect(
     view.locator('.fd-chat-subagent:not(.fd-chat-nested .fd-chat-subagent)'),
@@ -156,27 +158,38 @@ test('the subagent tree shows each child timeline and status, and the card count
   await expect(view).toContainText('All subagents reported.');
 });
 
-test('an approval is answered from the needs-you rail', async ({ page }) => {
+test('an approval is answered from the needs-you rail with one command', async ({ page }) => {
   const deck = new FakeDeck();
   deck.sessions = [session({ open_requests: [request], activity: 'needs_you' }, 'needs_you')];
-  deck.on('/api/commands/approval.answer', (body) => {
-    deck.sessions = [session()];
-    queueMicrotask(() => deck.publish());
-    return { status: 200, body: receipt(idOf(body), 'done') };
-  });
+  deck.on('/api/commands/approval.answer', (body) => ({
+    status: 200,
+    body: receipt(idOf(body), 'done'),
+  }));
+  const release = deck.hold('/api/commands/approval.answer');
   await setUp(page, deck);
   await openFleet(page);
   const rail = page.getByRole('region', { name: 'Needs you rail' });
-  await expect(rail).toContainText('Review the repo · Alpha: Bash');
-  await rail.getByRole('button', { name: 'Answer Bash in Review the repo' }).click();
-  const needs = page.getByRole('region', { name: 'Needs you' });
-  await expect(needs).toContainText('ls docs');
-  await needs.getByRole('button', { name: 'Allow' }).click();
-  await expect(page.getByRole('status').filter({ hasText: 'Done.' })).toBeVisible();
-  await expect(page.getByRole('region', { name: 'Needs you' })).toHaveCount(0);
-  const call = deck.calls.find((c) => c.path === '/api/commands/approval.answer');
-  expect(call?.csrf).toBe(CSRF);
-  expect(call?.body).toEqual({
+  await expect(rail).toContainText('Review the repo');
+  await expect(rail).toContainText('Alpha');
+  await expect(rail).toContainText('Bash');
+  await expect(rail).toContainText('ls docs');
+  const allow = rail.getByRole('button', { name: 'Allow: Bash in Review the repo' });
+  const deny = rail.getByRole('button', { name: 'Deny: Bash in Review the repo' });
+  await allow.click();
+  // the buttons stay disabled while the command is pending
+  await expect(allow).toBeDisabled();
+  await expect(deny).toBeDisabled();
+  release();
+  deck.sessions = [session()];
+  deck.publish();
+  // the request is answered: on a phone the strip has nothing left to show
+  await expect(rail).toHaveCount(0);
+  // the rail answers in place: the page does not change
+  await expect(page).toHaveURL(/#\/fleet$/);
+  const calls = deck.calls.filter((c) => c.path === '/api/commands/approval.answer');
+  expect(calls).toHaveLength(1);
+  expect(calls[0]?.csrf).toBe(CSRF);
+  expect(calls[0]?.body).toEqual({
     station: ST,
     command_id: expect.stringMatching(/^b[0-9a-z]{24}$/),
     command: {
@@ -186,11 +199,54 @@ test('an approval is answered from the needs-you rail', async ({ page }) => {
       decision: { option_id: 'allow', updated_input: null, text: null },
     },
   });
+});
+
+test('a refused answer from the rail shows its text and the buttons work again', async ({
+  page,
+}) => {
+  const deck = new FakeDeck();
+  deck.sessions = [session({ open_requests: [request], activity: 'needs_you' }, 'needs_you')];
+  deck.on('/api/commands/approval.answer', (body) => ({
+    status: 200,
+    body: receipt(idOf(body), 'done', 'The request is not open any more.'),
+  }));
+  await setUp(page, deck);
+  await openFleet(page);
+  const rail = page.getByRole('region', { name: 'Needs you rail' });
+  await rail.getByRole('button', { name: 'Deny: Bash in Review the repo' }).click();
+  await expect(rail.getByRole('alert')).toHaveText('Refused: The request is not open any more.');
+  await expect(rail.getByRole('button', { name: 'Deny: Bash in Review the repo' })).toBeEnabled();
+  await expect(rail.getByRole('button', { name: 'Allow: Bash in Review the repo' })).toBeEnabled();
+  const calls = deck.calls.filter((c) => c.path === '/api/commands/approval.answer');
+  expect(calls).toHaveLength(1);
+  expect(calls[0]?.body).toMatchObject({
+    command: { decision: { option_id: 'deny', updated_input: null, text: null } },
+  });
+});
+
+test('an approval is answered from the dock of its session', async ({ page }) => {
+  const deck = new FakeDeck();
+  deck.sessions = [session({ open_requests: [request], activity: 'needs_you' }, 'needs_you')];
+  deck.on('/api/commands/approval.answer', (body) => {
+    deck.sessions = [session()];
+    queueMicrotask(() => deck.publish());
+    return { status: 200, body: receipt(idOf(body), 'done') };
+  });
+  await setUp(page, deck);
+  await openSession(page, 'Review the repo');
+  const needs = page.getByRole('region', { name: 'Needs you' });
+  await expect(needs).toContainText('ls docs');
+  await needs.getByRole('button', { name: 'Allow' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Done.' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Needs you' })).toHaveCount(0);
+  const call = deck.calls.find((c) => c.path === '/api/commands/approval.answer');
+  expect(call?.csrf).toBe(CSRF);
+  expect(call?.body).toMatchObject({
+    command: { decision: { option_id: 'allow', updated_input: null, text: null } },
+  });
   await page.getByRole('button', { name: 'Back' }).click();
   await openFleet(page);
-  await expect(page.getByRole('region', { name: 'Needs you rail' })).toContainText(
-    'Nothing waits for you.',
-  );
+  await expect(page.getByRole('region', { name: 'Needs you rail' })).toHaveCount(0);
 });
 
 test('steer, follow-up, interrupt and the mode ladder send one command each', async ({ page }) => {
@@ -221,7 +277,7 @@ test('steer, follow-up, interrupt and the mode ladder send one command each', as
   await expect(page.getByRole('alert').locator('span')).toHaveText('Refused: No run is active.');
   await page.getByRole('button', { name: 'Interrupt' }).click();
   await expect(page.getByRole('alert')).toContainText('Delivery is unknown');
-  await page.getByLabel('Session settings').click();
+  await page.locator('summary[aria-label="Session menu"]').click();
   const ladder = page.getByRole('group', { name: 'Mode (most restrictive first)' });
   await expect(ladder.getByRole('button')).toHaveText([
     'default',
@@ -276,10 +332,11 @@ test('a read-only login sees the session but cannot drive or answer', async ({ p
   await expect(composer.getByLabel('Message')).toBeDisabled();
   await expect(composer.getByRole('button', { name: 'Send' })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Interrupt' })).toHaveCount(0);
-  // The Stop menu is a <details> summary, so it has no button role: check both.
-  await expect(page.getByRole('button', { name: 'Stop' })).toHaveCount(0);
-  await expect(page.locator('summary', { hasText: 'Stop' })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Open in terminal' })).toHaveCount(0);
+  // Stop is an item of the session menu: open the menu, then look for it.
+  await page.locator('summary[aria-label="Session menu"]').click();
+  await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Force stop…' })).toHaveCount(0);
+  await expect(page.locator('summary[aria-label="Open in terminal"]')).toHaveCount(0);
   await expect(
     page.getByRole('region', { name: 'Needs you' }).getByRole('button', { name: 'Allow' }),
   ).toBeDisabled();

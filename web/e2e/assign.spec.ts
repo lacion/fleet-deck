@@ -1,6 +1,6 @@
 // M3 6-3 (DL-204): `assign auto` from the fleet screen in a phone browser.
 import { expect, test } from '@playwright/test';
-import { FakeDeck, fitsWidth, logIn, openFleet, stationView } from './fake-deck';
+import { FakeDeck, fitsWidth, logIn, openFleet, openPanel, stationView } from './fake-deck';
 
 test('assign auto sends the task once and names the session', async ({ page }) => {
   const deck = new FakeDeck();
@@ -23,6 +23,7 @@ test('assign auto sends the task once and names the session', async ({ page }) =
   await deck.install(page);
   await logIn(page);
   await openFleet(page);
+  await openPanel(page, 'Assign');
   const form = page.getByRole('form', { name: 'Assign a task' });
   await form.getByLabel('Task').fill('fix the login');
   await form.getByLabel('Repository').fill('/home/me/projects/app');
@@ -47,6 +48,7 @@ test('an unrouted task offers a spawn on the best station', async ({ page }) => 
   await deck.install(page);
   await logIn(page);
   await openFleet(page);
+  await openPanel(page, 'Assign');
   const form = page.getByRole('form', { name: 'Assign a task' });
   await form.getByLabel('Task').fill('write the docs');
   await form.getByRole('button', { name: 'Assign auto' }).click();

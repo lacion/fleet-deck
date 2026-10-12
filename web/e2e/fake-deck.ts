@@ -43,6 +43,8 @@ export class FakeDeck {
   /** Timeline events by `station/session`; `station_seq` must grow. */
   private timelines = new Map<string, EventEnvelope[]>();
   private subscribed = new Map<WebSocketRoute, Set<string>>();
+  /** Requests to `path` wait for the release of their hold before the answer is sent. */
+  private holds = new Map<string, Promise<void>>();
 
   /** Answers `path` with `handler` (the default is 404). A POST needs the
    * CSRF token, like the real deck. */
@@ -50,10 +52,26 @@ export class FakeDeck {
     this.handlers.set(path, handler);
   }
 
+  /**
+   * Holds the answers to `path` (a POST or a GET) until the returned function is called, so that
+   * a test sees the state of the board while the request is pending. The handler still runs at once.
+   */
+  hold(path: string): () => void {
+    let release = () => {};
+    this.holds.set(
+      path,
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+    );
+    return release;
+  }
+
   async install(page: Page): Promise<void> {
     await page.route('**/api/**', async (route) => {
       const request = route.request();
       const reply = this.answer(request);
+      await this.holds.get(new URL(request.url()).pathname);
       await route.fulfill({
         status: reply.status,
         contentType: 'application/json',
@@ -257,6 +275,22 @@ export async function openFleet(page: Page): Promise<void> {
     .getByRole('link', { name: 'Fleet' })
     .click();
   await expect(page).toHaveURL(/#\/fleet$/);
+}
+
+/** A tab of the fleet home's bottom panel (DL-141): Activity, Mail & tasks, Assign or Usage. */
+export async function openPanel(
+  page: Page,
+  tab: 'Activity' | 'Mail & tasks' | 'Assign' | 'Usage',
+): Promise<void> {
+  await page
+    .getByRole('tablist', { name: 'Fleet panels' })
+    .getByRole('tab', { name: tab, exact: true })
+    .click();
+  await expect(
+    page
+      .getByRole('tablist', { name: 'Fleet panels' })
+      .getByRole('tab', { name: tab, exact: true }),
+  ).toHaveAttribute('aria-selected', 'true');
 }
 
 /** The phone's More page, then one of its links ("Plans" or "Stations"). */

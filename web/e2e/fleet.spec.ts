@@ -3,7 +3,7 @@
 import { expect, test } from '@playwright/test';
 import type { DeckSession, TaskView } from '../src/gen';
 import { summary } from '../src/testing/summary';
-import { FakeDeck, fitsWidth, logIn, openFleet, stationView } from './fake-deck';
+import { FakeDeck, fitsWidth, logIn, openFleet, openPanel, stationView } from './fake-deck';
 
 const ST = 'st-alpha';
 
@@ -50,6 +50,7 @@ test('a mail goes to the chosen session once, as a steer when asked', async ({ p
   await deck.install(page);
   await logIn(page);
   await openFleet(page);
+  await openPanel(page, 'Mail & tasks');
   const panel = page.getByRole('region', { name: 'Mail and tasks' });
   await expect(panel.getByLabel('Session')).toHaveValue(`${ST}/s1`);
   await panel.getByLabel('Text').fill('please rebase');
@@ -81,6 +82,7 @@ test('a task is created and its completion shows in the task list', async ({ pag
   await deck.install(page);
   await logIn(page);
   await openFleet(page);
+  await openPanel(page, 'Mail & tasks');
   const panel = page.getByRole('region', { name: 'Mail and tasks' });
   await panel.getByLabel('Text').fill('write the docs');
   await panel.getByRole('button', { name: 'Create task' }).click();
@@ -122,6 +124,7 @@ test('the owner revokes a coordinator grant from the phone', async ({ page }) =>
   await deck.install(page);
   await logIn(page);
   await openFleet(page);
+  await openPanel(page, 'Mail & tasks');
   const grants = page.getByRole('list', { name: 'Coordinator grants' });
   await expect(grants).toContainText('read, mail: active');
   await grants.getByRole('button', { name: 'Revoke' }).click();

@@ -111,7 +111,8 @@ test('a session starts from the form with a picked directory and opens', async (
   await form.getByLabel('First prompt (optional)').fill('Find the bug in login.ts');
   expect(await fitsWidth(page)).toBe(true);
   await form.getByRole('button', { name: 'Start session' }).click();
-  await expect(page.getByRole('status').filter({ hasText: 'Done.' })).toBeVisible();
+  // one successful start opens the new session at once
+  await expect(page).toHaveURL(/#\/s\/st-alpha\/s-new$/);
 
   const starts = deck.calls.filter((c) => c.path === '/api/commands/session.start');
   expect(starts).toHaveLength(1);
@@ -130,7 +131,6 @@ test('a session starts from the form with a picked directory and opens', async (
       prompt: { text: 'Find the bug in login.ts' },
     },
   });
-  await page.getByRole('button', { name: 'Open the new session' }).click();
   await expect(page.getByRole('heading', { name: 'Fix the login' })).toBeVisible();
 });
 
@@ -166,7 +166,7 @@ test('the mode list follows the capabilities of the chosen provider (P5-3)', asy
   await mode.selectOption('untrusted/read-only');
   expect(await fitsWidth(page)).toBe(true);
   await form.getByRole('button', { name: 'Start session' }).click();
-  await expect(page.getByRole('status').filter({ hasText: 'Done.' })).toBeVisible();
+  await expect(page).toHaveURL(/#\/s\/st-alpha\/s-cx$/);
   const starts = deck.calls.filter((c) => c.path === '/api/commands/session.start');
   expect(starts).toHaveLength(1);
   expect(starts[0]?.body).toMatchObject({
@@ -248,6 +248,9 @@ test('a batch starts one worktree session per line with Nx (M3 6-1)', async ({ p
   await expect(
     page.getByRole('status').filter({ hasText: '3 of 3 sessions started.' }),
   ).toBeVisible();
+  // a batch stays on the form: it offers to open the last session
+  await expect(page).toHaveURL(/#\/new$/);
+  await expect(form.getByRole('button', { name: 'Open the new session' })).toBeVisible();
   const starts = deck.calls.filter((c) => c.path === '/api/commands/session.start');
   expect(
     starts.map((c) => (c.body as { command: { prompt: { text: string } } }).command.prompt.text),
@@ -278,7 +281,7 @@ test('a clone start sends the URL and the new directory (M3 6-1)', async ({ page
   await form.getByLabel('Clone URL').fill('https://github.com/acme/app.git');
   await form.getByLabel('New directory name').fill('app-copy');
   await form.getByRole('button', { name: 'Start session' }).click();
-  await expect(page.getByRole('status').filter({ hasText: 'Done.' })).toBeVisible();
+  await expect(page).toHaveURL(/#\/s\/st-alpha\/s-c$/);
   const starts = deck.calls.filter((c) => c.path === '/api/commands/session.start');
   expect(starts[0]?.body).toMatchObject({
     command: {
@@ -313,7 +316,7 @@ test('a terminal CLI session is imported by its id as a driven session (6-12)', 
   await form.getByLabel('First prompt (optional)').fill('Go on');
   expect(await fitsWidth(page)).toBe(true);
   await form.getByRole('button', { name: 'Import session' }).click();
-  await expect(page.getByRole('status').filter({ hasText: 'Done.' })).toBeVisible();
+  await expect(page).toHaveURL(/#\/s\/st-alpha\/s-imp$/);
   const imports = deck.calls.filter((c) => c.path === '/api/commands/session.import');
   expect(imports).toHaveLength(1);
   expect(imports[0]?.csrf).toBe(CSRF);

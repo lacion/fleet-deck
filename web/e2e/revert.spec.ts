@@ -103,17 +103,24 @@ test('the files of a session are browsed, read and searched; a symlink is not op
   const view = await setUp(page, deck);
   await view.getByRole('tab', { name: 'Files' }).click();
   const files = view.getByRole('region', { name: 'Files' });
-  await files.getByRole('button', { name: 'Browse' }).click();
+  // the root listing loads at once: there is no Browse button
+  await expect(files.getByRole('button', { name: 'Browse' })).toHaveCount(0);
   await expect(files.locator('[data-entry-kind="symlink"]')).toContainText(
     'link (symlink, not opened)',
   );
   await expect(files.locator('[data-entry-kind="symlink"] button')).toHaveCount(0);
   await files.getByRole('button', { name: 'docs/' }).click();
-  await files.getByRole('button', { name: 'guide.md' }).click();
+  const crumbs = files.getByRole('navigation', { name: 'Folder path' });
+  await expect(crumbs.getByRole('button', { name: 'docs' })).toBeVisible();
+  await crumbs.getByRole('button', { name: 'root' }).click();
+  await expect(files.getByRole('button', { name: /^a\.txt/ })).toBeVisible();
+  await files.getByRole('button', { name: 'docs/' }).click();
+  // a file row names its size
+  await files.getByRole('button', { name: /^guide\.md\s*6 B$/ }).click();
   await expect(files.locator('.fd-file-text')).toHaveText('# Guide');
   await files.getByRole('button', { name: 'Back to the folder' }).click();
   await files.getByRole('button', { name: '..' }).click();
-  await files.getByRole('button', { name: 'a.txt' }).click();
+  await files.getByRole('button', { name: /^a\.txt\s*4 B$/ }).click();
   await expect(files.getByRole('alert')).toHaveText('no such file');
   await files.getByLabel('Search', { exact: true }).fill('Guide');
   await files.getByLabel('Search in').selectOption('content');
