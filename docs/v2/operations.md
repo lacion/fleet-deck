@@ -118,6 +118,8 @@ The station resumes the native session with the permission mode that you select 
 
 A coordinator session can read the fleet, send mail and drive the sessions that it starts (ADR-006). Item 6-5 is in progress: the station does not keep coordinator calls across a station restart yet, and no live smoke test covers a coordinator.
 
+**Current limit:** at this time, every coordinator start fails with `handoff_unverified`, for Claude and for Codex. The station gives the grant credential to a provider version only after the opt-in coordinator live smoke test (ADR-006 §8.5) recorded a passing handoff for it, and no such test has run yet (`crates/fleetdeck-providers/src/coordinator.rs`, test `the_capability_stays_off_until_the_live_smoke_passes`). The steps below apply when a provider version is verified.
+
 > **Caution:** A coordinator drives other sessions without a prompt from you. Revoke its grant when the work is done.
 
 1. On the board, open "New session" and choose a station, a provider instance and a directory.
@@ -174,7 +176,7 @@ Limits of this release (DL-127, follow-ups in `docs/v2/progress/m3-durable.md`):
 | Usage shows "unknown" | The provider did not report usage for that window. Fleet Deck never shows unknown usage as zero. |
 | The board refuses a WebSocket | Set `tailnet_hostname` when you open the board by its tailnet name. |
 | A link call fails with `feature_not_negotiated` | The deck and the station do not share the feature of that method (for example `coordinator.v1` for coordinator sessions). Upgrade the older side; an N−1 peer keeps the shared features. |
-| A coordinator session does not start | The start fails with its reason. `a coordinator session starts only as a new direct child`: start a new session with `host = "direct"`; a resume or a shim-hosted start cannot carry the grant credential. `the coordinator endpoint does not listen`: check the station coordinator MCP ingress. An unverified provider handoff also refuses the start (DL-215, DL-216). |
+| A coordinator session does not start | The start fails with its reason. `a coordinator session starts only as a new direct child`: start a new session with `host = "direct"`; a resume or a shim-hosted start cannot carry the grant credential. `the coordinator endpoint does not listen`: check the station coordinator MCP ingress. `handoff_unverified`: no provider version has a verified credential handoff yet, so every coordinator start fails with this reason at this time (§7.2; DL-215, DL-216). |
 
 ## 12. Owner steps that this repository cannot test
 

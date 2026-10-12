@@ -28,6 +28,14 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 85 (2026-10-12, 16:51–)
+
+- Round start: committed round 84 as 1bed9ce.
+- Sync: no new commits on m3/orchestration, m3/board or m3/ops.
+- Review finding of round 84 (operations §7.2 did not say that all providers refuse a coordinator start with `handoff_unverified`): checked against `crates/fleetdeck-providers/src/coordinator.rs` (`handoff` returns `Err(UNVERIFIED)` for Claude and Codex; test `the_capability_stays_off_until_the_live_smoke_passes`). The guide was wrong for the current build, so this round fixed it: §7.2 has a "Current limit" paragraph, and the §11 row names `handoff_unverified`. Follow-up row added as FIXED.
+- Lane B `m3-orchestration.md` still has no "LANE COMPLETE"; 6-13, 7-7 and 7-8 stay blocked.
+- Checks: `cargo nextest run -p fleetdeck-cli --test docs_commands` → passed; `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
+
 ## Round 84 (2026-10-12, 16:50–)
 
 - Round start: committed round 83 as 4c49703.
@@ -439,4 +447,5 @@ Limits of this map (review of round 71). Two rows above claim more than the test
 | 6-12 merge (review r50) | An import of a native session whose earlier session is `lost` with an unresolved shim can run that conversation twice (no unended-execution check for the native id). Round 82: documented as a caution in `docs/v2/operations.md` §7.1; the code check stays open. | `crates/fleetdeck-station/src/manager/decide.rs` |
 | 6-12 merge (review r50) | The board keeps the clone place and directory choices while an import id is set; the import ignores them without a visible note | `web/src/spawn/SpawnForm.tsx` |
 | 7-6 (review r50) | FIXED (commit 8798ac2): §7.1 says the import uses the mode of the spawn form. `docs/v2/operations.md` §7.1 says the import uses "the stored mode of the provider instance"; a provider instance has no stored permission mode (the import uses the mode of the spawn form) | `docs/v2/operations.md` |
+| 7-6 (review r84) | FIXED in round 85: `docs/v2/operations.md` §7.2 gave the coordinator start steps without saying that every provider refuses the start with `handoff_unverified` now (`crates/fleetdeck-providers/src/coordinator.rs::handoff`). §7.2 and the §11 row state the limit now. The steps stay valid for a verified provider version. | `docs/v2/operations.md` |
 | 7-8 prep (review r78) | The round-78 log said the 700-line probe lists two files; it lists 17, including the 798-line `host.rs`. Corrected in the round-78 entry. Add a test that runs `tools/module-size.sh` with a lower limit, so the probe count is evidence and not a hand count. Closed in round 80: `crates/fleetdeck-cli/tests/module_size.rs`. | `tools/module-size.sh`, `docs/v2/progress/m3-durable.md` |
