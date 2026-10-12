@@ -65,7 +65,7 @@ impl Shim {
             return;
         }
         let (tx, rx) = mpsc::channel(CONNECTION_QUEUE);
-        let closed = Arc::new(Notify::new());
+        let closed = Arc::new(watch::Sender::new(false));
         let attached = {
             let mut state = self.lock();
             if generation <= state.generation {
@@ -74,7 +74,7 @@ impl Shim {
                 state.generation = generation;
                 state.writes.takeover(generation);
                 if let Some(old) = state.conn.take() {
-                    old.closed.notify_one();
+                    old.closed.send_replace(true);
                 }
                 state.conn = Some(Conn {
                     generation,
@@ -98,10 +98,11 @@ impl Shim {
             return;
         }
         tokio::spawn(write_frames(w, rx, Arc::clone(&closed)));
+        let mut stop = closed.subscribe();
         loop {
             let frame = tokio::select! {
                 frame = read_frame::<_, ToShim>(&mut r) => frame,
-                () = closed.notified() => break,
+                _ = stop.wait_for(|c| *c) => break,
             };
             let Ok(Some((frame, payload))) = frame else {
                 break;
@@ -123,7 +124,7 @@ impl Shim {
             state.conn = None;
         }
         drop(state);
-        closed.notify_one();
+        closed.send_replace(true);
     }
 
     /// One frame of the current attachment. False closes the connection.
@@ -261,19 +262,31 @@ async fn refuse(w: &mut OwnedWriteHalf, reason: Refusal) {
     drop(w.shutdown().await);
 }
 
-async fn write_frames(mut w: OwnedWriteHalf, mut rx: mpsc::Receiver<Out>, closed: Arc<Notify>) {
+/// The writer of one attachment. A takeover ends it at once, also inside
+/// a frame that waits on a peer that does not read (the half-written frame
+/// goes with the closed socket).
+async fn write_frames(
+    mut w: OwnedWriteHalf,
+    mut rx: mpsc::Receiver<Out>,
+    closed: Arc<watch::Sender<bool>>,
+) {
+    let mut stop = closed.subscribe();
     loop {
         let next = tokio::select! {
             next = rx.recv() => next,
-            () = closed.notified() => None,
+            _ = stop.wait_for(|c| *c) => None,
         };
         let Some((frame, payload)) = next else {
             break;
         };
-        if write_frame(&mut w, &frame, &payload).await.is_err() {
+        let written = tokio::select! {
+            written = write_frame(&mut w, &frame, &payload) => written.is_ok(),
+            _ = stop.wait_for(|c| *c) => false,
+        };
+        if !written {
             break;
         }
     }
-    closed.notify_one();
+    closed.send_replace(true);
     drop(w.shutdown().await);
 }

@@ -50,6 +50,8 @@ const CONNECTION_QUEUE: usize = 256;
 const ATTACH_WAIT: Duration = Duration::from_secs(10);
 /// The time the shim waits for stdout EOF after the provider ended.
 const EOF_WAIT: Duration = Duration::from_secs(5);
+/// How often the exit path checks the stdout pump.
+const EOF_POLL: Duration = Duration::from_millis(100);
 /// The default `term_grace` of the stop after an overlong line.
 const OVERLONG_TERM_GRACE: Duration = Duration::from_secs(5);
 /// The error of a write that `close_stdin` ended.
@@ -185,8 +187,10 @@ struct Conn {
     tx: mpsc::Sender<Out>,
     /// The next stdout offset to stream; `None` until the first `replay`.
     sent: Option<u64>,
-    /// Ends the reader of a superseded attachment.
-    closed: Arc<Notify>,
+    /// `true` ends every task of a superseded attachment, also a socket
+    /// write or a queue send that waits on a peer that does not read
+    /// (ADR-005 §3 takeover; DL-121).
+    closed: Arc<watch::Sender<bool>>,
 }
 
 struct State {
@@ -201,6 +205,10 @@ struct State {
     /// end reports it.
     overlong: Option<(u64, u64)>,
     done: bool,
+    /// The stdout pump waits for an `ack` (the buffer is full).
+    stdout_waiting_ack: bool,
+    /// The last time the pump read bytes or got buffer space again.
+    stdout_progress: std::time::Instant,
 }
 
 struct Shim {
@@ -219,6 +227,9 @@ struct Shim {
     close_stdin: watch::Sender<bool>,
     /// The provider process ended.
     exited: watch::Sender<bool>,
+    /// The exit path tells the stdout pump to stop reading (only when
+    /// the pipe stayed empty for [`EOF_WAIT`], see [`Shim::wait_stdout_end`]).
+    stop_reading: watch::Sender<bool>,
     /// The shim ends (after `ack_exit` or the exit file).
     finished: Notify,
     _lock: LaunchLock,
@@ -248,12 +259,15 @@ impl Shim {
                 stderr_tail: VecDeque::new(),
                 overlong: None,
                 done: false,
+                stdout_waiting_ack: false,
+                stdout_progress: std::time::Instant::now(),
             }),
             streamed: Notify::new(),
             acked: Notify::new(),
             queued: Notify::new(),
             close_stdin: watch::Sender::new(false),
             exited: watch::Sender::new(false),
+            stop_reading: watch::Sender::new(false),
             finished: Notify::new(),
             _lock: lock,
         })
@@ -302,7 +316,7 @@ impl Shim {
     async fn on_exit(
         self: &Arc<Self>,
         status: std::io::Result<std::process::ExitStatus>,
-        mut eof: watch::Receiver<bool>,
+        eof: watch::Receiver<bool>,
     ) {
         use std::os::unix::process::ExitStatusExt as _;
         let termination = match &status {
@@ -315,7 +329,7 @@ impl Shim {
         };
         let descendants_remaining = group_members(self.pid());
         signal_group(self.pid(), rustix::process::Signal::KILL);
-        drop(tokio::time::timeout(EOF_WAIT, eof.wait_for(|done| *done)).await);
+        self.wait_stdout_end(eof).await;
         reap_orphans();
         let exit = {
             let mut state = self.lock();
@@ -333,6 +347,35 @@ impl Shim {
         };
         self.notify_conn(FromShim::Exited { exit: exit.clone() });
         tokio::spawn(Arc::clone(self).publish_exit(exit));
+    }
+
+    /// The final cursor is the end of the provider's output (ADR-005
+    /// §4.1, §4.5; DL-121). The exit waits for stdout EOF. While the buffer
+    /// is full the pump waits for the owner's `ack`s, so the wait goes on
+    /// as long as the owner drains it. Only when the pump found the pipe
+    /// empty for [`EOF_WAIT`] (a surviving process holds the pipe open)
+    /// does the pump stop reading; every byte of the provider was read.
+    async fn wait_stdout_end(&self, mut eof: watch::Receiver<bool>) {
+        loop {
+            if *eof.borrow() {
+                return;
+            }
+            let idle = {
+                let state = self.lock();
+                !state.stdout_waiting_ack && state.stdout_progress.elapsed() >= EOF_WAIT
+            };
+            if idle {
+                self.stop_reading.send_replace(true);
+                drop(eof.wait_for(|done| *done).await);
+                return;
+            }
+            if tokio::time::timeout(EOF_POLL, eof.wait_for(|done| *done))
+                .await
+                .is_ok()
+            {
+                return;
+            }
+        }
     }
 
     /// §4.5: an exit that no station acknowledges is published to the exit
@@ -377,10 +420,21 @@ impl Shim {
         eof: watch::Sender<bool>,
     ) {
         let mut chunk = vec![0u8; OUTPUT_CHUNK];
-        loop {
+        let mut stop = self.stop_reading.subscribe();
+        'pump: loop {
             let space = loop {
                 let acked = self.acked.notified();
-                let space = self.lock().buffer.space();
+                let space = {
+                    let mut state = self.lock();
+                    let space = state.buffer.space();
+                    if space == 0 {
+                        state.stdout_waiting_ack = true;
+                    } else if state.stdout_waiting_ack {
+                        state.stdout_waiting_ack = false;
+                        state.stdout_progress = std::time::Instant::now();
+                    }
+                    space
+                };
                 if space > 0 {
                     break space;
                 }
@@ -388,11 +442,19 @@ impl Shim {
                 acked.await;
             };
             let want = space.min(chunk.len());
-            let n = match stdout.read(&mut chunk[..want]).await {
-                Ok(0) | Err(_) => break,
-                Ok(n) => n,
+            // A read is cancel safe: a stop loses no byte of the pipe.
+            let n = tokio::select! {
+                read = stdout.read(&mut chunk[..want]) => match read {
+                    Ok(0) | Err(_) => break 'pump,
+                    Ok(n) => n,
+                },
+                _ = stop.wait_for(|s| *s) => break 'pump,
             };
-            self.lock().buffer.push(&chunk[..n]);
+            {
+                let mut state = self.lock();
+                state.buffer.push_at(&chunk[..n], now_ms());
+                state.stdout_progress = std::time::Instant::now();
+            }
             self.streamed.notify_one();
             self.check_overlong();
         }
@@ -402,22 +464,26 @@ impl Shim {
     /// §4.2: a full buffer without a newline is a line of the buffer size.
     /// The shim reports the range, discards it and stops the provider.
     fn check_overlong(self: &Arc<Self>) {
-        let range = {
+        let (range, first) = {
             let mut state = self.lock();
-            if state.overlong.is_some() {
-                return;
-            }
             let Some(range) = state.buffer.overlong_line() else {
                 return;
             };
-            state.overlong = Some(range);
-            state.cause = Some("stop_forced");
+            // More bytes of the same discarded line (the provider is being
+            // stopped) are discarded too, with their own gap, so the exit
+            // never waits for an `ack` of bytes no station can parse.
+            let first = state.overlong.is_none();
+            let start = state.overlong.map_or(range.0, |(start, _)| start);
+            state.overlong = Some((start, range.1));
+            if first {
+                state.cause = Some("stop_forced");
+            }
             // The range lies inside the buffer: the ack cannot fail.
             state.buffer.ack(range.1).ok();
             if let Some(conn) = state.conn.as_mut() {
                 conn.sent = conn.sent.map(|s| s.max(range.1));
             }
-            range
+            (range, first)
         };
         self.notify_conn(FromShim::Gap {
             from: range.0,
@@ -425,7 +491,9 @@ impl Shim {
             reason: GapReason::OutputFrameTooLarge,
         });
         self.acked.notify_one();
-        tokio::spawn(Arc::clone(self).stop(Duration::ZERO, OVERLONG_TERM_GRACE, "stop_forced"));
+        if first {
+            tokio::spawn(Arc::clone(self).stop(Duration::ZERO, OVERLONG_TERM_GRACE, "stop_forced"));
+        }
     }
 
     async fn stream(self: Arc<Self>) {
@@ -443,21 +511,31 @@ impl Shim {
                         break;
                     };
                     let from = sent.max(floor);
-                    let replay = state.buffer.replay(from);
-                    let take = replay.bytes.len().min(OUTPUT_CHUNK);
-                    let bytes = replay.bytes[..take].to_vec();
+                    // One frame never crosses a stored read: it carries the
+                    // time of that read, also in a replay (§2, §6).
+                    let Some((read_at, span_end)) = state.buffer.span(from) else {
+                        break;
+                    };
+                    let max = usize::try_from(span_end - from)
+                        .unwrap_or(usize::MAX)
+                        .min(OUTPUT_CHUNK);
+                    let bytes = state.buffer.bytes_at(from, max);
                     let tx = conn.tx.clone();
+                    let closed = conn.closed.subscribe();
                     if let Some(conn) = state.conn.as_mut() {
-                        conn.sent = Some(replay.offset + take as u64);
+                        conn.sent = Some(from + bytes.len() as u64);
                     }
-                    (tx, replay.offset, bytes)
+                    (tx, closed, from, read_at, bytes)
                 };
-                let (tx, offset, bytes) = next;
-                let frame = FromShim::Output {
-                    offset,
-                    read_at: now_ms(),
+                let (tx, mut closed, offset, read_at, bytes) = next;
+                let frame = FromShim::Output { offset, read_at };
+                // A superseded attachment whose peer does not read cannot
+                // hold the streamer: the new owner replays on its own.
+                let sent = tokio::select! {
+                    sent = tx.send((frame, bytes)) => sent.is_ok(),
+                    _ = closed.wait_for(|c| *c) => false,
                 };
-                if tx.send((frame, bytes)).await.is_err() {
+                if !sent {
                     break;
                 }
             }

@@ -323,6 +323,27 @@ fn a_line_of_the_buffer_size_without_a_newline_fails_the_session_with_an_explici
     assert_eq!(out.overlong_line(), Some((3, 11)));
 }
 
+#[test]
+fn every_stored_read_keeps_its_read_time_through_acks_and_replays() {
+    let mut out = OutputBuffer::new(1024);
+    out.push_at(b"one\ntw", 100);
+    out.push_at(b"o\nthree\n", 200);
+    assert_eq!(out.span(0), Some((100, 6)));
+    assert_eq!(out.span(5), Some((100, 6)));
+    assert_eq!(out.span(6), Some((200, 14)));
+    assert_eq!(out.span(14), None, "the end holds no byte");
+    assert_eq!(out.bytes_at(4, 2), b"tw".to_vec());
+    // An ack inside the first read keeps its time for the rest of it.
+    out.ack(4).unwrap();
+    assert_eq!(out.span(4), Some((100, 6)));
+    assert_eq!(out.span(3), None, "below the floor");
+    out.ack(8).unwrap();
+    assert_eq!(out.span(8), Some((200, 14)));
+    out.ack(14).unwrap();
+    out.push_at(b"four\n", 300);
+    assert_eq!(out.span(14), Some((300, 19)));
+}
+
 // ---- 11, 30–33, 35, 42: writes ----
 
 fn admit(t: &mut WriteTable, generation: u64, id: &str, seq: u64, bytes: &[u8]) -> Admission {

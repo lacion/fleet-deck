@@ -579,7 +579,18 @@ impl<C: DurableCore> DurableDriver<C> {
         let _drained = tokio::io::copy(reader, &mut tokio::io::sink()).await;
         let gap_end = gaps.iter().map(|(_, to, _)| *to).max().unwrap_or(offset);
         let cursor = offset.max(gap_end).max(self.process.delivered());
-        let mut events: Vec<NewEvent> = gaps
+        // The shim reports each discarded buffer of one overlong line as its
+        // own gap; touching gaps of one reason are one range here.
+        let mut merged: Vec<(u64, u64, GapReason)> = Vec::new();
+        let mut sorted = gaps.to_vec();
+        sorted.sort_by_key(|(from, _, _)| *from);
+        for (from, to, reason) in sorted {
+            match merged.last_mut() {
+                Some(last) if last.2 == reason && from <= last.1 => last.1 = last.1.max(to),
+                _ => merged.push((from, to, reason)),
+            }
+        }
+        let mut events: Vec<NewEvent> = merged
             .iter()
             .map(|(from, to, reason)| {
                 Event::OutputGap {

@@ -162,6 +162,8 @@ pub struct Seen {
     pub start: Option<u64>,
     pub bytes: Vec<u8>,
     pub frames: Vec<FromShim>,
+    /// Bytes inside a reported `gap` that never arrived.
+    pub skipped: u64,
 }
 
 impl Seen {
@@ -201,11 +203,33 @@ pub async fn read_until(att: &mut Attachment, mut stop: impl FnMut(&Seen) -> boo
         match frame {
             FromShim::Output { offset, .. } => {
                 let start = *seen.start.get_or_insert(offset);
-                assert_eq!(
-                    offset,
-                    start + seen.bytes.len() as u64,
-                    "offsets are contiguous"
-                );
+                let expected = start + seen.bytes.len() as u64 + seen.skipped;
+                // Offsets are contiguous, except across a reported gap: the
+                // shim discarded those bytes (ADR-005 §4.2).
+                let mut covered = expected;
+                let mut gaps: Vec<(u64, u64)> = seen
+                    .frames
+                    .iter()
+                    .filter_map(|f| match f {
+                        FromShim::Gap { from, to, .. } => Some((*from, *to)),
+                        _ => None,
+                    })
+                    .collect();
+                gaps.sort_unstable();
+                for (from, to) in gaps {
+                    if from <= covered {
+                        covered = covered.max(to);
+                    }
+                }
+                let in_gap = offset <= covered;
+                if offset != expected {
+                    assert!(
+                        in_gap && offset > expected,
+                        "offsets are contiguous: {offset} after {expected}, frames {:?}",
+                        seen.frames
+                    );
+                    seen.skipped += offset - expected;
+                }
                 seen.bytes.extend_from_slice(&payload);
             }
             other => seen.frames.push(other),

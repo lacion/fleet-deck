@@ -9,6 +9,10 @@
 //! A full buffer without a newline holds a line of the buffer size or more
 //! ([`OutputBuffer::overlong_line`]): the session fails with
 //! `output_frame_too_large` instead of waiting forever for an `ack`.
+//!
+//! Every stored span keeps the wall-clock time at which the shim read it
+//! from the pipe ([`OutputBuffer::span`]). A replay sends the original
+//! time, never the replay time (ADR-005 §2, §6; DL-121).
 
 use std::collections::VecDeque;
 
@@ -44,6 +48,9 @@ pub struct OutputBuffer {
     /// The offset of `bytes[0]` (also the acknowledged cursor).
     floor: u64,
     bytes: VecDeque<u8>,
+    /// `(start offset, read_at)` of every stored read, oldest first. The
+    /// first entry covers the floor.
+    stamps: VecDeque<(u64, u64)>,
 }
 
 impl OutputBuffer {
@@ -53,6 +60,7 @@ impl OutputBuffer {
             capacity: capacity.clamp(1, MAX_CAPACITY),
             floor: 0,
             bytes: VecDeque::new(),
+            stamps: VecDeque::new(),
         }
     }
 
@@ -79,10 +87,33 @@ impl OutputBuffer {
     /// and only the part that fits is stored. Returns the offset of the
     /// first stored byte and the number of stored bytes.
     pub fn push(&mut self, bytes: &[u8]) -> (u64, usize) {
+        self.push_at(bytes, 0)
+    }
+
+    /// [`Self::push`] with the time at which the shim read the bytes
+    /// (Unix ms).
+    pub fn push_at(&mut self, bytes: &[u8], read_at: u64) -> (u64, usize) {
         let offset = self.end();
         let n = bytes.len().min(self.space());
-        self.bytes.extend(&bytes[..n]);
+        if n > 0 {
+            self.bytes.extend(&bytes[..n]);
+            self.stamps.push_back((offset, read_at));
+        }
         (offset, n)
+    }
+
+    /// The read time of the span that holds `offset` and the end of that
+    /// span; `None` for an offset outside the stored bytes. One output
+    /// frame never crosses a span, so it has one read time.
+    #[must_use]
+    pub fn span(&self, offset: u64) -> Option<(u64, u64)> {
+        if offset < self.floor || offset >= self.end() {
+            return None;
+        }
+        let i = self.stamps.partition_point(|(start, _)| *start <= offset);
+        let (_, read_at) = *self.stamps.get(i.checked_sub(1)?)?;
+        let end = self.stamps.get(i).map_or(self.end(), |(start, _)| *start);
+        Some((read_at, end))
     }
 
     /// Frees the bytes below `cursor`. A cursor at or below the floor
@@ -98,6 +129,16 @@ impl OutputBuffer {
         let n = usize::try_from(cursor - self.floor).unwrap_or(usize::MAX);
         self.bytes.drain(..n);
         self.floor = cursor;
+        while self
+            .stamps
+            .get(1)
+            .is_some_and(|(start, _)| *start <= cursor)
+        {
+            self.stamps.pop_front();
+        }
+        if self.bytes.is_empty() {
+            self.stamps.clear();
+        }
         Ok(())
     }
 
@@ -120,6 +161,17 @@ impl OutputBuffer {
             offset: from.min(end),
             bytes: self.bytes.iter().skip(start).copied().collect(),
         }
+    }
+
+    /// At most `max` stored bytes from `from` on (nothing outside the
+    /// stored bytes).
+    #[must_use]
+    pub fn bytes_at(&self, from: u64, max: usize) -> Vec<u8> {
+        if from < self.floor {
+            return Vec::new();
+        }
+        let start = usize::try_from(from - self.floor).unwrap_or(usize::MAX);
+        self.bytes.iter().skip(start).take(max).copied().collect()
     }
 
     /// The range of a line that fills the whole buffer without a newline
