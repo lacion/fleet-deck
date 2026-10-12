@@ -1,6 +1,6 @@
 // M3 6-11: the human shell of a station in a phone browser (PLAN §6.8, DL-404).
 import { expect, test } from '@playwright/test';
-import { CSRF, FakeDeck, fitsWidth, logIn, stationView } from './fake-deck';
+import { CSRF, FakeDeck, fitsWidth, logIn, openMore, stationView } from './fake-deck';
 
 type ShellRow = {
   shell_id: string;
@@ -57,7 +57,7 @@ test('an admin opens a station shell, types into it, reattaches, and closes it',
   });
   await deck.install(page);
   await logIn(page);
-  await page.getByRole('button', { name: 'Stations (1)' }).click();
+  await openMore(page, 'Stations');
   const panel = page.getByRole('region', { name: 'Shells on alpha' });
   await expect(panel).toContainText('No open shells.');
 
@@ -107,7 +107,7 @@ test('an unreachable station cannot open a shell', async ({ page }) => {
   deck.on('/api/stations/alpha/shells', () => ({ status: 200, body: [] }));
   await deck.install(page);
   await logIn(page);
-  await page.getByRole('button', { name: 'Stations (1)' }).click();
+  await openMore(page, 'Stations');
   const panel = page.getByRole('region', { name: 'Shells on alpha' });
   await panel.getByLabel('Directory').fill('/work/repo');
   await expect(panel.getByRole('button', { name: 'Open shell' })).toBeDisabled();
@@ -119,6 +119,6 @@ test('a login without the admin scope sees no shell panel', async ({ page }) => 
   viewer.stations = [stationView('st-alpha', 'alpha')];
   await viewer.install(page);
   await logIn(page);
-  await page.getByRole('button', { name: 'Stations (1)' }).click();
+  await openMore(page, 'Stations');
   await expect(page.getByRole('region', { name: 'Shells on alpha' })).toHaveCount(0);
 });

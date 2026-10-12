@@ -2,13 +2,31 @@
 // page talks to it through Playwright request and WebSocket routing, so the
 // built board runs unchanged. The real deck/station flows of P4-5 use real
 // processes instead.
-import type { Page, Request, WebSocketRoute } from '@playwright/test';
-import type { DeckSession, EventEnvelope, StationView } from '../src/gen';
+import { expect, type Page, type Request, type WebSocketRoute } from '@playwright/test';
+import type { DeckCommand, DeckSession, EventEnvelope, StationView } from '../src/gen';
 
 export type Reply = { status: number; body: unknown };
 export type Call = { path: string; body: unknown; csrf: string | null };
 /** `body` is the JSON body of a POST; `query` holds the URL parameters. */
 type Handler = (body: unknown, query: URLSearchParams) => Reply;
+
+/** One shell of a station, as the shell list reports it. */
+export type ShellRow = {
+  shell_id: string;
+  cwd: string;
+  state: 'running' | 'exited';
+  cols: number;
+  rows: number;
+  created_at: number;
+  exit_code: number | null;
+  session_id?: string;
+};
+
+/** The body of a POST to a station's shells (the `change` is what counts). */
+export type ShellPost = {
+  command_id: string;
+  change: { op: string; shell_id: string; session_id?: string; cols?: number; rows?: number };
+};
 
 export const CSRF = 'csrf-e2e';
 export const PASSWORD = 'correct horse battery staple';
@@ -84,6 +102,63 @@ export class FakeDeck {
           sessions: this.sessions,
         }),
       );
+    });
+  }
+
+  /** Replaces one session (same station and id) and pushes it to the board sockets. */
+  setSession(next: DeckSession): void {
+    const same = (d: DeckSession) =>
+      d.station_id === next.station_id && d.summary.session_id === next.summary.session_id;
+    this.sessions = this.sessions.some(same)
+      ? this.sessions.map((d) => (same(d) ? next : d))
+      : [...this.sessions, next];
+    this.publish();
+  }
+
+  /**
+   * The shells of one station: GET lists `rows`, a POST is kept in `posts` and
+   * answered as accepted, after `onPost` ran (it may change `rows` or push a session).
+   */
+  shells(stationId: string, onPost: (post: ShellPost) => void = () => {}) {
+    const state = { rows: [] as ShellRow[], posts: [] as ShellPost[] };
+    this.on(`/api/stations/${stationId}/shells`, (body) => {
+      if (body === null) return { status: 200, body: state.rows };
+      const post = body as ShellPost;
+      state.posts.push(post);
+      onPost(post);
+      return { status: 200, body: { state: 'accepted' } };
+    });
+    return state;
+  }
+
+  /** Answers a session command as accepted; `onCall` sees its `command` body first. */
+  accept(method: string, stationId: string, onCall: (command: unknown) => void = () => {}): void {
+    this.on(`/api/commands/${method}`, (body) => {
+      const b = body as { command_id: string; command: unknown };
+      onCall(b.command);
+      const done: DeckCommand = {
+        command_id: b.command_id,
+        station_id: stationId,
+        method,
+        origin: 'board',
+        envelope: null,
+        retry_until: 0,
+        state: 'done',
+        attempts: 1,
+        sent_at: 1,
+        receipt: {
+          command_id: b.command_id,
+          state: 'accepted',
+          station_seq: null,
+          result: null,
+          reject: null,
+          at: 1,
+        },
+        reason: null,
+        created_at: 1,
+        updated_at: 1,
+      };
+      return { status: 200, body: done };
     });
   }
 
@@ -173,4 +248,40 @@ export async function fitsWidth(page: Page): Promise<boolean> {
   return page.evaluate(
     () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
   );
+}
+
+/** The phone's bottom bar: the Fleet page. */
+export async function openFleet(page: Page): Promise<void> {
+  await page
+    .getByRole('navigation', { name: 'Board' })
+    .getByRole('link', { name: 'Fleet' })
+    .click();
+  await expect(page).toHaveURL(/#\/fleet$/);
+}
+
+/** The phone's More page, then one of its links ("Plans" or "Stations"). */
+export async function openMore(page: Page, link: 'Plans' | 'Stations'): Promise<void> {
+  await page.getByRole('navigation', { name: 'Board' }).getByRole('link', { name: 'More' }).click();
+  await page
+    .getByRole('navigation', { name: 'More pages' })
+    .getByRole('link', { name: link === 'Stations' ? /^Stations/ : link })
+    .click();
+  await expect(page).toHaveURL(link === 'Plans' ? /#\/plans$/ : /#\/stations$/);
+}
+
+/** A session row of the list (sidebar, or the phone's home), by its title. */
+export async function openSession(page: Page, title: string): Promise<void> {
+  const rows = page.locator('a.fd-srow').filter({ hasText: title });
+  await rows.first().waitFor({ state: 'attached' });
+  const ended = page.locator('details.fd-sended').filter({ has: rows });
+  if ((await ended.count()) > 0) {
+    await ended.locator('> summary').click();
+  }
+  await rows.first().click();
+  await expect(page).toHaveURL(/#\/s\//);
+}
+
+/** A terminal stream that stays open and silent (the board attaches to a shell). */
+export async function quietShells(page: Page): Promise<void> {
+  await page.routeWebSocket('**/shells/*/attach', () => {});
 }

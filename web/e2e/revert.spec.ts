@@ -6,7 +6,7 @@ import type { DeckCommand, DeckSession, Event, SessionRevert } from '../src/gen'
 import { codexCaps } from '../src/testing/capabilities';
 import { summary } from '../src/testing/summary';
 import { envelopes } from '../src/testing/timeline';
-import { CSRF, FakeDeck, fitsWidth, logIn, stationView } from './fake-deck';
+import { CSRF, FakeDeck, fitsWidth, logIn, openSession, stationView } from './fake-deck';
 
 const ST = 'st-alpha';
 
@@ -60,8 +60,8 @@ async function setUp(page: Page, deck: FakeDeck) {
   await deck.install(page);
   await logIn(page);
   deck.emit(ST, 's1', envelopes('s1', [finalized('t1'), finalized('t2')]));
-  await page.getByRole('button', { name: 'Open session Edit the docs' }).click();
-  return page.getByRole('main', { name: 'Session' });
+  await openSession(page, 'Edit the docs');
+  return page.getByRole('region', { name: 'Session' });
 }
 
 test('the files of a session are browsed, read and searched; a symlink is not opened', async ({
@@ -101,6 +101,7 @@ test('the files of a session are browsed, read and searched; a symlink is not op
     },
   }));
   const view = await setUp(page, deck);
+  await view.getByRole('tab', { name: 'Files' }).click();
   const files = view.getByRole('region', { name: 'Files' });
   await files.getByRole('button', { name: 'Browse' }).click();
   await expect(files.locator('[data-entry-kind="symlink"]')).toContainText(
@@ -165,6 +166,7 @@ test('a turn diff is shown, a revert is confirmed, and a reconciliation is resol
     return { status: 200, body: accepted(b.command_id, 'session.resolve_revert') };
   });
   const view = await setUp(page, deck);
+  await view.getByRole('tab', { name: /^Changes/ }).click();
   const turns = view.getByRole('region', { name: 'Turns' });
   const t2 = turns.locator('[data-turn="t2"]');
   await t2.getByRole('button', { name: 'Show the diff' }).click();

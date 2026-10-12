@@ -4,7 +4,7 @@ import { expect, type Page, test } from '@playwright/test';
 import type { DeckCommand, DeckSession } from '../src/gen';
 import { summary } from '../src/testing/summary';
 import { claudeCapabilities } from '../src/testing/timeline';
-import { CSRF, FakeDeck, fitsWidth, logIn, stationView } from './fake-deck';
+import { CSRF, FakeDeck, fitsWidth, logIn, openFleet, openSession, stationView } from './fake-deck';
 
 const ST = 'st-alpha';
 
@@ -72,8 +72,8 @@ test('a session is renamed from the board, also after it ended', async ({ page }
     return { status: 200, body: done(b.command_id) };
   });
   await setUp(page, deck);
-  await page.getByRole('button', { name: 'Open session Review the repo' }).click();
-  const view = page.getByRole('main', { name: 'Session' });
+  await openSession(page, 'Review the repo');
+  const view = page.getByRole('region', { name: 'Session' });
   await view.getByRole('button', { name: 'Rename' }).click();
   const form = view.getByRole('form', { name: 'Rename the session' });
   await form.getByLabel('Title').fill('x'.repeat(81));
@@ -106,6 +106,7 @@ test('the event feed shows fleet changes newest first, filters them and opens a 
   const deck = new FakeDeck();
   deck.sessions = [session('s1', 1)];
   await setUp(page, deck);
+  await openFleet(page);
   const feed = page.getByRole('region', { name: 'Event feed' });
   await expect(feed).toContainText('Quiet so far.');
   deck.sessions = [
@@ -145,5 +146,5 @@ test('the event feed shows fleet changes newest first, filters them and opens a 
   await expect(feed.locator('li')).toContainText('Review the repo asks: Bash');
   await feed.getByRole('button', { name: 'Ends' }).click();
   await feed.getByRole('button', { name: 'Docs' }).click();
-  await expect(page.getByRole('main', { name: 'Session' })).toContainText('Docs');
+  await expect(page.getByRole('region', { name: 'Session' })).toContainText('Docs');
 });

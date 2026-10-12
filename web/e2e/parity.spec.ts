@@ -4,7 +4,7 @@ import { expect, test } from '@playwright/test';
 import type { DeckSession } from '../src/gen';
 import { summary } from '../src/testing/summary';
 import { claudeCapabilities } from '../src/testing/timeline';
-import { FakeDeck, logIn, stationView } from './fake-deck';
+import { FakeDeck, logIn, openSession, stationView } from './fake-deck';
 
 const ST = 'st-alpha';
 
@@ -43,7 +43,7 @@ test('Shift+Enter in the composer adds a newline and sends nothing (v0 parity)',
   }));
   await deck.install(page);
   await logIn(page);
-  await page.getByRole('button', { name: 'Open session Write the notes' }).click();
+  await openSession(page, 'Write the notes');
   const composer = page.getByRole('form', { name: 'Composer' });
   const box = composer.getByLabel('Message');
   await box.click();

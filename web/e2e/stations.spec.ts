@@ -1,6 +1,6 @@
 // M2 P4-2: the stations screen and the pairing dialog in a phone browser.
 import { expect, test } from '@playwright/test';
-import { CSRF, FakeDeck, fitsWidth, logIn, stationView } from './fake-deck';
+import { CSRF, FakeDeck, fitsWidth, logIn, openMore, stationView } from './fake-deck';
 
 const reported = stationView('st-alpha', 'Alpha', {
   info: {
@@ -39,7 +39,7 @@ test('an admin sees the station report and makes an invitation for a dialing sta
   }));
   await deck.install(page);
   await logIn(page);
-  await page.getByRole('button', { name: 'Stations (1)' }).click();
+  await openMore(page, 'Stations');
   const card = page.locator('[data-station="st-alpha"]');
   await expect(card).toContainText('1 live of 4 sessions');
   await expect(card).toContainText('0.2.0');
@@ -95,7 +95,7 @@ test('an admin pairs a listening station, sees a refusal, and removes a station'
   });
   await deck.install(page);
   await logIn(page);
-  await page.getByRole('button', { name: 'Stations (1)' }).click();
+  await openMore(page, 'Stations');
   await page.getByRole('button', { name: 'Add station' }).click();
   const dialog = page.getByRole('dialog', { name: 'Add station' });
   await dialog.getByLabel('This deck dials the station').check();
@@ -123,7 +123,12 @@ test('an admin pairs a listening station, sees a refusal, and removes a station'
   await alpha.getByRole('button', { name: 'Remove station' }).click();
   await alpha.getByRole('button', { name: 'Confirm remove' }).click();
   await expect(alpha).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Stations (1)' })).toBeVisible();
+  await page.getByRole('navigation', { name: 'Board' }).getByRole('link', { name: 'More' }).click();
+  await expect(
+    page
+      .getByRole('navigation', { name: 'More pages' })
+      .getByRole('link', { name: 'Stations · 1' }),
+  ).toBeVisible();
   expect(await fitsWidth(page)).toBe(true);
 });
 
@@ -135,7 +140,7 @@ test('a login without the admin scope sees the report but no pairing controls', 
   deck.scopes = ['read', 'drive', 'approve'];
   await deck.install(page);
   await logIn(page);
-  await page.getByRole('button', { name: 'Stations (1)' }).click();
+  await openMore(page, 'Stations');
   await expect(page.getByText('Pairing needs the admin scope.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Add station' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Remove station' })).toHaveCount(0);

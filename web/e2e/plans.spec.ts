@@ -4,7 +4,7 @@
 import { expect, test } from '@playwright/test';
 import type { DeckPlan } from '../src/gen';
 import { claudeCaps } from '../src/testing/capabilities';
-import { FakeDeck, fitsWidth, logIn, stationView } from './fake-deck';
+import { FakeDeck, fitsWidth, logIn, openMore, stationView } from './fake-deck';
 
 const ST = 'st-alpha';
 
@@ -64,7 +64,7 @@ test('a captured plan is read, archived, restored and starts a session', async (
   await deck.install(page);
   await logIn(page);
 
-  await page.getByRole('button', { name: 'Plans' }).click();
+  await openMore(page, 'Plans');
   const library = page.getByRole('main', { name: 'Plan library' });
   const p1 = library.getByRole('article', { name: 'Plan Cache plan p1' });
   await expect(library.getByRole('article')).toHaveCount(2);
@@ -99,7 +99,7 @@ test('without drive scope the plan actions are disabled', async ({ page }) => {
   deck.on('/api/plans', () => ({ status: 200, body: [plan('p1', 'proposed', 1)] }));
   await deck.install(page);
   await logIn(page);
-  await page.getByRole('button', { name: 'Plans' }).click();
+  await openMore(page, 'Plans');
   const p1 = page.getByRole('article', { name: 'Plan Cache plan p1' });
   await expect(p1.getByRole('button', { name: 'Archive' })).toBeDisabled();
   await expect(p1.getByRole('button', { name: 'Start a session with this plan' })).toBeDisabled();

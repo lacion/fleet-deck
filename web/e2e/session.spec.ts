@@ -1,11 +1,11 @@
 // M2 P4-3: the session view, the needs-you rail and the D15 subagent tree in
 // a phone browser. The board talks to a scripted deck (DL-059); P4-5 runs the
 // same flows against real processes.
-import { expect, type Page, test } from '@playwright/test';
+import { expect, type Locator, type Page, test } from '@playwright/test';
 import type { DeckCommand, DeckSession, OpenRequest } from '../src/gen';
 import { summary } from '../src/testing/summary';
 import { claudeCapabilities, nestedSubagents } from '../src/testing/timeline';
-import { CSRF, FakeDeck, fitsWidth, logIn, stationView } from './fake-deck';
+import { CSRF, FakeDeck, fitsWidth, logIn, openFleet, openSession, stationView } from './fake-deck';
 
 const ST = 'st-alpha';
 const ID = 'nested';
@@ -116,31 +116,43 @@ test('the subagent tree shows each child timeline and status, and the card count
   ];
   deck.emit(ST, ID, nestedSubagents(10));
   await setUp(page, deck);
+  await openFleet(page);
   const card = page.locator(`[data-session="${ID}"]`);
   await expect(card).toContainText('Subagents running: 4');
   expect(await fitsWidth(page)).toBe(true);
 
   await page.getByRole('button', { name: 'Open session Review the repo' }).click();
-  const view = page.getByRole('main', { name: 'Session' });
+  const view = page.getByRole('region', { name: 'Session' });
   const explore = view.locator('[data-subagent="node-1"]');
   const docs = explore.locator('[data-subagent="node-4"]');
-  await expect(view.locator('[data-running-subagents]')).toHaveText('3');
-  await expect(explore.locator('> summary')).toContainText('Explore the code · running');
+  const tests = view.locator('[data-subagent="node-2"]');
+  const chip = (card: Locator) => card.locator('> .fd-chat-card-head .fd-chat-chip');
+  const task = (card: Locator) => card.locator('> .fd-chat-subagent-task');
+  await expect(view.locator('.fd-chat-subagent[data-status="running"]')).toHaveCount(3);
+  await expect(task(explore)).toHaveText('Explore the code');
+  await expect(chip(explore)).toHaveText('running');
   await expect(explore).toContainText('main is small');
-  await expect(docs.locator('> summary')).toContainText('Read the docs · running');
-  await expect(docs).toContainText('Approval: Bash · waiting for an answer');
-  // The child events stay out of the top-level timeline.
-  await expect(view.locator('.fd-timeline > .fd-items > li')).toHaveCount(3);
+  await expect(task(docs)).toHaveText('Read the docs');
+  await expect(chip(docs)).toHaveText('running');
+  await expect(docs).toContainText('Bash');
+  await expect(docs).toContainText('Waiting for your answer.');
+  // The child cards stay inside their parent: two cards at the top, one nested.
+  await expect(
+    view.locator('.fd-chat-subagent:not(.fd-chat-nested .fd-chat-subagent)'),
+  ).toHaveCount(2);
+  await expect(explore.locator('.fd-chat-subagent')).toHaveCount(1);
+  await expect(tests.locator('.fd-chat-subagent')).toHaveCount(0);
   expect(await fitsWidth(page)).toBe(true);
 
   deck.emit(ST, ID, nestedSubagents().slice(11));
-  await expect(view.locator('[data-running-subagents]')).toHaveText('0');
-  await expect(docs.locator('> summary')).toContainText('Read the docs · done');
-  await expect(view.locator('[data-subagent="node-2"] > summary')).toContainText(
-    'Check the tests · failed',
-  );
-  await expect(explore.locator('> summary')).toContainText('Explore the code · done');
-  await expect(docs).toContainText('Approval: Bash · Allow (by board)');
+  await expect(view.locator('.fd-chat-subagent[data-status="running"]')).toHaveCount(0);
+  await expect(task(docs)).toHaveText('Read the docs');
+  await expect(chip(docs)).toHaveText('done');
+  await expect(task(tests)).toHaveText('Check the tests');
+  await expect(chip(tests)).toHaveText('failed');
+  await expect(task(explore)).toHaveText('Explore the code');
+  await expect(chip(explore)).toHaveText('done');
+  await expect(docs).toContainText('Bash · Allow (by board)');
   await expect(view).toContainText('All subagents reported.');
 });
 
@@ -153,6 +165,7 @@ test('an approval is answered from the needs-you rail', async ({ page }) => {
     return { status: 200, body: receipt(idOf(body), 'done') };
   });
   await setUp(page, deck);
+  await openFleet(page);
   const rail = page.getByRole('region', { name: 'Needs you rail' });
   await expect(rail).toContainText('Review the repo · Alpha: Bash');
   await rail.getByRole('button', { name: 'Answer Bash in Review the repo' }).click();
@@ -173,7 +186,8 @@ test('an approval is answered from the needs-you rail', async ({ page }) => {
       decision: { option_id: 'allow', updated_input: null, text: null },
     },
   });
-  await page.getByRole('button', { name: 'Back to fleet' }).click();
+  await page.getByRole('button', { name: 'Back' }).click();
+  await openFleet(page);
   await expect(page.getByRole('region', { name: 'Needs you rail' })).toContainText(
     'Nothing waits for you.',
   );
@@ -193,7 +207,7 @@ test('steer, follow-up, interrupt and the mode ladder send one command each', as
       : { status: 200, body: receipt(idOf(body), 'ambiguous') };
   });
   await setUp(page, deck);
-  await page.getByRole('button', { name: 'Open session Review the repo' }).click();
+  await openSession(page, 'Review the repo');
   const composer = page.getByRole('form', { name: 'Composer' });
   const text = composer.getByLabel('Message');
   await expect(composer.getByRole('button', { name: 'Steer now' })).toBeDisabled();
@@ -204,9 +218,10 @@ test('steer, follow-up, interrupt and the mode ladder send one command each', as
   await text.fill('then summarize');
   await composer.getByRole('button', { name: 'Queue follow-up' }).click();
   await page.getByRole('button', { name: 'Interrupt' }).click();
-  await expect(page.getByRole('alert')).toHaveText('Refused: No run is active.');
+  await expect(page.getByRole('alert').locator('span')).toHaveText('Refused: No run is active.');
   await page.getByRole('button', { name: 'Interrupt' }).click();
   await expect(page.getByRole('alert')).toContainText('Delivery is unknown');
+  await page.getByLabel('Session settings').click();
   const ladder = page.getByRole('group', { name: 'Mode (most restrictive first)' });
   await expect(ladder.getByRole('button')).toHaveText([
     'default',
@@ -256,11 +271,15 @@ test('a read-only login sees the session but cannot drive or answer', async ({ p
   ];
   deck.scopes = ['read'];
   await setUp(page, deck);
-  await page.getByRole('button', { name: 'Open session Review the repo' }).click();
+  await openSession(page, 'Review the repo');
   const composer = page.getByRole('form', { name: 'Composer' });
   await expect(composer.getByLabel('Message')).toBeDisabled();
   await expect(composer.getByRole('button', { name: 'Send' })).toBeDisabled();
-  await expect(page.getByRole('button', { name: 'Interrupt' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Interrupt' })).toHaveCount(0);
+  // The Stop menu is a <details> summary, so it has no button role: check both.
+  await expect(page.getByRole('button', { name: 'Stop' })).toHaveCount(0);
+  await expect(page.locator('summary', { hasText: 'Stop' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Open in terminal' })).toHaveCount(0);
   await expect(
     page.getByRole('region', { name: 'Needs you' }).getByRole('button', { name: 'Allow' }),
   ).toBeDisabled();
@@ -276,7 +295,7 @@ test('an idle session with the drive scope sends a prompt', async ({ page }) => 
     body: receipt(idOf(body), 'pending'),
   }));
   await setUp(page, deck);
-  await page.getByRole('button', { name: 'Open session Review the repo' }).click();
+  await openSession(page, 'Review the repo');
   const composer = page.getByRole('form', { name: 'Composer' });
   await expect(composer.getByRole('button', { name: 'Steer now' })).toHaveCount(0);
   await composer.getByLabel('Message').fill('hello');

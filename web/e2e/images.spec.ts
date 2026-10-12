@@ -4,7 +4,7 @@ import { expect, type Page, test } from '@playwright/test';
 import type { DeckSession, OpenRequest } from '../src/gen';
 import { summary } from '../src/testing/summary';
 import { claudeCapabilities } from '../src/testing/timeline';
-import { FakeDeck, fitsWidth, logIn, stationView } from './fake-deck';
+import { FakeDeck, fitsWidth, logIn, openFleet, openSession, stationView } from './fake-deck';
 
 const ST = 'st-alpha';
 // The 8-byte PNG signature; enough for the board, which does not decode it.
@@ -48,7 +48,7 @@ test('a picked or pasted image goes with the prompt', async ({ page }) => {
     },
   }));
   await setUp(page, deck);
-  await page.getByRole('button', { name: 'Open session Look at the bug' }).click();
+  await openSession(page, 'Look at the bug');
   const composer = page.getByRole('form', { name: 'Composer' });
   await composer
     .getByLabel('Add image')
@@ -114,6 +114,7 @@ test('a new needs-you request shows a browser notification once', async ({ page 
   const deck = new FakeDeck();
   deck.sessions = [session({ open_requests: [request('r1', 'Bash: ls')] })];
   await setUp(page, deck);
+  await openFleet(page);
   const rail = page.getByRole('region', { name: 'Needs you rail' });
   await rail.getByRole('button', { name: 'Notify me' }).click();
   await expect(rail.getByRole('button', { name: 'Notifications on' })).toBeVisible();

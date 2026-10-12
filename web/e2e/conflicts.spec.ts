@@ -4,7 +4,7 @@
 import { expect, test } from '@playwright/test';
 import type { DeckSession, FileConflict } from '../src/gen';
 import { summary } from '../src/testing/summary';
-import { FakeDeck, fitsWidth, logIn, stationView } from './fake-deck';
+import { FakeDeck, fitsWidth, logIn, openFleet, stationView } from './fake-deck';
 
 function session(station: string, id: string, title: string, at: number): DeckSession {
   return { station_id: station, status: 'working', summary: summary(id, 'working', at, { title }) };
@@ -21,6 +21,7 @@ test('two sessions on two stations that change one file show as a conflict', asy
   deck.on('/api/conflicts', () => ({ status: 200, body: answer }));
   await deck.install(page);
   await logIn(page);
+  await openFleet(page);
   const radar = page.getByRole('region', { name: 'Conflict radar' });
   await expect(radar).toContainText('No file was changed by two sessions');
 
