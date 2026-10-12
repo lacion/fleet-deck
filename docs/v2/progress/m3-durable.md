@@ -28,6 +28,13 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 89 (2026-10-12, 16:58–)
+
+- Round start: committed round 88 as 2f1df49. Merged `m3/orchestration` 560032c (2d661f1, 6-5 slice DL-218: durable station coordinator outbox, station schema V17 `coordinator_outbox`, `crates/fleetdeck-station/src/coordinator/outbox.rs`, `store/coordinator_outbox.rs`) as f8dbc14 without conflicts. `crates/fleetdeck-proto` unchanged, so no `make ts-types`. `m3/board` and `m3/ops`: no new commits. `m3-orchestration.md` still has no "LANE COMPLETE", so 6-13, 7-7 and 7-8 stay blocked.
+- Merge validation: `cargo nextest run -p fleetdeck-station -E 'test(outbox) | test(coordinator)'` -> 33 passed.
+- 7-6 docs for DL-218: internals §8 coordinator row names `outbox.rs`, `store/coordinator_outbox.rs`, V17 and the outbox states; operations §11 has a row for a coordinator call that fails `deck_unreachable` before the first deck link.
+- Checks: `cargo nextest run -p fleetdeck-cli --test docs_commands`, `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`.
+
 ## Round 88 (2026-10-12, 16:56–)
 
 - Round start: committed round 87 as 26d350a. `git log v2..m3/orchestration`, `v2..m3/board`, `v2..m3/ops`: no new commits; `m3-orchestration.md` has no "LANE COMPLETE", so 6-13, 7-7 and 7-8 stay blocked.

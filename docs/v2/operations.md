@@ -176,6 +176,7 @@ Limits of this release (DL-127, follow-ups in `docs/v2/progress/m3-durable.md`):
 | Usage shows "unknown" | The provider did not report usage for that window. Fleet Deck never shows unknown usage as zero. |
 | The board refuses a WebSocket | Set `tailnet_hostname` when you open the board by its tailnet name. |
 | A link call fails with `feature_not_negotiated` | The deck and the station do not share the feature of that method (for example `coordinator.v1` for coordinator sessions). Upgrade the older side; an N−1 peer keeps the shared features. |
+| A coordinator tool call fails `deck_unreachable` | The station has not linked to a deck since it started, so it knows no deck to send to. Check the link (row "The station is not on the board"). After the first link, the station keeps coordinator calls in its durable outbox and sends them when the deck is back, for up to 15 minutes (DL-218). |
 | A coordinator session does not start | The start fails with its reason. `a coordinator session starts only as a new direct child`: start a new session with `host = "direct"`; a resume or a shim-hosted start cannot carry the grant credential. `the coordinator endpoint does not listen`: check the station coordinator MCP ingress. `handoff_unverified`: no provider version has a verified credential handoff yet, so every coordinator start fails with this reason at this time (§7.2; DL-215, DL-216). |
 
 ## 12. Owner steps that this repository cannot test
