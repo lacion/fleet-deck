@@ -120,6 +120,65 @@
     "proto_version": 1,
     "raw_ref": null,
     "event": {
+      "kind": "session.slash_commands",
+      "commands": [
+        "deep-research",
+        "design",
+        "design-sync",
+        "dataviz",
+        "update-config",
+        "verify",
+        "debug",
+        "code-review",
+        "simplify",
+        "batch",
+        "fewer-permission-prompts",
+        "loop",
+        "claude-api",
+        "workflow-authoring",
+        "run",
+        "run-skill-generator",
+        "plugin-authoring",
+        "advisor",
+        "agents",
+        "auto-mode-setup",
+        "autocompact",
+        "clear",
+        "compact",
+        "config",
+        "output-style",
+        "context",
+        "effort",
+        "fast",
+        "heapdump",
+        "init",
+        "mcp",
+        "import",
+        "model",
+        "__remote-workflow",
+        "workflow-launch-exec",
+        "reload-skills",
+        "rename",
+        "security-review",
+        "usage",
+        "insights",
+        "recap",
+        "goal",
+        "design-consent",
+        "design-revoke",
+        "list-agents",
+        "team-onboarding"
+      ]
+    }
+  },
+  {
+    "station_seq": 107,
+    "session_id": "claude-tool_call_approve",
+    "session_seq": 7,
+    "at": 1760000007000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
       "kind": "tool.started",
       "node_id": "node-2",
       "parent_node_id": null,
@@ -133,10 +192,10 @@
     }
   },
   {
-    "station_seq": 107,
+    "station_seq": 108,
     "session_id": "claude-tool_call_approve",
-    "session_seq": 7,
-    "at": 1760000007000,
+    "session_seq": 8,
+    "at": 1760000008000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -172,10 +231,10 @@
     }
   },
   {
-    "station_seq": 108,
+    "station_seq": 109,
     "session_id": "claude-tool_call_approve",
-    "session_seq": 8,
-    "at": 1760000008000,
+    "session_seq": 9,
+    "at": 1760000009000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -186,10 +245,10 @@
     }
   },
   {
-    "station_seq": 109,
+    "station_seq": 110,
     "session_id": "claude-tool_call_approve",
-    "session_seq": 9,
-    "at": 1760000009000,
+    "session_seq": 10,
+    "at": 1760000010000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -198,20 +257,6 @@
       "status": "ok",
       "files": [],
       "exit_code": null
-    }
-  },
-  {
-    "station_seq": 110,
-    "session_id": "claude-tool_call_approve",
-    "session_seq": 10,
-    "at": 1760000010000,
-    "proto_version": 1,
-    "raw_ref": null,
-    "event": {
-      "kind": "message.delta",
-      "turn_id": "turn-1",
-      "parent_node_id": null,
-      "text": "approve"
     }
   },
   {
@@ -225,7 +270,7 @@
       "kind": "message.delta",
       "turn_id": "turn-1",
       "parent_node_id": null,
-      "text": "-ok"
+      "text": "approve"
     }
   },
   {
@@ -236,10 +281,10 @@
     "proto_version": 1,
     "raw_ref": null,
     "event": {
-      "kind": "message.completed",
+      "kind": "message.delta",
       "turn_id": "turn-1",
       "parent_node_id": null,
-      "text": "approve-ok"
+      "text": "-ok"
     }
   },
   {
@@ -247,6 +292,20 @@
     "session_id": "claude-tool_call_approve",
     "session_seq": 13,
     "at": 1760000013000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "message.completed",
+      "turn_id": "turn-1",
+      "parent_node_id": null,
+      "text": "approve-ok"
+    }
+  },
+  {
+    "station_seq": 114,
+    "session_id": "claude-tool_call_approve",
+    "session_seq": 14,
+    "at": 1760000014000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -260,10 +319,10 @@
     }
   },
   {
-    "station_seq": 114,
+    "station_seq": 115,
     "session_id": "claude-tool_call_approve",
-    "session_seq": 14,
-    "at": 1760000014000,
+    "session_seq": 15,
+    "at": 1760000015000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -278,10 +337,10 @@
     }
   },
   {
-    "station_seq": 115,
+    "station_seq": 116,
     "session_id": "claude-tool_call_approve",
-    "session_seq": 15,
-    "at": 1760000015000,
+    "session_seq": 16,
+    "at": 1760000016000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -292,10 +351,10 @@
     }
   },
   {
-    "station_seq": 116,
+    "station_seq": 117,
     "session_id": "claude-tool_call_approve",
-    "session_seq": 16,
-    "at": 1760000016000,
+    "session_seq": 17,
+    "at": 1760000017000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -306,10 +365,10 @@
     }
   },
   {
-    "station_seq": 117,
+    "station_seq": 118,
     "session_id": "claude-tool_call_approve",
-    "session_seq": 17,
-    "at": 1760000017000,
+    "session_seq": 18,
+    "at": 1760000018000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
