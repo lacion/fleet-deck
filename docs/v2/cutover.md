@@ -13,7 +13,7 @@ The repository side of the cutover (PLAN Phase 7, item 7-7) happens on the `v2` 
 | Sessions in tmux panes, a live terminal in the browser. | Sessions in the session view (native protocol), and a separate human shell when `allow_shell = true`. |
 | Re-armed questions. | Not needed: the request stays open in the protocol; the offline approval policy covers a deck outage. |
 | Revive. | Native resume. |
-| Adopt or take over a terminal session. | Import a session id (M3 item 6-12). |
+| Adopt or take over a terminal session. | Import the native session id as a driven session (`session.import`, DL-308). |
 | Share the board on the LAN with a URL token. | Board login (owner password, one-time URL, API tokens) on loopback, the private LAN or the tailnet. |
 | Coder support, remote control through claude.ai. | Dropped. |
 
@@ -46,7 +46,7 @@ v2 uses port 7420 for the board and 7421 for the link by default, so v1 (4711) a
 
 | v1 item | How to move it |
 | --- | --- |
-| A running session | Let it end in v1. Start a new v2 session in the same worktree, or import its provider session id when item 6-12 is available. |
+| A running session | Let it end in v1. Start a new v2 session in the same worktree, or import its provider session id (see the [operations guide](./operations.md) §7.1). |
 | Worktrees made by v1 (`<repo>--fd-<callsign>`) | They stay normal Git worktrees. Start a v2 session with that directory as `cwd`. v2 uses the same naming for the worktrees that it makes. |
 | Mail, plans, tasks | Not migrated. Copy what you need into a v2 plan or a prompt. |
 | LAN share link | Use the board login on the LAN or the tailnet address. |

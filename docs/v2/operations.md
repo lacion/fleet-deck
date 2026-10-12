@@ -101,6 +101,17 @@ The station keeps working when the deck is down. On the station machine:
 
 Approvals that wait for the deck follow `offline_approval_policy`.
 
+### 7.1 Import a CLI session
+
+You can continue a Claude Code or Codex conversation that you started in a terminal as a driven v2 session:
+
+1. End the terminal CLI. One native session must have only one driver.
+2. On the board, open "New session", choose the station, the provider instance and the directory of that conversation.
+3. Put the native session id into "Import CLI session id (optional)". The id has 1 to 128 letters, digits, `-`, `_` or `.`, and starts with a letter or a digit.
+4. Optionally give a first prompt, then select "Import session".
+
+The station resumes the native session with the stored mode of the provider instance. It refuses an id that another session of the station already drives. Fleet Deck does not read the terminal and does not import v1 data.
+
 ## 8. Back up
 
 - The station event log (`station.db`) is the source of truth for sessions. The deck database (`deck.db`) is the source of truth for mail, plans, tasks, routing and settings.

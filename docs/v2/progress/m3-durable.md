@@ -28,6 +28,15 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 49 (2026-10-12, 15:26–)
+
+- Committed round 48 (7-6) as c0aad4f.
+- Merged `m3/board` (6-12 import, rest of 6-8; LANE COMPLETE) as e2ca83b. Conflicts: `decide.rs` `start()` takes both the workspace request (6-1) and the import id (6-12; an import is a `Resume` effect, a start keeps its workspace plan); method counts 36 (link) and 22 (mutations); `manager/tests.rs` both modules; PROGRESS rows 6-11 and 6-12 both `[x]`; board spawn form keeps batch, clone and worktree, plus the import field (an import is one session without a workspace request); `e2e/spawn.spec.ts` keeps both tests; `make ts-types`.
+- Checks after the merge: `cargo build --workspace --all-targets` clean; nextest (import, method table, mutation, workspace, drain filters) 73 passed; `bun test src/spawn` 10 passed; biome lint and typecheck clean.
+- `m3/orchestration` and `m3/ops`: no new commits. Lane B (6-5 Coordinator) is not complete, so 6-13, 7-7 and 7-8 wait.
+- 7-6 docs update for the merged 6-12 import: `docs/v2/operations.md` §7.1, `docs/v2/cutover.md`.
+- Recorded the round-49 review findings on 7-6 as follow-ups.
+
 ## Round 48 (2026-10-12, 15:14–)
 
 - Committed round 47 (7-3) as 2ff7794.
@@ -87,3 +96,6 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
 | 7-3 (review r48) | No guard for lost shims and no adapter checkpoint compatibility check in the trial | `crates/fleetdeck-station/src/upgrade.rs` |
 | 7-3 (review r48) | The trial run of the new binary has no time bound | `crates/fleetdeck-cli/src/upgrade.rs` |
 | 7-3 (review r48) | ADR-005 tests 20/21/22/48 use store rows, not a real ShimHost of two builds; N−1 is tested at the link layer only | `crates/fleetdeck-station/src/upgrade_tests.rs` |
+| 7-6 (review r49) | The docs do not say that auto-continue is not supported on the shim host (a shim session gets `unsupported`) | `docs/v2/operations.md` §10 |
+| 7-6 (review r49) | The docs present the auto-continue rechecks as complete; the dispatch recheck covers only part of the A10 rules (see the 7-2 follow-ups) | `docs/v2/operations.md` §10, `docs/v2/internals.md` |
+| 7-6 (review r49) | The README says a revert changes nothing on failure; a revert that cannot be proven needs reconciliation and blocks input (PLAN §6.6) | `README.md` |
