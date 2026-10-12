@@ -1,18 +1,28 @@
-import { type ReactNode, useState } from 'react';
+import { useState, useSyncExternalStore } from 'react';
 import type { AssignActions } from '../assign/assign';
 import { AssignBar } from '../assign/AssignBar';
-import { Feed } from '../board/FeedPanel';
 import { ConflictRadar } from '../board/ConflictRadar';
 import type { ConflictLoader } from '../board/conflicts';
 import type { FeedItem } from '../board/feed';
-import { ALL, emptyFilter, type FleetFilter, filterFleet, stationName } from '../board/fleet';
-import { FleetBoard } from '../board/FleetBoard';
+import { Feed } from '../board/FeedPanel';
+import {
+  ALL,
+  emptyFilter,
+  type FleetFilter,
+  filterFleet,
+  stationName,
+  statusGroups,
+} from '../board/fleet';
+import { COLUMNS, columnCards, FleetBoard, FleetCard } from '../board/FleetBoard';
 import { NeedsYouRail } from '../board/NeedsYouRail';
 import { UsageMeters } from '../board/UsageMeters';
 import type { FleetActions } from '../fleet/fleet';
 import { FleetPanel } from '../fleet/FleetPanel';
 import type { DeckSession, SessionKey, StationView } from '../gen';
 import type { Freshness } from '../runtime/state';
+import type { SessionActions } from '../session/commands';
+import { ChevronDown, ChevronUp, Icon, Search } from '../ui/icons';
+import { useNow } from '../ui/useNow';
 
 type Props = {
   readonly sessions: readonly DeckSession[];
@@ -22,6 +32,8 @@ type Props = {
   readonly fleet: FleetActions | undefined;
   readonly conflicts: ConflictLoader | undefined;
   readonly feed: readonly FeedItem[];
+  readonly layout: 'desktop' | 'tablet' | 'phone';
+  readonly sessionActions?: ((key: SessionKey) => SessionActions) | undefined;
   readonly onOpen: (key: SessionKey) => void;
   readonly onSpawn: () => void;
 };
@@ -33,17 +45,58 @@ function fleetVersion(sessions: readonly DeckSession[]): string {
   return `${sessions.length}/${newest}`;
 }
 
-/** The card heading is visible; the component's own first heading stays for screen readers only. */
-function HomeCard({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <div className="fd-home-card">
-      <h2 className="fd-home-card-title">{title}</h2>
-      {children}
-    </div>
+const WIDE = '(min-width: 1280px)';
+
+/** True from 1280 px: the needs-you rail is a side column. Server and test snapshot: true. */
+function useWide(): boolean {
+  return useSyncExternalStore(
+    (notify) => {
+      const query = window.matchMedia(WIDE);
+      query.addEventListener('change', notify);
+      return () => query.removeEventListener('change', notify);
+    },
+    () => window.matchMedia(WIDE).matches,
+    () => true,
   );
 }
 
-/** The fleet home: counts, filters, who needs you, the lanes, and the cards under them. */
+type PanelTab = 'activity' | 'mail' | 'assign' | 'usage';
+type PanelState = { readonly open: boolean; readonly tab: PanelTab };
+const PANEL_KEY = 'fd-home-panel';
+const PANEL_DEFAULT: PanelState = { open: true, tab: 'activity' };
+const PANEL_TABS: readonly PanelTab[] = ['activity', 'mail', 'assign', 'usage'];
+
+function readPanel(hasAssign: boolean): PanelState {
+  try {
+    const raw = localStorage.getItem(PANEL_KEY);
+    if (raw === null) return PANEL_DEFAULT;
+    const v: unknown = JSON.parse(raw);
+    if (typeof v !== 'object' || v === null) return PANEL_DEFAULT;
+    const { open, tab } = v as { open?: unknown; tab?: unknown };
+    if (typeof open !== 'boolean' || !PANEL_TABS.includes(tab as PanelTab)) return PANEL_DEFAULT;
+    if (tab === 'assign' && !hasAssign) return PANEL_DEFAULT;
+    return { open, tab: tab as PanelTab };
+  } catch {
+    return PANEL_DEFAULT;
+  }
+}
+
+function writePanel(state: PanelState) {
+  try {
+    localStorage.setItem(PANEL_KEY, JSON.stringify(state));
+  } catch {
+    // Storage is blocked: the panel still works for this visit.
+  }
+}
+
+const PANEL_LABEL: Record<PanelTab, string> = {
+  activity: 'Activity',
+  mail: 'Mail & tasks',
+  assign: 'Assign',
+  usage: 'Usage',
+};
+
+/** The fleet home: header, filters, the columns, who needs you, and the bottom panel. */
 export function FleetHome({
   sessions,
   stations,
@@ -52,102 +105,276 @@ export function FleetHome({
   fleet,
   conflicts,
   feed,
+  layout,
+  sessionActions,
   onOpen,
   onSpawn,
 }: Props) {
   const [filter, setFilter] = useState<FleetFilter>(emptyFilter);
+  const wide = useWide();
+  const phone = layout === 'phone';
   const visible = filterFleet(sessions, stations, filter);
   const stationIds = [
     ...new Set([...stations.map((s) => s.station_id), ...sessions.map((s) => s.station_id)]),
   ].sort();
   const needsYou = sessions.filter((s) => s.status === 'needs_you').length;
-  return (
-    <div className="fd-home">
-      <header className="fd-home-head">
-        <h1 className="fd-screen-title">Fleet</h1>
-        <p className="fd-home-counts">
-          {sessions.length === 1 ? '1 session' : `${sessions.length} sessions`} ·{' '}
-          {needsYou === 1 ? '1 needs you' : `${needsYou} need you`}
-        </p>
-      </header>
-      <form
-        className="fd-filters"
-        aria-label="Fleet filters"
-        onSubmit={(event) => event.preventDefault()}
-      >
-        <label>
-          Station
-          <select
-            value={filter.station}
-            onChange={(event) => setFilter({ ...filter, station: event.target.value })}
-          >
-            <option value={ALL}>All stations</option>
-            {stationIds.map((id) => (
-              <option key={id} value={id}>
-                {stationName(id, stations)}
-              </option>
-            ))}
-            {filter.station && !stationIds.includes(filter.station) ? (
-              <option value={filter.station}>Removed station: {filter.station}</option>
-            ) : null}
-          </select>
-        </label>
-        <label>
-          Provider
-          <select
-            value={filter.provider}
-            onChange={(event) => setFilter({ ...filter, provider: event.target.value })}
-          >
-            <option value={ALL}>All providers</option>
-            <option value="claude">Claude</option>
-            <option value="codex">Codex</option>
-            <option value="unknown">Unknown</option>
-          </select>
-        </label>
-        <label>
-          Search
-          <input
-            type="search"
-            value={filter.search}
-            onChange={(event) => setFilter({ ...filter, search: event.target.value })}
-            placeholder="Title, workspace, model…"
-          />
-        </label>
-        <button type="button" onClick={() => setFilter(emptyFilter)}>
-          Clear filters
-        </button>
-        <output aria-live="polite">
-          {visible.length} of {sessions.length} sessions
-        </output>
-      </form>
-      <NeedsYouRail sessions={sessions} stations={stations} onOpen={onOpen} />
-      <FleetBoard sessions={visible} stations={stations} freshness={freshness} onOpen={onOpen} />
-      <div className="fd-home-grid">
-        <HomeCard title="Usage">
-          <UsageMeters sessions={visible} stations={stations} />
-        </HomeCard>
-        {conflicts === undefined ? null : (
-          <HomeCard title="Conflicts">
-            <ConflictRadar
-              load={conflicts}
-              stations={stations}
-              version={fleetVersion(sessions)}
-              onOpen={onOpen}
-            />
-          </HomeCard>
-        )}
-        <HomeCard title="Fleet mail and tasks">
-          <FleetPanel actions={fleet} sessions={sessions} />
-        </HomeCard>
-        {assign === undefined ? null : (
-          <HomeCard title="Assign">
-            <AssignBar actions={assign} onSpawn={onSpawn} />
-          </HomeCard>
-        )}
-        <HomeCard title="Activity">
-          <Feed items={feed} onOpen={onOpen} />
-        </HomeCard>
+  const stationCount = stations.length;
+  const unknownProvider = sessions.some(
+    (s) => s.summary.provider === null || s.summary.provider === 'unknown',
+  );
+  const filtered = filter.station !== ALL || filter.provider !== ALL || filter.search.trim() !== '';
+
+  const header = (
+    <header className="fd-home-head">
+      <h1 className="fd-wordmark">FLEET</h1>
+      <p className="fd-home-counts">
+        {sessions.length === 1 ? '1 session' : `${sessions.length} sessions`} ·{' '}
+        {needsYou === 1 ? '1 needs you' : `${needsYou} need you`} ·{' '}
+        {stationCount === 1 ? '1 station' : `${stationCount} stations`}
+      </p>
+      <div className="fd-field">
+        <Icon of={Search} />
+        <input
+          type="search"
+          aria-label="Filter sessions"
+          placeholder="Filter sessions"
+          value={filter.search}
+          onChange={(event) => setFilter({ ...filter, search: event.target.value })}
+        />
       </div>
+    </header>
+  );
+  const radar =
+    conflicts === undefined ? null : (
+      <ConflictRadar
+        load={conflicts}
+        stations={stations}
+        version={fleetVersion(sessions)}
+        onOpen={onOpen}
+      />
+    );
+  const chip = (label: string, selected: boolean, pick: () => void, key: string) => (
+    <button key={key} type="button" className="fd-chip" aria-pressed={selected} onClick={pick}>
+      {label}
+    </button>
+  );
+  const filters = (
+    <div className="fd-filters" role="group" aria-label="Fleet filters">
+      <span className="fd-label">Station</span>
+      {chip('All', filter.station === ALL, () => setFilter({ ...filter, station: ALL }), 'all')}
+      {stationIds.map((id) =>
+        chip(
+          stationName(id, stations),
+          filter.station === id,
+          () => setFilter({ ...filter, station: id }),
+          id,
+        ),
+      )}
+      {filter.station !== ALL && !stationIds.includes(filter.station)
+        ? chip(`Removed station: ${filter.station}`, true, () => {}, `removed-${filter.station}`)
+        : null}
+      <span className="fd-label">Provider</span>
+      {chip('All', filter.provider === ALL, () => setFilter({ ...filter, provider: ALL }), 'p-all')}
+      {chip(
+        'Claude',
+        filter.provider === 'claude',
+        () => setFilter({ ...filter, provider: 'claude' }),
+        'claude',
+      )}
+      {chip(
+        'Codex',
+        filter.provider === 'codex',
+        () => setFilter({ ...filter, provider: 'codex' }),
+        'codex',
+      )}
+      {unknownProvider
+        ? chip(
+            'Unknown',
+            filter.provider === 'unknown',
+            () => setFilter({ ...filter, provider: 'unknown' }),
+            'unknown',
+          )
+        : null}
+      {filtered ? (
+        <output className="fd-count fd-filters-count" aria-live="polite">
+          {visible.length} of {sessions.length}
+        </output>
+      ) : null}
     </div>
+  );
+  const rail = (variant: 'side' | 'strip') => (
+    <NeedsYouRail
+      sessions={sessions}
+      stations={stations}
+      onOpen={onOpen}
+      sessionActions={sessionActions}
+      variant={variant}
+    />
+  );
+  const empty =
+    visible.length === 0 ? (
+      <p className="fd-empty fd-lanes-empty">
+        {sessions.length === 0
+          ? 'No sessions yet. Start one with New session.'
+          : 'No session matches the filters.'}
+      </p>
+    ) : null;
+  const panel = (
+    <HomePanel
+      hasAssign={assign !== undefined}
+      stations={stations}
+      sessions={sessions}
+      visible={visible}
+      feed={feed}
+      fleet={fleet}
+      assign={assign}
+      onOpen={onOpen}
+      onSpawn={onSpawn}
+    />
+  );
+
+  if (phone) {
+    return (
+      <div className="fd-home" data-layout="phone">
+        {header}
+        {radar}
+        {filters}
+        {rail('strip')}
+        {empty ?? <PhoneColumns visible={visible} stations={stations} freshness={freshness} />}
+        {panel}
+      </div>
+    );
+  }
+  return (
+    <div className="fd-home" data-layout={layout}>
+      <div className="fd-home-main">
+        {header}
+        {radar}
+        {filters}
+        {wide ? null : rail('strip')}
+        <div className="fd-lanes">
+          <FleetBoard sessions={visible} stations={stations} freshness={freshness} />
+          {empty}
+        </div>
+        {panel}
+      </div>
+      {wide ? rail('side') : null}
+    </div>
+  );
+}
+
+/** Phone: one section for each column that has a card. */
+function PhoneColumns({
+  visible,
+  stations,
+  freshness,
+}: {
+  visible: readonly DeckSession[];
+  stations: readonly StationView[];
+  freshness: Freshness;
+}) {
+  const now = useNow(undefined, 30000);
+  const groups = statusGroups(visible);
+  return (
+    <>
+      {COLUMNS.map((column) => {
+        const cards = columnCards(groups, column.statuses);
+        if (cards.length === 0) return null;
+        return (
+          <section key={column.id} className="fd-phone-col" aria-label={column.label}>
+            <h2 className="fd-label">
+              {column.label} <span className="fd-count">{cards.length}</span>
+            </h2>
+            <ul className="fd-col">
+              {cards.map((card) => (
+                <FleetCard
+                  key={`${card.station_id}/${card.summary.session_id}`}
+                  card={card}
+                  stations={stations}
+                  freshness={freshness}
+                  now={now}
+                  showStation
+                />
+              ))}
+            </ul>
+          </section>
+        );
+      })}
+    </>
+  );
+}
+
+/** The bottom panel: activity, mail and tasks, assign, usage. */
+function HomePanel({
+  hasAssign,
+  stations,
+  sessions,
+  visible,
+  feed,
+  fleet,
+  assign,
+  onOpen,
+  onSpawn,
+}: {
+  hasAssign: boolean;
+  stations: readonly StationView[];
+  sessions: readonly DeckSession[];
+  visible: readonly DeckSession[];
+  feed: readonly FeedItem[];
+  fleet: FleetActions | undefined;
+  assign: AssignActions | undefined;
+  onOpen: (key: SessionKey) => void;
+  onSpawn: () => void;
+}) {
+  const [state, setState] = useState<PanelState>(() => readPanel(hasAssign));
+  const set = (next: PanelState) => {
+    setState(next);
+    writePanel(next);
+  };
+  const tab: PanelTab = state.tab === 'assign' && !hasAssign ? 'activity' : state.tab;
+  const tabs = PANEL_TABS.filter((t) => t !== 'assign' || hasAssign);
+  return (
+    <section className="fd-homepanel" data-open={state.open} aria-label="Fleet panel">
+      <div className="fd-homepanel-head">
+        <div role="tablist" aria-label="Fleet panels" className="fd-homepanel-tabs">
+          {tabs.map((t) => (
+            <button
+              key={t}
+              type="button"
+              role="tab"
+              className="fd-chip"
+              aria-selected={state.open && tab === t}
+              aria-controls="fd-homepanel-body"
+              onClick={() => set({ open: true, tab: t })}
+            >
+              {PANEL_LABEL[t]}
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          className="fd-iconbtn fd-sm"
+          aria-expanded={state.open}
+          aria-controls="fd-homepanel-body"
+          aria-label={state.open ? 'Collapse panel' : 'Expand panel'}
+          onClick={() => set({ ...state, open: !state.open })}
+        >
+          <Icon of={state.open ? ChevronDown : ChevronUp} />
+        </button>
+      </div>
+      <div
+        id="fd-homepanel-body"
+        className="fd-homepanel-body"
+        role="tabpanel"
+        hidden={!state.open}
+      >
+        {tab === 'activity' ? <Feed items={feed} onOpen={onOpen} /> : null}
+        {tab === 'mail' ? <FleetPanel actions={fleet} sessions={sessions} /> : null}
+        {tab === 'assign' && assign !== undefined ? (
+          <AssignBar actions={assign} onSpawn={onSpawn} />
+        ) : null}
+        {tab === 'usage' ? <UsageMeters sessions={visible} stations={stations} /> : null}
+      </div>
+    </section>
   );
 }

@@ -19,12 +19,13 @@ export function Feed({ items, onOpen }: Props) {
     .reverse();
   return (
     <section className="fd-feed" aria-label="Event feed">
-      <h2>Event feed</h2>
+      <h2 className="fd-vh">Event feed</h2>
       <div className="fd-feed-filters" role="group" aria-label="Feed filter">
         {FEED_FILTERS.map((f) => (
           <button
             key={f.id}
             type="button"
+            className="fd-chip fd-sm"
             aria-pressed={kind === f.id}
             onClick={() => setKind(f.id)}
           >
@@ -33,16 +34,19 @@ export function Feed({ items, onOpen }: Props) {
         ))}
       </div>
       {shown.length === 0 ? (
-        <p className="fd-note">Quiet so far.</p>
+        <p className="fd-empty">Quiet so far.</p>
       ) : (
-        <ol>
+        <ol className="fd-feedlines">
           {shown.map((i) => (
-            <li key={i.id} data-feed-kind={i.kind}>
-              <time dateTime={new Date(i.at).toISOString()}>{clock(i.at)}</time>{' '}
-              <button type="button" className="fd-link" onClick={() => onOpen(i.key)}>
+            <li key={i.id} className="fd-feedline" data-feed-kind={i.kind}>
+              <time className="fd-feed-t" dateTime={new Date(i.at).toISOString()}>
+                {clock(i.at)}
+              </time>
+              <span className="fd-feed-tag">{i.kind}</span>
+              <button type="button" className="fd-namebtn" onClick={() => onOpen(i.key)}>
                 {i.name}
-              </button>{' '}
-              {i.text}
+              </button>
+              <span className="fd-feed-m">{i.text}</span>
             </li>
           ))}
         </ol>

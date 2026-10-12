@@ -306,6 +306,8 @@ export function App({
       fleet={fleet}
       conflicts={conflicts}
       feed={feed}
+      layout={layout}
+      sessionActions={sessionActions}
       onOpen={open}
       onSpawn={() => navigate({ name: 'new' })}
     />

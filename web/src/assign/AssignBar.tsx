@@ -51,7 +51,7 @@ export function AssignBar({ actions, onSpawn }: Props) {
         Assign auto
       </button>
       {result === null ? null : (
-        <p role="status">
+        <p className="fd-note" role="status">
           {result.text}{' '}
           {result.spawnOn === null ? null : (
             <button type="button" onClick={() => onSpawn(result.spawnOn?.stationId ?? '')}>

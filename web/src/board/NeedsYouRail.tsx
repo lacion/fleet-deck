@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import type { DeckSession, SessionKey, StationView } from '../gen';
+import { formatHash } from '../app/routes';
+import { relativeAge } from '../app/sessions';
+import type { DeckSession, OpenRequest, SessionKey, StationView } from '../gen';
+import type { SessionActions } from '../session/commands';
+import { questionForm } from '../session/question';
+import { Bell, BellOff, Check, ChevronRight, Icon } from '../ui/icons';
+import { useNow } from '../ui/useNow';
 import { stationName } from './fleet';
 import {
   freshRequests,
@@ -15,46 +21,148 @@ type Props = {
   readonly sessions: readonly DeckSession[];
   readonly stations: readonly StationView[];
   readonly onOpen: (key: SessionKey) => void;
+  readonly sessionActions?: ((key: SessionKey) => SessionActions) | undefined;
+  readonly variant: 'side' | 'strip';
+  readonly now?: number | undefined;
 };
 
 /** Open approvals of every session, the oldest first (PLAN §12 needs-you rail). */
-export function NeedsYouRail({ sessions, stations, onOpen }: Props) {
+export function NeedsYouRail({
+  sessions,
+  stations,
+  onOpen,
+  sessionActions,
+  variant,
+  now: given,
+}: Props) {
+  const now = useNow(given, 30000);
   const waiting = sessions
     .flatMap((s) =>
       s.summary.open_requests.map((r) => ({
         key: { station_id: s.station_id, session_id: s.summary.session_id },
+        card: s,
         title: s.summary.title ?? s.summary.session_id,
         request: r,
       })),
     )
     .sort((a, b) => a.request.requested_at - b.request.requested_at);
   const [notify, setNotify] = useState(notifyEnabled);
+  const [pending, setPending] = useState<ReadonlySet<string>>(new Set());
+  const [errors, setErrors] = useState<Readonly<Record<string, string>>>({});
   useNotifications(sessions, notify, onOpen);
+  if (variant === 'strip' && waiting.length === 0) return null;
+  const settle = (requestId: string) =>
+    setPending((p) => {
+      const next = new Set(p);
+      next.delete(requestId);
+      return next;
+    });
+  const answer = (actions: SessionActions, request: OpenRequest, optionId: string) => {
+    const id = request.request_id;
+    setPending((p) => new Set(p).add(id));
+    actions.answer(id, optionId, null).then(
+      (outcome) => {
+        settle(id);
+        if (!outcome.ok) setErrors((e) => ({ ...e, [id]: outcome.text }));
+      },
+      (e: unknown) => {
+        settle(id);
+        setErrors((all) => ({ ...all, [id]: e instanceof Error ? e.message : 'Request failed' }));
+      },
+    );
+  };
   return (
-    <section className="fd-rail" aria-label="Needs you rail">
-      <h2>
-        Needs you <span className="fd-count">{waiting.length}</span>
-      </h2>
-      <NotifyToggle on={notify} onChange={setNotify} />
+    <section className="fd-rail" data-variant={variant} aria-label="Needs you rail">
+      <div className="fd-rail-top">
+        <h2 className="fd-rail-head">
+          <span className="fd-rail-title">NEEDS YOU</span>{' '}
+          <span className="fd-rail-count">{waiting.length}</span>
+        </h2>
+        <NotifyToggle on={notify} onChange={setNotify} />
+      </div>
       {waiting.length === 0 ? (
-        <p className="fd-empty">Nothing waits for you.</p>
+        <div className="fd-allclear">
+          <span className="fd-allclear-ring">
+            <Icon of={Check} />
+          </span>
+          <span className="fd-allclear-t1">ALL CLEAR</span>
+          <span className="fd-allclear-t2">Nothing waits for you.</span>
+        </div>
       ) : (
-        <ul>
-          {waiting.map((w) => (
-            <li key={`${w.key.station_id}/${w.key.session_id}/${w.request.request_id}`}>
-              <span>
-                {w.title} · {stationName(w.key.station_id, stations)}: {w.request.title}
-              </span>
-              <button
-                type="button"
-                aria-label={`Answer ${w.request.title} in ${w.title}`}
-                onClick={() => onOpen(w.key)}
+        <div className="fd-rail-list">
+          {waiting.map((w) => {
+            const r = w.request;
+            const actions = sessionActions?.(w.key);
+            const answerable =
+              actions?.canApprove === true &&
+              w.card.summary.capabilities?.approvals === true &&
+              questionForm(r) === null &&
+              r.options.length > 0;
+            const busy = pending.has(r.request_id);
+            const error = errors[r.request_id];
+            return (
+              <article
+                key={`${w.key.station_id}/${w.key.session_id}/${r.request_id}`}
+                className="fd-q"
+                data-request={r.request_id}
               >
-                Answer
-              </button>
-            </li>
-          ))}
-        </ul>
+                <div className="fd-q-row">
+                  <a
+                    className="fd-q-session"
+                    href={formatHash({
+                      name: 'session',
+                      station: w.key.station_id,
+                      session: w.key.session_id,
+                      tab: 'chat',
+                    })}
+                  >
+                    {w.title}
+                  </a>
+                  <span
+                    className="fd-badge fd-caps"
+                    data-tone={r.request_kind === 'question' ? 'info' : 'act'}
+                  >
+                    {r.request_kind === 'question' ? 'Question' : 'Permission'}
+                  </span>
+                  <span className="fd-badge">{stationName(w.key.station_id, stations)}</span>
+                  <span className="fd-q-age">{relativeAge(r.requested_at, now)}</span>
+                </div>
+                <p className="fd-q-title">{r.title}</p>
+                {r.details === '' ? null : <pre className="fd-code fd-q-cmd">{r.details}</pre>}
+                {answerable && actions !== undefined ? (
+                  <div className="fd-q-answer">
+                    {r.options.map((o, i) => (
+                      <button
+                        key={o.option_id}
+                        type="button"
+                        className={i === 0 ? 'fd-primary' : undefined}
+                        aria-label={`${o.label}: ${r.title} in ${w.title}`}
+                        disabled={busy}
+                        onClick={() => answer(actions, r, o.option_id)}
+                      >
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    className="fd-sm"
+                    aria-label={`Answer ${r.title} in ${w.title}`}
+                    onClick={() => onOpen(w.key)}
+                  >
+                    Open session <Icon of={ChevronRight} size={14} />
+                  </button>
+                )}
+                {error === undefined ? null : (
+                  <p className="fd-q-error" role="alert">
+                    {error}
+                  </p>
+                )}
+              </article>
+            );
+          })}
+        </div>
       )}
     </section>
   );
@@ -79,11 +187,16 @@ function useNotifications(
 
 function NotifyToggle(props: { on: boolean; onChange: (on: boolean) => void }) {
   const [state, setState] = useState(permission);
-  if (state === 'unsupported') {
-    return <p className="fd-note">This browser cannot show notifications.</p>;
-  }
-  if (state === 'denied') {
-    return <p className="fd-note">Notifications are blocked in this browser's settings.</p>;
+  if (state === 'unsupported' || state === 'denied') {
+    const text =
+      state === 'unsupported'
+        ? 'This browser cannot show notifications'
+        : "Notifications are blocked in this browser's settings";
+    return (
+      <button type="button" className="fd-iconbtn" disabled title={text} aria-label={text}>
+        <Icon of={BellOff} />
+      </button>
+    );
   }
   const turn = async (on: boolean) => {
     let now: Permission = state;
@@ -96,8 +209,15 @@ function NotifyToggle(props: { on: boolean; onChange: (on: boolean) => void }) {
     props.onChange(enabled);
   };
   return (
-    <button type="button" aria-pressed={props.on} onClick={() => void turn(!props.on)}>
-      {props.on ? 'Notifications on' : 'Notify me'}
+    <button
+      type="button"
+      className="fd-iconbtn"
+      aria-pressed={props.on}
+      aria-label="Notifications"
+      title={props.on ? 'Notifications are on' : 'Notifications are off'}
+      onClick={() => void turn(!props.on)}
+    >
+      <Icon of={props.on ? Bell : BellOff} />
     </button>
   );
 }

@@ -49,6 +49,7 @@ export function FleetPanel({ actions, sessions }: Props) {
   return (
     <section className="fd-fleet" aria-label="Mail and tasks">
       <form
+        className="fd-fleet-form"
         onSubmit={(event) => {
           event.preventDefault();
           run((to) => actions.mail(to, text.trim(), steer));
@@ -87,10 +88,14 @@ export function FleetPanel({ actions, sessions }: Props) {
             Create task
           </button>
         </div>
-        {result === null ? null : <p role="status">{result.text}</p>}
+        {result === null ? null : (
+          <p className="fd-note" role="status">
+            {result.text}
+          </p>
+        )}
       </form>
       {tasks.length === 0 ? null : (
-        <ul aria-label="Tasks">
+        <ul className="fd-fleet-list" aria-label="Tasks">
           {tasks.map((t) => (
             <li key={t.task_id}>
               <span className="fd-task-title">{t.title}</span>{' '}
@@ -100,7 +105,7 @@ export function FleetPanel({ actions, sessions }: Props) {
         </ul>
       )}
       {grants.length === 0 ? null : (
-        <ul aria-label="Coordinator grants">
+        <ul className="fd-fleet-list" aria-label="Coordinator grants">
           {grants.map((g) => (
             <li key={g.grant_id}>
               <span className="fd-task-title">Coordinator {g.session_id}</span>{' '}
