@@ -1,8 +1,8 @@
 # ADR-006 — Coordinator MCP: ingress, credentials, grants and authorization
 
-- **Status:** Proposed (revision 2 after design review). M3 round 5, 2026-10-12; DL-081. Revision 1 (commit 7965c6e) got adversary DESIGN REVIEW FAIL sa-7bc9f9f0 (7 MAJOR, 1 MINOR); revision 2 applies every required text of that review (§13 maps each finding to its section). Not wired. The implementation starts only after the architect records an adversary DESIGN REVIEW PASS for this ADR in the "Design approvals" section of the gate-state file (M3 goal, GATE STATUS). DL-073 records an owner pre-approval; DL-074 records why the executor still waits for the review.
+- **Status:** Proposed, revision 3. M3 round 10, 2026-10-12; DL-086. Revision 1 (commit 7965c6e) got adversary DESIGN REVIEW FAIL sa-7bc9f9f0 (7 MAJOR, 1 MINOR); revision 2 (DL-081, commit 2b7c937) applied it and got the re-review FAIL sa-b11bfa3b (3 MAJOR, 1 MINOR). Revision 3 applies every required text of the re-review (§13 maps the first review, §14 the re-review). Not wired. The implementation starts only after the architect records an adversary DESIGN REVIEW PASS for this ADR in the "Design approvals" section of the gate-state file (M3 goal, GATE STATUS). DL-073 records an owner pre-approval; DL-074 records why the executor still waits for the review.
 - **Date:** 2026-10-12
-- **Deciders:** architect (goal loop, M3), owner (pre-approval, DL-073), adversary DESIGN REVIEW (revision 1: FAIL sa-7bc9f9f0; revision 2: pending)
+- **Deciders:** architect (goal loop, M3), owner (pre-approval, DL-073), adversary DESIGN REVIEW (revision 1: FAIL sa-7bc9f9f0; revision 2: FAIL sa-b11bfa3b; revision 3: pending)
 - **Implements:** PLAN §7.1 "Coordinator API contract" (L14), §9 row "Coordinator agent overreach", §10 deck tables `coordinator_receipts` and `tokens`, Phase 6 "Required ADR-006 decisions"; ADR-004 §9.3 (G3 envelopes), §9.5 (G5 revocation), §9.6 (G6/G7 method table)
 - **Evidence:** none yet. §8 lists the executable negative tests that come before the wiring.
 - **Verified against:** Claude Code `--mcp-config` HTTP servers with `headers` and `${VAR}` expansion (Claude Code MCP documentation); Codex `mcp_servers.<name>.url` and `bearer_token_env_var` for Streamable HTTP (Codex configuration reference; openai/codex commit a43ae86, issues 19275 and 30125). Neither provider behavior is verified on this machine yet: §5.4 makes the live verification a precondition of the capability.
@@ -102,7 +102,15 @@ The station, its database, its identity key and every provider child run as one 
 | `pending`/`active`/`expired` | `expires_at` passed | `revoked` | `coordinator.ended { reason: expired }` |
 | any but `revoked` | owner revoke; session stop or end; process exit or loss; root native identity replaced (§5.6); deck pin removed (G5); station restart without a durable host | `revoked` (terminal) | `coordinator.ended { reason }`; the outbox fence of §6.5 applies |
 
-Renewal is allowed only for idle-expired bindings before absolute expiry; `active → active` renewal does not exist. A `revoked` binding never returns and cannot renew. A late or duplicate `coordinator.bound` event never revives a `revoked` binding and never lowers a generation: the deck and the station apply a lifecycle event only if its generation is higher than the stored one, or equal with the same facts. With ADR-005 `ShimHost`, a verified reattachment of the same process with the same native identity keeps the binding (state and generation unchanged); any doubt about the process identity revokes it (`process_lost`).
+Renewal is allowed only for idle-expired bindings before absolute expiry; `active → active` renewal does not exist. A `revoked` binding never returns and cannot renew. A late or duplicate `coordinator.bound` event never revives a `revoked` binding and never lowers a generation. Admission of lifecycle events (deck and station):
+
+- Generation equality does not prevent expiry or revocation of the current binding.
+- A matching `coordinator.ended` event can transition the current generation to `expired` or `revoked`.
+- Lifecycle events follow the station incarnation and committed sequence order.
+- A repeated `coordinator.bound` event is a no-op; it cannot reactivate an expired or revoked binding.
+- Activation occurs only for the initial pending binding or the recorded, matching renewal generation (§7).
+- Revoked grants remain terminal.
+- A lifecycle event with a generation lower than the stored one is ignored. With ADR-005 `ShimHost`, a verified reattachment of the same process with the same native identity keeps the binding (state and generation unchanged); any doubt about the process identity revokes it (`process_lost`).
 
 ### 5.6 Root native-identity signal
 
@@ -113,7 +121,21 @@ Renewal is allowed only for idle-expired bindings before absolute expiry; `activ
 
 ## 6. Wire and authorization
 
-### 6.1 Envelope changes (ADR-004 §9.3 and §9.6 rows stay; params change)
+### 6.1 Envelope and method changes (ADR-004 §9.6 gains exactly two rows)
+
+ADR-004's method table gains exactly these two rows; every other row stays unchanged, and the existing coordinator rows change only their params (below):
+
+| Method | Kind | Scope | Direction | Feature |
+| --- | --- | --- | --- | --- |
+| `session.coordinator_renew` | mutating, `CommandEnvelope` | `drive` | deck → station | `coordinator_v1` |
+| `session.coordinator_revoke` | mutating, `CommandEnvelope` | `drive` | deck → station | `coordinator_v1` |
+
+- Add `session.coordinator_renew` and `session.coordinator_revoke` to the link method table.
+- Both methods are mutating, require `drive`, travel deck→station, and require negotiated `coordinator_v1`.
+- Both use `CommandEnvelope`, targeting the station database incarnation, with immutable payloads and station receipts.
+- Their commands identify the target session and grant; renewal also carries the expected generation: `SessionCommand::CoordinatorRenew { session_id, grant_id, generation }` and `SessionCommand::CoordinatorRevoke { session_id, grant_id }`.
+- The station verifies that the grant belongs to that session before applying either command; a mismatch is a stored `invalid_command` rejection.
+- Only owner-authorized deck actions create these commands. Station-local requests and coordinator operations cannot create them (the station-local socket rejects both ops with `forbidden`, and no `CoordinatorOp` maps to them).
 
 - `CoordinatorCall { caller, token_digest, op }` becomes `CoordinatorCall { caller: SessionId, binding: CoordinatorBinding, idempotency_key: Option<String>, op: CoordinatorOp }` with `CoordinatorBinding { binding_id, grant_id, generation: u32, provider_instance, native_id }`. The digest never leaves the station: the deck needs no secret-derived value, because the pinned link authenticates the station and the binding facts are checked against the deck's own projection (§6.2).
 - `CoordinatorOp` (tag `op`, `deny_unknown_fields`, unknown op rejected): `spawn { station, spec, prompt? }`, `send { to, text, delivery: follow_up | steer }`, `interrupt { station, session_id }`, `stop { station, session_id }`, `assign { task, to }`, `assign_auto { task, requirements }`, `complete_task { task_id, result }`.
@@ -121,6 +143,7 @@ Renewal is allowed only for idle-expired bindings before absolute expiry; `activ
 - Link feature `coordinator_v1` (L16). A station enables the capability only on a link that negotiated it; a deck accepts the new shapes only on such a link. An M2 peer never negotiates it, so N−1 peers keep the M2 behavior (`unsupported`).
 - Station events (no secret, decodable by older peers as `EventBody::Unknown`, L16): `coordinator.bound { binding_id, grant_id, generation, provider_instance, native_id }`, `coordinator.ended { binding_id, generation, reason }`.
 - Lifecycle watermark. The deck applies `coordinator.bound` and `coordinator.ended` to the grant in the same transaction that ingests and acknowledges those station events. After every link (re)connect, the station sends no `coordinator.call` and no `coordinator.query` (including retries of sent rows) until the deck has acknowledged the station event stream through the sequence of the last coordinator lifecycle event (the lifecycle watermark). The acknowledged state therefore includes binding state and generation.
+- Snapshot synchronization. Coordinator-capable snapshots contain a complete binding-state projection at the snapshot watermark, including binding identifiers, generation, native identity, provider instance, and lifecycle state. The deck commits that projection and the stream cursor in one transaction before acknowledging the snapshot. An ordinary session-summary snapshot acknowledgment does not satisfy the coordinator lifecycle fence. Snapshot synchronization cannot revive a revoked grant or accept an unsolicited renewal generation: the projection is applied with the admission rules of §5.5, and a generation above the stored one is accepted only when it equals the recorded renewal generation.
 
 ### 6.2 Deck decision order for `coordinator.call` (extends the M2 rules)
 
@@ -167,7 +190,8 @@ All of steps 2–5 run in one deck write transaction:
 - Intake: an authorized tool call that maps to `coordinator.call` gets a new `command_id` (ULID). The station stores the complete envelope (with the binding of the intake) in a `coordinator_outbox` row in the same transaction as the intake, before any send. The stored envelope never changes (G3). `retry_until` = intake + 15 min.
 - Idempotency: the optional tool parameter `idempotency_key` (1–64 chars) is unique per binding. A second call with the same key and the same arguments returns the first call's `command_id` and state; the same key with other arguments gets the tool error `idempotency_key_reused`.
 - Coordinator outbox rows use the existing G3 states `pending`, `done`, `failed`, and `ambiguous` (`DeckCommandState`, ADR-004 §9.3). A definitive stored receipt produces `done`; it acknowledges acceptance or rejection, not execution completion.
-- The outbox worker sends the stored envelope; after a link loss or a timeout it sends the same envelope again until `retry_until` (the deck deduplicates, §6.2 step 4), subject to the fences below. After `retry_until` without a receipt, the row becomes `ambiguous` and is never sent again.
+- The outbox worker sends the stored envelope; after a link loss or a timeout it sends the same envelope again until `retry_until` (the deck deduplicates, §6.2 step 4), subject to the fences below.
+- When `retry_until` passes without a definitive receipt, a never-sent row becomes `failed` with `expired`. A row with an earlier transmission becomes `ambiguous`. The station durably records transmission eligibility (`sent_at` committed before the network write) before network I/O, so recovery cannot mistake a possibly sent row for an unsent row. Neither terminal state is automatically redispatched.
 - `incarnation_mismatch` or `expired` after any earlier send produces `ambiguous`. Before any send, it produces `failed` with `deck_reset` or `expired`.
 - Revocation or generation invalidation before any send produces `failed`. Without a definitive receipt after an earlier send, it produces `ambiguous`. A `forbidden` or `binding_stale` answer to a row that was sent before is not definitive for the earlier send, so the row is `ambiguous`.
 - Station-known invalidation (revocation, expiry, renewal, native replacement, process loss) fences every subsequent coordinator transmission of that binding, including retries of previously sent rows. Never-sent rows become `failed`. Sent rows without definitive receipts become `ambiguous` and are not resent.
@@ -184,8 +208,8 @@ All of steps 2–5 run in one deck write transaction:
 ## 7. Lifecycle, expiry, renewal and revocation
 
 - Idle expiry: the station and the deck both check it; the station check stops the call before the forward, the deck check is the authority. Only the refresh events of §5.3 reset idle time.
-- Renewal: an owner board action on an idle-`expired` grant before `expires_at`. The deck records the expected renewal generation (stored generation + 1) and sends a session command `coordinator_renew { grant_id, generation }` to the station (a new `SessionCommand` op with a station receipt). The station applies it only to an idle-expired binding with the previous generation, raises the generation and emits `coordinator.bound` with it. The deck awaits that matching station acknowledgment; it then commits the new binding fields and resets `last_used_at`. Until then the grant stays `expired`. Old-generation operations remain invalid (§6.5); a renewal never authorizes them. Revoked bindings cannot renew.
-- Revocation: the owner action commits `revoked` on the deck first; from that transaction on, every decision is `forbidden`. The deck then sends `coordinator_revoke { grant_id }` so the station marks the binding `revoked` and answers `401`. If the station is offline, the deck refusal is enough; the station applies the command when the link returns.
+- Renewal: an owner board action on an idle-`expired` grant before `expires_at`. The deck records the expected renewal generation (stored generation + 1) and sends the link method `session.coordinator_renew` (`SessionCommand::CoordinatorRenew { session_id, grant_id, generation }`, §6.1) to the station; the station stores a receipt. The station applies it only to an idle-expired binding with the previous generation, raises the generation and emits `coordinator.bound` with it. The deck awaits that matching station acknowledgment; it then commits the new binding fields and resets `last_used_at`. Until then the grant stays `expired`. Old-generation operations remain invalid (§6.5); a renewal never authorizes them. Revoked bindings cannot renew.
+- Revocation: the owner action commits `revoked` on the deck first; from that transaction on, every decision is `forbidden`. The deck then sends the link method `session.coordinator_revoke` (`SessionCommand::CoordinatorRevoke { session_id, grant_id }`, §6.1) so the station marks the binding `revoked` and answers `401`. If the station is offline, the deck refusal is enough; the station applies the command when the link returns.
 - Session end, process loss and native-identity replacement are station facts; the station revokes the binding and emits `coordinator.ended`; the deck marks the grant `revoked` from that event.
 - Deck database replacement (another incarnation): every call fails `incarnation_mismatch`; grants of the old database are gone, so all bindings stay useless until the owner creates new grants.
 
@@ -241,12 +265,24 @@ The implementation order is: types and these tests first, then the wiring. Each 
 25a. `a_successful_query_and_an_accepted_mutation_refresh_idle_time_and_a_ping_a_discovery_a_rejection_or_a_duplicate_do_not`
 25b. `renewal_needs_an_idle_expired_binding_and_the_matching_station_acknowledgment`
 25c. `a_late_or_duplicate_bound_event_never_revives_a_revoked_binding_or_lowers_its_generation`
+25d. `active_to_expired_and_active_to_revoked_at_the_same_generation_apply_and_a_replayed_earlier_bound_event_reactivates_neither`
+25e. `a_snapshot_recovery_with_an_unapplied_lifecycle_event_commits_the_grant_transition_before_any_coordinator_traffic_resumes` (deck and station link test: the lifecycle event is skipped by a forced snapshot; the snapshot's binding projection and the cursor commit in one transaction; an ordinary summary snapshot acknowledgment does not open the fence; an unsolicited renewal generation in the projection is refused)
 26. `a_peer_without_the_coordinator_feature_gets_the_m2_behavior`
+
+### 8.3a Renew and revoke link methods — `crates/fleetdeck-proto/tests/adr_revision2.rs` and `crates/fleetdeck-station/src/manager/coordinator_command_tests.rs`
+
+26a. `the_method_table_and_the_command_envelope_agree_for_coordinator_renew_and_revoke` (extends the method/envelope agreement tests: mutating, `drive`, deck→station, `coordinator_v1`)
+26b. `coordinator_renew_and_revoke_from_the_wrong_role_without_the_feature_or_without_drive_are_refused`
+26c. `a_duplicate_renew_or_revoke_command_returns_the_stored_receipt_and_applies_once`
+26d. `a_renew_or_revoke_whose_grant_belongs_to_another_session_is_a_stored_rejection`
+26e. `a_station_local_request_or_a_coordinator_operation_cannot_create_renew_or_revoke`
 
 ### 8.4 Station outbox — `crates/fleetdeck-station/src/coordinator/outbox_tests.rs`
 
 27. `a_call_sent_before_a_link_loss_is_sent_again_with_the_same_envelope_and_deduplicated`
-28. `a_call_without_a_receipt_after_retry_until_is_ambiguous_and_never_sent_again`
+28. `a_call_without_a_receipt_after_retry_until_is_ambiguous_and_never_sent_again` (after an earlier send)
+28b. `a_never_sent_call_after_retry_until_is_failed_expired_and_never_sent` (offline: the link is down from intake to the deadline)
+28c. `a_crash_at_the_transmission_boundary_makes_the_row_ambiguous_never_failed` (fault point after the `sent_at` commit and before the network write, and after the write; recovery classifies both as possibly sent)
 28a. `incarnation_mismatch_or_expired_is_failed_before_any_send_and_ambiguous_after_one`
 29. `the_same_idempotency_key_returns_the_first_command_and_another_payload_is_refused`
 30. `a_revocation_fails_queued_unsent_calls_without_a_send_and_makes_sent_ones_ambiguous_without_a_resend`
@@ -260,7 +296,7 @@ The implementation order is: types and these tests first, then the wiring. Each 
 
 | Failure | Behaviour |
 | --- | --- |
-| Link down | Calls stay in the station outbox and are sent again with the same envelope until `retry_until`, after the lifecycle watermark (§6.1); then `ambiguous`. Queries fail at once with `deck_unreachable`. |
+| Link down | Calls stay in the station outbox and are sent again with the same envelope until `retry_until`, after the lifecycle watermark (§6.1); then `ambiguous` after an earlier send, or `failed` (`expired`) for a never-sent row (§6.5). Queries fail at once with `deck_unreachable`. |
 | Deck restart | Receipts and grants are durable; the same envelope gets the stored receipt. |
 | Station restart (direct host) | The providers end (SIGKILL test, DL-074); every binding becomes `revoked` (`process_lost`) at recovery; queued unsent calls become `failed` (`revoked`); sent ones without a receipt become `ambiguous` and are never sent again (§6.5). |
 | Provider ignores the handoff | Its requests get `401`; the agent sees failing tools; nothing gains authority. |
@@ -298,3 +334,12 @@ The implementation order is: types and these tests first, then the wiring. Each 
 | MAJOR 6 — query contract | §6.1 (`target_incarnation`), §6.3 (`command_status`, fleet-state rule), §6.6, tests 24a, 24b |
 | MAJOR 7 — unauthenticated resource use | §5.1, tests 9, 9a |
 | MINOR — mode ceiling | §4 (`max_modes`), §6.3, test 20b |
+
+## 14. Re-review map (sa-b11bfa3b → revision 3)
+
+| Finding | Sections |
+| --- | --- |
+| 1 MAJOR — snapshot acknowledgment does not prove lifecycle sync | §6.1 (snapshot binding projection, one transaction with the cursor, summary acks do not open the fence), test 25e |
+| 2 MAJOR — lifecycle admission conflicts with expiry and revocation | §5.5 (admission rules), test 25d |
+| 3 MAJOR — no link-method contract for renew and revoke | §6.1 (two new method rows, approved by the architect as written), §7, tests 26a–26e |
+| 4 MINOR — unsent deadline expiry | §6.5 (never sent → `failed`/`expired`, sent → `ambiguous`, `sent_at` before I/O), §9, tests 28, 28b, 28c |
