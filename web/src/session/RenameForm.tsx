@@ -23,6 +23,7 @@ export function RenameForm({ title, enabled, onRename, startEditing = false, onC
     return (
       <button
         type="button"
+        className="fd-sm"
         disabled={!enabled}
         onClick={() => {
           setDraft(title ?? '');
@@ -59,11 +60,12 @@ export function RenameForm({ title, enabled, onRename, startEditing = false, onC
       {tooLong ? (
         <span role="alert">The title is longer than {MAX_TITLE_CHARS} characters.</span>
       ) : null}
-      <button type="submit" disabled={!enabled || tooLong}>
+      <button type="submit" className="fd-sm" disabled={!enabled || tooLong}>
         {trimmed === '' ? 'Clear the title' : 'Save'}
       </button>
       <button
         type="button"
+        className="fd-sm"
         onClick={() => {
           setEditing(false);
           onClose?.();

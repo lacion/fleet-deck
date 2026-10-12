@@ -24,6 +24,7 @@ export type PaneProps = {
   readonly onTab: (tab: Tab) => void;
   readonly onBack?: () => void;
   readonly onTerminalOpened?: () => void;
+  readonly onNewShell?: () => void;
 };
 
 type SessionRouteValue = Extract<Route, { name: 'session' }>;
@@ -41,6 +42,7 @@ type BuildInput = {
   readonly route: SessionRouteValue;
   readonly navigate: Navigate;
   readonly onTerminalOpened?: (() => void) | undefined;
+  readonly onNewShell?: (() => void) | undefined;
 };
 
 /**
@@ -48,7 +50,7 @@ type BuildInput = {
  * `onBack` exists on phone and tablet only (the desktop sidebar is always there).
  */
 export function buildPaneProps(input: BuildInput): PaneProps {
-  const { route, navigate, layout, onTerminalOpened, ...rest } = input;
+  const { route, navigate, layout, onTerminalOpened, onNewShell, ...rest } = input;
   return {
     ...rest,
     layout,
@@ -56,6 +58,7 @@ export function buildPaneProps(input: BuildInput): PaneProps {
     onTab: (tab) => navigate({ ...route, tab }),
     ...(layout === 'desktop' ? {} : { onBack: () => navigate({ name: 'home' }) }),
     ...(onTerminalOpened === undefined ? {} : { onTerminalOpened }),
+    ...(onNewShell === undefined ? {} : { onNewShell }),
   };
 }
 
@@ -72,6 +75,7 @@ type Props = {
   readonly route: SessionRouteValue;
   readonly navigate: Navigate;
   readonly onTerminalOpened?: (() => void) | undefined;
+  readonly onNewShell?: (() => void) | undefined;
 };
 
 /** One open session: computes the pane props and renders the session view. */

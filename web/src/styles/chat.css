@@ -1,69 +1,73 @@
-/* Chat view (DL-140). Tokens only; wave 2 imports this file. */
+/* DL-141: the chat view (UI-DESIGN.md §5.2). Primitives come from base.css; this file adds layout and
+   local modifiers only. */
 .fd-chat {
   position: relative;
   display: flex;
+  flex: 1;
   flex-direction: column;
   min-height: 0;
-  flex: 1;
   background: var(--bg);
   color: var(--text);
   font-family: var(--font-ui);
-  font-size: var(--fs-body);
+  font-size: var(--fs-chat);
 }
 .fd-chat-scroll {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--sp-4) var(--sp-3);
 }
 .fd-chat-scroll:focus-visible,
 .fd-chat summary:focus-visible,
-.fd-chat button:focus-visible,
 .fd-md a:focus-visible {
   outline: 2px solid var(--act);
-  outline-offset: 2px;
+  outline-offset: -2px;
 }
 .fd-chat-column {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-3);
-  max-width: 820px;
+  gap: 14px;
+  max-width: calc(var(--chat-w) + 48px);
   margin: 0 auto;
+  padding: 24px 24px 16px;
 }
 .fd-chat-column > * {
   margin: 0;
 }
+[data-layout="phone"] .fd-chat-column {
+  padding: 16px 12px;
+}
 .fd-chat-state {
-  text-align: center;
+  padding: 24px 0;
   color: var(--dim);
-  padding: var(--sp-5) 0;
+  text-align: center;
 }
 
-/* run: the owner's input */
+/* run: the owner's prompt */
 .fd-chat-run {
-  align-self: flex-end;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: var(--sp-1);
+  gap: 4px;
+  align-self: flex-end;
   max-width: 85%;
 }
 .fd-chat-run-label {
+  color: var(--faint);
+  font-family: var(--font-data);
   font-size: var(--fs-micro);
-  color: var(--dim);
 }
 .fd-chat-bubble {
+  padding: 8px 12px;
   background: var(--raised);
-  border: 1px solid var(--border-soft);
-  border-radius: var(--r-card);
-  padding: var(--sp-2) var(--sp-3);
-  white-space: pre-wrap;
+  border: 1px solid var(--border);
+  border-radius: 14px 14px 4px 14px;
   overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
-/* message: no bubble */
+/* message: Markdown, no bubble */
 .fd-chat-message {
-  line-height: 1.55;
+  line-height: 1.6;
   overflow-wrap: anywhere;
 }
 .fd-chat-streaming .fd-md > :last-child::after {
@@ -72,169 +76,215 @@
   width: 0.5ch;
   height: 1em;
   margin-left: 2px;
-  vertical-align: text-bottom;
   background: var(--dim);
+  vertical-align: text-bottom;
   animation: fd-chat-blink 1s steps(2, start) infinite;
 }
 
-/* reasoning */
-.fd-chat-reasoning > summary,
-.fd-chat-tool > summary,
-.fd-chat-toolgroup > summary,
-.fd-chat-subagent details > summary {
+/* the chevron of every disclosure turns 90 degrees when it opens */
+.fd-chat summary {
+  list-style: none;
   cursor: pointer;
-  color: var(--dim);
-  border-radius: var(--r-chip);
+}
+.fd-chat summary::-webkit-details-marker {
+  display: none;
+}
+.fd-chat details[open] > summary > .fd-icon:first-child,
+.fd-chat details[open] > summary > .fd-chat-chev > .fd-icon {
+  transform: rotate(90deg);
+}
+.fd-chat summary > .fd-icon:first-child,
+.fd-chat-chev > .fd-icon {
+  transition: transform var(--t-fast);
+}
+
+/* reasoning */
+.fd-chat-reasoning > summary {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--faint);
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
 }
 .fd-chat-reasoning-text {
-  margin-top: var(--sp-1);
-  padding-left: var(--sp-3);
-  border-left: 2px solid var(--border);
+  margin-top: 6px;
+  padding-left: 12px;
+  border-left: 2px solid var(--border-soft);
   color: var(--dim);
-  white-space: pre-wrap;
+  font-size: 13px;
   overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 .fd-chat-pulse {
   animation: fd-chat-pulse 1.6s ease-in-out infinite;
 }
 
-/* tools */
-.fd-chat-tool {
-  background: var(--surface);
-  border: 1px solid var(--border-soft);
-  border-radius: var(--r-ctl);
-  padding: var(--sp-1) var(--sp-2);
-}
+/* tool row */
 .fd-chat-tool > summary {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: var(--sp-2);
-  color: var(--text);
+  gap: 8px;
+  min-height: 28px;
+  padding: 0 6px;
+  border-radius: 6px;
 }
-.fd-chat-tool-title {
-  font-family: var(--font-data);
-  font-size: var(--fs-data);
-  overflow-wrap: anywhere;
+.fd-chat-tool > summary:hover {
+  background: var(--surface);
 }
 .fd-chat-mark {
-  width: 1.2em;
-  text-align: center;
-  color: var(--dim);
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 14px;
+  color: var(--faint);
+  font-family: var(--font-data);
 }
-.fd-chat-tool[data-status="ok"] .fd-chat-mark {
+.fd-chat-mark[data-status="ok"] {
   color: var(--ok);
 }
-.fd-chat-tool[data-status="failed"] .fd-chat-mark,
-.fd-chat-tool[data-status="denied"] .fd-chat-mark {
+.fd-chat-mark[data-status="failed"] {
   color: var(--hazard);
 }
-.fd-chat-dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  margin: 0 calc((1.2em - 8px) / 2);
-  border-radius: var(--r-pill);
-  background: var(--dim);
-  animation: fd-chat-pulse 1.2s ease-in-out infinite;
+.fd-chat-mark[data-status="denied"] {
+  color: var(--act);
 }
-.fd-chat-chip {
+.fd-chat-kind {
+  display: inline-flex;
+  flex: none;
+  color: var(--faint);
+}
+.fd-chat-tool-title {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
   font-family: var(--font-data);
-  font-size: var(--fs-micro);
-  color: var(--dim);
-  background: var(--raised);
-  border: 1px solid var(--border-soft);
-  border-radius: var(--r-chip);
-  padding: 0 var(--sp-1);
+  font-size: 12px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.fd-chat-exit {
-  color: var(--hazard);
-  background: var(--hazard-bg);
+.fd-chat-tool-arg {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dim);
+  font-family: var(--font-data);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fd-chat-tool > summary > .fd-badge {
+  flex: none;
+}
+.fd-chat-chev {
+  display: inline-flex;
+  flex: none;
+  margin-left: auto;
+  color: var(--faint);
 }
 .fd-chat-tool-body {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-2);
-  margin-top: var(--sp-2);
-}
-.fd-chat-pre {
-  margin: 0;
-  padding: var(--sp-2);
-  background: var(--code);
-  border-radius: var(--r-chip);
-  font-family: var(--font-data);
-  font-size: var(--fs-data);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  gap: 8px;
+  margin: 4px 0 4px 22px;
 }
 .fd-chat-output {
   max-height: 320px;
-  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
-.fd-chat-toolgroup {
-  border: 1px solid var(--border-soft);
-  border-radius: var(--r-card);
-  padding: var(--sp-1) var(--sp-2);
+.fd-chat-tool-body .fd-code {
+  max-height: 320px;
+}
+
+/* tool group */
+.fd-chat-toolgroup > summary {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--dim);
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
 }
 .fd-chat-toolgroup-body {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-2);
-  margin-top: var(--sp-2);
+  gap: 2px;
+  margin: 4px 0 0 6px;
+  padding-left: 12px;
+  border-left: 1px solid var(--border-soft);
 }
 
-/* cards: subagent, approval, plan */
+/* cards: subagent and plan */
 .fd-chat-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r-card);
-  padding: var(--sp-3);
   display: flex;
   flex-direction: column;
-  gap: var(--sp-2);
+  gap: 8px;
+  padding: 10px 12px;
 }
 .fd-chat-card-head {
   display: flex;
   align-items: center;
-  gap: var(--sp-2);
+  gap: 8px;
+  color: var(--dim);
 }
 .fd-chat-card-title {
-  font-size: var(--fs-title);
+  min-width: 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
   overflow-wrap: anywhere;
+}
+.fd-chat-card-head > .fd-badge {
+  margin-left: auto;
 }
 .fd-chat-subagent-task {
+  display: -webkit-box;
   margin: 0;
+  overflow: hidden;
   color: var(--dim);
+  font-size: 12.5px;
   overflow-wrap: anywhere;
-}
-.fd-chat-card-heading {
-  margin: 0;
-  font-size: var(--fs-heading);
-}
-.fd-chat-nested {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-3);
-  margin-top: var(--sp-2);
-  padding-left: var(--sp-3);
-  border-left: 2px solid var(--border-soft);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
 }
 .fd-chat-subagent[data-status="failed"] {
   border-color: var(--hazard);
 }
-.fd-chat-approval[data-state="open"] {
-  border-color: var(--act);
+.fd-chat-subagent details > summary {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--faint);
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
 }
-.fd-chat-waiting {
+.fd-chat-nested {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  padding-left: 12px;
+  border-left: 2px solid var(--border-soft);
+}
+.fd-chat-plan-label {
   margin: 0;
-  color: var(--act);
+  color: var(--m-quill);
 }
 
-/* single lines: answered approvals, turns, notices */
+/* single lines: approvals, turns, notices */
 .fd-chat-line {
-  text-align: center;
-  color: var(--dim);
-  font-size: var(--fs-data);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--faint);
+  font-family: var(--font-data);
+  font-size: 12px;
+}
+.fd-chat-ask {
+  color: var(--act);
 }
 .fd-chat-error {
   color: var(--hazard);
@@ -242,43 +292,31 @@
 .fd-chat-turn {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-1);
+  gap: 4px;
 }
 .fd-chat-diff {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: center;
-  gap: var(--sp-2);
+  gap: 8px;
   color: var(--dim);
   font-family: var(--font-data);
   font-size: var(--fs-data);
 }
-.fd-chat-btn,
-.fd-chat-jump,
-.fd-md-copy {
-  font: inherit;
-  font-size: var(--fs-body);
-  color: var(--text);
-  background: var(--raised);
-  border: 1px solid var(--border);
-  border-radius: var(--r-ctl);
-  padding: var(--sp-1) var(--sp-3);
-  cursor: pointer;
-  transition: border-color var(--t-fast);
+.fd-add {
+  color: var(--ok);
 }
-.fd-chat-btn:hover,
-.fd-chat-jump:hover,
-.fd-md-copy:hover {
-  border-color: var(--dim);
+.fd-del {
+  color: var(--hazard);
 }
 
 /* working row and the jump button */
 .fd-chat-working {
-  color: var(--dim);
   display: flex;
   align-items: center;
-  gap: var(--sp-1);
+  gap: 4px;
+  color: var(--faint);
+  font-size: 12px;
 }
 .fd-chat-dots {
   display: inline-flex;
@@ -287,8 +325,8 @@
 .fd-chat-dots span {
   width: 4px;
   height: 4px;
+  background: var(--faint);
   border-radius: var(--r-pill);
-  background: var(--dim);
   animation: fd-chat-pulse 1.2s ease-in-out infinite;
 }
 .fd-chat-dots span:nth-child(2) {
@@ -299,15 +337,16 @@
 }
 .fd-chat-jump {
   position: absolute;
-  bottom: var(--sp-4);
+  bottom: 12px;
   left: 50%;
-  transform: translateX(-50%);
   border-radius: var(--r-pill);
-  box-shadow: 0 2px 8px var(--bg);
+  box-shadow: var(--shadow-pop);
+  transform: translateX(-50%);
 }
 
-/* markdown */
+/* Markdown */
 .fd-md {
+  line-height: 1.6;
   overflow-wrap: anywhere;
 }
 .fd-md > :first-child {
@@ -316,62 +355,94 @@
 .fd-md > :last-child {
   margin-bottom: 0;
 }
-.fd-md a {
-  color: var(--text);
-  text-decoration: underline;
+.fd-md h1,
+.fd-md h2,
+.fd-md h3,
+.fd-md h4 {
+  margin: 16px 0 6px;
+  font-weight: 600;
+  line-height: 1.35;
 }
-.fd-md code {
-  font-family: var(--font-data);
-  font-size: var(--fs-data);
+.fd-md h1 {
+  font-size: 17px;
+}
+.fd-md h2 {
+  font-size: 15px;
+}
+.fd-md h3,
+.fd-md h4 {
+  font-size: 14px;
+}
+.fd-md p,
+.fd-md ul,
+.fd-md ol {
+  margin: 8px 0;
+}
+.fd-md a {
+  color: var(--m-comet);
+}
+.fd-md :not(pre) > code {
+  padding: 1px 5px;
   background: var(--code);
-  border-radius: var(--r-chip);
-  padding: 0 var(--sp-1);
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  font-family: var(--font-data);
+  font-size: 12.5px;
 }
 .fd-md-code {
-  position: relative;
-  margin: var(--sp-2) 0;
+  margin: 10px 0;
+  background: var(--code);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.fd-md-code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 28px;
+  padding: 0 4px 0 12px;
+}
+.fd-md-lang {
+  color: var(--faint);
+  font-family: var(--font-data);
+  font-size: var(--fs-micro);
 }
 .fd-md-code pre {
   margin: 0;
-  padding: var(--sp-3);
-  background: var(--code);
-  border: 1px solid var(--border-soft);
-  border-radius: var(--r-ctl);
+  padding: 10px 12px;
   overflow-x: auto;
+  font-family: var(--font-data);
+  font-size: 12.5px;
+  line-height: 1.5;
 }
 .fd-md-code pre code {
-  background: none;
-  padding: 0;
-  font-family: var(--font-data);
-}
-.fd-md-copy {
-  position: absolute;
-  top: var(--sp-1);
-  right: var(--sp-1);
-  font-size: var(--fs-micro);
-  padding: 0 var(--sp-2);
+  font-family: inherit;
 }
 .fd-md-table {
+  margin: 10px 0;
   overflow-x: auto;
-  margin: var(--sp-2) 0;
 }
 .fd-md table {
   border-collapse: collapse;
+  font-size: 13px;
 }
 .fd-md th,
 .fd-md td {
-  border: 1px solid var(--border);
-  padding: var(--sp-1) var(--sp-2);
+  padding: 6px 10px;
+  border: 1px solid var(--border-soft);
   text-align: left;
 }
+.fd-md th {
+  background: var(--surface);
+}
 .fd-md blockquote {
-  margin: var(--sp-2) 0;
-  padding-left: var(--sp-3);
-  border-left: 2px solid var(--border);
+  margin: 10px 0;
+  padding-left: 12px;
+  border-left: 3px solid var(--border);
   color: var(--dim);
 }
 .fd-md li > input[type="checkbox"] {
-  margin-right: var(--sp-1);
+  margin-right: 4px;
 }
 
 @keyframes fd-chat-pulse {
@@ -390,13 +461,8 @@
 }
 
 @media (pointer: coarse) {
-  .fd-chat summary,
-  .fd-chat-btn,
-  .fd-chat-jump,
-  .fd-md-copy {
-    min-height: var(--tap-min);
-  }
   .fd-chat summary {
+    min-height: var(--tap-min);
     display: flex;
     align-items: center;
   }
@@ -404,14 +470,12 @@
 
 @media (prefers-reduced-motion: reduce) {
   .fd-chat-pulse,
-  .fd-chat-dot,
   .fd-chat-dots span,
   .fd-chat-streaming .fd-md > :last-child::after {
     animation: none;
   }
-  .fd-chat-btn,
-  .fd-chat-jump,
-  .fd-md-copy {
+  .fd-chat summary > .fd-icon:first-child,
+  .fd-chat-chev > .fd-icon {
     transition: none;
   }
 }

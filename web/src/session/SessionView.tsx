@@ -1,6 +1,6 @@
 // DL-140: the session pane: header, the notice of a terminal hold, the tabs
 // (Chat | Changes | Files), the chat with the approval dock and the composer.
-import { type KeyboardEvent, useId, useMemo, useRef, useState } from 'react';
+import { type KeyboardEvent, type ReactNode, useId, useMemo, useRef, useState } from 'react';
 import { ChatView } from '../chat/ChatView';
 import type { DeckSession, StationView } from '../gen';
 import type { Freshness, Timeline } from '../runtime/state';
@@ -37,6 +37,8 @@ export type SessionViewProps = {
   readonly onBack?: () => void;
   /** The phone shows the terminal screen. */
   readonly onTerminalOpened?: () => void;
+  /** Opens a shell in the workspace; the session menu offers it when given. */
+  readonly onNewShell?: (() => void) | undefined;
 };
 
 const noop = () => {};
@@ -56,7 +58,7 @@ function disabledReason(
 /** One session: header, tabs, the chat with its approval dock and composer. */
 export function SessionView(props: SessionViewProps) {
   const { session, stations, timeline, freshness, actions, shells, terminals, watch } = props;
-  const { layout = 'desktop', onTab = noop, onBack, onTerminalOpened } = props;
+  const { layout = 'desktop', onTab = noop, onBack, onTerminalOpened, onNewShell } = props;
   const s = session.summary;
   const caps = s.capabilities;
   const key = useMemo(
@@ -91,9 +93,16 @@ export function SessionView(props: SessionViewProps) {
   const ids = useId();
   const tabs = useRef<Record<string, HTMLButtonElement | null>>({});
   const order: PaneTab[] = filesOffered ? ['chat', 'changes', 'files'] : ['chat', 'changes'];
-  const labels: Record<PaneTab, string> = {
+  const labels: Record<PaneTab, ReactNode> = {
     chat: 'Chat',
-    changes: turns.length > 0 ? `Changes · ${turns.length}` : 'Changes',
+    changes:
+      turns.length > 0 ? (
+        <>
+          Changes <span className="fd-count">{turns.length}</span>
+        </>
+      ) : (
+        'Changes'
+      ),
     files: 'Files',
   };
   const onTabKey = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -122,6 +131,8 @@ export function SessionView(props: SessionViewProps) {
         actions={actions ?? null}
         {...(onBack ? { onBack } : {})}
         terminal={terminal}
+        layout={layout}
+        onNewShell={onNewShell}
       />
       {hold ? (
         <div className="fd-pane-notice" role="note">
@@ -136,6 +147,7 @@ export function SessionView(props: SessionViewProps) {
                 <div className="fd-pane-row">
                   <button
                     type="button"
+                    className="fd-sm"
                     disabled={busy !== null}
                     onClick={() => {
                       setConfirmRelease(false);
@@ -148,7 +160,7 @@ export function SessionView(props: SessionViewProps) {
                   >
                     Release the hold
                   </button>
-                  <button type="button" onClick={() => setConfirmRelease(false)}>
+                  <button type="button" className="fd-sm" onClick={() => setConfirmRelease(false)}>
                     Cancel
                   </button>
                 </div>
@@ -156,6 +168,7 @@ export function SessionView(props: SessionViewProps) {
             ) : (
               <button
                 type="button"
+                className="fd-sm"
                 disabled={busy !== null}
                 onClick={() => setConfirmRelease(true)}
               >

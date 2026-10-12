@@ -1,7 +1,26 @@
 // The chat view of a session: the primary projection of the canonical events
 // (UI-PLAN §2.1). It renders `Item`s from `buildTimeline`; it owns no data.
 import { type ReactNode, useLayoutEffect, useRef, useState } from 'react';
-import { type Item, type Subagent, subagentLabel } from '../session/timeline';
+import { type Item, type Subagent, type SubagentStatus, subagentLabel } from '../session/timeline';
+import {
+  ArrowDown,
+  Ban,
+  Check,
+  ChevronRight,
+  FileText,
+  GitCompare,
+  Globe,
+  Icon,
+  type LucideIcon,
+  Pencil,
+  Plug,
+  Search,
+  SquareTerminal,
+  TriangleAlert,
+  Workflow,
+  Wrench,
+  X,
+} from '../ui/icons';
 import { runLabel } from './labels';
 import { Markdown } from './Markdown';
 
@@ -19,12 +38,41 @@ type OpenChanges = ((turnId: string) => void) | undefined;
 const NEAR_BOTTOM_PX = 80;
 const MAX_FILE_CHIPS = 3;
 
-const STATUS_MARK: Record<Tool['status'], string> = {
-  running: '',
-  ok: '✓',
-  failed: '✗',
-  denied: '⊘',
-  ended: '–',
+const KIND_ICON: Record<Tool['tool_kind'], LucideIcon> = {
+  shell: SquareTerminal,
+  edit: Pencil,
+  read: FileText,
+  search: Search,
+  web: Globe,
+  mcp: Plug,
+  subagent: Workflow,
+  other: Wrench,
+};
+
+const firstLine = (text: string): string => text.split('\n')[0] ?? '';
+
+/** The mark of a finished tool call; a running call shows a dot instead. */
+function StatusMark({ status }: { status: Exclude<Tool['status'], 'running'> }) {
+  return (
+    <span className="fd-chat-mark" role="img" aria-label={status} data-status={status}>
+      {status === 'ok' ? (
+        <Icon of={Check} size={14} />
+      ) : status === 'failed' ? (
+        <Icon of={X} size={14} />
+      ) : status === 'denied' ? (
+        <Icon of={Ban} size={14} />
+      ) : (
+        '–'
+      )}
+    </span>
+  );
+}
+
+const subagentTone = (status: SubagentStatus): 'ok' | 'info' | 'hazard' | 'muted' => {
+  if (status === 'running') return 'ok';
+  if (status === 'background') return 'info';
+  if (status === 'failed') return 'hazard';
+  return 'muted';
 };
 
 const basename = (path: string): string => path.split('/').filter(Boolean).pop() ?? path;
@@ -70,7 +118,10 @@ function ToolGroup({ tools }: { tools: Tool[] }) {
   }`;
   return (
     <details className="fd-chat-toolgroup" open={running > 0 ? true : undefined}>
-      <summary>{summary}</summary>
+      <summary>
+        <Icon of={ChevronRight} size={12} />
+        {summary}
+      </summary>
       <div className="fd-chat-toolgroup-body">
         {tools.map((tool) => (
           <ToolView key={tool.key} tool={tool} />
@@ -83,32 +134,35 @@ function ToolGroup({ tools }: { tools: Tool[] }) {
 function ToolView({ tool }: { tool: Tool }) {
   const shown = tool.files.slice(0, MAX_FILE_CHIPS);
   const more = tool.files.length - shown.length;
-  const mark = STATUS_MARK[tool.status];
   return (
     <details className="fd-chat-tool" data-status={tool.status}>
       <summary>
         {tool.status === 'running' ? (
-          <span className="fd-chat-dot" role="img" aria-label="running" />
+          <span className="fd-dot" data-status="working" role="img" aria-label="running" />
         ) : (
-          <span className="fd-chat-mark" role="img" aria-label={tool.status}>
-            {mark}
-          </span>
+          <StatusMark status={tool.status} />
         )}
+        <span className="fd-chat-kind" title={tool.tool_kind}>
+          <Icon of={KIND_ICON[tool.tool_kind]} size={14} />
+        </span>
         <span className="fd-chat-tool-title">{tool.title}</span>
-        <span className="fd-chat-chip">{tool.tool_kind}</span>
+        {tool.input ? <span className="fd-chat-tool-arg">{firstLine(tool.input)}</span> : null}
         {shown.map((path) => (
-          <span key={path} className="fd-chat-chip fd-chat-file" title={path}>
+          <span key={path} className="fd-badge" title={path}>
             {basename(path)}
           </span>
         ))}
-        {more > 0 ? <span className="fd-chat-chip">{`+${more}`}</span> : null}
+        {more > 0 ? <span className="fd-badge">{`+${more}`}</span> : null}
         {tool.exit_code !== null && tool.exit_code !== 0 ? (
-          <span className="fd-chat-chip fd-chat-exit">{`exit ${tool.exit_code}`}</span>
+          <span className="fd-badge" data-tone="hazard">{`exit ${tool.exit_code}`}</span>
         ) : null}
+        <span className="fd-chat-chev">
+          <Icon of={ChevronRight} size={14} />
+        </span>
       </summary>
       <div className="fd-chat-tool-body">
-        {tool.input ? <pre className="fd-chat-pre">{tool.input}</pre> : null}
-        <pre className="fd-chat-pre fd-chat-output">{tool.output || 'No output.'}</pre>
+        {tool.input ? <pre className="fd-code">{tool.input}</pre> : null}
+        <pre className="fd-code fd-chat-output">{tool.output || 'No output.'}</pre>
       </div>
     </details>
   );
@@ -119,17 +173,23 @@ function SubagentView(props: { item: Subagent; onOpenChanges: OpenChanges }) {
   const live = item.status === 'running' || item.status === 'background';
   return (
     <div
-      className="fd-chat-card fd-chat-subagent"
+      className="fd-chat-card fd-chat-subagent fd-panel"
       data-status={item.status}
       data-subagent={item.node_id}
     >
       <div className="fd-chat-card-head">
-        <span className="fd-chat-chip">{subagentLabel(item.status)}</span>
+        <Icon of={Workflow} size={14} />
         <span className="fd-chat-card-title">{item.title}</span>
+        <span className="fd-badge" data-tone={subagentTone(item.status)}>
+          {subagentLabel(item.status)}
+        </span>
       </div>
       {item.input ? <p className="fd-chat-subagent-task">{item.input}</p> : null}
       <details open={live ? true : undefined}>
-        <summary>{`${item.items.length} ${item.items.length === 1 ? 'entry' : 'entries'}`}</summary>
+        <summary>
+          <Icon of={ChevronRight} size={12} />
+          {`${item.items.length} ${item.items.length === 1 ? 'entry' : 'entries'}`}
+        </summary>
         <div className="fd-chat-nested">
           <Items items={item.items} onOpenChanges={props.onOpenChanges} />
         </div>
@@ -144,7 +204,9 @@ function ItemView(props: { item: Item; onOpenChanges: OpenChanges }) {
     case 'run':
       return (
         <div className="fd-chat-run">
-          <span className="fd-chat-run-label">{runLabel(item.origin)}</span>
+          {runLabel(item.origin) !== 'You' ? (
+            <span className="fd-chat-run-label">{runLabel(item.origin)}</span>
+          ) : null}
           <div className="fd-chat-bubble">{item.input}</div>
         </div>
       );
@@ -158,6 +220,7 @@ function ItemView(props: { item: Item; onOpenChanges: OpenChanges }) {
       return (
         <details className="fd-chat-reasoning">
           <summary className={item.done ? undefined : 'fd-chat-pulse'}>
+            <Icon of={ChevronRight} size={12} />
             {item.done ? 'Thinking' : 'Thinking…'}
           </summary>
           <div className="fd-chat-reasoning-text">{item.text}</div>
@@ -169,11 +232,10 @@ function ItemView(props: { item: Item; onOpenChanges: OpenChanges }) {
       return <SubagentView item={item} onOpenChanges={props.onOpenChanges} />;
     case 'approval':
       return item.state === 'open' ? (
-        <div className="fd-chat-card fd-chat-approval" data-state="open">
-          <div className="fd-chat-card-title">{item.title}</div>
-          {item.details ? <pre className="fd-chat-pre">{item.details}</pre> : null}
-          <p className="fd-chat-waiting">Waiting for your answer.</p>
-        </div>
+        <p className="fd-chat-line fd-chat-ask" data-state="open">
+          <Icon of={TriangleAlert} size={14} />
+          Waiting for your answer · {item.title}
+        </p>
       ) : (
         <p className="fd-chat-line" data-state={item.state}>
           {`${item.title} · ${item.outcome ?? 'expired'}`}
@@ -181,8 +243,8 @@ function ItemView(props: { item: Item; onOpenChanges: OpenChanges }) {
       );
     case 'plan':
       return (
-        <div className="fd-chat-card fd-chat-plan">
-          <h3 className="fd-chat-card-heading">Plan</h3>
+        <div className="fd-chat-card fd-chat-plan fd-panel">
+          <h3 className="fd-label fd-chat-plan-label">Plan</h3>
           <Markdown text={item.markdown} />
         </div>
       );
@@ -193,11 +255,14 @@ function ItemView(props: { item: Item; onOpenChanges: OpenChanges }) {
           {item.status !== 'done' ? <p className="fd-chat-line">{`Turn ${item.status}`}</p> : null}
           {item.diff ? (
             <div className="fd-chat-diff">
-              <span>{`${item.diff.files_changed} files changed · +${item.diff.insertions} −${item.diff.deletions}`}</span>
+              <Icon of={GitCompare} size={14} />
+              <span>{item.diff.files_changed} files changed</span>
+              <span className="fd-add">+{item.diff.insertions}</span>
+              <span className="fd-del">−{item.diff.deletions}</span>
               {props.onOpenChanges ? (
                 <button
                   type="button"
-                  className="fd-chat-btn"
+                  className="fd-ghost fd-sm"
                   onClick={() => props.onOpenChanges?.(item.turn_id)}
                 >
                   Review changes
@@ -286,14 +351,14 @@ export function ChatView(props: ChatViewProps) {
       {behind ? (
         <button
           type="button"
-          className="fd-chat-jump"
+          className="fd-chat-jump fd-sm"
           onClick={() => {
             toBottom(true);
             stick.current = true;
             setBehind(false);
           }}
         >
-          Jump to latest
+          <Icon of={ArrowDown} size={14} /> Jump to latest
         </button>
       ) : null}
     </section>

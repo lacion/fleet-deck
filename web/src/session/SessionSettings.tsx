@@ -16,6 +16,7 @@ export function ModeLadder(props: {
         <button
           key={m}
           type="button"
+          className="fd-sm"
           aria-pressed={m === props.current}
           disabled={!props.enabled || m === props.current}
           onClick={() => props.onSet(m)}
@@ -39,7 +40,7 @@ export function ModelPicker(props: {
   const value = model.trim();
   return (
     <form
-      className="fd-options"
+      className="fd-model"
       aria-label="Model"
       onSubmit={(event) => {
         event.preventDefault();
@@ -51,12 +52,13 @@ export function ModelPicker(props: {
       <label htmlFor={id}>Model (now {props.current ?? 'unknown'})</label>
       <input
         id={id}
+        className="fd-sm"
         value={model}
         disabled={!props.enabled}
         onChange={(event) => setModel(event.target.value)}
         placeholder="Model id or alias"
       />
-      <button type="submit" disabled={!props.enabled || value === ''}>
+      <button type="submit" className="fd-sm" disabled={!props.enabled || value === ''}>
         Set model
       </button>
     </form>

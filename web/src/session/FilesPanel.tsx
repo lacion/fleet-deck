@@ -34,9 +34,9 @@ export function FilesPanel({ files }: { readonly files: FileActions | null }) {
   const read = (path: string) => load(files.read(path), (file) => ({ kind: 'file', file }));
   return (
     <section className="fd-files" aria-label="Files">
-      <h3>Files</h3>
+      <h3 className="fd-label">Files</h3>
       <div className="fd-files-bar">
-        <button type="button" onClick={() => open('')}>
+        <button type="button" className="fd-sm" onClick={() => open('')}>
           Browse
         </button>
         <form
@@ -49,12 +49,14 @@ export function FilesPanel({ files }: { readonly files: FileActions | null }) {
           <label htmlFor="fd-file-query">Search</label>
           <input
             id="fd-file-query"
+            className="fd-sm"
             value={query}
             minLength={2}
             maxLength={256}
             onChange={(event) => setQuery(event.target.value)}
           />
           <select
+            className="fd-sm"
             aria-label="Search in"
             value={mode}
             onChange={(event) => setMode(event.target.value === 'content' ? 'content' : 'name')}
@@ -62,7 +64,7 @@ export function FilesPanel({ files }: { readonly files: FileActions | null }) {
             <option value="name">Names</option>
             <option value="content">Content</option>
           </select>
-          <button type="submit" disabled={query.trim().length < 2}>
+          <button type="submit" className="fd-sm" disabled={query.trim().length < 2}>
             Search
           </button>
         </form>
@@ -124,7 +126,7 @@ export function FilesPanel({ files }: { readonly files: FileActions | null }) {
           {view.file.binary ? (
             <p className="fd-note">A binary file is not shown.</p>
           ) : (
-            <pre className="fd-file-text">{view.file.text}</pre>
+            <pre className="fd-code fd-file-text">{view.file.text}</pre>
           )}
           {view.file.truncated ? (
             <p className="fd-note">The file is cut at the size limit.</p>
