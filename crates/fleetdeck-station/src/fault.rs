@@ -12,6 +12,7 @@
 //! | `after_claim` | the worker committed the claim, before the I/O | effect kind (`prompt`) |
 //! | `after_send` | the I/O returned, before the result is stored | effect kind |
 //! | `before_confirm` | provider evidence confirms an effect, inside its uncommitted transaction | effect kind |
+//! | `after_step` | a revert step committed, before the next external step (DL-117) | the new step (`rolled_back`) |
 //!
 //! The hook does something only in a build with the `fault-injection`
 //! feature (the CLI's tests enable it); in a normal build [`hit`] is empty.
@@ -27,15 +28,17 @@ pub enum FaultPoint {
     AfterClaim,
     AfterSend,
     BeforeConfirm,
+    AfterStep,
 }
 
 impl FaultPoint {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::BeforeCommit,
         Self::AfterCommit,
         Self::AfterClaim,
         Self::AfterSend,
         Self::BeforeConfirm,
+        Self::AfterStep,
     ];
 
     #[must_use]
@@ -46,6 +49,7 @@ impl FaultPoint {
             Self::AfterClaim => "after_claim",
             Self::AfterSend => "after_send",
             Self::BeforeConfirm => "before_confirm",
+            Self::AfterStep => "after_step",
         }
     }
 }

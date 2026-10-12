@@ -375,9 +375,17 @@ async fn step(
     to: RevertStep,
     why: Option<&str>,
 ) -> Result<bool, StoreError> {
-    env.store
+    let moved = env
+        .store
         .advance_revert(revert_id.to_owned(), from, to, why.map(str::to_owned))
-        .await
+        .await?;
+    if moved {
+        // A crash test kills the station after this commit, before the
+        // next external step (for example after a confirmed rollback and
+        // before the file restore).
+        crate::fault::hit(crate::fault::FaultPoint::AfterStep, to.as_str());
+    }
+    Ok(moved)
 }
 
 /// Start recovery of the reverts that a station stop interrupted.

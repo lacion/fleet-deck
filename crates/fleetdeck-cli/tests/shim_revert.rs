@@ -3,9 +3,10 @@
 //! app-server and a Git workspace. The same revert executor as with the
 //! direct host runs, with the durable driver's `thread/rollback` as the
 //! conversation rollback: success restores the files after the confirmed
-//! rollback, a refusal changes nothing, and a station crash between the
-//! rollback and the file restore never repeats the rollback and blocks the
-//! session's input.
+//! rollback, a refusal changes nothing, and an unanswered rollback blocks
+//! the session's input. The station crashes at each revert step are real
+//! SIGKILLs of `fleetdeck station serve` in `station_shim_revert_crash.rs`
+//! (DL-117).
 
 #![cfg(target_os = "linux")]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -20,7 +21,7 @@ use fleetdeck_core::ChildEnv;
 use fleetdeck_proto::command::{
     CommandOrigin, RETRY_WINDOW_MS, ReceiptState, SessionCommand, SessionSpec, StopMode, UserInput,
 };
-use fleetdeck_proto::event::{ProviderKind, RevertState, SessionState};
+use fleetdeck_proto::event::{ProviderKind, RevertState};
 use fleetdeck_proto::{CommandEnvelope, CommandId, Event, EventBody, SessionId, TurnId};
 use fleetdeck_providers::codex::{CodexAdapter, CodexAdapterConfig};
 use fleetdeck_providers::host::shim::host::{ShimHost, ShimHostConfig};
@@ -28,7 +29,7 @@ use fleetdeck_providers::host::{DirectChildHost, StopPolicy};
 use fleetdeck_station::manager::target::ShimSettings;
 use fleetdeck_station::manager::{Adapters, Policy, SessionManager};
 use fleetdeck_station::store::{
-    Caller, Decided, OfflineApprovalPolicy, ReadResult, RevertStep, Store, StoreConfig,
+    Caller, Decided, OfflineApprovalPolicy, ReadResult, Store, StoreConfig,
 };
 use fleetdeck_testkit::Det;
 use fleetdeck_testkit::fake::{FakeAgent, SCENARIO_ENV, STDIN_LOG_ENV};
@@ -423,81 +424,4 @@ async fn an_unanswered_rollback_under_a_shim_requires_reconciliation_and_blocks_
         .await;
     assert_eq!(decided.receipt.state, ReceiptState::Rejected);
     station.manager.shutdown(StopMode::Graceful).await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_station_crash_between_the_rollback_and_the_restore_never_repeats_the_rollback() {
-    // A long rollback wait: the station stops while the rollback has no
-    // answer (step `rollback_sent`).
-    let mut rig = Rig::new(Duration::from_secs(60));
-    let first = rig.station().await;
-    let (session, turn) = rig.two_turns(&first, "set-rollback hang").await;
-    rig.revert(&first, &session, &turn).await;
-    let deadline = Instant::now() + WAIT;
-    loop {
-        let rows = first.store.session_reverts(session.clone()).await.unwrap();
-        if rows.iter().any(|r| r.step == RevertStep::RollbackSent) {
-            break;
-        }
-        assert!(Instant::now() < deadline, "no rollback_sent: {rows:?}");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    // `rollback_sent` is committed before the frame leaves: wait until the
-    // app-server logged it.
-    let deadline = Instant::now() + WAIT;
-    while rig.method_count("thread/rollback") < 1 {
-        assert!(
-            Instant::now() < deadline,
-            "the rollback frame never arrived"
-        );
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    assert_eq!(rig.method_count("thread/rollback"), 1);
-    // A station crash: no shutdown, the old station's tasks are left
-    // behind (a takeover fences its shim attachment), and a new station
-    // opens the same database.
-    drop(first);
-
-    let second = rig.station().await;
-    let rows = second.store.session_reverts(session.clone()).await.unwrap();
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].step, RevertStep::ReconciliationRequired);
-    let summary = second
-        .store
-        .summary(session.clone())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(
-        summary.state,
-        SessionState::Running,
-        "restored under its shim"
-    );
-    let decided = rig
-        .submit(
-            &second,
-            SessionCommand::Prompt {
-                session_id: session.clone(),
-                input: text("blocked"),
-            },
-        )
-        .await;
-    assert_eq!(
-        decided.receipt.state,
-        ReceiptState::Rejected,
-        "input blocked"
-    );
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    assert_eq!(
-        rig.method_count("thread/rollback"),
-        1,
-        "the rollback is never sent again"
-    );
-    assert_eq!(
-        rig.file(),
-        "one\nedited\n",
-        "no file restored without a confirmed rollback"
-    );
-    assert_eq!(rig.method_count("initialize"), 1);
-    second.manager.shutdown(StopMode::Graceful).await;
 }

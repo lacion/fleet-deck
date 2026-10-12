@@ -1362,3 +1362,13 @@ Format: context, options, choice, reason, owner review.
 - Not done: the default host is still `direct`; macOS runs of the shim tests are owner/platform validation.
 - Owner review: the default host change to `shim` needs the owner/architect after 7-1 is accepted.
 
+## DL-117 — Real station kills inside a shim-host revert (PLAN §6.6, L13; ADR-005; M3 round 37)
+
+- Context: the round-36 review rejected the `shim_revert` crash test, which simulated a station crash by dropping the station objects inside the test process (destructors ran; the process lived). It asked for a real station SIGKILL regression that covers a confirmed rollback before the file restore.
+- Options: (a) SIGKILL a `station serve` process at a timed moment; (b) a fault point that aborts the process right after a revert step commits; (c) keep the in-process simulation.
+- Choice: (b). `FaultPoint::AfterStep` (`after_step@<step>`) is hit in `revert_run::step` after `advance_revert` committed the step, before the next external action. The abort is uncatchable for the station (no destructors, no graceful stop), and the step names the exact durable boundary: `rollback_sent` (claimed, frame not yet sent), `rolled_back` (provider confirmed, files untouched), `restoring`.
+- Reason: (a) cannot hit the narrow window between the rollback answer and the restore reliably; (c) is not a crash. The fault hook already serves the M2 crash tests and is compiled only with the `fault-injection` feature.
+- Results: after `rolled_back` and `restoring` the restarted station restores the files and the revert succeeds without a second `thread/rollback`; after `rollback_sent` the revert needs reconciliation and the rollback is never sent. The shim session is reattached in each case (one `initialize`).
+- Withdrawn: an observer catch-up wait before shim-host inputs; its regression passed without it, so it was not kept.
+- Owner review: not required (tests and a test-only fault point inside accepted contracts).
+
