@@ -466,5 +466,6 @@ fn target_of(mutation: &Mutation) -> Option<&IncarnationId> {
         Mutation::Configure(e) => Some(&e.target_incarnation),
         Mutation::RotateKey(e) => Some(&e.target_incarnation),
         Mutation::Coordinator(e) => Some(&e.target_incarnation),
+        Mutation::Shell(e) => Some(&e.target_incarnation),
     }
 }

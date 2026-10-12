@@ -20,6 +20,7 @@ pub mod mutation;
 pub mod orchestration;
 pub mod plans;
 pub mod session;
+pub mod shell;
 pub mod status;
 pub mod ts;
 pub mod version;

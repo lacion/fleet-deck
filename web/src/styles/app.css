@@ -290,3 +290,10 @@ body {
 .fd-task-state {
   opacity: 0.8;
 }
+
+/* The human shell (PLAN §6.8): a terminal that fits a phone width. */
+.fd-shells .fd-terminal {
+  width: 100%;
+  height: 22rem;
+  margin-top: 0.5rem;
+}

@@ -156,6 +156,7 @@ async fn read(ctx: &StationLink, req: InboundRequest) -> Outcome {
         "files.list" | "files.read" | "files.search" | "files.diff" => {
             file_method(ctx, &req.method, req.params).await
         }
+        "shell.list" => ok(ctx.shells.list()),
         "session.list" => match store.snapshot().await {
             Ok(s) => ok(s.sessions),
             Err(e) => internal(e),
@@ -175,6 +176,39 @@ async fn read(ctx: &StationLink, req: InboundRequest) -> Outcome {
             NOT_IMPLEMENTED,
             format!("`{other}` is not served by this station build"),
         )),
+    }
+}
+
+/// `shell.attach` (PLAN §6.8): a single-use token for one data stream of
+/// this link with the purpose `shell:<id>`. Error codes `unsupported` (no
+/// data channel on this link) and `invalid_state` (no such shell).
+pub(super) fn shell_attach(
+    ctx: &StationLink,
+    data: Option<&fleetdeck_link::data::Data>,
+    params: serde_json::Value,
+) -> Outcome {
+    use fleetdeck_proto::shell::{STREAM_PURPOSE, ShellAttach, ShellAttached};
+    let query: ShellAttach = match serde_json::from_value(params) {
+        Ok(q) => q,
+        Err(e) => return bad_params(e),
+    };
+    let Some(data) = data else {
+        return Outcome::Err(WireError::new(
+            "unsupported",
+            "this link has no data channel",
+        ));
+    };
+    if !ctx.shells.exists(&query.shell_id) {
+        return Outcome::Err(WireError::new(
+            "invalid_state",
+            format!("no shell `{}`", query.shell_id),
+        ));
+    }
+    match data.issue_token(&format!("{STREAM_PURPOSE}{}", query.shell_id)) {
+        Ok(token) => ok(ShellAttached {
+            stream_token: token.as_str().to_owned(),
+        }),
+        Err(e) => internal(e),
     }
 }
 
@@ -226,6 +260,19 @@ async fn mutate(
                         RejectCode::Unsupported,
                         "station.configure is not supported by this station build",
                     )))
+                })
+                .await
+        }
+        Mutation::Shell(envelope) => {
+            let shells = std::sync::Arc::clone(&ctx.shells);
+            let policy = ctx.manager.policy().clone();
+            let change = envelope.change.clone();
+            store
+                .decide_mutation(Mutation::Shell(envelope), caller, move |d| {
+                    shells
+                        .apply(&change, &policy, d.now())
+                        .map(|()| CommandResult::default())
+                        .map_err(DecideError::Reject)
                 })
                 .await
         }
