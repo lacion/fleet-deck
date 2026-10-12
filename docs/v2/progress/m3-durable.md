@@ -28,6 +28,14 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 56 (2026-10-12, 16:01–)
+
+- Committed round 55 as the round-start commit (`docs(v2): round 55 log and internals touch-up`).
+- Lanes: no new commits on `m3/orchestration`, `m3/board`, `m3/ops`; nothing to merge. `m3-board` and `m3-ops` say LANE COMPLETE; `m3-orchestration` does not (6-5 Coordinator partial), so 6-13, 7-7 and 7-8 still wait.
+- Merge fix (6-12 into the 7-3 drain): `session.import` now counts as new work and a drain refuses it (`crates/fleetdeck-station/src/manager/drain.rs`, DL-130); test `manager::tests::drain::a_draining_station_refuses_an_import`; `docs/v2/operations.md` §9 lists import.
+- Docs check: the r49/r50 7-6 doc findings (shim auto-continue limit, partial dispatch rechecks, README revert text, import mode) are already correct in `docs/v2/operations.md` §7.1/§10 and `README.md`.
+- Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 3 passed.
+
 ## Round 55 (2026-10-12, 15:47–)
 
 - Committed round 54 as 65df80d.
@@ -147,7 +155,7 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
 | 7-6 (review r49) | The docs do not say that auto-continue is not supported on the shim host (a shim session gets `unsupported`) | `docs/v2/operations.md` §10 |
 | 7-6 (review r49) | The docs present the auto-continue rechecks as complete; the dispatch recheck covers only part of the A10 rules (see the 7-2 follow-ups) | `docs/v2/operations.md` §10, `docs/v2/internals.md` |
 | 7-6 (review r49) | The README says a revert changes nothing on failure; a revert that cannot be proven needs reconciliation and blocks input (PLAN §6.6) | `README.md` |
-| 6-12 merge (review r50) | `session.import` is not in the drain guard's list of commands that create work, so an import passes a drain | `crates/fleetdeck-station/src/manager/drain.rs` |
+| 6-12 merge (review r50) | FIXED round 56 (DL-130, `a_draining_station_refuses_an_import`): `session.import` is not in the drain guard's list of commands that create work, so an import passes a drain | `crates/fleetdeck-station/src/manager/drain.rs` |
 | 6-12 merge (review r50) | An import of a native session whose earlier session is `lost` with an unresolved shim can run that conversation twice (no unended-execution check for the native id) | `crates/fleetdeck-station/src/manager/decide.rs` |
 | 6-12 merge (review r50) | The board keeps the clone place and directory choices while an import id is set; the import ignores them without a visible note | `web/src/spawn/SpawnForm.tsx` |
 | 7-6 (review r50) | `docs/v2/operations.md` §7.1 says the import uses "the stored mode of the provider instance"; a provider instance has no stored permission mode (the import uses the mode of the spawn form) | `docs/v2/operations.md` |

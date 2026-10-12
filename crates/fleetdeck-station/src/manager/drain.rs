@@ -37,6 +37,7 @@ pub fn creates_work(command: &SessionCommand) -> bool {
         command,
         SessionCommand::Start { .. }
             | SessionCommand::Resume { .. }
+            | SessionCommand::Import { .. }
             | SessionCommand::Fork { .. }
             | SessionCommand::Prompt { .. }
             | SessionCommand::FollowUp { .. }
