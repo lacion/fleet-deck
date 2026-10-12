@@ -1382,3 +1382,12 @@ Format: context, options, choice, reason, owner review.
 - Reason: (a) would wire a new public contract without design review and on a resume that did not exist; the owner resume is the shared step of L19 and of the deliverable-3 driven import, and its admission rules are the L19 safety rules that do not depend on the preference.
 - Owner review: `session.resume` is inside the PLAN contract (A10, ADR-004 method table); ADR-007 needs the architect's adversary DESIGN REVIEW before any auto-continue code.
 
+## DL-119 — Resume termination checks fail closed (ADR-005 §4.6, §6; M3 round 40)
+
+- Context: the round-39 review found that `Decision::unended_execution` (DL-118) refused a resume only for four listed `lost` reasons. A shim row that recovery ended `lost` because its adapter checkpoint was unsupported or corrupt, or because no driver or live process existed, left the shim and its provider running, yet the session was resumable: a resume could start a second execution of one native conversation.
+- Options: (a) add the missing reasons to the list; (b) list the outcomes that prove the end and refuse everything else.
+- Choice: (b). Only `never_started` (an intact launch journal proves no spawn) and `exited` with the reason `exited` (the shim reported the provider's exit with no remaining member of its process group or session) prove the end. Recovery now records an exit with surviving members as `exited_descendants_remaining`. Every other row, including reasons that a later build may add, refuses `session.resume` with `not_resumable` and the row's state and reason.
+- Reason: a deny list fails open for every reason it forgets, and ADR-005 §6 requires complete termination evidence before any resume. An allow list fails closed for new reasons by construction.
+- Not done: the audited owner reconciliation of ADR-005 §4.6 (the way to make such a session resumable after the owner stops the remaining processes); a reboot check (`boot_id`) for shim rows.
+- Owner review: not required (a stricter reading of the accepted ADR-005).
+

@@ -250,3 +250,89 @@ async fn a_resume_without_a_free_session_slot_is_refused() {
     assert_eq!(starts(&st, &s).await.len(), 1);
     st.manager.shutdown(StopMode::Kill).await;
 }
+
+/// Records one ended shim row of `session` (DL-119).
+async fn shim_row(
+    store: &crate::store::Store,
+    session: &SessionId,
+    id: &str,
+    state: crate::store::ShimState,
+    reason: &str,
+) {
+    store
+        .shim_starting(NewShim {
+            shim_id: id.to_owned(),
+            session_id: session.clone(),
+            socket_path: "/nonexistent/sock".into(),
+        })
+        .await
+        .unwrap();
+    store
+        .shim_end(id.to_owned(), state, reason.to_owned())
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn every_shim_outcome_that_does_not_prove_the_end_fails_closed() {
+    use crate::store::ShimState;
+    let mut st = Station::new(4).await;
+    let store = st.manager.store().clone();
+    // Every `lost` reason, also one this build does not know, and an exit
+    // with surviving group members, keeps the session `not_resumable`.
+    let unproven = [
+        (ShimState::Lost, "execution_unknown"),
+        (ShimState::Lost, "attach_refused"),
+        (ShimState::Lost, "shim_incompatible"),
+        (ShimState::Lost, "identity_mismatch"),
+        (ShimState::Lost, "adapter_checkpoint_unsupported"),
+        (
+            ShimState::Lost,
+            "adapter_checkpoint_corrupt: missing field `thread_id`",
+        ),
+        (ShimState::Lost, "no_durable_driver"),
+        (ShimState::Lost, "no_live_process"),
+        (ShimState::Lost, "a_reason_of_a_later_build"),
+        (ShimState::Exited, "exited_descendants_remaining"),
+    ];
+    for (n, (state, reason)) in unproven.into_iter().enumerate() {
+        let s = ended_session(&mut st, "claude").await;
+        shim_row(&store, &s, &format!("shim-{n}"), state, reason).await;
+        let before = st.effect_states(&s).await;
+        let d = st
+            .send(SessionCommand::Resume {
+                session_id: s.clone(),
+            })
+            .await;
+        let reject = d.receipt.reject.clone().expect(reason);
+        assert_eq!(reject.code, RejectCode::InvalidState, "{reason}");
+        assert!(
+            reject.message.contains("not_resumable") && reject.message.contains(reason),
+            "{reason}: {reject:?}"
+        );
+        assert_eq!(st.effect_states(&s).await, before, "{reason}");
+        assert_eq!(starts(&st, &s).await.len(), 1, "{reason}");
+    }
+    // A proven exit and a launch that never started allow the resume.
+    for (n, (state, reason)) in [
+        (ShimState::Exited, "exited"),
+        (ShimState::NeverStarted, "shim_never_started"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let s = ended_session(&mut st, "claude").await;
+        shim_row(&store, &s, &format!("proven-{n}"), state, reason).await;
+        st.accepted(SessionCommand::Resume {
+            session_id: s.clone(),
+        })
+        .await;
+        assert_eq!(st.state(&s).await, SessionState::Starting, "{reason}");
+        let effects = st.settled(&s).await;
+        assert!(
+            effects.contains(&("resume", EffectState::Confirmed)),
+            "{reason}: {effects:?}"
+        );
+    }
+    st.manager.shutdown(StopMode::Kill).await;
+}

@@ -50,6 +50,9 @@ pub mod reason {
     pub const SHIM_NEVER_STARTED: &str = "shim_never_started";
     /// The provider exited while the station was down.
     pub const EXITED: &str = "exited";
+    /// The provider exited, and members of its process group or session
+    /// were still alive (the end is not proven, DL-119).
+    pub const EXITED_DESCENDANTS_REMAINING: &str = "exited_descendants_remaining";
 }
 
 /// What recovery did with one row.
@@ -196,6 +199,11 @@ pub async fn recover_shim(
                 None => return Ok(outcome),
                 Some(why) => (ShimState::Lost, why),
             }
+        }
+        // A member of the provider's group or session outlived the exit:
+        // the end is not proven (ADR-005 §4.6; DL-119).
+        Recovered::Exited(exit) if exit.descendants_remaining > 0 => {
+            (ShimState::Exited, reason::EXITED_DESCENDANTS_REMAINING)
         }
         Recovered::Exited(_) => (ShimState::Exited, reason::EXITED),
         Recovered::NeverStarted => (ShimState::NeverStarted, reason::SHIM_NEVER_STARTED),

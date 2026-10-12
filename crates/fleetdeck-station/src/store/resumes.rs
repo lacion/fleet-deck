@@ -7,15 +7,18 @@ use rusqlite::OptionalExtension as _;
 use super::Result;
 use super::receipts::Decision;
 
-/// Shim loss reasons that do not prove that the previous provider
-/// execution ended (ADR-005 §4.6, §6): a resume could run two executions of
-/// one conversation.
-pub const UNPROVEN_SHIM_LOSS: &[&str] = &[
-    "execution_unknown",
-    "attach_refused",
-    "shim_incompatible",
-    "identity_mismatch",
-];
+/// The only shim row outcomes that prove that the execution ended
+/// (ADR-005 §4.6, §6; DL-119). Every other row — open, or `lost` for any
+/// reason (`execution_unknown`, `attach_refused`, `shim_incompatible`,
+/// `identity_mismatch`, an unsupported or corrupt adapter checkpoint, no
+/// driver, or a reason this build does not know) — fails closed: the shim
+/// may still drive the provider, so a resume could run a second execution
+/// of one conversation.
+///
+/// - `never_started`: an intact launch journal proves no spawn.
+/// - `exited` with reason [`PROVEN_EXIT`]: the shim reported the provider's
+///   exit with no remaining member of its process group or session.
+pub const PROVEN_EXIT: &str = "exited";
 
 impl Decision<'_> {
     /// The native resume identity that the provider reported in
@@ -35,36 +38,32 @@ impl Decision<'_> {
             .flatten())
     }
 
-    /// Why the previous execution of `session` may still run: an open shim
-    /// row, or a shim row that ended `lost` without proof of termination.
-    /// `None` when every recorded execution is proven ended.
+    /// Why the previous execution of `session` may still run: any shim
+    /// row of the session that does not prove its end (see
+    /// [`PROVEN_EXIT`]). `None` when every recorded shim execution is
+    /// proven ended (a direct-host process ends with the station).
     ///
     /// # Errors
     /// A database error.
     pub fn unended_execution(&self, session: &SessionId) -> Result<Option<String>> {
-        let conn = self.connection();
-        let open: Option<String> = conn
+        Ok(self
+            .connection()
             .query_row(
-                "SELECT shim_id FROM shims
-                 WHERE session_id = ?1 AND state IN ('starting', 'running') LIMIT 1",
-                [session.as_str()],
-                |r| r.get(0),
+                "SELECT shim_id, state, COALESCE(reason, '') FROM shims
+                 WHERE session_id = ?1
+                   AND NOT (state = 'never_started'
+                            OR (state = 'exited' AND reason = ?2))
+                 ORDER BY created_at, shim_id LIMIT 1",
+                rusqlite::params![session.as_str(), PROVEN_EXIT],
+                |r| {
+                    Ok(format!(
+                        "shim {} is {} ({})",
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?
+                    ))
+                },
             )
-            .optional()?;
-        if let Some(shim) = open {
-            return Ok(Some(format!("shim {shim} is still open")));
-        }
-        let mut stmt = conn.prepare(
-            "SELECT reason FROM shims WHERE session_id = ?1 AND state = 'lost'
-             AND reason IS NOT NULL",
-        )?;
-        let reasons: Vec<String> = stmt
-            .query_map([session.as_str()], |r| r.get(0))?
-            .collect::<rusqlite::Result<_>>()?;
-        Ok(reasons.into_iter().find(|reason| {
-            UNPROVEN_SHIM_LOSS
-                .iter()
-                .any(|unproven| reason.starts_with(unproven))
-        }))
+            .optional()?)
     }
 }

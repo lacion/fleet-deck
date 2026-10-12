@@ -25,6 +25,8 @@ use fleetdeck_providers::host::ProcessSpec;
 use fleetdeck_providers::host::shim::host::{AckMode, ShimHost, ShimHostConfig};
 use fleetdeck_providers::host::shim::journal::{Record, ShimFiles};
 use fleetdeck_providers::host::shim::start::Prepared;
+use fleetdeck_station::manager::decide::decide;
+use fleetdeck_station::manager::policy::Policy;
 use fleetdeck_station::manager::shim_codex::DurableCodex;
 use fleetdeck_station::manager::shim_station::{Configs, Durable, recover_station};
 use fleetdeck_station::manager::shims::launch_shim;
@@ -412,6 +414,59 @@ async fn an_unreadable_checkpoint_at_a_station_start_loses_the_session_and_leave
     let pid = shim_reaper::shim_pid(&shim_id).unwrap();
     assert!(alive(pid));
     assert_eq!(rig.method_count("initialize"), 1);
+
+    // DL-119: the original provider still runs under its shim, so a resume
+    // is refused with a stored receipt that spawns nothing, although the
+    // provider reported `resume` and its native thread id.
+    let provider = rig
+        .store
+        .shim(shim_id.clone())
+        .await
+        .unwrap()
+        .unwrap()
+        .provider_identity
+        .unwrap()
+        .pid;
+    assert!(alive(provider), "the original provider survives");
+    let summary = rig.store.summary("s1".into()).await.unwrap().unwrap();
+    assert!(summary.capabilities.as_ref().unwrap().resume);
+    let before = rig.store.session_effects("s1".into()).await.unwrap().len();
+    let policy = Policy::new(
+        vec![rig.tmp.path().to_owned()],
+        4,
+        OfflineApprovalPolicy::Wait,
+        std::collections::BTreeMap::from([("codex".into(), ProviderKind::Codex)]),
+    );
+    let envelope = CommandEnvelope {
+        command_id: CommandId::from("resume-1"),
+        target_incarnation: None,
+        retry_until: i64::try_from(rig.det.now_ms()).unwrap() + RETRY_WINDOW_MS,
+        origin: CommandOrigin::Board,
+        command: SessionCommand::Resume {
+            session_id: "s1".into(),
+        },
+    };
+    let decided = rig
+        .store
+        .decide(envelope.clone(), Caller::local(), {
+            let policy = policy.clone();
+            move |d| decide(d, &policy, CommandOrigin::Board, envelope.command.clone())
+        })
+        .await
+        .unwrap();
+    let reject = decided.receipt.reject.clone().expect("a stored rejection");
+    assert!(
+        reject.message.contains("not_resumable") && reject.message.contains(REASON_UNSUPPORTED),
+        "{reject:?}"
+    );
+    assert_eq!(
+        rig.store.session_effects("s1".into()).await.unwrap().len(),
+        before,
+        "nothing queued"
+    );
+    assert_eq!(rig.session_state().await, SessionState::Lost);
+    assert_eq!(rig.method_count("thread/resume"), 0);
+    assert!(alive(provider));
 }
 
 // ADR-005 tests 43 and 49 at the station (DL-113): a station crash during a
