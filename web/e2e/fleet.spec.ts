@@ -91,3 +91,38 @@ test('a task is created and its completion shows in the task list', async ({ pag
   ).toContainText('Done: merged');
   expect(await fitsWidth(page)).toBe(true);
 });
+
+test('the owner revokes a coordinator grant from the phone', async ({ page }) => {
+  const deck = new FakeDeck();
+  deck.stations = [stationView(ST, 'Alpha')];
+  deck.sessions = [session()];
+  let state = 'active';
+  const grant = () => ({
+    grant_id: 'g1',
+    station_id: ST,
+    session_id: 'coord-1',
+    classes: ['read', 'mail'],
+    stations: [ST],
+    spawn_cap: 3,
+    spawn_used: 0,
+    state,
+    revoked_reason: state === 'revoked' ? 'owner' : null,
+    generation: 1,
+    expires_at: 1_760_000_000_000,
+    last_used_at: null,
+  });
+  deck.on('/api/tasks', () => ({ status: 200, body: [] }));
+  deck.on('/api/coordinator/grants', () => ({ status: 200, body: [grant()] }));
+  deck.on('/api/coordinator/grants/g1/revoke', () => {
+    state = 'revoked';
+    return { status: 200, body: grant() };
+  });
+  await deck.install(page);
+  await logIn(page);
+  const grants = page.getByRole('list', { name: 'Coordinator grants' });
+  await expect(grants).toContainText('read, mail: active');
+  await grants.getByRole('button', { name: 'Revoke' }).click();
+  await expect(grants).toContainText('read, mail: revoked');
+  await expect(grants.getByRole('button', { name: 'Revoke' })).toHaveCount(0);
+  expect(await fitsWidth(page)).toBe(true);
+});

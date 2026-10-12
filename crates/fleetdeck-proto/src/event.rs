@@ -469,6 +469,24 @@ pub enum Event {
     /// the stable code of the first failed rule (ADR-007 §2.2).
     #[serde(rename = "session.auto_continue_skipped")]
     AutoContinueSkipped { reason: String },
+    /// The station bound a coordinator credential to the session's native
+    /// identity, or renewed it (ADR-006 §5.5, §6.1). No secret.
+    #[serde(rename = "coordinator.bound")]
+    CoordinatorBound {
+        binding_id: String,
+        grant_id: String,
+        generation: u32,
+        provider_instance: String,
+        native_id: String,
+    },
+    /// A coordinator binding ended: `idle` (expired, renewable) or
+    /// another reason (revoked) (ADR-006 §5.5).
+    #[serde(rename = "coordinator.ended")]
+    CoordinatorEnded {
+        binding_id: String,
+        generation: u32,
+        reason: String,
+    },
     /// Provider stdout bytes `[from, to)` were not parsed as events
     /// (ADR-005 §4.2; DL-113). Older peers decode this kind as unknown.
     #[serde(rename = "session.output_gap")]
@@ -524,7 +542,7 @@ pub enum Event {
 
 impl Event {
     /// Every known kind name, in declaration order.
-    pub const KINDS: [&'static str; 32] = [
+    pub const KINDS: [&'static str; 34] = [
         "session.started",
         "session.state",
         "run.started",
@@ -557,6 +575,8 @@ impl Event {
         "session.output_gap",
         "session.auto_continue_changed",
         "session.auto_continue_skipped",
+        "coordinator.bound",
+        "coordinator.ended",
     ];
 
     /// The dotted kind name.
@@ -594,6 +614,8 @@ impl Event {
             Self::SessionNamed { .. } => "session.named",
             Self::AutoContinueChanged { .. } => "session.auto_continue_changed",
             Self::AutoContinueSkipped { .. } => "session.auto_continue_skipped",
+            Self::CoordinatorBound { .. } => "coordinator.bound",
+            Self::CoordinatorEnded { .. } => "coordinator.ended",
             Self::OutputGap { .. } => "session.output_gap",
         }
     }

@@ -181,7 +181,9 @@ impl SessionSummary {
                 self.worktree.clone_from(worktree);
             }
             Event::AutoContinueChanged { enabled } => self.auto_continue = *enabled,
-            Event::AutoContinueSkipped { .. } => {}
+            Event::AutoContinueSkipped { .. }
+            | Event::CoordinatorBound { .. }
+            | Event::CoordinatorEnded { .. } => {}
             Event::SessionEnded { .. } => {
                 if !matches!(self.state, SessionState::Lost) {
                     self.state = SessionState::Exited;

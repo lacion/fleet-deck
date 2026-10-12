@@ -352,6 +352,11 @@ pub enum RejectCode {
     IncarnationMismatch,
     /// No receipt is stored (G3).
     Expired,
+    /// The coordinator binding facts do not match the deck's grant
+    /// (ADR-006 §6.2 step 3); no receipt is stored.
+    BindingStale,
+    /// The grant's lifetime spawn cap is used (ADR-006 §6.4); stored.
+    SpawnCapReached,
     /// A code of a newer peer.
     #[serde(other)]
     Unknown,
@@ -361,7 +366,10 @@ impl RejectCode {
     /// False for the codes that the station answers without a stored receipt.
     #[must_use]
     pub fn stores_receipt(self) -> bool {
-        !matches!(self, Self::IncarnationMismatch | Self::Expired)
+        !matches!(
+            self,
+            Self::IncarnationMismatch | Self::Expired | Self::BindingStale
+        )
     }
 }
 

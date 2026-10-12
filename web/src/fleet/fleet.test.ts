@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { TaskView } from '../gen';
-import { fleetActions, taskList, taskStatus } from './fleet';
+import { fleetActions, grantList, grantStatus, taskList, taskStatus } from './fleet';
 
 const task = (extra: Partial<TaskView> = {}): TaskView => ({
   task_id: 't1',
@@ -68,5 +68,51 @@ describe('fleet mail and tasks', () => {
     expect(taskStatus(task({ state: 'failed' }))).toBe('Failed');
     expect(taskList([task(), { nope: 1 }, 3])).toHaveLength(1);
     expect(taskList({})).toEqual([]);
+  });
+});
+
+describe('coordinator grants', () => {
+  const grant = {
+    grant_id: 'g1',
+    station_id: 'st',
+    session_id: 'coord-1',
+    classes: ['read', 'mail', 'spawn'],
+    stations: ['st'],
+    spawn_cap: 3,
+    spawn_used: 1,
+    state: 'active',
+    revoked_reason: null,
+    generation: null,
+    expires_at: 10,
+    last_used_at: null,
+  };
+  test('the list keeps grants only and the status says what the grant may do', async () => {
+    expect(grantList([grant, { nope: 1 }, 'x'])).toEqual([grant]);
+    expect(grantList({})).toEqual([]);
+    expect(grantStatus(grant)).toBe('read, mail, spawn, spawned 1 of 3: waiting for its session');
+    expect(grantStatus({ ...grant, classes: ['read'], generation: 1 })).toBe('read: active');
+  });
+  test('a revoke posts to the grant and a failure says so', async () => {
+    const posts: string[] = [];
+    const ok = fleetActions(
+      async () => [grant],
+      async (path) => {
+        posts.push(path);
+        return {};
+      },
+    );
+    expect(await ok.grants()).toEqual([grant]);
+    expect(await ok.revoke('g/1')).toEqual({ ok: true, text: 'Grant revoked.' });
+    expect(posts).toEqual(['/api/coordinator/grants/g%2F1/revoke']);
+    const bad = fleetActions(
+      async () => {
+        throw new Error('down');
+      },
+      async () => {
+        throw new Error('403 forbidden');
+      },
+    );
+    expect(await bad.grants()).toEqual([]);
+    expect(await bad.revoke('g1')).toEqual({ ok: false, text: 'Grant not revoked: 403 forbidden' });
   });
 });

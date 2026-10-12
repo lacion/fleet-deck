@@ -19,7 +19,10 @@ pub mod audit;
 pub mod auth;
 pub mod commands;
 pub mod coordinator;
+pub(crate) mod coordinator_ops;
+pub mod coordinator_query;
 pub mod fleet;
+pub mod grants;
 pub mod outbox;
 pub mod plans;
 pub mod read_model;
@@ -42,6 +45,7 @@ pub use audit::{AuditEntry, AuditResult, NewAudit};
 pub use auth::{ApiToken, LoginMethod, LoginSession, NewLogin, Principal};
 pub use commands::{DeckCommand, NewCommand, Settle};
 pub use fleet::{Completed, NewMail, NewTask};
+pub use grants::{Grant, GrantClass, GrantState, NewGrant};
 pub use outbox::{NewOutboxItem, OutboxItem, OutboxState};
 pub use read_model::{DeckSession, TIMELINE_CAP};
 pub use stations::{Direction, StationRecord};
@@ -272,6 +276,16 @@ impl DeckStore {
         if changed {
             self.board_changed();
         }
+    }
+
+    /// Every kept `station.info` (the coordinator decision reads them).
+    #[must_use]
+    pub fn station_infos(&self) -> BTreeMap<StationId, (StationInfo, i64)> {
+        self.inner
+            .infos
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// The last `station.info` of `station` and when it came.

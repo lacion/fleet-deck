@@ -238,3 +238,55 @@ async fn mail_and_tasks_need_the_drive_scope() {
     assert_eq!(get(&c, &h, "/api/tasks").await.status, 200);
     assert_eq!(get(&c, &h, "/api/mail").await.status, 200);
 }
+
+#[tokio::test]
+async fn the_owner_lists_and_revokes_a_coordinator_grant_and_a_viewer_cannot_revoke() {
+    let mut f = fixture().await;
+    let _station = f.connect().await;
+    let c = board(std::sync::Arc::clone(&f.ctx)).await;
+    let g = c
+        .store
+        .create_grant(fleetdeck_deck::store::NewGrant::new(
+            fleetdeck_proto::StationId::from(f.station.0.clone()),
+            "coord-1".into(),
+        ))
+        .await
+        .unwrap();
+    let h = owner(&c).await;
+    let r = get(&c, &h, "/api/coordinator/grants").await;
+    assert_eq!(r.status, 200);
+    assert_eq!(r.body[0]["grant_id"], g.grant_id.as_str());
+    assert_eq!(r.body[0]["classes"], json!(["read", "mail"]));
+    assert_eq!(r.body[0]["state"], "active");
+    assert!(r.body[0]["generation"].is_null());
+    // No credential or digest in the view.
+    assert!(!r.body.to_string().contains("digest"));
+    let (_, t) = c
+        .store
+        .create_token(
+            "viewer".into(),
+            BTreeSet::from([Scope::Read]),
+            24 * 60 * 60 * 1000,
+        )
+        .await
+        .unwrap();
+    let viewer = vec![("Authorization".to_owned(), format!("Bearer {}", t.expose()))];
+    let path = format!("/api/coordinator/grants/{}/revoke", g.grant_id);
+    assert_eq!(post(&c, &viewer, &path, json!({})).await.status, 403);
+    let r = post(&c, &h, &path, json!({})).await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert_eq!(r.body["state"], "revoked");
+    assert_eq!(r.body["revoked_reason"], "owner");
+    // A second revoke keeps it revoked; an unknown grant is 404.
+    assert_eq!(
+        post(&c, &h, &path, json!({})).await.body["state"],
+        "revoked"
+    );
+    let r = post(&c, &h, "/api/coordinator/grants/nope/revoke", json!({})).await;
+    assert_eq!(r.status, 404);
+    assert!(
+        !c.audited("coordinator.revoke", AuditResult::Ok)
+            .await
+            .is_empty()
+    );
+}

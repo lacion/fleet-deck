@@ -195,6 +195,20 @@ pub const API: &[ApiMethod] = &[
         true,
     ),
     m(
+        "coordinator.grants",
+        Method::GET,
+        "/api/coordinator/grants",
+        Some(Scope::Read),
+        false,
+    ),
+    m(
+        "coordinator.revoke",
+        Method::POST,
+        "/api/coordinator/grants/{grant_id}/revoke",
+        Some(Scope::Drive),
+        true,
+    ),
+    m(
         "tasks.list",
         Method::GET,
         "/api/tasks",
