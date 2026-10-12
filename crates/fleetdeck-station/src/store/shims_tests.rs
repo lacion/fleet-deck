@@ -426,3 +426,129 @@ async fn after_an_adapter_state_gap_no_frame_transition_or_stdin_claim_is_accept
     // A stale generation cannot commit a second gap.
     assert!(!s.shim_adapter_gap("a".into(), 7, 0, 10).await.unwrap());
 }
+
+#[test]
+fn v14_preserves_prior_adapter_invalidation_without_rewriting_events_or_blocks() {
+    let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+    let migrations = crate::store::schema::migrations();
+    migrations.to_version(&mut conn, 13).unwrap();
+    for (id, block) in [
+        ("marker", Some("adapter_state_gap")),
+        ("hidden", Some("stdin_partial_write")),
+        ("partial", Some("stdin_partial_write")),
+        ("clean", None),
+    ] {
+        conn.execute(
+            "INSERT INTO sessions (session_id, provider, provider_instance, cwd, state,
+                 offline_approval_policy, summary, created_at, updated_at)
+             VALUES (?1, 'claude', 'claude', '/w', 'running', 'wait', '{}', 1, 1)",
+            [id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO shims (shim_id, session_id, incarnation, state, socket_path,
+                 input_blocked, adapter_checkpoint, created_at, updated_at)
+             VALUES (?1, ?1, 'station', 'starting', '/socket', ?2, 'old checkpoint', 1, 1)",
+            rusqlite::params![id, block],
+        )
+        .unwrap();
+    }
+    let payload = serde_json::to_string(&Event::Error {
+        code: crate::store::shim_gaps::REASON_ADAPTER_STATE_GAP.to_owned(),
+        message: "output gap".to_owned(),
+        retry_at: None,
+    })
+    .unwrap();
+    conn.execute(
+        "INSERT INTO events (station_seq, session_id, session_seq, kind, payload, at)
+         VALUES (1, 'hidden', 1, 'error', ?1, 2)",
+        [&payload],
+    )
+    .unwrap();
+    migrations.to_latest(&mut conn).unwrap();
+    migrations.to_latest(&mut conn).unwrap();
+    for (id, invalid, block) in [
+        ("marker", true, Some("adapter_state_gap")),
+        ("hidden", true, Some("stdin_partial_write")),
+        ("partial", false, Some("stdin_partial_write")),
+        ("clean", false, None),
+    ] {
+        let actual: (bool, Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT adapter_gap, adapter_checkpoint, input_blocked FROM shims WHERE shim_id = ?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(actual.0, invalid, "{id}");
+        assert_eq!(
+            actual.1.as_deref(),
+            (!invalid).then_some("old checkpoint"),
+            "{id}"
+        );
+        assert_eq!(actual.2.as_deref(), block, "{id}");
+    }
+    let stored: String = conn
+        .query_row(
+            "SELECT payload FROM events WHERE station_seq = 1",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(stored, payload);
+}
+
+// DL-124: the gap flag is independent of an earlier input block; the
+// fences and the checkpoint guard still hold when `input_blocked` already
+// had another reason.
+#[tokio::test]
+async fn an_adapter_state_gap_after_an_earlier_input_block_still_fences_every_claim() {
+    let det = Det::new();
+    let s = store(&det).await;
+    s.shim_starting(shim("a")).await.unwrap();
+    assert!(s.shim_running("a".into(), identity(9)).await.unwrap());
+    assert_eq!(s.shim_next_generation("a".into()).await.unwrap(), Some(1));
+    s.shim_block_input("a".into(), crate::store::shim_writes::REASON_STDIN_PARTIAL)
+        .await
+        .unwrap();
+    assert!(!s.shim_has_adapter_gap("a".into()).await.unwrap());
+
+    assert!(s.shim_adapter_gap("a".into(), 1, 0, 10).await.unwrap());
+    assert!(s.shim_has_adapter_gap("a".into()).await.unwrap());
+    // The earlier reason is kept for the owner.
+    assert_eq!(
+        s.shim_input_blocked("s1".into()).await.unwrap().as_deref(),
+        Some(crate::store::shim_writes::REASON_STDIN_PARTIAL)
+    );
+    let meta = OutputMeta {
+        frames: vec!["{\"method\":\"fd/one\"}".to_owned()],
+        checkpoint: Some(fleetdeck_providers::checkpoint::AdapterCheckpoint {
+            provider: ProviderKind::Codex,
+            version: 1,
+            state: serde_json::json!({}),
+        }),
+        ..OutputMeta::default()
+    };
+    s.shim_commit_output_with("a".into(), 1, 10, Vec::new(), meta)
+        .await
+        .unwrap();
+    assert!(
+        s.shim_checkpoint("a".into()).await.unwrap().is_none(),
+        "no checkpoint after a gap"
+    );
+    let frame = s.shim_open_frames("a".into()).await.unwrap()[0].frame_seq;
+    assert_eq!(
+        s.shim_claim_frame("a".into(), 1, frame).await.unwrap(),
+        None
+    );
+    assert_eq!(
+        s.shim_claim_write("a".into(), 1, None, 0, 1).await.unwrap(),
+        None
+    );
+    assert_eq!(
+        s.shim_begin_transition("a".into(), 1, "e-1".into(), 1, Vec::new())
+            .await
+            .unwrap(),
+        None
+    );
+}

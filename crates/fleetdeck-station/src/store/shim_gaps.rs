@@ -31,16 +31,18 @@ pub const REASON_EXITED: &str = "exited";
 
 /// True when the adapter state of `shim_id` was invalidated by a gap: no
 /// generated frame, command transition or stdin frame may be claimed for
-/// it any more, whatever the caller's memory says (review of DL-122).
+/// it any more, whatever the caller's memory says (review of DL-122). The
+/// durable `adapter_gap` flag is read, never `input_blocked`, which can hold
+/// an earlier reason (DL-124).
 pub(super) fn has_adapter_gap(conn: &rusqlite::Connection, shim_id: &str) -> Result<bool> {
-    let blocked: Option<Option<String>> = conn
+    let flag: Option<i64> = conn
         .query_row(
-            "SELECT input_blocked FROM shims WHERE shim_id = ?1",
+            "SELECT adapter_gap FROM shims WHERE shim_id = ?1",
             [shim_id],
             |r| r.get(0),
         )
         .optional()?;
-    Ok(blocked.flatten().as_deref() == Some(REASON_ADAPTER_STATE_GAP))
+    Ok(flag.unwrap_or_default() != 0)
 }
 
 impl Store {
@@ -117,7 +119,7 @@ impl Store {
                 }
             }
             conn.execute(
-                "UPDATE shims SET adapter_checkpoint = NULL,
+                "UPDATE shims SET adapter_checkpoint = NULL, adapter_gap = 1,
                      input_blocked = COALESCE(input_blocked, ?2),
                      cursor = MAX(cursor, ?3), updated_at = ?4
                  WHERE shim_id = ?1",

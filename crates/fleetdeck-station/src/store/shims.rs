@@ -486,8 +486,10 @@ pub(super) fn store_checkpoint(
     text: &str,
     now: i64,
 ) -> Result<()> {
+    // An invalidated adapter state never gets a checkpoint again (DL-124).
     conn.execute(
-        "UPDATE shims SET adapter_checkpoint = ?2, updated_at = ?3 WHERE shim_id = ?1",
+        "UPDATE shims SET adapter_checkpoint = ?2, updated_at = ?3
+         WHERE shim_id = ?1 AND adapter_gap = 0",
         params![shim_id, text, now],
     )?;
     Ok(())

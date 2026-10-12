@@ -571,4 +571,95 @@ async fn a_dispatch_racing_an_adapter_state_gap_sends_nothing() {
     );
     assert!(alive(pid));
     driver.abandon().await;
+    drop(driver);
+}
+
+// DL-124: a session whose input was already blocked (a partial stdin
+// write) when the gap was committed: every claim fence still holds.
+#[tokio::test]
+async fn a_gap_after_an_earlier_input_block_still_stops_every_dispatch() {
+    let rig = Rig::new().await;
+    rig.store
+        .process_started("s1".into(), "proc-1".to_owned().into(), None)
+        .await
+        .unwrap();
+    let out = rig.tmp.path().join("stdin.out");
+    let (driver, shim_id, _pid) = rig.drive(&format!("cat > '{}'", out.display())).await;
+    rig.store
+        .shim_block_input(shim_id.clone(), "stdin_partial_write")
+        .await
+        .unwrap();
+    let generation = rig
+        .store
+        .shim(shim_id.clone())
+        .await
+        .unwrap()
+        .unwrap()
+        .generation;
+    assert!(
+        rig.store
+            .shim_adapter_gap(shim_id.clone(), generation, 0, 0)
+            .await
+            .unwrap()
+    );
+    let fence = rig.store.register_worker().await.unwrap();
+    let envelope = CommandEnvelope {
+        command_id: "cmd-1".into(),
+        target_incarnation: None,
+        retry_until: i64::try_from(rig._det.now_ms()).unwrap() + RETRY_WINDOW_MS,
+        origin: CommandOrigin::Board,
+        command: SessionCommand::Interrupt {
+            session_id: "s1".into(),
+        },
+    };
+    rig.store
+        .decide(envelope, Caller::local(), |d| {
+            d.enqueue(
+                &"s1".into(),
+                fleetdeck_station::store::EffectPayload::Interrupt,
+            )?;
+            Ok(CommandResult {
+                session_id: Some("s1".into()),
+                input_id: None,
+            })
+        })
+        .await
+        .unwrap();
+    let claimed = rig.store.claim_next(fence).await.unwrap().unwrap();
+    // The driver's memory has no gap; only the store can stop it.
+    assert!(!driver.has_adapter_gap());
+    let dispatch = driver.apply(&claimed).await;
+    assert!(
+        matches!(
+            &dispatch,
+            fleetdeck_station::store::Dispatch::NotDispatched(reason)
+                if reason == REASON_ADAPTER_STATE_GAP
+        ),
+        "{dispatch:?}"
+    );
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(std::fs::read(&out).unwrap_or_default(), Vec::<u8>::new());
+    driver.abandon().await;
+    drop(driver);
+    assert_eq!(
+        rig.store
+            .shim_input_blocked("s1".into())
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("stdin_partial_write")
+    );
+    // Recovery must consult the persistent flag, not the first block reason.
+    let configs = Configs {
+        claude: Box::new(|_| None),
+        codex: Box::new(|_| None),
+    };
+    let start = recover_station(&rig.store, &rig.host(), &configs, Duration::from_secs(1))
+        .await
+        .unwrap();
+    assert!(start.restored.is_empty());
+    assert_eq!(
+        start.ended,
+        vec![(shim_id, REASON_ADAPTER_STATE_GAP.to_owned())]
+    );
 }

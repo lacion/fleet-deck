@@ -1428,3 +1428,11 @@ Format: context, options, choice, reason, owner review.
 - Reason: the store fence holds for every path and every owner, including one whose memory is stale; the recheck under the lock keeps the driver from computing a command at all. The race regression fails without the store fence.
 - Owner review: not required (fix inside the accepted ADR-005 revision 3).
 
+## DL-124 — The adapter state gap is its own durable flag (ADR-005 §4.2; M3 round 45)
+
+- Context: the review of DL-123 found that `shim_adapter_gap` wrote the gap as `input_blocked = COALESCE(input_blocked, 'adapter_state_gap')`, and the three claim fences tested `input_blocked = 'adapter_state_gap'`. A session whose input was already blocked (`stdin_partial_write`) kept the old reason, so the fences, the checkpoint store and the station-start restore did not see the gap.
+- Options: (a) overwrite `input_blocked` with `adapter_state_gap`; (b) a separate `adapter_gap` flag that every gap check reads; (c) a list of block reasons.
+- Choice: (b). Schema V14 `ALTER TABLE shims ADD COLUMN adapter_gap INTEGER NOT NULL DEFAULT 0`. `shim_adapter_gap` sets it in the gap transaction; `has_adapter_gap` (the fences of `shim_claim_frame`, `shim_begin_transition`, `shim_claim_write_with`) and `restore_one` read it; `store_checkpoint` stores nothing for a flagged row. `input_blocked` keeps its first reason, which still blocks input.
+- Reason: (a) loses the earlier reason that the owner needs for reconciliation; (c) is more schema for no current need. A flag makes the invalidation independent of every input-block reason. V14 backfills `adapter_gap = 1` for every row whose `input_blocked` is `adapter_state_gap` (a gap committed before V14 without an earlier reason); a pre-V14 gap behind an earlier reason left no trace and cannot be recovered, but such a row still blocks input.
+- Owner review: not required (implementation inside the accepted ADR-005 revision 3).
+

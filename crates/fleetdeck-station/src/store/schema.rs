@@ -359,6 +359,21 @@ CREATE TABLE shim_transitions (
 );
 ";
 
+const V14: &str = "
+-- DL-124: adapter invalidation is independent of the first input-block reason.
+ALTER TABLE shims ADD COLUMN adapter_gap INTEGER NOT NULL DEFAULT 0;
+-- Preserve pre-V14 invalidation, including a gap hidden by an earlier block.
+-- A stale output transaction could have restored the checkpoint after the gap.
+-- Do not rewrite historical events or the original input-block reason.
+UPDATE shims SET adapter_gap = 1, adapter_checkpoint = NULL
+WHERE input_blocked = 'adapter_state_gap' OR EXISTS (
+    SELECT 1 FROM events
+    WHERE events.session_id = shims.session_id AND events.at >= shims.created_at
+      AND events.kind = 'error'
+      AND json_extract(events.payload, '$.code') = 'adapter_state_gap'
+);
+";
+
 /// The `station.db` migrations. V4 is the link epochs table of
 /// `fleetdeck-link` (G1).
 #[must_use]
@@ -377,5 +392,6 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V11),
         M::up(V12),
         M::up(V13),
+        M::up(V14),
     ])
 }

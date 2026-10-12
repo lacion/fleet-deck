@@ -211,10 +211,8 @@ async fn restore_one(
         return Ok(Err(REASON_NO_PROCESS.to_owned()));
     };
     if store
-        .shim_input_blocked(session_id.clone())
+        .shim_has_adapter_gap(attached.record.shim_id.clone())
         .await?
-        .as_deref()
-        == Some(crate::store::shim_gaps::REASON_ADAPTER_STATE_GAP)
     {
         // The stored adapter state was invalidated by an output gap
         // (§4.2): no driver is restored from it.
