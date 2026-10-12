@@ -1,6 +1,6 @@
 {
-  // Lint and format for the v2 board. A nested config of the repository root
-  // config: `root: false` keeps the v0 `biome lint` at the root working.
+  // Lint and format for the v2 board, a nested config of the repository root
+  // config (formatter and rule settings).
   "root": false,
   "extends": "//",
   "files": {

@@ -42,11 +42,11 @@ Commands: Rust tests run with `cargo nextest run -E 'test(<name>)'`, board unit 
 | Single-flight destructive actions; visible rejection | `a_reused_command_id_with_another_payload_is_rejected`; `web/e2e/spawn.spec.ts` "a refused start shows the station reason and keeps the form" | done |
 | Credential hygiene | `the_child_gets_exactly_the_scrubbed_environment`; `an_invitation_round_trips_and_debug_hides_the_secret` | done |
 | Numbered, transactional migrations | `the_migrations_are_valid` (deck and station) | done |
-| No model calls in the core | Doctrine rule; no test can prove an absence | not testable (design rule) |
+| No model calls in the core | `crates/fleetdeck-cli/tests/cutover.rs` `no_crate_calls_a_model_api_directly` (no crate source names a model API endpoint) | done |
 | Callsigns, tickets, worktree naming | `every_session_gets_its_own_callsign`; `a_worktree_start_creates_the_callsign_worktree_on_its_branch` | done |
 | Batch spawn with `Nx`, forced worktree isolation | `web/e2e/spawn.spec.ts` "a batch starts one worktree session per line with Nx (M3 6-1)" | done |
 | Conflict radar | `web/e2e/conflicts.spec.ts` (see above) | done |
-| Fake agents and test seams | `fleetdeck-testkit` fakes in every station test; live smoke `crates/fleetdeck-providers/tests/live_smoke.rs` behind `FD_LIVE_SMOKE=1` (`make smoke-live`) | done |
+| Fake agents and test seams | `crates/fleetdeck-cli/tests/cutover.rs` `normal_tests_use_fake_agents_and_live_smoke_tests_are_opt_in` (the `fleetdeck-testkit` fakes exist; every live smoke test in `crates/fleetdeck-providers/tests/live_smoke.rs` is ignored behind `FD_LIVE_SMOKE=1`, `make smoke-live`) | done |
 | Provider version gate | `station_info_providers_are_probed_once_with_versions`; `probe_of_a_missing_binary_reports_unknown` | probe done; a per-provider minimum version deferred (DL-131) |
 
 ## Provider-specific capability degradation

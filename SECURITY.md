@@ -1,5 +1,7 @@
 # Security Policy
 
+> **Note (v2 branch):** this policy describes Fleet Deck v1 (the Node daemon and the Claude Code plugin), which stays on `main` until the 2.0.0 release. The v1 code was removed from the `v2` branch in the cutover (DL-132). The v2 security model is in [docs/v2/PLAN.md](docs/v2/PLAN.md) and the ADRs in [docs/v2/adr/](docs/v2/adr/). Report a v2 vulnerability the same way as below.
+
 Fleet Deck is a local daemon that watches your Claude Code sessions, types into
 tmux 3.4+ panes, and spawns new agents on your behalf — including, behind a two-step
 red confirmation, unsupervised ones. That is a lot of power pointed at your

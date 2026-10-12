@@ -108,6 +108,13 @@ impl Rig {
         StdinLog::read(&self.log).count(&format!("\"method\":\"{method}\""))
     }
 
+    /// The provider processes that started a session: each `initialize`
+    /// that is not a station-start probe (a probe process sends
+    /// `account/read` after its `initialize` and exits; DL-219).
+    fn provider_starts(&self) -> usize {
+        self.frames("initialize") - self.frames("account/read")
+    }
+
     fn send(&self, command: SessionCommand) -> Receipt {
         let path = socket_path(&self.station.node.dirs().station());
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -286,7 +293,8 @@ fn assert_completed(rig: &mut Rig, session: &SessionId) {
         )),
         "{events:?}"
     );
-    assert_eq!(rig.frames("initialize"), 1, "no replacement provider");
+    assert_eq!(rig.provider_starts(), 1, "no replacement provider");
+    assert_eq!(rig.frames("thread/resume"), 0, "no replacement provider");
     rig.station.stop();
 }
 
@@ -373,6 +381,7 @@ fn a_station_killed_after_the_rollback_was_claimed_requires_reconciliation_and_n
     assert_eq!(receipt.state, ReceiptState::Rejected, "input is blocked");
     std::thread::sleep(Duration::from_millis(300));
     assert_eq!(rig.frames("thread/rollback"), 0);
-    assert_eq!(rig.frames("initialize"), 1);
+    assert_eq!(rig.provider_starts(), 1);
+    assert_eq!(rig.frames("thread/resume"), 0);
     rig.station.stop();
 }

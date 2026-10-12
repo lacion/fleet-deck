@@ -66,6 +66,9 @@ Until the 2.0.0 release, v1 stays on `main`. To go back, stop the v2 services an
 
 ## 7. Repository cutover checklist (item 7-7, branch `v2` only)
 
+Done in lane A round 103 (DL-132); test `crates/fleetdeck-cli/tests/cutover.rs` `the_v0_code_and_plugin_files_are_gone_from_v2`. Steps 1-4 are done; step 5 is item 7-8; step 6 stays an owner step.
+
+
 1. All lanes of M3 are merged and their checks pass.
 2. Delete `src/`, `board/`, `hooks/`, `scripts/`, the plugin files (`.claude-plugin/`) and the root `package.json` on `v2`.
 3. Remove the v1 CI jobs and the v1 entries of the root configuration files.

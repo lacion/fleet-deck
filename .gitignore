@@ -1,12 +1,7 @@
 node_modules/
-board/node_modules/
 *.db
 *.db-wal
 *.db-shm
-.fleetdeck-test/
-demo/demo-logs/
-demo/project/.claude/settings.json
-board/dist/
 ideas/
 # Rust (Fleet Deck v2)
 /target/
