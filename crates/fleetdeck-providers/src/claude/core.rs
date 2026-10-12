@@ -414,14 +414,19 @@ impl ClaudeCore {
 
     /// Feeds one CLI frame.
     ///
-    /// The canonical stream of a process opens with `session.started`: events
-    /// of frames before the first `system/init` are held and follow it. Writes
-    /// are never held.
+    /// Frames before the first `system/init` are held, except the answers to
+    /// the host's own control requests (mode, model): they are released at
+    /// once (DL-141). The other events of the frames before `system/init`
+    /// follow `session.started`. Writes are never held.
     pub fn on_frame(&mut self, frame: CliFrame) -> Vec<Output> {
         if self.ended {
             return Vec::new();
         }
+        let answer = matches!(frame, CliFrame::ControlResponse(_));
         let out = map::on_frame(self, frame);
+        if !self.started && answer {
+            return out;
+        }
         if !self.started {
             let mut writes = Vec::new();
             for o in out {

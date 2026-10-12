@@ -73,7 +73,7 @@ The adapter allocates host request ids (`fd-N`). It ignores `control_response` f
 
 A turn that no host input started (the CLI works on after a background task or an async subagent finished) opens with `origin: provider`. Such a turn never confirms a host input (DL-006, traps 4 and 5).
 
-Frames that arrive before the first `system/init` (for example `command_lifecycle queued`) are held and emitted right after `session.started`.
+Frames that arrive before the first `system/init` (for example `command_lifecycle queued`) are held and emitted right after `session.started`. The answers to the host's own control requests (mode, model) are the exception: they are released at once (DL-141).
 
 ### 2.5 Approvals and questions
 
