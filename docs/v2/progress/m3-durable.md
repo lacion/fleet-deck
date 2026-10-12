@@ -28,6 +28,13 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 94 (2026-10-12, 17:07–)
+
+- Round start: committed round 93 as ad64fa3. `git log v2..m3/orchestration`, `v2..m3/board`, `v2..m3/ops`: no new commits; `m3-orchestration.md` has no "LANE COMPLETE", so 6-13, 7-7 and 7-8 stay blocked.
+- Lane B activity (read only, no write in its worktree): the last lane B commit is 560032c (16:56). Its working tree has 23 changed paths (21 files, +882/−60 in `git diff --stat`), in the deck read model, grants, the deck link and the snapshot bound tests. This is the open 6-5 snapshot projection (ADR-006 25e). Lane B is still active, so lane A keeps the sync each round.
+- Merge plan for that work: `crates/fleetdeck-link/src/methods.rs` changes only a struct field (`coordinator: None`), so no link method table row conflict is expected. If `crates/fleetdeck-proto` changes, run `make ts-types` after the merge.
+- Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` (docs only, no test run).
+
 ## Round 93 (2026-10-12, 17:06–)
 
 - Round start: committed round 92 as 2a42aa0. `git log v2..m3/orchestration`, `v2..m3/board`, `v2..m3/ops`: no new commits; `m3-orchestration.md` has no "LANE COMPLETE", so 6-13, 7-7 and 7-8 stay blocked.
