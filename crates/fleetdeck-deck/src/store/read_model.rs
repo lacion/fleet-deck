@@ -218,6 +218,26 @@ impl DeckStore {
         watermark: u64,
         sessions: Vec<SessionSummary>,
     ) -> Result<()> {
+        self.apply_snapshot_with(station, incarnation, watermark, sessions, None)
+            .await
+    }
+
+    /// [`Self::apply_snapshot`] with the coordinator binding projection of
+    /// a coordinator-capable snapshot (ADR-006 §6.1, test 25e): the
+    /// projection, the summaries and the cursor commit in one transaction,
+    /// before the link acknowledges the snapshot. `None` is an ordinary
+    /// summary snapshot and changes no grant.
+    ///
+    /// # Errors
+    /// [`DeckError::UnknownStation`], or a database error.
+    pub async fn apply_snapshot_with(
+        &self,
+        station: StationId,
+        incarnation: IncarnationId,
+        watermark: u64,
+        sessions: Vec<SessionSummary>,
+        coordinator: Option<Vec<fleetdeck_proto::CoordinatorBindingState>>,
+    ) -> Result<()> {
         let now = self.now_ms();
         call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
@@ -250,6 +270,9 @@ impl DeckStore {
                     "DELETE FROM timeline WHERE station_id = ?1 AND session_id = ?2",
                     params![station.as_str(), id],
                 )?;
+            }
+            if let Some(projection) = &coordinator {
+                super::grants::apply_projection(&tx, &station, now, projection)?;
             }
             set_cursor(&tx, &station, &incarnation, watermark)?;
             tx.commit()?;

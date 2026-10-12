@@ -86,6 +86,8 @@ export * from "./ids/SessionId";
 export * from "./ids/StationId";
 export * from "./ids/TurnId";
 export * from "./link/ControlFrame";
+export * from "./link/CoordinatorBindingPhase";
+export * from "./link/CoordinatorBindingState";
 export * from "./link/Negotiated";
 export * from "./link/ReceiptQuery";
 export * from "./link/ReplayParams";

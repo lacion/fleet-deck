@@ -273,6 +273,18 @@ async fn expect_snapshot(
     watermark: u64,
     sessions: &[&str],
 ) {
+    expect_snapshot_with(deck, inc, watermark, sessions, Vec::new()).await;
+}
+
+/// A snapshot batch on a link with `coordinator.v1`: its end carries the
+/// coordinator binding projection (ADR-006 §6.1).
+async fn expect_snapshot_with(
+    deck: &mut LiveLink,
+    inc: &IncarnationId,
+    watermark: u64,
+    sessions: &[&str],
+    projection: Vec<fleetdeck_proto::CoordinatorBindingState>,
+) {
     assert_eq!(
         frame(deck).await,
         ControlFrame::SnapshotBegin {
@@ -296,9 +308,53 @@ async fn expect_snapshot(
         frame(deck).await,
         ControlFrame::SnapshotEnd {
             incarnation: inc.clone(),
-            watermark
+            watermark,
+            coordinator: Some(projection),
         }
     );
+}
+
+/// ADR-006 §8.3 25e (station side): a forced snapshot carries the binding
+/// projection at its watermark, without the credential; the deck side is
+/// `store::coordinator::tests::lifecycle::a_snapshot_recovery_with_an_unapplied_lifecycle_event_commits_the_grant_transition_before_any_coordinator_traffic_resumes`.
+#[tokio::test]
+async fn a_forced_snapshot_carries_the_coordinator_binding_projection_without_the_credential() {
+    use fleetdeck_station::coordinator::{Binding, BindingState};
+    let mut f = fixture().await;
+    f.session("s1").await;
+    let head = f.event("s1", 1).await;
+    let bindings = f.ctx.manager.policy().coordinator_bindings().clone();
+    bindings.insert(
+        "digest-of-the-credential".to_owned(),
+        Binding {
+            binding_id: "s1:grant-1".to_owned(),
+            grant_id: "grant-1".to_owned(),
+            session_id: "s1".into(),
+            provider_instance: "claude".to_owned(),
+            native_id: Some("native-1".to_owned()),
+            generation: 1,
+            classes: BTreeSet::new(),
+            state: BindingState::Active,
+            control_skill: "skill".to_owned(),
+        },
+    );
+    let mut deck = f.connect().await;
+    let inc = f.inc();
+    let s = start(call(&deck.control, "session.snapshot", json!({})).await);
+    assert_eq!(s.mode, StreamMode::Snapshot);
+    let want = fleetdeck_proto::CoordinatorBindingState {
+        binding_id: "s1:grant-1".to_owned(),
+        grant_id: "grant-1".to_owned(),
+        session_id: "s1".into(),
+        generation: 1,
+        provider_instance: "claude".to_owned(),
+        native_id: Some("native-1".to_owned()),
+        state: fleetdeck_proto::CoordinatorBindingPhase::Active,
+    };
+    expect_snapshot_with(&mut deck, &inc, head, &["s1"], vec![want]).await;
+    // The projection names no credential digest.
+    let text = serde_json::to_string(&bindings.projection()).unwrap();
+    assert!(!text.contains("digest-of-the-credential"));
 }
 
 #[tokio::test]

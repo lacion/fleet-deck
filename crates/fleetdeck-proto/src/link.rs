@@ -9,7 +9,7 @@ use ts_rs::TS;
 
 use crate::capability::Capabilities;
 use crate::event::{EventEnvelope, ProviderKind};
-use crate::ids::{CommandId, IncarnationId, ProviderInstanceId};
+use crate::ids::{CommandId, IncarnationId, ProviderInstanceId, SessionId};
 use crate::session::SessionSummary;
 
 /// The largest control frame in bytes (ADR-004 §2.6).
@@ -103,6 +103,35 @@ pub struct SessionSnapshot {
     pub summary: SessionSummary,
 }
 
+/// The lifecycle state of one coordinator binding in a snapshot
+/// projection (ADR-006 §5.5, §6.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "link/")]
+pub enum CoordinatorBindingPhase {
+    Pending,
+    Active,
+    Expired,
+    Revoked,
+}
+
+/// One coordinator binding of a coordinator-capable snapshot (ADR-006
+/// §6.1): the binding fields and the lifecycle state at the watermark. No
+/// secret.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "link/")]
+pub struct CoordinatorBindingState {
+    pub binding_id: String,
+    pub grant_id: String,
+    pub session_id: SessionId,
+    pub generation: u32,
+    pub provider_instance: String,
+    /// `None` while the binding is pending.
+    pub native_id: Option<String>,
+    pub state: CoordinatorBindingPhase,
+}
+
 /// One control frame.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -153,6 +182,12 @@ pub enum ControlFrame {
     SnapshotEnd {
         incarnation: IncarnationId,
         watermark: u64,
+        /// The coordinator binding projection at the watermark (ADR-006
+        /// §6.1, needs `coordinator.v1`). `None`: an ordinary summary
+        /// snapshot, which never opens the coordinator lifecycle fence.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        coordinator: Option<Vec<CoordinatorBindingState>>,
     },
     Ping {
         nonce: u64,
@@ -402,6 +437,7 @@ mod tests {
             ControlFrame::SnapshotEnd {
                 incarnation: "i".into(),
                 watermark: 3,
+                coordinator: None,
             },
             ControlFrame::Ping { nonce: 1 },
             ControlFrame::Pong { nonce: 1 },

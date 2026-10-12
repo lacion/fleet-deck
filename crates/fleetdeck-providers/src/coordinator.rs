@@ -68,10 +68,31 @@ impl CoordinatorLaunch {
     }
 }
 
-/// Whether the handoff is verified for a provider version: `Err` with the
-/// capability reason until the live smoke records a passing version.
-pub fn handoff(_provider: ProviderKind, _version: Option<&str>) -> Result<(), &'static str> {
-    Err(UNVERIFIED)
+/// The provider families and minimum versions for which the opt-in live
+/// smoke (ADR-006 §8.5, test 31) recorded a passing handoff (DL-219).
+/// Codex has no coordinated start yet.
+pub const VERIFIED: &[(ProviderKind, &str)] = &[(ProviderKind::Claude, "2.1.296")];
+
+/// The numeric parts of a dotted version (`2.1.296 (Claude Code)` →
+/// `[2, 1, 296]`), or `None` when it does not start with a number.
+fn numeric(version: &str) -> Option<Vec<u64>> {
+    let head = version.split_whitespace().next()?;
+    let parts: Vec<u64> = head.split('.').map_while(|p| p.parse().ok()).collect();
+    (!parts.is_empty()).then_some(parts)
+}
+
+/// Whether the handoff is verified for a provider version (ADR-006 §5.4):
+/// `Ok` for a version at or above the [`VERIFIED`] minimum of its
+/// provider family; `Err` with the capability reason for an unknown
+/// version, a lower one, or a provider without a verified handoff.
+pub fn handoff(provider: ProviderKind, version: Option<&str>) -> Result<(), &'static str> {
+    let min = VERIFIED
+        .iter()
+        .find(|(kind, _)| *kind == provider)
+        .and_then(|(_, min)| numeric(min))
+        .ok_or(UNVERIFIED)?;
+    let got = version.and_then(numeric).ok_or(UNVERIFIED)?;
+    if got >= min { Ok(()) } else { Err(UNVERIFIED) }
 }
 
 #[cfg(test)]
@@ -123,6 +144,23 @@ mod tests {
         for provider in [ProviderKind::Claude, ProviderKind::Codex] {
             assert_eq!(handoff(provider, Some("2.1.0")), Err(UNVERIFIED));
             assert_eq!(handoff(provider, None), Err(UNVERIFIED));
+            assert_eq!(handoff(provider, Some("unknown")), Err(UNVERIFIED));
         }
+        // DL-219: the live smoke passed for Claude 2.1.296; Codex has no
+        // coordinated start.
+        assert_eq!(
+            handoff(ProviderKind::Claude, Some("2.1.295")),
+            Err(UNVERIFIED)
+        );
+        assert_eq!(handoff(ProviderKind::Claude, Some("2.1.296")), Ok(()));
+        assert_eq!(
+            handoff(ProviderKind::Claude, Some("2.1.296 (Claude Code)")),
+            Ok(())
+        );
+        assert_eq!(handoff(ProviderKind::Claude, Some("2.10.0")), Ok(()));
+        assert_eq!(
+            handoff(ProviderKind::Codex, Some("0.160.0")),
+            Err(UNVERIFIED)
+        );
     }
 }

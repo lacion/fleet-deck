@@ -5,6 +5,7 @@ import type { CommandId } from "../ids/CommandId";
 import type { IncarnationId } from "../ids/IncarnationId";
 import type { SessionId } from "../ids/SessionId";
 import type { JsonValue } from "../serde_json/JsonValue";
+import type { CoordinatorBindingState } from "./CoordinatorBindingState";
 import type { SessionSnapshot } from "./SessionSnapshot";
 import type { WireError } from "./WireError";
 
@@ -40,4 +41,10 @@ event: Event, } | { "type": "ack", incarnation: IncarnationId, station_seq: numb
 /**
  * Every event up to this `station_seq` is in the snapshot.
  */
-watermark: number, session_count: number, } | { "type": "snapshot_session", incarnation: IncarnationId, snapshot: SessionSnapshot, } | { "type": "snapshot_end", incarnation: IncarnationId, watermark: number, } | { "type": "ping", nonce: number, } | { "type": "pong", nonce: number, } | { "type": "close", reason: string, detail: string, };
+watermark: number, session_count: number, } | { "type": "snapshot_session", incarnation: IncarnationId, snapshot: SessionSnapshot, } | { "type": "snapshot_end", incarnation: IncarnationId, watermark: number, 
+/**
+ * The coordinator binding projection at the watermark (ADR-006
+ * §6.1, needs `coordinator.v1`). `None`: an ordinary summary
+ * snapshot, which never opens the coordinator lifecycle fence.
+ */
+coordinator?: Array<CoordinatorBindingState>, } | { "type": "ping", nonce: number, } | { "type": "pong", nonce: number, } | { "type": "close", reason: string, detail: string, };

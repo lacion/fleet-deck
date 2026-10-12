@@ -311,3 +311,172 @@ async fn renewal_needs_an_idle_expired_binding_and_the_matching_station_acknowle
         .unwrap();
     assert_eq!(w.s.renew_grant(g.grant_id.clone()).await.unwrap(), None);
 }
+
+fn projected(
+    grant_id: &str,
+    generation: u32,
+    state: fleetdeck_proto::CoordinatorBindingPhase,
+) -> fleetdeck_proto::CoordinatorBindingState {
+    fleetdeck_proto::CoordinatorBindingState {
+        binding_id: "b-1".to_owned(),
+        grant_id: grant_id.to_owned(),
+        session_id: "coord-1".into(),
+        generation,
+        provider_instance: "claude".to_owned(),
+        native_id: Some("native-1".to_owned()),
+        state,
+    }
+}
+
+/// ADR-006 §8.3 25e (deck side): a forced snapshot skips the lifecycle
+/// events; the binding projection commits with the summaries and the
+/// cursor before coordinator traffic resumes.
+#[tokio::test]
+async fn a_snapshot_recovery_with_an_unapplied_lifecycle_event_commits_the_grant_transition_before_any_coordinator_traffic_resumes()
+ {
+    use fleetdeck_proto::CoordinatorBindingPhase as Phase;
+    let w = world().await;
+    let inc: fleetdeck_proto::IncarnationId = "inc".to_owned().into();
+    let sessions = || {
+        vec![
+            summary("coord-1", "/w/coord"),
+            summary("worker-1", "/w/app"),
+        ]
+    };
+    let mut new = NewGrant::new(w.alpha.clone(), "coord-1".into());
+    new.classes = BTreeSet::from([GrantClass::Mail]);
+    let g = w.s.create_grant(new).await.unwrap();
+    let gen1 = CoordinatorBinding {
+        binding_id: "b-1".to_owned(),
+        grant_id: g.grant_id.clone(),
+        generation: 1,
+        provider_instance: "claude".into(),
+        native_id: "native-1".to_owned(),
+    };
+    let op = || mail(target(&w.alpha, "worker-1"), "hi");
+
+    // The initial `coordinator.bound` (generation 1) is skipped. An
+    // ordinary summary snapshot does not open the fence: the call stays
+    // `binding_stale` and nothing is stored.
+    w.s.apply_snapshot(w.alpha.clone(), inc.clone(), 5, sessions())
+        .await
+        .unwrap();
+    assert!(
+        w.s.grant(g.grant_id.clone())
+            .await
+            .unwrap()
+            .unwrap()
+            .binding
+            .is_none()
+    );
+    let r = decide(&w, env(&w, &gen1, "k1", op())).await;
+    assert_eq!(code(&r), Some(RejectCode::BindingStale));
+
+    // A coordinator-capable snapshot carries the projection: the binding
+    // fields and the cursor commit together, then the call is accepted.
+    w.s.apply_snapshot_with(
+        w.alpha.clone(),
+        inc.clone(),
+        6,
+        sessions(),
+        Some(vec![projected(&g.grant_id, 1, Phase::Active)]),
+    )
+    .await
+    .unwrap();
+    let got = w.s.grant(g.grant_id.clone()).await.unwrap().unwrap();
+    assert_eq!(got.binding.as_ref().unwrap(), &gen1);
+    assert_eq!(got.state, GrantState::Active);
+    assert_eq!(
+        w.s.station(w.alpha.clone()).await.unwrap().unwrap().cursor,
+        6
+    );
+    let r = decide(&w, env(&w, &gen1, "k2", op())).await;
+    assert_eq!(r.state, ReceiptState::Accepted);
+
+    // An unsolicited renewal generation in a projection is refused.
+    w.s.apply_snapshot_with(
+        w.alpha.clone(),
+        inc.clone(),
+        7,
+        sessions(),
+        Some(vec![projected(&g.grant_id, 2, Phase::Active)]),
+    )
+    .await
+    .unwrap();
+    let got = w.s.grant(g.grant_id.clone()).await.unwrap().unwrap();
+    assert_eq!(got.binding.unwrap().generation, 1);
+
+    // The idle expiry and the bound event of an acknowledged renewal are
+    // skipped: the projections commit the expiry, then the recorded
+    // renewal generation with its binding fields.
+    w.s.apply_snapshot_with(
+        w.alpha.clone(),
+        inc.clone(),
+        8,
+        sessions(),
+        Some(vec![projected(&g.grant_id, 1, Phase::Expired)]),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        w.s.grant(g.grant_id.clone()).await.unwrap().unwrap().state,
+        GrantState::Expired
+    );
+    assert_eq!(w.s.renew_grant(g.grant_id.clone()).await.unwrap(), Some(2));
+    w.s.apply_snapshot_with(
+        w.alpha.clone(),
+        inc.clone(),
+        9,
+        sessions(),
+        Some(vec![projected(&g.grant_id, 2, Phase::Active)]),
+    )
+    .await
+    .unwrap();
+    let got = w.s.grant(g.grant_id.clone()).await.unwrap().unwrap();
+    assert_eq!(got.state, GrantState::Active);
+    assert_eq!(got.binding.as_ref().unwrap().generation, 2);
+    let mut gen2 = gen1.clone();
+    gen2.generation = 2;
+    let r = decide(&w, env(&w, &gen2, "k3", op())).await;
+    assert_eq!(r.state, ReceiptState::Accepted);
+
+    // A projection of a revoked grant with a higher generation does not
+    // revive it.
+    w.s.revoke_grant(g.grant_id.clone(), "owner".to_owned())
+        .await
+        .unwrap();
+    w.s.apply_snapshot_with(
+        w.alpha.clone(),
+        inc.clone(),
+        10,
+        sessions(),
+        Some(vec![projected(&g.grant_id, 3, Phase::Active)]),
+    )
+    .await
+    .unwrap();
+    let got = w.s.grant(g.grant_id.clone()).await.unwrap().unwrap();
+    assert_eq!(got.state, GrantState::Revoked);
+    assert_eq!(got.binding.unwrap().generation, 2);
+
+    // A station-revoked binding of a grant that never bound revokes the
+    // grant (fail closed); a pending one changes nothing.
+    let mut new = NewGrant::new(w.alpha.clone(), "coord-1".into());
+    new.classes = BTreeSet::from([GrantClass::Mail]);
+    let h = w.s.create_grant(new).await.unwrap();
+    let mut pending = projected(&h.grant_id, 0, Phase::Pending);
+    pending.native_id = None;
+    let mut revoked = pending.clone();
+    revoked.state = Phase::Revoked;
+    for (seq, p, want) in [
+        (11, pending, GrantState::Active),
+        (12, revoked, GrantState::Revoked),
+    ] {
+        w.s.apply_snapshot_with(w.alpha.clone(), inc.clone(), seq, sessions(), Some(vec![p]))
+            .await
+            .unwrap();
+        assert_eq!(
+            w.s.grant(h.grant_id.clone()).await.unwrap().unwrap().state,
+            want
+        );
+    }
+}

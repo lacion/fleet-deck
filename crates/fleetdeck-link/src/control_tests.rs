@@ -134,6 +134,7 @@ fn snapshot_end(seq: u64) -> ControlFrame {
     ControlFrame::SnapshotEnd {
         incarnation: inc(),
         watermark: seq,
+        coordinator: None,
     }
 }
 

@@ -182,6 +182,7 @@ async fn a_complete_batch_at_the_announced_count_is_applied() {
     f.send(ControlFrame::SnapshotEnd {
         incarnation: f.inc.clone(),
         watermark: 7,
+        coordinator: None,
     })
     .await;
     let Some(Inbound::Frame(ack)) = tokio::time::timeout(T, async {

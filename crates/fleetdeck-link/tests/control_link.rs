@@ -69,6 +69,7 @@ async fn roles_come_from_the_pairing_not_from_the_dial_direction() {
         let end = ControlFrame::SnapshotEnd {
             incarnation: inc.clone(),
             watermark: 3,
+            coordinator: None,
         };
         at_station.control.send(end.clone()).await.unwrap();
         assert_eq!(

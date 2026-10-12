@@ -157,6 +157,12 @@ impl StationNode {
             bindings,
         });
         this.spawn(tokio::spawn(this.ctx.coordinator.clone().run()));
+        // Probe the providers once at start: the coordinator handoff check
+        // needs their versions (DL-219).
+        let manager = Arc::clone(&this.ctx.manager);
+        this.spawn(tokio::spawn(async move {
+            manager.providers().await;
+        }));
         let mut addrs = listen.to_vec();
         addrs.extend(store.listen_addrs().await?);
         for addr in addrs {
