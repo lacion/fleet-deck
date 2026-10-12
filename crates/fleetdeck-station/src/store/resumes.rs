@@ -46,24 +46,34 @@ impl Decision<'_> {
     /// # Errors
     /// A database error.
     pub fn unended_execution(&self, session: &SessionId) -> Result<Option<String>> {
-        Ok(self
-            .connection()
-            .query_row(
-                "SELECT shim_id, state, COALESCE(reason, '') FROM shims
+        unended_execution(self.connection(), session)
+    }
+}
+
+/// See [`Decision::unended_execution`].
+///
+/// # Errors
+/// A database error.
+pub(super) fn unended_execution(
+    conn: &rusqlite::Connection,
+    session: &SessionId,
+) -> Result<Option<String>> {
+    Ok(conn
+        .query_row(
+            "SELECT shim_id, state, COALESCE(reason, '') FROM shims
                  WHERE session_id = ?1
                    AND NOT (state = 'never_started'
                             OR (state = 'exited' AND reason = ?2))
                  ORDER BY created_at, shim_id LIMIT 1",
-                rusqlite::params![session.as_str(), PROVEN_EXIT],
-                |r| {
-                    Ok(format!(
-                        "shim {} is {} ({})",
-                        r.get::<_, String>(0)?,
-                        r.get::<_, String>(1)?,
-                        r.get::<_, String>(2)?
-                    ))
-                },
-            )
-            .optional()?)
-    }
+            rusqlite::params![session.as_str(), PROVEN_EXIT],
+            |r| {
+                Ok(format!(
+                    "shim {} is {} ({})",
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?
+                ))
+            },
+        )
+        .optional()?)
 }

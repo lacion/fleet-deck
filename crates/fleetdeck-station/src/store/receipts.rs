@@ -42,6 +42,12 @@ pub struct Caller {
 }
 
 impl Caller {
+    /// True for a paired deck peer, false for the station-local CLI.
+    #[must_use]
+    pub fn is_peer(&self) -> bool {
+        self.grant.is_some()
+    }
+
     /// The station-local CLI (owner on the station machine).
     #[must_use]
     pub fn local() -> Self {

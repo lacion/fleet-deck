@@ -4,4 +4,4 @@
  * Where a run came from. `local` is the station-local CLI; `provider` is a
  * turn that the provider started without host input (background work, L7).
  */
-export type RunOrigin = "board" | "mail" | "coordinator" | "resume" | "local" | "provider";
+export type RunOrigin = "board" | "mail" | "coordinator" | "resume" | "local" | "provider" | "continuation";

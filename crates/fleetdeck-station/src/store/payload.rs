@@ -29,6 +29,14 @@ pub enum EffectPayload {
     Resume {
         native_session_id: String,
         spec: SessionSpec,
+        /// The first input of the resumed process: the fixed continuation
+        /// of an auto-continue (ADR-007 §2.3); absent for an owner resume.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        prompt: Option<InputRecord>,
+        /// Unix ms after which an auto-continue is not dispatched: the
+        /// window of ADR-007 §2.2 rule 9, rechecked at dispatch (§2.4).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        continue_by: Option<i64>,
     },
     Prompt {
         input: InputRecord,

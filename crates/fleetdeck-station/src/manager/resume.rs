@@ -28,7 +28,7 @@ use fleetdeck_proto::{Event, Operation, Reject, RejectCode, SessionId};
 
 use super::decide::{reject, result};
 use super::policy::{Policy, WorkspaceError};
-use crate::store::{DecideError, Decision, EffectPayload};
+use crate::store::{DecideError, Decision, EffectPayload, InputRecord};
 
 /// Decides `session.resume` for `session_id` (see the module documentation).
 ///
@@ -38,6 +38,21 @@ pub fn decide_resume(
     d: &mut Decision<'_>,
     policy: &Policy,
     session_id: &SessionId,
+) -> Result<CommandResult, DecideError> {
+    admit_resume(d, policy, session_id, None, None)
+}
+
+/// [`decide_resume`] with the first input of the new process and its
+/// dispatch deadline: an auto-continue intent (ADR-007 §2.3, DL-127).
+///
+/// # Errors
+/// A stored rejection, or a database error.
+pub fn admit_resume(
+    d: &mut Decision<'_>,
+    policy: &Policy,
+    session_id: &SessionId,
+    prompt: Option<InputRecord>,
+    continue_by: Option<i64>,
 ) -> Result<CommandResult, DecideError> {
     let s = d
         .summary(session_id)?
@@ -121,11 +136,14 @@ pub fn decide_resume(
         model: s.model.clone(),
         title: s.title.clone(),
     };
+    let input_id = prompt.as_ref().map(|p| p.input_id.clone());
     d.enqueue(
         session_id,
         EffectPayload::Resume {
             native_session_id: native,
             spec,
+            prompt,
+            continue_by,
         },
     )?;
     // The session is starting again from this commit: it counts against
@@ -140,5 +158,5 @@ pub fn decide_resume(
         }
         .into(),
     )?;
-    Ok(result(session_id, None))
+    Ok(result(session_id, input_id))
 }

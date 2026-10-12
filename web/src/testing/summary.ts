@@ -30,6 +30,7 @@ export function summary(
     usage: { input_tokens: null, output_tokens: null, cost_usd: null },
     last_error: null,
     revert: null,
+    auto_continue: false,
     session_seq: 0,
     updated_at: updatedAt,
     ...extra,

@@ -9,6 +9,7 @@
 //! 3. The pump of each session appends the adapter's events; provider
 //!    evidence in those events confirms the effects.
 
+pub mod auto_continue;
 pub mod decide;
 pub mod durable;
 pub mod files;
@@ -197,6 +198,13 @@ impl SessionManager {
         if recovered > 0 {
             tracing::info!(recovered, "recovered interrupted reverts");
         }
+        // Auto-continue intents of the sessions that this start lost, before
+        // any command is admitted (ADR-007 §2.2, DL-127).
+        let continued =
+            auto_continue::evaluate(&store, &policy, restore_from, shims.is_some()).await?;
+        if continued > 0 {
+            tracing::info!(continued, "stored auto-continue intents");
+        }
         let mut target = SessionTarget::new(store.clone(), adapters, Arc::clone(&ids));
         if let Some(settings) = shims {
             target = target.with_shims(settings);
@@ -297,8 +305,10 @@ impl SessionManager {
         let policy = Arc::clone(&self.policy);
         let origin = envelope.origin;
         let command = envelope.command.clone();
+        let guard = auto_continue::guard(&command, &caller);
         self.store
             .decide(envelope, caller, move |d| {
+                guard?;
                 decide::decide(d, &policy, origin, command)
             })
             .await
@@ -396,3 +406,7 @@ mod fault_tests;
 #[cfg(test)]
 #[path = "first_input_tests.rs"]
 mod first_input_tests;
+
+#[cfg(test)]
+#[path = "auto_continue_tests.rs"]
+mod auto_continue_tests;

@@ -173,6 +173,8 @@ impl SessionSummary {
                 });
             }
             Event::SessionRenamed { title } => self.title.clone_from(title),
+            Event::AutoContinueChanged { enabled } => self.auto_continue = *enabled,
+            Event::AutoContinueSkipped { .. } => {}
             Event::SessionEnded { .. } => {
                 if !matches!(self.state, SessionState::Lost) {
                     self.state = SessionState::Exited;

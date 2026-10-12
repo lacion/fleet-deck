@@ -285,7 +285,10 @@ async fn a_line_of_the_buffer_size_without_a_newline_fails_the_session_with_an_e
 }
 
 #[tokio::test]
-async fn an_unterminated_last_line_at_the_exit_is_an_explicit_gap_with_the_final_cursor() {
+async fn an_unterminated_last_line_at_eof_is_committed_as_malformed_before_the_exit_is_acknowledged()
+ {
+    // ADR-005 test 39 (formerly
+    // `an_unterminated_last_line_at_the_exit_is_an_explicit_gap_with_the_final_cursor`).
     let rig = Rig::new().await;
     let (_driver, shim_id, _pid) = rig.drive("echo first; printf partial").await;
     let events = rig.wait_ended().await;
@@ -295,7 +298,37 @@ async fn an_unterminated_last_line_at_the_exit_is_an_explicit_gap_with_the_final
         vec![(6, 13, OutputGapReason::UnterminatedLine)],
         "{events:?}"
     );
+    // The malformed tail is committed before the exit events.
+    let gap_at = events
+        .iter()
+        .position(|e| matches!(e, Event::OutputGap { .. }))
+        .unwrap();
+    let ended_at = events
+        .iter()
+        .position(|e| matches!(e, Event::SessionEnded { .. }))
+        .unwrap();
+    assert!(gap_at < ended_at, "{events:?}");
     assert_eq!(rig.cursor(&shim_id).await, 13);
+}
+
+// ADR-005 test 4: the bytes after the last newline of a running provider
+// are never committed and never acknowledged.
+#[tokio::test]
+async fn a_partial_line_is_never_acknowledged() {
+    let rig = Rig::new().await;
+    let (driver, shim_id, pid) = rig.drive("echo one; printf part; sleep 30").await;
+    let deadline = Instant::now() + WAIT;
+    while lines(&rig.events().await).is_empty() {
+        assert!(Instant::now() < deadline, "no line committed");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    // Give the pump time to read `part`.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(alive(pid));
+    assert_eq!(lines(&rig.events().await), vec!["one".to_owned()]);
+    assert!(gaps(&rig.events().await).is_empty());
+    assert_eq!(rig.cursor(&shim_id).await, 4, "only `one\\n` is committed");
+    assert_eq!(driver.process().acked(), 4, "only `one\\n` is acknowledged");
 }
 
 #[tokio::test]

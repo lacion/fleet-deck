@@ -22,6 +22,7 @@
 //!   gets [`ReadResult::SnapshotRequired`]. Receipts stay for
 //!   [`RECEIPT_RETENTION_MS`].
 
+pub mod auto_continue;
 pub mod effects;
 mod log;
 mod outbox;

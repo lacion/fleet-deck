@@ -190,6 +190,10 @@ fn samples() -> Vec<Event> {
             to: 65_546,
             reason: crate::event::OutputGapReason::OutputFrameTooLarge,
         },
+        Event::AutoContinueChanged { enabled: true },
+        Event::AutoContinueSkipped {
+            reason: "newer_owner_work".into(),
+        },
     ]
 }
 

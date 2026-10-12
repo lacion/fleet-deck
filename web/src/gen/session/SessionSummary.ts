@@ -54,6 +54,11 @@ last_error: SessionError | null,
  */
 revert: SessionRevert | null, 
 /**
+ * Auto-continue after a station restart (L19, ADR-007 §2.1). Off by
+ * default, also for a summary stored before it existed.
+ */
+auto_continue: boolean, 
+/**
  * The highest `session_seq` folded into this summary.
  */
 session_seq: number, 
