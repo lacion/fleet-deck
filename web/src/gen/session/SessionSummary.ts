@@ -10,6 +10,7 @@ import type { SessionId } from "../ids/SessionId";
 import type { TurnId } from "../ids/TurnId";
 import type { Activity } from "./Activity";
 import type { OpenRequest } from "./OpenRequest";
+import type { RepoInfo } from "./RepoInfo";
 import type { RunningTool } from "./RunningTool";
 import type { SessionError } from "./SessionError";
 import type { SessionRevert } from "./SessionRevert";
@@ -23,7 +24,11 @@ export type SessionSummary = { session_id: SessionId, provider: ProviderKind | n
  * `None` outside a repository or with a detached HEAD. Absent in a
  * summary stored before P4-2.
  */
-branch: string | null, title: string | null, state: SessionState, activity: Activity, mode: string | null, model: string | null, capabilities: Capabilities | null, current_run: RunId | null, current_turn: TurnId | null, open_requests: Array<OpenRequest>, 
+branch: string | null, 
+/**
+ * The repository of `cwd` (M3 6-7, DL-306). Absent before M3.
+ */
+repo: RepoInfo | null, title: string | null, state: SessionState, activity: Activity, mode: string | null, model: string | null, capabilities: Capabilities | null, current_run: RunId | null, current_turn: TurnId | null, open_requests: Array<OpenRequest>, 
 /**
  * Ids of running background tasks (L7).
  */

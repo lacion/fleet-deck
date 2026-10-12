@@ -323,3 +323,42 @@ async fn a_rename_reaches_the_station_needs_drive_and_is_audited() {
     assert_eq!((r.status, r.code()), (403, "forbidden"));
     no_request(&mut station, Duration::from_millis(300)).await;
 }
+
+fn prompt_body(id: &str, media_type: &str) -> Value {
+    json!({
+        "station": "fake",
+        "command_id": id,
+        "command": { "op": "prompt", "session_id": "s1", "input": {
+            "text": "what is this?",
+            "images": [{ "media_type": media_type, "data": "iVBORw0KGgo=" }],
+        } },
+    })
+}
+
+#[tokio::test]
+async fn a_prompt_with_a_pasted_image_reaches_the_station_and_a_bad_image_is_refused() {
+    let mut f = fixture().await;
+    let mut station = f.connect().await;
+    let c = board(std::sync::Arc::clone(&f.ctx)).await;
+    let h = owner(&c).await;
+
+    let call = post(&c, &h, "session.prompt", prompt_body("i1", "image/png"));
+    let (r, req) = tokio::join!(call, Fixture::answer(&mut station, accepted));
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert_eq!(req.method, "session.prompt");
+    let sent = req.params.to_string();
+    assert!(
+        sent.contains("iVBORw0KGgo=") && sent.contains("image/png"),
+        "{sent}"
+    );
+
+    let bad = post(&c, &h, "session.prompt", prompt_body("i2", "image/svg+xml")).await;
+    assert_eq!(
+        (bad.status, bad.code()),
+        (400, "invalid_input"),
+        "{}",
+        bad.body
+    );
+    no_request(&mut station, Duration::from_millis(300)).await;
+    assert_eq!(f.store.commands().await.unwrap().len(), 1);
+}

@@ -261,9 +261,7 @@ fn prompt(id: &str, text: &str) -> EffectPayload {
         input: InputRecord {
             input_id: InputId::from(id),
             origin: RunOrigin::Board,
-            input: UserInput {
-                text: text.to_owned(),
-            },
+            input: UserInput::new(text.to_owned()),
         },
     }
 }

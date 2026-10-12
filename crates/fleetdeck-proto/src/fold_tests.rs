@@ -52,6 +52,7 @@ fn started() -> Event {
         provider_refs: ProviderRefs::new(),
         title: None,
         branch: None,
+        repo: None,
     }
 }
 

@@ -1,6 +1,7 @@
 import { useMemo, useState, useSyncExternalStore } from 'react';
 import { App } from '../App';
 import { stationActions } from '../board/pairing';
+import { conflictLoader } from '../board/conflicts';
 import { planActions } from '../board/plans';
 import type { SessionKey } from '../gen';
 import { sessionActions } from '../session/commands';
@@ -52,6 +53,7 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
       ),
     [connection, scopeText],
   );
+  const conflicts = useMemo(() => conflictLoader((path) => connection.get(path)), [connection]);
   const watch = useMemo(() => (key: SessionKey) => connection.watch(key), [connection]);
   if (state.login === null) {
     return (
@@ -133,6 +135,7 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
         spawn={spawn}
         feed={state.feed}
         plans={plans}
+        conflicts={conflicts}
       />
     </>
   );

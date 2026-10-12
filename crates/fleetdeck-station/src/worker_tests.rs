@@ -90,9 +90,7 @@ async fn queue(s: &Store, det: &Det, id: &str) -> Effect {
         origin: CommandOrigin::Board,
         command: SessionCommand::Prompt {
             session_id: "s1".into(),
-            input: UserInput {
-                text: id.to_owned(),
-            },
+            input: UserInput::new(id.to_owned()),
         },
     };
     let input = id.to_owned();
@@ -104,9 +102,7 @@ async fn queue(s: &Store, det: &Det, id: &str) -> Effect {
                     input: InputRecord {
                         input_id: input.into(),
                         origin: RunOrigin::Board,
-                        input: UserInput {
-                            text: "hi".to_owned(),
-                        },
+                        input: UserInput::new("hi".to_owned()),
                     },
                 },
             )?;

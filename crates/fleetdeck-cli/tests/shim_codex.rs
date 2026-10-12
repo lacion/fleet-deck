@@ -267,9 +267,7 @@ fn input(id: &str, text: &str) -> InputRecord {
     InputRecord {
         input_id: InputId::from(id),
         origin: RunOrigin::Board,
-        input: UserInput {
-            text: text.to_owned(),
-        },
+        input: UserInput::new(text.to_owned()),
     }
 }
 

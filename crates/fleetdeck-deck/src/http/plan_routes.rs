@@ -9,6 +9,7 @@ use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Extension, Query, State};
 use axum::http::StatusCode;
+use fleetdeck_proto::conflicts::FileConflict;
 use fleetdeck_proto::plans::{DeckPlan, PlanMarkRequest};
 use serde::Deserialize;
 
@@ -34,6 +35,16 @@ pub async fn list(
             .plans(q.archived)
             .await
             .map_err(ApiError::internal)?,
+    ))
+}
+
+/// `GET /api/conflicts`: the conflict radar across stations (M3 6-7,
+/// DL-306).
+pub async fn conflicts(
+    State(board): State<Arc<Board>>,
+) -> Result<Json<Vec<FileConflict>>, ApiError> {
+    Ok(Json(
+        board.store.conflicts().await.map_err(ApiError::internal)?,
     ))
 }
 

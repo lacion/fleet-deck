@@ -282,7 +282,7 @@ impl Rig {
 }
 
 fn text(t: &str) -> UserInput {
-    UserInput { text: t.to_owned() }
+    UserInput::new(t.to_owned())
 }
 
 fn prompt(session: &SessionId, t: &str) -> SessionCommand {

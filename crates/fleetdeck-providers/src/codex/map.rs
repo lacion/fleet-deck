@@ -266,6 +266,7 @@ impl CodexCore {
             provider_refs: refs(&[("thread_id", self.thread_id.as_deref())]),
             title: None,
             branch: None,
+            repo: None,
         })]
     }
 

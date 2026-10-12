@@ -60,6 +60,9 @@ pub struct SessionSummary {
     /// summary stored before P4-2.
     #[serde(default)]
     pub branch: Option<String>,
+    /// The repository of `cwd` (M3 6-7, DL-306). Absent before M3.
+    #[serde(default)]
+    pub repo: Option<RepoInfo>,
     pub title: Option<String>,
     pub state: SessionState,
     pub activity: Activity,
@@ -112,6 +115,7 @@ impl SessionSummary {
             provider_version: None,
             cwd: None,
             branch: None,
+            repo: None,
             title: None,
             state: SessionState::Starting,
             activity: Activity::Idle,
@@ -136,6 +140,18 @@ impl SessionSummary {
 
 /// The most running tools that a summary keeps; the oldest goes first.
 pub const MAX_RUNNING_TOOLS: usize = 32;
+
+/// The repository that holds a session's `cwd` on its station (M3 6-7,
+/// DL-306).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "session/")]
+pub struct RepoInfo {
+    /// The absolute work tree root on the station.
+    pub root: String,
+    /// The normalized origin (`host/path`) when the repository has exactly
+    /// one remote. A heuristic, not an identity (PLAN §6.6).
+    pub origin: Option<String>,
+}
 
 /// Background task kinds that are subagents (D15): Claude reports a
 /// backgrounded `Agent`/`Task` call as `local_agent`.

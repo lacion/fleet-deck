@@ -29,6 +29,7 @@ export function summary(
     running_tools: [],
     usage: { input_tokens: null, output_tokens: null, cost_usd: null },
     rate_limits: [],
+    repo: null,
     last_error: null,
     revert: null,
     session_seq: 0,

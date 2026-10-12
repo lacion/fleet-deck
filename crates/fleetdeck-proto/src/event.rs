@@ -17,6 +17,7 @@ use crate::capability::Capabilities;
 use crate::ids::{
     InputId, NodeId, PlanId, ProviderInstanceId, RequestId, RunId, SessionId, TurnId,
 };
+use crate::session::RepoInfo;
 
 /// Native ids of a provider, scoped by provider + session (L6). Never a global key.
 pub type ProviderRefs = serde_json::Map<String, Value>;
@@ -314,6 +315,12 @@ pub enum Event {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         branch: Option<String>,
+        /// The repository of `cwd` that the station recorded (M3 6-7,
+        /// DL-306); the conflict radar groups file touches by it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        /// Boxed to keep the event small (clippy `large_enum_variant`).
+        repo: Option<Box<RepoInfo>>,
     },
     #[serde(rename = "session.state")]
     SessionStateChanged {

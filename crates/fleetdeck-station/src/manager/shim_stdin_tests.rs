@@ -72,9 +72,7 @@ async fn send(det: &Det, s: &Store, policy: &Policy, id: &str, command: SessionC
 fn prompt(text: &str) -> SessionCommand {
     SessionCommand::Prompt {
         session_id: "s1".into(),
-        input: UserInput {
-            text: text.to_owned(),
-        },
+        input: UserInput::new(text.to_owned()),
     }
 }
 

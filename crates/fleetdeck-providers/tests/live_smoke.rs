@@ -68,9 +68,7 @@ fn input(text: &str) -> HostInput {
         // from it).
         id: InputId::new("01K70000000000000000000001"),
         origin: RunOrigin::Board,
-        input: UserInput {
-            text: text.to_owned(),
-        },
+        input: UserInput::new(text.to_owned()),
     }
 }
 

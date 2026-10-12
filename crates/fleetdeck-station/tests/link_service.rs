@@ -163,9 +163,7 @@ impl Fixture {
             origin: CommandOrigin::Board,
             command: SessionCommand::Prompt {
                 session_id: "nope".into(),
-                input: UserInput {
-                    text: "hi".to_owned(),
-                },
+                input: UserInput::new("hi".to_owned()),
             },
         }
     }

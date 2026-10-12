@@ -52,7 +52,7 @@ pub(super) fn input(text: &str, id: &str) -> HostInput {
     HostInput {
         id: InputId::new(id),
         origin: RunOrigin::Board,
-        input: UserInput { text: text.into() },
+        input: UserInput::new(text),
     }
 }
 

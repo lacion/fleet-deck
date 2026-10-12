@@ -13,6 +13,7 @@ use crate::capability::Unsupported;
 use crate::ids::{
     CommandId, IncarnationId, InputId, ProviderInstanceId, RequestId, SessionId, TurnId,
 };
+pub use crate::input::{ImageInput, UserInput};
 
 /// The deck retries a command for at most this long after it accepted it (G3).
 pub const RETRY_WINDOW_MS: i64 = 15 * 60 * 1000;
@@ -32,13 +33,6 @@ pub struct SessionSpec {
     pub mode: Option<String>,
     pub model: Option<String>,
     pub title: Option<String>,
-}
-
-/// User text for a prompt, a steer, or a follow-up.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[ts(export_to = "command/")]
-pub struct UserInput {
-    pub text: String,
 }
 
 /// The answer to a runtime request, with the provider's own option id (L3).

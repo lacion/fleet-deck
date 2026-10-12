@@ -14,7 +14,7 @@ use axum::extract::{Extension, MatchedPath, Path, State};
 use axum::http::StatusCode;
 use fleetdeck_proto::CommandId;
 use fleetdeck_proto::board::{CommandRequest, valid_command_id};
-use fleetdeck_proto::command::CommandOrigin;
+use fleetdeck_proto::command::{CommandOrigin, UserInput};
 
 use super::Board;
 use super::guard::ApiError;
@@ -112,6 +112,9 @@ async fn route(
             "invalid_command_id",
             "a command id has 1 to 64 characters from [0-9A-Za-z_-]".to_owned(),
         ));
+    }
+    if let Some(Err(message)) = req.command.user_input().map(UserInput::check) {
+        return Err(refuse(StatusCode::BAD_REQUEST, "invalid_input", message));
     }
     let found = board
         .store

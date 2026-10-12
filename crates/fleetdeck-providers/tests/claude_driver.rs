@@ -97,9 +97,7 @@ async fn send_recorded_prompt(session: &mut ClaudeSession, path: &std::path::Pat
         .prompt(HostInput {
             id: InputId::new(cmd["cmd"]["input_id"].as_str().unwrap()),
             origin: RunOrigin::Board,
-            input: UserInput {
-                text: cmd["cmd"]["text"].as_str().unwrap().to_owned(),
-            },
+            input: UserInput::new(cmd["cmd"]["text"].as_str().unwrap().to_owned()),
         })
         .await
         .unwrap();

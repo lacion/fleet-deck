@@ -223,9 +223,7 @@ impl Rig {
         let d = self
             .accepted(SessionCommand::Start {
                 spec,
-                prompt: Some(UserInput {
-                    text: "hello".to_owned(),
-                }),
+                prompt: Some(UserInput::new("hello".to_owned())),
             })
             .await;
         let result = d.receipt.result.unwrap();
@@ -277,9 +275,7 @@ impl Rig {
     async fn later_prompt_runs(&mut self, session: &SessionId) {
         self.accepted(SessionCommand::Prompt {
             session_id: session.clone(),
-            input: UserInput {
-                text: "again".to_owned(),
-            },
+            input: UserInput::new("again".to_owned()),
         })
         .await;
         self.wait_for("turn done", |e| {

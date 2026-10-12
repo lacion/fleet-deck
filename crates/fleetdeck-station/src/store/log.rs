@@ -36,6 +36,14 @@ pub(super) fn insert_session(conn: &Connection, s: &NewSession, now: i64) -> Res
     summary.provider_instance = Some(s.provider_instance.clone());
     summary.cwd = Some(s.cwd.clone());
     summary.branch.clone_from(&s.branch);
+    // The repository of the workspace for the conflict radar (M3 6-7, DL-306).
+    summary.repo =
+        fleetdeck_core::git::repo_of(std::path::Path::new(&s.cwd)).map(|(root, origin)| {
+            fleetdeck_proto::session::RepoInfo {
+                root: root.to_string_lossy().into_owned(),
+                origin,
+            }
+        });
     summary.title.clone_from(&s.title);
     summary.mode.clone_from(&s.mode);
     summary.updated_at = now;
@@ -100,9 +108,16 @@ pub(super) fn append_at(
     let mut summary: SessionSummary = serde_json::from_str(&summary)?;
     let mut event = event;
     // The station is the source of the title and the branch (DL-061).
-    if let EventBody::Known(Event::SessionStarted { title, branch, .. }) = &mut event.event {
+    if let EventBody::Known(Event::SessionStarted {
+        title,
+        branch,
+        repo,
+        ..
+    }) = &mut event.event
+    {
         title.clone_from(&summary.title);
         branch.clone_from(&summary.branch);
+        *repo = summary.repo.clone().map(Box::new);
     }
     let station_seq = head(conn)? + 1;
     let session_seq = to_u64(last_session_seq)? + 1;

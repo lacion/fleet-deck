@@ -182,6 +182,23 @@ CREATE TABLE plans (
 CREATE INDEX plans_by_time ON plans (proposed_at DESC);
 ";
 
+/// The conflict radar input (M3 6-7, DL-306; PLAN §10 `file_touches`): the
+/// latest touch of a file by a session, keyed by the repository group.
+const V7: &str = "
+CREATE TABLE file_touches (
+    group_key      TEXT    NOT NULL,
+    file           TEXT    NOT NULL,
+    repo           TEXT,
+    station_id     TEXT    NOT NULL,
+    session_id     TEXT    NOT NULL,
+    session_title  TEXT,
+    path           TEXT    NOT NULL,
+    touched_at     INTEGER NOT NULL,
+    PRIMARY KEY (group_key, file, station_id, session_id)
+) STRICT;
+CREATE INDEX file_touches_by_time ON file_touches (touched_at);
+";
+
 /// The `deck.db` migrations.
 #[must_use]
 pub fn migrations() -> Migrations<'static> {
@@ -192,6 +209,7 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V4),
         M::up(V5),
         M::up(V6),
+        M::up(V7),
     ])
 }
 
