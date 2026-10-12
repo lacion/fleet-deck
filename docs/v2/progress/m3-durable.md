@@ -28,6 +28,15 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 60 (2026-10-12, 16:09–)
+
+- Committed round 59 as b8176c8.
+- Merged `m3/orchestration` ee38ccd (6-5 partial: the owner renewal waits for the station acknowledgment, ADR-006 25b; deck schema and grant routes; board fleet panel) without conflicts. `m3/board`, `m3/ops`: no new commits. No proto change, so no `make ts-types`.
+- Merge validation: `cargo nextest run -p fleetdeck-deck -E 'test(/coordinator/) | test(/grant/) | test(/schema/) | test(/migration/) | binary(board_fleet)'` → 31 passed.
+- 7-6 docs: the internals coordinator row names `web/src/fleet/FleetPanel.tsx` (grant renewal).
+- Lanes: `m3-orchestration.md` still has no LANE COMPLETE (6-5 open); 6-13, 7-7 and 7-8 still wait.
+- Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean; `bun run --cwd web lint` → clean (94 files).
+
 ## Round 59 (2026-10-12, 16:07–)
 
 - Committed round 58 as 48518f8.
