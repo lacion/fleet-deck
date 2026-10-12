@@ -3,6 +3,7 @@ import type { SessionKey, StationView, WorkspaceListing } from '../gen';
 import type { Freshness } from '../runtime/state';
 import {
   batchPrompts,
+  importIdProblem,
   providerLabel,
   type SpawnActions,
   type SpawnOutcome,
@@ -48,6 +49,7 @@ export function SpawnForm({
   const [cloneUrl, setCloneUrl] = useState('');
   const [cloneName, setCloneName] = useState('');
   const [batch, setBatch] = useState(false);
+  const [importId, setImportId] = useState('');
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<SpawnOutcome | null>(null);
 
@@ -71,6 +73,7 @@ export function SpawnForm({
   };
   const modes = spawnModes(provider);
   const cloneReady = place !== 'clone' || (cloneUrl.trim() !== '' && cloneName.trim() !== '');
+  const importProblem = importId.trim() === '' ? null : importIdProblem(importId.trim());
   const ready =
     live &&
     canDrive &&
@@ -98,7 +101,8 @@ export function SpawnForm({
               actions === undefined ||
               station === undefined ||
               provider === undefined ||
-              cwd === null
+              cwd === null ||
+              importProblem !== null
             ) {
               return;
             }
@@ -112,21 +116,25 @@ export function SpawnForm({
               model: model.trim() === '' ? null : model.trim(),
               title: title.trim() === '' ? null : title.trim(),
             };
-            // A batch forces a worktree per session (v0); a clone is one
-            // session.
+            const native = importId.trim();
+            // A batch forces a worktree per session (v0); a clone and an
+            // import are one session.
             const workspace =
-              place === 'clone'
-                ? { kind: 'clone' as const, url: cloneUrl.trim() }
-                : place === 'worktree' || batch
-                  ? { kind: 'worktree' as const }
-                  : null;
-            const prompts = batch && place !== 'clone' ? batchPrompts(prompt) : [prompt];
+              native !== ''
+                ? null
+                : place === 'clone'
+                  ? { kind: 'clone' as const, url: cloneUrl.trim() }
+                  : place === 'worktree' || batch
+                    ? { kind: 'worktree' as const }
+                    : null;
+            const prompts =
+              batch && place !== 'clone' && native === '' ? batchPrompts(prompt) : [prompt];
             const id = station.station_id;
             void (async () => {
               let last: SpawnOutcome | null = null;
               let started = 0;
               for (const p of prompts) {
-                last = await actions.start(id, spec, p, workspace);
+                last = await actions.start(id, spec, p, workspace, native);
                 if (!last.ok) break;
                 started += 1;
               }
@@ -137,7 +145,10 @@ export function SpawnForm({
                 };
               }
               setOutcome(last);
-              if (last?.ok === true) setPrompt('');
+              if (last?.ok === true) {
+                setPrompt('');
+                setImportId('');
+              }
             })().finally(() => setBusy(false));
           }}
         >
@@ -274,8 +285,21 @@ export function SpawnForm({
             First prompt (optional)
             <textarea rows={4} value={prompt} onChange={(event) => setPrompt(event.target.value)} />
           </label>
-          <button type="submit" disabled={!ready}>
-            {busy ? 'Starting…' : 'Start session'}
+          <label>
+            Import CLI session id (optional)
+            <input
+              value={importId}
+              spellCheck={false}
+              autoCapitalize="off"
+              onChange={(event) => setImportId(event.target.value)}
+            />
+          </label>
+          <p className="fd-note">
+            Continue a Claude or Codex session that you started in a terminal. Close it there first.
+          </p>
+          {importProblem === null ? null : <p role="alert">{importProblem}</p>}
+          <button type="submit" disabled={!ready || importProblem !== null}>
+            {busy ? 'Starting…' : importId.trim() === '' ? 'Start session' : 'Import session'}
           </button>
         </form>
       )}

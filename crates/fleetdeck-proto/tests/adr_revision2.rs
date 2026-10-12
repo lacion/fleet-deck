@@ -113,6 +113,7 @@ fn commands() -> Vec<SessionCommand> {
         match c {
             SessionCommand::Start { .. }
             | SessionCommand::Resume { .. }
+            | SessionCommand::Import { .. }
             | SessionCommand::Prompt { .. }
             | SessionCommand::Steer { .. }
             | SessionCommand::FollowUp { .. }

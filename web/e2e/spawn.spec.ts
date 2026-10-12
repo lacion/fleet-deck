@@ -284,3 +284,44 @@ test('a clone start sends the URL and the new directory (M3 6-1)', async ({ page
     },
   });
 });
+
+test('a terminal CLI session is imported by its id as a driven session (6-12)', async ({
+  page,
+}) => {
+  const deck = new FakeDeck();
+  deck.stations = [alpha];
+  picker(deck);
+  deck.on('/api/commands/session.import', () => ({
+    status: 200,
+    body: {
+      state: 'done',
+      receipt: { state: 'accepted', result: { session_id: 's-imp', input_id: null }, reject: null },
+    },
+  }));
+  await deck.install(page);
+  await logIn(page);
+  await chooseApp(page);
+  const form = page.getByRole('region', { name: 'New session' });
+  const id = form.getByLabel('Import CLI session id (optional)');
+  await id.fill('--resume');
+  await expect(form.getByRole('alert')).toContainText('starts with a letter or a digit');
+  await expect(form.getByRole('button', { name: 'Import session' })).toBeDisabled();
+  await id.fill('0b6c1d2e-aaaa-4bbb-8ccc-123456789abc');
+  await form.getByLabel('First prompt (optional)').fill('Go on');
+  expect(await fitsWidth(page)).toBe(true);
+  await form.getByRole('button', { name: 'Import session' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Done.' })).toBeVisible();
+  const imports = deck.calls.filter((c) => c.path === '/api/commands/session.import');
+  expect(imports).toHaveLength(1);
+  expect(imports[0]?.csrf).toBe(CSRF);
+  expect(imports[0]?.body).toMatchObject({
+    station: 'st-alpha',
+    command: {
+      op: 'import',
+      spec: { provider_instance: 'personal', cwd: `${ROOT}/app` },
+      native_session_id: '0b6c1d2e-aaaa-4bbb-8ccc-123456789abc',
+      prompt: { text: 'Go on' },
+    },
+  });
+  expect(deck.calls.filter((c) => c.path === '/api/commands/session.start')).toHaveLength(0);
+});

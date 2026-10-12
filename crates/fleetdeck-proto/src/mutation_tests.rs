@@ -52,6 +52,9 @@ pub(crate) fn sample(method: &str) -> Value {
             let command = match op {
                 "start" => json!({"op": "start", "spec": {"provider_instance": "claude",
                     "cwd": "/w", "mode": null, "model": null, "title": null}, "prompt": null}),
+                "import" => json!({"op": "import", "spec": {"provider_instance": "claude",
+                    "cwd": "/w", "mode": null, "model": null, "title": null},
+                    "native_session_id": "cli-1", "prompt": null}),
                 "prompt" | "steer" | "follow_up" => {
                     json!({"op": op, "session_id": s, "input": {"text": "hi"}})
                 }
@@ -97,7 +100,7 @@ fn every_mutating_method_parses_its_envelope_and_names_its_method() {
             count += 1;
         }
     }
-    assert_eq!(count, 21);
+    assert_eq!(count, 22);
 }
 
 #[test]

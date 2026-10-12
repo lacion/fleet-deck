@@ -672,3 +672,5 @@ mod resume;
 
 #[path = "drain_tests.rs"]
 mod drain;
+#[path = "import_tests.rs"]
+mod import_tests;

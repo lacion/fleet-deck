@@ -1,3 +1,5 @@
+LANE COMPLETE (2026-10-12, round 3): every lane C item (6-6, 6-9, 6-10, 6-7, 6-8, 6-12) is checked in `docs/v2/PROGRESS.md` with file and test evidence. The full `make check`, the cutover and the final checks belong to lane A.
+
 # Lane C (board), M3: round log
 
 Lane C works in `fleet-deck-worktrees/m3-board` on branch `m3/board`. Items, in this order: 6-6 Plans, 6-9 Usage meters, 6-10 Images and notifications, 6-7 Conflict radar, the rest of 6-8 Files and checkpoints, 6-12 Import. Decisions: `docs/v2/decisions/m3-board.md` (DL-300 to DL-399).
@@ -60,3 +62,29 @@ Lane C works in `fleet-deck-worktrees/m3-board` on branch `m3/board`. Items, in 
 | 6-10 | No Web Push or service worker: a closed board gets no notification; failed or finished turns make no notification. | `web/src/board/notify.ts` |
 | 6-7 | No owner setting to group repositories without one origin across stations (PLAN §6.6 "explicit owner choice"). | `crates/fleetdeck-proto/src/conflicts.rs` |
 | 6-7 | No warning to the two sessions (v0 mail and in-context whisper); ended sessions count inside the window. | `crates/fleetdeck-deck/src/store/conflicts.rs` |
+| 6-10 | Review round 2: notifications stop when the owner leaves the fleet screen (the hook lives in the needs-you rail of that screen). | `web/src/board/NeedsYouRail.tsx` |
+| 6-7 | Review round 2: the radar reloads on `max(updated_at)` of the fleet, so a touch without a newer summary time can be missed. | `web/src/App.tsx` |
+| 6-7 | Review round 2: conflict paths are not canonical (`a/../b`, `./b`, symlinked roots), so one file can show as two. | `crates/fleetdeck-proto/src/conflicts.rs` |
+| 6-7 | Review round 2: the normalized origin keeps a URL query or fragment, which can carry a credential. | `crates/fleetdeck-core/src/git.rs` |
+| 6-8 | The files.v1 re-review (DL-103, DL-109) and the DESIGN REVIEW of the `rename.v1` contract are architect steps (DL-307). | `docs/v2/adr/ADR-004-link-protocol-v1.md` |
+| 6-12 | The station does not list the native sessions of a workspace; the owner types the id. | `web/src/spawn/SpawnForm.tsx` |
+| 6-12 | The station cannot see if a terminal CLI still runs the imported conversation; no capability check before the spawn; the station test covers `fake-claude sim` only. | `crates/fleetdeck-station/src/manager/decide.rs` |
+
+## Round 3 (2026-10-12)
+
+- Start: committed round 2 as `c4fed56`; `git merge --no-edit v2` brought auto-continue (lane A). The merge broke the station build (`UserInput` without `images`, `session.started` without `repo` in `manager/auto_continue.rs` and its tests); fixed and committed as `2611426`. `make ts-types` after the merge: no change.
+- Review round 2 findings: recorded as follow-ups above (not reworked).
+- Done: 6-8 Files and checkpoints (DL-307: software evidence complete; two review steps stay with the architect), 6-12 Import (DL-308).
+- 6-12 evidence:
+  - Wire: `SessionCommand::Import` and `check_native_session_id` (`crates/fleetdeck-proto/src/command.rs`), feature `import.v1` (`crates/fleetdeck-proto/src/version.rs`), `SESSION_METHODS` (`crates/fleetdeck-proto/src/mutation.rs`), link method row (`crates/fleetdeck-link/src/methods.rs`), deck method row (`crates/fleetdeck-deck/src/http/methods.rs`), ADR-004 feature, method and envelope tables (`docs/v2/adr/ADR-004-link-protocol-v1.md`). TS bindings `web/src/gen/command/SessionCommand.ts`.
+  - Deck: `400 invalid_session_id` (`crates/fleetdeck-deck/src/http/command_routes.rs`).
+  - Station: `crates/fleetdeck-station/src/manager/decide.rs` (`start` with an optional import: id check, native session in use, native resume effect), `crates/fleetdeck-station/src/store/resumes.rs` (`set_native_session_id`, `native_session_in_use`).
+  - Board: `web/src/spawn/spawn.ts` (`importIdProblem`, `start(..., importId)`), `web/src/spawn/SpawnForm.tsx` (field "Import CLI session id (optional)", button "Import session").
+  - Tests: `command::tests::an_import_carries_a_native_id_that_can_never_read_as_a_flag`; `manager::tests::import_tests::{an_imported_claude_session_continues_the_given_native_session, an_import_is_refused_for_a_bad_id_a_foreign_workspace_or_a_native_session_in_use}` (`crates/fleetdeck-station/src/manager/import_tests.rs`); updated table tests `mutation::tests::*` (19 mutating methods), `method_table::the_code_method_table_equals_the_adr_method_table` (31 rows), `every_command_method_has_the_scope_of_its_link_method` (16); `web/src/spawn/spawn.test.tsx` (import test); Playwright `web/e2e/spawn.spec.ts` "a terminal CLI session is imported by its id as a driven session (6-12)".
+- Commands:
+  - `cargo nextest run -p fleetdeck-station -E 'test(auto_continue)'` (after the merge fix) → 16 passed.
+  - `cargo nextest run -p fleetdeck-station -p fleetdeck-proto -p fleetdeck-deck -p fleetdeck-link -E 'test(import) | test(every_command_method) | binary(adr_revision2) | binary(method_table) | test(mutation::) | test(feature) | test(version)'` → 32 passed.
+  - `cargo nextest run -p fleetdeck-proto -p fleetdeck-station -E 'binary(ts_drift) | test(import)'` → passed (after `cargo fmt`).
+  - `cd web && bun test src` → 124 passed; `bunx tsc --noEmit -p tsconfig.test.json` → clean; `bun test src/spawn` → 8 passed; `bun run build && FD_E2E_PORT=<free> bunx playwright test e2e/spawn.spec.ts` → 3 passed.
+- Checks: `cargo fmt --all --check` → ok; `cargo clippy --workspace --all-targets -- -D warnings` → ok; `bun run --cwd web lint` → ok (after `biome format` of `web/src/spawn/SpawnForm.tsx` and the `import` row in `web/src/session/commands.ts`).
+- Lane state: all lane C items are checked (LANE COMPLETE at the top of this file).

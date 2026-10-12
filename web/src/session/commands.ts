@@ -42,6 +42,7 @@ export const MAX_TITLE_CHARS = 80;
 const METHODS: Record<SessionCommand['op'], string> = {
   start: 'session.start',
   resume: 'session.resume',
+  import: 'session.import',
   prompt: 'session.prompt',
   steer: 'session.steer',
   follow_up: 'session.follow_up',

@@ -6,6 +6,7 @@ import { claudeCaps, codexCaps } from '../testing/capabilities';
 import { station } from '../testing/fleet';
 import {
   batchPrompts,
+  importIdProblem,
   listingView,
   providerLabel,
   spawnActions,
@@ -188,6 +189,46 @@ describe('spawn form (P4-4)', () => {
     const second = posts[1];
     expect(second).toBeDefined();
     expect(JSON.stringify(second?.body)).toContain('"prompt":null');
+  });
+
+  test('an import sends one session.import with the native id; a flag-like id is refused', async () => {
+    const posts: { path: string; body: unknown }[] = [];
+    const actions = spawnActions(
+      async () => listing,
+      async (path, body) => {
+        posts.push({ path, body });
+        return {
+          state: 'done',
+          receipt: { state: 'accepted', result: { session_id: 's-imp' }, reject: null },
+        };
+      },
+      ['read', 'drive'],
+      () => 'b-imp',
+    );
+    const spec = {
+      provider_instance: 'claude',
+      cwd: '/home/me/projects/app',
+      mode: null,
+      model: null,
+      title: null,
+    };
+    const out = await actions.start('station-a', spec, '', null, ' 0b6c-aa_1.x ');
+    expect(out.sessionId).toBe('s-imp');
+    expect(posts).toEqual([
+      {
+        path: '/api/commands/session.import',
+        body: {
+          station: 'station-a',
+          command_id: 'b-imp',
+          command: { op: 'import', spec, native_session_id: '0b6c-aa_1.x', prompt: null },
+        },
+      },
+    ]);
+    expect(importIdProblem('0b6c-aa_1.x')).toBeNull();
+    for (const bad of ['', '--resume', 'a b', 'a/b', 'x'.repeat(129)]) {
+      expect(importIdProblem(bad)).not.toBeNull();
+    }
+    expect(form([reported()])).toContain('Import CLI session id (optional)');
   });
 
   test('a refused or failed start shows the reason and no session', async () => {

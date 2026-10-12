@@ -194,6 +194,13 @@ pub const METHODS: &[MethodSpec] = &[
         true,
     ),
     m(
+        "session.import",
+        DeckToStation,
+        Scope::Drive,
+        Some(feature::IMPORT),
+        true,
+    ),
+    m(
         "session.rename",
         DeckToStation,
         Scope::Drive,
