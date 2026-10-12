@@ -389,6 +389,12 @@
   font-family: var(--font-data);
   font-size: 12.5px;
 }
+.fd-md th code,
+.fd-md td code {
+  padding: 0;
+  background: transparent;
+  border: 0;
+}
 .fd-md-code {
   margin: 10px 0;
   background: var(--code);
@@ -478,4 +484,21 @@
   .fd-chat-chev > .fd-icon {
     transition: none;
   }
+}
+
+/* A file name of a diff opens the file in the Files panel. */
+.fd-dl-file {
+  height: auto;
+  min-height: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  color: var(--m-comet);
+  font: inherit;
+  text-decoration: underline;
+}
+.fd-dl-file:hover:not(:disabled) {
+  background: none;
+  border-color: transparent;
 }

@@ -4,6 +4,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
   useCallback,
+  useEffect,
   useId,
   useMemo,
   useRef,
@@ -177,6 +178,17 @@ export function SessionView(props: SessionViewProps) {
   };
   const panelAct = (call: Parameters<typeof controller.act>[1]) => controller.act('turns', call);
   const filesReady = flags.live && actions?.canDrive === true;
+  const [fileRequest, setFileRequest] = useState<{ readonly path: string; readonly seq: number }>();
+  const requests = useRef(0);
+  const onOpenFile = (path: string) => {
+    requests.current += 1;
+    setFileRequest({ path, seq: requests.current });
+    if (!sideOpen) onTab('files');
+  };
+  // The Files panel reads a request when it shows (child effects run first); then it is spent.
+  useEffect(() => {
+    if (fileRequest && (tab === 'files' || sideOpen)) setFileRequest(undefined);
+  }, [fileRequest, tab, sideOpen]);
 
   return (
     <section className="fd-pane" aria-label="Session" data-layout={layout}>
@@ -323,6 +335,7 @@ export function SessionView(props: SessionViewProps) {
                   live={flags.live}
                   busy={busy !== null}
                   act={panelAct}
+                  onOpenFile={onOpenFile}
                 />
               </>
             ) : (
@@ -333,7 +346,7 @@ export function SessionView(props: SessionViewProps) {
           ) : null}
           {tab === 'files' ? (
             filesReady ? (
-              <FilesPanel files={actions?.files ?? null} />
+              <FilesPanel files={actions?.files ?? null} request={fileRequest} root={s.cwd} />
             ) : (
               <p className="fd-note">
                 Files are available when the board is live and you have the drive scope.
@@ -345,7 +358,12 @@ export function SessionView(props: SessionViewProps) {
         {sideOpen ? (
           <aside className="fd-pane-side" aria-label="Files panel">
             {filesReady ? (
-              <FilesPanel files={actions?.files ?? null} variant="side" />
+              <FilesPanel
+                files={actions?.files ?? null}
+                variant="side"
+                request={fileRequest}
+                root={s.cwd}
+              />
             ) : (
               <p className="fd-note">
                 Files are available when the board is live and you have the drive scope.
