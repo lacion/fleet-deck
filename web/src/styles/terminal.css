@@ -1,0 +1,237 @@
+/* The terminal layer (DL-140): xterm view, touch key bar, terminal dock. */
+
+/* terminal */
+.fd-term {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  background: var(--code);
+}
+.fd-term-host {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  padding: var(--sp-1);
+}
+.fd-term-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-3);
+  background: var(--code);
+  color: var(--dim);
+  font-family: var(--font-ui);
+  font-size: var(--fs-body);
+}
+.fd-term-overlay p {
+  margin: 0;
+}
+.fd-term-actions {
+  display: flex;
+  gap: var(--sp-2);
+}
+.fd-term-actions button,
+.fd-tdock button {
+  min-height: 28px;
+  padding: var(--sp-1) var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctl);
+  background: var(--raised);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-body);
+  cursor: pointer;
+  transition: border-color var(--t-fast);
+}
+.fd-term-actions button:hover,
+.fd-tdock button:hover {
+  border-color: var(--dim);
+}
+.fd-term-actions button:focus-visible,
+.fd-tdock button:focus-visible,
+.fd-keybar-key:focus-visible,
+.fd-tdock-handle:focus-visible {
+  outline: 2px solid var(--act);
+  outline-offset: 2px;
+}
+
+/* key bar */
+.fd-keybar {
+  display: flex;
+  gap: var(--sp-1);
+  padding: var(--sp-1) var(--sp-2);
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  overflow-x: auto;
+}
+.fd-keybar-key {
+  flex: 1 0 auto;
+  min-width: 40px;
+  min-height: 36px;
+  padding: var(--sp-1) var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctl);
+  background: var(--raised);
+  color: var(--text);
+  font-family: var(--font-data);
+  font-size: var(--fs-body);
+  cursor: pointer;
+}
+.fd-keybar-key[aria-pressed="true"] {
+  border-color: var(--text);
+  background: var(--border);
+}
+@media (pointer: coarse) {
+  .fd-keybar-key,
+  .fd-tdock button {
+    min-height: var(--tap-min);
+  }
+  .fd-keybar-key {
+    min-width: var(--tap-min);
+  }
+}
+
+/* dock */
+.fd-tdock {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  font-family: var(--font-ui);
+  font-size: var(--fs-body);
+  color: var(--text);
+}
+.fd-tdock[data-layout="full"] {
+  height: 100%;
+  border-top: 0;
+}
+.fd-tdock [hidden] {
+  display: none;
+}
+.fd-tdock-handle {
+  position: absolute;
+  top: -3px;
+  left: 0;
+  right: 0;
+  height: 6px;
+  cursor: row-resize;
+  touch-action: none;
+  z-index: 1;
+}
+.fd-tdock-handle:hover {
+  background: var(--border);
+}
+.fd-tdock-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-2);
+  border-bottom: 1px solid var(--border-soft);
+}
+.fd-tdock-tabs {
+  display: flex;
+  gap: var(--sp-1);
+  min-width: 0;
+  overflow-x: auto;
+}
+.fd-tdock-tabwrap {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-ctl);
+  background: var(--surface);
+}
+.fd-tdock-tabwrap[data-selected="true"] {
+  border-color: var(--border);
+  background: var(--raised);
+}
+.fd-tdock-tab {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  max-width: 220px;
+}
+.fd-tdock-kind {
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+  color: var(--dim);
+}
+.fd-tdock-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fd-tdock-station {
+  color: var(--dim);
+  font-size: var(--fs-data);
+  white-space: nowrap;
+}
+.fd-tdock-detach {
+  padding-inline: var(--sp-2);
+  color: var(--dim);
+}
+.fd-tdock-tools {
+  display: flex;
+  flex: 0 0 auto;
+  gap: var(--sp-2);
+}
+.fd-tdock .fd-tdock-tab,
+.fd-tdock .fd-tdock-detach {
+  border-color: transparent;
+  background: transparent;
+}
+.fd-tdock .fd-tdock-danger {
+  border-color: var(--hazard);
+  color: var(--hazard);
+}
+.fd-tdock-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--hazard-bg);
+  border-bottom: 1px solid var(--border-soft);
+}
+.fd-tdock-confirm p {
+  margin: 0;
+  flex: 1 1 auto;
+}
+.fd-tdock-error {
+  margin: 0;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--hazard-bg);
+  color: var(--hazard);
+}
+.fd-tdock-body {
+  flex: 1;
+  min-height: 0;
+}
+.fd-tdock-pane {
+  height: 100%;
+  min-height: 0;
+}
+.fd-tdock[data-layout="full"] .fd-tdock-tabs {
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.fd-tdock[data-layout="full"] .fd-tdock-bar {
+  flex-wrap: wrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fd-term-actions button,
+  .fd-tdock button {
+    transition: none;
+  }
+}

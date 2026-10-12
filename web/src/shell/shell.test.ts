@@ -57,4 +57,31 @@ describe('shell calls', () => {
     expect(newId('shell', () => 0.999)).toBe(`shell-${'z'.repeat(16)}`);
     expect([cells(0), cells(80.9), cells(4000), cells(Number.NaN)]).toEqual([1, 80, 1000, 1]);
   });
+
+  test('handover posts a tui shell for a session and release clears the hold', async () => {
+    const posts: [string, unknown][] = [];
+    const actions = shellActions(
+      async () => [],
+      async (path, body) => {
+        posts.push([path, body]);
+        return { state: 'accepted' };
+      },
+    );
+    const id = await actions.handover('a b', 's-1', 100.5, 0);
+    expect(id).toMatch(/^tui-[0-9a-z]{16}$/);
+    await actions.release('a b', id);
+    expect(posts.map(([p]) => p)).toEqual(Array(2).fill('/api/stations/a%20b/shells'));
+    const bodies = posts.map(([, b]) => b as { command_id: string; change: unknown });
+    expect(bodies.map((b) => b.change)).toEqual([
+      { op: 'handover', shell_id: id, session_id: 's-1', cols: 100, rows: 1 },
+      { op: 'release', shell_id: id },
+    ]);
+  });
+
+  test('a shell list accepts a session id string and refuses any other type', () => {
+    expect(shellList([{ ...info, session_id: 's-1' }])[0]?.session_id).toBe('s-1');
+    expect(shellList([info])[0]?.session_id).toBeUndefined();
+    expect(() => shellList([{ ...info, session_id: 7 }])).toThrow('Invalid shell list');
+    expect(() => shellList([{ ...info, session_id: null }])).toThrow('Invalid shell list');
+  });
 });

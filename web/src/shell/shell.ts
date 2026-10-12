@@ -6,6 +6,10 @@ export type ShellActions = {
   open(station: string, cwd: string, cols: number, rows: number): Promise<string>;
   resize(station: string, shellId: string, cols: number, rows: number): Promise<void>;
   close(station: string, shellId: string): Promise<void>;
+  /** Run the provider TUI of an ended session in a station PTY (DL-140); returns the shell id. */
+  handover(station: string, sessionId: string, cols: number, rows: number): Promise<string>;
+  /** The owner clears a terminal hold whose process the station cannot see (DL-140). */
+  release(station: string, shellId: string): Promise<void>;
   /** The WebSocket path of one shell (relative to the board origin). */
   socketPath(station: string, shellId: string): string;
 };
@@ -27,7 +31,8 @@ function shellInfo(v: unknown): ShellInfo {
     typeof v['cols'] !== 'number' ||
     typeof v['rows'] !== 'number' ||
     typeof v['created_at'] !== 'number' ||
-    !(exit === null || exit === undefined || typeof exit === 'number')
+    !(exit === null || exit === undefined || typeof exit === 'number') ||
+    !(v['session_id'] === undefined || typeof v['session_id'] === 'string')
   ) {
     throw new Error('Invalid shell list');
   }
@@ -83,6 +88,20 @@ export function shellActions(
     },
     close: async (station, shellId) => {
       await send(station, { op: 'close', shell_id: shellId });
+    },
+    handover: async (station, sessionId, cols, rows) => {
+      const shellId = newId('tui', random);
+      await send(station, {
+        op: 'handover',
+        shell_id: shellId,
+        session_id: sessionId,
+        cols: cells(cols),
+        rows: cells(rows),
+      });
+      return shellId;
+    },
+    release: async (station, shellId) => {
+      await send(station, { op: 'release', shell_id: shellId });
     },
     socketPath: (station, shellId) => `${base(station)}/${encodeURIComponent(shellId)}/attach`,
   };

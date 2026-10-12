@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { ShellInfo } from '../gen';
+import { Terminal } from '../terminal/Terminal';
 import type { ShellActions } from './shell';
 
 type Props = {
@@ -95,75 +96,17 @@ export function ShellPanel({ station, actions, disabled }: Props) {
           <button type="button" onClick={() => setActive(null)}>
             Detach
           </button>
-          <ShellTerminal station={station} shellId={active} actions={actions} />
+          <div className="fd-terminal">
+            <Terminal
+              station={station}
+              shellId={active}
+              actions={actions}
+              active={true}
+              touch={false}
+            />
+          </div>
         </>
       )}
     </section>
   );
-}
-
-/** An xterm.js view of one shell stream: binary frames both ways. */
-function ShellTerminal({
-  station,
-  shellId,
-  actions,
-}: {
-  readonly station: string;
-  readonly shellId: string;
-  readonly actions: ShellActions;
-}) {
-  const host = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    let disposed = false;
-    let cleanup = () => {};
-    void (async () => {
-      const [{ Terminal }, { FitAddon }] = await Promise.all([
-        import('@xterm/xterm'),
-        import('@xterm/addon-fit'),
-      ]);
-      const el = host.current;
-      if (disposed || el === null) return;
-      const term = new Terminal({ cursorBlink: true, fontSize: 13, scrollback: 5000 });
-      const fit = new FitAddon();
-      term.loadAddon(fit);
-      term.open(el);
-      fit.fit();
-      const url = new URL(actions.socketPath(station, shellId), window.location.href);
-      url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-      const ws = new WebSocket(url);
-      ws.binaryType = 'arraybuffer';
-      ws.onmessage = (e: MessageEvent) => {
-        const data: unknown = e.data;
-        // A tag check, not `instanceof`: the buffer can come from another realm.
-        if (Object.prototype.toString.call(data) === '[object ArrayBuffer]')
-          term.write(new Uint8Array(data as ArrayBuffer));
-        else if (data instanceof Blob)
-          void data.arrayBuffer().then((b) => term.write(new Uint8Array(b)));
-        else if (typeof data === 'string') term.write(data);
-      };
-      ws.onclose = () => term.write('\r\n[shell stream closed]\r\n');
-      const encoder = new TextEncoder();
-      const input = term.onData((d) => {
-        if (ws.readyState === WebSocket.OPEN) ws.send(encoder.encode(d));
-      });
-      const resized = term.onResize(({ cols, rows }) => {
-        void actions.resize(station, shellId, cols, rows).catch(() => undefined);
-      });
-      const onWindow = () => fit.fit();
-      window.addEventListener('resize', onWindow);
-      void actions.resize(station, shellId, term.cols, term.rows).catch(() => undefined);
-      cleanup = () => {
-        window.removeEventListener('resize', onWindow);
-        input.dispose();
-        resized.dispose();
-        ws.close();
-        term.dispose();
-      };
-    })();
-    return () => {
-      disposed = true;
-      cleanup();
-    };
-  }, [station, shellId, actions]);
-  return <div className="fd-terminal" ref={host} data-terminal={shellId} />;
 }
