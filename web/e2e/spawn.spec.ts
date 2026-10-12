@@ -13,6 +13,7 @@ const alpha = stationView('st-alpha', 'Alpha', {
     live_sessions: 0,
     version: '0.2.0',
     max_sessions: 4,
+    allow_shell: null,
     providers: [
       {
         instance: 'personal',

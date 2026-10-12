@@ -21,6 +21,7 @@ const info = (extra: Partial<StationInfo> = {}): StationInfo => ({
   live_sessions: 0,
   version: '0.2.0',
   max_sessions: 4,
+  allow_shell: null,
   providers: [
     {
       instance: 'claude',

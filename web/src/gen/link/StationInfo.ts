@@ -20,6 +20,11 @@ version: string | null,
  */
 max_sessions: number | null, 
 /**
+ * `allow_shell` of `station.toml`: the human shell and the TUI
+ * handover are allowed (DL-141). Absent from an older station.
+ */
+allow_shell: boolean | null, 
+/**
  * The configured provider instances with their probed versions.
  */
 providers: Array<StationProvider>, };

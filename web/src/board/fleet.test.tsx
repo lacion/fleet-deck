@@ -189,6 +189,7 @@ describe('station projections', () => {
               live_sessions: 1,
               version: '0.2.0',
               max_sessions: 4,
+              allow_shell: null,
               providers: [
                 {
                   instance: 'personal',
