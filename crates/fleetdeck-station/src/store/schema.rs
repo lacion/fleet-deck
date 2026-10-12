@@ -381,6 +381,29 @@ const V15: &str = "
 ALTER TABLE shims ADD COLUMN protocol INTEGER NOT NULL DEFAULT 1;
 ";
 
+const V16: &str = "
+-- DL-405 (M3 6-11; renumbered from V15 to V16 at the merge with lane A's V15): the durable effects of the human shell. A shell
+-- command commits its receipt and one `queued` row; the dispatcher claims the
+-- row before the PTY I/O and ends it as `confirmed` or `failed`. Station
+-- start recovery retires `queued` rows and marks `claimed` rows
+-- `outcome_unknown`: a station restart ends every shell (A10), so a shell
+-- effect is never dispatched by a later process.
+CREATE TABLE shell_effects (
+    effect_id   TEXT    PRIMARY KEY,
+    command_id  TEXT    NOT NULL UNIQUE,
+    shell_id    TEXT    NOT NULL,
+    op          TEXT    NOT NULL CHECK (op IN ('open', 'resize', 'close')),
+    change      TEXT    NOT NULL,
+    state       TEXT    NOT NULL CHECK (state IN ('queued', 'claimed', 'confirmed', 'failed',
+                                                  'retired_not_dispatched', 'outcome_unknown')),
+    detail      TEXT,
+    created_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL
+);
+CREATE INDEX shell_effects_open ON shell_effects (state, created_at)
+    WHERE state IN ('queued', 'claimed');
+";
+
 /// The `station.db` migrations. V4 is the link epochs table of
 /// `fleetdeck-link` (G1).
 #[must_use]
@@ -401,5 +424,6 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V13),
         M::up(V14),
         M::up(V15),
+        M::up(V16),
     ])
 }

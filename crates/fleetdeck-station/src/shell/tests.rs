@@ -5,13 +5,13 @@ use std::time::{Duration, Instant};
 use fleetdeck_core::childenv::ChildEnv;
 use fleetdeck_proto::command::RejectCode;
 use fleetdeck_proto::shell::{ShellChange, ShellState};
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::Receiver;
 
 use super::{ShellConfig, Shells};
 use crate::manager::policy::Policy;
 use crate::store::OfflineApprovalPolicy;
 
-fn policy(root: &std::path::Path) -> Policy {
+pub(super) fn policy(root: &std::path::Path) -> Policy {
     Policy::new(
         vec![root.to_path_buf()],
         4,
@@ -20,7 +20,7 @@ fn policy(root: &std::path::Path) -> Policy {
     )
 }
 
-fn env() -> ChildEnv {
+pub(super) fn env() -> ChildEnv {
     ChildEnv::scrubbed(
         [
             ("PATH", "/usr/bin:/bin"),
@@ -42,7 +42,7 @@ fn shells(allow: bool, max_shells: u32) -> Shells {
     Shells::with_env(config, env())
 }
 
-fn open(id: &str, cwd: &std::path::Path) -> ShellChange {
+pub(super) fn open(id: &str, cwd: &std::path::Path) -> ShellChange {
     ShellChange::Open {
         shell_id: id.to_owned(),
         cwd: cwd.to_string_lossy().into_owned(),
@@ -52,7 +52,7 @@ fn open(id: &str, cwd: &std::path::Path) -> ShellChange {
 }
 
 /// Reads `rx` (after `seen`) until the text holds `needle`.
-fn read_until(seen: &mut String, rx: &mut UnboundedReceiver<Vec<u8>>, needle: &str) {
+pub(super) fn read_until(seen: &mut String, rx: &mut Receiver<Vec<u8>>, needle: &str) {
     let t0 = Instant::now();
     while !seen.contains(needle) {
         assert!(

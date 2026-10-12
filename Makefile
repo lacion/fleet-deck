@@ -1,7 +1,7 @@
 # Fleet Deck v2 checks. `make check` is the one acceptance command (goal-mode
 # reviewers may run `make check` and `cargo test`, but not other cargo tools).
 # It is offline: see tools/check.sh for the one-time cache fill.
-.PHONY: check check-spikes test test-web ts-types smoke-live package-check perf
+.PHONY: check check-spikes test test-web test-lint ts-types smoke-live package-check perf
 # Every check of the M2 goal: fmt, clippy, nextest, deny, TS-types drift,
 # web typecheck + lint + test + build, and every recorded replay (G13).
 check:
@@ -17,6 +17,13 @@ test-web:
 	bun run --cwd web typecheck
 	bun run --cwd web lint
 	bun run --cwd web test
+# The format and lint checks of a normal review round (DL-309): a reviewer
+# may run `make test*`, so the three round checks have one offline target.
+test-lint:
+	cargo fmt --all --check
+	timeout 1800 cargo clippy --workspace --all-targets -- -D warnings
+	bun install --cwd web --frozen-lockfile --offline --ignore-scripts
+	bun run --cwd web lint
 # Regenerate the board's TypeScript types from fleetdeck-proto (PLAN §11).
 # The drift test `fleetdeck-proto::ts_drift` fails until the output is committed.
 ts-types:
