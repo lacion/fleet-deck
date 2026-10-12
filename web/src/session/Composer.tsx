@@ -7,6 +7,7 @@ import {
   useState,
 } from 'react';
 import type { ImageInput } from '../gen';
+import { ArrowUp, Icon, Paperclip } from '../ui/icons';
 import type { InputKind } from './commands';
 import { IMAGE_TYPES, imageFiles, imagesProblem, readImage, toDataUrl } from './images';
 import { matchSlash } from './slash';
@@ -203,7 +204,7 @@ export function Composer(props: Props) {
           ))}
         </div>
       ) : null}
-      <label htmlFor="fd-composer-text" className="fd-composer-label">
+      <label htmlFor="fd-composer-text" className="fd-vh">
         Message
       </label>
       <textarea
@@ -232,6 +233,7 @@ export function Composer(props: Props) {
               <img src={toDataUrl(image)} alt={`Pasted ${n + 1}`} />
               <button
                 type="button"
+                className="fd-sm"
                 aria-label={`Remove image ${n + 1}`}
                 onClick={() => {
                   setReadError(null);
@@ -250,8 +252,9 @@ export function Composer(props: Props) {
         </p>
       ) : null}
       <div className="fd-composer-bar">
-        <label className="fd-attach">
-          Add image
+        <label className="fd-iconbtn fd-attach" title="Add image">
+          <Icon of={Paperclip} />
+          <span className="fd-vh">Add image</span>
           <input
             type="file"
             accept={IMAGE_TYPES.join(',')}
@@ -263,6 +266,13 @@ export function Composer(props: Props) {
             }}
           />
         </label>
+        {reason ? (
+          <span className="fd-composer-note">{reason}</span>
+        ) : props.working && !props.nativeQueue ? (
+          <span className="fd-composer-note">
+            The station holds a follow-up until the turn ends.
+          </span>
+        ) : null}
         <div className="fd-composer-send">
           {props.working ? (
             <>
@@ -277,16 +287,11 @@ export function Composer(props: Props) {
             </>
           ) : (
             <button type="submit" className="fd-primary" disabled={blocked}>
-              Send
+              <Icon of={ArrowUp} size={14} /> Send
             </button>
           )}
         </div>
       </div>
-      {reason ? (
-        <p className="fd-composer-note">{reason}</p>
-      ) : props.working && !props.nativeQueue ? (
-        <p className="fd-composer-note">The station holds a follow-up until the turn ends.</p>
-      ) : null}
     </form>
   );
 }

@@ -44,7 +44,7 @@ export function QuestionAnswer({ request, form, enabled, busy, onAnswer }: Props
         <fieldset key={q.id} disabled={!enabled || busy}>
           <legend>{q.header ? `${q.header}: ${q.text}` : q.text}</legend>
           {q.options.map((o) => (
-            <label key={o}>
+            <label key={o} className="fd-opt">
               <input
                 type={q.multi ? 'checkbox' : 'radio'}
                 name={`${request.request_id}-${n}`}
@@ -56,7 +56,7 @@ export function QuestionAnswer({ request, form, enabled, busy, onAnswer }: Props
             </label>
           ))}
           {q.other ? (
-            <label>
+            <label className="fd-opt-other">
               {q.options.length > 0 ? 'Other answer' : 'Your answer'}
               <input
                 type={q.secret ? 'password' : 'text'}
@@ -71,7 +71,11 @@ export function QuestionAnswer({ request, form, enabled, busy, onAnswer }: Props
         </fieldset>
       ))}
       <div className="fd-options">
-        <button type="submit" disabled={!enabled || busy || !complete(form, answers)}>
+        <button
+          type="submit"
+          className="fd-primary"
+          disabled={!enabled || busy || !complete(form, answers)}
+        >
           Send answer
         </button>
         {form.others.map((id) => (

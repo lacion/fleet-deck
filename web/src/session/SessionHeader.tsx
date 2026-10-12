@@ -1,9 +1,24 @@
 // DL-140: the header of a session: title, status, provider, model, where it
-// runs, and the actions (interrupt, stop, resume, terminal, settings).
+// runs, and the actions (interrupt, resume, terminal) with one overflow menu (DL-141).
 import { type KeyboardEvent, type ReactNode, useRef, useState } from 'react';
 import { stationName } from '../board/fleet';
 import { providerLabel } from '../board/lanes';
 import type { DeckSession, StationView } from '../gen';
+import { modelFamily, shortModel } from '../ui/format';
+import {
+  Check,
+  ChevronLeft,
+  Ellipsis,
+  Icon,
+  Pencil,
+  Play,
+  Power,
+  Square,
+  SquareTerminal,
+  TriangleAlert,
+  Undo2,
+  X,
+} from '../ui/icons';
 import type { Outcome, SessionActions } from './commands';
 import type { Controller } from './controller';
 import { RenameForm } from './RenameForm';
@@ -22,6 +37,9 @@ type Props = {
   readonly actions: SessionActions | null;
   readonly onBack?: () => void;
   readonly terminal: TerminalProps | null;
+  readonly layout?: 'desktop' | 'tablet' | 'phone';
+  /** Opens a shell in the workspace; the menu offers it when given. */
+  readonly onNewShell?: (() => void) | undefined;
 };
 
 /** The longest path the header shows, in characters. */
@@ -41,6 +59,7 @@ function shortenMiddle(text: string, max: number): string {
 function Menu(props: {
   readonly summary: ReactNode;
   readonly label?: string;
+  readonly summaryClass?: string;
   readonly onClosed?: () => void;
   readonly children: (close: () => void) => ReactNode;
 }) {
@@ -63,33 +82,83 @@ function Menu(props: {
         if (!event.currentTarget.open) props.onClosed?.();
       }}
     >
-      <summary aria-label={props.label}>{props.summary}</summary>
+      <summary className={props.summaryClass} aria-label={props.label}>
+        {props.summary}
+      </summary>
       <div className="fd-menu-body">{props.children(close)}</div>
     </details>
   );
 }
 
-function PencilIcon() {
+/** The tone of the status badge. */
+function statusTone(status: string): 'act' | 'ok' | 'info' | 'hazard' | 'muted' {
+  switch (status) {
+    case 'needs_you':
+      return 'act';
+    case 'working':
+      return 'ok';
+    case 'verifying':
+      return 'info';
+    case 'unreachable':
+    case 'lost':
+      return 'hazard';
+    default:
+      return 'muted';
+  }
+}
+
+/** The status, model and provider badges of a session. */
+function Badges({ session }: { readonly session: DeckSession }) {
+  const s = session.summary;
   return (
-    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
-      <path
-        d="M11.5 2.5l2 2L5 13H3v-2z"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinejoin="round"
-      />
-    </svg>
+    <>
+      <span className="fd-badge" data-tone={statusTone(session.status)}>
+        {session.status.replaceAll('_', ' ')}
+      </span>
+      <span
+        className="fd-badge"
+        data-family={modelFamily(s.model) ?? undefined}
+        title={s.model ?? 'default model'}
+      >
+        {shortModel(s.model)}
+      </span>
+      <span className="fd-badge" data-provider={s.provider}>
+        {providerLabel(s.provider)}
+      </span>
+    </>
   );
 }
 
-export function SessionHeader({ session, stations, controller, actions, onBack, terminal }: Props) {
+/** The station, the branch and the directory of a session. */
+function Place({ parts, cwd }: { readonly parts: readonly string[]; readonly cwd: string | null }) {
+  return (
+    <p className="fd-sh-place">
+      {parts.map((part, n) => (
+        <span key={part} title={n === parts.length - 1 && cwd ? cwd : undefined}>
+          {n > 0 ? ' · ' : ''}
+          {part}
+        </span>
+      ))}
+    </p>
+  );
+}
+
+export function SessionHeader({
+  session,
+  stations,
+  controller,
+  actions,
+  onBack,
+  terminal,
+  layout = 'desktop',
+  onNewShell,
+}: Props) {
   const s = session.summary;
   const caps = s.capabilities;
   const { flags, busy } = controller;
+  const phone = layout === 'phone';
   const [renaming, setRenaming] = useState(false);
-  const [confirmKill, setConfirmKill] = useState(false);
-  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirm, setConfirm] = useState<'kill' | 'open' | null>(null);
   const run = (name: string, call: (a: SessionActions) => Promise<Outcome>) => {
     if (actions) controller.act(name, () => call(actions));
   };
@@ -111,211 +180,328 @@ export function SessionHeader({ session, stations, controller, actions, onBack, 
   ].filter((part): part is string => part !== null && part !== '');
   const outcome = controller.outcome;
 
-  return (
-    <div className="fd-sh-block">
-      <header className="fd-sh" aria-label="Session header">
-        <div className="fd-sh-line">
-          {onBack ? (
-            <button type="button" className="fd-sh-back" aria-label="Back" onClick={onBack}>
-              <span aria-hidden="true">←</span>
-            </button>
-          ) : null}
-          {renaming ? (
-            <RenameForm
-              title={s.title}
-              enabled={canRename}
-              startEditing
-              onClose={() => setRenaming(false)}
-              onRename={(t) => run('rename', (a) => a.rename(t))}
+  /** The confirm of "Open in terminal", inside a menu. */
+  const openConfirm = (close: () => void, open: () => void) => (
+    <div className="fd-sh-confirm" role="group" aria-label="Open in terminal">
+      <p className="fd-menu-text">
+        In the terminal, the board does not see approvals or prompts. The station holds this session
+        until you return it.
+        {flags.ended ? '' : ' The session stops first.'}
+      </p>
+      <button
+        type="button"
+        className="fd-primary"
+        disabled={busy !== null}
+        onClick={() => {
+          setConfirm(null);
+          close();
+          open();
+        }}
+      >
+        Open in terminal
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          setConfirm(null);
+          close();
+        }}
+      >
+        Cancel
+      </button>
+    </div>
+  );
+
+  /** The items of the session menu that every layout has. */
+  const menuItems = (close: () => void) => (
+    <>
+      <button
+        type="button"
+        disabled={!canRename}
+        onClick={() => {
+          close();
+          setRenaming(true);
+        }}
+      >
+        <Icon of={Pencil} /> Rename
+      </button>
+      {flags.canStop ? (
+        <>
+          <button
+            type="button"
+            disabled={busy !== null}
+            onClick={() => {
+              close();
+              run('stop', (a) => a.stop('graceful'));
+            }}
+          >
+            <Icon of={Power} /> Stop
+          </button>
+          <button
+            type="button"
+            className="fd-danger"
+            disabled={busy !== null}
+            onClick={() => setConfirm('kill')}
+          >
+            Force stop…
+          </button>
+        </>
+      ) : null}
+      {hasModes || hasModel || hasAuto ? (
+        <>
+          <div className="fd-menu-sep" />
+          {hasModes && caps ? (
+            <ModeLadder
+              modes={caps.modes}
+              current={s.mode}
+              enabled={settingsEnabled}
+              onSet={(m) => run('mode', (a) => a.setMode(m))}
             />
-          ) : (
-            <>
-              <h2 className="fd-sh-title">{title}</h2>
+          ) : null}
+          {hasModel ? (
+            <ModelPicker
+              current={s.model}
+              enabled={settingsEnabled}
+              onSet={(m) => run('model', (a) => a.setModel(m))}
+            />
+          ) : null}
+          {hasAuto ? (
+            <label className="fd-auto-continue">
+              <input
+                type="checkbox"
+                checked={s.auto_continue}
+                disabled={!flags.live || actions?.canDrive !== true || busy !== null}
+                onChange={(event) => {
+                  const on = event.currentTarget.checked;
+                  run('auto-continue', (a) => a.setAutoContinue(on));
+                }}
+              />{' '}
+              Continue after a station restart
+            </label>
+          ) : null}
+        </>
+      ) : null}
+      {onNewShell ? (
+        <>
+          <div className="fd-menu-sep" />
+          <button
+            type="button"
+            onClick={() => {
+              close();
+              onNewShell();
+            }}
+          >
+            <Icon of={SquareTerminal} /> Open shell in workspace
+          </button>
+        </>
+      ) : null}
+    </>
+  );
+
+  /** The session menu: the confirms replace the items; the phone adds the facts and the terminal item. */
+  const menuBody = (close: () => void) => {
+    if (confirm === 'kill') {
+      return (
+        <div className="fd-sh-confirm" role="group" aria-label="Force stop">
+          <p className="fd-menu-text">Force stop kills the provider process. Continue?</p>
+          <button
+            type="button"
+            className="fd-danger"
+            disabled={busy !== null}
+            onClick={() => {
+              setConfirm(null);
+              close();
+              run('stop', (a) => a.stop('kill'));
+            }}
+          >
+            Force stop
+          </button>
+          <button type="button" onClick={() => setConfirm(null)}>
+            Cancel
+          </button>
+        </div>
+      );
+    }
+    if (confirm === 'open' && terminal) return openConfirm(close, terminal.onOpen);
+    return (
+      <>
+        {phone ? (
+          <>
+            <div className="fd-menu-text">
+              <div className="fd-sh-badges">
+                <Badges session={session} />
+                {flags.held ? (
+                  <span className="fd-badge" data-tone="act">
+                    In terminal
+                  </span>
+                ) : null}
+              </div>
+              <Place parts={place} cwd={s.cwd} />
+            </div>
+            <div className="fd-menu-sep" />
+            {flags.held && terminal ? (
               <button
                 type="button"
-                className="fd-sh-icon"
-                aria-label="Rename"
-                disabled={!canRename}
-                onClick={() => setRenaming(true)}
+                disabled={!flags.live || actions?.canDrive !== true || busy !== null}
+                onClick={() => {
+                  close();
+                  terminal.onReturn();
+                }}
               >
-                <PencilIcon />
+                <Icon of={Undo2} /> Return to board control
               </button>
-            </>
-          )}
-          <span className="fd-sh-status" data-status={session.status}>
-            {session.status.replaceAll('_', ' ')}
-          </span>
-          <span className="fd-sh-chip" data-provider={s.provider}>
-            {providerLabel(s.provider)}
-          </span>
-          <span className="fd-sh-chip fd-sh-model">{s.model ?? 'default model'}</span>
+            ) : !flags.held && canTerminalOpen && terminal ? (
+              <button type="button" disabled={busy !== null} onClick={() => setConfirm('open')}>
+                <Icon of={SquareTerminal} /> Open in terminal…
+              </button>
+            ) : null}
+          </>
+        ) : null}
+        {menuItems(close)}
+      </>
+    );
+  };
+
+  const overflow = (
+    <Menu
+      summary={<Icon of={Ellipsis} />}
+      summaryClass="fd-iconbtn"
+      label="Session menu"
+      onClosed={() => setConfirm(null)}
+    >
+      {menuBody}
+    </Menu>
+  );
+
+  return (
+    <div className="fd-sh-block">
+      <header className="fd-sh" aria-label="Session header" data-layout={layout}>
+        {onBack ? (
+          <button type="button" className="fd-iconbtn" aria-label="Back" onClick={onBack}>
+            <Icon of={ChevronLeft} />
+          </button>
+        ) : null}
+        <div className="fd-sh-id">
+          <div className="fd-sh-line">
+            <span className="fd-dot" data-status={session.status} aria-hidden="true" />
+            {renaming ? (
+              <RenameForm
+                title={s.title}
+                enabled={canRename}
+                startEditing
+                onClose={() => setRenaming(false)}
+                onRename={(t) => run('rename', (a) => a.rename(t))}
+              />
+            ) : (
+              <>
+                <h2 className="fd-sh-title">{title}</h2>
+                {phone ? null : (
+                  <button
+                    type="button"
+                    className="fd-iconbtn fd-sm"
+                    aria-label="Rename"
+                    disabled={!canRename}
+                    onClick={() => setRenaming(true)}
+                  >
+                    <Icon of={Pencil} />
+                  </button>
+                )}
+              </>
+            )}
+            {phone ? null : <Badges session={session} />}
+          </div>
+          {phone ? null : <Place parts={place} cwd={s.cwd} />}
         </div>
-        <p className="fd-sh-place">
-          {place.map((part, n) => (
-            <span key={part} title={n === place.length - 1 && s.cwd ? s.cwd : undefined}>
-              {n > 0 ? ' · ' : ''}
-              {part}
-            </span>
-          ))}
-        </p>
         <div className="fd-sh-actions">
           {flags.canInterrupt ? (
-            <button
-              type="button"
-              disabled={busy !== null}
-              onClick={() => run('interrupt', (a) => a.interrupt())}
-            >
-              Interrupt
-            </button>
-          ) : null}
-          {flags.canStop ? (
-            <Menu summary="Stop" onClosed={() => setConfirmKill(false)}>
-              {(close) =>
-                confirmKill ? (
-                  <div className="fd-sh-confirm" role="group" aria-label="Force stop">
-                    <p>Force stop kills the provider process. Continue?</p>
-                    <div className="fd-options">
-                      <button
-                        type="button"
-                        className="fd-danger"
-                        disabled={busy !== null}
-                        onClick={() => {
-                          setConfirmKill(false);
-                          close();
-                          run('stop', (a) => a.stop('kill'));
-                        }}
-                      >
-                        Force stop
-                      </button>
-                      <button type="button" onClick={() => setConfirmKill(false)}>
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <button
-                      type="button"
-                      disabled={busy !== null}
-                      onClick={() => {
-                        close();
-                        run('stop', (a) => a.stop('graceful'));
-                      }}
-                    >
-                      Stop
-                    </button>
-                    <button
-                      type="button"
-                      className="fd-danger"
-                      disabled={busy !== null}
-                      onClick={() => setConfirmKill(true)}
-                    >
-                      Force stop
-                    </button>
-                  </>
-                )
-              }
-            </Menu>
+            phone ? (
+              <button
+                type="button"
+                className="fd-iconbtn"
+                aria-label="Interrupt"
+                disabled={busy !== null}
+                onClick={() => run('interrupt', (a) => a.interrupt())}
+              >
+                <Icon of={Square} />
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={busy !== null}
+                onClick={() => run('interrupt', (a) => a.interrupt())}
+              >
+                <Icon of={Square} size={14} /> Interrupt
+              </button>
+            )
           ) : null}
           {flags.canResume ? (
-            <button
-              type="button"
-              disabled={busy !== null}
-              onClick={() => run('resume', (a) => a.resume())}
-            >
-              Resume
-            </button>
+            phone ? (
+              <button
+                type="button"
+                className="fd-iconbtn fd-primary"
+                aria-label="Resume"
+                disabled={busy !== null}
+                onClick={() => run('resume', (a) => a.resume())}
+              >
+                <Icon of={Play} />
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="fd-primary"
+                disabled={busy !== null}
+                onClick={() => run('resume', (a) => a.resume())}
+              >
+                <Icon of={Play} size={14} /> Resume
+              </button>
+            )
           ) : null}
-          {flags.held ? (
+          {phone ? null : flags.held ? (
             <>
-              <span className="fd-sh-badge">In terminal</span>
+              <span className="fd-badge" data-tone="act">
+                In terminal
+              </span>
               {terminal ? (
                 <button
                   type="button"
                   disabled={!flags.live || actions?.canDrive !== true || busy !== null}
                   onClick={terminal.onReturn}
                 >
-                  Return to board control
+                  <Icon of={Undo2} size={14} /> Return to board control
                 </button>
               ) : null}
             </>
           ) : canTerminalOpen && terminal ? (
-            confirmOpen ? (
-              <div className="fd-sh-confirm" role="group" aria-label="Open in terminal">
-                <p>
-                  In the terminal, the board does not see approvals or prompts. The station holds
-                  this session until you return it.
-                  {flags.ended ? '' : ' The session stops first.'}
-                </p>
-                <div className="fd-options">
-                  <button
-                    type="button"
-                    disabled={busy !== null}
-                    onClick={() => {
-                      setConfirmOpen(false);
-                      terminal.onOpen();
-                    }}
-                  >
-                    Open in terminal
-                  </button>
-                  <button type="button" onClick={() => setConfirmOpen(false)}>
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <button type="button" disabled={busy !== null} onClick={() => setConfirmOpen(true)}>
-                Open in terminal
-              </button>
-            )
-          ) : null}
-          {hasModes || hasModel || hasAuto ? (
-            <Menu summary={<span aria-hidden="true">⚙</span>} label="Session settings">
-              {() => (
+            <Menu
+              summary={
                 <>
-                  {hasModes && caps ? (
-                    <ModeLadder
-                      modes={caps.modes}
-                      current={s.mode}
-                      enabled={settingsEnabled}
-                      onSet={(m) => run('mode', (a) => a.setMode(m))}
-                    />
-                  ) : null}
-                  {hasModel ? (
-                    <ModelPicker
-                      current={s.model}
-                      enabled={settingsEnabled}
-                      onSet={(m) => run('model', (a) => a.setModel(m))}
-                    />
-                  ) : null}
-                  {hasAuto ? (
-                    <label className="fd-auto-continue">
-                      <input
-                        type="checkbox"
-                        checked={s.auto_continue}
-                        disabled={!flags.live || actions?.canDrive !== true || busy !== null}
-                        onChange={(event) => {
-                          const on = event.currentTarget.checked;
-                          run('auto-continue', (a) => a.setAutoContinue(on));
-                        }}
-                      />{' '}
-                      Continue after a station restart
-                    </label>
-                  ) : null}
+                  <Icon of={SquareTerminal} /> <span className="fd-sh-wide">Open in terminal</span>
                 </>
-              )}
+              }
+              label="Open in terminal"
+            >
+              {(close) => openConfirm(close, terminal.onOpen)}
             </Menu>
           ) : null}
+          {overflow}
         </div>
-        {flags.live ? null : (
-          <p className="fd-sh-off">Controls are off until the board and the station are live.</p>
-        )}
       </header>
+      {flags.live ? null : (
+        <p className="fd-sh-strip" data-tone="act">
+          Controls are off until the board and the station are live.
+        </p>
+      )}
       {outcome ? (
         <div role={outcome.ok ? 'status' : 'alert'} className="fd-sh-outcome" data-ok={outcome.ok}>
+          <Icon of={outcome.ok ? Check : TriangleAlert} size={14} />
           <span>{outcome.text}</span>
-          <button type="button" onClick={controller.dismiss}>
-            Dismiss
+          <button
+            type="button"
+            className="fd-iconbtn fd-sm"
+            aria-label="Dismiss"
+            onClick={controller.dismiss}
+          >
+            <Icon of={X} />
           </button>
         </div>
       ) : null}

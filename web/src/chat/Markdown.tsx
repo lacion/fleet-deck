@@ -1,8 +1,17 @@
 // Safe Markdown for the chat (UI-PLAN §2.5): no raw HTML, links open in a new
 // tab, images are never loaded and render as links.
-import { type ComponentProps, memo, type ReactNode, useEffect, useState } from 'react';
+import {
+  type ComponentProps,
+  Children,
+  isValidElement,
+  memo,
+  type ReactNode,
+  useEffect,
+  useState,
+} from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { Check, Copy, Icon } from '../ui/icons';
 
 const COPIED_MS = 1500;
 const PLUGINS = [remarkGfm];
@@ -15,6 +24,14 @@ function textOf(node: ReactNode): string {
     return textOf((node.props as { children?: ReactNode }).children);
   }
   return '';
+}
+
+/** The language of a fenced block: the `language-xxx` class of its `code` element. */
+function languageOf(children: ReactNode): string | undefined {
+  const first = Children.toArray(children)[0];
+  if (!isValidElement(first)) return undefined;
+  const { className } = first.props as { className?: string };
+  return className?.match(/language-(\S+)/)?.[1];
 }
 
 function CodeBlock({ children }: { children?: ReactNode }) {
@@ -32,9 +49,18 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   };
   return (
     <div className="fd-md-code">
-      <button type="button" className="fd-md-copy" onClick={copy}>
-        {copied ? 'Copied' : 'Copy'}
-      </button>
+      <div className="fd-md-code-head">
+        <span className="fd-md-lang">{languageOf(children) ?? ''}</span>
+        <button
+          type="button"
+          className="fd-iconbtn fd-sm fd-md-copy"
+          aria-label={copied ? 'Copied' : 'Copy code'}
+          title={copied ? 'Copied' : 'Copy code'}
+          onClick={copy}
+        >
+          <Icon of={copied ? Check : Copy} size={14} />
+        </button>
+      </div>
       <pre>{children}</pre>
     </div>
   );

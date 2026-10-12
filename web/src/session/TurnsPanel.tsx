@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Diff } from '../chat/Diff';
 import type { RevertResolution, SessionSummary, TurnDiff } from '../gen';
 import type { Outcome, SessionActions } from './commands';
 import { type FinalizedTurn, revertBlock, revertHolds, revertText } from './workspace';
@@ -23,7 +24,7 @@ export function RevertStatus({ summary, actions, live, busy, act }: Props) {
     live && actions?.canDrive === true && !busy && revert.state === 'reconciliation_required';
   return (
     <section className="fd-revert" aria-label="Revert" data-revert-state={revert.state}>
-      <h3>Revert</h3>
+      <h3 className="fd-label">Revert</h3>
       <p role={revert.state === 'reconciliation_required' ? 'alert' : 'status'}>
         {revertText(revert.state, revert.reason)}
       </p>
@@ -40,6 +41,7 @@ export function RevertStatus({ summary, actions, live, busy, act }: Props) {
               <button
                 key={r}
                 type="button"
+                className="fd-sm"
                 disabled={!canResolve}
                 onClick={() => actions && act(() => actions.resolveRevert(revert.revert_id, r))}
               >
@@ -74,7 +76,7 @@ export function TurnsPanel(props: Props) {
   };
   return (
     <section className="fd-turns" aria-label="Turns">
-      <h3>Turns</h3>
+      <h3 className="fd-label">Turns</h3>
       {caps?.rollback === true ? null : (
         <p className="fd-note">
           This provider cannot roll back its conversation, so the board offers no revert. A
@@ -86,18 +88,19 @@ export function TurnsPanel(props: Props) {
           const block = revertBlock(t, summary, caps);
           const diff = diffs[t.turnId];
           return (
-            <li key={t.turnId} data-turn={t.turnId} data-reverted={t.reverted}>
-              <span>
-                Turn {i + 1}
-                {t.diff
-                  ? ` · ${t.diff.files_changed} files, +${t.diff.insertions} −${t.diff.deletions}`
-                  : t.end?.state === 'unavailable'
-                    ? ` · no completion checkpoint: ${t.end.reason}`
-                    : ''}
-                {t.reverted ? ' · reverted' : ''}
-              </span>
+            <li key={t.turnId} className="fd-panel" data-turn={t.turnId} data-reverted={t.reverted}>
+              <span className="fd-turn-name">Turn {i + 1}</span>
+              {t.diff ? (
+                <span className="fd-turn-stat">
+                  {t.diff.files_changed} files <span className="fd-add">+{t.diff.insertions}</span>{' '}
+                  <span className="fd-del">−{t.diff.deletions}</span>
+                </span>
+              ) : t.end?.state === 'unavailable' ? (
+                <span className="fd-turn-stat">no completion checkpoint: {t.end.reason}</span>
+              ) : null}
+              {t.reverted ? <span className="fd-turn-stat">reverted</span> : null}
               {t.diff && files ? (
-                <button type="button" onClick={() => showDiff(t.turnId)}>
+                <button type="button" className="fd-sm" onClick={() => showDiff(t.turnId)}>
                   Show the diff
                 </button>
               ) : null}
@@ -108,6 +111,7 @@ export function TurnsPanel(props: Props) {
                     every later turn go away.
                     <button
                       type="button"
+                      className="fd-sm fd-danger"
                       disabled={!drive || busy || block !== null}
                       onClick={() => {
                         setConfirm(null);
@@ -116,13 +120,14 @@ export function TurnsPanel(props: Props) {
                     >
                       Revert
                     </button>
-                    <button type="button" onClick={() => setConfirm(null)}>
+                    <button type="button" className="fd-sm" onClick={() => setConfirm(null)}>
                       Cancel
                     </button>
                   </span>
                 ) : (
                   <button
                     type="button"
+                    className="fd-sm"
                     disabled={!drive || busy || block !== null}
                     title={block ?? undefined}
                     onClick={() => setConfirm(t.turnId)}
@@ -133,10 +138,7 @@ export function TurnsPanel(props: Props) {
               ) : null}
               {typeof diff === 'string' ? <p role="alert">{diff}</p> : null}
               {diff && typeof diff !== 'string' ? (
-                <pre className="fd-diff" data-diff={t.turnId}>
-                  {diff.patch}
-                  {diff.truncated ? '\n… (the diff is cut at the size limit)' : ''}
-                </pre>
+                <Diff patch={diff.patch} truncated={diff.truncated} id={t.turnId} />
               ) : null}
             </li>
           );
