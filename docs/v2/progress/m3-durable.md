@@ -28,6 +28,84 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 70 (2026-10-12, 16:21–)
+
+- Committed round 69 as 0d4bbcd.
+- Lanes: no new commits on `m3/orchestration`, `m3/board`, `m3/ops`. `m3-orchestration.md` has no LANE COMPLETE (6-5 open); 6-13, 7-7 and 7-8 still wait.
+- 7-6 docs link check (script over README, internals, operations, cutover, LIVE-SMOKE and packaging README): every relative Markdown link and every `crates/…`, `web/…`, `docs/…`, `packaging/…` path exists. The §8 table of `docs/v2/internals.md` had three crate paths without the `crates/` prefix; they now have it.
+- Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
+
+## Round 69 (2026-10-12, 16:21–)
+
+- Committed round 68 as ff86800.
+- Lanes: no new commits on `m3/orchestration`, `m3/board`, `m3/ops`. `m3-orchestration.md` has no LANE COMPLETE (6-5 open); 6-13, 7-7 and 7-8 still wait.
+- 7-6 docs: `docs/v2/internals.md` §1 glossary adds **workspace**, **mail / task** and **coordinator grant** (the lane B terms).
+- Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
+
+## Round 68 (2026-10-12, 16:20–)
+
+- Committed round 67 as ecdcafd.
+- Lanes: no new commits on `m3/orchestration`, `m3/board`, `m3/ops`. `m3-orchestration.md` has no LANE COMPLETE.
+- 6-5 remaining work, copied from the lane B time-box status (`docs/v2/progress/m3-orchestration.md`, DL-209), so that lane A knows what 6-13 must check after the merge:
+  - the coordinator spec on `session.start` and the §8.2 handoff wiring with the secrecy tests 10–13;
+  - the durable station coordinator outbox (ADR-006 §6.5, §8.4);
+  - the snapshot projection (test 25e);
+  - grant creation at an owner start with the deck-served control skill;
+  - the coordinator live smoke (§8.5).
+- 7-6 docs: `docs/v2/cutover.md` §1 coordinator row names the open parts, so that a v1 user does not expect a `/fleet` replacement before 6-5 closes.
+- Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
+
+## Round 67 (2026-10-12, 16:19–)
+
+- Committed round 66 as 9a653cf.
+- Lanes: no new commits on `m3/orchestration`, `m3/board`, `m3/ops`. `m3-orchestration.md` has no LANE COMPLETE (6-5 open); 6-13, 7-7 and 7-8 still wait. The time-box status table of round 65 stays valid.
+- 7-6 docs: `docs/v2/operations.md` §11 troubleshooting row for `feature_not_negotiated` (version skew, `coordinator.v1`).
+- Tests: `cargo nextest run -p fleetdeck-cli --test docs_commands` → 1 passed.
+- Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
+
+## Round 66 (2026-10-12, 16:18–)
+
+- Committed round 65 as 49b1f67.
+- Lanes: no new commits on `m3/orchestration`, `m3/board`, `m3/ops`. `m3-orchestration.md` has no LANE COMPLETE (6-5 open); 6-13, 7-7 and 7-8 still wait. The time-box status table of round 65 stays valid.
+- 7-6 docs: `docs/v2/internals.md` §8 coordinator row names the `coordinator.v1` gate of the link forward methods.
+- Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
+
+## Round 65 (2026-10-12, 16:17–)
+
+- Committed round 64 as a86a08c.
+- Lanes: no new commits on `m3/orchestration`, `m3/board`, `m3/ops`. `m3-orchestration.md` has no LANE COMPLETE (6-5 open).
+
+### M3 status at the 16:20 time box
+
+| Item | State | Evidence |
+| --- | --- | --- |
+| P2-a, P2-b, SIGKILL child survival | Done | Named regression tests (rounds 1-3 of this log). |
+| 6-1 Workspaces, 6-2 Mail, 6-3 Assign auto, 6-4 Tasks | Done (lane B) | `docs/v2/progress/m3-orchestration.md`. |
+| 6-5 Coordinator | Open (lane B, partial) | ADR-006 tests up to 26 merged (9b27b2e); no LANE COMPLETE. |
+| 6-6 to 6-10, 6-12 | Done (lane C, LANE COMPLETE) | `docs/v2/progress/m3-board.md`. |
+| 6-11 Human shell, 7-4 Performance, 7-5 Packaging | Done (lane D, LANE COMPLETE) | `docs/v2/progress/m3-ops.md`. |
+| 7-1 ShimHost, 7-2 Auto-continue, 7-3 Drain and self-upgrade, 7-6 Docs | Done (lane A) | This log. |
+| 6-13 Parity, 7-7 Cutover, 7-8 Final checks | Open (lane A) | Wait for lane B LANE COMPLETE and its merge. |
+
+- Owner steps (unchanged): Docker image build, real tailnet, macOS launchd, physical phone, cargo-dist release (`docs/v2/operations.md` §12).
+- Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
+
+## Round 64 (2026-10-12, 16:15–)
+
+- Committed round 63 as dc177bd.
+- Lanes: merged `m3/orchestration` 42b27a9 as 9b27b2e, no conflicts (`coordinator.call` and `coordinator.query` gated by `coordinator.v1`, ADR-006 test 26). `crates/fleetdeck-proto` changed (doc comment): `make ts-types` → no change. `m3/board`, `m3/ops`: no new commits. `m3-orchestration.md` has no LANE COMPLETE (6-5 open); 6-13, 7-7 and 7-8 still wait.
+- Merge validation: `cargo nextest run -p fleetdeck-link` → 106 passed.
+- 7-6 docs: `docs/v2/internals.md` §link names the `coordinator.v1` feature gate as the example of `feature_not_negotiated`.
+- Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
+
+## Round 63 (2026-10-12, 16:13–)
+
+- Committed round 62 as f0b3ba7.
+- Lanes: no new commits on `m3/orchestration`, `m3/board`, `m3/ops`. `m3-orchestration.md` has no LANE COMPLETE (6-5 open); 6-13, 7-7 and 7-8 still wait.
+- 7-6 docs: the README documentation list links the ADRs (001, 002, 004, 005, 006, 007).
+- Tests: `cargo nextest run -p fleetdeck-cli --test docs_commands` → 1 passed.
+- Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
+
 ## Round 62 (2026-10-12, 16:12–)
 
 - Committed round 61 as ae42039.

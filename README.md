@@ -78,6 +78,7 @@ A station behind NAT dials the deck. A deck can also dial a station that listens
 - [Internals](docs/v2/internals.md): glossary, crate map, data flow, link protocol.
 - [Packaging](packaging/README.md): installer, systemd and launchd units, container image.
 - [Live smoke tests](docs/v2/LIVE-SMOKE.md): the opt-in tests against the real CLIs.
+- Architecture decisions: [ADR-001 Claude adapter](docs/v2/adr/ADR-001-native-claude-adapter.md), [ADR-002 Codex adapter](docs/v2/adr/ADR-002-native-codex-adapter.md), [ADR-004 link protocol](docs/v2/adr/ADR-004-link-protocol-v1.md), [ADR-005 ShimHost](docs/v2/adr/ADR-005-shim-host.md), [ADR-006 coordinator MCP](docs/v2/adr/ADR-006-coordinator-mcp.md), [ADR-007 auto-continue](docs/v2/adr/ADR-007-auto-continue.md).
 - [Plan](docs/v2/PLAN.md) and [decisions log](docs/v2/DECISIONS-LOG.md).
 
 ## Development

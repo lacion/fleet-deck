@@ -24,6 +24,9 @@ This document is the map of the v2 code for a developer and a reviewer. It gives
 | **lost** | A session whose process the station cannot account for after a restart. |
 | **checkpoint** | A snapshot of the workspace at a turn boundary, for revert (PLAN §6.6). |
 | **callsign** | A short session name, unique on its station; the address for mail and tasks. |
+| **workspace** | The directory where a session works: the repository itself, a new git worktree, or a clone. The station provisions it (`workspace/provision.rs`). |
+| **mail / task** | Deck-side fleet records: a message from one session to another (delivered as input through the outbox), and a unit of work that the deck assigns to a session. |
+| **coordinator grant** | A scoped, expiring permission that lets one session start and steer other sessions through the coordinator MCP API (ADR-006). The owner renews or revokes it. |
 | **drain** | A station mode that refuses new work before an upgrade (DL-128). |
 | **auto-continue** | An opt-in per-session preference: after a station restart, continue a lost turn with a fixed station message when every ADR-007 rule holds. |
 
@@ -55,7 +58,7 @@ This document is the map of the v2 code for a developer and a reviewer. It gives
 - Transport: TLS (rustls) with self-signed certificates from Ed25519 identity keys, pinned after pairing. A control WebSocket (JSON frames up to 1 MiB) and a data WebSocket (byte streams with credit flow control).
 - Handshake: both sides send `Hello { proto_min, proto_max, features, role, node_id, link_epoch, nonce }` and sign the transcript with the TLS exporter value. The highest common version wins; the features decide the behaviour.
 - Frames: `Request`, `Response`, `Event`, `Ack`, `SnapshotBegin`/`SnapshotSession`/`SnapshotEnd`, `Ping`/`Pong`, `Close`.
-- Each method declares its direction, scope and feature (`crates/fleetdeck-link/src/methods.rs`, ADR-004 §9.6). A method whose feature was not negotiated is refused `feature_not_negotiated`.
+- Each method declares its direction, scope and feature (`crates/fleetdeck-link/src/methods.rs`, ADR-004 §9.6). A method whose feature was not negotiated is refused `feature_not_negotiated`. Example: `coordinator.query` and `coordinator.call` need `coordinator.v1`, so an N−1 peer without it cannot reach the coordinator forward (ADR-006 test 26).
 - Commands carry `target_incarnation` and `retry_until`. The deck resends the same `command_id` after a reconnect and never after `retry_until`.
 - Network scope: loopback, private LAN and tailnet addresses only (D13).
 
@@ -97,10 +100,10 @@ Use this table to find the code of a feature. The tests of a feature are next to
 | --- | --- | --- | --- |
 | Workspaces (worktree, clone, batch) | `workspace/provision.rs`, `manager/workspaces.rs` | `http/workspace_routes.rs` | `web/src/spawn/`, `e2e/workspace.spec.ts`, `e2e/spawn.spec.ts` |
 | Assign, tasks, mail | — | `store/fleet.rs`, `http/assign_routes.rs`, `http/fleet_routes.rs` | `web/src/assign/`, `web/src/fleet/`, `e2e/assign.spec.ts`, `e2e/fleet.spec.ts` |
-| Coordinator MCP (ADR-006) | `coordinator/` (MCP ingress, bindings, tools, `forward.rs` link forward), `manager/coordinator_command.rs` (`session.coordinator_renew`, `session.coordinator_revoke`) | `store/coordinator.rs`, `store/coordinator_ops.rs`, `store/grants.rs`, `http/grant_routes.rs` | `web/src/session/commands.ts`, `web/src/fleet/FleetPanel.tsx` (grant renewal; in progress, lane B 6-5) |
+| Coordinator MCP (ADR-006) | `coordinator/` (MCP ingress, bindings, tools, `forward.rs` link forward; `coordinator.query` and `coordinator.call` are gated by `coordinator.v1` in `crates/fleetdeck-link/src/methods.rs`), `manager/coordinator_command.rs` (`session.coordinator_renew`, `session.coordinator_revoke`) | `store/coordinator.rs`, `store/coordinator_ops.rs`, `store/grants.rs`, `http/grant_routes.rs` | `web/src/session/commands.ts`, `web/src/fleet/FleetPanel.tsx` (grant renewal; in progress, lane B 6-5) |
 | Plans | — | `store/plans.rs`, `http/plan_routes.rs` | `board/PlanLibrary.tsx`, `e2e/plans.spec.ts` |
-| Usage meters | provider limits (`fleetdeck-providers/src/codex/limits.rs`) | read model | `board/UsageMeters.tsx`, `e2e/usage.spec.ts` |
-| Images and notifications | image input (`fleetdeck-proto/src/input.rs`; Claude `control.rs`, Codex `rpc.rs`) | — | `session/` (images), `board/notify.ts`, `e2e/images.spec.ts` |
+| Usage meters | provider limits (`crates/fleetdeck-providers/src/codex/limits.rs`) | read model | `board/UsageMeters.tsx`, `e2e/usage.spec.ts` |
+| Images and notifications | image input (`crates/fleetdeck-proto/src/input.rs`; Claude `control.rs`, Codex `rpc.rs`) | — | `session/` (images), `board/notify.ts`, `e2e/images.spec.ts` |
 | Conflict radar | — (the deck reads the file touches from the events) | `store/conflicts.rs` | `board/ConflictRadar.tsx`, `e2e/conflicts.spec.ts` |
 | Files, checkpoints, revert | `workspace/checkpoint.rs`, `workspace/restore.rs`, `manager/revert*.rs`, `manager/files.rs` | `http/file_routes.rs` | `web/src/session/`, `e2e/revert.spec.ts` |
 | Import a CLI session | `manager/decide.rs` (`session.import`) | method table | `web/src/spawn/`, `e2e/spawn.spec.ts` |
