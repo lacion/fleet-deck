@@ -28,6 +28,19 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 53 (2026-10-12, 15:39–)
+
+- Committed round 52 as cce4e69.
+- Merged `m3/orchestration` 0a647eb (6-5 Coordinator, partial: deck decision core, grants, queries, lifecycle, station MCP ingress) as d1e504b. Conflicts resolved, both sides kept:
+  - `crates/fleetdeck-deck/src/store/schema.rs`: lane B's coordinator grants (`tokens`, `coordinator_lineage`) renumbered V8 → V9 (file touches were V8 first); `M::up(V9)` added; module doc updated.
+  - `crates/fleetdeck-deck/src/store/read_model.rs`: both `conflicts::record_touches` and `grants::record_lifecycle` run per event.
+  - `crates/fleetdeck-proto/src/mutation.rs` imports and `crates/fleetdeck-proto/src/ts.rs` exports of both sides; `Cargo.lock` keeps `hyper`, `hyper-util` and `portable-pty`.
+  - `crates/fleetdeck-deck/src/store/coordinator_ops.rs` and `coordinator_tests.rs`: `UserInput::new(..)` (the images field came from lane C).
+  - `make ts-types` regenerated `web/src/gen` (coordinator types).
+- Checks after the merge: build clean; `cargo nextest run -p fleetdeck-proto -p fleetdeck-link -p fleetdeck-deck` → 279 passed; station coordinator and ingress tests → 15 passed; fmt, clippy, biome lint and typecheck clean.
+- Lane B has no LANE COMPLETE yet (6-5 is partial), so 6-13, 7-7 and 7-8 still wait.
+- 7-6: `docs/v2/internals.md` §8 coordinator row names the station `coordinator/` ingress and the deck grant modules.
+
 ## Round 52 (2026-10-12, 15:35–)
 
 - Committed round 51 as 8798ac2. `m3/orchestration`, `m3/board`, `m3/ops`: no new commits. Lane B has no LANE COMPLETE (6-5 Coordinator: 49 uncommitted files in its worktree), so 6-13, 7-7 and 7-8 still wait.
