@@ -28,6 +28,14 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 105 (2026-10-12, 17:53–)
+
+- Round start: committed round 104 as 400501b. Its tree (b4116f9) is the same tree as the clean-checkout snapshot 395871e, so the check below covers the committed HEAD. `m3/orchestration`, `m3/board`, `m3/ops`: no new commits.
+- Review r104: "finish the clean-checkout make check, record its result, and provide the required STATUS line with the acceptance evidence."
+- Clean-checkout `make check`, run 3 (snapshot 395871e = committed 400501b, cloned into `mktemp -d /mnt/rust-cow/fd-clean.XXXXXX` → `/mnt/rust-cow/fd-clean.8lLgmF`, deleted after with `cd /mnt/rust-cow && rm -r fd-clean.8lLgmF`): **all 15 commands passed** — fmt, clippy, `cargo nextest run --workspace` 1283 passed (7 skipped: the opt-in live smoke tests), `cargo deny check`, `tools/module-size.sh`, `ts_drift` 2 passed, board install/typecheck/lint/test (139 pass)/build/e2e/e2e:real, `replay-claude` 29 ok, `replay-codex` 18 ok.
+- After run 3 only this log entry and the 7-8 checklist line changed (docs only).
+- Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean. `web/` unchanged.
+
 ## Round 104 (2026-10-12, 17:42–)
 
 - Round start: committed round 103 as dacfaf2. `m3/orchestration` had new commits (dcb94e9: live test 31 through the station for both providers and the station lifecycle acknowledgment fence, DL-220); merged as 6d75c96 without conflict. `crates/fleetdeck-proto` unchanged, so no `make ts-types`. `m3/board` and `m3/ops`: already up to date. DL-220 copied into `docs/v2/DECISIONS-LOG.md` (lane B section).
