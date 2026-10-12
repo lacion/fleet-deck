@@ -797,6 +797,8 @@ dependencies = [
  "fleetdeck-providers",
  "fleetdeck-testkit",
  "futures-util",
+ "hyper",
+ "hyper-util",
  "portable-pty",
  "ring",
  "rusqlite",

@@ -7,7 +7,8 @@
 //! command router's `commands` table (G3). V4 (P3-7b): the outbox of
 //! deck-owned intent (A5) and the receipts of `coordinator.call` (G7). Auth
 //! and audit tables follow in P3-8 (V5). V6 (M3 6-6): the plan
-//! library. V7 (M3 6-2, 6-4): mail and tasks. V8 (M3 6-7): file touches.
+//! library. V7 (M3 6-2, 6-4): mail and tasks. V8 (M3 6-7): file touches. V9 (M3 6-5): coordinator
+//! grants (`tokens`) and their lineage.
 
 use rusqlite_migration::{M, Migrations};
 
@@ -232,6 +233,44 @@ CREATE TABLE file_touches (
 CREATE INDEX file_touches_by_time ON file_touches (touched_at);
 ";
 
+/// Coordinator grants (M3 6-5, ADR-006 §4, PLAN §10 table `tokens`) and the
+/// lineage of the sessions that a grant started (§6.3 `interrupt`/`stop`).
+/// Renumbered from V8 to V9 at the lane A merge (file touches came first).
+/// `spawn_used` is a durable lifetime counter (§6.4): receipt pruning never
+/// changes it.
+const V9: &str = "
+CREATE TABLE tokens (
+    grant_id                TEXT    PRIMARY KEY,
+    station_id              TEXT    NOT NULL,
+    session_id              TEXT    NOT NULL,
+    classes                 TEXT    NOT NULL,
+    stations                TEXT    NOT NULL,
+    spawn_cap               INTEGER NOT NULL CHECK (spawn_cap BETWEEN 0 AND 50),
+    spawn_used              INTEGER NOT NULL DEFAULT 0 CHECK (spawn_used >= 0),
+    max_modes               TEXT    NOT NULL,
+    idle_ttl_ms             INTEGER NOT NULL CHECK (idle_ttl_ms BETWEEN 1 AND 86400000),
+    created_at              INTEGER NOT NULL,
+    expires_at              INTEGER NOT NULL,
+    state                   TEXT    NOT NULL CHECK (state IN ('active', 'revoked', 'expired')),
+    revoked_reason          TEXT,
+    bound_generation        INTEGER,
+    bound_native_id         TEXT,
+    bound_provider_instance TEXT,
+    binding_id              TEXT,
+    last_used_at            INTEGER
+) STRICT;
+CREATE INDEX tokens_by_caller ON tokens (station_id, session_id, created_at);
+CREATE TABLE coordinator_lineage (
+    command_id      TEXT    PRIMARY KEY,
+    grant_id        TEXT    NOT NULL REFERENCES tokens (grant_id),
+    station_id      TEXT    NOT NULL,
+    session_id      TEXT,
+    start_outbox_id TEXT,
+    created_at      INTEGER NOT NULL
+) STRICT;
+CREATE INDEX lineage_by_session ON coordinator_lineage (station_id, session_id);
+";
+
 /// The `deck.db` migrations.
 #[must_use]
 pub fn migrations() -> Migrations<'static> {
@@ -244,6 +283,7 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V6),
         M::up(V7),
         M::up(V8),
+        M::up(V9),
     ])
 }
 

@@ -199,6 +199,18 @@ fn samples() -> Vec<Event> {
         Event::AutoContinueSkipped {
             reason: "newer_owner_work".into(),
         },
+        Event::CoordinatorBound {
+            binding_id: "b-1".into(),
+            grant_id: "g-1".into(),
+            generation: 1,
+            provider_instance: "claude".into(),
+            native_id: "native-1".into(),
+        },
+        Event::CoordinatorEnded {
+            binding_id: "b-1".into(),
+            generation: 1,
+            reason: "idle".into(),
+        },
     ]
 }
 

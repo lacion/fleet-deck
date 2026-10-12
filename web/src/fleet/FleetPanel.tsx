@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import type { DeckSession, TaskView } from '../gen';
-import { type FleetActions, type FleetResult, taskStatus } from './fleet';
+import type { DeckSession, GrantView, TaskView } from '../gen';
+import { type FleetActions, type FleetResult, grantStatus, taskStatus } from './fleet';
 
 type Props = {
   readonly actions: FleetActions | undefined;
@@ -19,11 +19,15 @@ export function FleetPanel({ actions, sessions }: Props) {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<FleetResult | null>(null);
   const [tasks, setTasks] = useState<readonly TaskView[]>([]);
+  const [grants, setGrants] = useState<readonly GrantView[]>([]);
   useEffect(() => {
     if (actions === undefined) return undefined;
     let current = true;
     void actions.tasks().then((t) => {
       if (current) setTasks(t);
+    });
+    void actions.grants().then((g) => {
+      if (current) setGrants(g);
     });
     return () => {
       current = false;
@@ -91,6 +95,34 @@ export function FleetPanel({ actions, sessions }: Props) {
             <li key={t.task_id}>
               <span className="fd-task-title">{t.title}</span>{' '}
               <span className={`fd-task-state fd-task-${t.state}`}>{taskStatus(t)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {grants.length === 0 ? null : (
+        <ul aria-label="Coordinator grants">
+          {grants.map((g) => (
+            <li key={g.grant_id}>
+              <span className="fd-task-title">Coordinator {g.session_id}</span>{' '}
+              <span className={`fd-task-state fd-grant-${g.state}`}>{grantStatus(g)}</span>
+              {g.state === 'revoked' ? null : (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => {
+                    setBusy(true);
+                    void actions
+                      .revoke(g.grant_id)
+                      .then(async (r) => {
+                        setResult(r);
+                        setGrants(await actions.grants());
+                      })
+                      .finally(() => setBusy(false));
+                  }}
+                >
+                  Revoke
+                </button>
+              )}
             </li>
           ))}
         </ul>

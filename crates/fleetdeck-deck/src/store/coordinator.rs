@@ -7,23 +7,31 @@
 //!    `incarnation_mismatch`, not stored.
 //! 2. In the decision transaction: the station must still be paired and
 //!    hold the `coordinate` grant, else `forbidden`, not stored (G5).
-//! 3. A stored receipt with the same method, caller and payload hash → that
+//! 3. The grant of the caller (M3 6-5, ADR-006 §6.2 step 3): none, revoked,
+//!    past `expires_at` or idle past its TTL → `forbidden`, not stored; a
+//!    binding that differs from the deck's → `binding_stale`, not stored.
+//!    Because this comes before the replay, a replay after a revocation
+//!    never returns the old acceptance.
+//! 4. A stored receipt with the same method, caller and payload hash → that
 //!    receipt (also after `retry_until`); the same id with another method,
 //!    caller or payload → `command_id_reused`, not stored.
-//! 4. A passed `retry_until` → `expired`, not stored.
-//! 5. Else the deck decides and stores the receipt. The coordinator
-//!    operations (spawn, send, stop, assign) come with PLAN Phase 6; until
-//!    then every new call is a stored rejection `unsupported` (DL-053).
+//! 5. A passed `retry_until` → `expired`, not stored.
+//! 6. Else the class, target and cap checks of [`super::coordinator_ops`]
+//!    and the intent commit with the stored receipt; `last_used_at` moves
+//!    only for an accepted new call.
 
 use std::collections::BTreeSet;
 
+use fleetdeck_proto::command::CommandResult;
 use fleetdeck_proto::link::Scope;
 use fleetdeck_proto::mutation::{CoordinatorCallEnvelope, Mutation};
 use fleetdeck_proto::{Receipt, Reject, RejectCode, StationId};
 use ring::digest::{SHA256, digest};
 use rusqlite::{OptionalExtension, params};
 
-use super::{DeckStore, Result, call};
+use super::coordinator_ops::{Context, Decision, decide};
+use super::grants::{GrantState, caller_grant};
+use super::{DeckStore, Result, call, new_id};
 
 const METHOD: &str = "coordinator.call";
 
@@ -49,6 +57,19 @@ impl DeckStore {
         let now = self.now_ms();
         let incarnation = self.incarnation().clone();
         let caller = format!("{}/{}", station, envelope.call.caller);
+        let caller_session = envelope.call.caller.clone();
+        let binding = envelope.call.binding.clone();
+        let op = envelope.call.op.clone();
+        let ctx = Context {
+            sessions: self.sessions().await?,
+            infos: self
+                .station_infos()
+                .into_iter()
+                .map(|(id, (info, _))| (id, info))
+                .collect(),
+            buried: self.undelivered_mail().await?,
+            outbox_id: new_id(self.inner.ids.as_ref()),
+        };
         let other_deck = envelope.target_incarnation != incarnation;
         let mutation = Mutation::Coordinator(envelope);
         let command_id = mutation.command_id().clone();
@@ -83,6 +104,39 @@ impl DeckStore {
                     "the station is not paired or has no `coordinate` grant",
                 ));
             }
+            let Some(grant) = caller_grant(&tx, &station, &caller_session)? else {
+                return Ok(rejected(
+                    RejectCode::Forbidden,
+                    "the caller has no coordinator grant",
+                ));
+            };
+            if grant.state != GrantState::Active || now > grant.expires_at {
+                return Ok(rejected(
+                    RejectCode::Forbidden,
+                    "the coordinator grant is revoked or expired",
+                ));
+            }
+            if grant.binding.as_ref() != Some(&binding) {
+                return Ok(rejected(
+                    RejectCode::BindingStale,
+                    "the coordinator binding is not the deck's binding of the grant",
+                ));
+            }
+            if grant
+                .last_used_at
+                .is_some_and(|t| now.saturating_sub(t) > grant.idle_ttl_ms)
+            {
+                tx.execute(
+                    "UPDATE tokens SET state = 'expired', revoked_reason = 'idle'
+                     WHERE grant_id = ?1 AND state = 'active'",
+                    [grant.grant_id.as_str()],
+                )?;
+                tx.commit()?;
+                return Ok(rejected(
+                    RejectCode::Forbidden,
+                    "the coordinator grant expired after its idle time",
+                ));
+            }
             let prior: Option<(String, String, String, String)> = tx
                 .query_row(
                     "SELECT method, caller, payload_sha256, receipt FROM coordinator_receipts
@@ -104,10 +158,24 @@ impl DeckStore {
             if let Err(reject) = admitted {
                 return Ok(Receipt::rejected(command_id.clone(), reject, now));
             }
-            let receipt = rejected(
-                RejectCode::Unsupported,
-                "coordinator operations come with PLAN Phase 6",
-            );
+            let receipt = match decide(&tx, &grant, &op, &ctx, command_id.as_str(), now)? {
+                Decision::Accepted(session_id) => {
+                    tx.execute(
+                        "UPDATE tokens SET last_used_at = ?2 WHERE grant_id = ?1",
+                        params![grant.grant_id, now],
+                    )?;
+                    Receipt::accepted(
+                        command_id.clone(),
+                        0,
+                        CommandResult {
+                            session_id,
+                            input_id: None,
+                        },
+                        now,
+                    )
+                }
+                Decision::Rejected(code, message) => rejected(code, &message),
+            };
             tx.execute(
                 "INSERT INTO coordinator_receipts
                      (command_id, station_id, method, caller, payload_sha256, receipt, at)
@@ -143,3 +211,7 @@ impl DeckStore {
         .await
     }
 }
+
+#[cfg(test)]
+#[path = "coordinator_tests.rs"]
+mod tests;

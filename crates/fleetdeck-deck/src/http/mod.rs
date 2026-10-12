@@ -9,6 +9,7 @@ pub mod auth_routes;
 pub mod command_routes;
 pub mod file_routes;
 pub mod fleet_routes;
+pub mod grant_routes;
 pub mod guard;
 pub mod methods;
 pub mod plan_routes;
@@ -119,6 +120,11 @@ pub fn router(board: Arc<Board>) -> Router {
             post(fleet_routes::complete_task),
         )
         .route("/api/tasks/{task_id}/wait", get(fleet_routes::wait_task))
+        .route("/api/coordinator/grants", get(grant_routes::list))
+        .route(
+            "/api/coordinator/grants/{grant_id}/revoke",
+            post(grant_routes::revoke),
+        )
         .route("/api/commands", get(read_routes::commands))
         .route(
             "/api/commands/{command_id}",

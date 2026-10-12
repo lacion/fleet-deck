@@ -11,7 +11,8 @@ use serde_json::Value;
 use ts_rs::TS;
 
 use crate::command::{CommandEnvelope, Reject, RejectCode, SessionSpec, UserInput, admit};
-use crate::ids::{CommandId, IncarnationId, SessionId, StationId};
+use crate::event::ProviderKind;
+use crate::ids::{CommandId, IncarnationId, ProviderInstanceId, SessionId, StationId};
 use crate::shell::ShellEnvelope;
 
 /// Domain separation of a key rotation signature (ADR-004 §9.5).
@@ -180,38 +181,105 @@ pub struct KeyRotationEnvelope {
     pub rotation: KeyRotation,
 }
 
-/// An operation of a coordinator agent that changes fleet intent (G7).
-/// Read operations use `coordinator.query`. An unknown op is rejected.
+/// A session that a coordinator operation names (ADR-006 §6.1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "mutation/")]
+pub struct CoordinatorTarget {
+    pub station: StationId,
+    pub session_id: SessionId,
+}
+
+/// What `assign_auto` needs from a session (the board's `assign auto`
+/// rules, DL-204).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "mutation/")]
+pub struct AssignRequirements {
+    /// A repository path: the session works in it or in one of its
+    /// worktrees; a start uses it as `cwd`.
+    #[serde(default)]
+    pub repo: Option<String>,
+    #[serde(default)]
+    pub provider: Option<ProviderKind>,
+}
+
+/// The delivery of coordinator mail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "mutation/")]
+pub enum CoordinatorDelivery {
+    FollowUp,
+    Steer,
+}
+
+/// An operation of a coordinator agent that changes fleet intent (G7,
+/// ADR-006 §6.1). Read operations use `coordinator.query`. An unknown op is
+/// rejected.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 #[ts(export_to = "mutation/")]
 pub enum CoordinatorOp {
-    /// Start a session on a station (counts against the token's spawn cap).
+    /// Start a session on a station (counts against the grant's spawn cap).
     Spawn {
         station: StationId,
         spec: SessionSpec,
         prompt: Option<UserInput>,
     },
-    /// Mail to a callsign, a repo group, a station, or everyone.
-    Send { to: String, text: String },
-    /// Stop a session.
+    /// Mail to a session.
+    Send {
+        to: CoordinatorTarget,
+        text: String,
+        delivery: CoordinatorDelivery,
+    },
+    /// Interrupt the turn of a session of this grant's lineage.
+    Interrupt {
+        station: StationId,
+        session_id: SessionId,
+    },
+    /// Stop a session of this grant's lineage.
     Stop {
         station: StationId,
         session_id: SessionId,
     },
-    /// Assign a task to a callsign.
-    Assign { task: String, to: String },
+    /// Assign a task to a session.
+    Assign { task: String, to: CoordinatorTarget },
+    /// Assign a task to the best session, or start one (spawn class).
+    AssignAuto {
+        task: String,
+        requirements: AssignRequirements,
+    },
+    /// Complete a task that was assigned to the caller.
+    CompleteTask {
+        task_id: String,
+        result: Option<String>,
+    },
 }
 
-/// The calling agent and its operation.
+/// The binding facts of a coordinator session: the deck checks them
+/// against its own projection (ADR-006 §6.1, §6.2 step 3).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "mutation/")]
+pub struct CoordinatorBinding {
+    pub binding_id: String,
+    pub grant_id: String,
+    pub generation: u32,
+    pub provider_instance: ProviderInstanceId,
+    pub native_id: String,
+}
+
+/// The calling agent and its operation. The credential and its digest
+/// never leave the station (ADR-006 §6.1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
 #[ts(export_to = "mutation/")]
 pub struct CoordinatorCall {
     /// The session of the coordinator agent on the sending station.
     pub caller: SessionId,
-    /// SHA-256 (64 hex digits) of the coordinator token that the agent
-    /// showed to its station. The token itself never crosses the link.
-    pub token_digest: String,
+    pub binding: CoordinatorBinding,
+    #[serde(default)]
+    pub idempotency_key: Option<String>,
     pub op: CoordinatorOp,
 }
 
@@ -224,6 +292,35 @@ pub struct CoordinatorCallEnvelope {
     pub target_incarnation: IncarnationId,
     pub retry_until: i64,
     pub call: CoordinatorCall,
+}
+
+/// A read of a coordinator agent (`coordinator.query`, ADR-006 §6.6). It
+/// keeps no receipt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "query", rename_all = "snake_case", deny_unknown_fields)]
+#[ts(export_to = "mutation/")]
+pub enum CoordinatorQuery {
+    /// The sessions on the grant's stations (`read` class).
+    ListSessions,
+    /// Wait for the end of a task on the grant's stations (`read` class).
+    WaitTask { task_id: String },
+    /// The receipt of an own `coordinator.call` (any mutating class).
+    CommandStatus { command_id: CommandId },
+}
+
+/// The `params` of `coordinator.query`. `deadline` ≤ arrival + 30 s, or
+/// ≤ arrival + 60 s for `wait_task`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "mutation/")]
+pub struct CoordinatorQueryEnvelope {
+    pub query_id: String,
+    /// The deck's database incarnation.
+    pub target_incarnation: IncarnationId,
+    pub caller: SessionId,
+    pub binding: CoordinatorBinding,
+    pub deadline: i64,
+    pub query: CoordinatorQuery,
 }
 
 /// The parsed `params` of a mutating request.

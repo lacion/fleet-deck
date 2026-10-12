@@ -44,8 +44,10 @@ pub(crate) fn sample(method: &str) -> Value {
         "shell.close" => with("change", json!({"op": "close", "shell_id": "main"})),
         "coordinator.call" => with(
             "call",
-            json!({"caller": s, "token_digest": "d".repeat(64),
-                   "op": {"op": "send", "to": "alpha", "text": "hi"}}),
+            json!({"caller": s, "binding": {"binding_id": "b", "grant_id": "g",
+                   "generation": 1, "provider_instance": "claude", "native_id": "n"},
+                   "op": {"op": "send", "to": {"station": "alpha", "session_id": s},
+                          "text": "hi", "delivery": "follow_up"}}),
         ),
         _ => {
             let op = method.rsplit('.').next().unwrap_or_default();
@@ -137,7 +139,8 @@ fn a_command_id_or_method_that_disagrees_is_an_invalid_command() {
 fn unknown_operations_and_fields_fail_closed() {
     let bad_op = with(
         "call",
-        json!({"caller": "s", "token_digest": "d",
+        json!({"caller": "s", "binding": {"binding_id": "b", "grant_id": "g",
+               "generation": 1, "provider_instance": "claude", "native_id": "n"},
         "op": {"op": "delete_everything"}}),
     );
     assert!(parse("coordinator.call", bad_op).is_err());

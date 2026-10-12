@@ -150,3 +150,77 @@ reason, owner review.
   result. The wait polls the store every 100 ms: simple, and bounded by the
   60 s cap. The coordinator MCP (6-5) exposes the same calls to agents.
 - Owner review: pending
+
+## DL-207: Coordinator deck decision core (6-5, ADR-006 §4, §6.1–§6.4)
+
+- Context: ADR-006 revision 4 (Accepted) defines grants, the binding
+  check, the decision order, the tool/class matrix and the spawn-cap
+  accounting. M2 stored every new `coordinator.call` as `unsupported`.
+- Choice: `CoordinatorCall` takes the ADR §6.1 shape (`caller`, `binding`,
+  `idempotency_key`, `op`; the M2 `token_digest` is gone). The ops are
+  `spawn`, `send`, `interrupt`, `stop`, `assign`, `assign_auto` and
+  `complete_task`. `RejectCode` gains `binding_stale` (never stored) and
+  `spawn_cap_reached` (stored). Deck schema V8 adds the grant table `tokens`
+  and `coordinator_lineage` (`crates/fleetdeck-deck/src/store/grants.rs`).
+  `decide_coordinator` (`store/coordinator.rs`) follows §6.2 steps 1–6 in
+  one transaction; the effects (`store/coordinator_ops.rs`) are deck-owned
+  intent through the existing outbox (mail rows, task rows, `session.start`,
+  `session.interrupt`, `session.stop`), so an accepted call and its intent
+  commit together (A5). Spawn checks the grant stations, the family ceiling
+  in `max_modes` (Claude permission-mode order; Codex approval policy ×
+  sandbox, component-wise; an unknown mode fails closed), then
+  `spawn_used < spawn_cap`, and increments in the same transaction.
+- Deviation: `SessionSpec` has no grant field, so a spawn spec that names
+  a grant has that key dropped at decode instead of an explicit refusal.
+  No grant can reach a station from a coordinator either way; test
+  `a_spawn_that_carries_a_grant_or_a_mode_above_max_mode_is_refused`
+  asserts that the re-encoded op has no grant.
+- Reason: the decision core is the authority boundary; it needs no station
+  or provider change and is fully testable offline.
+- Owner review: pending
+
+## DL-208: Station coordinator ingress (6-5, ADR-006 §5.1–§5.3)
+
+- Context: ADR-006 §5 defines a loopback MCP Streamable HTTP endpoint with
+  limits before authentication and one 401 for every credential failure.
+- Choice: `crates/fleetdeck-station/src/coordinator/` with `bindings.rs`
+  (credential minting into `Secret<String>`, SHA-256 digest only, binding
+  states, per-binding 8 concurrent / 20 rps), `tools.rs` (fixed catalog by
+  class), `jsonrpc.rs` (`initialize` with the two protocol versions and the
+  cached control skill, `ping`, `tools/list`, `tools/call`; pending binding
+  → `not_bound`; tool outside the classes → refused without a forward) and
+  `ingress.rs` (hyper http1 on `127.0.0.1:0`, connection limit with an
+  immediate close, unauthenticated in-flight limit with an immediate 429,
+  header and body time limits, 256 KiB body limit, Host/Origin/Content-Type
+  checks, batch → 400, notification → 202). The forward to the deck is the
+  `Forward` trait. The station crate now uses the workspace `hyper` and
+  `hyper-util` dependencies (already used by the deck; no new dependency).
+- Reason: the ingress is the station half of the trust boundary and has
+  the executable negative tests of §8.1.
+- Owner review: pending
+
+## DL-209: 6-5 parts that stay open after round 2
+
+- Context: the time box (16:20 CEST) does not allow the rest of ADR-006 in
+  this lane run. Round 2 delivered the deck decision core (DL-207), the
+  station ingress (DL-208), `coordinator.query` on the deck and the link,
+  the `coordinator.bound`/`coordinator.ended` lifecycle events with their
+  fold into the grant (tests 25c, 25d), the owner grant list and revoke
+  (board and HTTP), and the provider argument builder of the handoff
+  (`crates/fleetdeck-providers/src/coordinator.rs`, no credential in argv).
+- Open (6-5 stays unchecked):
+  - the start-path wiring of the handoff (mint, child env, binding on the
+    first native id) and the secrecy tests of §8.2;
+  - the `Forward` implementation over the link. The station does not know
+    the deck's database incarnation today; it must learn it from the link
+    hello before it can build an envelope. Then the station coordinator
+    outbox (§6.5, §8.4);
+  - the snapshot projection of the lifecycle state (test 25e);
+  - `session.coordinator_renew` and `session.coordinator_revoke` (§7,
+    26a–26e), and grant creation at an owner start with the control skill;
+  - the live smoke (§8.5) that gates the `coordinator` capability.
+- Choice: keep the capability false (`handoff_unverified`) as the ADR
+  requires until §8.5 passes; `handoff()` answers that reason for every
+  provider. No coordinator traffic can reach the deck without a binding, so
+  the open parts fail closed.
+- Owner review: pending

@@ -195,3 +195,25 @@ pub struct TaskView {
 pub const MAX_WAIT_MS: u64 = 60_000;
 /// The longest result text of a task.
 pub const MAX_RESULT_CHARS: usize = 16_384;
+
+/// A coordinator grant as the board shows it (M3 6-5, ADR-006 §4). It
+/// holds no credential and no digest.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "orchestration/")]
+pub struct GrantView {
+    pub grant_id: String,
+    pub station_id: StationId,
+    pub session_id: SessionId,
+    /// `read`, `mail`, `drive`, `spawn`.
+    pub classes: Vec<String>,
+    pub stations: Vec<StationId>,
+    pub spawn_cap: u32,
+    pub spawn_used: u32,
+    /// `active`, `revoked` or `expired`.
+    pub state: String,
+    pub revoked_reason: Option<String>,
+    /// The binding generation; `None` until the station binds it.
+    pub generation: Option<u32>,
+    pub expires_at: i64,
+    pub last_used_at: Option<i64>,
+}

@@ -181,6 +181,7 @@ impl DeckStore {
                 append_timeline(&tx, &station, &e)?;
                 super::plans::record_plan(&tx, &station, &e, &summary, now)?;
                 super::conflicts::record_touches(&tx, &station, &e, &summary)?;
+                super::grants::record_lifecycle(&tx, &station, &e)?;
                 touched.insert(e.session_id.clone());
                 cursor = e.station_seq;
                 applied += 1;

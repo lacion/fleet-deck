@@ -28,9 +28,13 @@ use crate::link::{
     ControlFrame, ReceiptQuery, ReplayParams, Scope, StationInfo, StreamMode, StreamStart,
     WorkspaceListing, WorkspaceQuery,
 };
-use crate::mutation::{CoordinatorCallEnvelope, KeyRotationEnvelope, StationConfigureEnvelope};
+use crate::mutation::{
+    CoordinatorCallEnvelope, CoordinatorQueryEnvelope, KeyRotationEnvelope,
+    StationConfigureEnvelope,
+};
 use crate::orchestration::{
-    AssignOutcome, AssignRequest, MailRequest, MailView, TaskCompletion, TaskRequest, TaskView,
+    AssignOutcome, AssignRequest, GrantView, MailRequest, MailView, TaskCompletion, TaskRequest,
+    TaskView,
 };
 use crate::plans::{DeckPlan, PlanMarkRequest, PlanStatus};
 use crate::session::{CardStatus, SessionSummary};
@@ -59,6 +63,7 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         crate::shell::ShellEnvelope::export_all(&cfg),
         crate::shell::ShellInfo::export_all(&cfg),
         crate::shell::ShellAttach::export_all(&cfg),
+        CoordinatorQueryEnvelope::export_all(&cfg),
         Receipt::export_all(&cfg),
         DeckCommandState::export_all(&cfg),
         CommandRequest::export_all(&cfg),
@@ -99,6 +104,7 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         TaskRequest::export_all(&cfg),
         TaskCompletion::export_all(&cfg),
         TaskView::export_all(&cfg),
+        GrantView::export_all(&cfg),
         DeckPlan::export_all(&cfg),
         FileConflict::export_all(&cfg),
         PlanStatus::export_all(&cfg),

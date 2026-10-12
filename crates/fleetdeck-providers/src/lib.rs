@@ -7,6 +7,8 @@ pub mod adapter;
 pub mod checkpoint;
 pub mod claude;
 pub mod codex;
+/// The coordinator credential handoff (M3 6-5, ADR-006 §5.4).
+pub mod coordinator;
 pub mod durable;
 pub mod host;
 pub mod rawlog;

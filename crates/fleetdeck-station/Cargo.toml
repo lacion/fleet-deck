@@ -27,6 +27,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]

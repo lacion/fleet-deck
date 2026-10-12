@@ -104,7 +104,7 @@ fn intent(
     })
 }
 
-async fn audited<T>(
+pub(crate) async fn audited<T>(
     board: &Board,
     principal: &Principal,
     action: &str,

@@ -1,0 +1,256 @@
+//! Coordinator credentials and bindings (ADR-006 §5.3–§5.5).
+//!
+//! The station keeps only the SHA-256 digest of a credential. The raw value
+//! lives in a [`Secret`] until it is put into the provider child's
+//! environment; it is never stored, logged or sent.
+
+use std::collections::{BTreeSet, HashMap};
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
+
+use fleetdeck_core::secret::Secret;
+use fleetdeck_proto::SessionId;
+use ring::rand::{SecureRandom, SystemRandom};
+use tokio::sync::Semaphore;
+
+/// The prefix of a coordinator credential.
+pub const TOKEN_PREFIX: &str = "fdc1_";
+/// The environment variable that carries the credential to the provider.
+pub const TOKEN_ENV: &str = "FLEETDECK_COORDINATOR_TOKEN";
+/// Concurrent requests of one binding, including waits for the deck (§5.1).
+pub const BINDING_CONCURRENCY: usize = 8;
+/// Requests per second of one binding (§5.1).
+pub const BINDING_RATE: u32 = 20;
+
+/// A tool class of a grant (ADR-006 §4, §6.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ToolClass {
+    Read,
+    Mail,
+    Drive,
+    Spawn,
+}
+
+/// The state of a binding (§5.5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BindingState {
+    /// Minted; the native identity of the session is not known yet.
+    Pending,
+    Active,
+    Expired,
+    Revoked,
+}
+
+/// One coordinator binding of a session.
+#[derive(Debug, Clone)]
+pub struct Binding {
+    pub binding_id: String,
+    pub grant_id: String,
+    pub session_id: SessionId,
+    pub provider_instance: String,
+    pub native_id: Option<String>,
+    pub generation: u32,
+    pub classes: BTreeSet<ToolClass>,
+    pub state: BindingState,
+    /// The cached control skill (§7.1), served as MCP `instructions`.
+    pub control_skill: String,
+}
+
+/// The identity of an authenticated caller. It comes from the binding only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Caller {
+    pub binding_id: String,
+    pub grant_id: String,
+    pub session_id: SessionId,
+    pub provider_instance: String,
+    pub native_id: String,
+    pub generation: u32,
+}
+
+/// A new credential: the raw value (secret) and its digest.
+pub fn mint() -> Result<(Secret<String>, String), ring::error::Unspecified> {
+    let mut bytes = [0u8; 32];
+    SystemRandom::new().fill(&mut bytes)?;
+    let token = format!("{TOKEN_PREFIX}{}", base64url(&bytes));
+    let d = digest(&token);
+    Ok((Secret::new(token), d))
+}
+
+/// The lowercase hex SHA-256 of a presented credential.
+pub fn digest(token: &str) -> String {
+    let d = ring::digest::digest(&ring::digest::SHA256, token.as_bytes());
+    d.as_ref().iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// `fdc1_` and 43 base64url characters.
+pub fn well_formed(token: &str) -> bool {
+    token.strip_prefix(TOKEN_PREFIX).is_some_and(|rest| {
+        rest.len() == 43
+            && rest
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    })
+}
+
+fn base64url(bytes: &[u8]) -> String {
+    const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = chunk
+            .iter()
+            .enumerate()
+            .fold(0u32, |n, (i, b)| n | (u32::from(*b) << (16 - 8 * i)));
+        for i in 0..=chunk.len() {
+            let idx = (n >> (18 - 6 * i)) & 63;
+            out.push(char::from(A[idx as usize]));
+        }
+    }
+    out
+}
+
+struct Entry {
+    binding: Binding,
+    inflight: Arc<Semaphore>,
+    window: (Instant, u32),
+}
+
+/// The bindings of a station, keyed by credential digest.
+#[derive(Clone, Default)]
+pub struct Bindings {
+    inner: Arc<Mutex<HashMap<String, Entry>>>,
+}
+
+/// The result of an authentication.
+pub(crate) enum Auth {
+    /// Missing, malformed, unknown, expired or revoked: one answer (§5.3).
+    Unauthorized,
+    /// The binding is over its rate or concurrency limit.
+    Limited,
+    Ok {
+        binding: Box<Binding>,
+        permit: tokio::sync::OwnedSemaphorePermit,
+    },
+}
+
+impl Bindings {
+    /// Add a binding for a credential digest.
+    pub fn insert(&self, digest: String, binding: Binding) {
+        let entry = Entry {
+            binding,
+            inflight: Arc::new(Semaphore::new(BINDING_CONCURRENCY)),
+            window: (Instant::now(), 0),
+        };
+        self.lock().insert(digest, entry);
+    }
+
+    /// Change a binding. Returns false for an unknown binding id.
+    pub fn update(&self, binding_id: &str, f: impl FnOnce(&mut Binding)) -> bool {
+        let mut map = self.lock();
+        match map
+            .values_mut()
+            .find(|e| e.binding.binding_id == binding_id)
+        {
+            Some(e) => {
+                f(&mut e.binding);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Bind the native identity: `pending` → `active` with generation 1,
+    /// or revoke an active binding whose root identity changed (§5.6).
+    pub fn native_identity(&self, binding_id: &str, native_id: &str) -> Option<BindingState> {
+        let mut out = None;
+        self.update(binding_id, |b| {
+            match (b.state, b.native_id.as_deref()) {
+                (BindingState::Pending, _) => {
+                    b.native_id = Some(native_id.to_owned());
+                    b.generation = 1;
+                    b.state = BindingState::Active;
+                }
+                (BindingState::Active | BindingState::Expired, Some(old)) if old != native_id => {
+                    b.state = BindingState::Revoked;
+                }
+                _ => {}
+            }
+            out = Some(b.state);
+        });
+        out
+    }
+
+    /// Revoke every binding of a session (process exit, stop; §5.5).
+    pub fn revoke_session(&self, session_id: &SessionId) {
+        for e in self.lock().values_mut() {
+            if &e.binding.session_id == session_id {
+                e.binding.state = BindingState::Revoked;
+            }
+        }
+    }
+
+    /// A copy of a binding by id.
+    pub fn get(&self, binding_id: &str) -> Option<Binding> {
+        self.lock()
+            .values()
+            .find(|e| e.binding.binding_id == binding_id)
+            .map(|e| e.binding.clone())
+    }
+
+    pub(crate) fn authenticate(&self, header: Option<&str>) -> Auth {
+        let Some(token) = header.and_then(|h| h.strip_prefix("Bearer ")) else {
+            tracing::info!(case = "missing", "coordinator credential refused");
+            return Auth::Unauthorized;
+        };
+        if !well_formed(token) {
+            tracing::info!(case = "malformed", "coordinator credential refused");
+            return Auth::Unauthorized;
+        }
+        let mut map = self.lock();
+        let Some(e) = map.get_mut(&digest(token)) else {
+            tracing::info!(case = "unknown", "coordinator credential refused");
+            return Auth::Unauthorized;
+        };
+        if matches!(
+            e.binding.state,
+            BindingState::Revoked | BindingState::Expired
+        ) {
+            tracing::info!(case = "ended", binding = %e.binding.binding_id, "coordinator credential refused");
+            return Auth::Unauthorized;
+        }
+        let now = Instant::now();
+        if now.duration_since(e.window.0).as_secs() >= 1 {
+            e.window = (now, 0);
+        }
+        if e.window.1 >= BINDING_RATE {
+            return Auth::Limited;
+        }
+        let Ok(permit) = e.inflight.clone().try_acquire_owned() else {
+            return Auth::Limited;
+        };
+        e.window.1 += 1;
+        Auth::Ok {
+            binding: Box::new(e.binding.clone()),
+            permit,
+        }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Entry>> {
+        self.inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+impl Binding {
+    /// The caller identity of an active binding.
+    pub fn caller(&self) -> Option<Caller> {
+        (self.state == BindingState::Active).then(|| Caller {
+            binding_id: self.binding_id.clone(),
+            grant_id: self.grant_id.clone(),
+            session_id: self.session_id.clone(),
+            provider_instance: self.provider_instance.clone(),
+            native_id: self.native_id.clone().unwrap_or_default(),
+            generation: self.generation,
+        })
+    }
+}
