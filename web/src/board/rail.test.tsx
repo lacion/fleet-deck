@@ -53,13 +53,63 @@ describe('needs-you rail', () => {
     const html = rail(request());
     expect(html).toContain('<h2 class="fd-rail-head"><span class="fd-rail-title">NEEDS YOU</span>');
     expect(html).toMatch(
-      /<button type="button" class="fd-primary" aria-label="Allow: Run tests in Fix login">Allow<\/button>/,
+      /<button type="button" class="fd-primary" aria-label="Allow: Run tests in Fix login">Allow<span class="fd-kbd">a<\/span><\/button>/,
     );
     expect(html).toMatch(
-      /<button type="button" aria-label="Deny: Run tests in Fix login">Deny<\/button>/,
+      /<button type="button" aria-label="Deny: Run tests in Fix login">Deny<span class="fd-kbd">d<\/span><\/button>/,
     );
     expect(html).not.toContain('Open session');
     expect(html.match(/aria-label="(Allow|Deny): /g)).toHaveLength(2);
+  });
+
+  test('the first request is selected and the options carry their key hints', () => {
+    const html = rail(
+      request({
+        options: [
+          { option_id: 'a', label: 'Once' },
+          { option_id: 'b', label: 'Always' },
+          { option_id: 'c', label: 'Deny' },
+        ],
+      }),
+    );
+    expect(html).toContain('data-request="r1" data-selected="true"');
+    expect(html).toContain('<span class="fd-rail-keys">[ ] · a/d</span>');
+    expect(html).toMatch(/Once<span class="fd-kbd">a<\/span>/);
+    expect(html).toMatch(/Always<span class="fd-kbd">2<\/span>/);
+    expect(html).toMatch(/Deny<span class="fd-kbd">d<\/span>/);
+  });
+
+  test('a single option is hinted with a, and only the first of two requests is selected', () => {
+    const one = rail(request({ options: [{ option_id: 'ok', label: 'Okay' }] }));
+    expect(one).toMatch(/Okay<span class="fd-kbd">a<\/span>/);
+    const two = renderToStaticMarkup(
+      <NeedsYouRail
+        sessions={[
+          waiting(request({ request_id: 'r1', requested_at: 1 })),
+          card('s2', 'needs_you', 'station-a', {
+            title: 'Other',
+            capabilities: claudeCaps(),
+            open_requests: [request({ request_id: 'r2', requested_at: 2 })],
+          }),
+        ]}
+        stations={[station()]}
+        variant="side"
+        onOpen={() => {}}
+        sessionActions={(key) =>
+          sessionActions(async () => ({}), key, ['read', 'drive', 'approve'])
+        }
+      />,
+    );
+    expect(two.match(/data-selected="true"/g)).toHaveLength(1);
+    expect(two).toContain('data-request="r1" data-selected="true"');
+    expect(two).not.toContain('data-request="r2" data-selected');
+  });
+
+  test('without an answerable request there is no selection and no key hint', () => {
+    const html = rail(request(), ['read', 'drive']);
+    expect(html).not.toContain('data-selected');
+    expect(html).not.toContain('fd-rail-keys');
+    expect(html).not.toContain('fd-kbd');
   });
 
   test('a request without the approve scope, the capability or actions opens the session', () => {

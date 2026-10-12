@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { shouldIgnore } from '../app/keys';
 import { formatHash } from '../app/routes';
 import { relativeAge } from '../app/sessions';
 import type { DeckSession, OpenRequest, SessionKey, StationView } from '../gen';
@@ -49,8 +50,20 @@ export function NeedsYouRail({
   const [notify, setNotify] = useState(notifyEnabled);
   const [pending, setPending] = useState<ReadonlySet<string>>(new Set());
   const [errors, setErrors] = useState<Readonly<Record<string, string>>>({});
+  const [picked, setPicked] = useState(0);
   useNotifications(sessions, notify, onOpen);
-  if (variant === 'strip' && waiting.length === 0) return null;
+  // The selection stays inside the list when the list shrinks.
+  const selected = Math.min(picked, Math.max(waiting.length - 1, 0));
+  const answerableOf = (w: (typeof waiting)[number]) => {
+    const actions = sessionActions?.(w.key);
+    const r = w.request;
+    const ok =
+      actions?.canApprove === true &&
+      w.card.summary.capabilities?.approvals === true &&
+      questionForm(r) === null &&
+      r.options.length > 0;
+    return ok && actions !== undefined ? actions : null;
+  };
   const settle = (requestId: string) =>
     setPending((p) => {
       const next = new Set(p);
@@ -71,12 +84,49 @@ export function NeedsYouRail({
       },
     );
   };
+  const anyAnswerable = waiting.some((w) => answerableOf(w) !== null);
+  const keys = useRef<(e: KeyboardEvent) => void>(() => {});
+  keys.current = (e) => {
+    if (!anyAnswerable || shouldIgnore(e) || e.shiftKey) return;
+    if (e.key === '[' || e.key === ']') {
+      e.preventDefault();
+      const step = e.key === ']' ? 1 : -1;
+      setPicked(Math.min(Math.max(selected + step, 0), waiting.length - 1));
+      return;
+    }
+    const item = waiting[selected];
+    if (item === undefined) return;
+    const actions = answerableOf(item);
+    const options = item.request.options;
+    if (actions === null || pending.has(item.request.request_id)) return;
+    const index =
+      e.key === 'a'
+        ? 0
+        : e.key === 'd'
+          ? options.length >= 2
+            ? options.length - 1
+            : -1
+          : /^[1-9]$/.test(e.key)
+            ? Number(e.key) - 1
+            : -1;
+    const option = options[index];
+    if (option === undefined) return;
+    e.preventDefault();
+    answer(actions, item.request, option.option_id);
+  };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => keys.current(e);
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
+  if (variant === 'strip' && waiting.length === 0) return null;
   return (
     <section className="fd-rail" data-variant={variant} aria-label="Needs you rail">
       <div className="fd-rail-top">
         <h2 className="fd-rail-head">
           <span className="fd-rail-title">NEEDS YOU</span>{' '}
           <span className="fd-rail-count">{waiting.length}</span>
+          {anyAnswerable ? <span className="fd-rail-keys">[ ] · a/d</span> : null}
         </h2>
         <NotifyToggle on={notify} onChange={setNotify} />
       </div>
@@ -90,14 +140,9 @@ export function NeedsYouRail({
         </div>
       ) : (
         <div className="fd-rail-list">
-          {waiting.map((w) => {
+          {waiting.map((w, index) => {
             const r = w.request;
-            const actions = sessionActions?.(w.key);
-            const answerable =
-              actions?.canApprove === true &&
-              w.card.summary.capabilities?.approvals === true &&
-              questionForm(r) === null &&
-              r.options.length > 0;
+            const actions = answerableOf(w);
             const busy = pending.has(r.request_id);
             const error = errors[r.request_id];
             return (
@@ -105,6 +150,7 @@ export function NeedsYouRail({
                 key={`${w.key.station_id}/${w.key.session_id}/${r.request_id}`}
                 className="fd-q"
                 data-request={r.request_id}
+                data-selected={anyAnswerable && index === selected ? 'true' : undefined}
               >
                 <div className="fd-q-row">
                   <a
@@ -129,7 +175,7 @@ export function NeedsYouRail({
                 </div>
                 <p className="fd-q-title">{r.title}</p>
                 {r.details === '' ? null : <pre className="fd-code fd-q-cmd">{r.details}</pre>}
-                {answerable && actions !== undefined ? (
+                {actions !== null ? (
                   <div className="fd-q-answer">
                     {r.options.map((o, i) => (
                       <button
@@ -141,6 +187,9 @@ export function NeedsYouRail({
                         onClick={() => answer(actions, r, o.option_id)}
                       >
                         {o.label}
+                        {hint(i, r.options.length) === null ? null : (
+                          <span className="fd-kbd">{hint(i, r.options.length)}</span>
+                        )}
                       </button>
                     ))}
                   </div>
@@ -166,6 +215,13 @@ export function NeedsYouRail({
       )}
     </section>
   );
+}
+
+/** The key hint of option `i` of `n`: first `a`, last `d` (with two or more), the others their number. */
+function hint(i: number, n: number): string | null {
+  if (i === 0) return 'a';
+  if (i === n - 1) return 'd';
+  return i < 9 ? String(i + 1) : null;
 }
 
 /** One notification for each request that appears while notifications are on (DL-305). */

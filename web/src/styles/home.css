@@ -58,6 +58,9 @@
   margin-left: auto;
   width: 220px;
 }
+.fd-home-conf {
+  color: var(--hazard);
+}
 
 /* ── conflict strip ─────────────────────────────────────────────── */
 .fd-confstrip {
@@ -149,8 +152,22 @@
 }
 .fd-colhead {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: 8px;
+  gap: 2px 8px;
+}
+.fd-colhead-tools {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  letter-spacing: normal;
+  text-transform: none;
+}
+.fd-colhead-report {
+  font-size: 12px;
+  color: var(--dim);
 }
 .fd-swim {
   display: flex;
@@ -172,6 +189,12 @@
   color: var(--dim);
   white-space: nowrap;
 }
+.fd-swim-conf {
+  font-family: var(--font-data);
+  font-size: 11px;
+  color: var(--hazard);
+  white-space: nowrap;
+}
 .fd-swim-rule {
   flex: 1;
   border-top: 1px solid var(--border-soft);
@@ -189,8 +212,18 @@
   list-style: none;
 }
 .fd-lanes-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
   padding: 24px 0;
   text-align: center;
+}
+.fd-lanes-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
 }
 
 /* ── card ───────────────────────────────────────────────────────── */
@@ -226,6 +259,14 @@
 .fd-card[data-status="lost"] {
   opacity: 0.5;
 }
+.fd-card[data-archived="true"] {
+  opacity: 0.4;
+}
+.fd-card[data-contested="true"] {
+  border-color: var(--hazard);
+  border-left-color: var(--hazard);
+  animation: fd-ripple var(--ripple-conflict) ease-out 1;
+}
 .fd-card:focus-visible {
   outline: 2px solid var(--act);
   outline-offset: 1px;
@@ -247,9 +288,23 @@
   -webkit-line-clamp: 2;
   overflow-wrap: anywhere;
 }
+.fd-card-star {
+  flex: none;
+  align-self: flex-start;
+  margin-top: 2px;
+  color: var(--act);
+}
+.fd-card-star .fd-icon {
+  fill: currentColor;
+}
 .fd-card-head .fd-dot {
   align-self: flex-start;
   margin-top: 5px;
+}
+.fd-card-place {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .fd-card-where .fd-badge {
   flex: none;
@@ -289,6 +344,22 @@
   color: var(--act);
 }
 .fd-card-ask .fd-icon {
+  display: inline;
+  vertical-align: -1px;
+}
+.fd-card-error {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  color: var(--hazard);
+}
+.fd-card-contested {
+  font-family: var(--font-data);
+  font-size: 11px;
+  color: var(--hazard);
+}
+.fd-card-contested .fd-icon {
   display: inline;
   vertical-align: -1px;
 }
@@ -346,6 +417,17 @@
   letter-spacing: 2px;
   color: var(--act);
 }
+.fd-rail-keys {
+  display: none;
+  font-family: var(--font-data);
+  font-size: 10px;
+  color: var(--faint);
+}
+@media (pointer: fine) {
+  .fd-rail-keys {
+    display: inline;
+  }
+}
 .fd-rail-count {
   padding: 0 8px;
   background: var(--act);
@@ -374,6 +456,10 @@
   border: 1px solid var(--border);
   border-radius: var(--r-panel);
   animation: fd-slide-in 0.3s ease-out 1;
+}
+.fd-q[data-selected="true"] {
+  border-color: var(--act);
+  box-shadow: 0 0 0 1px var(--act);
 }
 .fd-q-row {
   display: flex;
@@ -426,6 +512,20 @@
 }
 .fd-q-answer > button {
   flex: 1;
+}
+.fd-q-answer .fd-kbd {
+  display: none;
+  margin-left: 6px;
+}
+.fd-q-answer .fd-primary .fd-kbd {
+  border-color: currentColor;
+  color: inherit;
+  opacity: 0.7;
+}
+@media (pointer: fine) {
+  .fd-q-answer .fd-kbd {
+    display: inline;
+  }
 }
 .fd-q > .fd-sm {
   align-self: flex-start;
@@ -686,6 +786,15 @@
   flex-wrap: wrap;
   gap: 8px;
 }
+.fd-fleet-to {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.fd-fleet-failed {
+  color: var(--hazard);
+}
 .fd-fleet-list {
   display: flex;
   flex-direction: column;
@@ -725,6 +834,9 @@
 }
 
 /* ── phone ──────────────────────────────────────────────────────── */
+.fd-home[data-layout="phone"] {
+  padding-bottom: calc(56px + env(safe-area-inset-bottom) + 16px);
+}
 .fd-home[data-layout="phone"] .fd-home-head {
   flex-wrap: wrap;
   gap: 4px 12px;
@@ -759,6 +871,10 @@
   padding: 14px 12px 0;
 }
 .fd-phone-col > .fd-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
   margin: 0;
 }
 .fd-home[data-layout="phone"] .fd-homepanel {
@@ -777,4 +893,22 @@
   background: transparent;
   border-bottom-color: var(--border-soft);
   color: var(--faint);
+}
+
+/* ── compact density (DL-141) ───────────────────────────────────── */
+:root[data-density="compact"] .fd-card {
+  gap: 3px;
+  padding: 6px 10px;
+}
+:root[data-density="compact"] .fd-card-where {
+  display: none;
+}
+:root[data-density="compact"] .fd-card-note {
+  -webkit-line-clamp: 1;
+}
+:root[data-density="compact"] .fd-card-foot:not(:has(.fd-badge)) {
+  display: none;
+}
+:root[data-density="compact"] .fd-q {
+  padding: 8px 10px;
 }

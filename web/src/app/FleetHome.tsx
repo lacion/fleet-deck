@@ -1,19 +1,22 @@
-import { useState, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { AssignActions } from '../assign/assign';
 import { AssignBar } from '../assign/AssignBar';
-import { ConflictRadar } from '../board/ConflictRadar';
+import { ConflictRadar, useConflicts } from '../board/ConflictRadar';
 import type { ConflictLoader } from '../board/conflicts';
 import type { FeedItem } from '../board/feed';
 import { Feed } from '../board/FeedPanel';
 import {
   ALL,
+  archivedHidden,
+  contestedBy,
   emptyFilter,
   type FleetFilter,
   filterFleet,
+  repoNames,
   stationName,
   statusGroups,
 } from '../board/fleet';
-import { COLUMNS, columnCards, FleetBoard, FleetCard } from '../board/FleetBoard';
+import { COLUMNS, columnCards, FleetBoard, FleetCard, OfflineTools } from '../board/FleetBoard';
 import { NeedsYouRail } from '../board/NeedsYouRail';
 import { UsageMeters } from '../board/UsageMeters';
 import type { FleetActions } from '../fleet/fleet';
@@ -21,7 +24,8 @@ import { FleetPanel } from '../fleet/FleetPanel';
 import type { DeckSession, SessionKey, StationView } from '../gen';
 import type { Freshness } from '../runtime/state';
 import type { SessionActions } from '../session/commands';
-import { ChevronDown, ChevronUp, Icon, Search } from '../ui/icons';
+import { ChevronDown, ChevronUp, CircleHelp, Icon, Plus, Search } from '../ui/icons';
+import { archived, priority, sessionRef } from '../ui/localSet';
 import { useNow } from '../ui/useNow';
 
 type Props = {
@@ -97,6 +101,25 @@ function writePanel(state: PanelState) {
   }
 }
 
+type Group = 'station' | 'repo';
+const GROUP_KEY = 'fd-home-group';
+
+function readGroup(): Group {
+  try {
+    return localStorage.getItem(GROUP_KEY) === 'repo' ? 'repo' : 'station';
+  } catch {
+    return 'station';
+  }
+}
+
+function writeGroup(group: Group) {
+  try {
+    localStorage.setItem(GROUP_KEY, group);
+  } catch {
+    // Storage is blocked: the grouping still works for this visit.
+  }
+}
+
 const PANEL_LABEL: Record<PanelTab, string> = {
   activity: 'Activity',
   mail: 'Mail & tasks',
@@ -117,11 +140,24 @@ export function FleetHome({
   sessionActions,
   onOpen,
   onSpawn,
+  panelRequest,
+  onHelp,
+  onSpawnWith,
 }: Props) {
   const [filter, setFilter] = useState<FleetFilter>(emptyFilter);
+  const [group, setGroup] = useState<Group>(readGroup);
+  const [archivedOn, setArchivedOn] = useState(false);
+  const cleared = archived.use();
+  const { list, problem } = useConflicts(conflicts, fleetVersion(sessions));
   const wide = useWide();
   const phone = layout === 'phone';
-  const visible = filterFleet(sessions, stations, filter);
+  const archivedCount = sessions.filter((s) => archivedHidden(s, cleared)).length;
+  const showArchived = archivedOn && archivedCount > 0;
+  const shown = showArchived ? sessions : sessions.filter((s) => !archivedHidden(s, cleared));
+  const visible = filterFleet(shown, stations, filter);
+  const repos = repoNames(shown);
+  const contested = contestedBy(list ?? []);
+  const conflictCount = list?.length ?? 0;
   const stationIds = [
     ...new Set([...stations.map((s) => s.station_id), ...sessions.map((s) => s.station_id)]),
   ].sort();
@@ -130,7 +166,11 @@ export function FleetHome({
   const unknownProvider = sessions.some(
     (s) => s.summary.provider === null || s.summary.provider === 'unknown',
   );
-  const filtered = filter.station !== ALL || filter.provider !== ALL || filter.search.trim() !== '';
+  const filtered =
+    filter.station !== ALL ||
+    filter.provider !== ALL ||
+    filter.repo !== ALL ||
+    filter.search.trim() !== '';
 
   const header = (
     <header className="fd-home-head">
@@ -139,6 +179,14 @@ export function FleetHome({
         {sessions.length === 1 ? '1 session' : `${sessions.length} sessions`} ·{' '}
         {needsYou === 1 ? '1 needs you' : `${needsYou} need you`} ·{' '}
         {stationCount === 1 ? '1 station' : `${stationCount} stations`}
+        {conflictCount > 0 ? (
+          <>
+            {' · '}
+            <span className="fd-home-conf">
+              {conflictCount === 1 ? '1 conflict' : `${conflictCount} conflicts`}
+            </span>
+          </>
+        ) : null}
       </p>
       <div className="fd-field">
         <Icon of={Search} />
@@ -154,18 +202,17 @@ export function FleetHome({
   );
   const radar =
     conflicts === undefined ? null : (
-      <ConflictRadar
-        load={conflicts}
-        stations={stations}
-        version={fleetVersion(sessions)}
-        onOpen={onOpen}
-      />
+      <ConflictRadar list={list} problem={problem} stations={stations} onOpen={onOpen} />
     );
   const chip = (label: string, selected: boolean, pick: () => void, key: string) => (
     <button key={key} type="button" className="fd-chip" aria-pressed={selected} onClick={pick}>
       {label}
     </button>
   );
+  const pickGroup = (next: Group) => {
+    setGroup(next);
+    writeGroup(next);
+  };
   const filters = (
     <div className="fd-filters" role="group" aria-label="Fleet filters">
       <span className="fd-label">Station</span>
@@ -203,9 +250,38 @@ export function FleetHome({
             'unknown',
           )
         : null}
+      {repos.length >= 2 || filter.repo !== ALL ? (
+        <>
+          <span className="fd-label">Repo</span>
+          {chip('All', filter.repo === ALL, () => setFilter({ ...filter, repo: ALL }), 'r-all')}
+          {[...new Set([...repos, ...(filter.repo === ALL ? [] : [filter.repo])])].map((name) =>
+            chip(
+              name,
+              filter.repo === name,
+              () => setFilter({ ...filter, repo: name }),
+              `r-${name}`,
+            ),
+          )}
+        </>
+      ) : null}
+      {archivedCount > 0
+        ? chip(
+            `Archived (${archivedCount})`,
+            showArchived,
+            () => setArchivedOn(!archivedOn),
+            'archived',
+          )
+        : null}
+      {phone ? null : (
+        <>
+          <span className="fd-label">Group</span>
+          {chip('Station', group === 'station', () => pickGroup('station'), 'g-station')}
+          {chip('Repo', group === 'repo', () => pickGroup('repo'), 'g-repo')}
+        </>
+      )}
       {filtered ? (
         <output className="fd-count fd-filters-count" aria-live="polite">
-          {visible.length} of {sessions.length}
+          {visible.length} of {shown.length}
         </output>
       ) : null}
     </div>
@@ -221,11 +297,23 @@ export function FleetHome({
   );
   const empty =
     visible.length === 0 ? (
-      <p className="fd-empty fd-lanes-empty">
-        {sessions.length === 0
-          ? 'No sessions yet. Start one with New session.'
-          : 'No session matches the filters.'}
-      </p>
+      <div className="fd-lanes-empty">
+        <p className="fd-empty">
+          {sessions.length === 0
+            ? 'No sessions yet. Start one with New session.'
+            : 'No session matches the filters.'}
+        </p>
+        <div className="fd-lanes-empty-actions">
+          <button type="button" className="fd-primary" onClick={onSpawn}>
+            <Icon of={Plus} /> New session
+          </button>
+          {onHelp === undefined ? null : (
+            <button type="button" className="fd-ghost" onClick={onHelp}>
+              <Icon of={CircleHelp} /> What is this?
+            </button>
+          )}
+        </div>
+      </div>
     ) : null;
   const panel = (
     <HomePanel
@@ -237,7 +325,12 @@ export function FleetHome({
       fleet={fleet}
       assign={assign}
       onOpen={onOpen}
-      onSpawn={onSpawn}
+      onSpawn={(stationId, text) =>
+        onSpawnWith === undefined
+          ? onSpawn()
+          : onSpawnWith(stationId === '' ? null : stationId, text)
+      }
+      request={panelRequest}
     />
   );
 
@@ -248,7 +341,15 @@ export function FleetHome({
         {radar}
         {filters}
         {rail('strip')}
-        {empty ?? <PhoneColumns visible={visible} stations={stations} freshness={freshness} />}
+        {empty ?? (
+          <PhoneColumns
+            visible={visible}
+            stations={stations}
+            freshness={freshness}
+            contested={contested}
+            sessionActions={sessionActions}
+          />
+        )}
         {panel}
       </div>
     );
@@ -261,7 +362,14 @@ export function FleetHome({
         {filters}
         {wide ? null : rail('strip')}
         <div className="fd-lanes">
-          <FleetBoard sessions={visible} stations={stations} freshness={freshness} />
+          <FleetBoard
+            sessions={visible}
+            stations={stations}
+            freshness={freshness}
+            group={group}
+            contested={contested}
+            sessionActions={sessionActions}
+          />
           {empty}
         </div>
         {panel}
@@ -276,22 +384,30 @@ function PhoneColumns({
   visible,
   stations,
   freshness,
+  contested,
+  sessionActions,
 }: {
   visible: readonly DeckSession[];
   stations: readonly StationView[];
   freshness: Freshness;
+  contested: ReturnType<typeof contestedBy>;
+  sessionActions: ((key: SessionKey) => SessionActions) | undefined;
 }) {
   const now = useNow(undefined, 30000);
+  const starred = priority.use();
   const groups = statusGroups(visible);
   return (
     <>
       {COLUMNS.map((column) => {
-        const cards = columnCards(groups, column.statuses);
+        const cards = columnCards(groups, column.statuses, starred);
         if (cards.length === 0) return null;
         return (
           <section key={column.id} className="fd-phone-col" aria-label={column.label}>
             <h2 className="fd-label">
               {column.label} <span className="fd-count">{cards.length}</span>
+              {column.id === 'offline' ? (
+                <OfflineTools cards={cards} freshness={freshness} sessionActions={sessionActions} />
+              ) : null}
             </h2>
             <ul className="fd-col">
               {cards.map((card) => (
@@ -302,6 +418,7 @@ function PhoneColumns({
                   freshness={freshness}
                   now={now}
                   showStation
+                  contested={contested.get(sessionRef(card.station_id, card.summary.session_id))}
                 />
               ))}
             </ul>
@@ -323,6 +440,7 @@ function HomePanel({
   assign,
   onOpen,
   onSpawn,
+  request,
 }: {
   hasAssign: boolean;
   stations: readonly StationView[];
@@ -332,9 +450,23 @@ function HomePanel({
   fleet: FleetActions | undefined;
   assign: AssignActions | undefined;
   onOpen: (key: SessionKey) => void;
-  onSpawn: () => void;
+  onSpawn: (stationId: string, text: string) => void;
+  request: Props['panelRequest'];
 }) {
   const [state, setState] = useState<PanelState>(() => readPanel(hasAssign));
+  const seen = useRef<number | null>(null);
+  const seq = request?.seq;
+  const asked = request?.tab;
+  useEffect(() => {
+    if (seq === undefined || asked === undefined || seq === seen.current) return;
+    seen.current = seq;
+    const next: PanelState = {
+      open: true,
+      tab: asked === 'assign' && !hasAssign ? 'activity' : asked,
+    };
+    setState(next);
+    writePanel(next);
+  }, [seq, asked, hasAssign]);
   const set = (next: PanelState) => {
     setState(next);
     writePanel(next);
@@ -377,7 +509,9 @@ function HomePanel({
         hidden={!state.open}
       >
         {tab === 'activity' ? <Feed items={feed} onOpen={onOpen} /> : null}
-        {tab === 'mail' ? <FleetPanel actions={fleet} sessions={sessions} /> : null}
+        {tab === 'mail' ? (
+          <FleetPanel actions={fleet} sessions={sessions} stations={stations} />
+        ) : null}
         {tab === 'assign' && assign !== undefined ? (
           <AssignBar actions={assign} onSpawn={onSpawn} />
         ) : null}
