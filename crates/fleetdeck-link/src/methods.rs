@@ -228,14 +228,14 @@ pub const METHODS: &[MethodSpec] = &[
         "coordinator.query",
         StationToDeck,
         Scope::Coordinate,
-        None,
+        Some(feature::COORDINATOR),
         false,
     ),
     m(
         "coordinator.call",
         StationToDeck,
         Scope::Coordinate,
-        None,
+        Some(feature::COORDINATOR),
         true,
     ),
 ];
@@ -432,6 +432,26 @@ mod tests {
         }
     }
 
+    /// ADR-006 §8.3 26 (DL-214): without `coordinator.v1` a station's
+    /// coordinator traffic is refused before any scope check, as an M2 deck
+    /// does (it knows no coordinator shapes).
+    #[test]
+    fn a_peer_without_the_coordinator_feature_gets_the_m2_behavior() {
+        let (d, s) = (Role::Deck, Role::Station);
+        let coordinate = scopes(&[Scope::Coordinate]);
+        let m2 = negotiated(&[feature::CONTROL, feature::COMMAND_RECEIPTS]);
+        for (name, id) in [("coordinator.call", Some("c")), ("coordinator.query", None)] {
+            assert_eq!(
+                code_of(authorize(name, s, d, id, &m2, Some(&coordinate))),
+                code::FEATURE_NOT_NEGOTIATED
+            );
+            assert_eq!(
+                code_of(authorize(name, s, d, id, &all(), Some(&coordinate))),
+                "ok"
+            );
+        }
+    }
+
     #[test]
     fn request_checks_run_in_the_adr_order() {
         let none = scopes(&[]);
@@ -517,7 +537,7 @@ mod tests {
                     s,
                     d,
                     None,
-                    &n,
+                    &all(),
                     Some(&scopes(&[Scope::Coordinate])),
                 ),
                 "ok",

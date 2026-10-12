@@ -104,7 +104,7 @@ Every step after TLS has the bound `NodeConfig::handshake_timeout` (default 10 s
 | `rename.v1` | `session.rename` (M3, DL-095; the board title of a session, event `session.renamed`) |
 | `auto_continue.v1` | `session.set_auto_continue` (M3, ADR-007, DL-127; the per-session restart auto-continuation preference, events `session.auto_continue_changed` and `session.auto_continue_skipped`, input origin `continuation`) |
 | `import.v1` | `session.import` (M3, DL-308; a new driven session that continues an existing native CLI session id) |
-| `coordinator.v1` | `session.coordinator_renew`, `session.coordinator_revoke` (M3, ADR-006 §6.1 `coordinator_v1`, DL-212; the owner's renewal and revocation of a coordinator binding) |
+| `coordinator.v1` | `session.coordinator_renew`, `session.coordinator_revoke`, `coordinator.query`, `coordinator.call` (M3, ADR-006 §6.1 `coordinator_v1`, DL-212, DL-214; the owner's renewal and revocation of a coordinator binding) |
 | `files.v1` | `files.list`, `files.read`, `files.search`, `files.diff` (M3, DL-088; PLAN §6.6 file browse, search, read and per-turn diffs) |
 
 A method whose feature was not negotiated gets the error `feature_not_negotiated`. Behaviour depends on the negotiated features, not only on the version.
@@ -400,8 +400,8 @@ close             { reason, detail }
 | `shell.list` | deck → station | drive | `shell.v1` | no |
 | `shell.attach` | deck → station | drive | `shell.v1` | no (returns a `stream_token`) |
 | `shell.open`, `shell.resize`, `shell.close` | deck → station | drive | `shell.v1` | yes |
-| `coordinator.query` | station → deck | coordinate | — | no |
-| `coordinator.call` | station → deck | coordinate | — | yes |
+| `coordinator.query` | station → deck | coordinate | `coordinator.v1` | no |
+| `coordinator.call` | station → deck | coordinate | `coordinator.v1` | yes |
 
 - **`workspace.list` (added in M2 P4-4, DL-061, under the extension rule of §3: "every new method must declare a scope and, if needed, a feature"):** the directory picker of the board's spawn form. It lists the sub-directories of a path inside the station's allowed roots (`WorkspaceQuery` → `WorkspaceListing`). It reads only, but it needs `drive` because only a caller that may start a session needs the station's directory names. Errors: `missing_workspace`, `outside_roots`, `timeout`.
 - **`files.list`, `files.read`, `files.search`, `files.diff` (added in M3, DL-088, under the extension rule of §3; feature `files.v1`):** the read-only file service of PLAN §6.6. A query names its root as `{"session": <session id>}` (the session's working directory) or `{"workspace": <path>}`; the station resolves the root and checks the allowed roots again on every call. Paths are relative, `/`-separated, without `.`, `..`, `\\` or NUL. The station never follows a symlink below the root, never opens a FIFO or device, and never lists, reads or searches `.git` or credential directories (`.ssh`, `.aws`, `.gnupg`, `.kube`, `.docker`, `.netrc`). Every answer is bounded (1000 entries, 256 KiB read, 200 hits, 256 KiB diff) and reports a cut with `truncated`. `files.diff` takes `{session_id, turn_id}` and returns the patch between the start and completion checkpoints of that finalized turn (PLAN §6.6); a provider's own diff is never used. They read only and need `drive` for the reason of `workspace.list`. Errors: `invalid_path`, `invalid_query`, `not_found`, `wrong_kind`, `unknown_session`, `missing_workspace`, `outside_roots`, `no_diff`, `busy`, `timeout`.

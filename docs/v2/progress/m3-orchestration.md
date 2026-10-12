@@ -153,6 +153,25 @@ Items, in order: 6-1 Workspaces, 6-3 Assign auto, 6-4 Tasks, 6-2 Mail,
   `cargo clippy --workspace --all-targets -- -D warnings` (results in the
   round summary).
 
+### Round 5 (2026-10-12, from 16:09 CEST, time box end 16:20)
+
+- Committed round 4 (fc2c198); `git merge --no-edit v2` merged cleanly
+  (ee38ccd; lane A docs and log; no proto change, so no `make ts-types`).
+- Recorded the round-4 review findings below. The reviewer reported that
+  its format and lint commands were blocked in its environment; the
+  executor's checks of this round are in the round summary.
+- 6-5 (still partial, DL-214): test 26. `coordinator.call` and
+  `coordinator.query` now need `coordinator.v1` in
+  `crates/fleetdeck-link/src/methods.rs` and in the ADR-004 §9.6 table
+  (both builds offer the feature, so M3 peers are unchanged).
+  - `cargo nextest run -p fleetdeck-link -p fleetdeck-proto -p fleetdeck-deck -p fleetdeck-station -E 'package(fleetdeck-link) & test(methods) | binary(method_table) | binary(adr_revision2) | binary(coordinator) | test(a_bound_coordinator) | test(coordinator::forward) | binary(link_service) | test(a_peer_without_the_coordinator)'` -> 26 passed (first run: 2 failures, the ADR row literal in `method_table.rs` and an ADR-order case that used a link without the feature; both tests updated).
+- Status at the time box:
+  - Done: 6-1 Workspaces, 6-3 Assign auto, 6-4 Tasks, 6-2 Mail.
+  - Open: 6-5 Coordinator. Remaining: handoff start-path wiring and the
+    §8.2 secrecy tests, the durable station coordinator outbox (§6.5,
+    §8.4), snapshot projection (25e), grant creation at an owner start
+    with the control skill, live smoke §8.5, and the round-4 follow-ups.
+
 ## Review follow-ups (after M3)
 
 Review of round 1 (items 6-1, 6-3, 6-4, 6-2), recorded in round 2:
@@ -179,3 +198,10 @@ Review of round 2 (item 6-5, partial), recorded in round 3:
 | 6-5 | The grant-bearing spawn test asserts acceptance (the `grant` key is dropped at decode) instead of a rejection. | `crates/fleetdeck-deck/src/store/coordinator_tests.rs` |
 | 6-5 | The tool catalog misses ADR-006 tools and renames some (`send_mail` vs `send`, etc.). | `crates/fleetdeck-station/src/coordinator/tools.rs` |
 | 6-5 | Ingress tests set binding expiry by hand and never open more connections than the configured limit. | `crates/fleetdeck-station/src/coordinator/ingress_tests.rs` |
+
+Review of round 4 (item 6-5, renewal 25b), recorded in round 5:
+
+| Item | Finding | File |
+|---|---|---|
+| 6-5 | The renewal (`renew_grant`) and its `session.coordinator_renew` outbox item are written in two transactions, as for revoke; a crash between them leaves a pending renewal that the station never receives. Write both in one transaction (A5). | `crates/fleetdeck-deck/src/http/grant_routes.rs`, `crates/fleetdeck-deck/src/store/grants.rs` |
+| 6-5 | No test covers the successful path from `POST /api/coordinator/grants/{id}/renew` through the link to the station and back to an active grant (`coordinator.bound` of the renewal generation); the HTTP test checks only 403, 409 and 404. | `crates/fleetdeck-deck/tests/board_fleet.rs` |

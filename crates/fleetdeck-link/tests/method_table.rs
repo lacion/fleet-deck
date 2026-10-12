@@ -104,17 +104,17 @@ fn the_code_method_table_equals_the_adr_method_table() {
 
 #[test]
 fn a_changed_adr_row_breaks_the_agreement() {
-    let row = "| `coordinator.call` | station → deck | coordinate | — | yes |";
+    let row = "| `coordinator.call` | station → deck | coordinate | `coordinator.v1` | yes |";
     let text = adr();
     assert!(text.contains(row), "the ADR has the coordinator.call row");
     let changed = text.replace(
         row,
-        "| `coordinator.call` | station → deck | coordinate | — | no |",
+        "| `coordinator.call` | station → deck | coordinate | `coordinator.v1` | no |",
     );
     assert_ne!(adr_table(&changed), code_table());
     let moved = text.replace(
         row,
-        "| `coordinator.call` | deck → station | coordinate | — | yes |",
+        "| `coordinator.call` | deck → station | coordinate | `coordinator.v1` | yes |",
     );
     assert_ne!(adr_table(&moved), code_table());
 }
