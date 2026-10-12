@@ -28,6 +28,13 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 50 (2026-10-12, 15:32–)
+
+- Committed round 49 as c460b9b.
+- Merged `m3/board` (cce6d03, lane C's own merge of v2) as a97cdf4; the spawn form, `spawn.ts` and `manager/tests.rs` take lane C's resolution (same behaviour; an import also unblocks the clone readiness check). `bun test src/spawn` 10 passed; biome lint and typecheck clean.
+- `m3/orchestration` and `m3/ops`: no new commits. Lane B has no LANE COMPLETE (6-5 Coordinator uncommitted in its worktree), so 6-13, 7-7 and 7-8 still wait.
+- Recorded the round-50 review findings as follow-ups.
+
 ## Round 49 (2026-10-12, 15:26–)
 
 - Committed round 48 (7-6) as c0aad4f.
@@ -99,3 +106,7 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
 | 7-6 (review r49) | The docs do not say that auto-continue is not supported on the shim host (a shim session gets `unsupported`) | `docs/v2/operations.md` §10 |
 | 7-6 (review r49) | The docs present the auto-continue rechecks as complete; the dispatch recheck covers only part of the A10 rules (see the 7-2 follow-ups) | `docs/v2/operations.md` §10, `docs/v2/internals.md` |
 | 7-6 (review r49) | The README says a revert changes nothing on failure; a revert that cannot be proven needs reconciliation and blocks input (PLAN §6.6) | `README.md` |
+| 6-12 merge (review r50) | `session.import` is not in the drain guard's list of commands that create work, so an import passes a drain | `crates/fleetdeck-station/src/manager/drain.rs` |
+| 6-12 merge (review r50) | An import of a native session whose earlier session is `lost` with an unresolved shim can run that conversation twice (no unended-execution check for the native id) | `crates/fleetdeck-station/src/manager/decide.rs` |
+| 6-12 merge (review r50) | The board keeps the clone place and directory choices while an import id is set; the import ignores them without a visible note | `web/src/spawn/SpawnForm.tsx` |
+| 7-6 (review r50) | `docs/v2/operations.md` §7.1 says the import uses "the stored mode of the provider instance"; a provider instance has no stored permission mode (the import uses the mode of the spawn form) | `docs/v2/operations.md` |
