@@ -10,9 +10,15 @@
 //! - `capturing` and no ref → `unavailable {station_restart}`;
 //! - `open` → `unavailable {station_restart}`: the workspace changed after
 //!   the crash, so a capture now would not be the turn's boundary;
-//! - the worktree is gone, moved or another one → `unavailable
-//!   {station_restart}` for every undecided side;
-//! - a ref that is not ours → `unavailable {capture_failed}`.
+//! - `available {commit}` is checked again (DL-083): the ref must still name
+//!   that commit. A ref that is gone (or a worktree that is gone, moved or
+//!   another one) → `unavailable {checkpoint_missing}`; a ref that names
+//!   another commit or is not a checkpoint of this worktree →
+//!   `unavailable {checkpoint_changed}`. So `turn.finalized` never names a
+//!   checkpoint that does not exist;
+//! - a capturing side whose ref is not ours → `unavailable {capture_failed}`;
+//!   a gone/moved/other worktree makes undecided sides
+//!   `unavailable {station_restart}`.
 //!
 //! It never captures. Then a row with a provider turn gets `turn.finalized`
 //! (idempotent per app turn) and a row without one is abandoned. With the
@@ -23,7 +29,10 @@ use std::path::Path;
 
 use fleetdeck_proto::event::DiffSummary;
 
-use super::boundary::{REASON_CAPTURE_FAILED, REASON_STATION_RESTART};
+use super::boundary::{
+    REASON_CAPTURE_FAILED, REASON_CHECKPOINT_CHANGED, REASON_CHECKPOINT_MISSING,
+    REASON_STATION_RESTART,
+};
 use super::checkpoint::{Checkpoint, CheckpointKey, Phase, Worktree};
 use super::git::GitOptions;
 use crate::store::{AppTurnId, RowSide, RowState, Store, StoreError, TurnCheckpointRow, Which};
@@ -83,30 +92,55 @@ async fn side(
     key: &CheckpointKey,
 ) -> (RowSide, Option<Checkpoint>) {
     let unavailable = |why: &str| (RowSide::Unavailable(why.to_owned()), None);
-    let Some(w) = worktree else {
-        return match stored {
-            RowSide::Open | RowSide::Capturing => unavailable(REASON_STATION_RESTART),
-            decided => (decided.clone(), None),
-        };
-    };
     match stored {
         RowSide::Unavailable(_) => (stored.clone(), None),
         RowSide::Open => unavailable(REASON_STATION_RESTART),
-        RowSide::Capturing | RowSide::Available(_) => match w.read(key).await {
-            Ok(Some(found)) => match stored {
-                // The stored commit wins; a ref that moved is not ours.
-                RowSide::Available(commit) if *commit != found.commit => {
-                    unavailable(REASON_CAPTURE_FAILED)
-                }
-                _ => (RowSide::Available(found.commit.clone()), Some(found)),
-            },
-            Ok(None) if matches!(stored, RowSide::Capturing) => unavailable(REASON_STATION_RESTART),
-            // An available side whose ref disappeared keeps its record; the
-            // diff needs the ref, so there is none.
-            Ok(None) => (stored.clone(), None),
-            Err(_) => unavailable(REASON_CAPTURE_FAILED),
-        },
+        RowSide::Capturing => {
+            let Some(w) = worktree else {
+                return unavailable(REASON_STATION_RESTART);
+            };
+            match w.read(key).await {
+                Ok(Some(found)) => (RowSide::Available(found.commit.clone()), Some(found)),
+                Ok(None) => unavailable(REASON_STATION_RESTART),
+                Err(_) => unavailable(REASON_CAPTURE_FAILED),
+            }
+        }
+        // A recorded checkpoint is kept only while its ref still proves it.
+        RowSide::Available(commit) => {
+            let Some(w) = worktree else {
+                return unavailable(REASON_CHECKPOINT_MISSING);
+            };
+            match w.read(key).await {
+                Ok(Some(found)) if found.commit == *commit => (stored.clone(), Some(found)),
+                Ok(Some(_)) | Err(_) => unavailable(REASON_CHECKPOINT_CHANGED),
+                Ok(None) => unavailable(REASON_CHECKPOINT_MISSING),
+            }
+        }
     }
+}
+
+/// Stores one resolved side: records an undecided side, or withdraws a
+/// recorded `available` side that its ref no longer proves.
+async fn store_side(
+    store: &Store,
+    id: &AppTurnId,
+    which: Which,
+    stored: &RowSide,
+    resolved: RowSide,
+) -> Result<(), StoreError> {
+    match (stored, resolved) {
+        (RowSide::Available(commit), RowSide::Unavailable(reason)) => {
+            store
+                .withdraw_checkpoint_side(id.clone(), which, commit.clone(), reason)
+                .await?;
+        }
+        (_, resolved) => {
+            store
+                .record_checkpoint_side(id.clone(), which, resolved)
+                .await?;
+        }
+    }
+    Ok(())
 }
 
 /// Settles every unsettled row after a station start (module docs).
@@ -125,12 +159,8 @@ pub async fn settle_unsettled(
         }
         let resolved = resolve(&row, &incarnation, options.clone()).await;
         let id = row.app_turn.clone();
-        store
-            .record_checkpoint_side(id.clone(), Which::Start, resolved.start)
-            .await?;
-        store
-            .record_checkpoint_side(id.clone(), Which::End, resolved.end)
-            .await?;
+        store_side(store, &id, Which::Start, &row.start, resolved.start).await?;
+        store_side(store, &id, Which::End, &row.end, resolved.end).await?;
         if row.turn_id.is_some() {
             store
                 .finalize_turn(id.clone(), resolved.diff_summary)

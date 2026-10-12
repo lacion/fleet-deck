@@ -11,7 +11,11 @@
 //!   captures again (the workspace changed since).
 //! - **A side is decided once.** `capturing`/`open` → `available {commit}` or
 //!   `unavailable {reason}`; a decided side never changes again, so a late
-//!   capture result cannot overwrite an invalidation (DL-079).
+//!   capture result cannot overwrite an invalidation (DL-079). The one
+//!   exception is [`withdraw`]: before finalization, recovery turns an
+//!   `available {commit}` side whose ref is gone or names another commit into
+//!   `unavailable {reason}`, so `turn.finalized` never names a checkpoint that
+//!   does not exist (DL-083).
 //! - **`turn.finalized` after the refs, once.** [`finalize`] needs both sides
 //!   decided (so every ref that the event names exists) and appends
 //!   `turn.finalized` in the transaction that marks the row `finalized`. A
@@ -335,6 +339,30 @@ pub(super) fn record(
     Ok(true)
 }
 
+/// Withdraws an `available {commit}` side whose ref no longer proves it
+/// (gone, moved, or unreadable) and makes it `unavailable {reason}`. Only an
+/// open row and only the expected commit: a settled row or another value
+/// changes nothing and returns `false`.
+pub(super) fn withdraw(
+    conn: &Connection,
+    app_turn: &AppTurnId,
+    which: Which,
+    commit: &str,
+    reason: &str,
+    now: i64,
+) -> Result<bool> {
+    let (state_col, value_col) = which.columns();
+    let changed = conn.execute(
+        &format!(
+            "UPDATE turn_checkpoints SET {state_col} = 'unavailable', {value_col} = ?3, \
+             updated_at = ?4 WHERE app_turn = ?1 AND state = 'open' \
+             AND {state_col} = 'available' AND {value_col} = ?2"
+        ),
+        params![app_turn.as_str(), commit, reason, now],
+    )?;
+    Ok(changed == 1)
+}
+
 /// Binds the provider turn that the app turn became. Returns `false` when it
 /// is bound already (to any turn) or settled.
 pub(super) fn bind_turn(
@@ -461,6 +489,22 @@ impl super::Store {
         side: RowSide,
     ) -> Result<bool> {
         self.write(move |conn, now, _| record(conn, &app_turn, which, &side, now))
+            .await
+            .map(|(done, _)| done)
+    }
+
+    /// Withdraws a stale `available` side ([`withdraw`]).
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn withdraw_checkpoint_side(
+        &self,
+        app_turn: AppTurnId,
+        which: Which,
+        commit: String,
+        reason: String,
+    ) -> Result<bool> {
+        self.write(move |conn, now, _| withdraw(conn, &app_turn, which, &commit, &reason, now))
             .await
             .map(|(done, _)| done)
     }

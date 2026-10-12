@@ -54,6 +54,12 @@ pub const REASON_STATION_RESTART: &str = "station_restart";
 pub const REASON_NOT_A_WORKTREE: &str = "not_a_git_worktree";
 /// A Git command failed during the capture.
 pub const REASON_CAPTURE_FAILED: &str = "capture_failed";
+/// Recovery: the ref of a recorded `available` side is gone (or its
+/// worktree is gone), so the checkpoint cannot be shown or restored.
+pub const REASON_CHECKPOINT_MISSING: &str = "checkpoint_missing";
+/// Recovery: the ref of a recorded `available` side names another commit or
+/// is not a checkpoint of this worktree.
+pub const REASON_CHECKPOINT_CHANGED: &str = "checkpoint_changed";
 
 /// The state of one checkpoint side inside the station.
 #[derive(Debug, Clone, PartialEq, Eq)]

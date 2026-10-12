@@ -329,3 +329,35 @@ async fn unsettled_rows_survive_a_reopen_for_start_recovery() {
     assert_eq!(open[0].start, RowSide::Capturing);
     assert_eq!(open[0].process, Some("proc-1".to_owned().into()));
 }
+
+#[tokio::test]
+async fn a_withdrawal_needs_the_recorded_commit_and_an_open_row() {
+    let det = Det::new();
+    let s = store(&det).await;
+    let t = s
+        .plan_turn_checkpoint(planned("T1", Some("in-1")))
+        .await
+        .unwrap();
+    s.record_checkpoint_side(t.clone(), Which::Start, available("c0"))
+        .await
+        .unwrap();
+    let withdraw = |commit: &str| {
+        s.withdraw_checkpoint_side(
+            t.clone(),
+            Which::Start,
+            commit.to_owned(),
+            "checkpoint_missing".to_owned(),
+        )
+    };
+    assert!(!withdraw("other").await.unwrap(), "another commit");
+    assert!(
+        !s.withdraw_checkpoint_side(t.clone(), Which::End, "c0".into(), "x".into())
+            .await
+            .unwrap(),
+        "an open side is not withdrawn"
+    );
+    assert!(withdraw("c0").await.unwrap());
+    let row = s.turn_checkpoint(t.clone()).await.unwrap().unwrap();
+    assert_eq!(row.start, unavailable("checkpoint_missing"));
+    assert!(!withdraw("c0").await.unwrap(), "only once");
+}
