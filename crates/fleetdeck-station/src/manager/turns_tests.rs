@@ -143,7 +143,7 @@ async fn row_of_input(s: &Store, id: &str) -> TurnCheckpointRow {
         .unwrap()
 }
 
-async fn finalized(
+pub(crate) async fn finalized(
     s: &Store,
 ) -> Vec<(TurnId, CheckpointSide, CheckpointSide, Option<DiffSummary>)> {
     let ReadResult::Events { events, .. } = s.read_after(0, 1000).await.unwrap() else {

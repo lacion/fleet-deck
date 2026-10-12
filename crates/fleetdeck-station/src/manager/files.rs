@@ -18,7 +18,7 @@ use fleetdeck_proto::files::{
 
 use super::policy::{Policy, WorkspaceError};
 use crate::store::{RowSide, RowState, Store};
-use crate::workspace::files::{self, FileError, Found, PER_FILE_HITS, clip, walk_search};
+use crate::workspace::files::{self, FileError, Found, walk_search};
 use crate::workspace::{CheckpointKey, Git, GitOptions, Phase, Worktree};
 
 /// The longest a list or read may take.
@@ -32,7 +32,11 @@ pub const MAX_SEARCHES: usize = 4;
 /// The most `git` output that one search reads.
 pub const SEARCH_OUTPUT_MAX: usize = 4 * 1024 * 1024;
 
+/// The most lists and reads that run at the same time on one station.
+pub const MAX_READS: usize = 16;
+
 static SEARCHES: AtomicUsize = AtomicUsize::new(0);
+static READS: AtomicUsize = AtomicUsize::new(0);
 
 /// The canonical root of a query.
 ///
@@ -54,17 +58,43 @@ pub async fn root(store: &Store, policy: &Policy, root: &FileRoot) -> Result<Pat
             })?
         }
     };
-    policy.workspace(&cwd).map_err(|e| match e {
+    let canonical = policy.workspace(&cwd).map_err(|e| match e {
         WorkspaceError::Missing(_) => FileError::new(code::MISSING_WORKSPACE, e.to_string()),
         WorkspaceError::Outside(_) => FileError::new(code::OUTSIDE_ROOTS, e.to_string()),
-    })
+    })?;
+    refuse_private(policy, &canonical)?;
+    Ok(canonical)
 }
 
+/// Refuses a root that is a private directory (`.git` or a credential
+/// directory) or lies inside one, for both root forms (finding 2 of
+/// sa-13931f53).
+fn refuse_private(policy: &Policy, root: &Path) -> Result<(), FileError> {
+    if files::private_root(root, policy.allowed_roots()) {
+        return Err(FileError::new(
+            code::OUTSIDE_ROOTS,
+            "the root is a private directory or lies inside one",
+        ));
+    }
+    Ok(())
+}
+
+/// Runs `work` on the blocking pool with a deadline. `slot` moves into
+/// the worker and is released only when the worker ends: a timeout
+/// answers the caller, but file-system calls cannot be cancelled, so the
+/// worker may still run until its own bounds stop it, and its slot stays
+/// taken until then (finding 5 of sa-13931f53). The slots therefore bound
+/// the blocking workers that a slow file system can pile up.
 async fn blocking<T: Send + 'static>(
     limit: Duration,
+    slot: Slot,
     work: impl FnOnce() -> Result<T, FileError> + Send + 'static,
 ) -> Result<T, FileError> {
-    match tokio::time::timeout(limit, tokio::task::spawn_blocking(work)).await {
+    let task = tokio::task::spawn_blocking(move || {
+        let _slot = slot;
+        work()
+    });
+    match tokio::time::timeout(limit, task).await {
         Ok(Ok(result)) => result,
         Ok(Err(e)) => Err(FileError::new("internal", e.to_string())),
         Err(_) => Err(FileError::new(
@@ -84,7 +114,8 @@ pub async fn list(
     query: FileListQuery,
 ) -> Result<FileListing, FileError> {
     let root = root(store, policy, &query.root).await?;
-    blocking(READ_TIMEOUT, move || files::list(&root, &query.path)).await
+    let slot = Slot::take(&READS, MAX_READS)?;
+    blocking(READ_TIMEOUT, slot, move || files::list(&root, &query.path)).await
 }
 
 /// `files.read`.
@@ -97,24 +128,28 @@ pub async fn read(
     query: FileReadQuery,
 ) -> Result<FileContent, FileError> {
     let root = root(store, policy, &query.root).await?;
-    blocking(READ_TIMEOUT, move || {
+    let slot = Slot::take(&READS, MAX_READS)?;
+    blocking(READ_TIMEOUT, slot, move || {
         files::read(&root, &query.path, query.max_bytes)
     })
     .await
 }
 
-/// Releases a search slot on drop.
-struct Slot;
+/// One taken worker slot of a counter; released on drop.
+struct Slot(&'static AtomicUsize);
 
 impl Slot {
-    fn take() -> Option<Self> {
-        let mut now = SEARCHES.load(Ordering::Acquire);
+    fn take(counter: &'static AtomicUsize, max: usize) -> Result<Self, FileError> {
+        let mut now = counter.load(Ordering::Acquire);
         loop {
-            if now >= MAX_SEARCHES {
-                return None;
+            if now >= max {
+                return Err(FileError::new(
+                    code::BUSY,
+                    format!("{max} file operations of this kind run on this station; try again"),
+                ));
             }
-            match SEARCHES.compare_exchange(now, now + 1, Ordering::AcqRel, Ordering::Acquire) {
-                Ok(_) => return Some(Self),
+            match counter.compare_exchange(now, now + 1, Ordering::AcqRel, Ordering::Acquire) {
+                Ok(_) => return Ok(Self(counter)),
                 Err(seen) => now = seen,
             }
         }
@@ -123,7 +158,7 @@ impl Slot {
 
 impl Drop for Slot {
     fn drop(&mut self) {
-        SEARCHES.fetch_sub(1, Ordering::AcqRel);
+        self.0.fetch_sub(1, Ordering::AcqRel);
     }
 }
 
@@ -151,48 +186,77 @@ pub async fn search(
         .max_hits
         .unwrap_or(MAX_SEARCH_HITS)
         .clamp(1, MAX_SEARCH_HITS) as usize;
-    let Some(_slot) = Slot::take() else {
-        return Err(FileError::new(
-            code::BUSY,
-            format!("{MAX_SEARCHES} searches run on this station; try again"),
-        ));
-    };
+    let slot = Slot::take(&SEARCHES, MAX_SEARCHES)?;
     let content = query.mode == SearchMode::Content;
+    let needle = query.query.to_lowercase();
     let options = GitOptions {
         timeout: SEARCH_TIMEOUT,
         ..git.clone()
     };
     // Git runs in the directory that the root descriptor holds, never in
     // the root by name: a rename of the root or an ancestor during the
-    // search cannot move it (DL-092). Without a pinned path (macOS) the
-    // search uses the descriptor walk.
+    // search cannot move it (DL-092). Git only names the candidate files;
+    // their content is read through the same descriptor, one component at
+    // a time without following a symlink, so a directory swapped for a
+    // symlink below the root cannot redirect the search (DL-098). Without
+    // a pinned path (macOS) the search uses the descriptor walk.
     let base = files::open_root(&root)
         .map_err(|_| FileError::new(code::NOT_FOUND, "the root is not found"))?;
-    if let Some(pinned) = files::pinned_dir(&base) {
-        let git = Git::new(pinned, options);
-        if is_worktree(&git).await {
-            let found =
-                tokio::time::timeout(SEARCH_TIMEOUT, git_search(&git, &query.query, content, max))
-                    .await
-                    .map_err(|_| FileError::new(code::TIMEOUT, "the search took too long"))??;
-            drop(base);
-            return Ok(FileSearch {
-                hits: found.hits,
-                truncated: found.truncated,
-                backend: SearchBackend::Git,
-            });
+    let listed = match files::pinned_dir(&base) {
+        Some(pinned) => {
+            let git = Git::new(pinned, options);
+            if is_worktree(&git).await {
+                Some(
+                    tokio::time::timeout(SEARCH_TIMEOUT, candidates(&git))
+                        .await
+                        .map_err(|_| FileError::new(code::TIMEOUT, "the search took too long"))??,
+                )
+            } else {
+                None
+            }
         }
-    }
-    drop(base);
-    let needle = query.query.to_lowercase();
-    let found = blocking(SEARCH_TIMEOUT, move || {
-        Ok(walk_search(&root, &needle, content, max))
-    })
-    .await?;
+        None => None,
+    };
+    let Some((paths, cut)) = listed else {
+        drop(base);
+        let found = blocking(SEARCH_TIMEOUT, slot, move || {
+            Ok(walk_search(&root, &needle, content, max))
+        })
+        .await?;
+        return Ok(FileSearch {
+            hits: found.hits,
+            truncated: found.truncated,
+            backend: SearchBackend::Walk,
+        });
+    };
+    let mut found = if content {
+        blocking(SEARCH_TIMEOUT, slot, move || {
+            Ok(files::grep_paths(&base, &paths, &needle, max))
+        })
+        .await?
+    } else {
+        drop(base);
+        let mut found = Found::default();
+        for path in paths
+            .into_iter()
+            .filter(|p| p.to_lowercase().contains(&needle))
+        {
+            let hit = SearchHit {
+                path,
+                line: None,
+                text: None,
+            };
+            if !found.push(hit, max) {
+                break;
+            }
+        }
+        found
+    };
+    found.truncated |= cut;
     Ok(FileSearch {
         hits: found.hits,
         truncated: found.truncated,
-        backend: SearchBackend::Walk,
+        backend: SearchBackend::Git,
     })
 }
 
@@ -203,96 +267,38 @@ async fn is_worktree(git: &Git) -> bool {
     )
 }
 
-async fn git_search(git: &Git, text: &str, content: bool, max: usize) -> Result<Found, FileError> {
-    let failed = |e: crate::workspace::GitError| FileError::new("internal", e.to_string());
-    let mut found = Found::default();
-    if !content {
-        let (_, out, cut) = git
-            .bounded(
-                &[
-                    "ls-files",
-                    "-z",
-                    "--cached",
-                    "--others",
-                    "--exclude-standard",
-                ],
-                SEARCH_OUTPUT_MAX,
-            )
-            .await
-            .map_err(failed)?;
-        found.truncated = cut;
-        let needle = text.to_lowercase();
-        let mut paths: Vec<&str> = crate::workspace::git::nul_fields(&out)
-            .into_iter()
-            .filter_map(|field| std::str::from_utf8(field).ok())
-            .filter(|path| !hidden_path(path) && path.to_lowercase().contains(&needle))
-            .collect();
-        // Sorted, and `--cached` lists a conflicted path once per stage.
-        paths.sort_unstable();
-        paths.dedup();
-        for path in paths {
-            let hit = SearchHit {
-                path: path.to_owned(),
-                line: None,
-                text: None,
-            };
-            if !found.push(hit, max) {
-                break;
-            }
-        }
-        return Ok(found);
-    }
-    let per_file = format!("--max-count={PER_FILE_HITS}");
-    let args = [
-        "grep",
-        "-I",
-        "-n",
-        "-i",
-        "-F",
-        "-z",
-        "--no-color",
-        "--untracked",
-        &per_file,
-        "-e",
-        text,
-        "--",
-    ];
+/// The tracked and untracked (not ignored) files that Git lists, sorted,
+/// once each and without hidden paths; true when the listing was cut.
+async fn candidates(git: &Git) -> Result<(Vec<String>, bool), FileError> {
     let (status, out, cut) = git
-        .bounded(&args, SEARCH_OUTPUT_MAX)
+        .bounded(
+            &[
+                "ls-files",
+                "-z",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+            ],
+            SEARCH_OUTPUT_MAX,
+        )
         .await
-        .map_err(failed)?;
-    // `git grep` exits 1 when nothing matches.
-    if status != 0 && status != 1 && !cut {
+        .map_err(|e| FileError::new("internal", e.to_string()))?;
+    if status != 0 && !cut {
         return Err(FileError::new(
             "internal",
-            format!("git grep failed ({status})"),
+            format!("git ls-files failed ({status})"),
         ));
     }
-    found.truncated = cut;
-    for line in out.split(|b| *b == b'\n') {
-        // `-z`: path NUL line NUL text.
-        let mut parts = line.splitn(3, |b| *b == 0);
-        let (Some(path), Some(number), Some(rest)) = (parts.next(), parts.next(), parts.next())
-        else {
-            continue;
-        };
-        let (Ok(path), Ok(number)) = (std::str::from_utf8(path), std::str::from_utf8(number))
-        else {
-            continue;
-        };
-        if hidden_path(path) {
-            continue;
-        }
-        let hit = SearchHit {
-            path: path.to_owned(),
-            line: number.parse().ok(),
-            text: Some(clip(&String::from_utf8_lossy(rest))),
-        };
-        if !found.push(hit, max) {
-            break;
-        }
-    }
-    Ok(found)
+    let mut paths: Vec<String> = crate::workspace::git::nul_fields(&out)
+        .into_iter()
+        .filter_map(|field| std::str::from_utf8(field).ok())
+        .filter(|path| !hidden_path(path))
+        .map(str::to_owned)
+        .collect();
+    // Sorted, and `--cached` lists a conflicted path once per stage.
+    paths.sort_unstable();
+    paths.dedup();
+    Ok((paths, cut))
 }
 
 /// `files.diff`: the patch of one finalized turn from its start checkpoint
@@ -339,6 +345,7 @@ pub async fn diff(
         WorkspaceError::Missing(_) => no_diff("the worktree is gone"),
         WorkspaceError::Outside(_) => FileError::new(code::OUTSIDE_ROOTS, e.to_string()),
     })?;
+    refuse_private(policy, &canonical)?;
     let options = GitOptions {
         timeout: DIFF_TIMEOUT,
         ..git.clone()
@@ -392,3 +399,7 @@ pub async fn diff(
 #[cfg(test)]
 #[path = "files_tests.rs"]
 mod files_tests;
+
+#[cfg(test)]
+#[path = "files_review_tests.rs"]
+mod files_review_tests;

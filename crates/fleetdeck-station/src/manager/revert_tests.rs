@@ -28,7 +28,7 @@ use crate::manager::turns::turns_tests::{
 use crate::store::{
     Caller, Dispatch, NewRevert, ReadResult, RevertStep, RowSide, Store, TurnCheckpointRow,
 };
-use crate::workspace::{GitOptions, Limits, Phase, Worktree};
+use crate::workspace::{Captured, CheckpointKey, GitOptions, Limits, Phase, Worktree};
 
 #[derive(Clone)]
 enum Rollback {
@@ -46,24 +46,39 @@ enum Rollback {
     },
 }
 
-/// Changes `a.txt` and points `end_ref` at a commit of that workspace,
-/// so the reread completion checkpoint matches the changed files.
-fn repoint(dir: &std::path::Path, end_ref: &str) {
+/// Changes `a.txt` and points `end_ref` at a VALID replacement
+/// checkpoint of that workspace: a real checkpoint commit of this
+/// worktree (the production writer, with the `fleetdeck checkpoint`
+/// marker and the `worktree-id` field) whose tree holds the writer's
+/// content and whose commit differs from the admitted one. The
+/// checkpoint reader accepts it, and the reread completion checkpoint
+/// matches the changed files, so only the comparison with the admitted
+/// completion commit stops the restore (finding 3 of sa-3491e52e; the
+/// tests of sa-ba907845).
+async fn repoint(dir: &std::path::Path, end_ref: &str) {
+    let worktree = Worktree::open(dir, GitOptions::isolated()).await.unwrap();
+    let admitted = worktree.read_ref(end_ref).await.unwrap().unwrap();
     std::fs::write(dir.join("a.txt"), "a writer\n").unwrap();
-    let out = std::process::Command::new("git")
-        .current_dir(dir)
-        .args(["stash", "create"])
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_AUTHOR_NAME", "t")
-        .env("GIT_AUTHOR_EMAIL", "t@t")
-        .env("GIT_COMMITTER_NAME", "t")
-        .env("GIT_COMMITTER_EMAIL", "t@t")
-        .output()
-        .unwrap();
-    let commit = String::from_utf8(out.stdout).unwrap().trim().to_owned();
-    assert!(!commit.is_empty(), "stash create made no commit");
-    git(dir, &["update-ref", end_ref, &commit]);
+    let other = CheckpointKey {
+        incarnation: "replacement".into(),
+        session: "s-replacement".into(),
+        turn: "t-replacement".into(),
+        phase: Phase::Completion,
+    };
+    let Captured::Published(replacement) =
+        worktree.capture(&other, Limits::default()).await.unwrap()
+    else {
+        panic!("no replacement checkpoint");
+    };
+    assert_ne!(replacement.commit, admitted.commit);
+    assert_ne!(replacement.tree, admitted.tree);
+    git(dir, &["update-ref", end_ref, &replacement.commit]);
+    // The reader accepts the repointed ref as a checkpoint of this
+    // worktree: the old invalid-checkpoint path cannot stop the restore.
+    let reread = worktree.read_ref(end_ref).await.unwrap().unwrap();
+    assert_eq!(reread.commit, replacement.commit);
+    assert_eq!(reread.tree, replacement.tree);
+    assert_eq!(reread.worktree_id, admitted.worktree_id);
 }
 
 struct Scripted {
@@ -133,7 +148,7 @@ impl LiveSession for Scripted {
                 Ok(())
             }
             Rollback::OkWhileRepointing { dir, end_ref } => {
-                repoint(dir, end_ref);
+                repoint(dir, end_ref).await;
                 Ok(())
             }
         }
@@ -482,14 +497,14 @@ async fn a_workspace_change_with_a_repointed_completion_ref_during_the_rollback_
     assert_eq!(rig.reverted().await, vec![None, None]);
 }
 
-#[tokio::test]
-async fn recovery_after_a_confirmed_rollback_with_a_repointed_completion_ref_needs_reconciliation()
-{
+/// Recovery from `at` after a confirmed rollback, with a workspace change
+/// and a valid replacement completion checkpoint.
+async fn recovery_with_a_repointed_completion_ref(at: RevertStep) {
     let rig = Rig::new().await;
     let end_ref = rig.end_ref().await;
     rig.admit().await;
-    repoint(&rig.dir, &end_ref);
-    recover_from_admitted(&rig, RevertStep::RolledBack).await;
+    repoint(&rig.dir, &end_ref).await;
+    recover_from_admitted(&rig, at).await;
     assert_eq!(
         rig.step().await,
         (
@@ -499,6 +514,18 @@ async fn recovery_after_a_confirmed_rollback_with_a_repointed_completion_ref_nee
     );
     assert_eq!(rig.file("a.txt"), "a writer\n");
     assert_eq!(rig.file("b.txt"), "two\nT2\n");
+    assert_eq!(rig.reverted().await, vec![None, None]);
+}
+
+#[tokio::test]
+async fn recovery_after_a_confirmed_rollback_with_a_repointed_completion_ref_needs_reconciliation()
+{
+    recovery_with_a_repointed_completion_ref(RevertStep::RolledBack).await;
+}
+
+#[tokio::test]
+async fn recovery_of_a_restore_with_a_repointed_completion_ref_needs_reconciliation() {
+    recovery_with_a_repointed_completion_ref(RevertStep::Restoring).await;
 }
 
 async fn recover_from(rig: &Rig, at: RevertStep) {

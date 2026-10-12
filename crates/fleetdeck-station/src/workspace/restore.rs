@@ -27,6 +27,23 @@ use super::checkpoint::{
 };
 use super::git::nul_fields;
 use fleetdeck_proto::event::DiffSummary;
+use fleetdeck_proto::files::HIDDEN_NAMES;
+
+/// The pathspec of every path that a diff may show: everything except the
+/// private names of [`HIDDEN_NAMES`] (`.git` and credential files and
+/// directories) at any depth, case-insensitive. Renames are not detected,
+/// so each side of a rename into or out of a private directory is a
+/// separate path, and the private side is left out (finding 3 of
+/// sa-13931f53).
+#[must_use]
+pub fn visible_pathspec() -> Vec<String> {
+    let mut spec = vec!["--".to_owned(), ".".to_owned()];
+    for name in HIDDEN_NAMES {
+        spec.push(format!(":(exclude,icase,glob)**/{name}"));
+        spec.push(format!(":(exclude,icase,glob)**/{name}/**"));
+    }
+    spec
+}
 
 /// Why a restore was rejected before any mutation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,27 +98,35 @@ pub struct Diff {
 
 impl Worktree {
     /// The patch from `from` to `to`, at most `max_bytes` long. Both
-    /// checkpoints must belong to this worktree.
+    /// checkpoints must belong to this worktree. Private paths are left
+    /// out ([`visible_pathspec`]). Git's output is read up to the limit
+    /// only; with more output the process is killed (finding 4 of
+    /// sa-13931f53).
     pub async fn diff(&self, from: &Checkpoint, to: &Checkpoint, max_bytes: usize) -> Result<Diff> {
         for c in [from, to] {
             self.own(c)?;
         }
-        let out = self
-            .git()
-            .run(&[
-                "diff-tree",
-                "-p",
-                "-r",
-                "--no-ext-diff",
-                "--no-textconv",
-                "--no-color",
-                "--binary",
-                &from.tree,
-                &to.tree,
-            ])
-            .await?;
-        let truncated = out.len() > max_bytes;
-        let mut patch = String::from_utf8_lossy(&out[..out.len().min(max_bytes)]).into_owned();
+        let spec = visible_pathspec();
+        let mut args = vec![
+            "diff-tree",
+            "-p",
+            "-r",
+            "--no-renames",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-color",
+            "--binary",
+            &from.tree,
+            &to.tree,
+        ];
+        args.extend(spec.iter().map(String::as_str));
+        let (status, out, truncated) = self.git().bounded(&args, max_bytes).await?;
+        if status != 0 && !truncated {
+            return Err(CheckpointError::Io(std::io::Error::other(format!(
+                "git diff-tree failed ({status})"
+            ))));
+        }
+        let mut patch = String::from_utf8_lossy(&out).into_owned();
         if truncated {
             // A lossy cut may end inside a character; it is marked anyway.
             patch.push_str("\n[diff truncated]\n");
@@ -110,22 +135,23 @@ impl Worktree {
     }
 
     /// The size of the diff from `from` to `to` (`diff-tree --numstat`);
-    /// a binary file counts as changed with no lines.
+    /// a binary file counts as changed with no lines. Private paths are
+    /// left out ([`visible_pathspec`]).
     pub async fn diff_summary(&self, from: &Checkpoint, to: &Checkpoint) -> Result<DiffSummary> {
         for c in [from, to] {
             self.own(c)?;
         }
-        let out = self
-            .git()
-            .text(&[
-                "diff-tree",
-                "-r",
-                "--numstat",
-                "--no-renames",
-                &from.tree,
-                &to.tree,
-            ])
-            .await?;
+        let spec = visible_pathspec();
+        let mut args = vec![
+            "diff-tree",
+            "-r",
+            "--numstat",
+            "--no-renames",
+            &from.tree,
+            &to.tree,
+        ];
+        args.extend(spec.iter().map(String::as_str));
+        let out = self.git().text(&args).await?;
         let mut summary = DiffSummary {
             files_changed: 0,
             insertions: 0,

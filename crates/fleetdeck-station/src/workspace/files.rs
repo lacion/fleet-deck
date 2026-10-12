@@ -15,7 +15,9 @@
 //!   directory replaced by a symlink after a check cannot redirect a later
 //!   step (M3 round 12; the review found that the earlier `lstat` walk
 //!   protected only the final component);
-//! - `.git` and credential directories are never listed, opened or searched;
+//! - `.git` and credential directories are never listed, opened or searched,
+//!   and neither is a root inside one ([`private_root`]; finding 2 of
+//!   sa-13931f53);
 //! - every walk and read is bounded, and each cut is reported.
 
 use std::ffi::CStr;
@@ -26,7 +28,7 @@ use std::path::Path;
 
 use fleetdeck_proto::files::{
     FileContent, FileEntry, FileKind, FileListing, MAX_HIT_CHARS, MAX_LIST_ENTRIES, MAX_READ_BYTES,
-    SearchHit, code, hidden_name, path_segments,
+    SearchHit, code, hidden_name, hidden_path, path_segments,
 };
 use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags, Stat};
 
@@ -440,6 +442,65 @@ pub fn walk_search(root: &Path, needle: &str, content: bool, max: usize) -> Foun
             if !grep_file(&dir, &name, &path, needle, max, &mut found) {
                 return found;
             }
+        }
+    }
+    found
+}
+
+/// True when the canonical `root` is a private directory or lies inside
+/// one: a segment of `root` below the allowed root that holds it is a
+/// hidden name (case-insensitive). A root that no allowed root holds is
+/// private too (fail closed). The longest allowed root counts, so an
+/// allowed root that the owner set inside a private directory stays
+/// usable for its own subdirectories only when no further private
+/// segment follows.
+#[must_use]
+pub fn private_root(root: &Path, allowed: &[std::path::PathBuf]) -> bool {
+    let Some(holder) = allowed
+        .iter()
+        .filter(|a| root.starts_with(a))
+        .max_by_key(|a| a.components().count())
+    else {
+        return true;
+    };
+    let Ok(below) = root.strip_prefix(holder) else {
+        return true;
+    };
+    below.components().any(|c| match c {
+        std::path::Component::Normal(name) => name.to_str().is_none_or(hidden_name),
+        _ => true,
+    })
+}
+
+/// Searches the content of candidate `paths` (for example the paths that
+/// `git ls-files` listed) below the directory that `base` holds. Each file
+/// opens from `base`, one component at a time, without following a
+/// symlink, so a candidate whose directory became a symlink is skipped:
+/// Git may name the candidates, but it never reads their content for the
+/// station (finding 1 of sa-13931f53). Hidden paths are skipped; at most
+/// [`WALK_FILE_MAX`] files open. `needle` is lower case already.
+#[must_use]
+pub fn grep_paths(base: &OwnedFd, paths: &[String], needle: &str, max: usize) -> Found {
+    let mut found = Found::default();
+    let mut opened = 0usize;
+    for path in paths {
+        if hidden_path(path) {
+            continue;
+        }
+        let Ok(segments) = path_segments(path) else {
+            continue;
+        };
+        let Ok(Some((parent, last, FileKind::File))) = parent_and_last(base, &segments, path)
+        else {
+            continue;
+        };
+        opened += 1;
+        if opened > WALK_FILE_MAX {
+            found.truncated = true;
+            return found;
+        }
+        if !grep_file(&parent, last, path, needle, max, &mut found) {
+            return found;
         }
     }
     found

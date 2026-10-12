@@ -24,7 +24,7 @@ use crate::manager::turns::turns_tests::{
 use crate::store::{OfflineApprovalPolicy, Store};
 use crate::workspace::GitOptions;
 
-fn policy(root: &Path) -> Policy {
+pub(super) fn policy(root: &Path) -> Policy {
     Policy::new(
         vec![root.to_path_buf()],
         4,
@@ -33,11 +33,11 @@ fn policy(root: &Path) -> Policy {
     )
 }
 
-fn ws(path: &Path) -> FileRoot {
+pub(super) fn ws(path: &Path) -> FileRoot {
     FileRoot::Workspace(path.display().to_string())
 }
 
-fn session() -> FileRoot {
+pub(super) fn session() -> FileRoot {
     FileRoot::Session(S1.into())
 }
 
@@ -77,7 +77,7 @@ fn tree() -> (tempfile::TempDir, PathBuf, tempfile::TempDir) {
     (tmp, root, outside)
 }
 
-async fn store_with_session(det: &Det, cwd: &Path) -> Store {
+pub(super) async fn store_with_session(det: &Det, cwd: &Path) -> Store {
     setup(det, cwd).await.0
 }
 
