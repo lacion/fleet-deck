@@ -7,8 +7,7 @@
 //! command router's `commands` table (G3). V4 (P3-7b): the outbox of
 //! deck-owned intent (A5) and the receipts of `coordinator.call` (G7). Auth
 //! and audit tables follow in P3-8 (V5). V6 (M3 6-6): the plan
-//! library. V7 (M3 6-2, 6-4): mail and tasks. V8 (M3 6-7): file touches. V9 (M3 6-5): coordinator
-//! grants (`tokens`) and their lineage.
+//! library. V7 (M3 6-2, 6-4): mail and tasks. V8 (M3 6-7): file touches.
 
 use rusqlite_migration::{M, Migrations};
 
@@ -235,9 +234,8 @@ CREATE INDEX file_touches_by_time ON file_touches (touched_at);
 
 /// Coordinator grants (M3 6-5, ADR-006 §4, PLAN §10 table `tokens`) and the
 /// lineage of the sessions that a grant started (§6.3 `interrupt`/`stop`).
-/// Renumbered from V8 to V9 at the lane A merge (file touches came first).
 /// `spawn_used` is a durable lifetime counter (§6.4): receipt pruning never
-/// changes it.
+/// changes it. Renumbered from V8 to V9 at the merge of lane C's V8.
 const V9: &str = "
 CREATE TABLE tokens (
     grant_id                TEXT    PRIMARY KEY,
