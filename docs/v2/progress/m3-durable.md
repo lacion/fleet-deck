@@ -28,6 +28,12 @@ Lane A owns branch v2, `docs/v2/DECISIONS-LOG.md` (DL-125 to DL-199) and the mer
   - Tests: `cargo nextest run -p fleetdeck-station -E 'test(/drain/)'` → 2 passed; `-E 'test(/upgrade::/)'` → 5 passed; `cargo nextest run -p fleetdeck-link --test version_skew` → 4 passed; `cargo nextest run -p fleetdeck-cli --test station_upgrade` → 2 passed; station local/schema/shims tests → 17 passed.
 - Checks: `cargo fmt --all --check` → clean; `cargo clippy --workspace --all-targets -- -D warnings` → clean.
 
+## Round 92 (2026-10-12, 17:05–)
+
+- Round start: committed round 91 as 80282d7. `git log v2..m3/orchestration`, `v2..m3/board`, `v2..m3/ops`: no new commits; `m3-orchestration.md` has no "LANE COMPLETE", so 6-13, 7-7 and 7-8 stay blocked.
+- 7-6 cutover guide: `docs/v2/cutover.md` §1 said only "The full parity table is PLAN §16". It now lists the five open parity checks of round 91 (session grid, Shift+Enter newline, model badge after a model change, owner resume from the board, station discovery on the LAN), so a v1 user knows what is not yet proven before the cutover. The list goes away when 6-13 adds a test or a deferral for each row.
+- Checks: `cargo nextest run -p fleetdeck-cli --test docs_commands`, `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`.
+
 ## Round 91 (2026-10-12, 17:03–)
 
 - Round start: committed round 90 as 708fdd4. `git log v2..m3/orchestration`, `v2..m3/board`, `v2..m3/ops`: no new commits; `m3-orchestration.md` has no "LANE COMPLETE", so 6-13, 7-7 and 7-8 stay blocked.
