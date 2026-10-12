@@ -62,6 +62,7 @@ async fn station(dir: &std::path::Path, root: PathBuf, allow: bool) -> Arc<Stati
         allow,
         max_shells: 2,
         program: Some(("/bin/sh".into(), Vec::new())),
+        instances: BTreeMap::new(),
     }));
     StationNode::start_with_shells(
         Arc::new(manager),

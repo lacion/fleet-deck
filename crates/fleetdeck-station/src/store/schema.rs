@@ -432,6 +432,33 @@ CREATE INDEX coordinator_outbox_pending ON coordinator_outbox (state, created_at
     WHERE state = 'pending';
 ";
 
+const V18: &str = "
+-- DL-140: a `shell.handover` is a durable shell effect too. SQLite cannot
+-- change a CHECK constraint in place, so the table is rebuilt with `handover`
+-- among the ops (`release` never makes an effect row). Every row, column and
+-- the partial index stay as V16 defined them.
+CREATE TABLE shell_effects_v18 (
+    effect_id   TEXT    PRIMARY KEY,
+    command_id  TEXT    NOT NULL UNIQUE,
+    shell_id    TEXT    NOT NULL,
+    op          TEXT    NOT NULL CHECK (op IN ('open', 'resize', 'close', 'handover')),
+    change      TEXT    NOT NULL,
+    state       TEXT    NOT NULL CHECK (state IN ('queued', 'claimed', 'confirmed', 'failed',
+                                                  'retired_not_dispatched', 'outcome_unknown')),
+    detail      TEXT,
+    created_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL
+);
+INSERT INTO shell_effects_v18
+    (effect_id, command_id, shell_id, op, change, state, detail, created_at, updated_at)
+SELECT effect_id, command_id, shell_id, op, change, state, detail, created_at, updated_at
+FROM shell_effects;
+DROP TABLE shell_effects;
+ALTER TABLE shell_effects_v18 RENAME TO shell_effects;
+CREATE INDEX shell_effects_open ON shell_effects (state, created_at)
+    WHERE state IN ('queued', 'claimed');
+";
+
 /// The `station.db` migrations. V4 is the link epochs table of
 /// `fleetdeck-link` (G1).
 #[must_use]
@@ -454,5 +481,119 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V15),
         M::up(V16),
         M::up(V17),
+        M::up(V18),
     ])
+}
+
+#[cfg(test)]
+mod tests {
+    use rusqlite::{Connection, params};
+
+    use super::migrations;
+
+    fn insert(conn: &Connection, id: &str, op: &str, state: &str, detail: Option<&str>) {
+        conn.execute(
+            "INSERT INTO shell_effects
+               (effect_id, command_id, shell_id, op, change, state, detail, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, '{}', ?5, ?6, 5, 6)",
+            params![
+                id,
+                format!("cmd-{id}"),
+                format!("sh-{id}"),
+                op,
+                state,
+                detail
+            ],
+        )
+        .unwrap();
+    }
+
+    fn rows(conn: &Connection) -> Vec<(String, String, String, String, Option<String>)> {
+        conn.prepare(
+            "SELECT effect_id, command_id, op, state, detail FROM shell_effects
+             ORDER BY effect_id",
+        )
+        .unwrap()
+        .query_map([], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+        })
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap()
+    }
+
+    #[test]
+    fn v18_keeps_the_shell_effects_and_admits_the_handover_op() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        let migrations = migrations();
+        migrations.to_version(&mut conn, 17).unwrap();
+        insert(&conn, "a", "open", "queued", None);
+        insert(&conn, "b", "resize", "claimed", None);
+        insert(&conn, "c", "close", "confirmed", None);
+        insert(&conn, "d", "open", "failed", Some("no pty"));
+        insert(
+            &conn,
+            "e",
+            "open",
+            "retired_not_dispatched",
+            Some("station_restart"),
+        );
+        let before = rows(&conn);
+        assert_eq!(before.len(), 5);
+
+        migrations.to_latest(&mut conn).unwrap();
+        assert_eq!(rows(&conn), before);
+        let (command, shell, created, updated): (String, String, i64, i64) = conn
+            .query_row(
+                "SELECT command_id, shell_id, created_at, updated_at FROM shell_effects
+                 WHERE effect_id = 'a'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            (command.as_str(), shell.as_str(), created, updated),
+            ("cmd-a", "sh-a", 5, 6)
+        );
+
+        insert(&conn, "f", "handover", "queued", None);
+        assert!(
+            conn.execute(
+                "INSERT INTO shell_effects
+                   (effect_id, command_id, shell_id, op, change, state, created_at, updated_at)
+                 VALUES ('g', 'cmd-g', 'sh-g', 'release', '{}', 'queued', 1, 1)",
+                [],
+            )
+            .is_err(),
+            "release makes no effect row"
+        );
+        assert!(
+            conn.execute(
+                "INSERT INTO shell_effects
+                   (effect_id, command_id, shell_id, op, change, state, created_at, updated_at)
+                 VALUES ('h', 'cmd-h', 'sh-h', 'bogus', '{}', 'queued', 1, 1)",
+                [],
+            )
+            .is_err(),
+            "an unknown op is refused"
+        );
+        // The unique command id and the partial index survive the rebuild.
+        assert!(
+            conn.execute(
+                "INSERT INTO shell_effects
+                   (effect_id, command_id, shell_id, op, change, state, created_at, updated_at)
+                 VALUES ('i', 'cmd-a', 'sh-i', 'open', '{}', 'queued', 1, 1)",
+                [],
+            )
+            .is_err()
+        );
+        let index: String = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE name = 'shell_effects_open'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(index.contains("'queued', 'claimed'"));
+    }
 }

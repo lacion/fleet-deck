@@ -145,6 +145,7 @@ impl RunningStation {
             allow: config.allow_shell,
             max_shells: config.max_shells,
             program: None,
+            instances: terminal_instances(config),
         }));
         let node = StationNode::start_with_shells(
             Arc::clone(&manager),
@@ -198,4 +199,35 @@ impl RunningStation {
             tracing::debug!(error = %e, "socket file");
         }
     }
+}
+
+/// The provider instances that a terminal handover can start (DL-140): each
+/// with its binary and its scrubbed environment. An instance whose
+/// environment does not build has no terminal.
+fn terminal_instances(
+    config: &StationConfig,
+) -> std::collections::BTreeMap<fleetdeck_proto::ProviderInstanceId, crate::shell::TerminalInstance>
+{
+    let base = fleetdeck_core::childenv::ChildEnv::from_process();
+    let mut out = std::collections::BTreeMap::new();
+    for instance in &config.provider_instances {
+        match fleetdeck_core::childenv::ChildEnv::for_instance(base.clone(), instance) {
+            Ok(env) => {
+                out.insert(
+                    instance.id.clone(),
+                    crate::shell::TerminalInstance {
+                        driver: instance.driver,
+                        binary: instance.binary.clone(),
+                        env,
+                    },
+                );
+            }
+            Err(e) => tracing::warn!(
+                instance = %instance.id,
+                error = %e,
+                "no terminal handover for this provider instance"
+            ),
+        }
+    }
+    out
 }

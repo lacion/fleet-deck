@@ -55,6 +55,26 @@ impl Decision<'_> {
             .map(SessionId::from))
     }
 
+    /// A session of this station that a terminal holds (`summary.terminal`)
+    /// and that continues the native session `native` (DL-140): a resume,
+    /// a handover or an import of it would run a second process on one
+    /// conversation.
+    ///
+    /// # Errors
+    /// A database error.
+    pub fn native_session_held(&self, native: &str) -> Result<Option<SessionId>> {
+        Ok(self
+            .connection()
+            .query_row(
+                "SELECT session_id FROM sessions WHERE native_session_id = ?1 \
+                 AND json_extract(summary, '$.terminal') IS NOT NULL LIMIT 1",
+                [native],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()?
+            .map(SessionId::from))
+    }
+
     /// The native resume identity that the provider reported in
     /// `session.started` (Claude `session_id`, Codex `thread_id`).
     ///

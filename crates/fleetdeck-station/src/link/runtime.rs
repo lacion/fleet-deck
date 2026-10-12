@@ -163,6 +163,15 @@ impl StationNode {
         this.spawn(tokio::spawn(async move {
             manager.providers().await;
         }));
+        // The holds of the terminals of an earlier process end or stay
+        // before any board can ask (DL-140).
+        crate::shell::handover::recover_holds(&store).await?;
+        if let Some(exits) = this.ctx.shells.take_exits() {
+            this.spawn(crate::shell::handover::spawn_exit_release(
+                store.clone(),
+                exits,
+            ));
+        }
         let mut addrs = listen.to_vec();
         addrs.extend(store.listen_addrs().await?);
         for addr in addrs {

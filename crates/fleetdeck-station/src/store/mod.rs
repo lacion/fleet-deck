@@ -41,6 +41,7 @@ pub mod shim_driver;
 pub mod shim_gaps;
 pub mod shim_writes;
 pub mod shims;
+pub mod terminal;
 mod turn_checkpoints;
 
 use std::path::Path;

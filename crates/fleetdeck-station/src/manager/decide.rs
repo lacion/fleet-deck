@@ -409,6 +409,14 @@ fn start(
             format!("session `{other}` already drives this native session"),
         ));
     }
+    if let Some(native) = &import
+        && let Some(other) = d.native_session_held(native)?
+    {
+        return Err(reject(
+            RejectCode::InvalidState,
+            format!("session `{other}` holds this native session in a terminal"),
+        ));
+    }
     let branch = match &plan {
         Some(WorkspacePlan::Worktree { branch, .. }) => Some(branch.clone()),
         Some(WorkspacePlan::Clone { .. }) => None,

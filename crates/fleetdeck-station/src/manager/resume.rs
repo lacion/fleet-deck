@@ -17,14 +17,17 @@
 //! - no revert of the session waits for reconciliation and no revert holds
 //!   the worktree;
 //! - the workspace is still inside the allowed roots and the station has a
-//!   free session slot.
+//!   free session slot;
+//! - no terminal holds the session or its native session (DL-140).
 //!
 //! The new process gets the stored mode and model, never a more permissive
 //! mode (L8): the provider maps an unknown mode to its most restrictive one.
 
 use fleetdeck_proto::command::{CommandResult, SessionSpec};
 use fleetdeck_proto::event::SessionState;
-use fleetdeck_proto::{Event, Operation, Reject, RejectCode, SessionId};
+use fleetdeck_proto::{
+    Event, Operation, ProviderInstanceId, Reject, RejectCode, SessionId, SessionSummary,
+};
 
 use super::decide::{reject, result};
 use super::policy::{Policy, WorkspaceError};
@@ -42,18 +45,31 @@ pub fn decide_resume(
     admit_resume(d, policy, session_id, None, None)
 }
 
-/// [`decide_resume`] with the first input of the new process and its
-/// dispatch deadline: an auto-continue intent (ADR-007 §2.3, DL-127).
+/// The facts of a session that a new process may continue (`session.resume`
+/// and `shell.handover`, DL-140).
+#[derive(Debug, Clone)]
+pub(crate) struct Resumable {
+    pub(crate) summary: SessionSummary,
+    /// The native resume identity (Claude `session_id`, Codex `thread_id`).
+    pub(crate) native: String,
+    pub(crate) instance: ProviderInstanceId,
+    /// The canonical workspace of the session.
+    pub(crate) cwd: String,
+}
+
+/// The checks that every continuation of an ended session shares: the
+/// session exists and has ended with no live process, its provider instance
+/// is configured, it can resume and has a native id, no earlier execution
+/// may still run, no revert blocks it, and its workspace is inside the
+/// roots and free of reverts.
 ///
 /// # Errors
 /// A stored rejection, or a database error.
-pub fn admit_resume(
-    d: &mut Decision<'_>,
+pub(crate) fn resumable(
+    d: &Decision<'_>,
     policy: &Policy,
     session_id: &SessionId,
-    prompt: Option<InputRecord>,
-    continue_by: Option<i64>,
-) -> Result<CommandResult, DecideError> {
+) -> Result<Resumable, DecideError> {
     let s = d
         .summary(session_id)?
         .ok_or_else(|| reject(RejectCode::UnknownSession, "no such session"))?;
@@ -120,6 +136,53 @@ pub fn admit_resume(
             ),
         ));
     }
+    Ok(Resumable {
+        summary: s,
+        native,
+        instance,
+        cwd,
+    })
+}
+
+/// The terminal exclusion of a resume and of a handover (DL-140): the
+/// session itself is not held by a terminal, and no other session holds the
+/// same native session.
+///
+/// # Errors
+/// A stored rejection, or a database error.
+pub(crate) fn not_held(d: &Decision<'_>, r: &Resumable) -> Result<(), DecideError> {
+    if let Some(hold) = &r.summary.terminal {
+        return Err(reject(
+            RejectCode::InvalidState,
+            format!(
+                "a terminal holds this session (shell `{}`); return it to board control first",
+                hold.shell_id
+            ),
+        ));
+    }
+    if let Some(other) = d.native_session_held(&r.native)? {
+        return Err(reject(
+            RejectCode::InvalidState,
+            format!("session `{other}` holds this native session in a terminal"),
+        ));
+    }
+    Ok(())
+}
+
+/// [`decide_resume`] with the first input of the new process and its
+/// dispatch deadline: an auto-continue intent (ADR-007 §2.3, DL-127).
+///
+/// # Errors
+/// A stored rejection, or a database error.
+pub fn admit_resume(
+    d: &mut Decision<'_>,
+    policy: &Policy,
+    session_id: &SessionId,
+    prompt: Option<InputRecord>,
+    continue_by: Option<i64>,
+) -> Result<CommandResult, DecideError> {
+    let r = resumable(d, policy, session_id)?;
+    not_held(d, &r)?;
     if d.active_sessions()? >= u64::from(policy.max_sessions()) {
         return Err(reject(
             RejectCode::Forbidden,
@@ -130,18 +193,18 @@ pub fn admit_resume(
         ));
     }
     let spec = SessionSpec {
-        provider_instance: instance,
-        cwd,
-        mode: s.mode.clone(),
-        model: s.model.clone(),
-        title: s.title.clone(),
+        provider_instance: r.instance,
+        cwd: r.cwd,
+        mode: r.summary.mode.clone(),
+        model: r.summary.model.clone(),
+        title: r.summary.title.clone(),
         coordinator: None,
     };
     let input_id = prompt.as_ref().map(|p| p.input_id.clone());
     d.enqueue(
         session_id,
         EffectPayload::Resume {
-            native_session_id: native,
+            native_session_id: r.native,
             spec,
             prompt,
             continue_by,

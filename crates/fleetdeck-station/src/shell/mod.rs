@@ -19,6 +19,7 @@
 //!   deck or board does not end them. A station restart does (A10).
 
 pub mod data;
+pub mod handover;
 pub mod scrollback;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -27,6 +28,8 @@ use std::io::{Read, Write};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use fleetdeck_core::childenv::ChildEnv;
+use fleetdeck_proto::ProviderInstanceId;
+use fleetdeck_proto::SessionId;
 use fleetdeck_proto::command::{CommandResult, Reject, RejectCode};
 use fleetdeck_proto::shell::{ShellChange, ShellEnvelope, ShellInfo, ShellState};
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
@@ -35,7 +38,9 @@ use tokio::sync::mpsc;
 use crate::manager::policy::Policy;
 use crate::store::effects::EffectId;
 use crate::store::shell_effects::{self, PendingShell};
+use crate::store::terminal::HandoverLaunch;
 use crate::store::{DecideError, Decision, Store, StoreError};
+pub use handover::{TerminalExit, TerminalInstance};
 pub use scrollback::Scrollback;
 
 /// The settings of the shell service (`station.toml`).
@@ -46,6 +51,9 @@ pub struct ShellConfig {
     /// The program and its arguments; `None` is the owner's login shell
     /// (`$SHELL -l`, else `/bin/sh -l`).
     pub program: Option<(OsString, Vec<OsString>)>,
+    /// The provider instances that have a binary for a terminal handover
+    /// (DL-140).
+    pub instances: BTreeMap<ProviderInstanceId, TerminalInstance>,
 }
 
 impl Default for ShellConfig {
@@ -54,6 +62,7 @@ impl Default for ShellConfig {
             allow: true,
             max_shells: fleetdeck_core::config::DEFAULT_MAX_SHELLS,
             program: None,
+            instances: BTreeMap::new(),
         }
     }
 }
@@ -67,12 +76,24 @@ struct Output {
     subscribers: Vec<mpsc::Sender<Vec<u8>>>,
 }
 
+/// What one new shell runs.
+struct Launch {
+    program: (OsString, Vec<OsString>),
+    env: ChildEnv,
+    /// The session that a TUI handover holds.
+    session: Option<SessionId>,
+}
+
 struct Shell {
     info: Mutex<ShellInfo>,
     master: Mutex<Box<dyn MasterPty + Send>>,
     writer: Mutex<Box<dyn Write + Send>>,
     child: Mutex<Box<dyn Child + Send + Sync>>,
     output: Mutex<Output>,
+    /// The session that the shell holds (a TUI handover).
+    session: Option<SessionId>,
+    /// The process of the shell, when the PTY reports it.
+    pid: Option<u32>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -86,6 +107,9 @@ pub struct Shells {
     shells: Mutex<BTreeMap<String, Arc<Shell>>>,
     /// One dispatcher at a time keeps the effects in commit order.
     dispatch: tokio::sync::Mutex<()>,
+    /// The exit reports of the TUI shells (DL-140).
+    exits: mpsc::UnboundedSender<TerminalExit>,
+    exit_reports: Mutex<Option<mpsc::UnboundedReceiver<TerminalExit>>>,
 }
 
 impl std::fmt::Debug for Shells {
@@ -119,12 +143,21 @@ impl Shells {
 
     #[must_use]
     pub fn with_env(config: ShellConfig, env: ChildEnv) -> Self {
+        let (exits, exit_reports) = mpsc::unbounded_channel();
         Self {
             config,
             env,
             shells: Mutex::default(),
             dispatch: tokio::sync::Mutex::new(()),
+            exits,
+            exit_reports: Mutex::new(Some(exit_reports)),
         }
+    }
+
+    /// The reports that a TUI process ended (first call only). The station
+    /// releases the hold of the session for each (DL-140).
+    pub fn take_exits(&self) -> Option<mpsc::UnboundedReceiver<TerminalExit>> {
+        lock(&self.exit_reports).take()
     }
 
     /// Every shell, oldest first.
@@ -165,7 +198,7 @@ impl Shells {
         let mut ids: BTreeSet<String> = lock(&self.shells).keys().cloned().collect();
         for p in pending {
             match p.op.as_str() {
-                "open" => {
+                "open" | "handover" => {
                     ids.insert(p.shell_id.clone());
                 }
                 "close" => {
@@ -179,23 +212,9 @@ impl Shells {
                 policy
                     .workspace(cwd)
                     .map_err(|e| reject(RejectCode::InvalidCommand, e.to_string()))?;
-                if ids.contains(shell_id) {
-                    return Err(reject(
-                        RejectCode::InvalidState,
-                        format!("shell `{shell_id}` exists"),
-                    ));
-                }
-                if ids.len() >= self.config.max_shells as usize {
-                    return Err(reject(
-                        RejectCode::InvalidState,
-                        format!(
-                            "the station runs its maximum of {} shells (max_shells)",
-                            self.config.max_shells
-                        ),
-                    ));
-                }
-                Ok(())
+                self.room(&ids, shell_id)
             }
+            ShellChange::Handover { shell_id, .. } => self.room(&ids, shell_id),
             ShellChange::Resize { shell_id, .. } | ShellChange::Close { shell_id } => {
                 if ids.contains(shell_id) {
                     Ok(())
@@ -203,11 +222,31 @@ impl Shells {
                     Err(unknown(shell_id))
                 }
             }
-            ShellChange::Handover { .. } | ShellChange::Release { .. } => Err(reject(
-                RejectCode::Unsupported,
-                "the terminal handover is not part of this station build yet (DL-140)",
-            )),
+            // The owner releases a hold the station cannot see: the decision
+            // transaction checks the hold ([`decide`]).
+            ShellChange::Release { .. } => Ok(()),
         }
+    }
+
+    /// A free id and a free slot among the live shells and the committed
+    /// opens and handovers (`ids`).
+    fn room(&self, ids: &BTreeSet<String>, shell_id: &str) -> Result<(), Reject> {
+        if ids.contains(shell_id) {
+            return Err(reject(
+                RejectCode::InvalidState,
+                format!("shell `{shell_id}` exists"),
+            ));
+        }
+        if ids.len() >= self.config.max_shells as usize {
+            return Err(reject(
+                RejectCode::InvalidState,
+                format!(
+                    "the station runs its maximum of {} shells (max_shells)",
+                    self.config.max_shells
+                ),
+            ));
+        }
+        Ok(())
     }
 
     /// Does one checked change: the PTY I/O (after the receipt commit).
@@ -244,17 +283,27 @@ impl Shells {
                 let shell = lock(&self.shells)
                     .remove(shell_id.as_str())
                     .ok_or_else(|| unknown(shell_id).message)?;
-                if let Err(e) = lock(&shell.child).kill() {
-                    tracing::debug!(error = %e, "shell kill");
+                match shell.pid {
+                    // A TUI gets SIGHUP for its whole process group; the
+                    // hold ends when the pump sees the process gone.
+                    Some(pid) if shell.session.is_some() => handover::hang_up(&shell, pid),
+                    _ => {
+                        if let Err(e) = lock(&shell.child).kill() {
+                            tracing::debug!(error = %e, "shell kill");
+                        }
+                    }
                 }
                 // Dropping the subscribers ends every attached stream.
                 lock(&shell.output).subscribers.clear();
                 tracing::info!(shell = %shell_id, "shell closed");
                 Ok(())
             }
-            ShellChange::Handover { .. } | ShellChange::Release { .. } => Err(
-                "the terminal handover is not part of this station build yet (DL-140)".to_owned(),
-            ),
+            // A handover needs the store ([`dispatch`]); a release is decided
+            // in its receipt transaction and has no effect.
+            ShellChange::Handover { .. } | ShellChange::Release { .. } => Err(format!(
+                "{} is not a PTY effect of its own",
+                change.method()
+            )),
         }
     }
 
@@ -296,6 +345,66 @@ impl Shells {
         rows: u16,
         now: i64,
     ) -> Result<(), Reject> {
+        let launch = Launch {
+            program: self.program(),
+            env: self.env.clone(),
+            session: None,
+        };
+        self.spawn(shell_id, cwd, cols, rows, now, launch)
+            .map(|_| ())
+    }
+
+    /// Starts the provider TUI of `session_id` in a new shell and returns
+    /// its process id (DL-140).
+    ///
+    /// # Errors
+    /// The reject with why the shell did not start.
+    pub fn handover(
+        &self,
+        shell_id: &str,
+        session_id: &SessionId,
+        launch: &HandoverLaunch,
+        cols: u16,
+        rows: u16,
+        now: i64,
+    ) -> Result<Option<u32>, Reject> {
+        let instance = self
+            .config
+            .instances
+            .get(&launch.provider_instance)
+            .ok_or_else(|| {
+                reject(
+                    RejectCode::InvalidState,
+                    format!(
+                        "provider instance `{}` has no binary for a terminal",
+                        launch.provider_instance
+                    ),
+                )
+            })?;
+        let program = handover::tui_command(
+            instance.driver,
+            &instance.binary,
+            &launch.native,
+            launch.mode.as_deref(),
+            launch.model.as_deref(),
+        );
+        let launch_env = Launch {
+            program,
+            env: instance.env.clone(),
+            session: Some(session_id.clone()),
+        };
+        self.spawn(shell_id, &launch.cwd, cols, rows, now, launch_env)
+    }
+
+    fn spawn(
+        &self,
+        shell_id: &str,
+        cwd: &std::path::Path,
+        cols: u16,
+        rows: u16,
+        now: i64,
+        launch: Launch,
+    ) -> Result<Option<u32>, Reject> {
         let mut shells = lock(&self.shells);
         if shells.contains_key(shell_id) {
             return Err(reject(
@@ -318,12 +427,12 @@ impl Shells {
         let pair = native_pty_system()
             .openpty(size(cols, rows))
             .map_err(|e| failed("open a pty", &e))?;
-        let (program, args) = self.program();
-        let mut cmd = CommandBuilder::new(&program);
-        cmd.args(&args);
+        let (program, args) = &launch.program;
+        let mut cmd = CommandBuilder::new(program);
+        cmd.args(args);
         cmd.cwd(cwd);
         cmd.env_clear();
-        for (k, v) in self.env.iter() {
+        for (k, v) in launch.env.iter() {
             cmd.env(k, v);
         }
         cmd.env("TERM", "xterm-256color");
@@ -331,6 +440,7 @@ impl Shells {
             .slave
             .spawn_command(cmd)
             .map_err(|e| failed("start the shell", &e))?;
+        let pid = child.process_id();
         drop(pair.slave);
         let reader = pair
             .master
@@ -349,7 +459,7 @@ impl Shells {
                 rows,
                 created_at: now,
                 exit_code: None,
-                session_id: None,
+                session_id: launch.session.clone(),
             }),
             master: Mutex::new(pair.master),
             writer: Mutex::new(writer),
@@ -358,16 +468,19 @@ impl Shells {
                 ring: Scrollback::default(),
                 subscribers: Vec::new(),
             }),
+            session: launch.session.clone(),
+            pid,
         });
         let read_side = Arc::clone(&shell);
+        let exits = launch.session.is_some().then(|| self.exits.clone());
         let name = format!("shell-{shell_id}");
         std::thread::Builder::new()
             .name(name)
-            .spawn(move || pump(&read_side, reader))
+            .spawn(move || pump(&read_side, reader, exits.as_ref()))
             .map_err(|e| failed("reader thread", &e))?;
         shells.insert(shell_id.to_owned(), shell);
         tracing::info!(shell = %shell_id, cwd = %cwd.display(), "shell opened");
-        Ok(())
+        Ok(pid)
     }
 
     /// The scrollback and a queue of the live output after it.
@@ -402,8 +515,13 @@ impl Shells {
     pub fn close_all(&self) {
         let all = std::mem::take(&mut *lock(&self.shells));
         for shell in all.values() {
-            if let Err(e) = lock(&shell.child).kill() {
-                tracing::debug!(error = %e, "shell kill");
+            match shell.pid {
+                Some(pid) if shell.session.is_some() => handover::hang_up_now(pid),
+                _ => {
+                    if let Err(e) = lock(&shell.child).kill() {
+                        tracing::debug!(error = %e, "shell kill");
+                    }
+                }
             }
         }
     }
@@ -422,6 +540,18 @@ pub fn decide(
 ) -> Result<CommandResult, DecideError> {
     let pending = shell_effects::pending(d.connection())?;
     shells.check(&envelope.change, policy, &pending)?;
+    match &envelope.change {
+        ShellChange::Handover {
+            shell_id,
+            session_id,
+            ..
+        } => handover::admit(d, policy, &shells.config.instances, session_id, shell_id)?,
+        ShellChange::Release { shell_id } => {
+            handover::decide_release(d, shells, &pending, shell_id)?;
+            return Ok(CommandResult::default());
+        }
+        _ => {}
+    }
     let effect_id: EffectId = d.new_id();
     shell_effects::enqueue(
         d.connection(),
@@ -451,9 +581,19 @@ pub async fn dispatch(
         let policy = policy.clone();
         let now = store.now_ms();
         let change = effect.change;
-        let outcome = tokio::task::spawn_blocking(move || worker.execute(&change, &policy, now))
-            .await
-            .unwrap_or_else(|e| Err(format!("shell task: {e}")));
+        let outcome = if let ShellChange::Handover {
+            shell_id,
+            session_id,
+            cols,
+            rows,
+        } = &change
+        {
+            start_terminal(store, worker, shell_id, session_id, (*cols, *rows), now).await?
+        } else {
+            tokio::task::spawn_blocking(move || worker.execute(&change, &policy, now))
+                .await
+                .unwrap_or_else(|e| Err(format!("shell task: {e}")))
+        };
         if let Err(e) = &outcome {
             tracing::warn!(command = %effect.command_id, error = %e, "shell effect failed");
         }
@@ -463,13 +603,58 @@ pub async fn dispatch(
     Ok(done)
 }
 
+/// The PTY I/O of one `shell.handover`: starts the TUI and records its pid
+/// in the hold, or ends the hold when the TUI did not start.
+async fn start_terminal(
+    store: &Store,
+    shells: Arc<Shells>,
+    shell_id: &str,
+    session_id: &SessionId,
+    (cols, rows): (u16, u16),
+    now: i64,
+) -> Result<Result<(), String>, StoreError> {
+    let started = match store.handover_launch(session_id.clone()).await? {
+        None => Err("the session has no resume identity".to_owned()),
+        Some(launch) => {
+            let (shell, session) = (shell_id.to_owned(), session_id.clone());
+            tokio::task::spawn_blocking(move || {
+                shells.handover(&shell, &session, &launch, cols, rows, now)
+            })
+            .await
+            .unwrap_or_else(|e| Err(reject(RejectCode::InvalidState, format!("shell task: {e}"))))
+            .map_err(|r| r.message)
+        }
+    };
+    match started {
+        Ok(pid) => {
+            if let Some(pid) = pid {
+                store
+                    .record_terminal_pid(session_id.clone(), shell_id.to_owned(), pid)
+                    .await?;
+            }
+            Ok(Ok(()))
+        }
+        Err(e) => {
+            let reason = format!("the terminal did not start: {e}");
+            store
+                .release_terminal(session_id.clone(), shell_id.to_owned(), reason)
+                .await?;
+            Ok(Err(e))
+        }
+    }
+}
+
 fn unknown(shell_id: &str) -> Reject {
     reject(RejectCode::InvalidState, format!("no shell `{shell_id}`"))
 }
 
 /// Copies the PTY output into the scrollback and to the subscribers until
 /// the shell ends.
-fn pump(shell: &Shell, mut reader: Box<dyn Read + Send>) {
+fn pump(
+    shell: &Shell,
+    mut reader: Box<dyn Read + Send>,
+    exits: Option<&mpsc::UnboundedSender<TerminalExit>>,
+) {
     let mut buf = vec![0u8; 16 * 1024];
     loop {
         match reader.read(&mut buf) {
@@ -497,6 +682,19 @@ fn pump(shell: &Shell, mut reader: Box<dyn Read + Send>) {
         info.exit_code = code;
     }
     lock(&shell.output).subscribers.clear();
+    // A TUI shell reports the end of its process: the hold of its session
+    // ends then (DL-140). The shell id is the key of the hold.
+    if let (Some(exits), Some(session_id)) = (exits, &shell.session) {
+        let shell_id = lock(&shell.info).shell_id.clone();
+        let report = TerminalExit {
+            session_id: session_id.clone(),
+            shell_id,
+            code,
+        };
+        if exits.send(report).is_err() {
+            tracing::warn!("no one releases the terminal holds");
+        }
+    }
 }
 
 #[cfg(test)]

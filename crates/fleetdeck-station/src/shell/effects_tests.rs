@@ -2,6 +2,7 @@
 //! no PTY I/O; a crash after the commit never runs the effect in a later
 //! process; a slow reader cannot grow the station memory.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -23,6 +24,7 @@ fn shells_with(program: &str, max_shells: u32) -> Arc<Shells> {
             allow: true,
             max_shells,
             program: Some((program.into(), Vec::new())),
+            instances: BTreeMap::new(),
         },
         env(),
     ))
