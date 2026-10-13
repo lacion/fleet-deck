@@ -49,7 +49,12 @@ v1 had five doctrine rules, and v1.0 widened them. v2 keeps their intent but cha
 
 1. **Drive through the protocol.** The station speaks each provider's own protocol. It never scrapes a terminal and never installs hooks into another tool's config.
 2. **The station owns execution.** Every command, git operation, file write and process runs on the station that owns the workspace. The deck never runs user code.
-3. **No model calls in the core.** The deck and the station make no LLM calls. The agents are the intelligence. Test: `no_crate_calls_a_model_api_directly`.
+3. **Model help through the owner's subscription, small and optional (DL-153).** No crate calls a model API directly (test: `no_crate_calls_a_model_api_directly`). When a feature needs generated text, the station runs one short headless call of the user's own provider CLI (`claude` or `codex`) on the owner's subscription, with the smallest fitting model (Haiku 5.5 for Claude, Luna for Codex). Each such call:
+    - is opt-in per feature;
+    - has a token budget, and its token use shows in the usage meters;
+    - is off the critical path: the feature works, plainly, without it;
+    - is labeled "generated" on the board.
+   Generated text never decides anything that the owner or the protocol decides. It does not approve, pick a winner, choose a permission mode or route work.
 4. **Unknown is never zero.** A missing value shows as unknown, never as a guess or as 0. This covers usage, cost and limits.
 5. **Credentials stay on the station.** The deck holds no provider, forge or tracker credentials. A station uses its own user's `git`, `gh`, `glab` and provider logins. A Jira or Linear token comes from the station user's environment or a mode-0600 file that `station.toml` names, and only the station reads it (DL-152). A secret never reaches the deck, the link, a read model, an argv, a log or the board (`Secret<T>`, scrubbed child env).
 6. **Third-party text is data.** Text from an issue, a PR, a web page or another agent is fenced and labeled as untrusted. A spawn from such text is supervised by default, with no path to a bypass mode (PLAN §9; it is not built yet, see R3).
@@ -58,7 +63,7 @@ v1 had five doctrine rules, and v1.0 widened them. v2 keeps their intent but cha
 9. **Contracts first.** Every wire shape is a versioned Rust type. A peer of a newer build keeps unknown events unchanged.
 10. **Four proofs per feature.** Each feature has these four tests, and `PARITY.md` names them:
     - **fail-open:** what keeps working when it breaks;
-    - **determinism:** no model calls;
+    - **determinism:** no model call decides anything; model help (rule 3) is optional, budgeted and labeled;
     - **exposure:** no secret leaks;
     - **version resilience:** an older or newer peer degrades and does not break.
 
@@ -97,9 +102,9 @@ Keep these decisions. Reopen them only with a DL entry.
 - **Codex rollout tails, `auth.json` reads and the 20 MB "tail, never slurp" rule:** not needed, because limits and items come from the protocol.
 - **Editing another tool's config (`config.toml`, `hooks.json`):** never done. `fleetdeck doctor` only reads. If v2 ever writes there, it needs a consent step and an uninstall.
 - **Remote control (`/rc`), `/clear` succession, Stop-hook mail:** dropped.
-- **An Electron app, an agent-agnostic core, Computer Use, a hosted relay, "AI picks the winner":** rejected, as v1.0 also decided.
+- **An Electron app, an agent-agnostic core, Computer Use, a hosted relay, "AI picks the winner":** rejected, as v1.0 also decided. Model help (rule 3) may summarize the candidates of a race; the owner picks.
 - **Jira and Linear:** v1 cut them, because a tracker token is a stored credential. The owner reversed this (DL-152): GitHub, GitLab, Jira and Linear are all in scope, with the tracker token held only by the station (rule 5).
-- **LLM-written titles:** not built. Callsigns are deterministic.
+- **LLM-written titles:** now allowed as opt-in model help (rule 3, R10). Callsigns stay deterministic.
 - **The T3 Code "do not adopt" table:** obsolete for v2. v2 now mediates (drive, event sourcing, normalization). Only its "no relay" and "no LLM calls" rows still hold.
 
 ---
@@ -213,6 +218,25 @@ The board works with issues and pull requests from four systems. The station doe
 
 ---
 
+### R10. Model help (owner decision DL-153)
+
+Small, cheap, optional text from the owner's own subscription (rule 3). It runs on a station with Haiku 5.5 (Claude) or Luna (Codex), and it uses a short headless CLI call with a budget. Candidates, most useful first:
+
+1. **Session titles** from the first prompt, for sessions without a title (one call per session, about 100 output tokens).
+2. **A summary of a finished session or turn** ("what did this agent do"), on the card and in "what did I miss". This works with R6.1 unread.
+3. **PR and commit text** from the whole-session diff (R1.2) and the session summary, for R3.6 writes, always shown for the owner to edit.
+4. **An issue digest** for the R3 issue browser: a two-line gist of a long issue. Fenced untrusted text goes in, and the digest is labeled as generated from untrusted text.
+5. **A race summary** for R1.4: what each sibling session changed, side by side. The owner picks.
+6. **A conflict explanation** for the conflict mail: which change of each session touched the same file.
+7. **A plan gist** in the plan library.
+
+Rules for every item:
+- **Budget:** a per-call token cap and a daily cap per station.
+- **Cache:** a result is cached by its input hash, so the same input never costs twice.
+- **Off switch:** a global switch in the station and deck configuration.
+- **Visible cost:** the token use shows in the usage meters under a "Fleet Deck" scope.
+- **Failure:** a failed or skipped call leaves the plain fallback (no title, no summary), never an error state.
+
 ## 7. Proposed sequence
 
 Each step has its cut line: the part that drops first if time runs short.
@@ -225,6 +249,7 @@ Each step has its cut line: the part that drops first if time runs short.
 | **M4.3 Release hardening** | R8.1 macOS lane; R8.2 version gate; R9.1 security delta; R9.2 proof columns; R9.4 propagation debt; R9.7 gate | None: this is the 2.0.0 gate |
 | **M5 Integrations, read only** | R3.1 envelope and fixture; R3.2 station service (GitHub, GitLab, Jira, Linear); R3.3 issue browser and spawn; R3.5 PR reviewer; R3.4 fix checks | R3.4 |
 | **M5.1 Accounts** | R4.3 limits in the picker; R4.4 assign by quota; R4.5 Claude windows research | R4.5 |
+| **M5.2 Model help** | R10.1 titles; R10.2 session summaries; the budget, cache and off switch | R10.2 |
 | **M6** | R1.4 compare the winner; R5 automations; R6.1 unread; R6.3 palette row | R5 missed-run grace |
 | **Later, owner decision** | R3.6 writes (PRs, comments, issue moves); R6.2 terminal wall; R6.5 activity stream; R6.6 hibernation; R4.6 inferred cost; ACP for a third provider | — |
 

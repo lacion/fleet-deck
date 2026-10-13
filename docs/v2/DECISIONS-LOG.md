@@ -2410,3 +2410,15 @@ Owner review: pending.
   These come with the design of M5. That design is high risk (credentials, untrusted text that starts sessions), so it gets an adversary DESIGN REVIEW before it is frozen.
 - Invalidates: the "Jira and Linear: cut" line of `FLEETDECK-V2.md` §4, which is corrected in the same commit.
 - Owner review: decided by the owner.
+
+## DL-153 — Model help through the owner's subscription (owner decision, 2026-10-13)
+
+- Context: v1 and v2 kept "no model calls in the core" (the deck and the station never call an LLM). The owner now allows Fleet Deck to use the Claude Code or Codex subscription to generate useful text, with few tokens, using small models: Haiku 5.5 and Luna.
+- Choice: rule 3 of `FLEETDECK-V2.md` changes from "no model calls" to "model help through the owner's subscription, small and optional". No crate calls a model API directly; the test `no_crate_calls_a_model_api_directly` stays. A station runs one short headless call of the user's own provider CLI with the smallest fitting model. Each call is opt-in per feature, has a token budget and a daily cap, is cached by its input hash, and shows its use in the usage meters. It is off the critical path, so the feature works without it, and the board labels its text "generated". Generated text never approves, picks a winner, chooses a mode or routes work. The candidate uses are in `FLEETDECK-V2.md` R10.
+- Not decided yet:
+  - the exact CLI invocation and model ids per provider ("Luna" is the owner's name for the small Codex model);
+  - the default budgets;
+  - which features turn it on by default.
+  These come with the M5.2 design.
+- Invalidates: the "LLM-written titles: not built" line and the old rule 3 of `FLEETDECK-V2.md`, which are corrected in the same commit. `PLAN.md` doctrine text that says "no model calls" means "no direct model API calls" from now on.
+- Owner review: decided by the owner.

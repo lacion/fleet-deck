@@ -88,7 +88,7 @@ v0 had five rules. v2 changes two of them (drive, not observe; many machines, no
 1. **Drive through native protocols.** Use each agent's structured protocol. Never scrape a terminal.
 2. **Work never depends on the deck.** If the deck, the board, or the network fails, running sessions continue. Approvals follow the session's offline policy.
 3. **The machine that runs the work owns its history.** The station keeps the session event log. The deck keeps a synced read model.
-4. **No model calls in the core.** Routing, status, conflicts, and mail are deterministic code. Agents are the only intelligence.
+4. **No model decides in the core.** Routing, status, conflicts, and mail are deterministic code. No crate calls a model API directly. Optional generated text (titles, summaries, PR text) may come from the owner's own subscription through a short headless provider CLI call on a station, with a small model and a budget; it is labeled and never decides (DL-153).
 5. **No phone-home, no hosted relay, no public exposure.** The owner runs every component. The deck and stations are reachable only on the local network (loopback, LAN) and on the owner's Tailscale tailnet (D13). The deck and the station refuse to listen on a public address.
 6. **Credentials stay on the machine that uses them.** Provider logins stay on the station. Nothing secret goes into the read model, argv, or logs.
 7. **Every mutation is idempotent and audited.** Command ids, command receipts on the station, an audit log on the deck.
@@ -113,7 +113,7 @@ v0 is ~30k lines of TypeScript, 44 releases, and a large body of reviews (`docs/
 | Single-flight destructive actions; visible rejection | board actions, `src/daemon/spawns.ts` | Command ids + receipts (A4); the board disables a pending action |
 | Credential hygiene: scrub origin URLs, keep tokens off `/state` and argv, scrub child env | `src/daemon/env-scrub.ts`, `src/daemon/repo-identity.ts` | Same rules, enforced by types (`Secret<T>` wrapper that does not implement `Serialize`) |
 | Numbered, transactional migrations with `PRAGMA user_version` | `docs/v1/architecture.md` (v0 had ~30 ad-hoc `ALTER`s) | `rusqlite_migration` from day one, on both databases |
-| No model calls in the core | doctrine | Doctrine rule 4 |
+| No model decides in the core (model help: DL-153) | doctrine | Doctrine rule 4 |
 | Callsigns, tickets from branch names, worktree naming `<repo>--fd-<callsign>` | `src/daemon/tickets.ts`, `src/daemon/worktrees.ts` | Same conventions |
 | Batch spawn with `Nx` prefix, forced worktree isolation | `board/src/components/SpawnForm.tsx`, `src/daemon/spawns.ts` | Same feature, plus a station picker |
 | Conflict radar | `src/daemon/events.ts` | Same feature, now across stations (repo grouping is a heuristic, see §6.6) |
