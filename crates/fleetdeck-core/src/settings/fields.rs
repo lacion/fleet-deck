@@ -267,6 +267,28 @@ pub fn deck_fields() -> Vec<FieldMeta> {
             Live,
             "Tell both sessions once when two sessions change the same file.",
         ),
+        field(
+            "clone_host",
+            "Default Git host",
+            K::Text,
+            Live,
+            "The host for a repository given as owner/name, for example github.com or gitlab.com.",
+        ),
+        field(
+            "clone_org",
+            "Default organization",
+            K::Text,
+            Live,
+            "The owner or group for a repository given by name only.",
+        ),
+        field(
+            "clone_transport",
+            "Clone with",
+            K::Enum,
+            Live,
+            "https uses your Git credential helper; ssh uses your SSH keys.",
+        )
+        .options(&["https", "ssh"]),
     ]
     .into_iter()
     .map(|f| f.0)

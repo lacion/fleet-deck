@@ -234,6 +234,51 @@ fn deck_defaults_and_rules() {
 }
 
 #[test]
+fn deck_clone_defaults_and_rules() {
+    let d = DeckConfig::parse("").unwrap();
+    assert_eq!(d.clone_host, "github.com");
+    assert_eq!(d.clone_org, "");
+    assert_eq!(d.clone_transport, CloneTransport::Https);
+    let d = DeckConfig::parse(
+        "clone_host = \"GitLab.Example.com\"\nclone_org = \"acme/tools\"\nclone_transport = \"ssh\"",
+    )
+    .unwrap();
+    assert_eq!(d.clone_host, "gitlab.example.com");
+    assert_eq!(d.clone_org, "acme/tools");
+    assert_eq!(d.clone_transport, CloneTransport::Ssh);
+    assert_eq!(d.clone_transport.as_str(), "ssh");
+    assert_eq!(DeckConfig::parse("clone_org = \"\"").unwrap().clone_org, "");
+    let e = |t: &str| DeckConfig::parse(t).unwrap_err().to_string();
+    for bad in [
+        "clone_host = \"\"",
+        "clone_host = \"github\"",
+        "clone_host = \"-a.com\"",
+        "clone_host = \"a-.com\"",
+        "clone_host = \"a..com\"",
+        "clone_host = \"a.com/x\"",
+        "clone_host = \"a b.com\"",
+    ] {
+        assert!(e(bad).contains("clone_host"), "{bad}");
+    }
+    let long = format!("clone_host = \"{}.com\"", "a".repeat(250));
+    assert!(e(&long).contains("clone_host"));
+    for bad in [
+        "clone_org = \"/acme\"",
+        "clone_org = \"acme/\"",
+        "clone_org = \"a//b\"",
+        "clone_org = \"a b\"",
+        "clone_org = \"a:b\"",
+    ] {
+        assert!(e(bad).contains("clone_org"), "{bad}");
+    }
+    let long = format!("clone_org = \"{}\"", "a".repeat(201));
+    assert!(e(&long).contains("clone_org"));
+    assert!(e("clone_transport = \"http\"").contains("clone_transport"));
+    assert!(e("clone_transport = \"\"").contains("clone_transport"));
+    assert!(DeckConfig::parse("clone_transport = 1").is_err());
+}
+
+#[test]
 fn files_load_with_owner_rules() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("station.toml");

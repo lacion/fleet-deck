@@ -356,7 +356,7 @@ async fn a_clone_url_with_credentials_or_outside_the_roots_is_forbidden() {
 }
 
 #[tokio::test]
-async fn a_clone_start_clones_into_a_new_directory_inside_the_roots() {
+async fn a_clone_start_clones_into_a_new_directory_and_reuses_it_the_second_time() {
     let mut st = Station::new(4).await;
     let ws = st.workspace();
     init_repo(Path::new(&ws));
@@ -376,12 +376,92 @@ async fn a_clone_start_clones_into_a_new_directory_inside_the_roots() {
     .await;
     assert!(target.join("a.txt").is_file());
     assert!(summary(&st, &s).await.callsign.is_some());
-    // The same target again: it exists now, so the start is refused.
-    let code = st
-        .rejected(start_cmd(
+    // The same target again: it is a clone of the same repository now, so
+    // the start is accepted and runs in place.
+    let again = st
+        .accepted(start_cmd(
             &target.to_string_lossy(),
             Some(WorkspaceRequest::Clone {
                 url: format!("file://{ws}"),
+            }),
+        ))
+        .await;
+    let second = again.receipt.result.unwrap().session_id.unwrap();
+    let existing = target
+        .canonicalize()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    assert_eq!(summary(&st, &second).await.cwd.as_deref(), Some(&*existing));
+    assert_eq!(summary(&st, &second).await.worktree, None);
+    st.manager.shutdown(StopMode::Kill).await;
+}
+
+#[tokio::test]
+async fn a_clone_start_into_a_clone_of_the_same_repository_starts_in_place_without_a_plan() {
+    let mut st = Station::new(4).await;
+    let ws = st.workspace();
+    let existing = Path::new(&ws).parent().unwrap().join("tools");
+    std::fs::create_dir(&existing).unwrap();
+    git(&existing, &["init", "-q"]);
+    git(
+        &existing,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/acme/tools.git",
+        ],
+    );
+    // An ssh request of the same repository reuses the https checkout.
+    let d = st
+        .accepted(start_cmd(
+            &existing.to_string_lossy(),
+            Some(WorkspaceRequest::Clone {
+                url: "git@github.com:acme/tools.git".into(),
+            }),
+        ))
+        .await;
+    let s = d.receipt.result.unwrap().session_id.unwrap();
+    let path = existing
+        .canonicalize()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    assert_eq!(summary(&st, &s).await.cwd.as_deref(), Some(&*path));
+    let effects = st.manager.store().session_effects(s.clone()).await.unwrap();
+    let start = effects
+        .iter()
+        .find_map(|e| match &e.payload {
+            crate::store::EffectPayload::Start { workspace, .. } => Some(workspace.clone()),
+            _ => None,
+        })
+        .expect("a start effect");
+    assert_eq!(start, None);
+    st.manager.shutdown(StopMode::Kill).await;
+}
+
+#[tokio::test]
+async fn a_clone_start_into_a_clone_of_another_repository_is_refused() {
+    let mut st = Station::new(4).await;
+    let ws = st.workspace();
+    let existing = Path::new(&ws).parent().unwrap().join("tools");
+    std::fs::create_dir(&existing).unwrap();
+    git(&existing, &["init", "-q"]);
+    git(
+        &existing,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/acme/other.git",
+        ],
+    );
+    let code = st
+        .rejected(start_cmd(
+            &existing.to_string_lossy(),
+            Some(WorkspaceRequest::Clone {
+                url: "https://github.com/acme/tools.git".into(),
             }),
         ))
         .await;

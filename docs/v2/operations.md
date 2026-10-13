@@ -93,6 +93,9 @@ Check the setup from the board (project preflight) or with the `integrations.sta
 | `link_listen` | `127.0.0.1:7421` | The link listener for stations that dial the deck. |
 | `tailnet_hostname` | (none) | The tailnet DNS name of the deck, for the WebSocket `Origin` check. |
 | `conflict_mail` | `true` | When two sessions change the same file within 30 minutes, the deck sends each session one follow-up mail about it (DL-145). Set `false` to turn this off. |
+| `clone_host` | `github.com` | The Git host for a repository that the board gets as `owner/name`. A lower-case host name, for example `gitlab.com`. Applies at once. |
+| `clone_org` | (empty) | The owner or group for a repository that the board gets by name only. Use `acme` or a group path such as `acme/tools`. Applies at once. |
+| `clone_transport` | `https` | `https` uses your Git credential helper. `ssh` uses your SSH keys. It decides the URL that the board builds from a short name. Applies at once. |
 
 > **Caution:** use only loopback, private LAN or tailnet addresses. The deck refuses a public address. Do not forward a port from a router.
 

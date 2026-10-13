@@ -242,6 +242,9 @@ impl Holder for DeckHolder {
         m.insert("link_listen".into(), addrs(&c.link_listen));
         m.insert("tailnet_hostname".into(), json!(c.tailnet_hostname));
         m.insert("conflict_mail".into(), json!(c.conflict_mail));
+        m.insert("clone_host".into(), json!(c.clone_host));
+        m.insert("clone_org".into(), json!(c.clone_org));
+        m.insert("clone_transport".into(), json!(c.clone_transport.as_str()));
         m
     }
 

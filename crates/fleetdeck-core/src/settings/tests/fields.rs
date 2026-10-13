@@ -30,6 +30,7 @@ fn sample(f: &FieldMeta) -> String {
         FieldKind::Bool => "true".to_owned(),
         FieldKind::Int => f.min.unwrap_or(1).to_string(),
         FieldKind::Text if f.key == "tailnet_hostname" => "\"deck.example\"".to_owned(),
+        FieldKind::Text if f.key == "clone_host" => "\"git.example.com\"".to_owned(),
         FieldKind::Text if f.key == "offline_approval_policy" => "\"wait\"".to_owned(),
         FieldKind::Text | FieldKind::Path => "\"x\"".to_owned(),
         FieldKind::Enum => format!("{:?}", f.options[0]),
@@ -84,6 +85,29 @@ fn every_deck_key_parses_alone() {
         DeckConfig::parse(&text)
             .unwrap_or_else(|e| panic!("`{}` does not parse alone: {e}", f.key));
     }
+}
+
+#[test]
+fn the_clone_keys_are_live_and_show_their_defaults() {
+    let fields = deck_fields();
+    let get = |k: &str| fields.iter().find(|f| f.key == k).unwrap().clone();
+    for key in ["clone_host", "clone_org", "clone_transport"] {
+        let f = get(key);
+        assert_eq!(f.apply, fleetdeck_proto::settings::Apply::Live, "{key}");
+        assert!(!f.danger, "{key}");
+    }
+    assert_eq!(get("clone_host").kind, FieldKind::Text);
+    assert_eq!(get("clone_org").kind, FieldKind::Text);
+    assert_eq!(get("clone_transport").kind, FieldKind::Enum);
+    assert_eq!(get("clone_transport").options, vec!["https", "ssh"]);
+    let fx = Fixture::new(None);
+    let deck = fx.dir.path().join("cfg").join("deck.toml");
+    let view = view_deck(&deck, &[]).unwrap();
+    assert_eq!(view.values["clone_host"], json!("github.com"));
+    assert_eq!(view.values["clone_org"], json!(""));
+    assert_eq!(view.values["clone_transport"], json!("https"));
+    let value_keys: BTreeSet<String> = view.values.keys().cloned().collect();
+    assert_eq!(value_keys, keys(&view.fields));
 }
 
 #[test]

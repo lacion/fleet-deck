@@ -540,6 +540,32 @@ pub struct DeckConfig {
     /// Tell both sessions once when two sessions change the same file
     /// (DL-145). On by default.
     pub conflict_mail: bool,
+    /// The Git host of `owner/name` (lower case, `github.com` by default).
+    pub clone_host: String,
+    /// The owner or group of a repository given by name only (empty by default).
+    pub clone_org: String,
+    /// How the board clones a repository that it gets as a short name.
+    pub clone_transport: CloneTransport,
+}
+
+/// How a clone reaches the Git host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloneTransport {
+    /// `https://host/path.git`, with the Git credential helper.
+    Https,
+    /// `git@host:path.git`, with the SSH keys.
+    Ssh,
+}
+
+impl CloneTransport {
+    /// The text form, as in `deck.toml`.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Https => "https",
+            Self::Ssh => "ssh",
+        }
+    }
 }
 
 /// The keys of `deck.toml` (`RawDeck`).
@@ -550,6 +576,9 @@ pub(crate) const RAW_DECK_KEYS: &[&str] = &[
     "link_listen",
     "tailnet_hostname",
     "conflict_mail",
+    "clone_host",
+    "clone_org",
+    "clone_transport",
 ];
 
 #[derive(Deserialize)]
@@ -560,6 +589,9 @@ struct RawDeck {
     link_listen: Option<Vec<String>>,
     tailnet_hostname: Option<String>,
     conflict_mail: Option<bool>,
+    clone_host: Option<String>,
+    clone_org: Option<String>,
+    clone_transport: Option<String>,
 }
 
 impl DeckConfig {
@@ -599,12 +631,31 @@ impl DeckConfig {
                 ));
             }
         };
+        let clone_host = raw.clone_host.map(|h| h.to_ascii_lowercase());
+        if let Some(h) = clone_host.as_deref().filter(|h| !valid_clone_host(h)) {
+            return Err(invalid(
+                "clone_host",
+                format!("`{h}` is not a Git host name"),
+            ));
+        }
+        let clone_org = raw.clone_org.unwrap_or_default();
+        if !clone_org.is_empty() && !valid_clone_org(&clone_org) {
+            return Err(invalid("clone_org", format!("`{clone_org}` is not a name")));
+        }
+        let clone_transport = match raw.clone_transport.as_deref() {
+            None | Some("https") => CloneTransport::Https,
+            Some("ssh") => CloneTransport::Ssh,
+            Some(_) => return Err(invalid("clone_transport", "use \"https\" or \"ssh\"")),
+        };
         Ok(Self {
             name,
             listen,
             link_listen,
             tailnet_hostname,
             conflict_mail: raw.conflict_mail.unwrap_or(true),
+            clone_host: clone_host.unwrap_or_else(|| "github.com".to_owned()),
+            clone_org,
+            clone_transport,
         })
     }
 }
@@ -706,6 +757,23 @@ pub(crate) fn valid_env_key(key: &str) -> bool {
     !b.is_empty()
         && (b[0].is_ascii_alphabetic() || b[0] == b'_')
         && b.iter().all(|c| c.is_ascii_alphanumeric() || *c == b'_')
+}
+
+/// At least two labels of `[a-z0-9]([a-z0-9-]*[a-z0-9])?`, 1 to 253 bytes.
+fn valid_clone_host(host: &str) -> bool {
+    let edge = |c: u8| c.is_ascii_lowercase() || c.is_ascii_digit();
+    let label = |l: &str| {
+        l.bytes().next().is_some_and(edge)
+            && l.bytes().next_back().is_some_and(edge)
+            && l.bytes().all(|c| edge(c) || c == b'-')
+    };
+    host.len() <= 253 && host.contains('.') && host.split('.').all(label)
+}
+
+/// At most 200 bytes of `[A-Za-z0-9._-]+` segments that a `/` separates.
+fn valid_clone_org(org: &str) -> bool {
+    let name = |c: u8| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'-');
+    org.len() <= 200 && org.split('/').all(|s| !s.is_empty() && s.bytes().all(name))
 }
 
 fn valid_dns_name(name: &str) -> bool {
