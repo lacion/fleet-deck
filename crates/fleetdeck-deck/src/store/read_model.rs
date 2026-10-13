@@ -81,6 +81,11 @@ fn store_summary(
             now
         ],
     )?;
+    // A session that runs again gets the items that wait for it (the outbox
+    // sender polls, so nothing wakes it).
+    if !matches!(summary.state, SessionState::Exited | SessionState::Lost) {
+        super::outbox::release_held_tx(tx, station, &summary.session_id, now)?;
+    }
     Ok(())
 }
 
