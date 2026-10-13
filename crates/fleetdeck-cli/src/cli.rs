@@ -44,6 +44,8 @@ pub enum Command {
         #[command(subcommand)]
         command: Option<StationCommand>,
     },
+    /// Check the local setup and say what is wrong (read-only).
+    Doctor,
     /// Print a one-time board login URL (from the deck's owner-only socket).
     Open,
     /// The durable provider shim (ADR-005 §2). The station starts it and
@@ -331,6 +333,7 @@ mod tests {
             &["station", "approve", "req-1", "--option", "deny"],
             &["station", "interrupt", "s-1"],
             &["open"],
+            &["doctor"],
         ] {
             assert!(parse(args).is_ok(), "{args:?} should parse");
         }

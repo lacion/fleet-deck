@@ -3,6 +3,7 @@
 mod auth;
 mod cli;
 mod deck;
+mod doctor;
 mod invite;
 mod pairing;
 mod station;
@@ -46,7 +47,7 @@ fn main() -> ExitCode {
         _ => {}
     }
     match run(cli) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(code) => code,
         Err(err) => {
             eprintln!("fleetdeck: {err:#}");
             ExitCode::from(1)
@@ -54,7 +55,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(cli: Cli) -> anyhow::Result<()> {
+fn run(cli: Cli) -> anyhow::Result<ExitCode> {
     fleetdeck_core::logging::init(cli.log_format)?;
     let env = fleetdeck_core::paths::Env::from_process();
     let dirs = fleetdeck_core::paths::NodeDirs::resolve(cli.data_dir.as_deref(), &env)?;
@@ -65,17 +66,21 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()?;
-        return runtime.block_on(local_main(local, &dirs, &env));
+        return runtime
+            .block_on(local_main(local, &dirs, &env))
+            .map(|()| ExitCode::SUCCESS);
     }
     let runtime = || {
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
     };
+    let done = |result: anyhow::Result<()>| result.map(|()| ExitCode::SUCCESS);
     match &cli.command {
-        Command::Deck { command } => runtime()?.block_on(deck_main(command.as_ref(), &dirs)),
-        Command::Up(args) => runtime()?.block_on(up::up(&dirs, &env, args)),
-        Command::Open => runtime()?.block_on(auth::open(&dirs)),
+        Command::Deck { command } => done(runtime()?.block_on(deck_main(command.as_ref(), &dirs))),
+        Command::Up(args) => done(runtime()?.block_on(up::up(&dirs, &env, args))),
+        Command::Open => done(runtime()?.block_on(auth::open(&dirs))),
+        Command::Doctor => Ok(runtime()?.block_on(doctor::run(&dirs, &env))),
         Command::Station { .. } | Command::Shim { .. } | Command::ShimExec { .. } => {
             anyhow::bail!("internal error: the command was not dispatched")
         }
