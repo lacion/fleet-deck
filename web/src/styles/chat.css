@@ -502,3 +502,49 @@
   background: none;
   border-color: transparent;
 }
+
+/* DL-175: the filter bar. It stays above the scroll area; on a phone it scrolls sideways. */
+.fd-chat-filters {
+  flex: none;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border-soft);
+  scrollbar-width: none;
+}
+.fd-chat-filters::-webkit-scrollbar {
+  display: none;
+}
+.fd-chat-filters-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: calc(var(--chat-w) + 48px);
+  margin: 0 auto;
+  padding: 6px 24px;
+}
+[data-layout="phone"] .fd-chat-filters-row {
+  padding: 6px 12px;
+}
+.fd-chat-filters .fd-chip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.fd-chat-filters .fd-chip:focus-visible {
+  outline: 2px solid var(--act);
+  outline-offset: -2px;
+}
+.fd-chat-filter-count {
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+.fd-chat-filter-sep {
+  flex: none;
+  align-self: stretch;
+  width: 1px;
+  margin: 3px 6px;
+  background: var(--border);
+}
+.fd-chat-toolfold .fd-badge {
+  margin-left: 6px;
+}

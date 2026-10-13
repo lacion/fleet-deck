@@ -367,6 +367,7 @@ export function SessionView(props: SessionViewProps) {
             <>
               <ChatView
                 items={tree.items}
+                provider={s.provider}
                 working={s.current_run !== null}
                 ready={timeline?.ready === true}
                 error={timeline?.error ?? null}
