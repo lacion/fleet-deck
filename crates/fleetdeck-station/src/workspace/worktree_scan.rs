@@ -466,11 +466,18 @@ fn check_files(
             continue;
         }
         if entry.mode == MODE_GITLINK {
-            // A submodule without `.git` is not initialized: not changed.
             if std::fs::symlink_metadata(full.join(".git")).is_ok() {
                 files
                     .submodules
                     .push((entry.path.clone(), entry.oid.clone()));
+            } else {
+                // A submodule without `.git` is not initialized. Git lists
+                // nothing inside it, so any file there is work.
+                let mut inside = std::fs::read_dir(&full)
+                    .map_err(|e| format!("cannot read {}: {e}", relative.display()))?;
+                if inside.next().is_some() {
+                    files.changed.push(entry.path.clone());
+                }
             }
             continue;
         }

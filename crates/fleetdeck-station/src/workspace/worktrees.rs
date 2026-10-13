@@ -292,9 +292,14 @@ async fn unpushed(
 }
 
 async fn last_commit(git: &Git) -> Option<WorktreeCommit> {
-    let text = scan::text(git, &["log", "-1", "--format=%ct%x00%s"])
-        .await
-        .ok()?;
+    // `--no-show-signature`: `log.showSignature` would run the configured
+    // signature verifier (PRE-PR review of DL-143).
+    let text = scan::text(
+        git,
+        &["log", "-1", "--no-show-signature", "--format=%ct%x00%s"],
+    )
+    .await
+    .ok()?;
     let (secs, subject) = text.trim_end_matches('\n').split_once('\0')?;
     Some(WorktreeCommit {
         subject: subject.to_owned(),

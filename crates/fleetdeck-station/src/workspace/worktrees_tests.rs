@@ -513,3 +513,54 @@ fn the_scan_future_can_move_between_threads() {
     let fut = scan(&git, Path::new("."), 0);
     is_send(&fut);
 }
+
+#[tokio::test]
+async fn a_configured_signature_verifier_does_not_run() {
+    use std::os::unix::fs::PermissionsExt;
+    let f = fixture();
+    let tools = tempfile::tempdir().unwrap();
+    // A fake signer: Git takes any armored text as the signature.
+    let signer = tools.path().join("sign.sh");
+    std::fs::write(
+        &signer,
+        "#!/bin/sh\ncat >/dev/null\necho '[GNUPG:] SIG_CREATED ' >&2\n\
+         printf -- '-----BEGIN PGP SIGNATURE-----\\n\\nZmFrZQ==\\n-----END PGP SIGNATURE-----\\n'\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&signer, std::fs::Permissions::from_mode(0o755)).unwrap();
+    git(&f.wt, &["config", "gpg.program", signer.to_str().unwrap()]);
+    std::fs::write(f.wt.join("b.txt"), "two\n").unwrap();
+    git(&f.wt, &["add", "b.txt"]);
+    git(&f.wt, &["commit", "-q", "-S", "-m", "signed"]);
+    let (script, marker) = marker_script(tools.path());
+    git(&f.wt, &["config", "gpg.program", script.to_str().unwrap()]);
+    git(&f.wt, &["config", "log.showSignature", "true"]);
+    let info = one(
+        &policy(f.root.path()),
+        session("s1", &f.wt, SessionState::Exited),
+    )
+    .await;
+    assert_eq!(
+        info.last_commit.map(|c| c.subject).as_deref(),
+        Some("signed")
+    );
+    assert!(!marker.exists(), "the signature verifier ran");
+}
+
+#[tokio::test]
+async fn files_in_an_uninitialized_submodule_directory_are_work() {
+    let f = fixture();
+    let head = git(&f.wt, &["rev-parse", "HEAD"]);
+    let gitlink = format!("160000,{},sub", head.trim());
+    git(&f.wt, &["update-index", "--add", "--cacheinfo", &gitlink]);
+    git(&f.wt, &["commit", "-q", "-m", "a submodule"]);
+    git(&f.main, &["merge", "-q", "--ff-only", "fd/x"]);
+    std::fs::create_dir(f.wt.join("sub")).unwrap();
+    let p = policy(f.root.path());
+    let empty = one(&p, session("s1", &f.wt, SessionState::Exited)).await;
+    assert_eq!(empty.verdict, WorktreeVerdict::Clean, "{empty:?}");
+    std::fs::write(f.wt.join("sub/notes.txt"), "unsaved\n").unwrap();
+    let full = one(&p, session("s1", &f.wt, SessionState::Exited)).await;
+    assert_eq!(full.verdict, WorktreeVerdict::HasWork, "{full:?}");
+    assert_eq!(full.dirty, Some(1));
+}

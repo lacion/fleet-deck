@@ -171,6 +171,42 @@ describe('archived sessions on the deck (DL-149)', () => {
     warn.mockRestore();
   });
 
+  test('a migration that stops between batches keeps each batch id on retry', async () => {
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    const old = Array.from({ length: 501 }, (_, i) => `st/s${String(i).padStart(3, '0')}`);
+    items.set('fd-archived', JSON.stringify(old));
+    const d = deck();
+    // The real deck ignores a known mutation id.
+    const applied = new Set<string>();
+    let failAfter = 1;
+    const api: ArchiveApi = {
+      get: d.api.get,
+      post: async (path, body) => {
+        const b = body as Posted;
+        if (failAfter === 0) throw new Error('down');
+        failAfter -= 1;
+        if (applied.has(b.mutation_id)) return d.api.get(path);
+        applied.add(b.mutation_id);
+        return d.api.post(path, body);
+      },
+    };
+    const a = createArchive();
+    const first = a.attach(api);
+    await flush();
+    first();
+    expect(d.state.refs.size).toBe(500);
+    expect(items.has('fd-archived')).toBe(true);
+    failAfter = 10;
+    const detach = a.attach(api);
+    await flush();
+    expect(d.state.refs.size).toBe(501);
+    expect(items.has('fd-archived')).toBe(false);
+    const ids = d.state.posts.map((p) => p.mutation_id);
+    expect(new Set(ids).size).toBe(2);
+    detach();
+    warn.mockRestore();
+  });
+
   test('a deck that is down leaves the cached set', async () => {
     const warn = spyOn(console, 'warn').mockImplementation(() => {});
     items.set('fd-archived-cache', JSON.stringify(['st/cached']));

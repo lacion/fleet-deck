@@ -126,18 +126,18 @@ export function createArchive(): Archive {
     if (old.length === 0 && storage()?.getItem(LEGACY_KEY) === null) return;
     migrating = true;
     try {
-      const missing = old.filter((r) => !deckRefs.includes(r));
-      if (missing.length > 0) {
-        const hash = await sha256Hex16(old.join('\n'));
-        const all = missing.flatMap((r) => splitRef(r) ?? []);
-        for (let i = 0; i < all.length; i += MAX_CHANGES) {
-          const change: ArchiveChange = {
-            mutation_id: `migrate-${deviceId()}-${hash}${i === 0 ? '' : `-${i / MAX_CHANGES}`}`,
-            changes: all.slice(i, i + MAX_CHANGES),
-          };
-          const answer = parseList(await target.post(PATH, change));
-          if (api === target) set(new Set(answer));
-        }
+      // Fixed batches of the sorted old set: a batch keeps its id across
+      // retries, so a retry never reuses an id for other refs.
+      for (let i = 0; i < old.length; i += MAX_CHANGES) {
+        const batch = old.slice(i, i + MAX_CHANGES);
+        const missing = batch.filter((r) => !deckRefs.includes(r));
+        if (missing.length === 0) continue;
+        const change: ArchiveChange = {
+          mutation_id: `migrate-${deviceId()}-${await sha256Hex16(batch.join('\n'))}`,
+          changes: missing.flatMap((r) => splitRef(r) ?? []),
+        };
+        const answer = parseList(await target.post(PATH, change));
+        if (api === target) set(new Set(answer));
       }
       storage()?.removeItem(LEGACY_KEY);
     } catch (e) {
