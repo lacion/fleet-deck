@@ -19,7 +19,6 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use fleetdeck_core::ids::new_id;
 use fleetdeck_proto::board::DeckSession;
-use fleetdeck_proto::event::ProviderKind;
 use fleetdeck_proto::orchestration::{
     DeliveryState, MailDelivery, MailGroup, MailView, TaskCompletion, TaskState, TaskView,
 };
@@ -221,10 +220,9 @@ pub fn group_members(sessions: &[DeckSession], group: MailGroup) -> Vec<&DeckSes
                 CardStatus::Ended | CardStatus::Lost | CardStatus::Unreachable
             )
         })
-        .filter(|s| match group {
-            MailGroup::Idle => s.status == CardStatus::Idle,
-            MailGroup::Claude => s.summary.provider == Some(ProviderKind::Claude),
-            MailGroup::Codex => s.summary.provider == Some(ProviderKind::Codex),
+        .filter(|s| match group.provider() {
+            None => s.status == CardStatus::Idle,
+            Some(kind) => s.summary.provider == Some(kind),
         })
         .collect()
 }
@@ -274,8 +272,8 @@ pub(super) fn block_open_tasks(
     now: i64,
 ) -> Result<usize> {
     Ok(tx.execute(
-        "UPDATE tasks SET state = 'blocked', completion_reason = ?4, updated_at = ?5,
-             completed_at = ?5
+        "UPDATE tasks SET state = 'blocked', completion_reason = ?3, updated_at = ?4,
+             completed_at = ?4
          WHERE station_id = ?1 AND session_id = ?2 AND state IN ('open', 'question')",
         params![
             station.as_str(),

@@ -144,8 +144,8 @@ mod tests {
 
     #[test]
     fn only_the_newest_due_time_counts() {
-        // The deck was off for 3 days: three due times, the newest is 40 min
-        // old and runs; the older ones are overtaken.
+        // The deck was off from midnight for 3 days: four 09:00 due times,
+        // the newest is 40 min old and runs; the older ones are overtaken.
         let now = D0 + 3 * DAY + 9 * HOUR + 40 * MIN;
         assert_eq!(
             plan(&daily(), 0, D0, now, HOUR),
@@ -153,13 +153,13 @@ mod tests {
                 due: D0 + 3 * DAY + 9 * HOUR
             }
         );
-        // Off for 3 days, back late in the evening: missed, three due times.
+        // Off for 3 days, back late in the evening: missed, four due times.
         let late = D0 + 3 * DAY + 20 * HOUR;
         assert_eq!(
             plan(&daily(), 0, D0, late, HOUR),
             Plan::Missed {
                 due: D0 + 3 * DAY + 9 * HOUR,
-                count: 3
+                count: 4
             }
         );
     }

@@ -213,9 +213,10 @@ async fn run_now_needs_a_live_link_and_a_known_schedule() {
         "{}",
         r.text
     );
+    // Both refusals are audited: the unknown schedule and the down link.
     assert_eq!(
         c.audited("schedules.run", AuditResult::Failed).await.len(),
-        1
+        2
     );
     let r = c.get(&format!("/api/schedules/{id}/runs"), &h[..1]).await;
     assert!(r.body.as_array().unwrap().is_empty());

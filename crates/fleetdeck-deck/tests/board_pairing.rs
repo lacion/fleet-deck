@@ -186,7 +186,7 @@ async fn the_board_pairs_both_directions_reports_station_info_and_removes() {
     assert_eq!(info["max_sessions"], 2);
     assert_eq!(
         info["providers"],
-        json!([{ "instance": "codex", "provider": "codex", "version": null, "auth": "unknown", "capabilities": null }])
+        json!([{ "instance": "codex", "provider": "codex", "version": null, "auth": "unknown", "capabilities": null, "version_status": "unknown" }])
     );
     assert!(view["info_at"].as_i64().unwrap() >= now);
 

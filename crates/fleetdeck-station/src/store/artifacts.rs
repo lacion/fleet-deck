@@ -337,21 +337,6 @@ fn commit(
     };
     let files: Vec<String> = new.staged.files.iter().map(|f| f.path.clone()).collect();
     let size = new.staged.size();
-    tx.execute(
-        "INSERT INTO artifact_versions
-             (artifact_id, version, size, sha256, manifest_sha256, files, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        params![
-            artifact_id,
-            version,
-            to_i64(size)?,
-            main.sha256,
-            manifest,
-            serde_json::to_string(&files).map_err(StoreError::from)?,
-            now
-        ],
-    )
-    .map_err(StoreError::from)?;
     let title = new
         .title
         .clone()
@@ -399,6 +384,22 @@ fn commit(
             }
         }
     };
+    // The version row refers to the artifact row, so it comes second.
+    tx.execute(
+        "INSERT INTO artifact_versions
+             (artifact_id, version, size, sha256, manifest_sha256, files, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            artifact_id,
+            version,
+            to_i64(size)?,
+            main.sha256,
+            manifest,
+            serde_json::to_string(&files).map_err(StoreError::from)?,
+            now
+        ],
+    )
+    .map_err(StoreError::from)?;
     let seq = match &artifact.session_id {
         Some(session) => {
             let event = NewEvent {

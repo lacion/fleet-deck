@@ -111,6 +111,17 @@ impl MailGroup {
             _ => None,
         }
     }
+
+    /// The provider that a provider group names; `None` for `@idle`. The
+    /// deck asks this instead of matching a provider name (crate layering).
+    #[must_use]
+    pub fn provider(self) -> Option<ProviderKind> {
+        match self {
+            Self::Idle => None,
+            Self::Claude => Some(ProviderKind::Claude),
+            Self::Codex => Some(ProviderKind::Codex),
+        }
+    }
 }
 
 /// How a mail reaches a session: a native follow-up (after the current
