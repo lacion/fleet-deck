@@ -262,3 +262,26 @@ async fn a_restart_does_not_warn_again() {
         .unwrap();
     assert_eq!(s.mails(10).await.unwrap().len(), 2);
 }
+
+#[tokio::test]
+async fn a_replayed_old_touch_is_no_conflict_with_a_recent_one() {
+    let det = Det::new();
+    let (s, station, inc) = setup(&det, SessionState::Running).await;
+    let at = now(&det);
+    s.apply_events(
+        station.clone(),
+        inc.clone(),
+        vec![changed(1, "s1", at - 1_000)],
+    )
+    .await
+    .unwrap();
+    // A replay of a touch two hours old: outside the window on the other side.
+    s.apply_events(
+        station.clone(),
+        inc.clone(),
+        vec![changed(2, "s2", at - 2 * 60 * 60 * 1000)],
+    )
+    .await
+    .unwrap();
+    assert!(s.mails(10).await.unwrap().is_empty());
+}

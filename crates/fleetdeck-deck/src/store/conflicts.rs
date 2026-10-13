@@ -167,7 +167,7 @@ fn mail_conflicts(
 ) -> Result<()> {
     let mut stmt = tx.prepare(
         "SELECT station_id, session_id FROM file_touches
-         WHERE group_key = ?1 AND file = ?2 AND touched_at >= ?3
+         WHERE group_key = ?1 AND file = ?2 AND touched_at >= ?3 AND touched_at <= ?6
              AND NOT (station_id = ?4 AND session_id = ?5)
          ORDER BY station_id, session_id",
     )?;
@@ -178,7 +178,10 @@ fn mail_conflicts(
                 file,
                 e.at.saturating_sub(CONFLICT_WINDOW_MS),
                 station.as_str(),
-                e.session_id.as_str()
+                e.session_id.as_str(),
+                // Both sides of the window: a replayed old touch is not a
+                // conflict with a recent one (Codex review).
+                e.at.saturating_add(CONFLICT_WINDOW_MS)
             ],
             |r| {
                 Ok(Party {

@@ -132,9 +132,9 @@ export class Connection {
   }
   /** One mutating board call with the login's CSRF token. It never retries:
    * the caller shows the error and the person decides. */
-  async post(path: string, body: unknown): Promise<unknown> {
+  async post(path: string, body: unknown, timeoutMs: number = TIMEOUT_MS): Promise<unknown> {
     const controller = new AbortController();
-    const cancel = this.env.schedule(() => controller.abort(), TIMEOUT_MS);
+    const cancel = this.env.schedule(() => controller.abort(), timeoutMs);
     try {
       return await request(this.env.fetch, path, controller.signal, body, this.state.login?.csrf);
     } finally {

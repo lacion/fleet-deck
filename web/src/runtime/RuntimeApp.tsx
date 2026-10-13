@@ -25,14 +25,18 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
     connection.getSnapshot,
     connection.getSnapshot,
   );
-  // DL-149: the archived sessions live on the deck.
+  // DL-149: the archived sessions live on the deck; attach once logged in,
+  // and again after a new login.
+  const loggedIn = state.login !== null;
   useEffect(
     () =>
-      archived.attach({
-        get: (p) => connection.get(p),
-        post: (p, b) => connection.post(p, b),
-      }),
-    [connection],
+      loggedIn
+        ? archived.attach({
+            get: (p) => connection.get(p),
+            post: (p, b) => connection.post(p, b),
+          })
+        : undefined,
+    [connection, loggedIn],
   );
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
@@ -70,7 +74,9 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
     () =>
       spawnActions(
         (path) => connection.get(path),
-        (path, body) => connection.post(path, body),
+        // The deck waits up to 30 s for a station's Git access check (DL-144).
+        (path, body) =>
+          connection.post(path, body, path.endsWith('/workspace/preflight') ? 35_000 : undefined),
         scopeText.split(' '),
       ),
     [connection, scopeText],
