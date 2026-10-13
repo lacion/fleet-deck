@@ -1,6 +1,6 @@
-// DL-141: small per-browser sets of session keys (priority stars, archived
-// sessions), kept in localStorage. Every read and write survives a blocked
-// or full storage: the set then lives in memory only.
+// DL-141: small per-browser sets of session keys (priority stars), kept in
+// localStorage. Every read and write survives a blocked or full storage: the
+// set then lives in memory only.
 import { useSyncExternalStore } from 'react';
 
 /** The key of one session in a set: `<station_id>/<session_id>`. */
@@ -67,5 +67,3 @@ function read(storageKey: string): ReadonlySet<string> {
 
 /** Sessions the owner starred (v1 priority). */
 export const priority = localSet('fd-priority');
-/** Ended or lost sessions the owner cleared from the board; a live session always shows. */
-export const archived = localSet('fd-archived');

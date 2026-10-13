@@ -13,9 +13,9 @@ use std::path::{Path, PathBuf};
 use ts_rs::{Config, TS};
 
 use crate::board::{
-    AddStationRequest, BoardClientMessage, BoardServerMessage, CommandRequest, DeckCommand,
-    DeckSession, DeviceLink, DeviceLinkEntry, FleetExtras, PairingInvitation, SessionKey,
-    StationView, WsTicket,
+    AddStationRequest, ArchiveChange, ArchiveItem, ArchiveList, ArchiveRef, BoardClientMessage,
+    BoardServerMessage, CommandRequest, DeckCommand, DeckSession, DeviceLink, DeviceLinkEntry,
+    FleetExtras, PairingInvitation, SessionKey, StationView, WsTicket,
 };
 use crate::capability::{Capabilities, Operation, Unsupported};
 use crate::command::{CommandEnvelope, DeckCommandState, Receipt};
@@ -78,6 +78,10 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         BoardClientMessage::export_all(&cfg),
         WsTicket::export_all(&cfg),
         DeviceLink::export_all(&cfg),
+        ArchiveRef::export_all(&cfg),
+        ArchiveList::export_all(&cfg),
+        ArchiveItem::export_all(&cfg),
+        ArchiveChange::export_all(&cfg),
         DeviceLinkEntry::export_all(&cfg),
         PairingInvitation::export_all(&cfg),
         AddStationRequest::export_all(&cfg),

@@ -18,7 +18,8 @@ import {
   Zap,
 } from '../ui/icons';
 import { shortModel } from '../ui/format';
-import { archived as archivedSet, priority, sessionRef } from '../ui/localSet';
+import { archived as archivedSet } from '../ui/archive';
+import { priority, sessionRef } from '../ui/localSet';
 import type { Chrome } from './chrome';
 import { PrefsRow } from './Prefs';
 import { formatHash, type Route } from './routes';

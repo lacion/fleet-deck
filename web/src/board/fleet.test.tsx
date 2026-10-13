@@ -3,7 +3,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { WorktreeInfo } from '../gen';
 import type { ShellActions } from '../shell/shell';
 import { card, station } from '../testing/fleet';
-import { archived, priority } from '../ui/localSet';
+import { archived } from '../ui/archive';
+import { priority } from '../ui/localSet';
 import {
   archivedHidden,
   cardKey,

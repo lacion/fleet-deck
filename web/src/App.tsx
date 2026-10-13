@@ -37,7 +37,8 @@ import { SpawnForm } from './spawn/SpawnForm';
 import type { Watch } from './terminal/handover';
 import { TerminalDock } from './terminal/TerminalDock';
 import { type TermTab, type TerminalStore, tabId } from './terminal/store';
-import { archived, priority } from './ui/localSet';
+import { archived } from './ui/archive';
+import { priority } from './ui/localSet';
 
 type Props = {
   readonly sessions?: readonly DeckSession[];

@@ -27,7 +27,8 @@ import type { DeckSession, SessionKey, StationView } from '../gen';
 import type { Freshness } from '../runtime/state';
 import type { SessionActions } from '../session/commands';
 import { ChevronDown, ChevronUp, CircleHelp, Icon, Plus, Search } from '../ui/icons';
-import { archived, priority, sessionRef } from '../ui/localSet';
+import { archived } from '../ui/archive';
+import { priority, sessionRef } from '../ui/localSet';
 import { useNow } from '../ui/useNow';
 
 type Props = {

@@ -1,4 +1,4 @@
-import { useMemo, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { App } from '../App';
 import { stationActions, worktreeLoader } from '../board/pairing';
 import { conflictLoader } from '../board/conflicts';
@@ -15,6 +15,7 @@ import { createTerminalStore, type TermTab } from '../terminal/store';
 import { handoverFlow } from '../session/handoverFlow';
 import type { Outcome } from '../session/commands';
 import type { Watch } from '../terminal/handover';
+import { archived } from '../ui/archive';
 import type { Connection } from './connection';
 
 export function RuntimeApp({ connection }: { readonly connection: Connection }) {
@@ -22,6 +23,15 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
     connection.subscribe,
     connection.getSnapshot,
     connection.getSnapshot,
+  );
+  // DL-149: the archived sessions live on the deck.
+  useEffect(
+    () =>
+      archived.attach({
+        get: (p) => connection.get(p),
+        post: (p, b) => connection.post(p, b),
+      }),
+    [connection],
   );
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
