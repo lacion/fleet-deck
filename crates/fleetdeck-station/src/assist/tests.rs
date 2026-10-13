@@ -162,7 +162,7 @@ async fn the_call_uses_the_model_and_the_instance_of_the_signed_in_provider() {
         .unwrap();
     let call = fake.last.lock().unwrap().clone().unwrap();
     assert_eq!(call.driver, Driver::Codex);
-    assert_eq!(call.model, "luna");
+    assert_eq!(call.model, "gpt-5.6-luna");
     assert!(
         call.prompt
             .contains("-----BEGIN INPUT-----\na prompt\n-----END INPUT-----")

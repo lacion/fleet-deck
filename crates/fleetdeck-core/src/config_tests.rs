@@ -358,7 +358,7 @@ fn model_help_defaults_are_on_with_the_owner_budget() {
     assert_eq!(c.model_help, ModelHelpConfig::default());
     assert!(c.model_help.enabled);
     assert_eq!(c.model_help.claude_model, "claude-haiku-5-5");
-    assert_eq!(c.model_help.codex_model, "luna");
+    assert_eq!(c.model_help.codex_model, "gpt-5.6-luna");
     assert_eq!(c.model_help.provider, None);
     assert_eq!(c.model_help.per_call_max_output_tokens, 400);
     assert_eq!(c.model_help.daily_token_cap, 200_000);

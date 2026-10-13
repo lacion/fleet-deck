@@ -51,7 +51,7 @@ impl HostChoice {
 }
 /// The default models of the station's model help (R10, DL-167).
 pub const DEFAULT_ASSIST_CLAUDE_MODEL: &str = "claude-haiku-5-5";
-pub const DEFAULT_ASSIST_CODEX_MODEL: &str = "luna";
+pub const DEFAULT_ASSIST_CODEX_MODEL: &str = "gpt-5.6-luna";
 pub const DEFAULT_ASSIST_MAX_OUTPUT_TOKENS: u32 = 400;
 pub const DEFAULT_ASSIST_DAILY_TOKEN_CAP: u64 = 200_000;
 pub const DEFAULT_BOARD_LISTEN: &str = "127.0.0.1:7420";
