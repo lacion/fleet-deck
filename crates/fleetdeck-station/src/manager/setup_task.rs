@@ -17,15 +17,17 @@ use std::time::Duration;
 use fleetdeck_core::ChildEnv;
 use fleetdeck_proto::SessionId;
 use fleetdeck_proto::command::{SessionSpec, StopMode};
+use fleetdeck_providers::host::ProcessControl;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 use super::SessionTarget;
-use crate::store::{Dispatch, Effect, EffectPayload, InputRecord};
+use crate::store::{Dispatch, Effect, InputRecord};
 use crate::workspace::setup::{STOPPED_MESSAGE, SetupError};
 
-/// The wait for the setup tasks at the station shutdown.
-const SETUP_STOP_WAIT: Duration = Duration::from_secs(15);
+/// The wait for the setup tasks at the station shutdown: the Codex handshake
+/// (30 s) and a stop grace fit in it.
+const SETUP_STOP_WAIT: Duration = Duration::from_secs(60);
 
 /// One start that waits for its setup command, or starts its provider.
 pub(super) struct SetupTask {
@@ -33,9 +35,27 @@ pub(super) struct SetupTask {
     cancel: watch::Sender<bool>,
     /// Taken by the shutdown, which waits for it.
     handle: Option<JoinHandle<()>>,
-    /// The mode of the stop that cancelled the task: Kill replaces
+    /// The mode of a stop that the task has not applied yet: Kill replaces
     /// Graceful, and Graceful never replaces Kill.
     how: Option<StopMode>,
+    /// The mode that the task applies now (the entry stays until it ends).
+    stopping: Option<StopMode>,
+}
+
+impl SetupTask {
+    /// Records a stop. A stop that is not stronger than the one that the task
+    /// applies now adds nothing: that stop is already on its way.
+    fn record(&mut self, how: StopMode) {
+        let wanted = merge(self.how, how);
+        if self.stopping == Some(StopMode::Kill)
+            || (self.stopping == Some(StopMode::Graceful) && wanted == StopMode::Graceful)
+        {
+            return;
+        }
+        self.how = Some(wanted);
+        // The cancel goes out under the registry lock.
+        self.cancel.send_replace(true);
+    }
 }
 
 pub(super) type SetupTasks = Arc<StdMutex<HashMap<SessionId, SetupTask>>>;
@@ -51,8 +71,22 @@ struct SetupRun {
     env: ChildEnv,
 }
 
-/// Holds the task right after it left its setup, before the provider starts
-/// (tests only).
+/// The points where a test holds a start (tests only).
+#[cfg(test)]
+#[derive(Default)]
+pub(in crate::manager) struct Hooks {
+    /// Right after the task left its setup, before the provider start.
+    pub start: StartHook,
+    /// After the provider spawn, before the first input work.
+    pub input: StartHook,
+    /// After the fence and the checkpoint work, right before the delivery
+    /// check of the first input.
+    pub checkpoint: StartHook,
+    /// After the provider registration, right before the task ends.
+    pub end: StartHook,
+}
+
+/// One point where a test holds a start (tests only).
 #[cfg(test)]
 #[derive(Default)]
 pub(in crate::manager) struct StartHook {
@@ -69,12 +103,20 @@ impl StartHook {
         self.armed.store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
-    async fn hold(&self) {
+    pub(in crate::manager) async fn hold(&self) {
         if self.armed.swap(false, std::sync::atomic::Ordering::SeqCst) {
             self.reached.notify_one();
             self.release.notified().await;
         }
     }
+}
+
+/// The wait for the stop of a provider after its task was aborted.
+const ABORT_STOP_WAIT: Duration = Duration::from_secs(10);
+
+/// Whether a stop cancelled the start (the setup, or the start after it).
+pub(super) fn cancelled(cancel: Option<&watch::Receiver<bool>>) -> bool {
+    cancel.is_some_and(|c| *c.borrow())
 }
 
 /// The mode that two stops give together.
@@ -134,6 +176,7 @@ impl SessionTarget {
             cancel,
             handle: Some(handle),
             how: None,
+            stopping: None,
         };
         tasks.insert(session_id.clone(), task);
         Dispatch::Deferred
@@ -178,8 +221,9 @@ impl SessionTarget {
         let dispatch = match failure {
             None => {
                 #[cfg(test)]
-                self.start_hook.hold().await;
-                self.start(&effect, &spec, prompt.as_ref(), None).await
+                self.hooks.start.hold().await;
+                self.start(&effect, &spec, prompt.as_ref(), None, Some(&stop_flag))
+                    .await
             }
             Some(e) => {
                 let stopped = e.message == STOPPED_MESSAGE;
@@ -204,15 +248,42 @@ impl SessionTarget {
         {
             tracing::warn!(error = %e, effect = %effect.effect_id, "the start effect was not settled");
         }
-        let how = self.leave_setup(&session_id);
-        if let (true, Some(how)) = (started, how) {
-            // A stop came while the provider started: the new session ends.
-            let stop = Effect {
-                payload: EffectPayload::Stop { how },
-                process_incarnation: None,
-                ..effect
-            };
-            let _ = self.operate(&stop).await;
+        // The entry stays until the provider that this task started is gone,
+        // so that a shutdown waits for it, and until no stop is left to apply.
+        if started {
+            #[cfg(test)]
+            self.hooks.end.hold().await;
+            while let Some(how) = self.finish_or_take_stop(&session_id) {
+                self.stop_started(&session_id, how).await;
+            }
+        } else {
+            self.leave_setup(&session_id);
+        }
+    }
+
+    /// Stops the live session of a start that a stop cancelled, and waits for
+    /// its end. The session lock is not held while it waits.
+    async fn stop_started(&self, session_id: &SessionId, how: StopMode) {
+        let Some(live) = self.live(session_id) else {
+            return;
+        };
+        let session = {
+            let mut live = live.lock().await;
+            if let Some(durable) = live.durable.as_ref() {
+                let (process, policy) = (durable.driver.process(), durable.stop);
+                drop(live);
+                match how {
+                    StopMode::Graceful => drop(process.stop(policy).await),
+                    StopMode::Kill => drop(process.kill().await),
+                }
+                return;
+            }
+            live.session.take()
+        };
+        if let Some(mut session) = session
+            && let Err(e) = session.stop(how).await
+        {
+            tracing::warn!(error = %e, "stop of a cancelled start");
         }
     }
 
@@ -223,11 +294,32 @@ impl SessionTarget {
         *stop.borrow()
     }
 
-    /// Takes the session out of the registry and returns the mode of the
-    /// stop that came during the task, if any.
-    fn leave_setup(&self, session_id: &SessionId) -> Option<StopMode> {
-        let mut tasks = self.setups.lock().ok()?;
-        tasks.remove(session_id).and_then(|t| t.how)
+    /// Decides the end of the task under one lock. A recorded stop is taken
+    /// out (the entry stays, as `stopping`) and returned. With no stop the
+    /// entry is removed and `None` is returned, so no stop can come between
+    /// the check and the removal.
+    fn finish_or_take_stop(&self, session_id: &SessionId) -> Option<StopMode> {
+        let Ok(mut tasks) = self.setups.lock() else {
+            return None;
+        };
+        let task = tasks.get_mut(session_id)?;
+        match task.how.take() {
+            Some(how) => {
+                task.stopping = Some(merge(task.stopping, how));
+                Some(how)
+            }
+            None => {
+                tasks.remove(session_id);
+                None
+            }
+        }
+    }
+
+    /// Takes the session out of the registry.
+    fn leave_setup(&self, session_id: &SessionId) {
+        if let Ok(mut tasks) = self.setups.lock() {
+            tasks.remove(session_id);
+        }
     }
 
     /// Sends the cancel to the task of the session and records the mode.
@@ -239,30 +331,47 @@ impl SessionTarget {
         let Some(task) = tasks.get_mut(session_id) else {
             return false;
         };
-        task.how = Some(merge(task.how, how));
-        task.cancel.send_replace(true);
+        task.record(how);
         true
     }
 
     /// Cancels every task with `how` and waits for them (station shutdown).
-    /// A task that started its provider stops it before it ends.
+    /// A task that started its provider stops it and waits for its end before
+    /// it ends. A task that does not end in time is aborted; its provider
+    /// session, if it still holds one, is dropped, and a drop kills the
+    /// process group of a direct session (a shim session outlives the
+    /// station by design and is restored at the next start).
     pub(super) async fn stop_setups(&self, how: StopMode) {
         let handles: Vec<_> = match self.setups.lock() {
             Ok(mut tasks) => tasks
-                .values_mut()
-                .filter_map(|task| {
-                    task.how = Some(merge(task.how, how));
-                    // The cancel goes out under the lock, as for a stop.
-                    task.cancel.send_replace(true);
-                    task.handle.take()
+                .iter_mut()
+                .filter_map(|(session_id, task)| {
+                    task.record(how);
+                    task.handle.take().map(|h| (session_id.clone(), h))
                 })
                 .collect(),
             Err(_) => return,
         };
         let deadline = tokio::time::Instant::now() + SETUP_STOP_WAIT;
-        for handle in handles {
-            if tokio::time::timeout_at(deadline, handle).await.is_err() {
-                tracing::warn!("a setup task did not stop in time at the shutdown");
+        for (session_id, mut handle) in handles {
+            if tokio::time::timeout_at(deadline, &mut handle)
+                .await
+                .is_err()
+            {
+                tracing::warn!(session = %session_id, "a setup task did not stop in time; aborted");
+                handle.abort();
+                let _ = handle.await;
+                // A provider that the task registered is stopped here: a
+                // direct session would die with its dropped handle, a shim
+                // session would not.
+                let stopped = self.stop_started(&session_id, StopMode::Kill);
+                if tokio::time::timeout(ABORT_STOP_WAIT, stopped)
+                    .await
+                    .is_err()
+                {
+                    tracing::warn!(session = %session_id, "the provider of an aborted task did not stop");
+                }
+                self.leave_setup(&session_id);
             }
         }
     }
