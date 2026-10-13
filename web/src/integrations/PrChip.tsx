@@ -31,7 +31,7 @@ export function PrChip({ card }: { readonly card: DeckSession }) {
       className="fd-badge fd-int-prchip"
       data-pr={pr.number}
       data-tone={prTone(pr)}
-      title={`${pr.title} · checks ${pr.checks} · review ${pr.review_state.replaceAll('_', ' ')}`}
+      title={prChipTitle(pr)}
       href={href}
       target="_blank"
       rel="noopener noreferrer"
@@ -40,4 +40,20 @@ export function PrChip({ card }: { readonly card: DeckSession }) {
       {pr.number} {prStateText(pr)}
     </a>
   );
+}
+
+const REVIEW_TEXT: Readonly<Record<PrSummary['review_state'], string | null>> = {
+  approved: 'approved',
+  changes_requested: 'changes requested',
+  review_required: 'review required',
+  none: null,
+};
+
+/** The chip tooltip: the title, then the checks and the review state that are known. */
+export function prChipTitle(pr: Pick<PrSummary, 'title' | 'checks' | 'review_state'>): string {
+  const parts = [pr.title];
+  if (pr.checks !== 'none') parts.push(`checks ${pr.checks}`);
+  const review = REVIEW_TEXT[pr.review_state];
+  if (review !== null) parts.push(review);
+  return parts.join(' · ');
 }

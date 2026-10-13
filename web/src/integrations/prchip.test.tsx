@@ -26,7 +26,7 @@ describe('PrChip (R3.6)', () => {
     expect(html).toContain('rel="noopener noreferrer"');
     expect(html).toContain('#1 open');
     expect(html).not.toContain('data-tone');
-    expect(html).toContain('title="Change 1 · checks passing · review review required"');
+    expect(html).toContain('title="Change 1 · checks passing · review required"');
   });
 
   test('a draft shows draft', () => {
