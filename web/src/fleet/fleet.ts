@@ -12,7 +12,8 @@ export type FleetTarget = { readonly stationId: string; readonly sessionId: stri
 export type FleetResult = { readonly ok: boolean; readonly text: string };
 
 export type FleetActions = {
-  mail(target: FleetTarget, text: string, steer: boolean): Promise<FleetResult>;
+  /** `mailId` is the `mail_id` of the request; a retry sends the id of its first try. */
+  mail(target: FleetTarget, text: string, steer: boolean, mailId?: string): Promise<FleetResult>;
   task(target: FleetTarget, title: string): Promise<FleetResult>;
   tasks(): Promise<readonly TaskView[]>;
   grants(): Promise<readonly GrantView[]>;
@@ -20,6 +21,47 @@ export type FleetActions = {
   /** Renews an idle-expired grant (ADR-006 test 25b). */
   renew(grantId: string): Promise<FleetResult>;
 };
+
+/** One target of a mail send: its session ref and where the mail goes. */
+export type SendTarget = { readonly ref: string; readonly target: FleetTarget };
+
+/** A target of the last send with its own `mail_id`; a `failed` one is sent again on a retry. */
+export type SendEntry = SendTarget & {
+  readonly mailId: string;
+  readonly state: 'sent' | 'failed';
+  readonly error?: string;
+};
+
+/** The last send: its text, steer flag, target set (`key`) and one entry for each target. */
+export type SendRecord = {
+  readonly text: string;
+  readonly steer: boolean;
+  readonly key: string;
+  readonly entries: readonly SendEntry[];
+};
+
+/** A new `mail_id`, the generator `fleetActions` uses by default. */
+export const newMailId = (): string => commandId();
+
+/**
+ * What to send now. The same text, steer flag and target set (any order) as the
+ * record: only its failed entries, with their own ids. Anything else: a new record
+ * with a new id for each target. An entry starts `failed` until its mail is sent.
+ */
+export function nextSends(
+  record: SendRecord | null,
+  targets: readonly SendTarget[],
+  text: string,
+  steer: boolean,
+  newId: () => string = newMailId,
+): { readonly record: SendRecord; readonly todo: readonly SendEntry[] } {
+  const key = JSON.stringify(targets.map((t) => t.ref).sort());
+  if (record !== null && record.text === text && record.steer === steer && record.key === key) {
+    return { record, todo: record.entries.filter((e) => e.state === 'failed') };
+  }
+  const entries = targets.map((t): SendEntry => ({ ...t, mailId: newId(), state: 'failed' }));
+  return { record: { text, steer, key, entries }, todo: entries };
+}
 
 const record = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -64,10 +106,10 @@ export function taskStatus(t: TaskView): string {
 
 export function fleetActions(get: Get, post: Post, newId: () => string = commandId): FleetActions {
   return {
-    mail: async (target, text, steer) => {
+    mail: async (target, text, steer, mailId) => {
       try {
         await post('/api/mail', {
-          mail_id: newId(),
+          mail_id: mailId ?? newId(),
           station: target.stationId,
           session_id: target.sessionId,
           text,
