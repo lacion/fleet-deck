@@ -339,6 +339,31 @@ async fn the_relay_forwards_a_secret_once_and_leaves_no_trace_of_it() {
             400,
             "invalid_body",
         ),
+        // A value of the wrong type or kind is never quoted back.
+        (
+            "token",
+            json!({ "kind": "linear", "token": [token] }),
+            400,
+            "invalid_body",
+        ),
+        (
+            "token",
+            json!({ "kind": token, "token": secret }),
+            400,
+            "invalid_body",
+        ),
+        (
+            "apps",
+            json!({ "kind": "jira", "client_id": { "x": secret }, "client_secret": token }),
+            400,
+            "invalid_body",
+        ),
+        (
+            "apps",
+            json!({ "kind": secret, "client_id": "c", "client_secret": token }),
+            400,
+            "invalid_body",
+        ),
     ] {
         let r =
             s.c.post(

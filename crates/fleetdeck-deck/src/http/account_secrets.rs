@@ -15,20 +15,49 @@
 use std::sync::Arc;
 
 use axum::Json;
-use axum::extract::rejection::JsonRejection;
+use axum::body::Bytes;
+use axum::extract::rejection::BytesRejection;
 use axum::extract::{Extension, Path, State};
 use axum::http::StatusCode;
 use fleetdeck_core::Secret;
 use fleetdeck_proto::accounts::{AccountKind, AccountView, AppSet, AppView, TokenSet};
+use serde::de::DeserializeOwned;
 use serde_json::json;
 
 use super::Board;
-use super::account_routes::{ask, audited, body_error, host_ok, invalid_field, station, text_ok};
+use super::account_routes::{ask, audited, host_ok, invalid_field, station, text_ok};
 use super::guard::{ApiError, owner_only};
 use crate::store::Principal;
 
 /// The largest request body of the relay routes: 16 KiB.
 pub const MAX_BODY: usize = 16 * 1024;
+
+/// Reads the body as bytes and parses it here. The default JSON rejection is
+/// not used: a serde error text can quote the input, and the input can be
+/// the secret. Every parse error is a fixed 400 `invalid_body`; a body above
+/// the limit is a fixed 413 `too_large`.
+fn parse<T: DeserializeOwned>(body: Result<Bytes, BytesRejection>) -> Result<T, ApiError> {
+    let bytes = body.map_err(|e| {
+        if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
+            ApiError::new(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "too_large",
+                "the request body is too large",
+            )
+        } else {
+            invalid_body()
+        }
+    })?;
+    serde_json::from_slice(&bytes).map_err(|_| invalid_body())
+}
+
+fn invalid_body() -> ApiError {
+    ApiError::new(
+        StatusCode::BAD_REQUEST,
+        "invalid_body",
+        "the request body is not valid",
+    )
+}
 
 fn invalid_kind() -> ApiError {
     ApiError::new(
@@ -94,11 +123,11 @@ pub async fn app_set(
     State(board): State<Arc<Board>>,
     Extension(principal): Extension<Principal>,
     Path(name): Path<String>,
-    body: Result<Json<AppSet>, JsonRejection>,
+    body: Result<Bytes, BytesRejection>,
 ) -> Result<Json<AppView>, ApiError> {
     let work = async {
         owner_only(&principal, "sets an OAuth app")?;
-        let Json(app) = body.map_err(|e| body_error(&e))?;
+        let app: AppSet = parse(body)?;
         check_app(&app)?;
         let AppSet {
             kind,
@@ -128,11 +157,11 @@ pub async fn token_set(
     State(board): State<Arc<Board>>,
     Extension(principal): Extension<Principal>,
     Path(name): Path<String>,
-    body: Result<Json<TokenSet>, JsonRejection>,
+    body: Result<Bytes, BytesRejection>,
 ) -> Result<Json<AccountView>, ApiError> {
     let work = async {
         owner_only(&principal, "sets an account token")?;
-        let Json(mut token) = body.map_err(|e| body_error(&e))?;
+        let mut token: TokenSet = parse(body)?;
         check_token(&mut token)?;
         let TokenSet {
             kind,
