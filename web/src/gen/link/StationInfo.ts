@@ -25,6 +25,11 @@ max_sessions: number | null,
  */
 allow_shell: boolean | null, 
 /**
+ * `allow_setup_cmd` of `station.toml`: a session start can run a setup
+ * command (DL-148). Absent from an older station.
+ */
+allow_setup_cmd?: boolean | null, 
+/**
  * The configured provider instances with their probed versions.
  */
 providers: Array<StationProvider>, };

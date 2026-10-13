@@ -66,6 +66,7 @@ fn info(name: &str) -> StationInfo {
         version: None,
         max_sessions: Some(8),
         allow_shell: None,
+        allow_setup_cmd: None,
         providers: vec![
             provider("claude", ProviderKind::Claude),
             provider("codex", ProviderKind::Codex),
@@ -467,6 +468,27 @@ async fn a_duplicate_spawn_returns_the_stored_receipt_and_counts_once() {
     assert_eq!(decide(&w, e).await, first);
     assert_eq!(spawn_used(&w, &b).await, 1);
     assert_eq!(w.s.coordinator_starts().await.unwrap(), 1);
+}
+
+/// DL-148: a coordinator spawn never carries a setup command; the field is
+/// absent from the queued start.
+#[tokio::test]
+async fn a_coordinator_spawn_carries_no_setup_command() {
+    let w = world().await;
+    let b = grant(&w, &[GrantClass::Spawn], 3, &[("claude", "default")]).await;
+    let first = decide(&w, env(&w, &b, "k1", spawn(&w.alpha, "claude", None))).await;
+    assert_eq!(first.state, ReceiptState::Accepted);
+    let starts: Vec<_> =
+        w.s.outbox()
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|i| i.origin == "coordinator")
+            .collect();
+    assert_eq!(starts.len(), 1);
+    let payload = starts[0].payload.to_string();
+    assert!(payload.contains(r#""op":"start""#), "{payload}");
+    assert!(!payload.contains("setup_cmd"), "{payload}");
 }
 
 #[tokio::test]

@@ -40,6 +40,7 @@ fn start_cmd(cwd: &str, workspace: Option<WorkspaceRequest>) -> SessionCommand {
         spec: spec(cwd, "claude"),
         prompt: Some(text("hello")),
         workspace: workspace.map(Box::new),
+        setup_cmd: None,
     }
 }
 

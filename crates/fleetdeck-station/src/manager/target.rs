@@ -301,6 +301,40 @@ impl SessionTarget {
         Dispatch::Confirmed
     }
 
+    /// Runs the setup command of a start in the session's workspace, with the
+    /// environment of the provider instance (DL-148). On a failure the start
+    /// fails and this returns the dispatch code.
+    async fn run_setup(&self, effect: &Effect, spec: &SessionSpec, cmd: &str) -> Option<String> {
+        let session_id = &effect.session_id;
+        let Some(env) = self
+            .policy
+            .as_ref()
+            .and_then(|p| p.setup_env(&spec.provider_instance))
+        else {
+            let text = "the setup command has no environment for this provider instance";
+            self.start_failed(session_id, text).await;
+            return Some("setup_failed".into());
+        };
+        let result = crate::workspace::setup::run(
+            &self.store,
+            effect.effect_id.as_str(),
+            session_id,
+            cmd,
+            Path::new(&spec.cwd),
+            env,
+            crate::workspace::setup::DEFAULT_TIMEOUT,
+        )
+        .await;
+        let Err(e) = result else { return None };
+        let text = if e.output_tail.is_empty() {
+            e.message
+        } else {
+            format!("{}\n\n{}", e.message, e.output_tail)
+        };
+        self.start_failed(session_id, &text).await;
+        Some("setup_failed".into())
+    }
+
     /// A start that never got a process ends the session (`exited`).
     async fn start_failed(&self, session_id: &SessionId, message: &str) {
         let events = vec![
@@ -424,6 +458,7 @@ impl EffectTarget for SessionTarget {
                 spec,
                 prompt,
                 workspace,
+                setup_cmd,
             } => {
                 // The Git work of the start (M3 6-1, DL-200) runs in the
                 // effect, before the provider starts.
@@ -434,6 +469,11 @@ impl EffectTarget for SessionTarget {
                     let text = format!("the workspace was not created: {e}");
                     self.start_failed(&effect.session_id, &text).await;
                     return Dispatch::NotDispatched("workspace_failed".into());
+                }
+                if let Some(cmd) = setup_cmd
+                    && let Some(code) = self.run_setup(effect, spec, cmd).await
+                {
+                    return Dispatch::NotDispatched(code);
                 }
                 self.start(effect, spec, prompt.as_ref(), None).await
             }

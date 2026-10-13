@@ -44,6 +44,10 @@ pub enum EffectPayload {
         /// Git work before the provider starts (M3 6-1, DL-200).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         workspace: Option<WorkspacePlan>,
+        /// The owner's setup command, run after the Git work and before the
+        /// provider starts (DL-148).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        setup_cmd: Option<String>,
     },
     /// A native resume of an ended session (DL-118): a new provider
     /// process continues `native_session_id` with `spec` (the stored

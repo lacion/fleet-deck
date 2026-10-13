@@ -96,6 +96,22 @@ pub fn adapters_from_config(
     Ok(out)
 }
 
+/// The environments of the setup commands: for each provider instance the
+/// same environment that its adapter gets (DL-148).
+///
+/// # Errors
+/// An instance `env` table that cannot go into a child environment.
+pub fn setup_envs_from_config(
+    config: &StationConfig,
+) -> std::result::Result<policy::SetupEnvs, fleetdeck_core::childenv::ChildEnvError> {
+    let mut out = policy::SetupEnvs::new();
+    for instance in &config.provider_instances {
+        let env = ChildEnv::for_instance(ChildEnv::from_process(), instance)?;
+        out.insert(instance.id.clone(), env);
+    }
+    Ok(out)
+}
+
 /// One station's session manager.
 pub struct SessionManager {
     store: Store,
@@ -201,6 +217,12 @@ impl SessionManager {
         let recovered = revert_run::recover(env).await?;
         if recovered > 0 {
             tracing::info!(recovered, "recovered interrupted reverts");
+        }
+        // A setup process that outlived the last station process is stopped
+        // before any command is admitted (DL-148).
+        let stopped = crate::workspace::setup_cleanup::cleanup_stale(&store).await?;
+        if stopped > 0 {
+            tracing::info!(stopped, "cleaned up setup runs");
         }
         // Auto-continue intents of the sessions that this start lost, before
         // any command is admitted (ADR-007 §2.2, DL-127).

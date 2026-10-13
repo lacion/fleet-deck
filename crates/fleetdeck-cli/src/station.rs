@@ -143,6 +143,7 @@ pub async fn run(dirs: &NodeDirs, args: &RunArgs) -> anyhow::Result<()> {
             },
             prompt: Some(UserInput::new(args.prompt.clone())),
             workspace: None,
+            setup_cmd: None,
         }),
     )
     .await?;

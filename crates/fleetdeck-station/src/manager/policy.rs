@@ -5,6 +5,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use fleetdeck_core::ChildEnv;
 use fleetdeck_core::config::{OfflineApprovalPolicy as ConfigOffline, StationConfig};
 use fleetdeck_proto::ProviderInstanceId;
 use fleetdeck_proto::event::ProviderKind;
@@ -21,12 +22,20 @@ pub enum WorkspaceError {
     Outside(String),
 }
 
+/// The environment of each provider instance, as a provider process gets it:
+/// the environment of its setup command too (DL-148).
+pub type SetupEnvs = BTreeMap<ProviderInstanceId, ChildEnv>;
+
 /// The validated policy of one station.
 #[derive(Debug, Clone)]
 pub struct Policy {
     /// Canonical roots (symlinks resolved, t3code trap 8).
     allowed_roots: Vec<PathBuf>,
     max_sessions: u32,
+    /// `allow_setup_cmd` of `station.toml` (DL-148).
+    allow_setup_cmd: bool,
+    /// The environment of a setup command, by provider instance (DL-148).
+    setup_envs: SetupEnvs,
     offline: OfflineApprovalPolicy,
     instances: BTreeMap<ProviderInstanceId, ProviderKind>,
     /// Canonical repository path → the owner's group (DL-201).
@@ -55,6 +64,8 @@ impl Policy {
                 .map(|r| r.canonicalize().unwrap_or_else(|_| r.clone()))
                 .collect(),
             max_sessions: config.max_sessions,
+            allow_setup_cmd: config.allow_setup_cmd,
+            setup_envs: SetupEnvs::new(),
             offline,
             instances: config
                 .provider_instances
@@ -111,11 +122,39 @@ impl Policy {
                 .map(|r| r.canonicalize().unwrap_or(r))
                 .collect(),
             max_sessions,
+            allow_setup_cmd: false,
+            setup_envs: SetupEnvs::new(),
             offline,
             instances,
             repo_groups: BTreeMap::new(),
             coordinator: crate::coordinator::Bindings::default(),
         }
+    }
+
+    /// The same policy with setup commands on or off (DL-148).
+    #[must_use]
+    pub fn with_allow_setup_cmd(mut self, on: bool) -> Self {
+        self.allow_setup_cmd = on;
+        self
+    }
+
+    /// The same policy with the environments of the setup commands.
+    #[must_use]
+    pub fn with_setup_envs(mut self, envs: SetupEnvs) -> Self {
+        self.setup_envs = envs;
+        self
+    }
+
+    /// The environment of a setup command of `instance`, if it has one.
+    #[must_use]
+    pub fn setup_env(&self, instance: &ProviderInstanceId) -> Option<&ChildEnv> {
+        self.setup_envs.get(instance)
+    }
+
+    /// Whether a session start can run the owner's setup command (DL-148).
+    #[must_use]
+    pub fn allow_setup_cmd(&self) -> bool {
+        self.allow_setup_cmd
     }
 
     #[must_use]

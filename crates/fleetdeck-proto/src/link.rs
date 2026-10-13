@@ -257,6 +257,11 @@ pub struct StationInfo {
     /// handover are allowed (DL-141). Absent from an older station.
     #[serde(default)]
     pub allow_shell: Option<bool>,
+    /// `allow_setup_cmd` of `station.toml`: a session start can run a setup
+    /// command (DL-148). Absent from an older station.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub allow_setup_cmd: Option<bool>,
     /// The configured provider instances with their probed versions.
     #[serde(default)]
     pub providers: Vec<StationProvider>,

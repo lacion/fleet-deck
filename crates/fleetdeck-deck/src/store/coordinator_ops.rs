@@ -515,6 +515,7 @@ fn start(
             spec,
             prompt,
             workspace: None,
+            setup_cmd: None,
         },
         now,
     )?;

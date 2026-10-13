@@ -11,6 +11,8 @@ pub mod preflight;
 pub mod provision;
 pub mod restore;
 pub mod settle;
+pub mod setup;
+pub mod setup_cleanup;
 pub mod worktrees;
 
 pub use checkpoint::{
