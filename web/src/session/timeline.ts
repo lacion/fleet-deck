@@ -10,6 +10,7 @@ import type {
   DiffSummary,
   Event,
   EventEnvelope,
+  ModelChoice,
   ToolKind,
   TurnStatus,
 } from '../gen';
@@ -78,6 +79,17 @@ export function slashCommands(events: readonly EventEnvelope[]): readonly string
     const event = events[i]?.event as Event | { kind: string } | undefined;
     if (event?.kind === 'session.slash_commands') {
       return (event as Extract<Event, { kind: 'session.slash_commands' }>).commands;
+    }
+  }
+  return null;
+}
+
+/** The models of the newest `session.models` event, or null. */
+export function sessionModels(events: readonly EventEnvelope[]): readonly ModelChoice[] | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i]?.event as Event | { kind: string } | undefined;
+    if (event?.kind === 'session.models') {
+      return (event as Extract<Event, { kind: 'session.models' }>).models;
     }
   }
   return null;

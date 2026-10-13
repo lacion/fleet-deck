@@ -897,6 +897,16 @@ fieldset:disabled .fd-opt {
 .fd-model input {
   min-width: 0;
 }
+.fd-model-select {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+.fd-model-other {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: 1fr auto;
+  gap: 4px;
+}
 .fd-auto-continue {
   display: flex;
   align-items: center;

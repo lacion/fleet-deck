@@ -4,7 +4,7 @@ import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from 
 import { relativeAge } from '../app/sessions';
 import { stationName } from '../board/fleet';
 import { providerLabel } from '../board/lanes';
-import type { DeckSession, StationView } from '../gen';
+import type { DeckSession, ModelChoice, StationView } from '../gen';
 import { modelFamily, shortModel } from '../ui/format';
 import {
   Archive,
@@ -52,6 +52,8 @@ type Props = {
   readonly onNewShell?: (() => void) | undefined;
   /** The Files side panel: the header shows its toggle when given. */
   readonly filesPanel?: { readonly open: boolean; readonly toggle: () => void };
+  /** The models that the provider harness reports (`session.models`). */
+  readonly models?: readonly ModelChoice[] | null;
 };
 
 /** The status update that "Ask for a status update" sends. */
@@ -270,6 +272,7 @@ export function SessionHeader({
   layout = 'desktop',
   onNewShell,
   filesPanel,
+  models = null,
 }: Props) {
   const s = session.summary;
   const caps = s.capabilities;
@@ -412,6 +415,7 @@ export function SessionHeader({
           {hasModel ? (
             <ModelPicker
               current={s.model}
+              models={models}
               enabled={settingsEnabled}
               onSet={(m) => run('model', (a) => a.setModel(m))}
             />

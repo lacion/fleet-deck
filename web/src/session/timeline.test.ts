@@ -6,6 +6,7 @@ import {
   buildTimeline,
   type Item,
   runningSubagents,
+  sessionModels,
   slashCommands,
   type Subagent,
   subagentLabel,
@@ -440,5 +441,20 @@ describe('chat timeline items (DL-140)', () => {
       { kind: 'session.slash_commands', commands: ['init', 'review'] },
     ]);
     expect(slashCommands(events)).toEqual(['init', 'review']);
+  });
+
+  test('sessionModels reads the newest event, else null', () => {
+    expect(sessionModels(envelopes('s', [{ kind: 'model.changed', model: 'm' }]))).toBeNull();
+    const old = [{ value: 'old', label: 'Old', description: null }];
+    const last = [
+      { value: 'default', label: 'Default', description: 'The default model' },
+      { value: 'opus', label: 'Opus', description: null },
+    ];
+    const events = envelopes('s', [
+      { kind: 'session.models', models: old },
+      { kind: 'model.changed', model: 'm' },
+      { kind: 'session.models', models: last },
+    ]);
+    expect(sessionModels(events)).toEqual(last);
   });
 });
