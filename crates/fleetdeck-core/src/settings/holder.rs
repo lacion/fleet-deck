@@ -78,6 +78,10 @@ impl Holder for StationHolder {
         m.insert("max_sessions".into(), json!(c.max_sessions));
         m.insert("allow_setup_cmd".into(), json!(c.allow_setup_cmd));
         m.insert("allow_shell".into(), json!(c.allow_shell));
+        m.insert(
+            "allow_bypass_permissions".into(),
+            json!(c.allow_bypass_permissions),
+        );
         m.insert("max_shells".into(), json!(c.max_shells));
         m.insert(
             "offline_approval_policy".into(),
@@ -185,6 +189,10 @@ impl Holder for StationHolder {
             "allow_setup_cmd",
         );
         add(!old.allow_shell && new.allow_shell, "allow_shell");
+        add(
+            !old.allow_bypass_permissions && new.allow_bypass_permissions,
+            "allow_bypass_permissions",
+        );
         add(
             new.allowed_roots
                 .iter()

@@ -89,12 +89,14 @@ pub fn adapters_from_config(
                 let mut cfg =
                     ClaudeAdapterConfig::new(instance.id.clone(), instance.binary.clone(), env);
                 cfg.raw_log = raw_log();
+                cfg.allow_bypass = config.allow_bypass_permissions;
                 Arc::new(ClaudeAdapter::new(cfg, Arc::clone(host)))
             }
             Driver::Codex => {
                 let mut cfg =
                     CodexAdapterConfig::new(instance.id.clone(), instance.binary.clone(), env);
                 cfg.raw_log = raw_log();
+                cfg.allow_full_access = config.allow_bypass_permissions;
                 Arc::new(CodexAdapter::new(cfg, Arc::clone(host)))
             }
         };
@@ -703,3 +705,7 @@ mod coordinator_live_tests;
 #[cfg(test)]
 #[path = "version_tests.rs"]
 mod version_tests;
+
+#[cfg(test)]
+#[path = "adapters_bypass_tests.rs"]
+mod adapters_bypass_tests;

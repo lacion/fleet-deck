@@ -94,6 +94,14 @@ pub fn station_fields() -> Vec<FieldMeta> {
         )
         .danger(),
         field(
+            "allow_bypass_permissions",
+            "Allow bypass permissions",
+            K::Bool,
+            Restart,
+            "Offer the mode that skips every permission check (Claude bypassPermissions, Codex danger-full-access) for sessions on this station.",
+        )
+        .danger(),
+        field(
             "max_shells",
             "Most terminals",
             K::Int,

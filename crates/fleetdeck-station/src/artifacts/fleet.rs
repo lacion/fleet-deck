@@ -11,6 +11,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::ArtifactService;
+use super::service::ContentPublish;
 use crate::coordinator::{Caller, FleetTools};
 use crate::store::{NewEvent, Store};
 
@@ -32,9 +33,16 @@ impl StationFleet {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PublishArgs {
-    path: String,
+    #[serde(default)]
+    path: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    content: Option<String>,
     #[serde(default)]
     title: Option<String>,
+    #[serde(default)]
+    artifact_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -56,16 +64,41 @@ impl FleetTools for StationFleet {
                 let service = self.artifacts.as_ref().ok_or_else(|| {
                     "unsupported: this station has no artifact directory".to_owned()
                 })?;
-                let published = service
-                    .publish(ArtifactPublish {
-                        session_id: Some(caller.session_id),
-                        path: args.path,
-                        title: args.title,
-                        artifact_id: None,
-                        author: Some(AUTHOR_AGENT.to_owned()),
-                    })
-                    .await
-                    .map_err(|e| e.to_string())?;
+                let session_id = Some(caller.session_id);
+                let author = Some(AUTHOR_AGENT.to_owned());
+                let published = match (args.path, args.content) {
+                    (Some(path), None) => {
+                        if args.name.is_some() {
+                            return Err(invalid("`name` goes with `content`, not with `path`"));
+                        }
+                        service
+                            .publish(ArtifactPublish {
+                                session_id,
+                                path,
+                                title: args.title,
+                                artifact_id: args.artifact_id,
+                                author,
+                            })
+                            .await
+                    }
+                    (None, Some(content)) => {
+                        let name = args
+                            .name
+                            .ok_or_else(|| invalid("`content` needs a `name`"))?;
+                        service
+                            .publish_content(ContentPublish {
+                                session_id,
+                                name,
+                                content,
+                                title: args.title,
+                                artifact_id: args.artifact_id,
+                                author,
+                            })
+                            .await
+                    }
+                    _ => return Err(invalid("give exactly one of `path` or `content`")),
+                }
+                .map_err(|e| e.to_string())?;
                 Ok(json!({
                     "artifact_id": published.artifact.artifact_id,
                     "version": published.version.version,

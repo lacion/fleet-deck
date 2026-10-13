@@ -15,6 +15,7 @@ const SECTIONS: readonly { readonly title: string; readonly keys: readonly strin
       'hibernate_after_min',
       'host',
       'shim_buffer_mib',
+      'allow_bypass_permissions',
     ],
   },
   { title: 'Folders', keys: ['allowed_roots', 'repo_groups'] },

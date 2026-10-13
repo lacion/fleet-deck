@@ -198,3 +198,83 @@ pub fn stage(
 pub fn staging_dir(root: &Path, unique: &str) -> PathBuf {
     root.join(".staging").join(unique)
 }
+
+/// The most bytes of the inline `content` of a publish.
+pub const MAX_CONTENT_BYTES: usize = 8 * 1024 * 1024;
+
+/// The longest file name of an inline publish.
+const MAX_NAME_CHARS: usize = 128;
+
+fn invalid_params(message: &str) -> ArtifactError {
+    ArtifactError::new(code::INVALID_PARAMS, message)
+}
+
+/// Checks the `name` and the `content` of an inline publish: a name of
+/// `[A-Za-z0-9._-]{1,128}` that does not start with `.` and has an
+/// extension of a text kind; 1 byte to 8 MiB of content.
+///
+/// # Errors
+/// `invalid_params`.
+pub fn check_content(name: &str, content: &str) -> Result<(), ArtifactError> {
+    let chars_ok = !name.is_empty()
+        && name.len() <= MAX_NAME_CHARS
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'));
+    if !chars_ok || name.starts_with('.') {
+        return Err(invalid_params(
+            "`name` has 1 to 128 characters from A-Z, a-z, 0-9, `.`, `_` and `-`, and does not start with `.`",
+        ));
+    }
+    if name.rsplit_once('.').is_none_or(|(_, ext)| ext.is_empty()) {
+        return Err(invalid_params(
+            "`name` needs an extension, for example report.html",
+        ));
+    }
+    if matches!(
+        ArtifactKind::of_path(name),
+        ArtifactKind::Image | ArtifactKind::Pdf
+    ) {
+        return Err(invalid_params("use `path` for an image or a PDF"));
+    }
+    if content.is_empty() {
+        return Err(invalid_params("the content is empty"));
+    }
+    if content.len() > MAX_CONTENT_BYTES {
+        return Err(invalid_params("`content` has at most 8 MiB"));
+    }
+    Ok(())
+}
+
+/// Writes `content` to the fresh staging file `name` (O_EXCL, mode 0600)
+/// and returns it as a single-file bundle. The caller has run
+/// [`check_content`].
+///
+/// # Errors
+/// `internal`.
+pub fn stage_text(name: &str, content: &str, staging: &Path) -> Result<Staged, ArtifactError> {
+    fs::create_dir_all(staging).map_err(|e| io_error("staging directory", e))?;
+    let target = staging.join(name);
+    let mut out = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&target)
+        .map_err(|e| io_error("staging file", e))?;
+    out.write_all(content.as_bytes())
+        .and_then(|()| out.flush())
+        .map_err(|e| io_error("staging write", e))?;
+    let sha256 = ring::digest::digest(&SHA256, content.as_bytes())
+        .as_ref()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    Ok(Staged {
+        dir: staging.to_path_buf(),
+        files: vec![StagedFile {
+            path: name.to_owned(),
+            size: content.len() as u64,
+            sha256,
+        }],
+    })
+}

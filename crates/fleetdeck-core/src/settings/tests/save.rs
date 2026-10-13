@@ -277,6 +277,18 @@ fn the_danger_rules() {
     assert!(d("allow_shell = true", "allow_shell = false").is_empty());
     assert_eq!(d("", "allow_setup_cmd = true"), vec!["allow_setup_cmd"]);
     assert_eq!(
+        d("", "allow_bypass_permissions = true"),
+        vec!["allow_bypass_permissions"]
+    );
+    assert!(
+        d(
+            "allow_bypass_permissions = true",
+            "allow_bypass_permissions = false"
+        )
+        .is_empty()
+    );
+    assert!(d("", "allow_bypass_permissions = false").is_empty());
+    assert_eq!(
         d(
             "allowed_roots = [\"/a\"]",
             "allowed_roots = [\"/a\", \"/b\"]"
