@@ -31,7 +31,11 @@ export function startHeartbeat(
   send: (key: SessionRef) => void,
   key: SessionRef,
   seconds: number = PRESENCE_HEARTBEAT_S,
-  timers: Timers = { set: setInterval, clear: (id) => clearInterval(id as number) },
+  // `setInterval` is called through an arrow: a browser refuses it as a method of another object.
+  timers: Timers = {
+    set: (fn, ms) => setInterval(fn, ms),
+    clear: (id) => clearInterval(id as number),
+  },
 ): () => void {
   send(key);
   const id = timers.set(() => send(key), seconds * 1000);

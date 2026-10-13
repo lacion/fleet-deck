@@ -159,6 +159,7 @@ test('the Files side panel lists the root at once, opens folders, and its toggle
   await expect(pane.getByRole('tablist', { name: 'Session views' }).getByRole('tab')).toHaveText([
     'Chat',
     'Changes',
+    'Artifacts',
   ]);
   // the root listing loads at once, once
   await expect(side.getByRole('button', { name: 'docs/' })).toBeVisible();
