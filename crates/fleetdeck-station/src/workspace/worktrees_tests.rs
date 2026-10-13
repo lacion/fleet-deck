@@ -11,7 +11,8 @@ use fleetdeck_proto::link::{WorktreeInfo, WorktreeVerdict};
 use fleetdeck_proto::session::SessionSummary;
 
 use super::worktrees::{
-    Count, NOT_CHECKED, OUTSIDE_ROOTS, count_entries, git_options, list, parse_worktrees,
+    Count, GIT_FILTERS, NOT_CHECKED, OUTSIDE_ROOTS, count_entries, git_options, list,
+    parse_worktrees,
 };
 use crate::manager::policy::Policy;
 use crate::store::OfflineApprovalPolicy;
@@ -123,6 +124,62 @@ async fn an_untracked_file_is_work_also_when_the_repo_hides_untracked_files() {
     assert_eq!(info.verdict, WorktreeVerdict::HasWork, "{info:?}");
     assert_eq!(info.dirty, Some(1));
     assert_eq!(info.ignored, Some(1));
+}
+
+/// A script in `dir` that writes the marker file `ran` next to it.
+fn marker_script(dir: &Path) -> (PathBuf, PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let marker = dir.join("ran");
+    let script = dir.join("probe.sh");
+    std::fs::write(
+        &script,
+        format!("#!/bin/sh\ntouch '{}'\ncat\n", marker.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    (script, marker)
+}
+
+#[tokio::test]
+async fn a_repository_with_git_filters_is_not_inspected() {
+    let f = fixture();
+    let tools = tempfile::tempdir().unwrap();
+    let (script, marker) = marker_script(tools.path());
+    std::fs::write(f.main.join(".gitattributes"), "* filter=probe\n").unwrap();
+    git(
+        &f.main,
+        &["config", "filter.probe.clean", script.to_str().unwrap()],
+    );
+    std::fs::write(f.wt.join("a.txt"), "changed\n").unwrap();
+    let info = one(
+        &policy(f.root.path()),
+        session("s1", &f.wt, SessionState::Exited),
+    )
+    .await;
+    assert_eq!(info.verdict, WorktreeVerdict::Unknown, "{info:?}");
+    assert_eq!(info.note.as_deref(), Some(GIT_FILTERS));
+    assert_eq!((info.dirty, info.ignored), (None, None));
+    assert!(!marker.exists(), "a filter ran");
+}
+
+#[tokio::test]
+async fn a_configured_fsmonitor_command_does_not_run() {
+    let f = fixture();
+    let tools = tempfile::tempdir().unwrap();
+    let (script, marker) = marker_script(tools.path());
+    git(
+        &f.main,
+        &["config", "core.fsmonitor", script.to_str().unwrap()],
+    );
+    std::fs::write(f.wt.join("a.txt"), "changed\n").unwrap();
+    let info = one(
+        &policy(f.root.path()),
+        session("s1", &f.wt, SessionState::Exited),
+    )
+    .await;
+    assert_eq!(info.verdict, WorktreeVerdict::HasWork, "{info:?}");
+    assert_eq!(info.dirty, Some(1));
+    assert!(!marker.exists(), "the fsmonitor command ran");
 }
 
 #[tokio::test]
