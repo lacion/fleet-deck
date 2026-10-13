@@ -85,7 +85,8 @@ impl DurableCore for ClaudeCore {
             EffectPayload::Start { prompt: None, .. }
             | EffectPayload::Resume { .. }
             | EffectPayload::Stop { .. }
-            | EffectPayload::Revert { .. } => Err(not_a_command()),
+            | EffectPayload::Revert { .. }
+            | EffectPayload::Worktree { .. } => Err(not_a_command()),
         }?;
         Ok(split(out))
     }

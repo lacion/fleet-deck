@@ -217,7 +217,9 @@ test('the worktree list of a station shows the evidence and copies the remove co
   await expect(work).toHaveAttribute('data-verdict', 'has_work');
   await expect(work.locator('.fd-badge').first()).toHaveText('Has work');
   await expect(work.getByRole('link', { name: 's2' })).toBeVisible();
-  await expect(section).toContainText('The board does not remove worktrees.');
+  await expect(section).toContainText(
+    'Move to trash keeps every file; Restore puts the worktree back.',
+  );
   const copy = section.getByRole('button', { name: 'Copy the remove command' });
   await expect(copy).toHaveCount(2);
   await copy.first().click();

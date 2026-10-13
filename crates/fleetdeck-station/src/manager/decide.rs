@@ -244,6 +244,14 @@ pub fn decide(
             }
             plain_effect(d, &session_id, EffectPayload::Stop { how })
         }
+        // The session manager decides these with the shells of the station
+        // (`SessionManager::submit`); here no shell list is known (DL-150).
+        command @ (SessionCommand::WorktreeTrash { .. }
+        | SessionCommand::WorktreeRestore { .. }
+        | SessionCommand::WorktreePurge { .. }
+        | SessionCommand::WorktreeRelease { .. }) => {
+            super::trash::decide(d, policy, origin, None, command)
+        }
     }
 }
 
@@ -369,6 +377,9 @@ fn start(
             policy.coordinator_bindings(),
         )?;
     }
+    // Before the existence check: a folder in the trash is missing at its
+    // original place, and the owner needs the reason (DL-150).
+    super::trash::custody(d, &spec.cwd)?;
     let canonical_inside = |p: &std::path::Path| policy.workspace(&p.to_string_lossy()).ok();
     let refused = |r: provision::Refused| {
         let code = if r.forbidden {
@@ -437,6 +448,7 @@ fn start(
             ),
         ));
     }
+    super::trash::custody(d, &spec.cwd)?;
     if let Some(native) = &import
         && let Some(other) = d.native_session_in_use(native)?
     {

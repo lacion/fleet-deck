@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import type { WorktreeInfo } from '../gen';
+import type { WorktreeInfo, WorktreeTrash } from '../gen';
 import type { ShellActions } from '../shell/shell';
 import { card, station } from '../testing/fleet';
 import { archived } from '../ui/archive';
@@ -565,6 +565,91 @@ describe('worktree rows (DL-142)', () => {
 
   test('a null comparison names main', () => {
     expect(row({ compared_with: 'main' })).toContain('commits not on main');
+  });
+});
+
+describe('worktree rows with the trash buttons (DL-150)', () => {
+  const clean: WorktreeInfo = {
+    session_id: 's1',
+    title: 'Fix the login',
+    path: '/w/deck-wt/s1',
+    branch: 'fd/s1',
+    main: '/w/deck',
+    exists: true,
+    registered: true,
+    dirty: 0,
+    ignored: 0,
+    unpushed: 0,
+    compared_with: 'remotes',
+    last_commit: null,
+    live: false,
+    verdict: 'clean',
+    note: null,
+  };
+  const trash = (extra: Partial<WorktreeTrash>): WorktreeTrash => ({
+    state: 'trashed',
+    phase: null,
+    message: null,
+    trash_path: '/w/.trash/s1-abc',
+    trashed_at: 0,
+    ...extra,
+  });
+  const row = (extra: Partial<WorktreeInfo>, act = true) =>
+    renderToStaticMarkup(
+      <WorktreeRow
+        worktree={{ ...clean, ...extra }}
+        station="station-a"
+        now={3 * 3_600_000}
+        onAction={act ? async () => ({ ok: true, text: 'x' }) : undefined}
+      />,
+    );
+
+  test('a clean ended row offers Move to trash; a live, missing or read-only row does not', () => {
+    expect(row({})).toContain('Move to trash');
+    expect(row({ live: true, verdict: 'live' })).not.toContain('Move to trash');
+    expect(row({ exists: false, verdict: 'missing' })).not.toContain('Move to trash');
+    expect(row({}, false)).not.toContain('Move to trash');
+  });
+  test('a trashed row shows Restore, Delete permanently, the age and the path', () => {
+    const html = row({ verdict: 'trashed', trash: trash({}) });
+    expect(html).toContain('data-tone="muted">In the trash<');
+    expect(html).toContain('Restore');
+    expect(html).toContain('Delete permanently');
+    expect(html).toContain('In the trash since 3h ago');
+    expect(html).toContain('title="/w/.trash/s1-abc">/w/.trash/s1-abc<');
+    expect(html).not.toContain('Move to trash');
+    expect(html).not.toContain('Copy the remove command');
+    expect(row({ verdict: 'trashed', trash: trash({ trashed_at: 3 * 3_600_000 }) })).toContain(
+      'In the trash since now',
+    );
+  });
+  test('a failed purge shows the message, Delete permanently and Stop tracking', () => {
+    const html = row({
+      verdict: 'trashed',
+      trash: trash({ state: 'failed', phase: 'purge', message: 'busy' }),
+    });
+    expect(html).toContain('The last step failed: busy');
+    expect(html).toContain('Delete permanently');
+    expect(html).toContain('Stop tracking');
+    expect(html).not.toContain('>Restore<');
+  });
+  test('a failed trash or restore offers Restore, and an unknown phase only Stop tracking', () => {
+    const failed = (phase: string | null) =>
+      row({ verdict: 'trashed', trash: trash({ state: 'failed', phase, message: 'no' }) });
+    expect(failed('trash')).toContain('Restore');
+    expect(failed('restore')).toContain('Restore');
+    expect(failed('restore')).not.toContain('Delete permanently');
+    const unknown = failed(null);
+    expect(unknown).toContain('Stop tracking');
+    expect(unknown).not.toContain('Restore');
+    expect(unknown).not.toContain('Delete permanently');
+  });
+  test('a row in progress shows its line and no buttons', () => {
+    const html = row({ verdict: 'trashed', trash: trash({ state: 'purging' }) });
+    expect(html).toContain('Deleting…');
+    expect(html).not.toContain('<button');
+    expect(row({ trash: trash({ state: 'trashing' }) })).toContain('Moving…');
+    expect(row({ trash: trash({ state: 'restoring' }) })).toContain('Restoring…');
   });
 });
 

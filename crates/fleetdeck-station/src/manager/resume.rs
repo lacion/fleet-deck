@@ -81,6 +81,9 @@ pub(crate) fn resumable(
             "only an ended session can be resumed",
         ));
     }
+    if let Some(cwd) = &s.cwd {
+        super::trash::custody(d, cwd)?;
+    }
     let instance = s.provider_instance.clone().ok_or_else(|| {
         reject(
             RejectCode::InvalidState,
@@ -122,6 +125,9 @@ pub(crate) fn resumable(
         .cwd
         .clone()
         .ok_or_else(|| reject(RejectCode::InvalidState, "the session has no workspace"))?;
+    // Before the existence check: a folder in the trash is missing at its
+    // original place, and the owner needs the reason (DL-150).
+    super::trash::custody(d, &stored_cwd)?;
     let cwd = policy.workspace(&stored_cwd).map_err(|e| match e {
         WorkspaceError::Missing(_) => reject(RejectCode::InvalidState, e.to_string()),
         WorkspaceError::Outside(_) => reject(RejectCode::Forbidden, e.to_string()),
@@ -136,6 +142,7 @@ pub(crate) fn resumable(
             ),
         ));
     }
+    super::trash::custody(d, &cwd)?;
     Ok(Resumable {
         summary: s,
         native,

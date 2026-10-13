@@ -471,6 +471,31 @@ CREATE TABLE setup_runs (
 );
 ";
 
+const V20: &str = "
+-- DL-150: the worktree trash. One row per trash operation; the open rows
+-- (every state but restored, purged and released) hold the folder and the
+-- trash path against any other use. `main` and `admin_dir` are read from Git
+-- in the first effect step.
+CREATE TABLE worktree_ops (
+    op_id         TEXT    PRIMARY KEY,
+    session_id    TEXT    NOT NULL,
+    main          TEXT    NOT NULL,
+    admin_dir     TEXT    NOT NULL,
+    original_path TEXT    NOT NULL,
+    trash_path    TEXT    NOT NULL,
+    dev           INTEGER NOT NULL,
+    ino           INTEGER NOT NULL,
+    branch        TEXT,
+    state         TEXT    NOT NULL,
+    phase         TEXT,
+    message       TEXT,
+    trashed_at    INTEGER NOT NULL,
+    updated_at    INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX worktree_ops_open ON worktree_ops(session_id)
+    WHERE state NOT IN ('restored', 'purged', 'released');
+";
+
 /// The `station.db` migrations. V4 is the link epochs table of
 /// `fleetdeck-link` (G1).
 #[must_use]
@@ -495,6 +520,7 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V17),
         M::up(V18),
         M::up(V19),
+        M::up(V20),
     ])
 }
 
@@ -608,5 +634,33 @@ mod tests {
             )
             .unwrap();
         assert!(index.contains("'queued', 'claimed'"));
+    }
+
+    #[test]
+    fn v20_admits_one_open_trash_row_per_session() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrations().to_latest(&mut conn).unwrap();
+        let insert = |op: &str, session: &str, state: &str| {
+            conn.execute(
+                "INSERT INTO worktree_ops (op_id, session_id, main, admin_dir, original_path,
+                     trash_path, dev, ino, state, trashed_at, updated_at)
+                 VALUES (?1, ?2, '', '', '/w/a', '/w/.fleetdeck-trash/a--1', 1, 2, ?3, 5, 5)",
+                params![op, session, state],
+            )
+        };
+        insert("op1", "s1", "trashed").unwrap();
+        assert!(
+            insert("op2", "s1", "failed").is_err(),
+            "one open row per session"
+        );
+        insert("op3", "s2", "purged").unwrap();
+        insert("op4", "s2", "trashing").unwrap();
+        insert("op5", "s2", "released").unwrap();
+        conn.execute(
+            "UPDATE worktree_ops SET state = 'restored' WHERE op_id = 'op1'",
+            [],
+        )
+        .unwrap();
+        insert("op6", "s1", "trashing").unwrap();
     }
 }

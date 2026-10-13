@@ -350,6 +350,7 @@ impl Store {
                 .as_ref()
                 .is_some_and(|s| s.revert.as_ref().is_some_and(|r| r.blocks_input()))
                 || super::sharing::open_revert_over(conn, &spec.cwd)?.is_some()
+                || super::worktree_ops::open_over(conn, &spec.cwd)?.is_some()
                 || max_sessions
                     .is_some_and(|max| active_sessions(conn).is_ok_and(|n| n >= u64::from(max)))
             {

@@ -27,6 +27,7 @@ pub mod shim_station;
 pub mod shim_stdin;
 pub mod shims;
 pub mod target;
+pub mod trash;
 pub mod turns;
 pub mod workspaces;
 
@@ -36,7 +37,7 @@ use std::time::Duration;
 
 use fleetdeck_core::config::{Driver, StationConfig};
 use fleetdeck_core::{ChildEnv, SharedIds};
-use fleetdeck_proto::command::{CommandEnvelope, StopMode};
+use fleetdeck_proto::command::{CommandEnvelope, SessionCommand, StopMode};
 use fleetdeck_proto::link::StationProvider;
 use fleetdeck_providers::claude::{ClaudeAdapter, ClaudeAdapterConfig, RawLogSettings};
 use fleetdeck_providers::codex::{CodexAdapter, CodexAdapterConfig};
@@ -123,6 +124,8 @@ pub struct SessionManager {
     /// The provider report of `station.info`, probed once per process.
     providers: tokio::sync::OnceCell<Vec<StationProvider>>,
     draining: std::sync::atomic::AtomicBool,
+    /// The shells of the station, once the link node set them (DL-150).
+    shells: target::ShellsSlot,
 }
 
 impl std::fmt::Debug for SessionManager {
@@ -231,9 +234,17 @@ impl SessionManager {
         if continued > 0 {
             tracing::info!(continued, "stored auto-continue intents");
         }
+        // A trash operation that a restart interrupted goes on from its row
+        // (DL-150); the effect of the earlier process is retired.
+        let requeued = store.requeue_worktree_ops().await?;
+        if requeued > 0 {
+            tracing::info!(requeued, "resumed interrupted worktree operations");
+        }
+        let shells = target::ShellsSlot::default();
         let mut target = SessionTarget::new(store.clone(), adapters, Arc::clone(&ids))
             .with_coordinator(policy.coordinator_bindings().clone())
-            .with_policy(policy.clone());
+            .with_policy(policy.clone())
+            .with_shells(shells.clone());
         if let Some(settings) = shims {
             target = target.with_shims(settings);
         }
@@ -264,7 +275,15 @@ impl SessionManager {
             tasks: std::sync::Mutex::new(tasks),
             providers: tokio::sync::OnceCell::new(),
             draining: std::sync::atomic::AtomicBool::new(false),
+            shells,
         })
+    }
+
+    /// Gives the manager the shells of the station: the trash and purge
+    /// decisions and the file work of the trash read their start folders
+    /// (DL-150). The first call wins.
+    pub fn set_shells(&self, shells: Arc<crate::shell::Shells>) {
+        self.shells.set(shells);
     }
 
     #[must_use]
@@ -344,10 +363,19 @@ impl SessionManager {
         let guard = auto_continue::guard(&command, &caller)
             .and_then(|()| coordinator_command::guard(&command, &caller))
             .and_then(|()| drain::guard(self.draining(), &command));
+        let shells = self.shells.get();
         self.store
             .decide(envelope, caller, move |d| {
                 guard?;
-                decide::decide(d, &policy, origin, command)
+                match command {
+                    command @ (SessionCommand::WorktreeTrash { .. }
+                    | SessionCommand::WorktreeRestore { .. }
+                    | SessionCommand::WorktreePurge { .. }
+                    | SessionCommand::WorktreeRelease { .. }) => {
+                        trash::decide(d, &policy, origin, shells.as_deref(), command)
+                    }
+                    command => decide::decide(d, &policy, origin, command),
+                }
             })
             .await
     }
