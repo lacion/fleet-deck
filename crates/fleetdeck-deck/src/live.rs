@@ -26,14 +26,15 @@ impl DeckLive {
     }
 }
 
-/// The current [`DeckLive`]: readers clone the `Arc`, a publish swaps it.
-#[derive(Debug)]
-pub struct LiveCell(RwLock<Arc<DeckLive>>);
+/// The current [`DeckLive`]: readers clone the `Arc`, a publish swaps it. A
+/// clone of the cell shares the value (the local socket publishes too).
+#[derive(Debug, Clone)]
+pub struct LiveCell(Arc<RwLock<Arc<DeckLive>>>);
 
 impl LiveCell {
     #[must_use]
     pub fn new(live: DeckLive) -> Self {
-        Self(RwLock::new(Arc::new(live)))
+        Self(Arc::new(RwLock::new(Arc::new(live))))
     }
 
     /// The current value.

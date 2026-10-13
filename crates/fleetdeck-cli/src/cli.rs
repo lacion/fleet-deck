@@ -46,6 +46,12 @@ pub enum Command {
     },
     /// Check the local setup and say what is wrong (read-only).
     Doctor,
+    /// Read and change the settings of the running deck or station through
+    /// its owner-only local socket.
+    Settings {
+        #[command(subcommand)]
+        command: SettingsCommand,
+    },
     /// Print a one-time board login URL (from the deck's owner-only socket).
     Open {
         /// Print a one-time elevation code for the board instead (single use,
@@ -143,6 +149,45 @@ pub enum DeckCommand {
         /// Print the entries as JSON.
         #[arg(long)]
         json: bool,
+    },
+}
+
+/// `fleetdeck settings` (DL-172, design 1.3). Without `--station` the
+/// command talks to the deck; with it, to the station of this machine.
+#[derive(Debug, Subcommand)]
+pub enum SettingsCommand {
+    /// Show the settings: key, value (a secret shows `(set)`) and when a
+    /// change applies (`live` or `restart`).
+    Get {
+        /// Use the station of this machine instead of the deck.
+        #[arg(long)]
+        station: bool,
+        /// Print the settings view as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Change one setting. The value is read as JSON when it parses
+    /// (`true`, `5`, `["a"]`, `null` removes the key), else as plain text.
+    Set {
+        /// The settings key, for example `conflict_mail`.
+        key: String,
+        /// The new value.
+        #[arg(allow_hyphen_values = true)]
+        value: String,
+        /// Use the station of this machine instead of the deck.
+        #[arg(long)]
+        station: bool,
+    },
+    /// Store a secret value of the station. The value comes from stdin
+    /// (one line) or from a prompt that does not echo; never from an
+    /// argument.
+    Secret {
+        /// The settings key of the secret, for example
+        /// `provider_instance.work.env.TOKEN`.
+        key: String,
+        /// Use the station of this machine (the deck has no secrets).
+        #[arg(long)]
+        station: bool,
     },
 }
 
@@ -340,6 +385,16 @@ mod tests {
             &["open"],
             &["open", "--elevate"],
             &["doctor"],
+            &["settings", "get"],
+            &["settings", "get", "--station", "--json"],
+            &["settings", "set", "conflict_mail", "false"],
+            &["settings", "set", "max_sessions", "-1", "--station"],
+            &[
+                "settings",
+                "secret",
+                "provider_instance.work.env.TOKEN",
+                "--station",
+            ],
         ] {
             assert!(parse(args).is_ok(), "{args:?} should parse");
         }
@@ -350,6 +405,39 @@ mod tests {
         let invitation = "fdinv1:wss://127.0.0.1:7443#abc.def.123";
         assert!(parse(&["station", "join", invitation]).is_err());
         assert!(parse(&["deck", "add-station", invitation]).is_err());
+    }
+
+    #[test]
+    fn a_secret_value_is_never_an_argument() {
+        // `secret` takes the key only: a second positional is refused.
+        assert!(parse(&["settings", "secret", "k", "value", "--station"]).is_err());
+        assert!(parse(&["settings", "secret"]).is_err());
+        assert!(parse(&["settings", "set", "only-a-key"]).is_err());
+        let cli = parse(&["settings", "secret", "k"]).unwrap();
+        let Command::Settings {
+            command: SettingsCommand::Secret { key, station },
+        } = cli.command
+        else {
+            panic!("not a settings secret");
+        };
+        assert_eq!((key.as_str(), station), ("k", false));
+    }
+
+    #[test]
+    fn settings_flags_select_the_holder() {
+        let cli = parse(&["settings", "set", "a", "-5", "--station"]).unwrap();
+        let Command::Settings {
+            command:
+                SettingsCommand::Set {
+                    key,
+                    value,
+                    station,
+                },
+        } = cli.command
+        else {
+            panic!("not a settings set");
+        };
+        assert_eq!((key.as_str(), value.as_str(), station), ("a", "-5", true));
     }
 
     #[test]

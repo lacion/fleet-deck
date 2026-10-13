@@ -144,6 +144,18 @@ impl RunningDeck {
             restart,
             local_station,
         } = options;
+        let deck_settings = crate::http::settings_routes::DeckSettings {
+            writer: Arc::new(SettingsWriter::<DeckHolder>::new(
+                &settings_path,
+                None,
+                &Env::default(),
+            )),
+            path: settings_path,
+            overrides,
+        };
+        let board_settings = deck_settings.clone();
+        let live_cell = crate::live::LiveCell::new(live);
+        let board_live = live_cell.clone();
         let board = BoardServer::bind(
             &config.listen,
             move |bound| {
@@ -161,17 +173,9 @@ impl RunningDeck {
                     ws_recheck: crate::http::ws::RECHECK,
                     pairing: Some(board_node),
                     assets: crate::http::assets::BoardAssets::Embedded,
-                    live: crate::live::LiveCell::new(live),
+                    live: board_live,
                     elevations: board_elevations,
-                    settings: Some(crate::http::settings_routes::DeckSettings {
-                        writer: Arc::new(SettingsWriter::<DeckHolder>::new(
-                            &settings_path,
-                            None,
-                            &Env::default(),
-                        )),
-                        path: settings_path,
-                        overrides,
-                    }),
+                    settings: Some(board_settings),
                     restart,
                     local_station,
                 });
@@ -199,6 +203,8 @@ impl RunningDeck {
             node: Arc::clone(&node),
             board: endpoint.clone(),
             elevations,
+            settings: Some(deck_settings),
+            live: live_cell,
         });
         let server = tokio::spawn(local::serve(listener, local, rx.clone()));
         let scheduler = crate::scheduler::spawn(store.clone(), Arc::clone(node.link()), rx);

@@ -26,9 +26,9 @@ use serde_json::{Map, Value, json};
 
 use super::Board;
 use super::guard::{ApiError, owner_only};
-use crate::live::DeckLive;
+use crate::live::{DeckLive, LiveCell};
 use crate::store::auth::LoginSession;
-use crate::store::{AuditResult, NewAudit, Principal, StationRecord};
+use crate::store::{AuditResult, DeckStore, NewAudit, Principal, StationRecord};
 
 /// The longest the board waits for the station's answer.
 pub const SETTINGS_WAIT: Duration = Duration::from_secs(15);
@@ -39,6 +39,7 @@ const RESTART_DELAY: Duration = Duration::from_millis(300);
 const DECK_TARGET: &str = "deck";
 
 /// The settings file of the deck and how its writer is set up.
+#[derive(Clone)]
 pub struct DeckSettings {
     pub writer: Arc<SettingsWriter<DeckHolder>>,
     pub path: PathBuf,
@@ -296,17 +297,7 @@ pub async fn deck_get(
     )
     .await?;
     let settings = board.settings.as_ref().ok_or_else(not_set_up)?;
-    let path = settings.path.clone();
-    let overrides = settings.overrides.clone();
-    let view = tokio::task::spawn_blocking(move || {
-        let pairs: Vec<(&str, &str)> = overrides
-            .iter()
-            .map(|(k, f)| (k.as_str(), f.as_str()))
-            .collect();
-        view_deck(&path, &pairs)
-    })
-    .await
-    .map_err(ApiError::internal)?;
+    let view = deck_view(settings).await;
     match view {
         Ok(v) => Ok(Json(v)),
         Err(e) => {
@@ -356,6 +347,23 @@ async fn deck_save(
 ) -> Result<SettingsSaved, ApiError> {
     let settings = board.settings.as_ref().ok_or_else(not_set_up)?;
     let elevated = is_elevated(board, session, change.elevation.as_deref());
+    save_and_publish(settings, &board.store, &board.live, change, elevated)
+        .await
+        .map_err(|e| save_error(&e))
+}
+
+/// Saves a change of the deck settings and publishes the live fields. The
+/// board routes and the local socket both call it.
+///
+/// # Errors
+/// [`SaveError`].
+pub async fn save_and_publish(
+    settings: &DeckSettings,
+    store: &DeckStore,
+    live: &LiveCell,
+    change: SettingsChange,
+    elevated: bool,
+) -> Result<SettingsSaved, SaveError> {
     let writer = Arc::clone(&settings.writer);
     let saved = tokio::task::spawn_blocking(move || {
         writer.save(&change, elevated, |new| {
@@ -363,11 +371,11 @@ async fn deck_save(
         })
     })
     .await
-    .map_err(ApiError::internal)?;
+    .map_err(|_| SaveError::SettingsWriteFailed)?;
     match saved {
         // 1.4 step 2: publish, which cannot fail.
-        Ok((saved, _config, live)) => {
-            publish(board, live);
+        Ok((saved, _config, new)) => {
+            publish(store, live, new);
             Ok(saved)
         }
         Err(e) => {
@@ -376,19 +384,37 @@ async fn deck_save(
                 // base and publish it, so that the next save can work.
                 let writer = Arc::clone(&settings.writer);
                 if let Ok(Ok(config)) = tokio::task::spawn_blocking(move || writer.resync()).await {
-                    publish(board, DeckLive::of(&config));
+                    publish(store, live, DeckLive::of(&config));
                 }
             }
-            Err(save_error(&e))
+            Err(e)
         }
     }
 }
 
+/// The view of the deck settings, read in a blocking task.
+///
+/// # Errors
+/// The text of the read error (for the log only).
+pub async fn deck_view(settings: &DeckSettings) -> Result<SettingsView, String> {
+    let path = settings.path.clone();
+    let overrides = settings.overrides.clone();
+    tokio::task::spawn_blocking(move || {
+        let pairs: Vec<(&str, &str)> = overrides
+            .iter()
+            .map(|(k, f)| (k.as_str(), f.as_str()))
+            .collect();
+        view_deck(&path, &pairs).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Publishes the live fields: the board reads them per use, and the store
 /// reads its flag for the conflict mail at every fold.
-fn publish(board: &Board, live: DeckLive) {
-    board.store.set_conflict_mail(live.conflict_mail);
-    board.live.publish(live);
+fn publish(store: &DeckStore, cell: &LiveCell, live: DeckLive) {
+    store.set_conflict_mail(live.conflict_mail);
+    cell.publish(live);
 }
 
 /// `GET /api/stations/{station}/settings`: link method `settings.get`.

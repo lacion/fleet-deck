@@ -19,6 +19,10 @@ use fleetdeck_core::localsock::{self, BindError, LineClient, read_line, send};
 use fleetdeck_proto::command::{
     ApprovalDecision, CommandEnvelope, CommandOrigin, RETRY_WINDOW_MS, Receipt, SessionCommand,
 };
+use fleetdeck_proto::link::Outcome;
+use fleetdeck_proto::settings::{
+    SecretSet, SecretSetParams, SettingsChange, SettingsSaved, SettingsSetParams, SettingsView,
+};
 use fleetdeck_proto::{CommandId, RequestId, SessionSummary};
 use serde::{Deserialize, Serialize};
 use tokio::io::BufReader;
@@ -67,6 +71,14 @@ pub enum LocalRequest {
     /// `station drain`: refuse new work and wait until no session has open
     /// work, at most `timeout_ms` (M3 7-3, DL-128).
     Drain { timeout_ms: u64 },
+    /// `fleetdeck settings get --station` (DL-172).
+    SettingsGet,
+    /// `fleetdeck settings set --station`. The local socket is the owner,
+    /// so the save counts as elevated.
+    SettingsSet { change: SettingsChange },
+    /// `fleetdeck settings secret --station`: stores a secret and points
+    /// the config to it. `Debug` hides the value; nothing logs the request.
+    SettingsSecret { secret: SecretSet, revision: String },
 }
 
 pub use fleetdeck_core::localsock::InvitationText;
@@ -97,6 +109,20 @@ pub enum LocalResponse {
     /// The result of [`LocalRequest::Drain`].
     Drained {
         report: crate::manager::drain::DrainReport,
+    },
+    /// The answer to [`LocalRequest::SettingsGet`].
+    Settings {
+        view: SettingsView,
+    },
+    /// The answer to [`LocalRequest::SettingsSet`] and
+    /// [`LocalRequest::SettingsSecret`].
+    SettingsSaved {
+        saved: SettingsSaved,
+    },
+    /// A settings request that failed, with its fixed error code.
+    SettingsError {
+        code: String,
+        message: String,
     },
     /// The station could not decide the request (bad line, database error).
     Error {
@@ -214,8 +240,65 @@ async fn pairing(node: Option<&StationNode>, request: LocalRequest) -> LocalResp
     result.unwrap_or_else(|e| error(e.to_string()))
 }
 
+fn settings_error(code: &str, message: &str) -> LocalResponse {
+    LocalResponse::SettingsError {
+        code: code.to_owned(),
+        message: message.to_owned(),
+    }
+}
+
+/// The response for the outcome of a settings call. The text of a decode
+/// error is never used: it can quote a value.
+fn settings_response<T: serde::de::DeserializeOwned>(
+    outcome: Outcome,
+    ok: impl FnOnce(T) -> LocalResponse,
+) -> LocalResponse {
+    match outcome {
+        Outcome::Ok(v) => match serde_json::from_value(v) {
+            Ok(t) => ok(t),
+            Err(_) => settings_error("internal", "the answer could not be read"),
+        },
+        Outcome::Err(e) => LocalResponse::SettingsError {
+            code: e.code,
+            message: e.message,
+        },
+    }
+}
+
+/// The three settings requests, answered by the station's settings holder.
+async fn settings(manager: &Arc<SessionManager>, request: LocalRequest) -> LocalResponse {
+    let Some(holder) = manager.settings() else {
+        return settings_error("unsupported", "this station has no settings holder");
+    };
+    match request {
+        LocalRequest::SettingsGet => {
+            settings_response(holder.get().await, |view| LocalResponse::Settings { view })
+        }
+        LocalRequest::SettingsSet { change } => {
+            let params = serde_json::json!(SettingsSetParams {
+                change,
+                elevated: true,
+            });
+            settings_response(holder.set(manager, params).await, |saved| {
+                LocalResponse::SettingsSaved { saved }
+            })
+        }
+        LocalRequest::SettingsSecret { secret, revision } => {
+            let params = serde_json::json!(SecretSetParams {
+                secret,
+                revision,
+                elevated: true,
+            });
+            settings_response(holder.secret_set(manager, params).await, |saved| {
+                LocalResponse::SettingsSaved { saved }
+            })
+        }
+        _ => error("not a settings request".to_owned()),
+    }
+}
+
 async fn handle(
-    manager: &SessionManager,
+    manager: &Arc<SessionManager>,
     node: Option<&StationNode>,
     request: LocalRequest,
 ) -> LocalResponse {
@@ -223,6 +306,9 @@ async fn handle(
         LocalRequest::Invite { .. } | LocalRequest::Join { .. } | LocalRequest::ForgetDeck => {
             return pairing(node, request).await;
         }
+        LocalRequest::SettingsGet
+        | LocalRequest::SettingsSet { .. }
+        | LocalRequest::SettingsSecret { .. } => return settings(manager, request).await,
         LocalRequest::Drain { timeout_ms } => {
             return match manager
                 .drain(std::time::Duration::from_millis(timeout_ms))

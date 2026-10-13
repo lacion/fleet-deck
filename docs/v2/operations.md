@@ -118,6 +118,17 @@ A station stop with `host = "direct"` stops every agent; the sessions become `lo
 - Restart from the board (`POST /api/settings/restart`): the process executes itself again with the argv, the environment and the executable path that it had at start. It first stops as for SIGTERM. `fleetdeck up` restarts as one process.
 - **Exit code 75.** When the new `exec` fails after the process stopped, the process logs `restart failed: <errno>` and exits with code 75. The deck then shows as offline on the board. Read the log, repair the cause (for example a deleted or replaced binary), and start `fleetdeck` again.
 
+### Settings from the shell (DL-172)
+
+The deck and the station are the only writers of their config file while they run. To change a setting from a shell, use `fleetdeck settings`. It talks to the running process over its owner-only local socket (`deck.sock` or `station.sock`). Do not edit the file by hand while Fleet Deck runs. In `fleetdeck up` mode both sockets exist.
+
+1. Show the settings of the deck: `fleetdeck settings get`. Add `--station` for the station of this machine, or `--json` for the full view. The table has the columns key, value and apply. A secret value shows `(set)`. `apply` is `live` (at once) or `restart` (at the next start).
+2. Change one setting: `fleetdeck settings set <key> <value>` (add `--station` for the station). The value is read as JSON when it parses (`true`, `5`, `["a"]`, `null` removes the key). Else it is a plain string.
+3. Read the answer. `Saved and applied.` means that the change is live. `Saved. Applies after a restart: <keys>.` means that you must restart the process. An error prints its code and message, and the exit code is 1.
+4. Store a secret of the station: `fleetdeck settings secret <key> --station`. The value is the first line of stdin, or a prompt that does not show it. It is never an argument. The deck has no secret settings.
+
+The local socket is the owner on this machine, so these commands need no elevation. A save reads the current revision first. When another change happens in between (`settings_changed`), the command reads again and tries once more. Each deck save writes an audit row with the actor `local` and the keys only.
+
 ## 6. Pair a station
 
 Station dials the deck (the station is behind NAT or on a laptop):
