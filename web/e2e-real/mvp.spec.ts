@@ -79,7 +79,10 @@ async function fitsWidth(): Promise<boolean> {
  * its Back button returns to the session list first. */
 async function bar(): Promise<Locator> {
   const nav = page.getByRole('navigation', { name: 'Board', exact: true });
-  if ((await nav.count()) === 0) await page.getByRole('button', { name: 'Back' }).click();
+  const back = page.getByRole('button', { name: 'Back' });
+  // Wait for the screen first: the bar, or a screen with Back (a session).
+  await expect(nav.or(back).first()).toBeVisible();
+  if (!(await nav.isVisible())) await back.click();
   await expect(nav).toBeVisible();
   return nav;
 }
