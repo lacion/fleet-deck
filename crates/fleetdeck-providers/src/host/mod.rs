@@ -100,6 +100,10 @@ impl ExitReport {
     }
 }
 
+/// The grace of a graceful stop while the session is idle: a user's async
+/// hook can keep the CLI alive after stdin EOF (DL-141).
+pub const DEFAULT_IDLE_GRACE: Duration = Duration::from_secs(3);
+
 /// The time bounds of [`ProcessControl::stop`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StopPolicy {

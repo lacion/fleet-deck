@@ -126,6 +126,11 @@ pub trait DurableCore: Send + Sync + Sized + 'static {
     fn command(&mut self, effect: &Effect) -> Result<Steps, ProviderError>;
     /// The provider process ended.
     fn ended(&self) -> bool;
+    /// No turn runs, no input waits, no background work runs (a graceful
+    /// stop then uses the short idle grace, DL-141).
+    fn is_idle(&self) -> bool {
+        false
+    }
 }
 
 /// The host input of a stored input record.
@@ -749,6 +754,13 @@ impl<C: DurableCore> DurableDriver<C> {
     #[must_use]
     pub fn process(&self) -> &Arc<ShimProcess> {
         &self.process
+    }
+
+    /// True when the core is idle. A core that a step holds (or a poisoned
+    /// one) counts as not idle.
+    #[must_use]
+    pub fn idle(&self) -> bool {
+        self.core.try_lock().is_ok_and(|core| core.is_idle())
     }
 }
 

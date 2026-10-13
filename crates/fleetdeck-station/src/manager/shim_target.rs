@@ -33,7 +33,7 @@ use fleetdeck_proto::{Event, EventBody, SessionId};
 use fleetdeck_providers::ProviderAdapter;
 use fleetdeck_providers::durable::{DurableConfig, DurableLaunch};
 use fleetdeck_providers::host::shim::host::{AckMode, ShimHost, ShimProcess};
-use fleetdeck_providers::host::{ProcessControl as _, StopPolicy};
+use fleetdeck_providers::host::{DEFAULT_IDLE_GRACE, ProcessControl as _, StopPolicy};
 use tokio::sync::Mutex;
 
 use super::super::shim_claude::DurableClaude;
@@ -340,7 +340,12 @@ impl SessionTarget {
         match &effect.payload {
             EffectPayload::Stop { how } => {
                 let process = durable.driver.process();
-                let (how, policy) = (*how, durable.stop);
+                let (how, mut policy) = (*how, durable.stop);
+                if how == StopMode::Graceful && durable.driver.idle() {
+                    // A user's async hook can keep an idle CLI alive after
+                    // stdin EOF (DL-141).
+                    policy.grace = DEFAULT_IDLE_GRACE.min(policy.grace);
+                }
                 // `session.ended` confirms the stop (the driver commits it).
                 tokio::spawn(async move {
                     match how {

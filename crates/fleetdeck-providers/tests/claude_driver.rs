@@ -373,6 +373,36 @@ async fn a_graceful_stop_of_an_idle_session_uses_the_idle_grace() {
 }
 
 #[tokio::test]
+async fn a_graceful_stop_during_a_turn_uses_the_idle_grace_after_the_turn_ends() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (mut session, mut rx) = lingering_sim(
+        tmp.path(),
+        20_000,
+        Duration::from_secs(10),
+        Duration::from_millis(300),
+    )
+    .await;
+    // `slow` keeps the turn open; at stdin EOF the sim ends it after 1 s and
+    // then lingers.
+    send_prompt(&mut session, "01K70000000000000000000001", "slow").await;
+    wait_for(&mut rx, |e| matches!(e, Event::TurnStarted { .. })).await;
+    let started = Instant::now();
+    tokio::time::timeout(WAIT, session.stop(StopMode::Graceful))
+        .await
+        .expect("stop keeps its deadline")
+        .unwrap();
+    // 1 s turn end + idle grace 300 ms + term grace 300 ms + the settle time
+    // of the host, far below the 10 s grace and the 20 s linger.
+    assert!(
+        started.elapsed() < Duration::from_secs(4),
+        "{:?}",
+        started.elapsed()
+    );
+    println!("busy-then-idle stop took {:?}", started.elapsed());
+    wait_for(&mut rx, |e| matches!(e, Event::TurnCompleted { .. })).await;
+}
+
+#[tokio::test]
 async fn a_graceful_stop_of_a_busy_session_keeps_the_full_grace() {
     let tmp = tempfile::tempdir().unwrap();
     let (mut session, mut rx) = lingering_sim(

@@ -91,6 +91,15 @@ impl Durable {
         }
     }
 
+    /// True when the driver's core is idle (a Codex core never is).
+    #[must_use]
+    pub fn idle(&self) -> bool {
+        match self {
+            Self::Claude(d) => d.idle(),
+            Self::Codex(d) => d.idle(),
+        }
+    }
+
     /// Stops the driver's output pump without touching the shim (tests and
     /// station shutdown).
     pub async fn abandon(&self) {
