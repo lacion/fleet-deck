@@ -36,6 +36,8 @@ export type SessionActions = {
   revert(turnId: string): Promise<Outcome>;
   /** The owner's resolution of a revert in `reconciliation_required` (DL-097). */
   resolveRevert(revertId: string, resolution: RevertResolution): Promise<Outcome>;
+  /** A generated summary of the session (R10.2, DL-167). The station stores it as the digest. */
+  summarize(): Promise<Outcome>;
   /** The file service of the session; `null` without a reader (tests). */
   readonly files: FileActions | null;
 };
@@ -150,6 +152,17 @@ export function sessionActions(
     revert: (turn_id) => run({ op: 'revert', session_id, turn_id }),
     resolveRevert: (revert_id, resolution) =>
       run({ op: 'resolve_revert', session_id, revert_id, resolution }),
+    summarize: async () => {
+      const path = `/api/stations/${encodeURIComponent(key.station_id)}/sessions/${encodeURIComponent(session_id)}/digest`;
+      try {
+        await post(path, {});
+        return { ok: true, text: 'Summarized.' };
+      } catch (error) {
+        // A failed summary leaves the session as it was: the text says so, nothing else changes.
+        const reason = error instanceof Error ? error.message : 'The request failed.';
+        return { ok: false, text: `No summary was made: ${reason}` };
+      }
+    },
     files: get ? fileActions(get, key) : null,
   };
 }

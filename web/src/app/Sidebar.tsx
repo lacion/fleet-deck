@@ -19,6 +19,7 @@ import {
   Zap,
 } from '../ui/icons';
 import { shortModel } from '../ui/format';
+import { GeneratedMark } from '../ui/generated';
 import { archived as archivedSet } from '../ui/archive';
 import { priority, sessionRef } from '../ui/localSet';
 import type { Chrome } from './chrome';
@@ -87,6 +88,7 @@ function Row({
         <span className="fd-srow-title">
           <span className="fd-vh">{statusLabel(card)}: </span>
           {sessionTitle(card)}
+          {s.title !== null && s.title_generated ? <GeneratedMark /> : null}
           {starred ? (
             <span className="fd-srow-star" role="img" aria-label="Starred">
               <Icon of={Star} size={12} />

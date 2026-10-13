@@ -95,3 +95,33 @@ export function meterText(m: RateMeter): string {
   const d = new Date(m.resetsAt);
   return `${used}, resets ${d.toISOString().slice(0, 16).replace('T', ' ')} UTC`;
 }
+
+/** The model-help use of one station today, under the "Fleet Deck" scope (R10, DL-167). */
+export type AssistMeter = {
+  readonly key: string;
+  readonly label: string;
+  readonly tokens: number;
+  readonly cap: number;
+};
+
+/** One meter for each station whose model help is on. A station without a cap has it off. */
+export function assistMeters(stations: readonly StationView[]): AssistMeter[] {
+  const out: AssistMeter[] = [];
+  for (const st of stations) {
+    const info = st.info;
+    const cap = info?.assist_cap;
+    if (info == null || cap == null) continue;
+    out.push({
+      key: `${st.station_id}/fleetdeck`,
+      label: `${st.name} · Fleet Deck`,
+      tokens: info.assist_tokens_today ?? 0,
+      cap,
+    });
+  }
+  return out.sort((a, b) => a.key.localeCompare(b.key));
+}
+
+/** The text of a model-help meter, for example "1,200 of 200,000 tokens today". */
+export function assistText(m: AssistMeter): string {
+  return `${tokens(m.tokens)} of ${tokens(m.cap)} tokens today`;
+}

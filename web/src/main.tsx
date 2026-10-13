@@ -21,6 +21,7 @@ import './styles/session.css';
 import './styles/chat.css';
 import './styles/terminal.css';
 import './styles/spawn.css';
+import './styles/modelhelp.css';
 
 initTheme();
 initDensity();
