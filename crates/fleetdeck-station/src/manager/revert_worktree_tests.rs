@@ -202,6 +202,69 @@ async fn an_open_revert_holds_the_worktree_against_other_sessions() {
 }
 
 #[tokio::test]
+async fn a_revert_is_refused_while_a_terminal_holds_an_exited_session_of_the_worktree() {
+    let mut st = Station::new(4).await;
+    let (a, dir, turn) = codex_with_turn(&mut st, "ok").await;
+    let ws = st.workspace();
+    let b = st.start(&ws, Some("hello")).await;
+    wait_count(&st, "B's finalized turn", &b, 1, is_finalized).await;
+    st.accepted(SessionCommand::Stop {
+        session_id: b.clone(),
+        how: StopMode::Graceful,
+    })
+    .await;
+    wait_count(&st, "B's end", &b, 1, |e| {
+        matches!(e, Event::SessionEnded { .. })
+    })
+    .await;
+    st.settled(&b).await;
+    // B's TUI runs (DL-140): the session is exited and a terminal holds it.
+    let store = st.manager.store().clone();
+    store
+        .append(
+            b.clone(),
+            vec![
+                Event::SessionTerminal {
+                    shell_id: Some("tui-1".to_owned()),
+                    pid: Some(7),
+                    reason: Some("terminal started".to_owned()),
+                }
+                .into(),
+            ],
+        )
+        .await
+        .unwrap();
+    let revert = SessionCommand::Revert {
+        session_id: a.clone(),
+        turn_id: turn,
+    };
+    let (code, message) = refusal(&mut st, revert).await;
+    assert_eq!(code, RejectCode::InvalidState);
+    assert!(message.contains("a terminal holds it"), "{message}");
+    assert!(message.contains(b.as_str()), "{message}");
+    assert!(store.session_reverts(a.clone()).await.unwrap().is_empty());
+    assert_eq!(
+        std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+        "one\nedited\n"
+    );
+    // The release ends the conflict.
+    assert!(
+        store
+            .release_terminal(b.clone(), "tui-1".to_owned(), "tui exited".to_owned())
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        store
+            .worktree_conflict(ws.clone(), a.clone())
+            .await
+            .unwrap(),
+        None
+    );
+    st.manager.shutdown(StopMode::Kill).await;
+}
+
+#[tokio::test]
 async fn a_second_revert_after_a_successful_one_reverts_the_earlier_turn() {
     let mut st = Station::new(4).await;
     let (a, dir, turn) = codex_with_turn(&mut st, "ok").await;
