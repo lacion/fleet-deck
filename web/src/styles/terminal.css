@@ -23,6 +23,12 @@
 .fd-term-screen .xterm {
   height: 100%;
 }
+/* The strip under the last whole row takes xterm's default black; the board's terminal color covers it. */
+.fd-term-screen .xterm,
+.fd-term-screen .xterm-viewport,
+.fd-term-screen .xterm-scrollable-element {
+  background-color: var(--code);
+}
 .fd-term-screen .xterm-viewport {
   scrollbar-width: thin;
   scrollbar-color: var(--faint) transparent;
