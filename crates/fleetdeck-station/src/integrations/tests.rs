@@ -158,7 +158,17 @@ fn service(
 }
 
 async fn ask(svc: &Integrations, method: &str, params: Value) -> Result<Value, (String, String)> {
-    let resolve = |p: &str| (p == "/work/app").then(|| PathBuf::from("/tmp"));
+    ask_at(svc, method, params, Path::new("/tmp")).await
+}
+
+/// [`ask`] with `/work/app` resolving to `repo`.
+async fn ask_at(
+    svc: &Integrations,
+    method: &str,
+    params: Value,
+    repo: &Path,
+) -> Result<Value, (String, String)> {
+    let resolve = |p: &str| (p == "/work/app").then(|| repo.to_path_buf());
     match svc.call(method, params, &resolve).await {
         Outcome::Ok(v) => Ok(v),
         Outcome::Err(e) => Err((e.code, e.message)),
@@ -405,9 +415,103 @@ async fn a_write_clears_the_list_cache() {
     );
 }
 
+/// A repository whose remotes are `(name, url)`.
+fn repo_with_remotes(dir: &Path, remotes: &[(&str, &str)]) {
+    std::fs::create_dir_all(dir).unwrap();
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{args:?}: {out:?}");
+    };
+    git(&["init", "-q"]);
+    for (name, url) in remotes {
+        git(&["remote", "add", name, url]);
+    }
+}
+
+#[tokio::test]
+async fn prs_create_needs_a_remote_that_names_the_bound_repository() {
+    let tmp = tempfile::tempdir().unwrap();
+    let svc = service(
+        tmp.path(),
+        &[
+            VIEWER_GH,
+            (
+                "repos/acme/app/pulls",
+                r#"{"html_url":"https://github.com/acme/app/pull/11"}"#,
+            ),
+        ],
+        &[],
+        &[],
+    );
+    let params = |id: &str| {
+        json!({"command_id": id, "forge": binding_json(&github()), "path": "/work/app", "head": "PROJ-1-x", "base": "main",
+               "title": "PROJ-1 fix", "body": "text", "draft": false})
+    };
+    let none = tmp.path().join("none");
+    repo_with_remotes(&none, &[]);
+    let (c, m) = ask_at(&svc, "prs.create", params("c-5"), &none)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        (c.as_str(), m.as_str()),
+        (code::INVALID_PARAMS, "the repository has no remote")
+    );
+    let other = tmp.path().join("other");
+    repo_with_remotes(&other, &[("origin", "git@github.com:acme/else.git")]);
+    let (c, m) = ask_at(&svc, "prs.create", params("c-6"), &other)
+        .await
+        .unwrap_err();
+    assert_eq!(c, code::INVALID_PARAMS);
+    assert_eq!(m, "no remote of this repository names github.com/acme/app");
+    // Two remotes: one of them names the project (a fork setup).
+    let fork = tmp.path().join("fork");
+    repo_with_remotes(
+        &fork,
+        &[
+            ("origin", "git@github.com:me/app.git"),
+            ("upstream", "https://github.com/Acme/App.git"),
+        ],
+    );
+    ask_at(&svc, "prs.create", params("c-7"), &fork)
+        .await
+        .unwrap();
+    assert_eq!(calls(&tmp.path().join("gh")), 2, "viewer and create");
+}
+
+#[tokio::test]
+async fn prs_fetch_head_needs_a_path_inside_the_roots() {
+    let tmp = tempfile::tempdir().unwrap();
+    let svc = service(tmp.path(), &[], &[], &[]);
+    let params = |path: &str| json!({"forge": binding_json(&github()), "number": 7, "path": path});
+    let (c, _) = ask(&svc, "prs.fetch_head", params("/elsewhere"))
+        .await
+        .unwrap_err();
+    assert_eq!(c, code::OUTSIDE_ROOTS);
+    let (c, _) = ask(&svc, "prs.fetch_head", params("relative"))
+        .await
+        .unwrap_err();
+    assert_eq!(c, code::INVALID_PARAMS);
+    let (c, _) = ask(
+        &svc,
+        "prs.fetch_head",
+        json!({"forge": binding_json(&github()), "number": 7, "path": "/work/app", "x": 1}),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(c, code::INVALID_PARAMS);
+}
+
 #[tokio::test]
 async fn prs_create_needs_a_path_inside_the_roots() {
     let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("app");
+    repo_with_remotes(&repo, &[("origin", "https://github.com/acme/app.git")]);
     let svc = service(
         tmp.path(),
         &[
@@ -429,7 +533,7 @@ async fn prs_create_needs_a_path_inside_the_roots() {
         .unwrap_err();
     assert_eq!(c, code::OUTSIDE_ROOTS);
     let made: WriteResult = serde_json::from_value(
-        ask(&svc, "prs.create", params("/work/app", "c-4"))
+        ask_at(&svc, "prs.create", params("/work/app", "c-4"), &repo)
             .await
             .unwrap(),
     )

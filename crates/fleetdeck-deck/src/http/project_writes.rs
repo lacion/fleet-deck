@@ -27,9 +27,9 @@ use fleetdeck_proto::command::{
 };
 use fleetdeck_proto::integrations::{
     Binding, CommentBody, DEFAULT_PROMPT, DEFAULT_REVIEW_PROMPT, IssueCommentWrite, IssueDetail,
-    IssueGet, IssueRef, IssueTransition, PrComment, PrCreateBody, PrDetail, PrRef, PrReview,
-    Project, ReviewBody, StartFailure, StartSessions, StartedSession, StartedSessions,
-    TrackerBinding, TransitionBody, WriteResult, valid_branch,
+    IssueGet, IssueRef, IssueTransition, PrComment, PrCreateBody, PrDetail, PrFetchHead, PrHead,
+    PrRef, PrReview, Project, ReviewBody, StartFailure, StartSessions, StartedSession,
+    StartedSessions, TrackerBinding, TransitionBody, WriteResult, valid_branch,
 };
 use fleetdeck_proto::untrusted::fence;
 use serde_json::{Value, json};
@@ -378,6 +378,7 @@ fn start(
     title: String,
     prompt: String,
     branch: String,
+    base: Option<String>,
     issue: Option<IssueRef>,
 ) -> SessionCommand {
     SessionCommand::Start {
@@ -392,7 +393,7 @@ fn start(
         prompt: Some(UserInput::new(prompt)),
         workspace: Some(Box::new(WorkspaceRequest::Worktree {
             branch: Some(branch),
-            base: None,
+            base,
         })),
         setup_cmd: None,
         issue: issue.map(Box::new),
@@ -419,15 +420,37 @@ fn issue_starts(
                 title.clone(),
                 format!("{template}\n\n{}", detail.body_markdown),
                 branch_for(&r.key, &r.title, nth),
+                None,
                 Some(r.clone()),
             )
         })
         .collect()
 }
 
-/// The start of a review: a worktree on the pull request's head branch, the
-/// description and the changed files in the envelope.
-fn review_start(project: &Project, req: &StartSessions, pr: &PrDetail) -> SessionCommand {
+/// The branch of a review: `review/pr-<n>-<oid7>-<b4>`. `oid7` is the first 7
+/// characters of the fetched head and `b4` the last 4 characters of the batch
+/// id in lower case, so every review is a new branch on the head of the pull
+/// request.
+pub fn review_branch(number: u64, head: &PrHead, batch_id: &str) -> String {
+    let oid7: String = head.oid.chars().take(7).collect();
+    let skip = batch_id.chars().count().saturating_sub(4);
+    let b4: String = batch_id
+        .chars()
+        .skip(skip)
+        .collect::<String>()
+        .to_lowercase();
+    format!("review/pr-{number}-{oid7}-{b4}")
+}
+
+/// The start of a review: a new worktree branch on the fetched head of the
+/// pull request (R3.7), the description and the changed files in the
+/// envelope.
+fn review_start(
+    project: &Project,
+    req: &StartSessions,
+    pr: &PrDetail,
+    head: &PrHead,
+) -> SessionCommand {
     let prompt = project
         .review_prompt
         .as_deref()
@@ -447,6 +470,7 @@ fn review_start(project: &Project, req: &StartSessions, pr: &PrDetail) -> Sessio
     }
     let listing = fence(&format!("pr:#{} files", s.number), &files.join("\n"));
     let title = one_line(&format!("Review #{} {}", s.number, s.title), TITLE_CHARS);
+    let branch = review_branch(s.number, head, &req.batch_id);
     start(
         project,
         req,
@@ -455,7 +479,8 @@ fn review_start(project: &Project, req: &StartSessions, pr: &PrDetail) -> Sessio
             "{prompt}\n\n{}\n\nChanged files:\n{listing}",
             pr.body_markdown
         ),
-        s.head_branch.clone(),
+        branch,
+        Some(head.ref_name.clone()),
         None,
     )
 }
@@ -496,7 +521,21 @@ pub async fn sessions(
         };
         match ask::<PrDetail>(&control, "prs.get", json!(pr), READ_WAIT).await {
             Ok(detail) if valid_branch(&detail.summary.head_branch) => {
-                commands.push((key, review_start(&project, &req, &detail)));
+                let fetch = PrFetchHead {
+                    forge: pr.forge.clone(),
+                    number,
+                    path: project.path.clone(),
+                };
+                match ask::<PrHead>(&control, "prs.fetch_head", json!(fetch), READ_WAIT).await {
+                    Ok(head) => {
+                        commands.push((key, review_start(&project, &req, &detail, &head)));
+                    }
+                    Err(e) => failed.push(StartFailure {
+                        key,
+                        code: "pr_fetch_failed".to_owned(),
+                        message: e.message,
+                    }),
+                }
             }
             Ok(_) => failed.push(StartFailure {
                 key,

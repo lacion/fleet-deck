@@ -28,6 +28,49 @@ fn bindings_check_their_fields() {
 }
 
 #[test]
+fn gitlab_repos_take_subgroups_and_github_stays_owner_name() {
+    let gitlab = |repo: &str| ForgeBinding {
+        kind: ForgeKind::Gitlab,
+        host: "gitlab.com".into(),
+        repo: repo.into(),
+    };
+    let github = |repo: &str| ForgeBinding {
+        kind: ForgeKind::Github,
+        host: "github.com".into(),
+        repo: repo.into(),
+    };
+    assert!(gitlab("a/b").check().is_ok());
+    assert!(gitlab("a/b/c").check().is_ok());
+    assert!(gitlab("a/b/c/d").check().is_ok());
+    assert!(gitlab(&["g"; 20].join("/")).check().is_ok());
+    assert!(gitlab(&["g"; 21].join("/")).check().is_err());
+    assert!(github("a/b").check().is_ok());
+    assert!(github("a/b/c").check().is_err());
+    assert!(github("a/b/c/d").check().is_err());
+    for bad in [
+        "a/.", "a/..", "a/.x", "a/-x", "a//b", "a/b c", "a/b/", "/a/b", "a/é",
+    ] {
+        assert!(gitlab(bad).check().is_err(), "{bad}");
+    }
+}
+
+#[test]
+fn a_fetch_head_checks_its_fields() {
+    let ok = PrFetchHead {
+        forge: forge(),
+        number: 7,
+        path: "/srv/repo".into(),
+    };
+    assert!(ok.check().is_ok());
+    let mut bad = ok.clone();
+    bad.number = 0;
+    assert!(bad.check().is_err());
+    let mut bad = ok.clone();
+    bad.path = "relative".into();
+    assert!(bad.check().is_err());
+}
+
+#[test]
 fn issue_keys_follow_the_binding() {
     let t = Binding::Tracker(TrackerBinding {
         tracker: "acme".into(),

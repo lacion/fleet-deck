@@ -172,17 +172,25 @@ impl Integrations {
                         "the path is outside the allowed roots of this station",
                     )
                 })?;
-                // A repository with one remote must be the bound repository.
-                if let Some((_, Some(origin))) = fleetdeck_core::git::repo_of(&cwd) {
-                    let wanted = format!("{}/{}", p.forge.host, p.forge.repo).to_lowercase();
-                    if origin != wanted {
-                        return Err(Fail::new(
-                            code::INVALID_PARAMS,
-                            format!(
-                                "the repository at the path has the origin `{origin}`, not `{wanted}`"
-                            ),
-                        ));
-                    }
+                // At least one remote must name the bound repository.
+                let remotes = super::fetch::remote_urls(&cwd).await?;
+                if remotes.is_empty() {
+                    return Err(Fail::new(
+                        code::INVALID_PARAMS,
+                        "the repository has no remote",
+                    ));
+                }
+                if !remotes
+                    .iter()
+                    .any(|(_, url)| super::fetch::remote_names_project(url, &p.forge))
+                {
+                    return Err(Fail::new(
+                        code::INVALID_PARAMS,
+                        format!(
+                            "no remote of this repository names {}/{}",
+                            p.forge.host, p.forge.repo
+                        ),
+                    ));
                 }
                 let forge = self.forge(&p.forge);
                 let actor = forge.viewer().await?;

@@ -202,6 +202,8 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         it::Asset::export_all(&cfg),
         it::PrsList::export_all(&cfg),
         it::PrRef::export_all(&cfg),
+        it::PrFetchHead::export_all(&cfg),
+        it::PrHead::export_all(&cfg),
         it::PrCreate::export_all(&cfg),
         it::PrComment::export_all(&cfg),
         it::ReviewEvent::export_all(&cfg),
