@@ -41,6 +41,8 @@ test.beforeAll(async ({ browser }) => {
     hasTouch: true,
     ignoreHTTPSErrors: true,
   });
+  // The help overlay opens once on the first live board; this person has seen it.
+  await context.addInitScript(() => localStorage.setItem('fd-help-seen', '1'));
   await context.routeWebSocket('**/api/ws', (ws) => {
     const server = ws.connectToServer();
     sockets.add(ws);
@@ -62,7 +64,8 @@ test.afterAll(async () => {
 });
 
 const status = (text: string) => page.getByRole('status').filter({ hasText: text });
-const live = () => expect(status('Connected · Live fleet')).toBeVisible();
+const pill = (freshness: 'live' | 'stale') =>
+  page.locator(`.fd-wspill[data-freshness="${freshness}"]`);
 const card = (sessionId: string) => page.locator(`.fd-card[data-session="${sessionId}"]`);
 const stationCard = (name: string) =>
   page.locator('.fd-station[data-station]').filter({ has: page.getByRole('heading', { name }) });
@@ -72,13 +75,43 @@ async function fitsWidth(): Promise<boolean> {
   return page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
 }
 
+/** The bottom bar (Sessions, Fleet, New, More). A session screen has none:
+ * its Back button returns to the session list first. */
+async function bar(): Promise<Locator> {
+  const nav = page.getByRole('navigation', { name: 'Board', exact: true });
+  if ((await nav.count()) === 0) await page.getByRole('button', { name: 'Back' }).click();
+  await expect(nav).toBeVisible();
+  return nav;
+}
+
 async function fleet() {
-  await page.getByRole('button', { name: 'Fleet', exact: true }).click();
+  await (await bar()).getByRole('link', { name: 'Fleet' }).click();
+}
+
+/** The session list has the connection pill (the phone has no sidebar). */
+async function live() {
+  await (await bar()).getByRole('link', { name: 'Sessions' }).click();
+  await expect(pill('live')).toBeVisible();
+}
+
+/** The board has lost the deck: the pill is stale and says that it reconnects. */
+async function stale() {
+  await (await bar()).getByRole('link', { name: 'Sessions' }).click();
+  await expect(pill('stale')).toContainText('Reconnecting · Stale fleet');
+}
+
+/** The Stations page, through the More screen. */
+async function stations(count: number) {
+  await (await bar()).getByRole('link', { name: 'More' }).click();
+  await page
+    .getByRole('navigation', { name: 'More pages' })
+    .getByRole('link', { name: `Stations ${count}` })
+    .click();
 }
 
 /** Starts a session from the spawn form and returns its id. */
 async function spawn(station: Station, title: string, prompt: string): Promise<string> {
-  await page.getByRole('button', { name: 'New session' }).click();
+  await (await bar()).getByRole('link', { name: 'New' }).click();
   const form = page.getByRole('region', { name: 'New session' });
   await form
     .getByRole('combobox', { name: 'Station', exact: true })
@@ -98,7 +131,8 @@ async function spawn(station: Station, title: string, prompt: string): Promise<s
   await form.getByLabel('First prompt (optional)').fill(prompt);
   expect(await fitsWidth()).toBe(true);
   await form.getByRole('button', { name: 'Start session' }).click();
-  await expect(status('Done.')).toBeVisible();
+  // One new session opens at once (DL-141).
+  await expect(page).toHaveURL(/#\/s\//);
   await fleet();
   const title_ = page.locator('.fd-card').filter({ hasText: title });
   await expect(title_).toHaveCount(1);
@@ -109,8 +143,8 @@ async function spawn(station: Station, title: string, prompt: string): Promise<s
 
 async function open(title: string): Promise<Locator> {
   await fleet();
-  await page.getByRole('button', { name: `Open session ${title}` }).click();
-  return page.getByRole('main', { name: 'Session' });
+  await page.locator('.fd-card').filter({ hasText: title }).click();
+  return page.getByRole('region', { name: 'Session', exact: true });
 }
 
 /** The deck's command rows: the expected count per method, every one done
@@ -133,8 +167,8 @@ function stationSessions(station: Station): { session_id: string }[] {
 test('the board logs in and pairs a dialing and a listening station', async () => {
   await page.goto(deck.loginLink());
   await live();
-  expect(new URL(page.url()).hash).toBe('');
-  await page.getByRole('button', { name: 'Stations (0)' }).click();
+  expect(new URL(page.url()).hash).toMatch(/^(#\/)?$/);
+  await stations(0);
 
   // Bravo has no listener: the deck makes an invitation and bravo dials.
   await page.getByRole('button', { name: 'Add station' }).click();
@@ -153,12 +187,14 @@ test('the board logs in and pairs a dialing and a listening station', async () =
   await expect(dialog.getByRole('status')).toHaveText('Paired station alpha.');
   await dialog.getByRole('button', { name: 'Close' }).click();
 
-  await expect(page.getByRole('button', { name: 'Stations (2)' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Stations 2' })).toBeVisible();
   for (const name of ['alpha', 'bravo']) {
     const st = stationCard(name);
     await expect(st).toContainText('Link up');
-    await expect(st).toContainText('0 live of 4 sessions');
-    await expect(st).toContainText(`${PROVIDER} · claude · 2.1.999`);
+    await expect(st).toContainText('0 / 4');
+    await expect(st.locator(`.fd-providers [data-instance="${PROVIDER}"]`)).toContainText(
+      'Claude 2.1.999',
+    );
   }
   await expect(stationCard('alpha')).toContainText('Deck dials station');
   await expect(stationCard('bravo')).toContainText('Station dials deck');
@@ -167,22 +203,26 @@ test('the board logs in and pairs a dialing and a listening station', async () =
 
 test('a session spawned on alpha asks for an approval that the needs-you rail answers', async () => {
   const id = await spawn(alpha, 'Alpha approval', 'ask echo hi');
-  await expect(card(id)).toContainText(`Branch: ${BRANCH}`);
+  await expect(card(id)).toContainText(BRANCH);
   const rail = page.getByRole('region', { name: 'Needs you rail' });
-  await expect(rail).toContainText('Alpha approval · alpha: Bash');
-  await rail.getByRole('button', { name: 'Answer Bash in Alpha approval' }).click();
-  const needs = page.getByRole('region', { name: 'Needs you' });
-  await expect(needs).toContainText('echo hi');
+  await expect(rail).toContainText('Alpha approval');
+  await expect(rail).toContainText('alpha');
+  await expect(rail).toContainText('Bash');
+  await expect(rail).toContainText('echo hi');
   expect(await fitsWidth()).toBe(true);
-  await needs.getByRole('button', { name: 'Allow once' }).click();
-  await expect(status('Done.')).toBeVisible();
+  await rail.getByRole('button', { name: 'Allow once: Bash in Alpha approval' }).click();
+  // The rail is gone when nothing waits for the answer (the phone strip is empty).
+  await expect(rail).toHaveCount(0);
+  const view = await open('Alpha approval');
   await expect(page.getByRole('region', { name: 'Needs you' })).toHaveCount(0);
-  const view = page.getByRole('main', { name: 'Session' });
-  await expect(view).toContainText('Bash · echo hi · ok');
-  await expect(view.locator('.fd-items')).toContainText('done');
-  await expect(view).toContainText('Approval: Bash · Allow once (by board)');
+  const log = view.getByRole('log');
+  await expect(log).toContainText('Bash');
+  await expect(log).toContainText('echo hi');
+  await expect(log.getByRole('img', { name: 'ok' })).toBeVisible();
+  await expect(log).toContainText('done');
+  await expect(log).toContainText('Bash · Allow once (by board)');
   await fleet();
-  await expect(rail).toContainText('Nothing waits for you.');
+  await expect(rail).toHaveCount(0);
   expect(stationSessions(alpha).map((s) => s.session_id)).toEqual([id]);
 });
 
@@ -198,10 +238,10 @@ test('a running turn on bravo takes a steer and an interrupt, then runs the stee
   await page.getByRole('button', { name: 'Interrupt' }).click();
   await expect(status('Done.')).toBeVisible();
   await expect(view).toContainText('echo: after the stop');
-  await expect(view).toContainText('Turn interrupted.');
+  await expect(view).toContainText('Turn interrupted');
   // The steered input ran once, after the interrupted turn.
-  const text = (await view.locator('.fd-items').innerText()).replace(/\s+/g, ' ');
-  expect(text.indexOf('Turn interrupted.')).toBeLessThan(text.indexOf('echo: after the stop'));
+  const text = (await view.getByRole('log').innerText()).replace(/\s+/g, ' ');
+  expect(text.indexOf('Turn interrupted')).toBeLessThan(text.indexOf('echo: after the stop'));
   expect(text.split('echo: after the stop')).toHaveLength(2);
   await expect(composer.getByRole('button', { name: 'Send' })).toBeVisible();
   expect(await fitsWidth()).toBe(true);
@@ -211,17 +251,20 @@ test('a running turn on bravo takes a steer and an interrupt, then runs the stee
 test('the board survives a deck restart without a new login and shows work done meanwhile', async () => {
   await fleet();
   await deck.stop();
-  await expect(status('Reconnecting · Stale fleet')).toBeVisible();
+  await stale();
   await expect(status('Cached data is read-only until the deck reconnects.')).toBeVisible();
   // The cached session stays readable, but nothing can be sent.
-  const view = await open('Alpha approval');
+  let view = await open('Alpha approval');
   await expect(view).toContainText('Controls are off until the board and the station are live.');
+  await view.locator('summary[aria-label="Session menu"]').click();
   const plan = view.getByRole('button', { name: 'plan', exact: true });
   await expect(plan).toBeDisabled();
   // The station works on while the deck is away.
   const away = alpha.run('while the deck is away');
   await deck.start();
   await live();
+  view = await open('Alpha approval');
+  await view.locator('summary[aria-label="Session menu"]').click();
   await expect(plan).toBeEnabled();
   await expect(view).not.toContainText('Controls are off');
   await fleet();
@@ -255,10 +298,11 @@ test('the phone drops its network, catches up, and drives a session again', asyn
   await context.setOffline(true);
   expect(sockets.size).toBe(1);
   for (const ws of sockets) await ws.close({ code: 4000, reason: 'network lost' });
-  await expect(status('Reconnecting · Stale fleet')).toBeVisible();
+  await stale();
   const offline = bravo.run('while the phone is offline');
   await context.setOffline(false);
   await live();
+  await fleet();
   await expect(card(offline)).toBeVisible();
   await expect(page.locator('.fd-card')).toHaveCount(4);
   const view = await open('Bravo long run');
@@ -285,7 +329,7 @@ test('the phone drops its network, catches up, and drives a session again', asyn
 test('a station link drop shows the station unreachable until it returns', async () => {
   await fleet();
   await bravo.stop();
-  await page.getByRole('button', { name: 'Stations (2)' }).click();
+  await stations(2);
   await expect(stationCard('bravo')).toContainText('Unreachable');
   await expect(stationCard('alpha')).toContainText('Link up');
   await bravo.start();

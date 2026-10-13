@@ -46,15 +46,15 @@ test('the board pairs both stations and lists their Claude and Codex agents', as
   for (const name of ['alpha', 'bravo']) {
     const st = phone.stationCard(name);
     await expect(st).toContainText('Link up');
-    await expect(st).toContainText(`${PROVIDER} · claude · 2.1.999`);
-    await expect(st).toContainText(CODEX_LABEL);
+    await expect(phone.provider(name, PROVIDER)).toContainText('Claude 2.1.999');
+    await expect(phone.provider(name, CODEX)).toContainText('Codex 0.160.999');
   }
   expect(await phone.fitsWidth()).toBe(true);
 });
 
 test('the spawn form offers the Codex modes that the station reports', async () => {
   const page = phone.page;
-  await page.getByRole('button', { name: 'New session' }).click();
+  await (await phone.bar()).getByRole('link', { name: 'New' }).click();
   const form = page.getByRole('region', { name: 'New session' });
   await form.getByRole('combobox', { name: 'Provider' }).selectOption({ label: CODEX_LABEL });
   const modes = await form.getByLabel('Permission mode').locator('option').allTextContents();
@@ -67,23 +67,24 @@ test('the spawn form offers the Codex modes that the station reports', async () 
 test('a Codex session on alpha asks for an approval that the needs-you rail answers', async () => {
   const page = phone.page;
   const id = await phone.spawn(alpha, CODEX_LABEL, 'Codex approval', 'ask echo hi');
-  await expect(phone.card(id)).toContainText(`Branch: ${BRANCH}`);
-  await expect(phone.card(id)).toContainText(`Instance: ${CODEX}`);
+  await expect(phone.card(id)).toContainText('gpt-sim-1');
+  await expect(phone.card(id)).toContainText(BRANCH);
   const rail = page.getByRole('region', { name: 'Needs you rail' });
-  await expect(rail).toContainText('Codex approval · alpha: echo hi');
-  await rail.getByRole('button', { name: 'Answer echo hi in Codex approval' }).click();
-  const needs = page.getByRole('region', { name: 'Needs you' });
-  await expect(needs).toContainText('echo hi');
+  await expect(rail).toContainText('Codex approval');
+  await expect(rail).toContainText('alpha');
+  await expect(rail).toContainText('echo hi');
   expect(await phone.fitsWidth()).toBe(true);
-  await needs.getByRole('button', { name: 'Allow once' }).click();
-  await expect(phone.status('Done.')).toBeVisible();
+  await rail.getByRole('button', { name: 'Allow once: echo hi in Codex approval' }).click();
+  // The rail is gone when nothing waits for the answer (the phone strip is empty).
+  await expect(rail).toHaveCount(0);
+  const view = await phone.open('Codex approval');
   await expect(page.getByRole('region', { name: 'Needs you' })).toHaveCount(0);
-  const view = page.getByRole('main', { name: 'Session' });
-  await expect(view).toContainText('Shell · echo hi');
-  await expect(view).toContainText('ran: echo hi');
-  await expect(view).toContainText('Approval: echo hi · Allow once (by board)');
+  const log = view.getByRole('log');
+  await expect(log).toContainText('Shell');
+  await expect(log).toContainText('ran: echo hi');
+  await expect(log).toContainText('echo hi · Allow once (by board)');
   await phone.fleet();
-  await expect(rail).toContainText('Nothing waits for you.');
+  await expect(rail).toHaveCount(0);
   expect(stationSessions(alpha).map((s) => [s.session_id, s.provider_instance])).toEqual([
     [id, CODEX],
   ]);
@@ -111,7 +112,7 @@ test('a Codex turn on bravo takes a steer into the running turn, then an interru
   await expect(view).toContainText('working');
   await page.getByRole('button', { name: 'Interrupt' }).click();
   await expect(phone.status('Done.')).toBeVisible();
-  await expect(view).toContainText('Turn interrupted.');
+  await expect(view).toContainText('Turn interrupted');
   await expect(composer.getByRole('button', { name: 'Send' })).toBeVisible();
   expect(await phone.fitsWidth()).toBe(true);
   expect(stationSessions(bravo).map((s) => s.session_id)).toEqual([id]);
@@ -120,14 +121,17 @@ test('a Codex turn on bravo takes a steer into the running turn, then an interru
 test('the board survives a deck restart and shows Codex work done meanwhile', async () => {
   await phone.fleet();
   await deck.stop();
-  await expect(phone.status('Reconnecting · Stale fleet')).toBeVisible();
-  const view = await phone.open('Codex approval');
+  await phone.stale();
+  let view = await phone.open('Codex approval');
   await expect(view).toContainText('Controls are off until the board and the station are live.');
+  await view.locator('summary[aria-label="Session menu"]').click();
   const mode = view.getByRole('button', { name: 'untrusted/read-only', exact: true });
   await expect(mode).toBeDisabled();
   const away = alpha.run('while the deck is away', CODEX);
   await deck.start();
   await phone.live();
+  view = await phone.open('Codex approval');
+  await view.locator('summary[aria-label="Session menu"]').click();
   await expect(mode).toBeEnabled();
   await phone.fleet();
   await expect(phone.card(away)).toBeVisible();
@@ -166,10 +170,11 @@ test('the phone drops its network, catches up, and drives a Codex session again'
   await phone.context.setOffline(true);
   expect(phone.sockets.size).toBe(1);
   for (const ws of phone.sockets) await ws.close({ code: 4000, reason: 'network lost' });
-  await expect(phone.status('Reconnecting · Stale fleet')).toBeVisible();
+  await phone.stale();
   const offline = bravo.run('while the phone is offline', CODEX);
   await phone.context.setOffline(false);
   await phone.live();
+  await phone.fleet();
   await expect(phone.card(offline)).toBeVisible();
   await expect(page.locator('.fd-card')).toHaveCount(4);
   const view = await phone.open('Codex long run');
@@ -197,7 +202,7 @@ test('a station link drop shows the station unreachable until it returns', async
   const page = phone.page;
   await phone.fleet();
   await bravo.stop();
-  await page.getByRole('button', { name: 'Stations (2)' }).click();
+  await phone.stations(2);
   await expect(phone.stationCard('bravo')).toContainText('Unreachable');
   await expect(phone.stationCard('alpha')).toContainText('Link up');
   await bravo.start();
@@ -225,10 +230,11 @@ test('a Codex background command shows on the card until the station poll sees i
   await expect(view).toContainText('started in background');
   await phone.fleet();
   const card = page.locator('.fd-card').filter({ hasText: 'Codex approval' });
-  await expect(card).toContainText('Background tasks: 1');
+  const tasks = card.locator('[title="Background tasks"]');
+  await expect(tasks).toHaveText('1');
   // The poll repeats every 5 s while the terminal runs; the fake ends it on
   // the second list.
-  await expect(card).not.toContainText('Background tasks', { timeout: 30_000 });
+  await expect(tasks).toHaveCount(0, { timeout: 30_000 });
   const a = alpha.codexInput();
   expect(a.turns).toEqual(['ask echo hi', 'while the deck is away', 'bg make build']);
   expect(a.methods['thread/backgroundTerminals/list']).toBeGreaterThanOrEqual(2);
@@ -238,7 +244,7 @@ test('a Codex question gets its answer from the phone answer form', async () => 
   const page = phone.page;
   await phone.fleet();
   const rail = page.getByRole('region', { name: 'Needs you rail' });
-  await expect(rail).toContainText('Nothing waits for you.');
+  await expect(rail).toHaveCount(0);
   const view = await phone.open('Codex approval');
   const composer = page.getByRole('form', { name: 'Composer' });
   await composer.getByLabel('Message').fill('question Which color do you prefer?');
@@ -255,7 +261,8 @@ test('a Codex question gets its answer from the phone answer form', async () => 
   await expect(phone.status('Done.')).toBeVisible();
   await expect(view).toContainText('answered: Blue');
   await expect(page.getByRole('region', { name: 'Needs you' })).toHaveCount(0);
-  await expect(view).toContainText('Question · Which color do you prefer?');
+  await expect(view).toContainText('Question');
+  await expect(view).toContainText('Which color do you prefer? · Answer (by board)');
   // A typed answer replaces the choice.
   await composer.getByLabel('Message').fill('question Which size?');
   await composer.getByRole('button', { name: 'Send' }).click();

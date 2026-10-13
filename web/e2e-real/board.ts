@@ -29,6 +29,8 @@ export class Phone {
       hasTouch: true,
       ignoreHTTPSErrors: true,
     });
+    // The help overlay opens once on the first live board; this person has seen it.
+    await context.addInitScript(() => localStorage.setItem('fd-help-seen', '1'));
     const phone = new Phone(context, await context.newPage(), deck);
     await context.routeWebSocket('**/api/ws', (ws) => {
       const server = ws.connectToServer();
@@ -49,8 +51,34 @@ export class Phone {
     return this.page.getByRole('status').filter({ hasText: text });
   }
 
+  /** The connection pill of the session list header (the phone has no sidebar). */
+  pill(freshness: 'live' | 'stale'): Locator {
+    return this.page.locator(`.fd-wspill[data-freshness="${freshness}"]`);
+  }
+
+  /** The bottom bar (Sessions, Fleet, New, More). A session screen has none:
+   * its Back button returns to the session list first. */
+  async bar(): Promise<Locator> {
+    const bar = this.page.getByRole('navigation', { name: 'Board', exact: true });
+    if ((await bar.count()) === 0) await this.page.getByRole('button', { name: 'Back' }).click();
+    await expect(bar).toBeVisible();
+    return bar;
+  }
+
+  /** The session list, which has the connection pill. */
+  async sessions(): Promise<void> {
+    await (await this.bar()).getByRole('link', { name: 'Sessions' }).click();
+  }
+
   async live(): Promise<void> {
-    await expect(this.status('Connected · Live fleet')).toBeVisible();
+    await this.sessions();
+    await expect(this.pill('live')).toBeVisible();
+  }
+
+  /** The board has lost the deck: the pill is stale and says that it reconnects. */
+  async stale(): Promise<void> {
+    await this.sessions();
+    await expect(this.pill('stale')).toContainText('Reconnecting · Stale fleet');
   }
 
   card(sessionId: string): Locator {
@@ -63,13 +91,27 @@ export class Phone {
       .filter({ has: this.page.getByRole('heading', { name }) });
   }
 
+  /** The badge of a configured provider on a station card. */
+  provider(name: string, instance: string): Locator {
+    return this.stationCard(name).locator(`.fd-providers [data-instance="${instance}"]`);
+  }
+
   /** The page fits the phone width: no horizontal scroll. */
   fitsWidth(): Promise<boolean> {
     return this.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
   }
 
   async fleet(): Promise<void> {
-    await this.page.getByRole('button', { name: 'Fleet', exact: true }).click();
+    await (await this.bar()).getByRole('link', { name: 'Fleet' }).click();
+  }
+
+  /** The Stations page, through the More screen. */
+  async stations(count: number): Promise<void> {
+    await (await this.bar()).getByRole('link', { name: 'More' }).click();
+    await this.page
+      .getByRole('navigation', { name: 'More pages' })
+      .getByRole('link', { name: `Stations ${count}` })
+      .click();
   }
 
   /** Logs in with the deck's login link and pairs `listening` (the deck dials
@@ -78,7 +120,7 @@ export class Phone {
     const page = this.page;
     await page.goto(this.deck.loginLink());
     await this.live();
-    await page.getByRole('button', { name: 'Stations (0)' }).click();
+    await this.stations(0);
     await page.getByRole('button', { name: 'Add station' }).click();
     const dialog = page.getByRole('dialog', { name: 'Add station' });
     await dialog.getByRole('button', { name: 'Create invitation' }).click();
@@ -92,14 +134,14 @@ export class Phone {
     await dialog.getByRole('button', { name: 'Pair station' }).click();
     await expect(dialog.getByRole('status')).toHaveText(`Paired station ${listening.name}.`);
     await dialog.getByRole('button', { name: 'Close' }).click();
-    await expect(page.getByRole('button', { name: 'Stations (2)' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Stations 2' })).toBeVisible();
   }
 
   /** Starts a session from the spawn form with the provider whose label is
    * `provider` and returns its id. */
   async spawn(station: Station, provider: string, title: string, prompt: string): Promise<string> {
     const page = this.page;
-    await page.getByRole('button', { name: 'New session' }).click();
+    await (await this.bar()).getByRole('link', { name: 'New' }).click();
     const form = page.getByRole('region', { name: 'New session' });
     await form
       .getByRole('combobox', { name: 'Station', exact: true })
@@ -117,7 +159,8 @@ export class Phone {
     await form.getByLabel('First prompt (optional)').fill(prompt);
     expect(await this.fitsWidth()).toBe(true);
     await form.getByRole('button', { name: 'Start session' }).click();
-    await expect(this.status('Done.')).toBeVisible();
+    // One new session opens at once (DL-141).
+    await expect(page).toHaveURL(/#\/s\//);
     await this.fleet();
     const card = page.locator('.fd-card').filter({ hasText: title });
     await expect(card).toHaveCount(1);
@@ -128,8 +171,8 @@ export class Phone {
 
   async open(title: string): Promise<Locator> {
     await this.fleet();
-    await this.page.getByRole('button', { name: `Open session ${title}` }).click();
-    return this.page.getByRole('main', { name: 'Session' });
+    await this.page.locator('.fd-card').filter({ hasText: title }).click();
+    return this.page.getByRole('region', { name: 'Session', exact: true });
   }
 
   /** The deck's command rows: the expected count per method, every one done
