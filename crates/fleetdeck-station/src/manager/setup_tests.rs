@@ -2,12 +2,20 @@
 //! command that runs before the provider starts, and a failure that ends the
 //! start with the exit text and the output tail.
 
+use fleetdeck_testkit::fake::STDIN_LOG_ENV;
+use fleetdeck_testkit::sim_claude::StdinLog;
+
 use super::*;
 use crate::store::Dispatch;
 
 /// A station whose policy allows (or refuses) setup commands, with the
 /// environment of the `claude` instance.
 async fn station(allow: bool) -> Station {
+    station_with(allow, None).await
+}
+
+/// [`station`] whose fake provider logs its stdin to `log`.
+async fn station_with(allow: bool, log: Option<&std::path::Path>) -> Station {
     let det = Det::new();
     let root = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(root.path().join("projects/app")).unwrap();
@@ -28,10 +36,23 @@ async fn station(allow: bool) -> Station {
         "claude".into(),
         ChildEnv::from_process(),
     )]));
-    let adapters = Adapters::from([(
-        "claude".into(),
-        adapter(FakeAgent::Claude.locate().unwrap()),
-    )]);
+    let provider = match log {
+        None => adapter(FakeAgent::Claude.locate().unwrap()),
+        Some(log) => {
+            let mut env = ChildEnv::from_process();
+            env.set(SCENARIO_ENV, "sim").unwrap();
+            env.set(STDIN_LOG_ENV, log.to_str().unwrap()).unwrap();
+            let program = FakeAgent::Claude.locate().unwrap();
+            let mut config = ClaudeAdapterConfig::new("claude".into(), program, env);
+            config.stop = StopPolicy {
+                grace: Duration::from_millis(500),
+                term_grace: Duration::from_millis(300),
+            };
+            config.delivery_grace = Duration::from_millis(500);
+            Arc::new(ClaudeAdapter::new(config, Arc::new(DirectChildHost::new())))
+        }
+    };
+    let adapters = Adapters::from([("claude".into(), provider)]);
     let manager = SessionManager::start(store, policy, adapters, ids)
         .await
         .unwrap();
@@ -313,9 +334,11 @@ async fn wait_no_live(st: &Station) {
 }
 
 #[tokio::test]
-async fn a_stop_during_the_provider_start_ends_the_new_session() {
+async fn a_stop_before_the_provider_spawn_spawns_nothing() {
     use crate::worker::EffectTarget;
-    let mut st = station(true).await;
+    let log = tempfile::tempdir().unwrap();
+    let log = log.path().join("stdin.log");
+    let mut st = station_with(true, Some(&log)).await;
     let target = Arc::clone(&st.manager.target);
     let hook = target.start_hook();
     hook.arm();
@@ -325,11 +348,36 @@ async fn a_stop_during_the_provider_start_ends_the_new_session() {
         .await
         .unwrap();
     let stop = unbound_stop(&a, StopMode::Kill);
-    assert_eq!(st.manager.target.dispatch(&stop).await, Dispatch::Confirmed);
+    assert_eq!(target.dispatch(&stop).await, Dispatch::Confirmed);
+    hook.release.notify_one();
+    wait_ended(&st, &a).await;
+    assert!(StdinLog::read(&log).pids.is_empty(), "no provider spawned");
+    assert!(st.manager.store().setup_runs().await.unwrap().is_empty());
+    st.manager.shutdown(StopMode::Kill).await;
+}
+
+#[tokio::test]
+async fn a_stop_after_the_spawn_does_not_send_the_first_prompt_and_ends_the_session() {
+    use crate::worker::EffectTarget;
+    let log = tempfile::tempdir().unwrap();
+    let log = log.path().join("stdin.log");
+    let mut st = station_with(true, Some(&log)).await;
+    let target = Arc::clone(&st.manager.target);
+    let hook = target.input_hook();
+    hook.arm();
+    let a = session_of(&mut st, "true").await;
+    // The provider is spawned; the first prompt is not sent yet.
+    tokio::time::timeout(WAIT, hook.reached.notified())
+        .await
+        .unwrap();
+    let stop = unbound_stop(&a, StopMode::Graceful);
+    assert_eq!(target.dispatch(&stop).await, Dispatch::Confirmed);
     hook.release.notify_one();
     wait_ended(&st, &a).await;
     wait_no_live(&st).await;
-    assert!(st.manager.store().setup_runs().await.unwrap().is_empty());
+    let stdin = StdinLog::read(&log);
+    assert_eq!(stdin.pids.len(), 1, "the provider was spawned");
+    assert_eq!(stdin.count("hello"), 0, "{:?}", stdin.lines);
     st.manager.shutdown(StopMode::Kill).await;
 }
 
@@ -355,9 +403,38 @@ async fn a_stop_that_comes_after_the_start_stops_the_live_session() {
     st.manager.shutdown(StopMode::Kill).await;
 }
 
+#[cfg(target_os = "linux")]
 #[tokio::test]
-async fn a_shutdown_during_the_provider_start_leaves_no_live_provider() {
-    let mut st = station(true).await;
+async fn a_shutdown_during_the_provider_start_waits_and_leaves_no_provider() {
+    let log = tempfile::tempdir().unwrap();
+    let log = log.path().join("stdin.log");
+    let mut st = station_with(true, Some(&log)).await;
+    let target = Arc::clone(&st.manager.target);
+    let hook = target.input_hook();
+    hook.arm();
+    let a = session_of(&mut st, "true").await;
+    tokio::time::timeout(WAIT, hook.reached.notified())
+        .await
+        .unwrap();
+    let release = async {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        hook.release.notify_one();
+    };
+    tokio::join!(st.manager.shutdown(StopMode::Kill), release);
+    // The shutdown returned: the provider is already gone, with no polling.
+    let stdin = StdinLog::read(&log);
+    assert_eq!(stdin.pids.len(), 1, "the provider was spawned");
+    let proc = format!("/proc/{}", stdin.pids[0]);
+    assert!(!std::path::Path::new(&proc).exists(), "the provider runs");
+    assert_eq!(stdin.count("hello"), 0, "{:?}", stdin.lines);
+    wait_ended(&st, &a).await;
+}
+
+#[tokio::test]
+async fn a_shutdown_before_the_provider_spawn_spawns_nothing() {
+    let log = tempfile::tempdir().unwrap();
+    let log = log.path().join("stdin.log");
+    let mut st = station_with(true, Some(&log)).await;
     let target = Arc::clone(&st.manager.target);
     let hook = target.start_hook();
     hook.arm();
@@ -370,6 +447,20 @@ async fn a_shutdown_during_the_provider_start_leaves_no_live_provider() {
         hook.release.notify_one();
     };
     tokio::join!(st.manager.shutdown(StopMode::Kill), release);
-    wait_no_live(&st).await;
+    assert!(StdinLog::read(&log).pids.is_empty(), "no provider spawned");
     wait_ended(&st, &a).await;
+}
+
+#[tokio::test]
+async fn without_a_stop_the_first_prompt_reaches_the_provider_after_the_setup() {
+    let log = tempfile::tempdir().unwrap();
+    let log = log.path().join("stdin.log");
+    let mut st = station_with(true, Some(&log)).await;
+    session_of(&mut st, "true").await;
+    st.wait_for("turn", |e| {
+        matches!(e, Event::TurnCompleted { .. }).then_some(())
+    })
+    .await;
+    assert_eq!(StdinLog::read(&log).count("hello"), 1);
+    st.manager.shutdown(StopMode::Kill).await;
 }

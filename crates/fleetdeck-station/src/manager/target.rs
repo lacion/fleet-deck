@@ -25,13 +25,14 @@ use fleetdeck_providers::{
     Answer, ControlId, EventSink, HostInput, LiveSession, ModelId, NativeSessionId, PermissionMode,
     ProviderAdapter, ProviderError,
 };
-use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio::sync::{Mutex, mpsc, oneshot, watch};
 
 use super::turns::SessionTurns;
 use crate::store::{
     Dispatch, Effect, EffectPayload, InputRecord, NewEvent, ProcessIncarnation, Store,
 };
 use crate::worker::EffectTarget;
+use crate::workspace::setup::STOPPED_MESSAGE;
 use crate::workspace::{GitOptions, Limits};
 
 /// Events that the pump appends in one transaction at most.
@@ -78,6 +79,9 @@ pub struct SessionTarget {
     /// Holds a start task before its provider start (tests only).
     #[cfg(test)]
     start_hook: setup_task::StartHook,
+    /// Holds a start before its first input (tests only).
+    #[cfg(test)]
+    input_hook: setup_task::StartHook,
 }
 
 impl std::fmt::Debug for SessionTarget {
@@ -106,6 +110,8 @@ impl SessionTarget {
             this: Weak::new(),
             #[cfg(test)]
             start_hook: setup_task::StartHook::default(),
+            #[cfg(test)]
+            input_hook: setup_task::StartHook::default(),
         }
     }
 
@@ -113,6 +119,12 @@ impl SessionTarget {
     #[cfg(test)]
     pub(super) fn start_hook(&self) -> &setup_task::StartHook {
         &self.start_hook
+    }
+
+    /// The hook that holds a start before its first input.
+    #[cfg(test)]
+    pub(super) fn input_hook(&self) -> &setup_task::StartHook {
+        &self.input_hook
     }
 
     /// The target in an `Arc` that knows itself. A start with a setup command
@@ -203,6 +215,7 @@ impl SessionTarget {
         spec: &SessionSpec,
         prompt: Option<&InputRecord>,
         resume: Option<&str>,
+        cancel: Option<&watch::Receiver<bool>>,
     ) -> Dispatch {
         let session_id = effect.session_id.clone();
         let Some(adapter) = self.adapters.get(&spec.provider_instance).cloned() else {
@@ -236,7 +249,7 @@ impl SessionTarget {
         };
         if let Some((shims, launch)) = self.durable_launch(&adapter, spec) {
             return self
-                .start_durable(effect, spec, prompt, &shims, launch)
+                .start_durable(effect, spec, prompt, &shims, launch, cancel)
                 .await;
         }
         let turns = SessionTurns::open(
@@ -260,6 +273,13 @@ impl SessionTarget {
             ready_rx,
             self.coordinator.clone(),
         ));
+        if setup_task::cancelled(cancel) {
+            // A stop came during the setup: no provider is spawned.
+            drop(ready_tx);
+            self.coordinator.revoke_session(&session_id);
+            self.start_failed(&session_id, STOPPED_MESSAGE).await;
+            return Dispatch::NotDispatched(REASON_SETUP_STOPPED.into());
+        }
         let started = match (resume, coordinator) {
             (Some(native), _) => {
                 let native = NativeSessionId(native.to_owned());
@@ -293,7 +313,11 @@ impl SessionTarget {
         }
         turns.set_process(process.clone());
         let mut sent_prompt = Ok(());
-        if let Some(input) = prompt {
+        #[cfg(test)]
+        self.input_hook.hold().await;
+        // A stop that came during the setup: the first input is not sent.
+        let cancelled_input = prompt.is_some() && setup_task::cancelled(cancel);
+        if let Some(input) = prompt.filter(|_| !cancelled_input) {
             let fence = turns.fence().await;
             turns.begin_input(&fence, &input.input_id).await;
             turns.input_sent(&input.input_id);
@@ -316,7 +340,16 @@ impl SessionTarget {
             );
         }
         let _ = ready_tx.send(process);
-        if let Err(e) = sent_prompt {
+        if cancelled_input {
+            let not_sent = Dispatch::NotDispatched(REASON_SETUP_STOPPED.into());
+            if let Err(e) = self
+                .store
+                .first_input_failed(effect.effect_id.clone(), not_sent)
+                .await
+            {
+                tracing::error!(error = %e, "the first input failure was not stored");
+            }
+        } else if let Err(e) = sent_prompt {
             // The spawn is the provider's acceptance of the start; the first
             // input gets its own durable evidence (GATE-M2 P2-a).
             tracing::warn!(error = %e, "the first input was not sent");
@@ -473,7 +506,7 @@ impl EffectTarget for SessionTarget {
                 if let Some(cmd) = setup_cmd {
                     return self.defer_setup(effect, spec, prompt.as_ref(), cmd).await;
                 }
-                self.start(effect, spec, prompt.as_ref(), None).await
+                self.start(effect, spec, prompt.as_ref(), None, None).await
             }
             EffectPayload::Resume {
                 native_session_id,
@@ -486,7 +519,7 @@ impl EffectTarget for SessionTarget {
                 {
                     return Dispatch::NotDispatched(code);
                 }
-                self.start(effect, spec, prompt.as_ref(), Some(native_session_id))
+                self.start(effect, spec, prompt.as_ref(), Some(native_session_id), None)
                     .await
             }
             // A stop during the setup command cancels it; the setup task ends
@@ -594,6 +627,9 @@ mod shim_target;
 
 #[path = "setup_task.rs"]
 mod setup_task;
+
+/// The dispatch reason of a start that a stop cancelled during its setup.
+pub const REASON_SETUP_STOPPED: &str = "setup_stopped";
 
 /// The dispatch reason of a resume on the shim host (DL-118).
 pub const REASON_RESUME_UNSUPPORTED: &str = "resume_not_supported_on_the_shim_host";

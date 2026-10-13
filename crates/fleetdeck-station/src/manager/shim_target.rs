@@ -226,8 +226,15 @@ impl SessionTarget {
         prompt: Option<&InputRecord>,
         shims: &ShimSettings,
         launch: DurableLaunch,
+        cancel: Option<&tokio::sync::watch::Receiver<bool>>,
     ) -> Dispatch {
         let session_id = effect.session_id.clone();
+        if super::setup_task::cancelled(cancel) {
+            // A stop came during the setup: no shim is launched.
+            self.start_failed(&session_id, crate::workspace::setup::STOPPED_MESSAGE)
+                .await;
+            return Dispatch::NotDispatched(super::REASON_SETUP_STOPPED.into());
+        }
         let turns = self.turns(&session_id, Path::new(&spec.cwd)).await;
         let from = *self.store.subscribe().borrow();
         let attached = match launch_shim(
@@ -293,6 +300,18 @@ impl SessionTarget {
             launch.stop,
             from,
         );
+        if prompt.is_some() && super::setup_task::cancelled(cancel) {
+            // A stop came during the setup: the first input is not sent.
+            let not_sent = Dispatch::NotDispatched(super::REASON_SETUP_STOPPED.into());
+            if let Err(e) = self
+                .store
+                .first_input_failed(effect.effect_id.clone(), not_sent)
+                .await
+            {
+                tracing::error!(error = %e, "the first input failure was not stored");
+            }
+            return Dispatch::Confirmed;
+        }
         if let Some(input) = prompt {
             let fence = turns.fence().await;
             turns.begin_input(&fence, &input.input_id).await;
