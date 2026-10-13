@@ -2922,3 +2922,9 @@ Owner review: pending.
 - Tests: `app/phone_nav.test.tsx`, `e2e/phone_nav.spec.ts`, `ui/dismiss.test.tsx`, `e2e/menus.spec.ts`, `spawn/repoRef.test.ts`, `workspace/clone_reuse_tests.rs`, `manager/workspace_tests.rs`, core settings field tests.
 - Not done: no branch choice on clone (needs a wire change); the composer above a real phone keyboard needs a device check.
 - Owner review: pending.
+
+## DL-182 — resume on the shim host (design)
+
+- Context: owner report 2026-10-14: "start_failed: resume is not supported on the shim host yet" on a station with `host = "shim"`; owner choice "build resume on the shim host". DL-118 refused every shim-host resume at dispatch because no durable resume launch existed; recovery never used the boot id, so a reboot left every shim session unresumable; the ADR-005 §4.6 owner reconciliation was not built.
+- Choice: `docs/v2/design/shim-resume.md`: `ProviderAdapter::durable_resume_launch` (Claude `--resume`, Codex `thread/resume`); the dispatch rechecks the termination evidence and starts a new shim; recovery turns a gone shim row into `exited`/`ended_by_reboot` when the stored boot id differs; an owner-only, audited "Mark the previous run as ended" after a session-and-group check that finds no live process.
+- Status: design in review; no code.
