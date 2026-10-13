@@ -90,11 +90,6 @@ fn set_focus() -> Value {
                  "description": "One line about what you do now. Empty text clears it."}}})
 }
 
-fn ask_coordinator() -> Value {
-    json!({"type": "object", "required": ["question"],
-           "properties": {"question": {"type": "string"}}})
-}
-
 /// Every tool. The order is the order of `tools/list`.
 pub const TOOLS: &[Tool] = &[
     Tool {
@@ -176,13 +171,23 @@ pub const TOOLS: &[Tool] = &[
         description: "Set the one line that Fleet Deck shows on your card (at most 120 characters).",
         schema: set_focus,
     },
-    Tool {
-        name: "ask_coordinator",
-        class: ToolClass::Own,
-        description: "Ask the coordinator of your task a question.",
-        schema: ask_coordinator,
-    },
 ];
+
+impl Tool {
+    /// Whether the granted classes give this tool. `ask_coordinator` is a
+    /// `Mail` tool, and every session's own binding (`Own`) has it too
+    /// (DL-165): there the station answers it.
+    pub fn granted(&self, classes: &BTreeSet<ToolClass>) -> bool {
+        classes.contains(&self.class)
+            || (self.name == "ask_coordinator" && classes.contains(&ToolClass::Own))
+    }
+
+    /// Whether the station's own session tools answer this call: an `Own`
+    /// tool, or `ask_coordinator` for a binding without `Mail`.
+    pub fn is_own(&self, classes: &BTreeSet<ToolClass>) -> bool {
+        self.class == ToolClass::Own || !classes.contains(&self.class)
+    }
+}
 
 /// The tool by name.
 pub fn tool(name: &str) -> Option<&'static Tool> {
@@ -193,7 +198,7 @@ pub fn tool(name: &str) -> Option<&'static Tool> {
 pub fn catalog(classes: &BTreeSet<ToolClass>) -> Value {
     let tools: Vec<Value> = TOOLS
         .iter()
-        .filter(|t| classes.contains(&t.class))
+        .filter(|t| t.granted(classes))
         .map(|t| json!({"name": t.name, "description": t.description, "inputSchema": (t.schema)()}))
         .collect();
     json!({ "tools": tools })

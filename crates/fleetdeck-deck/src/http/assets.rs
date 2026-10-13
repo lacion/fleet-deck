@@ -38,7 +38,7 @@ pub enum BoardAssets {
 
 /// The content security policy of every board answer.
 pub const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; \
-    img-src 'self' data:; font-src 'self'; connect-src 'self'; manifest-src 'self'; \
+    img-src 'self' data:; font-src 'self'; frame-src 'self'; connect-src 'self'; manifest-src 'self'; \
     base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
 /// The text of a 404 when the deck has no board files.

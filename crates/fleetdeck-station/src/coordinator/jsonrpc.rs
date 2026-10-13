@@ -2,7 +2,6 @@
 
 use serde_json::{Value, json};
 
-use super::bindings::ToolClass;
 use super::bindings::{Binding, BindingState};
 use super::ingress::{FleetTools, Forward};
 use super::tools;
@@ -65,14 +64,14 @@ pub async fn answer(
         "tools/call" => {
             let name = params.get("name").and_then(Value::as_str).unwrap_or("");
             let args = params.get("arguments").cloned().unwrap_or(json!({}));
-            match tools::tool(name).filter(|t| binding.classes.contains(&t.class)) {
+            match tools::tool(name).filter(|t| t.granted(&binding.classes)) {
                 None => result(
                     &id,
                     tool_text("forbidden: the grant has no such tool", true),
                 ),
                 Some(tool) => match (binding.state, binding.caller()) {
                     (BindingState::Active, Some(caller)) => {
-                        let outcome = if tool.class == ToolClass::Own {
+                        let outcome = if tool.is_own(&binding.classes) {
                             match fleet {
                                 Some(fleet) => fleet.call(caller, tool.name, args).await,
                                 None => {

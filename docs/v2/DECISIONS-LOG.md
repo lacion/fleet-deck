@@ -2565,6 +2565,7 @@ Owner review: pending.
   - **Cookie and the sandbox:** the board cookie is `SameSite=Strict`, and a sandboxed frame has an opaque origin, so its sub-requests do not carry the cookie. A page with bundled files therefore cannot load them from the cookie-guarded raw route. The board viewer asks `POST .../view` for a one-hour link under `/a/{token}/` (a share row of kind `view`; not listed, not counted).
 - Tests: Rust unit tests for the bundle scan, the path walls, versions, chunks, the suggestion and the three tools; an ingress test for a fleet-only binding; a start test for the fleet-only handoff; deck integration tests over a real link (publish, raw, sandbox headers, share, revoke, expiry, owner-only, share while the station is off). The Rust tests run at the end of the goal.
 - Open: `ask_coordinator` returns "no coordinator" until the R2 escalation path (DL-160) is wired; the Codex handoff for a session without a grant follows the existing verified-version rule.
+- Merge note: `ask_coordinator` is the one DL-160 tool (class `Mail`); `Tool::granted` also gives it to a session's own binding (`Own`), where the station answers it (`no_coordinator` until a plain worker has a deck path). The board CSP gains `frame-src 'self'` so that the viewer iframe can load `/a/<token>/`; the artifact answers keep their own sandbox CSP and send no `X-Frame-Options`.
 - Owner review: pending.
 
 ## DL-170 — Compare the winner of an `Nx` batch (R1.4)

@@ -528,7 +528,7 @@ async fn a_fleet_only_binding_sees_its_own_tools_and_the_station_answers_them() 
     };
     assert_eq!(
         names(&send(list()).await),
-        ["publish_artifact", "set_focus", "ask_coordinator"]
+        ["ask_coordinator", "publish_artifact", "set_focus"]
     );
     let reply = send(call("set_focus", json!({"text": "reading the tests"}))).await;
     assert!(!tool_result(&reply).0, "{}", reply.body);
