@@ -8,6 +8,7 @@ pub mod local;
 pub mod local_auth;
 pub mod peers;
 pub mod routing;
+pub mod scheduler;
 pub mod serve;
 pub mod store;
 

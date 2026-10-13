@@ -29,6 +29,7 @@ pub mod grants;
 pub mod outbox;
 pub mod plans;
 pub mod read_model;
+pub mod schedules;
 pub mod schema;
 pub mod stations;
 
@@ -52,6 +53,7 @@ pub use fleet::{Completed, NewMail, NewTask};
 pub use grants::{Grant, GrantClass, GrantState, NewGrant};
 pub use outbox::{NewOutboxItem, OutboxItem, OutboxState};
 pub use read_model::{DeckSession, TIMELINE_CAP};
+pub use schedules::StoredSchedule;
 pub use stations::{Direction, StationRecord};
 
 #[derive(Debug, thiserror::Error)]
@@ -84,6 +86,8 @@ pub enum DeckError {
     Invalid(String),
     #[error("unknown plan {0}")]
     UnknownPlan(String),
+    #[error("unknown schedule {0}")]
+    UnknownSchedule(String),
     #[error("password hashing: {0}")]
     Hash(String),
     #[error("corrupt store: {0}")]

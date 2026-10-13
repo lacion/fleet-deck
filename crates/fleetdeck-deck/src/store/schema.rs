@@ -300,6 +300,51 @@ CREATE TABLE archive_mutations (
 );
 ";
 
+/// The automations (R5, DL-168): the schedules that the deck owns and the
+/// run of each due time. `UNIQUE (schedule_id, due_at)` makes a run
+/// idempotent: a restart or a second tick finds the row and does nothing.
+/// A `manual` run ("run now") is not a due time: it never moves the cursor.
+/// `armed_at` is the time since which due times count: a new schedule, or
+/// one that the owner turns on again or gives another cron or time zone,
+/// does not run for the time before. A run row is never changed back: a
+/// crash between the claim and the end leaves `started` (at most once).
+const V16: &str = "
+CREATE TABLE schedules (
+    schedule_id       TEXT    PRIMARY KEY,
+    name              TEXT    NOT NULL,
+    enabled           INTEGER NOT NULL,
+    cron              TEXT    NOT NULL,
+    timezone          TEXT    NOT NULL,
+    station_id        TEXT    NOT NULL,
+    project_id        TEXT,
+    path              TEXT    NOT NULL,
+    provider_instance TEXT    NOT NULL,
+    mode              TEXT,
+    model             TEXT,
+    prompt            TEXT    NOT NULL,
+    precheck_cmd      TEXT,
+    reuse_session     INTEGER NOT NULL,
+    last_station      TEXT,
+    last_session      TEXT,
+    grace_ms          INTEGER NOT NULL DEFAULT 3600000,
+    created_at        INTEGER NOT NULL,
+    armed_at          INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE schedule_runs (
+    run_id      TEXT    PRIMARY KEY,
+    schedule_id TEXT    NOT NULL REFERENCES schedules(schedule_id) ON DELETE CASCADE,
+    due_at      INTEGER NOT NULL,
+    started_at  INTEGER NOT NULL,
+    state       TEXT    NOT NULL CHECK (state IN ('started', 'skipped', 'failed', 'missed')),
+    reason      TEXT    NOT NULL DEFAULT '',
+    station_id  TEXT    NOT NULL,
+    session_id  TEXT,
+    manual      INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (schedule_id, due_at)
+) STRICT;
+";
+
 /// The `deck.db` migrations.
 #[must_use]
 pub fn migrations() -> Migrations<'static> {
@@ -316,6 +361,9 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V10),
         M::up(V11),
         M::up(V12),
+        // R5 is named V16 so that it does not clash with V13 to V15 of the
+        // other v2 goal branches; the list position decides at the merge.
+        M::up(V16),
     ])
 }
 

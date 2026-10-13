@@ -22,6 +22,8 @@ pub const MAX_PRECHECK_CHARS: usize = 4096;
 pub const MAX_FIELD_CHARS: usize = 4096;
 /// The default grace period of a missed run: one hour.
 pub const DEFAULT_GRACE_MS: i64 = 3_600_000;
+/// The shortest grace period: one minute (the scheduler wakes every 30 s).
+pub const MIN_GRACE_MS: i64 = 60_000;
 /// The longest grace period: seven days.
 pub const MAX_GRACE_MS: i64 = 7 * 24 * 3_600_000;
 /// The most runs that `GET /api/schedules/{id}/runs` returns.
@@ -119,6 +121,8 @@ pub struct ScheduleRun {
     pub reason: String,
     pub station_id: StationId,
     pub session_id: Option<String>,
+    /// "Run now": the owner started it; it does not move the schedule.
+    pub manual: bool,
 }
 
 /// A schedule with what the list shows.
@@ -220,10 +224,10 @@ impl ScheduleInput {
             ));
         }
         if let Some(grace) = self.grace_ms
-            && !(0..=MAX_GRACE_MS).contains(&grace)
+            && !(MIN_GRACE_MS..=MAX_GRACE_MS).contains(&grace)
         {
             return Err(format!(
-                "the grace period is 0 to {MAX_GRACE_MS} milliseconds"
+                "the grace period is {MIN_GRACE_MS} to {MAX_GRACE_MS} milliseconds"
             ));
         }
         Ok(())
@@ -282,8 +286,10 @@ mod tests {
         i.precheck_cmd = Some("a\0b".to_owned());
         assert!(i.check().is_err());
         let mut i = input();
-        i.grace_ms = Some(-1);
+        i.grace_ms = Some(MIN_GRACE_MS - 1);
         assert!(i.check().is_err());
+        i.grace_ms = Some(MIN_GRACE_MS);
+        assert_eq!(i.check(), Ok(()));
         i.grace_ms = Some(MAX_GRACE_MS + 1);
         assert!(i.check().is_err());
     }

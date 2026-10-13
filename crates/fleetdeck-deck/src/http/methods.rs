@@ -194,6 +194,65 @@ pub const API: &[ApiMethod] = &[
         Some(Scope::Drive),
         true,
     ),
+    // The automations (R5, DL-168): `admin`, and the handlers also require
+    // the owner's board login (DL-138). The board client sends only GET and
+    // POST, so an update and a delete also have a POST route.
+    m(
+        "schedules.list",
+        Method::GET,
+        "/api/schedules",
+        Some(Scope::Admin),
+        false,
+    ),
+    m(
+        "schedules.create",
+        Method::POST,
+        "/api/schedules",
+        Some(Scope::Admin),
+        true,
+    ),
+    m(
+        "schedules.update",
+        Method::PUT,
+        "/api/schedules/{schedule_id}",
+        Some(Scope::Admin),
+        true,
+    ),
+    m(
+        "schedules.delete",
+        Method::DELETE,
+        "/api/schedules/{schedule_id}",
+        Some(Scope::Admin),
+        true,
+    ),
+    m(
+        "schedules.update_post",
+        Method::POST,
+        "/api/schedules/{schedule_id}/update",
+        Some(Scope::Admin),
+        true,
+    ),
+    m(
+        "schedules.delete_post",
+        Method::POST,
+        "/api/schedules/{schedule_id}/delete",
+        Some(Scope::Admin),
+        true,
+    ),
+    m(
+        "schedules.run",
+        Method::POST,
+        "/api/schedules/{schedule_id}/run",
+        Some(Scope::Admin),
+        true,
+    ),
+    m(
+        "schedules.runs",
+        Method::GET,
+        "/api/schedules/{schedule_id}/runs",
+        Some(Scope::Admin),
+        false,
+    ),
     m(
         "sessions.list",
         Method::GET,
