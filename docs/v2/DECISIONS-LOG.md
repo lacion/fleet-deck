@@ -2888,3 +2888,25 @@ Owner review: pending.
   - Code: `prepare_fleet` returns `Result<CoordinatorLaunch, NoTools>`; the spawn (launch, fallback, "attached" line) is in `manager/target_spawn.rs`.
 - Tests: `providers/tests/resume_coordinated.rs` (Claude and Codex argv with the token only in env, the trait default), `manager/target_spawn_tests.rs` (resume_coordinated call, fallback and revoke, grant session keeps the plain resume, start paths, log lines), `coordinator_start_tests.rs` (launch on a direct resume, the no-tools reasons, binding replaced and activated after a stop and a resume).
 - Owner review: pending.
+
+## DL-178 — tailnet detect, list and pair (design)
+
+- Context: owner request 2026-10-14 ("full support for tailnet autodetect, and auto configure auto discovery"); owner choice "Detect, list, 1-click pair". Replaces the DL-131 deferral of station discovery for tailnets (mDNS stays deferred).
+- Choice: `docs/v2/design/tailnet.md`. Revision 1 (a station discovery endpoint authorized by `tailscale whois`) failed the DESIGN REVIEW (7 blockers). Revision 2 follows the advisor (Codex task `task-mv79r56g-cfkyf4`): Tailscale is a display source only; the deck's "Use tailnet" fills managed listen addresses with an elevated save; the board lists the deck's tailnet devices with no probe; pairing starts on the station with a board-generated `fleetdeck station join --tailnet … --deck-fingerprint …`, on the existing pair channel with a new negotiated `pair_request.v1`; the owner approves on the board with elevation and a full fingerprint comparison, while an owner-opened 10-minute request window is open.
+- Workflow change stated to the owner: one command on the station plus one approval on the board, not a single click on the deck.
+- Status: design in review; no code.
+
+## DL-179 — review comments on the Changes diff (design)
+
+- Context: owner request 2026-10-14 ("add comments to the diff in changes, similar to a PR github and be able to reference that in the chat").
+- Choice: `docs/v2/design/review-comments.md`: deck table V20 `review_comments`/`reviews`, server-derived anchors from a diff snapshot fetched as the caller, threads, drafts per author, an atomic and idempotent "Send review" follow-up, `review_rev` on the card for live updates, a Review card and `c-xxxxxx` chips in the chat, a `#` composer menu. Replaces the R1.3 local line notes (explicit import of old notes).
+- Status: revision 1 failed the DESIGN REVIEW (6 blockers); revision 2 in re-review; no code.
+
+## DL-180 — v1 parity defects: workspace work off the effect worker, input to a hibernated session, held mail
+
+- Context: the v1-vs-v2 gap audit (2026-10-14) found two v2 defects: a clone (up to 15 min) or a worktree add (120 s) ran inside the station's single effect worker, so it blocked every other session's prompts, answers and interrupts, and a Stop could not cancel it; and mail, conflict mail and tasks to a hibernated (or otherwise ended) session were refused and the deck outbox made them `dead` (v1 held mail until the session resumed).
+- Choice (station): the Git work of a start runs in the deferred start task (the DL-148 setup task, generalized: `defer_start` / `prepare_then_start`); `provision_cancellable` drops the git future on a stop (git runs with `kill_on_drop`) and `undo_partial` removes a new clone directory, or a new worktree and its new branch. A Stop is admitted while a claimed start effect has a workspace plan (`store/provisioning.rs::provisioning_for`); the restart consent lists "Workspace of <session>". A prompt, steer or follow-up to a session that is `exited` and `hibernated` is admitted as `admit_resume` with that input as the first input (max sessions and the resume rules apply); an ended session that is not hibernated is still refused.
+- Choice (deck): an outbox follow-up or steer that the station rejects `invalid_state` while the deck shows the target `exited` or `lost` stays `queued` with `reason = session_ended` and `next_at = expires_at` (no schema change); a stored summary of that session in any other state releases it (`release_held_tx` in `store_summary`). Other ops keep the old rule. A summary that does not parse holds nothing.
+- Open (ADR-008 r3): a coordinator-origin input must never resume a hibernated session; this rule is part of the ADR-008 work.
+- Tests: `manager/provision_task_tests.rs`, `manager/hibernated_input_tests.rs`, `store/outbox_hold_tests.rs`.
+- Owner review: pending.
