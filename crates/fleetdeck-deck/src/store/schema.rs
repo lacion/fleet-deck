@@ -303,7 +303,7 @@ CREATE TABLE archive_mutations (
 /// The projects of the board (R3, DL-164): a repository on a station with
 /// its forge and tracker bindings (JSON) and the prompts for sessions that
 /// start from a ticket or a review. No token is ever stored here.
-const V13: &str = "
+const V18: &str = "
 CREATE TABLE projects (
     project_id      TEXT    PRIMARY KEY,
     name            TEXT    NOT NULL,
@@ -334,7 +334,7 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V10),
         M::up(V11),
         M::up(V12),
-        M::up(V13),
+        M::up(V18),
     ])
 }
 
