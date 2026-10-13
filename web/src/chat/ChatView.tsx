@@ -1,6 +1,7 @@
 // The chat view of a session: the primary projection of the canonical events
 // (UI-PLAN §2.1). It renders `Item`s from `buildTimeline`; it owns no data.
-import { type ReactNode, useLayoutEffect, useRef, useState } from 'react';
+import { type ReactNode, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { ProviderKind } from '../gen';
 import { hasChanges } from '../session/changes';
 import { type Item, type Subagent, type SubagentStatus, subagentLabel } from '../session/timeline';
 import {
@@ -26,6 +27,8 @@ import { ArtifactChip, SuggestedChip } from '../artifacts/ArtifactChips';
 import { memberName } from '../sharing/member';
 import { clock } from '../sharing/people';
 import { runLabel } from './labels';
+import { applyChatFilter, compactRuns, type Tool, useChatFilter, type ChatFilter } from './filter';
+import { FilterBar } from './FilterBar';
 import { Markdown } from './Markdown';
 
 export type ChatViewProps = {
@@ -34,9 +37,12 @@ export type ChatViewProps = {
   readonly ready: boolean;
   readonly error: string | null;
   readonly onOpenChanges?: (turnId: string) => void;
+  /** The provider of the session; it decides how a tool name is classified. */
+  readonly provider?: ProviderKind | null;
+  /** The filter to start with; the saved filter of this browser when absent (tests). */
+  readonly initialFilter?: ChatFilter;
 };
 
-type Tool = Extract<Item, { type: 'tool' }>;
 type OpenChanges = ((turnId: string) => void) | undefined;
 
 const NEAR_BOTTOM_PX = 80;
@@ -81,54 +87,51 @@ const subagentTone = (status: SubagentStatus): 'ok' | 'info' | 'hazard' | 'muted
 
 const basename = (path: string): string => path.split('/').filter(Boolean).pop() ?? path;
 
-type Row = { kind: 'item'; item: Item } | { kind: 'tools'; tools: Tool[] };
+type ItemsProps = {
+  items: readonly Item[];
+  onOpenChanges: OpenChanges;
+  compact: boolean;
+  provider: ProviderKind | null;
+};
 
-/** Three or more consecutive tool items become one group. */
-function rows(items: readonly Item[]): Row[] {
-  const out: Row[] = [];
-  let run: Tool[] = [];
-  const flush = () => {
-    if (run.length >= 3) out.push({ kind: 'tools', tools: run });
-    else for (const tool of run) out.push({ kind: 'item', item: tool });
-    run = [];
-  };
-  for (const item of items) {
-    if (item.type === 'tool') {
-      run.push(item);
-    } else {
-      flush();
-      out.push({ kind: 'item', item });
-    }
-  }
-  flush();
-  return out;
-}
-
-function Items(props: { items: readonly Item[]; onOpenChanges: OpenChanges }): ReactNode {
-  return rows(props.items).map((row) =>
-    row.kind === 'tools' ? (
-      <ToolGroup key={row.tools[0]?.key} tools={row.tools} />
+function Items(props: ItemsProps): ReactNode {
+  const { compact, provider, onOpenChanges } = props;
+  return compactRuns(props.items, compact, provider).map((row) =>
+    row.kind === 'fold' ? (
+      <ToolFold
+        key={row.items[0]?.key}
+        items={row.items}
+        failed={row.failed}
+        summary={row.summary}
+        {...{ onOpenChanges, compact, provider }}
+      />
     ) : (
-      <ItemView key={row.item.key} item={row.item} onOpenChanges={props.onOpenChanges} />
+      <ItemView key={row.item.key} item={row.item} {...{ onOpenChanges, compact, provider }} />
     ),
   );
 }
 
-function ToolGroup({ tools }: { tools: Tool[] }) {
-  const running = tools.filter((t) => t.status === 'running').length;
-  const failed = tools.filter((t) => t.status === 'failed').length;
-  const summary = `${tools.length} tool calls${running > 0 ? ` · ${running} running` : ''}${
-    failed > 0 ? ` · ${failed} failed` : ''
-  }`;
+/** DL-175: a run of finished tool rows (and notes) folded into one row. A run with a failure starts open. */
+function ToolFold(
+  props: Omit<ItemsProps, 'items'> & { items: Item[]; failed: number; summary: string },
+) {
+  const { items, failed, summary, ...rest } = props;
   return (
-    <details className="fd-chat-toolgroup" open={running > 0 ? true : undefined}>
+    <details
+      className="fd-chat-toolgroup fd-chat-toolfold"
+      open={failed > 0 ? true : undefined}
+      data-failed={failed > 0 ? '' : undefined}
+    >
       <summary>
         <Icon of={ChevronRight} size={12} />
         {summary}
+        {failed > 0 ? (
+          <span className="fd-badge" data-tone="hazard">{`${failed} failed`}</span>
+        ) : null}
       </summary>
       <div className="fd-chat-toolgroup-body">
-        {tools.map((tool) => (
-          <ToolView key={tool.key} tool={tool} />
+        {items.map((item) => (
+          <ItemView key={item.key} item={item} {...rest} />
         ))}
       </div>
     </details>
@@ -172,8 +175,8 @@ function ToolView({ tool }: { tool: Tool }) {
   );
 }
 
-function SubagentView(props: { item: Subagent; onOpenChanges: OpenChanges }) {
-  const { item } = props;
+function SubagentView(props: Omit<ItemsProps, 'items'> & { item: Subagent }) {
+  const { item, ...rest } = props;
   const live = item.status === 'running' || item.status === 'background';
   return (
     <div
@@ -195,14 +198,14 @@ function SubagentView(props: { item: Subagent; onOpenChanges: OpenChanges }) {
           {`${item.items.length} ${item.items.length === 1 ? 'entry' : 'entries'}`}
         </summary>
         <div className="fd-chat-nested">
-          <Items items={item.items} onOpenChanges={props.onOpenChanges} />
+          <Items items={item.items} {...rest} />
         </div>
       </details>
     </div>
   );
 }
 
-function ItemView(props: { item: Item; onOpenChanges: OpenChanges }) {
+function ItemView(props: Omit<ItemsProps, 'items'> & { item: Item }) {
   const { item } = props;
   switch (item.type) {
     case 'run': {
@@ -241,7 +244,7 @@ function ItemView(props: { item: Item; onOpenChanges: OpenChanges }) {
     case 'tool':
       return <ToolView tool={item} />;
     case 'subagent':
-      return <SubagentView item={item} onOpenChanges={props.onOpenChanges} />;
+      return <SubagentView {...props} item={item} />;
     case 'approval':
       return item.state === 'open' ? (
         <p className="fd-chat-line fd-chat-ask" data-state="open">
@@ -308,9 +311,17 @@ function ItemView(props: { item: Item; onOpenChanges: OpenChanges }) {
 
 export function ChatView(props: ChatViewProps) {
   const { items, working, ready, error } = props;
+  const provider = props.provider ?? null;
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true); // the user is near the bottom
   const [behind, setBehind] = useState(false);
+  const [filter, setFilter] = useChatFilter(props.initialFilter);
+  // The filters pick what renders; the stored timeline (`items`) does not change.
+  const filtered = useMemo(
+    () => applyChatFilter(items, filter, provider),
+    [items, filter, provider],
+  );
+  const shown = filtered.items;
 
   const toBottom = (smooth: boolean) => {
     const el = scroller.current;
@@ -322,13 +333,14 @@ export function ChatView(props: ChatViewProps) {
   const seen = useRef<readonly Item[] | null>(null);
 
   // `stick` is the position before this commit: only a scroll by the user changes it.
+  // A change of the filter keeps the bottom when it was at the bottom, and is not new output.
   useLayoutEffect(() => {
     const fresh = seen.current !== items;
     const mounted = seen.current === null;
     seen.current = items;
     if (mounted || stick.current) toBottom(false);
     else if (fresh) setBehind(true);
-  }, [items, working]);
+  }, [items, shown, working]);
 
   const onScroll = () => {
     const el = scroller.current;
@@ -338,7 +350,7 @@ export function ChatView(props: ChatViewProps) {
     if (near) setBehind(false);
   };
 
-  const last = items.at(-1);
+  const last = shown.at(-1);
   const showWorking = working && !(last?.type === 'message' && !last.done);
 
   let body: ReactNode;
@@ -352,11 +364,24 @@ export function ChatView(props: ChatViewProps) {
   } else if (items.length === 0) {
     body = <p className="fd-chat-state">No messages yet. Send a prompt to start.</p>;
   } else {
-    body = <Items items={items} onOpenChanges={props.onOpenChanges} />;
+    body =
+      shown.length === 0 ? (
+        <p className="fd-chat-state">Every row is hidden by the filters.</p>
+      ) : (
+        <Items
+          items={shown}
+          onOpenChanges={props.onOpenChanges}
+          compact={filter.compact}
+          provider={provider}
+        />
+      );
   }
 
   return (
     <section className="fd-chat" aria-label="Conversation">
+      {ready && !error && items.length > 0 ? (
+        <FilterBar filter={filter} counts={filtered.counts} onChange={setFilter} />
+      ) : null}
       {/* biome-ignore lint/a11y/noNoninteractiveTabindex: a keyboard user scrolls the log */}
       <div className="fd-chat-scroll" role="log" ref={scroller} onScroll={onScroll} tabIndex={0}>
         <div className="fd-chat-column">

@@ -284,12 +284,22 @@ The fleet screen: header (wordmark + fleet line), filters as one horizontal scro
 - Code block: a `.fd-panel`-like box with `--code` fill and radius 8 px; a 28 px head row: the language (from `language-xxx`, mono 10.5 px `--faint`) at the left, a `Copy`/`Check` `.fd-iconbtn .fd-sm` ("Copy code" / "Copied") at the right; the `pre` under it, padding 10px 12px, mono 12.5 px, horizontal scroll. The head is never over the code.
 - Thinking: a `<details>`: summary mono 11.5 px `--faint` with a chevron ("Thinking", streaming "Thinking…" with a pulse); body 13 px `--dim`, `pre-wrap`, 2 px `--border-soft` left border, padding-left 12 px.
 - Tool row (v1 timeline density): a `<details>`; summary 28 px, radius 6 px, hover `--surface`: status mark (running `.fd-dot[data-status=working]`, ok `Check` `--ok`, failed `X` `--hazard`, denied `Ban` `--act`, ended `--faint` "–"), the kind icon (§2.2, `--faint`), the title (mono 12 px 500), the first line of the input (mono 12 px `--dim`, ellipsis, flex 1), file badges (at most 3, then "+N"), an exit badge (`hazard`) when the exit code is not 0, a `ChevronRight` that turns 90° when open. Body: indent 22 px; the input and the output as `.fd-code` (max-height 320 px).
-- Tool group (3+ tools): summary mono 11.5 px `--dim` "5 tool calls · 1 running" with a chevron; body indented with a 1 px `--border-soft` left border.
+- Tool fold (replaces the old tool group): a run of 3 or more consecutive finished tool rows is one `<details>`; summary mono 11.5 px `--dim` "12 tool calls · 7 reads, 3 commands, 2 MCP" (kinds in the order reads, edits, commands, MCP, other) with a chevron; body indented with a 1 px `--border-soft` left border. A failure adds a `hazard` badge "N failed" and the fold starts open. A running tool is never folded; it stays a row after the fold.
 - Subagent: `.fd-panel`, padding 10px 12px; head `Workflow` + title (13 px 600) + status badge; the task 12.5 px `--dim` (2 lines when closed); nested items with a left border.
 - Approval in the chat: open → one line, mono 12 px `--act`: `TriangleAlert` "Waiting for your answer · {title}". Resolved → one line `--faint`: `{title} · {outcome}`. The controls are only in the dock.
 - Plan: `.fd-panel`, padding 12px 14px; `.fd-label` "PLAN" in `--m-quill`; Markdown.
 - Turn diff line: `GitCompare` + "2 files changed" + "+3" (`--ok`) "−1" (`--hazard`), mono 11.5 px, and a `.fd-ghost .fd-sm` "Review changes".
 - Working: 12 px `--faint` "Working" with three dots. Jump to latest: a floating pill (`.fd-sm`, `--raised`, `--shadow-pop`, `ArrowDown`) centered over the bottom of the scroll area.
+
+#### Chat filters (DL-175)
+
+- A filter bar above the scroll area (it does not scroll with the chat): one row of `.fd-chip` toggles in a `role="group"` "Chat filters", `aria-pressed`, padding 6px 24px (phone 6px 12px), bottom border `--border-soft`, the same width as the chat column. On a phone the row scrolls sideways. It shows when the chat has at least one item.
+- Chips: Reads, Edits, Commands, MCP, Other tools, Thinking, Notices; a separator; "Compact tools". A hidden kind that has rows shows its count on the chip ("Reads 12", `--faint`).
+- Reads: Read, Glob, Grep, LS and the file view tools (tool kind read or search). Edits: Write, Edit, MultiEdit, NotebookEdit, apply patch. Commands: Bash and the Codex shell. MCP: names that start with `mcp__` and the Codex MCP calls. Other tools: the rest. Notices: info notices; error notices always show.
+- Always shown: agent and user messages, approvals and questions, errors, plans, turn diff lines, artifact chips. The filter also applies inside subagent cards.
+- Default: every kind on, Compact tools off. The state is per browser (localStorage `fd-chat-filter`, the same for every session; a blocked storage gives the default).
+- Compact tools also folds the agent's intermediate messages ("notes": every agent message of a turn but the last one, and any message that a tool row follows) into the fold, for runs of 2 or more items: "12 tool calls · 5 notes · 7 reads, 3 commands, 2 MCP". The last message of a turn never folds.
+- The filters never change the stored timeline. A change keeps the bottom of the chat when the chat is at the bottom. When every row is hidden the chat says "Every row is hidden by the filters."
 
 ### 5.3 Approval dock and composer
 

@@ -94,10 +94,12 @@ describe('ChatView', () => {
     expect(html).toContain('again');
   });
 
-  test('three tools in a row form one group', () => {
-    const html = view({ items: [tool(1), tool(2, 'running'), tool(3, 'failed')] });
-    expect(html).toContain('3 tool calls · 1 running · 1 failed');
+  test('three finished tools in a row form one fold; a running tool stays outside', () => {
+    const html = view({ items: [tool(1), tool(2), tool(3, 'failed'), tool(4, 'running')] });
+    expect(html).toContain('3 tool calls · 3 commands');
+    expect(html).toContain('1 failed');
     expect(html).toContain('fd-chat-toolgroup');
+    expect(html.indexOf('Bash 4')).toBeGreaterThan(html.indexOf('</details></div></details>'));
     expect(view({ items: [tool(1), tool(2)] })).not.toContain('tool calls');
   });
 
