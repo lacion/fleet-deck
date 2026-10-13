@@ -138,7 +138,11 @@ const idle: Controller = {
 
 function header(
   s: DeckSession,
-  extra: { terminal?: { available: boolean } | null; actions?: typeof drive | null } = {},
+  extra: {
+    terminal?: { available: boolean } | null;
+    actions?: typeof drive | null;
+    onNewShell?: () => void;
+  } = {},
 ) {
   const actions = extra.actions === undefined ? drive : extra.actions;
   const terminal = extra.terminal ? { ...extra.terminal, onOpen() {}, onReturn() {} } : null;
@@ -149,8 +153,17 @@ function header(
       controller={{ ...idle, flags: sessionFlags(s, 'live', actions) }}
       actions={actions}
       terminal={terminal}
+      {...(extra.onNewShell ? { onNewShell: extra.onNewShell } : {})}
     />,
   );
+}
+
+/** The markup of the "Terminal" menu of the header, or '' without one. */
+function terminalMenu(html: string): string {
+  const match = /<details class="fd-menu"><summary aria-label="Terminal">[\s\S]*?<\/details>/.exec(
+    html,
+  );
+  return match?.[0] ?? '';
 }
 
 describe('session header (DL-140)', () => {
@@ -188,6 +201,27 @@ describe('session header (DL-140)', () => {
     expect(header(ended(), { terminal: { available: true } })).toContain('Open in terminal');
     expect(header(session(), { terminal: { available: false } })).not.toContain('Open in terminal');
     expect(header(session(), { terminal: null })).not.toContain('Open in terminal');
+  });
+
+  test('the Terminal menu offers Open shell in workspace, and Open in terminal when it is possible', () => {
+    const onNewShell = () => {};
+    const shellOnly = terminalMenu(header(session(), { onNewShell }));
+    expect(shellOnly).toContain('Open shell in workspace');
+    expect(shellOnly).not.toContain('Open in terminal');
+    const both = terminalMenu(header(session(), { onNewShell, terminal: { available: true } }));
+    expect(both).toContain('Open shell in workspace');
+    expect(both).toContain('fd-menu-sep');
+    expect(both).toContain('Open in terminal…');
+    expect(both.indexOf('Open shell in workspace')).toBeLessThan(both.indexOf('Open in terminal…'));
+    // Without a new-shell action, only the handover shows; without both, there is no menu.
+    const handover = terminalMenu(header(session(), { terminal: { available: true } }));
+    expect(handover).not.toContain('Open shell in workspace');
+    expect(handover).toContain('Open in terminal…');
+    expect(terminalMenu(header(session()))).toBe('');
+    // A held session keeps the shell item and no handover item.
+    const heldMenu = terminalMenu(header(held(), { onNewShell, terminal: { available: true } }));
+    expect(heldMenu).toContain('Open shell in workspace');
+    expect(heldMenu).not.toContain('Open in terminal');
   });
 
   test('a station with shells off gives no Open in terminal and says why in the menu', () => {

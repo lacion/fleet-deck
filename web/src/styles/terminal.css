@@ -11,10 +11,21 @@
   background: var(--code);
 }
 .fd-term-host {
+  position: relative;
   flex: 1;
   min-height: 0;
   min-width: 0;
-  padding: 6px 8px;
+}
+.fd-term-screen {
+  position: absolute;
+  inset: 8px 4px 8px 10px;
+}
+.fd-term-screen .xterm {
+  height: 100%;
+}
+.fd-term-screen .xterm-viewport {
+  scrollbar-width: thin;
+  scrollbar-color: var(--faint) transparent;
 }
 .fd-term-overlay {
   position: absolute;

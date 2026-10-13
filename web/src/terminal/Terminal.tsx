@@ -1,3 +1,4 @@
+import type { ITheme } from '@xterm/xterm';
 import { useEffect, useRef, useState } from 'react';
 import type { ShellActions } from '../shell/shell';
 import { KeyBar, ctrlByte } from './KeyBar';
@@ -50,19 +51,58 @@ export function PasteNote({ note }: { readonly note: PasteNoteState | null }) {
 
 const RESIZE_DEBOUNCE_MS = 150;
 
-function theme(): Record<string, string> {
-  const css = getComputedStyle(document.documentElement);
+const FONT_LOAD_MS = 1500;
+
+/** The 16 ANSI colors and the chrome of the terminal, from the board's tokens (as v1). */
+export function termTheme(
+  css: Pick<CSSStyleDeclaration, 'getPropertyValue'> = getComputedStyle(document.documentElement),
+): ITheme {
   const v = (name: string) => css.getPropertyValue(name).trim();
   const out: Record<string, string> = {};
-  const set = (key: string, name: string) => {
-    const value = v(name);
+  const set = (key: keyof ITheme, value: string) => {
     if (value !== '') out[key] = value;
   };
-  set('background', '--code');
-  set('foreground', '--text');
-  set('cursor', '--act');
-  set('selectionBackground', '--term-selection');
-  return out;
+  const code = v('--code');
+  const text = v('--text');
+  const act = v('--act');
+  set('background', code);
+  set('foreground', text);
+  set('cursor', act);
+  set('cursorAccent', code);
+  set(
+    'selectionBackground',
+    v('--term-selection') || (/^#[0-9a-fA-F]{6}$/.test(act) ? `${act}44` : act),
+  );
+  set('black', v('--bg'));
+  set('red', v('--hazard'));
+  set('green', v('--ok'));
+  set('yellow', act);
+  set('blue', v('--m-comet'));
+  set('magenta', v('--m-fable'));
+  set('cyan', v('--m-quill'));
+  set('white', text);
+  set('brightBlack', v('--faint'));
+  set('brightRed', '#FF8A76');
+  set('brightGreen', '#7BD3A6');
+  set('brightYellow', '#F6BE6A');
+  set('brightBlue', '#AECFFA');
+  set('brightMagenta', '#D8CBFF');
+  set('brightCyan', '#9AE4DD');
+  set('brightWhite', '#FFFFFF');
+  return out as ITheme;
+}
+
+/** Wait for the terminal font, so xterm measures it and not a fallback; never longer than FONT_LOAD_MS. */
+async function loadFont(fontFamily: string): Promise<void> {
+  if (fontFamily === '' || typeof document === 'undefined' || !document.fonts) return;
+  try {
+    await Promise.race([
+      document.fonts.load(`13px ${fontFamily}`),
+      new Promise<void>((resolve) => setTimeout(resolve, FONT_LOAD_MS)),
+    ]);
+  } catch {
+    // The font stays a fallback; the fit after `fonts.ready` corrects the metrics.
+  }
 }
 
 /** An xterm.js view of one shell stream: binary frames both ways (PLAN §6.8). */
@@ -96,16 +136,29 @@ export function Terminal({ station, shellId, kind, actions, active, touch, onEnd
       if (disposed || el === null) return;
       const css = getComputedStyle(document.documentElement);
       const fontFamily = css.getPropertyValue('--font-data').trim();
+      await loadFont(fontFamily);
+      if (disposed) return;
       const term = new XTerm({
         cursorBlink: true,
-        fontSize: 13,
+        fontSize: touch ? 12 : 13,
+        fontWeight: 400,
+        fontWeightBold: 600,
+        lineHeight: 1.15,
+        letterSpacing: 0,
         scrollback: 5000,
+        // The agent's TUI reports the mouse, so a plain drag goes to the agent. A Mac needs
+        // Option+click to force a local selection.
+        macOptionClickForcesSelection: true,
+        allowProposedApi: false,
         ...(fontFamily === '' ? {} : { fontFamily }),
-        theme: theme(),
+        theme: termTheme(),
       });
       const fitAddon = new FitAddon();
       term.loadAddon(fitAddon);
-      term.open(el);
+      const screen = document.createElement('div');
+      screen.className = 'fd-term-screen';
+      el.appendChild(screen);
+      term.open(screen);
       const fit = () => {
         try {
           fitAddon.fit();
@@ -114,6 +167,12 @@ export function Terminal({ station, shellId, kind, actions, active, touch, onEnd
         }
       };
       handles.current = { fit, focus: () => term.focus() };
+      // A font that loads after the wait changes the cell size: fit again and repaint.
+      void document.fonts?.ready.then(() => {
+        if (disposed) return;
+        fit();
+        term.refresh(0, term.rows - 1);
+      });
       if (activeRef.current) {
         fit();
         term.focus();
@@ -181,7 +240,7 @@ export function Terminal({ station, shellId, kind, actions, active, touch, onEnd
         return true;
       });
       const onTheme = () => {
-        term.options.theme = theme();
+        term.options.theme = termTheme();
       };
       window.addEventListener('fd:theme', onTheme);
       const input = term.onData((d) => {
@@ -266,6 +325,7 @@ export function Terminal({ station, shellId, kind, actions, active, touch, onEnd
         ws.onclose = null;
         ws.close();
         term.dispose();
+        screen.remove();
         handles.current = null;
         sender.current = () => undefined;
       };

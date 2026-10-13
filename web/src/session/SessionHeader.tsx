@@ -277,6 +277,7 @@ export function SessionHeader({
   const phone = layout === 'phone';
   const [renaming, setRenaming] = useState(false);
   const [confirm, setConfirm] = useState<'kill' | 'open' | null>(null);
+  const [termConfirm, setTermConfirm] = useState(false);
   const run = (name: string, call: (a: SessionActions) => Promise<Outcome>) => {
     if (actions) controller.act(name, () => call(actions));
   };
@@ -307,7 +308,11 @@ export function SessionHeader({
     s.last_error != null && (s.state === 'exited' || s.state === 'lost' || s.current_run === null);
 
   /** The confirm of "Open in terminal", inside a menu. */
-  const openConfirm = (close: () => void, open: () => void) => (
+  const openConfirm = (
+    close: () => void,
+    open: () => void,
+    reset: () => void = () => setConfirm(null),
+  ) => (
     <div className="fd-sh-confirm" role="group" aria-label="Open in terminal">
       <p className="fd-menu-text">
         In the terminal, the board does not see approvals or prompts. The station holds this session
@@ -319,7 +324,7 @@ export function SessionHeader({
         className="fd-primary"
         disabled={busy !== null}
         onClick={() => {
-          setConfirm(null);
+          reset();
           close();
           open();
         }}
@@ -329,7 +334,7 @@ export function SessionHeader({
       <button
         type="button"
         onClick={() => {
-          setConfirm(null);
+          reset();
           close();
         }}
       >
@@ -524,6 +529,49 @@ export function SessionHeader({
     );
   };
 
+  /** The "Terminal" menu of the desktop header: the shell item, and the TUI handover when it is possible. */
+  const showTerminalMenu =
+    onNewShell !== undefined || (canTerminalOpen && terminal !== null && !flags.held);
+  const terminalMenu = showTerminalMenu ? (
+    <Menu
+      summary={
+        <>
+          <Icon of={SquareTerminal} /> <span className="fd-sh-wide">Terminal</span>
+        </>
+      }
+      label="Terminal"
+      onClosed={() => setTermConfirm(false)}
+    >
+      {(close) =>
+        termConfirm && terminal ? (
+          openConfirm(close, terminal.onOpen, () => setTermConfirm(false))
+        ) : (
+          <>
+            {onNewShell ? (
+              <button
+                type="button"
+                onClick={() => {
+                  close();
+                  onNewShell();
+                }}
+              >
+                <Icon of={SquareTerminal} /> Open shell in workspace
+              </button>
+            ) : null}
+            {canTerminalOpen && terminal && !flags.held ? (
+              <>
+                {onNewShell ? <div className="fd-menu-sep" /> : null}
+                <button type="button" disabled={busy !== null} onClick={() => setTermConfirm(true)}>
+                  <Icon of={SquareTerminal} /> Open in terminal…
+                </button>
+              </>
+            ) : null}
+          </>
+        )
+      }
+    </Menu>
+  ) : null;
+
   const overflow = (
     <Menu
       summary={<Icon of={Ellipsis} />}
@@ -637,19 +685,11 @@ export function SessionHeader({
                   <Icon of={Undo2} size={14} /> Return to board control
                 </button>
               ) : null}
+              {terminalMenu}
             </>
-          ) : canTerminalOpen && terminal ? (
-            <Menu
-              summary={
-                <>
-                  <Icon of={SquareTerminal} /> <span className="fd-sh-wide">Open in terminal</span>
-                </>
-              }
-              label="Open in terminal"
-            >
-              {(close) => openConfirm(close, terminal.onOpen)}
-            </Menu>
-          ) : null}
+          ) : (
+            terminalMenu
+          )}
           {filesPanel ? (
             <button
               type="button"
