@@ -137,18 +137,18 @@ Each theme lists its items best first. Every item names its v2 status.
 ### R1. Harvest: review a finished task (highest value)
 
 1. **Record the base of each spawn (`base_ref` and the resolved `base_oid`) at spawn time.** For an imported session, use `merge-base HEAD origin/HEAD` and label it "inferred base". Missing: a requested `base` name is kept (DL-144), but no resolved commit is. Start this first, because history accrues from the day it lands.
-2. **A diff since spawn, for the whole session, including untracked files,** on the session's Changes tab and as a total on the card. Missing: only per-turn diffs exist, and checkpoints cover tracked files only (`SCOPE_TRACKED`).
-3. **Line notes in the diff view, sent as one batched follow-up** (format: `re: <file> L<n>: <note>`), kept on the screen for the next revision. Missing: the transport exists (the mail outbox), the UI does not.
-4. **Compare the winner of an `Nx` batch:** a side-by-side summary of the sibling sessions, then "keep this one" (the others go to the worktree trash). Missing: batch, diff and trash exist (DL-150). The choice stays with the owner, never a model.
-5. **Checkpoint scope for untracked files, and garbage collection of checkpoint refs** when a worktree is purged or a session is archived. Partial: hidden refs grow without a limit in a long-lived repository.
+2. **A diff since spawn, for the whole session, including untracked files,** on the session's Changes tab and as a total on the card. Built (DL-159).
+3. **Line notes in the diff view, sent as one batched follow-up** (format: `re: <file> L<n>: <note>`), kept on the screen for the next revision. Built (DL-159).
+4. **Compare the winner of an `Nx` batch:** a side-by-side summary of the sibling sessions, then "keep this one" (the others go to the worktree trash). Built (DL-170).
+5. **Checkpoint scope for untracked files, and garbage collection of checkpoint refs** when a worktree is purged or a session is archived. Built (DL-159; untracked files stay out of checkpoints).
 
 ### R2. Orchestration: a fleet that runs unattended
 
-1. **`blocked` and `question` completion kinds** for tasks, beside `done` and `failed`. Missing.
-2. **Dead-worker synthesis:** a task whose session becomes `lost` or `exited` without a completion ends as `blocked`, with the reason. Missing (no task state for this in `orchestration.rs`).
-3. **Worker escalation:** an MCP tool through which a worker asks its coordinator a question; the question becomes a `question` completion or a mail. Missing (ADR-006 §6.3: coordinators answer no approvals in M3).
-4. **Wait for any event:** a long-poll over several tasks or sessions (done, blocked, question or error). Partial: `wait_task` waits for one task.
-5. **Group mail addresses** `@idle` and `@<provider>`, built only when a coordinator needs them. Partial.
+1. **`blocked` and `question` completion kinds** for tasks, beside `done` and `failed`. Built (DL-160).
+2. **Dead-worker synthesis:** a task whose session becomes `lost` or `exited` without a completion ends as `blocked`, with the reason. Built (DL-160).
+3. **Worker escalation:** an MCP tool through which a worker asks its coordinator a question; the question becomes a `question` completion or a mail. Built (DL-160).
+4. **Wait for any event:** a long-poll over several tasks or sessions (done, blocked, question or error). Built (DL-160).
+5. **Group mail addresses** `@idle` and `@<provider>`, built only when a coordinator needs them. Built (DL-160).
 
 ### R3. Integrations: GitHub, GitLab, Jira and Linear (owner decisions DL-152, DL-156)
 
@@ -174,33 +174,33 @@ The owner creates a project on the board. A preflight checks each binding from t
    - the status, assignee, priority, labels and estimate;
    - the comments and the linked PRs;
    - images, through a station proxy, because the deck holds no token.
-   Missing.
+   Built (DL-164).
 4. **Sessions from tickets, one or a batch.** Select one or more issues, then "Start sessions". Each session:
    - is named after its ticket: the title is `PROJ-123 <issue title>`, the callsign `<animal>-PROJ-123` (exists, DL-144), and the branch `PROJ-123-<short-slug>` in its own worktree;
    - gets the issue text in the envelope as its first prompt context, together with a prompt template that the owner can edit per project;
    - keeps an `issue` link (system, key, URL) in its summary, so the card shows a ticket chip and the issue view shows its sessions.
 
-   A batch uses the existing batch spawn (`Nx` also works per ticket). Missing.
-5. **Pull and merge requests per project.** A PR/MR view with these groups: **review requested from you**, **yours** (open, draft, approved, changes requested), **pending** (waiting on review or checks), and **merged or closed** recently. Each row shows its CI checks, review state, mergeability, ticket key and age. Missing.
-6. **Session ↔ PR links.** A session links to a PR when the PR's head branch is the session's branch, or when the PR names the session's ticket key. The card shows a PR chip with its state, and the PR row shows its sessions. Missing.
-7. **Review in one click.** On a PR or MR (in "review requested from you" or any row), "Start review session" makes a worktree on the PR head and starts a supervised reviewer session. The reviewer uses the user's installed review skill or the project's review prompt, and gets the PR description and the diff summary in the envelope. Missing.
-8. **"Fix the broken checks":** a session gets the failing check names, the links and the log tails of a PR or MR. Missing.
+   A batch uses the existing batch spawn (`Nx` also works per ticket). Built (DL-164).
+5. **Pull and merge requests per project.** A PR/MR view with these groups: **review requested from you**, **yours** (open, draft, approved, changes requested), **pending** (waiting on review or checks), and **merged or closed** recently. Each row shows its CI checks, review state, mergeability, ticket key and age. Built (DL-164).
+6. **Session ↔ PR links.** A session links to a PR when the PR's head branch is the session's branch, or when the PR names the session's ticket key. The card shows a PR chip with its state, and the PR row shows its sessions. Built (DL-164): the card shows the issue chip, and the PR row shows its sessions; a PR chip on the card is open.
+7. **Review in one click.** On a PR or MR (in "review requested from you" or any row), "Start review session" makes a worktree on the PR head and starts a supervised reviewer session. The reviewer uses the user's installed review skill or the project's review prompt, and gets the PR description and the diff summary in the envelope. Built (DL-164).
+8. **"Fix the broken checks":** a session gets the failing check names, the links and the log tails of a PR or MR. Built (DL-164).
 9. **Writes, later:**
    - create a PR or MR from a finished session (with model-help text, R10.3);
    - post a review or comment;
    - move a Jira or Linear issue (for example to "In review" with the PR link).
 
-   Each write needs a verb allowlist, an identity preview ("posts as @user"), one board confirm per write and an audit line, and it is never batched or automatic. Missing. Stopping rule: ship the writes only with the full security set.
+   Each write needs a verb allowlist, an identity preview ("posts as @user"), one board confirm per write and an audit line, and it is never batched or automatic. Built (DL-164).
 10. **GitLab details:** subgroup paths with three or more segments, and SSH and https remotes that name the same project. Partial (the clone preflight exists, DL-144).
 
 ### R4. Usage and accounts
 
-1. **Tightest window first, with a reset countdown** ("resets in 2 h"). Partial: meters are sorted by key (`web/src/board/usage.ts`).
-2. **An 80% warning on the fleet home and on the session header,** not only inside the Usage tab. Partial: the bar changes color at 80%.
-3. **The limit of each provider instance in the spawn picker,** so the owner sees "account A resets in 15 min, use B". Missing; the data is already on the board.
-4. **Assign by quota:** `assign auto` prefers the instance with the most room. Missing.
-5. **Claude windows that show before a limit.** Partial: the adapter maps `rate_limit_event` (`claude/map.rs`), but the CLI sends it mostly near a limit, so the meters are often empty. Research whether `/usage` or another protocol source gives the windows earlier.
-6. **Codex cost from a local price table, labeled "inferred"** (owner decision DL-157). Partial (Codex reports tokens only). The board shows it as "≈ $1.20 inferred", never mixed silently with reported cost. The price table is versioned, and a model that is not in it stays unknown (rule 4).
+1. **Tightest window first, with a reset countdown** ("resets in 2 h"). Built (DL-161).
+2. **An 80% warning on the fleet home and on the session header,** not only inside the Usage tab. Built (DL-161).
+3. **The limit of each provider instance in the spawn picker,** so the owner sees "account A resets in 15 min, use B". Built (DL-161).
+4. **Assign by quota:** `assign auto` prefers the instance with the most room. Built (DL-161).
+5. **Claude windows that show before a limit.** Partial: the adapter maps `rate_limit_event` (`claude/map.rs`), but the CLI sends it mostly near a limit, so the meters are often empty. Research whether `/usage` or another protocol source gives the windows earlier. Research note in DL-161; open.
+6. **Codex cost from a local price table, labeled "inferred"** (owner decision DL-157). Built (DL-161).
 
 ### R5. Automations
 
@@ -208,24 +208,24 @@ The owner creates a project on the board. A preflight checks each binding from t
 
 ### R6. Views at fifteen or more sessions
 
-1. **Unread state per session** with a stored read cursor: "what did I miss" on a phone. Missing.
+1. **Unread state per session** with a stored read cursor: "what did I miss" on a phone. Built (DL-169).
 2. **Watch many sessions at once: explore another form than a terminal wall** (DL-157). The owner does not need a grid of terminals, but wants a way to watch the fleet. Candidates to explore:
    - a "live wall" of compact chat tiles (the last lines and the current tool of each session);
    - a focus mode that cycles through the sessions that need attention;
    - split panes of two to four session chats.
 
-   Explore first, with mockups; build the one that the owner picks.
-3. **"No match, start a session" row** in the palette. Missing.
-4. **A one-line "current focus" that the agent writes** (through MCP) and the card shows. Partial (the current tool and the title exist).
-5. **A merged activity stream with a channel per session or repository.** Missing; build it after a 15-session load test (v1 called it "a real subsystem").
-6. **Hibernation:** stop long-idle finished sessions and resume them on open. Missing; native resume makes it cheap. Measure memory first.
+   Explore first, with mockups; build the one that the owner picks. Built (DL-169): the Watch page (`#/watch`) with live tiles and a focus mode; the owner can still pick another form.
+3. **"No match, start a session" row** in the palette. Built (DL-163).
+4. **A one-line "current focus" that the agent writes** (through MCP) and the card shows. Built (DL-165, DL-169).
+5. **A merged activity stream with a channel per session or repository.** Built (DL-169).
+6. **Hibernation:** stop long-idle finished sessions and resume them on open. Built (DL-169).
 
 ### R7. Honest feedback
 
-1. **Asynchronous spawn failures** (clone, worktree, setup command) appear at once on the board, with the redacted Git or shell error, and deduplicated per session. Partial: the failure ends the session with an error event; a visible banner and the "starting" state on the card need a check.
-2. **Plan execute atomicity:** a failed start leaves the plan `proposed`; a successful one marks it `executed`. Also add a "proposer still live" note. Partial (`PlanLibrary.tsx` marks in a second call).
-3. **A written rule for refused controls:** hide a control when the provider does not support it; disable it with the reason when a permission or a state blocks it. Partial.
-4. **A written Esc and overlay order, with a test that every overlay blocks the board hotkeys.** Partial.
+1. **Asynchronous spawn failures** (clone, worktree, setup command) appear at once on the board, with the redacted Git or shell error, and deduplicated per session. Built (DL-163).
+2. **Plan execute atomicity:** a failed start leaves the plan `proposed`; a successful one marks it `executed`. Also add a "proposer still live" note. Built (DL-163).
+3. **A written rule for refused controls:** hide a control when the provider does not support it; disable it with the reason when a permission or a state blocks it. Built (DL-163).
+4. **A written Esc and overlay order, with a test that every overlay blocks the board hotkeys.** Built (DL-163).
 
 ### R8. Platform and quality
 
