@@ -1,6 +1,6 @@
 # ADR-008 — Fleet control: fleet-scope grants, new tools, and approvals by a coordinator
 
-- **Status:** Proposed (revision 2, 2026-10-14). Revision 1 (commit 7cc02abe) got adversary DESIGN REVIEW FAIL (8 blockers, 4 major; report `/tmp/adversary-report-7cc02abe-codex-verbatim.md`); §12 maps each finding to its change. Needs a PASS before code.
+- **Status:** Proposed (revision 3, 2026-10-14). Revision 1 (commit 7cc02abe) got DESIGN REVIEW FAIL (8 blockers, 4 major; `/tmp/adversary-report-7cc02abe-codex-verbatim.md`); revision 2 (commit 0e8946d4) got RE-REVIEW FAIL (4 blockers, 1 major; `/tmp/adversary-report-0e8946d4.md`). §12 and §13 map each finding to its change. Needs a PASS before code; this is the last review round allowed for this design.
 - **Deciders:** owner (2026-10-14: "lets expand the mcp to allow full controls of the fleet … launch a session and that session could orchestrate a lot of things in the fleet"; scope answer: "Full control incl. approvals"), architect.
 - **Extends:** ADR-006 (revision 4). Every ADR-006 rule stays in force unless this ADR names it and replaces it. The credential handoff (§5.4), the binding states (§5.5), the decision order (§6.2), the station outbox and its fences (§6.5) and the same-UID boundary (§3) are unchanged.
 
@@ -30,6 +30,7 @@ Answering approvals is the largest new power. A coordinator reads third-party te
 - New field `answer_cap` (0–5000, default 500) with a durable lifetime counter `answer_used`. Accounting is the ADR-006 §6.4 rule: counted in the decision transaction with the receipt and the intent; never returned; `answer_cap_reached` is a stored rejection.
 - **Creation needs elevation.** The spawn form shows "Fleet control" with switches: fleet scope, inspect, manage, answer approvals. Any switch on needs the owner's elevation (DL-172: the owner password, or a `fleetdeck open --elevate` code) in the same request; the deck refuses a start whose grant has a fleet-control field without a fresh elevation (`elevation_required`, stored). A member, a share guest or an API token never creates one.
 - **Version gate.** Link feature `coordinator.v2` (the existing feature is `coordinator.v1`, `crates/fleetdeck-proto/src/version.rs:48`). The deck refuses to create a fleet-control grant (`unsupported`, stored) unless the coordinator's station and every station in the grant's `stations` negotiated `coordinator.v2` on their current link. `CoordinatorSpec` serializes `scope`, `answer_cap` and the new classes only when the grant is a fleet-control grant (`skip_serializing_if` the ADR-006 defaults), so a lineage grant's start command stays byte-compatible with a `coordinator.v1` station (`CoordinatorSpec` has `deny_unknown_fields`).
+- **Every send needs v2, not only creation.** Every fleet-control send or resend requires current `coordinator.v2` negotiation on the caller's and the target's links at that moment; loss of negotiation prevents transmission (the item stays queued until its 10-minute expiry, then `dead`, `authority_lost`), and the authority is never omitted or downgraded to run a fleet-control command through a legacy method.
 - **Kill switch.** New station setting `allow_fleet_control` (default `false`, `apply: Live`, `danger: true`; on needs elevation, off does not). It is checked at three points: station intake on the coordinator's station (fleet-control tools answer `not_granted`, never forwarded), deck decision (the deck mirrors each station's value from its settings view, refreshed on every station settings publish; unknown counts as off → `forbidden`, stored), and dispatch on the target station (§6.2). The tool catalog is fixed at process start (ADR-006 §5.3): fleet-control tools are listed when the grant has their classes, whatever the setting; calls fail while it is off.
 
 ## 4. Authorization
@@ -77,7 +78,14 @@ Every text that reaches a coordinator session and that it did not write itself u
 ### 4.4 Privacy of coordinator reads
 
 - `file_read` and `file_search` use the station file routes unchanged (identity-aware, DL-173).
-- `session_diff` for a coordinator: the station builds the session diff as today, then, before rendering each file of the new side, opens the work-tree file without following links and checks its identity with the private-path registry and the hard-link rule of DL-173 (nlink > 1 outside `.git` refused). A refused file is replaced by one line `(hidden: private file)` in the diff; its content and stats are dropped. If the identity check cannot run for any file, the whole query fails with `privacy_unknown`. The DL-173 open point (a tracked hard link can show in a board diff) does not apply to this interface.
+- `session_diff` for a coordinator does **not** use the board's snapshot diff (`git add -u` + `write-tree`, `crates/fleetdeck-station/src/workspace/checkpoint.rs:356`). It is built per file, and privacy is decided before any byte is read:
+  1. List the changed paths against the session base (`git diff --name-status -z <base>` on the work tree, plus untracked files within the existing limits).
+  2. Drop every path whose old or new name matches the private-path name rules or the member deny list.
+  3. New side: open the work-tree file without following links; check that open file's identity with the private-path registry and the DL-173 hard-link rule (nlink > 1 outside `.git` refused); read the new-side bytes **from that same open file descriptor** (so a later replacement of the path cannot change what was checked). A refused file appears as `(hidden: private file)`.
+  4. Old side: the blob of `<base>:<old path>` (`git cat-file blob`). This is committed repository content, not a station-local file; private paths protect local credential files, not committed history, and the name rules of step 2 still apply to the old path.
+  5. Render each file pair with `git diff --no-index` over two copies in a fresh private temp directory (mode 0700, removed after), with the same size limits as today.
+  6. If any identity check cannot run, the whole query fails with `privacy_unknown`.
+  The DL-173 open point (a tracked hard link can show in a board diff) does not apply to this interface.
 
 ## 5. Approvals and questions by a coordinator
 
@@ -92,6 +100,7 @@ Every text that reaches a coordinator session and that it did not write itself u
 
 - Superseding ADR-006 §6.3's spawn-mode rule for bypass modes: no coordinator operation may start, resume, or set a session into a bypass or full-access mode (Claude `bypassPermissions`; Codex `never` approval with `danger-full-access`), whatever `max_modes` or `allow_bypass_permissions` say.
 - `set_mode`, `start_in_project` and `spawn` need the target provider family to have a ceiling in `max_modes` and the mode within it.
+- **No implicit continuation by a coordinator.** An input whose origin is a coordinator (`RunOrigin::Coordinator`, or a routed command with `authority`), including mail, task assignment and steer, never resumes a hibernated or ended session. The station's hibernated-input resume (DL-180, `resume_hibernated` in `crates/fleetdeck-station/src/manager/decide.rs`) applies only to the origins `Board`, `Local` and owner/member mail (`RunOrigin::Mail` without `authority`); for a coordinator origin the input is refused `invalid_state` and the deck outbox holds it until the session runs again (DL-180 hold). To continue such a session the coordinator calls `resume_session`, which has the checks below. This also applies to ADR-006 (`coordinator.v1`) coordinators.
 - `resume_session`: the deck computes the effective resumed mode (the session's stored mode, or the provider instance's default when none is stored) and refuses the resume (`forbidden`, stored) unless the family has a ceiling, the mode is within it, and it is not a bypass mode. The station's resume admission checks the same at dispatch with the mode it will really use.
 
 ### 5.3 Answers
@@ -108,11 +117,12 @@ Every text that reaches a coordinator session and that it did not write itself u
 
 Every deck intent created by a fleet-control op carries `authority { grant_id, caller_station, caller_session, generation }` in the outbox item and in the routed command (new optional field on the routed session command envelope, sent only on `coordinator.v2` links). Fleet-control intents expire after 10 minutes (not 24 h).
 
-### 6.2 Rechecks
+### 6.2 Rechecks until the provider write
 
-- **Deck, before each attempt** (`start_attempt`): the grant is `active`, its binding generation equals `authority.generation`, the target still passes §4.2 (from the deck's session and grant view), and the deck's mirror of `allow_fleet_control` is on for the caller's and the target's station. Any failure ends the item `dead` (`authority_lost`); it is never sent.
-- **Target station, at decision and again at effect dispatch:** a command with `authority` is refused (`forbidden`, stored at decision; `NotDispatched("authority_lost")` at dispatch) when the target station's live `allow_fleet_control` is off, when the target session holds an active binding with a mutating class on this station (§4.2 rule 3), or when the target is the caller session (rule 2). A command with `authority` on a link without `coordinator.v2` is refused (`unsupported`).
-- **Revocation** (owner, deck first, ADR-006 §7) ends every intent that has not started an attempt (`dead`, `authority_lost`) in the revocation transaction. A command already accepted by the target station and queued there is fenced only by the station's own rechecks (kill switch, target exclusions); the residual window is the station's local effect queue. The operations guide states it.
+- **Deck, before every send and every resend** of a routed command with `authority` (`DeckLink::send`, `crates/fleetdeck-deck/src/link/router.rs:291`, and `start_attempt`): the grant is `active` and not past `expires_at`, its binding generation equals `authority.generation`, the target still passes §4.2, the deck's mirror of `allow_fleet_control` is on for the caller's and the target's station, and both links negotiated `coordinator.v2`. Any failure: the command is not sent; the outbox item ends `dead` (`authority_lost`).
+- **Target station, at decision:** a command with `authority` is refused (`forbidden`, stored) when the target station's live `allow_fleet_control` is off, when the target session holds an active binding with a mutating class on this station (§4.2 rule 3), or when the target is the caller session (rule 2).
+- **Target station, at effect dispatch (authority round trip):** right before the provider write of an effect whose command had `authority`, the station asks the deck over the link with a new non-mutating method `coordinator.authority_check { grant_id, generation, caller_station, caller_session, target_session, command_id }` (feature `coordinator.v2`, deadline 5 s). The deck answers `valid` only if every deck-side check above still holds at that moment. `invalid`, no answer within 5 s, or no link → the effect is `NotDispatched("authority_lost")` or `NotDispatched("authority_unknown")` and the session gets an `error` event with that code; it is never retried with a new id. The station also rechecks its own live `allow_fleet_control` and rule 3 at that point.
+- **Revocation** (owner, deck first, ADR-006 §7) and turning `allow_fleet_control` off take effect for every effect whose provider write has not begun: queued deck items end at the next send check, sent commands are refused at target decision or dispatch by the round trip. The only remaining window is between a `valid` answer and the provider write inside the target station process (milliseconds); the operations guide states it.
 
 ## 7. Lifecycle
 
@@ -140,13 +150,16 @@ Deck (`crates/fleetdeck-deck/src/store/fleet_control_tests.rs`):
 5. Answers: `allow_once` and `deny` accepted, `answer_used` +1, audit row, `answered_by`; `allow_session`, `allow_always`, `amend`, `other`, `None` refused without a count; cap reached (and two concurrent decisions for the last slot: exactly one wins); structured `question_answers` accepted and validated; a bad one refused.
 6. Modes: `set_mode`, `spawn`, `start_in_project` above the ceiling or bypass refused; `resume_session` of a session stored in a mode above the ceiling, in bypass, or with no stored mode and a default above the ceiling refused.
 7. `start_in_project`: counts against `spawn_cap`, the new session is in the lineage; `move_to_project` with a project of another station → `wrong_station`.
-8. Provenance: revocation, a generation change, a target that becomes a coordinator, and the setting turned off, each between acceptance and the first attempt → `dead` (`authority_lost`), never sent; an item past 10 minutes expires.
+8. Provenance: revocation, a generation change, a target that becomes a coordinator, the caller's or the target's setting turned off, and a link that drops to `coordinator.v1`, each (a) between acceptance and the first attempt, (b) between the first send and a resend, → never sent, `dead` (`authority_lost`); an item past 10 minutes expires.
+8a. `coordinator.authority_check`: valid for a current grant; invalid after revocation, after a generation change, after the caller's or the target's setting turned off, and for a target that became a coordinator.
+8b. Answer accounting: a duplicate call id does not count twice; receipt pruning does not change `answer_used`.
 9. Fencing: every new query result with third-party text, and `mail_frame`/`question_frame` output, is enveloped with the source outside the fence.
 Station (`crates/fleetdeck-station/src/coordinator/fleet_control_tests.rs`):
 10. Intake refuses fleet-control tools with the setting off; the catalog lists tools by class.
-11. Dispatch recheck: a command with `authority` whose target became a coordinator, or with the setting turned off after decision, is `NotDispatched("authority_lost")`.
+11. Dispatch recheck: a command with `authority` that the target station accepted, then the grant is revoked (or the caller's setting turned off) before dispatch → the round trip answers invalid → `NotDispatched("authority_lost")`; with the deck unreachable at dispatch → `NotDispatched("authority_unknown")`; a target that became a coordinator → refused.
+11a. Implicit resume: coordinator mail, a coordinator task and a coordinator steer to a hibernated session are refused `invalid_state` and held by the deck; board and owner-mail inputs still resume it (DL-180); `resume_session` above the ceiling is refused.
 12. `already_answered` for a coordinator answer after a board answer; a board answer after a board answer keeps today's result.
-13. `session_diff` for a coordinator hides a tracked work-tree file hard-linked to a private file, and fails with `privacy_unknown` when the identity check cannot run.
+13. `session_diff` for a coordinator: hides a tracked work-tree file hard-linked to a private file; a path replaced between the identity check and the read cannot change the bytes (the read is from the checked descriptor); a private-named path on the old side only is dropped; fails with `privacy_unknown` when the identity check cannot run; the temp directory is removed.
 14. Resume admission refuses a coordinator resume into a mode above the ceiling or into bypass.
 Providers: 15. `OptionKind` classification for every Claude and Codex decision shape, including object-valued amendments.
 Board (`web/src/spawn/fleetcontrol.test.tsx`): 16. The switches ask for elevation; the start command carries the fields; the chip and the answers list.
@@ -180,3 +193,13 @@ Board (`web/src/spawn/fleetcontrol.test.tsx`): 16. The switches ask for elevatio
 | M2 start serialization breaks v1 stations | §3 version gate and conditional serialization (test 3). |
 | M3 first answer wins has no rejection | §5.3 `already_answered` for coordinator answers (test 12). |
 | M4 tests do not cover every rule | §9 matrix and the new tests. |
+
+## 13. Re-review map (revision 2 → revision 3)
+
+| Finding (rev 2) | Change |
+| --- | --- |
+| B1 implicit resume through mail | §5.2 "No implicit continuation by a coordinator" (also for ADR-006 coordinators); test 11a. |
+| B2 queued effects survive revocation | §6.2 recheck before every send and resend, and the `coordinator.authority_check` round trip at target dispatch; tests 8, 8a, 11. |
+| B3 diff bytes not covered by the identity check | §4.4 per-file diff: names first, new side read from the checked descriptor, old side from committed blobs, `--no-index` render; test 13. |
+| B4 reconnect on v1 bypasses the authority | §3 "Every send needs v2"; §6.2 deck send check; test 8. |
+| M1 tests | Tests 8, 8a, 8b, 11, 11a, 13. |
