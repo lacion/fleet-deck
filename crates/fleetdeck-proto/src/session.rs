@@ -8,8 +8,8 @@ use ts_rs::TS;
 
 use crate::capability::Capabilities;
 use crate::event::{
-    ApprovalOption, ProviderKind, RateLimit, RequestKind, ResponseChannel, RevertState,
-    SessionState, ToolKind, Usage,
+    ApprovalOption, ModelChoice, ProviderKind, RateLimit, RequestKind, ResponseChannel,
+    RevertState, SessionState, ToolKind, Usage,
 };
 use crate::ids::{NodeId, ProviderInstanceId, RequestId, RunId, SessionId, TurnId};
 
@@ -113,6 +113,11 @@ pub struct SessionSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub terminal: Option<TerminalHold>,
+    /// The models that the provider harness offers, from the last
+    /// `session.models` (DL-151). Absent before the first one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub models: Option<Vec<ModelChoice>>,
     /// The highest `session_seq` folded into this summary.
     pub session_seq: u64,
     /// Unix ms of the last folded event.
@@ -151,6 +156,7 @@ impl SessionSummary {
             revert: None,
             auto_continue: false,
             terminal: None,
+            models: None,
             session_seq: 0,
             updated_at: 0,
         }

@@ -205,8 +205,8 @@ impl SessionSummary {
             | Event::CoordinatorBound { .. }
             | Event::CoordinatorEnded { .. }
             | Event::SlashCommands { .. }
-            | Event::SessionNotice { .. }
-            | Event::SessionModels { .. } => {}
+            | Event::SessionNotice { .. } => {}
+            Event::SessionModels { models } => self.models = Some(models.clone()),
             Event::SessionEnded { .. } => {
                 if !matches!(self.state, SessionState::Lost) {
                     self.state = SessionState::Exited;

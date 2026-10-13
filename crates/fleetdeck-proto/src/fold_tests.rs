@@ -568,21 +568,22 @@ fn a_session_notice_does_not_change_the_summary() {
 }
 
 #[test]
-fn session_models_does_not_change_the_summary() {
+fn session_models_set_the_models_of_the_summary_and_the_last_list_wins() {
     let mut f = Feed::new();
     f.push(started());
-    let mut expected = f.summary.clone();
-    let s = f.push(Event::SessionModels {
-        models: vec![crate::event::ModelChoice {
-            value: "opus".to_owned(),
-            label: "Opus".to_owned(),
-            description: None,
-        }],
+    assert_eq!(f.summary.models, None);
+    let choice = |value: &str| crate::event::ModelChoice {
+        value: value.to_owned(),
+        label: value.to_uppercase(),
+        description: None,
+    };
+    f.push(Event::SessionModels {
+        models: vec![choice("opus")],
     });
-    // Only the sequence and the time move; all other fields stay.
-    expected.session_seq = s.session_seq;
-    expected.updated_at = s.updated_at;
-    assert_eq!(*s, expected);
+    let s = f.push(Event::SessionModels {
+        models: vec![choice("sonnet"), choice("haiku")],
+    });
+    assert_eq!(s.models, Some(vec![choice("sonnet"), choice("haiku")]));
 }
 
 fn terminal(shell_id: Option<&str>, pid: Option<u32>, reason: Option<&str>) -> Event {
