@@ -177,7 +177,7 @@ Top bar (48 px, `--surface`, bottom border): `PanelLeft` icon button "Sessions" 
 
 Never leave a control that looks active and then fails with a silent error.
 
-**Overlays.** An overlay is a dialog (`role="dialog"`, `aria-modal="true"`), a menu or the sessions drawer. From top to bottom the order is: dialogs, menus, the drawer, the help, the palette.
+**Overlays.** An overlay is a dialog (`role="dialog"`, `aria-modal="true"`), a menu or the sessions drawer. From top to bottom the order is: dialogs, menus, the palette, the help, the drawer (the z-index order; the global `Esc` handler closes them in this order).
 
 - `Esc` closes the topmost overlay only. A dialog, a menu and the drawer handle `Esc` themselves when the focus is inside; the global handler closes the next one in the order when the focus is outside.
 - Every overlay component calls `useOverlay()` (`web/src/app/overlay.ts`). While one is mounted, the board hotkeys (`j k / n f c t ?`) are off. `Mod+K` and `Esc` still work.
