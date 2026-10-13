@@ -13,7 +13,7 @@
 //! - An upstream error is a fixed code with the HTTP status; no upstream
 //!   text reaches an error or a log.
 
-use std::sync::{Arc, PoisonError};
+use std::sync::PoisonError;
 use std::time::{Duration, Instant};
 
 use base64::Engine;
@@ -307,8 +307,9 @@ impl Accounts {
                 refresh_token: tokens.refresh.as_ref().map(|t| Secret::new(t.clone())),
                 expires_at: tokens.expires_at,
                 email: None,
+                generation: 0,
             };
-            ids.push(self.save_account(&account)?);
+            ids.push(self.save_account(&account).await?);
         }
         Ok(ids)
     }
@@ -367,8 +368,9 @@ impl Accounts {
             refresh_token: tokens.refresh.map(Secret::new),
             expires_at: tokens.expires_at,
             email: None,
+            generation: 0,
         };
-        Ok(vec![self.save_account(&account)?])
+        Ok(vec![self.save_account(&account).await?])
     }
 
     /// The access token of the account `id`, refreshed first when it ends in
@@ -395,18 +397,7 @@ impl Accounts {
         if !due(&account) {
             return Ok(account.access_token);
         }
-        let key = if account.kind == AccountKind::Jira {
-            "jira"
-        } else {
-            id
-        };
-        let lock = {
-            let mut locks = self
-                .refresh_locks
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
-            Arc::clone(locks.entry(key.to_owned()).or_default())
-        };
+        let lock = self.lifecycle_lock(id);
         let _one_at_a_time = lock.lock().await;
         // Read again inside the lock: a refresh that just ended has stored
         // the new pair.
@@ -419,6 +410,9 @@ impl Accounts {
                 self.set_needs_login(id, false);
                 Ok(token)
             }
+            // The account was logged out or replaced during the refresh: it
+            // does not need a sign-in, it is gone or new.
+            Err(fail) if fail.code == code::INVALID_PARAMS => Err(fail),
             Err(fail) => {
                 self.set_needs_login(id, true);
                 tracing::warn!(account = %id, code = fail.code, "the token refresh failed");
@@ -469,6 +463,16 @@ impl Accounts {
             .refresh
             .clone()
             .unwrap_or_else(|| old.expose().clone());
+        // The file must be the one that was read: a logout or a replacement
+        // that came while the request was open wins, and the answer is
+        // dropped (PRE-PR r1).
+        if store
+            .account(id)
+            .map_err(store_fail)?
+            .is_none_or(|now| now.generation != account.generation)
+        {
+            return Err(invalid("the account changed during the refresh"));
+        }
         // The new pair is written before the access token is used.
         let mut updated = account.clone();
         updated.access_token = Secret::new(tokens.access.clone());

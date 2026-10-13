@@ -22,7 +22,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tokio::sync::watch;
 
-use crate::store::{Dispatch, Effect, Result, Store, StoreError};
+use crate::store::{Dispatch, Effect, EffectPayload, Result, Store, StoreError};
 
 /// The provider side of the worker: the session manager (P2-6), or a fake in
 /// tests.
@@ -33,6 +33,22 @@ pub trait EffectTarget: Send + Sync {
     /// [`Dispatch::NotDispatched`] when they differ (the process that the
     /// command was for is gone).
     async fn dispatch(&self, effect: &Effect) -> Dispatch;
+
+    /// Called before each claim (PRE-PR r1, the restart freeze).
+    fn begin_claim(&self) -> Claim {
+        Claim::default()
+    }
+}
+
+/// What a target says before a claim.
+#[derive(Default)]
+pub struct Claim {
+    /// True: a queued start or resume effect stays queued.
+    pub hold_starts: bool,
+    /// Kept until a start or resume effect that this claim took is
+    /// dispatched; dropped at once for any other effect. The restart
+    /// admission waits for these guards.
+    pub guard: Option<Box<dyn std::any::Any + Send>>,
 }
 
 /// One worker generation.
@@ -75,9 +91,16 @@ impl EffectWorker {
     /// # Errors
     /// [`StoreError::Fenced`] or a database error.
     pub async fn run_once(&self) -> Result<Option<Effect>> {
-        let Some(effect) = self.store.claim_next(self.fence).await? else {
+        let Claim { hold_starts, guard } = self.target.begin_claim();
+        let Some(effect) = self.store.claim_next_held(self.fence, hold_starts).await? else {
             return Ok(None);
         };
+        let _claiming = guard.filter(|_| {
+            matches!(
+                effect.payload,
+                EffectPayload::Start { .. } | EffectPayload::Resume { .. }
+            )
+        });
         let kind = effect.payload.kind();
         crate::fault::hit(crate::fault::FaultPoint::AfterClaim, kind);
         let dispatch = self.target.dispatch(&effect).await;

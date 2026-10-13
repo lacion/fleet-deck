@@ -122,6 +122,11 @@ pub struct Accounts {
     pub(crate) login_gate: tokio::sync::Mutex<()>,
     pub(crate) needs_login: Mutex<HashSet<String>>,
     pub(crate) transactions: Mutex<Vec<oauth::Transaction>>,
+    /// The lifecycle locks of the stored accounts (PRE-PR r1): one for all
+    /// the Jira accounts (key `jira`: one rotating refresh token serves all
+    /// the sites of a sign-in) and one for each Linear account (its id).
+    /// Logout, token replacement, a sign-in that replaces an account and the
+    /// refresh take the lock of the account.
     pub(crate) refresh_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 
@@ -159,6 +164,16 @@ impl Accounts {
         if self.store.set(store).is_err() {
             tracing::warn!("the account store was attached twice");
         }
+    }
+
+    /// The lifecycle lock of the stored account `id` (see `refresh_locks`).
+    pub(crate) fn lifecycle_lock(&self, id: &str) -> Arc<tokio::sync::Mutex<()>> {
+        let key = if id.starts_with("jira-") { "jira" } else { id };
+        let mut locks = self
+            .refresh_locks
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        Arc::clone(locks.entry(key.to_owned()).or_default())
     }
 
     pub(crate) fn runner(&self) -> forge::Runner {
@@ -308,6 +323,8 @@ impl Accounts {
     /// refused.
     async fn logout(&self, id: &str, trackers: &[TrackerConfig]) -> Result<(), Fail> {
         if store::valid_account_id(id) {
+            let lock = self.lifecycle_lock(id);
+            let _lifecycle = lock.lock().await;
             let found = self.store()?.delete_account(id).map_err(store_fail)?;
             self.set_needs_login(id, false);
             return if found {
@@ -339,9 +356,16 @@ impl Accounts {
 
     /// Writes `account`, in the file of an account that has the same
     /// identity (the same kind, method and site) or in a new one. Returns
-    /// the id.
-    pub(crate) fn save_account(&self, account: &StoredAccount) -> Result<String, Fail> {
+    /// the id. It holds the lifecycle lock of the account: for Jira the one
+    /// lock of the family (also while it looks for the file), for Linear the
+    /// lock of the account that it writes.
+    pub(crate) async fn save_account(&self, account: &StoredAccount) -> Result<String, Fail> {
         let store = self.store()?;
+        let family = (account.kind == AccountKind::Jira).then(|| self.lifecycle_lock("jira"));
+        let _family = match &family {
+            Some(lock) => Some(lock.lock().await),
+            None => None,
+        };
         let mut found = None;
         for id in store.account_ids().map_err(store_fail)? {
             match store.account(&id) {
@@ -362,6 +386,11 @@ impl Accounts {
         let id = match found {
             Some(id) => id,
             None => store::new_account_id(account.kind).map_err(store_fail)?,
+        };
+        let own = family.is_none().then(|| self.lifecycle_lock(&id));
+        let _own = match &own {
+            Some(lock) => Some(lock.lock().await),
+            None => None,
         };
         store.put_account(&id, account).map_err(store_fail)?;
         self.set_needs_login(&id, false);

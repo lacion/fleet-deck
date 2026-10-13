@@ -382,9 +382,12 @@ pub fn read_for(
         ));
     }
     let (file, size) = open_file(&parent, last, path)?;
-    // A hard link to a private file: the opened file is the check, not its
-    // name.
-    if file.metadata().is_ok_and(|m| private.is_private_file(&m)) {
+    // A hard link to a private file, or a file with more than one link: the
+    // opened file is the check, not its name.
+    if file
+        .metadata()
+        .is_ok_and(|m| private.is_private_opened(&m, path))
+    {
         return Err(not_found(path));
     }
     let limit = max_bytes.unwrap_or(MAX_READ_BYTES).min(MAX_READ_BYTES);
@@ -604,7 +607,8 @@ pub fn grep_paths(
 /// or a read error marks the search `truncated`, so a match past the limit
 /// is never silently missing (finding 2 of sa-fbed2a6d). A binary file is
 /// skipped (as `git grep -I` does). A hard link to a private file is
-/// skipped by the identity of the opened file.
+/// skipped by the identity of the opened file, and so is a file with more
+/// than one link (outside `.git`).
 fn grep_file(
     dir: &OwnedFd,
     name: &str,
@@ -617,7 +621,10 @@ fn grep_file(
     let Ok((file, _size)) = open_file(dir, name, path) else {
         return true;
     };
-    if file.metadata().is_ok_and(|m| private.is_private_file(&m)) {
+    if file
+        .metadata()
+        .is_ok_and(|m| private.is_private_opened(&m, path))
+    {
         return true;
     }
     // One byte past the budget tells a file of exactly the budget, read

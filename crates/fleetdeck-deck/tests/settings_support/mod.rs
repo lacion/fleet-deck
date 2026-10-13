@@ -79,6 +79,7 @@ pub fn deck_settings(dir: &Path, text: &str) -> DeckSettings {
         )),
         path,
         overrides: vec![("listen".to_owned(), "--listen".to_owned())],
+        gate: Arc::default(),
     }
 }
 

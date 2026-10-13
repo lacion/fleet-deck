@@ -24,11 +24,12 @@ use fleetdeck_proto::session::SessionBase;
 use fleetdeck_proto::{Event, ProviderInstanceId, SessionId};
 use fleetdeck_providers::host::HostError;
 use fleetdeck_providers::{
-    Answer, ControlId, EventSink, HostInput, LiveSession, ModelId, NativeSessionId, PermissionMode,
+    Answer, ControlId, EventSink, LiveSession, ModelId, NativeSessionId, PermissionMode,
     ProviderAdapter, ProviderError,
 };
 use tokio::sync::{Mutex, mpsc, oneshot, watch};
 
+use super::durable::host_input;
 pub use super::shells_slot::ShellsSlot;
 use super::turns::SessionTurns;
 use crate::store::{
@@ -88,6 +89,8 @@ pub struct SessionTarget {
     broken: Arc<StdMutex<BTreeMap<ProviderInstanceId, &'static str>>>,
     /// The shells of the station, for the file work of the worktree trash.
     shells: ShellsSlot,
+    /// The restart freeze (PRE-PR r1).
+    pub(super) restart: Arc<super::restart_gate::RestartState>,
 }
 
 impl std::fmt::Debug for SessionTarget {
@@ -118,6 +121,7 @@ impl SessionTarget {
             hooks: setup_task::Hooks::default(),
             shells: ShellsSlot::default(),
             broken: Arc::default(),
+            restart: Arc::default(),
         }
     }
 
@@ -586,6 +590,10 @@ impl SessionTarget {
 
 #[async_trait]
 impl EffectTarget for SessionTarget {
+    fn begin_claim(&self) -> crate::worker::Claim {
+        self.restart.begin_claim()
+    }
+
     async fn dispatch(&self, effect: &Effect) -> Dispatch {
         match &effect.payload {
             EffectPayload::Start {
@@ -684,14 +692,6 @@ impl EffectTarget for SessionTarget {
             },
             _ => self.operate(effect).await,
         }
-    }
-}
-
-fn host_input(record: &InputRecord) -> HostInput {
-    HostInput {
-        id: record.input_id.clone(),
-        origin: record.origin,
-        input: record.input.clone(),
     }
 }
 

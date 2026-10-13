@@ -97,6 +97,7 @@ impl Accounts {
                 );
                 let user = tracker.whoami().await.map_err(check_failed)?;
                 self.store_token(AccountKind::Jira, Some(site), Some(email), user, token)
+                    .await
             }
             AccountKind::Linear => {
                 if site.is_some() || email.is_some() {
@@ -113,11 +114,12 @@ impl Accounts {
                 let (user, workspace) = tracker.linear_identity().await.map_err(check_failed)?;
                 let site = workspace.map(|k| format!("https://linear.app/{k}"));
                 self.store_token(AccountKind::Linear, site, None, user, token)
+                    .await
             }
         }
     }
 
-    fn store_token(
+    async fn store_token(
         &self,
         kind: AccountKind,
         site: Option<String>,
@@ -135,8 +137,9 @@ impl Accounts {
             refresh_token: None,
             expires_at: None,
             email,
+            generation: 0,
         };
-        let id = self.save_account(&account)?;
+        let id = self.save_account(&account).await?;
         Ok(self.view(&id, &account))
     }
 }

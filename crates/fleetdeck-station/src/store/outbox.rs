@@ -117,7 +117,16 @@ impl Store {
     /// [`super::StoreError::Fenced`] when a newer worker exists, or a
     /// database error.
     pub async fn claim_next(&self, fence: u64) -> Result<Option<Effect>> {
-        self.write(move |conn, now, out| effects::claim_next(conn, fence, now, out))
+        self.claim_next_held(fence, false).await
+    }
+
+    /// [`Self::claim_next`] that leaves a queued start or resume effect
+    /// queued when `hold_starts` is true (the restart freeze).
+    ///
+    /// # Errors
+    /// See [`Self::claim_next`].
+    pub async fn claim_next_held(&self, fence: u64, hold_starts: bool) -> Result<Option<Effect>> {
+        self.write(move |conn, now, out| effects::claim_next(conn, fence, hold_starts, now, out))
             .await
             .map(|(claimed, _)| claimed)
     }
@@ -216,5 +225,11 @@ impl Store {
 
     pub(super) fn wake_worker(&self) {
         self.inner.outbox.send_modify(|n| *n = n.wrapping_add(1));
+    }
+
+    /// Wakes the effect worker: it looks at the outbox again (the end of a
+    /// restart freeze).
+    pub fn nudge_worker(&self) {
+        self.wake_worker();
     }
 }

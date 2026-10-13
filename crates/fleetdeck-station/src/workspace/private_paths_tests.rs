@@ -206,6 +206,28 @@ fn a_hard_link_to_a_private_file_is_private() {
 }
 
 #[test]
+fn a_file_with_more_than_one_link_is_refused_outside_git_only() {
+    let (_t, home) = home();
+    let p = PrivatePaths::default();
+    let one = home.join("one.txt");
+    std::fs::write(&one, "x").unwrap();
+    let meta = |path: &Path| std::fs::metadata(path).unwrap();
+    // A normal file (one link) is unchanged.
+    assert!(!p.is_private_opened(&meta(&one), "one.txt"));
+    let two = home.join("two.txt");
+    std::fs::hard_link(&one, &two).unwrap();
+    assert!(p.is_private_opened(&meta(&one), "one.txt"));
+    assert!(p.is_private_opened(&meta(&two), "dir/two.txt"));
+    // Git makes hard links itself: a path with a `.git` component stays
+    // readable.
+    assert!(!p.is_private_opened(&meta(&two), ".git/objects/ab/cdef"));
+    assert!(!p.is_private_opened(&meta(&two), "sub/.git/objects/ab/cdef"));
+    assert!(p.is_private_opened(&meta(&two), "my.git/objects"));
+    // A directory is not a regular file.
+    assert!(!p.is_private_opened(&meta(&home), ""));
+}
+
+#[test]
 fn deny_all_refuses_every_path_and_default_refuses_none() {
     let all = PrivatePaths::deny_all();
     assert!(all.is_private(Path::new("/tmp")));

@@ -18,11 +18,12 @@ use fleetdeck_proto::link::{Outcome, Scope, WireError};
 use harness::*;
 use serde_json::json;
 
-const OWNER_ROUTES: [(&str, &str); 8] = [
+const OWNER_ROUTES: [(&str, &str); 9] = [
     ("GET", "/api/stations/fake/accounts"),
     ("POST", "/api/stations/fake/accounts/forge/login"),
     ("GET", "/api/stations/fake/accounts/forge/login/l1"),
     ("POST", "/api/stations/fake/accounts/acc-1/logout"),
+    ("GET", "/api/stations/fake/accounts/acc-1/containers"),
     ("POST", "/api/secrets/stations/fake/accounts/apps"),
     ("POST", "/api/secrets/stations/fake/accounts/token"),
     ("POST", "/api/accounts/oauth/start"),
@@ -82,10 +83,6 @@ async fn a_token_a_member_and_a_missing_csrf_are_refused_on_every_account_route(
             expect(&r, 403, "owner_only");
         }
     }
-    // The containers route is `read`: a token reads it, a member never.
-    let containers = "/api/stations/fake/accounts/acc-1/containers";
-    let r = s.c.get(containers, &refs(&member)).await;
-    expect(&r, 403, "owner_only");
     // The owner needs the CSRF header on a POST.
     let no_csrf = vec![s.h[0].clone()];
     for (method, path) in OWNER_ROUTES.iter().filter(|(m, _)| *m == "POST") {
@@ -95,16 +92,22 @@ async fn a_token_a_member_and_a_missing_csrf_are_refused_on_every_account_route(
         expect(&r, 403, "csrf");
     }
     no_request(&mut s.station, Duration::from_millis(300)).await;
-    // A token with `read` reads the containers.
+    // A token without the `admin` scope is refused by the method table (the
+    // full-scope token above got `owner_only` from the handler); the owner
+    // reads it.
+    let containers = "/api/stations/fake/accounts/acc-1/containers";
     let (_, reader) =
         s.c.store
             .create_token("reader".into(), BTreeSet::from([Scope::Read]), DAY)
             .await
             .unwrap();
     let reader = token_headers(reader.expose());
+    let r = s.c.get(containers, &refs(&reader)).await;
+    expect(&r, 403, "forbidden");
+    no_request(&mut s.station, Duration::from_millis(300)).await;
     let (r, req) = exchange(
         &mut s.station,
-        s.c.get(containers, &refs(&reader)),
+        s.c.get(containers, &refs(&s.h)),
         ok(json!({ "containers": [{ "key": "PROJ", "name": "Project" }] })),
     )
     .await;

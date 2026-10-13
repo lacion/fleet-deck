@@ -66,6 +66,10 @@ pub struct StoredAccount {
     /// Unix seconds.
     pub expires_at: Option<i64>,
     pub email: Option<String>,
+    /// The write counter of the file: 0 for a file that has none, and each
+    /// [`AccountStore::put_account`] writes the old value plus one. A refresh
+    /// that read generation N writes only while the file still has N.
+    pub generation: u64,
 }
 
 impl fmt::Debug for StoredAccount {
@@ -83,6 +87,7 @@ impl fmt::Debug for StoredAccount {
             )
             .field("expires_at", &self.expires_at)
             .field("email", &self.email)
+            .field("generation", &self.generation)
             .finish()
     }
 }
@@ -102,6 +107,7 @@ impl Clone for StoredAccount {
                 .map(|t| Secret::new(t.expose().clone())),
             expires_at: self.expires_at,
             email: self.email.clone(),
+            generation: self.generation,
         }
     }
 }
@@ -133,6 +139,8 @@ struct AccountDisk {
     expires_at: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     email: Option<String>,
+    #[serde(default)]
+    generation: u64,
 }
 
 /// True for an account id of the store: `jira-` or `linear-` and 8 hex
@@ -259,10 +267,14 @@ impl AccountStore {
             refresh_token: d.refresh_token.map(Secret::new),
             expires_at: d.expires_at,
             email: d.email,
+            generation: d.generation,
         }))
     }
 
-    /// Writes the account `id`.
+    /// Writes the account `id`. The generation of the file is the old one
+    /// plus one (1 for a new file; a file that cannot be read counts as 0),
+    /// whatever `a.generation` holds. The caller holds the lifecycle lock
+    /// of the account.
     ///
     /// # Errors
     /// [`StoreError`].
@@ -270,6 +282,12 @@ impl AccountStore {
         if !valid_account_id(id) {
             return Err(StoreError::BadRecord);
         }
+        let generation = self
+            .account(id)
+            .ok()
+            .flatten()
+            .map_or(0, |old| old.generation)
+            .saturating_add(1);
         let disk = AccountDisk {
             kind: a.kind,
             method: a.method,
@@ -280,6 +298,7 @@ impl AccountStore {
             refresh_token: a.refresh_token.as_ref().map(|t| t.expose().clone()),
             expires_at: a.expires_at,
             email: a.email.clone(),
+            generation,
         };
         let bytes = serde_json::to_vec(&disk).map_err(|_| StoreError::BadRecord)?;
         self.write(&format!("acct-{id}.json"), &bytes)
@@ -395,6 +414,7 @@ mod tests {
             refresh_token: Some(Secret::new("refresh-canary-1".into())),
             expires_at: Some(1_900_000_000),
             email: None,
+            generation: 0,
         }
     }
 
@@ -452,6 +472,34 @@ mod tests {
         assert!(s.delete_account("linear-00000001").unwrap());
         assert!(!s.delete_account("linear-00000001").unwrap());
         assert!(s.account("linear-00000001").unwrap().is_none());
+    }
+
+    #[test]
+    fn every_write_increases_the_generation_and_an_old_file_reads_as_0() {
+        let tmp = tempfile::tempdir().unwrap();
+        let s = store(tmp.path());
+        let id = "jira-0a1b2c3d";
+        s.put_account(id, &account("a")).unwrap();
+        assert_eq!(s.account(id).unwrap().unwrap().generation, 1);
+        // A caller cannot set the counter: the file has the old one plus one.
+        let mut again = s.account(id).unwrap().unwrap();
+        again.generation = 40;
+        s.put_account(id, &again).unwrap();
+        assert_eq!(s.account(id).unwrap().unwrap().generation, 2);
+        // A file of an older build has no generation.
+        let path = s.dir().join(format!("acct-{id}.json"));
+        let old = fs::read_to_string(&path)
+            .unwrap()
+            .replace(",\"generation\":2", "");
+        assert!(!old.contains("generation"), "{old}");
+        fs::write(&path, old).unwrap();
+        assert_eq!(s.account(id).unwrap().unwrap().generation, 0);
+        s.put_account(id, &account("b")).unwrap();
+        assert_eq!(s.account(id).unwrap().unwrap().generation, 1);
+        // A deleted account starts again at 1.
+        assert!(s.delete_account(id).unwrap());
+        s.put_account(id, &account("c")).unwrap();
+        assert_eq!(s.account(id).unwrap().unwrap().generation, 1);
     }
 
     #[test]

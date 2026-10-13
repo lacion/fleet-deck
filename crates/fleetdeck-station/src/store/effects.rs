@@ -330,15 +330,27 @@ pub(super) fn register_worker(
     Ok(fence)
 }
 
-/// Claims the oldest queued effect for the worker with `fence`.
+/// Claims the oldest queued effect for the worker with `fence`. With
+/// `hold_starts` a queued start or resume effect stays queued, and so does
+/// any later effect of a session that has one (the restart freeze, PRE-PR
+/// r1).
 pub(super) fn claim_next(
     conn: &Connection,
     fence: u64,
+    hold_starts: bool,
     now: i64,
     out: &mut Vec<EventEnvelope>,
 ) -> Result<Option<Effect>> {
     check_fence(conn, fence)?;
-    let oldest = "seq = (SELECT MIN(seq) FROM effects WHERE state = 'queued')";
+    let oldest = if hold_starts {
+        "seq = (SELECT MIN(e.seq) FROM effects e WHERE e.state = 'queued' \
+         AND e.kind NOT IN ('start', 'resume') \
+         AND NOT EXISTS (SELECT 1 FROM effects h WHERE h.state = 'queued' \
+             AND h.kind IN ('start', 'resume') \
+             AND h.session_id = e.session_id AND h.seq < e.seq))"
+    } else {
+        "seq = (SELECT MIN(seq) FROM effects WHERE state = 'queued')"
+    };
     let mut effect = loop {
         let Some(effect) = select(conn, oldest, [])?.pop() else {
             return Ok(None);

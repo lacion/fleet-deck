@@ -20,6 +20,7 @@ pub mod hibernate;
 pub mod policy;
 pub mod policy_hub;
 mod restart_check;
+pub mod restart_gate;
 pub mod resume;
 pub mod revert;
 pub mod revert_run;
@@ -136,6 +137,9 @@ pub struct SessionManager {
     /// The provider report of `station.info`, probed once per process.
     providers: tokio::sync::OnceCell<Vec<StationProvider>>,
     draining: std::sync::atomic::AtomicBool,
+    /// The restart freeze and its counts, shared with the target (finding 3
+    /// of PRE-PR r1).
+    restart: Arc<restart_gate::RestartState>,
     /// The shells of the station, once the link node set them (DL-150).
     shells: target::ShellsSlot,
     /// The artifact service, once the station gave it a directory (DL-165).
@@ -295,7 +299,9 @@ impl SessionManager {
         let integrations = integrations
             .unwrap_or_else(|| crate::integrations::Integrations::new(policy.trackers().to_vec()));
         let hub = Arc::new(PolicyHub::new(policy));
+        let restart = Arc::<restart_gate::RestartState>::default();
         let mut target = SessionTarget::new(store.clone(), adapters, Arc::clone(&ids))
+            .with_restart(Arc::clone(&restart))
             .with_coordinator(coordinator.clone())
             .with_policy(Arc::clone(&hub))
             .with_shells(shells.clone());
@@ -340,6 +346,7 @@ impl SessionManager {
             tasks: std::sync::Mutex::new(tasks),
             providers: tokio::sync::OnceCell::new(),
             draining: std::sync::atomic::AtomicBool::new(false),
+            restart,
             shells,
             artifacts: std::sync::OnceLock::new(),
             assist: std::sync::OnceLock::new(),
@@ -558,9 +565,14 @@ impl SessionManager {
         let coordinator = self.coordinator.clone();
         let origin = envelope.origin;
         let command = envelope.command.clone();
+        // The count comes before the flag is read: the restart admission
+        // sets the flag, then waits for the count (restart_gate).
+        let _creating =
+            restart_gate::creates_session(&command).then(|| self.restart.enter_submit());
         let guard = auto_continue::guard(&command, &caller)
             .and_then(|()| coordinator_command::guard(&command, &caller))
-            .and_then(|()| drain::guard(self.draining(), &command));
+            .and_then(|()| drain::guard(self.draining(), &command))
+            .and_then(|()| restart_gate::guard(self.restart.restarting(), &command));
         let shells = self.shells.get();
         self.store
             .decide(envelope, caller, move |d| {
