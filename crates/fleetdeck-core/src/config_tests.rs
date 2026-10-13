@@ -1,5 +1,7 @@
 use std::path::Path;
 
+use fleetdeck_proto::integrations::TrackerKind;
+
 use super::*;
 
 fn env() -> Env {
