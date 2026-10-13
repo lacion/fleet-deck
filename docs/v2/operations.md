@@ -28,6 +28,7 @@ A missing file gives the defaults. An unknown key is an error.
 | `host` | `direct` | `direct`: the agents are children of the station and stop with it. `shim`: each agent runs under a `fleetdeck shim` process and survives a station restart or upgrade (ADR-005). |
 | `shim_buffer_mib` | `16` | The shim output buffer, 1–256 MiB. |
 | `repo_groups` | (empty) | Repository path → group name, for the conflict radar. |
+| `[[trackers]]` | (none) | A Jira or Linear tracker for the board's issue views (R3, DL-164). See "Trackers" below. |
 | `[[provider_instance]]` | `claude` and `codex` | `id`, `driver` (`claude` or `codex`), `binary`, `config_home`, `env` (values are secrets; they never leave the station). |
 
 Example:
@@ -48,6 +49,37 @@ id = "codex-work"
 driver = "codex"
 config_home = "~/.codex-work"
 ```
+
+### Trackers (`[[trackers]]`)
+
+GitHub and GitLab need no entry. The station uses the signed-in `gh` and `glab` of its own user (run `gh auth login` and `glab auth login` as that user). Jira Cloud and Linear need one `[[trackers]]` entry each:
+
+| Key | Meaning |
+| --- | --- |
+| `id` | A short name (1-32 of `a-z`, `0-9`, `-`, `_`). A project binding on the board names this id. |
+| `kind` | `jira` or `linear`. |
+| `site` | Jira only: `https://acme.atlassian.net`, without a path. |
+| `email` | Jira only: the account e-mail that owns the API token. |
+| `token_env` | The name of an environment variable of the station process that holds the API token. |
+| `token_file` | A file that holds the API token. It must have mode 0600. |
+
+Give exactly one of `token_env` and `token_file`. The token is read for each request and is never stored, logged, sent to the deck or put in the argument list or the environment of a child process (the station sends it to `curl` on stdin). A Jira API token comes from the Atlassian account page; a Linear personal API key comes from the Linear settings (API).
+
+```toml
+[[trackers]]
+id = "acme"
+kind = "jira"
+site = "https://acme.atlassian.net"
+email = "ana@acme.test"
+token_env = "JIRA_API_TOKEN"
+
+[[trackers]]
+id = "lin"
+kind = "linear"
+token_file = "~/.config/fleetdeck/linear.token"
+```
+
+Check the setup from the board (project preflight) or with the `integrations.status` link method. `gh`, `glab` and `curl` must be on the `PATH` of the station.
 
 ## 3. Deck configuration (`deck.toml`)
 

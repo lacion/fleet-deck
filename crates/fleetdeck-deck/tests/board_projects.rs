@@ -250,16 +250,22 @@ async fn the_owner_manages_projects_reads_prs_and_writes_with_a_confirm() {
         "the token and the missing confirm"
     );
 
-    // A review start reads the pull request and flags the command.
-    let started = board
-        .post(
-            &format!("/api/projects/{id}/sessions"),
-            &h,
-            json!({"batch_id": "batch-1", "provider_instance": "claude", "count_per_issue": 1,
-                   "review_of_pr": 9, "mode": "bypassPermissions"}),
-        )
-        .await;
-    assert_eq!(started.status, 200, "{}", started.body);
+    // A review start reads the pull request and flags the command. The
+    // deck may not have synced the station yet: the same batch id is safe to
+    // send again.
+    let review = json!({"batch_id": "batch-1", "provider_instance": "claude",
+        "count_per_issue": 1, "review_of_pr": 9, "mode": "bypassPermissions"});
+    let sessions = format!("/api/projects/{id}/sessions");
+    let deadline = tokio::time::Instant::now() + T;
+    let started = loop {
+        let r = board.post(&sessions, &h, review.clone()).await;
+        assert_eq!(r.status, 200, "{}", r.body);
+        if !r.body["started"].as_array().unwrap().is_empty() {
+            break r;
+        }
+        assert!(tokio::time::Instant::now() < deadline, "{}", r.body);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
     let command = &started.body["started"][0]["command"];
     assert_eq!(command["command_id"], "batch-1-1");
     let start = &command["envelope"]["command"];
@@ -273,14 +279,7 @@ async fn the_owner_manages_projects_reads_prs_and_writes_with_a_confirm() {
     );
     assert!(prompt.contains("src/a.rs (+3 -1)"));
     // A resend with the same batch id starts nothing new.
-    let again = board
-        .post(
-            &format!("/api/projects/{id}/sessions"),
-            &h,
-            json!({"batch_id": "batch-1", "provider_instance": "claude", "count_per_issue": 1,
-                   "review_of_pr": 9, "mode": "bypassPermissions"}),
-        )
-        .await;
+    let again = board.post(&sessions, &h, review).await;
     assert_eq!(
         again.body["started"][0]["command"]["command_id"],
         "batch-1-1"
