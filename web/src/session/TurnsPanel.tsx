@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Diff } from '../chat/Diff';
 import type { RevertResolution, SessionSummary, TurnDiff } from '../gen';
 import type { Outcome, SessionActions } from './commands';
+import { hasChanges } from './changes';
 import { type FinalizedTurn, revertBlock, revertHolds, revertText } from './workspace';
 
 type Props = {
@@ -92,16 +93,29 @@ export function TurnsPanel(props: Props) {
           return (
             <li key={t.turnId} className="fd-panel" data-turn={t.turnId} data-reverted={t.reverted}>
               <span className="fd-turn-name">Turn {i + 1}</span>
-              {t.diff ? (
+              {t.diff && hasChanges(t.diff) ? (
                 <span className="fd-turn-stat">
-                  {t.diff.files_changed} files <span className="fd-add">+{t.diff.insertions}</span>{' '}
-                  <span className="fd-del">−{t.diff.deletions}</span>
+                  {t.diff.files_changed} {t.diff.files_changed === 1 ? 'file' : 'files'}
+                  {t.diff.insertions > 0 ? (
+                    <>
+                      {' '}
+                      <span className="fd-add">+{t.diff.insertions}</span>
+                    </>
+                  ) : null}
+                  {t.diff.deletions > 0 ? (
+                    <>
+                      {' '}
+                      <span className="fd-del">−{t.diff.deletions}</span>
+                    </>
+                  ) : null}
                 </span>
               ) : t.end?.state === 'unavailable' ? (
                 <span className="fd-turn-stat">no completion checkpoint: {t.end.reason}</span>
-              ) : null}
+              ) : (
+                <span className="fd-turn-stat">No file changes</span>
+              )}
               {t.reverted ? <span className="fd-turn-stat">reverted</span> : null}
-              {t.diff && files ? (
+              {hasChanges(t.diff) && files ? (
                 <button type="button" className="fd-sm" onClick={() => showDiff(t.turnId)}>
                   Show the diff
                 </button>

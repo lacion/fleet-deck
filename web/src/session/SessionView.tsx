@@ -18,6 +18,7 @@ import type { ShellActions } from '../shell/shell';
 import { releaseHold, type Watch } from '../terminal/handover';
 import type { TerminalStore } from '../terminal/store';
 import { ApprovalDock } from './ApprovalDock';
+import { hasChanges } from './changes';
 import type { SessionActions } from './commands';
 import { Composer } from './Composer';
 import { useSessionController } from './controller';
@@ -149,13 +150,14 @@ export function SessionView(props: SessionViewProps) {
   const [confirmRelease, setConfirmRelease] = useState(false);
   const ids = useId();
   const tabs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const changed = turns.filter((t) => !t.reverted && hasChanges(t.diff)).length;
   const order: PaneTab[] = tabsOffered ? ['chat', 'changes', 'files'] : ['chat', 'changes'];
   const labels: Record<PaneTab, ReactNode> = {
     chat: 'Chat',
     changes:
-      turns.length > 0 ? (
+      changed > 0 ? (
         <>
-          Changes <span className="fd-count">{turns.length}</span>
+          Changes <span className="fd-count">{changed}</span>
         </>
       ) : (
         'Changes'

@@ -174,6 +174,29 @@ describe('session pane (DL-140)', () => {
     expect(changes).not.toContain('aria-label="Composer"');
   });
 
+  test('the Changes tab badge counts only the turns with changes and is absent for 0', () => {
+    const finalized = (turn: string, files: number): Event => ({
+      kind: 'turn.finalized',
+      turn_id: turn,
+      checkpoint: {
+        worktree_id: 'wt',
+        scope: 'tracked',
+        start: { state: 'available', commit: `${turn}-s` },
+        end: { state: 'available', commit: `${turn}-e` },
+      },
+      diff_summary: { files_changed: files, insertions: files, deletions: 0 },
+    });
+    const some = envelopes('nested', [finalized('t1', 1), finalized('t2', 0), finalized('t3', 2)]);
+    const html = view(session({ capabilities: codexCaps() }), timeline(some));
+    expect(html).toMatch(/>Changes <span class="fd-count">2<\/span><\/button>/);
+    const none = envelopes('nested', [finalized('t1', 0)]);
+    const empty = view(session({ capabilities: codexCaps() }), timeline(none));
+    expect(empty).toMatch(
+      /role="tab"[^>]*aria-selected="false"[^>]*tabindex="-1">Changes<\/button>/,
+    );
+    expect(empty).not.toContain('fd-count">0');
+  });
+
   test('the Changes tab says so when no turn has finished', () => {
     const html = view(session(), timeline(), { tab: 'changes' });
     expect(html).toContain(

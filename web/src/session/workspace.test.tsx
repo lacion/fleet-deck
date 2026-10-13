@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import type { CheckpointSide, DeckSession, Event, SessionRevert } from '../gen';
+import type { CheckpointSide, DeckSession, DiffSummary, Event, SessionRevert } from '../gen';
 import type { Timeline } from '../runtime/state';
 import { claudeCaps, codexCaps } from '../testing/capabilities';
 import { station } from '../testing/fleet';
@@ -22,13 +22,17 @@ const key = { station_id: 'station-a', session_id: 's1' };
 const ok = (commit: string): CheckpointSide => ({ state: 'available', commit });
 const gone = (reason: string): CheckpointSide => ({ state: 'unavailable', reason });
 
-function finalized(turn: string, start = ok(`${turn}-start`), end = ok(`${turn}-end`)): Event {
+function finalized(
+  turn: string,
+  start = ok(`${turn}-start`),
+  end = ok(`${turn}-end`),
+  diff: DiffSummary | null = { files_changed: 1, insertions: 2, deletions: 1 },
+): Event {
   return {
     kind: 'turn.finalized',
     turn_id: turn,
     checkpoint: { worktree_id: 'wt', scope: 'tracked', start, end },
-    diff_summary:
-      end.state === 'available' ? { files_changed: 1, insertions: 2, deletions: 1 } : null,
+    diff_summary: end.state === 'available' ? diff : null,
   };
 }
 
@@ -135,7 +139,7 @@ describe('turns and reverts (DL-097)', () => {
     const html = view(codex(), [finalized('t1'), finalized('t2', ok('s'), gone('queued_input'))]);
     expect(html).toContain('aria-label="Turns"');
     expect(html).toMatch(
-      /data-turn="t1" data-reverted="false"><span class="fd-turn-name">Turn 1<\/span><span class="fd-turn-stat">1 files <span class="fd-add">\+2<\/span> <span class="fd-del">−1<\/span><\/span>/,
+      /data-turn="t1" data-reverted="false"><span class="fd-turn-name">Turn 1<\/span><span class="fd-turn-stat">1 file <span class="fd-add">\+2<\/span> <span class="fd-del">−1<\/span><\/span>/,
     );
     expect(html).toContain('<span class="fd-turn-name">Turn 2</span>');
     expect(html).toContain(
@@ -147,6 +151,24 @@ describe('turns and reverts (DL-097)', () => {
     expect(html).not.toContain('aria-label="Files"');
     const files = view(codex(), [finalized('t1')], undefined, 'files');
     expect(files).toContain('aria-label="Files"');
+  });
+
+  test('a turn without file changes says so and has no Show the diff', () => {
+    const html = view(codex(), [
+      finalized('t1', ok('s'), ok('e'), { files_changed: 0, insertions: 0, deletions: 0 }),
+    ]);
+    expect(html).toContain('<span class="fd-turn-name">Turn 1</span>');
+    expect(html).toContain('<span class="fd-turn-stat">No file changes</span>');
+    expect(html).not.toContain('Show the diff');
+    expect(html).not.toContain('+0');
+  });
+
+  test('a turn with files and no line counts shows the files only', () => {
+    const html = view(codex(), [
+      finalized('t1', ok('s'), ok('e'), { files_changed: 2, insertions: 0, deletions: 0 }),
+    ]);
+    expect(html).toContain('<span class="fd-turn-stat">2 files</span>');
+    expect(html).toContain('Show the diff');
   });
 
   test('a reverted turn says so', () => {
