@@ -1,6 +1,7 @@
 //! Jira Cloud REST v3. Issue bodies and comments are Atlassian Document
 //! Format; the station converts them to Markdown ([`super::adf`]).
 
+use fleetdeck_proto::accounts::Container;
 use fleetdeck_proto::integrations::{
     IssueComment, IssueDetail, IssueRef, IssueSearch, IssueSummary, code,
 };
@@ -79,7 +80,7 @@ pub async fn search(t: &Tracker<'_>, q: &IssueSearch) -> Result<Vec<IssueSummary
     let answer = t
         .json(
             "POST",
-            format!("{}/rest/api/3/search/jql", t.site()),
+            format!("{}/rest/api/3/search/jql", t.base()),
             Some(&body),
         )
         .await?;
@@ -121,11 +122,12 @@ fn markdown(body: &Value, media: &MediaUrls) -> String {
 
 pub async fn get(t: &Tracker<'_>, key: &str) -> Result<IssueDetail, Fail> {
     let site = t.site();
+    let api = t.base();
     let issue = t
         .json(
             "GET",
             format!(
-                "{site}/rest/api/3/issue/{key}?fields=summary,description,status,assignee,priority,labels,updated,attachment,timetracking,customfield_10016"
+                "{api}/rest/api/3/issue/{key}?fields=summary,description,status,assignee,priority,labels,updated,attachment,timetracking,customfield_10016"
             ),
             None,
         )
@@ -133,14 +135,14 @@ pub async fn get(t: &Tracker<'_>, key: &str) -> Result<IssueDetail, Fail> {
     let list = t
         .json(
             "GET",
-            format!("{site}/rest/api/3/issue/{key}/comment?maxResults=30&orderBy=created"),
+            format!("{api}/rest/api/3/issue/{key}/comment?maxResults=30&orderBy=created"),
             None,
         )
         .await?;
     let remote = match t
         .json(
             "GET",
-            format!("{site}/rest/api/3/issue/{key}/remotelink"),
+            format!("{api}/rest/api/3/issue/{key}/remotelink"),
             None,
         )
         .await
@@ -152,7 +154,7 @@ pub async fn get(t: &Tracker<'_>, key: &str) -> Result<IssueDetail, Fail> {
         }
     };
     let fields = &issue["fields"];
-    let media = media_urls(site, &fields["attachment"]);
+    let media = media_urls(&api, &fields["attachment"]);
     let source = format!("jira:{key}");
     let body = markdown(&fields["description"], &media);
     let mut images = adf::image_urls(&fields["description"], &media);
@@ -207,7 +209,7 @@ pub async fn comment(t: &Tracker<'_>, key: &str, body: &str) -> Result<String, F
     let made = t
         .json(
             "POST",
-            format!("{site}/rest/api/3/issue/{key}/comment"),
+            format!("{}/rest/api/3/issue/{key}/comment", t.base()),
             Some(&json!({"body": adf::from_text(body)})),
         )
         .await?;
@@ -244,17 +246,18 @@ fn pick_transition(list: &Value, to: &str) -> Result<String, Fail> {
 
 pub async fn transition(t: &Tracker<'_>, key: &str, to: &str) -> Result<String, Fail> {
     let site = t.site();
+    let api = t.base();
     let list = t
         .json(
             "GET",
-            format!("{site}/rest/api/3/issue/{key}/transitions"),
+            format!("{api}/rest/api/3/issue/{key}/transitions"),
             None,
         )
         .await?;
     let id = pick_transition(&list, to)?;
     t.json(
         "POST",
-        format!("{site}/rest/api/3/issue/{key}/transitions"),
+        format!("{api}/rest/api/3/issue/{key}/transitions"),
         Some(&json!({"transition": {"id": id}})),
     )
     .await?;
@@ -263,13 +266,35 @@ pub async fn transition(t: &Tracker<'_>, key: &str, to: &str) -> Result<String, 
 
 pub async fn whoami(t: &Tracker<'_>) -> Result<String, Fail> {
     let me = t
-        .json("GET", format!("{}/rest/api/3/myself", t.site()), None)
+        .json("GET", format!("{}/rest/api/3/myself", t.base()), None)
         .await?;
     me["displayName"]
         .as_str()
         .or(me["emailAddress"].as_str())
         .map(str::to_owned)
         .ok_or_else(|| Fail::bad_answer("Jira gave no user name"))
+}
+
+/// The projects of the account (up to 100).
+pub async fn containers(t: &Tracker<'_>) -> Result<Vec<Container>, Fail> {
+    let answer = t
+        .json(
+            "GET",
+            format!("{}/rest/api/3/project/search?maxResults=100", t.base()),
+            None,
+        )
+        .await?;
+    Ok(answer["values"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|p| {
+            Some(Container {
+                key: p["key"].as_str()?.to_owned(),
+                name: p["name"].as_str().unwrap_or_default().to_owned(),
+            })
+        })
+        .collect())
 }
 
 #[cfg(test)]

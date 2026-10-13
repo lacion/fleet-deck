@@ -8,6 +8,8 @@ pub mod host {
     pub use fleetdeck_providers::host::*;
 }
 
+/// The connected GitHub, GitLab, Jira and Linear accounts (DL-173).
+pub mod accounts;
 /// Artifacts: versioned files that a session or a person publishes (R12).
 pub mod artifacts;
 /// Model help on the station (R10, DL-167).

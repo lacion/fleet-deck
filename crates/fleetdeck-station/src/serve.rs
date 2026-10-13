@@ -51,6 +51,8 @@ pub enum ServeError {
     Link(#[from] NodeError),
     #[error("shim host: the station executable is unknown: {0}")]
     ShimExe(std::io::Error),
+    #[error("account store: {0}")]
+    Accounts(#[from] crate::accounts::store::StoreError),
 }
 
 /// The shim host of `host = "shim"` (ADR-005 §1, §5.1): this executable
@@ -152,6 +154,14 @@ impl RunningStation {
                 SessionManager::start_with_shims(store, policy, adapters, ids, shims).await?
             }
         });
+        // The credential store of the connected accounts (DL-173): mode
+        // 0700, durable before the first account is written.
+        manager
+            .integrations()
+            .accounts()
+            .attach(crate::accounts::store::AccountStore::open(
+                &station_dir.join("accounts"),
+            )?);
         let assist = Arc::new(crate::assist::Assist::new(
             Arc::clone(manager.policy_hub()),
             manager.store().clone(),
