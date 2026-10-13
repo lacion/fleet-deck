@@ -57,6 +57,7 @@ config_home = "~/.codex-work"
 | `listen` | `127.0.0.1:7420` | The board HTTP and WebSocket addresses. Login is always required. |
 | `link_listen` | `127.0.0.1:7421` | The link listener for stations that dial the deck. |
 | `tailnet_hostname` | (none) | The tailnet DNS name of the deck, for the WebSocket `Origin` check. |
+| `conflict_mail` | `true` | When two sessions change the same file within 30 minutes, the deck sends each session one follow-up mail about it (DL-145). Set `false` to turn this off. |
 
 > **Caution:** use only loopback, private LAN or tailnet addresses. The deck refuses a public address. Do not forward a port from a router.
 
@@ -166,6 +167,8 @@ Limits of this release (DL-127, follow-ups in `docs/v2/progress/m3-durable.md`):
 - The station checks every ADR-007 rule when it stores the continuation. Right before the dispatch, it checks again only these rules: identity, proven end of the old process, newer owner work, requested stop and the time window. It does not check again the preference, the turn state, the capability, the workspace or a free session slot.
 
 ## 11. Troubleshooting
+
+Run `fleetdeck doctor` first. It changes nothing. It prints one line for each check (`ok`, `warn` or `fail`) and then a summary, and its exit code is 1 when a check fails. It checks the data directory and its mode, `station.toml` and `deck.toml` (parse and mode), `git`, the `--version` of each provider binary, `allow_shell`, the deck local socket, the board listener, and the v1 Fleet Deck Claude plugin. Remove the v1 plugin after the cutover: its hooks slow every stop of a v2 session.
 
 | Symptom | What to do |
 | --- | --- |
