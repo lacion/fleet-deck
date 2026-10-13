@@ -11,7 +11,8 @@ use std::sync::Arc;
 
 use fleetdeck_core::config::{HostChoice, StationConfig};
 use fleetdeck_core::identity::{Identity, IdentityError};
-use fleetdeck_core::paths::{NodeDirs, ensure_private_dir};
+use fleetdeck_core::paths::{Env, NodeDirs, ensure_private_dir};
+use fleetdeck_core::restart::Restart;
 use fleetdeck_core::{SharedClock, SharedIds, SystemClock, UlidSource};
 use fleetdeck_link::reconnect::BackoffPolicy;
 use fleetdeck_proto::command::StopMode;
@@ -79,9 +80,10 @@ fn shim_settings(
 pub async fn serve(
     dirs: &NodeDirs,
     config: &StationConfig,
+    restart: Option<Arc<dyn Restart>>,
     stop: impl Future<Output = ()>,
 ) -> Result<(), ServeError> {
-    let station = RunningStation::start(dirs, config).await?;
+    let station = RunningStation::start(dirs, config, restart).await?;
     stop.await;
     station.stop().await;
     Ok(())
@@ -104,11 +106,16 @@ pub struct RunningStation {
 
 impl RunningStation {
     /// Opens and recovers `station.db`, starts the manager, the link node
-    /// and the local socket.
+    /// and the local socket. `restart` is the restart request of the
+    /// process (DL-172); without it `station.restart` answers `unsupported`.
     ///
     /// # Errors
     /// [`ServeError`].
-    pub async fn start(dirs: &NodeDirs, config: &StationConfig) -> Result<Self, ServeError> {
+    pub async fn start(
+        dirs: &NodeDirs,
+        config: &StationConfig,
+        restart: Option<Arc<dyn Restart>>,
+    ) -> Result<Self, ServeError> {
         let station_dir = dirs.station();
         ensure_private_dir(&station_dir).map_err(|source| ServeError::Dir {
             path: station_dir.clone(),
@@ -146,6 +153,12 @@ impl RunningStation {
             assist_instances(config),
         ));
         manager.set_assist(Arc::clone(&assist));
+        manager.set_settings(Arc::new(crate::settings_svc::StationSettings::new(
+            &dirs.station_config(),
+            &station_dir.join("secrets"),
+            Env::from_process(),
+            restart,
+        )));
         let (shutdown, rx) = watch::channel(false);
         let assist_task = tokio::spawn(crate::assist::watch::run(
             assist,

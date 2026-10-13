@@ -19,6 +19,7 @@ pub mod files;
 pub mod hibernate;
 pub mod policy;
 pub mod policy_hub;
+mod restart_check;
 pub mod resume;
 pub mod revert;
 pub mod revert_run;
@@ -142,6 +143,9 @@ pub struct SessionManager {
     /// The model help of the station, once the station process set it
     /// (R10, DL-167).
     assist: std::sync::OnceLock<Arc<crate::assist::Assist>>,
+    /// The settings holder of the station, once the station process set it
+    /// (DL-172). Without it the settings methods answer `unsupported`.
+    settings: std::sync::OnceLock<Arc<crate::settings_svc::StationSettings>>,
 }
 
 impl std::fmt::Debug for SessionManager {
@@ -336,6 +340,7 @@ impl SessionManager {
             shells,
             artifacts: std::sync::OnceLock::new(),
             assist: std::sync::OnceLock::new(),
+            settings: std::sync::OnceLock::new(),
         })
     }
 
@@ -374,6 +379,18 @@ impl SessionManager {
     #[must_use]
     pub fn assist(&self) -> Option<Arc<crate::assist::Assist>> {
         self.assist.get().cloned()
+    }
+
+    /// Gives the manager the settings holder of the station (DL-172). The
+    /// first call wins.
+    pub fn set_settings(&self, settings: Arc<crate::settings_svc::StationSettings>) {
+        let _ = self.settings.set(settings);
+    }
+
+    /// The settings holder, if the station process set it.
+    #[must_use]
+    pub fn settings(&self) -> Option<Arc<crate::settings_svc::StationSettings>> {
+        self.settings.get().cloned()
     }
 
     #[must_use]

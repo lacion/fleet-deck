@@ -87,8 +87,8 @@ pub async fn up(
     restart: &RestartHandle,
 ) -> anyhow::Result<()> {
     let mut deck_config = DeckConfig::load(&dirs.deck_config())?;
-    // The station worker connects `restart` to the station side; until then
-    // the deck asks the local station, which answers `unsupported`.
+    // The deck asks the local station to restart (one process), and the
+    // station holds the same restart handle.
     let mut options = StartOptions::default();
     if let Some(listen) = args.listen {
         fleetdeck_core::netscope::check_bind(listen)
@@ -103,13 +103,14 @@ pub async fn up(
         &dirs.station().join("secrets"),
     )?;
     let deck = RunningDeck::start(dirs, &deck_config, BackoffPolicy::default(), options).await?;
-    let station = match RunningStation::start(dirs, &station_config).await {
-        Ok(s) => s,
-        Err(e) => {
-            deck.stop().await;
-            return Err(e.into());
-        }
-    };
+    let station =
+        match RunningStation::start(dirs, &station_config, Some(Arc::new(restart.clone()))).await {
+            Ok(s) => s,
+            Err(e) => {
+                deck.stop().await;
+                return Err(e.into());
+            }
+        };
     let paired = match pair_local(&deck, &station).await {
         Ok(p) => p,
         Err(e) => {
@@ -171,7 +172,7 @@ mod tests {
         let other = TempNode::new("other").unwrap();
         home.write_station_toml("name = \"home\"\nallowed_roots = [\"~/projects\"]\n")
             .unwrap();
-        let station = RunningStation::start(home.dirs(), &home.station_config().unwrap())
+        let station = RunningStation::start(home.dirs(), &home.station_config().unwrap(), None)
             .await
             .unwrap();
         let first = deck(&home).await;
