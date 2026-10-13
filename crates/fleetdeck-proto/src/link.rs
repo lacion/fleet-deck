@@ -334,6 +334,27 @@ pub struct WorkspaceEntry {
     pub group: Option<String>,
 }
 
+/// `workspace.preflight` params (DL-144): the Git URL that a clone would use.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "link/")]
+pub struct PreflightQuery {
+    pub url: String,
+}
+
+/// The `workspace.preflight` answer (DL-144): whether the station can read
+/// the remote with its own Git credentials.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "link/")]
+pub struct Preflight {
+    pub ok: bool,
+    /// The scrubbed end of the Git error text (at most 2000 characters);
+    /// empty when `ok`.
+    pub message: String,
+    /// What the owner can do about the failure, when the station knows.
+    pub hint: Option<String>,
+}
+
 /// `workspace.worktrees` params (DL-142): none.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields)]

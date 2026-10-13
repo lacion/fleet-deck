@@ -20,11 +20,15 @@ pub struct InputRecord {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum WorkspacePlan {
-    /// `git worktree add -b <branch> <path>` in `repo`.
+    /// `git worktree add -b <branch> <path> [<base>]` in `repo`; an existing
+    /// `branch` is checked out instead (DL-144).
     Worktree {
         repo: String,
         path: String,
         branch: String,
+        /// The commit-ish that a new `branch` starts from.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        base: Option<String>,
     },
     /// `git clone <url> <path>`.
     Clone { url: String, path: String },

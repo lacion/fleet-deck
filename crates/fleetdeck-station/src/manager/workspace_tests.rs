@@ -39,7 +39,7 @@ fn start_cmd(cwd: &str, workspace: Option<WorkspaceRequest>) -> SessionCommand {
     SessionCommand::Start {
         spec: spec(cwd, "claude"),
         prompt: Some(text("hello")),
-        workspace,
+        workspace: workspace.map(Box::new),
     }
 }
 
@@ -58,7 +58,13 @@ async fn a_worktree_start_creates_the_callsign_worktree_on_its_branch() {
     let ws = st.workspace();
     init_repo(Path::new(&ws));
     let d = st
-        .accepted(start_cmd(&ws, Some(WorkspaceRequest::Worktree)))
+        .accepted(start_cmd(
+            &ws,
+            Some(WorkspaceRequest::Worktree {
+                branch: None,
+                base: None,
+            }),
+        ))
         .await;
     let s = d.receipt.result.unwrap().session_id.unwrap();
     let sum = summary(&st, &s).await;
@@ -100,6 +106,172 @@ async fn a_worktree_start_creates_the_callsign_worktree_on_its_branch() {
     st.manager.shutdown(StopMode::Kill).await;
 }
 
+fn worktree(branch: Option<&str>, base: Option<&str>) -> Option<WorkspaceRequest> {
+    Some(WorkspaceRequest::Worktree {
+        branch: branch.map(str::to_owned),
+        base: base.map(str::to_owned),
+    })
+}
+
+/// The message of the first `start_failed` error.
+async fn start_failure(st: &Station) -> String {
+    st.wait_for("start failure", |e| match e {
+        Event::Error { code, message, .. } if code == "start_failed" => Some(message.clone()),
+        _ => None,
+    })
+    .await
+}
+
+#[tokio::test]
+async fn a_worktree_start_on_an_existing_branch_checks_it_out_and_names_the_ticket() {
+    let mut st = Station::new(4).await;
+    let ws = st.workspace();
+    init_repo(Path::new(&ws));
+    git(Path::new(&ws), &["branch", "feature/PROJ-123-login"]);
+    let d = st
+        .accepted(start_cmd(
+            &ws,
+            worktree(Some("feature/PROJ-123-login"), None),
+        ))
+        .await;
+    let s = d.receipt.result.unwrap().session_id.unwrap();
+    let sum = summary(&st, &s).await;
+    let callsign = sum.callsign.clone().unwrap();
+    let (animal, key) = callsign.split_once('-').unwrap();
+    assert!(crate::workspace::provision::CALLSIGNS.contains(&animal));
+    assert_eq!(key, "PROJ-123");
+    assert_eq!(sum.branch.as_deref(), Some("feature/PROJ-123-login"));
+    st.wait_for("started", |e| {
+        matches!(e, Event::SessionStarted { .. }).then_some(())
+    })
+    .await;
+    let path = sum.worktree.unwrap();
+    assert!(path.ends_with(&format!("app--fd-{callsign}")), "{path}");
+    assert_eq!(
+        git(Path::new(&path), &["rev-parse", "--abbrev-ref", "HEAD"]),
+        "feature/PROJ-123-login"
+    );
+    // The same branch again: Git refuses a branch checked out elsewhere.
+    let d = st
+        .accepted(start_cmd(
+            &ws,
+            worktree(Some("feature/PROJ-123-login"), None),
+        ))
+        .await;
+    let s2 = d.receipt.result.unwrap().session_id.unwrap();
+    let message = start_failure(&st).await;
+    assert!(
+        message.starts_with("the workspace was not created"),
+        "{message}"
+    );
+    assert_eq!(st.state(&s2).await, SessionState::Exited);
+    st.manager.shutdown(StopMode::Kill).await;
+}
+
+#[tokio::test]
+async fn a_worktree_start_on_a_new_branch_starts_from_the_base() {
+    let mut st = Station::new(4).await;
+    let ws = st.workspace();
+    init_repo(Path::new(&ws));
+    let first = git(Path::new(&ws), &["rev-parse", "HEAD"]);
+    std::fs::write(Path::new(&ws).join("b.txt"), "two\n").unwrap();
+    git(Path::new(&ws), &["add", "b.txt"]);
+    git(Path::new(&ws), &["commit", "-qm", "two"]);
+    let d = st
+        .accepted(start_cmd(&ws, worktree(Some("topic/new"), Some(&first))))
+        .await;
+    let s = d.receipt.result.unwrap().session_id.unwrap();
+    st.wait_for("started", |e| {
+        matches!(e, Event::SessionStarted { .. }).then_some(())
+    })
+    .await;
+    let sum = summary(&st, &s).await;
+    assert_eq!(sum.branch.as_deref(), Some("topic/new"));
+    // No ticket key in the branch: today's callsign.
+    assert_eq!(sum.callsign.unwrap().split_once('-').unwrap().1.len(), 4);
+    let path = sum.worktree.unwrap();
+    let path = Path::new(&path);
+    assert_eq!(
+        git(path, &["rev-parse", "--abbrev-ref", "HEAD"]),
+        "topic/new"
+    );
+    assert_eq!(git(path, &["rev-parse", "HEAD"]), first);
+    assert!(!path.join("b.txt").exists());
+    st.manager.shutdown(StopMode::Kill).await;
+}
+
+#[tokio::test]
+async fn a_bad_base_or_a_base_on_an_existing_branch_fails_the_start() {
+    let mut st = Station::new(4).await;
+    let ws = st.workspace();
+    init_repo(Path::new(&ws));
+    git(Path::new(&ws), &["branch", "old"]);
+    let d = st
+        .accepted(start_cmd(
+            &ws,
+            worktree(Some("topic/x"), Some("no-such-ref")),
+        ))
+        .await;
+    let s = d.receipt.result.unwrap().session_id.unwrap();
+    let message = start_failure(&st).await;
+    assert!(
+        message.contains("the base `no-such-ref` is not a commit"),
+        "{message}"
+    );
+    assert_eq!(st.state(&s).await, SessionState::Exited);
+    let sum = summary(&st, &s).await;
+    assert!(!Path::new(&sum.worktree.unwrap()).exists());
+    assert_eq!(git(Path::new(&ws), &["branch", "--list", "topic/x"]), "");
+
+    let d = st
+        .accepted(start_cmd(&ws, worktree(Some("old"), Some("HEAD"))))
+        .await;
+    let s = d.receipt.result.unwrap().session_id.unwrap();
+    st.settled(&s).await;
+    let events = st.events().await;
+    let found = events.iter().any(|e| {
+        matches!(&e.event, fleetdeck_proto::event::EventBody::Known(Event::Error { message, .. })
+            if message.contains("the branch `old` exists; a base applies only to a new branch"))
+    });
+    assert!(found, "{:#?}", events);
+    st.manager.shutdown(StopMode::Kill).await;
+}
+
+#[tokio::test]
+async fn a_bad_branch_choice_is_refused_in_the_decision() {
+    let mut st = Station::new(4).await;
+    let ws = st.workspace();
+    init_repo(Path::new(&ws));
+    for (branch, base) in [
+        (Some("-x"), None),
+        (Some("a b"), None),
+        (Some("a..b"), None),
+        (Some("a/"), None),
+        (Some("x.lock"), None),
+        (None, Some("main")),
+        (Some("ok"), Some("-x")),
+        (Some("ok"), Some("a b")),
+    ] {
+        let code = st.rejected(start_cmd(&ws, worktree(branch, base))).await;
+        assert_eq!(code, RejectCode::InvalidCommand, "{branch:?} {base:?}");
+    }
+    let projects = Path::new(&ws).parent().unwrap();
+    assert_eq!(std::fs::read_dir(projects).unwrap().count(), 1);
+    st.manager.shutdown(StopMode::Kill).await;
+}
+
+#[tokio::test]
+async fn a_start_in_place_takes_the_ticket_key_from_the_current_branch() {
+    let mut st = Station::new(4).await;
+    let ws = st.workspace();
+    init_repo(Path::new(&ws));
+    git(Path::new(&ws), &["checkout", "-qb", "feature/PROJ-9-x"]);
+    let s = st.start(&ws, None).await;
+    let callsign = summary(&st, &s).await.callsign.unwrap();
+    assert_eq!(callsign.split_once('-').unwrap().1, "PROJ-9");
+    st.manager.shutdown(StopMode::Kill).await;
+}
+
 #[tokio::test]
 async fn every_session_gets_its_own_callsign() {
     let mut st = Station::new(8).await;
@@ -120,7 +292,13 @@ async fn a_worktree_start_outside_a_repository_is_refused_and_creates_nothing() 
     let mut st = Station::new(4).await;
     let ws = st.workspace();
     let code = st
-        .rejected(start_cmd(&ws, Some(WorkspaceRequest::Worktree)))
+        .rejected(start_cmd(
+            &ws,
+            Some(WorkspaceRequest::Worktree {
+                branch: None,
+                base: None,
+            }),
+        ))
         .await;
     assert_eq!(code, RejectCode::InvalidCommand);
     let projects = Path::new(&ws).parent().unwrap();

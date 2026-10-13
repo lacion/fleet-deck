@@ -16,7 +16,7 @@ use fleetdeck_link::methods::code;
 use fleetdeck_link::revoke::{RotateError, check_rotation, finish_rotation};
 use fleetdeck_proto::command::{CommandResult, ReceiptState};
 use fleetdeck_proto::link::{
-    Outcome, ReceiptQuery, StationInfo, WireError, WorkspaceQuery, WorktreesQuery,
+    Outcome, PreflightQuery, ReceiptQuery, StationInfo, WireError, WorkspaceQuery, WorktreesQuery,
 };
 use fleetdeck_proto::mutation::Mutation;
 use fleetdeck_proto::{Receipt, Reject, RejectCode};
@@ -89,6 +89,32 @@ async fn worktrees(ctx: &StationLink, params: serde_json::Value) -> Outcome {
     {
         Ok(list) => ok(list),
         Err(e) => internal(e),
+    }
+}
+
+/// `workspace.preflight` (DL-144): the Git access check of a clone URL. A
+/// failed check is an answer with `ok: false`. Error codes `invalid_url`,
+/// `forbidden` (the URL rules of a clone) and `internal`.
+async fn preflight(ctx: &StationLink, params: serde_json::Value) -> Outcome {
+    use crate::workspace::GitOptions;
+    use crate::workspace::preflight::{self, PreflightError};
+    let query: PreflightQuery = match serde_json::from_value(params) {
+        Ok(q) => q,
+        Err(e) => return bad_params(e),
+    };
+    let policy = ctx.manager.policy();
+    let inside = |p: &std::path::Path| policy.workspace(&p.to_string_lossy()).ok();
+    match preflight::run(&query.url, inside, &GitOptions::isolated().program).await {
+        Ok(answer) => ok(answer),
+        Err(PreflightError::Refused(r)) => Outcome::Err(WireError::new(
+            if r.forbidden {
+                "forbidden"
+            } else {
+                "invalid_url"
+            },
+            r.message,
+        )),
+        Err(PreflightError::Spawn(e)) => internal(e),
     }
 }
 
@@ -176,6 +202,7 @@ async fn read(ctx: &StationLink, req: InboundRequest) -> Outcome {
         }),
         "workspace.list" => workspaces(ctx, req.params).await,
         "workspace.worktrees" => worktrees(ctx, req.params).await,
+        "workspace.preflight" => preflight(ctx, req.params).await,
         "files.list" | "files.read" | "files.search" | "files.diff" => {
             file_method(ctx, &req.method, req.params).await
         }
