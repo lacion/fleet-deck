@@ -717,6 +717,9 @@ mod revert_wired;
 #[path = "rename_tests.rs"]
 mod rename;
 
+#[path = "assist_wired_tests.rs"]
+mod assist_wired;
+
 #[path = "setup_tests.rs"]
 mod setup;
 

@@ -32,4 +32,14 @@ allow_setup_cmd?: boolean | null,
 /**
  * The configured provider instances with their probed versions.
  */
-providers: Array<StationProvider>, };
+providers: Array<StationProvider>, 
+/**
+ * The tokens that the station's model help used today (DL-167, R10).
+ * Absent from a station without model help, or with it switched off.
+ */
+assist_tokens_today?: number | null, 
+/**
+ * The daily token cap of the station's model help. Absent when the
+ * model help is off.
+ */
+assist_cap?: number | null, };

@@ -126,6 +126,9 @@ pub struct SessionManager {
     draining: std::sync::atomic::AtomicBool,
     /// The shells of the station, once the link node set them (DL-150).
     shells: target::ShellsSlot,
+    /// The model help of the station, once the station process set it
+    /// (R10, DL-167).
+    assist: std::sync::OnceLock<Arc<crate::assist::Assist>>,
 }
 
 impl std::fmt::Debug for SessionManager {
@@ -276,6 +279,7 @@ impl SessionManager {
             providers: tokio::sync::OnceCell::new(),
             draining: std::sync::atomic::AtomicBool::new(false),
             shells,
+            assist: std::sync::OnceLock::new(),
         })
     }
 
@@ -284,6 +288,18 @@ impl SessionManager {
     /// (DL-150). The first call wins.
     pub fn set_shells(&self, shells: Arc<crate::shell::Shells>) {
         self.shells.set(shells);
+    }
+
+    /// Gives the manager the model help of the station (R10, DL-167). The
+    /// first call wins.
+    pub fn set_assist(&self, assist: Arc<crate::assist::Assist>) {
+        let _ = self.assist.set(assist);
+    }
+
+    /// The model help, if the station process set it.
+    #[must_use]
+    pub fn assist(&self) -> Option<Arc<crate::assist::Assist>> {
+        self.assist.get().cloned()
     }
 
     #[must_use]

@@ -57,6 +57,8 @@ pub mod feature {
     /// `session.worktree_trash`, `_restore`, `_purge` and `_release`: the
     /// worktree trash (DL-150).
     pub const TRASH: &str = "workspace.trash.v1";
+    /// `assist.generate`: model help on the station (R10, DL-167).
+    pub const ASSIST: &str = "assist.v1";
 
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
@@ -76,6 +78,7 @@ pub mod feature {
         PREFLIGHT,
         WRITE_TEMP,
         TRASH,
+        ASSIST,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];

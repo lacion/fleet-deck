@@ -14,6 +14,7 @@ use fleetdeck_core::identity::PeerKey;
 use fleetdeck_link::control::{Control, InboundRequest};
 use fleetdeck_link::methods::code;
 use fleetdeck_link::revoke::{RotateError, check_rotation, finish_rotation};
+use fleetdeck_proto::assist::AssistRequest;
 use fleetdeck_proto::command::{CommandResult, ReceiptState};
 use fleetdeck_proto::link::{
     Outcome, PasteImage, PreflightQuery, ReceiptQuery, StationInfo, WireError, WorkspaceQuery,
@@ -145,6 +146,30 @@ async fn preflight(ctx: &StationLink, params: serde_json::Value) -> Outcome {
     }
 }
 
+/// `assist.generate` (DL-167): one model-help text. Error codes `disabled`,
+/// `budget`, `no_provider`, `invalid_params` and `failed`; a caller keeps
+/// its plain fallback for each of them.
+async fn assist(ctx: &StationLink, params: serde_json::Value) -> Outcome {
+    let request: AssistRequest = match serde_json::from_value(params) {
+        Ok(q) => q,
+        Err(e) => return bad_params(e),
+    };
+    let Some(assist) = ctx.manager.assist() else {
+        return Outcome::Err(WireError::new(
+            "disabled",
+            "this station runs without model help",
+        ));
+    };
+    let providers = ctx.manager.providers().await;
+    match assist
+        .generate(request.kind, &request.input, &providers)
+        .await
+    {
+        Ok(answer) => ok(answer),
+        Err(e) => Outcome::Err(WireError::new(e.code(), e.to_string())),
+    }
+}
+
 /// The `files.v1` methods (M3 DL-088). A [`FileError`] keeps its code.
 ///
 /// [`FileError`]: crate::workspace::files::FileError
@@ -217,20 +242,29 @@ async fn answer(
 async fn read(ctx: &StationLink, req: InboundRequest) -> Outcome {
     let store = ctx.manager.store();
     match req.method.as_str() {
-        "station.info" => ok(StationInfo {
-            name: ctx.name.clone(),
-            incarnation: store.incarnation().clone(),
-            head: store.head(),
-            live_sessions: ctx.manager.live_sessions() as u64,
-            version: Some(env!("CARGO_PKG_VERSION").to_owned()),
-            max_sessions: Some(ctx.manager.policy().max_sessions()),
-            allow_shell: Some(ctx.shells.allowed()),
-            allow_setup_cmd: Some(ctx.manager.policy().allow_setup_cmd()),
-            providers: ctx.manager.providers().await,
-        }),
+        "station.info" => {
+            let usage = match ctx.manager.assist() {
+                Some(assist) => assist.usage().await,
+                None => None,
+            };
+            ok(StationInfo {
+                name: ctx.name.clone(),
+                incarnation: store.incarnation().clone(),
+                head: store.head(),
+                live_sessions: ctx.manager.live_sessions() as u64,
+                version: Some(env!("CARGO_PKG_VERSION").to_owned()),
+                max_sessions: Some(ctx.manager.policy().max_sessions()),
+                allow_shell: Some(ctx.shells.allowed()),
+                allow_setup_cmd: Some(ctx.manager.policy().allow_setup_cmd()),
+                providers: ctx.manager.providers().await,
+                assist_tokens_today: usage.map(|(tokens, _)| tokens),
+                assist_cap: usage.map(|(_, cap)| cap),
+            })
+        }
         "workspace.list" => workspaces(ctx, req.params).await,
         "workspace.worktrees" => worktrees(ctx, req.params).await,
         "workspace.preflight" => preflight(ctx, req.params).await,
+        "assist.generate" => assist(ctx, req.params).await,
         "files.write_temp" => write_temp(ctx, req.params).await,
         "files.list" | "files.read" | "files.search" | "files.diff" => {
             file_method(ctx, &req.method, req.params).await

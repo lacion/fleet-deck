@@ -8,6 +8,9 @@ pub mod host {
     pub use fleetdeck_providers::host::*;
 }
 
+/// Model help on the station (R10, DL-167).
+pub mod assist;
+
 /// Crash injection at the effect boundaries (M2 P2-8).
 /// The coordinator MCP endpoint (M3 6-5, ADR-006).
 pub mod coordinator;

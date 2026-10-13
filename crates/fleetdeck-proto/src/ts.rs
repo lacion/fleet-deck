@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 
 use ts_rs::{Config, TS};
 
+use crate::assist::{AssistAnswer, AssistKind, AssistRequest, AssistRoute, AssistSession};
 use crate::board::{
     AddStationRequest, ArchiveChange, ArchiveItem, ArchiveList, ArchiveRef, BoardClientMessage,
     BoardServerMessage, CommandRequest, DeckCommand, DeckSession, DeviceLink, DeviceLinkEntry,
@@ -124,6 +125,11 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         FileConflict::export_all(&cfg),
         PlanStatus::export_all(&cfg),
         PlanMarkRequest::export_all(&cfg),
+        AssistKind::export_all(&cfg),
+        AssistRequest::export_all(&cfg),
+        AssistAnswer::export_all(&cfg),
+        AssistRoute::export_all(&cfg),
+        AssistSession::export_all(&cfg),
     ];
     for result in results {
         result.map_err(io::Error::other)?;
