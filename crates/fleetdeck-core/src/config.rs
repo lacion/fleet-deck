@@ -7,7 +7,9 @@
 //! - A file that other users can write is refused: it names binaries that the
 //!   station runs.
 //! - Listen addresses must pass the D13 bind rule (`netscope::check_bind`).
-//! - Instance `env` values are [`Secret`]s (they often hold API keys).
+//! - Instance `env` values are [`Secret`]s (they often hold API keys). A
+//!   value is a plain string or a reference `{ secret = "<name>" }` to a file
+//!   of the secret store (DL-172).
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -23,9 +25,22 @@ use serde::Deserialize;
 use crate::netscope::{self, AddrError};
 use crate::paths::{Env, PathError, expand_path};
 use crate::secret::Secret;
+use crate::settings::refs;
 
+#[path = "config_model_help.rs"]
+mod model_help_cfg;
+#[cfg(test)]
+pub(crate) use model_help_cfg::RAW_MODEL_HELP_KEYS;
+use model_help_cfg::RawModelHelp;
+pub use model_help_cfg::{
+    DEFAULT_ASSIST_CLAUDE_MODEL, DEFAULT_ASSIST_CODEX_MODEL, DEFAULT_ASSIST_DAILY_TOKEN_CAP,
+    DEFAULT_ASSIST_MAX_OUTPUT_TOKENS, ModelHelpConfig,
+};
+#[path = "config_toml.rs"]
+mod toml_text;
 #[path = "config_trackers.rs"]
 mod trackers_cfg;
+use toml_text::toml_error;
 use trackers_cfg::{RawTracker, parse_trackers};
 pub use trackers_cfg::{TokenError, TokenSource, TrackerConfig};
 
@@ -54,11 +69,6 @@ impl HostChoice {
         }
     }
 }
-/// The default models of the station's model help (R10, DL-167).
-pub const DEFAULT_ASSIST_CLAUDE_MODEL: &str = "claude-haiku-5-5";
-pub const DEFAULT_ASSIST_CODEX_MODEL: &str = "gpt-5.6-luna";
-pub const DEFAULT_ASSIST_MAX_OUTPUT_TOKENS: u32 = 400;
-pub const DEFAULT_ASSIST_DAILY_TOKEN_CAP: u64 = 200_000;
 pub const DEFAULT_BOARD_LISTEN: &str = "127.0.0.1:7420";
 pub const DEFAULT_LINK_LISTEN: &str = "127.0.0.1:7421";
 
@@ -186,59 +196,6 @@ pub fn parse_duration(text: &str) -> Result<Duration, String> {
         .ok_or_else(bad)
 }
 
-/// A TOML error with the position and a fixed description only. A config
-/// file can hold provider secrets in `env`, and the parser's message and
-/// excerpt can copy a value (a number, a string, a variant) to the terminal
-/// or the service log, so no parser text is shown (DL-136, DL-137).
-fn toml_error(text: &str, e: &toml::de::Error) -> ConfigError {
-    let at = e
-        .span()
-        .map(|span| {
-            let before = text.get(..span.start).unwrap_or(text);
-            let line = before.matches('\n').count() + 1;
-            let column = before.rsplit('\n').next().map_or(0, |l| l.chars().count()) + 1;
-            format!("line {line}, column {column}: ")
-        })
-        .unwrap_or_default();
-    ConfigError::Toml {
-        path: PathBuf::new(),
-        message: format!("{at}{}", toml_category(e.message())),
-    }
-}
-
-/// A value-free description of a parser message. Only names from this
-/// crate's own schema (`missing field`) are kept; everything else becomes a
-/// fixed text.
-fn toml_category(message: &str) -> String {
-    if message.starts_with("missing field `")
-        && let Some(name) = message
-            .strip_prefix("missing field `")
-            .and_then(|rest| rest.strip_suffix('`'))
-        && name.chars().all(|c| c.is_ascii_lowercase() || c == '_')
-    {
-        return format!("missing field `{name}`");
-    }
-    let fixed = [
-        ("unknown field", "unknown field (check the key names)"),
-        (
-            "unknown variant",
-            "unknown variant (not one of the allowed values)",
-        ),
-        ("invalid type", "invalid type (a value has the wrong type)"),
-        ("invalid value", "invalid value"),
-        ("invalid length", "invalid length"),
-        ("duplicate key", "duplicate key"),
-        ("duplicate field", "duplicate key"),
-    ];
-    fixed
-        .iter()
-        .find(|(prefix, _)| message.starts_with(prefix))
-        .map_or_else(
-            || "invalid TOML syntax".to_owned(),
-            |(_, text)| (*text).to_owned(),
-        )
-}
-
 /// The largest `hibernate_after_min`: one week.
 pub const MAX_HIBERNATE_AFTER_MIN: u32 = 7 * 24 * 60;
 
@@ -278,98 +235,27 @@ pub struct StationConfig {
     pub model_help: ModelHelpConfig,
 }
 
-/// The `[model_help]` table of `station.toml` (R10, DL-167). It is also the
-/// off switch: `enabled = false` makes every call answer `disabled`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ModelHelpConfig {
-    pub enabled: bool,
-    pub claude_model: String,
-    pub codex_model: String,
-    /// The driver to use. `None`: the first provider instance that is
-    /// signed in.
-    pub provider: Option<Driver>,
-    /// The output limit of one call, in tokens.
-    pub per_call_max_output_tokens: u32,
-    /// The tokens (input and output) that the station spends in one UTC day.
-    pub daily_token_cap: u64,
-}
-
-impl Default for ModelHelpConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            claude_model: DEFAULT_ASSIST_CLAUDE_MODEL.to_owned(),
-            codex_model: DEFAULT_ASSIST_CODEX_MODEL.to_owned(),
-            provider: None,
-            per_call_max_output_tokens: DEFAULT_ASSIST_MAX_OUTPUT_TOKENS,
-            daily_token_cap: DEFAULT_ASSIST_DAILY_TOKEN_CAP,
-        }
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawModelHelp {
-    enabled: Option<bool>,
-    claude_model: Option<String>,
-    codex_model: Option<String>,
-    provider: Option<Driver>,
-    per_call_max_output_tokens: Option<u32>,
-    daily_token_cap: Option<u64>,
-}
-
-impl RawModelHelp {
-    fn validate(self) -> Result<ModelHelpConfig, ConfigError> {
-        let model = |field: &str, value: Option<String>, default: &str| {
-            let value = value.unwrap_or_else(|| default.to_owned());
-            // A model name is a command line argument: it must not look
-            // like an option.
-            let ok = (1..=100).contains(&value.len())
-                && !value.starts_with('-')
-                && value
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b':'));
-            if ok {
-                Ok(value)
-            } else {
-                Err(invalid(
-                    format!("model_help.{field}"),
-                    "use 1-100 of A-Z, a-z, 0-9, `-`, `_`, `.`, `:`, not starting with `-`",
-                ))
-            }
-        };
-        let per_call = self
-            .per_call_max_output_tokens
-            .unwrap_or(DEFAULT_ASSIST_MAX_OUTPUT_TOKENS);
-        if !(1..=4000).contains(&per_call) {
-            return Err(invalid(
-                "model_help.per_call_max_output_tokens",
-                "use a value from 1 to 4000",
-            ));
-        }
-        let cap = self
-            .daily_token_cap
-            .unwrap_or(DEFAULT_ASSIST_DAILY_TOKEN_CAP);
-        if !(1..=1_000_000_000).contains(&cap) {
-            return Err(invalid(
-                "model_help.daily_token_cap",
-                "use a value from 1 to 1000000000",
-            ));
-        }
-        Ok(ModelHelpConfig {
-            enabled: self.enabled.unwrap_or(true),
-            claude_model: model(
-                "claude_model",
-                self.claude_model,
-                DEFAULT_ASSIST_CLAUDE_MODEL,
-            )?,
-            codex_model: model("codex_model", self.codex_model, DEFAULT_ASSIST_CODEX_MODEL)?,
-            provider: self.provider,
-            per_call_max_output_tokens: per_call,
-            daily_token_cap: cap,
-        })
-    }
-}
+/// The keys of `station.toml` (`RawStation`). `model_help` is a table; its
+/// keys are in [`RAW_MODEL_HELP_KEYS`].
+#[cfg(test)]
+pub(crate) const RAW_STATION_KEYS: &[&str] = &[
+    "name",
+    "allowed_roots",
+    "max_sessions",
+    "allow_setup_cmd",
+    "allow_shell",
+    "max_shells",
+    "offline_approval_policy",
+    "listen",
+    "provider_instance",
+    "host",
+    "shim_buffer_mib",
+    "repo_groups",
+    "hibernate_after_min",
+    "trackers",
+    "member_deny",
+    "model_help",
+];
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -392,6 +278,9 @@ struct RawStation {
     model_help: Option<RawModelHelp>,
 }
 
+/// The keys of one `[[provider_instance]]` (`RawInstance`).
+pub(crate) const RAW_INSTANCE_KEYS: &[&str] = &["id", "driver", "binary", "config_home", "env"];
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawInstance {
@@ -400,19 +289,53 @@ struct RawInstance {
     binary: Option<String>,
     config_home: Option<String>,
     #[serde(default)]
-    env: BTreeMap<String, String>,
+    env: BTreeMap<String, RawEnvValue>,
+}
+
+/// An `env` value: the plain text, or a reference to the secret store.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum RawEnvValue {
+    Plain(String),
+    Reference(RawSecretRef),
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawSecretRef {
+    secret: String,
 }
 
 impl StationConfig {
-    /// Reads `path`; a missing file gives the defaults.
+    /// Reads `path`; a missing file gives the defaults. A secret reference
+    /// is an error here: use [`Self::load_with_store`].
     pub fn load(path: &Path, env: &Env) -> Result<Self, ConfigError> {
+        Self::load_inner(path, env, None)
+    }
+
+    /// Like [`Self::load`], and resolves the secret references from `store`
+    /// (`<station data>/secrets`, DL-172).
+    pub fn load_with_store(path: &Path, env: &Env, store: &Path) -> Result<Self, ConfigError> {
+        Self::load_inner(path, env, Some(store))
+    }
+
+    fn load_inner(path: &Path, env: &Env, store: Option<&Path>) -> Result<Self, ConfigError> {
         match read_owner_file(path)? {
-            Some(text) => Self::parse(&text, env).map_err(|e| with_path(e, path)),
-            None => Self::parse("", env),
+            Some(text) => Self::parse_with_store(&text, env, store).map_err(|e| with_path(e, path)),
+            None => Self::parse_with_store("", env, store),
         }
     }
 
     pub fn parse(text: &str, env: &Env) -> Result<Self, ConfigError> {
+        Self::parse_with_store(text, env, None)
+    }
+
+    /// Like [`Self::parse`], and resolves the secret references from `store`.
+    pub fn parse_with_store(
+        text: &str,
+        env: &Env,
+        store: Option<&Path>,
+    ) -> Result<Self, ConfigError> {
         let raw: RawStation = toml::from_str(text).map_err(|e| toml_error(text, &e))?;
         let home = env.home.as_deref();
         let name = match raw.name {
@@ -463,7 +386,7 @@ impl StationConfig {
             ));
         }
         let provider_instances = match raw.provider_instance {
-            Some(list) => parse_instances(list, home)?,
+            Some(list) => parse_instances(list, home, store)?,
             None => vec![
                 ProviderInstance::default_for(Driver::Claude),
                 ProviderInstance::default_for(Driver::Codex),
@@ -539,6 +462,7 @@ const MAX_MEMBER_DENY: usize = 200;
 fn parse_instances(
     list: Vec<RawInstance>,
     home: Option<&Path>,
+    store: Option<&Path>,
 ) -> Result<Vec<ProviderInstance>, ConfigError> {
     let mut out: Vec<ProviderInstance> = Vec::with_capacity(list.len());
     for (i, raw) in list.into_iter().enumerate() {
@@ -572,6 +496,11 @@ fn parse_instances(
         };
         let mut env = BTreeMap::new();
         for (key, value) in raw.env {
+            let value = match value {
+                RawEnvValue::Plain(text) => text,
+                RawEnvValue::Reference(r) => refs::read_reference(store, &r.secret)
+                    .map_err(|m| invalid(field("env"), format!("`{key}`: {m}")))?,
+            };
             if !valid_env_key(&key) || value.contains('\0') {
                 return Err(invalid(
                     field("env"),
@@ -606,6 +535,16 @@ pub struct DeckConfig {
     /// (DL-145). On by default.
     pub conflict_mail: bool,
 }
+
+/// The keys of `deck.toml` (`RawDeck`).
+#[cfg(test)]
+pub(crate) const RAW_DECK_KEYS: &[&str] = &[
+    "name",
+    "listen",
+    "link_listen",
+    "tailnet_hostname",
+    "conflict_mail",
+];
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -756,7 +695,7 @@ fn valid_instance_id(id: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, b'-' | b'_'))
 }
 
-fn valid_env_key(key: &str) -> bool {
+pub(crate) fn valid_env_key(key: &str) -> bool {
     let b = key.as_bytes();
     !b.is_empty()
         && (b[0].is_ascii_alphabetic() || b[0] == b'_')

@@ -67,7 +67,11 @@ pub async fn up(dirs: &NodeDirs, env: &Env, args: &ServeArgs) -> anyhow::Result<
             .map_err(|e| anyhow::anyhow!("--listen: {e}"))?;
         deck_config.listen = vec![listen];
     }
-    let station_config = StationConfig::load(&dirs.station_config(), env)?;
+    let station_config = StationConfig::load_with_store(
+        &dirs.station_config(),
+        env,
+        &dirs.station().join("secrets"),
+    )?;
     let deck = RunningDeck::start(dirs, &deck_config, BackoffPolicy::default()).await?;
     let station = match RunningStation::start(dirs, &station_config).await {
         Ok(s) => s,
