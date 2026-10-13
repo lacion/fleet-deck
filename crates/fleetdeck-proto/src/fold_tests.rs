@@ -607,5 +607,27 @@ fn session_models_set_the_models_of_the_summary_and_the_last_list_wins() {
     assert_eq!(s.models, Some(vec![choice("sonnet"), choice("haiku")]));
 }
 
+#[test]
+fn slash_commands_set_the_commands_and_the_skills_of_the_summary_and_the_last_list_wins() {
+    let mut f = Feed::new();
+    f.push(started());
+    assert_eq!(f.summary.slash_commands, None);
+    assert_eq!(f.summary.skills, None);
+    let names = |a: &[&str]| a.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>();
+    f.push(Event::SlashCommands {
+        commands: names(&["compact"]),
+        skills: Vec::new(),
+    });
+    let s = f.push(Event::SlashCommands {
+        commands: names(&["compact", "review", "deploy"]),
+        skills: names(&["deploy"]),
+    });
+    assert_eq!(
+        s.slash_commands,
+        Some(names(&["compact", "review", "deploy"]))
+    );
+    assert_eq!(s.skills, Some(names(&["deploy"])));
+}
+
 #[path = "fold_tests_more.rs"]
 mod more;

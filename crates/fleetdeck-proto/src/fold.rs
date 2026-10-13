@@ -215,8 +215,11 @@ impl SessionSummary {
             Event::AutoContinueSkipped { .. }
             | Event::CoordinatorBound { .. }
             | Event::CoordinatorEnded { .. }
-            | Event::SlashCommands { .. }
             | Event::SessionNotice { .. } => {}
+            Event::SlashCommands { commands, skills } => {
+                self.slash_commands = Some(commands.clone());
+                self.skills = Some(skills.clone());
+            }
             Event::SessionModels { models } => self.models = Some(models.clone()),
             Event::SessionBase {
                 git_ref,

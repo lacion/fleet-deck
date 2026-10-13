@@ -2,6 +2,7 @@ import {
   type ClipboardEvent,
   type KeyboardEvent,
   useId,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -10,6 +11,7 @@ import type { ImageInput } from '../gen';
 import { ArrowUp, Icon, Paperclip } from '../ui/icons';
 import type { InputKind } from './commands';
 import { IMAGE_TYPES, imageFiles, imagesProblem, readImage, toDataUrl } from './images';
+import { MAX_AT_OPTIONS, matchAt, MIN_AT_QUERY } from './at';
 import { matchSlash } from './slash';
 
 type Props = {
@@ -22,6 +24,10 @@ type Props = {
   readonly disabledReason?: string | null;
   /** The commands of the provider; `null` or empty: it gave no list. */
   readonly slashCommands?: readonly string[] | null;
+  /** The skill names of the provider; a command in this list shows the badge "skill". */
+  readonly skills?: readonly string[];
+  /** The file name search of the session root (DL-174); `null` or absent: `@` has no menu. */
+  readonly searchFiles?: ((query: string, maxHits: number) => Promise<readonly string[]>) | null;
   /** With a key, the text is kept in `sessionStorage` until it is sent. */
   readonly draftKey?: string;
 };
@@ -55,6 +61,45 @@ function coarsePointer(): boolean {
   return typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches === true;
 }
 
+/** The wait after the last key before the `@` search starts. */
+const AT_DELAY_MS = 200;
+
+/** One row of a menu: `text` is the label, `badge` an optional tag. */
+export type MenuRow = { readonly key: string; readonly text: string; readonly badge?: string };
+
+/** The menu above the text box: the commands (`/`) or the file paths (`@`). */
+export function ComposerMenu(props: {
+  readonly id: string;
+  readonly label: string;
+  readonly rows: readonly MenuRow[];
+  readonly current: number;
+  readonly onChoose: (n: number) => void;
+}) {
+  return (
+    <div className="fd-composer-menu" role="listbox" aria-label={props.label} id={props.id}>
+      {props.rows.map((row, n) => (
+        <div
+          key={row.key}
+          id={`${props.id}-${n}`}
+          role="option"
+          tabIndex={-1}
+          aria-selected={n === props.current}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => props.onChoose(n)}
+          onKeyDown={() => {}}
+        >
+          {row.text}
+          {row.badge ? (
+            <span className="fd-badge" data-tone="muted" style={{ marginLeft: 'auto' }}>
+              {row.badge}
+            </span>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** The message box of a session: text, slash commands, a draft and pasted images (M3 6-10, DL-140). */
 export function Composer(props: Props) {
   const { draftKey } = props;
@@ -64,8 +109,17 @@ export function Composer(props: Props) {
   const [readError, setReadError] = useState<string | null>(null);
   const [active, setActive] = useState(0);
   const [menuClosed, setMenuClosed] = useState(false);
+  const [cursor, setCursor] = useState(0);
+  const [found, setFound] = useState<{ query: string; paths: readonly string[] }>({
+    query: '',
+    paths: [],
+  });
   const box = useRef<HTMLTextAreaElement>(null);
   const listId = useId();
+  const caretTo = useRef<number | null>(null);
+  const calls = useRef(0);
+  const search = useRef(props.searchFiles);
+  search.current = props.searchFiles;
   // Another session: its draft replaces the text.
   if (loadedKey !== draftKey) {
     setLoadedKey(draftKey);
@@ -77,11 +131,47 @@ export function Composer(props: Props) {
   const blocked = !props.enabled || empty || problem !== null;
   const commands = props.slashCommands ?? [];
   const hasCommands = commands.length > 0;
-  const slash = hasCommands ? matchSlash(text, commands) : null;
-  const options = slash?.options ?? [];
-  const menuOpen = props.enabled && !menuClosed && options.length > 0;
-  const current = Math.min(active, Math.max(options.length - 1, 0));
+  const slash = hasCommands ? matchSlash(text, commands, props.skills) : null;
+  const canSearch = props.searchFiles != null;
+  const at = canSearch && slash === null ? matchAt(text, cursor) : null;
+  const atQuery = at !== null && at.query.length >= MIN_AT_QUERY ? at.query : null;
+  const atPaths = atQuery !== null && found.query === atQuery ? found.paths : [];
+  const rows: MenuRow[] =
+    slash !== null
+      ? slash.options.map((o) => ({
+          key: o.name,
+          text: `/${o.name}`,
+          ...(o.skill ? { badge: 'skill' } : {}),
+        }))
+      : atPaths.map((path) => ({ key: path, text: path }));
+  const menuOpen = props.enabled && !menuClosed && rows.length > 0;
+  const current = Math.min(active, Math.max(rows.length - 1, 0));
   const optionId = (n: number) => `${listId}-${n}`;
+
+  // `@` search: 200 ms after the last key; an answer of an older call is ignored.
+  useEffect(() => {
+    if (atQuery === null) return;
+    calls.current += 1;
+    const run = calls.current;
+    const timer = setTimeout(() => {
+      const call = search.current;
+      if (!call) return;
+      call(atQuery, MAX_AT_OPTIONS).then(
+        (paths) => {
+          if (calls.current === run)
+            setFound({ query: atQuery, paths: paths.slice(0, MAX_AT_OPTIONS) });
+        },
+        () => {
+          // A failed or refused search closes the menu, with no notice.
+          if (calls.current === run) setFound({ query: atQuery, paths: [] });
+        },
+      );
+    }, AT_DELAY_MS);
+    return () => {
+      clearTimeout(timer);
+      calls.current += 1;
+    };
+  }, [atQuery]);
 
   // The box grows with its text, from one row to MAX_ROWS.
   useLayoutEffect(() => {
@@ -101,8 +191,18 @@ export function Composer(props: Props) {
     el.style.overflowY = wanted > max ? 'auto' : 'hidden';
   }, [text]);
 
-  const edit = (value: string) => {
+  // After a pick the caret goes behind the inserted text.
+  useLayoutEffect(() => {
+    const to = caretTo.current;
+    if (to === null) return;
+    caretTo.current = null;
+    box.current?.setSelectionRange(to, to);
+    setCursor(to);
+  }, [text]);
+
+  const edit = (value: string, caret = value.length) => {
     setText(value);
+    setCursor(caret);
     setActive(0);
     setMenuClosed(false);
     writeDraft(draftKey, value);
@@ -120,8 +220,17 @@ export function Composer(props: Props) {
   const submit = () => {
     if (!blocked) send(props.working ? 'follow_up' : 'prompt');
   };
-  const choose = (command: string) => {
-    edit(`/${command} `);
+  const choose = (n: number) => {
+    const row = rows[n];
+    if (row === undefined) return;
+    if (slash !== null) {
+      edit(`${row.text} `);
+    } else if (at !== null) {
+      const insert = `@${row.text} `;
+      const next = text.slice(0, at.start) + insert + text.slice(cursor);
+      caretTo.current = at.start + insert.length;
+      edit(next, at.start + insert.length);
+    }
     box.current?.focus();
   };
   const add = async (files: File[]) => {
@@ -144,21 +253,18 @@ export function Composer(props: Props) {
     if (menuOpen) {
       if (event.key === 'ArrowDown') {
         event.preventDefault();
-        setActive((current + 1) % options.length);
+        setActive((current + 1) % rows.length);
         return;
       }
       if (event.key === 'ArrowUp') {
         event.preventDefault();
-        setActive((current - 1 + options.length) % options.length);
+        setActive((current - 1 + rows.length) % rows.length);
         return;
       }
       if ((event.key === 'Enter' && !event.shiftKey) || event.key === 'Tab') {
-        const command = options[current];
-        if (command !== undefined) {
-          event.preventDefault();
-          choose(command);
-          return;
-        }
+        event.preventDefault();
+        choose(current);
+        return;
       }
       if (event.key === 'Escape') {
         event.preventDefault();
@@ -187,22 +293,13 @@ export function Composer(props: Props) {
       }}
     >
       {menuOpen ? (
-        <div className="fd-composer-menu" role="listbox" aria-label="Commands" id={listId}>
-          {options.map((command, n) => (
-            <div
-              key={command}
-              id={optionId(n)}
-              role="option"
-              tabIndex={-1}
-              aria-selected={n === current}
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => choose(command)}
-              onKeyDown={() => {}}
-            >
-              /{command}
-            </div>
-          ))}
-        </div>
+        <ComposerMenu
+          id={listId}
+          label={slash !== null ? 'Commands' : 'Files'}
+          rows={rows}
+          current={current}
+          onChoose={choose}
+        />
       ) : null}
       <label htmlFor="fd-composer-text" className="fd-vh">
         Message
@@ -214,16 +311,17 @@ export function Composer(props: Props) {
         value={text}
         disabled={!props.enabled}
         placeholder={placeholder}
-        aria-autocomplete={hasCommands ? 'list' : undefined}
+        aria-autocomplete={hasCommands || canSearch ? 'list' : undefined}
         aria-controls={menuOpen ? listId : undefined}
         aria-activedescendant={menuOpen ? optionId(current) : undefined}
-        onChange={(event) => edit(event.target.value)}
+        onChange={(event) => edit(event.target.value, event.target.selectionStart)}
+        onSelect={(event) => setCursor(event.currentTarget.selectionStart)}
         onKeyDown={onKeyDown}
         onPaste={onPaste}
       />
-      {!hasCommands && text.startsWith('/') ? (
+      {!hasCommands && /^\/\S*$/.test(text) ? (
         <p className="fd-composer-note">
-          This provider gave no command list. The text goes to the agent as a prompt.
+          This session reports no commands. The text goes to the agent as a prompt.
         </p>
       ) : null}
       {images.length > 0 ? (

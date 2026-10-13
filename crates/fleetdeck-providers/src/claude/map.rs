@@ -133,8 +133,9 @@ fn on_system(core: &mut ClaudeCore, subtype: &str, body: &Map<String, Value>) ->
                 out.push(Output::Emit(Event::SessionModels { models }));
             }
             let commands = slash_commands(body);
-            if !commands.is_empty() {
-                out.push(Output::Emit(Event::SlashCommands { commands }));
+            let skills = string_list(body, "skills");
+            if !commands.is_empty() || !skills.is_empty() {
+                out.push(Output::Emit(Event::SlashCommands { commands, skills }));
             }
             out.extend(core.usage_request());
             out

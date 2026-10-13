@@ -546,9 +546,14 @@ pub enum Event {
         #[ts(optional)]
         reason: Option<String>,
     },
-    /// The slash commands that the provider offers in this session (DL-140).
+    /// The slash commands that the provider offers in this session (DL-140),
+    /// and the names of its skills (DL-174); a skill name is also a command.
     #[serde(rename = "session.slash_commands")]
-    SlashCommands { commands: Vec<String> },
+    SlashCommands {
+        commands: Vec<String>,
+        #[serde(default)]
+        skills: Vec<String>,
+    },
     /// A notice for the session chat. `code` names the cause; `text` is for
     /// the user. The fold ignores it.
     #[serde(rename = "session.notice")]

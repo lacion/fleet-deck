@@ -243,6 +243,13 @@ export function SessionView(props: SessionViewProps) {
   const panelAct = (call: Parameters<typeof controller.act>[1]) => controller.act('turns', call);
   // A viewer has no drive scope but sees the files of the shared session.
   const filesReady = flags.live && (actions?.canDrive === true || guest !== null);
+  const files = actions?.files ?? null;
+  // DL-174: the `@` menu of the composer searches the file names of the session root.
+  const searchFiles =
+    files !== null && filesReady
+      ? async (query: string, maxHits: number) =>
+          (await files.search(query, 'name', maxHits)).hits.map((h) => h.path)
+      : null;
   const [fileRequest, setFileRequest] = useState<{ readonly path: string; readonly seq: number }>();
   const requests = useRef(0);
   const onOpenFile = (path: string) => {
@@ -425,7 +432,9 @@ export function SessionView(props: SessionViewProps) {
                           ? null
                           : disabledReason(flags, actions)
                     }
-                    slashCommands={slashCommands(events)}
+                    slashCommands={s.slash_commands ?? slashCommands(events)}
+                    skills={s.skills ?? []}
+                    searchFiles={searchFiles}
                     draftKey={`${session.station_id}/${s.session_id}`}
                   />
                 ) : guest?.role === 'viewer' ? (

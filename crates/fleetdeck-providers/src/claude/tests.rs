@@ -673,13 +673,15 @@ fn the_first_init_emits_the_slash_commands_without_the_terminal_only_ones() {
     let mut core = ClaudeCore::new(config(false));
     let frame = json!({"type":"system","subtype":"init","session_id":"s-1",
         "slash_commands":["compact","/doctor","review"],
-        "terminal_slash_commands":["doctor"]});
+        "terminal_slash_commands":["doctor"],
+        "skills":["review", 7, "deploy"]});
     let events = emits(&feed(&mut core, frame.clone()));
     assert!(matches!(events[0], Event::SessionStarted { .. }));
     assert_eq!(
         events[1],
         Event::SlashCommands {
-            commands: vec!["compact".to_owned(), "review".to_owned()]
+            commands: vec!["compact".to_owned(), "review".to_owned()],
+            skills: vec!["review".to_owned(), "deploy".to_owned()]
         }
     );
     assert_eq!(events.len(), 2);

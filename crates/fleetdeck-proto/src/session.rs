@@ -128,6 +128,16 @@ pub struct SessionSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub models: Option<Vec<ModelChoice>>,
+    /// The slash commands of the provider, from the last
+    /// `session.slash_commands` (DL-174). Absent before the first one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub slash_commands: Option<Vec<String>>,
+    /// The skill names of the provider, from the last
+    /// `session.slash_commands` (DL-174). Absent before the first one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub skills: Option<Vec<String>>,
     /// The commit that the session started from, from `session.base`
     /// (R1.1). Absent before the first one and outside a repository.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -197,6 +207,8 @@ impl SessionSummary {
             auto_continue: false,
             terminal: None,
             models: None,
+            slash_commands: None,
+            skills: None,
             base: None,
             artifacts_count: 0,
             focus: None,

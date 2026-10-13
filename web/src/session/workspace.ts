@@ -30,7 +30,8 @@ export type SearchModeName = 'name' | 'content';
 export type FileActions = {
   list(path: string): Promise<FileListing>;
   read(path: string): Promise<FileContent>;
-  search(query: string, mode: SearchModeName): Promise<FileSearch>;
+  /** `maxHits` asks the station for fewer hits (`max_hits`). */
+  search(query: string, mode: SearchModeName, maxHits?: number): Promise<FileSearch>;
   diff(turnId: string): Promise<TurnDiff>;
   /** The working tree of the session against its base commit (R1.2). */
   sessionDiff(): Promise<SessionDiff>;
@@ -68,9 +69,13 @@ function rootActions(
         ['path', 'size', 'binary', 'text', 'truncated'],
         'file',
       ),
-    search: async (query, mode) =>
+    search: async (query, mode, maxHits) =>
       shaped<FileSearch>(
-        await get(`${base}/files/search?${root}&q=${encodeURIComponent(query)}&mode=${mode}`),
+        await get(
+          `${base}/files/search?${root}&q=${encodeURIComponent(query)}&mode=${mode}${
+            maxHits === undefined ? '' : `&max_hits=${maxHits}`
+          }`,
+        ),
         ['hits', 'truncated', 'backend'],
         'search answer',
       ),

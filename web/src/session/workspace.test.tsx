@@ -379,11 +379,13 @@ describe('workspace actions', () => {
     await files.list('src');
     await files.read('a b.txt');
     await files.search('fn main', 'content');
+    await files.search('src/ma', 'name', 20);
     await files.diff('turn/1');
     expect(asked).toEqual([
       '/api/stations/station-a/files/list?session=s1&path=src',
       '/api/stations/station-a/files/read?session=s1&path=a%20b.txt',
       '/api/stations/station-a/files/search?session=s1&q=fn%20main&mode=content',
+      '/api/stations/station-a/files/search?session=s1&q=src%2Fma&mode=name&max_hits=20',
       '/api/stations/station-a/sessions/s1/turns/turn%2F1/diff',
     ]);
     const bad = fileActions(async () => ({ entries: [] }), key);
