@@ -322,5 +322,7 @@ test('a starred session sorts first and ended sessions are cleared into Archived
   const archived = sidebar.getByRole('region', { name: 'Archived' });
   await expect(archived).toContainText('Old job');
   await expect(archived).toContainText('Lost job');
-  expect(await page.evaluate(() => localStorage.getItem('fd-archived'))).toContain('st-alpha/s4');
+  expect(await page.evaluate(() => localStorage.getItem('fd-archived-cache'))).toContain(
+    'st-alpha/s4',
+  );
 });
