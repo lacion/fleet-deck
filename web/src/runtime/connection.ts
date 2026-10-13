@@ -121,9 +121,9 @@ export class Connection {
     }
   }
   /** One read call (no body, no CSRF token). It never retries. */
-  async get(path: string): Promise<unknown> {
+  async get(path: string, timeoutMs: number = TIMEOUT_MS): Promise<unknown> {
     const controller = new AbortController();
-    const cancel = this.env.schedule(() => controller.abort(), TIMEOUT_MS);
+    const cancel = this.env.schedule(() => controller.abort(), timeoutMs);
     try {
       return await request(this.env.fetch, path, controller.signal);
     } finally {

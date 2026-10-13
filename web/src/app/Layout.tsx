@@ -51,7 +51,15 @@ export function Notices({ notices }: { readonly notices: readonly Notice[] }) {
 }
 
 /** Routes of the phone that show the bottom bar. */
-const BAR_ROUTES: readonly Route['name'][] = ['home', 'fleet', 'new', 'plans', 'stations', 'more'];
+const BAR_ROUTES: readonly Route['name'][] = [
+  'home',
+  'fleet',
+  'new',
+  'plans',
+  'stations',
+  'files',
+  'more',
+];
 
 function BottomBar({ route }: { readonly route: Route }) {
   const items: readonly {

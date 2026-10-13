@@ -131,7 +131,7 @@ export function FleetPanel({ actions, sessions, stations }: Props) {
     return { entries, results };
   };
   const sendMany = async () => {
-    if (targets.length === 0 || text.trim() === '' || busy) return;
+    if ((targets.length === 0 && owed === null) || text.trim() === '' || busy) return;
     setBusy(true);
     setMany(null);
     const names = new Map(sessions.map((s) => [keyOf(s), nameOf(s)]));
@@ -249,10 +249,14 @@ export function FleetPanel({ actions, sessions, stations }: Props) {
             disabled={
               busy ||
               text.trim() === '' ||
-              (audience === 'one' ? chosen === undefined : targets.length === 0)
+              (audience === 'one' ? chosen === undefined : targets.length === 0 && owed === null)
             }
           >
-            {audience === 'one' ? 'Send mail' : `Send to ${targets.length}`}
+            {audience === 'one'
+              ? 'Send mail'
+              : targets.length === 0 && owed !== null
+                ? 'Send again'
+                : `Send to ${targets.length}`}
           </button>
           <button
             type="button"
@@ -263,7 +267,7 @@ export function FleetPanel({ actions, sessions, stations }: Props) {
             Create task
           </button>
         </div>
-        {audience !== 'one' && targets.length === 0 ? (
+        {audience !== 'one' && targets.length === 0 && owed === null ? (
           <p className="fd-note">No live session matches.</p>
         ) : null}
         {result === null ? null : (

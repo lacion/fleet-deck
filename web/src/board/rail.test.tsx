@@ -35,12 +35,14 @@ const rail = (
   open: OpenRequest,
   scopes: string[] | null = ['read', 'drive', 'approve'],
   caps = claudeCaps(),
+  freshness: 'live' | 'stale' = 'live',
 ) =>
   renderToStaticMarkup(
     <NeedsYouRail
       sessions={[waiting(open, caps)]}
       stations={[station()]}
       variant="side"
+      freshness={freshness}
       onOpen={() => {}}
       sessionActions={
         scopes === null ? undefined : (key) => sessionActions(async () => ({}), key, scopes)
@@ -94,6 +96,7 @@ describe('needs-you rail', () => {
         ]}
         stations={[station()]}
         variant="side"
+        freshness="live"
         onOpen={() => {}}
         sessionActions={(key) =>
           sessionActions(async () => ({}), key, ['read', 'drive', 'approve'])
@@ -124,6 +127,15 @@ describe('needs-you rail', () => {
     }
   });
 
+  test('while the board is stale an otherwise answerable request opens the session', () => {
+    const html = rail(request(), ['read', 'drive', 'approve'], claudeCaps(), 'stale');
+    expect(html).toContain('aria-label="Answer Run tests in Fix login"');
+    expect(html).toContain('Open session');
+    expect(html).not.toContain('aria-label="Allow: ');
+    expect(html).not.toContain('fd-rail-keys');
+    expect(html).not.toContain('data-selected');
+  });
+
   test('a question form is answered in the session, not in the rail', () => {
     const html = rail(recordedRequest('codex-question_rpc'));
     expect(html).toContain('Open session');
@@ -134,12 +146,24 @@ describe('needs-you rail', () => {
   test('an empty rail says all clear; the strip variant renders nothing', () => {
     const idle = [card('s1')];
     const side = renderToStaticMarkup(
-      <NeedsYouRail sessions={idle} stations={[station()]} variant="side" onOpen={() => {}} />,
+      <NeedsYouRail
+        sessions={idle}
+        stations={[station()]}
+        variant="side"
+        freshness="live"
+        onOpen={() => {}}
+      />,
     );
     expect(side).toContain('ALL CLEAR');
     expect(side).toContain('Nothing waits for you.');
     const strip = renderToStaticMarkup(
-      <NeedsYouRail sessions={idle} stations={[station()]} variant="strip" onOpen={() => {}} />,
+      <NeedsYouRail
+        sessions={idle}
+        stations={[station()]}
+        variant="strip"
+        freshness="live"
+        onOpen={() => {}}
+      />,
     );
     expect(strip).toBe('');
   });

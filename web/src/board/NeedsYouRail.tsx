@@ -3,7 +3,9 @@ import { shouldIgnore } from '../app/keys';
 import { formatHash } from '../app/routes';
 import { relativeAge } from '../app/sessions';
 import type { DeckSession, OpenRequest, SessionKey, StationView } from '../gen';
+import type { Freshness } from '../runtime/state';
 import type { SessionActions } from '../session/commands';
+import { sessionFlags } from '../session/controller';
 import { questionForm } from '../session/question';
 import { Bell, BellOff, Check, ChevronRight, Icon } from '../ui/icons';
 import { useNow } from '../ui/useNow';
@@ -24,6 +26,7 @@ type Props = {
   readonly onOpen: (key: SessionKey) => void;
   readonly sessionActions?: ((key: SessionKey) => SessionActions) | undefined;
   readonly variant: 'side' | 'strip';
+  readonly freshness: Freshness;
   readonly now?: number | undefined;
 };
 
@@ -34,6 +37,7 @@ export function NeedsYouRail({
   onOpen,
   sessionActions,
   variant,
+  freshness,
   now: given,
 }: Props) {
   const now = useNow(given, 30000);
@@ -58,7 +62,7 @@ export function NeedsYouRail({
     const actions = sessionActions?.(w.key);
     const r = w.request;
     const ok =
-      actions?.canApprove === true &&
+      sessionFlags(w.card, freshness, actions ?? null).approve &&
       w.card.summary.capabilities?.approvals === true &&
       questionForm(r) === null &&
       r.options.length > 0;

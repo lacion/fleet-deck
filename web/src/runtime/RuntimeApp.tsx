@@ -38,7 +38,7 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
           )
         : undefined,
       // The worktree inventory is owner-only as well.
-      worktrees: canAdmin ? worktreeLoader((path) => connection.get(path)) : undefined,
+      worktrees: canAdmin ? worktreeLoader((path) => connection.get(path, 65_000)) : undefined,
     }),
     [connection, canAdmin],
   );
