@@ -24,6 +24,8 @@ describe('routes', () => {
       'plans',
       'stations',
       'files',
+      'watch',
+      'activity',
       'terminals',
       'more',
     ] as const) {

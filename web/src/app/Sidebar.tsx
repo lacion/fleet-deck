@@ -3,11 +3,13 @@ import { STATUS_LANES } from '../board/fleet';
 import type { DeckSession, StationView } from '../gen';
 import {
   Archive,
+  Eye,
   Folder,
   GitBranch,
   Icon,
   LayoutGrid,
   LogOut,
+  MessagesSquare,
   FileText,
   Plus,
   Search,
@@ -21,6 +23,8 @@ import {
 import { shortModel } from '../ui/format';
 import { archived as archivedSet } from '../ui/archive';
 import { priority, sessionRef } from '../ui/localSet';
+import { isHibernated } from '../views/hibernate';
+import { FocusLine, UnreadMark, unreadOf } from '../views/marks';
 import type { Chrome } from './chrome';
 import { DeviceLinkDialog } from './DeviceLinkDialog';
 import { PrefsRow } from './Prefs';
@@ -42,7 +46,9 @@ type Props = {
 };
 
 const statusLabel = (card: DeckSession) =>
-  STATUS_LANES.find((lane) => lane.status === card.status)?.label ?? card.status;
+  isHibernated(card)
+    ? 'Hibernated'
+    : (STATUS_LANES.find((lane) => lane.status === card.status)?.label ?? card.status);
 
 /** Re-renders every `ms` so that the ages stay right. */
 function useNow(given: number | undefined, ms: number): number {
@@ -87,6 +93,7 @@ function Row({
         <span className="fd-srow-title">
           <span className="fd-vh">{statusLabel(card)}: </span>
           {sessionTitle(card)}
+          <UnreadMark count={unreadOf(card)} />
           {starred ? (
             <span className="fd-srow-star" role="img" aria-label="Starred">
               <Icon of={Star} size={12} />
@@ -99,6 +106,7 @@ function Row({
           ) : null}
         </span>
         <span className="fd-srow-age">{relativeAge(s.updated_at, now)}</span>
+        <FocusLine summary={s} />
         <span className="fd-srow-meta">
           {shortModel(s.model)}
           {s.branch != null && s.branch !== '' ? (
@@ -328,6 +336,14 @@ export function Sidebar({
             <a href="#/fleet" aria-current={route.name === 'fleet' ? 'page' : undefined}>
               <Icon of={LayoutGrid} />
               Fleet
+            </a>
+            <a href="#/watch" aria-current={route.name === 'watch' ? 'page' : undefined}>
+              <Icon of={Eye} />
+              Watch
+            </a>
+            <a href="#/activity" aria-current={route.name === 'activity' ? 'page' : undefined}>
+              <Icon of={MessagesSquare} />
+              Activity
             </a>
             <a href="#/plans" aria-current={route.name === 'plans' ? 'page' : undefined}>
               <Icon of={FileText} />

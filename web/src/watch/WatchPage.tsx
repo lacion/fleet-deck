@@ -1,0 +1,323 @@
+// R6.2 (DL-169): `#/watch`, the first explored form of "watch many sessions" (DL-157): a wall of
+// compact live tiles, one per live session, and a Focus mode that cycles through the sessions
+// that need you. The page is isolated: no other screen imports it.
+import { useEffect, useMemo, useState } from 'react';
+import { formatHash } from '../app/routes';
+import { basename } from '../app/sessions';
+import { repoName, stationName } from '../board/fleet';
+import type { DeckSession, SessionKey, StationView } from '../gen';
+import type { Freshness, Timeline } from '../runtime/state';
+import type { SessionActions } from '../session/commands';
+import { Icon, TriangleAlert } from '../ui/icons';
+import { FocusLine, UnreadMark, unreadOf } from '../views/marks';
+import {
+  ALL,
+  emptyWatchFilter,
+  FOCUS_MS,
+  filterChoices,
+  focusOrder,
+  MAX_TILES,
+  nextFocus,
+  refOf,
+  tileLines,
+  tileRequest,
+  type WatchFilter,
+  watchSessions,
+} from './tiles';
+
+type Props = {
+  readonly sessions: readonly DeckSession[];
+  readonly stations: readonly StationView[];
+  readonly freshness: Freshness;
+  readonly timelines?: Readonly<Record<string, Timeline>> | undefined;
+  /** Opens the live timeline of a session; returns the cancel function. */
+  readonly watch?: ((key: SessionKey) => () => void) | undefined;
+  readonly sessionActions?: ((key: SessionKey) => SessionActions) | undefined;
+  /** Focus is on at the first render (tests). */
+  readonly initialFocus?: boolean;
+  /** The focused session at the first render (tests). */
+  readonly initialFocused?: string | null;
+  /** The filter at the first render (tests). */
+  readonly initialFilter?: WatchFilter;
+};
+
+const timelineOf = (timelines: Props['timelines'], key: SessionKey): Timeline | undefined =>
+  timelines?.[JSON.stringify([key.station_id, key.session_id])];
+
+function Tile({
+  card,
+  stations,
+  timeline,
+  actions,
+  freshness,
+  focused,
+}: {
+  readonly card: DeckSession;
+  readonly stations: readonly StationView[];
+  readonly timeline: Timeline | undefined;
+  readonly actions: SessionActions | undefined;
+  readonly freshness: Freshness;
+  readonly focused: boolean;
+}) {
+  const s = card.summary;
+  const key: SessionKey = { station_id: card.station_id, session_id: s.session_id };
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const lines = tileLines(timeline?.events ?? []);
+  const tool = s.running_tools[0];
+  const ask = tileRequest(card);
+  const answerable =
+    ask?.plain === true &&
+    s.capabilities?.approvals === true &&
+    actions?.canApprove === true &&
+    freshness === 'live';
+  const href = formatHash({
+    name: 'session',
+    station: key.station_id,
+    session: key.session_id,
+    tab: 'chat',
+  });
+  const where = [stationName(card.station_id, stations), repoName(card)].join(' · ');
+  const answer = (requestId: string, optionId: string) => {
+    if (actions === undefined) return;
+    setBusy(true);
+    setNote(null);
+    actions.answer(requestId, optionId).then(
+      (o) => {
+        setBusy(false);
+        setNote(o.ok ? null : o.text);
+      },
+      (e: unknown) => {
+        setBusy(false);
+        setNote(e instanceof Error ? e.message : 'The request failed.');
+      },
+    );
+  };
+  return (
+    <li
+      className="fd-wtile"
+      data-status={card.status}
+      data-focused={focused ? 'true' : undefined}
+      data-session={s.session_id}
+    >
+      <a className="fd-wtile-open" href={href}>
+        <span className="fd-wtile-head">
+          <span className="fd-dot" data-status={card.status} aria-hidden="true" />
+          <span className="fd-wtile-title">{s.title ?? s.callsign ?? s.session_id}</span>
+          <UnreadMark count={unreadOf(card)} />
+        </span>
+        <span className="fd-wtile-where">
+          {where}
+          {s.branch !== null && s.branch !== ''
+            ? ` · ${s.branch}`
+            : s.cwd != null
+              ? ` · ${basename(s.cwd)}`
+              : ''}
+        </span>
+        <FocusLine summary={s} />
+        {lines.length === 0 ? (
+          <span className="fd-wtile-empty">
+            {timeline?.ready === true ? 'No chat yet.' : 'Loading…'}
+          </span>
+        ) : (
+          <span className="fd-wtile-lines">
+            {lines.map((l) => (
+              <span key={l.key} className="fd-wtile-line" data-kind={l.kind}>
+                {l.text}
+              </span>
+            ))}
+          </span>
+        )}
+        {tool === undefined ? null : (
+          <span className="fd-wtile-tool" title="Running now">
+            {tool.input_summary === '' ? tool.title : `${tool.title}: ${tool.input_summary}`}
+          </span>
+        )}
+      </a>
+      {ask === null ? null : (
+        <div className="fd-wtile-ask" role="group" aria-label={`Needs you: ${ask.request.title}`}>
+          <span className="fd-card-ask">
+            <Icon of={TriangleAlert} size={12} /> {ask.request.title}
+          </span>
+          {answerable ? (
+            <span className="fd-options">
+              {ask.request.options.map((o, n) => (
+                <button
+                  key={o.option_id}
+                  type="button"
+                  className={n === 0 ? 'fd-primary fd-sm' : 'fd-sm'}
+                  disabled={busy}
+                  aria-label={`${o.label}: ${ask.request.title} in ${s.title ?? s.session_id}`}
+                  onClick={() => answer(ask.request.request_id, o.option_id)}
+                >
+                  {o.label}
+                </button>
+              ))}
+            </span>
+          ) : (
+            <span className="fd-wtile-note">Open the session to answer.</span>
+          )}
+          {note === null ? null : (
+            <span className="fd-wtile-note" role="alert">
+              {note}
+            </span>
+          )}
+        </div>
+      )}
+    </li>
+  );
+}
+
+/** The watch page: filters, the Focus toggle and the wall. */
+export function WatchPage({
+  sessions,
+  stations,
+  freshness,
+  timelines,
+  watch,
+  sessionActions,
+  initialFocus = false,
+  initialFocused = null,
+  initialFilter = emptyWatchFilter,
+}: Props) {
+  const [filter, setFilter] = useState<WatchFilter>(initialFilter);
+  const [focusOn, setFocusOn] = useState(initialFocus);
+  const [focused, setFocused] = useState<string | null>(initialFocused);
+  const choices = filterChoices(sessions);
+  const matching = watchSessions(sessions, filter);
+  const shown = matching.slice(0, MAX_TILES);
+  const order = focusOrder(sessions, filter);
+  const orderKey = order.join('\n');
+  // Focus stays on one session while it needs you; the first one starts it.
+  const current = focusOn
+    ? focused !== null && order.includes(focused)
+      ? focused
+      : (order[0] ?? null)
+    : null;
+  useEffect(() => {
+    if (!focusOn) return undefined;
+    setFocused((now) => (now !== null && order.includes(now) ? now : (order[0] ?? null)));
+    if (order.length < 2) return undefined;
+    const timer = setInterval(() => setFocused((now) => nextFocus(order, now)), FOCUS_MS);
+    return () => clearInterval(timer);
+    // `orderKey` stands for the content of `order`.
+  }, [focusOn, orderKey]);
+
+  const visible = focusOn ? shown.filter((c) => refOf(c) === current) : shown;
+  const refs = visible.map(refOf).join('\n');
+  const keys = useMemo(
+    () =>
+      visible.map(
+        (c): SessionKey => ({ station_id: c.station_id, session_id: c.summary.session_id }),
+      ),
+    // `refs` stands for the content of `visible`.
+    [refs],
+  );
+  useEffect(() => {
+    if (watch === undefined) return undefined;
+    const cancels: (() => void)[] = [];
+    for (const key of keys) {
+      try {
+        cancels.push(watch(key));
+      } catch {
+        // More timelines than the socket allows: the tile shows no chat lines.
+      }
+    }
+    return () => {
+      for (const cancel of cancels) cancel();
+    };
+  }, [watch, keys]);
+
+  const select = (
+    label: string,
+    value: string,
+    all: string,
+    options: readonly { value: string; label: string }[],
+    set: (v: string) => void,
+  ) => (
+    <label className="fd-wfilter">
+      <span className="fd-vh">{label}</span>
+      <select value={value} aria-label={label} onChange={(e) => set(e.target.value)}>
+        <option value={ALL}>{all}</option>
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+  return (
+    <section className="fd-screen fd-watch" aria-label="Watch">
+      <h1 className="fd-screen-title">Watch</h1>
+      <div className="fd-wbar">
+        {select(
+          'Station',
+          filter.station,
+          'All stations',
+          choices.stations.map((id) => ({ value: id, label: stationName(id, stations) })),
+          (station) => setFilter({ ...filter, station }),
+        )}
+        {select(
+          'Repository',
+          filter.repo,
+          'All repositories',
+          choices.repos.map((r) => ({ value: r, label: r })),
+          (repo) => setFilter({ ...filter, repo }),
+        )}
+        <button
+          type="button"
+          className="fd-chip"
+          aria-pressed={filter.needsOnly}
+          onClick={() => setFilter({ ...filter, needsOnly: !filter.needsOnly })}
+        >
+          Needs you only
+        </button>
+        <button
+          type="button"
+          className="fd-chip"
+          aria-pressed={focusOn}
+          title={`Cycles every ${FOCUS_MS / 1000} s through the sessions that need you`}
+          onClick={() => setFocusOn(!focusOn)}
+        >
+          Focus
+        </button>
+        <span className="fd-count" aria-live="polite">
+          {matching.length} live
+        </span>
+      </div>
+      {matching.length > MAX_TILES && !focusOn ? (
+        <p className="fd-note">
+          Showing {MAX_TILES} of {matching.length} sessions. Filter to see the others.
+        </p>
+      ) : null}
+      {focusOn && current === null ? (
+        <p className="fd-empty">Nothing needs you right now. Focus waits for the next request.</p>
+      ) : visible.length === 0 ? (
+        <p className="fd-empty">
+          {sessions.length === 0 ? 'No sessions yet.' : 'No live session matches.'}
+        </p>
+      ) : (
+        <ul className="fd-wall" data-focus={focusOn ? 'true' : undefined}>
+          {visible.map((card) => (
+            <Tile
+              key={refOf(card)}
+              card={card}
+              stations={stations}
+              timeline={timelineOf(timelines, {
+                station_id: card.station_id,
+                session_id: card.summary.session_id,
+              })}
+              actions={sessionActions?.({
+                station_id: card.station_id,
+                session_id: card.summary.session_id,
+              })}
+              freshness={freshness}
+              focused={focusOn}
+            />
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}

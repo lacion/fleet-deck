@@ -458,3 +458,14 @@ describe('chat timeline items (DL-140)', () => {
     expect(sessionModels(events)).toEqual(last);
   });
 });
+
+describe('hibernation (R6.6)', () => {
+  test('a hibernated session shows a notice with the idle time', () => {
+    const items = buildTimeline(
+      envelopes('s', [{ kind: 'session.hibernated', after_min: 30 }]),
+    ).items;
+    expect(items).toMatchObject([
+      { type: 'notice', text: 'Hibernated after 30 min idle. Send a prompt to resume it.' },
+    ]);
+  });
+});

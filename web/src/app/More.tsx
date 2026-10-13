@@ -1,5 +1,15 @@
 import { useState } from 'react';
-import { FileText, Folder, Icon, LogOut, Server, Smartphone, SquareTerminal } from '../ui/icons';
+import {
+  Eye,
+  FileText,
+  Folder,
+  Icon,
+  LogOut,
+  MessagesSquare,
+  Server,
+  Smartphone,
+  SquareTerminal,
+} from '../ui/icons';
 import type { Chrome } from './chrome';
 import { DeviceLinkDialog } from './DeviceLinkDialog';
 import { PrefsRow } from './Prefs';
@@ -18,6 +28,18 @@ export function More({ stationCount, terminalCount, chrome }: Props) {
       <h1 className="fd-screen-title">More</h1>
       <nav aria-label="More pages">
         <ul className="fd-more-links">
+          <li>
+            <a href="#/watch">
+              <Icon of={Eye} />
+              Watch
+            </a>
+          </li>
+          <li>
+            <a href="#/activity">
+              <Icon of={MessagesSquare} />
+              Activity
+            </a>
+          </li>
           <li>
             <a href="#/plans">
               <Icon of={FileText} />

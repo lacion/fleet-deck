@@ -24,6 +24,8 @@ import {
   Workflow,
 } from '../ui/icons';
 import { archived } from '../ui/archive';
+import { isHibernated } from '../views/hibernate';
+import { FocusLine, UnreadMark, unreadOf } from '../views/marks';
 import { priority, sessionRef } from '../ui/localSet';
 import { useNow } from '../ui/useNow';
 import { buckets } from './activity';
@@ -151,6 +153,13 @@ function CardNote({ card }: { card: DeckSession }) {
       </span>
     );
   }
+  if (isHibernated(card)) {
+    return (
+      <span className="fd-card-note" data-note="hibernated">
+        Hibernated · resumes with your next prompt
+      </span>
+    );
+  }
   return (
     <span className="fd-card-note" data-note={card.status}>
       {STATUS_NOTE[card.status]}
@@ -222,6 +231,7 @@ export function FleetCard({
               <Icon of={Star} size={12} />
             </span>
           ) : null}
+          <UnreadMark count={unreadOf(card)} />
           {extra !== undefined && extra.mail_pending > 0 ? (
             <span className="fd-card-mail" title="Mail waiting for delivery">
               <Icon of={Mail} size={12} /> {extra.mail_pending}
@@ -240,6 +250,7 @@ export function FleetCard({
           </span>
         </span>
         <CardNote card={card} />
+        <FocusLine summary={s} />
         {files.length === 0 ? null : (
           <span className="fd-card-files">
             {files.map((path) => (

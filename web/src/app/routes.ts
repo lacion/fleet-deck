@@ -9,6 +9,8 @@ export type Route =
   | { readonly name: 'plans' }
   | { readonly name: 'stations' }
   | { readonly name: 'files' }
+  | { readonly name: 'watch' }
+  | { readonly name: 'activity' }
   | { readonly name: 'terminals' }
   | { readonly name: 'more' }
   | {
@@ -20,7 +22,17 @@ export type Route =
 
 const HOME: Route = { name: 'home' };
 
-const PLAIN = ['fleet', 'new', 'plans', 'stations', 'files', 'terminals', 'more'] as const;
+const PLAIN = [
+  'fleet',
+  'new',
+  'plans',
+  'stations',
+  'files',
+  'watch',
+  'activity',
+  'terminals',
+  'more',
+] as const;
 
 /** Hash routes (DL-140): the browser's back button works on a phone. Anything unknown is home. */
 export function parseHash(hash: string): Route {

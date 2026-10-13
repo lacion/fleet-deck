@@ -20,6 +20,7 @@ import type { TerminalStore } from '../terminal/store';
 import { ApprovalDock } from './ApprovalDock';
 import { hasChanges } from './changes';
 import type { SessionActions } from './commands';
+import { isHibernated, resumeThenSend } from '../views/hibernate';
 import { Composer } from './Composer';
 import { useSessionController } from './controller';
 import { FilesPanel } from './FilesPanel';
@@ -121,6 +122,7 @@ export function SessionView(props: SessionViewProps) {
   const tree = buildTimeline(events);
   const turns = finalizedTurns(events);
   const filesOffered = actions?.files != null;
+  const wakes = isHibernated(session) && flags.canResume;
   const wide = useWide();
   const [filesOpen, toggleFiles] = useFilesOpen();
   const sidePanel = layout === 'desktop' && wide && filesOffered;
@@ -304,14 +306,20 @@ export function SessionView(props: SessionViewProps) {
                   }
                 />
                 <Composer
-                  enabled={flags.drive && busy === null}
+                  enabled={(flags.drive || wakes) && busy === null}
                   working={s.current_run !== null}
                   steer={caps?.steer === true}
                   nativeQueue={caps?.native_follow_up === true}
                   onSend={(kind, text, images) =>
-                    actions && controller.act('send', () => actions.send(kind, text, images))
+                    actions &&
+                    controller.act('send', () =>
+                      // R6.6: a hibernated session resumes first, then takes the prompt.
+                      wakes
+                        ? resumeThenSend(actions, kind, text, images)
+                        : actions.send(kind, text, images),
+                    )
                   }
-                  disabledReason={disabledReason(flags, actions)}
+                  disabledReason={wakes ? null : disabledReason(flags, actions)}
                   slashCommands={slashCommands(events)}
                   draftKey={`${session.station_id}/${s.session_id}`}
                 />
