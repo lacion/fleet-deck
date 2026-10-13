@@ -59,6 +59,7 @@ fn started() -> Event {
 
 fn run(id: &str) -> Event {
     Event::RunStarted {
+        author: None,
         run_id: id.into(),
         input_summary: "hi".to_owned(),
         origin: RunOrigin::Board,
@@ -101,6 +102,7 @@ fn a_session_moves_through_the_lanes() {
     assert_eq!(s.activity, Activity::NeedsYou);
     assert_eq!(s.open_requests[0].requested_at, s.updated_at);
     let s = f.push(Event::ApprovalResolved {
+        answered_by: None,
         request_id: "req-1".into(),
         option_id: "allow".to_owned(),
         by: ResolvedBy::Board,

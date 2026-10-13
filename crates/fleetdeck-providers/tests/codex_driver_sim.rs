@@ -199,6 +199,7 @@ async fn approvals_steer_and_interrupt_reach_the_app_server() {
         .answer(Answer {
             request: request_id.clone(),
             decision: ApprovalDecision {
+                answered_by: None,
                 option_id: "accept".into(),
                 updated_input: None,
                 text: None,

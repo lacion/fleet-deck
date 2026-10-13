@@ -188,6 +188,7 @@ mod tests {
                 run_id: format!("r{seq}").into(),
                 input_summary: "hi".to_owned(),
                 origin: RunOrigin::Board,
+                author: None,
             },
         )
     }

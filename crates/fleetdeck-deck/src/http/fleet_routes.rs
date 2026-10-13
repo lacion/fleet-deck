@@ -26,7 +26,9 @@ use super::guard::ApiError;
 use crate::link::CommandKind;
 use crate::link::router::origin_name;
 use crate::store::fleet::{group_mail_id, group_members};
-use crate::store::{AuditResult, Completed, NewAudit, NewMail, NewOutboxItem, NewTask, Principal};
+use crate::store::{
+    AuditResult, Completed, MemberAction, NewAudit, NewMail, NewOutboxItem, NewTask, Principal,
+};
 
 /// How long the outbox tries to deliver a mail or a task.
 pub const DELIVERY_TTL_MS: i64 = 24 * 60 * 60 * 1000;
@@ -148,7 +150,30 @@ pub async fn send_mail(
         let Json(req) = body.map_err(|e| bad("invalid_body", e.body_text()))?;
         check_id(&req.mail_id)?;
         check_text(&req.text, MAX_TASK_CHARS)?;
-        let station = target(&board, &req.station, &req.session_id).await?;
+        // A member mails the sessions of its share (collaborator role); in
+        // mob mode only the driver does, as a mail steers the agent.
+        let station = if matches!(principal, Principal::Member(..)) {
+            let id = super::access::session_of(
+                &board,
+                &principal,
+                &req.station,
+                req.session_id.as_str(),
+                MemberAction::Mail,
+                "send mail",
+            )
+            .await?;
+            super::access::ensure_driver(
+                &board,
+                &principal,
+                &id,
+                req.session_id.as_str(),
+                MemberAction::Mail,
+            )
+            .await?;
+            id
+        } else {
+            target(&board, &req.station, &req.session_id).await?
+        };
         let sender = principal.actor();
         let delivery = req.delivery.unwrap_or(MailDelivery::FollowUp);
         let input = UserInput::new(mail_frame(&sender, req.text.trim()));

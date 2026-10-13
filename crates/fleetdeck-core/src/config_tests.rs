@@ -311,6 +311,21 @@ fn explicit_repo_groups_are_paths_with_names() {
     );
 }
 
+#[test]
+fn member_deny_adds_patterns_and_refuses_bad_ones() {
+    let c = StationConfig::parse("member_deny = [\"*.tfstate\", \"private/\"]", &env()).unwrap();
+    assert_eq!(c.member_deny, ["*.tfstate", "private/"]);
+    assert!(
+        StationConfig::parse("", &env())
+            .unwrap()
+            .member_deny
+            .is_empty()
+    );
+    assert!(err("member_deny = [\"/etc\"]").contains("member_deny[0]"));
+    assert!(err("member_deny = [\"a/../b\"]").contains("relative"));
+    assert!(err("member_deny = [\"\"]").contains("1 to 200"));
+}
+
 /// DL-136: a TOML error names the file position but never echoes the
 /// source line or a quoted value, because `env` can hold provider secrets.
 #[test]

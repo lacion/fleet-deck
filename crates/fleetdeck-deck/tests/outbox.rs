@@ -200,6 +200,7 @@ async fn an_attempt_and_its_command_are_stored_in_one_transaction_and_survive_a_
         .await
         .unwrap();
     let cmd = |id: &str| NewCommand {
+        author: None,
         command_id: CommandId::from(id),
         station_id: st.station_id.clone(),
         method: "session.interrupt".to_owned(),
@@ -289,6 +290,7 @@ async fn the_store_refuses_an_attempt_that_outlives_its_item_or_starts_after_it(
         .await
         .unwrap();
     let cmd = |id: &str, retry_until: i64| NewCommand {
+        author: None,
         command_id: CommandId::from(id),
         station_id: f.station.clone(),
         method: "session.interrupt".to_owned(),

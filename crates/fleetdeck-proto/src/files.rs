@@ -226,11 +226,21 @@ pub struct TurnDiff {
     pub from_commit: String,
     /// The completion checkpoint commit.
     pub to_commit: String,
+    /// The size of the diff. For a member it counts the visible files only.
     pub summary: DiffSummary,
     /// The patch (`git diff-tree -p --binary`), lossy UTF-8.
     pub patch: String,
     /// The patch was cut at the byte limit.
     pub truncated: bool,
+    /// The files that the member deny list hid from the patch and from the
+    /// summary (a member only; R11.9).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    #[ts(optional, as = "Option<u32>")]
+    pub hidden_files: u32,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 /// `files.session_diff` params: the working tree of a session against the

@@ -170,6 +170,7 @@ async fn each_command_method_needs_its_own_scope() {
             "session_id": "s1",
             "request_id": "r1",
             "decision": ApprovalDecision {
+                answered_by: None,
                 option_id: "allow".to_owned(),
                 updated_input: None,
                 text: None,

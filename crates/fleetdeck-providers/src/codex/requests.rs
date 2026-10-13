@@ -440,6 +440,7 @@ impl CodexCore {
             request_id: answer.request.clone(),
             option_id: option,
             by: answer.by,
+            answered_by: answer.decision.answered_by.clone(),
         }));
         Ok(out)
     }

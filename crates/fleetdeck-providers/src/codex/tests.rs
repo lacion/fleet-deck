@@ -60,6 +60,7 @@ pub(super) fn ans(request: &RequestId, option: &str) -> Answer {
     Answer {
         request: request.clone(),
         decision: ApprovalDecision {
+            answered_by: None,
             option_id: option.into(),
             updated_input: None,
             text: None,

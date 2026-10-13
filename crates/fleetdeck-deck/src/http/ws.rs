@@ -17,6 +17,13 @@
 //!   events catches up from the stored timeline.
 //! - **Expiry.** Every [`RECHECK`] (the board's `ws_recheck`) the socket checks that its login
 //!   session or token is still valid and closes with code 4401 when not.
+//! - **Members** (R11, DL-166). A member's socket sees the cards, the stations
+//!   and the timelines of the sessions of its share only. At every change of
+//!   the board and at every recheck the deck loads the share again, so a
+//!   revoke or a change of a space takes effect at once.
+//! - **People.** A `presence` heartbeat of a viewer (every 20 s) and the
+//!   `presence`, `chat`, `driver` and `drive_request` messages of the people
+//!   features for the sessions that the socket may see.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -36,9 +43,10 @@ use tokio::sync::broadcast::error::RecvError;
 
 use super::Board;
 use super::guard::ApiError;
+use super::read_routes::{member_sessions, member_stations};
 use crate::local::station_view;
 use crate::store::auth::{random_token, secret_hash};
-use crate::store::{DeckError, DeckStore, LiveEvents, Principal};
+use crate::store::{DeckError, DeckStore, LiveEvents, Principal, SocialEvent};
 
 /// How long a WebSocket ticket is valid.
 pub const TICKET_TTL_MS: i64 = 30_000;
@@ -119,9 +127,15 @@ pub async fn upgrade(
     ws.max_message_size(MAX_CLIENT_MESSAGE)
         .max_frame_size(MAX_CLIENT_MESSAGE)
         .on_upgrade(move |socket| async move {
-            if let Err(e) = Session::new(board, principal, socket).run().await {
+            let socket_id = board.store.new_socket_id();
+            let store = board.store.clone();
+            if let Err(e) = Session::new(board, principal, socket, socket_id)
+                .run()
+                .await
+            {
                 tracing::debug!(error = %e, "board socket");
             }
+            store.presence_leave(socket_id);
         })
 }
 
@@ -147,6 +161,8 @@ struct Sub {
 struct Session {
     board: Arc<Board>,
     principal: Principal,
+    /// The id of this socket for presence.
+    socket_id: u64,
     socket: WebSocket,
     cards: BTreeMap<SessionKey, DeckSession>,
     stations: Vec<StationView>,
@@ -160,13 +176,20 @@ async fn view(
     store: &DeckStore,
     principal: &Principal,
 ) -> Result<(Vec<StationView>, Vec<DeckSession>), WsError> {
-    let stations = store
+    let stations: Vec<StationView> = store
         .stations()
         .await?
         .iter()
         .map(|st| station_view(st, store))
         .collect();
-    Ok((stations, store.sessions_for(principal).await?))
+    let sessions = store.sessions_for(principal).await?;
+    Ok(match principal {
+        Principal::Member(_, grant) => {
+            let sessions = member_sessions(grant, sessions);
+            (member_stations(stations, &sessions), sessions)
+        }
+        _ => (stations, sessions),
+    })
 }
 
 async fn incarnation_of(
@@ -187,10 +210,11 @@ fn key(c: &DeckSession) -> SessionKey {
 }
 
 impl Session {
-    fn new(board: Arc<Board>, principal: Principal, socket: WebSocket) -> Self {
+    fn new(board: Arc<Board>, principal: Principal, socket: WebSocket, socket_id: u64) -> Self {
         Self {
             board,
             principal,
+            socket_id,
             socket,
             cards: BTreeMap::new(),
             stations: Vec::new(),
@@ -208,12 +232,14 @@ impl Session {
         let store = self.board.store.clone();
         let mut board_rx = store.watch_board();
         let mut live_rx = store.subscribe_live();
+        let mut social_rx = store.subscribe_social();
         self.send(&BoardServerMessage::Hello {
             protocol: BOARD_PROTOCOL,
             deck_incarnation: store.incarnation().clone(),
         })
         .await?;
         let version = *board_rx.borrow_and_update();
+        self.refresh_member().await?;
         let (stations, sessions) = view(&self.board.store, &self.principal).await?;
         self.cards = sessions.iter().map(|c| (key(c), c.clone())).collect();
         self.stations.clone_from(&stations);
@@ -225,6 +251,10 @@ impl Session {
         .await?;
         let mut recheck = tokio::time::interval(self.board.ws_recheck);
         recheck.tick().await;
+        let mut sweep = tokio::time::interval(Duration::from_secs(
+            fleetdeck_proto::share::PRESENCE_HEARTBEAT_S,
+        ));
+        sweep.tick().await;
         loop {
             tokio::select! {
                 changed = board_rx.changed() => {
@@ -239,6 +269,12 @@ impl Session {
                     Err(RecvError::Lagged(_)) => self.catch_up().await?,
                     Err(RecvError::Closed) => return Ok(()),
                 },
+                social = social_rx.recv() => match social {
+                    Ok(event) => self.social(&event).await?,
+                    Err(RecvError::Lagged(_)) => {}
+                    Err(RecvError::Closed) => return Ok(()),
+                },
+                _ = sweep.tick() => store.presence_sweep(),
                 msg = self.socket.recv() => match msg {
                     Some(Ok(Message::Text(text))) => self.client(text.as_str()).await?,
                     Some(Ok(Message::Binary(_))) => {
@@ -248,7 +284,7 @@ impl Session {
                     Some(Err(_)) | None => return Ok(()),
                 },
                 _ = recheck.tick() => {
-                    if !store.principal_alive(&self.principal).await? {
+                    if !store.principal_alive(&self.principal).await? || !self.refresh_member().await? {
                         let _ = self.socket.send(Message::Close(Some(CloseFrame {
                             code: CLOSE_LOGIN_ENDED,
                             reason: "login ended".into(),
@@ -271,6 +307,16 @@ impl Session {
     /// Sends what changed since the last snapshot or delta, and restarts
     /// the subscriptions of a station with a new incarnation.
     async fn delta(&mut self, version: u64) -> Result<(), WsError> {
+        if !self.refresh_member().await? {
+            let _ = self
+                .socket
+                .send(Message::Close(Some(CloseFrame {
+                    code: CLOSE_LOGIN_ENDED,
+                    reason: "login ended".into(),
+                })))
+                .await;
+            return Err(WsError::Send(axum::Error::new("the member login ended")));
+        }
         let (stations, sessions) = view(&self.board.store, &self.principal).await?;
         let mut next: BTreeMap<SessionKey, DeckSession> =
             sessions.into_iter().map(|c| (key(&c), c)).collect();
@@ -345,6 +391,42 @@ impl Session {
         Ok(())
     }
 
+    /// A member's share is loaded again: the covered sessions can change.
+    /// False when the login or its share ended. A subscription to a session
+    /// that the share does not cover any more ends.
+    async fn refresh_member(&mut self) -> Result<bool, WsError> {
+        let Principal::Member(id, grant) = &self.principal else {
+            return Ok(true);
+        };
+        let Some(fresh) = self.board.store.member_refresh(grant).await? else {
+            return Ok(false);
+        };
+        let id = id.clone();
+        self.subs.retain(|k, _| {
+            fresh
+                .scope
+                .covers(k.station_id.as_str(), k.session_id.as_str())
+        });
+        self.principal = Principal::Member(id, Box::new(fresh));
+        Ok(true)
+    }
+
+    /// True when this socket may see the session.
+    fn may_see(&self, k: &SessionKey) -> bool {
+        match &self.principal {
+            Principal::Member(_, g) => g.scope.covers(k.station_id.as_str(), k.session_id.as_str()),
+            _ => true,
+        }
+    }
+
+    /// An update of the people features (presence, chat, driver).
+    async fn social(&mut self, event: &SocialEvent) -> Result<(), WsError> {
+        if self.may_see(&event.key) {
+            self.send(&event.message).await?;
+        }
+        Ok(())
+    }
+
     /// After a lag: every subscription resends the stored timeline after
     /// its cursor (the streaming deltas in between are lost).
     async fn catch_up(&mut self) -> Result<(), WsError> {
@@ -405,6 +487,9 @@ impl Session {
                     let detail = format!("at most {MAX_SUBSCRIPTIONS} timelines per socket");
                     return self.error("too_many_subscriptions", &detail).await;
                 }
+                if !self.may_see(&k) {
+                    return self.error("unknown_session", "no such session").await;
+                }
                 if self
                     .board
                     .store
@@ -415,6 +500,23 @@ impl Session {
                     return self.error("unknown_station", "no such station").await;
                 }
                 self.start(k, incarnation, after).await
+            }
+            BoardClientMessage::Presence {
+                station_id,
+                session_id,
+            } => {
+                let k = SessionKey {
+                    station_id,
+                    session_id,
+                };
+                if !self.may_see(&k) {
+                    return self.error("unknown_session", "no such session").await;
+                }
+                let actor = self.principal.actor();
+                self.board
+                    .store
+                    .presence_heartbeat(&k, &actor, self.socket_id);
+                Ok(())
             }
             BoardClientMessage::Unsubscribe {
                 station_id,
@@ -457,6 +559,34 @@ impl Session {
             reset: resume.is_none(),
         })
         .await?;
-        self.stored_after(&k).await
+        self.stored_after(&k).await?;
+        // The current state of the people features of the session.
+        let who = store.presence_of(&k);
+        if !who.is_empty() {
+            self.send(&BoardServerMessage::Presence {
+                station_id: k.station_id.clone(),
+                session_id: k.session_id.clone(),
+                who,
+            })
+            .await?;
+        }
+        let state = store
+            .driver_state(k.station_id.0.clone(), k.session_id.0.clone())
+            .await?;
+        if state.driver.is_some() || !state.requests.is_empty() {
+            self.send(&BoardServerMessage::Driver {
+                station_id: k.station_id.clone(),
+                session_id: k.session_id.clone(),
+                driver: state.driver,
+            })
+            .await?;
+            self.send(&BoardServerMessage::DriveRequest {
+                station_id: k.station_id.clone(),
+                session_id: k.session_id.clone(),
+                requests: state.requests,
+            })
+            .await?;
+        }
+        Ok(())
     }
 }

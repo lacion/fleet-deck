@@ -8,4 +8,10 @@ export type UserInput = { text: string,
 /**
  * Pasted images, in paste order. Old peers send no field.
  */
-images?: Array<ImageInput>, };
+images?: Array<ImageInput>, 
+/**
+ * Who typed it, when it is not the owner: `member:<name>` (R11.5,
+ * DL-166). The deck sets it for every command of a member and clears it
+ * for every other caller; the station shows it in `run.started`.
+ */
+author?: string, };

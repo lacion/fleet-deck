@@ -416,7 +416,7 @@ impl DeckStore {
     ///
     /// # Errors
     /// A database error.
-    pub async fn create_share(&self, new: NewShare) -> Result<ShareRow> {
+    pub async fn create_artifact_share(&self, new: NewShare) -> Result<ShareRow> {
         let now = self.now_ms();
         let id = share_id_of(&new.token_hash);
         let row = ShareRow {
@@ -511,7 +511,7 @@ impl DeckStore {
     ///
     /// # Errors
     /// A database error.
-    pub async fn revoke_share(
+    pub async fn revoke_artifact_share(
         &self,
         station: StationId,
         artifact_id: String,

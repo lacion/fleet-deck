@@ -264,6 +264,10 @@ pub struct StationConfig {
     /// The `[[trackers]]` entries: Jira and Linear (R3, DL-164). GitHub and
     /// GitLab need no entry, only their CLIs.
     pub trackers: Vec<TrackerConfig>,
+    /// `member_deny`: more patterns that hide files from the members of a
+    /// shared session (R11.9, DL-166). The station adds them to its default
+    /// deny list; they never remove a default pattern.
+    pub member_deny: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -283,6 +287,7 @@ struct RawStation {
     repo_groups: Option<BTreeMap<String, String>>,
     hibernate_after_min: Option<u32>,
     trackers: Option<Vec<RawTracker>>,
+    member_deny: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -380,6 +385,17 @@ impl StationConfig {
             repo_groups.insert(path, group);
         }
         let trackers = parse_trackers(raw.trackers.unwrap_or_default(), home)?;
+        let member_deny = raw.member_deny.unwrap_or_default();
+        if member_deny.len() > MAX_MEMBER_DENY {
+            return Err(invalid(
+                "member_deny",
+                format!("give at most {MAX_MEMBER_DENY} patterns"),
+            ));
+        }
+        for (i, pattern) in member_deny.iter().enumerate() {
+            fleetdeck_proto::member_deny::check_pattern(pattern)
+                .map_err(|m| invalid(format!("member_deny[{i}]"), m))?;
+        }
         Ok(Self {
             name,
             allowed_roots,
@@ -395,6 +411,7 @@ impl StationConfig {
             repo_groups,
             hibernate_after_min,
             trackers,
+            member_deny,
         })
     }
 
@@ -408,6 +425,9 @@ impl StationConfig {
         self.allowed_roots.iter().any(|root| path.starts_with(root))
     }
 }
+
+/// The most `member_deny` patterns.
+const MAX_MEMBER_DENY: usize = 200;
 
 fn parse_instances(
     list: Vec<RawInstance>,

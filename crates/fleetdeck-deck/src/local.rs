@@ -44,6 +44,8 @@ pub fn socket_path(deck_dir: &Path) -> PathBuf {
 }
 
 /// One request of the local CLI.
+// One request per CLI call: the size of `Command` costs nothing.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum DeckRequest {

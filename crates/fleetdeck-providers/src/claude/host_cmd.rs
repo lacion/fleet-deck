@@ -60,6 +60,7 @@ impl ClaudeCore {
             } => self.answer(&Answer {
                 request: RequestId::new(request_id.as_str()),
                 decision: ApprovalDecision {
+                    answered_by: None,
                     option_id: option_id.clone(),
                     updated_input: updated_input.clone(),
                     text: message.clone(),

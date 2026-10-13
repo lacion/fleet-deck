@@ -204,6 +204,13 @@ export function reduceMessage(state: RuntimeState, msg: BoardServerMessage): Run
           ]),
         ),
       };
+    // The people features (presence, chat, mob driver; R11, DL-166): the shared-fleet
+    // board change keeps them; until then the reducer ignores them.
+    case 'presence':
+    case 'chat':
+    case 'driver':
+    case 'drive_request':
+      return state;
     default:
       msg satisfies never;
       throw new Error('Unknown board message');

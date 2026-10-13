@@ -62,6 +62,7 @@ async fn deliver(s: &DeckStore, station: &StationId) {
     for due in s.due_outbox(station.clone()).await.unwrap() {
         let id = CommandId::from(format!("c-{}", due.outbox_id));
         let cmd = NewCommand {
+            author: None,
             command_id: id.clone(),
             station_id: station.clone(),
             method: "session.follow_up".to_owned(),

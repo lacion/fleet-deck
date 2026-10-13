@@ -10,6 +10,7 @@ use crate::event::EventEnvelope;
 use crate::ids::{CommandId, IncarnationId, SessionId, StationId};
 use crate::link::StationInfo;
 use crate::session::{CardStatus, SessionSummary};
+use crate::share::ChatMessage;
 
 /// The longest client-chosen command id.
 pub const MAX_COMMAND_ID_CHARS: usize = 64;
@@ -56,6 +57,11 @@ pub struct DeckCommand {
     pub receipt: Option<Receipt>,
     /// Why a command is `failed` or `ambiguous`.
     pub reason: Option<String>,
+    /// Who sent the command: `owner`, `member:<name>` or `token:<name>`
+    /// (R11.5, DL-166). For an approval it is who answered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub author: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -266,6 +272,34 @@ pub enum BoardServerMessage {
         session_id: SessionId,
         events: Vec<EventEnvelope>,
     },
+    /// Who has a session open now (R11.5, DL-166): the actors (`owner`,
+    /// `member:<name>`) with a heartbeat in the last 60 s. Sent when the
+    /// set changes, for the sessions that the socket may see.
+    Presence {
+        station_id: StationId,
+        session_id: SessionId,
+        who: Vec<String>,
+    },
+    /// A new message of the side chat of a session (people only; the agent
+    /// never reads it).
+    Chat {
+        station_id: StationId,
+        session_id: SessionId,
+        message: ChatMessage,
+    },
+    /// The driver of a session in mob mode changed (`None`: nobody drives).
+    Driver {
+        station_id: StationId,
+        session_id: SessionId,
+        driver: Option<String>,
+    },
+    /// The people who ask to drive a session in mob mode, oldest first. The
+    /// full list: an empty list clears every request.
+    DriveRequest {
+        station_id: StationId,
+        session_id: SessionId,
+        requests: Vec<String>,
+    },
     /// A refused client message; the socket stays open.
     Error { code: String, message: String },
 }
@@ -285,6 +319,12 @@ pub enum BoardClientMessage {
         after: Option<u64>,
     },
     Unsubscribe {
+        station_id: StationId,
+        session_id: SessionId,
+    },
+    /// The heartbeat of a viewer that has `session_id` open: send it every
+    /// 20 s. Without one for 60 s the viewer is gone (R11.5).
+    Presence {
         station_id: StationId,
         session_id: SessionId,
     },

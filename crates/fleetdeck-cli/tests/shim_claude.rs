@@ -441,6 +441,7 @@ async fn a_reattached_claude_session_answers_an_approval_opened_before_the_crash
         .claimed(EffectPayload::Answer {
             request_id: RequestId(request_id.0.clone()),
             decision: ApprovalDecision {
+                answered_by: None,
                 option_id: "allow".to_owned(),
                 updated_input: None,
                 text: None,

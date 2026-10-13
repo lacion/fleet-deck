@@ -383,7 +383,7 @@ async fn an_artifact_is_published_served_under_the_sandbox_and_shared_while_the_
     let expired = fleetdeck_deck::store::auth::secret_hash(&expired_token);
     board
         .store
-        .create_share(NewShare {
+        .create_artifact_share(NewShare {
             token_hash: expired,
             station_id,
             artifact_id: id.clone(),

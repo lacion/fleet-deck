@@ -7,7 +7,10 @@
 //! 3. Every method except the login methods needs a principal: a bearer
 //!    API token (`Authorization: Bearer fdtok1_…`) or the owner's login
 //!    cookie. Login is required also on loopback (A13).
-//! 4. The principal must hold the method's scope.
+//! 4. The principal must hold the method's scope. A member of a shared
+//!    session (R11, DL-166) has no scope check: the method must be open to
+//!    members (`ApiMethod::member`; every other method is 403 `owner_only`),
+//!    and its handler then checks the share (the session and the role).
 //! 5. A mutating method with a cookie login needs the `X-CSRF-Token`
 //!    header of that login.
 //!
@@ -189,6 +192,10 @@ pub fn owner_only(principal: &Principal, action: &str) -> Result<(), ApiError> {
     }
 }
 
+/// The login cookie of a member starts with this (the owner's cookie is
+/// plain hex), so the guard asks one table.
+const MEMBER_COOKIE_PREFIX: &str = "fdmem1_";
+
 /// The value of one cookie in the `Cookie` headers.
 #[must_use]
 pub fn cookie(headers: &HeaderMap, name: &str) -> Option<Secret<String>> {
@@ -231,6 +238,13 @@ pub async fn authenticate(board: &Board, headers: &HeaderMap) -> Result<Principa
         };
     }
     let value = cookie(headers, COOKIE).ok_or_else(missing)?;
+    if value.expose().starts_with(MEMBER_COOKIE_PREFIX) {
+        return match board.store.member_login(&value).await {
+            Ok(Some(g)) => Ok(Principal::Member(g.member_id.clone(), Box::new(g))),
+            Ok(None) => Err(missing()),
+            Err(e) => Err(ApiError::internal(e)),
+        };
+    }
     match board.store.login_session(&value).await {
         Ok(Some(s)) => Ok(Principal::Owner(s)),
         Ok(None) => Err(missing()),
@@ -271,7 +285,18 @@ pub async fn check(
         authenticate(board, headers).await
     }
     .map_err(|e| (None, e))?;
-    if !principal.has(scope) {
+    if matches!(principal, Principal::Member(..)) {
+        if !api.member {
+            return Err((
+                Some(principal.actor()),
+                ApiError::new(
+                    StatusCode::FORBIDDEN,
+                    "owner_only",
+                    "only the owner's board login does this",
+                ),
+            ));
+        }
+    } else if !principal.has(scope) {
         return Err((
             Some(principal.actor()),
             ApiError::new(
@@ -281,14 +306,19 @@ pub async fn check(
             ),
         ));
     }
+    let csrf = match &principal {
+        Principal::Owner(session) => Some(session.csrf.as_str()),
+        Principal::Member(_, grant) => Some(grant.csrf.as_str()),
+        Principal::Token(..) => None,
+    };
     if api.mutating
-        && let Principal::Owner(session) = &principal
+        && let Some(csrf) = csrf
     {
         let sent = headers
             .get(CSRF_HEADER)
             .map(|v| v.as_bytes())
             .unwrap_or_default();
-        if !ct_eq(sent, session.csrf.as_bytes()) {
+        if !ct_eq(sent, csrf.as_bytes()) {
             return Err((
                 Some(principal.actor()),
                 ApiError::new(

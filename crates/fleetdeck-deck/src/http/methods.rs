@@ -20,6 +20,10 @@ pub struct ApiMethod {
     /// A mutating method needs the CSRF token of a cookie login and is
     /// audited.
     pub mutating: bool,
+    /// A member of a shared session may call the method (R11, DL-166). The
+    /// handler then checks the share: the session and the role. `false`: the
+    /// guard refuses a member with 403 `owner_only`.
+    pub member: bool,
 }
 
 const fn m(
@@ -35,6 +39,15 @@ const fn m(
         path,
         scope,
         mutating,
+        member: false,
+    }
+}
+
+impl ApiMethod {
+    /// The method that a member of a shared session may call too.
+    const fn member(mut self) -> Self {
+        self.member = true;
+        self
     }
 }
 
@@ -61,7 +74,8 @@ pub const API: &[ApiMethod] = &[
         "/api/auth/logout",
         Some(Scope::Read),
         true,
-    ),
+    )
+    .member(),
     // A device link (DL-146): `admin`, and the handler also requires the
     // owner's board login (DL-138).
     m(
@@ -77,14 +91,16 @@ pub const API: &[ApiMethod] = &[
         "/api/auth/session",
         Some(Scope::Read),
         false,
-    ),
+    )
+    .member(),
     m(
         "stations.list",
         Method::GET,
         "/api/stations",
         Some(Scope::Read),
         false,
-    ),
+    )
+    .member(),
     m(
         "stations.add",
         Method::POST,
@@ -135,28 +151,32 @@ pub const API: &[ApiMethod] = &[
         "/api/stations/{station}/files/list",
         Some(Scope::Drive),
         false,
-    ),
+    )
+    .member(),
     m(
         "files.read",
         Method::GET,
         "/api/stations/{station}/files/read",
         Some(Scope::Drive),
         false,
-    ),
+    )
+    .member(),
     m(
         "files.search",
         Method::GET,
         "/api/stations/{station}/files/search",
         Some(Scope::Drive),
         false,
-    ),
+    )
+    .member(),
     m(
         "files.diff",
         Method::GET,
         "/api/stations/{station}/sessions/{session}/turns/{turn}/diff",
         Some(Scope::Drive),
         false,
-    ),
+    )
+    .member(),
     // Artifacts (R12, DL-165). Reads need `read`; a publish needs `drive`;
     // a share link is `admin` and the handler also requires the owner's
     // board login (DL-138). The board's own view link only reads, but it
@@ -319,7 +339,8 @@ pub const API: &[ApiMethod] = &[
         "/api/sessions",
         Some(Scope::Read),
         false,
-    ),
+    )
+    .member(),
     // The read cursor of the caller only (R6.1, DL-169): `read` is enough.
     m(
         "sessions.read",
@@ -341,7 +362,8 @@ pub const API: &[ApiMethod] = &[
         "/api/fleet/extras",
         Some(Scope::Read),
         false,
-    ),
+    )
+    .member(),
     m(
         "commands.list",
         Method::GET,
@@ -362,8 +384,9 @@ pub const API: &[ApiMethod] = &[
         "/api/commands/{command_id}",
         Some(Scope::Read),
         false,
-    ),
-    m(WS_METHOD, Method::GET, "/api/ws", Some(Scope::Read), false),
+    )
+    .member(),
+    m(WS_METHOD, Method::GET, "/api/ws", Some(Scope::Read), false).member(),
     // The worktree inventory (DL-142): `admin`, and the handler also
     // requires the owner's board login (DL-138).
     m(
@@ -556,7 +579,8 @@ pub const API: &[ApiMethod] = &[
         "/api/ws/ticket",
         Some(Scope::Read),
         true,
-    ),
+    )
+    .member(),
     m(
         "session.assign",
         Method::POST,
@@ -577,7 +601,8 @@ pub const API: &[ApiMethod] = &[
         "/api/mail",
         Some(Scope::Drive),
         true,
-    ),
+    )
+    .member(),
     m(
         "coordinator.grants",
         Method::GET,
@@ -644,10 +669,10 @@ pub const API: &[ApiMethod] = &[
     cmd("session.start", Scope::Drive),
     cmd("session.resume", Scope::Drive),
     cmd("session.import", Scope::Drive),
-    cmd("session.prompt", Scope::Drive),
-    cmd("session.steer", Scope::Drive),
-    cmd("session.follow_up", Scope::Drive),
-    cmd("session.interrupt", Scope::Drive),
+    cmd("session.prompt", Scope::Drive).member(),
+    cmd("session.steer", Scope::Drive).member(),
+    cmd("session.follow_up", Scope::Drive).member(),
+    cmd("session.interrupt", Scope::Drive).member(),
     cmd("session.set_mode", Scope::Drive),
     cmd("session.set_model", Scope::Drive),
     cmd("session.fork", Scope::Drive),
@@ -658,7 +683,97 @@ pub const API: &[ApiMethod] = &[
     cmd("session.set_auto_continue", Scope::Drive),
     // `session.coordinator_renew` / `_revoke` have no generic route: only
     // the owner-checked grant routes send them (ADR-006 §3, DL-138).
-    cmd("approval.answer", Scope::Approve),
+    // A member answers a question as a collaborator and a tool approval as
+    // an approver; the handler decides by the request (DL-166).
+    cmd("approval.answer", Scope::Approve).member(),
+    // The shared fleet (R11, DL-166). The owner makes shares and spaces
+    // (`admin`, and the handlers also require the owner's board login); a
+    // member joins with an invite (no login needed).
+    m("auth.join", Method::POST, "/api/auth/join", None, true),
+    m(
+        "shares.create",
+        Method::POST,
+        "/api/shares",
+        Some(Scope::Admin),
+        true,
+    ),
+    m(
+        "shares.list",
+        Method::GET,
+        "/api/shares",
+        Some(Scope::Admin),
+        false,
+    ),
+    m(
+        "shares.revoke",
+        Method::POST,
+        "/api/shares/{share_id}/revoke",
+        Some(Scope::Admin),
+        true,
+    ),
+    m(
+        "spaces.create",
+        Method::POST,
+        "/api/spaces",
+        Some(Scope::Admin),
+        true,
+    ),
+    m(
+        "spaces.list",
+        Method::GET,
+        "/api/spaces",
+        Some(Scope::Admin),
+        false,
+    ),
+    m(
+        "spaces.add_session",
+        Method::POST,
+        "/api/spaces/{space_id}/sessions",
+        Some(Scope::Admin),
+        true,
+    ),
+    // The side chat and mob steering: the owner and the members of the
+    // share; the handlers check the share (DL-166).
+    m(
+        "chat.list",
+        Method::GET,
+        "/api/sessions/{station}/{session}/chat",
+        Some(Scope::Read),
+        false,
+    )
+    .member(),
+    m(
+        "chat.post",
+        Method::POST,
+        "/api/sessions/{station}/{session}/chat",
+        Some(Scope::Drive),
+        true,
+    )
+    .member(),
+    m(
+        "drive.request",
+        Method::POST,
+        "/api/sessions/{station}/{session}/drive/request",
+        Some(Scope::Drive),
+        true,
+    )
+    .member(),
+    m(
+        "drive.grant",
+        Method::POST,
+        "/api/sessions/{station}/{session}/drive/grant",
+        Some(Scope::Drive),
+        true,
+    )
+    .member(),
+    m(
+        "drive.release",
+        Method::POST,
+        "/api/sessions/{station}/{session}/drive/release",
+        Some(Scope::Drive),
+        true,
+    )
+    .member(),
 ];
 
 /// The route prefix of the command methods.
@@ -674,6 +789,7 @@ const fn cmd(name: &'static str, scope: Scope) -> ApiMethod {
         path: name,
         scope: Some(scope),
         mutating: true,
+        member: false,
     }
 }
 
@@ -715,7 +831,7 @@ mod tests {
             }
             assert_eq!(
                 a.scope.is_none(),
-                a.name == "auth.login" || a.name == "auth.link",
+                matches!(a.name, "auth.login" | "auth.link" | "auth.join"),
                 "{}",
                 a.name
             );
@@ -738,6 +854,55 @@ mod tests {
             Some("commands.get")
         );
         assert_eq!(find(&Method::POST, "/api/commands/session.nope"), None);
+    }
+
+    /// The member column (R11, DL-166): exactly these methods are open to a
+    /// member of a shared session, and each of their handlers checks the share.
+    /// A new method is owner-only until it is added here on purpose.
+    #[test]
+    fn exactly_these_methods_are_open_to_a_member() {
+        let mut open: Vec<&str> = API.iter().filter(|a| a.member).map(|a| a.name).collect();
+        open.sort_unstable();
+        assert_eq!(
+            open,
+            [
+                "approval.answer",
+                "auth.logout",
+                "auth.session",
+                "board.ws",
+                "board.ws_ticket",
+                "chat.list",
+                "chat.post",
+                "commands.get",
+                "drive.grant",
+                "drive.release",
+                "drive.request",
+                "files.diff",
+                "files.list",
+                "files.read",
+                "files.search",
+                "fleet.extras",
+                "mail.send",
+                "session.follow_up",
+                "session.interrupt",
+                "session.prompt",
+                "session.steer",
+                "sessions.list",
+                "stations.list",
+            ]
+        );
+        // The login methods need no principal at all.
+        for name in [
+            "shares.create",
+            "shares.revoke",
+            "spaces.create",
+            "shells.command",
+        ] {
+            assert!(
+                !API.iter().find(|a| a.name == name).unwrap().member,
+                "{name}"
+            );
+        }
     }
 
     #[test]

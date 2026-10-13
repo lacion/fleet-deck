@@ -76,6 +76,9 @@ pub(super) struct InputEntry {
     pub(super) uuid: String,
     pub(super) origin: RunOrigin,
     pub(super) summary: String,
+    /// Who typed the input (R11.5, DL-166); a checkpoint of an older build has none.
+    #[serde(default)]
+    pub(super) author: Option<String>,
     /// `None` until the CLI reports the input (written, not confirmed).
     pub(super) state: Option<InputState>,
     pub(super) turn: Option<TurnId>,
@@ -354,6 +357,7 @@ impl ClaudeCore {
             uuid: uuid.clone(),
             origin: input.origin,
             summary: summary_of(&input.input.text),
+            author: input.input.author.clone(),
             state: None,
             turn: None,
         });
@@ -496,9 +500,14 @@ impl ClaudeCore {
     /// the host input that starts it; `None` is a provider turn (trap 4).
     pub(super) fn start_turn(&mut self, input: Option<usize>) -> (TurnId, Vec<Output>) {
         let mut out = Vec::new();
-        let (origin, summary, uuid) = match input.and_then(|i| self.inputs.get(i)) {
-            Some(e) => (e.origin, e.summary.clone(), Some(e.uuid.clone())),
-            None => (RunOrigin::Provider, "provider turn".to_owned(), None),
+        let (origin, summary, uuid, author) = match input.and_then(|i| self.inputs.get(i)) {
+            Some(e) => (
+                e.origin,
+                e.summary.clone(),
+                Some(e.uuid.clone()),
+                e.author.clone(),
+            ),
+            None => (RunOrigin::Provider, "provider turn".to_owned(), None, None),
         };
         let run_id = match &self.run {
             Some(r) => r.clone(),
@@ -509,6 +518,7 @@ impl ClaudeCore {
                     run_id: r.clone(),
                     input_summary: summary,
                     origin,
+                    author,
                 }));
                 r
             }

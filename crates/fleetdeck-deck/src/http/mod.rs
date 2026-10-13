@@ -3,6 +3,7 @@
 //! accepts only the deck's board addresses (D13; checked in `DeckConfig`).
 //! The deck serves HTTPS itself ([`tls`]; D13: no reverse proxy, DL-054).
 
+pub mod access;
 pub mod activity_routes;
 pub mod archive_routes;
 pub mod artifact_routes;
@@ -16,11 +17,13 @@ pub mod grant_routes;
 pub mod guard;
 pub mod methods;
 pub mod paste_routes;
+pub mod people_routes;
 pub mod plan_routes;
 pub mod project_writes;
 pub mod projects_routes;
 pub mod read_routes;
 pub mod schedule_routes;
+pub mod share_routes;
 pub mod shell_routes;
 pub mod station_routes;
 pub mod tls;
@@ -83,6 +86,7 @@ pub fn router(board: Arc<Board>) -> Router {
     }
     r.route("/api/auth/login", post(auth_routes::password))
         .route("/api/auth/link", post(auth_routes::link))
+        .route("/api/auth/join", post(auth_routes::join))
         .route("/api/auth/device-link", post(auth_routes::device_link))
         .route("/api/auth/logout", post(auth_routes::logout))
         .route("/api/auth/session", get(auth_routes::session))
@@ -296,6 +300,38 @@ pub fn router(board: Arc<Board>) -> Router {
         .route("/api/audit", get(read_routes::audit))
         .route("/api/ws", get(ws::upgrade))
         .route("/api/ws/ticket", post(ws::ticket))
+        .route(
+            "/api/shares",
+            get(share_routes::list_shares).post(share_routes::create_share),
+        )
+        .route(
+            "/api/shares/{share_id}/revoke",
+            post(share_routes::revoke_share),
+        )
+        .route(
+            "/api/spaces",
+            get(share_routes::list_spaces).post(share_routes::create_space),
+        )
+        .route(
+            "/api/spaces/{space_id}/sessions",
+            post(share_routes::add_space_session),
+        )
+        .route(
+            "/api/sessions/{station}/{session}/chat",
+            get(people_routes::chat).post(people_routes::post_chat),
+        )
+        .route(
+            "/api/sessions/{station}/{session}/drive/request",
+            post(people_routes::drive_request),
+        )
+        .route(
+            "/api/sessions/{station}/{session}/drive/grant",
+            post(people_routes::drive_grant),
+        )
+        .route(
+            "/api/sessions/{station}/{session}/drive/release",
+            post(people_routes::drive_release),
+        )
         .route_layer(middleware::from_fn_with_state(
             Arc::clone(&board),
             guard::guard,

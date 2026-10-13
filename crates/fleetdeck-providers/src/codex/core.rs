@@ -71,6 +71,9 @@ pub(super) struct InputEntry {
     pub(super) id: InputId,
     pub(super) origin: RunOrigin,
     pub(super) summary: String,
+    /// Who typed the input (R11.5, DL-166); a checkpoint of an older build has none.
+    #[serde(default)]
+    pub(super) author: Option<String>,
     /// `None` until the app-server accepted the request.
     pub(super) state: Option<InputState>,
     pub(super) turn: Option<TurnId>,
@@ -414,6 +417,7 @@ impl CodexCore {
             id: input.id.clone(),
             origin: input.origin,
             summary: summary_of(&input.input.text),
+            author: input.input.author.clone(),
             state: None,
             turn: None,
         });
@@ -697,13 +701,13 @@ impl CodexCore {
             return Vec::new();
         }
         let mut out = Vec::new();
-        let (origin, summary) = match self
+        let (origin, summary, author) = match self
             .turn_input
             .take()
             .and_then(|id| self.inputs.iter().find(|i| i.id == id))
         {
-            Some(e) => (e.origin, e.summary.clone()),
-            None => (RunOrigin::Provider, "provider turn".to_owned()),
+            Some(e) => (e.origin, e.summary.clone(), e.author.clone()),
+            None => (RunOrigin::Provider, "provider turn".to_owned(), None),
         };
         let run_id = self.ids.run();
         self.run = Some(run_id.clone());
@@ -711,6 +715,7 @@ impl CodexCore {
             run_id: run_id.clone(),
             input_summary: summary,
             origin,
+            author,
         }));
         let turn_id = TurnId(self.ids.next("turn"));
         self.turn = Some(turn_id.clone());

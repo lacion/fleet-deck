@@ -9,6 +9,7 @@ use fleetdeck_core::ChildEnv;
 use fleetdeck_core::config::{OfflineApprovalPolicy as ConfigOffline, StationConfig};
 use fleetdeck_proto::ProviderInstanceId;
 use fleetdeck_proto::event::ProviderKind;
+use fleetdeck_proto::member_deny::MemberDeny;
 use fleetdeck_providers::adapter::canonical_workspace;
 
 use crate::store::OfflineApprovalPolicy;
@@ -49,6 +50,9 @@ pub struct Policy {
     /// GitHub, GitLab, Jira and Linear (R3, DL-164). Shared, not
     /// configuration: it holds a response cache and the recent writes.
     integrations: std::sync::Arc<crate::integrations::Integrations>,
+    /// The files hidden from the members of a shared session (R11.9,
+    /// DL-166): the default list plus `member_deny` of `station.toml`.
+    member_deny: MemberDeny,
 }
 
 impl Policy {
@@ -83,6 +87,7 @@ impl Policy {
             integrations: std::sync::Arc::new(crate::integrations::Integrations::new(
                 config.trackers.clone(),
             )),
+            member_deny: MemberDeny::new(&config.member_deny),
         }
         .with_repo_groups(&config.repo_groups)
     }
@@ -153,6 +158,7 @@ impl Policy {
             hibernate_after_min: 0,
             coordinator: crate::coordinator::Bindings::default(),
             integrations: std::sync::Arc::default(),
+            member_deny: MemberDeny::default(),
         }
     }
 
@@ -167,6 +173,18 @@ impl Policy {
     pub fn with_integrations(mut self, service: crate::integrations::Integrations) -> Self {
         self.integrations = std::sync::Arc::new(service);
         self
+    }
+
+    /// The files that a member of a shared session must not see.
+    #[must_use]
+    pub fn member_deny(&self) -> &MemberDeny {
+        &self.member_deny
+    }
+
+    /// The same policy with another deck list (station tests).
+    #[cfg(test)]
+    pub(crate) fn set_member_deny(&mut self, deny: MemberDeny) {
+        self.member_deny = deny;
     }
 
     /// The same policy with setup commands on or off (DL-148).

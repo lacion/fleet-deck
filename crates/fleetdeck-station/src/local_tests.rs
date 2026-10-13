@@ -128,6 +128,7 @@ async fn requests_get_one_response_each_on_the_same_connection() {
             command_id: None,
             request_id: "req-x".into(),
             decision: ApprovalDecision {
+                answered_by: None,
                 option_id: "allow".into(),
                 updated_input: None,
                 text: None,
@@ -175,6 +176,7 @@ fn the_wire_shapes_are_stable() {
         command_id: None,
         request_id: "r1".into(),
         decision: ApprovalDecision {
+            answered_by: None,
             option_id: "deny".into(),
             updated_input: None,
             text: None,

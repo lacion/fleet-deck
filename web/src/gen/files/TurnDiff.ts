@@ -14,7 +14,11 @@ from_commit: string,
 /**
  * The completion checkpoint commit.
  */
-to_commit: string, summary: DiffSummary, 
+to_commit: string, 
+/**
+ * The size of the diff. For a member it counts the visible files only.
+ */
+summary: DiffSummary, 
 /**
  * The patch (`git diff-tree -p --binary`), lossy UTF-8.
  */
@@ -22,4 +26,9 @@ patch: string,
 /**
  * The patch was cut at the byte limit.
  */
-truncated: boolean, };
+truncated: boolean, 
+/**
+ * The files that the member deny list hid from the patch and from the
+ * summary (a member only; R11.9).
+ */
+hidden_files?: number, };

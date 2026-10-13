@@ -121,6 +121,7 @@ pub(super) fn answer(request: &str, option: &str) -> Answer {
     Answer {
         request: RequestId::new(request),
         decision: ApprovalDecision {
+            answered_by: None,
             option_id: option.to_owned(),
             updated_input: None,
             text: None,

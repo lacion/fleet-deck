@@ -351,6 +351,11 @@ pub enum Event {
         run_id: RunId,
         input_summary: String,
         origin: RunOrigin,
+        /// Who typed the input, when it is not the owner: `member:<name>`
+        /// (R11.5, DL-166). Older peers send no field.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        author: Option<String>,
     },
     #[serde(rename = "turn.started")]
     TurnStarted {
@@ -426,6 +431,11 @@ pub enum Event {
         request_id: RequestId,
         option_id: String,
         by: ResolvedBy,
+        /// Who answered, when it is not the owner: `member:<name>` (R11.5,
+        /// DL-166). Older peers send no field.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        answered_by: Option<String>,
     },
     #[serde(rename = "approval.expired")]
     ApprovalExpired {

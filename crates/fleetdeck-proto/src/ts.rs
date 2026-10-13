@@ -49,6 +49,10 @@ use crate::orchestration::{
 };
 use crate::plans::{DeckPlan, PlanMarkRequest, PlanStatus};
 use crate::session::{CardStatus, SessionSummary};
+use crate::share::{
+    ChatMessage, ChatPost, DriveGrant, DriverState, JoinRequest, NewShare, NewSpace, ShareCreated,
+    ShareInfo, ShareKind, ShareRole, SharedScope, SpaceSession, SpaceView, Steering,
+};
 use crate::version::{Negotiated, VersionOffer};
 
 /// The ts-rs configuration: 64-bit integers are `number` (sequence numbers
@@ -217,6 +221,21 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         it::CommentBody::export_all(&cfg),
         it::ReviewBody::export_all(&cfg),
         it::TransitionBody::export_all(&cfg),
+        ShareKind::export_all(&cfg),
+        ShareRole::export_all(&cfg),
+        Steering::export_all(&cfg),
+        NewShare::export_all(&cfg),
+        ShareCreated::export_all(&cfg),
+        ShareInfo::export_all(&cfg),
+        NewSpace::export_all(&cfg),
+        SpaceView::export_all(&cfg),
+        SpaceSession::export_all(&cfg),
+        JoinRequest::export_all(&cfg),
+        SharedScope::export_all(&cfg),
+        ChatMessage::export_all(&cfg),
+        ChatPost::export_all(&cfg),
+        DriveGrant::export_all(&cfg),
+        DriverState::export_all(&cfg),
     ];
     for result in results {
         result.map_err(io::Error::other)?;

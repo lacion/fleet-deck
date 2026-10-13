@@ -31,9 +31,11 @@ use crate::store::{DeckCommand, DeckError, NewCommand, Settle};
 
 /// A mutating command for one station.
 // `Start` grew by the issue link and the origin flag (DL-164).
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+// `SessionCommand` carries the author of an input (R11.5); one command is
+// built for each board call, so the size difference costs nothing.
+#[allow(clippy::large_enum_variant)]
 pub enum CommandKind {
     /// `session.*`.
     Session { command: SessionCommand },
@@ -132,7 +134,7 @@ impl DeckLink {
         origin: CommandOrigin,
         kind: CommandKind,
     ) -> Result<NewCommand, DeckError> {
-        self.build_until(station, origin, kind, i64::MAX, None)
+        self.build_until(station, origin, kind, i64::MAX, None, None)
             .await
     }
 
@@ -148,6 +150,7 @@ impl DeckLink {
         kind: CommandKind,
         latest: i64,
         command_id: Option<CommandId>,
+        author: Option<String>,
     ) -> Result<NewCommand, DeckError> {
         let rec = self
             .store
@@ -187,6 +190,7 @@ impl DeckLink {
             origin: origin_name(origin).to_owned(),
             envelope,
             retry_until,
+            author,
         })
     }
 
@@ -225,8 +229,25 @@ impl DeckLink {
         kind: CommandKind,
         command_id: CommandId,
     ) -> Result<(DeckCommand, bool), DeckError> {
+        self.submit_by(station, origin, kind, command_id, None)
+            .await
+    }
+
+    /// [`DeckLink::submit_as`] with the author of the command (R11.5): the
+    /// stored command row keeps it.
+    ///
+    /// # Errors
+    /// See [`DeckLink::submit_as`].
+    pub async fn submit_by(
+        self: &Arc<Self>,
+        station: StationId,
+        origin: CommandOrigin,
+        kind: CommandKind,
+        command_id: CommandId,
+        author: Option<String>,
+    ) -> Result<(DeckCommand, bool), DeckError> {
         let new = self
-            .build_until(station, origin, kind, i64::MAX, Some(command_id))
+            .build_until(station, origin, kind, i64::MAX, Some(command_id), author)
             .await?;
         let (cmd, new) = self.store.insert_or_existing(new).await?;
         if new {

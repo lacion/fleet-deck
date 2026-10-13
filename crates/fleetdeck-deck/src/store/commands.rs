@@ -38,6 +38,8 @@ pub struct NewCommand {
     pub origin: String,
     pub envelope: Value,
     pub retry_until: i64,
+    /// Who sent it: `owner`, `member:<name>` or `token:<name>` (R11.5).
+    pub author: Option<String>,
 }
 
 /// What came back for one send.
@@ -50,7 +52,7 @@ pub enum Settle {
 }
 
 const COLUMNS: &str = "command_id, station_id, method, origin, envelope, retry_until, state, \
-                       attempts, sent_at, receipt, reason, created_at, updated_at";
+                       attempts, sent_at, receipt, reason, created_at, updated_at, author";
 
 fn state_name(s: DeckCommandState) -> &'static str {
     match s {
@@ -85,6 +87,7 @@ type RawCommand = (
     Option<String>,
     i64,
     i64,
+    Option<String>,
 );
 
 fn raw(r: &Row<'_>) -> rusqlite::Result<RawCommand> {
@@ -102,6 +105,7 @@ fn raw(r: &Row<'_>) -> rusqlite::Result<RawCommand> {
         r.get(10)?,
         r.get(11)?,
         r.get(12)?,
+        r.get(13)?,
     ))
 }
 
@@ -123,6 +127,7 @@ fn parse(r: RawCommand) -> Result<DeckCommand> {
         reason: r.10,
         created_at: r.11,
         updated_at: r.12,
+        author: r.13,
     })
 }
 
@@ -192,8 +197,8 @@ pub(crate) fn insert(conn: &Connection, cmd: &NewCommand, now: i64) -> Result<()
     }
     conn.execute(
         "INSERT INTO commands (command_id, station_id, method, origin, envelope,
-             retry_until, state, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending', ?7, ?7)",
+             retry_until, state, created_at, updated_at, author)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending', ?7, ?7, ?8)",
         params![
             cmd.command_id.as_str(),
             cmd.station_id.as_str(),
@@ -201,7 +206,8 @@ pub(crate) fn insert(conn: &Connection, cmd: &NewCommand, now: i64) -> Result<()
             cmd.origin,
             serde_json::to_string(&cmd.envelope)?,
             cmd.retry_until,
-            now
+            now,
+            cmd.author
         ],
     )?;
     Ok(())

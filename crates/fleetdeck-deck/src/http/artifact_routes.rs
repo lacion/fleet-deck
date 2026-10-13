@@ -520,7 +520,7 @@ pub async fn share(
             .saturating_add(i64::from(req.expires_in_days) * DAY_MS);
         let row = board
             .store
-            .create_share(NewShare {
+            .create_artifact_share(NewShare {
                 token_hash: hash,
                 station_id: rec.station_id,
                 artifact_id: id.clone(),
@@ -573,7 +573,7 @@ pub async fn revoke(
         let rec = station_of(&board, &station).await?;
         let found = board
             .store
-            .revoke_share(
+            .revoke_artifact_share(
                 rec.station_id,
                 id.clone(),
                 secret_hash(&token),
@@ -627,7 +627,7 @@ pub async fn view(
     let expires_at = board.store.now_ms().saturating_add(VIEW_LINK_MS);
     board
         .store
-        .create_share(NewShare {
+        .create_artifact_share(NewShare {
             token_hash: hash,
             station_id: rec.station_id,
             artifact_id: id,

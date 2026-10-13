@@ -208,21 +208,25 @@ async fn file_method(ctx: &StationLink, method: &str, params: serde_json::Value)
     let store = ctx.manager.store();
     let policy = ctx.manager.policy();
     let git = GitOptions::isolated();
+    // The deck marks a call for a member of a shared session (R11.9); the
+    // station hides the files of the member deny list from it.
+    let mut params = params;
+    let member = fleetdeck_proto::member_deny::take_member_flag(&mut params);
     match method {
         "files.list" => match serde_json::from_value(params) {
-            Ok(q) => done(files::list(store, policy, q).await),
+            Ok(q) => done(files::list_as(store, policy, q, member).await),
             Err(e) => bad_params(e),
         },
         "files.read" => match serde_json::from_value(params) {
-            Ok(q) => done(files::read(store, policy, q).await),
+            Ok(q) => done(files::read_as(store, policy, q, member).await),
             Err(e) => bad_params(e),
         },
         "files.search" => match serde_json::from_value(params) {
-            Ok(q) => done(files::search(store, policy, &git, q).await),
+            Ok(q) => done(files::search_as(store, policy, &git, q, member).await),
             Err(e) => bad_params(e),
         },
         "files.diff" => match serde_json::from_value(params) {
-            Ok(q) => done(files::diff(store, policy, &git, q).await),
+            Ok(q) => done(files::diff_as(store, policy, &git, q, member).await),
             Err(e) => bad_params(e),
         },
         "files.session_diff" => match serde_json::from_value(params) {

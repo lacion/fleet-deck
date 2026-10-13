@@ -285,6 +285,7 @@ pub(super) fn observe(
             request_id,
             option_id,
             by,
+            ..
         } => {
             let receipt = json(&AnswerReceipt {
                 command_id: None,
@@ -479,6 +480,7 @@ pub(super) fn deny_overdue(
             EffectPayload::Answer {
                 request_id: req.request_id.clone(),
                 decision: ApprovalDecision {
+                    answered_by: None,
                     option_id: deny.option_id,
                     updated_input: None,
                     text: Some("denied by the station: the deck was not reachable".to_owned()),

@@ -449,6 +449,7 @@ async fn a_provider_crash_settles_its_effects_expires_its_request_and_rejects_a_
                 session_id: session.clone(),
                 request_id: request.clone(),
                 decision: ApprovalDecision {
+                    answered_by: None,
                     option_id: "allow".into(),
                     updated_input: None,
                     text: None,
