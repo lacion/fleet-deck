@@ -19,8 +19,8 @@ use std::sync::{Arc, Mutex as StdMutex, Weak};
 use async_trait::async_trait;
 use fleetdeck_core::{SharedIds, new_id};
 use fleetdeck_proto::command::{SessionSpec, StopMode};
-use fleetdeck_proto::session::SessionBase;
 use fleetdeck_proto::event::ProviderKind;
+use fleetdeck_proto::session::SessionBase;
 use fleetdeck_proto::{Event, ProviderInstanceId, SessionId};
 use fleetdeck_providers::host::HostError;
 use fleetdeck_providers::{
