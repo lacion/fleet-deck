@@ -60,7 +60,15 @@ pub fn decide(
             spec,
             prompt,
             workspace,
-        } => start(d, policy, origin_run, spec, prompt, workspace, None),
+        } => start(
+            d,
+            policy,
+            origin_run,
+            spec,
+            prompt,
+            workspace.map(|w| *w),
+            None,
+        ),
         SessionCommand::Import {
             spec,
             native_session_id,
@@ -381,12 +389,26 @@ fn start(
         ));
     }
     let session_id: SessionId = d.new_id();
-    let callsign = new_callsign(d, &session_id, active)?;
+    // The branch that the session works on: the chosen branch of a
+    // worktree, else the current branch of a start in place (DL-144).
+    let ticket = match &workspace {
+        Some(WorkspaceRequest::Worktree { branch, base }) => {
+            provision::check_branch_choice(branch.as_deref(), base.as_deref()).map_err(refused)?;
+            branch.as_deref().and_then(provision::ticket_key)
+        }
+        Some(WorkspaceRequest::Clone { .. }) => None,
+        None => fleetdeck_core::git::current_branch(&cwd)
+            .as_deref()
+            .and_then(provision::ticket_key),
+    };
+    let callsign = new_callsign(d, &session_id, active, ticket.as_deref())?;
     let mut worktree = None;
-    if matches!(workspace, Some(WorkspaceRequest::Worktree)) {
+    if let Some(WorkspaceRequest::Worktree { branch, base }) = &workspace {
         let (worktree_plan, path) =
-            provision::worktree_plan(&cwd, &callsign, |p| canonical_inside(p).is_some())
-                .map_err(refused)?;
+            provision::worktree_plan(&cwd, &callsign, branch.as_deref(), base.as_deref(), |p| {
+                canonical_inside(p).is_some()
+            })
+            .map_err(refused)?;
         worktree = Some(path.to_string_lossy().into_owned());
         plan = Some(worktree_plan);
         cwd = path;
@@ -470,8 +492,9 @@ fn new_callsign(
     d: &Decision<'_>,
     session_id: &SessionId,
     start: u64,
+    ticket: Option<&str>,
 ) -> Result<String, DecideError> {
-    for candidate in provision::callsign_candidates(session_id.as_str(), start) {
+    for candidate in provision::callsign_candidates(session_id.as_str(), start, ticket) {
         if !d.callsign_taken(&candidate)? {
             return Ok(candidate);
         }

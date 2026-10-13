@@ -4,4 +4,14 @@
  * How a start gets its workspace (PLAN §6.6, M3 6-1, DL-200). The station
  * does the Git work in the start effect, never in the decision.
  */
-export type WorkspaceRequest = { "kind": "worktree" } | { "kind": "clone", url: string, };
+export type WorkspaceRequest = { "kind": "worktree", 
+/**
+ * The branch of the worktree: an existing branch is checked out, a
+ * new one is created. Absent: the new branch `fd/<callsign>`.
+ */
+branch?: string, 
+/**
+ * The commit-ish that a new `branch` starts from (default `HEAD`).
+ * It needs a `branch`.
+ */
+base?: string, } | { "kind": "clone", url: string, };

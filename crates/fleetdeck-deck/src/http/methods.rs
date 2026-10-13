@@ -105,6 +105,13 @@ pub const API: &[ApiMethod] = &[
         false,
     ),
     m(
+        "workspace.preflight",
+        Method::POST,
+        "/api/stations/{station}/workspace/preflight",
+        Some(Scope::Drive),
+        true,
+    ),
+    m(
         "files.list",
         Method::GET,
         "/api/stations/{station}/files/list",

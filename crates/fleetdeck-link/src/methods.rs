@@ -107,6 +107,15 @@ pub const METHODS: &[MethodSpec] = &[
         Some(feature::WORKTREES),
         false,
     ),
+    // The Git access check before a clone (DL-144): it reads the remote
+    // with the station's credentials, so it needs the drive scope.
+    m(
+        "workspace.preflight",
+        DeckToStation,
+        Scope::Drive,
+        Some(feature::PREFLIGHT),
+        false,
+    ),
     m(
         "files.list",
         DeckToStation,

@@ -49,6 +49,8 @@ pub mod feature {
     /// `workspace.worktrees`: the read-only inventory of the worktrees that
     /// the station created for sessions (DL-142).
     pub const WORKTREES: &str = "workspace.worktrees.v1";
+    /// `workspace.preflight`: the Git access check of a clone URL (DL-144).
+    pub const PREFLIGHT: &str = "workspace.preflight.v1";
 
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
@@ -65,6 +67,7 @@ pub mod feature {
         AUTO_CONTINUE,
         IMPORT,
         WORKTREES,
+        PREFLIGHT,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];

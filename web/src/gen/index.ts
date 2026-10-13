@@ -91,6 +91,8 @@ export * from "./link/ControlFrame";
 export * from "./link/CoordinatorBindingPhase";
 export * from "./link/CoordinatorBindingState";
 export * from "./link/Negotiated";
+export * from "./link/Preflight";
+export * from "./link/PreflightQuery";
 export * from "./link/ReceiptQuery";
 export * from "./link/ReplayParams";
 export * from "./link/Scope";

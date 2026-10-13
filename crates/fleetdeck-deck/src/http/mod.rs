@@ -86,6 +86,10 @@ pub fn router(board: Arc<Board>) -> Router {
             get(workspace_routes::list),
         )
         .route(
+            "/api/stations/{station}/workspace/preflight",
+            post(workspace_routes::preflight),
+        )
+        .route(
             "/api/stations/{station}/worktrees",
             get(worktree_routes::list),
         )

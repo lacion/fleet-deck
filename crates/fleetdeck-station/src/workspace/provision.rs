@@ -45,11 +45,43 @@ fn forbidden(message: impl Into<String>) -> Refused {
     }
 }
 
-/// The callsign candidates of a new session, best first: the rotation from
-/// `start` with the last four id characters, then the rotation with the
-/// whole id (unique, because the id is).
+/// The first ticket key in `branch`: `[A-Z][A-Z0-9]{1,9}-[0-9]{1,6}`
+/// (`feature/PROJ-123-login` gives `PROJ-123`). Lower case gives none.
 #[must_use]
-pub fn callsign_candidates(session_id: &str, start: u64) -> Vec<String> {
+pub fn ticket_key(branch: &str) -> Option<String> {
+    let b = branch.as_bytes();
+    for start in 0..b.len() {
+        if !b[start].is_ascii_uppercase() {
+            continue;
+        }
+        // The key letters: 1 to 9 after the first one, then a dash.
+        let mut i = start + 1;
+        while i < b.len() && i - start <= 10 && (b[i].is_ascii_uppercase() || b[i].is_ascii_digit())
+        {
+            i += 1;
+        }
+        // `i` is one past the run; the dash must follow a run of 2 to 10.
+        if i - start < 2 || i - start > 10 || b.get(i) != Some(&b'-') {
+            continue;
+        }
+        let digits = b[i + 1..]
+            .iter()
+            .take(6)
+            .take_while(|c| c.is_ascii_digit())
+            .count();
+        if digits >= 1 {
+            return Some(branch[start..i + 1 + digits].to_owned());
+        }
+    }
+    None
+}
+
+/// The callsign candidates of a new session, best first: with a ticket key
+/// the rotation `<animal>-<KEY>` (DL-144), then the rotation from `start`
+/// with the last four id characters, then the rotation with the whole id
+/// (unique, because the id is).
+#[must_use]
+pub fn callsign_candidates(session_id: &str, start: u64, ticket: Option<&str>) -> Vec<String> {
     let id: String = session_id
         .chars()
         .filter(char::is_ascii_alphanumeric)
@@ -59,14 +91,49 @@ pub fn callsign_candidates(session_id: &str, start: u64) -> Vec<String> {
     let n = CALLSIGNS.len();
     let offset = usize::try_from(start % n as u64).unwrap_or(0);
     let animal = |i: usize| CALLSIGNS[(offset + i) % n];
-    (0..n)
-        .map(|i| format!("{}-{short}", animal(i)))
+    let keyed = ticket
+        .into_iter()
+        .flat_map(|key| (0..n).map(move |i| format!("{}-{key}", animal(i))));
+    keyed
+        .chain((0..n).map(|i| format!("{}-{short}", animal(i))))
         .chain((0..n).map(|i| format!("{}-{id}", animal(i))))
         .collect()
 }
 
+/// The longest branch or base name that the station takes.
+pub const MAX_REF_CHARS: usize = 200;
+
+/// Checks the branch choice of a worktree start by syntax only; Git
+/// validates the names again in the effect.
+///
+/// # Errors
+/// [`Refused`]: a bad branch or base name, or a base without a branch.
+pub fn check_branch_choice(branch: Option<&str>, base: Option<&str>) -> Result<(), Refused> {
+    let plain = |s: &str| {
+        let n = s.chars().count();
+        (1..=MAX_REF_CHARS).contains(&n)
+            && !s.starts_with('-')
+            && !s.chars().any(|c| c.is_whitespace() || c.is_ascii_control())
+    };
+    match (branch, base) {
+        (None, Some(_)) => Err(invalid("a base needs a branch")),
+        (Some(b), _)
+            if !plain(b)
+                || b.contains("..")
+                || b.contains(['~', '^', ':', '?', '*', '[', '\\'])
+                || b.ends_with('/')
+                || b.ends_with(".lock") =>
+        {
+            Err(invalid(format!("the branch name `{b}` is not valid")))
+        }
+        (_, Some(base)) if !plain(base) => Err(invalid(format!("the base `{base}` is not valid"))),
+        _ => Ok(()),
+    }
+}
+
 /// The worktree plan for `repo` (canonical, inside an allowed root):
-/// `<parent>/<name>--fd-<callsign>` on branch `fd/<callsign>`. `inside`
+/// `<parent>/<name>--fd-<callsign>` on the chosen `branch` (checked by
+/// [`check_branch_choice`]), else on the new branch `fd/<callsign>`. `inside`
 /// says whether a canonical directory is inside the allowed roots.
 ///
 /// # Errors
@@ -75,6 +142,8 @@ pub fn callsign_candidates(session_id: &str, start: u64) -> Vec<String> {
 pub fn worktree_plan(
     repo: &Path,
     callsign: &str,
+    branch: Option<&str>,
+    base: Option<&str>,
     inside: impl Fn(&Path) -> bool,
 ) -> Result<(WorkspacePlan, PathBuf), Refused> {
     if !std::fs::symlink_metadata(repo.join(".git")).is_ok_and(|m| m.is_dir()) {
@@ -100,7 +169,8 @@ pub fn worktree_plan(
         WorkspacePlan::Worktree {
             repo: text(repo),
             path: text(&path),
-            branch: format!("fd/{callsign}"),
+            branch: branch.map_or_else(|| format!("fd/{callsign}"), str::to_owned),
+            base: base.map(str::to_owned),
         },
         path,
     ))
@@ -145,7 +215,7 @@ pub fn clone_plan(
 
 /// Accepts `https://`, `ssh://` and `user@host:path` URLs without a
 /// password or token, and `file://` URLs of a repository inside the roots.
-fn check_url(
+pub(crate) fn check_url(
     url: &str,
     canonical_inside: impl Fn(&Path) -> Option<PathBuf>,
 ) -> Result<(), Refused> {
@@ -216,7 +286,12 @@ pub async fn provision(plan: &WorkspacePlan, program: &Path) -> Result<(), Strin
         isolated: false,
     };
     match plan {
-        WorkspacePlan::Worktree { repo, path, branch } => {
+        WorkspacePlan::Worktree {
+            repo,
+            path,
+            branch,
+            base,
+        } => {
             if Path::new(path).is_dir() {
                 let git = Git::new(path, options(WORKTREE_TIMEOUT));
                 let head = git
@@ -229,8 +304,52 @@ pub async fn provision(plan: &WorkspacePlan, program: &Path) -> Result<(), Strin
                     Err(format!("`{path}` exists on another branch"))
                 };
             }
-            Git::new(repo, options(WORKTREE_TIMEOUT))
-                .run(&["worktree", "add", "-b", branch, "--", path])
+            let git = Git::new(repo, options(WORKTREE_TIMEOUT));
+            let heads_ref = format!("refs/heads/{branch}");
+            let exists = git
+                .status(&["show-ref", "--verify", "--quiet", &heads_ref], &[], None)
+                .await
+                .map_err(|e| e.to_string())?
+                .0
+                == 0;
+            if exists {
+                if base.is_some() {
+                    return Err(format!(
+                        "the branch `{branch}` exists; a base applies only to a new branch"
+                    ));
+                }
+                return git
+                    .run(&["worktree", "add", "--", path, branch])
+                    .await
+                    .map(|_| ())
+                    .map_err(|e| e.to_string());
+            }
+            let start = match base {
+                Some(base) => {
+                    let commit = format!("{base}^{{commit}}");
+                    let verified = git
+                        .status(
+                            &[
+                                "rev-parse",
+                                "--verify",
+                                "--quiet",
+                                "--end-of-options",
+                                &commit,
+                            ],
+                            &[],
+                            None,
+                        )
+                        .await
+                        .map_err(|e| e.to_string())?
+                        .0;
+                    if verified != 0 {
+                        return Err(format!("the base `{base}` is not a commit"));
+                    }
+                    base.as_str()
+                }
+                None => "HEAD",
+            };
+            git.run(&["worktree", "add", "-b", branch, "--", path, start])
                 .await
                 .map(|_| ())
                 .map_err(|e| e.to_string())
@@ -288,7 +407,7 @@ pub fn normalize_origin(url: &str) -> String {
 }
 
 /// Text of a `git` error without anything that looks like a credential.
-fn scrub(text: &str) -> String {
+pub(crate) fn scrub(text: &str) -> String {
     text.split(' ')
         .map(|w| {
             if w.contains("://") {
@@ -357,11 +476,64 @@ mod tests {
 
     #[test]
     fn callsigns_rotate_and_fall_back_to_the_whole_id() {
-        let c = callsign_candidates("01HZX-ABCD9", 1);
+        let c = callsign_candidates("01HZX-ABCD9", 1, None);
         assert_eq!(c[0], "otter-bcd9");
         assert_eq!(c[11], "falcon-bcd9");
         assert_eq!(c[12], "otter-01hzxabcd9");
         assert_eq!(c.len(), 24);
+    }
+
+    #[test]
+    fn callsigns_with_a_ticket_key_come_first() {
+        let c = callsign_candidates("01HZX-ABCD9", 1, Some("PROJ-123"));
+        assert_eq!(c[0], "otter-PROJ-123");
+        assert_eq!(c[11], "falcon-PROJ-123");
+        assert_eq!(c[12], "otter-bcd9");
+        assert_eq!(c.len(), 36);
+        assert_eq!(c[12..], callsign_candidates("01HZX-ABCD9", 1, None)[..]);
+    }
+
+    #[test]
+    fn a_ticket_key_is_the_first_upper_case_key_of_the_branch() {
+        let key = |b: &str| ticket_key(b);
+        assert_eq!(key("feature/PROJ-123-login").as_deref(), Some("PROJ-123"));
+        assert_eq!(key("PROJ-7").as_deref(), Some("PROJ-7"));
+        assert_eq!(key("fix/AB1-5/CD-9").as_deref(), Some("AB1-5"));
+        assert_eq!(key("a/PROJ-1234567").as_deref(), Some("PROJ-123456"));
+        assert_eq!(key("fd/raven"), None);
+        assert_eq!(key("feature/proj-123"), None);
+        assert_eq!(key("feature/PROJ-"), None);
+        assert_eq!(key("feature/P-1"), None);
+        assert_eq!(key("main"), None);
+        // A letter run of 11 has no key of its own; the tail does.
+        assert_eq!(key("ABCDEFGHIJK-1").as_deref(), Some("BCDEFGHIJK-1"));
+    }
+
+    #[test]
+    fn branch_choices_are_checked_by_syntax() {
+        assert_eq!(check_branch_choice(None, None), Ok(()));
+        assert_eq!(check_branch_choice(Some("feature/x-1"), None), Ok(()));
+        assert_eq!(
+            check_branch_choice(Some("feature/x"), Some("HEAD~1")),
+            Ok(())
+        );
+        let long = "a".repeat(201);
+        for bad in [
+            "", "-x", "a b", "a..b", "a~1", "a^", "a:b", "a?", "a*", "a[", "a\\b", "a/", "x.lock",
+            "a\tb", "a\u{7f}b", "a\0b", &long,
+        ] {
+            let err = check_branch_choice(Some(bad), None).unwrap_err();
+            assert!(!err.forbidden, "{bad:?}");
+            assert_eq!(err.message, format!("the branch name `{bad}` is not valid"));
+        }
+        assert_eq!(
+            check_branch_choice(None, Some("main")).unwrap_err().message,
+            "a base needs a branch"
+        );
+        for bad in ["", "-x", "a b", "a\nb", "a\u{7f}", &long] {
+            let err = check_branch_choice(Some("x"), Some(bad)).unwrap_err();
+            assert_eq!(err.message, format!("the base `{bad}` is not valid"));
+        }
     }
 
     #[test]

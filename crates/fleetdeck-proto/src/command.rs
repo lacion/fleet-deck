@@ -73,9 +73,20 @@ pub struct ControlSkill {
 #[ts(export_to = "command/")]
 pub enum WorkspaceRequest {
     /// A new worktree `<repo>--fd-<callsign>` beside the repository at
-    /// `spec.cwd`, on the new branch `fd/<callsign>` (v0 naming). Batch and
-    /// `Nx` spawns always use it (forced isolation).
-    Worktree,
+    /// `spec.cwd`, by default on the new branch `fd/<callsign>` (v0 naming).
+    /// Batch and `Nx` spawns always use it (forced isolation).
+    Worktree {
+        /// The branch of the worktree: an existing branch is checked out, a
+        /// new one is created. Absent: the new branch `fd/<callsign>`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        branch: Option<String>,
+        /// The commit-ish that a new `branch` starts from (default `HEAD`).
+        /// It needs a `branch`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        base: Option<String>,
+    },
     /// Clone `url` into the new directory `spec.cwd` with the station's own
     /// Git credentials. A URL with credentials is refused.
     Clone { url: String },
@@ -115,7 +126,7 @@ pub enum SessionCommand {
         /// absent = `spec.cwd` as it is.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
-        workspace: Option<WorkspaceRequest>,
+        workspace: Option<Box<WorkspaceRequest>>,
     },
     Resume {
         session_id: SessionId,
