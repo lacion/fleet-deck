@@ -16,6 +16,7 @@
 
 mod checkpoint;
 mod core;
+mod core_types;
 mod driver;
 mod host_cmd;
 mod limits;

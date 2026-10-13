@@ -237,6 +237,24 @@ impl World {
         }
     }
 
+    /// Waits until `alpha` is reachable, so that later events of the station
+    /// stream to the deck and fill its timeline (a snapshot has no timeline).
+    async fn wait_reachable(&self) {
+        let deadline = tokio::time::Instant::now() + T;
+        loop {
+            let r = self.board.get("/api/stations", &refs(&self.headers)).await;
+            let reachable = r.body.as_array().is_some_and(|a| {
+                a.iter()
+                    .any(|s| s["name"] == "alpha" && s["reachable"] == true)
+            });
+            if reachable {
+                return;
+            }
+            assert!(tokio::time::Instant::now() < deadline, "{}", r.body);
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
     fn stop(self) {
         self.station.shutdown();
         self.node.shutdown();
@@ -317,6 +335,7 @@ async fn the_digest_route_asks_the_station_and_the_deck_folds_the_stored_digest(
 async fn pr_text_race_issue_and_plan_inputs_are_built_from_deck_data_and_fenced() {
     let tmp = tempfile::tempdir().unwrap();
     let w = world(tmp.path(), ModelHelpConfig::default()).await;
+    w.wait_reachable().await;
     w.session(
         "s1",
         "Fix login",

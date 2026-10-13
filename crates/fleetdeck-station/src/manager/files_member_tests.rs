@@ -112,7 +112,10 @@ async fn a_member_search_never_names_or_reads_a_hidden_file() {
     let s = store_with_session(&det, &root).await;
     let p = deny_policy(&root, &["private/"]);
     let git = GitOptions::isolated();
-    for (mode, text) in [(SearchMode::Content, "token_here"), (SearchMode::Name, "e")] {
+    for (mode, text) in [
+        (SearchMode::Content, "token_here"),
+        (SearchMode::Name, "en"),
+    ] {
         let q = || FileSearchQuery {
             root: session(),
             query: text.to_owned(),
