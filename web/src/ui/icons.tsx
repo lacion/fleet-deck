@@ -54,6 +54,7 @@ export {
   SquareTerminal,
   Star,
   Sun,
+  Trash2,
   TriangleAlert,
   Undo2,
   Workflow,
