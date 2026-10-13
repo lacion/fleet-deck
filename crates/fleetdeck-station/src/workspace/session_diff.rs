@@ -176,7 +176,10 @@ async fn compute(
     let mut truncated = listing_cut || paths.len() > MAX_UNTRACKED;
     let paths: Vec<String> = paths.into_iter().take(MAX_UNTRACKED).collect();
     let remaining = max.saturating_sub(patch.len());
-    let rendered = tokio::task::spawn_blocking(move || render_untracked(&root, &paths, remaining))
+    // `git ls-files` names paths from the worktree root, which is above the
+    // session folder when the session started in a subdirectory.
+    let top = worktree.root().to_path_buf();
+    let rendered = tokio::task::spawn_blocking(move || render_untracked(&top, &paths, remaining))
         .await
         .map_err(|e| internal(&e))?;
     patch.push_str(&rendered.patch);

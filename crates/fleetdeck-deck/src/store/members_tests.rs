@@ -247,16 +247,18 @@ async fn the_same_name_in_a_share_is_the_same_member() {
     let shares = st.shares().await.unwrap();
     assert_eq!(shares[0].members, ["Ann", "Bob"]);
     assert_eq!(shares[0].uses_left, 0);
-    // Another share with the same name is another member.
+    // The actor `member:<name>` authorizes command reads and the mob driver,
+    // so another share cannot take the name, and the refusal keeps the invite.
     let other = st
         .create_share(board_share(ShareRole::Viewer))
         .await
         .unwrap();
-    let c = st
-        .join(&secret(other.token.expose()), "Ann")
-        .await
-        .unwrap()
-        .unwrap();
+    let t2 = secret(other.token.expose());
+    assert!(matches!(
+        st.join(&t2, "ANN").await,
+        Err(DeckError::NameTaken(_))
+    ));
+    let c = st.join(&t2, "Cy").await.unwrap().unwrap();
     assert_ne!(c.grant.member_id, a.grant.member_id);
 }
 

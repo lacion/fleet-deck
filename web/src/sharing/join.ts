@@ -27,6 +27,7 @@ export const JOIN_ERRORS = {
   invite: 'This invite link is not valid any more. Ask for a new one.',
   tries: 'Too many tries. Wait a minute.',
   name: 'Use 1 to 40 letters, digits or spaces.',
+  taken: 'Someone on this deck already uses that name. Pick another one.',
 } as const;
 
 export type Joined = { readonly role: ShareRole; readonly display_name: string };
@@ -44,6 +45,7 @@ export function joinErrorText(status: number, code: string | null, message: stri
   if (status === 401 && (code === null || code === 'invalid_invite')) return JOIN_ERRORS.invite;
   if (status === 429) return JOIN_ERRORS.tries;
   if (status === 400 && code === 'invalid_display_name') return JOIN_ERRORS.name;
+  if (status === 409 && code === 'display_name_taken') return JOIN_ERRORS.taken;
   return message ?? `The deck refused the request (${status}).`;
 }
 

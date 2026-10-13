@@ -299,7 +299,8 @@ impl DeckStore {
     /// the same display name (case-insensitive) in the same share is reused.
     ///
     /// # Errors
-    /// [`DeckError::Invalid`] for a bad display name; a database error.
+    /// [`DeckError::Invalid`] for a bad display name; [`DeckError::NameTaken`]
+    /// for a name that a member of another share has; a database error.
     pub async fn join(
         &self,
         token: &Secret<String>,
@@ -345,6 +346,19 @@ impl DeckStore {
             let member = match existing {
                 Some(id) => id,
                 None => {
+                    // The actor `member:<name>` authorizes command reads and
+                    // the mob driver, so a name is unique on the deck: a
+                    // member of another share keeps it (the invite use is
+                    // rolled back with the transaction).
+                    let taken: bool = tx.query_row(
+                        "SELECT EXISTS (SELECT 1 FROM members
+                         WHERE share_id <> ?1 AND display_name = ?2 COLLATE NOCASE)",
+                        params![share_id, name],
+                        |r| r.get(0),
+                    )?;
+                    if taken {
+                        return Err(DeckError::NameTaken(name.clone()));
+                    }
                     tx.execute(
                         "INSERT INTO members (member_id, share_id, display_name, created_at)
                          VALUES (?1, ?2, ?3, ?4)",

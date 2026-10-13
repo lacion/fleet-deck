@@ -88,11 +88,12 @@ impl Cron {
         let by_day = self.days >> day & 1 == 1;
         let weekday = (days_since_epoch + 4).rem_euclid(7);
         let by_weekday = self.weekdays >> weekday & 1 == 1;
-        match (self.days_any, self.weekdays_any) {
-            (true, true) => true,
-            (true, false) => by_weekday,
-            (false, true) => by_day,
-            (false, false) => by_day || by_weekday,
+        // Classic cron: when either field starts with `*` (also `*/2`), both
+        // fields must match; when neither does, either one is enough.
+        if self.days_any || self.weekdays_any {
+            by_day && by_weekday
+        } else {
+            by_day || by_weekday
         }
     }
 
@@ -407,5 +408,18 @@ mod tests {
         ] {
             assert!(parse_offset(bad).is_err(), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn a_stepped_day_field_still_limits_the_days() {
+        // `*/2` in the day of month: odd dates only (1, 3, …), every weekday.
+        let t = at(2026, 10, 13, 10, 0);
+        assert_eq!(next("0 9 */2 * *", t, 0), Some(at(2026, 10, 15, 9, 0)));
+        // `*/2` in the weekday: Sunday, Tuesday, Thursday, Saturday. After
+        // Tuesday 2026-10-13 10:00 the next is Thursday 2026-10-15.
+        assert_eq!(next("0 9 * * */2", t, 0), Some(at(2026, 10, 15, 9, 0)));
+        // Neither field starts with `*`: either one is enough (the 14th is a
+        // Wednesday, the first Monday after the 13th is the 19th).
+        assert_eq!(next("0 9 14 * 1", t, 0), Some(at(2026, 10, 14, 9, 0)));
     }
 }

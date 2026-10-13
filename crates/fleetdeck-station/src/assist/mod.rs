@@ -237,9 +237,6 @@ impl Assist {
         if let Some(hit) = self.store.assist_cache_get(hash.clone()).await? {
             return Ok(answer(hit.output, true));
         }
-        if self.store.assist_tokens_today().await? >= self.cap() {
-            return Err(AssistError::Budget);
-        }
         let env = match instance.driver {
             Driver::Claude => {
                 runner::claude_env(&instance.env, self.config.per_call_max_output_tokens)
@@ -259,6 +256,11 @@ impl Assist {
             .acquire()
             .await
             .map_err(|e| AssistError::Failed(e.to_string()))?;
+        // The budget is read after the slot: a call that waited behind others
+        // sees the tokens that they spent, so a backlog stops at the cap.
+        if self.store.assist_tokens_today().await? >= self.cap() {
+            return Err(AssistError::Budget);
+        }
         let run = self
             .runner
             .run(call)

@@ -289,7 +289,8 @@ async fn member_view(board: &Board, grant: &ShareGrant) -> Result<SessionView, A
 /// token nor the cookie goes to a log or to the audit row.
 ///
 /// # Errors
-/// 400 `invalid_display_name`; 401 `invalid_invite`; 429
+/// 400 `invalid_display_name`; 401 `invalid_invite`; 409
+/// `display_name_taken`; 429
 /// `too_many_attempts`; 500 `internal`.
 pub async fn join(State(board): State<Arc<Board>>, Json(body): Json<JoinRequest>) -> Response {
     const ACTION: &str = "auth.join";
@@ -345,6 +346,12 @@ pub async fn join(State(board): State<Arc<Board>>, Json(body): Json<JoinRequest>
         Err(DeckError::Invalid(message)) => {
             ApiError::new(StatusCode::BAD_REQUEST, "invalid_display_name", message).into_response()
         }
+        Err(DeckError::NameTaken(_)) => ApiError::new(
+            StatusCode::CONFLICT,
+            "display_name_taken",
+            "a member of another share uses this name; pick another",
+        )
+        .into_response(),
         Err(e) => ApiError::internal(e).into_response(),
     }
 }

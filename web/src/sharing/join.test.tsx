@@ -100,6 +100,7 @@ describe('the join call (R11.4)', () => {
       ok: false,
       text: 'Use 1 to 40 letters, digits or spaces.',
     });
+    expect(await run(409, 'display_name_taken')).toEqual({ ok: false, text: JOIN_ERRORS.taken });
   });
 
   test('another error shows the message of the deck; no answer shows a network text', async () => {

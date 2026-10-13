@@ -203,7 +203,8 @@ export function WatchPage({
     // `orderKey` stands for the content of `order`.
   }, [focusOn, orderKey]);
 
-  const visible = focusOn ? shown.filter((c) => refOf(c) === current) : shown;
+  // Focus picks from every matching session; the tile limit is for the wall only.
+  const visible = focusOn ? matching.filter((c) => refOf(c) === current) : shown;
   const refs = visible.map(refOf).join('\n');
   const keys = useMemo(
     () =>
