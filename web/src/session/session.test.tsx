@@ -121,6 +121,15 @@ const request = (id: string, at = 1) => ({
 });
 
 describe('session pane (DL-140)', () => {
+  test('the header model selector takes the models of the summary (DL-151)', () => {
+    const models = [{ value: 'opus', label: 'Opus', description: null }];
+    const html = view(session({ models }), timeline());
+    expect(html).toContain('aria-label="Model"');
+    expect(html).toContain('<option value="opus">Opus</option>');
+    expect(html).toContain('Other…');
+    expect(view(session(), timeline())).not.toContain('<option value="opus">Opus</option>');
+  });
+
   test('the header shows the title and the pane has the three views', () => {
     const html = view(session(), timeline());
     expect(html).toContain('<section class="fd-pane" aria-label="Session" data-layout="desktop">');

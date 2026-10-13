@@ -8,6 +8,7 @@
 // (`3x task` starts three), each in its own worktree.
 import type {
   DeckSession,
+  ModelChoice,
   Preflight,
   SessionSpec,
   StationProvider,
@@ -304,6 +305,24 @@ export function recentDirs(
     if (out.length === MAX_RECENT) break;
   }
   return out;
+}
+
+/**
+ * The models that the provider reported (DL-151): the list of the newest
+ * session of the station and the provider instance that has one, or `null`.
+ */
+export function knownModels(
+  sessions: readonly DeckSession[],
+  stationId: string,
+  instance: string,
+): readonly ModelChoice[] | null {
+  let best: DeckSession | null = null;
+  for (const s of sessions) {
+    if (s.station_id !== stationId || s.summary.provider_instance !== instance) continue;
+    if ((s.summary.models?.length ?? 0) === 0) continue;
+    if (best === null || s.summary.updated_at > best.summary.updated_at) best = s;
+  }
+  return best?.summary.models ?? null;
 }
 
 export function providerLabel(p: StationProvider): string {

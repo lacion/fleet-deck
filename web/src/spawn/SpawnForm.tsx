@@ -4,12 +4,14 @@ import type { Freshness } from '../runtime/state';
 import { Icon, Pin, PinOff } from '../ui/icons';
 import { BranchFields } from './BranchFields';
 import { CloneAccess } from './CloneAccess';
+import { ModelField } from './ModelField';
 import { SetupField } from './SetupField';
 import {
   baseProblem,
   batchPrompts,
   branchProblem,
   importIdProblem,
+  knownModels,
   lastParts,
   providerLabel,
   type PreflightResult,
@@ -300,6 +302,7 @@ export function SpawnForm({
                   setListing(null);
                   setCwd(null);
                   setMode('');
+                  setModel('');
                 }}
               >
                 {targets.map((s) => (
@@ -447,6 +450,7 @@ export function SpawnForm({
                 onChange={(event) => {
                   setInstance(event.target.value);
                   setMode('');
+                  setModel('');
                 }}
               >
                 {providers.map((p) => (
@@ -467,10 +471,12 @@ export function SpawnForm({
                 ))}
               </select>
             </label>
-            <label>
-              Model (optional)
-              <input value={model} onChange={(event) => setModel(event.target.value)} />
-            </label>
+            <ModelField
+              key={`${stationId}/${instance}`}
+              value={model}
+              models={knownModels(sessions, stationId, instance)}
+              onChange={setModel}
+            />
           </div>
           <div className="fd-panel">
             <h3 className="fd-label">Task</h3>
