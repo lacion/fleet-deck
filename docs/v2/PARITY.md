@@ -73,6 +73,6 @@ The v1 board's features and their v2 status are in the parity audit of DL-141 (a
 | Setup command | DL-148: opt-in `allow_setup_cmd`, owner only, process group plus marker cleanup | `setup_tests.rs`, `board_setup_cmd.rs`; `web/e2e/night2.spec.ts` |
 | Per-browser archive | DL-149: the archive lives on the deck (sync across devices) | `board_archive.rs`, `web/src/ui/archive.test.ts` |
 | `fleetdeck doctor` | read-only setup check | `crates/fleetdeck-cli/tests/doctor.rs` |
-| Worktree removal from the board | DL-150: trash, restore, delete permanently, stop tracking — on branch `night2/trash-ready`, waiting for the owner's decision | `trash_tests.rs`, `trash_race_tests.rs`, `board_worktree_trash.rs`, `web/e2e/trash.spec.ts` |
+| Worktree removal from the board | DL-150: trash, restore, delete permanently, stop tracking | `trash_tests.rs`, `trash_race_tests.rs`, `board_worktree_trash.rs`, `web/e2e/trash.spec.ts` |
 
 Also built: a fast graceful stop during a turn and on the shim host (DL-141 follow-up), and a chat notice when the v1 plugin is active in a v2 session.
