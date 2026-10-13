@@ -66,6 +66,8 @@ v1 had five doctrine rules, and v1.0 widened them. v2 keeps their intent but cha
     - **determinism:** no model call decides anything; model help (rule 3) is optional, budgeted and labeled;
     - **exposure:** no secret leaks;
     - **version resilience:** an older or newer peer degrades and does not break.
+11. **People other than the owner are principals (DL-154).** A collaborator acts only inside what an owner share gives them. The board names them on every message and answer, and the audit log records them. An owner-only surface stays owner-only. Steering an agent means that the agent runs commands on the owner's machine, so a share invite says this in plain words.
+12. **Artifacts are first-class (DL-155).** An artifact is an immutable, versioned file that a session or a person publishes: HTML, Markdown, an image, SVG or PDF. The board shows it natively. An HTML artifact always runs in a sandbox that cannot reach the board, its cookies or its API.
 
 ---
 
@@ -237,6 +239,76 @@ Rules for every item:
 - **Visible cost:** the token use shows in the usage meters under a "Fleet Deck" scope.
 - **Failure:** a failed or skipped call leaves the plain fallback (no title, no summary), never an error state.
 
+### R11. Shared fleet and shared sessions (owner decision DL-154)
+
+Goal: a team works on the same sessions. A person with an invite can see and follow a session, and, with the right role, steer it and answer it, as if it were their own.
+
+Today v2 has one human principal, the owner (a password login), plus bearer tokens with scopes (`read`, `drive`, `approve`, `admin`) and owner-only routes (DL-138). Sharing adds people.
+
+Design sketch (recommended defaults; the adversary reviews it before it is frozen):
+
+1. **Share objects.** The owner shares one of three things, each with a role. A share has an expiry (default 7 days) and the owner can revoke it at once.
+   - **A session:** that session only, its timeline, approvals and changes.
+   - **A space:** a named set of sessions, for example "the auth refactor". New sessions can join it.
+   - **The board:** every session, for a trusted teammate.
+2. **Roles:**
+   - **Viewer:** sees the chat, the timeline, the plan, the diffs and the artifacts, live, and follows the session.
+   - **Collaborator:** a viewer that can also send prompts, steers and follow-ups, interrupt, and answer the agent's questions.
+   - **Approver:** a collaborator that can also answer tool approvals.
+
+   No role can raise the permission mode above the one that the owner set, change the model provider, or start a session in bypass mode.
+3. **Always owner-only:** shells and the TUI handover (a shell is the machine), the setup command, worktree delete, station pairing and configuration, device links, coordinator grants, tracker and forge credentials, model-help budgets, and the creation of shares.
+4. **The invite URI** is `https://<deck>/#join=<token>`. It is single-use or limited to N uses, and it expires. The person who opens it picks a display name, and the deck makes a member login: a cookie tied to that member and that share. The token travels only in the fragment, as login links do (DL-146). The first version has local members only. A later version can add a GitHub or OIDC login, or a passkey per member.
+5. **Attribution and presence:**
+   - every input event carries its author (owner or member name), and the chat shows it;
+   - the board shows who watches a session now;
+   - approvals record who answered them;
+   - the audit log has every member action.
+6. **Concurrent steering:** messages queue in order as they do today (steer and follow-up). An optional "driver" baton lets one person take the composer for a while; it is advisory, not a lock.
+7. **Reach:** the deck must be reachable for the team, through a LAN, a tailnet (Tailscale sharing), or the owner's own tunnel. Never through a hosted relay. A self-signed certificate is a problem for guests, so the docs recommend a tailnet name or a real certificate.
+8. **Exposure:** a shared session shows its code, diffs and transcript. The invite shows what the person will see. A share of a session never shows other sessions, stations, usage or credentials.
+
+Open owner decisions:
+- **(a)** May collaborators answer tool approvals, or only approvers?
+- **(b)** Local members only at first, or a GitHub login from the start?
+- **(c)** Do shared people see the Files browser, or only the diffs?
+- **(d)** Is the driver baton needed?
+
+### R12. Artifacts as first-class citizens (owner decision DL-155)
+
+Goal: an HTML page that an agent makes, for example with `/explain-html`, opens inside Fleet Deck, keeps its versions, and can be shared with anyone the owner chooses. The same holds for Markdown, images, SVG and PDF.
+
+Design sketch (recommended defaults; adversary review before freeze):
+
+1. **What an artifact is:** an immutable file version with an id, a title, a kind (html, md, image, svg, pdf), the session that made it, its author, and its creation time. A new publish of the same artifact makes a new version; the old versions stay.
+2. **How an artifact is made:**
+   - (a) an agent calls a Fleet Deck MCP tool `publish_artifact(path, title)` that every session gets (not only coordinators);
+   - (b) the station suggests one when a session writes an `.html` file that is meant to be opened (for example the `/explain-html` output), and the owner keeps it with one click;
+   - (c) a person picks "Publish as artifact" in the Files panel.
+
+   The station copies the bytes into its data directory (size cap, for example 10 MiB per version). The deck keeps a copy of each shared version, so a share works while the station is off.
+3. **Where it shows:**
+   - an Artifacts tab per session;
+   - a global Artifacts page with search, kind and session filters;
+   - a chip in the chat at the turn that made it.
+
+   Markdown renders with the chat renderer; an image, SVG or PDF shows inline.
+4. **The HTML sandbox:**
+   - An HTML artifact renders in an `<iframe sandbox="allow-scripts">`, without `allow-same-origin`. It comes from a separate origin, or from a `blob:` URL with an opaque origin, under a strict CSP.
+   - It cannot read the board's cookies, storage or API, cannot navigate the top window, and cannot open popups without a click.
+   - External scripts (CDN libraries that explain pages use) are allowed only from an allowlist that the owner can extend.
+5. **Sharing:**
+   - **A share link per artifact** (`https://<deck>/a/<id>#<token>`): read-only, one version or "always the latest", with an expiry, revocable, and recorded in the audit log.
+   - **Download:** a person can download the file, for example to send it by mail.
+   - **Inside a shared space:** artifacts follow the space's share (R11), so collaborators see the artifacts of a shared session.
+6. **Model help (R10):** a one-line summary per artifact for the list, optional.
+7. **Later:** comments on an artifact; an artifact as the input of a new session ("work from this design").
+
+Open owner decisions:
+- **(e)** May a public share link reach people outside the team, if the deck is reachable for them?
+- **(f)** The default CDN allowlist for HTML artifacts.
+- **(g)** The size cap per version and in total.
+
 ## 7. Proposed sequence
 
 Each step has its cut line: the part that drops first if time runs short.
@@ -250,6 +322,8 @@ Each step has its cut line: the part that drops first if time runs short.
 | **M5 Integrations, read only** | R3.1 envelope and fixture; R3.2 station service (GitHub, GitLab, Jira, Linear); R3.3 issue browser and spawn; R3.5 PR reviewer; R3.4 fix checks | R3.4 |
 | **M5.1 Accounts** | R4.3 limits in the picker; R4.4 assign by quota; R4.5 Claude windows research | R4.5 |
 | **M5.2 Model help** | R10.1 titles; R10.2 session summaries; the budget, cache and off switch | R10.2 |
+| **M5.3 Artifacts** | R12.1–R12.5: publish (MCP tool, Files panel, the HTML suggestion), the viewer and sandbox, versions, share links | R12.2 (b) the automatic suggestion |
+| **M5.4 Shared fleet** | R11.1–R11.5, R11.7, R11.8: shares, roles, invite URI, member login, attribution, presence, audit | R11.6 the driver baton; spaces (start with session and board shares) |
 | **M6** | R1.4 compare the winner; R5 automations; R6.1 unread; R6.3 palette row | R5 missed-run grace |
 | **Later, owner decision** | R3.6 writes (PRs, comments, issue moves); R6.2 terminal wall; R6.5 activity stream; R6.6 hibernation; R4.6 inferred cost; ACP for a third provider | — |
 
@@ -262,9 +336,11 @@ Each step has its cut line: the part that drops first if time runs short.
 3. **Inferred Codex cost (R4.6):** acceptable when it is labeled "inferred", or keep "unknown"?
 4. **Automations (R5):** which first schedules matter (daily triage, nightly test fix, PR review)? They decide the precheck design.
 5. **The 2.0.0 cut:** does M4.3 come before or after M4.1 and M4.2?
+6. **Shared fleet (R11):** decided (DL-154). Open: (a) to (d) in R11.
+7. **Artifacts (R12):** decided (DL-155). Open: (e) to (g) in R12.
 
 ---
 
 ## 9. What this document does not change
 
-This document changes no decision of `PLAN.md` or `DECISIONS-LOG.md`. Each step of §7 starts with a DL entry and, for a high-risk part (forge text, automations that start sessions, PR writes), an adversary design review, as the owner's review rules require.
+This document changes no decision of `PLAN.md` or `DECISIONS-LOG.md`. Each step of §7 starts with a DL entry and, for a high-risk part (forge text, automations that start sessions, PR writes, shared access, the HTML artifact sandbox), an adversary design review, as the owner's review rules require.

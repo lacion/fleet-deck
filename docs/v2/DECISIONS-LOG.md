@@ -2422,3 +2422,30 @@ Owner review: pending.
   These come with the M5.2 design.
 - Invalidates: the "LLM-written titles: not built" line and the old rule 3 of `FLEETDECK-V2.md`, which are corrected in the same commit. `PLAN.md` doctrine text that says "no model calls" means "no direct model API calls" from now on.
 - Owner review: decided by the owner.
+
+## DL-154 — A shared fleet: other people see, follow and steer sessions (owner decision, 2026-10-13)
+
+- Context: v2 has one human principal, the owner, plus scoped bearer tokens (DL-138). The owner wants team work: share a URI, and the people with that invite see the session, follow it, steer it and work on the same thing.
+- Choice: collaboration is in scope (`FLEETDECK-V2.md` rule 11 and R11).
+  - The owner shares a session, a space (a named set of sessions) or the board, with a role: viewer, collaborator or approver. Each share has an expiry, and the owner can revoke it.
+  - An invite URI (`#join=<token>`, single-use or N uses) makes a member login.
+  - Members are new principals. Every input, approval and action carries its author, and the audit log records it.
+  - Owner-only surfaces stay owner-only: shells and the TUI, the setup command, worktree delete, pairing, device links, grants, credentials, and the creation of shares. No member can raise the permission mode that the owner set.
+  - The invite says in plain words that steering makes the agent run commands on the owner's machine.
+- Not decided yet: the open owner questions (a)–(d) of R11, and the member identity beyond local members.
+- Review: this changes the threat model (new principals, remote humans on a deck that runs code). It needs an adversary DESIGN REVIEW before freeze and a PRE-PR review before merge.
+- Owner review: decided by the owner.
+
+## DL-155 — Artifacts are first-class: native viewing and sharing (owner decision, 2026-10-13)
+
+- Context: the owner works with HTML artifacts a lot (for example the `/explain-html` pages) and wants to see them inside Fleet Deck and to share them with anyone they choose.
+- Choice: artifacts are in scope (`FLEETDECK-V2.md` rule 12 and R12).
+  - An artifact is an immutable, versioned file (HTML, Markdown, image, SVG or PDF) from a session or a person.
+  - It is made by a `publish_artifact` MCP tool for every session, by a suggestion when a session writes a page that is meant to be opened, or by "Publish" in the Files panel.
+  - The station stores the versions, and the deck keeps a copy of shared versions.
+  - The board shows an Artifacts tab per session, a global page, and chat chips.
+  - HTML renders only in a sandboxed iframe with an opaque origin, under a strict CSP and a CDN allowlist.
+  - Sharing: revocable share links with an expiry, downloads, and the shares of R11.
+- Not decided yet: the open owner questions (e)–(g) of R12.
+- Review: high risk (untrusted HTML and JavaScript next to the board, links to outsiders). It needs an adversary DESIGN REVIEW before freeze.
+- Owner review: decided by the owner.
