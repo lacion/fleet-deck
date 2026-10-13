@@ -8,7 +8,7 @@ import {
   useNotes,
   withNote,
 } from '../chat/notes';
-import type { RevertResolution, SessionDiff, SessionSummary, TurnDiff } from '../gen';
+import type { RevertResolution, SessionBase, SessionDiff, SessionSummary, TurnDiff } from '../gen';
 import { sessionRef } from '../ui/localSet';
 import type { Outcome, SessionActions } from './commands';
 import { hasChanges } from './changes';
@@ -118,6 +118,32 @@ function NotesBar({
   );
 }
 
+/** The notes above a "Since spawn" diff: a shared folder (DL-159) and a guessed start commit. */
+export function SinceNotes({
+  base,
+  scope,
+}: {
+  readonly base: SessionBase | undefined;
+  readonly scope: SessionDiff['scope'];
+}) {
+  return (
+    <>
+      {scope === 'session_files' ? (
+        <p className="fd-note" data-note="shared-folder">
+          This session works in a shared folder. The diff shows only the files that this session
+          changed.
+        </p>
+      ) : null}
+      {base?.inferred === true ? (
+        <p className="fd-note" data-note="guessed-base">
+          The start commit was guessed ({base.git_ref ?? 'a commit'}), because this session started
+          before Fleet Deck recorded it.
+        </p>
+      ) : null}
+    </>
+  );
+}
+
 /** The working tree of the session against its base commit, with line notes (R1.2, R1.3). */
 function SinceSpawn({
   summary,
@@ -187,6 +213,7 @@ function SinceSpawn({
           Refresh
         </button>
       </p>
+      <SinceNotes base={base} scope={diff?.scope} />
       {error !== null ? (
         <p role="alert" className="fd-since-alert">
           {error}
@@ -236,7 +263,10 @@ export function TurnsPanel(props: Props) {
   const notesKey = notesStorageKey(station ?? '', summary.session_id);
   const noteList = useNotes(notesKey);
   const hasBase = Boolean(summary.base);
-  const view = hasBase ? (chosen ?? 'spawn') : 'turns';
+  // A guessed start commit makes the whole-session diff unreliable: open "By turn" (DL-159).
+  const view = hasBase
+    ? (chosen ?? (summary.base?.inferred === true ? 'turns' : 'spawn'))
+    : 'turns';
   if (turns.length === 0 && !hasBase) return null;
   const onSet = (file: string, line: number, text: string) =>
     setNotes(notesKey, withNote(noteList, file, line, text));

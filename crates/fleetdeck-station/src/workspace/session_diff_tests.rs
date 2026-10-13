@@ -4,11 +4,11 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use fleetdeck_proto::event::{Event, ProviderKind};
-use fleetdeck_proto::files::{FileContent, SessionDiffQuery, code};
+use fleetdeck_proto::event::{Event, FileChange, ProviderKind};
+use fleetdeck_proto::files::{DiffScope, FileContent, SessionDiffQuery, code};
 use fleetdeck_testkit::Det;
 
-use super::{new_file_patch, run};
+use super::{new_file_patch, repo_path, run};
 use crate::manager::policy::Policy;
 use crate::store::{NewEvent, NewSession, OfflineApprovalPolicy, Store, StoreConfig};
 use crate::workspace::GitOptions;
@@ -102,6 +102,31 @@ async fn rig(with_base: bool) -> Rig {
 }
 
 impl Rig {
+    /// The station gives the session a worktree of its own.
+    async fn own_worktree(&self) {
+        let named = Event::SessionNamed {
+            callsign: "ace".to_owned(),
+            worktree: Some(self.dir.display().to_string()),
+        };
+        self.store
+            .append("s1".into(), vec![NewEvent::from(named)])
+            .await
+            .unwrap();
+    }
+
+    /// The session reports that it changed `path`.
+    async fn reports(&self, path: &str) {
+        let event = Event::FileChanged {
+            path: path.to_owned(),
+            change: FileChange::Modified,
+            node_id: None,
+        };
+        self.store
+            .append("s1".into(), vec![NewEvent::from(event)])
+            .await
+            .unwrap();
+    }
+
     async fn diff(
         &self,
         max: Option<u64>,
@@ -122,6 +147,7 @@ impl Rig {
 #[tokio::test]
 async fn the_diff_has_the_edits_after_the_base_commit_and_the_untracked_files() {
     let r = rig(true).await;
+    r.own_worktree().await;
     // An edit that is committed after the base, an uncommitted edit, a
     // deletion, an untracked text file and an untracked binary file.
     std::fs::write(r.dir.join("a.txt"), "one\nmore\n").unwrap();
@@ -151,6 +177,7 @@ async fn the_diff_has_the_edits_after_the_base_commit_and_the_untracked_files() 
 #[tokio::test]
 async fn the_diff_leaves_out_ignored_and_private_paths_and_does_not_follow_a_link() {
     let r = rig(true).await;
+    r.own_worktree().await;
     std::fs::write(r.dir.join("ignored.txt"), "secret\n").unwrap();
     std::fs::create_dir(r.dir.join(".ssh")).unwrap();
     std::fs::write(r.dir.join(".ssh/key"), "private\n").unwrap();
@@ -167,6 +194,7 @@ async fn the_diff_leaves_out_ignored_and_private_paths_and_does_not_follow_a_lin
 #[tokio::test]
 async fn a_small_byte_limit_cuts_the_patch_and_marks_it() {
     let r = rig(true).await;
+    r.own_worktree().await;
     std::fs::write(r.dir.join("a.txt"), "one\nmore\nlines\nand more lines\n").unwrap();
     let d = r.diff(Some(10)).await.unwrap();
     assert!(d.truncated);
@@ -223,4 +251,98 @@ fn a_new_file_patch_shows_text_lines_and_a_header_for_other_content() {
     let (p, n) = new_file_patch("f", &text("a\n", true));
     assert!(p.contains("Binary files /dev/null and b/f differ"), "{p}");
     assert_eq!(n, 0);
+}
+
+#[tokio::test]
+async fn a_session_in_a_shared_folder_shows_only_the_files_that_it_changed() {
+    let r = rig(true).await;
+    // The session edits `a.txt` (absolute path) and writes `mine.txt`
+    // (relative path); someone else edits `b.txt` and writes `theirs.txt`.
+    std::fs::write(r.dir.join("a.txt"), "one\nmine\n").unwrap();
+    std::fs::write(r.dir.join("mine.txt"), "mine\n").unwrap();
+    std::fs::write(r.dir.join("b.txt"), "two\ntheirs\n").unwrap();
+    std::fs::write(r.dir.join("theirs.txt"), "theirs\n").unwrap();
+    r.reports(&r.dir.join("a.txt").display().to_string()).await;
+    r.reports("mine.txt").await;
+    let d = r.diff(None).await.unwrap();
+    assert_eq!(d.scope, DiffScope::SessionFiles);
+    assert!(d.patch.contains("+mine"), "{}", d.patch);
+    assert!(d.patch.contains("a/mine.txt"), "{}", d.patch);
+    assert!(!d.patch.contains("theirs"), "{}", d.patch);
+    assert!(!d.patch.contains("b.txt"), "{}", d.patch);
+    assert_eq!(d.summary.files_changed, 2);
+    assert_eq!(d.summary.insertions, 2);
+}
+
+#[tokio::test]
+async fn a_session_in_a_shared_folder_that_changed_no_file_has_an_empty_diff() {
+    let r = rig(true).await;
+    std::fs::write(r.dir.join("b.txt"), "two\ntheirs\n").unwrap();
+    // A path outside the folder does not count.
+    r.reports("/etc/hostname").await;
+    r.reports("../outside.txt").await;
+    let d = r.diff(None).await.unwrap();
+    assert_eq!(d.scope, DiffScope::SessionFiles);
+    assert!(d.patch.is_empty());
+    assert_eq!(
+        (
+            d.summary.files_changed,
+            d.summary.insertions,
+            d.summary.deletions
+        ),
+        (0, 0, 0)
+    );
+    assert!(!d.truncated);
+}
+
+#[tokio::test]
+async fn a_session_with_a_worktree_of_its_own_keeps_the_full_diff() {
+    let r = rig(true).await;
+    r.own_worktree().await;
+    std::fs::write(r.dir.join("a.txt"), "one\nmine\n").unwrap();
+    std::fs::write(r.dir.join("b.txt"), "two\nmore\n").unwrap();
+    let d = r.diff(None).await.unwrap();
+    assert_eq!(d.scope, DiffScope::Worktree);
+    assert_eq!(d.summary.files_changed, 2);
+    assert!(
+        d.patch.contains("+mine") && d.patch.contains("+more"),
+        "{}",
+        d.patch
+    );
+}
+
+#[tokio::test]
+async fn the_files_of_a_shared_folder_session_go_to_git_in_groups() {
+    let r = rig(true).await;
+    // More tracked files than one pathspec group; the session changed all of
+    // them, and someone else changed `b.txt`.
+    for n in 0..=super::MAX_PATHSPEC {
+        std::fs::write(r.dir.join(format!("f{n:03}.txt")), "x\n").unwrap();
+    }
+    git(&r.dir, &["add", "."]);
+    git(&r.dir, &["commit", "-q", "-m", "many"]);
+    std::fs::write(r.dir.join("b.txt"), "two\ntheirs\n").unwrap();
+    for n in 0..=super::MAX_PATHSPEC {
+        r.reports(&format!("f{n:03}.txt")).await;
+    }
+    let d = r.diff(None).await.unwrap();
+    assert_eq!(d.summary.files_changed as usize, super::MAX_PATHSPEC + 1);
+    assert!(d.patch.contains("f000.txt") && d.patch.contains("f500.txt"));
+    assert!(!d.patch.contains("theirs"), "{}", d.patch);
+}
+
+#[test]
+fn a_reported_path_becomes_a_path_from_the_top_of_the_worktree() {
+    let top = Path::new("/w/repo");
+    let dir = Path::new("/w/repo/sub");
+    let cwd = Some(Path::new("/link/repo/sub"));
+    let of = |raw| repo_path(raw, dir, cwd, top);
+    assert_eq!(of("/w/repo/a/b.txt").as_deref(), Some("a/b.txt"));
+    assert_eq!(of("b.txt").as_deref(), Some("sub/b.txt"));
+    // Through the stored (not canonical) folder.
+    assert_eq!(of("/link/repo/sub/c.txt").as_deref(), Some("sub/c.txt"));
+    assert_eq!(of("/elsewhere/a.txt"), None);
+    assert_eq!(of("../../outside.txt"), None);
+    assert_eq!(of("/w/repo/.git/config"), None);
+    assert_eq!(of("/w/repo"), None);
 }

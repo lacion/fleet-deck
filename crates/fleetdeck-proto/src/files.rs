@@ -271,6 +271,23 @@ pub struct SessionDiff {
     /// The patch was cut at the byte limit, or a binary, a large or an
     /// excess untracked file was left out.
     pub truncated: bool,
+    /// Which files the diff covers. Absent in an answer of an older station.
+    #[serde(default)]
+    #[ts(optional, as = "Option<DiffScope>")]
+    pub scope: DiffScope,
+}
+
+/// The files that a [`SessionDiff`] covers.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "files/")]
+pub enum DiffScope {
+    /// The whole worktree of the session.
+    #[default]
+    Worktree,
+    /// The session works in a shared folder (no worktree of its own): only
+    /// the files that the session changed.
+    SessionFiles,
 }
 
 /// Validates a relative path of a query and returns its segments.

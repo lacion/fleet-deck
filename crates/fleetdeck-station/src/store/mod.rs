@@ -37,6 +37,7 @@ pub mod requests;
 pub mod resumes;
 pub mod reverts;
 pub mod schema;
+pub mod session_files;
 pub mod setup_runs;
 mod sharing;
 pub mod shell_effects;
