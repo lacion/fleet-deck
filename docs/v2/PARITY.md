@@ -61,4 +61,18 @@ Commands: Rust tests run with `cargo nextest run -E 'test(<name>)'`, board unit 
 
 ## Board parity with the v1 board (DL-141, DL-142)
 
-The v1 board's features and their v2 status are in the parity audit of DL-141 (a 139-row matrix). Built in DL-141: the v1 columns and cards, the answerable Needs-you rail with keys, conflict marks, repo grouping, Resume all, Clear and per-browser archive, stars, the bypass mark, the last error, mail to a station, a repo or everyone, compact density, light/dark/system theme, help with concepts and first-run help, the mail key `c`, plan assign to a live session, the batch preview, recent and pinned directories, card mail badges, file chips and the activity sparkline, the global Files page, Markdown view and copy path, TUI Shift+Enter, OSC 52 copy, the deck version, and the read-only worktree list (DL-142). Not built yet: worktree removal from the board (needs a quarantine design, DL-142), a LAN link and QR code for a phone, the git access preflight and branch choice in the spawn form, the conflict warning to the agents, ticket callsigns, the setup command, image paste into a TUI tab, and `fleetdeck doctor`.
+The v1 board's features and their v2 status are in the parity audit of DL-141 (a 139-row matrix). Built in DL-141: the v1 columns and cards, the answerable Needs-you rail with keys, conflict marks, repo grouping, Resume all, Clear and per-browser archive, stars, the bypass mark, the last error, mail to a station, a repo or everyone, compact density, light/dark/system theme, help with concepts and first-run help, the mail key `c`, plan assign to a live session, the batch preview, recent and pinned directories, card mail badges, file chips and the activity sparkline, the global Files page, Markdown view and copy path, TUI Shift+Enter, OSC 52 copy, the deck version, and the read-only worktree list (DL-142). Built in night 2 (DL-143 … DL-150):
+
+| v1 feature | v2 | Tests |
+| --- | --- | --- |
+| Worktree verdict without running repository programs | DL-143: no `git status`; the station reads the index and hashes changed files itself | `worktrees_tests.rs` (filters, fsmonitor and the signature verifier never run; staged, rewritten, `chmod +x`, unborn and submodule work) |
+| Git access preflight, branch choice, ticket callsigns | DL-144: `workspace.preflight`, `Worktree { branch, base }`, `<animal>-<KEY>` | `preflight.rs`, `provision.rs` tests; `web/e2e/night2.spec.ts` |
+| Conflict warning to the agents | DL-145: one follow-up mail per pair, file and recipient; `conflict_mail` in deck.toml | `crates/fleetdeck-deck/tests/conflict_mail.rs` |
+| LAN link and QR code for a phone | DL-146: "Add a device" (owner only, single-use link per board address, local QR encoder) | `board_device_link.rs`; `web/e2e/night2.spec.ts` "Add a device …" |
+| Image paste into a TUI or shell tab | DL-147: `files.write_temp` and `POST …/paste`; the path is typed, never Enter | `paste_tests.rs`, `board_paste.rs`, `web/src/terminal/paste.test.ts` |
+| Setup command | DL-148: opt-in `allow_setup_cmd`, owner only, process group plus marker cleanup | `setup_tests.rs`, `board_setup_cmd.rs`; `web/e2e/night2.spec.ts` |
+| Per-browser archive | DL-149: the archive lives on the deck (sync across devices) | `board_archive.rs`, `web/src/ui/archive.test.ts` |
+| `fleetdeck doctor` | read-only setup check | `crates/fleetdeck-cli/tests/doctor.rs` |
+| Worktree removal from the board | DL-150: trash, restore, delete permanently, stop tracking — on branch `night2/trash-ready`, waiting for the owner's decision | `trash_tests.rs`, `trash_race_tests.rs`, `board_worktree_trash.rs`, `web/e2e/trash.spec.ts` |
+
+Also built: a fast graceful stop during a turn and on the shim host (DL-141 follow-up), and a chat notice when the v1 plugin is active in a v2 session.
