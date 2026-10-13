@@ -6,11 +6,10 @@
 //! worktree, each with a 10 s limit. It never fetches and never writes. A
 //! path outside the allowed roots is never passed to Git.
 //!
-//! `git status` can run the clean and process filters that the repository
-//! configures (`filter.<driver>.*`). A repository with Git filters is not
-//! inspected with `status`: its `dirty` and `ignored` stay unknown and its
-//! verdict is `unknown` (see [`GIT_FILTERS`]). `status` also ignores
-//! submodules, which have their own configuration.
+//! The inventory runs no `git status`. It reads the index and the files
+//! itself (see [`scan`]). No command that it runs can run a filter, a hook,
+//! an fsmonitor command, a textconv or external diff program, or a lazy
+//! fetch.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -22,7 +21,10 @@ use tokio::time::Instant;
 
 use crate::manager::policy::{Policy, WorkspaceError};
 use crate::store::{Store, StoreError};
-use crate::workspace::{Git, GitError, GitOptions};
+use crate::workspace::{Git, GitOptions};
+
+#[path = "worktree_scan.rs"]
+pub(super) mod scan;
 
 /// The limit for one Git command.
 pub const GIT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -35,8 +37,6 @@ pub const NOT_CHECKED: &str = "not checked: the time limit passed";
 pub const OUTSIDE_ROOTS: &str = "outside the allowed roots";
 /// The note of a worktree that Git does not list.
 pub const NOT_LISTED: &str = "not listed by git worktree list";
-/// The note of a worktree whose repository configures Git filters.
-pub const GIT_FILTERS: &str = "the repository configures Git filters; the board does not run them";
 
 /// `git` from `PATH`, 10 s per call, no system or user configuration.
 #[must_use]
@@ -164,13 +164,13 @@ async fn check(
     let git = Git::new(&canonical, options.clone());
     let mut note = None;
 
-    info.branch = match git.text(&["rev-parse", "--abbrev-ref", "HEAD"]).await {
+    info.branch = match scan::text(&git, &["rev-parse", "--abbrev-ref", "HEAD"]).await {
         Ok(t) => Some(t.trim().to_owned()).filter(|b| !b.is_empty() && b != "HEAD"),
         Err(_) => None,
     };
 
     let mut main_head = None;
-    match git.text(&["worktree", "list", "--porcelain"]).await {
+    match scan::text(&git, &["worktree", "list", "--porcelain"]).await {
         Ok(text) => {
             let entries = parse_worktrees(&text);
             if let Some(first) = entries.first() {
@@ -185,29 +185,18 @@ async fn check(
         Err(e) => fail(&mut note, e),
     }
 
-    match filters_configured(&git).await {
-        Ok(false) => {
-            info.dirty = match status_count(&git, &["--untracked-files=all"], Count::Changed).await
-            {
-                Ok(n) => Some(n),
-                Err(e) => {
-                    fail(&mut note, e);
-                    None
-                }
-            };
-            info.ignored = status_count(&git, &["--ignored=matching"], Count::Ignored)
-                .await
-                .ok();
+    match scan::scan(&git, &canonical, 0).await {
+        Ok(found) => {
+            info.dirty = Some(found.changed.saturating_add(found.untracked));
+            info.ignored = found.ignored;
         }
-        // No `status`: it could run a filter. The note replaces earlier ones.
-        Ok(true) => note = Some(GIT_FILTERS.to_owned()),
-        Err(e) => note = Some(e),
+        Err(e) => fail(&mut note, e),
     }
 
     match unpushed(&git, main_head.as_deref()).await {
         Ok((n, with)) => {
             info.unpushed = Some(n);
-            info.compared_with = Some(with.to_owned());
+            info.compared_with = with.map(str::to_owned);
         }
         Err(e) => fail(&mut note, e),
     }
@@ -264,73 +253,20 @@ fn same_path(listed: &str, canonical: &Path) -> bool {
     listed.canonicalize().unwrap_or(listed) == canonical
 }
 
-/// Whether the repository configures a Git filter (`git config
-/// --get-regexp '^filter\.'`): exit 1 with no output means none. Any other
-/// exit is an error, and the caller then does not run `status`.
-async fn filters_configured(git: &Git) -> Result<bool, String> {
-    let (code, out, stderr) = git
-        .status(&["config", "--get-regexp", r"^filter\."], &[], None)
+/// The commits that no fetched remote ref holds; without any remote ref,
+/// the commits that the main checkout's HEAD does not hold. An unborn branch
+/// has none, and nothing to compare with.
+async fn unpushed(
+    git: &Git,
+    main_head: Option<&str>,
+) -> Result<(u32, Option<&'static str>), String> {
+    let head = scan::status(git, &["rev-parse", "--verify", "--quiet", "HEAD"])
         .await
         .map_err(|e| e.to_string())?;
-    match code {
-        0 => Ok(!out.is_empty()),
-        1 => Ok(false),
-        _ => Err(format!("git config filter check failed ({code}): {stderr}")),
+    if head.0 != 0 {
+        return Ok((0, None));
     }
-}
-
-#[derive(Clone, Copy)]
-pub(super) enum Count {
-    Changed,
-    Ignored,
-}
-
-/// The entries of `git status --porcelain=v1 -z`: the changed and untracked
-/// ones, or the ignored ones (`!!`). The second path of a rename or copy is
-/// not an entry.
-async fn status_count(git: &Git, extra: &[&str], which: Count) -> Result<u32, GitError> {
-    let mut args = vec![
-        "-c",
-        "status.showUntrackedFiles=all",
-        "status",
-        "--ignore-submodules=all",
-        "--porcelain=v1",
-        "-z",
-    ];
-    args.extend_from_slice(extra);
-    let text = git.text(&args).await?;
-    Ok(count_entries(&text, which))
-}
-
-pub(super) fn count_entries(text: &str, which: Count) -> u32 {
-    let mut n = 0u32;
-    let mut tokens = text.split('\0');
-    while let Some(token) = tokens.next() {
-        let bytes = token.as_bytes();
-        if bytes.len() < 4 || bytes[2] != b' ' {
-            continue;
-        }
-        let ignored = bytes.starts_with(b"!!");
-        let wanted = match which {
-            Count::Changed => !ignored,
-            Count::Ignored => ignored,
-        };
-        if !wanted {
-            continue;
-        }
-        n = n.saturating_add(1);
-        if matches!(bytes[0], b'R' | b'C') || matches!(bytes[1], b'R' | b'C') {
-            tokens.next();
-        }
-    }
-    n
-}
-
-/// The commits that no fetched remote ref holds; without any remote ref,
-/// the commits that the main checkout's HEAD does not hold.
-async fn unpushed(git: &Git, main_head: Option<&str>) -> Result<(u32, &'static str), String> {
-    let refs = git
-        .text(&["for-each-ref", "--count=1", "refs/remotes"])
+    let refs = scan::text(git, &["for-each-ref", "--count=1", "refs/remotes"])
         .await
         .map_err(|e| e.to_string())?;
     let (args, with): (Vec<&str>, &'static str) = if refs.trim().is_empty() {
@@ -344,16 +280,18 @@ async fn unpushed(git: &Git, main_head: Option<&str>) -> Result<(u32, &'static s
             "remotes",
         )
     };
-    let text = git.text(&args).await.map_err(|e| e.to_string())?;
+    let text = scan::text(git, &args).await.map_err(|e| e.to_string())?;
     let n = text
         .trim()
         .parse::<u32>()
         .map_err(|e| format!("git rev-list count: {e}"))?;
-    Ok((n, with))
+    Ok((n, Some(with)))
 }
 
 async fn last_commit(git: &Git) -> Option<WorktreeCommit> {
-    let text = git.text(&["log", "-1", "--format=%ct%x00%s"]).await.ok()?;
+    let text = scan::text(git, &["log", "-1", "--format=%ct%x00%s"])
+        .await
+        .ok()?;
     let (secs, subject) = text.trim_end_matches('\n').split_once('\0')?;
     Some(WorktreeCommit {
         subject: subject.to_owned(),
