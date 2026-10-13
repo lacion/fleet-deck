@@ -552,6 +552,19 @@ CREATE TABLE drive_requests (
 ALTER TABLE commands ADD COLUMN author TEXT;
 ";
 
+/// The project of a session (DL-176): a manual choice of the owner. A row
+/// with a NULL `project_id` means "no project" and overrides the automatic
+/// match by folder; no row means the automatic match.
+const V19: &str = "
+CREATE TABLE project_sessions (
+    station_id  TEXT    NOT NULL,
+    session_id  TEXT    NOT NULL,
+    project_id  TEXT    REFERENCES projects (project_id) ON DELETE CASCADE,
+    assigned_at INTEGER NOT NULL,
+    PRIMARY KEY (station_id, session_id)
+) STRICT;
+";
+
 /// The `deck.db` migrations.
 #[must_use]
 pub fn migrations() -> Migrations<'static> {
@@ -576,6 +589,7 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V17),
         M::up(V18),
         M::up(V15),
+        M::up(V19),
     ])
 }
 

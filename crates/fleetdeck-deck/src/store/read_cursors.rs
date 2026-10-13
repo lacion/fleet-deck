@@ -112,6 +112,7 @@ impl DeckStore {
             let key = (card.station_id.clone(), card.summary.session_id.clone());
             card.unread = counts.get(&key).copied().filter(|n| *n > 0);
         }
+        self.fill_projects(principal, &mut cards).await?;
         Ok(cards)
     }
 }

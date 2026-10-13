@@ -15,6 +15,7 @@ fn card(id: &str, status: CardStatus, cwd: &str, updated_at: i64) -> DeckSession
         summary,
         status,
         unread: None,
+        project_id: None,
     }
 }
 

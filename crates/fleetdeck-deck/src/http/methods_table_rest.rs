@@ -240,6 +240,29 @@ pub const API_REST: &[ApiMethod] = &[
         Some(Scope::Drive),
         true,
     ),
+    // The project of a session (DL-176): `drive`, owner and tokens, never a
+    // member.
+    m(
+        "projects.session_assign",
+        Method::POST,
+        "/api/projects/{project}/sessions/assign",
+        Some(Scope::Drive),
+        true,
+    ),
+    m(
+        "sessions.project_clear",
+        Method::POST,
+        "/api/sessions/{station}/{session}/project/clear",
+        Some(Scope::Drive),
+        true,
+    ),
+    m(
+        "sessions.project_auto",
+        Method::POST,
+        "/api/sessions/{station}/{session}/project/auto",
+        Some(Scope::Drive),
+        true,
+    ),
     m(
         "board.ws_ticket",
         Method::POST,

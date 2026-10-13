@@ -434,6 +434,7 @@ fn card(id: &str, provider: ProviderKind, state: SessionState, activity: Activit
         status: card_status(&summary, true),
         summary,
         unread: None,
+        project_id: None,
     }
 }
 

@@ -13,4 +13,10 @@ export type DeckSession = { station_id: StationId, summary: SessionSummary, stat
  * need the caller (R6.1, DL-169). The deck fills it per caller; it is
  * absent when zero.
  */
-unread?: number, };
+unread?: number, 
+/**
+ * The project of the session (DL-176): the owner's choice, else the
+ * match by folder, repository or forge. Absent when there is none. The
+ * deck fills it for the owner and for tokens, never for a member.
+ */
+project_id?: string, };

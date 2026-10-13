@@ -35,6 +35,7 @@ pub mod members;
 pub mod outbox;
 pub mod plans;
 pub mod presence;
+pub mod project_sessions;
 pub mod projects;
 pub mod read_cursors;
 pub mod read_model;
