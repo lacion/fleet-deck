@@ -3,6 +3,7 @@
 //! start with the exit text and the output tail.
 
 use super::*;
+use crate::store::Dispatch;
 
 /// A station whose policy allows (or refuses) setup commands, with the
 /// environment of the `claude` instance.
@@ -10,7 +11,10 @@ async fn station(allow: bool) -> Station {
     let det = Det::new();
     let root = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(root.path().join("projects/app")).unwrap();
-    let store = Store::open_in_memory(det.clock(), det.ids(), StoreConfig::default())
+    // Random ids: the effect id is the setup marker, and the deterministic ids
+    // of another test process would give it the same marker.
+    let ids: fleetdeck_core::SharedIds = Arc::new(fleetdeck_core::UlidSource::new(det.clock()));
+    let store = Store::open_in_memory(det.clock(), Arc::clone(&ids), StoreConfig::default())
         .await
         .unwrap();
     let policy = Policy::new(
@@ -28,7 +32,7 @@ async fn station(allow: bool) -> Station {
         "claude".into(),
         adapter(FakeAgent::Claude.locate().unwrap()),
     )]);
-    let manager = SessionManager::start(store, policy, adapters, det.ids())
+    let manager = SessionManager::start(store, policy, adapters, ids)
         .await
         .unwrap();
     Station {
@@ -264,4 +268,108 @@ async fn a_slow_setup_does_not_block_other_sessions_and_a_stop_ends_it() {
     assert_eq!(st.state(&a).await, SessionState::Exited);
     st.settled(&a).await;
     st.manager.shutdown(StopMode::Kill).await;
+}
+
+/// A stop effect without a process incarnation, as the decision stores it
+/// during a setup command.
+fn unbound_stop(session: &SessionId, how: StopMode) -> crate::store::Effect {
+    crate::store::Effect {
+        effect_id: crate::store::EffectId::from("stop-test".to_owned()),
+        command_id: None,
+        session_id: session.clone(),
+        process_incarnation: None,
+        payload: crate::store::EffectPayload::Stop { how },
+        state: EffectState::Claimed,
+        fence_token: None,
+        reason: None,
+    }
+}
+
+async fn session_of(st: &mut Station, cmd: &str) -> SessionId {
+    let ws = st.workspace();
+    st.accepted(start_with_setup(&ws, cmd))
+        .await
+        .receipt
+        .result
+        .unwrap()
+        .session_id
+        .unwrap()
+}
+
+async fn wait_ended(st: &Station, session: &SessionId) {
+    let deadline = tokio::time::Instant::now() + WAIT;
+    while st.state(session).await != SessionState::Exited {
+        assert!(tokio::time::Instant::now() < deadline, "not ended");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+async fn wait_no_live(st: &Station) {
+    let deadline = tokio::time::Instant::now() + WAIT;
+    while st.manager.live_sessions() > 0 {
+        assert!(tokio::time::Instant::now() < deadline, "a provider is live");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+#[tokio::test]
+async fn a_stop_during_the_provider_start_ends_the_new_session() {
+    use crate::worker::EffectTarget;
+    let mut st = station(true).await;
+    let target = Arc::clone(&st.manager.target);
+    let hook = target.start_hook();
+    hook.arm();
+    let a = session_of(&mut st, "true").await;
+    // The task left its setup and waits before the provider start.
+    tokio::time::timeout(WAIT, hook.reached.notified())
+        .await
+        .unwrap();
+    let stop = unbound_stop(&a, StopMode::Kill);
+    assert_eq!(st.manager.target.dispatch(&stop).await, Dispatch::Confirmed);
+    hook.release.notify_one();
+    wait_ended(&st, &a).await;
+    wait_no_live(&st).await;
+    assert!(st.manager.store().setup_runs().await.unwrap().is_empty());
+    st.manager.shutdown(StopMode::Kill).await;
+}
+
+#[tokio::test]
+async fn a_stop_that_comes_after_the_start_stops_the_live_session() {
+    use crate::worker::EffectTarget;
+    let mut st = station(true).await;
+    let a = session_of(&mut st, "true").await;
+    st.wait_for("started", |e| {
+        matches!(e, Event::SessionStarted { .. }).then_some(())
+    })
+    .await;
+    // The task has settled and left the registry once the effect is settled.
+    st.settled(&a).await;
+    let stop = unbound_stop(&a, StopMode::Kill);
+    let dispatch = st.manager.target.dispatch(&stop).await;
+    assert!(
+        matches!(dispatch, Dispatch::Sent | Dispatch::Confirmed),
+        "{dispatch:?}"
+    );
+    wait_ended(&st, &a).await;
+    wait_no_live(&st).await;
+    st.manager.shutdown(StopMode::Kill).await;
+}
+
+#[tokio::test]
+async fn a_shutdown_during_the_provider_start_leaves_no_live_provider() {
+    let mut st = station(true).await;
+    let target = Arc::clone(&st.manager.target);
+    let hook = target.start_hook();
+    hook.arm();
+    let a = session_of(&mut st, "true").await;
+    tokio::time::timeout(WAIT, hook.reached.notified())
+        .await
+        .unwrap();
+    let release = async {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        hook.release.notify_one();
+    };
+    tokio::join!(st.manager.shutdown(StopMode::Kill), release);
+    wait_no_live(&st).await;
+    wait_ended(&st, &a).await;
 }

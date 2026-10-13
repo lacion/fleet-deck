@@ -15,7 +15,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::sync::{Arc, Mutex as StdMutex, Weak};
-use std::time::Duration;
 
 use async_trait::async_trait;
 use fleetdeck_core::{SharedIds, new_id};
@@ -26,15 +25,13 @@ use fleetdeck_providers::{
     Answer, ControlId, EventSink, HostInput, LiveSession, ModelId, NativeSessionId, PermissionMode,
     ProviderAdapter, ProviderError,
 };
-use tokio::sync::{Mutex, mpsc, oneshot, watch};
-use tokio::task::JoinHandle;
+use tokio::sync::{Mutex, mpsc, oneshot};
 
 use super::turns::SessionTurns;
 use crate::store::{
     Dispatch, Effect, EffectPayload, InputRecord, NewEvent, ProcessIncarnation, Store,
 };
 use crate::worker::EffectTarget;
-use crate::workspace::setup::{STOPPED_MESSAGE, SetupError};
 use crate::workspace::{GitOptions, Limits};
 
 /// Events that the pump appends in one transaction at most.
@@ -43,9 +40,6 @@ const PUMP_BATCH: usize = 64;
 const SINK_CAPACITY: usize = 256;
 /// The `session.ended` reason when a process ends without one.
 pub const REASON_PROCESS_EXIT: &str = "process_exit";
-
-/// The wait for the setup tasks at the station shutdown.
-const SETUP_STOP_WAIT: Duration = Duration::from_secs(15);
 
 /// The provider adapters of a station, by instance id.
 pub type Adapters = BTreeMap<ProviderInstanceId, Arc<dyn ProviderAdapter>>;
@@ -60,16 +54,6 @@ struct Live {
 }
 
 type Sessions = Arc<StdMutex<HashMap<SessionId, Arc<Mutex<Live>>>>>;
-
-/// A start that waits for its setup command (DL-148): the task runs the
-/// command, starts the provider and settles the start effect itself.
-struct SetupTask {
-    /// `true` stops the setup command.
-    cancel: watch::Sender<bool>,
-    handle: JoinHandle<()>,
-}
-
-type SetupTasks = Arc<StdMutex<HashMap<SessionId, SetupTask>>>;
 
 /// The session manager's [`EffectTarget`].
 pub struct SessionTarget {
@@ -87,21 +71,13 @@ pub struct SessionTarget {
     /// (ADR-007 §2.4 rules 2 and 10, DL-133).
     policy: Option<super::policy::Policy>,
     /// The starts that wait for their setup command, by session (DL-148).
-    setups: SetupTasks,
+    setups: setup_task::SetupTasks,
     /// This target as an `Arc`, for the tasks that outlive one dispatch;
     /// empty until [`Self::shared`].
     this: Weak<SessionTarget>,
-}
-
-/// What the task of a start with a setup command owns.
-struct SetupRun {
-    effect: Effect,
-    /// The fence token that claimed the effect.
-    fence: u64,
-    spec: SessionSpec,
-    prompt: Option<InputRecord>,
-    cmd: String,
-    env: fleetdeck_core::ChildEnv,
+    /// Holds a start task before its provider start (tests only).
+    #[cfg(test)]
+    start_hook: setup_task::StartHook,
 }
 
 impl std::fmt::Debug for SessionTarget {
@@ -128,7 +104,15 @@ impl SessionTarget {
             policy: None,
             setups: Arc::default(),
             this: Weak::new(),
+            #[cfg(test)]
+            start_hook: setup_task::StartHook::default(),
         }
+    }
+
+    /// The hook that holds a start task before its provider start.
+    #[cfg(test)]
+    pub(super) fn start_hook(&self) -> &setup_task::StartHook {
+        &self.start_hook
     }
 
     /// The target in an `Arc` that knows itself. A start with a setup command
@@ -179,7 +163,7 @@ impl SessionTarget {
     /// Stops every live session (station shutdown). First it stops the setup
     /// commands that run and waits for their tasks, up to 15 s.
     pub async fn stop_all(&self, how: StopMode) {
-        self.stop_setups().await;
+        self.stop_setups(how).await;
         let all: Vec<_> = match self.sessions.lock() {
             Ok(s) => s
                 .iter()
@@ -347,168 +331,6 @@ impl SessionTarget {
         Dispatch::Confirmed
     }
 
-    /// Registers a start with a setup command (DL-148): the command runs in
-    /// a task of its own, so the effect worker goes on with other sessions.
-    /// The task starts the provider and settles the effect. A failure before
-    /// the task ends the start here and returns the dispatch code.
-    async fn defer_setup(
-        &self,
-        effect: &Effect,
-        spec: &SessionSpec,
-        prompt: Option<&InputRecord>,
-        cmd: &str,
-    ) -> Dispatch {
-        let session_id = &effect.session_id;
-        let Some(env) = self
-            .policy
-            .as_ref()
-            .and_then(|p| p.setup_env(&spec.provider_instance))
-        else {
-            let text = "the setup command has no environment for this provider instance";
-            self.start_failed(session_id, text).await;
-            return Dispatch::NotDispatched("setup_failed".into());
-        };
-        let (Some(this), Some(fence)) = (self.this.upgrade(), effect.fence_token) else {
-            let text = "the setup command cannot run: the effect has no owner";
-            self.start_failed(session_id, text).await;
-            return Dispatch::NotDispatched("setup_failed".into());
-        };
-        let run = SetupRun {
-            effect: effect.clone(),
-            fence,
-            spec: spec.clone(),
-            prompt: prompt.cloned(),
-            cmd: cmd.to_owned(),
-            env: env.clone(),
-        };
-        let (cancel, cancel_rx) = watch::channel(false);
-        // The lock covers the spawn and the insert: the task removes itself
-        // only after it has the lock.
-        let Ok(mut tasks) = self.setups.lock() else {
-            self.start_failed(session_id, "the setup tasks are unreadable")
-                .await;
-            return Dispatch::NotDispatched("setup_failed".into());
-        };
-        let handle = tokio::spawn(this.setup_then_start(run, cancel_rx));
-        tasks.insert(session_id.clone(), SetupTask { cancel, handle });
-        Dispatch::Deferred
-    }
-
-    /// The task of a start with a setup command: the command, then the
-    /// provider start, then the settle of the start effect.
-    async fn setup_then_start(self: Arc<Self>, run: SetupRun, cancel: watch::Receiver<bool>) {
-        let SetupRun {
-            effect,
-            fence,
-            spec,
-            prompt,
-            cmd,
-            env,
-        } = run;
-        let session_id = effect.session_id.clone();
-        let stop_flag = cancel.clone();
-        let result = crate::workspace::setup::run(
-            &self.store,
-            effect.effect_id.as_str(),
-            &session_id,
-            &cmd,
-            Path::new(&spec.cwd),
-            &env,
-            crate::workspace::setup::DEFAULT_TIMEOUT,
-            cancel,
-        )
-        .await;
-        let failure = match result {
-            Ok(()) if self.leave_setup(&session_id, &stop_flag) => None,
-            // A stop that came after the command ended is a stop.
-            Ok(()) => Some(SetupError {
-                message: STOPPED_MESSAGE.into(),
-                output_tail: String::new(),
-            }),
-            Err(e) => Some(e),
-        };
-        let dispatch = match failure {
-            None => self.start(&effect, &spec, prompt.as_ref(), None).await,
-            Some(e) => {
-                let stopped = e.message == STOPPED_MESSAGE;
-                let text = if e.output_tail.is_empty() {
-                    e.message
-                } else {
-                    format!("{}\n\n{}", e.message, e.output_tail)
-                };
-                self.start_failed(&session_id, &text).await;
-                Dispatch::NotDispatched(
-                    if stopped {
-                        "setup_stopped"
-                    } else {
-                        "setup_failed"
-                    }
-                    .into(),
-                )
-            }
-        };
-        if let Err(e) = self
-            .store
-            .settle(effect.effect_id.clone(), fence, dispatch)
-            .await
-        {
-            tracing::warn!(error = %e, effect = %effect.effect_id, "the start effect was not settled");
-        }
-        if let Ok(mut tasks) = self.setups.lock() {
-            tasks.remove(&session_id);
-        }
-    }
-
-    /// Takes the session out of the setup tasks when no stop is pending, so
-    /// that a later stop is not lost in a task that already left its setup
-    /// (it then finds no task). False when a stop is pending.
-    fn leave_setup(&self, session_id: &SessionId, stop: &watch::Receiver<bool>) -> bool {
-        let Ok(mut tasks) = self.setups.lock() else {
-            return true;
-        };
-        if *stop.borrow() {
-            return false;
-        }
-        tasks.remove(session_id);
-        true
-    }
-
-    /// Sends the cancel to the setup task of the session. False when the
-    /// session has none.
-    fn cancel_setup(&self, session_id: &SessionId) -> bool {
-        let Ok(tasks) = self.setups.lock() else {
-            return false;
-        };
-        tasks.get(session_id).is_some_and(|t| {
-            t.cancel.send_replace(true);
-            true
-        })
-    }
-
-    /// Cancels every setup task and waits for them (station shutdown).
-    async fn stop_setups(&self) {
-        let tasks: Vec<_> = match self.setups.lock() {
-            Ok(mut tasks) => tasks
-                .drain()
-                .map(|(_, t)| {
-                    // The cancel goes out under the lock, as for a stop.
-                    t.cancel.send_replace(true);
-                    t
-                })
-                .collect(),
-            Err(_) => return,
-        };
-        let deadline = tokio::time::Instant::now() + SETUP_STOP_WAIT;
-        for task in tasks {
-            if tokio::time::timeout_at(deadline, task.handle)
-                .await
-                .is_err()
-            {
-                tracing::warn!("a setup task did not stop in time at the shutdown");
-            }
-        }
-    }
-
     /// A start that never got a process ends the session (`exited`).
     async fn start_failed(&self, session_id: &SessionId, message: &str) {
         let events = vec![
@@ -532,7 +354,11 @@ impl SessionTarget {
             return Dispatch::NotDispatched("no_process".into());
         };
         let mut live = live.lock().await;
-        if effect.process_incarnation.as_ref() != Some(&live.process) {
+        // A stop of a start that waited for its setup command has no
+        // incarnation: it stops the process that is live now (DL-148).
+        let unbound_stop = effect.process_incarnation.is_none()
+            && matches!(effect.payload, EffectPayload::Stop { .. });
+        if !unbound_stop && effect.process_incarnation.as_ref() != Some(&live.process) {
             return Dispatch::NotDispatched("process_changed".into());
         }
         if let Some(durable) = live.durable.as_ref() {
@@ -665,7 +491,7 @@ impl EffectTarget for SessionTarget {
             }
             // A stop during the setup command cancels it; the setup task ends
             // the session.
-            EffectPayload::Stop { .. } if self.cancel_setup(&effect.session_id) => {
+            EffectPayload::Stop { how } if self.cancel_setup(&effect.session_id, *how) => {
                 Dispatch::Confirmed
             }
             _ => self.operate(effect).await,
@@ -765,6 +591,9 @@ async fn pump(
 
 #[path = "shim_target.rs"]
 mod shim_target;
+
+#[path = "setup_task.rs"]
+mod setup_task;
 
 /// The dispatch reason of a resume on the shim host (DL-118).
 pub const REASON_RESUME_UNSUPPORTED: &str = "resume_not_supported_on_the_shim_host";
