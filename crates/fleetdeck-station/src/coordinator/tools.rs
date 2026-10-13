@@ -63,6 +63,23 @@ fn task() -> Value {
            "properties": {"task_id": {"type": "string"}, "timeout_ms": {"type": "integer"}}})
 }
 
+fn publish_artifact() -> Value {
+    json!({"type": "object", "required": ["path"], "properties": {
+        "path": {"type": "string", "description": "A file in your workspace (relative or absolute)."},
+        "title": {"type": "string", "description": "A short title for the artifact."}}})
+}
+
+fn set_focus() -> Value {
+    json!({"type": "object", "required": ["text"], "properties": {
+        "text": {"type": "string", "maxLength": 120,
+                 "description": "One line about what you do now. Empty text clears it."}}})
+}
+
+fn ask_coordinator() -> Value {
+    json!({"type": "object", "required": ["question"],
+           "properties": {"question": {"type": "string"}}})
+}
+
 /// Every tool. The order is the order of `tools/list`.
 pub const TOOLS: &[Tool] = &[
     Tool {
@@ -118,6 +135,24 @@ pub const TOOLS: &[Tool] = &[
         class: ToolClass::Spawn,
         description: "Start a session.",
         schema: spawn,
+    },
+    Tool {
+        name: "publish_artifact",
+        class: ToolClass::Own,
+        description: "Keep a file of your workspace (HTML, Markdown, an image, SVG, PDF) as a versioned artifact that the owner opens in Fleet Deck. An HTML file is kept with the local files that it names.",
+        schema: publish_artifact,
+    },
+    Tool {
+        name: "set_focus",
+        class: ToolClass::Own,
+        description: "Set the one line that Fleet Deck shows on your card (at most 120 characters).",
+        schema: set_focus,
+    },
+    Tool {
+        name: "ask_coordinator",
+        class: ToolClass::Own,
+        description: "Ask the coordinator of your task a question.",
+        schema: ask_coordinator,
     },
 ];
 

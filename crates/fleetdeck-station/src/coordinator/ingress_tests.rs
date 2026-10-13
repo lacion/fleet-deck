@@ -480,3 +480,67 @@ fn a_minted_credential_is_well_formed_and_only_its_digest_is_kept() {
     assert_eq!(d.len(), 64);
     assert!(!d.contains(token.expose().as_str()));
 }
+
+#[derive(Default)]
+struct OwnTools {
+    calls: Mutex<Vec<(Caller, String, Value)>>,
+}
+
+#[async_trait]
+impl FleetTools for OwnTools {
+    async fn call(&self, caller: Caller, tool: &str, args: Value) -> Result<Value, String> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push((caller, tool.to_owned(), args));
+        Ok(json!({"ok": true}))
+    }
+}
+
+/// DL-165: a session without a grant sees only its own tools, the station
+/// answers them (the deck forward is not asked), and a coordinator tool is
+/// refused.
+#[tokio::test]
+async fn a_fleet_only_binding_sees_its_own_tools_and_the_station_answers_them() {
+    let bindings = Bindings::default();
+    let (token, d) = mint().unwrap();
+    let mut b = binding("s1:fleet", BindingState::Active, &[ToolClass::Own]);
+    b.grant_id = String::new();
+    bindings.insert(d, b);
+    let forward = Arc::new(Recorder::default());
+    let own = Arc::new(OwnTools::default());
+    let ingress = Ingress::start_with(
+        bindings,
+        forward.clone(),
+        Some(own.clone()),
+        Limits::default(),
+    )
+    .await
+    .unwrap();
+    let token = token.into_exposed();
+    let send = |msg: Value| {
+        raw(
+            ingress.addr,
+            request(ingress.addr, Some(&token), "", &msg.to_string()),
+        )
+    };
+    assert_eq!(
+        names(&send(list()).await),
+        ["publish_artifact", "set_focus", "ask_coordinator"]
+    );
+    let reply = send(call("set_focus", json!({"text": "reading the tests"}))).await;
+    assert!(!tool_result(&reply).0, "{}", reply.body);
+    let reply = send(call("list_sessions", json!({}))).await;
+    assert_eq!(
+        tool_result(&reply),
+        (true, "forbidden: the grant has no such tool".to_owned())
+    );
+    assert!(
+        forward.calls.lock().unwrap().is_empty(),
+        "the deck is not asked"
+    );
+    let calls = own.calls.lock().unwrap();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].1, "set_focus");
+    assert_eq!(calls[0].0.session_id.as_str(), "coord-1");
+}

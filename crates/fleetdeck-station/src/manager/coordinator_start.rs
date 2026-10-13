@@ -40,6 +40,11 @@ pub(super) fn bound_events(
             continue;
         };
         for b in bindings.session_native(session_id, native) {
+            // The binding of a session without a grant is not a
+            // coordinator binding: the deck knows nothing of it.
+            if b.is_fleet_only() {
+                continue;
+            }
             out.push(NewEvent::from(match b.state {
                 BindingState::Active => Event::CoordinatorBound {
                     binding_id: b.binding_id,
@@ -65,6 +70,7 @@ pub(super) fn ended_events(bindings: &Bindings, session_id: &SessionId) -> Vec<N
     bindings
         .end_session(session_id)
         .into_iter()
+        .filter(|b| !b.is_fleet_only())
         .map(|b| {
             NewEvent::from(Event::CoordinatorEnded {
                 binding_id: b.binding_id,
@@ -94,11 +100,13 @@ pub(super) fn prepare(
     let url = bindings
         .endpoint()
         .ok_or_else(|| "the coordinator endpoint does not listen".to_owned())?;
-    let classes = coordinator
+    let mut classes: std::collections::BTreeSet<ToolClass> = coordinator
         .classes
         .iter()
         .map(|c| ToolClass::parse(c).ok_or_else(|| format!("unknown grant class `{c}`")))
         .collect::<Result<_, _>>()?;
+    // A coordinator session has the session's own tools too (DL-165).
+    classes.insert(ToolClass::Own);
     let handoff = Handoff::prepare(provider, &url).map_err(|e| e.to_string())?;
     bindings.insert(
         handoff.digest.clone(),
@@ -116,3 +124,49 @@ pub(super) fn prepare(
     );
     Ok(handoff.into_launch())
 }
+
+/// The fleet-only handoff of a session that has no coordinator grant
+/// (DL-165): the session gets the loopback MCP endpoint and a credential
+/// for its own tools (`publish_artifact`, `set_focus`, `ask_coordinator`).
+///
+/// `None` when the session cannot have it: a resume or a shim-hosted start
+/// has no handoff path, the provider version has no verified handoff, or
+/// the endpoint does not listen. The session then starts without the
+/// tools; that is not an error.
+pub(super) fn prepare_fleet(
+    bindings: &Bindings,
+    provider: ProviderKind,
+    session_id: &SessionId,
+    spec: &SessionSpec,
+    resumed_or_durable: bool,
+) -> Option<CoordinatorLaunch> {
+    if resumed_or_durable || bindings.handoff(provider, None).is_err() {
+        return None;
+    }
+    let url = bindings.endpoint()?;
+    let handoff = Handoff::prepare(provider, &url).ok()?;
+    bindings.insert(
+        handoff.digest.clone(),
+        Binding {
+            binding_id: format!("{session_id}:{FLEET_GRANT}"),
+            grant_id: String::new(),
+            session_id: session_id.clone(),
+            provider_instance: spec.provider_instance.to_string(),
+            native_id: None,
+            generation: 0,
+            classes: std::iter::once(ToolClass::Own).collect(),
+            state: BindingState::Pending,
+            control_skill: FLEET_SKILL.to_owned(),
+        },
+    );
+    Some(handoff.into_launch())
+}
+
+/// The name part of a fleet-only binding id.
+const FLEET_GRANT: &str = "fleet";
+
+/// The MCP `instructions` of a session without a coordinator grant.
+const FLEET_SKILL: &str = "Fleet Deck session tools. `publish_artifact` keeps a file of your \
+workspace (an HTML page, Markdown, an image, SVG or PDF) as a versioned artifact that the owner \
+opens in Fleet Deck. `set_focus` sets the one line (at most 120 characters) on your card. \
+`ask_coordinator` asks the coordinator of your task a question. The tools need no credential.";

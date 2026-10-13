@@ -30,6 +30,10 @@ pub enum ToolClass {
     Mail,
     Drive,
     Spawn,
+    /// The session's own tools (`publish_artifact`, `set_focus`,
+    /// `ask_coordinator`; DL-165). Every binding has it; no grant names
+    /// it ([`ToolClass::parse`] never returns it).
+    Own,
 }
 
 /// The state of a binding (§5.5).
@@ -164,6 +168,16 @@ impl ToolClass {
             "spawn" => Self::Spawn,
             _ => return None,
         })
+    }
+}
+
+impl Binding {
+    /// True for the binding of a session that has no coordinator grant: it
+    /// holds only the session's own tools (DL-165). It has no grant id and
+    /// never reaches the deck as a coordinator binding.
+    #[must_use]
+    pub fn is_fleet_only(&self) -> bool {
+        self.grant_id.is_empty()
     }
 }
 
@@ -346,6 +360,7 @@ impl Bindings {
         let mut out: Vec<_> = self
             .lock()
             .values()
+            .filter(|e| !e.binding.is_fleet_only())
             .map(|e| {
                 let b = &e.binding;
                 fleetdeck_proto::CoordinatorBindingState {

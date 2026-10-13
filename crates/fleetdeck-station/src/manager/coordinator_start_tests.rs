@@ -315,3 +315,73 @@ fn the_start_effect_rechecks_the_handoff_and_the_endpoint() {
         "a refusal adds no binding"
     );
 }
+
+/// DL-165: a session without a grant gets a fleet-only binding when the
+/// provider can take the handoff; it never reaches the deck as a
+/// coordinator binding; a resume, a missing endpoint or an unverified
+/// provider start without it.
+#[test]
+fn a_session_without_a_grant_gets_a_fleet_only_binding_when_the_handoff_works() {
+    let spec = SessionSpec {
+        provider_instance: "claude".into(),
+        cwd: "/w".to_owned(),
+        mode: None,
+        model: None,
+        title: None,
+        coordinator: None,
+    };
+    let session: SessionId = "s-1".into();
+    let ok = Bindings::default().with_handoff(verified);
+    ok.set_endpoint(URL.to_owned());
+    let launch =
+        coordinator_start::prepare_fleet(&ok, ProviderKind::Claude, &session, &spec, false)
+            .expect("a fleet handoff");
+    assert!(launch.args.iter().all(|a| !a.contains("fdc1_")));
+    let binding = ok.get("s-1:fleet").expect("the binding");
+    assert!(binding.is_fleet_only());
+    assert_eq!(
+        binding.classes.iter().copied().collect::<Vec<_>>(),
+        [crate::coordinator::ToolClass::Own]
+    );
+    // The deck never sees it: not in the projection, no lifecycle event.
+    assert!(ok.projection().is_empty());
+    let started = Event::SessionStarted {
+        provider: ProviderKind::Claude,
+        provider_instance: "claude".into(),
+        provider_version: None,
+        model: None,
+        cwd: "/w".to_owned(),
+        mode: None,
+        capabilities: Box::new(fleetdeck_proto::Capabilities::minimal()),
+        resumed: None,
+        title: None,
+        branch: None,
+        repo: None,
+        provider_refs: serde_json::json!({"session_id": "native-1"})
+            .as_object()
+            .unwrap()
+            .clone(),
+    };
+    assert!(coordinator_start::bound_events(&ok, &session, &[started]).is_empty());
+    assert_eq!(ok.get("s-1:fleet").unwrap().state, BindingState::Active);
+    assert!(coordinator_start::ended_events(&ok, &session).is_empty());
+    assert_eq!(ok.get("s-1:fleet").unwrap().state, BindingState::Revoked);
+    // Without the handoff, the start goes on without the tools.
+    let other: SessionId = "s-2".into();
+    let unverified = Bindings::default();
+    unverified.set_endpoint(URL.to_owned());
+    let no_endpoint = Bindings::default().with_handoff(verified);
+    for (bindings, resumed) in [(&unverified, false), (&no_endpoint, false), (&ok, true)] {
+        assert!(
+            coordinator_start::prepare_fleet(
+                bindings,
+                ProviderKind::Claude,
+                &other,
+                &spec,
+                resumed
+            )
+            .is_none()
+        );
+        assert!(bindings.get("s-2:fleet").is_none());
+    }
+}
