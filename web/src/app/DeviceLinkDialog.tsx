@@ -9,6 +9,7 @@ import {
 import { Check, Copy, Icon, X } from '../ui/icons';
 import { qrMatrix, qrSvgPath } from '../ui/qr';
 import { trapTab, useFocusReturn } from './focus';
+import { useOverlay } from './overlay';
 
 type Props = {
   /** Makes one link. The dialog calls it once when it opens, and again for "Try again" and "New link". */
@@ -137,6 +138,7 @@ export function DeviceLinkDialog({ load, onClose, now = Date.now, initial }: Pro
   const root = useRef<HTMLDivElement>(null);
   const close = useRef<HTMLButtonElement>(null);
   useFocusReturn(root, close);
+  useOverlay();
   const [state, setState] = useState<State>(
     initial === undefined ? { kind: 'loading' } : { kind: 'done', result: initial },
   );

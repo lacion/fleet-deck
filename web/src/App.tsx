@@ -3,7 +3,7 @@ import type { AssignActions } from './assign/assign';
 import type { FeedItem } from './board/feed';
 import type { ConflictLoader } from './board/conflicts';
 import { stationName } from './board/fleet';
-import type { PlanActions } from './board/plans';
+import { markOnStart, type PlanActions } from './board/plans';
 import type { StationActions } from './board/pairing';
 import { PlanLibrary } from './board/PlanLibrary';
 import { StationsPanel } from './board/StationsPanel';
@@ -17,6 +17,7 @@ import type {
   WorkspaceListing,
 } from './gen';
 import type { Chrome, Notice } from './app/chrome';
+import { startFailures } from './app/failures';
 import { FilesPage } from './app/FilesPage';
 import { FleetHome } from './app/FleetHome';
 import { HelpOverlay } from './app/HelpOverlay';
@@ -39,6 +40,7 @@ import { TerminalDock } from './terminal/TerminalDock';
 import { type TermTab, type TerminalStore, tabId } from './terminal/store';
 import { archived } from './ui/archive';
 import { priority } from './ui/localSet';
+import { useNow } from './ui/useNow';
 
 type Props = {
   readonly sessions?: readonly DeckSession[];
@@ -165,10 +167,13 @@ export function App({
 
   // The first prompt of the spawn form when a plan starts a session.
   const [planPrompt, setPlanPrompt] = useState('');
+  // The plan that the spawn form starts; the plan is marked executed after a start that worked (R7.2).
+  const [planId, setPlanId] = useState<string | null>(null);
   const [spawnStation, setSpawnStation] = useState<string | null>(null);
   useEffect(() => {
     if (route.name !== 'new') {
       setPlanPrompt('');
+      setPlanId(null);
       setSpawnStation(null);
     }
   }, [route.name]);
@@ -205,6 +210,11 @@ export function App({
     ...(local !== null && local.at === routeKey ? [local.notice] : []),
   ];
 
+  // R7.1: a session that ended before it started gets a banner until the owner dismisses it.
+  const [dismissed, setDismissed] = useState<ReadonlySet<string>>(() => new Set());
+  const failureNow = useNow(undefined, 30_000);
+  const failures = startFailures(sessions, failureNow, dismissed);
+
   const open = (key: SessionKey) => navigate(sessionRoute(key));
   const toTerminals = () => navigate({ name: 'terminals' });
   const order = sidebarOrder(sidebarModel(sessions, stations, '', { starred, archived: cleared }));
@@ -233,14 +243,11 @@ export function App({
     if (phone) toTerminals();
     else if (terminals !== undefined) terminals.setOpen(!terminals.getState().open);
   };
-  const modal = palette || help;
-  const unlessModal = (fn: () => void) => () => {
-    if (!modal) fn();
-  };
+  // The board hotkeys are off while any overlay is open (`useOverlay`, see `keys.ts`).
   useGlobalKeys({
-    next: unlessModal(() => step(1)),
-    prev: unlessModal(() => step(-1)),
-    focus: unlessModal(() => {
+    next: () => step(1),
+    prev: () => step(-1),
+    focus: () => {
       const composer = document.getElementById('fd-composer-text');
       if (composer !== null) {
         composer.focus();
@@ -250,21 +257,20 @@ export function App({
       if (phone && route.name !== 'home') navigate({ name: 'home' });
       if (layout === 'tablet') setDrawerAt(routeKey);
       setTimeout(() => document.getElementById('fd-sidebar-search')?.focus(), 0);
-    }),
-    new: unlessModal(() => navigate({ name: 'new' })),
-    fleet: unlessModal(() => navigate({ name: 'fleet' })),
-    compose: unlessModal(() => {
+    },
+    new: () => navigate({ name: 'new' }),
+    fleet: () => navigate({ name: 'fleet' }),
+    compose: () => {
       navigate({ name: 'fleet' });
       setPanelRequest((r) => ({ tab: 'mail', seq: (r?.seq ?? 0) + 1 }));
-    }),
-    terminals: unlessModal(toggleDock),
-    help: () => {
-      if (!palette) setHelp(true);
     },
+    terminals: toggleDock,
+    help: () => setHelp(true),
     palette: () => {
       setHelp(false);
       setPalette(!palette);
     },
+    // The topmost overlay closes first (UI-DESIGN "Esc and overlay order").
     escape: () => {
       if (palette) setPalette(false);
       else if (help) setHelp(false);
@@ -340,6 +346,7 @@ export function App({
       terminalCount={tabCount}
       onNavigate={(next) => {
         setPlanPrompt('');
+        setPlanId(null);
         setSpawnStation(null);
         navigate(next);
       }}
@@ -370,11 +377,23 @@ export function App({
       onHelp={() => setHelp(true)}
       onSpawnWith={(station, prompt) => {
         setPlanPrompt(prompt);
+        setPlanId(null);
         setSpawnStation(station);
         navigate({ name: 'new' });
       }}
     />
   );
+
+  // R7.2: a plan is `executed` only after its start returned ok; a failed start keeps it `proposed`.
+  const planSpawn: SpawnActions | undefined =
+    spawn === undefined || plans === undefined || planId === null
+      ? spawn
+      : markOnStart(spawn, plans, planId, (e) =>
+          notify(
+            { text: `The plan was not marked executed: ${message(e)}`, tone: 'error' },
+            { name: 'plans' },
+          ),
+        );
 
   const back: Navigate = navigate;
   const content = (() => {
@@ -393,7 +412,7 @@ export function App({
               sessions={sessions}
               stations={stations}
               freshness={freshness}
-              actions={spawn}
+              actions={planSpawn}
               initialListing={initialListing}
               onOpen={open}
             />
@@ -414,6 +433,7 @@ export function App({
               }
               onExecute={(plan) => {
                 setPlanPrompt(plan.markdown);
+                setPlanId(plan.id);
                 setSpawnStation(null);
                 navigate({ name: 'new' });
               }}
@@ -479,6 +499,9 @@ export function App({
       drawerOpen={drawerOpen}
       onDrawer={(next) => setDrawerAt(next ? routeKey : null)}
       notices={notices}
+      failures={failures}
+      onOpenFailure={(f) => open(f.key)}
+      onDismissFailure={(f) => setDismissed((set) => new Set(set).add(f.ref))}
       dock={dock}
       onTerminalsBack={() => {
         if (typeof window !== 'undefined' && window.history.length > 1) window.history.back();
@@ -493,6 +516,12 @@ export function App({
               stations={stations}
               onOpen={open}
               onClose={() => setPalette(false)}
+              onStart={(prompt) => {
+                setPlanPrompt(prompt);
+                setPlanId(null);
+                setSpawnStation(null);
+                navigate({ name: 'new' });
+              }}
             />
           ) : null}
         </>

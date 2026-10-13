@@ -1,4 +1,5 @@
 import { type CSSProperties, useEffect, useRef, useState } from 'react';
+import { firstLine, isStartFailure } from '../app/failures';
 import { formatHash } from '../app/routes';
 import { basename, relativeAge } from '../app/sessions';
 import type { CardStatus, DeckSession, SessionExtras, SessionKey, StationView } from '../gen';
@@ -127,6 +128,13 @@ function CardNote({ card }: { card: DeckSession }) {
     );
   }
   const error = s.last_error;
+  if (error != null && isStartFailure(card)) {
+    return (
+      <span className="fd-card-note" data-note="start_failed">
+        <span className="fd-card-error">Failed to start: {firstLine(error.message)}</span>
+      </span>
+    );
+  }
   if (
     error !== null &&
     error !== undefined &&
