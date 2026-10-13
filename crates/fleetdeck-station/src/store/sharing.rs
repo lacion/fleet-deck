@@ -118,6 +118,15 @@ impl Decision<'_> {
         conflict(self.connection(), root, except)
     }
 
+    /// The live or terminal-held sessions whose directory overlaps `root`,
+    /// except `except`.
+    ///
+    /// # Errors
+    /// A database error.
+    pub fn sessions_over(&self, root: &str, except: &SessionId) -> Result<Vec<SessionSummary>> {
+        sharing(self.connection(), root, except)
+    }
+
     /// The open revert of any session whose worktree overlaps `cwd`.
     ///
     /// # Errors

@@ -34,6 +34,15 @@ pub enum WorkspacePlan {
     Clone { url: String, path: String },
 }
 
+/// What a worktree effect does with its `worktree_ops` row (DL-150).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorktreeAction {
+    Trash,
+    Restore,
+    Purge,
+}
+
 /// What an effect does.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -96,6 +105,12 @@ pub enum EffectPayload {
         app_turn: String,
         turns: u32,
     },
+    /// The file work of one worktree trash operation (DL-150). It needs no
+    /// provider process: the `worktree_ops` row holds the steps.
+    Worktree {
+        op_id: String,
+        action: WorktreeAction,
+    },
 }
 
 impl EffectPayload {
@@ -113,13 +128,18 @@ impl EffectPayload {
             Self::SetModel { .. } => "set_model",
             Self::Stop { .. } => "stop",
             Self::Revert { .. } => "revert",
+            Self::Worktree { .. } => "worktree",
         }
     }
 
-    /// True for effects that act on a running process (all but start/resume).
+    /// True for effects that act on a running process (all but start, resume
+    /// and worktree).
     #[must_use]
     pub fn needs_process(&self) -> bool {
-        !matches!(self, Self::Start { .. } | Self::Resume { .. })
+        !matches!(
+            self,
+            Self::Start { .. } | Self::Resume { .. } | Self::Worktree { .. }
+        )
     }
 
     /// The host input that the effect delivers.

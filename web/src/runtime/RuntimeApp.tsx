@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { App } from '../App';
-import { stationActions, worktreeLoader } from '../board/pairing';
+import { stationActions, worktreeActor, worktreeLoader } from '../board/pairing';
 import { conflictLoader } from '../board/conflicts';
 import { workspaceFiles } from '../session/workspace';
 import { planActions } from '../board/plans';
@@ -54,6 +54,9 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
         : undefined,
       // The worktree inventory is owner-only as well.
       worktrees: canAdmin ? worktreeLoader((path) => connection.get(path, 65_000)) : undefined,
+      worktreeAction: canAdmin
+        ? worktreeActor((path, body) => connection.post(path, body))
+        : undefined,
     }),
     [connection, canAdmin],
   );

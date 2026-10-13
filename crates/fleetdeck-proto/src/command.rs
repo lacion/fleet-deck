@@ -219,6 +219,26 @@ pub enum SessionCommand {
         session_id: SessionId,
         grant_id: String,
     },
+    /// Move the worktree of an ended session into the trash folder beside
+    /// it (DL-150). Nothing is deleted. Owner action, scope `admin`.
+    WorktreeTrash {
+        session_id: SessionId,
+    },
+    /// Move a trashed worktree back to its place (DL-150).
+    WorktreeRestore {
+        session_id: SessionId,
+    },
+    /// Delete a trashed worktree for good (DL-150). `confirm_name` is the
+    /// name of the trash folder.
+    WorktreePurge {
+        session_id: SessionId,
+        confirm_name: String,
+    },
+    /// Stop tracking a worktree operation that failed (DL-150). Nothing is
+    /// moved or deleted.
+    WorktreeRelease {
+        session_id: SessionId,
+    },
 }
 
 /// How the owner resolves a revert that needs reconciliation (DL-097).
@@ -306,6 +326,10 @@ impl SessionCommand {
             Self::SetAutoContinue { .. } => "session.set_auto_continue",
             Self::CoordinatorRenew { .. } => "session.coordinator_renew",
             Self::CoordinatorRevoke { .. } => "session.coordinator_revoke",
+            Self::WorktreeTrash { .. } => "session.worktree_trash",
+            Self::WorktreeRestore { .. } => "session.worktree_restore",
+            Self::WorktreePurge { .. } => "session.worktree_purge",
+            Self::WorktreeRelease { .. } => "session.worktree_release",
         }
     }
 
@@ -329,7 +353,11 @@ impl SessionCommand {
             | Self::ResolveRevert { session_id, .. }
             | Self::SetAutoContinue { session_id, .. }
             | Self::CoordinatorRenew { session_id, .. }
-            | Self::CoordinatorRevoke { session_id, .. } => Some(session_id),
+            | Self::CoordinatorRevoke { session_id, .. }
+            | Self::WorktreeTrash { session_id }
+            | Self::WorktreeRestore { session_id }
+            | Self::WorktreePurge { session_id, .. }
+            | Self::WorktreeRelease { session_id } => Some(session_id),
         }
     }
 }

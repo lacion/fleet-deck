@@ -55,6 +55,24 @@ struct Live {
 
 type Sessions = Arc<StdMutex<HashMap<SessionId, Arc<Mutex<Live>>>>>;
 
+/// The shells of the station, shared by the manager and its target. The
+/// link node sets them after the manager started (DL-150).
+#[derive(Clone, Default)]
+pub struct ShellsSlot(Arc<std::sync::OnceLock<Arc<crate::shell::Shells>>>);
+
+impl ShellsSlot {
+    /// Sets the shells; a second call changes nothing.
+    pub fn set(&self, shells: Arc<crate::shell::Shells>) {
+        let _ = self.0.set(shells);
+    }
+
+    /// The shells, once set.
+    #[must_use]
+    pub fn get(&self) -> Option<Arc<crate::shell::Shells>> {
+        self.0.get().cloned()
+    }
+}
+
 /// The session manager's [`EffectTarget`].
 pub struct SessionTarget {
     store: Store,
@@ -78,6 +96,8 @@ pub struct SessionTarget {
     /// Holds a start task before its provider start (tests only).
     #[cfg(test)]
     start_hook: setup_task::StartHook,
+    /// The shells of the station, for the file work of the worktree trash.
+    shells: ShellsSlot,
 }
 
 impl std::fmt::Debug for SessionTarget {
@@ -106,6 +126,7 @@ impl SessionTarget {
             this: Weak::new(),
             #[cfg(test)]
             start_hook: setup_task::StartHook::default(),
+            shells: ShellsSlot::default(),
         }
     }
 
@@ -123,6 +144,13 @@ impl SessionTarget {
             self.this = weak.clone();
             self
         })
+    }
+
+    /// The slot that holds the shells of the station (DL-150).
+    #[must_use]
+    pub fn with_shells(mut self, shells: ShellsSlot) -> Self {
+        self.shells = shells;
+        self
     }
 
     /// The station policy that the dispatch recheck of an auto-continue
@@ -439,6 +467,7 @@ impl SessionTarget {
             }
             EffectPayload::Start { .. }
             | EffectPayload::Resume { .. }
+            | EffectPayload::Worktree { .. }
             | EffectPayload::Stop { .. } => {
                 return Dispatch::NotDispatched("not_a_live_operation".into());
             }
@@ -494,6 +523,23 @@ impl EffectTarget for SessionTarget {
             EffectPayload::Stop { how } if self.cancel_setup(&effect.session_id, *how) => {
                 Dispatch::Confirmed
             }
+            // The file work of a worktree trash needs no provider process
+            // (DL-150): it runs before the target lookup.
+            EffectPayload::Worktree { op_id, action } => match self.policy.as_ref() {
+                Some(policy) => {
+                    let shells = self.shells.get();
+                    crate::workspace::trash::run(
+                        &self.store,
+                        policy,
+                        &self.git,
+                        shells.as_deref(),
+                        op_id,
+                        *action,
+                    )
+                    .await
+                }
+                None => Dispatch::NotDispatched("no_policy".into()),
+            },
             _ => self.operate(effect).await,
         }
     }

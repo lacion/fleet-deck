@@ -97,6 +97,35 @@ pub fn pending(conn: &Connection) -> Result<Vec<PendingShell>> {
     Ok(rows)
 }
 
+/// The start folders of the shells that queued or claimed effects will
+/// open: the folder of an `open`, the folder of the held session of a
+/// `handover` (DL-150).
+///
+/// # Errors
+/// A database or JSON error.
+pub fn pending_cwds(conn: &Connection) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT change FROM shell_effects WHERE state IN ('queued', 'claimed')
+           AND op IN ('open', 'handover') ORDER BY created_at, effect_id",
+    )?;
+    let changes = stmt
+        .query_map([], |r| r.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut out = Vec::new();
+    for change in changes {
+        match serde_json::from_str::<ShellChange>(&change)? {
+            ShellChange::Open { cwd, .. } => out.push(cwd),
+            ShellChange::Handover { session_id, .. } => {
+                if let Some(cwd) = super::log::summary(conn, &session_id)?.and_then(|s| s.cwd) {
+                    out.push(cwd);
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(out)
+}
+
 /// Start recovery: no shell effect of an earlier process is dispatched.
 /// Returns (retired, unknown).
 ///
@@ -119,6 +148,14 @@ pub fn recover(conn: &Connection, now: i64) -> Result<(usize, usize)> {
 }
 
 impl Store {
+    /// [`pending_cwds`] outside a command.
+    ///
+    /// # Errors
+    /// A database or JSON error.
+    pub async fn pending_shell_cwds(&self) -> Result<Vec<String>> {
+        call(&self.inner.db, move |conn| pending_cwds(conn)).await
+    }
+
     /// Claims the oldest queued shell effect before its PTY I/O.
     ///
     /// # Errors

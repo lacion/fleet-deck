@@ -15,12 +15,15 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use fleetdeck_proto::event::SessionState;
-use fleetdeck_proto::link::{WorktreeCommit, WorktreeInfo, WorktreeList, WorktreeVerdict};
+use fleetdeck_proto::link::{
+    WorktreeCommit, WorktreeInfo, WorktreeList, WorktreeTrash, WorktreeVerdict,
+};
 use fleetdeck_proto::session::SessionSummary;
 use tokio::time::Instant;
 
 use crate::manager::policy::{Policy, WorkspaceError};
-use crate::store::{Store, StoreError};
+use crate::store::worktree_ops::{FAILED, RELEASED};
+use crate::store::{Store, StoreError, WorktreeOp};
 use crate::workspace::{Git, GitOptions};
 
 #[path = "worktree_scan.rs"]
@@ -58,14 +61,19 @@ pub async fn inventory(
     git: &GitOptions,
 ) -> Result<WorktreeList, StoreError> {
     let sessions = store.snapshot().await?.sessions;
-    Ok(list(sessions, policy, git, DEADLINE).await)
+    let ops = store.worktree_ops_open().await?;
+    Ok(list(sessions, &ops, policy, git, DEADLINE).await)
 }
 
 /// The inventory of the worktrees in `sessions`, one after the other. A
 /// worktree that is not checked when `deadline` passes gets the verdict
-/// `unknown` with the note [`NOT_CHECKED`].
+/// `unknown` with the note [`NOT_CHECKED`]. `ops` are the open trash
+/// operations (DL-150): a worktree in the trash gets the verdict `trashed`
+/// and is not scanned; a `failed` operation keeps the normal scan and adds
+/// its facts.
 pub async fn list(
     sessions: Vec<SessionSummary>,
+    ops: &[WorktreeOp],
     policy: &Policy,
     git: &GitOptions,
     deadline: Duration,
@@ -86,14 +94,36 @@ pub async fn list(
             continue;
         };
         let live = is_live(s);
-        let info = match tokio::time::timeout_at(deadline, check(s, path, live, policy, git)).await
-        {
-            Ok(info) => info,
-            Err(_) => unchecked(s, path, live),
-        };
+        let op = ops
+            .iter()
+            .find(|o| o.session_id == s.session_id && o.state != RELEASED);
+        if let Some(op) = op.filter(|o| o.state != FAILED) {
+            worktrees.push(WorktreeInfo {
+                verdict: WorktreeVerdict::Trashed,
+                trash: Some(trash_info(op)),
+                ..blank(s, path, live)
+            });
+            continue;
+        }
+        let mut info =
+            match tokio::time::timeout_at(deadline, check(s, path, live, policy, git)).await {
+                Ok(info) => info,
+                Err(_) => unchecked(s, path, live),
+            };
+        info.trash = op.map(trash_info);
         worktrees.push(info);
     }
     WorktreeList { worktrees }
+}
+
+fn trash_info(op: &WorktreeOp) -> WorktreeTrash {
+    WorktreeTrash {
+        state: op.state.clone(),
+        phase: op.phase.clone(),
+        message: op.message.clone(),
+        trash_path: op.trash_path.clone(),
+        trashed_at: op.trashed_at,
+    }
 }
 
 /// A session is live while it has a process or a terminal hold.
@@ -118,6 +148,7 @@ fn blank(s: &SessionSummary, path: &str, live: bool) -> WorktreeInfo {
         live,
         verdict: WorktreeVerdict::Unknown,
         note: None,
+        trash: None,
     }
 }
 

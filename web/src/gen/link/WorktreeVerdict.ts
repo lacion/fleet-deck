@@ -3,4 +3,4 @@
 /**
  * What the station knows about the work in a worktree.
  */
-export type WorktreeVerdict = "missing" | "live" | "has_work" | "clean" | "unknown";
+export type WorktreeVerdict = "missing" | "live" | "has_work" | "clean" | "unknown" | "trashed";

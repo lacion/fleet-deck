@@ -76,7 +76,7 @@ text_id!(
     ProcessIncarnation
 );
 
-pub use super::payload::{EffectPayload, InputRecord, WorkspacePlan};
+pub use super::payload::{EffectPayload, InputRecord, WorkspacePlan, WorktreeAction};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -497,6 +497,11 @@ pub(super) fn transition(
 fn transition_events(effect: &Effect, to: EffectState, reason: &str) -> Vec<Event> {
     let kind = effect.payload.kind();
     let input = effect.payload.input();
+    // The row of a worktree operation and the inventory carry its outcome
+    // (DL-150).
+    if matches!(effect.payload, EffectPayload::Worktree { .. }) {
+        return Vec::new();
+    }
     match (to, input) {
         (EffectState::RetiredNotDispatched, Some(input)) => vec![Event::InputUpdated {
             input_id: input.input_id.clone(),

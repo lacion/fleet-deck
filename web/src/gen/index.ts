@@ -117,6 +117,7 @@ export * from "./link/WorkspaceQuery";
 export * from "./link/WorktreeCommit";
 export * from "./link/WorktreeInfo";
 export * from "./link/WorktreeList";
+export * from "./link/WorktreeTrash";
 export * from "./link/WorktreeVerdict";
 export * from "./link/WorktreesQuery";
 export * from "./mutation/AssignRequirements";
