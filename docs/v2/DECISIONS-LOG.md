@@ -2476,3 +2476,16 @@ Owner review: pending.
 - Automations: all kinds (R5).
 - Open: when to cut the 2.0.0 release, early (hardening first) or late (after all features). The architect recommends early.
 - Owner review: decided by the owner.
+
+## DL-158 — Local CI, a provider version check, the owner's security review, and the release on the owner's word (2026-10-13)
+
+- CI: GitHub Actions is expensive, so `.github/workflows/v2.yml` runs only on demand (`workflow_dispatch`). The owner runs `make check` on their own machines, also on macOS before a release. Every worker and the architect still run `make check` (or its parts) locally before a merge.
+- Minimum provider version (the owner left it to the architect):
+  - each adapter names the oldest CLI version that its fixtures and live smoke cover;
+  - an older CLI gets a warning (station info, the spawn form, `fleetdeck doctor`), not a refusal;
+  - only a version that is known to break the protocol is refused (a deny list);
+  - a local `make` target diffs a newer Codex app-server schema against the pinned one.
+- Security review: the owner does one at the end. The architect keeps a checklist of the new surfaces for it. The per-feature adversary reviews stay.
+- Release: the owner cuts 2.0.0 when they decide. Until then, all work is on the `v2` branch.
+- Invalidates: the GATE-M1 G13 note that CI runs on every push (the workflow header is updated), and the "macOS CI lane" and "security delta" rows of `FLEETDECK-V2.md` R8 and R9, which are corrected in the same commit.
+- Owner review: decided by the owner.

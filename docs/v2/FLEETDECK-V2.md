@@ -229,8 +229,8 @@ The owner creates a project on the board. A preflight checks each binding from t
 
 ### R8. Platform and quality
 
-1. **A macOS CI lane.** Missing; D12 promises macOS, but CI is Ubuntu only. Setup cleanup, launchd, socket paths and process groups differ on macOS.
-2. **A minimum CLI version per provider, and a CI job that diffs the Codex app-server schema of a newer release.** Deferred (DL-131). This prevents silent protocol drift.
+1. **macOS checks on the owner's machine.** GitHub CI runs only on demand now (DL-158), so the owner runs `make check` locally, also on a macOS machine before a release. D12 promises macOS, and setup cleanup, launchd, socket paths and process groups differ there. Missing: a short macOS section in `TESTING.md` that lists what to run.
+2. **A provider version check (architect's decision, DL-158).** Each adapter names the oldest CLI version that its replay fixtures and live smoke cover. An older CLI is not refused: the station marks the provider "older than tested", and the spawn form and `fleetdeck doctor` show a warning. The station refuses only a version that is known to break the protocol (a short deny list). A `make` target (not CI) diffs the Codex app-server schema of a newer release against the pinned one. Missing.
 3. **A crate-layering test** (`cargo metadata`): `fleetdeck-proto` imports no server crate, `fleetdeck-providers` does not import `fleetdeck-deck`, and the deck never matches on a provider name. Missing; it is cheap.
 4. **A guard against a silent zero-test pass:** each lane asserts a minimum test count. Missing.
 5. **A checkpoint latency bar:** a checkpoint adds no latency to an approval or a turn completion. Missing as a named bar.
@@ -239,7 +239,7 @@ The owner creates a project on the board. A preflight checks each binding from t
 
 ### R9. Documents and process
 
-1. **A security delta review of the surfaces added after the last design review:** DL-143 … DL-151 (inspection, preflight, conflict mail, device link, image paste, setup command, archive, trash, models), as one checklist. Partial: each part had adversary reviews, but no final delta pass exists.
+1. **The owner's security review at the end** (DL-158). The architect keeps a checklist of every surface that is new since the last design review, for that review: DL-143 … DL-157 and every later DL. Each feature still gets its adversary reviews while it is built.
 2. **Proof columns in `PARITY.md`:** fail-open and exposure tests for each M3 and night-2 row. Partial.
 3. **A testing rule in `TESTING.md`:** green or revert; never edit, skip or ignore a test to make it pass; a list of fail-open behaviors that must not get stricter. Missing.
 4. **Pay the propagation debt:** reconcile `PLAN.md` §10 (data sketch) with the real migrations, and add an "invalidates" line to each new DL entry. Missing.
@@ -343,7 +343,7 @@ All the work in this table is planned (DL-157). The steps set the order of the w
 | **M4.0 (now, small)** | R1.1 base commit at spawn; R8.3 layering test; R8.4 zero-test guard; R9.3 testing rule; R4.1–R4.2 tightest-first and the 80% chip; R7.1 spawn-failure banner | Nothing; each item is small |
 | **M4.1 Harvest** | R1.2 diff since spawn; R1.3 batched line notes; R1.5 checkpoint GC | Untracked files in the diff (label them "not in the diff") |
 | **M4.2 Unattended fleet** | R2.1–R2.4 | Wait-for-any (coordinators can loop over `wait_task`) |
-| **M4.3 Release hardening** | R8.1 macOS lane; R8.2 version gate; R9.1 security delta; R9.2 proof columns; R9.4 propagation debt; R9.7 gate | None: this is the 2.0.0 gate |
+| **M4.3 Hardening** | R8.1 macOS check list; R8.2 provider version check; R9.2 proof columns; R9.4 propagation debt; R9.7 gate; the R9.1 checklist kept current | None |
 | **M5 Integrations, read only** | R3.1 envelope and fixture; R3.2 station service (GitHub, GitLab, Jira, Linear); projects and bindings; R3.3 issues with rich previews; R3.4 sessions from tickets (one or a batch); R3.5 PR/MR view; R3.6 session ↔ PR links; R3.7 review in one click; R3.8 fix checks | R3.8 |
 | **M5.1 Accounts** | R4.3 limits in the picker; R4.4 assign by quota; R4.5 Claude windows research | R4.5 |
 | **M5.2 Model help** | R10.1 titles; R10.2 session summaries; the budget, cache and off switch | R10.2 |
@@ -360,21 +360,11 @@ All the work in this table is planned (DL-157). The steps set the order of the w
 2. **Watching many sessions (R6.2):** no terminal wall. Explore another form (DL-157).
 3. **Inferred Codex cost (R4.6):** yes, labeled "inferred" (DL-157).
 4. **Automations (R5):** all kinds (DL-157).
-5. **When to release 2.0.0:** open; see the note below.
+5. **When to release 2.0.0:** the owner says when (DL-158). Until then, all work goes on the `v2` branch.
 6. **Shared fleet (R11):** decided (DL-154, DL-156).
 7. **Artifacts (R12):** decided (DL-155, DL-156).
 
-**About decision 5.** "2.0.0" is the first release of v2 that replaces v1 for daily use: the cutover in `docs/v2/cutover.md`. M4.3 is the release hardening:
-- the macOS CI lane;
-- the minimum provider version;
-- the security review of everything new since the last design review;
-- the proof columns, and the documents fixed.
-
-The question is when to cut that release:
-- **(A) Cut early:** hardening now, release 2.0.0, use v2 every day, then build the rest as 2.1, 2.2 and so on. You get real use and real bug reports sooner.
-- **(B) Cut late:** build the rest first (harvest, unattended fleet, integrations, sharing, artifacts, …), then harden and release once.
-
-Recommendation: (A). Reason: real daily use finds problems that tests do not find, and every later feature then lands on a hardened base.
+**About decision 5.** "2.0.0" is the first v2 release that replaces v1 for daily use (`docs/v2/cutover.md`). The owner cuts it when they decide; the owner's security review comes before it (DL-158).
 
 ---
 

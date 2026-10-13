@@ -1,14 +1,12 @@
 name: v2
-# Fleet Deck v2 (Rust workspace + web/ board). It runs for pushes and pull
-# requests to `main` (after the v2 merge) and to `v2`.
+# Fleet Deck v2 (Rust workspace + web/ board). It runs only on demand
+# (Actions > v2 > Run workflow): the owner runs `make check` on their own
+# machines instead, because GitHub CI is expensive (DL-158).
 # One job: fill the caches with network access, then run `make check`
 # (tools/check.sh), which is offline and is the same command that reviewers
 # and developers run locally (GATE-M1 G13, PLAN §14 Phase 1).
 on:
-  push:
-    branches: [main, v2]
-  pull_request:
-    branches: [main, v2]
+  workflow_dispatch: {}
 concurrency:
   group: v2-${{ github.ref }}
   cancel-in-progress: true
