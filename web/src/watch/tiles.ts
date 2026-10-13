@@ -2,7 +2,6 @@
 // A wall of compact live tiles: the model of one tile and of the page. Nothing here is
 // shared with the rest of the board, so the owner can pick another form later.
 import { repoName } from '../board/fleet';
-import { isLive } from '../app/sessions';
 import type { DeckSession, EventEnvelope, OpenRequest } from '../gen';
 import { buildTimeline, type Item } from '../session/timeline';
 import { questionForm } from '../session/question';
@@ -17,6 +16,10 @@ export const FOCUS_MS = 20_000;
 export const LINE_CHARS = 140;
 
 export const ALL = '';
+
+/** A session with a live process: a hibernated one has none, so it has no tile. */
+const isLive = (card: DeckSession): boolean =>
+  card.status !== 'ended' && card.status !== 'lost' && card.status !== 'unreachable';
 
 export type WatchFilter = {
   /** A station id, or `ALL`. */

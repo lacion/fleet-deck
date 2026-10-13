@@ -106,6 +106,7 @@ describe('the wall and Focus', () => {
     waiting('late', 300),
     waiting('early', 100, { repo: { root: '/w/app', origin: 'github.com/acme/web.git' } }),
     card('done', 'ended'),
+    card('asleep', 'ended', 'station-a', { state: 'exited', hibernated: true }),
     card('on-b', 'working', 'station-b', { updated_at: 9 }),
   ];
 
@@ -114,6 +115,7 @@ describe('the wall and Focus', () => {
     expect(shown.slice(0, 2).sort()).toEqual(['early', 'late']);
     expect(shown).toContain('on-b');
     expect(shown).not.toContain('done');
+    expect(shown).not.toContain('asleep');
   });
 
   test('the filters narrow by station, repository and needs-you', () => {

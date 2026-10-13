@@ -88,6 +88,10 @@ async fn an_idle_session_hibernates_once_and_resumes() {
         .then_some(())
     })
     .await;
+    st.wait_for("run completed", |e| {
+        matches!(e, Event::RunCompleted { .. }).then_some(())
+    })
+    .await;
     let store = st.manager.store().clone();
     let policy = st.manager.policy().clone();
 
