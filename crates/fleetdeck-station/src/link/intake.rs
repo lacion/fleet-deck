@@ -16,8 +16,8 @@ use fleetdeck_link::methods::code;
 use fleetdeck_link::revoke::{RotateError, check_rotation, finish_rotation};
 use fleetdeck_proto::command::{CommandResult, ReceiptState};
 use fleetdeck_proto::link::{
-    Outcome, PasteImage, PreflightQuery, ReceiptQuery, StationInfo, WireError, WorkspaceQuery,
-    WorktreesQuery,
+    Outcome, PasteImage, PrecheckQuery, PreflightQuery, ReceiptQuery, StationInfo, WireError,
+    WorkspaceQuery, WorktreesQuery,
 };
 use fleetdeck_proto::mutation::Mutation;
 use fleetdeck_proto::{Receipt, Reject, RejectCode};
@@ -142,6 +142,45 @@ async fn preflight(ctx: &StationLink, params: serde_json::Value) -> Outcome {
             r.message,
         )),
         Err(PreflightError::Spawn(e)) => internal(e),
+    }
+}
+
+/// `workspace.precheck` (R5, DL-168): the shell precheck of a schedule. It
+/// runs the owner's command, so it needs `allow_setup_cmd`. A command that
+/// exits non-zero is an answer. Error codes `unsupported`, `invalid_params`,
+/// `missing_workspace`, `outside_roots` and `internal`.
+async fn precheck(ctx: &StationLink, params: serde_json::Value) -> Outcome {
+    use crate::manager::policy::WorkspaceError;
+    use crate::workspace::precheck::{self, PrecheckError};
+    let query: PrecheckQuery = match serde_json::from_value(params) {
+        Ok(q) => q,
+        Err(e) => return bad_params(e),
+    };
+    let policy = ctx.manager.policy();
+    if !policy.allow_setup_cmd() {
+        return Outcome::Err(WireError::new(
+            "unsupported",
+            "setup commands are off on this station (allow_setup_cmd = false)",
+        ));
+    }
+    if let Err(PrecheckError::Invalid(m) | PrecheckError::Run(m)) = precheck::check_cmd(&query.cmd)
+    {
+        return Outcome::Err(WireError::new("invalid_params", m));
+    }
+    let cwd = match policy.workspace(&query.cwd) {
+        Ok(p) => p,
+        Err(e @ WorkspaceError::Missing(_)) => {
+            return Outcome::Err(WireError::new("missing_workspace", e.to_string()));
+        }
+        Err(e @ WorkspaceError::Outside(_)) => {
+            return Outcome::Err(WireError::new("outside_roots", e.to_string()));
+        }
+    };
+    let env = fleetdeck_core::ChildEnv::from_process();
+    match precheck::run(&query.cmd, &cwd, &env, precheck::TIMEOUT).await {
+        Ok(answer) => ok(answer),
+        Err(PrecheckError::Invalid(m)) => Outcome::Err(WireError::new("invalid_params", m)),
+        Err(PrecheckError::Run(m)) => internal(m),
     }
 }
 
@@ -276,6 +315,7 @@ async fn read(ctx: &StationLink, req: InboundRequest) -> Outcome {
         "workspace.list" => workspaces(ctx, req.params).await,
         "workspace.worktrees" => worktrees(ctx, req.params).await,
         "workspace.preflight" => preflight(ctx, req.params).await,
+        "workspace.precheck" => precheck(ctx, req.params).await,
         "files.write_temp" => write_temp(ctx, req.params).await,
         "files.list" | "files.read" | "files.search" | "files.diff" | "files.session_diff" => {
             file_method(ctx, &req.method, req.params).await

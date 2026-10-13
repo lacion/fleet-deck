@@ -65,6 +65,10 @@ pub mod feature {
     /// `artifacts.file`: the artifact service (R12, DL-165).
     pub const ARTIFACTS: &str = "artifacts.v1";
 
+    /// `workspace.precheck`: the shell precheck of a schedule, run on the
+    /// station (R5, DL-168).
+    pub const PRECHECK: &str = "workspace.precheck.v1";
+
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
         CONTROL,
@@ -85,6 +89,7 @@ pub mod feature {
         TRASH,
         SESSION_DIFF,
         ARTIFACTS,
+        PRECHECK,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];

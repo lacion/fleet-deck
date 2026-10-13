@@ -74,6 +74,8 @@ pub struct RunningDeck {
     pub endpoint: Option<BoardEndpoint>,
     board: BoardServer,
     server: tokio::task::JoinHandle<()>,
+    /// The automations scheduler (R5, DL-168).
+    scheduler: tokio::task::JoinHandle<()>,
     shutdown: watch::Sender<bool>,
     socket: PathBuf,
 }
@@ -155,7 +157,8 @@ impl RunningDeck {
             node: Arc::clone(&node),
             board: endpoint.clone(),
         });
-        let server = tokio::spawn(local::serve(listener, local, rx));
+        let server = tokio::spawn(local::serve(listener, local, rx.clone()));
+        let scheduler = crate::scheduler::spawn(store.clone(), Arc::clone(node.link()), rx);
         Ok(Self {
             node,
             identity,
@@ -163,6 +166,7 @@ impl RunningDeck {
             endpoint,
             board,
             server,
+            scheduler,
             shutdown,
             socket,
         })
@@ -173,6 +177,7 @@ impl RunningDeck {
         tracing::info!("deck stopping");
         let _ = self.shutdown.send(true);
         let _ = self.server.await;
+        let _ = self.scheduler.await;
         self.board.join().await;
         self.node.shutdown();
         if let Err(e) = std::fs::remove_file(&self.socket) {

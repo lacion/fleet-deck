@@ -17,6 +17,7 @@ pub mod methods;
 pub mod paste_routes;
 pub mod plan_routes;
 pub mod read_routes;
+pub mod schedule_routes;
 pub mod shell_routes;
 pub mod station_routes;
 pub mod tls;
@@ -151,6 +152,30 @@ pub fn router(board: Arc<Board>) -> Router {
             get(archive_routes::list).post(archive_routes::change),
         )
         .route("/api/conflicts", get(plan_routes::conflicts))
+        .route(
+            "/api/schedules",
+            get(schedule_routes::list).post(schedule_routes::create),
+        )
+        .route(
+            "/api/schedules/{schedule_id}",
+            axum::routing::put(schedule_routes::update).delete(schedule_routes::delete),
+        )
+        .route(
+            "/api/schedules/{schedule_id}/update",
+            post(schedule_routes::update),
+        )
+        .route(
+            "/api/schedules/{schedule_id}/delete",
+            post(schedule_routes::delete),
+        )
+        .route(
+            "/api/schedules/{schedule_id}/run",
+            post(schedule_routes::run),
+        )
+        .route(
+            "/api/schedules/{schedule_id}/runs",
+            get(schedule_routes::runs),
+        )
         .route("/api/plans", get(plan_routes::list))
         .route("/api/plans/mark", post(plan_routes::mark))
         .route("/api/sessions", get(read_routes::sessions))

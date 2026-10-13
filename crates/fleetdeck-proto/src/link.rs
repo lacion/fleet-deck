@@ -381,6 +381,29 @@ pub struct Preflight {
     pub hint: Option<String>,
 }
 
+/// `workspace.precheck` params (R5, DL-168): the shell command of a
+/// schedule and the folder where it runs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "link/")]
+pub struct PrecheckQuery {
+    pub cwd: String,
+    pub cmd: String,
+}
+
+/// The `workspace.precheck` answer (R5, DL-168): how the command ended.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "link/")]
+pub struct PrecheckResult {
+    /// The exit code; `None` when a signal ended the command or it timed
+    /// out.
+    pub exit_code: Option<i32>,
+    /// The command ran longer than the 60 s limit and was stopped.
+    pub timed_out: bool,
+    /// The end of the output (stdout and stderr together), scrubbed.
+    pub output_tail: String,
+}
+
 /// `files.write_temp` params (DL-147): one pasted image. The `upload_id`
 /// makes a retry return the same path.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

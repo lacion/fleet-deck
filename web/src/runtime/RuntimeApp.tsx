@@ -5,6 +5,7 @@ import { conflictLoader } from '../board/conflicts';
 import { raceSummary } from '../compare/compare';
 import { workspaceFiles } from '../session/workspace';
 import { planActions } from '../board/plans';
+import { automationActions } from '../automations/automations';
 import type { FleetExtras, SessionKey } from '../gen';
 import { sessionActions } from '../session/commands';
 import { shellActions } from '../shell/shell';
@@ -110,6 +111,17 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
         scopeText.split(' '),
       ),
     [connection, scopeText],
+  );
+  // The deck's automation routes are owner-only: no admin scope, no automations.
+  const automations = useMemo(
+    () =>
+      canAdmin
+        ? automationActions(
+            (path) => connection.get(path),
+            (path, body) => connection.post(path, body),
+          )
+        : undefined,
+    [connection, canAdmin],
   );
   const conflicts = useMemo(() => conflictLoader((path) => connection.get(path)), [connection]);
   const filesFor = useMemo(
@@ -253,6 +265,7 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
       fleet={fleet}
       feed={state.feed}
       plans={plans}
+      automations={automations}
       conflicts={conflicts}
       extras={extras}
       chrome={chrome}

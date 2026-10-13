@@ -116,6 +116,16 @@ pub const METHODS: &[MethodSpec] = &[
         Some(feature::PREFLIGHT),
         false,
     ),
+    // The shell precheck of a schedule (R5, DL-168): it runs the owner's
+    // shell command on the station, so it needs `admin` (like a setup
+    // command, DL-148) and the station's `allow_setup_cmd`.
+    m(
+        "workspace.precheck",
+        DeckToStation,
+        Scope::Admin,
+        Some(feature::PRECHECK),
+        false,
+    ),
     // A pasted image on the station (DL-147). Not a receipt mutation: the
     // upload id makes a retry return the same path.
     m(

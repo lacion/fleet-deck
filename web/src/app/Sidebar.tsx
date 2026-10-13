@@ -16,6 +16,7 @@ import {
   SquareTerminal,
   Star,
   TriangleAlert,
+  Workflow,
   Zap,
 } from '../ui/icons';
 import { shortModel } from '../ui/format';
@@ -332,6 +333,13 @@ export function Sidebar({
             <a href="#/plans" aria-current={route.name === 'plans' ? 'page' : undefined}>
               <Icon of={FileText} />
               Plans
+            </a>
+            <a
+              href="#/automations"
+              aria-current={route.name === 'automations' ? 'page' : undefined}
+            >
+              <Icon of={Workflow} />
+              Automations
             </a>
             <a href="#/files" aria-current={route.name === 'files' ? 'page' : undefined}>
               <Icon of={Folder} />
