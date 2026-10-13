@@ -4,6 +4,7 @@ import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from 
 import { relativeAge } from '../app/sessions';
 import { stationName } from '../board/fleet';
 import { providerLabel } from '../board/lanes';
+import { limitChip, rateMeters } from '../board/usage';
 import type { DeckSession, ModelChoice, StationView } from '../gen';
 import { modelFamily, shortModel } from '../ui/format';
 import {
@@ -222,6 +223,7 @@ function Badges({
   readonly modeLast?: boolean;
 }) {
   const s = session.summary;
+  const limit = limitChip(rateMeters([session], []));
   const mode = s.mode ? (
     <span className="fd-badge" data-tone={modeTone(s.mode)} title="Permission mode">
       {s.mode}
@@ -243,6 +245,11 @@ function Badges({
       <span className="fd-badge" data-provider={s.provider}>
         {providerLabel(s.provider)}
       </span>
+      {limit === null ? null : (
+        <span className="fd-badge" data-tone={limit.tone}>
+          {limit.text}
+        </span>
+      )}
       {modeLast ? mode : null}
     </>
   );

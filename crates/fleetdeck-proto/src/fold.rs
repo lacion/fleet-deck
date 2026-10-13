@@ -263,6 +263,8 @@ fn add_usage(total: &mut Usage, more: &Usage) {
     total.input_tokens = add(total.input_tokens, more.input_tokens);
     total.output_tokens = add(total.output_tokens, more.output_tokens);
     total.cost_usd = add(total.cost_usd, more.cost_usd);
+    // A total with one inferred part is inferred (R4.6).
+    total.cost_inferred |= more.cost_inferred && more.cost_usd.is_some();
 }
 
 /// The most rate-limit windows that a summary keeps.

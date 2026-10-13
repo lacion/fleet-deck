@@ -394,6 +394,30 @@ describe('spawn form (P4-4)', () => {
     expect(html).not.toContain('/w/other');
   });
 
+  test('the provider options show the limit of each instance (R4.3)', () => {
+    const at = 1_000_000 + 60 * 60_000;
+    const limit = (instance: string, used: number) =>
+      card('s-' + instance, 'working', 'station-a', {
+        provider_instance: instance,
+        rate_limits: [{ scope: 'five_hour', used_percent: used, resets_at: at }],
+      });
+    const html = renderToStaticMarkup(
+      <SpawnForm
+        stations={[reported()]}
+        freshness="live"
+        onOpen={() => {}}
+        sessions={[limit('claude', 42), limit('codex', 90)]}
+        now={1_000_000}
+      />,
+    );
+    expect(html).toContain(
+      'claude · claude · 2.1.999 · 42% of five_hour, resets in 1 h (most room)',
+    );
+    expect(html).toContain(
+      'codex · codex · version unknown · 90% of five_hour, resets in 1 h</option>',
+    );
+  });
+
   describe('the model field (DL-151)', () => {
     const list = (...values: string[]) =>
       values.map((value) => ({ value, label: value.toUpperCase(), description: `The ${value}.` }));

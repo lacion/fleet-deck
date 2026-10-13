@@ -464,6 +464,7 @@ fn usage_of(res: &ResultFrame) -> Usage {
         input_tokens: tokens("input_tokens"),
         output_tokens: tokens("output_tokens"),
         cost_usd: res.total_cost_usd,
+        cost_inferred: false,
     }
 }
 

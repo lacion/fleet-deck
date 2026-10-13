@@ -524,7 +524,8 @@
       "usage": {
         "input_tokens": 18,
         "output_tokens": 517,
-        "cost_usd": 0.0144198
+        "cost_usd": 0.0144198,
+        "cost_inferred": false
       },
       "rate_limits": []
     }
@@ -543,7 +544,8 @@
       "usage": {
         "input_tokens": 18,
         "output_tokens": 517,
-        "cost_usd": 0.0144198
+        "cost_usd": 0.0144198,
+        "cost_inferred": false
       }
     }
   },
@@ -672,7 +674,8 @@
       "usage": {
         "input_tokens": 10,
         "output_tokens": 57,
-        "cost_usd": 0.043495450000000005
+        "cost_usd": 0.043495450000000005,
+        "cost_inferred": false
       },
       "rate_limits": []
     }
@@ -691,7 +694,8 @@
       "usage": {
         "input_tokens": 10,
         "output_tokens": 57,
-        "cost_usd": 0.043495450000000005
+        "cost_usd": 0.043495450000000005,
+        "cost_inferred": false
       }
     }
   },

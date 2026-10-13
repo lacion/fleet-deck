@@ -16,6 +16,7 @@ import type {
   WorkspaceListing,
   WorkspaceRequest,
 } from '../gen';
+import { limitSuffix, type RateMeter } from '../board/usage';
 import { commandId, type Outcome, outcomeOf } from '../session/commands';
 
 type Get = (path: string) => Promise<unknown>;
@@ -328,6 +329,20 @@ export function knownModels(
 export function providerLabel(p: StationProvider): string {
   const version = p.version === null ? 'version unknown' : p.version;
   return `${p.instance} · ${p.provider} · ${version}`;
+}
+
+/**
+ * The option text of the provider select (R4.3): the label, the tightest
+ * limit of the instance ("42% of five_hour, resets in 1 h") and "(most room)".
+ */
+export function providerChoiceLabel(
+  p: StationProvider,
+  limit: RateMeter | null,
+  now: number,
+  mostRoom: boolean,
+): string {
+  const suffix = limitSuffix(limit, now);
+  return `${providerLabel(p)}${suffix === '' ? '' : ` · ${suffix}`}${mostRoom ? ' (most room)' : ''}`;
 }
 
 export function spawnActions(

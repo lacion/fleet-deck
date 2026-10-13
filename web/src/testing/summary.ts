@@ -29,7 +29,7 @@ export function summary(
     background_tasks: [],
     background_agents: 0,
     running_tools: [],
-    usage: { input_tokens: null, output_tokens: null, cost_usd: null },
+    usage: { input_tokens: null, output_tokens: null, cost_usd: null, cost_inferred: false },
     rate_limits: [],
     repo: null,
     last_error: null,

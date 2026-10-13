@@ -161,5 +161,5 @@ export function lastSeen(value: number | null): string {
 }
 export function usageText(card: DeckSession): string {
   const usage = card.summary.usage;
-  return `Input ${usage.input_tokens ?? 'unknown'} · Output ${usage.output_tokens ?? 'unknown'} · Cost ${usage.cost_usd === null ? 'unknown' : `$${usage.cost_usd.toFixed(4)}`}`;
+  return `Input ${usage.input_tokens ?? 'unknown'} · Output ${usage.output_tokens ?? 'unknown'} · Cost ${usage.cost_usd === null ? 'unknown' : `${usage.cost_inferred ? '≈ ' : ''}$${usage.cost_usd.toFixed(4)}${usage.cost_inferred ? ' inferred' : ''}`}`;
 }

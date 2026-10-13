@@ -27,6 +27,7 @@ import { useNow } from '../ui/useNow';
 import { buckets } from './activity';
 import { type Contested, cardKey, NO_REPO, repoName, stationName, statusGroups } from './fleet';
 import { Sparkline } from './Sparkline';
+import { costText } from './usage';
 
 type Props = {
   readonly sessions: readonly DeckSession[];
@@ -281,8 +282,8 @@ export function FleetCard({
               In terminal
             </span>
           ) : null}
-          {s.usage.cost_usd !== null ? (
-            <span className="fd-badge">${s.usage.cost_usd.toFixed(2)}</span>
+          {costText(s.usage) !== null ? (
+            <span className="fd-badge">{costText(s.usage)}</span>
           ) : null}
           {freshness === 'stale' ? (
             <span className="fd-badge" data-tone="muted">

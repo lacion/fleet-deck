@@ -1,13 +1,17 @@
 import type { DeckSession, StationView } from '../gen';
-import { dollars, fleetUsage, meterText, rateMeters, tokens, totalText } from './usage';
+import { useNow } from '../ui/useNow';
+import { costTotalText, fleetUsage, meterText, rateMeters, tokens, totalText } from './usage';
 
 type Props = {
   readonly sessions: readonly DeckSession[];
   readonly stations: readonly StationView[];
+  /** Unix ms of now; tests give it. */
+  readonly now?: number | undefined;
 };
 
 /** Fleet usage totals and provider rate-limit meters (DL-303). */
-export function UsageMeters({ sessions, stations }: Props) {
+export function UsageMeters({ sessions, stations, now: given }: Props) {
+  const now = useNow(given, 30000);
   const usage = fleetUsage(sessions);
   const meters = rateMeters(sessions, stations);
   return (
@@ -24,7 +28,7 @@ export function UsageMeters({ sessions, stations }: Props) {
         </div>
         <div className="fd-usage-stat">
           <dt className="fd-label">Cost</dt>
-          <dd>{totalText(usage.cost, dollars)}</dd>
+          <dd>{costTotalText(usage)}</dd>
         </div>
       </dl>
       {meters.length === 0 ? (
@@ -47,7 +51,7 @@ export function UsageMeters({ sessions, stations }: Props) {
                   aria-label={`${m.label} ${m.scope}`}
                 />
               )}
-              <span className="fd-usage-text">{meterText(m)}</span>
+              <span className="fd-usage-text">{meterText(m, now)}</span>
             </li>
           ))}
         </ul>

@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use super::*;
+use fleetdeck_proto::event::RateLimit;
 use fleetdeck_proto::link::{StationInfo, StationProvider};
 use fleetdeck_proto::{SessionSummary, StationId};
 
@@ -74,6 +75,77 @@ fn assign_auto_prefers_idle_then_queued_then_busy_then_least_buried() {
     assert_eq!(pick(&cards[..1], &none), "busy");
     // A session that needs you or whose station is unreachable takes no task.
     assert_eq!(pick(&cards[4..], &none), "");
+}
+
+fn limited(mut card: DeckSession, instance: &str, used: Option<f64>) -> DeckSession {
+    card.summary.provider_instance = Some(instance.to_owned().into());
+    card.summary.rate_limits = vec![RateLimit {
+        scope: "five_hour".to_owned(),
+        used_percent: used,
+        resets_at: None,
+    }];
+    card
+}
+
+#[test]
+fn assign_auto_breaks_a_tie_by_the_instance_with_the_most_room() {
+    // Same status, no mail, same activity time: only the quota differs.
+    let cards = vec![
+        limited(
+            card("tight", CardStatus::Idle, "/p/app", 5),
+            "a",
+            Some(90.0),
+        ),
+        limited(
+            card("roomy", CardStatus::Idle, "/p/app", 5),
+            "b",
+            Some(20.0),
+        ),
+        limited(card("unknown", CardStatus::Idle, "/p/app", 5), "c", None),
+    ];
+    let none = BTreeMap::new();
+    let pick = |cards: &[DeckSession]| {
+        pick_session(cards, &Needs::default(), &none)
+            .map(|s| s.summary.session_id.0.clone())
+            .unwrap_or_default()
+    };
+    assert_eq!(pick(&cards), "roomy");
+    // Unknown counts as 50: it beats a tight instance, and loses to a roomy one.
+    assert_eq!(
+        pick(
+            &cards[..1]
+                .iter()
+                .chain(&cards[2..])
+                .cloned()
+                .collect::<Vec<_>>()
+        ),
+        "unknown"
+    );
+    // A better fit still wins over more room.
+    let mut busy_roomy = cards.clone();
+    busy_roomy[1].status = CardStatus::Working;
+    assert_eq!(pick(&busy_roomy), "unknown");
+}
+
+#[test]
+fn the_quota_of_an_instance_is_its_tightest_latest_window() {
+    let old = limited(card("old", CardStatus::Idle, "/p/app", 1), "a", Some(95.0));
+    let new = limited(card("new", CardStatus::Idle, "/p/app", 9), "a", Some(30.0));
+    let mut weekly = new.clone();
+    weekly.summary.rate_limits.push(RateLimit {
+        scope: "weekly".to_owned(),
+        used_percent: Some(60.0),
+        resets_at: None,
+    });
+    // The latest five_hour window (30) replaces the old one (95); weekly is tighter.
+    let cards = vec![old, weekly.clone()];
+    assert!((used_percent_of(&cards, &weekly) - 60.0).abs() < f64::EPSILON);
+    // Another instance of the station does not share the windows.
+    let other = limited(card("o", CardStatus::Idle, "/p/app", 9), "b", None);
+    assert!(
+        (used_percent_of(&[other.clone(), new], &other) - UNKNOWN_USED_PERCENT).abs()
+            < f64::EPSILON
+    );
 }
 
 #[test]
