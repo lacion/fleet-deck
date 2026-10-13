@@ -29,6 +29,7 @@ use fleetdeck_providers::{
 };
 use tokio::sync::{Mutex, mpsc, oneshot, watch};
 
+pub use super::shells_slot::ShellsSlot;
 use super::turns::SessionTurns;
 use crate::store::{
     Dispatch, Effect, EffectPayload, InputRecord, NewEvent, ProcessIncarnation, Store,
@@ -59,24 +60,6 @@ struct Live {
 
 type Sessions = Arc<StdMutex<HashMap<SessionId, Arc<Mutex<Live>>>>>;
 
-/// The shells of the station, shared by the manager and its target. The
-/// link node sets them after the manager started (DL-150).
-#[derive(Clone, Default)]
-pub struct ShellsSlot(Arc<std::sync::OnceLock<Arc<crate::shell::Shells>>>);
-
-impl ShellsSlot {
-    /// Sets the shells; a second call changes nothing.
-    pub fn set(&self, shells: Arc<crate::shell::Shells>) {
-        let _ = self.0.set(shells);
-    }
-
-    /// The shells, once set.
-    #[must_use]
-    pub fn get(&self) -> Option<Arc<crate::shell::Shells>> {
-        self.0.get().cloned()
-    }
-}
-
 /// The session manager's [`EffectTarget`].
 pub struct SessionTarget {
     store: Store,
@@ -91,7 +74,7 @@ pub struct SessionTarget {
     coordinator: crate::coordinator::Bindings,
     /// The station policy for the dispatch recheck of an auto-continue
     /// (ADR-007 §2.4 rules 2 and 10, DL-133).
-    policy: Option<super::policy::Policy>,
+    policy: Option<Arc<super::policy_hub::PolicyHub>>,
     /// The starts that wait for their setup command, by session (DL-148).
     setups: setup_task::SetupTasks,
     /// This target as an `Arc`, for the tasks that outlive one dispatch;
@@ -182,12 +165,19 @@ impl SessionTarget {
         self
     }
 
-    /// The station policy that the dispatch recheck of an auto-continue
-    /// uses (ADR-007 §2.4 rules 2 and 10, DL-133).
+    /// The live station policy that the dispatch rechecks use: a queued
+    /// start, an auto-continue (ADR-007 §2.4 rules 2 and 10, DL-133) and
+    /// the file work of a trash. Each dispatch reads the current snapshot
+    /// (DL-172 §1.4).
     #[must_use]
-    pub fn with_policy(mut self, policy: super::policy::Policy) -> Self {
-        self.policy = Some(policy);
+    pub fn with_policy(mut self, hub: Arc<super::policy_hub::PolicyHub>) -> Self {
+        self.policy = Some(hub);
         self
+    }
+
+    /// The current policy snapshot, once the target has a hub.
+    pub(super) fn current_policy(&self) -> Option<Arc<super::policy::Policy>> {
+        self.policy.as_ref().map(|hub| hub.current())
     }
 
     /// The coordinator bindings of the station (ADR-006 §5.4).
@@ -604,6 +594,14 @@ impl EffectTarget for SessionTarget {
                 workspace,
                 setup_cmd,
             } => {
+                // The queued start is checked again against the current
+                // policy (DL-172 §1.4).
+                if let Some(why) = self.current_policy().and_then(|p| {
+                    p.start_refusal(&spec.cwd, workspace.is_some(), setup_cmd.is_some())
+                }) {
+                    self.start_failed(&effect.session_id, why).await;
+                    return Dispatch::NotDispatched("policy_changed".into());
+                }
                 // The base commit is read before the worktree is made (R1.1).
                 let wants_base = !self.has_base(&effect.session_id).await;
                 let planned = if wants_base {
@@ -642,8 +640,9 @@ impl EffectTarget for SessionTarget {
                 prompt,
                 ..
             } => {
+                let policy = self.current_policy();
                 if let Some(code) =
-                    super::auto_continue::recheck(&self.store, self.policy.as_ref(), effect).await
+                    super::auto_continue::recheck(&self.store, policy.as_deref(), effect).await
                 {
                     return Dispatch::NotDispatched(code);
                 }
@@ -668,12 +667,12 @@ impl EffectTarget for SessionTarget {
             }
             // The file work of a worktree trash needs no provider process
             // (DL-150): it runs before the target lookup.
-            EffectPayload::Worktree { op_id, action } => match self.policy.as_ref() {
+            EffectPayload::Worktree { op_id, action } => match self.current_policy() {
                 Some(policy) => {
                     let shells = self.shells.get();
                     crate::workspace::trash::run(
                         &self.store,
-                        policy,
+                        &policy,
                         &self.git,
                         shells.as_deref(),
                         op_id,

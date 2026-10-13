@@ -18,9 +18,11 @@ pub mod durable;
 pub mod files;
 pub mod hibernate;
 pub mod policy;
+pub mod policy_hub;
 pub mod resume;
 pub mod revert;
 pub mod revert_run;
+mod shells_slot;
 pub mod shim_claude;
 pub mod shim_codex;
 pub mod shim_exit;
@@ -49,6 +51,7 @@ use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 pub use policy::{Policy, WorkspaceError};
+pub use policy_hub::{Holders, PolicyHub, PrepareError, Prepared};
 pub use target::{Adapters, SessionTarget};
 
 use crate::store::{Caller, Decided, Result, Store};
@@ -117,7 +120,14 @@ pub fn setup_envs_from_config(
 /// One station's session manager.
 pub struct SessionManager {
     store: Store,
-    policy: Arc<Policy>,
+    policy: Arc<PolicyHub>,
+    /// The coordinator bindings of this station (ADR-006 §5): the ingress
+    /// authenticates against them, and the owner's renew and revoke
+    /// commands change them (DL-212). Built once, not configuration.
+    coordinator: crate::coordinator::Bindings,
+    /// GitHub, GitLab, Jira and Linear (R3, DL-164): a response cache and
+    /// the recent writes. A publish replaces it when the trackers change.
+    integrations: std::sync::RwLock<Arc<crate::integrations::Integrations>>,
     target: Arc<SessionTarget>,
     ids: SharedIds,
     shutdown: watch::Sender<bool>,
@@ -155,7 +165,22 @@ impl SessionManager {
         adapters: Adapters,
         ids: SharedIds,
     ) -> Result<Self> {
-        Self::start_inner(store, policy, adapters, ids, None).await
+        Self::start_inner(store, policy, Holders::default(), adapters, ids, None).await
+    }
+
+    /// [`Self::start`] with the runtime holders that the caller built (the
+    /// coordinator bindings that the ingress shares, a service of tests).
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn start_with_holders(
+        store: Store,
+        policy: Policy,
+        holders: Holders,
+        adapters: Adapters,
+        ids: SharedIds,
+    ) -> Result<Self> {
+        Self::start_inner(store, policy, holders, adapters, ids, None).await
     }
 
     /// [`Self::start`] for a station that hosts sessions under shims
@@ -174,12 +199,21 @@ impl SessionManager {
         ids: SharedIds,
         shims: target::ShimSettings,
     ) -> Result<Self> {
-        Self::start_inner(store, policy, adapters, ids, Some(shims)).await
+        Self::start_inner(
+            store,
+            policy,
+            Holders::default(),
+            adapters,
+            ids,
+            Some(shims),
+        )
+        .await
     }
 
     async fn start_inner(
         store: Store,
         policy: Policy,
+        holders: Holders,
         adapters: Adapters,
         ids: SharedIds,
         shims: Option<target::ShimSettings>,
@@ -247,9 +281,16 @@ impl SessionManager {
             tracing::info!(requeued, "resumed interrupted worktree operations");
         }
         let shells = target::ShellsSlot::default();
+        let Holders {
+            coordinator,
+            integrations,
+        } = holders;
+        let integrations = integrations
+            .unwrap_or_else(|| crate::integrations::Integrations::new(policy.trackers().to_vec()));
+        let hub = Arc::new(PolicyHub::new(policy));
         let mut target = SessionTarget::new(store.clone(), adapters, Arc::clone(&ids))
-            .with_coordinator(policy.coordinator_bindings().clone())
-            .with_policy(policy.clone())
+            .with_coordinator(coordinator.clone())
+            .with_policy(Arc::clone(&hub))
             .with_shells(shells.clone());
         if let Some(settings) = shims {
             target = target.with_shims(settings);
@@ -271,19 +312,21 @@ impl SessionManager {
                 tracing::error!(error = %e, "effect worker stopped");
             }
         }));
-        let hibernate_after = policy.hibernate_after_min();
-        if hibernate_after > 0 {
-            tasks.push(tokio::spawn(hibernate::ticker(
-                store.clone(),
-                policy.clone(),
-                hibernate_after,
-                rx.clone(),
-            )));
-        }
+        // The ticker always runs: it reads `hibernate_after_min` from the
+        // current snapshot at each tick, and 0 is off (DL-172 §1.4).
+        tasks.push(tokio::spawn(hibernate::ticker(
+            store.clone(),
+            Arc::clone(&hub),
+            coordinator.clone(),
+            hibernate::TICK,
+            rx.clone(),
+        )));
         tasks.push(tokio::spawn(deny_ticker(store.clone(), rx)));
         Ok(Self {
             store,
-            policy: Arc::new(policy),
+            policy: hub,
+            coordinator,
+            integrations: std::sync::RwLock::new(Arc::new(integrations)),
             target,
             ids,
             shutdown,
@@ -338,9 +381,72 @@ impl SessionManager {
         &self.store
     }
 
+    /// The current policy snapshot. Read it for each request, decision or
+    /// dispatch; never keep it longer (DL-172 §1.4).
     #[must_use]
-    pub fn policy(&self) -> &Policy {
+    pub fn policy(&self) -> Arc<Policy> {
+        self.policy.current()
+    }
+
+    /// The hub that holds the policy snapshot and its version.
+    #[must_use]
+    pub fn policy_hub(&self) -> &Arc<PolicyHub> {
         &self.policy
+    }
+
+    /// The coordinator bindings of this station.
+    #[must_use]
+    pub fn coordinator_bindings(&self) -> &crate::coordinator::Bindings {
+        &self.coordinator
+    }
+
+    /// The integration service of this station (R3, DL-164). Read it for
+    /// each request: a publish can replace it.
+    #[must_use]
+    pub fn integrations(&self) -> Arc<crate::integrations::Integrations> {
+        Arc::clone(
+            &self
+                .integrations
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
+    }
+
+    /// Step 1 of a live config change (DL-172 §1.4): validates `new` and
+    /// builds the snapshot, with a new integration service when the
+    /// trackers changed. It publishes nothing. The fields that apply only at
+    /// a restart (`listen`, `host`, `shim_buffer_mib`, `provider_instances`)
+    /// are ignored.
+    ///
+    /// # Errors
+    /// The key of the value that cannot apply, and a message without the
+    /// value.
+    pub fn prepare(&self, new: &StationConfig) -> std::result::Result<Prepared, PrepareError> {
+        policy_hub::validate(new)?;
+        let policy = self.policy.current();
+        let integrations = (policy.trackers() != new.trackers.as_slice())
+            .then(|| self.integrations().rebuilt(new.trackers.clone()));
+        Ok(Prepared {
+            policy: policy.reconfigured(new),
+            integrations,
+        })
+    }
+
+    /// Step 2 of a live config change: swaps the snapshot and the rebuilt
+    /// integration service. It cannot fail. The caller runs one `prepare`
+    /// and `publish` at a time.
+    pub fn publish(&self, prepared: Prepared) {
+        let Prepared {
+            policy,
+            integrations,
+        } = prepared;
+        if let Some(service) = integrations {
+            *self
+                .integrations
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Arc::new(service);
+        }
+        self.policy.swap(policy);
     }
 
     /// A new id from the station's id source (command ids of the local CLI).
@@ -359,7 +465,8 @@ impl SessionManager {
         self.providers
             .get_or_init(|| async {
                 let mut out = Vec::new();
-                for (instance, kind) in self.policy.instances() {
+                let policy = self.policy.current();
+                for (instance, kind) in policy.instances() {
                     let probe = match self.target.adapter(instance) {
                         Some(adapter) => tokio::time::timeout(PROBE_TIMEOUT, adapter.probe())
                             .await
@@ -381,9 +488,7 @@ impl SessionManager {
                     }
                     if let Some(v) = &version {
                         // The coordinator handoff check (DL-219).
-                        self.policy
-                            .coordinator_bindings()
-                            .record_version(*kind, v.clone());
+                        self.coordinator.record_version(*kind, v.clone());
                     }
                     out.push(StationProvider {
                         instance: instance.clone(),
@@ -411,7 +516,8 @@ impl SessionManager {
     /// # Errors
     /// A database error: nothing is stored.
     pub async fn submit(&self, envelope: CommandEnvelope, caller: Caller) -> Result<Decided> {
-        let policy = Arc::clone(&self.policy);
+        let policy = self.policy.current();
+        let coordinator = self.coordinator.clone();
         let origin = envelope.origin;
         let command = envelope.command.clone();
         let guard = auto_continue::guard(&command, &caller)
@@ -428,7 +534,7 @@ impl SessionManager {
                     | SessionCommand::WorktreeRelease { .. }) => {
                         trash::decide(d, &policy, origin, shells.as_deref(), command)
                     }
-                    command => decide::decide(d, &policy, origin, command),
+                    command => decide::decide(d, &policy, &coordinator, origin, command),
                 }
             })
             .await

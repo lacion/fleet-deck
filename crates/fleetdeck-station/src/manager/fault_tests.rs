@@ -171,7 +171,13 @@ impl Rig {
         let command = envelope.command.clone();
         self.store
             .decide(envelope, Caller::local(), move |d| {
-                decide::decide(d, &policy, origin, command)
+                decide::decide(
+                    d,
+                    &policy,
+                    &crate::coordinator::Bindings::default(),
+                    origin,
+                    command,
+                )
             })
             .await
             .unwrap()

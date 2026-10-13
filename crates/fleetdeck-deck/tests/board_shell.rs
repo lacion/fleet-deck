@@ -54,13 +54,12 @@ async fn station(dir: &std::path::Path, root: PathBuf, allow: bool) -> Arc<Stati
     )
     .await
     .unwrap();
-    let policy = Policy::new(vec![root], 2, OfflineApprovalPolicy::Wait, BTreeMap::new());
+    let policy = Policy::new(vec![root], 2, OfflineApprovalPolicy::Wait, BTreeMap::new())
+        .with_shell(allow, 2);
     let manager = SessionManager::start(store, policy, Adapters::new(), ids)
         .await
         .unwrap();
     let shells = Arc::new(Shells::new(ShellConfig {
-        allow,
-        max_shells: 2,
         program: Some(("/bin/sh".into(), Vec::new())),
         instances: BTreeMap::new(),
     }));

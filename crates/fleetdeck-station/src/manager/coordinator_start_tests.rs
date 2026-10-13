@@ -72,8 +72,7 @@ async fn a_deck_start_with_a_grant_hands_the_credential_to_the_child_environment
         2,
         OfflineApprovalPolicy::Wait,
         BTreeMap::from([("claude".into(), ProviderKind::Claude)]),
-    )
-    .with_coordinator(bindings.clone());
+    );
     let mut env = ChildEnv::from_process();
     env.set(SCENARIO_ENV, "sim").unwrap();
     env.set(LAUNCH_LOG_ENV, &launch_log).unwrap();
@@ -81,9 +80,14 @@ async fn a_deck_start_with_a_grant_hands_the_credential_to_the_child_environment
         ClaudeAdapterConfig::new("claude".into(), FakeAgent::Claude.locate().unwrap(), env);
     let adapter: Arc<dyn fleetdeck_providers::ProviderAdapter> =
         Arc::new(ClaudeAdapter::new(config, Arc::new(DirectChildHost::new())));
-    let manager = SessionManager::start(
+    let holders = Holders {
+        coordinator: bindings.clone(),
+        ..Holders::default()
+    };
+    let manager = SessionManager::start_with_holders(
         store,
         policy.clone(),
+        holders,
         Adapters::from([("claude".into(), adapter)]),
         det.ids(),
     )
@@ -117,10 +121,17 @@ async fn a_deck_start_with_a_grant_hands_the_credential_to_the_child_environment
     };
     let command = envelope.command.clone();
     let decide_policy = policy.clone();
+    let decide_bindings = bindings.clone();
     let decided = manager
         .store()
         .decide(envelope, Caller::deck("k"), move |d| {
-            decide::decide(d, &decide_policy, CommandOrigin::Board, command)
+            decide::decide(
+                d,
+                &decide_policy,
+                &decide_bindings,
+                CommandOrigin::Board,
+                command,
+            )
         })
         .await
         .unwrap();
@@ -230,10 +241,17 @@ async fn a_deck_start_with_a_grant_hands_the_credential_to_the_child_environment
     };
     let command = stop.command.clone();
     let decide_policy = policy.clone();
+    let decide_bindings = bindings.clone();
     manager
         .store()
         .decide(stop, Caller::deck("k"), move |d| {
-            decide::decide(d, &decide_policy, CommandOrigin::Board, command)
+            decide::decide(
+                d,
+                &decide_policy,
+                &decide_bindings,
+                CommandOrigin::Board,
+                command,
+            )
         })
         .await
         .unwrap();

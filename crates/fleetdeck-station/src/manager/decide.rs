@@ -13,6 +13,7 @@ use fleetdeck_proto::{InputId, Operation, Reject, RejectCode, SessionId, Session
 use fleetdeck_providers::codex::validate_question_answer;
 
 use super::policy::{Policy, WorkspaceError};
+use crate::coordinator::Bindings;
 use crate::store::{
     AnswerClaim, DecideError, Decision, EffectPayload, InputRecord, NewSession, RequestState,
     RuntimeRequest, WorkspacePlan,
@@ -52,6 +53,7 @@ pub(super) fn reject(code: RejectCode, message: impl Into<String>) -> DecideErro
 pub fn decide(
     d: &mut Decision<'_>,
     policy: &Policy,
+    bindings: &Bindings,
     origin: CommandOrigin,
     command: SessionCommand,
 ) -> Result<CommandResult, DecideError> {
@@ -80,6 +82,7 @@ pub fn decide(
             start(
                 d,
                 policy,
+                bindings,
                 origin_run,
                 spec,
                 prompt,
@@ -103,6 +106,7 @@ pub fn decide(
             start(
                 d,
                 policy,
+                bindings,
                 origin_run,
                 spec,
                 prompt,
@@ -128,13 +132,18 @@ pub fn decide(
             session_id,
             grant_id,
             generation,
-        } => {
-            super::coordinator_command::renew(d, policy, origin, &session_id, &grant_id, generation)
-        }
+        } => super::coordinator_command::renew(
+            d,
+            bindings,
+            origin,
+            &session_id,
+            &grant_id,
+            generation,
+        ),
         SessionCommand::CoordinatorRevoke {
             session_id,
             grant_id,
-        } => super::coordinator_command::revoke(d, policy, origin, &session_id, &grant_id),
+        } => super::coordinator_command::revoke(d, bindings, origin, &session_id, &grant_id),
         SessionCommand::Prompt { session_id, input } => {
             let s = live_session(d, &session_id, Operation::Prompt)?;
             input_effect(d, &s, origin_run, input, |input| EffectPayload::Prompt {
@@ -415,6 +424,7 @@ fn restrict_mode(kind: ProviderKind, chosen: Option<&str>) -> Result<String, Dec
 fn start(
     d: &mut Decision<'_>,
     policy: &Policy,
+    bindings: &Bindings,
     origin: RunOrigin,
     mut spec: SessionSpec,
     prompt: Option<fleetdeck_proto::command::UserInput>,
@@ -441,7 +451,7 @@ fn start(
             provider,
             coordinator,
             import.is_some(),
-            policy.coordinator_bindings(),
+            bindings,
         )?;
     }
     // Before the existence check: a folder in the trash is missing at its

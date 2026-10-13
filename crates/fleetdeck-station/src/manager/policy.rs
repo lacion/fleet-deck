@@ -6,7 +6,10 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use fleetdeck_core::ChildEnv;
-use fleetdeck_core::config::{OfflineApprovalPolicy as ConfigOffline, StationConfig};
+use fleetdeck_core::config::{
+    DEFAULT_MAX_SHELLS, ModelHelpConfig, OfflineApprovalPolicy as ConfigOffline, StationConfig,
+    TrackerConfig,
+};
 use fleetdeck_proto::ProviderInstanceId;
 use fleetdeck_proto::event::ProviderKind;
 use fleetdeck_proto::member_deny::MemberDeny;
@@ -27,7 +30,12 @@ pub enum WorkspaceError {
 /// the environment of its setup command too (DL-148).
 pub type SetupEnvs = BTreeMap<ProviderInstanceId, ChildEnv>;
 
-/// The validated policy of one station.
+/// The configuration snapshot of one station: the values that the station
+/// reads at run time. [`super::policy_hub::PolicyHub`] holds the current one;
+/// every consumer reads it when it handles a request, a decision or a
+/// dispatch. It holds configuration only. The runtime state is built once and
+/// lives elsewhere: the coordinator bindings, the integration service, the
+/// assist runner and budget, and the shells.
 #[derive(Debug, Clone)]
 pub struct Policy {
     /// Canonical roots (symlinks resolved, t3code trap 8).
@@ -43,13 +51,15 @@ pub struct Policy {
     repo_groups: BTreeMap<PathBuf, String>,
     /// `hibernate_after_min` of `station.toml`; 0 is off (R6.6, DL-169).
     hibernate_after_min: u32,
-    /// The coordinator bindings of this station (ADR-006 §5): the ingress
-    /// authenticates against them, and the owner's renew and revoke
-    /// commands change them (DL-212). Shared, not configuration.
-    coordinator: crate::coordinator::Bindings,
-    /// GitHub, GitLab, Jira and Linear (R3, DL-164). Shared, not
-    /// configuration: it holds a response cache and the recent writes.
-    integrations: std::sync::Arc<crate::integrations::Integrations>,
+    /// The `[[trackers]]` entries (R3, DL-164). The integration service
+    /// is rebuilt from them when they change.
+    trackers: Vec<TrackerConfig>,
+    /// `allow_shell` of `station.toml`: new shells and handovers.
+    allow_shell: bool,
+    /// `max_shells` of `station.toml`.
+    max_shells: u32,
+    /// `[model_help]` of `station.toml` (R10, DL-167).
+    model_help: ModelHelpConfig,
     /// The files hidden from the members of a shared session (R11.9,
     /// DL-166): the default list plus `member_deny` of `station.toml`.
     member_deny: MemberDeny,
@@ -83,10 +93,10 @@ impl Policy {
                 .collect(),
             repo_groups: BTreeMap::new(),
             hibernate_after_min: config.hibernate_after_min,
-            coordinator: crate::coordinator::Bindings::default(),
-            integrations: std::sync::Arc::new(crate::integrations::Integrations::new(
-                config.trackers.clone(),
-            )),
+            trackers: config.trackers.clone(),
+            allow_shell: config.allow_shell,
+            max_shells: config.max_shells,
+            model_help: config.model_help.clone(),
             member_deny: MemberDeny::new(&config.member_deny),
         }
         .with_repo_groups(&config.repo_groups)
@@ -116,20 +126,6 @@ impl Policy {
         self.hibernate_after_min
     }
 
-    /// The coordinator bindings of this station.
-    #[must_use]
-    pub fn coordinator_bindings(&self) -> &crate::coordinator::Bindings {
-        &self.coordinator
-    }
-
-    /// The same policy with other coordinator bindings (station tests).
-    #[cfg(test)]
-    #[must_use]
-    pub(crate) fn with_coordinator(mut self, bindings: crate::coordinator::Bindings) -> Self {
-        self.coordinator = bindings;
-        self
-    }
-
     /// The owner's group of a canonical repository path.
     #[must_use]
     pub fn repo_group(&self, repo: &Path) -> Option<&str> {
@@ -156,23 +152,93 @@ impl Policy {
             instances,
             repo_groups: BTreeMap::new(),
             hibernate_after_min: 0,
-            coordinator: crate::coordinator::Bindings::default(),
-            integrations: std::sync::Arc::default(),
+            trackers: Vec::new(),
+            allow_shell: true,
+            max_shells: DEFAULT_MAX_SHELLS,
+            model_help: ModelHelpConfig::default(),
             member_deny: MemberDeny::default(),
         }
     }
 
-    /// The integration service of this station (R3, DL-164).
+    /// The `[[trackers]]` entries of the station.
     #[must_use]
-    pub fn integrations(&self) -> &std::sync::Arc<crate::integrations::Integrations> {
-        &self.integrations
+    pub fn trackers(&self) -> &[TrackerConfig] {
+        &self.trackers
     }
 
-    /// The same policy with another integration service (tests).
+    /// Whether new shells and terminal handovers are allowed.
     #[must_use]
-    pub fn with_integrations(mut self, service: crate::integrations::Integrations) -> Self {
-        self.integrations = std::sync::Arc::new(service);
+    pub fn allow_shell(&self) -> bool {
+        self.allow_shell
+    }
+
+    /// The most shells that run at the same time.
+    #[must_use]
+    pub fn max_shells(&self) -> u32 {
+        self.max_shells
+    }
+
+    /// The same policy with shells on or off and a shell limit.
+    #[must_use]
+    pub fn with_shell(mut self, allow: bool, max_shells: u32) -> Self {
+        self.allow_shell = allow;
+        self.max_shells = max_shells;
         self
+    }
+
+    /// The model help settings (R10, DL-167).
+    #[must_use]
+    pub fn model_help(&self) -> &ModelHelpConfig {
+        &self.model_help
+    }
+
+    /// The same policy with other model help settings.
+    #[must_use]
+    pub fn with_model_help(mut self, config: ModelHelpConfig) -> Self {
+        self.model_help = config;
+        self
+    }
+
+    /// The snapshot for a new `config` while the station runs (DL-172
+    /// §1.4). The values that apply only at a restart stay as they are:
+    /// the provider instances and the setup environments that came from
+    /// them.
+    #[must_use]
+    pub fn reconfigured(&self, config: &StationConfig) -> Self {
+        let mut next = Self::from_config(config);
+        next.instances.clone_from(&self.instances);
+        next.setup_envs.clone_from(&self.setup_envs);
+        next
+    }
+
+    /// Why a start that waited in the queue must not run under this
+    /// snapshot (DL-172 §1.4): its folder is outside the roots now, or it
+    /// carries a setup command that is off now. `None`: it can run.
+    /// `provisioned` is true when the dispatch itself creates the folder
+    /// (a worktree or a clone), so that the folder may not exist yet.
+    #[must_use]
+    pub fn start_refusal(
+        &self,
+        cwd: &str,
+        provisioned: bool,
+        has_setup_cmd: bool,
+    ) -> Option<&'static str> {
+        let inside = if provisioned {
+            // The nearest existing parent decides.
+            Path::new(cwd)
+                .ancestors()
+                .find_map(|p| p.canonicalize().ok())
+                .is_some_and(|p| self.allowed_roots.iter().any(|root| p.starts_with(root)))
+        } else {
+            self.workspace(cwd).is_ok()
+        };
+        if !inside {
+            Some("the station policy changed: the folder is outside the allowed roots")
+        } else if has_setup_cmd && !self.allow_setup_cmd {
+            Some("the station policy changed: setup commands are off")
+        } else {
+            None
+        }
     }
 
     /// The files that a member of a shared session must not see.

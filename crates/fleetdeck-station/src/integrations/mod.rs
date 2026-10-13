@@ -95,6 +95,19 @@ impl Integrations {
         Self::with_programs(trackers, Programs::default())
     }
 
+    /// A new service for `trackers` with the helper programs of this one
+    /// (DL-172 §1.4). The cache and the recent writes start empty.
+    #[must_use]
+    pub fn rebuilt(&self, trackers: Vec<TrackerConfig>) -> Self {
+        Self::with_programs(trackers, self.programs.clone())
+    }
+
+    /// The `[[trackers]]` entries of this service.
+    #[must_use]
+    pub fn trackers(&self) -> &[TrackerConfig] {
+        &self.trackers
+    }
+
     /// [`Integrations::new`] with other helper programs (tests).
     #[must_use]
     pub fn with_programs(trackers: Vec<TrackerConfig>, programs: Programs) -> Self {

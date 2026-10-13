@@ -197,11 +197,15 @@ async fn live_round(kind: ProviderKind) {
         2,
         OfflineApprovalPolicy::Wait,
         BTreeMap::from([("live".into(), kind)]),
-    )
-    .with_coordinator(bindings.clone());
-    let manager = SessionManager::start(
+    );
+    let holders = Holders {
+        coordinator: bindings.clone(),
+        ..Holders::default()
+    };
+    let manager = SessionManager::start_with_holders(
         store,
         policy.clone(),
+        holders,
         Adapters::from([("live".into(), adapter)]),
         det.ids(),
     )
@@ -217,10 +221,11 @@ async fn live_round(kind: ProviderKind) {
             command: command.clone(),
         };
         let p = policy.clone();
+        let b = bindings.clone();
         manager
             .store()
             .decide(envelope, Caller::deck("k"), move |d| {
-                decide::decide(d, &p, CommandOrigin::Board, command)
+                decide::decide(d, &p, &b, CommandOrigin::Board, command)
             })
             .await
             .unwrap()

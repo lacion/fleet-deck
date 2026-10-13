@@ -229,3 +229,28 @@ async fn a_member_diff_loses_the_hunks_of_hidden_files() {
         owner.summary.files_changed
     );
 }
+
+#[tokio::test]
+async fn a_publish_with_a_new_deny_pattern_hides_the_files_from_the_next_member_call() {
+    let det = Det::new();
+    let (_t, root) = tree();
+    let s = store_with_session(&det, &root).await;
+    let hub = crate::manager::policy_hub::PolicyHub::new(deny_policy(&root, &[]));
+    let names = |l: fleetdeck_proto::files::FileListing| -> Vec<String> {
+        l.entries.into_iter().map(|e| e.name).collect()
+    };
+    let q = || FileListQuery {
+        root: session(),
+        path: String::new(),
+    };
+    let before = names(list_as(&s, &hub.current(), q(), true).await.unwrap());
+    assert!(before.iter().any(|n| n == "private"), "{before:?}");
+
+    let config = crate::manager::policy_hub::test_config(&root, "member_deny = [\"private/\"]\n");
+    hub.swap(hub.current().reconfigured(&config));
+    let after = names(list_as(&s, &hub.current(), q(), true).await.unwrap());
+    assert!(!after.iter().any(|n| n == "private"), "{after:?}");
+    // The owner still sees it.
+    let owner = names(list_as(&s, &hub.current(), q(), false).await.unwrap());
+    assert!(owner.iter().any(|n| n == "private"), "{owner:?}");
+}

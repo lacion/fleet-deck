@@ -14,8 +14,11 @@
 //!   transaction, so an input that arrives in between wins: the command is
 //!   then rejected and nothing is stored but the rejection receipt.
 //! - **Sweep.** [`ticker`] runs [`sweep`] every [`TICK`] while the station
-//!   runs. Hibernation off (0 minutes) starts no ticker.
+//!   runs. It reads `hibernate_after_min` from the current policy snapshot
+//!   at each tick, so a live change applies without a restart; 0 is off
+//!   and the sweep then does nothing (DL-172 §1.4).
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use fleetdeck_proto::command::{
@@ -28,6 +31,8 @@ use tokio::sync::watch;
 
 use super::decide::{self, reject};
 use super::policy::Policy;
+use super::policy_hub::PolicyHub;
+use crate::coordinator::Bindings;
 use crate::store::{Caller, DecideError, Decision, Store};
 
 /// How often the station looks for sessions to hibernate.
@@ -65,6 +70,7 @@ fn refused(why: &str) -> DecideError {
 fn decide_hibernate(
     d: &mut Decision<'_>,
     policy: &Policy,
+    bindings: &Bindings,
     session_id: &SessionId,
     after_min: u32,
 ) -> Result<CommandResult, DecideError> {
@@ -84,7 +90,7 @@ fn decide_hibernate(
         session_id: session_id.clone(),
         how: StopMode::Graceful,
     };
-    let done = decide::decide(d, policy, CommandOrigin::Local, stop)?;
+    let done = decide::decide(d, policy, bindings, CommandOrigin::Local, stop)?;
     d.append(session_id, Event::SessionHibernated { after_min }.into())?;
     Ok(done)
 }
@@ -94,7 +100,12 @@ fn decide_hibernate(
 ///
 /// # Errors
 /// A database error.
-pub async fn sweep(store: &Store, policy: &Policy, after_min: u32) -> crate::store::Result<usize> {
+pub async fn sweep(
+    store: &Store,
+    policy: &Policy,
+    bindings: &Bindings,
+    after_min: u32,
+) -> crate::store::Result<usize> {
     if after_min == 0 {
         return Ok(0);
     }
@@ -119,10 +130,11 @@ pub async fn sweep(store: &Store, policy: &Policy, after_min: u32) -> crate::sto
             },
         };
         let policy = policy.clone();
+        let bindings = bindings.clone();
         let id = session_id.clone();
         let decided = store
             .decide(envelope, Caller::local(), move |d| {
-                decide_hibernate(d, &policy, &id, after_min)
+                decide_hibernate(d, &policy, &bindings, &id, after_min)
             })
             .await?;
         if !decided.duplicate && decided.effects.iter().any(|e| e.session_id == session_id) {
@@ -132,22 +144,27 @@ pub async fn sweep(store: &Store, policy: &Policy, after_min: u32) -> crate::sto
     Ok(stopped)
 }
 
-/// Runs [`sweep`] every [`TICK`] until `shutdown`.
+/// Runs [`sweep`] every `period` (the station uses [`TICK`]) until
+/// `shutdown`. Each tick reads the current policy snapshot.
 pub async fn ticker(
     store: Store,
-    policy: Policy,
-    after_min: u32,
+    hub: Arc<PolicyHub>,
+    bindings: Bindings,
+    period: Duration,
     mut shutdown: watch::Receiver<bool>,
 ) {
-    let mut tick = tokio::time::interval(TICK);
+    let mut tick = tokio::time::interval(period);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         tokio::select! {
-            _ = tick.tick() => match sweep(&store, &policy, after_min).await {
-                Ok(0) => {}
-                Ok(n) => tracing::info!(hibernated = n, "stopped idle sessions"),
-                Err(e) => tracing::warn!(error = %e, "hibernation sweep"),
-            },
+            _ = tick.tick() => {
+                let policy = hub.current();
+                match sweep(&store, &policy, &bindings, policy.hibernate_after_min()).await {
+                    Ok(0) => {}
+                    Ok(n) => tracing::info!(hibernated = n, "stopped idle sessions"),
+                    Err(e) => tracing::warn!(error = %e, "hibernation sweep"),
+                }
+            }
             changed = shutdown.changed() => {
                 if changed.is_err() || *shutdown.borrow() {
                     return;

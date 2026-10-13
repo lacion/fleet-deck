@@ -449,7 +449,15 @@ async fn an_unreadable_checkpoint_at_a_station_start_loses_the_session_and_leave
         .store
         .decide(envelope.clone(), Caller::local(), {
             let policy = policy.clone();
-            move |d| decide(d, &policy, CommandOrigin::Board, envelope.command.clone())
+            move |d| {
+                decide(
+                    d,
+                    &policy,
+                    &fleetdeck_station::coordinator::Bindings::default(),
+                    CommandOrigin::Board,
+                    envelope.command.clone(),
+                )
+            }
         })
         .await
         .unwrap();

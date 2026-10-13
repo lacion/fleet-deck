@@ -18,7 +18,8 @@ use ring::rand::{SecureRandom, SystemRandom};
 use rustix::fs::{FileType, Mode, OFlags};
 
 use super::{ArtifactError, stage};
-use crate::manager::policy::{Policy, WorkspaceError};
+use crate::manager::PolicyHub;
+use crate::manager::policy::WorkspaceError;
 use crate::store::Store;
 use crate::store::artifacts::{CommitError, NewVersion};
 use crate::workspace::files::{open_root, private_root};
@@ -27,7 +28,8 @@ use crate::workspace::files::{open_root, private_root};
 #[derive(Debug, Clone)]
 pub struct ArtifactService {
     store: Store,
-    policy: Arc<Policy>,
+    /// The live policy: each publish reads the current roots.
+    policy: Arc<PolicyHub>,
     /// `<station data>/artifacts`.
     root: PathBuf,
 }
@@ -52,7 +54,7 @@ impl ArtifactService {
     /// A service that keeps its bytes in `root`. Leftovers of a publish
     /// that a crash interrupted are removed.
     #[must_use]
-    pub fn new(store: Store, policy: Arc<Policy>, root: PathBuf) -> Self {
+    pub fn new(store: Store, policy: Arc<PolicyHub>, root: PathBuf) -> Self {
         let _ = std::fs::remove_dir_all(root.join(".staging"));
         Self {
             store,
@@ -88,7 +90,7 @@ impl ArtifactService {
                             format!("session `{id}` is unknown or has no working directory"),
                         )
                     })?;
-                Some(self.policy.workspace(&cwd).map_err(|e| match e {
+                Some(self.policy.current().workspace(&cwd).map_err(|e| match e {
                     WorkspaceError::Missing(_) => {
                         ArtifactError::new(code::NOT_FOUND, e.to_string())
                     }
@@ -130,7 +132,8 @@ impl ArtifactService {
         let parent = std::fs::canonicalize(parent)
             .map_err(|_| ArtifactError::new(code::NOT_FOUND, format!("`{path}` is not found")))?;
         let full = parent.join(name);
-        let allowed = self.policy.allowed_roots();
+        let policy = self.policy.current();
+        let allowed = policy.allowed_roots();
         let root = session_root
             .iter()
             .chain(allowed.iter())

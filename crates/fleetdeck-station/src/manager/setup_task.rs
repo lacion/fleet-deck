@@ -141,8 +141,8 @@ impl SessionTarget {
         cmd: &str,
     ) -> Dispatch {
         let session_id = &effect.session_id;
-        let Some(env) = self
-            .policy
+        let policy = self.current_policy();
+        let Some(env) = policy
             .as_ref()
             .and_then(|p| p.setup_env(&spec.provider_instance))
         else {

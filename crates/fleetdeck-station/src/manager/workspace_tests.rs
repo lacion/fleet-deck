@@ -411,7 +411,7 @@ async fn the_repo_catalog_shows_origin_default_branch_and_group() {
     let query = fleetdeck_proto::link::WorkspaceQuery {
         path: Some(projects),
     };
-    let list = workspaces::list(&st.manager.policy, &query).unwrap();
+    let list = workspaces::list(&st.manager.policy(), &query).unwrap();
     let app = list.entries.iter().find(|e| e.name == "app").unwrap();
     assert!(app.repository);
     assert_eq!(
@@ -424,7 +424,7 @@ async fn the_repo_catalog_shows_origin_default_branch_and_group() {
     let canonical = Path::new(&ws).canonicalize().unwrap();
     let policy = st
         .manager
-        .policy
+        .policy()
         .as_ref()
         .clone()
         .with_repo_groups(&BTreeMap::from([(canonical, "fleet".to_owned())]));

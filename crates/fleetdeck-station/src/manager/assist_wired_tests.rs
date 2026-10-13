@@ -243,3 +243,52 @@ async fn the_watcher_titles_a_session_once_and_digests_it_when_it_ends() {
     watcher.await.unwrap();
     manager.shutdown(StopMode::Kill).await;
 }
+
+#[tokio::test]
+async fn a_publish_that_turns_model_help_off_refuses_the_next_call() {
+    use fleetdeck_proto::assist::AssistKind;
+
+    let st = Station::new(2).await;
+    let root = st.root.path().join("projects");
+    let fake = Arc::new(Fake::default());
+    let instance = AssistInstance {
+        id: "claude".into(),
+        driver: Driver::Claude,
+        binary: "claude".into(),
+        env: ChildEnv::empty(),
+    };
+    let assist = Assist::with_hub_runner(
+        Arc::clone(st.manager.policy_hub()),
+        st.manager.store().clone(),
+        vec![instance],
+        fake.clone(),
+    );
+    let apply = |extra: &str| {
+        let config = super::policy_hub::test_config(&root, extra);
+        st.manager.publish(st.manager.prepare(&config).unwrap());
+    };
+
+    apply("[model_help]\nprovider = \"claude\"\n");
+    let answer = assist
+        .generate(AssistKind::Title, "fix the login redirect", &[])
+        .await
+        .unwrap();
+    assert_eq!(answer.text, "Greet the user");
+    assert_eq!(fake.calls.load(Ordering::SeqCst), 1);
+
+    apply("[model_help]\nprovider = \"claude\"\nenabled = false\n");
+    let err = assist
+        .generate(AssistKind::Title, "another prompt", &[])
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), "disabled");
+    assert_eq!(fake.calls.load(Ordering::SeqCst), 1);
+
+    apply("[model_help]\nprovider = \"claude\"\n");
+    assist
+        .generate(AssistKind::Title, "another prompt", &[])
+        .await
+        .unwrap();
+    assert_eq!(fake.calls.load(Ordering::SeqCst), 2);
+    st.manager.shutdown(StopMode::Kill).await;
+}

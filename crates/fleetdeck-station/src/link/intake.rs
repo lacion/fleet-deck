@@ -56,7 +56,7 @@ async fn workspaces(ctx: &StationLink, params: serde_json::Value) -> Outcome {
         Ok(q) => q,
         Err(e) => return bad_params(e),
     };
-    let policy = ctx.manager.policy().clone();
+    let policy = ctx.manager.policy();
     let task =
         tokio::task::spawn_blocking(move || crate::manager::workspaces::list(&policy, &query));
     match tokio::time::timeout(WORKSPACE_TIMEOUT, task).await {
@@ -84,7 +84,7 @@ async fn worktrees(ctx: &StationLink, params: serde_json::Value) -> Outcome {
     }
     match worktrees::inventory(
         ctx.manager.store(),
-        ctx.manager.policy(),
+        &ctx.manager.policy(),
         &worktrees::git_options(),
     )
     .await
@@ -190,7 +190,10 @@ async fn precheck(ctx: &StationLink, params: serde_json::Value) -> Outcome {
 async fn integration(ctx: &StationLink, method: &str, params: serde_json::Value) -> Outcome {
     let policy = ctx.manager.policy();
     let resolve = |path: &str| policy.workspace(path).ok();
-    policy.integrations().call(method, params, &resolve).await
+    ctx.manager
+        .integrations()
+        .call(method, params, &resolve)
+        .await
 }
 
 /// `assist.generate` (DL-167): one model-help text. Error codes `disabled`,
@@ -231,7 +234,9 @@ async fn file_method(ctx: &StationLink, method: &str, params: serde_json::Value)
         }
     }
     let store = ctx.manager.store();
-    let policy = ctx.manager.policy();
+    // The snapshot of this call: the roots and `member_deny` of the moment.
+    let current = ctx.manager.policy();
+    let policy = &*current;
     let git = GitOptions::isolated();
     // The deck marks a call for a member of a shared session (R11.9); the
     // station hides the files of the member deny list from it.
@@ -350,7 +355,7 @@ async fn read(ctx: &StationLink, req: InboundRequest) -> Outcome {
                 live_sessions: ctx.manager.live_sessions() as u64,
                 version: Some(env!("CARGO_PKG_VERSION").to_owned()),
                 max_sessions: Some(ctx.manager.policy().max_sessions()),
-                allow_shell: Some(ctx.shells.allowed()),
+                allow_shell: Some(ctx.manager.policy().allow_shell()),
                 allow_setup_cmd: Some(ctx.manager.policy().allow_setup_cmd()),
                 providers: ctx.manager.providers().await,
                 assist_tokens_today: usage.map(|(tokens, _)| tokens),
@@ -481,13 +486,15 @@ async fn mutate(
             // DL-405: the receipt transaction only checks and enqueues; the
             // PTY I/O runs after the commit, claimed first.
             let shells = std::sync::Arc::clone(&ctx.shells);
-            let policy = ctx.manager.policy().clone();
+            let policy = ctx.manager.policy();
             let decided = store
                 .decide_mutation(Mutation::Shell(envelope.clone()), caller, move |d| {
                     crate::shell::decide(d, &shells, &policy, &envelope)
                 })
                 .await;
-            if let Err(e) = crate::shell::dispatch(store, &ctx.shells, ctx.manager.policy()).await {
+            if let Err(e) =
+                crate::shell::dispatch(store, &ctx.shells, ctx.manager.policy_hub()).await
+            {
                 tracing::warn!(error = %e, "shell dispatch");
             }
             decided

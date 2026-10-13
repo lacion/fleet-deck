@@ -21,9 +21,10 @@ use fleetdeck_proto::{
     CommandId, Event, EventBody, Mutation, ProviderInstanceId, SessionCommand, SessionId,
     SessionSummary,
 };
-use fleetdeck_station::manager::Policy;
+use fleetdeck_station::coordinator::Bindings;
 use fleetdeck_station::manager::decide::decide as decide_session;
 use fleetdeck_station::manager::resume::admit_resume;
+use fleetdeck_station::manager::{Policy, PolicyHub};
 use fleetdeck_station::shell::handover::spawn_exit_release;
 use fleetdeck_station::shell::{ShellConfig, Shells, TerminalInstance, decide, dispatch};
 use fleetdeck_station::store::{
@@ -64,8 +65,6 @@ pub fn shells_for(binary: &Path, store: &Store) -> (Arc<Shells>, tokio::task::Jo
         env: child_env(),
     };
     let config = ShellConfig {
-        allow: true,
-        max_shells: 4,
         program: None,
         instances: BTreeMap::from([(ProviderInstanceId::new("claude"), instance)]),
     };
@@ -98,7 +97,8 @@ impl Rig {
             4,
             OfflineApprovalPolicy::Wait,
             BTreeMap::from([(ProviderInstanceId::new("claude"), ProviderKind::Claude)]),
-        );
+        )
+        .with_shell(true, 4);
         let (shells, exit_task) = shells_for(&binary, &store);
         Self {
             shells,
@@ -193,7 +193,13 @@ impl Rig {
         let policy = self.policy.clone();
         self.store
             .decide_mutation(Mutation::Shell(envelope), Caller::local(), move |d| {
-                decide_session(d, &policy, CommandOrigin::Local, command)
+                decide_session(
+                    d,
+                    &policy,
+                    &Bindings::default(),
+                    CommandOrigin::Local,
+                    command,
+                )
             })
             .await
             .unwrap()
@@ -217,9 +223,13 @@ impl Rig {
     }
 
     pub async fn dispatch(&self) -> usize {
-        dispatch(&self.store, &self.shells, &self.policy)
-            .await
-            .unwrap()
+        dispatch(
+            &self.store,
+            &self.shells,
+            &PolicyHub::new(self.policy.clone()),
+        )
+        .await
+        .unwrap()
     }
 
     /// An ended session of the `claude` instance with the native session
