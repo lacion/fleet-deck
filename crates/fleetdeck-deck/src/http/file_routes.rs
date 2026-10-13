@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Json;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
 use fleetdeck_proto::files::{
     FileContent, FileListQuery, FileListing, FileReadQuery, FileRoot, FileSearch, FileSearchQuery,
@@ -26,7 +26,9 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
 use super::Board;
+use super::access::session_of;
 use super::guard::ApiError;
+use crate::store::{MemberAction, Principal};
 
 /// The longest the board waits for the station's answer (above the
 /// station's own deadlines).
@@ -79,13 +81,55 @@ impl FileParams {
     }
 }
 
+/// For a member (R11.9, DL-166): the query names the `session` root of a
+/// shared session, never a `workspace`, and the call goes to the station with
+/// the member flag, so the station hides the files of its deny list.
+async fn member_check(
+    board: &Board,
+    principal: &Principal,
+    station: &str,
+    session: Option<&str>,
+    workspace: Option<&str>,
+) -> Result<bool, ApiError> {
+    if !matches!(principal, Principal::Member(..)) {
+        return Ok(false);
+    }
+    let session = match (session, workspace) {
+        (Some(s), None) => s,
+        _ => {
+            return Err(ApiError::new(
+                StatusCode::FORBIDDEN,
+                "not_shared",
+                "a member browses the files of a shared session only",
+            ));
+        }
+    };
+    session_of(
+        board,
+        principal,
+        station,
+        session,
+        MemberAction::Read,
+        "read these files",
+    )
+    .await?;
+    Ok(true)
+}
+
 /// Sends `method` to the station's live link and decodes the answer.
 async fn forward<T: DeserializeOwned>(
     board: &Board,
     station: &str,
     method: &'static str,
-    params: serde_json::Value,
+    mut params: serde_json::Value,
+    member: bool,
 ) -> Result<Json<T>, ApiError> {
+    if member && let Some(o) = params.as_object_mut() {
+        o.insert(
+            fleetdeck_proto::member_deny::MEMBER_PARAM.to_owned(),
+            serde_json::Value::Bool(true),
+        );
+    }
     let rec = board
         .store
         .find_station(station.to_owned())
@@ -177,38 +221,65 @@ fn params<T: serde::Serialize>(query: &T) -> Result<serde_json::Value, ApiError>
 /// 409 `station_unreachable`; 502 `station_error`; 504 `timeout`.
 pub async fn list(
     State(board): State<Arc<Board>>,
+    Extension(principal): Extension<Principal>,
     Path(station): Path<String>,
     Query(p): Query<FileParams>,
 ) -> Result<Json<FileListing>, ApiError> {
+    let member = member_check(
+        &board,
+        &principal,
+        &station,
+        p.session.as_deref(),
+        p.workspace.as_deref(),
+    )
+    .await?;
     let query = FileListQuery {
         root: p.root()?,
         path: p.path()?,
     };
-    forward(&board, &station, "files.list", params(&query)?).await
+    forward(&board, &station, "files.list", params(&query)?, member).await
 }
 
 /// # Errors
 /// As [`list`].
 pub async fn read(
     State(board): State<Arc<Board>>,
+    Extension(principal): Extension<Principal>,
     Path(station): Path<String>,
     Query(p): Query<FileParams>,
 ) -> Result<Json<FileContent>, ApiError> {
+    let member = member_check(
+        &board,
+        &principal,
+        &station,
+        p.session.as_deref(),
+        p.workspace.as_deref(),
+    )
+    .await?;
     let query = FileReadQuery {
         root: p.root()?,
         path: p.path()?,
         max_bytes: p.max_bytes,
     };
-    forward(&board, &station, "files.read", params(&query)?).await
+    forward(&board, &station, "files.read", params(&query)?, member).await
 }
 
 /// # Errors
 /// As [`list`], plus 400 `invalid_query` and 429 `busy`.
 pub async fn search(
     State(board): State<Arc<Board>>,
+    Extension(principal): Extension<Principal>,
     Path(station): Path<String>,
     Query(p): Query<FileParams>,
 ) -> Result<Json<FileSearch>, ApiError> {
+    let member = member_check(
+        &board,
+        &principal,
+        &station,
+        p.session.as_deref(),
+        p.workspace.as_deref(),
+    )
+    .await?;
     let mode = match p.mode.as_deref() {
         None | Some("name") => SearchMode::Name,
         Some("content") => SearchMode::Content,
@@ -224,7 +295,7 @@ pub async fn search(
         mode,
         max_hits: p.max_hits,
     };
-    forward(&board, &station, "files.search", params(&query)?).await
+    forward(&board, &station, "files.search", params(&query)?, member).await
 }
 
 /// # Errors
@@ -233,9 +304,11 @@ pub async fn search(
 /// `timeout`.
 pub async fn diff(
     State(board): State<Arc<Board>>,
+    Extension(principal): Extension<Principal>,
     Path((station, session, turn)): Path<(String, String, String)>,
     Query(p): Query<FileParams>,
 ) -> Result<Json<TurnDiff>, ApiError> {
+    let member = member_check(&board, &principal, &station, Some(&session), None).await?;
     if !text_ok(&session) || !text_ok(&turn) {
         return Err(bad("invalid_path", "the session or turn id is too long"));
     }
@@ -244,5 +317,5 @@ pub async fn diff(
         turn_id: TurnId::from(turn.as_str()),
         max_bytes: p.max_bytes,
     };
-    forward(&board, &station, "files.diff", params(&query)?).await
+    forward(&board, &station, "files.diff", params(&query)?, member).await
 }

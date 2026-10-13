@@ -12,15 +12,18 @@ use axum::extract::{Extension, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use fleetdeck_core::Secret;
-use fleetdeck_proto::board::{DeviceLink, DeviceLinkEntry};
+use fleetdeck_proto::board::{DeviceLink, DeviceLinkEntry, SessionKey};
 use fleetdeck_proto::link::Scope;
+use fleetdeck_proto::share::{JoinRequest, ShareKind, ShareRole, SharedScope};
 use serde::{Deserialize, Serialize};
 
 use super::Board;
 use super::guard::{ApiError, COOKIE, origin_label, owner_only};
 use crate::local_auth::login_url;
 use crate::store::auth::{LOGIN_LINK_TTL_MS, SESSION_MAX_MS};
-use crate::store::{AuditResult, LoginMethod, NewAudit, NewLogin, Principal};
+use crate::store::{
+    AuditResult, DeckError, LoginMethod, NewAudit, NewLogin, Principal, ShareGrant, ShareScope,
+};
 
 /// Failed logins in one window before the deck refuses logins.
 pub const MAX_FAILURES: usize = 5;
@@ -109,6 +112,15 @@ pub struct SessionView {
     /// The version of this deck (DL-141).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deck_version: Option<String>,
+    /// The display name of a member (R11, DL-166).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    /// The role of a member's share.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<ShareRole>,
+    /// What a member's share covers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<SharedScope>,
 }
 
 /// The version of this deck.
@@ -128,6 +140,9 @@ fn logged_in(login: &NewLogin) -> Response {
         csrf: Some(login.csrf.clone()),
         expires_at: login.expires_at,
         deck_version: Some(DECK_VERSION.to_owned()),
+        display_name: None,
+        role: None,
+        scope: None,
     };
     let mut res = Json(view).into_response();
     res.headers_mut().insert(
@@ -224,6 +239,116 @@ pub async fn link(State(board): State<Arc<Board>>, Json(body): Json<LinkLogin>) 
     login(&board, "auth.link", LoginMethod::Link, valid).await
 }
 
+/// What a member's share covers, for the session view and the join answer.
+async fn shared_scope(board: &Board, grant: &ShareGrant) -> Result<SharedScope, ApiError> {
+    let sessions = match &grant.scope {
+        ShareScope::Board => Vec::new(),
+        ShareScope::Sessions(set) => set
+            .iter()
+            .map(|(station, session)| SessionKey {
+                station_id: station.clone().into(),
+                session_id: session.clone().into(),
+            })
+            .collect(),
+    };
+    let space_name = if grant.kind == ShareKind::Space {
+        board
+            .store
+            .space_name(grant.target.clone())
+            .await
+            .map_err(ApiError::internal)?
+    } else {
+        None
+    };
+    Ok(SharedScope {
+        kind: grant.kind,
+        target: grant.target.clone(),
+        space_name,
+        steering: grant.steering,
+        sessions,
+    })
+}
+
+async fn member_view(board: &Board, grant: &ShareGrant) -> Result<SessionView, ApiError> {
+    Ok(SessionView {
+        actor: grant.actor(),
+        scopes: grant.scopes().into_iter().collect(),
+        csrf: Some(grant.csrf.clone()),
+        expires_at: grant.expires_at,
+        deck_version: Some(DECK_VERSION.to_owned()),
+        display_name: Some(grant.display_name.clone()),
+        role: Some(grant.role),
+        scope: Some(shared_scope(board, grant).await?),
+    })
+}
+
+/// `POST /api/auth/join { token, display_name }` (R11.4, DL-166): the invite
+/// token of `#join=<token>` and the display name that the person picks. A
+/// valid invite makes a member login (a cookie tied to the member and the
+/// share). The deck limits failed attempts like failed logins. Neither the
+/// token nor the cookie goes to a log or to the audit row.
+///
+/// # Errors
+/// 400 `invalid_display_name`; 401 `invalid_invite`; 429
+/// `too_many_attempts`; 500 `internal`.
+pub async fn join(State(board): State<Arc<Board>>, Json(body): Json<JoinRequest>) -> Response {
+    const ACTION: &str = "auth.join";
+    if let Some(e) = throttled(&board) {
+        board
+            .store
+            .audit_or_log(NewAudit::new("anonymous", ACTION, AuditResult::Refused).detail(e.code))
+            .await;
+        return e.into_response();
+    }
+    let joined = board
+        .store
+        .join(&Secret::new(body.token), &body.display_name)
+        .await;
+    match joined {
+        Ok(Some(login)) => {
+            let grant = login.grant;
+            board
+                .store
+                .audit_or_log(
+                    NewAudit::new(grant.actor(), ACTION, AuditResult::Ok)
+                        .target(grant.share_id.clone()),
+                )
+                .await;
+            let view = match member_view(&board, &grant).await {
+                Ok(v) => v,
+                Err(e) => return e.into_response(),
+            };
+            let max_age = (grant.expires_at - board.store.now_ms()).max(0) / 1000;
+            let mut res = Json(view).into_response();
+            res.headers_mut().insert(
+                header::SET_COOKIE,
+                set_cookie(login.cookie.expose(), max_age),
+            );
+            res
+        }
+        Ok(None) => {
+            board.limiter.failed(board.store.now_ms());
+            board
+                .store
+                .audit_or_log(
+                    NewAudit::new("anonymous", ACTION, AuditResult::Refused)
+                        .detail("invalid invite"),
+                )
+                .await;
+            ApiError::new(
+                StatusCode::UNAUTHORIZED,
+                "invalid_invite",
+                "the invitation is not valid, is used up, has expired or was revoked",
+            )
+            .into_response()
+        }
+        Err(DeckError::Invalid(message)) => {
+            ApiError::new(StatusCode::BAD_REQUEST, "invalid_display_name", message).into_response()
+        }
+        Err(e) => ApiError::internal(e).into_response(),
+    }
+}
+
 /// `POST /api/auth/device-link` (DL-146): a one-time login link for a new
 /// device, for the owner's board login only. One single-use token, one link
 /// for each board origin. Neither the token nor a URL goes to a log or to
@@ -287,9 +412,12 @@ pub async fn logout(
     Extension(principal): Extension<Principal>,
 ) -> Response {
     let actor = principal.actor();
-    if let Principal::Owner(session) = principal
-        && let Err(e) = board.store.end_login(session.session_hash).await
-    {
+    let ended = match principal {
+        Principal::Owner(session) => board.store.end_login(session.session_hash).await,
+        Principal::Member(_, grant) => board.store.end_member_login(grant.session_hash).await,
+        Principal::Token(..) => Ok(true),
+    };
+    if let Err(e) = ended {
         return ApiError::internal(e).into_response();
     }
     board
@@ -303,18 +431,25 @@ pub async fn logout(
 }
 
 /// `GET /api/auth/session`.
-pub async fn session(Extension(principal): Extension<Principal>) -> Json<SessionView> {
+pub async fn session(
+    State(board): State<Arc<Board>>,
+    Extension(principal): Extension<Principal>,
+) -> Result<Json<SessionView>, ApiError> {
     let (csrf, expires_at) = match &principal {
         Principal::Owner(s) => (Some(s.csrf.clone()), s.expires_at),
         Principal::Token(t, _) => (None, t.expires_at),
+        Principal::Member(_, grant) => return member_view(&board, grant).await.map(Json),
     };
-    Json(SessionView {
+    Ok(Json(SessionView {
         actor: principal.actor(),
         scopes: principal.scopes().into_iter().collect(),
         csrf,
         expires_at,
         deck_version: Some(DECK_VERSION.to_owned()),
-    })
+        display_name: None,
+        role: None,
+        scope: None,
+    }))
 }
 
 #[cfg(test)]

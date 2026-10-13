@@ -300,6 +300,82 @@ CREATE TABLE archive_mutations (
 );
 ";
 
+/// The shared fleet (R11, DL-166): spaces, shares, invites, local members and
+/// their logins, the side chat, and the mob-mode driver with its requests.
+/// Only hashes of secrets are stored (the invite token, the member cookie).
+/// `commands.author` is who sent a command (`owner`, `member:<name>`,
+/// `token:<name>`); `NULL` for a command that the deck made itself.
+const V15: &str = "
+CREATE TABLE spaces (
+    space_id   TEXT    PRIMARY KEY,
+    name       TEXT    NOT NULL,
+    created_at INTEGER NOT NULL
+) STRICT;
+CREATE TABLE space_sessions (
+    space_id   TEXT NOT NULL REFERENCES spaces (space_id) ON DELETE CASCADE,
+    station_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    PRIMARY KEY (space_id, station_id, session_id)
+) STRICT;
+CREATE TABLE shares (
+    share_id   TEXT    PRIMARY KEY,
+    kind       TEXT    NOT NULL CHECK (kind IN ('session', 'space', 'board')),
+    target     TEXT    NOT NULL,
+    role       TEXT    NOT NULL CHECK (role IN ('viewer', 'collaborator', 'approver')),
+    steering   TEXT    NOT NULL CHECK (steering IN ('open', 'mob')),
+    expires_at INTEGER NOT NULL,
+    revoked_at INTEGER,
+    created_at INTEGER NOT NULL
+) STRICT;
+CREATE TABLE invites (
+    token_hash TEXT    PRIMARY KEY,
+    share_id   TEXT    NOT NULL REFERENCES shares (share_id) ON DELETE CASCADE,
+    uses_left  INTEGER NOT NULL CHECK (uses_left >= 0),
+    expires_at INTEGER NOT NULL
+) STRICT;
+CREATE INDEX invites_by_share ON invites (share_id);
+CREATE TABLE members (
+    member_id    TEXT    PRIMARY KEY,
+    share_id     TEXT    NOT NULL REFERENCES shares (share_id) ON DELETE CASCADE,
+    display_name TEXT    NOT NULL,
+    created_at   INTEGER NOT NULL,
+    UNIQUE (share_id, display_name)
+) STRICT;
+CREATE TABLE member_sessions (
+    session_hash TEXT    PRIMARY KEY,
+    member_id    TEXT    NOT NULL REFERENCES members (member_id) ON DELETE CASCADE,
+    share_id     TEXT    NOT NULL REFERENCES shares (share_id) ON DELETE CASCADE,
+    csrf_token   TEXT    NOT NULL,
+    created_at   INTEGER NOT NULL,
+    expires_at   INTEGER NOT NULL
+) STRICT;
+CREATE INDEX member_sessions_by_share ON member_sessions (share_id);
+CREATE TABLE session_chat (
+    station_id TEXT    NOT NULL,
+    session_id TEXT    NOT NULL,
+    seq        INTEGER NOT NULL,
+    author     TEXT    NOT NULL,
+    text       TEXT    NOT NULL,
+    at         INTEGER NOT NULL,
+    PRIMARY KEY (station_id, session_id, seq)
+) STRICT;
+CREATE TABLE drivers (
+    station_id      TEXT    NOT NULL,
+    session_id      TEXT    NOT NULL,
+    member_or_owner TEXT    NOT NULL,
+    since           INTEGER NOT NULL,
+    PRIMARY KEY (station_id, session_id)
+) STRICT;
+CREATE TABLE drive_requests (
+    station_id TEXT    NOT NULL,
+    session_id TEXT    NOT NULL,
+    requester  TEXT    NOT NULL,
+    at         INTEGER NOT NULL,
+    PRIMARY KEY (station_id, session_id, requester)
+) STRICT;
+ALTER TABLE commands ADD COLUMN author TEXT;
+";
+
 /// The `deck.db` migrations.
 #[must_use]
 pub fn migrations() -> Migrations<'static> {
@@ -316,6 +392,7 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V10),
         M::up(V11),
         M::up(V12),
+        M::up(V15),
     ])
 }
 

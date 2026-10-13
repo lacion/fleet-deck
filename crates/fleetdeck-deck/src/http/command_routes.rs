@@ -13,14 +13,19 @@ use axum::extract::rejection::JsonRejection;
 use axum::extract::{Extension, MatchedPath, Path, State};
 use axum::http::StatusCode;
 use fleetdeck_proto::CommandId;
+use fleetdeck_proto::StationId;
 use fleetdeck_proto::board::{CommandRequest, valid_command_id};
 use fleetdeck_proto::command::{CommandOrigin, SessionCommand, UserInput, check_native_session_id};
+use fleetdeck_proto::event::RequestKind;
 
-use super::Board;
 use super::guard::ApiError;
 use super::methods::COMMAND_PREFIX;
+use super::{Board, access};
 use crate::link::CommandKind;
-use crate::store::{AuditResult, DeckCommand, DeckError, NewAudit, Principal};
+use crate::store::{
+    AuditResult, DeckCommand, DeckError, MemberAction, NewAudit, Principal, ShareGrant,
+    member_allows,
+};
 
 /// How long a command call waits for the station's receipt before it
 /// answers with the `pending` command (the board then polls).
@@ -43,8 +48,7 @@ pub async fn command(
         .unwrap_or_default()
         .to_owned();
     let audit = NewAudit::new(principal.actor(), method.clone(), AuditResult::Refused);
-    let owner = matches!(principal, Principal::Owner(_));
-    match route(&board, &method, owner, body).await {
+    match route(&board, &method, &principal, body).await {
         Ok((cmd, new)) => {
             let mut row = NewAudit::new(principal.actor(), method, AuditResult::Ok)
                 .target(cmd.station_id.0.clone())
@@ -79,9 +83,10 @@ type Refusal = (Option<String>, Option<CommandId>, ApiError);
 async fn route(
     board: &Arc<Board>,
     method: &str,
-    owner: bool,
+    principal: &Principal,
     body: Result<Json<CommandRequest>, JsonRejection>,
 ) -> Result<(DeckCommand, bool), Refusal> {
+    let owner = matches!(principal, Principal::Owner(_));
     let Json(req) = body.map_err(|e| {
         (
             None,
@@ -135,6 +140,14 @@ async fn route(
         .await
         .map_err(|e| (station.clone(), id.clone(), ApiError::internal(e)))?;
     let Some(rec) = found else {
+        // A member learns nothing about the stations of the deck.
+        if matches!(principal, Principal::Member(..)) {
+            return Err(refuse(
+                StatusCode::NOT_FOUND,
+                "unknown_session",
+                "no such session".to_owned(),
+            ));
+        }
         return Err(refuse(
             StatusCode::NOT_FOUND,
             "unknown_station",
@@ -143,6 +156,14 @@ async fn route(
     };
     let station = Some(rec.station_id.0.clone());
     let mut command = req.command;
+    if let Principal::Member(_, grant) = principal {
+        member_command(board, grant, &rec.station_id, &mut command)
+            .await
+            .map_err(|e| (station.clone(), id.clone(), e))?;
+    } else {
+        // Only the deck says who typed an input: a caller cannot forge it.
+        clear_author(&mut command);
+    }
     // A setup command runs shell code on the station: only the owner sends
     // one, and only to a station that reports it runs setup commands
     // (an older station would ignore the field, DL-148).
@@ -202,7 +223,13 @@ async fn route(
     let kind = CommandKind::Session { command };
     board
         .link
-        .submit_as(rec.station_id, CommandOrigin::Board, kind, req.command_id)
+        .submit_by(
+            rec.station_id,
+            CommandOrigin::Board,
+            kind,
+            req.command_id,
+            Some(principal.actor()),
+        )
         .await
         .map_err(|e| {
             let api = match &e {
@@ -221,19 +248,107 @@ async fn route(
         })
 }
 
-/// `GET /api/commands/{command_id}`.
+/// Removes the author of every input and the `answered_by` of an answer of
+/// a command that does not come from a member.
+fn clear_author(command: &mut SessionCommand) {
+    if let Some(input) = command.user_input_mut() {
+        input.author = None;
+    }
+    if let SessionCommand::Answer { decision, .. } = command {
+        decision.answered_by = None;
+    }
+}
+
+/// The member policy of a command (R11.2, DL-166): a member sends a prompt, a
+/// steer, a follow-up, an interrupt or an answer to a session that the share
+/// covers, with the role that the action needs. Everything else is for the
+/// owner. The deck sets the author of the input and of the answer.
+async fn member_command(
+    board: &Board,
+    grant: &ShareGrant,
+    station: &StationId,
+    command: &mut SessionCommand,
+) -> Result<(), ApiError> {
+    let owner_only = || {
+        ApiError::new(
+            StatusCode::FORBIDDEN,
+            "owner_only",
+            "only the owner's board login sends this command",
+        )
+    };
+    let Some(session) = command.session_id().map(|s| s.as_str().to_owned()) else {
+        return Err(owner_only());
+    };
+    let action = match command {
+        SessionCommand::Prompt { .. } => MemberAction::Prompt,
+        SessionCommand::Steer { .. } => MemberAction::Steer,
+        SessionCommand::FollowUp { .. } => MemberAction::FollowUp,
+        SessionCommand::Interrupt { .. } => MemberAction::Interrupt,
+        SessionCommand::Answer { request_id, .. } => {
+            // A question needs the collaborator role, a tool approval the
+            // approver role. A request that the deck cannot find is a tool
+            // approval (fail closed).
+            let kind = board
+                .store
+                .request_kind(station.0.clone(), session.clone(), request_id.to_string())
+                .await
+                .map_err(ApiError::internal)?;
+            if kind == Some(RequestKind::Question) {
+                MemberAction::AnswerQuestion
+            } else {
+                MemberAction::AnswerApproval
+            }
+        }
+        _ => return Err(owner_only()),
+    };
+    if !grant.scope.covers(station.as_str(), &session) {
+        return Err(access::unknown_session(station.as_str(), &session));
+    }
+    if !member_allows(grant, action, station.as_str(), &session) {
+        return Err(access::role_refused(
+            if action == MemberAction::AnswerApproval {
+                "answer a tool approval"
+            } else {
+                "send this command"
+            },
+        ));
+    }
+    access::ensure_driver(
+        board,
+        &Principal::Member(grant.member_id.clone(), Box::new(grant.clone())),
+        station,
+        &session,
+        action,
+    )
+    .await?;
+    if let Some(input) = command.user_input_mut() {
+        input.author = Some(grant.actor());
+    }
+    if let SessionCommand::Answer { decision, .. } = command {
+        decision.answered_by = Some(grant.actor());
+    }
+    Ok(())
+}
+
+/// `GET /api/commands/{command_id}`. A member reads its own commands only.
 ///
 /// # Errors
 /// 404 `unknown_command`.
 pub async fn get_command(
     State(board): State<Arc<Board>>,
+    Extension(principal): Extension<Principal>,
     Path(command_id): Path<String>,
 ) -> Result<Json<DeckCommand>, ApiError> {
-    board
+    let found = board
         .store
         .command(CommandId::from(command_id))
         .await
         .map_err(ApiError::internal)?
+        .filter(|c| {
+            !matches!(principal, Principal::Member(..))
+                || c.author.as_deref() == Some(principal.actor().as_str())
+        });
+    found
         .map(Json)
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "unknown_command", "no such command"))
 }

@@ -18,7 +18,9 @@ use fleetdeck_testkit::Det;
 use super::files_tests::{session, store_with_session, ws};
 use super::{diff_as, list_as, read_as, search_as};
 use crate::manager::policy::Policy;
-use crate::manager::turns::turns_tests::{S1, completed, dispatch, input, repo, setup, started};
+use crate::manager::turns::turns_tests::{
+    S1, completed, dispatch, git, input, repo, setup, started,
+};
 use crate::store::OfflineApprovalPolicy;
 use crate::workspace::GitOptions;
 
@@ -188,6 +190,10 @@ async fn a_member_browses_the_session_workspace_only() {
 async fn a_member_diff_loses_the_hunks_of_hidden_files() {
     let det = Det::new();
     let (_t, dir) = repo();
+    // A checkpoint holds tracked files only: the secret is tracked.
+    std::fs::write(dir.join(".env"), "TOKEN=old\n").unwrap();
+    git(&dir, &["add", "."]);
+    git(&dir, &["commit", "-q", "-m", "secret"]);
     let (s, turns) = setup(&det, &dir).await;
     let p = deny_policy(&dir, &[]);
     let git = GitOptions::isolated();

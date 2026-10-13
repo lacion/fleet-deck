@@ -21,6 +21,7 @@ use ring::rand::{SecureRandom, SystemRandom};
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
+use super::members::{MemberId, ShareGrant};
 use super::{DeckError, DeckStore, Result, call};
 
 /// A login session ends after 7 idle days.
@@ -94,6 +95,10 @@ pub enum Principal {
     /// that is revoked and created again under the same name is another
     /// principal).
     Token(ApiToken, String),
+    /// A member of a shared session (R11, DL-166): the login of a person
+    /// that joined with an invite. The grant holds the share, the role and
+    /// the covered sessions.
+    Member(MemberId, Box<ShareGrant>),
 }
 
 impl Principal {
@@ -103,6 +108,7 @@ impl Principal {
         match self {
             Self::Owner(_) => "owner".to_owned(),
             Self::Token(t, _) => format!("token:{}", t.name),
+            Self::Member(_, g) => g.actor(),
         }
     }
 
@@ -111,6 +117,7 @@ impl Principal {
         match self {
             Self::Owner(_) => OWNER_SCOPES.contains(&scope),
             Self::Token(t, _) => t.scopes.contains(&scope),
+            Self::Member(_, g) => g.scopes().contains(&scope),
         }
     }
 
@@ -119,6 +126,7 @@ impl Principal {
         match self {
             Self::Owner(_) => OWNER_SCOPES.into_iter().collect(),
             Self::Token(t, _) => t.scopes.clone(),
+            Self::Member(_, g) => g.scopes(),
         }
     }
 }
@@ -364,6 +372,11 @@ impl DeckStore {
                      WHERE token_hash = ?1 AND expires_at > ?2",
                     params![hash, now],
                 )?,
+                // The login and its share must both be alive (a revoke or
+                // an expiry of the share ends the member at once).
+                Principal::Member(_, g) => {
+                    return Ok(super::members::grant_alive(conn, &g.session_hash, now)?);
+                }
             };
             Ok(n == 1)
         })

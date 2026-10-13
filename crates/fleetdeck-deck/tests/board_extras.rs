@@ -53,6 +53,7 @@ async fn deliver(f: &Fixture) {
     for due in s.due_outbox(f.station.clone()).await.unwrap() {
         let id = CommandId::from(format!("c-{}", due.outbox_id));
         let cmd = NewCommand {
+            author: None,
             command_id: id.clone(),
             station_id: f.station.clone(),
             method: "session.follow_up".to_owned(),

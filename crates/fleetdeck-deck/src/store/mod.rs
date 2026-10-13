@@ -18,6 +18,7 @@
 pub mod archive;
 pub mod audit;
 pub mod auth;
+pub mod chat;
 pub mod commands;
 pub mod conflicts;
 pub mod coordinator;
@@ -26,10 +27,13 @@ pub mod coordinator_query;
 pub mod extras;
 pub mod fleet;
 pub mod grants;
+pub mod members;
 pub mod outbox;
 pub mod plans;
+pub mod presence;
 pub mod read_model;
 pub mod schema;
+pub mod shares;
 pub mod stations;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -50,7 +54,9 @@ pub use auth::{ApiToken, LoginMethod, LoginSession, NewLogin, Principal};
 pub use commands::{DeckCommand, NewCommand, Settle};
 pub use fleet::{Completed, NewMail, NewTask};
 pub use grants::{Grant, GrantClass, GrantState, NewGrant};
+pub use members::{MemberAction, MemberId, ShareGrant, ShareScope, member_allows};
 pub use outbox::{NewOutboxItem, OutboxItem, OutboxState};
+pub use presence::SocialEvent;
 pub use read_model::{DeckSession, TIMELINE_CAP};
 pub use stations::{Direction, StationRecord};
 
@@ -130,6 +136,12 @@ struct Inner {
     infos: Mutex<BTreeMap<StationId, (StationInfo, i64)>>,
     /// Whether two sessions that change one file get a mail (DL-145).
     conflict_mail: AtomicBool,
+    /// Presence, chat and mob-driver updates for the board sockets (R11).
+    social: broadcast::Sender<Arc<presence::SocialEvent>>,
+    /// Who has a session open now (R11.5); in memory only.
+    presence: Mutex<presence::PresenceMap>,
+    /// The next id of a board socket.
+    sockets: std::sync::atomic::AtomicU64,
 }
 
 /// The deck store. Clones share one database thread.
@@ -208,6 +220,9 @@ impl DeckStore {
                 reachable: Mutex::default(),
                 infos: Mutex::default(),
                 conflict_mail: AtomicBool::new(true),
+                social: broadcast::channel(LIVE_BUFFER).0,
+                presence: Mutex::default(),
+                sockets: std::sync::atomic::AtomicU64::new(1),
             }),
         })
     }
