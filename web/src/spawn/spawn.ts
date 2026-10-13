@@ -8,6 +8,7 @@
 // (`3x task` starts three), each in its own worktree.
 import type {
   DeckSession,
+  Preflight,
   SessionSpec,
   StationProvider,
   StationView,
@@ -21,9 +22,16 @@ type Post = (path: string, body: unknown) => Promise<unknown>;
 
 export type SpawnOutcome = Outcome & { readonly sessionId: string | null };
 
+/** The answer of a clone access check (DL-144): the station's verdict, or why there is none. */
+export type PreflightResult =
+  | { readonly ok: true; readonly preflight: Preflight }
+  | { readonly ok: false; readonly text: string };
+
 export type SpawnActions = {
   readonly canDrive: boolean;
   list(stationId: string, path: string | null): Promise<WorkspaceListing>;
+  /** Asks the station whether it can read the clone URL with its own Git credentials (DL-144). */
+  preflight(stationId: string, url: string): Promise<PreflightResult>;
   /** With `importId`: a `session.import` of that native CLI session (DL-308). */
   start(
     stationId: string,
@@ -49,6 +57,61 @@ export function importIdProblem(id: string): string | null {
     return 'The session id may hold only letters, digits, "-", "_" and ".", and starts with a letter or a digit.';
   }
   return null;
+}
+
+/** The longest branch or base name that the station accepts. */
+export const MAX_REF = 200;
+
+/**
+ * Why a base cannot be used, or `null` (mirrors the station: 1 to 200
+ * characters, no leading `-`, no whitespace or control characters).
+ */
+export function baseProblem(name: string): string | null {
+  if (
+    name.length === 0 ||
+    name.length > MAX_REF ||
+    name.startsWith('-') ||
+    /[\s\u0000-\u001f\u007f]/.test(name)
+  ) {
+    return 'the base is not valid';
+  }
+  return null;
+}
+
+/**
+ * Why a branch name cannot be used, or `null` (mirrors the station: the
+ * base rule, no `..`, none of `~^:?*[\`, not ending in `/` or `.lock`).
+ */
+export function branchProblem(name: string): string | null {
+  if (
+    baseProblem(name) !== null ||
+    name.includes('..') ||
+    /[~^:?*[\\]/.test(name) ||
+    name.endsWith('/') ||
+    name.endsWith('.lock')
+  ) {
+    return 'the branch name is not valid';
+  }
+  return null;
+}
+
+/**
+ * The workspace request of a start (DL-144): `null` works in the chosen
+ * directory. A batch forces a plain worktree per session, so it never
+ * carries a branch or a base; a base needs a branch.
+ */
+export function workspaceRequest(
+  place: 'here' | 'worktree' | 'clone',
+  batch: boolean,
+  cloneUrl: string,
+  branch: string,
+  base: string,
+): WorkspaceRequest | null {
+  if (place === 'clone') return { kind: 'clone', url: cloneUrl.trim() };
+  if (place === 'here' && !batch) return null;
+  const b = batch ? '' : branch.trim();
+  const from = base.trim();
+  return { kind: 'worktree', ...(b ? { branch: b } : {}), ...(b && from ? { base: from } : {}) };
 }
 
 /** The most sessions that one batch line can ask for (`10x`). */
@@ -202,6 +265,25 @@ export function spawnActions(
       return listingView(
         await get(`/api/stations/${encodeURIComponent(stationId)}/workspaces${query}`),
       );
+    },
+    preflight: async (stationId, url) => {
+      try {
+        const reply = await post(
+          `/api/stations/${encodeURIComponent(stationId)}/workspace/preflight`,
+          { url },
+        );
+        if (
+          !record(reply) ||
+          typeof reply['ok'] !== 'boolean' ||
+          typeof reply['message'] !== 'string' ||
+          !(reply['hint'] === null || typeof reply['hint'] === 'string')
+        ) {
+          return { ok: false, text: 'The station gave an answer that the board cannot read.' };
+        }
+        return { ok: true, preflight: reply as Preflight };
+      } catch (error) {
+        return { ok: false, text: error instanceof Error ? error.message : 'The request failed.' };
+      }
     },
     start: async (stationId, spec, prompt, workspace = null, importId) => {
       const first = prompt.trim() === '' ? null : { text: prompt };
