@@ -201,7 +201,7 @@ export type RaceSummary =
 export async function raceSummary(post: Post, keys: readonly SessionKey[]): Promise<RaceSummary> {
   try {
     const answer = await post('/api/assist/race', {
-      sessions: keys.map((k) => ({ station_id: k.station_id, session_id: k.session_id })),
+      sessions: keys.map((k) => ({ station: k.station_id, session_id: k.session_id })),
     });
     if (record(answer) && typeof answer['text'] === 'string') {
       return { kind: 'text', text: answer['text'] };

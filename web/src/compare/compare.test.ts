@@ -237,8 +237,8 @@ describe('race summary (R10.5)', () => {
         path: '/api/assist/race',
         body: {
           sessions: [
-            { station_id: 'station-a', session_id: 'a' },
-            { station_id: 'station-a', session_id: 'b' },
+            { station: 'station-a', session_id: 'a' },
+            { station: 'station-a', session_id: 'b' },
           ],
         },
       },
