@@ -113,6 +113,7 @@ export * from "./link/StationProvider";
 export * from "./link/StreamMode";
 export * from "./link/StreamStart";
 export * from "./link/VersionOffer";
+export * from "./link/VersionStatus";
 export * from "./link/WireError";
 export * from "./link/WorkspaceEntry";
 export * from "./link/WorkspaceListing";

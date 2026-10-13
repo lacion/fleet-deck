@@ -229,23 +229,23 @@ The owner creates a project on the board. A preflight checks each binding from t
 
 ### R8. Platform and quality
 
-1. **macOS checks on the owner's machine.** GitHub CI runs only on demand now (DL-158), so the owner runs `make check` locally, also on a macOS machine before a release. D12 promises macOS, and setup cleanup, launchd, socket paths and process groups differ there. Missing: a short macOS section in `TESTING.md` that lists what to run.
-2. **A provider version check (architect's decision, DL-158).** Each adapter names the oldest CLI version that its replay fixtures and live smoke cover. An older CLI is not refused: the station marks the provider "older than tested", and the spawn form and `fleetdeck doctor` show a warning. The station refuses only a version that is known to break the protocol (a short deny list). A `make` target (not CI) diffs the Codex app-server schema of a newer release against the pinned one. Missing.
-3. **A crate-layering test** (`cargo metadata`): `fleetdeck-proto` imports no server crate, `fleetdeck-providers` does not import `fleetdeck-deck`, and the deck never matches on a provider name. Missing; it is cheap.
-4. **A guard against a silent zero-test pass:** each lane asserts a minimum test count. Missing.
-5. **A checkpoint latency bar:** a checkpoint adds no latency to an approval or a turn completion. Missing as a named bar.
-6. **A 15-session board load test.** Missing.
-7. **A reproducible board build** embedded in the binary (build twice, compare). Missing.
+1. **macOS checks on the owner's machine.** GitHub CI runs only on demand now (DL-158), so the owner runs `make check` locally, also on a macOS machine before a release. D12 promises macOS, and setup cleanup, launchd, socket paths and process groups differ there. Built (DL-162): `TESTING.md` §6 lists what to run.
+2. **A provider version check (architect's decision, DL-158).** Each adapter names the oldest CLI version that its replay fixtures and live smoke cover. An older CLI is not refused: the station marks the provider "older than tested", and the spawn form and `fleetdeck doctor` show a warning. The station refuses only a version that is known to break the protocol (a short deny list). A `make` target (not CI) diffs the Codex app-server schema of a newer release against the pinned one. Built (DL-162): `version_status`, `make codex-schema-diff`.
+3. **A crate-layering test** (`cargo metadata`): `fleetdeck-proto` imports no server crate, `fleetdeck-providers` does not import `fleetdeck-deck`, and the deck never matches on a provider name. Built (DL-162): `crates/fleetdeck-cli/tests/layering.rs`.
+4. **A guard against a silent zero-test pass:** each lane asserts a minimum test count. Built (DL-162): `tools/check.sh`.
+5. **A checkpoint latency bar:** a checkpoint adds no latency to an approval or a turn completion. Built (DL-162): a named bar in `tests/perf.rs`.
+6. **A 15-session board load test.** Built (DL-162): `tests/perf.rs`.
+7. **A reproducible board build** embedded in the binary (build twice, compare). Built (DL-162): `make board-repro`.
 
 ### R9. Documents and process
 
-1. **The owner's security review at the end** (DL-158). The architect keeps a checklist of every surface that is new since the last design review, for that review: DL-143 … DL-157 and every later DL. Each feature still gets its adversary reviews while it is built.
-2. **Proof columns in `PARITY.md`:** fail-open and exposure tests for each M3 and night-2 row. Partial.
-3. **A testing rule in `TESTING.md`:** green or revert; never edit, skip or ignore a test to make it pass; a list of fail-open behaviors that must not get stricter. Missing.
-4. **Pay the propagation debt:** reconcile `PLAN.md` §10 (data sketch) with the real migrations, and add an "invalidates" line to each new DL entry. Missing.
-5. **`internals.md`:** a board route map (route, scope, mutating) and a session lifecycle diagram (lanes and effect states). Partial.
-6. **"A day on the deck":** one owner story that uses every feature once, as the script for the cutover rehearsal. Missing.
-7. **A one-line release gate for 2.0.0:** proofs, migrations, tests, performance, platform, fallback and the security delta are all green. Missing.
+1. **The owner's security review at the end** (DL-158). The architect keeps a checklist of every surface that is new since the last design review, for that review: DL-143 … DL-157 and every later DL. Each feature still gets its adversary reviews while it is built. Built (DL-162): `SECURITY-CHECKLIST.md`.
+2. **Proof columns in `PARITY.md`:** fail-open and exposure tests for each M3 and night-2 row. Built for the night-2 rows (DL-162); the M3 rows keep their test names without the new column.
+3. **A testing rule in `TESTING.md`:** green or revert; never edit, skip or ignore a test to make it pass; a list of fail-open behaviors that must not get stricter. Built (DL-162): `TESTING.md` §7.
+4. **Pay the propagation debt:** reconcile `PLAN.md` §10 (data sketch) with the real migrations, and add an "invalidates" line to each new DL entry. Built (DL-162) for `PLAN.md` §10; the "invalidates" line stays a rule for each new DL.
+5. **`internals.md`:** a board route map (route, scope, mutating) and a session lifecycle diagram (lanes and effect states). Built (DL-162): `internals.md` §9 to §11.
+6. **"A day on the deck":** one owner story that uses every feature once, as the script for the cutover rehearsal. Built (DL-162): `DAY-ON-THE-DECK.md`.
+7. **A one-line release gate for 2.0.0:** proofs, migrations, tests, performance, platform, fallback and the security delta are all green. Built (DL-162): the gate sentence at the end of §9.
 
 ---
 
@@ -371,3 +371,5 @@ All the work in this table is planned (DL-157). The steps set the order of the w
 ## 9. What this document does not change
 
 This document changes no decision of `PLAN.md` or `DECISIONS-LOG.md`. Each step of §7 starts with a DL entry and, for a high-risk part (forge text, automations that start sessions, PR writes, shared access, the HTML artifact sandbox), an adversary design review, as the owner's review rules require.
+
+**Release gate for 2.0.0 (R9.7).** The owner cuts 2.0.0 only when all of these are green: proofs (every `PARITY.md` row has its proof columns), migrations (the migration tests pass), tests (`make check` passes, with the R8.4 test-count floors), performance (the `make perf` bars pass), platform (the macOS list of `TESTING.md` §6 is done), fallback (v1 still runs and the `cutover.md` way back works) and the security delta (the owner has reviewed every row of `SECURITY-CHECKLIST.md`).

@@ -20,11 +20,12 @@ The repository side of the cutover (PLAN Phase 7, item 7-7) happens on the `v2` 
 
 The full parity table is PLAN §16.
 
-Item 6-13 records the test for each parity row in [PARITY.md](./PARITY.md). Three v1 behaviours have no v2 equivalent yet; they are deferred for an owner decision (DL-131):
+Item 6-13 records the test for each parity row in [PARITY.md](./PARITY.md). Two v1 behaviours have no v2 equivalent yet; they are deferred for an owner decision (DL-131):
 
 - the terminal grid (v2: a session grid)
 - station discovery on the LAN (add dial targets by hand)
-- a minimum CLI version per provider (the probe reports the version)
+
+The minimum CLI version is built as a warning (DL-158, DL-162): the board and `fleetdeck doctor` warn about a CLI that is older than the tested version, and the station refuses only a version that is known to break the protocol.
 
 ## 2. Before you start
 

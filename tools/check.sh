@@ -22,6 +22,13 @@
 set -u
 cd "$(dirname "$0")/.." || exit 2
 
+# R8.4 (DL-162): a lane that runs fewer tests than this fails, so that a lane
+# that silently runs nothing never gives a green check (the v1 Bun lane ran
+# zero tests and exited 0). Raise a floor when the suite grows; never lower it
+# to make a run pass.
+MIN_RUST_TESTS=1000
+MIN_BUN_TESTS=300
+
 export CI=true # insta: a snapshot mismatch fails instead of writing a new file
 log_dir=$(mktemp -d "${TMPDIR:-/tmp}/fd-check.XXXXXX") || exit 2
 failed=0
@@ -49,6 +56,28 @@ run() {
     return 0
 }
 
+# Fails when the lane of the log `$2` ran fewer than `$3` tests (`$1` names
+# the lane). nextest prints `N tests run`; `cargo test` prints one
+# `test result: ok. N passed` per binary; `bun test` prints `N pass`.
+guard_count() {
+    lane=$1
+    log=$2
+    min=$3
+    count=$(awk '
+        /^ +Summary .* [0-9]+ tests? run:/ { for (i = 2; i <= NF; i++) if ($i == "tests" || $i == "test") nextest = $(i - 1) }
+        /^test result: / { cargo += $4 }
+        /^ *[0-9]+ pass$/ { bun = $1 }
+        END { if (nextest != "") print nextest; else if (cargo != "") print cargo; else if (bun != "") print bun; else print 0 }
+    ' "$log")
+    n=$((n + 1))
+    if [ "$count" -ge "$min" ]; then
+        printf 'ok     %s ran %s tests (at least %s)\n' "$lane" "$count" "$min"
+    else
+        printf 'FAILED %s ran %s tests, fewer than %s: a lane that runs no tests is not green\n' "$lane" "$count" "$min"
+        failed=$((failed + 1))
+    fi
+}
+
 runner=${FD_TEST_RUNNER:-}
 if [ -z "$runner" ]; then
     if cargo nextest --version >/dev/null 2>&1; then runner=nextest; else runner=test; fi
@@ -73,6 +102,7 @@ run cargo fmt --all --check
 run cargo clippy --workspace --all-targets -- -D warnings
 # shellcheck disable=SC2086 # $tests is two words on purpose
 run $tests --workspace
+guard_count "rust tests" "$log" "$MIN_RUST_TESTS"
 run cargo deny check
 # The module size rule (fewer than 800 lines per module, M3 goal).
 run sh tools/module-size.sh
@@ -87,6 +117,7 @@ run bun install --cwd web --frozen-lockfile --offline --ignore-scripts
 run bun run --cwd web typecheck
 run bun run --cwd web lint
 run bun run --cwd web test
+guard_count "bun tests" "$log" "$MIN_BUN_TESTS"
 run bun run --cwd web build
 # Phone-viewport browser tests of the built board (Playwright, Chromium).
 run bun run --cwd web e2e

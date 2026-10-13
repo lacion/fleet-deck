@@ -2,6 +2,7 @@
 import type { Capabilities } from "../capability/Capabilities";
 import type { ProviderKind } from "../event/ProviderKind";
 import type { ProviderInstanceId } from "../ids/ProviderInstanceId";
+import type { VersionStatus } from "./VersionStatus";
 
 /**
  * One configured provider instance of a station (`[[provider_instance]]`,
@@ -24,4 +25,9 @@ auth: string,
  * offers their modes. `None` when the station has no adapter for the
  * instance, or from a station before P5-3.
  */
-capabilities: Capabilities | null, };
+capabilities: Capabilities | null, 
+/**
+ * How the probed version compares with the adapter's tested minimum and
+ * its deny list (R8.2, DL-162). `unknown` from an older station.
+ */
+version_status: VersionStatus, };

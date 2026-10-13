@@ -115,7 +115,44 @@ address that you open, or log in with the owner password.
   `make smoke-live`. See [LIVE-SMOKE.md](./LIVE-SMOKE.md).
 - Logs: `FLEETDECK_LOG=debug fleetdeck up`.
 
-## 6. Report problems
+## 6. macOS before a release
+
+GitHub CI runs only on demand (DL-158), so the owner runs the checks on a macOS machine before a release. The behavior of setup cleanup, launchd, socket paths and process groups is different on macOS. Do these steps on the Mac, in this order:
+
+1. `make check`. It runs the full suite on macOS. Read these results with care:
+   - the shim tests (`shim_*`): process groups and the shim host;
+   - `setup_tests.rs` and `setup_cleanup.rs`: the cleanup of a setup command uses `ps -E` on macOS and has no group check (DL-148);
+   - the `doctor` and `station_*` tests that start real processes.
+2. `make package-check`. It checks the launchd agents in `packaging/launchd/` (`dev.fleetdeck.*.plist`) statically.
+3. Install the agents by hand as `packaging/README.md` says (copy the plists to `~/Library/LaunchAgents`, then `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.fleetdeck.station.plist`). Run `fleetdeck doctor`, then `launchctl bootout` the agent. The station agent must use `AbandonProcessGroup`, so that shim-hosted agents survive a station stop (operations guide).
+4. Use a short data directory when a socket test fails with "path too long". A Unix socket path is limited to about 104 bytes on macOS (108 on Linux): use `--data-dir /tmp/fd` for the check.
+5. `make board-repro`. It uses `shasum` on macOS.
+6. `make smoke-live` with signed-in `claude` and `codex` CLIs.
+7. `fleetdeck doctor` on the Mac. It must not show `warn provider ... is older than the tested ...` for a CLI that you just installed.
+
+`make perf` reads `/proc` and runs on Linux only. Do not run it on macOS.
+
+## 7. Rules for tests
+
+These rules are for every person and every agent that changes this repository.
+
+- **Green or revert.** A change is complete only when `make check` is green. If a change makes a check fail and you cannot fix the cause now, revert the change. Do not leave a red check on `v2`.
+- **Never edit, skip or ignore a test to make it pass.** Do not add `#[ignore]`, `skip`, `todo`, `.only`, a wider timeout, a looser assertion or a deleted test to get a green result. If a test is wrong, the owner decides, and the change that fixes the test gets its own DL entry that says why the old assertion was wrong.
+- **No lane may run zero tests.** `tools/check.sh` fails when nextest runs fewer than 1000 tests or `bun test` runs fewer than 300 (R8.4). Raise a floor when the suite grows. Never lower it to make a run pass.
+- **Fail-open behaviors must not get stricter.** An agent can make code look more correct and make it less fail-open. The behaviors below keep a session or the owner working when something fails. Each has a test. A change that makes one of them stricter (a new refusal, a new wait, a new error) needs an owner decision first.
+
+| Fail-open behavior | Where it is decided | Test |
+| --- | --- | --- |
+| A deck or network failure never stops a session (A10, doctrine rule 2). | PLAN A10 | `a_command_for_an_unreachable_station_waits_and_is_sent_when_it_links` |
+| A probe that fails reports `unknown` sign-in, never "signed out", and never opens a session (L11, trap 9). | `crates/fleetdeck-providers` probes | `probe_of_a_missing_binary_reports_unknown`; `station_info_providers_are_probed_once_with_versions` |
+| A CLI that is older than the tested version only warns. Only a version on the deny list is refused (DL-158). | `fleetdeck-providers` `version.rs` | `version::tests::an_older_version_is_older_than_tested`; `a_start_on_a_broken_version_is_refused_with_the_reason` |
+| A checkpoint never delays or fails a turn. A directory outside Git, a submodule or a queued input gives an explicit `unavailable` side, not an error (DL-084). | `manager/turns.rs`, `workspace/boundary.rs` | `a_directory_outside_git_finalizes_every_turn_as_not_a_git_worktree`; `a_native_queued_turn_gives_explicit_unavailable_sides`; the R8.5 bar in `tests/perf.rs` |
+| A station restart retires the effects of a dead process and expires its approvals as `not_resumable`; it never replays an effect (A10, L2, L3). | `store/recovery.rs` | `a_lost_process_retires_queued_effects_and_expires_its_requests` |
+| Auto-continue is off by default, and an uncertain recovery stays `lost` (L19). | `manager/auto_continue.rs` | `auto_continue_tests.rs` |
+| An event or a field from a newer peer is kept as unknown and written back unchanged (L16). | `fleetdeck-proto`, `fleetdeck-link` | `an_event_of_a_newer_build_is_kept_as_unknown_and_written_back_unchanged` |
+| A conflict mail goes to no ended session, and `conflict_mail = false` turns it off (DL-145). | `store` `apply_events` | `an_ended_session_gets_no_mail_and_the_live_one_still_does`; `conflict_mail_false_mails_nobody` |
+
+## 8. Report problems
 
 Note the time, the station, the session and what you did. Attach
 `fleetdeck deck audit` output and the terminal log. Never paste an

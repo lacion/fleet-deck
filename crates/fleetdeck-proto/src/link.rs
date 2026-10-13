@@ -286,6 +286,27 @@ pub struct StationProvider {
     /// instance, or from a station before P5-3.
     #[serde(default)]
     pub capabilities: Option<Capabilities>,
+    /// How the probed version compares with the adapter's tested minimum and
+    /// its deny list (R8.2, DL-162). `unknown` from an older station.
+    #[serde(default)]
+    pub version_status: VersionStatus,
+}
+
+/// The verdict of the provider version check (R8.2, DL-162).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "link/")]
+pub enum VersionStatus {
+    /// At or above the oldest version that the fixtures and smoke cover.
+    Ok,
+    /// Older than the tested minimum: a warning, not a refusal.
+    OlderThanTested,
+    /// A version that is known to break the protocol: starts are refused.
+    Broken,
+    /// No version, or a version that does not parse.
+    #[default]
+    #[serde(other)]
+    Unknown,
 }
 
 /// `workspace.list` params (M2 P4-4, DL-061): the directory to list; `None`
@@ -610,6 +631,7 @@ mod tests {
             json!({"instance": "codex", "provider": "codex", "version": null, "auth": "unknown"});
         let p: StationProvider = serde_json::from_value(old).unwrap();
         assert_eq!(p.capabilities, None);
+        assert_eq!(p.version_status, VersionStatus::Unknown);
         let new = StationProvider {
             capabilities: Some(Capabilities::minimal()),
             ..p
@@ -617,5 +639,22 @@ mod tests {
         let back: StationProvider =
             serde_json::from_value(serde_json::to_value(&new).unwrap()).unwrap();
         assert_eq!(back, new);
+    }
+
+    #[test]
+    fn the_version_status_has_snake_case_names_and_an_unknown_fallback() {
+        let all = [
+            (VersionStatus::Ok, "ok"),
+            (VersionStatus::OlderThanTested, "older_than_tested"),
+            (VersionStatus::Broken, "broken"),
+            (VersionStatus::Unknown, "unknown"),
+        ];
+        for (status, name) in all {
+            assert_eq!(serde_json::to_value(status).unwrap(), json!(name));
+            let back: VersionStatus = serde_json::from_value(json!(name)).unwrap();
+            assert_eq!(back, status);
+        }
+        let newer: VersionStatus = serde_json::from_value(json!("from_the_future")).unwrap();
+        assert_eq!(newer, VersionStatus::Unknown);
     }
 }

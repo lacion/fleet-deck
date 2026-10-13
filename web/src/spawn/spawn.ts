@@ -345,6 +345,20 @@ export function providerChoiceLabel(
   return `${providerLabel(p)}${suffix === '' ? '' : ` · ${suffix}`}${mostRoom ? ' (most room)' : ''}`;
 }
 
+/** The warning under the provider select for a CLI version that the station
+ * marked (R8.2, DL-162); `null` for an `ok` or `unknown` version. */
+export function versionWarning(p: StationProvider | undefined): string | null {
+  if (p === undefined) return null;
+  const version = p.version ?? 'unknown';
+  if (p.version_status === 'older_than_tested') {
+    return `This ${p.provider} CLI (${version}) is older than the version that Fleet Deck is tested with. It still starts, but a feature may not work.`;
+  }
+  if (p.version_status === 'broken') {
+    return `This ${p.provider} version (${version}) is known to break the protocol. The station refuses to start a session with it.`;
+  }
+  return null;
+}
+
 export function spawnActions(
   get: Get,
   post: Post,

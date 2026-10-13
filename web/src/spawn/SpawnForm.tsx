@@ -28,6 +28,7 @@ import {
   spawnModes,
   spawnTargets,
   togglePin,
+  versionWarning,
   workspaceRequest,
   writePins,
 } from './spawn';
@@ -476,6 +477,11 @@ export function SpawnForm({
                 ))}
               </select>
             </label>
+            {versionWarning(provider) === null ? null : (
+              <p className="fd-note" role="status" data-version-warning>
+                {versionWarning(provider)}
+              </p>
+            )}
             <label>
               Permission mode
               <select value={mode} onChange={(event) => setMode(event.target.value)}>

@@ -53,6 +53,12 @@ pub use map::{HANDLED_NOTIFICATIONS, IGNORED_NOTIFICATIONS};
 pub use probe::{parse_account, parse_version};
 pub use requests::{DECLINED_REQUESTS, HANDLED_REQUESTS, validate_question_answer};
 
+/// The oldest `codex` version that the pinned app-server schema and the
+/// recorded fixtures cover (R8.2, DL-162).
+pub const TESTED_MIN_VERSION: &str = "0.160.0";
+/// `codex` versions that are known to break the protocol (none yet).
+pub const KNOWN_BROKEN: &[&str] = &[];
+
 /// Codex collaboration modes (`ModeKind` of the 0.160.0 schema).
 pub const COLLABORATION_MODES: &[&str] = &["plan", "default"];
 

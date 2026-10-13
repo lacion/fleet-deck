@@ -16,6 +16,8 @@ use fleetdeck_core::childenv::ChildEnv;
 use fleetdeck_core::config::{ConfigError, DeckConfig, StationConfig};
 use fleetdeck_core::paths::{Env, NodeDirs};
 use fleetdeck_deck::local::{DeckRequest, DeckResponse};
+use fleetdeck_proto::event::ProviderKind;
+use fleetdeck_proto::link::VersionStatus;
 use tokio::net::TcpStream;
 use tokio::process::Command;
 
@@ -233,7 +235,7 @@ async fn check_providers_and_shells(report: &mut Report, station: &Loaded<Statio
             }
         };
         match version(&instance.binary, Some(&env)).await {
-            Ok(line) => report.ok(&check, line),
+            Ok(line) => report_provider_version(report, &check, instance.driver.kind(), &line),
             Err(e) => report.fail(&check, e),
         }
     }
@@ -241,6 +243,31 @@ async fn check_providers_and_shells(report: &mut Report, station: &Loaded<Statio
         report.ok("shells", "shells on");
     } else {
         report.warn("shells", "shells off: the board offers no terminal");
+    }
+}
+
+/// (d) for one provider: the version line is `ok`, unless the version is
+/// older than the adapter's tested minimum (a warning, R8.2) or on its deny
+/// list (a failure: the station refuses starts).
+fn report_provider_version(report: &mut Report, check: &str, kind: ProviderKind, line: &str) {
+    let parsed = match kind {
+        ProviderKind::Claude => fleetdeck_providers::claude::parse_version(line),
+        ProviderKind::Codex => fleetdeck_providers::codex::parse_version(line),
+        ProviderKind::Unknown => None,
+    };
+    let status = fleetdeck_providers::version::version_status(kind, parsed.as_deref());
+    let min = fleetdeck_providers::version::tested_min_version(kind).unwrap_or("?");
+    let shown = parsed.as_deref().unwrap_or(line);
+    match status {
+        VersionStatus::OlderThanTested => report.warn(
+            check,
+            format_args!("{shown} is older than the tested {min}"),
+        ),
+        VersionStatus::Broken => report.fail(
+            check,
+            format_args!("{shown} is known to break the protocol"),
+        ),
+        VersionStatus::Ok | VersionStatus::Unknown => report.ok(check, line),
     }
 }
 

@@ -47,7 +47,7 @@ Commands: Rust tests run with `cargo nextest run -E 'test(<name>)'`, board unit 
 | Batch spawn with `Nx`, forced worktree isolation | `web/e2e/spawn.spec.ts` "a batch starts one worktree session per line with Nx (M3 6-1)" | done |
 | Conflict radar | `web/e2e/conflicts.spec.ts` (see above) | done |
 | Fake agents and test seams | `crates/fleetdeck-cli/tests/cutover.rs` `normal_tests_use_fake_agents_and_live_smoke_tests_are_opt_in` (the `fleetdeck-testkit` fakes exist; every live smoke test in `crates/fleetdeck-providers/tests/live_smoke.rs` is ignored behind `FD_LIVE_SMOKE=1`, `make smoke-live`) | done |
-| Provider version gate | `station_info_providers_are_probed_once_with_versions`; `probe_of_a_missing_binary_reports_unknown` | probe done; a per-provider minimum version deferred (DL-131) |
+| Provider version gate | `station_info_providers_are_probed_once_with_versions`; `probe_of_a_missing_binary_reports_unknown`; `version::tests`; `manager/version_tests.rs` | done (DL-162): an older CLI warns, only a deny-listed version is refused (DL-158) |
 
 ## Provider-specific capability degradation
 
@@ -57,22 +57,24 @@ Commands: Rust tests run with `cargo nextest run -E 'test(<name>)'`, board unit 
 
 1. Session grid (many live session views at once).
 2. LAN station discovery (mDNS, `mdns-sd`); owners add dial targets by hand.
-3. A per-provider minimum CLI version that refuses an older CLI (the probe reports the version).
+3. ~~A per-provider minimum CLI version that refuses an older CLI.~~ Replaced by DL-158 and built in DL-162: an older CLI gets a warning, and only a known-broken version is refused.
 
 ## Board parity with the v1 board (DL-141, DL-142)
 
 The v1 board's features and their v2 status are in the parity audit of DL-141 (a 139-row matrix). Built in DL-141: the v1 columns and cards, the answerable Needs-you rail with keys, conflict marks, repo grouping, Resume all, Clear and per-browser archive, stars, the bypass mark, the last error, mail to a station, a repo or everyone, compact density, light/dark/system theme, help with concepts and first-run help, the mail key `c`, plan assign to a live session, the batch preview, recent and pinned directories, card mail badges, file chips and the activity sparkline, the global Files page, Markdown view and copy path, TUI Shift+Enter, OSC 52 copy, the deck version, and the read-only worktree list (DL-142). Built in night 2 (DL-143 … DL-150):
 
-| v1 feature | v2 | Tests |
-| --- | --- | --- |
-| Worktree verdict without running repository programs | DL-143: no `git status`; the station reads the index and hashes changed files itself | `worktrees_tests.rs` (filters, fsmonitor and the signature verifier never run; staged, rewritten, `chmod +x`, unborn and submodule work) |
-| Git access preflight, branch choice, ticket callsigns | DL-144: `workspace.preflight`, `Worktree { branch, base }`, `<animal>-<KEY>` | `preflight.rs`, `provision.rs` tests; `web/e2e/night2.spec.ts` |
-| Conflict warning to the agents | DL-145: one follow-up mail per pair, file and recipient; `conflict_mail` in deck.toml | `crates/fleetdeck-deck/tests/conflict_mail.rs` |
-| LAN link and QR code for a phone | DL-146: "Add a device" (owner only, single-use link per board address, local QR encoder) | `board_device_link.rs`; `web/e2e/night2.spec.ts` "Add a device …" |
-| Image paste into a TUI or shell tab | DL-147: `files.write_temp` and `POST …/paste`; the path is typed, never Enter | `paste_tests.rs`, `board_paste.rs`, `web/src/terminal/paste.test.ts` |
-| Setup command | DL-148: opt-in `allow_setup_cmd`, owner only, process group plus marker cleanup | `setup_tests.rs`, `board_setup_cmd.rs`; `web/e2e/night2.spec.ts` |
-| Per-browser archive | DL-149: the archive lives on the deck (sync across devices) | `board_archive.rs`, `web/src/ui/archive.test.ts` |
-| `fleetdeck doctor` | read-only setup check | `crates/fleetdeck-cli/tests/doctor.rs` |
-| Worktree removal from the board | DL-150: trash, restore, delete permanently, stop tracking | `trash_tests.rs`, `trash_race_tests.rs`, `board_worktree_trash.rs`, `web/e2e/trash.spec.ts` |
+| v1 feature | v2 | Tests | Fail-open and exposure proof (R9.2) |
+| --- | --- | --- | --- |
+| Worktree verdict without running repository programs | DL-143: no `git status`; the station reads the index and hashes changed files itself | `worktrees_tests.rs` (filters, fsmonitor and the signature verifier never run; staged, rewritten, `chmod +x`, unborn and submodule work) | Fail-open: `a_repository_with_git_filters_is_inspected_without_running_them`, `a_configured_fsmonitor_command_does_not_run`. Exposure: `board_worktrees.rs` `the_owner_lists_the_worktrees_of_a_station_and_a_token_cannot`. |
+| Git access preflight, branch choice, ticket callsigns | DL-144: `workspace.preflight`, `Worktree { branch, base }`, `<animal>-<KEY>` | `preflight.rs`, `provision.rs` tests; `web/e2e/night2.spec.ts` | Fail-open: `workspace_preflight.rs` `the_preflight_is_relayed_to_the_station_and_its_refusals_are_mapped`. Exposure: `preflight.rs` `urls_with_credentials_or_outside_the_roots_are_refused`. |
+| Conflict warning to the agents | DL-145: one follow-up mail per pair, file and recipient; `conflict_mail` in deck.toml | `crates/fleetdeck-deck/tests/conflict_mail.rs` | Fail-open: `conflict_mail.rs` `an_ended_session_gets_no_mail_and_the_live_one_still_does`, `conflict_mail_false_mails_nobody`. Exposure: —. |
+| LAN link and QR code for a phone | DL-146: "Add a device" (owner only, single-use link per board address, local QR encoder) | `board_device_link.rs`; `web/e2e/night2.spec.ts` "Add a device …" | Exposure: `board_device_link.rs` `a_token_is_refused_and_no_link_is_made`, `a_request_without_the_csrf_header_is_refused`, `the_eleventh_link_in_a_minute_waits`. |
+| Image paste into a TUI or shell tab | DL-147: `files.write_temp` and `POST …/paste`; the path is typed, never Enter | `paste_tests.rs`, `board_paste.rs`, `web/src/terminal/paste.test.ts` | Fail-open: `board_paste.rs` `a_station_without_a_paste_directory_answers_unsupported`. Exposure: `paste_tests.rs` `every_extension_needs_its_magic_bytes`, `a_link_in_place_of_the_directory_is_refused`; `board_paste.rs` `a_body_above_one_mib_is_refused`. |
+| Setup command | DL-148: opt-in `allow_setup_cmd`, owner only, process group plus marker cleanup | `setup_tests.rs`, `board_setup_cmd.rs`; `web/e2e/night2.spec.ts` | Fail-open: `manager/setup_tests.rs` `a_slow_setup_does_not_block_other_sessions_and_a_stop_ends_it`. Exposure: `board_setup_cmd.rs` `a_token_cannot_start_a_session_with_a_setup_command`; `setup_tests.rs` `a_coordinator_start_cannot_carry_a_setup_command`, `a_station_with_the_policy_off_refuses_a_setup_command`. |
+| Per-browser archive | DL-149: the archive lives on the deck (sync across devices) | `board_archive.rs`, `web/src/ui/archive.test.ts` | Fail-open: `board_archive.rs` `the_owner_archives_and_a_resend_changes_nothing`. Exposure: `archive_changes_need_drive_csrf_and_a_valid_body`. |
+| `fleetdeck doctor` | read-only setup check | `crates/fleetdeck-cli/tests/doctor.rs` | Fail-open: `doctor.rs` `a_provider_older_than_the_tested_version_is_a_warning` (a warning, never a failure). Exposure: — (read-only). |
+| Worktree removal from the board | DL-150: trash, restore, delete permanently, stop tracking | `trash_tests.rs`, `trash_race_tests.rs`, `board_worktree_trash.rs`, `web/e2e/trash.spec.ts` | Fail-open: `trash_race_tests.rs` `a_folder_replaced_after_the_claim_is_neither_deleted_nor_moved`; `trash_tests.rs` `a_queued_purge_after_a_release_is_superseded_and_deletes_nothing`. Exposure: `board_worktree_trash.rs` `a_token_and_a_missing_csrf_header_are_refused_and_audited`. |
+| Models list for the board selector | DL-151: `session.models` event from the provider | `claude/tests.rs`, `codex/tests.rs`, `fold_tests.rs` | Fail-open: an empty or failed `model/list` emits nothing and no error (`codex/tests.rs`). Exposure: — (display only). |
+| Provider version check | DL-158, DL-162: `version_status` in `station.info`, spawn-form warning, `doctor` warning, deny list | `version::tests`, `manager/version_tests.rs`, `doctor.rs`, `web/src/spawn/spawn.test.tsx` | Fail-open: `an_older_version_is_older_than_tested` (a warning only), `station_info_marks_an_older_cli_and_accepts_a_tested_one`. Exposure: `a_start_on_a_broken_version_is_refused_with_the_reason`. |
 
 Also built: a fast graceful stop during a turn and on the shim host (DL-141 follow-up), and a chat notice when the v1 plugin is active in a v2 session.
