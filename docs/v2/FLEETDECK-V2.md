@@ -191,7 +191,7 @@ The owner creates a project on the board. A preflight checks each binding from t
    - move a Jira or Linear issue (for example to "In review" with the PR link).
 
    Each write needs a verb allowlist, an identity preview ("posts as @user"), one board confirm per write and an audit line, and it is never batched or automatic. Built (DL-164).
-10. **GitLab details:** subgroup paths with three or more segments, and SSH and https remotes that name the same project. Partial (the clone preflight exists, DL-144).
+10. **GitLab details:** subgroup paths with three or more segments, and SSH and https remotes that name the same project. Built (DL-164): subgroup paths of 2 to 20 segments and SSH or https remotes of one project match.
 
 ### R4. Usage and accounts
 
