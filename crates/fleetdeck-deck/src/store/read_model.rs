@@ -14,6 +14,8 @@
 //!   most [`TIMELINE_CAP`] rows per session (DL-049).
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use fleetdeck_proto::link::ReplayParams;
 use fleetdeck_proto::{
@@ -155,6 +157,11 @@ impl DeckStore {
         events: Vec<EventEnvelope>,
     ) -> Result<Applied> {
         let now = self.now_ms();
+        let mail_ids = self
+            .inner
+            .conflict_mail
+            .load(Ordering::Relaxed)
+            .then(|| Arc::clone(&self.inner.ids));
         let (id, inc) = (station.clone(), incarnation.clone());
         let (applied, folded) = call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
@@ -181,7 +188,11 @@ impl DeckStore {
                 append_timeline(&tx, &station, &e)?;
                 super::plans::record_plan(&tx, &station, &e, &summary, now)?;
                 super::grants::record_lifecycle(&tx, &station, &e)?;
-                super::conflicts::record_touches(&tx, &station, &e, &summary)?;
+                let mail = mail_ids.as_ref().map(|ids| super::conflicts::MailContext {
+                    ids: ids.as_ref(),
+                    now,
+                });
+                super::conflicts::record_touches(&tx, &station, &e, &summary, mail.as_ref())?;
                 touched.insert(e.session_id.clone());
                 cursor = e.station_seq;
                 applied += 1;

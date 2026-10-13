@@ -159,6 +159,38 @@ fn get_task(conn: &Connection, id: &str) -> Result<Option<TaskView>> {
         .optional()?)
 }
 
+/// Stores a mail and its outbox item in the caller's transaction. A known
+/// `mail_id` returns the stored mail and inserts nothing (`false`).
+pub(super) fn insert_mail(
+    conn: &Connection,
+    mail: &NewMail,
+    outbox_id: &str,
+    now: i64,
+) -> Result<(MailView, bool)> {
+    if let Some(stored) = get_mail(conn, &mail.mail_id)? {
+        return Ok((stored, false));
+    }
+    insert_item(conn, outbox_id, &mail.item, now)?;
+    conn.execute(
+        "INSERT INTO mail (mail_id, sender, station_id, session_id, delivery, text,
+             outbox_id, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            mail.mail_id,
+            mail.sender,
+            mail.item.station_id.as_str(),
+            mail.session_id.0,
+            delivery_name(mail.delivery),
+            mail.text,
+            outbox_id,
+            now
+        ],
+    )?;
+    let stored = get_mail(conn, &mail.mail_id)?
+        .ok_or_else(|| DeckError::Corrupt("an inserted mail is gone".to_owned()))?;
+    Ok((stored, true))
+}
+
 impl DeckStore {
     /// Stores a mail and queues its delivery in one transaction. A known
     /// `mail_id` returns the stored mail and queues nothing (`false`).
@@ -170,29 +202,9 @@ impl DeckStore {
         let outbox_id: String = new_id(self.inner.ids.as_ref());
         call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
-            if let Some(stored) = get_mail(&tx, &mail.mail_id)? {
-                return Ok((stored, false));
-            }
-            insert_item(&tx, &outbox_id, &mail.item, now)?;
-            tx.execute(
-                "INSERT INTO mail (mail_id, sender, station_id, session_id, delivery, text,
-                     outbox_id, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                params![
-                    mail.mail_id,
-                    mail.sender,
-                    mail.item.station_id.as_str(),
-                    mail.session_id.0,
-                    delivery_name(mail.delivery),
-                    mail.text,
-                    outbox_id,
-                    now
-                ],
-            )?;
-            let stored = get_mail(&tx, &mail.mail_id)?
-                .ok_or_else(|| DeckError::Corrupt("an inserted mail is gone".to_owned()))?;
+            let stored = insert_mail(&tx, &mail, &outbox_id, now)?;
             tx.commit()?;
-            Ok((stored, true))
+            Ok(stored)
         })
         .await
     }

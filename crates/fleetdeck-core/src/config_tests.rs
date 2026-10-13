@@ -199,6 +199,7 @@ fn deck_defaults_and_rules() {
     assert_eq!(d.listen, vec![DEFAULT_BOARD_LISTEN.parse().unwrap()]);
     assert_eq!(d.link_listen, vec![DEFAULT_LINK_LISTEN.parse().unwrap()]);
     assert_eq!(d.tailnet_hostname, None);
+    assert!(d.conflict_mail);
     let d = DeckConfig::parse(
         "name = \"home\"\nlisten = [\"100.101.1.2:7420\"]\nlink_listen = []\n\
          tailnet_hostname = \"Deck.tail1234.ts.net\"",
@@ -206,6 +207,18 @@ fn deck_defaults_and_rules() {
     .unwrap();
     assert!(d.link_listen.is_empty());
     assert_eq!(d.tailnet_hostname.as_deref(), Some("deck.tail1234.ts.net"));
+    assert!(d.conflict_mail);
+    assert!(
+        !DeckConfig::parse("conflict_mail = false")
+            .unwrap()
+            .conflict_mail
+    );
+    assert!(
+        DeckConfig::parse("conflict_mail = true")
+            .unwrap()
+            .conflict_mail
+    );
+    assert!(DeckConfig::parse("conflict_mail = 1").is_err());
     let e = |t: &str| DeckConfig::parse(t).unwrap_err().to_string();
     assert!(e("listen = []").contains("listen"));
     assert!(e("listen = [\"0.0.0.0:7420\"]").contains("refusing to listen"));
