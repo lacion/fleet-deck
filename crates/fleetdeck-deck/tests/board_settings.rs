@@ -417,3 +417,62 @@ async fn a_station_save_is_forwarded_with_the_elevation_decision() {
         assert!(!format!("{e:?}").contains(&elevation));
     }
 }
+
+fn name_change(name: &str, revision: &str) -> fleetdeck_proto::settings::SettingsChange {
+    serde_json::from_value(json!({ "changes": { "name": name }, "revision": revision })).unwrap()
+}
+
+/// PRE-PR r1 finding 5: a save waits for the gate, and the saves of one deck
+/// publish in the order of their commits.
+#[tokio::test]
+async fn a_save_waits_for_the_gate_and_the_live_name_follows_the_last_commit() {
+    use fleetdeck_deck::http::settings_routes::{deck_view, save_and_publish};
+
+    let tmp = tempfile::tempdir().unwrap();
+    let (_f, c) = deck_board(tmp.path()).await;
+    let settings = c.state.settings.clone().unwrap();
+    let revision = deck_view(&settings).await.unwrap().revision;
+
+    // A held gate holds the save before it writes the file.
+    let held = settings.gate.lock().await;
+    let save = tokio::spawn({
+        let (settings, store, live) = (settings.clone(), c.store.clone(), c.state.live.clone());
+        let change = name_change("held", &revision);
+        async move { save_and_publish(&settings, &store, &live, change, false).await }
+    });
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(!save.is_finished());
+    let text = std::fs::read_to_string(tmp.path().join("deck.toml")).unwrap();
+    assert!(text.contains("name = \"alpha\""), "{text}");
+    drop(held);
+    save.await.unwrap().unwrap();
+    assert_eq!(c.state.live.get().name, "held");
+
+    // Concurrent saves, each retried on a stale revision: the live name
+    // equals the name in the file at the end.
+    let mut tasks = Vec::new();
+    for i in 0..8 {
+        let (settings, store, live) = (settings.clone(), c.store.clone(), c.state.live.clone());
+        tasks.push(tokio::spawn(async move {
+            loop {
+                let revision = deck_view(&settings).await.unwrap().revision;
+                let change = name_change(&format!("n{i}"), &revision);
+                match save_and_publish(&settings, &store, &live, change, false).await {
+                    Ok(_) => return,
+                    Err(fleetdeck_core::settings::SaveError::SettingsChanged) => {}
+                    Err(e) => panic!("{e}"),
+                }
+            }
+        }));
+    }
+    for t in tasks {
+        t.await.unwrap();
+    }
+    let text = std::fs::read_to_string(tmp.path().join("deck.toml")).unwrap();
+    let live = c.state.live.get();
+    assert!(
+        text.contains(&format!("name = \"{}\"", live.name)),
+        "{} in {text}",
+        live.name
+    );
+}

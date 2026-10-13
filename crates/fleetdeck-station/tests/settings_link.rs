@@ -123,9 +123,10 @@ impl Rig {
         let restart = Arc::new(FakeRestart::default());
         let handle: Option<Arc<dyn Restart>> =
             handle.then(|| Arc::clone(&restart) as Arc<dyn Restart>);
-        manager.set_settings(Arc::new(StationSettings::new(
-            &config, &store_dir, env, handle,
-        )));
+        manager.set_settings(Arc::new(
+            StationSettings::new(&config, &store_dir, env, handle)
+                .with_settle(Duration::from_millis(400)),
+        ));
         let deck = Arc::new(Identity::generate().unwrap());
         store
             .pin_peer(PairedKey {
@@ -514,6 +515,50 @@ async fn a_restart_lists_a_running_direct_session_and_stops_it_only_when_told() 
     }
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(rig.restart.0.load(Ordering::SeqCst), 1);
+    rig.manager.shutdown(StopMode::Kill).await;
+}
+
+#[tokio::test]
+async fn a_refused_restart_unfreezes_and_an_accepted_one_refuses_new_sessions() {
+    let mut rig = Rig::new(4).await;
+    let deck = rig.connect().await;
+    rig.start_session("c1").await.unwrap();
+    rig.wait_live(1).await;
+    let ask = |stop: bool| {
+        call(
+            &deck.control,
+            "station.restart",
+            json!({ "stop_direct_sessions": stop, "elevated": true }),
+        )
+    };
+    // A refusal for a missing consent: starts work again.
+    let answer: RestartAnswer = serde_json::from_value(ok(ask(false).await)).unwrap();
+    assert!(!answer.restarting);
+    assert!(!rig.manager.restart_state().restarting());
+    rig.start_session("c2").await.unwrap();
+    // A start in flight for longer than the wait: `unavailable`, unfrozen.
+    let held = rig.manager.restart_state().enter_submit();
+    let e = err(ask(true).await);
+    assert_eq!(e.code, "unavailable");
+    assert_eq!(e.message, "starts are still running; try again");
+    assert!(!rig.manager.restart_state().restarting());
+    drop(held);
+    assert_eq!(rig.restart.0.load(Ordering::SeqCst), 0);
+    // An accepted restart keeps the freeze: a new session is refused, and a
+    // second request does not undo it.
+    let answer: RestartAnswer = serde_json::from_value(ok(ask(true).await)).unwrap();
+    assert!(answer.restarting);
+    assert_eq!(
+        rig.start_session("c3").await.unwrap_err(),
+        RejectCode::InvalidState
+    );
+    let again: RestartAnswer = serde_json::from_value(ok(ask(false).await)).unwrap();
+    assert!(!again.restarting);
+    assert!(rig.manager.restart_state().restarting());
+    assert_eq!(
+        rig.start_session("c4").await.unwrap_err(),
+        RejectCode::InvalidState
+    );
     rig.manager.shutdown(StopMode::Kill).await;
 }
 

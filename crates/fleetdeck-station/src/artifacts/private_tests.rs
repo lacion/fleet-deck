@@ -95,6 +95,26 @@ async fn a_hard_link_to_a_private_file_is_not_published() {
 }
 
 #[tokio::test]
+async fn a_hard_link_to_a_credential_file_is_not_published() {
+    let r = private_rig().await;
+    let station = r.base.join(".local/share/fleetdeck/station");
+    write(&station.join("accounts/acct-x.json"), "account\n");
+    let config = r.base.join(".config/fleetdeck/station.toml");
+    let temp = r.base.join(".config/fleetdeck/station.toml.tmp-save");
+    write(&temp, "saved\n");
+    std::fs::rename(&temp, &config).unwrap();
+    for (source, name) in [
+        (station.join("accounts/acct-x.json"), "link-account.txt"),
+        (station.join("secrets/jira_token"), "link-secret.txt"),
+        (config, "link-config.txt"),
+    ] {
+        std::fs::hard_link(source, r.work.join(name)).unwrap();
+        let err = r.service.publish(publish(name)).await.unwrap_err();
+        assert_eq!(err.code, code::NOT_FOUND, "{name}");
+    }
+}
+
+#[tokio::test]
 async fn an_html_page_does_not_bundle_a_private_file_that_it_names() {
     let r = private_rig().await;
     // The page lies in the config directory: its sibling `station.toml`

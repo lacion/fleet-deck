@@ -46,8 +46,8 @@ pub const API: &[ApiMethod] = &[
     )
     .member(),
     // The accounts of a station (DL-173). The owner-only rows are `admin`,
-    // and every handler also requires the owner's board login (DL-138); the
-    // containers read needs `read` and is closed to members. The relay rows
+    // and every handler also requires the owner's board login (DL-138), the
+    // containers read too (PRE-PR r1). The relay rows
     // (`/api/secrets/...`) carry a secret and never go through commands.
     m(
         "accounts.list",
@@ -81,7 +81,7 @@ pub const API: &[ApiMethod] = &[
         "accounts.containers",
         Method::GET,
         "/api/stations/{station}/accounts/{account_id}/containers",
-        Some(Scope::Read),
+        Some(Scope::Admin),
         false,
     ),
     m(

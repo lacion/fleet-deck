@@ -390,3 +390,89 @@ async fn a_manager_without_private_paths_refuses_every_file_call() {
         .shutdown(fleetdeck_proto::command::StopMode::Graceful)
         .await;
 }
+
+/// The hard links of PRE-PR r1 finding 1 inside `home`: one for each
+/// credential kind that the identity list of the set does not hold. Returns
+/// the names of the links.
+fn credential_links(home: &Path) -> Vec<String> {
+    let station = home.join(".local/share/fleetdeck/station");
+    std::fs::create_dir_all(station.join("accounts")).unwrap();
+    std::fs::write(
+        station.join("accounts/acct-x.json"),
+        format!("{NEEDLE} account\n"),
+    )
+    .unwrap();
+    // A save replaces station.toml by rename: the new inode is not in the
+    // identity list that was built at start.
+    let config = home.join(".config/fleetdeck/station.toml");
+    let temp = home.join(".config/fleetdeck/station.toml.tmp-save");
+    std::fs::write(&temp, format!("{NEEDLE} saved\n")).unwrap();
+    std::fs::rename(&temp, &config).unwrap();
+    let mut names = Vec::new();
+    for (source, name) in [
+        (station.join("accounts/acct-x.json"), "link-account.txt"),
+        (station.join("secrets/jira_token"), "link-secret.txt"),
+        (config, "link-config.txt"),
+    ] {
+        std::fs::hard_link(source, home.join(name)).unwrap();
+        names.push(name.to_owned());
+    }
+    names
+}
+
+#[tokio::test]
+async fn a_hard_link_to_a_credential_file_is_not_read_for_the_owner_and_a_member() {
+    let det = Det::new();
+    let (_t, home, private) = world();
+    let links = credential_links(&home);
+    let s = store_with_session(&det, &home).await;
+    let p = policy(&home);
+    for member in [false, true] {
+        for name in &links {
+            let err = read_as(
+                &s,
+                &p,
+                &private,
+                FileReadQuery {
+                    root: session(),
+                    path: name.clone(),
+                    max_bytes: None,
+                },
+                member,
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(err.code, code::NOT_FOUND, "member {member}: {name}");
+        }
+        // A file with one link is unchanged.
+        let ok = read_as(
+            &s,
+            &p,
+            &private,
+            FileReadQuery {
+                root: session(),
+                path: "notes.txt".into(),
+                max_bytes: None,
+            },
+            member,
+        )
+        .await
+        .unwrap();
+        assert!(ok.text.unwrap().contains(NEEDLE));
+    }
+}
+
+#[tokio::test]
+async fn a_walk_search_skips_a_hard_link_to_a_credential_file() {
+    let (_t, home, private) = world();
+    let links = credential_links(&home);
+    for member in [false, true] {
+        let (content, backend) =
+            search_paths(&home, &private, member, SearchMode::Content, NEEDLE).await;
+        assert_eq!(backend, SearchBackend::Walk);
+        assert_eq!(content, normal_set(), "member {member}");
+        for name in &links {
+            assert!(!content.contains(name), "member {member}: {name}");
+        }
+    }
+}

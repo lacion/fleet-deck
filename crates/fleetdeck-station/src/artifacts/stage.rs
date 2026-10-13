@@ -56,16 +56,20 @@ fn descend(base: &OwnedFd, segments: &[&str]) -> rustix::io::Result<OwnedFd> {
 }
 
 /// Opens the regular file `name` of `dir`. `None` for anything else: a
-/// missing name, a symlink, a directory, a FIFO, a device, or a hard link to
-/// a private file of the station.
-fn open_regular(dir: &OwnedFd, name: &str, private: &PrivatePaths) -> Option<File> {
+/// missing name, a symlink, a directory, a FIFO, a device, a hard link to a
+/// private file of the station, or a file with more than one link (outside
+/// `.git`). `rel` is the path of the file below the root.
+fn open_regular(dir: &OwnedFd, name: &str, rel: &str, private: &PrivatePaths) -> Option<File> {
     let fd = rustix::fs::openat(dir, name, file_flags(), Mode::empty()).ok()?;
     let stat = rustix::fs::fstat(fd.as_fd()).ok()?;
     if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile {
         return None;
     }
     let file = File::from(fd);
-    (!file.metadata().is_ok_and(|m| private.is_private_file(&m))).then_some(file)
+    (!file
+        .metadata()
+        .is_ok_and(|m| private.is_private_opened(&m, rel)))
+    .then_some(file)
 }
 
 /// Streams `source` into `target` and returns its size and SHA-256.
@@ -138,7 +142,7 @@ pub fn stage(
     }
     let base = open_root(root).map_err(|_| not_found(rel))?;
     let page_dir = descend(&base, parents).map_err(|_| not_found(rel))?;
-    let main = open_regular(&page_dir, name, private).ok_or_else(|| not_found(rel))?;
+    let main = open_regular(&page_dir, name, rel, private).ok_or_else(|| not_found(rel))?;
     fs::create_dir_all(staging).map_err(|e| io_error("staging directory", e))?;
     let (size, sha256) = copy_hashed(main, &staging.join(name))?;
     let mut files = vec![StagedFile {
@@ -173,7 +177,7 @@ pub fn stage(
         let Ok(dir) = descend(&page_dir, dirs) else {
             continue;
         };
-        let Some(file) = open_regular(&dir, last, private) else {
+        let Some(file) = open_regular(&dir, last, &reference, private) else {
             continue;
         };
         let (size, sha256) = copy_hashed(file, &staging.join(&reference))?;

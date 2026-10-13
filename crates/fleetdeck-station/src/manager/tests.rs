@@ -740,6 +740,8 @@ mod origin_text_tests;
 mod policy_hub_tests;
 #[path = "rename_tests.rs"]
 mod rename;
+#[path = "restart_gate_tests.rs"]
+mod restart_gate;
 #[path = "resume_tests.rs"]
 mod resume;
 #[path = "revert_wired_tests.rs"]

@@ -6,8 +6,8 @@
 //!   .../accounts/{account_id}/logout`: owner only. The deck relays them to
 //!   the station's `accounts.*` methods. A token or a member gets 403
 //!   `owner_only`.
-//! - `GET .../accounts/{account_id}/containers`: scope `read`, closed to
-//!   members; the projects of Jira or the teams of Linear.
+//! - `GET .../accounts/{account_id}/containers`: owner only, like the other
+//!   routes; the projects of Jira or the teams of Linear.
 //! - `POST /api/accounts/oauth/start` and `POST /api/accounts/oauth/finish`:
 //!   owner only, with the transactions of [`crate::oauth`].
 //!
@@ -375,16 +375,18 @@ pub async fn logout(
         .map(|_| Json(json!({})))
 }
 
-/// `GET /api/stations/{station}/accounts/{account_id}/containers`: scope
-/// `read`, closed to members (the guard). The Jira projects or Linear teams
-/// of an account.
+/// `GET /api/stations/{station}/accounts/{account_id}/containers`: owner
+/// only (PRE-PR r1). The Jira projects or Linear teams of an account.
 ///
 /// # Errors
-/// 400 `invalid_field`; 404 `unknown_station`; 409; 502; 504.
+/// 400 `invalid_field`; 403 `owner_only`; 404 `unknown_station`; 409; 502;
+/// 504.
 pub async fn containers(
     State(board): State<Arc<Board>>,
+    Extension(principal): Extension<Principal>,
     Path((name, account_id)): Path<(String, String)>,
 ) -> Result<Json<Containers>, ApiError> {
+    owner(&principal)?;
     if !id_ok(&account_id) {
         return Err(invalid_field());
     }

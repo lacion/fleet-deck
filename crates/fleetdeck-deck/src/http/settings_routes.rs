@@ -46,6 +46,9 @@ pub struct DeckSettings {
     /// `(key, flag)` of the values that the process took from the command
     /// line, for example `("listen", "--listen")`.
     pub overrides: Vec<(String, String)>,
+    /// Holds a save from its start to its publish, so that two saves
+    /// publish in the order of their commits (PRE-PR r1). A clone shares it.
+    pub gate: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl std::fmt::Debug for DeckSettings {
@@ -353,7 +356,8 @@ async fn deck_save(
 }
 
 /// Saves a change of the deck settings and publishes the live fields. The
-/// board routes and the local socket both call it.
+/// board routes and the local socket both call it. The gate of the settings
+/// is held until the publish.
 ///
 /// # Errors
 /// [`SaveError`].
@@ -364,6 +368,7 @@ pub async fn save_and_publish(
     change: SettingsChange,
     elevated: bool,
 ) -> Result<SettingsSaved, SaveError> {
+    let _gate = settings.gate.lock().await;
     let writer = Arc::clone(&settings.writer);
     let saved = tokio::task::spawn_blocking(move || {
         writer.save(&change, elevated, |new| {

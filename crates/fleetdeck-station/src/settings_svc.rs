@@ -32,6 +32,9 @@ use crate::shell::Shells;
 /// The wait between the answer of `station.restart` and the restart request.
 pub const RESTART_DELAY: Duration = Duration::from_millis(200);
 
+/// The longest wait of a restart admission for the starts in flight.
+pub const RESTART_SETTLE: Duration = Duration::from_secs(10);
+
 /// The settings of one station: the only writer of its config file while the
 /// station runs.
 pub struct StationSettings {
@@ -41,6 +44,10 @@ pub struct StationSettings {
     writer: Arc<SettingsWriter<StationHolder>>,
     /// Holds a save from its `prepare` to its `publish`.
     gate: Arc<std::sync::Mutex<()>>,
+    /// Serializes the restart admissions (PRE-PR r1 finding 3).
+    restart_gate: tokio::sync::Mutex<()>,
+    /// How long an admission waits for the starts in flight.
+    settle: Duration,
     restart: Option<Arc<dyn Restart>>,
 }
 
@@ -99,8 +106,17 @@ impl StationSettings {
             env,
             writer: Arc::new(writer),
             gate: Arc::default(),
+            restart_gate: tokio::sync::Mutex::new(()),
+            settle: RESTART_SETTLE,
             restart,
         }
+    }
+
+    /// Changes the wait of a restart admission (tests shorten it).
+    #[must_use]
+    pub fn with_settle(mut self, settle: Duration) -> Self {
+        self.settle = settle;
+        self
     }
 
     /// `settings.get`: the view of the config file. A secret is shown as
@@ -184,6 +200,11 @@ impl StationSettings {
     /// `station.restart`: lists what a restart ends. It asks the process to
     /// restart after the answer, when nothing is listed or when the caller
     /// accepts to stop it.
+    ///
+    /// The admission runs under the restart gate (PRE-PR r1): it freezes new
+    /// sessions, waits for the starts in flight, and only then lists what
+    /// the restart ends. A refusal or a failure unfreezes; the freeze stays
+    /// after the answer `restarting: true`.
     pub async fn restart(
         &self,
         manager: &Arc<SessionManager>,
@@ -202,16 +223,27 @@ impl StationSettings {
         let Some(handle) = self.restart.clone() else {
             return unsupported("this station cannot restart itself");
         };
+        let _admission = self.restart_gate.lock().await;
+        manager.begin_restart();
+        if !manager.settle_starts(self.settle).await {
+            manager.end_restart();
+            return fixed("unavailable", "starts are still running; try again");
+        }
         let would_stop = match manager.restart_would_stop(shells).await {
             Ok(list) => list,
-            Err(_) => return fixed("internal", "the restart list cannot be built"),
+            Err(_) => {
+                manager.end_restart();
+                return fixed("internal", "the restart list cannot be built");
+            }
         };
         if !would_stop.is_empty() && !request.stop_direct_sessions {
+            manager.end_restart();
             return ok(RestartAnswer {
                 restarting: false,
                 would_stop,
             });
         }
+        manager.commit_restart();
         tokio::spawn(async move {
             tokio::time::sleep(RESTART_DELAY).await;
             handle.request();

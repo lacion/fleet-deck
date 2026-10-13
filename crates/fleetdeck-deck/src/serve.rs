@@ -152,6 +152,7 @@ impl RunningDeck {
             )),
             path: settings_path,
             overrides,
+            gate: Arc::default(),
         };
         let board_settings = deck_settings.clone();
         let live_cell = crate::live::LiveCell::new(live);

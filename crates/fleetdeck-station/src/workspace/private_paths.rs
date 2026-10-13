@@ -237,6 +237,18 @@ impl PrivatePaths {
         self.deny_all || (meta.is_file() && self.ids.contains(&(meta.dev(), meta.ino())))
     }
 
+    /// True when the opened file must not be read, searched or staged:
+    /// [`Self::is_private_file`], or a regular file with more than one hard
+    /// link (a link to a credential cannot be told apart cheaply) unless one
+    /// component of `rel` (its path below the root) is `.git`, where git
+    /// itself makes hard links. `meta` is the metadata of the opened file,
+    /// not of its name.
+    #[must_use]
+    pub fn is_private_opened(&self, meta: &std::fs::Metadata, rel: &str) -> bool {
+        self.is_private_file(meta)
+            || (meta.is_file() && meta.nlink() > 1 && !rel.split('/').any(|c| c == ".git"))
+    }
+
     /// [`Self::is_private_canonical`] after the path is made canonical (for
     /// a path that does not exist: its nearest existing ancestor).
     #[must_use]

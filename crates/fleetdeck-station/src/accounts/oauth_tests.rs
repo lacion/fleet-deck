@@ -391,6 +391,7 @@ fn stored(kind: AccountKind, expires_in: i64, site: &str, cloud: Option<&str>) -
         refresh_token: Some(Secret::new("old-refresh".into())),
         expires_at: Some(now_secs() + expires_in),
         email: None,
+        generation: 0,
     }
 }
 
@@ -529,4 +530,115 @@ async fn two_calls_at_once_refresh_once() {
     assert_eq!(y.unwrap().expose(), ACCESS2);
     let calls = log(&tmp.path().join("curl"), "argv.log").lines().count();
     assert_eq!(calls, 1);
+}
+
+/// A fake `curl` that answers the refresh only after the test creates the
+/// file `release`. It creates the file `started` when the request is open.
+fn blocking_curl(dir: &Path) -> std::path::PathBuf {
+    let answer = refresh_answer();
+    super::test_support::script(
+        dir,
+        "curl",
+        &format!(
+            "D='{d}'\ncat > \"$D/in.tmp\"\n: > \"$D/started\"\nwhile [ ! -f \"$D/release\" ]; do sleep 0.02; done\nprintf '%s' '{answer}'\nif grep -q 'FD-STATUS' \"$D/in.tmp\"; then printf '\\nFD-STATUS:200'; fi\nexit 0",
+            d = dir.display()
+        ),
+    )
+}
+
+/// A service whose curl blocks, with the Jira account `jira-00000001` due.
+async fn blocked_refresh(
+    tmp: &Path,
+    id: &'static str,
+    kind: AccountKind,
+) -> (
+    std::sync::Arc<Accounts>,
+    tokio::task::JoinHandle<Result<Secret<String>, crate::integrations::exec::Fail>>,
+) {
+    let mut p = programs(tmp);
+    p.curl = blocking_curl(&tmp.join("curl"));
+    let a = std::sync::Arc::new(service(tmp, p));
+    set_app(&a, kind);
+    let (site, cloud) = if kind == AccountKind::Jira {
+        ("https://a.atlassian.net", Some("c1"))
+    } else {
+        ("https://linear.app/acme", None)
+    };
+    a.store()
+        .unwrap()
+        .put_account(id, &stored(kind, 30, site, cloud))
+        .unwrap();
+    let refresh = tokio::spawn({
+        let a = std::sync::Arc::clone(&a);
+        async move { a.fresh(id).await }
+    });
+    for _ in 0..500 {
+        if tmp.join("curl").join("started").exists() {
+            return (a, refresh);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("the refresh request did not start");
+}
+
+#[tokio::test]
+async fn a_logout_waits_for_a_refresh_in_flight_and_the_account_stays_gone() {
+    for (id, kind) in [
+        ("jira-00000001", AccountKind::Jira),
+        ("linear-00000001", AccountKind::Linear),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let (a, refresh) = blocked_refresh(tmp.path(), id, kind).await;
+        let logout = tokio::spawn({
+            let a = std::sync::Arc::clone(&a);
+            async move {
+                a.call(
+                    "accounts.logout",
+                    serde_json::json!({ "account_id": id }),
+                    &[],
+                )
+                .await
+            }
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        assert!(!logout.is_finished(), "{id}: the logout waits for the lock");
+        assert!(a.store().unwrap().account(id).unwrap().is_some());
+        std::fs::write(tmp.path().join("curl").join("release"), "").unwrap();
+        assert_eq!(refresh.await.unwrap().unwrap().expose(), ACCESS2);
+        logout.await.unwrap().unwrap();
+        // The refresh did not bring the account back.
+        assert!(a.store().unwrap().account(id).unwrap().is_none(), "{id}");
+        assert!(a.store().unwrap().account_ids().unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn a_refresh_drops_its_answer_when_the_file_is_gone_or_was_written_meanwhile() {
+    let id = "linear-00000001";
+    // The file is removed without the lock (a hand edit): not recreated.
+    let tmp = tempfile::tempdir().unwrap();
+    let (a, refresh) = blocked_refresh(tmp.path(), id, AccountKind::Linear).await;
+    assert!(a.store().unwrap().delete_account(id).unwrap());
+    std::fs::write(tmp.path().join("curl").join("release"), "").unwrap();
+    let err = refresh.await.unwrap().unwrap_err();
+    assert_eq!(err.code, "invalid_params");
+    assert!(a.store().unwrap().account(id).unwrap().is_none());
+    // The file is written without the lock: the new content stays, and the
+    // account is not marked as needing a sign-in.
+    let tmp = tempfile::tempdir().unwrap();
+    let (a, refresh) = blocked_refresh(tmp.path(), id, AccountKind::Linear).await;
+    let mut newer = stored(AccountKind::Linear, 3600, "https://linear.app/acme", None);
+    newer.access_token = Secret::new("newer-access".into());
+    a.store().unwrap().put_account(id, &newer).unwrap();
+    std::fs::write(tmp.path().join("curl").join("release"), "").unwrap();
+    let err = refresh.await.unwrap().unwrap_err();
+    assert_eq!(err.code, "invalid_params");
+    let now = a.store().unwrap().account(id).unwrap().unwrap();
+    assert_eq!(now.access_token.expose(), "newer-access");
+    assert_eq!(now.generation, 2);
+    let list = a
+        .call("accounts.list", serde_json::json!({}), &[])
+        .await
+        .unwrap();
+    assert_eq!(list["accounts"][0]["status"], "ok");
 }
