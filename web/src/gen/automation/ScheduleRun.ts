@@ -18,4 +18,8 @@ started_at: number, state: ScheduleRunState,
  * Why the run ended so: the last line of the precheck output, an
  * error, or a note. Empty for a plain start.
  */
-reason: string, station_id: StationId, session_id: string | null, };
+reason: string, station_id: StationId, session_id: string | null, 
+/**
+ * "Run now": the owner started it; it does not move the schedule.
+ */
+manual: boolean, };

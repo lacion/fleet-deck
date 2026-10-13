@@ -22,6 +22,7 @@ describe('routes', () => {
       'fleet',
       'new',
       'plans',
+      'automations',
       'stations',
       'files',
       'terminals',

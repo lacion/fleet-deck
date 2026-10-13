@@ -1,5 +1,7 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { AssignActions } from './assign/assign';
+import { AutomationsPage } from './automations/AutomationsPage';
+import type { AutomationActions } from './automations/automations';
 import type { FeedItem } from './board/feed';
 import type { ConflictLoader } from './board/conflicts';
 import { stationName } from './board/fleet';
@@ -68,6 +70,8 @@ type Props = {
   readonly feed?: readonly FeedItem[];
   /** The plan library (DL-301). */
   readonly plans?: PlanActions | undefined;
+  /** The automations (R5, DL-168); absent without the owner login. */
+  readonly automations?: AutomationActions | undefined;
   /** The conflict radar (M3 6-7); absent in tests without a deck. */
   readonly conflicts?: ConflictLoader | undefined;
   /** The fleet card extras (DL-141); absent in tests without a deck. */
@@ -122,6 +126,7 @@ export function App({
   initialListing = null,
   feed = [],
   plans,
+  automations,
   conflicts,
   extras,
   initialPlans = null,
@@ -437,6 +442,16 @@ export function App({
                 setSpawnStation(null);
                 navigate({ name: 'new' });
               }}
+            />
+          </div>
+        );
+      case 'automations':
+        return (
+          <div className="fd-screen">
+            <AutomationsPage
+              stations={stations}
+              actions={automations}
+              live={freshness === 'live'}
             />
           </div>
         );

@@ -1,0 +1,370 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { stationName } from '../board/fleet';
+import type { Schedule, ScheduleRun, ScheduleView, StationView } from '../gen';
+import { spawnTargets } from '../spawn/spawn';
+import { useNow } from '../ui/useNow';
+import {
+  type AutomationActions,
+  type Draft,
+  describeCron,
+  draftOf,
+  emptyDraft,
+  inputOf,
+  lastRunText,
+  STATE_LABEL,
+  STATE_TONE,
+  untilText,
+} from './automations';
+import { ScheduleForm } from './ScheduleForm';
+
+/** How often the page reads the list again (a run ends at the deck, not here). */
+const REFRESH_MS = 20_000;
+/** The reads after "Run now": the precheck and the start take a few seconds. */
+const AFTER_RUN_MS = [3_000, 10_000];
+
+type Props = {
+  readonly stations: readonly StationView[];
+  /** Absent without the owner login (no admin scope). */
+  readonly actions: AutomationActions | undefined;
+  readonly live: boolean;
+  /** The list at the first render (tests). */
+  readonly initial?: readonly ScheduleView[] | null;
+  /** Unix ms of "now" (tests). */
+  readonly now?: number;
+  /** The form at the first render (tests): a draft for a new automation. */
+  readonly initialForm?: Draft | null;
+};
+
+const message = (e: unknown) => (e instanceof Error ? e.message : 'The deck did not answer.');
+
+const when = (ms: number) => new Date(ms).toLocaleString();
+
+function RunBadge({ run }: { readonly run: ScheduleRun }) {
+  return (
+    <span className="fd-badge" data-tone={STATE_TONE[run.state]}>
+      {STATE_LABEL[run.state]}
+    </span>
+  );
+}
+
+/** The newest runs of one automation. */
+function RunHistory({
+  id,
+  actions,
+  version,
+}: {
+  readonly id: string;
+  readonly actions: AutomationActions;
+  readonly version: number;
+}) {
+  const [runs, setRuns] = useState<readonly ScheduleRun[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    // `version` is read so that a new value asks for a new read.
+    if (version < 0) return undefined;
+    let current = true;
+    actions.runs(id).then(
+      (list) => current && setRuns(list),
+      (e: unknown) => current && setError(message(e)),
+    );
+    return () => {
+      current = false;
+    };
+  }, [id, actions, version]);
+  if (error !== null) return <p role="alert">{error}</p>;
+  if (runs === null) return <p role="status">Loading runs…</p>;
+  if (runs.length === 0) return <p className="fd-note">No runs yet.</p>;
+  return (
+    <ol className="fd-plan-list">
+      {runs.map((r) => (
+        <li key={r.run_id} data-run-state={r.state}>
+          <RunBadge run={r} />{' '}
+          <time dateTime={new Date(r.due_at).toISOString()}>{when(r.due_at)}</time>
+          {r.manual ? ' · run now' : ''}
+          {r.reason === '' ? '' : ` · ${r.reason}`}
+          {r.session_id === null ? null : (
+            <>
+              {' · '}
+              <a
+                href={`#/s/${encodeURIComponent(r.station_id)}/${encodeURIComponent(r.session_id)}`}
+              >
+                Open the session
+              </a>
+            </>
+          )}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/** The automations page (R5, DL-168): schedules that the deck runs, with their history. */
+export function AutomationsPage({
+  stations,
+  actions,
+  live,
+  initial = null,
+  now: given,
+  initialForm = null,
+}: Props) {
+  const now = useNow(given, 30_000);
+  const [list, setList] = useState<readonly ScheduleView[] | null>(initial);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [form, setForm] = useState<{ readonly id: string | null; readonly draft: Draft } | null>(
+    initialForm === null ? null : { id: null, draft: initialForm },
+  );
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
+  const [version, setVersion] = useState(0);
+  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  useEffect(() => () => timers.current.forEach(clearTimeout), []);
+  const load = useCallback(() => {
+    if (actions === undefined) return;
+    actions.list().then(
+      (rows) => {
+        setList(rows);
+        setError(null);
+      },
+      (e: unknown) => setError(message(e)),
+    );
+  }, [actions]);
+  useEffect(load, [load]);
+  useEffect(() => {
+    if (actions === undefined) return undefined;
+    const timer = setInterval(() => {
+      load();
+      setVersion((v) => v + 1);
+    }, REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [actions, load]);
+  const can = live && actions !== undefined;
+  const targets = spawnTargets(stations);
+
+  const act = (id: string, what: () => Promise<unknown>, done?: string) => {
+    setBusy(id);
+    setError(null);
+    what()
+      .then(() => {
+        if (done !== undefined) setNotice(done);
+        load();
+        setVersion((v) => v + 1);
+      })
+      .catch((e: unknown) => setError(message(e)))
+      .finally(() => setBusy(null));
+  };
+  const runNow = (s: Schedule) => {
+    if (actions === undefined) return;
+    act(
+      s.schedule_id,
+      async () => {
+        await actions.runNow(s.schedule_id);
+        for (const ms of AFTER_RUN_MS) {
+          timers.current.push(
+            setTimeout(() => {
+              load();
+              setVersion((v) => v + 1);
+            }, ms),
+          );
+        }
+      },
+      `A run of “${s.name}” started. Its result appears in the run history.`,
+    );
+  };
+  const toggle = (s: Schedule) => {
+    if (actions === undefined) return;
+    const draft: Draft = { ...draftOf(s), enabled: !s.enabled };
+    act(s.schedule_id, () => actions.update(s.schedule_id, inputOf(draft)));
+  };
+  const save = (draft: Draft) => {
+    if (actions === undefined || form === null) return;
+    setSaving(true);
+    setSaveError(null);
+    const body = inputOf(draft);
+    const call = form.id === null ? actions.create(body) : actions.update(form.id, body);
+    call
+      .then(() => {
+        setForm(null);
+        load();
+      })
+      .catch((e: unknown) => setSaveError(message(e)))
+      .finally(() => setSaving(false));
+  };
+  const first = targets[0];
+  const newDraft = () =>
+    emptyDraft(first?.station_id ?? '', first?.info?.providers[0]?.instance ?? '');
+  return (
+    <main className="fd-plans fd-auto" aria-label="Automations">
+      <h2>Automations</h2>
+      <p className="fd-note">
+        The deck starts a session at each due time. A precheck runs on the station first; a non-zero
+        exit skips the run.
+      </p>
+      <div className="fd-plan-tools">
+        <button
+          type="button"
+          disabled={!can || form !== null || targets.length === 0}
+          onClick={() => {
+            setSaveError(null);
+            setForm({ id: null, draft: newDraft() });
+          }}
+        >
+          New automation
+        </button>
+        <button type="button" onClick={load} disabled={actions === undefined}>
+          Refresh
+        </button>
+      </div>
+      {actions === undefined ? (
+        <p className="fd-note">Automations need the owner’s login.</p>
+      ) : targets.length === 0 && form === null ? (
+        <p className="fd-note">No linked station has reported its providers yet.</p>
+      ) : null}
+      {error === null ? null : <p role="alert">{error}</p>}
+      {notice === null ? null : <p role="status">{notice}</p>}
+      {form === null ? null : (
+        <ScheduleForm
+          key={form.id ?? 'new'}
+          stations={stations}
+          initial={form.draft}
+          error={saveError}
+          saving={saving}
+          editing={form.id !== null}
+          onSave={save}
+          onCancel={() => setForm(null)}
+        />
+      )}
+      {list === null ? (
+        actions === undefined ? null : (
+          <p role="status">Loading automations…</p>
+        )
+      ) : list.length === 0 ? (
+        <p className="fd-note">
+          No automations yet. Add one to run a triage, a nightly test fix or a review sweep.
+        </p>
+      ) : (
+        <ol className="fd-plan-list">
+          {list.map(({ schedule: s, next_run_at: next, last_run: last }) => {
+            const linked = stations.find((st) => st.station_id === s.station_id)?.reachable;
+            return (
+              <li key={s.schedule_id} data-enabled={s.enabled}>
+                <article aria-label={`Automation ${s.name}`}>
+                  <h3>
+                    {s.name}{' '}
+                    {s.enabled ? null : (
+                      <span className="fd-badge" data-tone="muted">
+                        Off
+                      </span>
+                    )}
+                  </h3>
+                  <p className="fd-plan-meta">
+                    {describeCron(s.cron)} · {s.timezone} · {stationName(s.station_id, stations)} ·{' '}
+                    {s.path}
+                  </p>
+                  <p className="fd-plan-meta">
+                    Next run:{' '}
+                    {next === null ? (
+                      'none (off)'
+                    ) : (
+                      <time dateTime={new Date(next).toISOString()} title={when(next)}>
+                        {untilText(next, now)}
+                      </time>
+                    )}
+                    {' · '}Last run:{' '}
+                    {last === null ? (
+                      'never'
+                    ) : (
+                      <>
+                        <RunBadge run={last} />{' '}
+                        <span title={when(last.due_at)}>{lastRunText(last)}</span>
+                      </>
+                    )}
+                  </p>
+                  <details
+                    open={open.has(s.schedule_id)}
+                    onToggle={(event) => {
+                      const isOpen = event.currentTarget.open;
+                      setOpen((cur) => {
+                        const next = new Set(cur);
+                        if (isOpen) next.add(s.schedule_id);
+                        else next.delete(s.schedule_id);
+                        return next;
+                      });
+                    }}
+                  >
+                    <summary>Run history</summary>
+                    {open.has(s.schedule_id) && actions !== undefined ? (
+                      <RunHistory id={s.schedule_id} actions={actions} version={version} />
+                    ) : null}
+                  </details>
+                  <div className="fd-plan-actions">
+                    <button
+                      type="button"
+                      disabled={!can || busy === s.schedule_id || linked === false}
+                      title={linked === false ? 'The station is not linked.' : undefined}
+                      onClick={() => runNow(s)}
+                    >
+                      Run now
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!can || form !== null}
+                      onClick={() => {
+                        setSaveError(null);
+                        setForm({ id: s.schedule_id, draft: draftOf(s) });
+                      }}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!can || busy === s.schedule_id}
+                      onClick={() => toggle(s)}
+                    >
+                      {s.enabled ? 'Turn off' : 'Turn on'}
+                    </button>
+                    {confirming === s.schedule_id ? (
+                      <>
+                        <span>Delete this automation and its history?</span>
+                        <button
+                          type="button"
+                          disabled={!can || busy === s.schedule_id}
+                          onClick={() => {
+                            setConfirming(null);
+                            const a = actions;
+                            if (a !== undefined) act(s.schedule_id, () => a.remove(s.schedule_id));
+                          }}
+                        >
+                          Delete
+                        </button>
+                        <button
+                          type="button"
+                          className="fd-ghost"
+                          onClick={() => setConfirming(null)}
+                        >
+                          Keep
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        className="fd-ghost"
+                        disabled={!can}
+                        onClick={() => setConfirming(s.schedule_id)}
+                      >
+                        Delete…
+                      </button>
+                    )}
+                  </div>
+                </article>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+    </main>
+  );
+}

@@ -204,7 +204,7 @@ The owner creates a project on the board. A preflight checks each binding from t
 
 ### R5. Automations
 
-1. **Scheduled runs (all kinds, DL-157):** daily triage, nightly test fixes, PR review sweeps, dependency updates, and any owner-defined schedule. Each has a cron expression or a preset, a prompt, a repository, a station and a provider instance. A shell precheck runs on the station (never on the deck). A non-zero precheck records a "skipped" run. A missed run gets a grace period, and a run can reuse a session. The deck owns the schedule because it is always on. Missing.
+1. **Scheduled runs (all kinds, DL-157):** daily triage, nightly test fixes, PR review sweeps, dependency updates, and any owner-defined schedule. Each has a cron expression or a preset, a prompt, a repository, a station and a provider instance. A shell precheck runs on the station (never on the deck). A non-zero precheck records a "skipped" run. A missed run gets a grace period, and a run can reuse a session. The deck owns the schedule because it is always on. Built (DL-168).
 
 ### R6. Views at fifteen or more sessions
 
