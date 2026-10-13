@@ -87,7 +87,7 @@ diff_summary: DiffSummary | null, } | { "kind": "revert.updated", revert_id: str
 /**
  * The station guessed the base (an import or a resume).
  */
-inferred: boolean, } | { "kind": "run.completed", run_id: RunId, status: TurnStatus, 
+inferred: boolean, } | { "kind": "session.focus", text: string, } | { "kind": "session.hibernated", after_min: number, } | { "kind": "run.completed", run_id: RunId, status: TurnStatus, 
 /**
  * Background work still runs; the session is not idle (L7).
  */

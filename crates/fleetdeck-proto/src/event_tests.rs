@@ -243,6 +243,10 @@ fn samples() -> Vec<Event> {
             oid: "0123456789abcdef0123456789abcdef01234567".into(),
             inferred: false,
         },
+        Event::SessionFocus {
+            text: "fixing the login test".into(),
+        },
+        Event::SessionHibernated { after_min: 30 },
     ]
 }
 

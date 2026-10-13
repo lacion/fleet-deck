@@ -732,6 +732,9 @@ mod drain;
 #[path = "import_tests.rs"]
 mod import_tests;
 
+#[path = "hibernate_tests.rs"]
+mod hibernate_tests;
+
 #[path = "coordinator_command_tests.rs"]
 mod coordinator_command;
 

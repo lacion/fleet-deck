@@ -7,7 +7,7 @@ export function card(
   stationId = 'station-a',
   extra: Partial<DeckSession['summary']> = {},
 ): DeckSession {
-  return { station_id: stationId, status, summary: summary(id, 'working', 1, extra) };
+  return { station_id: stationId, status, summary: summary(id, 'working', 1, extra), unread: 0 };
 }
 export function station(id = 'station-a', extra: Partial<StationView> = {}): StationView {
   return {

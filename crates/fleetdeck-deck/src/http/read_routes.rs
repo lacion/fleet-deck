@@ -5,13 +5,13 @@
 use std::sync::Arc;
 
 use axum::Json;
-use axum::extract::State;
+use axum::extract::{Extension, State};
 use fleetdeck_proto::board::FleetExtras;
 
 use super::Board;
 use super::guard::ApiError;
 use crate::local::{StationView, station_view};
-use crate::store::{AuditEntry, DeckCommand, DeckSession};
+use crate::store::{AuditEntry, DeckCommand, DeckSession, Principal};
 
 /// The newest audit rows that `GET /api/audit` returns.
 pub const AUDIT_PAGE: u32 = 200;
@@ -26,10 +26,17 @@ pub async fn stations(State(board): State<Arc<Board>>) -> Result<Json<Vec<Statio
     ))
 }
 
-/// `GET /api/sessions`: every card.
-pub async fn sessions(State(board): State<Arc<Board>>) -> Result<Json<Vec<DeckSession>>, ApiError> {
+/// `GET /api/sessions`: every card, with the unread count of the caller.
+pub async fn sessions(
+    State(board): State<Arc<Board>>,
+    Extension(principal): Extension<Principal>,
+) -> Result<Json<Vec<DeckSession>>, ApiError> {
     Ok(Json(
-        board.store.sessions().await.map_err(ApiError::internal)?,
+        board
+            .store
+            .sessions_for(&principal)
+            .await
+            .map_err(ApiError::internal)?,
     ))
 }
 

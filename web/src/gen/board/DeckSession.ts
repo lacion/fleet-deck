@@ -7,4 +7,9 @@ import type { SessionSummary } from "../session/SessionSummary";
  * One card of the board: a session of a station with the status
  * projection of PLAN §7.2.
  */
-export type DeckSession = { station_id: StationId, summary: SessionSummary, status: CardStatus, };
+export type DeckSession = { station_id: StationId, summary: SessionSummary, status: CardStatus, 
+/**
+ * The events after the caller's read cursor that are agent output or
+ * need the caller (R6.1, DL-169). The deck fills it per caller.
+ */
+unread: number, };

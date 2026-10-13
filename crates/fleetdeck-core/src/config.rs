@@ -229,6 +229,9 @@ fn toml_category(message: &str) -> String {
         )
 }
 
+/// The largest `hibernate_after_min`: one week.
+pub const MAX_HIBERNATE_AFTER_MIN: u32 = 7 * 24 * 60;
+
 /// The validated `station.toml`.
 #[derive(Debug)]
 pub struct StationConfig {
@@ -249,6 +252,10 @@ pub struct StationConfig {
     /// DL-201): repository path → group name, the owner's choice for repos
     /// with several or no remotes.
     pub repo_groups: BTreeMap<PathBuf, String>,
+    /// `hibernate_after_min`: minutes of idleness after which the station
+    /// stops a session gracefully so that the board can resume it (R6.6,
+    /// DL-169). 0 (the default) turns hibernation off.
+    pub hibernate_after_min: u32,
 }
 
 #[derive(Deserialize)]
@@ -266,6 +273,7 @@ struct RawStation {
     host: Option<String>,
     shim_buffer_mib: Option<u32>,
     repo_groups: Option<BTreeMap<String, String>>,
+    hibernate_after_min: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -331,6 +339,13 @@ impl StationConfig {
         if !(1..=256).contains(&shim_buffer_mib) {
             return Err(invalid("shim_buffer_mib", "use a value from 1 to 256"));
         }
+        let hibernate_after_min = raw.hibernate_after_min.unwrap_or(0);
+        if hibernate_after_min > MAX_HIBERNATE_AFTER_MIN {
+            return Err(invalid(
+                "hibernate_after_min",
+                "use 0 (off) or a number of minutes from 1 to 10080",
+            ));
+        }
         let provider_instances = match raw.provider_instance {
             Some(list) => parse_instances(list, home)?,
             None => vec![
@@ -368,6 +383,7 @@ impl StationConfig {
             host,
             shim_buffer_mib,
             repo_groups,
+            hibernate_after_min,
         })
     }
 

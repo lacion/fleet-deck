@@ -554,6 +554,15 @@ pub enum Event {
         #[serde(default)]
         inferred: bool,
     },
+    /// The session's one-line current focus, set by its `set_focus` MCP
+    /// tool (R6, DL-165). Empty text clears it.
+    #[serde(rename = "session.focus")]
+    SessionFocus { text: String },
+    /// The station stops this idle session after `after_min` minutes
+    /// without activity (R6.6, DL-169). It comes before the stop; the board
+    /// shows the session as hibernated and resumes it on the next input.
+    #[serde(rename = "session.hibernated")]
+    SessionHibernated { after_min: u32 },
     #[serde(rename = "run.completed")]
     RunCompleted {
         run_id: RunId,
@@ -601,7 +610,7 @@ pub enum Event {
 
 impl Event {
     /// Every known kind name, in declaration order.
-    pub const KINDS: [&'static str; 39] = [
+    pub const KINDS: [&'static str; 41] = [
         "session.started",
         "session.state",
         "run.started",
@@ -641,6 +650,8 @@ impl Event {
         "session.notice",
         "session.models",
         "session.base",
+        "session.focus",
+        "session.hibernated",
     ];
 
     /// The dotted kind name.
@@ -686,6 +697,8 @@ impl Event {
             Self::SessionNotice { .. } => "session.notice",
             Self::SessionModels { .. } => "session.models",
             Self::SessionBase { .. } => "session.base",
+            Self::SessionFocus { .. } => "session.focus",
+            Self::SessionHibernated { .. } => "session.hibernated",
         }
     }
 

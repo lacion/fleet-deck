@@ -14,6 +14,7 @@ fn card(id: &str, status: CardStatus, cwd: &str, updated_at: i64) -> DeckSession
         station_id: StationId::from("st".to_owned()),
         summary,
         status,
+        unread: 0,
     }
 }
 

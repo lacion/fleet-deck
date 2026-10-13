@@ -66,6 +66,7 @@ impl SessionSummary {
                 self.mode.clone_from(mode);
                 self.capabilities = Some(capabilities.as_ref().clone());
                 self.state = SessionState::Running;
+                self.hibernated = false;
             }
             Event::SessionStateChanged { state, .. } => {
                 self.state = *state;
@@ -218,6 +219,10 @@ impl SessionSummary {
                     inferred: *inferred,
                 });
             }
+            Event::SessionFocus { text } => {
+                self.focus = Some(text.clone()).filter(|t| !t.is_empty());
+            }
+            Event::SessionHibernated { .. } => self.hibernated = true,
             Event::SessionEnded { .. } => {
                 if !matches!(self.state, SessionState::Lost) {
                     self.state = SessionState::Exited;

@@ -208,6 +208,21 @@ pub const API: &[ApiMethod] = &[
         Some(Scope::Read),
         false,
     ),
+    // The read cursor of the caller only (R6.1, DL-169): `read` is enough.
+    m(
+        "sessions.read",
+        Method::POST,
+        "/api/sessions/{station}/{session}/read",
+        Some(Scope::Read),
+        true,
+    ),
+    m(
+        "activity.list",
+        Method::GET,
+        "/api/activity",
+        Some(Scope::Read),
+        false,
+    ),
     m(
         "fleet.extras",
         Method::GET,

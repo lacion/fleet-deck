@@ -351,3 +351,14 @@ fn parse_errors_never_echo_config_values() {
         err(&unclosed)
     );
 }
+
+#[test]
+fn hibernate_after_min_is_off_by_default_and_bounded() {
+    let c = StationConfig::parse("", &env()).unwrap();
+    assert_eq!(c.hibernate_after_min, 0);
+    let c = StationConfig::parse("hibernate_after_min = 45", &env()).unwrap();
+    assert_eq!(c.hibernate_after_min, 45);
+    let c = StationConfig::parse("hibernate_after_min = 10080", &env()).unwrap();
+    assert_eq!(c.hibernate_after_min, MAX_HIBERNATE_AFTER_MIN);
+    assert!(err("hibernate_after_min = 10081").contains("hibernate_after_min"));
+}
