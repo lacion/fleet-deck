@@ -107,6 +107,13 @@ const BAR_ROUTES: readonly Route['name'][] = [
   'more',
   'shares',
   'spaces',
+  'artifacts',
+  'artifact',
+  'settings',
+  'automations',
+  'projects',
+  'project',
+  'compare',
 ];
 
 function BottomBar({ route, guest }: { readonly route: Route; readonly guest: boolean }) {
@@ -124,7 +131,22 @@ function BottomBar({ route, guest }: { readonly route: Route; readonly guest: bo
       href: '#/more',
       label: 'More',
       icon: Ellipsis,
-      on: ['more', 'plans', 'stations', 'watch', 'activity', 'shares', 'spaces'],
+      on: [
+        'more',
+        'plans',
+        'stations',
+        'watch',
+        'activity',
+        'shares',
+        'spaces',
+        'artifacts',
+        'artifact',
+        'settings',
+        'automations',
+        'projects',
+        'project',
+        'compare',
+      ],
     },
   ];
   const items = guest ? all.filter((item) => item.guest !== false) : all;

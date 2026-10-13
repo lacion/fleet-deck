@@ -347,6 +347,7 @@ body:has(.fd-app[data-layout="tablet"]) {
 
 .fd-sidebar-links a,
 .fd-more-links a,
+.fd-more-links button,
 .fd-linkbtn {
   display: flex;
   align-items: center;
@@ -549,6 +550,7 @@ body:has(.fd-app[data-layout="tablet"]) {
   position: absolute;
   inset: 0;
   width: 100%;
+  height: auto;
   max-width: none;
   min-height: 0;
   padding: 0;
@@ -828,12 +830,19 @@ body:has(.fd-app[data-layout="tablet"]) {
   gap: 2px;
 }
 
-.fd-more-links a {
+.fd-more-links a,
+.fd-more-links button {
   height: 44px;
   padding: 0 var(--sp-3);
   background: var(--surface);
   border: 1px solid var(--border);
   color: var(--text);
+}
+
+.fd-more-links button {
+  width: 100%;
+  justify-content: flex-start;
+  font-weight: 400;
 }
 
 /* ---------- Plans ---------- */
@@ -1036,6 +1045,7 @@ body:has(.fd-app[data-layout="tablet"]) {
 
 .fd-shells form label {
   display: flex;
+  white-space: nowrap;
   flex: 1 1 14rem;
   align-items: center;
   gap: var(--sp-2);

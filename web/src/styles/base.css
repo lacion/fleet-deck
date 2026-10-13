@@ -522,6 +522,9 @@ input[type="radio"] {
   height: var(--ctl-h-sm);
 }
 .fd-menu-body {
+  max-height: min(70vh, 560px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   position: absolute;
   right: 0;
   top: calc(100% + 4px);
@@ -634,5 +637,15 @@ input[type="radio"] {
   }
   .fd-iconbtn {
     min-width: var(--tap-min);
+  }
+  /* After the chip rule above, so that it wins at the same specificity. */
+  .fd-chip {
+    min-height: 36px;
+  }
+  .fd-tap,
+  .fd-wt > summary.fd-label {
+    display: inline-flex;
+    align-items: center;
+    min-height: 36px;
   }
 }

@@ -232,7 +232,6 @@ describe('overlays block the board hotkeys (R7.4)', () => {
         'HelpOverlay.tsx',
         'Layout.tsx',
         'Palette.tsx',
-        'PairingDialog.tsx',
         'PublishDialog.tsx',
         // The artifact share dialog and the board share dialog (R11, sharing/) have one name.
         'ShareDialog.tsx',

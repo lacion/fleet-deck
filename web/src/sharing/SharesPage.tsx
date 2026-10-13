@@ -244,7 +244,10 @@ export function SharesView({
       description={
         <>
           People join through a link. A revoke ends the link and every login that came from it. See{' '}
-          <a href="#/spaces">Spaces</a> for sets of sessions.
+          <a className="fd-tap" href="#/spaces">
+            Spaces
+          </a>{' '}
+          for sets of sessions.
         </>
       }
       actions={newShare}

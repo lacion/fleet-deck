@@ -3,6 +3,7 @@ import { useIntegrations } from '../integrations/context';
 import { useSettings } from '../settings/context';
 import { FolderGit2 } from '../integrations/icons';
 import {
+  CircleHelp,
   Eye,
   FileText,
   Folder,
@@ -10,6 +11,7 @@ import {
   LogOut,
   MessagesSquare,
   Paperclip,
+  Search,
   Server,
   Settings,
   Smartphone,
@@ -27,10 +29,12 @@ type Props = {
   readonly stationCount: number;
   readonly terminalCount: number;
   readonly chrome?: Chrome | undefined;
+  readonly onPalette?: (() => void) | undefined;
+  readonly onHelp?: (() => void) | undefined;
 };
 
 /** The phone's "More" page: the pages that have no place in the bottom bar. */
-export function More({ stationCount, terminalCount, chrome }: Props) {
+export function More({ stationCount, terminalCount, chrome, onPalette, onHelp }: Props) {
   const [addingDevice, setAddingDevice] = useState(false);
   const projectsLink = useIntegrations()?.actions.canAdmin === true;
   const settingsLink = useSettings() !== undefined;
@@ -119,6 +123,22 @@ export function More({ stationCount, terminalCount, chrome }: Props) {
                 Terminals
                 <span className="fd-count">{terminalCount}</span>
               </a>
+            </li>
+          )}
+          {onPalette === undefined ? null : (
+            <li>
+              <button type="button" onClick={onPalette}>
+                <Icon of={Search} />
+                Search sessions
+              </button>
+            </li>
+          )}
+          {onHelp === undefined ? null : (
+            <li>
+              <button type="button" onClick={onHelp}>
+                <Icon of={CircleHelp} />
+                Help
+              </button>
             </li>
           )}
         </ul>

@@ -201,7 +201,12 @@ export function ProjectsPage({
                     <Fragment key={p.project_id}>
                       <tr aria-label={`Project ${p.name}`}>
                         <td className="fd-cell-name">
-                          <a href={`#/project/${encodeURIComponent(p.project_id)}`}>{p.name}</a>
+                          <a
+                            className="fd-tap"
+                            href={`#/project/${encodeURIComponent(p.project_id)}`}
+                          >
+                            {p.name}
+                          </a>
                         </td>
                         <td data-label="Station">{stationName(p.station_id, stations)}</td>
                         <td className="fd-cell-path" data-label="Folder">
