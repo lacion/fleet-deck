@@ -78,7 +78,7 @@ pub async fn serve(ctx: Arc<StationLink>, link: LiveLink) -> Closing {
         .negotiated
         .has(fleetdeck_proto::version::feature::COORDINATOR)
     {
-        stream = stream.with_coordinator(ctx.manager.policy().coordinator_bindings().clone());
+        stream = stream.with_coordinator(ctx.manager.coordinator_bindings().clone());
     }
     while let Some(message) = inbound.recv().await {
         match message {

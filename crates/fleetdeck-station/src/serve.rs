@@ -141,7 +141,7 @@ impl RunningStation {
             }
         });
         let assist = Arc::new(crate::assist::Assist::new(
-            config.model_help.clone(),
+            Arc::clone(manager.policy_hub()),
             manager.store().clone(),
             assist_instances(config),
         ));
@@ -156,8 +156,6 @@ impl RunningStation {
         // A station restart ends every shell (PLAN §6.8, A10): the PTYs
         // close with the process.
         let shells = Arc::new(crate::shell::Shells::new(crate::shell::ShellConfig {
-            allow: config.allow_shell,
-            max_shells: config.max_shells,
             program: None,
             instances: terminal_instances(config),
         }));

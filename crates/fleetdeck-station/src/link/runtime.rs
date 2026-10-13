@@ -175,7 +175,7 @@ impl StationNode {
         .with_store(Arc::clone(&peers))
         .with_invitations(Arc::clone(&invitations));
         let paired = peers.pin_all(&node.pins).await?;
-        let bindings = manager.policy().coordinator_bindings().clone();
+        let bindings = manager.coordinator_bindings().clone();
         // The durable coordinator outbox (ADR-006 §6.5, DL-218).
         let forward = crate::coordinator::LinkForward::with_outbox(store.clone(), bindings.clone());
         // The session's own tools are answered by the station (DL-165).

@@ -17,8 +17,7 @@ use fleetdeck_proto::event::{ProviderKind, RunOrigin};
 use fleetdeck_proto::{Event, RejectCode, SessionId};
 
 use super::decide::{reject, result};
-use super::policy::Policy;
-use crate::coordinator::BindingState;
+use crate::coordinator::{BindingState, Bindings};
 use crate::store::{Caller, DecideError, Decision};
 
 fn forbidden() -> DecideError {
@@ -68,7 +67,7 @@ fn owner(origin: CommandOrigin) -> Result<(), DecideError> {
 /// A stored rejection, or a database error.
 pub fn revoke(
     d: &mut Decision<'_>,
-    policy: &Policy,
+    bindings: &Bindings,
     origin: CommandOrigin,
     session_id: &SessionId,
     grant_id: &str,
@@ -76,7 +75,6 @@ pub fn revoke(
     owner(origin)?;
     d.summary(session_id)?
         .ok_or_else(|| reject(RejectCode::UnknownSession, "no such session"))?;
-    let bindings = policy.coordinator_bindings();
     let binding = bindings.find(session_id, grant_id).ok_or_else(|| {
         reject(
             RejectCode::InvalidCommand,
@@ -102,7 +100,7 @@ pub fn revoke(
 /// A stored rejection, or a database error.
 pub fn renew(
     d: &mut Decision<'_>,
-    policy: &Policy,
+    bindings: &Bindings,
     origin: CommandOrigin,
     session_id: &SessionId,
     grant_id: &str,
@@ -111,7 +109,6 @@ pub fn renew(
     owner(origin)?;
     d.summary(session_id)?
         .ok_or_else(|| reject(RejectCode::UnknownSession, "no such session"))?;
-    let bindings = policy.coordinator_bindings();
     let binding = bindings.find(session_id, grant_id).ok_or_else(|| {
         reject(
             RejectCode::InvalidCommand,

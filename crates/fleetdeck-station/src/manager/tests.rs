@@ -736,6 +736,8 @@ mod hibernate_tests;
 mod import_tests;
 #[path = "origin_text_tests.rs"]
 mod origin_text_tests;
+#[path = "policy_hub_tests.rs"]
+mod policy_hub_tests;
 #[path = "rename_tests.rs"]
 mod rename;
 #[path = "resume_tests.rs"]

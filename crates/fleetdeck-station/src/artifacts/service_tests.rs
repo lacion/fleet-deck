@@ -20,6 +20,7 @@ use super::fleet::StationFleet;
 use super::{ArtifactService, suggest};
 use crate::coordinator::{Caller, FleetTools};
 use crate::manager::policy::Policy;
+use crate::manager::policy_hub::PolicyHub;
 use crate::store::{NewSession, OfflineApprovalPolicy, Store, StoreConfig};
 
 const S1: &str = "s1";
@@ -57,12 +58,12 @@ async fn rig() -> Rig {
         })
         .await
         .unwrap();
-    let policy = Arc::new(Policy::new(
+    let policy = Arc::new(PolicyHub::new(Policy::new(
         vec![base.clone()],
         4,
         OfflineApprovalPolicy::Wait,
         BTreeMap::new(),
-    ));
+    )));
     let root = base.join("data/artifacts");
     let service = ArtifactService::new(store.clone(), policy, root.clone());
     Rig {

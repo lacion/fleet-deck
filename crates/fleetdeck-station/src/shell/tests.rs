@@ -13,12 +13,18 @@ use crate::manager::policy::Policy;
 use crate::store::OfflineApprovalPolicy;
 
 pub(super) fn policy(root: &std::path::Path) -> Policy {
+    policy_with(root, true, 2)
+}
+
+/// A policy with `allow_shell` and `max_shells` set.
+pub(super) fn policy_with(root: &std::path::Path, allow: bool, max_shells: u32) -> Policy {
     Policy::new(
         vec![root.to_path_buf()],
         4,
         OfflineApprovalPolicy::Wait,
         BTreeMap::new(),
     )
+    .with_shell(allow, max_shells)
 }
 
 pub(super) fn env() -> ChildEnv {
@@ -34,10 +40,8 @@ pub(super) fn env() -> ChildEnv {
     )
 }
 
-fn shells(allow: bool, max_shells: u32) -> Shells {
+fn shells() -> Shells {
     let config = ShellConfig {
-        allow,
-        max_shells,
         program: Some(("/bin/sh".into(), Vec::new())),
         instances: BTreeMap::new(),
     };
@@ -74,11 +78,14 @@ fn shell_policy_checks_allow_shell_the_roots_and_the_shell_cap() {
     let outside = tempfile::tempdir().expect("outside");
     let p = policy(root.path());
 
-    let off = shells(false, 2);
-    let e = off.apply(&open("a", root.path()), &p, 1).expect_err("off");
+    let off = shells();
+    let p_off = policy_with(root.path(), false, 2);
+    let e = off
+        .apply(&open("a", root.path()), &p_off, 1)
+        .expect_err("off");
     assert_eq!(e.code, RejectCode::Unsupported);
 
-    let on = shells(true, 2);
+    let on = shells();
     let e = on
         .apply(&open("a", outside.path()), &p, 1)
         .expect_err("outside");
@@ -116,7 +123,7 @@ fn shell_policy_checks_allow_shell_the_roots_and_the_shell_cap() {
 fn a_shell_runs_in_its_cwd_with_the_scrubbed_environment() {
     let root = tempfile::tempdir().expect("root");
     let p = policy(root.path());
-    let s = shells(true, 2);
+    let s = shells();
     s.apply(&open("env", root.path()), &p, 1).expect("open");
     let (_, mut rx) = s.attach("env").expect("attach");
     assert!(s.input("env", b"pwd; env; echo END-OF-$((40+2))\n"));
@@ -141,7 +148,7 @@ fn a_shell_runs_in_its_cwd_with_the_scrubbed_environment() {
 fn a_reattached_board_gets_the_scrollback_and_the_shell_survives_a_detach() {
     let root = tempfile::tempdir().expect("root");
     let p = policy(root.path());
-    let s = shells(true, 2);
+    let s = shells();
     s.apply(&open("sh", root.path()), &p, 1).expect("open");
     let resize = ShellChange::Resize {
         shell_id: "sh".to_owned(),
@@ -195,8 +202,8 @@ fn a_reattached_board_gets_the_scrollback_and_the_shell_survives_a_detach() {
 #[test]
 fn a_handover_is_refused_when_shells_are_not_allowed() {
     let root = tempfile::tempdir().expect("root");
-    let p = policy(root.path());
-    let s = shells(false, 2);
+    let p = policy_with(root.path(), false, 2);
+    let s = shells();
     let handover = ShellChange::Handover {
         shell_id: "tui".to_owned(),
         session_id: "s1".into(),
@@ -212,7 +219,7 @@ fn a_handover_is_refused_when_shells_are_not_allowed() {
 fn a_handover_and_a_release_are_not_pty_effects_of_their_own() {
     let root = tempfile::tempdir().expect("root");
     let p = policy(root.path());
-    let s = shells(true, 2);
+    let s = shells();
     let handover = ShellChange::Handover {
         shell_id: "tui".to_owned(),
         session_id: "s1".into(),
@@ -232,11 +239,12 @@ fn a_handover_and_a_release_are_not_pty_effects_of_their_own() {
 #[test]
 fn closing_an_exited_tui_sends_no_signal() {
     let root = tempfile::tempdir().expect("root");
-    let s = shells(true, 2);
+    let s = shells();
     let launch = Launch {
         program: ("/bin/sh".into(), vec!["-c".into(), "exit 0".into()]),
         env: env(),
         session: Some("s1".into()),
+        max_shells: 2,
     };
     let pid = s
         .spawn("tui", root.path(), 80, 24, 1, launch)

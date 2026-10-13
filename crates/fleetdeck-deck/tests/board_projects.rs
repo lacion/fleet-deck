@@ -24,7 +24,7 @@ use fleetdeck_proto::link::Scope;
 use fleetdeck_station::integrations::Integrations;
 use fleetdeck_station::integrations::exec::Programs;
 use fleetdeck_station::link::StationNode;
-use fleetdeck_station::manager::{Adapters, Policy, SessionManager};
+use fleetdeck_station::manager::{Adapters, Holders, Policy, SessionManager};
 use fleetdeck_station::store::{OfflineApprovalPolicy, Store, StoreConfig};
 use serde_json::{Value, json};
 
@@ -79,9 +79,12 @@ async fn station(dir: &Path, root: PathBuf, gh: PathBuf) -> Arc<StationNode> {
             ..Programs::default()
         },
     );
-    let policy = Policy::new(vec![root], 2, OfflineApprovalPolicy::Wait, BTreeMap::new())
-        .with_integrations(integrations);
-    let manager = SessionManager::start(store, policy, Adapters::new(), ids)
+    let policy = Policy::new(vec![root], 2, OfflineApprovalPolicy::Wait, BTreeMap::new());
+    let holders = Holders {
+        integrations: Some(integrations),
+        ..Holders::default()
+    };
+    let manager = SessionManager::start_with_holders(store, policy, holders, Adapters::new(), ids)
         .await
         .unwrap();
     StationNode::start(

@@ -7,6 +7,7 @@ use fleetdeck_proto::capability::Capabilities;
 use fleetdeck_proto::session::OpenRequest;
 
 use super::*;
+use crate::coordinator::Bindings;
 use crate::manager::hibernate;
 
 const AFTER: u32 = 30;
@@ -96,13 +97,23 @@ async fn an_idle_session_hibernates_once_and_resumes() {
     let policy = st.manager.policy().clone();
 
     // Too early: nothing stops.
-    assert_eq!(hibernate::sweep(&store, &policy, AFTER).await.unwrap(), 0);
+    assert_eq!(
+        hibernate::sweep(&store, &policy, &Bindings::default(), AFTER)
+            .await
+            .unwrap(),
+        0
+    );
     assert_eq!(st.state(&s).await, SessionState::Running);
 
     st.det.advance(Duration::from_millis(
         u64::try_from(i64::from(AFTER) * MIN_MS).unwrap() + 1,
     ));
-    assert_eq!(hibernate::sweep(&store, &policy, AFTER).await.unwrap(), 1);
+    assert_eq!(
+        hibernate::sweep(&store, &policy, &Bindings::default(), AFTER)
+            .await
+            .unwrap(),
+        1
+    );
     st.wait_for("hibernated", |e| {
         matches!(e, Event::SessionHibernated { after_min } if *after_min == AFTER).then_some(())
     })
@@ -116,7 +127,12 @@ async fn an_idle_session_hibernates_once_and_resumes() {
     assert_eq!(summary.state, SessionState::Exited);
 
     // The ended session is no candidate: a second sweep stores nothing.
-    assert_eq!(hibernate::sweep(&store, &policy, AFTER).await.unwrap(), 0);
+    assert_eq!(
+        hibernate::sweep(&store, &policy, &Bindings::default(), AFTER)
+            .await
+            .unwrap(),
+        0
+    );
 
     // The resume works on a hibernated session.
     st.settled(&s).await;
@@ -139,6 +155,11 @@ async fn a_session_with_hibernation_off_is_never_stopped() {
     st.det.advance(Duration::from_secs(24 * 60 * 60));
     let store = st.manager.store().clone();
     let policy = st.manager.policy().clone();
-    assert_eq!(hibernate::sweep(&store, &policy, 0).await.unwrap(), 0);
+    assert_eq!(
+        hibernate::sweep(&store, &policy, &Bindings::default(), 0)
+            .await
+            .unwrap(),
+        0
+    );
     assert_eq!(st.state(&s).await, SessionState::Running);
 }

@@ -190,9 +190,13 @@ async fn a_queued_shell_open_fails_when_a_row_holds_its_folder() {
         .await
         .unwrap();
     let shells = Arc::new(Shells::new(ShellConfig::default()));
-    let ran = crate::shell::dispatch(&r.store, &shells, &r.policy)
-        .await
-        .unwrap();
+    let ran = crate::shell::dispatch(
+        &r.store,
+        &shells,
+        &crate::manager::policy_hub::PolicyHub::new(r.policy.clone()),
+    )
+    .await
+    .unwrap();
     assert_eq!(ran, 1);
     assert!(shells.list().is_empty(), "no PTY was spawned");
     let state = r

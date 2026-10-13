@@ -15,6 +15,7 @@ pub mod prompts;
 pub mod runner;
 pub mod watch;
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -27,7 +28,8 @@ use fleetdeck_proto::{Event, ProviderInstanceId, SessionId};
 use ring::digest::{SHA256, digest};
 use tokio::sync::Semaphore;
 
-use crate::store::{Store, StoreError};
+use crate::manager::{Policy, PolicyHub};
+use crate::store::{OfflineApprovalPolicy, Store, StoreError};
 use runner::{Call, CliRunner, Runner};
 
 /// The calls that run at the same time.
@@ -78,10 +80,12 @@ impl From<StoreError> for AssistError {
     }
 }
 
-/// The model help of one station.
+/// The model help of one station. The runner, the slots and the budget are
+/// built once; the `[model_help]` settings are live: each call reads the
+/// current policy snapshot (DL-172 §1.4).
 #[derive(Debug)]
 pub struct Assist {
-    config: ModelHelpConfig,
+    hub: Arc<PolicyHub>,
     store: Store,
     instances: Vec<AssistInstance>,
     runner: Arc<dyn Runner>,
@@ -89,13 +93,15 @@ pub struct Assist {
 }
 
 impl Assist {
-    /// The model help with the real CLI runner.
+    /// The model help with the real CLI runner and the live settings of
+    /// `hub`.
     #[must_use]
-    pub fn new(config: ModelHelpConfig, store: Store, instances: Vec<AssistInstance>) -> Self {
-        Self::with_runner(config, store, instances, Arc::new(CliRunner))
+    pub fn new(hub: Arc<PolicyHub>, store: Store, instances: Vec<AssistInstance>) -> Self {
+        Self::with_hub_runner(hub, store, instances, Arc::new(CliRunner))
     }
 
-    /// The model help with another runner (the tests use a fake).
+    /// The model help with fixed settings and another runner (the tests
+    /// use a fake).
     #[must_use]
     pub fn with_runner(
         config: ModelHelpConfig,
@@ -103,8 +109,21 @@ impl Assist {
         instances: Vec<AssistInstance>,
         runner: Arc<dyn Runner>,
     ) -> Self {
+        let policy = Policy::new(Vec::new(), 0, OfflineApprovalPolicy::Wait, BTreeMap::new())
+            .with_model_help(config);
+        Self::with_hub_runner(Arc::new(PolicyHub::new(policy)), store, instances, runner)
+    }
+
+    /// The model help with the live settings of `hub` and another runner.
+    #[must_use]
+    pub fn with_hub_runner(
+        hub: Arc<PolicyHub>,
+        store: Store,
+        instances: Vec<AssistInstance>,
+        runner: Arc<dyn Runner>,
+    ) -> Self {
         Self {
-            config,
+            hub,
             store,
             instances,
             runner,
@@ -112,16 +131,21 @@ impl Assist {
         }
     }
 
+    /// The current `[model_help]` settings. Read them once for each call.
+    fn config(&self) -> ModelHelpConfig {
+        self.hub.current().model_help().clone()
+    }
+
     /// False when `[model_help] enabled = false`.
     #[must_use]
     pub fn enabled(&self) -> bool {
-        self.config.enabled
+        self.config().enabled
     }
 
     /// The daily token cap.
     #[must_use]
     pub fn cap(&self) -> u64 {
-        self.config.daily_token_cap
+        self.config().daily_token_cap
     }
 
     /// The tokens used today and the cap, for `station.info`; `None` when
@@ -141,8 +165,12 @@ impl Assist {
 
     /// The instance that runs a call: the first one of the configured
     /// driver, else the first one that is signed in.
-    fn pick(&self, providers: &[StationProvider]) -> Option<&AssistInstance> {
-        match self.config.provider {
+    fn pick(
+        &self,
+        config: &ModelHelpConfig,
+        providers: &[StationProvider],
+    ) -> Option<&AssistInstance> {
+        match config.provider {
             Some(driver) => self.instances.iter().find(|i| i.driver == driver),
             None => self.instances.iter().find(|i| {
                 providers
@@ -152,10 +180,10 @@ impl Assist {
         }
     }
 
-    fn model(&self, driver: Driver) -> &str {
+    fn model(config: &ModelHelpConfig, driver: Driver) -> &str {
         match driver {
-            Driver::Claude => &self.config.claude_model,
-            Driver::Codex => &self.config.codex_model,
+            Driver::Claude => &config.claude_model,
+            Driver::Codex => &config.codex_model,
         }
     }
 
@@ -230,17 +258,18 @@ impl Assist {
                 "the input has more than {MAX_INPUT_CHARS} characters"
             )));
         }
-        let instance = self.pick(providers).ok_or(AssistError::NoProvider)?;
-        let model = self.model(instance.driver).to_owned();
+        let config = self.config();
+        let instance = self
+            .pick(&config, providers)
+            .ok_or(AssistError::NoProvider)?;
+        let model = Self::model(&config, instance.driver).to_owned();
         let prompt = prompts::build(kind, input);
         let hash = input_hash(kind, &model, &prompt);
         if let Some(hit) = self.store.assist_cache_get(hash.clone()).await? {
             return Ok(answer(hit.output, true));
         }
         let env = match instance.driver {
-            Driver::Claude => {
-                runner::claude_env(&instance.env, self.config.per_call_max_output_tokens)
-            }
+            Driver::Claude => runner::claude_env(&instance.env, config.per_call_max_output_tokens),
             Driver::Codex => instance.env.clone(),
         };
         let call = Call {
@@ -249,7 +278,7 @@ impl Assist {
             env,
             model,
             prompt,
-            max_output_tokens: self.config.per_call_max_output_tokens,
+            max_output_tokens: config.per_call_max_output_tokens,
         };
         let _slot = self
             .slots
@@ -258,7 +287,7 @@ impl Assist {
             .map_err(|e| AssistError::Failed(e.to_string()))?;
         // The budget is read after the slot: a call that waited behind others
         // sees the tokens that they spent, so a backlog stops at the cap.
-        if self.store.assist_tokens_today().await? >= self.cap() {
+        if self.store.assist_tokens_today().await? >= config.daily_token_cap {
             return Err(AssistError::Budget);
         }
         let run = self
@@ -266,7 +295,7 @@ impl Assist {
             .run(call)
             .await
             .map_err(|e| AssistError::Failed(e.to_string()))?;
-        let max_chars = MAX_OUTPUT_CHARS.min(self.config.per_call_max_output_tokens as usize * 4);
+        let max_chars = MAX_OUTPUT_CHARS.min(config.per_call_max_output_tokens as usize * 4);
         let text = clean(kind, &run.text, max_chars)
             .ok_or_else(|| AssistError::Failed("the model gave no usable text".to_owned()))?;
         self.store

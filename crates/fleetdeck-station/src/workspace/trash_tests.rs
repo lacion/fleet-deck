@@ -166,7 +166,13 @@ impl Rig {
                 ) {
                     trash::decide(d, &policy, origin, shells.as_deref(), command)
                 } else {
-                    crate::manager::decide::decide(d, &policy, origin, command)
+                    crate::manager::decide::decide(
+                        d,
+                        &policy,
+                        &crate::coordinator::Bindings::default(),
+                        origin,
+                        command,
+                    )
                 }
             })
             .await

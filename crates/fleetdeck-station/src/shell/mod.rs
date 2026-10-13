@@ -51,28 +51,17 @@ use crate::store::terminal::HandoverLaunch;
 pub use handover::{TerminalExit, TerminalInstance};
 pub use scrollback::Scrollback;
 
-/// The settings of the shell service (`station.toml`).
-#[derive(Debug, Clone)]
+/// The settings of the shell service that are fixed while the station runs.
+/// `allow_shell` and `max_shells` are live: each call reads them from the
+/// current policy snapshot (DL-172 §1.4).
+#[derive(Debug, Clone, Default)]
 pub struct ShellConfig {
-    pub allow: bool,
-    pub max_shells: u32,
     /// The program and its arguments; `None` is the owner's login shell
     /// (`$SHELL -l`, else `/bin/sh -l`).
     pub program: Option<(OsString, Vec<OsString>)>,
     /// The provider instances that have a binary for a terminal handover
     /// (DL-140).
     pub instances: BTreeMap<ProviderInstanceId, TerminalInstance>,
-}
-
-impl Default for ShellConfig {
-    fn default() -> Self {
-        Self {
-            allow: true,
-            max_shells: fleetdeck_core::config::DEFAULT_MAX_SHELLS,
-            program: None,
-            instances: BTreeMap::new(),
-        }
-    }
 }
 
 /// The output chunks (at most 16 KiB each) that one attached stream may
@@ -90,7 +79,12 @@ struct Launch {
     env: ChildEnv,
     /// The session that a TUI handover holds.
     session: Option<SessionId>,
+    /// `max_shells` of the policy snapshot that admitted the start.
+    max_shells: u32,
 }
+
+/// The refusal of a queued start when shells turned off after the commit.
+pub(crate) const SHELLS_OFF: &str = "shells are off on this station (allow_shell = false)";
 
 struct Shell {
     info: Mutex<ShellInfo>,
@@ -178,13 +172,6 @@ impl Shells {
         }
     }
 
-    /// `allow_shell` of the station config: shells and TUI handovers are
-    /// allowed.
-    #[must_use]
-    pub fn allowed(&self) -> bool {
-        self.config.allow
-    }
-
     /// The reports that a TUI process ended (first call only). The station
     /// releases the hold of the session for each (DL-140).
     pub fn take_exits(&self) -> Option<mpsc::UnboundedReceiver<TerminalExit>> {
@@ -217,11 +204,14 @@ impl Shells {
         policy: &Policy,
         pending: &[PendingShell],
     ) -> Result<(), Reject> {
-        if !self.config.allow {
-            return Err(reject(
-                RejectCode::Unsupported,
-                "shells are off on this station (allow_shell = false)",
-            ));
+        // A running shell keeps running when shells turn off: only a new
+        // shell is refused (DL-172 §1.4).
+        if matches!(
+            change,
+            ShellChange::Open { .. } | ShellChange::Handover { .. }
+        ) && !policy.allow_shell()
+        {
+            return Err(reject(RejectCode::Unsupported, SHELLS_OFF));
         }
         change
             .check()
@@ -252,9 +242,11 @@ impl Shells {
                 policy
                     .workspace(cwd)
                     .map_err(|e| reject(RejectCode::InvalidCommand, e.to_string()))?;
-                self.room(&ids, shell_id)
+                self.room(&ids, shell_id, policy.max_shells())
             }
-            ShellChange::Handover { shell_id, .. } => self.room(&ids, shell_id),
+            ShellChange::Handover { shell_id, .. } => {
+                self.room(&ids, shell_id, policy.max_shells())
+            }
             ShellChange::Resize { shell_id, .. } | ShellChange::Close { shell_id } => {
                 if ids.contains(shell_id) {
                     Ok(())
@@ -270,20 +262,17 @@ impl Shells {
 
     /// A free id and a free slot among the live shells and the committed
     /// opens and handovers (`ids`).
-    fn room(&self, ids: &BTreeSet<String>, shell_id: &str) -> Result<(), Reject> {
+    fn room(&self, ids: &BTreeSet<String>, shell_id: &str, max_shells: u32) -> Result<(), Reject> {
         if ids.contains(shell_id) {
             return Err(reject(
                 RejectCode::InvalidState,
                 format!("shell `{shell_id}` exists"),
             ));
         }
-        if ids.len() >= self.config.max_shells as usize {
+        if ids.len() >= max_shells as usize {
             return Err(reject(
                 RejectCode::InvalidState,
-                format!(
-                    "the station runs its maximum of {} shells (max_shells)",
-                    self.config.max_shells
-                ),
+                format!("the station runs its maximum of {max_shells} shells (max_shells)"),
             ));
         }
         Ok(())
@@ -301,8 +290,12 @@ impl Shells {
                 cols,
                 rows,
             } => {
+                // A queued open is checked again: shells may be off now.
+                if !policy.allow_shell() {
+                    return Err(SHELLS_OFF.to_owned());
+                }
                 let cwd = policy.workspace(cwd).map_err(|e| e.to_string())?;
-                self.open(shell_id, &cwd, *cols, *rows, now)
+                self.open(shell_id, &cwd, *cols, *rows, now, policy.max_shells())
                     .map_err(|r| r.message)
             }
             ShellChange::Resize {
@@ -406,11 +399,13 @@ impl Shells {
         cols: u16,
         rows: u16,
         now: i64,
+        max_shells: u32,
     ) -> Result<(), Reject> {
         let launch = Launch {
             program: self.program(),
             env: self.env.clone(),
             session: None,
+            max_shells,
         };
         self.spawn(shell_id, cwd, cols, rows, now, launch)
             .map(|_| ())
@@ -431,9 +426,9 @@ impl Shells {
         shell_id: &str,
         session_id: &SessionId,
         launch: &HandoverLaunch,
-        cols: u16,
-        rows: u16,
+        (cols, rows): (u16, u16),
         now: i64,
+        max_shells: u32,
     ) -> Result<Option<u32>, StartError> {
         let instance = self
             .config
@@ -459,6 +454,7 @@ impl Shells {
             program,
             env: instance.env.clone(),
             session: Some(session_id.clone()),
+            max_shells,
         };
         self.spawn(shell_id, &launch.cwd, cols, rows, now, launch_env)
     }
@@ -491,13 +487,11 @@ impl Shells {
                 format!("shell `{shell_id}` exists"),
             ));
         }
-        if shells.len() >= self.config.max_shells as usize {
+        let max_shells = launch.max_shells;
+        if shells.len() >= max_shells as usize {
             return Err(not_started(
                 RejectCode::InvalidState,
-                format!(
-                    "the station runs its maximum of {} shells (max_shells)",
-                    self.config.max_shells
-                ),
+                format!("the station runs its maximum of {max_shells} shells (max_shells)"),
             ));
         }
         let failed = |what: &str, e: &dyn std::fmt::Display| {

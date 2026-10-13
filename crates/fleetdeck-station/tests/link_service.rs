@@ -56,11 +56,16 @@ fn deck_node(identity: Arc<Identity>, station: &Identity) -> NodeConfig {
 }
 
 async fn fixture(shells: ShellConfig) -> Fixture {
+    fixture_with(shells, true).await
+}
+
+async fn fixture_with(shells: ShellConfig, allow_shell: bool) -> Fixture {
     let det = Det::new();
     let store = Store::open_in_memory(det.clock(), det.ids(), StoreConfig::default())
         .await
         .unwrap();
-    let policy = Policy::new(Vec::new(), 4, OfflineApprovalPolicy::Wait, BTreeMap::new());
+    let policy = Policy::new(Vec::new(), 4, OfflineApprovalPolicy::Wait, BTreeMap::new())
+        .with_shell(allow_shell, 8);
     let manager = SessionManager::start(store.clone(), policy, Adapters::new(), det.ids())
         .await
         .unwrap();
@@ -272,11 +277,7 @@ async fn a_replay_sends_the_events_after_the_cursor_then_live_events_and_acks_ke
 #[tokio::test]
 async fn station_info_reports_allow_shell() {
     for allow in [false, true] {
-        let mut f = fixture(ShellConfig {
-            allow,
-            ..ShellConfig::default()
-        })
-        .await;
+        let mut f = fixture_with(ShellConfig::default(), allow).await;
         let deck = f.connect().await;
         let info: StationInfo =
             serde_json::from_value(ok(call(&deck.control, "station.info", json!({})).await))
@@ -341,7 +342,7 @@ async fn a_forced_snapshot_carries_the_coordinator_binding_projection_without_th
     let mut f = fixture(ShellConfig::default()).await;
     f.session("s1").await;
     let head = f.event("s1", 1).await;
-    let bindings = f.ctx.manager.policy().coordinator_bindings().clone();
+    let bindings = f.ctx.manager.coordinator_bindings().clone();
     bindings.insert(
         "digest-of-the-credential".to_owned(),
         Binding {

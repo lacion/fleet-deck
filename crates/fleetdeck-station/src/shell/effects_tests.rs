@@ -13,16 +13,15 @@ use fleetdeck_proto::{CommandId, RejectCode};
 use fleetdeck_testkit::Det;
 use tokio::sync::mpsc::error::TryRecvError;
 
-use super::tests::{env, open, policy, read_until};
+use super::tests::{env, open, policy_with, read_until};
 use super::{SUBSCRIBER_QUEUE, ShellConfig, Shells, decide, dispatch};
 use crate::manager::policy::Policy;
+use crate::manager::policy_hub::{PolicyHub, test_config};
 use crate::store::{Caller, Decided, Store, StoreConfig};
 
-fn shells_with(program: &str, max_shells: u32) -> Arc<Shells> {
+fn shells_with(program: &str) -> Arc<Shells> {
     Arc::new(Shells::with_env(
         ShellConfig {
-            allow: true,
-            max_shells,
             program: Some((program.into(), Vec::new())),
             instances: BTreeMap::new(),
         },
@@ -77,12 +76,13 @@ async fn a_shell_command_committed_before_a_crash_never_runs_after_the_restart()
     let dir = tempfile::tempdir().expect("dir");
     let root = tempfile::tempdir().expect("root");
     let db = dir.path().join("station.db");
-    let p = policy(root.path());
+    let p = policy_with(root.path(), true, 4);
+    let hub = PolicyHub::new(p.clone());
 
     // Process 1 commits two opens and crashes: one before the claim, one
     // after the claim and before the PTY I/O.
     let first = file_store(&det, &db).await;
-    let shells1 = shells_with("/bin/sh", 4);
+    let shells1 = shells_with("/bin/sh");
     let d = command(&first, &shells1, &p, "sh-a", open("a", root.path())).await;
     assert_eq!(d.receipt.state, ReceiptState::Accepted);
     // The receipt transaction did no PTY I/O.
@@ -104,7 +104,7 @@ async fn a_shell_command_committed_before_a_crash_never_runs_after_the_restart()
 
     // Process 2: start recovery ends both effects; nothing runs.
     let second = file_store(&det, &db).await;
-    let shells2 = shells_with("/bin/sh", 4);
+    let shells2 = shells_with("/bin/sh");
     assert_eq!(
         state(&second, "sh-a").await,
         (
@@ -119,7 +119,10 @@ async fn a_shell_command_committed_before_a_crash_never_runs_after_the_restart()
             Some("station_restart".to_owned())
         )
     );
-    assert_eq!(dispatch(&second, &shells2, &p).await.expect("dispatch"), 0);
+    assert_eq!(
+        dispatch(&second, &shells2, &hub).await.expect("dispatch"),
+        0
+    );
     assert!(shells2.list().is_empty());
 
     // A retry with the same command id gets the stored receipt and runs
@@ -127,12 +130,18 @@ async fn a_shell_command_committed_before_a_crash_never_runs_after_the_restart()
     let d = command(&second, &shells2, &p, "sh-b", open("b", root.path())).await;
     assert!(d.duplicate);
     assert_eq!(d.receipt.state, ReceiptState::Accepted);
-    assert_eq!(dispatch(&second, &shells2, &p).await.expect("dispatch"), 0);
+    assert_eq!(
+        dispatch(&second, &shells2, &hub).await.expect("dispatch"),
+        0
+    );
     assert!(shells2.list().is_empty());
     // A new command works in the new process.
     let d = command(&second, &shells2, &p, "sh-c", open("c", root.path())).await;
     assert_eq!(d.receipt.state, ReceiptState::Accepted);
-    assert_eq!(dispatch(&second, &shells2, &p).await.expect("dispatch"), 1);
+    assert_eq!(
+        dispatch(&second, &shells2, &hub).await.expect("dispatch"),
+        1
+    );
     assert_eq!(state(&second, "sh-c").await.0, "confirmed");
     assert_eq!(shells2.list().len(), 1);
     shells2.close_all();
@@ -143,9 +152,10 @@ async fn shell_effects_run_after_the_commit_in_order_and_a_pty_failure_is_record
     let det = Det::new();
     let dir = tempfile::tempdir().expect("dir");
     let root = tempfile::tempdir().expect("root");
-    let p = policy(root.path());
+    let p = policy_with(root.path(), true, 1);
+    let hub = PolicyHub::new(p.clone());
     let store = file_store(&det, &dir.path().join("station.db")).await;
-    let shells = shells_with("/bin/sh", 1);
+    let shells = shells_with("/bin/sh");
 
     // A resize and a close of a shell whose open is pending are accepted;
     // the cap counts the pending open.
@@ -161,7 +171,7 @@ async fn shell_effects_run_after_the_commit_in_order_and_a_pty_failure_is_record
     let reject = d.receipt.reject.expect("rejected");
     assert_eq!(reject.code, RejectCode::InvalidState);
     assert!(reject.message.contains("max_shells"), "{reject:?}");
-    assert_eq!(dispatch(&store, &shells, &p).await.expect("dispatch"), 2);
+    assert_eq!(dispatch(&store, &shells, &hub).await.expect("dispatch"), 2);
     assert_eq!(state(&store, "sh-1").await.0, "confirmed");
     assert_eq!(state(&store, "sh-2").await.0, "confirmed");
     let info = &shells.list()[0];
@@ -174,15 +184,15 @@ async fn shell_effects_run_after_the_commit_in_order_and_a_pty_failure_is_record
         shell_id: "a".to_owned(),
     };
     command(&store, &shells, &p, "sh-4", close).await;
-    assert_eq!(dispatch(&store, &shells, &p).await.expect("dispatch"), 1);
+    assert_eq!(dispatch(&store, &shells, &hub).await.expect("dispatch"), 1);
     assert_eq!(state(&store, "sh-4").await.0, "confirmed");
     assert!(shells.list().is_empty());
 
     // The PTY cannot start the program: the effect is `failed` with the
     // reason, and no shell is listed.
-    let broken = shells_with("/nonexistent/fleetdeck-shell", 1);
+    let broken = shells_with("/nonexistent/fleetdeck-shell");
     command(&store, &broken, &p, "sh-5", open("x", root.path())).await;
-    assert_eq!(dispatch(&store, &broken, &p).await.expect("dispatch"), 1);
+    assert_eq!(dispatch(&store, &broken, &hub).await.expect("dispatch"), 1);
     let (st, detail) = state(&store, "sh-5").await;
     assert_eq!(st, "failed");
     assert!(
@@ -195,8 +205,8 @@ async fn shell_effects_run_after_the_commit_in_order_and_a_pty_failure_is_record
 #[test]
 fn a_slow_reader_is_cut_off_and_the_shell_keeps_running_with_its_scrollback() {
     let root = tempfile::tempdir().expect("root");
-    let p = policy(root.path());
-    let s = shells_with("/bin/sh", 1);
+    let p = policy_with(root.path(), true, 1);
+    let s = shells_with("/bin/sh");
     s.apply(&open("sh", root.path()), &p, 1).expect("open");
     // This reader never reads while the shell writes about 20 MB.
     let (_, mut slow) = s.attach("sh").expect("attach");
@@ -231,4 +241,48 @@ fn a_slow_reader_is_cut_off_and_the_shell_keeps_running_with_its_scrollback() {
     let mut seen = String::new();
     read_until(&mut seen, &mut fresh, "AGAIN-43");
     s.close_all();
+}
+
+#[tokio::test]
+async fn turning_allow_shell_off_keeps_a_running_shell_and_refuses_new_and_queued_opens() {
+    let det = Det::new();
+    let dir = tempfile::tempdir().expect("dir");
+    let root = tempfile::tempdir().expect("root");
+    let on = policy_with(root.path(), true, 4);
+    let hub = PolicyHub::new(on.clone());
+    let store = file_store(&det, &dir.path().join("station.db")).await;
+    let shells = shells_with("/bin/sh");
+
+    // One shell runs; a second open is committed and not dispatched yet.
+    command(&store, &shells, &on, "sh-1", open("a", root.path())).await;
+    assert_eq!(dispatch(&store, &shells, &hub).await.expect("dispatch"), 1);
+    let d = command(&store, &shells, &on, "sh-2", open("b", root.path())).await;
+    assert_eq!(d.receipt.state, ReceiptState::Accepted);
+
+    // The owner turns shells off: the running shell stays, the queued open
+    // fails at the dispatch, and a new open is refused.
+    let config = test_config(root.path(), "allow_shell = false\nmax_shells = 4\n");
+    hub.swap(hub.current().reconfigured(&config));
+    assert_eq!(dispatch(&store, &shells, &hub).await.expect("dispatch"), 1);
+    let (st, detail) = state(&store, "sh-2").await;
+    assert_eq!(st, "failed");
+    assert!(
+        detail.as_deref().unwrap_or("").contains("allow_shell"),
+        "{detail:?}"
+    );
+    let ids: Vec<_> = shells.list().into_iter().map(|s| s.shell_id).collect();
+    assert_eq!(ids, ["a"]);
+    let off = hub.current();
+    let d = command(&store, &shells, &off, "sh-3", open("c", root.path())).await;
+    let reject = d.receipt.reject.expect("rejected");
+    assert_eq!(reject.code, RejectCode::Unsupported);
+    // The running shell can still be closed.
+    let close = ShellChange::Close {
+        shell_id: "a".to_owned(),
+    };
+    let d = command(&store, &shells, &off, "sh-4", close).await;
+    assert_eq!(d.receipt.state, ReceiptState::Accepted);
+    assert_eq!(dispatch(&store, &shells, &hub).await.expect("dispatch"), 1);
+    assert!(shells.list().is_empty());
+    shells.close_all();
 }

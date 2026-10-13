@@ -9,8 +9,9 @@ use fleetdeck_proto::command::{CommandResult, RejectCode};
 use fleetdeck_proto::shell::{ShellChange, ShellEnvelope};
 
 use super::handover;
-use super::{Shells, StartError, reject};
+use super::{SHELLS_OFF, Shells, StartError, reject};
 use crate::manager::policy::Policy;
+use crate::manager::policy_hub::PolicyHub;
 use crate::store::effects::EffectId;
 use crate::store::shell_effects;
 use crate::store::{DecideError, Decision, Store, StoreError};
@@ -64,7 +65,9 @@ pub fn decide(
 }
 
 /// Runs the queued shell effects in commit order: each is claimed before
-/// its PTY I/O and ends `confirmed` or `failed`. Returns how many ran.
+/// its PTY I/O and ends `confirmed` or `failed`. Each effect reads the
+/// current policy snapshot, so a queued open or handover that the new
+/// snapshot refuses fails (DL-172 §1.4). Returns how many ran.
 ///
 /// # Errors
 /// A store error; the effect then stays claimed, and the next start
@@ -72,13 +75,13 @@ pub fn decide(
 pub async fn dispatch(
     store: &Store,
     shells: &Arc<Shells>,
-    policy: &Policy,
+    hub: &PolicyHub,
 ) -> Result<usize, StoreError> {
     let _turn = shells.dispatch.lock().await;
     let mut done = 0;
     while let Some(effect) = store.claim_shell_effect().await? {
         let worker = Arc::clone(shells);
-        let policy = policy.clone();
+        let policy = hub.current();
         let now = store.now_ms();
         let change = effect.change;
         let held = custody_refusal(store, &policy, &change).await?;
@@ -91,7 +94,16 @@ pub async fn dispatch(
             rows,
         } = &change
         {
-            start_terminal(store, worker, shell_id, session_id, (*cols, *rows), now).await?
+            start_terminal(
+                store,
+                worker,
+                &policy,
+                shell_id,
+                session_id,
+                (*cols, *rows),
+                now,
+            )
+            .await?
         } else {
             tokio::task::spawn_blocking(move || worker.execute(&change, &policy, now))
                 .await
@@ -136,29 +148,39 @@ async fn custody_refusal(
 async fn start_terminal(
     store: &Store,
     shells: Arc<Shells>,
+    policy: &Policy,
     shell_id: &str,
     session_id: &SessionId,
     (cols, rows): (u16, u16),
     now: i64,
 ) -> Result<Result<(), String>, StoreError> {
-    let started = match store.handover_launch(session_id.clone()).await? {
-        None => Err(StartError::NotStarted(reject(
-            RejectCode::InvalidState,
-            "the session has no resume identity",
-        ))),
-        Some(launch) => {
-            let (shell, session) = (shell_id.to_owned(), session_id.clone());
-            tokio::task::spawn_blocking(move || {
-                shells.handover(&shell, &session, &launch, cols, rows, now)
-            })
-            .await
-            .unwrap_or_else(|e| {
-                // The task may have died after the child started.
-                Err(StartError::MayRun {
-                    pid: None,
-                    message: format!("shell task: {e}"),
+    let max_shells = policy.max_shells();
+    let started = if !policy.allow_shell() {
+        // Shells turned off after the commit (DL-172 §1.4).
+        Err(StartError::NotStarted(reject(
+            RejectCode::Unsupported,
+            SHELLS_OFF,
+        )))
+    } else {
+        match store.handover_launch(session_id.clone()).await? {
+            None => Err(StartError::NotStarted(reject(
+                RejectCode::InvalidState,
+                "the session has no resume identity",
+            ))),
+            Some(launch) => {
+                let (shell, session) = (shell_id.to_owned(), session_id.clone());
+                tokio::task::spawn_blocking(move || {
+                    shells.handover(&shell, &session, &launch, (cols, rows), now, max_shells)
                 })
-            })
+                .await
+                .unwrap_or_else(|e| {
+                    // The task may have died after the child started.
+                    Err(StartError::MayRun {
+                        pid: None,
+                        message: format!("shell task: {e}"),
+                    })
+                })
+            }
         }
     };
     match started {

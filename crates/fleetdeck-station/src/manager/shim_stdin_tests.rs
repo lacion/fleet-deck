@@ -62,7 +62,13 @@ async fn send(det: &Det, s: &Store, policy: &Policy, id: &str, command: SessionC
     };
     let policy = policy.clone();
     s.decide(envelope, Caller::local(), move |d| {
-        decide(d, &policy, CommandOrigin::Board, command)
+        decide(
+            d,
+            &policy,
+            &crate::coordinator::Bindings::default(),
+            CommandOrigin::Board,
+            command,
+        )
     })
     .await
     .unwrap()

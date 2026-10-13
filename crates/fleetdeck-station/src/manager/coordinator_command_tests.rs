@@ -62,7 +62,7 @@ impl Station {
 
     async fn bind(&self, session: &SessionId, grant: &str, state: BindingState, generation: u32) {
         let native = self.native(session).await;
-        self.manager.policy().coordinator_bindings().insert(
+        self.manager.coordinator_bindings().insert(
             format!("digest-{grant}"),
             Binding {
                 binding_id: format!("b-{grant}"),
@@ -80,7 +80,6 @@ impl Station {
 
     fn binding(&self, grant: &str) -> Binding {
         self.manager
-            .policy()
             .coordinator_bindings()
             .get(&format!("b-{grant}"))
             .unwrap()
