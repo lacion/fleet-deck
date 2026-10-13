@@ -127,14 +127,14 @@ test('the access check of a clone URL shows the hint and what Git said', async (
   await chooseApp(page);
   const form = page.getByRole('region', { name: 'New session' });
   await form.getByLabel('Workspace').selectOption('clone');
-  await form.getByLabel('Clone URL').fill('git@github.com:me/private.git');
+  await form.getByLabel('Repository', { exact: true }).fill('git@github.com:me/private.git');
   await form.getByRole('button', { name: 'Check access' }).click();
   await expect(form).toContainText("The station's SSH key has no access.");
   await form.getByText('Git said').click();
   await expect(form).toContainText('Permission denied (publickey).');
   await shot(page, 'spawn-clone-check');
   expect(await fitsWidth(page)).toBe(true);
-  await form.getByLabel('Clone URL').fill('git@github.com:me/other.git');
+  await form.getByLabel('Repository', { exact: true }).fill('git@github.com:me/other.git');
   await expect(form).not.toContainText("The station's SSH key has no access.");
 });
 

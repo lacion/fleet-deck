@@ -35,6 +35,7 @@ const SECTIONS: readonly { readonly title: string; readonly keys: readonly strin
   { title: 'Sharing', keys: ['member_deny'] },
   { title: 'Network', keys: ['listen', 'link_listen', 'tailnet_hostname'] },
   { title: 'Notifications', keys: ['conflict_mail'] },
+  { title: 'New sessions', keys: ['clone_host', 'clone_org', 'clone_transport'] },
   { title: 'Trackers', keys: ['trackers'] },
 ];
 

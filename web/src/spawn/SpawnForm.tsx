@@ -3,11 +3,14 @@ import { instanceLimit, mostRoom, rateMeters } from '../board/usage';
 import { batchRef, newBatchId } from '../compare/compare';
 import type { DeckSession, SessionKey, StationView, WorkspaceListing } from '../gen';
 import type { Freshness } from '../runtime/state';
+import { DECK } from '../settings/actions';
+import { useSettings } from '../settings/context';
 import { FolderPicker } from '../ui/FolderPicker';
 import { useNow } from '../ui/useNow';
 import { BranchFields } from './BranchFields';
 import { CloneAccess } from './CloneAccess';
 import { ModelField } from './ModelField';
+import { type CloneDefaults, cloneDefaultsOf, DEFAULT_CLONE, resolveRepo } from './repoRef';
 import { SetupField } from './SetupField';
 import {
   baseProblem,
@@ -44,7 +47,9 @@ type Props = {
   /** R3: the directory chosen at the first render ("Fix checks" of a project). */
   readonly initialCwd?: string | undefined;
   /** DL-176: the workspace choice at the first render ("New session in this project": worktree). */
-  readonly initialPlace?: 'here' | 'worktree' | undefined;
+  readonly initialPlace?: 'here' | 'worktree' | 'clone' | undefined;
+  /** The repository field at the first render (tests). */
+  readonly initialRepo?: string | undefined;
   /** DL-141: the fleet, for the recent directories of a station. */
   readonly sessions?: readonly DeckSession[] | undefined;
   /** Unix ms of now for the reset times of the limits (tests). */
@@ -63,6 +68,7 @@ export function SpawnForm({
   initialStation,
   initialCwd,
   initialPlace = 'here',
+  initialRepo = '',
   sessions = [],
   now: givenNow,
 }: Props) {
@@ -91,8 +97,14 @@ export function SpawnForm({
   const [prompt, setPrompt] = useState(initialPrompt);
   const [importId, setImportId] = useState('');
   const [place, setPlace] = useState<'here' | 'worktree' | 'clone'>(initialPlace);
-  const [cloneUrl, setCloneUrl] = useState('');
-  const [cloneName, setCloneName] = useState('');
+  const [repoText, setRepoText] = useState(initialRepo);
+  // The error line of the field is an alert once the owner left the field or pressed Start.
+  const [repoSeen, setRepoSeen] = useState(false);
+  const [nameText, setNameText] = useState('');
+  const [nameTouched, setNameTouched] = useState(false);
+  // The default host, organization and transport come from the deck settings (owner only).
+  const settingsEnv = useSettings();
+  const [cloneDefaults, setCloneDefaults] = useState<CloneDefaults>(DEFAULT_CLONE);
   const [branch, setBranch] = useState('');
   const [base, setBase] = useState('');
   const [access, setAccess] = useState<{
@@ -111,6 +123,23 @@ export function SpawnForm({
   // directory then keeps the typed text instead of the remembered one.
   const setupEdited = useRef(false);
 
+  // The deck settings are read once. A login that is not the owner's, or a failed read, keeps the
+  // built-in defaults: the form then asks for owner/name or a URL.
+  useEffect(() => {
+    if (settingsEnv === undefined) return;
+    let current = true;
+    void settingsEnv.settings
+      .view(DECK)
+      .then((view) => {
+        if (current) setCloneDefaults(cloneDefaultsOf(view));
+      })
+      .catch(() => {
+        if (current) setCloneDefaults(DEFAULT_CLONE);
+      });
+    return () => {
+      current = false;
+    };
+  }, []);
   // A station that goes away (or the first one that appears) resets the
   // choice; a directory belongs to its station.
   useEffect(() => {
@@ -147,15 +176,20 @@ export function SpawnForm({
     branchName !== '' &&
     (branchProblem(branchName) !== null ||
       (base.trim() !== '' && baseProblem(base.trim()) !== null));
+  const repo = resolveRepo(repoText, cloneDefaults);
+  const cloneUrl = 'url' in repo ? repo.url : '';
+  const repoError = 'error' in repo ? repo.error : null;
+  // The directory name follows the repository until the owner types one.
+  const cloneName = nameTouched ? nameText : 'name' in repo ? repo.name : '';
   // The access result belongs to the station and the URL that it checked.
   const accessResult =
-    access !== null && access.stationId === stationId && access.url === cloneUrl.trim()
+    access !== null && access.stationId === stationId && access.url === cloneUrl
       ? access.result
       : null;
   const checkAccess = () => {
-    if (actions === undefined || station === undefined || checking) return;
+    if (actions === undefined || station === undefined || checking || cloneUrl === '') return;
     const id = station.station_id;
-    const url = cloneUrl.trim();
+    const url = cloneUrl;
     setChecking(true);
     setAccess(null);
     void actions
@@ -164,9 +198,7 @@ export function SpawnForm({
       .finally(() => setChecking(false));
   };
   const cloneReady =
-    place !== 'clone' ||
-    importId.trim() !== '' ||
-    (cloneUrl.trim() !== '' && cloneName.trim() !== '');
+    place !== 'clone' || importId.trim() !== '' || (cloneUrl !== '' && cloneName.trim() !== '');
   const ready =
     live &&
     canDrive &&
@@ -187,7 +219,11 @@ export function SpawnForm({
     cwd?.startsWith('/') === true
       ? null
       : 'choose a directory (type an absolute path, or Browse… and Use this folder)',
-    cloneReady ? null : 'enter the clone URL and the new directory name',
+    cloneReady
+      ? null
+      : repoError !== null
+        ? repoError.replace(/\.$/, '')
+        : 'enter the new directory name',
     branchFields && branchName !== '' && branchProblem(branchName) !== null
       ? 'fix the branch name'
       : null,
@@ -210,6 +246,7 @@ export function SpawnForm({
         <form
           onSubmit={(event) => {
             event.preventDefault();
+            setRepoSeen(true);
             if (
               !ready ||
               actions === undefined ||
@@ -336,11 +373,18 @@ export function SpawnForm({
               Workspace
               <select
                 value={place}
-                onChange={(event) => setPlace(event.target.value as 'here' | 'worktree' | 'clone')}
+                onChange={(event) => {
+                  const next = event.target.value as 'here' | 'worktree' | 'clone';
+                  setPlace(next);
+                  if (next !== 'clone') {
+                    setNameTouched(false);
+                    setNameText('');
+                  }
+                }}
               >
                 <option value="here">Work in this directory</option>
                 <option value="worktree">A new worktree on its own branch</option>
-                <option value="clone">Clone a URL into a new directory here</option>
+                <option value="clone">Clone a repository into a new directory here</option>
               </select>
             </label>
             {branchFields ? (
@@ -350,8 +394,15 @@ export function SpawnForm({
               <>
                 <div className="fd-spawn-url">
                   <label>
-                    Clone URL
-                    <input value={cloneUrl} onChange={(event) => setCloneUrl(event.target.value)} />
+                    Repository
+                    <input
+                      value={repoText}
+                      placeholder="owner/name, host/owner/name or a URL"
+                      spellCheck={false}
+                      autoCapitalize="off"
+                      onChange={(event) => setRepoText(event.target.value)}
+                      onBlur={() => setRepoSeen(true)}
+                    />
                   </label>
                   <CloneAccess
                     url={cloneUrl}
@@ -360,9 +411,18 @@ export function SpawnForm({
                     onCheck={checkAccess}
                   />
                 </div>
+                <p className="fd-note" role={repoError !== null && repoSeen ? 'alert' : undefined}>
+                  {repoError ?? `Clones ${cloneUrl}`}
+                </p>
                 <label>
                   New directory name
-                  <input value={cloneName} onChange={(event) => setCloneName(event.target.value)} />
+                  <input
+                    value={cloneName}
+                    onChange={(event) => {
+                      setNameTouched(true);
+                      setNameText(event.target.value);
+                    }}
+                  />
                 </label>
               </>
             ) : null}
