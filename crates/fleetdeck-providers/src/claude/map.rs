@@ -122,6 +122,12 @@ fn on_system(core: &mut ClaudeCore, subtype: &str, body: &Map<String, Value>) ->
                 branch: None,
                 repo: None,
             })];
+            if has_v1_plugin(body) {
+                out.push(Output::Emit(Event::SessionNotice {
+                    code: V1_PLUGIN_NOTICE_CODE.to_owned(),
+                    text: V1_PLUGIN_NOTICE_TEXT.to_owned(),
+                }));
+            }
             let commands = slash_commands(body);
             if !commands.is_empty() {
                 out.push(Output::Emit(Event::SlashCommands { commands }));
@@ -154,6 +160,21 @@ fn on_system(core: &mut ClaudeCore, subtype: &str, body: &Map<String, Value>) ->
         // only a frame that names the input's client uuid does (ADR-001).
         _ => Vec::new(),
     }
+}
+
+/// The `code` of the notice for an active Fleet Deck v1 plugin (DL-141).
+const V1_PLUGIN_NOTICE_CODE: &str = "v1_plugin";
+const V1_PLUGIN_NOTICE_TEXT: &str = "The Fleet Deck v1 plugin is active in this session. Its hooks slow every stop and report the session to the v1 board. Remove the plugin in Claude Code (/plugin) after the cutover.";
+
+/// True when the `init` frame's `plugins` list has a plugin named `fleetdeck`.
+fn has_v1_plugin(body: &Map<String, Value>) -> bool {
+    body.get("plugins")
+        .and_then(Value::as_array)
+        .is_some_and(|plugins| {
+            plugins
+                .iter()
+                .any(|p| p.get("name").and_then(Value::as_str) == Some("fleetdeck"))
+        })
 }
 
 /// The strings of the array `key` of an `init` frame; a missing key, a

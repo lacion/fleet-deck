@@ -552,6 +552,21 @@ fn a_model_change_moves_the_model_badge_to_the_new_model() {
     assert_eq!(f.push(run("run-1")).model.as_deref(), Some("opus"));
 }
 
+#[test]
+fn a_session_notice_does_not_change_the_summary() {
+    let mut f = Feed::new();
+    f.push(started());
+    let mut expected = f.summary.clone();
+    let s = f.push(Event::SessionNotice {
+        code: "v1_plugin".to_owned(),
+        text: "The Fleet Deck v1 plugin is active in this session.".to_owned(),
+    });
+    // Only the sequence and the time move; all other fields stay.
+    expected.session_seq = s.session_seq;
+    expected.updated_at = s.updated_at;
+    assert_eq!(*s, expected);
+}
+
 fn terminal(shell_id: Option<&str>, pid: Option<u32>, reason: Option<&str>) -> Event {
     Event::SessionTerminal {
         shell_id: shell_id.map(str::to_owned),

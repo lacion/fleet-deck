@@ -120,6 +120,19 @@
     "proto_version": 1,
     "raw_ref": null,
     "event": {
+      "kind": "session.notice",
+      "code": "v1_plugin",
+      "text": "The Fleet Deck v1 plugin is active in this session. Its hooks slow every stop and report the session to the v1 board. Remove the plugin in Claude Code (/plugin) after the cutover."
+    }
+  },
+  {
+    "station_seq": 107,
+    "session_id": "claude-ask_user_question",
+    "session_seq": 7,
+    "at": 1760000007000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
       "kind": "session.slash_commands",
       "commands": [
         "deep-research",
@@ -172,10 +185,10 @@
     }
   },
   {
-    "station_seq": 107,
+    "station_seq": 108,
     "session_id": "claude-ask_user_question",
-    "session_seq": 7,
-    "at": 1760000007000,
+    "session_seq": 8,
+    "at": 1760000008000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -192,10 +205,10 @@
     }
   },
   {
-    "station_seq": 108,
+    "station_seq": 109,
     "session_id": "claude-ask_user_question",
-    "session_seq": 8,
-    "at": 1760000008000,
+    "session_seq": 9,
+    "at": 1760000009000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -242,10 +255,10 @@
     }
   },
   {
-    "station_seq": 109,
+    "station_seq": 110,
     "session_id": "claude-ask_user_question",
-    "session_seq": 9,
-    "at": 1760000009000,
+    "session_seq": 10,
+    "at": 1760000010000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -256,10 +269,10 @@
     }
   },
   {
-    "station_seq": 110,
+    "station_seq": 111,
     "session_id": "claude-ask_user_question",
-    "session_seq": 10,
-    "at": 1760000010000,
+    "session_seq": 11,
+    "at": 1760000011000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -271,20 +284,6 @@
     }
   },
   {
-    "station_seq": 111,
-    "session_id": "claude-ask_user_question",
-    "session_seq": 11,
-    "at": 1760000011000,
-    "proto_version": 1,
-    "raw_ref": null,
-    "event": {
-      "kind": "message.delta",
-      "turn_id": "turn-1",
-      "parent_node_id": null,
-      "text": "blue"
-    }
-  },
-  {
     "station_seq": 112,
     "session_id": "claude-ask_user_question",
     "session_seq": 12,
@@ -292,7 +291,7 @@
     "proto_version": 1,
     "raw_ref": null,
     "event": {
-      "kind": "message.completed",
+      "kind": "message.delta",
       "turn_id": "turn-1",
       "parent_node_id": null,
       "text": "blue"
@@ -306,6 +305,20 @@
     "proto_version": 1,
     "raw_ref": null,
     "event": {
+      "kind": "message.completed",
+      "turn_id": "turn-1",
+      "parent_node_id": null,
+      "text": "blue"
+    }
+  },
+  {
+    "station_seq": 114,
+    "session_id": "claude-ask_user_question",
+    "session_seq": 14,
+    "at": 1760000014000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
       "kind": "usage.updated",
       "usage": {
         "input_tokens": 18,
@@ -316,10 +329,10 @@
     }
   },
   {
-    "station_seq": 114,
+    "station_seq": 115,
     "session_id": "claude-ask_user_question",
-    "session_seq": 14,
-    "at": 1760000014000,
+    "session_seq": 15,
+    "at": 1760000015000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -334,10 +347,10 @@
     }
   },
   {
-    "station_seq": 115,
+    "station_seq": 116,
     "session_id": "claude-ask_user_question",
-    "session_seq": 15,
-    "at": 1760000015000,
+    "session_seq": 16,
+    "at": 1760000016000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -348,10 +361,10 @@
     }
   },
   {
-    "station_seq": 116,
+    "station_seq": 117,
     "session_id": "claude-ask_user_question",
-    "session_seq": 16,
-    "at": 1760000016000,
+    "session_seq": 17,
+    "at": 1760000017000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -362,10 +375,10 @@
     }
   },
   {
-    "station_seq": 117,
+    "station_seq": 118,
     "session_id": "claude-ask_user_question",
-    "session_seq": 17,
-    "at": 1760000017000,
+    "session_seq": 18,
+    "at": 1760000018000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {

@@ -289,7 +289,7 @@ describe('session pane (DL-140)', () => {
   });
 
   test('a recorded background subagent shows its background state', () => {
-    const events = recorded('subagent').filter((e) => e.session_seq <= 9);
+    const events = recorded('subagent').filter((e) => e.session_seq <= 10);
     const html = view(session(), timeline(events));
     expect(html).toContain('running in the background');
   });

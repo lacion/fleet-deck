@@ -204,7 +204,8 @@ impl SessionSummary {
             Event::AutoContinueSkipped { .. }
             | Event::CoordinatorBound { .. }
             | Event::CoordinatorEnded { .. }
-            | Event::SlashCommands { .. } => {}
+            | Event::SlashCommands { .. }
+            | Event::SessionNotice { .. } => {}
             Event::SessionEnded { .. } => {
                 if !matches!(self.state, SessionState::Lost) {
                     self.state = SessionState::Exited;

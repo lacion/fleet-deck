@@ -120,6 +120,19 @@
     "proto_version": 1,
     "raw_ref": null,
     "event": {
+      "kind": "session.notice",
+      "code": "v1_plugin",
+      "text": "The Fleet Deck v1 plugin is active in this session. Its hooks slow every stop and report the session to the v1 board. Remove the plugin in Claude Code (/plugin) after the cutover."
+    }
+  },
+  {
+    "station_seq": 107,
+    "session_id": "claude-subagent",
+    "session_seq": 7,
+    "at": 1760000007000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
       "kind": "session.slash_commands",
       "commands": [
         "deep-research",
@@ -172,10 +185,10 @@
     }
   },
   {
-    "station_seq": 107,
+    "station_seq": 108,
     "session_id": "claude-subagent",
-    "session_seq": 7,
-    "at": 1760000007000,
+    "session_seq": 8,
+    "at": 1760000008000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -192,10 +205,10 @@
     }
   },
   {
-    "station_seq": 108,
+    "station_seq": 109,
     "session_id": "claude-subagent",
-    "session_seq": 8,
-    "at": 1760000008000,
+    "session_seq": 9,
+    "at": 1760000009000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -209,10 +222,10 @@
     }
   },
   {
-    "station_seq": 109,
+    "station_seq": 110,
     "session_id": "claude-subagent",
-    "session_seq": 9,
-    "at": 1760000009000,
+    "session_seq": 10,
+    "at": 1760000010000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -221,20 +234,6 @@
       "status": "ok",
       "files": [],
       "exit_code": null
-    }
-  },
-  {
-    "station_seq": 110,
-    "session_id": "claude-subagent",
-    "session_seq": 10,
-    "at": 1760000010000,
-    "proto_version": 1,
-    "raw_ref": null,
-    "event": {
-      "kind": "message.delta",
-      "turn_id": "turn-1",
-      "parent_node_id": null,
-      "text": "The"
     }
   },
   {
@@ -248,7 +247,7 @@
       "kind": "message.delta",
       "turn_id": "turn-1",
       "parent_node_id": null,
-      "text": " sub"
+      "text": "The"
     }
   },
   {
@@ -262,7 +261,7 @@
       "kind": "message.delta",
       "turn_id": "turn-1",
       "parent_node_id": null,
-      "text": "agent is running"
+      "text": " sub"
     }
   },
   {
@@ -276,7 +275,7 @@
       "kind": "message.delta",
       "turn_id": "turn-1",
       "parent_node_id": null,
-      "text": " in the background."
+      "text": "agent is running"
     }
   },
   {
@@ -290,7 +289,7 @@
       "kind": "message.delta",
       "turn_id": "turn-1",
       "parent_node_id": null,
-      "text": " I'll wait for"
+      "text": " in the background."
     }
   },
   {
@@ -304,7 +303,7 @@
       "kind": "message.delta",
       "turn_id": "turn-1",
       "parent_node_id": null,
-      "text": " it to complete."
+      "text": " I'll wait for"
     }
   },
   {
@@ -315,10 +314,10 @@
     "proto_version": 1,
     "raw_ref": null,
     "event": {
-      "kind": "message.completed",
+      "kind": "message.delta",
       "turn_id": "turn-1",
       "parent_node_id": null,
-      "text": "The subagent is running in the background. I'll wait for it to complete."
+      "text": " it to complete."
     }
   },
   {
@@ -326,6 +325,20 @@
     "session_id": "claude-subagent",
     "session_seq": 17,
     "at": 1760000017000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "message.completed",
+      "turn_id": "turn-1",
+      "parent_node_id": null,
+      "text": "The subagent is running in the background. I'll wait for it to complete."
+    }
+  },
+  {
+    "station_seq": 118,
+    "session_id": "claude-subagent",
+    "session_seq": 18,
+    "at": 1760000018000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -339,10 +352,10 @@
     }
   },
   {
-    "station_seq": 118,
+    "station_seq": 119,
     "session_id": "claude-subagent",
-    "session_seq": 18,
-    "at": 1760000018000,
+    "session_seq": 19,
+    "at": 1760000019000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -357,10 +370,10 @@
     }
   },
   {
-    "station_seq": 119,
+    "station_seq": 120,
     "session_id": "claude-subagent",
-    "session_seq": 19,
-    "at": 1760000019000,
+    "session_seq": 20,
+    "at": 1760000020000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -371,10 +384,10 @@
     }
   },
   {
-    "station_seq": 120,
+    "station_seq": 121,
     "session_id": "claude-subagent",
-    "session_seq": 20,
-    "at": 1760000020000,
+    "session_seq": 21,
+    "at": 1760000021000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -385,10 +398,10 @@
     }
   },
   {
-    "station_seq": 121,
+    "station_seq": 122,
     "session_id": "claude-subagent",
-    "session_seq": 21,
-    "at": 1760000021000,
+    "session_seq": 22,
+    "at": 1760000022000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -397,10 +410,10 @@
     }
   },
   {
-    "station_seq": 122,
+    "station_seq": 123,
     "session_id": "claude-subagent",
-    "session_seq": 22,
-    "at": 1760000022000,
+    "session_seq": 23,
+    "at": 1760000023000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -411,10 +424,10 @@
     }
   },
   {
-    "station_seq": 123,
+    "station_seq": 124,
     "session_id": "claude-subagent",
-    "session_seq": 23,
-    "at": 1760000023000,
+    "session_seq": 24,
+    "at": 1760000024000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -428,20 +441,6 @@
     }
   },
   {
-    "station_seq": 124,
-    "session_id": "claude-subagent",
-    "session_seq": 24,
-    "at": 1760000024000,
-    "proto_version": 1,
-    "raw_ref": null,
-    "event": {
-      "kind": "message.delta",
-      "turn_id": "turn-3",
-      "parent_node_id": null,
-      "text": "sub"
-    }
-  },
-  {
     "station_seq": 125,
     "session_id": "claude-subagent",
     "session_seq": 25,
@@ -452,7 +451,7 @@
       "kind": "message.delta",
       "turn_id": "turn-3",
       "parent_node_id": null,
-      "text": "-ok"
+      "text": "sub"
     }
   },
   {
@@ -463,10 +462,10 @@
     "proto_version": 1,
     "raw_ref": null,
     "event": {
-      "kind": "message.completed",
+      "kind": "message.delta",
       "turn_id": "turn-3",
       "parent_node_id": null,
-      "text": "sub-ok"
+      "text": "-ok"
     }
   },
   {
@@ -474,6 +473,20 @@
     "session_id": "claude-subagent",
     "session_seq": 27,
     "at": 1760000027000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "message.completed",
+      "turn_id": "turn-3",
+      "parent_node_id": null,
+      "text": "sub-ok"
+    }
+  },
+  {
+    "station_seq": 128,
+    "session_id": "claude-subagent",
+    "session_seq": 28,
+    "at": 1760000028000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -487,10 +500,10 @@
     }
   },
   {
-    "station_seq": 128,
+    "station_seq": 129,
     "session_id": "claude-subagent",
-    "session_seq": 28,
-    "at": 1760000028000,
+    "session_seq": 29,
+    "at": 1760000029000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -505,10 +518,10 @@
     }
   },
   {
-    "station_seq": 129,
+    "station_seq": 130,
     "session_id": "claude-subagent",
-    "session_seq": 29,
-    "at": 1760000029000,
+    "session_seq": 30,
+    "at": 1760000030000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -519,10 +532,10 @@
     }
   },
   {
-    "station_seq": 130,
+    "station_seq": 131,
     "session_id": "claude-subagent",
-    "session_seq": 30,
-    "at": 1760000030000,
+    "session_seq": 31,
+    "at": 1760000031000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
