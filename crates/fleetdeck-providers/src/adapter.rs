@@ -249,6 +249,21 @@ pub trait ProviderAdapter: Send + Sync {
         spec: SessionSpec,
         sink: EventSink,
     ) -> Result<Box<dyn LiveSession>>;
+    /// [`Self::resume`] with the credential handoff of the session's own
+    /// tools. An adapter without a handoff refuses, like
+    /// [`Self::start_coordinated`].
+    async fn resume_coordinated(
+        &self,
+        native_id: &NativeSessionId,
+        spec: SessionSpec,
+        sink: EventSink,
+        launch: crate::coordinator::CoordinatorLaunch,
+    ) -> Result<Box<dyn LiveSession>> {
+        let _ = (native_id, spec, sink, launch);
+        Err(ProviderError::CoordinatorHandoff(
+            crate::coordinator::UNVERIFIED,
+        ))
+    }
     /// Starts a new session with the context of `native_id` (the id that
     /// [`LiveSession::fork`] returned). Unsupported unless the adapter
     /// overrides it (DL-033).

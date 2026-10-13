@@ -24,8 +24,8 @@ use fleetdeck_proto::session::SessionBase;
 use fleetdeck_proto::{Event, ProviderInstanceId, SessionId};
 use fleetdeck_providers::host::HostError;
 use fleetdeck_providers::{
-    Answer, ControlId, EventSink, LiveSession, ModelId, NativeSessionId, PermissionMode,
-    ProviderAdapter, ProviderError,
+    Answer, ControlId, EventSink, LiveSession, ModelId, PermissionMode, ProviderAdapter,
+    ProviderError,
 };
 use tokio::sync::{Mutex, mpsc, oneshot, watch};
 
@@ -277,13 +277,19 @@ impl SessionTarget {
         let coordinator = match spec.coordinator.as_deref() {
             // A session without a grant gets the session's own tools when
             // its provider can take the handoff (DL-165).
-            None => super::coordinator_start::prepare_fleet(
+            None => match super::coordinator_start::prepare_fleet(
                 &self.coordinator,
                 adapter.kind(),
                 &session_id,
                 spec,
-                resume.is_some() || self.shims.is_some(),
-            ),
+                self.shims.is_some(),
+            ) {
+                Ok(launch) => Some(launch),
+                Err(why) => {
+                    super::coordinator_start::log_no_tools(&session_id, adapter.kind(), &why);
+                    None
+                }
+            },
             Some(c) => match super::coordinator_start::prepare(
                 &self.coordinator,
                 adapter.kind(),
@@ -332,28 +338,16 @@ impl SessionTarget {
             self.start_failed(&session_id, STOPPED_MESSAGE).await;
             return Dispatch::NotDispatched(REASON_SETUP_STOPPED.into());
         }
-        let started = match (resume, coordinator) {
-            (Some(native), _) => {
-                let native = NativeSessionId(native.to_owned());
-                adapter.resume(&native, spec.clone(), sink).await
-            }
-            (None, Some(launch)) => {
-                match adapter
-                    .start_coordinated(spec.clone(), sink.clone(), launch)
-                    .await
-                {
-                    // An adapter that cannot take the handoff still starts a
-                    // session that asked for no grant (DL-165).
-                    Err(ProviderError::CoordinatorHandoff(why)) if fleet_only => {
-                        tracing::debug!(reason = why, "no session tools for this start");
-                        self.coordinator.revoke_session(&session_id);
-                        adapter.start(spec.clone(), sink).await
-                    }
-                    other => other,
-                }
-            }
-            (None, None) => adapter.start(spec.clone(), sink).await,
-        };
+        let started = target_spawn::Spawn {
+            bindings: &self.coordinator,
+            session_id: &session_id,
+            spec,
+            resume,
+            launch: coordinator,
+            fleet_only,
+        }
+        .run(&adapter, sink)
+        .await;
         let mut session = match started {
             Ok(session) => session,
             Err(e) => {
@@ -783,6 +777,13 @@ mod shim_target;
 
 #[path = "setup_task.rs"]
 mod setup_task;
+
+#[path = "target_spawn.rs"]
+mod target_spawn;
+
+#[cfg(test)]
+#[path = "target_spawn_tests.rs"]
+mod target_spawn_tests;
 
 /// The dispatch reason of a start that a stop cancelled during its setup.
 pub const REASON_SETUP_STOPPED: &str = "setup_stopped";
