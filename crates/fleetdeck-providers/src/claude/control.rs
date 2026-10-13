@@ -68,6 +68,13 @@ pub fn set_model(request_id: &str, model: Option<&str>) -> Value {
     control_request(request_id, "set_model", json!({"model": model}))
 }
 
+/// `get_usage`: the plan rate-limit windows. `skip_behaviors` skips the scan
+/// of the local transcripts, which a usage meter does not need.
+#[must_use]
+pub fn get_usage(request_id: &str) -> Value {
+    control_request(request_id, "get_usage", json!({"skip_behaviors": true}))
+}
+
 /// The host's decision for a `can_use_tool` request.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PermissionDecision {

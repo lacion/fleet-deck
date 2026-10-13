@@ -92,6 +92,8 @@ fn replay(path: &Path) -> Report {
                 for o in p.core.on_frame(parse_value(frame).unwrap()) {
                     match o {
                         Output::Emit(e) => report.events.push(e),
+                        // The SDK never asked `get_usage` (R4.5): only the core does.
+                        Output::Write(v) if v["request"]["subtype"] == "get_usage" => {}
                         Output::Write(v) => p.spontaneous.push_back(v),
                     }
                 }

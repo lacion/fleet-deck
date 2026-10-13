@@ -9,7 +9,7 @@ use serde_json::{Map, Value};
 
 use super::core::{ClaudeCore, HostRequest, Output, ToolNode, truncate};
 use super::frames::{CliFrame, ControlResponse, MessageFrame, RateLimitInfo, ResultFrame};
-use super::requests;
+use super::{requests, usage};
 
 /// A `provider_refs` map; `None` values are skipped.
 pub(super) fn refs(pairs: &[(&str, Option<&str>)]) -> Map<String, Value> {
@@ -136,6 +136,7 @@ fn on_system(core: &mut ClaudeCore, subtype: &str, body: &Map<String, Value>) ->
             if !commands.is_empty() {
                 out.push(Output::Emit(Event::SlashCommands { commands }));
             }
+            out.extend(core.usage_request());
             out
         }
         "background_tasks_changed" => {
@@ -500,6 +501,7 @@ fn on_result(core: &mut ClaudeCore, res: &ResultFrame) -> Vec<Output> {
         rate_limits: Vec::new(),
     }));
     out.extend(core.end_turn(status, Some(usage)));
+    out.extend(core.usage_request());
     out
 }
 
@@ -596,6 +598,9 @@ fn on_control_response(core: &mut ClaudeCore, resp: &ControlResponse) -> Vec<Out
     let Some(kind) = core.host_requests.remove(&resp.request_id) else {
         return Vec::new();
     };
+    if kind == HostRequest::Usage {
+        return usage::on_response(core, resp);
+    }
     // Only the matching response confirms or refuses an interrupt.
     if let HostRequest::Interrupt(control_id) = kind {
         if !resp.ok {
@@ -646,6 +651,6 @@ fn on_control_response(core: &mut ClaudeCore, resp: &ControlResponse) -> Vec<Out
             vec![Output::Emit(Event::ModelChanged { model })]
         }
         // Answered above.
-        HostRequest::Interrupt(_) => Vec::new(),
+        HostRequest::Interrupt(_) | HostRequest::Usage => Vec::new(),
     }
 }

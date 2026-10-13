@@ -244,7 +244,8 @@ fn every_recorded_fixture_replays_through_the_production_core() {
         writes += report.writes_checked;
         assert_eq!(report.unknown_frames, 0, "{name}: unknown frames");
     }
-    assert_eq!(writes, 62, "every recorded write is compared");
+    // 62 recorded writes and one `get_usage` after the first `init` of each of the 22 processes.
+    assert_eq!(writes, 84, "every recorded write is compared");
 }
 
 fn replay_named(scenario: &str) -> Vec<Event> {
