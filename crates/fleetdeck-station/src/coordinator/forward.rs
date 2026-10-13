@@ -8,6 +8,11 @@
 //! the durable station coordinator outbox of §6.5 (`super::outbox`).
 //! Without one, and for every query, a missing deck fails at once with
 //! `deck_unreachable`.
+//!
+//! `ask_coordinator` of a binding without a grant (a worker, R2.3) is a
+//! call with an empty grant id. It never goes through the outbox: a deck
+//! that is not connected is `unavailable`, and the deck answers with the
+//! receipt that this module turns into a tool result or an error.
 
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -20,7 +25,7 @@ use fleetdeck_proto::mutation::{
     CoordinatorQueryEnvelope,
 };
 use fleetdeck_proto::orchestration::MAX_WAIT_IDS;
-use fleetdeck_proto::{CommandId, IncarnationId, ProviderInstanceId};
+use fleetdeck_proto::{CommandId, IncarnationId, ProviderInstanceId, Receipt, Reject};
 use ring::rand::{SecureRandom, SystemRandom};
 use serde_json::Value;
 
@@ -30,6 +35,8 @@ use super::tools::to_op;
 
 /// How long a forwarded call may be retried (`retry_until`, §6.5).
 pub const CALL_RETRY: Duration = Duration::from_secs(15 * 60);
+/// The longest question that `ask_coordinator` takes, in characters.
+pub const MAX_QUESTION_CHARS: usize = 4000;
 /// The deadline of a query; `wait_task` waits at most [`WAIT_LIMIT`].
 pub const QUERY_LIMIT: Duration = Duration::from_secs(25);
 pub const WAIT_LIMIT: Duration = Duration::from_secs(55);
@@ -288,9 +295,86 @@ impl LinkForward {
     }
 }
 
+/// The tool error of a rejected receipt. `no_coordinator` and
+/// `rate_limited` are named in the deck's message; any other rejection
+/// is `<code>: <message>`.
+fn rejection(reject: &Reject) -> String {
+    let message = reject.message.as_str();
+    if ["no_coordinator:", "rate_limited:"]
+        .iter()
+        .any(|p| message.starts_with(p))
+    {
+        return message.to_owned();
+    }
+    let code = serde_json::to_value(reject.code)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_owned))
+        .unwrap_or_else(|| "rejected".to_owned());
+    format!("{code}: {message}")
+}
+
+impl LinkForward {
+    /// `ask_coordinator` of a worker without a grant (R2.3): one direct
+    /// call to the deck, never queued.
+    async fn ask_without_grant(&self, caller: Caller, args: Value) -> Result<Value, String> {
+        let question = args.get("question").and_then(Value::as_str);
+        if question.is_none_or(|q| q.trim().is_empty() || q.chars().count() > MAX_QUESTION_CHARS) {
+            return Err(format!(
+                "invalid_params: `question` has 1 to {MAX_QUESTION_CHARS} characters"
+            ));
+        }
+        let Some(link) = self.link() else {
+            return Err("unavailable: the deck is not connected".to_owned());
+        };
+        let reply = match self
+            .call_direct(&link, caller, "ask_coordinator", args)
+            .await
+        {
+            Err(e) if e.starts_with("deck_unreachable") => {
+                return Err("unavailable: the deck is not connected".to_owned());
+            }
+            other => other?,
+        };
+        let receipt: Receipt = serde_json::from_value(reply.clone())
+            .map_err(|e| format!("internal: bad receipt: {e}"))?;
+        match receipt.reject {
+            Some(reject) => Err(rejection(&reject)),
+            None => Ok(reply),
+        }
+    }
+
+    /// One call over `link` without the outbox and without the lifecycle
+    /// fence.
+    async fn call_direct(
+        &self,
+        link: &DeckLink,
+        caller: Caller,
+        tool: &str,
+        args: Value,
+    ) -> Result<Value, String> {
+        let (method, command_id, params) =
+            Self::envelope(&caller, tool, &args, &link.incarnation, (self.clock)())?;
+        match link
+            .transport
+            .request(method, command_id.as_ref(), params)
+            .await
+        {
+            Ok(Outcome::Ok(v)) => Ok(v),
+            Ok(Outcome::Err(e)) => Err(format!("{}: {}", e.code, e.message)),
+            Err(e) => Err(format!("deck_unreachable: {e}")),
+        }
+    }
+}
+
 #[async_trait]
 impl Forward for LinkForward {
     async fn call(&self, caller: Caller, tool: &str, args: Value) -> Result<Value, String> {
+        if caller.grant_id.is_empty() {
+            return match tool {
+                "ask_coordinator" => self.ask_without_grant(caller, args).await,
+                other => Err(format!("forbidden: no such tool `{other}`")),
+            };
+        }
         if let Some(outbox) = &self.outbox
             && to_op(tool, &without_key(&args))?.is_some()
         {
@@ -306,17 +390,7 @@ impl Forward for LinkForward {
                     .to_owned(),
             );
         }
-        let (method, command_id, params) =
-            Self::envelope(&caller, tool, &args, &link.incarnation, (self.clock)())?;
-        match link
-            .transport
-            .request(method, command_id.as_ref(), params)
-            .await
-        {
-            Ok(Outcome::Ok(v)) => Ok(v),
-            Ok(Outcome::Err(e)) => Err(format!("{}: {}", e.code, e.message)),
-            Err(e) => Err(format!("deck_unreachable: {e}")),
-        }
+        self.call_direct(&link, caller, tool, args).await
     }
 }
 
@@ -421,5 +495,124 @@ mod tests {
         let f = LinkForward::default();
         let r = f.call(caller(), "list_sessions", json!({})).await;
         assert!(r.unwrap_err().starts_with("deck_unreachable"));
+    }
+
+    struct Deck {
+        sent: Mutex<Vec<Value>>,
+        reply: Mutex<Reject>,
+        accept: bool,
+    }
+
+    #[async_trait]
+    impl Transport for Deck {
+        async fn request(
+            &self,
+            method: &str,
+            command_id: Option<&CommandId>,
+            params: Value,
+        ) -> Result<Outcome, String> {
+            assert_eq!(method, "coordinator.call");
+            self.sent.lock().unwrap().push(params);
+            let id = command_id.cloned().unwrap();
+            let receipt = if self.accept {
+                Receipt::accepted(id, 0, fleetdeck_proto::command::CommandResult::default(), 1)
+            } else {
+                Receipt::rejected(id, self.reply.lock().unwrap().clone(), 1)
+            };
+            Ok(Outcome::Ok(serde_json::to_value(receipt).unwrap()))
+        }
+    }
+
+    fn worker() -> Caller {
+        Caller {
+            binding_id: "w-1".to_owned(),
+            grant_id: String::new(),
+            session_id: "worker-1".into(),
+            provider_instance: "claude".to_owned(),
+            native_id: "native-w".to_owned(),
+            generation: 1,
+        }
+    }
+
+    fn deck(accept: bool, code: fleetdeck_proto::RejectCode, message: &str) -> Arc<Deck> {
+        Arc::new(Deck {
+            sent: Mutex::default(),
+            reply: Mutex::new(Reject::new(code, message)),
+            accept,
+        })
+    }
+
+    #[tokio::test]
+    async fn a_worker_without_a_grant_asks_the_deck_with_an_empty_grant_id() {
+        let f = LinkForward::default();
+        let d = deck(true, fleetdeck_proto::RejectCode::Forbidden, "");
+        f.connect_transport(d.clone(), "deck-inc".to_owned().into());
+        let q = json!({"question": "which branch?"});
+        let r = f.call(worker(), "ask_coordinator", q).await.unwrap();
+        assert_eq!(r["state"], "accepted");
+        let sent = d.sent.lock().unwrap().clone();
+        assert_eq!(sent.len(), 1);
+        let env: CoordinatorCallEnvelope = serde_json::from_value(sent[0].clone()).unwrap();
+        assert_eq!(env.call.caller.as_str(), "worker-1");
+        assert!(env.call.binding.grant_id.is_empty());
+        assert_eq!(
+            env.call.op,
+            fleetdeck_proto::mutation::CoordinatorOp::AskCoordinator {
+                question: "which branch?".to_owned()
+            }
+        );
+        // The question is checked before anything is sent.
+        for bad in [
+            json!({}),
+            json!({"question": " "}),
+            json!({"question": "x".repeat(4001)}),
+        ] {
+            let e = f.call(worker(), "ask_coordinator", bad).await.unwrap_err();
+            assert!(e.starts_with("invalid_params"), "{e}");
+        }
+        // A worker has no other tool.
+        let e = f
+            .call(worker(), "list_sessions", json!({}))
+            .await
+            .unwrap_err();
+        assert!(e.starts_with("forbidden"), "{e}");
+        assert_eq!(d.sent.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_rejected_question_names_its_reason_and_a_missing_deck_is_unavailable() {
+        use fleetdeck_proto::RejectCode;
+        let q = json!({"question": "which branch?"});
+        let f = LinkForward::default();
+        let e = f
+            .call(worker(), "ask_coordinator", q.clone())
+            .await
+            .unwrap_err();
+        assert_eq!(e, "unavailable: the deck is not connected");
+        for (code, message, expected) in [
+            (
+                RejectCode::InvalidState,
+                "no_coordinator: no open task of this session has a coordinator",
+                "no_coordinator: no open task of this session has a coordinator",
+            ),
+            (
+                RejectCode::InvalidState,
+                "rate_limited: at most 10 questions per session per hour",
+                "rate_limited: at most 10 questions per session per hour",
+            ),
+            (
+                RejectCode::Forbidden,
+                "the caller has no coordinator grant",
+                "forbidden: the caller has no coordinator grant",
+            ),
+        ] {
+            let f = LinkForward::default();
+            f.connect_transport(deck(false, code, message), "deck-inc".to_owned().into());
+            let e = f
+                .call(worker(), "ask_coordinator", q.clone())
+                .await
+                .unwrap_err();
+            assert_eq!(e, expected);
+        }
     }
 }

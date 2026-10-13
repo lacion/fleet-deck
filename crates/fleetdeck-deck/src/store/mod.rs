@@ -154,6 +154,8 @@ struct Inner {
     sockets: std::sync::atomic::AtomicU64,
     /// The conflict mails that wait for a generated sentence (DL-167).
     sentence_jobs: Mutex<Vec<conflicts::SentenceJob>>,
+    /// The `ask_coordinator` calls of the workers in the last hour (R2.3).
+    ask_limits: coordinator_fleet::AskLimiter,
 }
 
 /// The deck store. Clones share one database thread.
@@ -236,6 +238,7 @@ impl DeckStore {
                 presence: Mutex::default(),
                 sockets: std::sync::atomic::AtomicU64::new(1),
                 sentence_jobs: Mutex::default(),
+                ask_limits: coordinator_fleet::AskLimiter::default(),
             }),
         })
     }

@@ -3,9 +3,12 @@
 //! (R2.3). They run inside the decision transaction of
 //! [`super::coordinator`], like the other ops of [`super::coordinator_ops`].
 
+use std::collections::{HashMap, VecDeque};
+use std::sync::{Mutex, PoisonError};
+
 use fleetdeck_proto::RejectCode;
 use fleetdeck_proto::command::{SessionCommand, UserInput};
-use fleetdeck_proto::mutation::CoordinatorDelivery;
+use fleetdeck_proto::mutation::{CoordinatorDelivery, CoordinatorOp};
 use fleetdeck_proto::orchestration::{
     MailDelivery, MailGroup, TaskCompletion, TaskState, mail_frame, question_frame,
 };
@@ -98,11 +101,7 @@ pub(super) fn send_group(
     Ok(Decision::Accepted(None))
 }
 
-/// `ask_coordinator`: a `question` completion of the caller's newest open
-/// task, and the framed question as mail to the coordinator session that
-/// created the task. A caller without an open task is rejected. A task
-/// that the owner made, or whose coordinator session is gone, keeps the
-/// question for the board and sends no mail.
+/// `ask_coordinator` of a coordinator grant: [`ask_for`] the grant's session.
 pub(super) fn ask(
     tx: &Connection,
     grant: &Grant,
@@ -111,20 +110,60 @@ pub(super) fn ask(
     command_id: &str,
     now: i64,
 ) -> Result<Decision> {
+    ask_for(
+        tx,
+        ctx,
+        (&grant.station_id, &grant.session_id),
+        question,
+        (command_id, false),
+        now,
+    )
+}
+
+/// `ask_coordinator`: a `question` completion of the newest open task of
+/// `(station, session)`, and the framed question as mail to the coordinator
+/// session that created the task. A caller without an open task is
+/// rejected. A task that the owner made, or whose coordinator session is
+/// gone, keeps the question for the board and sends no mail. With
+/// `coordinated` (a worker without a grant) only a task that has a
+/// coordinator session counts.
+fn ask_for(
+    tx: &Connection,
+    ctx: &Context,
+    (caller_station, caller_session): (&StationId, &SessionId),
+    question: &str,
+    (command_id, coordinated): (&str, bool),
+    now: i64,
+) -> Result<Decision> {
     if let Some(d) = check_text(question) {
         return Ok(d);
     }
+    let coordinated_only = if coordinated {
+        "AND coordinator_session IS NOT NULL"
+    } else {
+        ""
+    };
     let row: Option<(String, Option<String>, Option<String>)> = tx
         .query_row(
-            "SELECT task_id, coordinator_station, coordinator_session FROM tasks
-             WHERE station_id = ?1 AND session_id = ?2 AND state IN ('open', 'question')
-             ORDER BY created_at DESC, task_id DESC LIMIT 1",
-            params![grant.station_id.as_str(), grant.session_id.0],
+            &format!(
+                "SELECT task_id, coordinator_station, coordinator_session FROM tasks
+                 WHERE station_id = ?1 AND session_id = ?2 AND state IN ('open', 'question')
+                   {coordinated_only}
+                 ORDER BY created_at DESC, task_id DESC LIMIT 1"
+            ),
+            params![caller_station.as_str(), caller_session.0],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .optional()?;
     let Some((task_id, station, session)) = row else {
-        return no(RejectCode::InvalidState, "the caller has no open task");
+        return if coordinated {
+            no(
+                RejectCode::InvalidState,
+                "no_coordinator: no open task of this session has a coordinator",
+            )
+        } else {
+            no(RejectCode::InvalidState, "the caller has no open task")
+        };
     };
     let completion = TaskCompletion {
         state: TaskState::Question,
@@ -146,9 +185,9 @@ pub(super) fn ask(
     let worker = ctx
         .sessions
         .iter()
-        .find(|s| s.station_id == grant.station_id && s.summary.session_id == grant.session_id)
+        .find(|s| &s.station_id == caller_station && &s.summary.session_id == caller_session)
         .and_then(|s| s.summary.callsign.clone())
-        .unwrap_or_else(|| grant.session_id.0.clone());
+        .unwrap_or_else(|| caller_session.0.clone());
     let command = follow_up(&session, question_frame(&worker, question.trim()));
     let mail = NewMail {
         mail_id: command_id.to_owned(),
@@ -160,4 +199,72 @@ pub(super) fn ask(
     };
     insert_mail(tx, &mail, &ctx.outbox_id, now)?;
     Ok(Decision::Accepted(Some(session)))
+}
+
+/// Worker questions per session in one window (R2.3).
+pub(super) const ASK_LIMIT: usize = 10;
+/// The window of [`ASK_LIMIT`]: one hour.
+const ASK_WINDOW_MS: i64 = 60 * 60 * 1000;
+
+/// The `ask_coordinator` calls of the last hour per worker session, in
+/// memory only.
+#[derive(Debug, Default)]
+pub(super) struct AskLimiter(Mutex<HashMap<(StationId, SessionId), VecDeque<i64>>>);
+
+impl AskLimiter {
+    /// Records a call at `now`; false when the window holds [`ASK_LIMIT`]
+    /// calls of this session already.
+    fn reserve(&self, station: &StationId, session: &SessionId, now: i64) -> bool {
+        let mut map = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        map.retain(|_, q| q.back().is_some_and(|t| *t > now - ASK_WINDOW_MS));
+        let q = map.entry((station.clone(), session.clone())).or_default();
+        while q.front().is_some_and(|t| *t <= now - ASK_WINDOW_MS) {
+            q.pop_front();
+        }
+        if q.len() >= ASK_LIMIT {
+            return false;
+        }
+        q.push_back(now);
+        true
+    }
+}
+
+/// A `coordinator.call` of a session without a grant (R2.3): only
+/// `ask_coordinator`. The session must exist under the calling station,
+/// and it may ask at most [`ASK_LIMIT`] times per hour.
+pub(super) fn decide_worker(
+    tx: &Connection,
+    limiter: &AskLimiter,
+    ctx: &Context,
+    (station, session): (&StationId, &SessionId),
+    op: &CoordinatorOp,
+    command_id: &str,
+    now: i64,
+) -> Result<Decision> {
+    let CoordinatorOp::AskCoordinator { question } = op else {
+        return no(
+            RejectCode::Forbidden,
+            "forbidden: a session without a coordinator grant may only call `ask_coordinator`",
+        );
+    };
+    if !session_known(tx, station, session)? {
+        return no(
+            RejectCode::Forbidden,
+            "forbidden: the session is not a session of this station",
+        );
+    }
+    if !limiter.reserve(station, session, now) {
+        return no(
+            RejectCode::InvalidState,
+            format!("rate_limited: at most {ASK_LIMIT} questions per session per hour"),
+        );
+    }
+    ask_for(
+        tx,
+        ctx,
+        (station, session),
+        question,
+        (command_id, true),
+        now,
+    )
 }

@@ -176,16 +176,16 @@ pub const TOOLS: &[Tool] = &[
 impl Tool {
     /// Whether the granted classes give this tool. `ask_coordinator` is a
     /// `Mail` tool, and every session's own binding (`Own`) has it too
-    /// (DL-165): there the station answers it.
+    /// (DL-165): there the call goes to the deck without a grant (R2.3).
     pub fn granted(&self, classes: &BTreeSet<ToolClass>) -> bool {
         classes.contains(&self.class)
             || (self.name == "ask_coordinator" && classes.contains(&ToolClass::Own))
     }
 
     /// Whether the station's own session tools answer this call: an `Own`
-    /// tool, or `ask_coordinator` for a binding without `Mail`.
-    pub fn is_own(&self, classes: &BTreeSet<ToolClass>) -> bool {
-        self.class == ToolClass::Own || !classes.contains(&self.class)
+    /// tool. `ask_coordinator` is always forwarded to the deck (R2.3).
+    pub fn is_own(&self) -> bool {
+        self.class == ToolClass::Own
     }
 }
 

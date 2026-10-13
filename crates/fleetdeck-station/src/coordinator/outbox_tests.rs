@@ -441,3 +441,43 @@ async fn a_reconnect_holds_calls_and_queries_until_the_deck_acknowledges_the_lif
     assert_eq!(again["state"], "pending", "{again}");
     assert_eq!(r.deck.sent().len(), 1);
 }
+
+/// R2.3: a worker's question is one direct call. It is not queued, and
+/// with the link down it is `unavailable`, not `pending`.
+#[tokio::test]
+async fn a_worker_question_bypasses_the_outbox() {
+    let r = rig(Mode::Accept).await;
+    let worker = super::bindings::Caller {
+        binding_id: "w-1".to_owned(),
+        grant_id: String::new(),
+        session_id: "worker-1".into(),
+        provider_instance: "claude".to_owned(),
+        native_id: "native-w".to_owned(),
+        generation: 1,
+    };
+    let q = json!({"question": "which branch?"});
+    r.forward
+        .call(worker.clone(), "ask_coordinator", q.clone())
+        .await
+        .unwrap();
+    assert_eq!(r.deck.sent().len(), 1);
+    assert!(r.store.coordinator_pending().await.unwrap().is_empty());
+    let id = r.deck.sent()[0].0.clone().unwrap();
+    assert!(r.store.coordinator_row(id).await.unwrap().is_none());
+
+    let down = rig(Mode::Accept).await;
+    let serial = down.forward.connect_transport(
+        down.deck.clone(),
+        IncarnationId::from("deck-inc".to_owned()),
+    );
+    down.forward.disconnect(serial);
+    let e = down
+        .forward
+        .call(worker, "ask_coordinator", q)
+        .await
+        .map(|_| ())
+        .unwrap_err();
+    assert_eq!(e, "unavailable: the deck is not connected");
+    assert!(down.deck.sent().is_empty());
+    assert!(down.store.coordinator_pending().await.unwrap().is_empty());
+}

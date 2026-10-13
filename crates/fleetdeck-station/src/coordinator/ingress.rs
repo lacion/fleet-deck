@@ -26,15 +26,15 @@ use super::bindings::{Auth, Bindings, Caller};
 use super::jsonrpc::{self, Answer};
 
 /// The deck side of a tool call: the station forwards an authorized call
-/// as `coordinator.call` or `coordinator.query`.
+/// as `coordinator.call` or `coordinator.query`. `ask_coordinator` of a
+/// binding without a grant goes here too (R2.3).
 #[async_trait]
 pub trait Forward: Send + Sync {
     async fn call(&self, caller: Caller, tool: &str, args: Value) -> Result<Value, String>;
 }
 
 /// The station side of the session's own tools (`publish_artifact`,
-/// `set_focus`, `ask_coordinator`; DL-165): the station answers them, the
-/// deck is not asked.
+/// `set_focus`; DL-165): the station answers them, the deck is not asked.
 #[async_trait]
 pub trait FleetTools: Send + Sync {
     async fn call(&self, caller: Caller, tool: &str, args: Value) -> Result<Value, String>;

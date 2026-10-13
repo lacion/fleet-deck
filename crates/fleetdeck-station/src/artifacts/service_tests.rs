@@ -449,7 +449,8 @@ async fn the_session_tools_publish_as_the_agent_set_the_focus_and_have_no_coordi
         .unwrap();
     let summary = r.store.summary(S1.into()).await.unwrap().unwrap();
     assert_eq!(summary.focus, None);
-    // No coordinator parent: the question has no addressee.
+    // `ask_coordinator` is not answered here: the coordinator endpoint
+    // forwards it to the deck (R2.3).
     let err = tools
         .call(
             caller(),
@@ -458,11 +459,7 @@ async fn the_session_tools_publish_as_the_agent_set_the_focus_and_have_no_coordi
         )
         .await
         .unwrap_err();
-    assert!(err.starts_with("no_coordinator"), "{err}");
-    let err = tools
-        .call(caller(), "ask_coordinator", json!({"question": " "}))
-        .await;
-    assert!(err.unwrap_err().starts_with("invalid_params"));
+    assert!(err.starts_with("forbidden"), "{err}");
     let err = tools
         .call(caller(), "list_sessions", json!({}))
         .await
