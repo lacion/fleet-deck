@@ -61,6 +61,8 @@ test('c opens the fleet page', async ({ page }) => {
   deck.stations = [stationView('st-alpha', 'Alpha')];
   await deck.install(page);
   await logIn(page);
+  // The key listener lives in the board: wait for it before the key press.
+  await expect(page.getByRole('navigation', { name: 'Board' })).toBeVisible();
   await expect(page).not.toHaveURL(/#\/fleet$/);
   await page.keyboard.press('c');
   await expect(page).toHaveURL(/#\/fleet$/);
