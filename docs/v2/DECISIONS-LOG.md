@@ -2398,3 +2398,15 @@ Owner review: pending.
   - Replays: the recorded Codex fixtures hold no `model/list` and the host ids are part of the recording, so `CoreConfig.request_models` (false in every replay and checkpoint placeholder) and `CodexAdapterConfig.request_models` (true from `new`) switch the request. The adapter passes the flag to the core and to the durable launch config. The sim Codex answers `model/list` with one model. The three Claude board fixtures (`web/src/testing/fixtures/claude-*.events.json`) are regenerated, because the recorded `initialize` answers now yield `session.models`.
 - Tests: proto (`event_tests.rs` round trip and a decode without `description`, `fold_tests.rs` the summary does not change); Claude (`claude/tests.rs`: answer before `init`, answer after `init`, empty or invalid lists); Codex (`codex/tests.rs`: the request after the thread opens, two pages with a hidden model and the id fallbacks, the 4-page limit, an error and an empty list; `tests/codex_driver_sim.rs`: the event arrives after `session.started`).
 - Owner review: pending.
+
+## DL-152 — GitHub, GitLab, Jira and Linear integration is in scope (owner decision, 2026-10-13)
+
+- Context: the v1 plan (`docs/v1/p3-issue-pr-spawning.md` on `fd/typescript-migration`) cut Jira and Linear because a tracker token is a stored credential, and `docs/v2/FLEETDECK-V2.md` (first version) repeated that cut. The owner wants all four systems in the board.
+- Choice: GitHub, GitLab, Jira and Linear are in scope (`FLEETDECK-V2.md` R3). The credential rule changes, but it keeps its intent. The station does all forge and tracker I/O with its own user's credentials. GitHub and GitLab go through the user's `gh` and `glab`. Jira (Cloud REST v3) and Linear (GraphQL) use a token that the station reads from its user's environment (`token_env`) or a mode-0600 file (`token_file`) that `station.toml` names. The token never reaches the deck, the link, a read model, an argv, a log or the board. Every issue, PR and tracker text is fenced untrusted data. A spawn from it is supervised, with no path to a bypass mode.
+- Not decided yet:
+  - the order of the four systems;
+  - the write verbs (create a PR, comment, move an issue) and their milestone;
+  - the exact `station.toml` keys.
+  These come with the design of M5. That design is high risk (credentials, untrusted text that starts sessions), so it gets an adversary DESIGN REVIEW before it is frozen.
+- Invalidates: the "Jira and Linear: cut" line of `FLEETDECK-V2.md` §4, which is corrected in the same commit.
+- Owner review: decided by the owner.

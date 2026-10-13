@@ -51,7 +51,7 @@ v1 had five doctrine rules, and v1.0 widened them. v2 keeps their intent but cha
 2. **The station owns execution.** Every command, git operation, file write and process runs on the station that owns the workspace. The deck never runs user code.
 3. **No model calls in the core.** The deck and the station make no LLM calls. The agents are the intelligence. Test: `no_crate_calls_a_model_api_directly`.
 4. **Unknown is never zero.** A missing value shows as unknown, never as a guess or as 0. This covers usage, cost and limits.
-5. **Credentials stay where they are.** The deck holds no provider or forge credentials. A station uses its own user's `git`, `gh` and provider logins. A secret never reaches a read model, an argv, a log or the board (`Secret<T>`, scrubbed child env).
+5. **Credentials stay on the station.** The deck holds no provider, forge or tracker credentials. A station uses its own user's `git`, `gh`, `glab` and provider logins. A Jira or Linear token comes from the station user's environment or a mode-0600 file that `station.toml` names, and only the station reads it (DL-152). A secret never reaches the deck, the link, a read model, an argv, a log or the board (`Secret<T>`, scrubbed child env).
 6. **Third-party text is data.** Text from an issue, a PR, a web page or another agent is fenced and labeled as untrusted. A spawn from such text is supervised by default, with no path to a bypass mode (PLAN §9; it is not built yet, see R3).
 7. **Failure never stops work.** A deck, network or board failure never stops a session. A station restart either reattaches a shim-hosted session or marks it `lost`; it never guesses.
 8. **Capability-honest UI.** The board shows a control only when the provider supports it. A refused control shows the reason.
@@ -98,7 +98,7 @@ Keep these decisions. Reopen them only with a DL entry.
 - **Editing another tool's config (`config.toml`, `hooks.json`):** never done. `fleetdeck doctor` only reads. If v2 ever writes there, it needs a consent step and an uninstall.
 - **Remote control (`/rc`), `/clear` succession, Stop-hook mail:** dropped.
 - **An Electron app, an agent-agnostic core, Computer Use, a hosted relay, "AI picks the winner":** rejected, as v1.0 also decided.
-- **Jira and Linear:** cut, because a tracker token is a stored credential (rule 5).
+- **Jira and Linear:** v1 cut them, because a tracker token is a stored credential. The owner reversed this (DL-152): GitHub, GitLab, Jira and Linear are all in scope, with the tracker token held only by the station (rule 5).
 - **LLM-written titles:** not built. Callsigns are deterministic.
 - **The T3 Code "do not adopt" table:** obsolete for v2. v2 now mediates (drive, event sourcing, normalization). Only its "no relay" and "no LLM calls" rows still hold.
 
@@ -111,7 +111,7 @@ These come from Orca, T3 Code, the v0 UX plan and the v1 reviews, kept only wher
 1. **Review is the main daily action, and v2 has only half of it.** Orca, T3 Code and v1 P2 all say this. A user reviews what an agent changed in total, then sends one set of notes. v2 has per-turn diffs and revert, but no whole-session diff and no notes (R1).
 2. **Batch the feedback.** Line notes sent as one message give one revision pass. A drip of notes makes the agent swing (Orca). The mail outbox already delivers one framed follow-up, so only the UI is missing.
 3. **A fleet must run without a human at the keyboard.** This needs workers that can escalate, completions that say "blocked" or "question", a dead worker that ends its task with a reason, and a coordinator that waits for any event (Orca, v1 P5). v2 has tasks and `wait_task`, but no escalation, no `blocked` or `question` kinds, and no dead-worker synthesis (R2).
-4. **The injection boundary comes before any forge feature.** Hostile issue text plus an unsupervised spawn is a live exploit chain (v1 P3). Build the fenced envelope and its hostile fixture first (R3).
+4. **The injection boundary comes before any forge or tracker feature.** Hostile issue text plus an unsupervised spawn is a live exploit chain (v1 P3). Build the fenced envelope and its hostile fixture first (R3).
 5. **Limits govern a busy day.** The useful facts are the tightest window first, the time to reset, a warning before a limit stops work, and which account has room (v1 P4, Orca) (R4).
 6. **A failed asynchronous step must say why, where the user looks.** The v0 UX plan found silent clone and spawn failures. The same risk exists in v2 for a clone, a setup command or a worktree that fails after the form closes (R7).
 7. **Measure before you promise; a false green is worse than red.** The v1 Bun lane ran zero tests and exited 0. v1 also found its migration size understated five times (R8).
@@ -143,14 +143,24 @@ Each theme lists its items best first. Every item names its v2 status.
 4. **Wait for any event:** a long-poll over several tasks or sessions (done, blocked, question or error). Partial: `wait_task` waits for one task.
 5. **Group mail addresses** `@idle` and `@<provider>`, built only when a coordinator needs them. Partial.
 
-### R3. Forge: issues and pull requests through the station's own `gh` and `glab`
+### R3. Integrations: GitHub, GitLab, Jira and Linear (owner decision DL-152)
 
-1. **The injection envelope first:** fenced, labeled untrusted text, a forced supervised mode for every forge-derived spawn, and the fixture "an issue body that asks for `--dangerously-skip-permissions` still gives a supervised worker". Missing; this is the gate for everything below.
-2. **A read-only issue browser and spawn from issues,** one worker per selected issue, with ticket callsigns (they exist) and the issue text in the envelope. The station runs `gh issue list` or `glab issue list`; the deck holds no token. Missing.
-3. **"Fix the broken checks":** hand an agent the failing CI check names and links of a PR. Missing.
-4. **A PR reviewer:** point at a PR URL; the station checks the branch out in a worktree and starts a reviewer session with the user's installed review skill. Missing.
-5. **PR-scoped writes (create a PR, post a review or comment), later:** a verb allowlist, an identity preview ("posts as @user"), one board confirm per write, an audit line, and never in a batch or automatically. Missing. Stopping rule: build these only with the full security set; otherwise stay read-only.
-6. **GitLab details:** subgroup paths with three or more segments, and SSH and https remotes that name the same project. Partial (the clone preflight exists, DL-144).
+The board works with issues and pull requests from four systems. The station does all forge and tracker I/O, with its own user's credentials (rule 5). The deck relays the station's answers and holds no token.
+
+| System | Station access | Issues | Pull or merge requests |
+| --- | --- | --- | --- |
+| GitHub | the user's `gh` CLI | yes | yes |
+| GitLab | the user's `glab` CLI | yes | yes |
+| Jira (Cloud) | REST API v3, site + email + API token from the station's env or a token file | yes | no (links to GitHub or GitLab PRs only) |
+| Linear | GraphQL API, personal API key from the station's env or a token file | yes | no (links only) |
+
+1. **The injection envelope first:** fenced, labeled untrusted text, a forced supervised mode for every spawn from issue, PR or tracker text, and the fixture "an issue body that asks for `--dangerously-skip-permissions` still gives a supervised worker". Missing; this is the gate for everything below.
+2. **The station's integration service:** a `trackers` section in `station.toml` (`[[trackers]]` with `kind = "jira" | "linear"`, the site, and `token_env` or `token_file`; GitHub and GitLab need only their CLIs). Link methods to list, search and read issues; the station returns the text inside the envelope. A preflight like the Git one (DL-144) says "the station can read Jira at <site>". Missing.
+3. **A read-only issue browser on the board and spawn from issues:** one worker per selected issue from any of the four systems. The ticket key becomes the callsign (`otter-PROJ-123`, which exists) and the branch name. Missing.
+4. **"Fix the broken checks":** hand an agent the failing CI check names and links of a PR (GitHub and GitLab). Missing.
+5. **A PR reviewer:** point at a PR URL; the station checks the branch out in a worktree and starts a reviewer session with the user's installed review skill. Missing.
+6. **Writes, later:** create a PR, post a review or comment, and move a Jira or Linear issue (for example to "In review" with the PR link). Each needs a verb allowlist, an identity preview ("posts as @user"), one board confirm per write, an audit line, and it is never batched or automatic. Missing. Stopping rule: build the writes only with the full security set; otherwise stay read-only.
+7. **GitLab details:** subgroup paths with three or more segments, and SSH and https remotes that name the same project. Partial (the clone preflight exists, DL-144).
 
 ### R4. Usage and accounts
 
@@ -213,16 +223,16 @@ Each step has its cut line: the part that drops first if time runs short.
 | **M4.1 Harvest** | R1.2 diff since spawn; R1.3 batched line notes; R1.5 checkpoint GC | Untracked files in the diff (label them "not in the diff") |
 | **M4.2 Unattended fleet** | R2.1–R2.4 | Wait-for-any (coordinators can loop over `wait_task`) |
 | **M4.3 Release hardening** | R8.1 macOS lane; R8.2 version gate; R9.1 security delta; R9.2 proof columns; R9.4 propagation debt; R9.7 gate | None: this is the 2.0.0 gate |
-| **M5 Forge, read only** | R3.1 envelope and fixture; R3.2 issue browser and spawn; R3.4 PR reviewer; R3.3 fix checks | R3.3 |
+| **M5 Integrations, read only** | R3.1 envelope and fixture; R3.2 station service (GitHub, GitLab, Jira, Linear); R3.3 issue browser and spawn; R3.5 PR reviewer; R3.4 fix checks | R3.4 |
 | **M5.1 Accounts** | R4.3 limits in the picker; R4.4 assign by quota; R4.5 Claude windows research | R4.5 |
 | **M6** | R1.4 compare the winner; R5 automations; R6.1 unread; R6.3 palette row | R5 missed-run grace |
-| **Later, owner decision** | R3.5 PR writes; R6.2 terminal wall; R6.5 activity stream; R6.6 hibernation; R4.6 inferred cost; ACP for a third provider | — |
+| **Later, owner decision** | R3.6 writes (PRs, comments, issue moves); R6.2 terminal wall; R6.5 activity stream; R6.6 hibernation; R4.6 inferred cost; ACP for a third provider | — |
 
 ---
 
 ## 8. Owner decisions needed
 
-1. **Forge work (R3):** build the read-only part in M5? The writes need a second decision after the read part ships.
+1. **Integrations (R3):** decided (DL-152): GitHub, GitLab, Jira and Linear are in scope. Still open: the order of the four, and whether the writes (R3.6) follow in the same milestone.
 2. **Terminal wall (R6.2):** still wanted, now that the dock and the TUI handover exist?
 3. **Inferred Codex cost (R4.6):** acceptable when it is labeled "inferred", or keep "unknown"?
 4. **Automations (R5):** which first schedules matter (daily triage, nightly test fix, PR review)? They decide the precheck design.
