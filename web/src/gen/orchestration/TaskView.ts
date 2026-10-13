@@ -9,6 +9,18 @@ import type { TaskState } from "./TaskState";
  */
 export type TaskView = { task_id: string, title: string, creator: string, station_id: StationId, session_id: SessionId, state: TaskState, result: string | null, 
 /**
+ * Why the task is `blocked`, or why the worker asks (`question`).
+ */
+completion_reason: string | null, 
+/**
+ * The question of a `question` task.
+ */
+question: string | null, 
+/**
  * The delivery of the task text to the session.
  */
-delivery: DeliveryState, reason: string | null, created_at: number, updated_at: number, completed_at: number | null, };
+delivery: DeliveryState, 
+/**
+ * Why the delivery is `dead`.
+ */
+reason: string | null, created_at: number, updated_at: number, completed_at: number | null, };

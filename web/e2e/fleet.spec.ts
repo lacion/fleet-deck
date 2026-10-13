@@ -28,6 +28,8 @@ function task(title: string, extra: Partial<TaskView> = {}): TaskView {
     session_id: 's1',
     state: 'open',
     result: null,
+    completion_reason: null,
+    question: null,
     delivery: 'delivered',
     reason: null,
     created_at: 1,

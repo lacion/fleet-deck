@@ -247,6 +247,7 @@ impl DeckStore {
                 .map(RawRecord::parse)
                 .transpose()?;
             if let Some(rec) = &found {
+                super::fleet::block_unlisted_tasks(&tx, &rec.station_id, &BTreeSet::new(), now)?;
                 tx.execute(
                     "DELETE FROM stations WHERE station_id = ?1",
                     [rec.station_id.as_str()],

@@ -112,6 +112,12 @@ export function grantStatus(g: GrantView): string {
 export function taskStatus(t: TaskView): string {
   if (t.state === 'done') return t.result === null ? 'Done' : `Done: ${t.result}`;
   if (t.state === 'failed') return t.result === null ? 'Failed' : `Failed: ${t.result}`;
+  if (t.state === 'blocked') {
+    return t.completion_reason === null ? 'Blocked' : `Blocked: ${t.completion_reason}`;
+  }
+  if (t.state === 'question') {
+    return t.question === null ? 'Asks a question' : `Asks: ${t.question}`;
+  }
   if (t.delivery === 'dead') return `Not delivered${t.reason === null ? '' : `: ${t.reason}`}`;
   return t.delivery === 'delivered' ? 'Open' : 'Open, not yet delivered';
 }

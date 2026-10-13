@@ -155,6 +155,7 @@ pub fn router(board: Arc<Board>) -> Router {
             "/api/mail",
             get(fleet_routes::mails).post(fleet_routes::send_mail),
         )
+        .route("/api/mail/group", post(fleet_routes::send_group_mail))
         .route(
             "/api/tasks",
             get(fleet_routes::tasks).post(fleet_routes::create_task),
@@ -164,6 +165,7 @@ pub fn router(board: Arc<Board>) -> Router {
             post(fleet_routes::complete_task),
         )
         .route("/api/tasks/{task_id}/wait", get(fleet_routes::wait_task))
+        .route("/api/tasks/wait", get(fleet_routes::wait_any_task))
         .route("/api/coordinator/grants", get(grant_routes::list))
         .route(
             "/api/coordinator/grants/{grant_id}/revoke",

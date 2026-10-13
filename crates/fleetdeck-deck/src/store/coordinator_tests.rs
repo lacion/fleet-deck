@@ -536,6 +536,9 @@ async fn a_task_completes_only_for_its_assignee() {
     let complete = |id: &str| CoordinatorOp::CompleteTask {
         task_id: id.to_owned(),
         result: Some("ok".to_owned()),
+        state: None,
+        reason: None,
+        question: None,
     };
     let r = decide(&w, env(&w, &b, "c1", complete("t-worker"))).await;
     assert_eq!(code(&r), Some(RejectCode::Forbidden));
@@ -684,3 +687,6 @@ fn mode_ceilings_are_per_family_and_unknown_modes_fail_closed() {
 
 #[path = "coordinator_lifecycle_tests.rs"]
 mod lifecycle;
+
+#[path = "coordinator_fleet_tests.rs"]
+mod fleet_ops;

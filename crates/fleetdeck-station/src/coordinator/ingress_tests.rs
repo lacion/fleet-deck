@@ -253,10 +253,12 @@ async fn a_pending_binding_discovers_the_fixed_granted_catalog_and_every_executi
         [
             "list_sessions",
             "wait_task",
+            "wait_tasks",
             "send_mail",
             "assign",
             "assign_auto",
-            "complete_task"
+            "complete_task",
+            "ask_coordinator"
         ]
     );
     for tool in &tools {

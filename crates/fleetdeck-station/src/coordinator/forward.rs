@@ -19,6 +19,7 @@ use fleetdeck_proto::mutation::{
     CoordinatorBinding, CoordinatorCall, CoordinatorCallEnvelope, CoordinatorQuery,
     CoordinatorQueryEnvelope,
 };
+use fleetdeck_proto::orchestration::MAX_WAIT_IDS;
 use fleetdeck_proto::{CommandId, IncarnationId, ProviderInstanceId};
 use ring::rand::{SecureRandom, SystemRandom};
 use serde_json::Value;
@@ -142,6 +143,19 @@ fn query(tool: &str, args: &Value) -> Result<(CoordinatorQuery, Duration), Strin
                 },
                 WAIT_LIMIT,
             ))
+        }
+        "wait_tasks" => {
+            let ids: Option<Vec<String>> = args
+                .get("task_ids")
+                .and_then(Value::as_array)
+                .map(|a| a.iter().map(|v| v.as_str().map(str::to_owned)).collect())
+                .and_then(|ids: Vec<Option<String>>| ids.into_iter().collect());
+            let ids = ids
+                .filter(|ids| !ids.is_empty() && ids.len() <= MAX_WAIT_IDS)
+                .ok_or_else(|| {
+                    format!("invalid_params: `task_ids` has 1 to {MAX_WAIT_IDS} task ids")
+                })?;
+            Ok((CoordinatorQuery::WaitTasks { task_ids: ids }, WAIT_LIMIT))
         }
         other => Err(format!("invalid_params: no read tool `{other}`")),
     }
@@ -378,6 +392,28 @@ mod tests {
         assert_ne!(a, b);
         // A missing task id is refused before anything is sent.
         assert!(LinkForward::envelope(&caller(), "wait_task", &json!({}), &inc, 1).is_err());
+
+        // `wait_tasks` is one long-poll query over its task ids.
+        let (method, _, v) = LinkForward::envelope(
+            &caller(),
+            "wait_tasks",
+            &json!({"task_ids": ["t1", "t2"]}),
+            &inc,
+            1_000,
+        )
+        .unwrap();
+        assert_eq!(method, "coordinator.query");
+        let q: CoordinatorQueryEnvelope = serde_json::from_value(v).unwrap();
+        assert_eq!(
+            q.query,
+            CoordinatorQuery::WaitTasks {
+                task_ids: vec!["t1".into(), "t2".into()]
+            }
+        );
+        assert_eq!(q.deadline, 56_000);
+        for bad in [json!({}), json!({"task_ids": []}), json!({"task_ids": [1]})] {
+            assert!(LinkForward::envelope(&caller(), "wait_tasks", &bad, &inc, 1).is_err());
+        }
     }
 
     #[tokio::test]

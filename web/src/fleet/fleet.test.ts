@@ -21,6 +21,8 @@ const task = (extra: Partial<TaskView> = {}): TaskView => ({
   session_id: 's1',
   state: 'open',
   result: null,
+  completion_reason: null,
+  question: null,
   delivery: 'queued',
   reason: null,
   created_at: 1,
@@ -93,6 +95,14 @@ describe('fleet mail and tasks', () => {
     );
     expect(taskStatus(task({ state: 'done', result: 'merged' }))).toBe('Done: merged');
     expect(taskStatus(task({ state: 'failed' }))).toBe('Failed');
+    expect(taskStatus(task({ state: 'blocked' }))).toBe('Blocked');
+    expect(
+      taskStatus(task({ state: 'blocked', completion_reason: 'the worker session ended' })),
+    ).toBe('Blocked: the worker session ended');
+    expect(taskStatus(task({ state: 'question', question: 'which key?' }))).toBe(
+      'Asks: which key?',
+    );
+    expect(taskStatus(task({ state: 'question' }))).toBe('Asks a question');
     expect(taskList([task(), { nope: 1 }, 3])).toHaveLength(1);
     expect(taskList({})).toEqual([]);
   });

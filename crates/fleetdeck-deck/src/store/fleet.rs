@@ -4,16 +4,26 @@
 //! the text once, as a native follow-up or steer (DL-205, DL-206). The
 //! delivery state of a row is the state of its outbox item.
 //!
-//! A task stays `open` until a completion (`done` or `failed`, with an
-//! optional result) arrives from the board or from the coordinator API
-//! (6-5). A completion of an ended task with the same state and result is
-//! a duplicate and changes nothing; another one is refused.
+//! A task stays `open` until a completion arrives from the board or from
+//! the coordinator API (6-5): `done` and `failed` (with an optional
+//! result), `blocked` (with a reason) or `question` (with a reason and a
+//! question, R2.1). `question` does not end the task: the worker can
+//! complete it again. A completion of an ended task with the same content
+//! is a duplicate and changes nothing; another one is refused.
+//!
+//! A task whose session ends (`exited`, `lost`, or removed from the read
+//! model) without a final completion ends as `blocked` with the reason
+//! (R2.2): [`block_open_tasks`].
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use fleetdeck_core::ids::new_id;
-use fleetdeck_proto::orchestration::{DeliveryState, MailDelivery, MailView, TaskState, TaskView};
-use fleetdeck_proto::{SessionId, StationId};
+use fleetdeck_proto::board::DeckSession;
+use fleetdeck_proto::event::ProviderKind;
+use fleetdeck_proto::orchestration::{
+    DeliveryState, MailDelivery, MailGroup, MailView, TaskCompletion, TaskState, TaskView,
+};
+use fleetdeck_proto::{CardStatus, SessionId, StationId};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
 use super::outbox::{NewOutboxItem, insert_item};
@@ -70,6 +80,8 @@ fn task_state_name(s: TaskState) -> &'static str {
         TaskState::Open => "open",
         TaskState::Done => "done",
         TaskState::Failed => "failed",
+        TaskState::Blocked => "blocked",
+        TaskState::Question => "question",
     }
 }
 
@@ -78,6 +90,8 @@ fn parse_task_state(s: &str) -> rusqlite::Result<TaskState> {
         "open" => Ok(TaskState::Open),
         "done" => Ok(TaskState::Done),
         "failed" => Ok(TaskState::Failed),
+        "blocked" => Ok(TaskState::Blocked),
+        "question" => Ok(TaskState::Question),
         other => Err(corrupt(format!("task state {other}"))),
     }
 }
@@ -119,7 +133,8 @@ fn mail_row(row: &Row<'_>) -> rusqlite::Result<MailView> {
 }
 
 const TASK_SELECT: &str = "SELECT t.task_id, t.title, t.creator, t.station_id, t.session_id,
-     t.state, t.result, o.state, o.reason, t.created_at, t.updated_at, t.completed_at
+     t.state, t.result, t.completion_reason, t.question, o.state, o.reason, t.created_at,
+     t.updated_at, t.completed_at
      FROM tasks t JOIN outbox o ON o.outbox_id = t.outbox_id";
 
 fn task_row(row: &Row<'_>) -> rusqlite::Result<TaskView> {
@@ -131,11 +146,13 @@ fn task_row(row: &Row<'_>) -> rusqlite::Result<TaskView> {
         session_id: SessionId(row.get(4)?),
         state: parse_task_state(&row.get::<_, String>(5)?)?,
         result: row.get(6)?,
-        delivery: parse_outbox_state(&row.get::<_, String>(7)?)?,
-        reason: row.get(8)?,
-        created_at: row.get(9)?,
-        updated_at: row.get(10)?,
-        completed_at: row.get(11)?,
+        completion_reason: row.get(7)?,
+        question: row.get(8)?,
+        delivery: parse_outbox_state(&row.get::<_, String>(9)?)?,
+        reason: row.get(10)?,
+        created_at: row.get(11)?,
+        updated_at: row.get(12)?,
+        completed_at: row.get(13)?,
     })
 }
 
@@ -191,6 +208,106 @@ pub(super) fn insert_mail(
     Ok((stored, true))
 }
 
+/// The live sessions that a group address names (R2.5): `@idle` the idle
+/// ones, `@claude` and `@codex` the sessions of that provider. A session
+/// that ended, was lost or sits behind a down link is not live.
+#[must_use]
+pub fn group_members(sessions: &[DeckSession], group: MailGroup) -> Vec<&DeckSession> {
+    sessions
+        .iter()
+        .filter(|s| {
+            !matches!(
+                s.status,
+                CardStatus::Ended | CardStatus::Lost | CardStatus::Unreachable
+            )
+        })
+        .filter(|s| match group {
+            MailGroup::Idle => s.status == CardStatus::Idle,
+            MailGroup::Claude => s.summary.provider == Some(ProviderKind::Claude),
+            MailGroup::Codex => s.summary.provider == Some(ProviderKind::Codex),
+        })
+        .collect()
+}
+
+/// The id of the `n`-th mail of a group send (`n` from 1).
+#[must_use]
+pub fn group_mail_id(mail_id: &str, n: usize) -> String {
+    format!("{mail_id}-{n}")
+}
+
+/// Writes a completion on a task that is `open` or in `question`, in the
+/// caller's transaction. The caller has checked the completion
+/// ([`TaskCompletion::check`]) and the task.
+pub(super) fn write_completion(
+    tx: &Connection,
+    task_id: &str,
+    completion: &TaskCompletion,
+    now: i64,
+) -> Result<()> {
+    let ended = (completion.state != TaskState::Question).then_some(now);
+    tx.execute(
+        "UPDATE tasks SET state = ?2, result = ?3, completion_reason = ?4, question = ?5,
+             updated_at = ?6, completed_at = ?7
+         WHERE task_id = ?1 AND state IN ('open', 'question')",
+        params![
+            task_id,
+            task_state_name(completion.state),
+            completion.result,
+            completion.reason,
+            completion.question,
+            now,
+            ended
+        ],
+    )?;
+    Ok(())
+}
+
+/// Ends the open tasks of one session as `blocked` (R2.2): `cause` is the
+/// session state (`exited`, `lost`) or `removed`. Only a task without a
+/// final completion changes, so a repeat changes nothing. Returns the
+/// number of tasks that ended.
+pub(super) fn block_open_tasks(
+    tx: &Connection,
+    station: &StationId,
+    session: &str,
+    cause: &str,
+    now: i64,
+) -> Result<usize> {
+    Ok(tx.execute(
+        "UPDATE tasks SET state = 'blocked', completion_reason = ?4, updated_at = ?5,
+             completed_at = ?5
+         WHERE station_id = ?1 AND session_id = ?2 AND state IN ('open', 'question')",
+        params![
+            station.as_str(),
+            session,
+            format!("the worker session ended without a completion ({cause})"),
+            now
+        ],
+    )?)
+}
+
+/// [`block_open_tasks`] for every session of `station` with an open task
+/// that is not in `named` (the sessions that the read model still holds).
+pub(super) fn block_unlisted_tasks(
+    tx: &Connection,
+    station: &StationId,
+    named: &BTreeSet<String>,
+    now: i64,
+) -> Result<()> {
+    let mut stmt = tx.prepare(
+        "SELECT DISTINCT session_id FROM tasks
+         WHERE station_id = ?1 AND state IN ('open', 'question')",
+    )?;
+    let open: Vec<String> = stmt
+        .query_map([station.as_str()], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    drop(stmt);
+    for session in open.iter().filter(|s| !named.contains(*s)) {
+        block_open_tasks(tx, station, session, "removed", now)?;
+    }
+    Ok(())
+}
+
 impl DeckStore {
     /// Stores a mail and queues its delivery in one transaction. A known
     /// `mail_id` returns the stored mail and queues nothing (`false`).
@@ -205,6 +322,53 @@ impl DeckStore {
             let stored = insert_mail(&tx, &mail, &outbox_id, now)?;
             tx.commit()?;
             Ok(stored)
+        })
+        .await
+    }
+
+    /// Stores the mails of one group send (R2.5), each with its outbox item,
+    /// in one transaction. `mails` hold the ids `<prefix>-<n>`. When mails
+    /// of `prefix` exist already, they are returned and nothing is stored
+    /// (`false`), so a resend does not reach a changed group.
+    ///
+    /// # Errors
+    /// [`DeckError::UnknownStation`], or a database error.
+    pub async fn send_group_mail(
+        &self,
+        prefix: String,
+        mails: Vec<NewMail>,
+    ) -> Result<(Vec<MailView>, bool)> {
+        let now = self.now_ms();
+        let outbox_ids: Vec<String> = mails
+            .iter()
+            .map(|_| new_id(self.inner.ids.as_ref()))
+            .collect();
+        call(&self.inner.db, move |conn| {
+            let tx = conn.transaction()?;
+            let mut stored = {
+                let mut stmt = tx.prepare(&format!("{MAIL_SELECT} WHERE m.mail_id GLOB ?1"))?;
+                let rows = stmt.query_map([format!("{prefix}-[0-9]*")], mail_row)?;
+                let all = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+                all.into_iter()
+                    .filter_map(|m| {
+                        let n = m
+                            .mail_id
+                            .strip_prefix(&format!("{prefix}-"))?
+                            .parse::<usize>();
+                        Some((n.ok()?, m))
+                    })
+                    .collect::<Vec<_>>()
+            };
+            if !stored.is_empty() {
+                stored.sort_by_key(|(n, _)| *n);
+                return Ok((stored.into_iter().map(|(_, m)| m).collect(), false));
+            }
+            let mut out = Vec::with_capacity(mails.len());
+            for (mail, outbox_id) in mails.iter().zip(&outbox_ids) {
+                out.push(insert_mail(&tx, mail, outbox_id, now)?.0);
+            }
+            tx.commit()?;
+            Ok((out, true))
         })
         .await
     }
@@ -304,41 +468,58 @@ impl DeckStore {
         .await
     }
 
-    /// Ends an open task with `state` (`done` or `failed`) and `result`;
-    /// `None` for an unknown task.
+    /// The tasks of `ids`, in the order of `ids`. `Ok(Err(id))` names an id
+    /// that is no task (R2.4).
     ///
     /// # Errors
-    /// [`DeckError::Corrupt`] for `state` `open`, or a database error.
+    /// A database error.
+    pub async fn tasks_by_ids(
+        &self,
+        ids: Vec<String>,
+    ) -> Result<std::result::Result<Vec<TaskView>, String>> {
+        call(&self.inner.db, move |conn| {
+            let mut out = Vec::with_capacity(ids.len());
+            for id in ids {
+                match get_task(conn, &id)? {
+                    Some(task) => out.push(task),
+                    None => return Ok(Err(id)),
+                }
+            }
+            Ok(Ok(out))
+        })
+        .await
+    }
+
+    /// Completes an open task (or answers a `question` with a new
+    /// completion); `None` for an unknown task. The same completion again
+    /// is a duplicate; any completion of an ended task is a conflict.
+    ///
+    /// # Errors
+    /// [`DeckError::Invalid`] for a completion that breaks
+    /// [`TaskCompletion::check`], or a database error.
     pub async fn complete_task(
         &self,
         task_id: String,
-        state: TaskState,
-        result: Option<String>,
+        completion: TaskCompletion,
     ) -> Result<Option<Completed>> {
-        if state == TaskState::Open {
-            return Err(DeckError::Corrupt(
-                "a completion is done or failed".to_owned(),
-            ));
-        }
+        completion.check().map_err(DeckError::Invalid)?;
         let now = self.now_ms();
         call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             let Some(task) = get_task(&tx, &task_id)? else {
                 return Ok(None);
             };
-            if task.state != TaskState::Open {
-                let same = task.state == state && task.result == result;
-                return Ok(Some(if same {
-                    Completed::Ended(task)
-                } else {
-                    Completed::Conflict(task)
-                }));
+            let same = task.state == completion.state
+                && task.result == completion.result
+                && task.completion_reason == completion.reason
+                && task.question == completion.question;
+            if same {
+                return Ok(Some(Completed::Ended(task)));
             }
-            tx.execute(
-                "UPDATE tasks SET state = ?2, result = ?3, updated_at = ?4, completed_at = ?4
-                 WHERE task_id = ?1 AND state = 'open'",
-                params![task_id, task_state_name(state), result, now],
-            )?;
+            if !task.state.is_open() {
+                return Ok(Some(Completed::Conflict(task)));
+            }
+            write_completion(&tx, &task_id, &completion, now)?;
             let ended = get_task(&tx, &task_id)?
                 .ok_or_else(|| DeckError::Corrupt("a completed task is gone".to_owned()))?;
             tx.commit()?;

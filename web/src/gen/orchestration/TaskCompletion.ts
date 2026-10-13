@@ -6,6 +6,16 @@ import type { TaskState } from "./TaskState";
  */
 export type TaskCompletion = { 
 /**
- * `done` or `failed`.
+ * `done`, `failed`, `blocked` or `question`.
  */
-state: TaskState, result?: string, };
+state: TaskState, result?: string, 
+/**
+ * Why the worker is blocked, or why it asks. Needed for `blocked` and
+ * `question`; refused for `done` and `failed`.
+ */
+reason?: string, 
+/**
+ * The question for the coordinator. Needed for `question`; refused
+ * for every other state.
+ */
+question?: string, };

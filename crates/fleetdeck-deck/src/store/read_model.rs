@@ -17,6 +17,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
+use fleetdeck_proto::event::SessionState;
 use fleetdeck_proto::link::ReplayParams;
 use fleetdeck_proto::{
     EventEnvelope, IncarnationId, SessionId, SessionSummary, StationId, card_status,
@@ -80,6 +81,22 @@ fn store_summary(
             now
         ],
     )?;
+    Ok(())
+}
+
+/// R2.2: a session that exited or was lost ends its open tasks as `blocked`.
+fn end_worker_tasks(
+    tx: &Transaction<'_>,
+    station: &StationId,
+    summary: &SessionSummary,
+    now: i64,
+) -> Result<()> {
+    let cause = match summary.state {
+        SessionState::Exited => "exited",
+        SessionState::Lost => "lost",
+        SessionState::Starting | SessionState::Running | SessionState::Stopping => return Ok(()),
+    };
+    super::fleet::block_open_tasks(tx, station, summary.session_id.as_str(), cause, now)?;
     Ok(())
 }
 
@@ -185,6 +202,7 @@ impl DeckStore {
                 let mut summary = load_summary(&tx, &station, &e.session_id)?;
                 summary.apply(&e);
                 store_summary(&tx, &station, &summary, now)?;
+                end_worker_tasks(&tx, &station, &summary, now)?;
                 append_timeline(&tx, &station, &e)?;
                 super::plans::record_plan(&tx, &station, &e, &summary, now)?;
                 super::grants::record_lifecycle(&tx, &station, &e)?;
@@ -267,8 +285,11 @@ impl DeckStore {
             let mut named = BTreeSet::new();
             for summary in &sessions {
                 store_summary(&tx, &station, summary, now)?;
+                end_worker_tasks(&tx, &station, summary, now)?;
                 named.insert(summary.session_id.as_str().to_owned());
             }
+            // A session that the batch does not name is gone (R2.2).
+            super::fleet::block_unlisted_tasks(&tx, &station, &named, now)?;
             // The timeline of a session that the batch does not name goes too.
             let mut stmt =
                 tx.prepare("SELECT DISTINCT session_id FROM timeline WHERE station_id = ?1")?;
