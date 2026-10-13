@@ -15,6 +15,11 @@
 //!
 //! - `done` with an accepted receipt → `delivered`;
 //! - `done` with a stored rejection → `dead` (`rejected: <code>`);
+//! - `done` rejected with `invalid_state` while the deck shows the target
+//!   session `exited` or `lost` → `queued` and held (`reason =
+//!   session_ended`, `next_at = expires_at`) until the session runs again
+//!   ([`DeckStore::release_held`]); only a follow-up or a steer is held
+//!   ([`target_session`]);
 //! - `failed` with a reason that proves the station never ran it
 //!   (`not_sent`, `station_reset`, `expired`) → `queued` again with a new
 //!   command on the next attempt, after a backoff of
@@ -28,14 +33,16 @@
 //! transaction.
 
 use fleetdeck_core::ids::new_id;
-use fleetdeck_proto::command::{DeckCommandState, ReceiptState};
-use fleetdeck_proto::{CommandId, StationId};
+use fleetdeck_proto::command::{DeckCommandState, ReceiptState, SessionCommand};
+use fleetdeck_proto::event::SessionState;
+use fleetdeck_proto::{CommandId, RejectCode, SessionId, SessionSummary, StationId};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::commands::{self, NewCommand};
 use super::{DeckError, DeckStore, Result, call};
+use crate::link::router::CommandKind;
 
 /// The first backoff after an attempt that the station never ran.
 pub const ATTEMPT_BACKOFF_MS: i64 = 5_000;
@@ -275,6 +282,81 @@ fn next(cmd: &commands::DeckCommand) -> Option<(OutboxState, Option<String>)> {
     }
 }
 
+/// The session that an outbox payload targets, when a rejection of the
+/// payload because the session ended holds the item. Only a follow-up or a
+/// steer is held: every other payload gives `None`.
+fn target_session(payload: &Value) -> Option<SessionId> {
+    match serde_json::from_value::<CommandKind>(payload.clone()).ok()? {
+        CommandKind::Session {
+            command:
+                SessionCommand::FollowUp { session_id, .. } | SessionCommand::Steer { session_id, .. },
+        } => Some(session_id),
+        _ => None,
+    }
+}
+
+/// Whether the done command `cmd` of `item` holds the item instead of
+/// making it `dead`: the station rejected it with `invalid_state`, the
+/// payload targets one session, and the deck shows that session `exited`
+/// or `lost`.
+fn holds(conn: &Connection, item: &OutboxItem, cmd: &commands::DeckCommand) -> Result<bool> {
+    let invalid_state = cmd.state == DeckCommandState::Done
+        && cmd.receipt.as_ref().is_some_and(|r| {
+            r.state == ReceiptState::Rejected
+                && r.reject
+                    .as_ref()
+                    .is_some_and(|j| j.code == RejectCode::InvalidState)
+        });
+    if !invalid_state {
+        return Ok(false);
+    }
+    let Some(session) = target_session(&item.payload) else {
+        return Ok(false);
+    };
+    let text: Option<String> = conn
+        .query_row(
+            "SELECT summary FROM sessions WHERE station_id = ?1 AND session_id = ?2",
+            params![item.station_id.as_str(), session.as_str()],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let Some(text) = text else {
+        return Ok(false);
+    };
+    let summary: SessionSummary = serde_json::from_str(&text)?;
+    Ok(matches!(
+        summary.state,
+        SessionState::Exited | SessionState::Lost
+    ))
+}
+
+/// Releases the items of `station` that are held for `session`: they are
+/// due now. Returns the number of released items.
+pub(crate) fn release_held_tx(
+    conn: &Connection,
+    station: &StationId,
+    session: &SessionId,
+    now: i64,
+) -> Result<usize> {
+    let held = list(
+        conn,
+        "WHERE station_id = ?1 AND state = 'queued' AND reason = 'session_ended'",
+        params![station.as_str()],
+    )?;
+    let mut released = 0;
+    for item in held {
+        if target_session(&item.payload).as_ref() != Some(session) {
+            continue;
+        }
+        released += conn.execute(
+            "UPDATE outbox SET next_at = ?2, reason = NULL, updated_at = ?2
+             WHERE outbox_id = ?1 AND state = 'queued' AND reason = 'session_ended'",
+            params![item.outbox_id, now],
+        )?;
+    }
+    Ok(released)
+}
+
 impl DeckStore {
     /// Queues one item.
     ///
@@ -384,7 +466,16 @@ impl DeckStore {
                 let Some((state, reason)) = next(&cmd) else {
                     continue;
                 };
-                if state == OutboxState::Queued {
+                if state == OutboxState::Dead && holds(&tx, &item, &cmd)? {
+                    // The target session ended: keep the item until it
+                    // runs again (`release_held`) or the item expires.
+                    tx.execute(
+                        "UPDATE outbox SET state = 'queued', reason = 'session_ended',
+                             next_at = expires_at, updated_at = ?2
+                         WHERE outbox_id = ?1",
+                        params![item.outbox_id, now],
+                    )?;
+                } else if state == OutboxState::Queued {
                     tx.execute(
                         "UPDATE outbox SET state = 'queued', reason = ?2, next_at = ?3,
                              updated_at = ?4
@@ -398,6 +489,23 @@ impl DeckStore {
             }
             tx.commit()?;
             Ok(changed)
+        })
+        .await
+    }
+
+    /// Makes the items that are held for `session` of `station` due now,
+    /// because the session runs again (module rules). Returns the number
+    /// of released items.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn release_held(&self, station: StationId, session: SessionId) -> Result<usize> {
+        let now = self.now_ms();
+        call(&self.inner.db, move |conn| {
+            let tx = conn.transaction()?;
+            let released = release_held_tx(&tx, &station, &session, now)?;
+            tx.commit()?;
+            Ok(released)
         })
         .await
     }
@@ -418,6 +526,10 @@ impl DeckStore {
         call(&self.inner.db, |conn| list(conn, "", [])).await
     }
 }
+
+#[cfg(test)]
+#[path = "outbox_hold_tests.rs"]
+mod hold_tests;
 
 #[cfg(test)]
 mod tests {
