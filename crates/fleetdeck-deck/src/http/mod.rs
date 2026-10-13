@@ -15,6 +15,8 @@ pub mod guard;
 pub mod methods;
 pub mod paste_routes;
 pub mod plan_routes;
+pub mod project_writes;
+pub mod projects_routes;
 pub mod read_routes;
 pub mod shell_routes;
 pub mod station_routes;
@@ -172,6 +174,62 @@ pub fn router(board: Arc<Board>) -> Router {
         .route(
             "/api/coordinator/grants/{grant_id}/renew",
             post(grant_routes::renew),
+        )
+        .route(
+            "/api/projects",
+            get(projects_routes::list).post(projects_routes::create),
+        )
+        .route(
+            "/api/projects/{project}",
+            axum::routing::put(projects_routes::update).delete(projects_routes::delete),
+        )
+        .route(
+            "/api/projects/{project}/preflight",
+            post(projects_routes::preflight),
+        )
+        .route(
+            "/api/projects/{project}/issues",
+            get(projects_routes::issues),
+        )
+        .route(
+            "/api/projects/{project}/issues/{key}",
+            get(projects_routes::issue),
+        )
+        .route(
+            "/api/projects/{project}/issues/{key}/comments",
+            post(project_writes::issue_comment),
+        )
+        .route(
+            "/api/projects/{project}/issues/{key}/transition",
+            post(project_writes::issue_transition),
+        )
+        .route(
+            "/api/projects/{project}/assets",
+            get(projects_routes::asset),
+        )
+        .route(
+            "/api/projects/{project}/prs",
+            get(projects_routes::prs).post(project_writes::pr_create),
+        )
+        .route(
+            "/api/projects/{project}/prs/{number}",
+            get(projects_routes::pr),
+        )
+        .route(
+            "/api/projects/{project}/prs/{number}/checks",
+            get(projects_routes::pr_checks),
+        )
+        .route(
+            "/api/projects/{project}/prs/{number}/comments",
+            post(project_writes::pr_comment),
+        )
+        .route(
+            "/api/projects/{project}/prs/{number}/reviews",
+            post(project_writes::pr_review),
+        )
+        .route(
+            "/api/projects/{project}/sessions",
+            post(project_writes::sessions),
         )
         .route("/api/commands", get(read_routes::commands))
         .route(

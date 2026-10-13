@@ -300,6 +300,24 @@ CREATE TABLE archive_mutations (
 );
 ";
 
+/// The projects of the board (R3, DL-164): a repository on a station with
+/// its forge and tracker bindings (JSON) and the prompts for sessions that
+/// start from a ticket or a review. No token is ever stored here.
+const V13: &str = "
+CREATE TABLE projects (
+    project_id      TEXT    PRIMARY KEY,
+    name            TEXT    NOT NULL,
+    station_id      TEXT    NOT NULL,
+    path            TEXT    NOT NULL,
+    forge           TEXT,
+    trackers        TEXT    NOT NULL DEFAULT '[]',
+    prompt_template TEXT,
+    review_prompt   TEXT,
+    created_at      INTEGER NOT NULL
+);
+CREATE INDEX projects_by_station ON projects (station_id);
+";
+
 /// The `deck.db` migrations.
 #[must_use]
 pub fn migrations() -> Migrations<'static> {
@@ -316,6 +334,7 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V10),
         M::up(V11),
         M::up(V12),
+        M::up(V13),
     ])
 }
 

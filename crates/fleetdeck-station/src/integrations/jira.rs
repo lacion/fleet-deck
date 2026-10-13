@@ -4,13 +4,13 @@
 use fleetdeck_proto::integrations::{
     IssueComment, IssueDetail, IssueRef, IssueSearch, IssueSummary, code,
 };
-use fleetdeck_proto::untrusted::fence;
+use fleetdeck_proto::untrusted::fence_cut;
 use serde_json::{Value, json};
 
 use super::adf::{self, MediaUrls};
 use super::exec::Fail;
 use super::tracker::{Tracker, points};
-use super::util::{parse_time, pr_links};
+use super::util::{BODY_CHARS, COMMENT_CHARS, parse_time, pr_links};
 
 fn s(v: &Value) -> String {
     v.as_str().unwrap_or_default().to_owned()
@@ -178,7 +178,7 @@ pub async fn get(t: &Tracker<'_>, key: &str) -> Result<IssueDetail, Fail> {
                 .unwrap_or("unknown")
                 .to_owned(),
             at: parse_time(c["created"].as_str().unwrap_or_default()),
-            body_markdown: fence(&source, &text),
+            body_markdown: fence_cut(&source, &text, COMMENT_CHARS),
         });
     }
     linked.extend(pr_links(&body));
@@ -194,7 +194,7 @@ pub async fn get(t: &Tracker<'_>, key: &str) -> Result<IssueDetail, Fail> {
         .or_else(|| fields["customfield_10016"].as_f64().map(points));
     Ok(IssueDetail {
         summary: summary(site, &issue),
-        body_markdown: fence(&source, &body),
+        body_markdown: fence_cut(&source, &body, BODY_CHARS),
         estimate,
         comments,
         linked_prs,

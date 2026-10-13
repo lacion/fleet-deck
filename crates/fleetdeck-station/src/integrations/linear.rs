@@ -4,12 +4,12 @@
 use fleetdeck_proto::integrations::{
     IssueComment, IssueDetail, IssueRef, IssueSearch, IssueSummary, code,
 };
-use fleetdeck_proto::untrusted::fence;
+use fleetdeck_proto::untrusted::fence_cut;
 use serde_json::{Value, json};
 
 use super::exec::Fail;
 use super::tracker::{Tracker, points};
-use super::util::{image_urls, parse_time, pr_links};
+use super::util::{BODY_CHARS, COMMENT_CHARS, image_urls, parse_time, pr_links};
 
 /// The endpoint of the Linear API.
 pub const ENDPOINT: &str = "https://api.linear.app/graphql";
@@ -124,7 +124,11 @@ pub async fn get(t: &Tracker<'_>, key: &str) -> Result<IssueDetail, Fail> {
                 .unwrap_or("unknown")
                 .to_owned(),
             at: parse_time(c["createdAt"].as_str().unwrap_or_default()),
-            body_markdown: fence(&source, c["body"].as_str().unwrap_or_default()),
+            body_markdown: fence_cut(
+                &source,
+                c["body"].as_str().unwrap_or_default(),
+                COMMENT_CHARS,
+            ),
         })
         .collect();
     let mut linked_prs: Vec<String> = Vec::new();
@@ -142,7 +146,7 @@ pub async fn get(t: &Tracker<'_>, key: &str) -> Result<IssueDetail, Fail> {
     }
     Ok(IssueDetail {
         summary: summary(issue),
-        body_markdown: fence(&source, body),
+        body_markdown: fence_cut(&source, body, BODY_CHARS),
         estimate: issue["estimate"].as_f64().map(points),
         comments,
         linked_prs,

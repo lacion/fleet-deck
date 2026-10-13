@@ -8,12 +8,14 @@ use fleetdeck_proto::integrations::{
     IssueSearch, IssueSummary, PrDetail, PrFile, PrGroups, PrState, PrSummary, ReviewEvent,
     ReviewState, code,
 };
-use fleetdeck_proto::untrusted::fence;
+use fleetdeck_proto::untrusted::fence_cut;
 use serde_json::{Value, json};
 
 use super::exec::Fail;
 use super::forge::{self, Forge, MAX_COMMENTS};
-use super::util::{image_urls, parse_time, tail_lines, urlencode};
+use super::util::{
+    BODY_CHARS, COMMENT_CHARS, LOG_CHARS, image_urls, parse_time, tail_lines, urlencode,
+};
 
 fn s(v: &Value) -> String {
     v.as_str().unwrap_or_default().to_owned()
@@ -89,7 +91,11 @@ fn notes(source: &str, list: &Value) -> Vec<IssueComment> {
                 .unwrap_or("ghost")
                 .to_owned(),
             at: parse_time(n["created_at"].as_str().unwrap_or_default()),
-            body_markdown: fence(source, n["body"].as_str().unwrap_or_default()),
+            body_markdown: fence_cut(
+                source,
+                n["body"].as_str().unwrap_or_default(),
+                COMMENT_CHARS,
+            ),
         })
         .collect()
 }
@@ -132,7 +138,7 @@ pub async fn issue_get(f: &Forge<'_>, number: u64) -> Result<IssueDetail, Fail> 
     let body = issue["description"].as_str().unwrap_or_default();
     Ok(IssueDetail {
         summary: issue_summary(&issue),
-        body_markdown: fence(&source, body),
+        body_markdown: fence_cut(&source, body, BODY_CHARS),
         estimate: issue["time_stats"]["human_time_estimate"]
             .as_str()
             .map(str::to_owned),
@@ -261,7 +267,11 @@ pub async fn pr_get(f: &Forge<'_>, number: u64) -> Result<PrDetail, Fail> {
     let source = format!("gitlab:{}!{number}", f.binding.repo);
     Ok(PrDetail {
         summary: mr_summary(&mr, &viewer),
-        body_markdown: fence(&source, mr["description"].as_str().unwrap_or_default()),
+        body_markdown: fence_cut(
+            &source,
+            mr["description"].as_str().unwrap_or_default(),
+            BODY_CHARS,
+        ),
         files: changes["changes"]
             .as_array()
             .into_iter()
@@ -323,7 +333,7 @@ pub async fn pr_checks(f: &Forge<'_>, number: u64) -> Result<ChecksFailing, Fail
             log_tail: if trace.is_empty() {
                 String::new()
             } else {
-                fence(&source, &trace)
+                fence_cut(&source, &trace, LOG_CHARS)
             },
             name,
             url: s(&job["web_url"]),

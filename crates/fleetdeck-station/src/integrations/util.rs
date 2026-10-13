@@ -1,6 +1,13 @@
 //! Small helpers of the integration service: time stamps, URL encoding,
 //! images in Markdown, log tails.
 
+/// The most characters of an issue or pull request body in an answer.
+pub const BODY_CHARS: usize = 100_000;
+/// The most characters of one comment in an answer.
+pub const COMMENT_CHARS: usize = 20_000;
+/// The most characters of the log tail of one check in an answer.
+pub const LOG_CHARS: usize = 60_000;
+
 /// Days from 1970-01-01 to the civil date (proleptic Gregorian).
 fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     let y = if m <= 2 { y - 1 } else { y };

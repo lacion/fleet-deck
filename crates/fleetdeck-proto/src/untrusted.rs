@@ -38,6 +38,20 @@ pub fn fence(source: &str, text: &str) -> String {
     )
 }
 
+/// [`fence`] for text that may be long: the text is cut to `max_chars`
+/// characters (at a character boundary), and a cut adds a line that says so.
+/// The cut happens before the envelope is built, so the closing tag stays.
+#[must_use]
+pub fn fence_cut(source: &str, text: &str, max_chars: usize) -> String {
+    match text.char_indices().nth(max_chars) {
+        None => fence(source, text),
+        Some((at, _)) => fence(
+            source,
+            &format!("{}\n[text cut at {max_chars} characters]", &text[..at]),
+        ),
+    }
+}
+
 /// `text` with every `</untrusted` made inert.
 fn defuse(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
@@ -97,6 +111,18 @@ mod tests {
     fn the_source_cannot_break_out_of_its_attribute() {
         let out = fence("x\"><evil>\n", "t");
         assert!(out.starts_with("<untrusted source=\"x___evil__\">\n"));
+    }
+
+    #[test]
+    fn long_text_is_cut_before_the_envelope_and_keeps_its_closing_tag() {
+        let text = "é".repeat(50);
+        let out = fence_cut("s", &text, 10);
+        assert!(out.contains(&"é".repeat(10)));
+        assert!(!out.contains(&"é".repeat(11)));
+        assert!(out.contains("[text cut at 10 characters]"));
+        assert!(out.ends_with("\n</untrusted>"));
+        assert_eq!(fence_cut("s", "short", 10), fence("s", "short"));
+        assert_eq!(fence_cut("s", "exactly10!", 10), fence("s", "exactly10!"));
     }
 
     #[test]

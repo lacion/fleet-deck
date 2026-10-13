@@ -8,12 +8,14 @@ use fleetdeck_proto::integrations::{
     IssueSearch, IssueSummary, PrDetail, PrFile, PrGroups, PrState, PrSummary, ReviewEvent,
     ReviewState, code,
 };
-use fleetdeck_proto::untrusted::fence;
+use fleetdeck_proto::untrusted::fence_cut;
 use serde_json::{Value, json};
 
 use super::exec::Fail;
 use super::forge::{self, Forge, MAX_COMMENTS};
-use super::util::{image_urls, parse_time, tail_lines, urlencode};
+use super::util::{
+    BODY_CHARS, COMMENT_CHARS, LOG_CHARS, image_urls, parse_time, tail_lines, urlencode,
+};
 
 fn s(v: &Value) -> String {
     v.as_str().unwrap_or_default().to_owned()
@@ -91,7 +93,11 @@ fn comments(source: &str, list: &Value) -> Vec<IssueComment> {
                     .or(c["createdAt"].as_str())
                     .unwrap_or_default(),
             ),
-            body_markdown: fence(source, c["body"].as_str().unwrap_or_default()),
+            body_markdown: fence_cut(
+                source,
+                c["body"].as_str().unwrap_or_default(),
+                COMMENT_CHARS,
+            ),
         })
         .collect()
 }
@@ -139,7 +145,7 @@ pub async fn issue_get(f: &Forge<'_>, number: u64) -> Result<IssueDetail, Fail> 
     let body = issue["body"].as_str().unwrap_or_default();
     Ok(IssueDetail {
         summary: issue_summary(&issue),
-        body_markdown: fence(&source, body),
+        body_markdown: fence_cut(&source, body, BODY_CHARS),
         estimate: None,
         comments: comments(&source, &list),
         linked_prs,
@@ -285,7 +291,7 @@ pub async fn pr_get(f: &Forge<'_>, number: u64) -> Result<PrDetail, Fail> {
     let source = format!("github:{}#{number}", f.binding.repo);
     Ok(PrDetail {
         summary: pr_summary(pr, &viewer),
-        body_markdown: fence(&source, pr["body"].as_str().unwrap_or_default()),
+        body_markdown: fence_cut(&source, pr["body"].as_str().unwrap_or_default(), BODY_CHARS),
         files: pr["files"]["nodes"]
             .as_array()
             .into_iter()
@@ -370,7 +376,7 @@ pub async fn pr_checks(f: &Forge<'_>, number: u64) -> Result<ChecksFailing, Fail
             log_tail: if log.is_empty() {
                 String::new()
             } else {
-                fence(&source, &log)
+                fence_cut(&source, &log, LOG_CHARS)
             },
             name,
             url,

@@ -162,6 +162,19 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         it::IssueCommentWrite::export_all(&cfg),
         it::IssueTransition::export_all(&cfg),
         it::WriteResult::export_all(&cfg),
+        it::Project::export_all(&cfg),
+        it::ProjectInput::export_all(&cfg),
+        it::ProjectList::export_all(&cfg),
+        it::BindingCheck::export_all(&cfg),
+        it::ProjectPreflight::export_all(&cfg),
+        it::StartSessions::export_all(&cfg),
+        it::StartedSession::export_all(&cfg),
+        it::StartFailure::export_all(&cfg),
+        it::StartedSessions::export_all(&cfg),
+        it::PrCreateBody::export_all(&cfg),
+        it::CommentBody::export_all(&cfg),
+        it::ReviewBody::export_all(&cfg),
+        it::TransitionBody::export_all(&cfg),
     ];
     for result in results {
         result.map_err(io::Error::other)?;
