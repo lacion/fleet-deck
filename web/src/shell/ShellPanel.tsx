@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { ShellInfo } from '../gen';
+import { useTouch } from '../app/viewport';
 import { Terminal } from '../terminal/Terminal';
 import type { ShellActions } from './shell';
 
@@ -21,6 +22,7 @@ export function ShellPanel({ station, actions, disabled }: Props) {
   const [cwd, setCwd] = useState('');
   const [active, setActive] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const touch = useTouch();
   const refresh = useCallback(async () => {
     try {
       setShells(await actions.list(station));
@@ -102,7 +104,7 @@ export function ShellPanel({ station, actions, disabled }: Props) {
               shellId={active}
               actions={actions}
               active={true}
-              touch={false}
+              touch={touch}
             />
           </div>
         </>

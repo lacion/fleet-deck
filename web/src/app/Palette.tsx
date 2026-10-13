@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { stationName } from '../board/fleet';
 import { STATUS_LANES } from '../board/fleet';
 import type { DeckSession, SessionKey, StationView } from '../gen';
+import { useDismiss } from '../ui/dismiss';
 import { trapTab, useFocusReturn } from './focus';
 import { useOverlay } from './overlay';
 import { paletteMatches, sessionTitle } from './sessions';
@@ -35,6 +36,7 @@ export function Palette({
   const input = useRef<HTMLInputElement>(null);
   useFocusReturn(root, input);
   useOverlay();
+  useDismiss(root, true, onClose);
   const matches = paletteMatches(sessions, query);
   const at = Math.min(active, Math.max(0, matches.length - 1));
   const pick = (card: DeckSession) => {

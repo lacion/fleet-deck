@@ -7,7 +7,7 @@ import { card, station } from '../testing/fleet';
 import { ApprovalDock } from './ApprovalDock';
 import { matchAt } from './at';
 import { sessionActions } from './commands';
-import { Composer, ComposerMenu } from './Composer';
+import { Composer, ComposerMenu, searchFailure } from './Composer';
 import { type Controller, sessionFlags } from './controller';
 import { SessionHeader } from './SessionHeader';
 import { ModelPicker } from './SessionSettings';
@@ -147,6 +147,12 @@ describe('slash menu matching (DL-140)', () => {
 });
 
 describe('at file menu matching (DL-174)', () => {
+  test('a bare at and an at word with one character match', () => {
+    expect(matchAt('@', 1)).toEqual({ query: '', start: 0 });
+    expect(matchAt('see @', 5)).toEqual({ query: '', start: 4 });
+    expect(matchAt('@a', 2)).toEqual({ query: 'a', start: 0 });
+  });
+
   test('an at word with one character or more after it matches', () => {
     expect(matchAt('@a', 2)).toEqual({ query: 'a', start: 0 });
     expect(matchAt('see @src/ma', 11)).toEqual({ query: 'src/ma', start: 4 });
@@ -160,7 +166,7 @@ describe('at file menu matching (DL-174)', () => {
 
   test('no match without a query, in the middle of a word, or outside the word', () => {
     expect(matchAt('', 0)).toBeNull();
-    expect(matchAt('@', 1)).toBeNull();
+    expect(matchAt('@', 0)).toBeNull();
     expect(matchAt('see @ ', 6)).toBeNull();
     expect(matchAt('mail me@host', 12)).toBeNull();
     expect(matchAt('@a b', 4)).toBeNull();
@@ -203,6 +209,51 @@ describe('composer menus (DL-174)', () => {
     );
     expect(html).toContain('aria-label="Files"');
     expect(html).toContain('>src/a.ts</div>');
+  });
+
+  test('status rows are disabled options that the keys skip', () => {
+    const html = renderToStaticMarkup(
+      <ComposerMenu
+        id="m"
+        label="Files"
+        rows={[
+          { key: 'src/a.ts', text: 'src/a.ts' },
+          { key: 'status', text: 'Searching…', status: true },
+        ]}
+        current={0}
+        onChoose={noop}
+      />,
+    );
+    expect(html).toMatch(
+      /<div id="m-1" role="option" tabindex="-1" aria-disabled="true" aria-selected="false" class="fd-composer-status">Searching…<\/div>/,
+    );
+    expect(html).not.toMatch(/id="m-0"[^>]*aria-disabled/);
+    for (const text of [
+      'Type 2 or more letters to search files',
+      'No matching files',
+      'File search failed: boom',
+    ]) {
+      const only = renderToStaticMarkup(
+        <ComposerMenu
+          id="m"
+          label="Files"
+          rows={[{ key: 'status', text, status: true }]}
+          current={0}
+          onChoose={noop}
+        />,
+      );
+      expect(only).toContain(`>${text}</div>`);
+      expect(only).toContain('aria-disabled="true"');
+    }
+  });
+
+  test('a failed search names the error message, or the station that did not answer', () => {
+    expect(searchFailure(new Error('search is off'))).toBe('search is off');
+    expect(searchFailure(new Error('x'.repeat(120)))).toBe('x'.repeat(120));
+    expect(searchFailure(new Error('x'.repeat(121)))).toBe('the station did not answer');
+    expect(searchFailure(new Error(''))).toBe('the station did not answer');
+    expect(searchFailure('text')).toBe('the station did not answer');
+    expect(searchFailure(undefined)).toBe('the station did not answer');
   });
 
   const composer = (extra: Partial<Parameters<typeof Composer>[0]> = {}) =>

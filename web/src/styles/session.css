@@ -576,6 +576,14 @@ fieldset:disabled .fd-opt {
   background: var(--raised);
   box-shadow: inset 2px 0 0 var(--act);
 }
+.fd-composer-menu .fd-composer-status {
+  height: auto;
+  min-height: 30px;
+  color: var(--faint);
+  cursor: default;
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+}
 .fd-pane[data-layout="phone"] .fd-composer-bar .fd-composer-note {
   white-space: normal;
   line-height: 1.3;

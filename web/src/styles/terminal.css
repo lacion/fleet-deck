@@ -81,6 +81,7 @@
   padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--border-soft);
   background: var(--surface);
+  flex-wrap: nowrap;
   overflow-x: auto;
 }
 .fd-keybar-key {
