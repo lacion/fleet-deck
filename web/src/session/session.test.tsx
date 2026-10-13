@@ -306,10 +306,17 @@ describe('session pane (DL-140)', () => {
   });
 
   test('the slash commands of the session reach the composer', () => {
-    const events = [at(1, { kind: 'session.slash_commands', commands: ['init', 'compact'] })];
+    const events = [
+      at(1, { kind: 'session.slash_commands', commands: ['init', 'compact'], skills: [] }),
+    ];
     const html = view(session(), timeline(events));
     expect(html).toContain('(/ for commands)');
     expect(view(session(), timeline([]))).not.toContain('(/ for commands)');
+  });
+
+  test('the commands of the summary reach the composer without a timeline event (DL-174)', () => {
+    const html = view(session({ slash_commands: ['init'], skills: ['init'] }), timeline([]));
+    expect(html).toContain('(/ for commands)');
   });
 
   test('the chat nests the subagents and shows the open approval', () => {

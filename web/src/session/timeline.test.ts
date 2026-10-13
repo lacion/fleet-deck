@@ -436,9 +436,9 @@ describe('chat timeline items (DL-140)', () => {
   test('slashCommands reads the newest event, else null', () => {
     expect(slashCommands(envelopes('s', [{ kind: 'model.changed', model: 'm' }]))).toBeNull();
     const events = envelopes('s', [
-      { kind: 'session.slash_commands', commands: ['old'] },
+      { kind: 'session.slash_commands', commands: ['old'], skills: [] },
       { kind: 'model.changed', model: 'm' },
-      { kind: 'session.slash_commands', commands: ['init', 'review'] },
+      { kind: 'session.slash_commands', commands: ['init', 'review'], skills: [] },
     ]);
     expect(slashCommands(events)).toEqual(['init', 'review']);
   });

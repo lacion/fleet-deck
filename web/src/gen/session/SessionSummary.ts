@@ -104,6 +104,16 @@ terminal?: TerminalHold,
  */
 models?: Array<ModelChoice>, 
 /**
+ * The slash commands of the provider, from the last
+ * `session.slash_commands` (DL-174). Absent before the first one.
+ */
+slash_commands?: Array<string>, 
+/**
+ * The skill names of the provider, from the last
+ * `session.slash_commands` (DL-174). Absent before the first one.
+ */
+skills?: Array<string>, 
+/**
  * The commit that the session started from, from `session.base`
  * (R1.1). Absent before the first one and outside a repository.
  */

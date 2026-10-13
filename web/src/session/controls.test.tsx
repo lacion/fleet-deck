@@ -5,8 +5,9 @@ import type { DeckSession, ModelChoice, OpenRequest } from '../gen';
 import { claudeCaps, minimalCaps } from '../testing/capabilities';
 import { card, station } from '../testing/fleet';
 import { ApprovalDock } from './ApprovalDock';
+import { matchAt } from './at';
 import { sessionActions } from './commands';
-import { Composer } from './Composer';
+import { Composer, ComposerMenu } from './Composer';
 import { type Controller, sessionFlags } from './controller';
 import { SessionHeader } from './SessionHeader';
 import { ModelPicker } from './SessionSettings';
@@ -101,6 +102,9 @@ describe('session flags (DL-140)', () => {
 
 describe('slash menu matching (DL-140)', () => {
   const commands = ['compact', 'init', 'review', 'clear', 'cost', 'pr-comments'];
+  const names = (text: string, list: readonly string[], skills: readonly string[] = []) =>
+    matchSlash(text, list, skills)?.options.map((o) => o.name);
+  const plain = (list: string[]) => list.map((name) => ({ name, skill: false }));
 
   test('text without a leading slash does not match', () => {
     expect(matchSlash('hello', commands)).toBeNull();
@@ -111,21 +115,127 @@ describe('slash menu matching (DL-140)', () => {
   test('commands that start with the query come before commands that contain it', () => {
     expect(matchSlash('/c', commands)).toEqual({
       query: 'c',
-      options: ['compact', 'clear', 'cost', 'pr-comments'],
+      options: plain(['compact', 'clear', 'cost', 'pr-comments']),
     });
-    expect(matchSlash('/CO', commands)?.options).toEqual(['compact', 'cost', 'pr-comments']);
-    expect(matchSlash('/', commands)?.options).toEqual(commands);
+    expect(names('/CO', commands)).toEqual(['compact', 'cost', 'pr-comments']);
+    expect(names('/', commands)).toEqual(commands);
   });
 
   test('at most 8 options and no duplicates', () => {
     const many = Array.from({ length: 12 }, (_, n) => `cmd${n}`);
     expect(matchSlash('/cmd', many)?.options).toHaveLength(8);
-    expect(matchSlash('/a', ['a', 'a', 'ab'])?.options).toEqual(['a', 'ab']);
+    expect(names('/a', ['a', 'a', 'ab'])).toEqual(['a', 'ab']);
+  });
+
+  test('a command that is also a skill carries the skill flag (DL-174)', () => {
+    expect(matchSlash('/', ['compact', 'deploy', 'review'], ['deploy', 'review'])?.options).toEqual(
+      [
+        { name: 'compact', skill: false },
+        { name: 'deploy', skill: true },
+        { name: 'review', skill: true },
+      ],
+    );
+    expect(matchSlash('/dep', ['compact', 'deploy'], ['compact'])?.options).toEqual([
+      { name: 'deploy', skill: false },
+    ]);
   });
 
   test('a space after the command closes the match', () => {
     expect(matchSlash('/compact ', commands)).toBeNull();
     expect(matchSlash('/compact now', commands)).toBeNull();
+  });
+});
+
+describe('at file menu matching (DL-174)', () => {
+  test('an at word with one character or more after it matches', () => {
+    expect(matchAt('@a', 2)).toEqual({ query: 'a', start: 0 });
+    expect(matchAt('see @src/ma', 11)).toEqual({ query: 'src/ma', start: 4 });
+    expect(matchAt('@src/main.rs and', 12)).toEqual({ query: 'src/main.rs', start: 0 });
+  });
+
+  test('the word ends at the cursor', () => {
+    expect(matchAt('@src/main.rs', 4)).toEqual({ query: 'src', start: 0 });
+    expect(matchAt('fix @a.ts now', 9)).toEqual({ query: 'a.ts', start: 4 });
+  });
+
+  test('no match without a query, in the middle of a word, or outside the word', () => {
+    expect(matchAt('', 0)).toBeNull();
+    expect(matchAt('@', 1)).toBeNull();
+    expect(matchAt('see @ ', 6)).toBeNull();
+    expect(matchAt('mail me@host', 12)).toBeNull();
+    expect(matchAt('@a b', 4)).toBeNull();
+    expect(matchAt('hello', 5)).toBeNull();
+    expect(matchAt('line one\n@x', 11)).toEqual({ query: 'x', start: 9 });
+  });
+
+  test('a cursor outside the text is clamped', () => {
+    expect(matchAt('@ab', 99)).toEqual({ query: 'ab', start: 0 });
+    expect(matchAt('@ab', -3)).toBeNull();
+  });
+});
+
+describe('composer menus (DL-174)', () => {
+  const noop = () => {};
+  const rows = [
+    { key: 'deploy', text: '/deploy', badge: 'skill' },
+    { key: 'compact', text: '/compact' },
+  ];
+
+  test('the command menu shows the skill badge on a skill only', () => {
+    const html = renderToStaticMarkup(
+      <ComposerMenu id="m" label="Commands" rows={rows} current={0} onChoose={noop} />,
+    );
+    expect(html).toContain('aria-label="Commands"');
+    expect(html).toMatch(/\/deploy<span[^>]*>skill<\/span>/);
+    expect(html).toMatch(/\/compact<\/div>/);
+    expect(html).toContain('aria-selected="true"');
+  });
+
+  test('the file menu shows the relative paths', () => {
+    const html = renderToStaticMarkup(
+      <ComposerMenu
+        id="m"
+        label="Files"
+        rows={[{ key: 'src/a.ts', text: 'src/a.ts' }]}
+        current={0}
+        onChoose={noop}
+      />,
+    );
+    expect(html).toContain('aria-label="Files"');
+    expect(html).toContain('>src/a.ts</div>');
+  });
+
+  const composer = (extra: Partial<Parameters<typeof Composer>[0]> = {}) =>
+    renderToStaticMarkup(
+      <Composer
+        enabled
+        working={false}
+        steer={false}
+        nativeQueue={false}
+        onSend={noop}
+        {...extra}
+      />,
+    );
+
+  test('a session without commands says so for a slash word only (DL-174)', () => {
+    const draft = (text: string) => {
+      const store = { getItem: () => text, setItem: () => {}, removeItem: () => {} };
+      Object.defineProperty(globalThis, 'sessionStorage', { value: store, configurable: true });
+      try {
+        return composer({ draftKey: 'k' });
+      } finally {
+        Reflect.deleteProperty(globalThis, 'sessionStorage');
+      }
+    };
+    const note = 'This session reports no commands. The text goes to the agent as a prompt.';
+    expect(draft('/co')).toContain(note);
+    expect(draft('hello')).not.toContain('This session reports no commands.');
+    expect(draft('/co now')).not.toContain('This session reports no commands.');
+  });
+
+  test('the placeholder offers the commands when the session has some', () => {
+    expect(composer({ slashCommands: ['init'] })).toContain('(/ for commands)');
+    expect(composer({ slashCommands: [] })).not.toContain('(/ for commands)');
   });
 });
 

@@ -230,6 +230,7 @@ fn samples() -> Vec<Event> {
         },
         Event::SlashCommands {
             commands: vec!["review".into(), "compact".into()],
+            skills: vec!["review".into()],
         },
         Event::SessionNotice {
             code: "v1_plugin".into(),
@@ -433,6 +434,18 @@ fn a_model_choice_without_a_description_decodes() {
         panic!("expected session.models");
     };
     assert_eq!(models[0].description, None);
+}
+
+#[test]
+fn slash_commands_without_skills_decode() {
+    let body: EventBody =
+        serde_json::from_value(json!({"kind": "session.slash_commands", "commands": ["compact"]}))
+            .unwrap();
+    let Some(Event::SlashCommands { commands, skills }) = body.known() else {
+        panic!("expected session.slash_commands");
+    };
+    assert_eq!(commands, &["compact".to_owned()]);
+    assert!(skills.is_empty());
 }
 
 #[test]
