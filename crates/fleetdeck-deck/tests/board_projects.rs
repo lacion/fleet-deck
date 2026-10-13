@@ -137,6 +137,65 @@ fn project_body(path: &str) -> Value {
     })
 }
 
+/// A repository at `path` whose `origin` is a local bare repository that
+/// holds `refs/pull/9/head`, so a review start can fetch the PR head
+/// (`prs.fetch_head`, DL-164) without a network.
+fn repo_with_pr(tmp: &Path, path: &Path) {
+    let git = |dir: &Path, args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args([
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "init.defaultBranch=main",
+            ])
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    let bare = tmp.join("remote.git");
+    std::fs::create_dir_all(&bare).unwrap();
+    git(&bare, &["init", "--bare", "-q"]);
+    let work = tmp.join("work");
+    std::fs::create_dir_all(&work).unwrap();
+    git(&work, &["init", "-q"]);
+    std::fs::write(work.join("a.rs"), "fn a() {}\n").unwrap();
+    git(&work, &["add", "a.rs"]);
+    git(&work, &["commit", "-q", "-m", "base"]);
+    git(
+        &work,
+        &["push", "-q", bare.to_str().unwrap(), "HEAD:refs/heads/main"],
+    );
+    std::fs::write(work.join("a.rs"), "fn a() { b() }\n").unwrap();
+    git(&work, &["commit", "-q", "-am", "pr"]);
+    git(
+        &work,
+        &[
+            "push",
+            "-q",
+            bare.to_str().unwrap(),
+            "HEAD:refs/pull/9/head",
+        ],
+    );
+    git(
+        tmp,
+        &[
+            "clone",
+            "-q",
+            bare.to_str().unwrap(),
+            path.to_str().unwrap(),
+        ],
+    );
+}
+
 #[tokio::test]
 async fn the_owner_manages_projects_reads_prs_and_writes_with_a_confirm() {
     let tmp = tempfile::tempdir().unwrap();
@@ -153,6 +212,7 @@ async fn the_owner_manages_projects_reads_prs_and_writes_with_a_confirm() {
     let (cookie, csrf) = board.login().await;
     let h = [("Cookie", cookie.as_str()), ("X-CSRF-Token", csrf.as_str())];
     let path = root.join("app");
+    repo_with_pr(tmp.path(), &path);
     let path = path.to_str().unwrap();
 
     // A project of an unknown station is refused; a good one is stored.
@@ -273,7 +333,13 @@ async fn the_owner_manages_projects_reads_prs_and_writes_with_a_confirm() {
     assert_eq!(command["command_id"], "batch-1-1");
     let start = &command["envelope"]["command"];
     assert_eq!(start["origin_text"], true, "{start}");
-    assert_eq!(start["workspace"]["branch"], "PROJ-9-login");
+    // R3.7 (DL-164): a review works on the fetched PR head, in its own branch.
+    let branch = start["workspace"]["branch"].as_str().unwrap();
+    assert!(
+        branch.starts_with("review/pr-9-") && branch.ends_with("-ch-1"),
+        "{branch}"
+    );
+    assert_eq!(start["workspace"]["base"], "refs/fleetdeck/pr/9");
     assert_eq!(start["spec"]["title"], "Review #9 Add login");
     let prompt = start["prompt"]["text"].as_str().unwrap();
     assert!(

@@ -67,6 +67,9 @@ pub fn replay_reference(fx: &Fixture) -> Result<ReferenceReport, ReplayError> {
                 proc = Some(Process::default());
                 report.processes += 1;
             }
+            // The product core's `get_usage` write (R4.5) is not part of the
+            // SDK or spike behavior.
+            Record::In { frame } if crate::replay::is_usage_probe(frame) => {}
             Record::In { frame } => {
                 let p = proc.as_mut().ok_or(ReplayError::NoProcess { index })?;
                 on_in(p, frame, index, &mut report)?;

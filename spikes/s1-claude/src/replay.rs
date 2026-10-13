@@ -83,6 +83,9 @@ pub fn replay(fx: &Fixture) -> Result<ReplayReport, ReplayError> {
                 })?;
                 collect(outs, &mut report, &mut queue);
             }
+            // The product core asks `get_usage` after init (R4.5, DL-161);
+            // the spike adapter never does, so that recorded write is skipped.
+            Record::In { frame } if is_usage_probe(frame) => {}
             Record::In { frame } => {
                 let actual = queue.pop_front().ok_or_else(|| ReplayError::MissingWrite {
                     index,
@@ -126,6 +129,13 @@ pub fn replay(fx: &Fixture) -> Result<ReplayReport, ReplayError> {
     finish_process(&mut core, &mut report);
     ensure_empty(&mut queue, fx.records.len())?;
     Ok(report)
+}
+
+/// True for the product core's `get_usage` control request (R4.5).
+#[must_use]
+pub fn is_usage_probe(frame: &Value) -> bool {
+    frame.get("type").and_then(Value::as_str) == Some("control_request")
+        && frame.pointer("/request/subtype").and_then(Value::as_str) == Some("get_usage")
 }
 
 fn collect(outs: Vec<Output>, report: &mut ReplayReport, queue: &mut VecDeque<Value>) {

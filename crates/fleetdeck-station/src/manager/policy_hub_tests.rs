@@ -185,6 +185,7 @@ async fn a_queued_start_is_refused_at_dispatch_when_the_roots_narrowed() {
     let store = Store::open_in_memory(det.clock(), det.ids(), StoreConfig::default())
         .await
         .unwrap();
+    store.recover(Vec::new()).await.unwrap();
     let policy = Policy::new(
         vec![root.path().join("projects")],
         4,
