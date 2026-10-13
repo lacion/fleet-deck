@@ -5,6 +5,8 @@ import {
   grantList,
   grantStatus,
   nextSends,
+  type SendEntry,
+  type SendIntent,
   type SendRecord,
   type SendTarget,
   taskList,
@@ -174,39 +176,70 @@ describe('the record of the last mail send', () => {
     return () => `id${++n}`;
   };
 
+  const intent = (extra: Partial<SendIntent> = {}): SendIntent => ({
+    text: 'hi',
+    steer: false,
+    audience: 'all',
+    selection: '',
+    ...extra,
+  });
+  /** A first send to a and b where a was sent and b failed. */
+  const afterFirst = (): { after: SendRecord; b: SendEntry } => {
+    const first = nextSends(null, intent(), [target('a'), target('b')], ids()).record;
+    const [a, b] = first.entries;
+    if (a === undefined || b === undefined) throw new Error('two entries');
+    return { after: { ...first, entries: [{ ...a, state: 'sent' }, b] }, b };
+  };
+
   test('a new send gets a new id for each target', () => {
-    const { record, todo } = nextSends(null, [target('a'), target('b')], 'hi', false, ids());
+    const { record, todo } = nextSends(null, intent(), [target('a'), target('b')], ids());
     expect(todo.map((e) => [e.ref, e.mailId, e.state])).toEqual([
       ['a', 'id1', 'failed'],
       ['b', 'id2', 'failed'],
     ]);
     expect(record.entries).toEqual(todo);
+    expect(record.intent).toEqual(intent());
   });
 
-  test('the same input sends only the failed entries, with their old ids', () => {
-    const first = nextSends(null, [target('a'), target('b')], 'hi', false, ids()).record;
-    const [a, b] = first.entries;
-    if (a === undefined || b === undefined) throw new Error('two entries');
-    const after: SendRecord = { ...first, entries: [{ ...a, state: 'sent' }, b] };
-    // the order of the targets does not matter
-    const again = nextSends(after, [target('b'), target('a')], 'hi', false, ids());
+  test('the same intent sends only the failed entries, with their old ids', () => {
+    const { after, b } = afterFirst();
+    const again = nextSends(after, intent(), [target('b'), target('a')], ids());
     expect(again.record).toBe(after);
     expect(again.todo).toEqual([b]);
     expect(again.todo[0]?.mailId).toBe('id2');
   });
 
-  test('a changed text, steer flag or target set starts a new record with new ids', () => {
-    const first = nextSends(null, [target('a'), target('b')], 'hi', false, ids()).record;
-    for (const [targets, text, steer] of [
-      [[target('a'), target('b')], 'other', false],
-      [[target('a'), target('b')], 'hi', true],
-      [[target('a')], 'hi', false],
-      [[target('a'), target('c')], 'hi', false],
+  test('a session that appears between the attempts is not sent', () => {
+    const { after, b } = afterFirst();
+    const again = nextSends(after, intent(), [target('a'), target('b'), target('c')], ids());
+    expect(again.record).toBe(after);
+    expect(again.todo).toEqual([b]);
+    expect(again.todo[0]?.mailId).toBe('id2');
+  });
+
+  test('a failed session that leaves the targets is still retried with its old id', () => {
+    const { after, b } = afterFirst();
+    const again = nextSends(after, intent(), [target('a')], ids());
+    expect(again.record).toBe(after);
+    expect(again.todo).toEqual([b]);
+    expect(again.todo[0]?.mailId).toBe('id2');
+  });
+
+  test('a changed text, steer flag, audience or selection starts a new record with new ids', () => {
+    const { after } = afterFirst();
+    const targets = [target('a'), target('c')];
+    for (const changed of [
+      { text: 'other' },
+      { steer: true },
+      { audience: 'station' },
+      { selection: 'st' },
     ] as const) {
-      const next = nextSends(first, targets, text, steer, ids());
-      expect(next.record).not.toBe(first);
-      expect(next.todo).toHaveLength(targets.length);
-      expect(next.todo.map((e) => e.mailId)).toEqual(targets.map((_, i) => `id${i + 1}`));
+      const next = nextSends(after, intent(changed), targets, ids());
+      expect(next.record).not.toBe(after);
+      expect(next.todo.map((e) => [e.ref, e.mailId])).toEqual([
+        ['a', 'id1'],
+        ['c', 'id2'],
+      ]);
     }
   });
 });

@@ -228,6 +228,83 @@ test('a retry after a failed mail sends only the failed target, with its first m
   await expect(panel.getByLabel('Text')).toHaveValue('');
 });
 
+test('a retry keeps its first recipients when the fleet changes; Start over adopts it', async ({
+  page,
+}) => {
+  const deck = new FakeDeck();
+  deck.stations = [stationView(ST, 'Alpha')];
+  deck.sessions = [sessionIn('a', 'Alpha one'), sessionIn('b', 'Alpha two')];
+  const mails: { mail_id: string; session_id: string }[] = [];
+  let first = true;
+  deck.on('/api/tasks', () => ({ status: 200, body: [] }));
+  deck.on('/api/mail', (body) => {
+    mails.push(body as { mail_id: string; session_id: string });
+    if (first) {
+      first = false;
+      return { status: 500, body: { code: 'internal', message: 'The deck failed.' } };
+    }
+    return { status: 200, body: {} };
+  });
+  await deck.install(page);
+  await logIn(page);
+  await openFleet(page);
+  await openPanel(page, 'Mail & tasks');
+  const panel = page.getByRole('region', { name: 'Mail and tasks' });
+  await panel.getByRole('button', { name: 'Everyone' }).click();
+  await panel.getByLabel('Text').fill('hello');
+  await panel.getByRole('button', { name: 'Send to 2' }).click();
+  await expect(panel.getByText('Sent to 1 of 2.')).toBeVisible();
+  await expect(
+    panel.getByText('Send again retries the 1 failed of the first 2 recipients.'),
+  ).toBeVisible();
+  expect(mails).toHaveLength(2);
+  const failedTry = mails[0];
+  deck.setSession(sessionIn('c', 'Alpha three'));
+  await expect(panel.getByRole('button', { name: 'Send to 3' })).toBeVisible();
+  await panel.getByRole('button', { name: 'Send to 3' }).click();
+  await expect(panel.getByText('Sent to 2 of 2.')).toBeVisible();
+  expect(mails).toHaveLength(3);
+  expect(mails[2]).toEqual(failedTry);
+  await expect(panel.getByText(/Send again retries/)).toHaveCount(0);
+});
+
+test('Start over sends to all current targets with new mail ids', async ({ page }) => {
+  const deck = new FakeDeck();
+  deck.stations = [stationView(ST, 'Alpha')];
+  deck.sessions = [sessionIn('a', 'Alpha one'), sessionIn('b', 'Alpha two')];
+  const mails: { mail_id: string; session_id: string }[] = [];
+  let first = true;
+  deck.on('/api/tasks', () => ({ status: 200, body: [] }));
+  deck.on('/api/mail', (body) => {
+    mails.push(body as { mail_id: string; session_id: string });
+    if (first) {
+      first = false;
+      return { status: 500, body: { code: 'internal', message: 'The deck failed.' } };
+    }
+    return { status: 200, body: {} };
+  });
+  await deck.install(page);
+  await logIn(page);
+  await openFleet(page);
+  await openPanel(page, 'Mail & tasks');
+  const panel = page.getByRole('region', { name: 'Mail and tasks' });
+  await panel.getByRole('button', { name: 'Everyone' }).click();
+  await panel.getByLabel('Text').fill('hello');
+  await panel.getByRole('button', { name: 'Send to 2' }).click();
+  await expect(panel.getByText('Sent to 1 of 2.')).toBeVisible();
+  const firstIds = mails.map((m) => m.mail_id);
+  deck.setSession(sessionIn('c', 'Alpha three'));
+  await expect(panel.getByRole('button', { name: 'Send to 3' })).toBeVisible();
+  await panel.getByRole('button', { name: 'Start over' }).click();
+  await expect(panel.getByRole('button', { name: 'Start over' })).toHaveCount(0);
+  await expect(panel.getByText('Sent to 1 of 2.')).toHaveCount(0);
+  await panel.getByRole('button', { name: 'Send to 3' }).click();
+  await expect(panel.getByText('Sent to 3 of 3.')).toBeVisible();
+  const second = mails.slice(2);
+  expect(second.map((m) => m.session_id).sort()).toEqual(['a', 'b', 'c']);
+  for (const m of second) expect(firstIds).not.toContain(m.mail_id);
+});
+
 test('Clear hides an ended session and the Archived chip shows it again', async ({ page }) => {
   const deck = new FakeDeck();
   deck.stations = [stationView(ST, 'Alpha')];
