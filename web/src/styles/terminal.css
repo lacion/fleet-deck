@@ -32,6 +32,26 @@
 .fd-term-overlay p {
   margin: 0;
 }
+.fd-term-note {
+  position: absolute;
+  top: var(--sp-2);
+  right: var(--sp-2);
+  max-width: calc(100% - 2 * var(--sp-2));
+  padding: var(--sp-1) var(--sp-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctl);
+  background: var(--surface);
+  color: var(--dim);
+  font-family: var(--font-ui);
+  font-size: var(--fs-body);
+  pointer-events: none;
+  z-index: 1;
+}
+.fd-term-note[data-tone="error"] {
+  border-color: var(--hazard);
+  background: var(--hazard-bg);
+  color: var(--hazard);
+}
 .fd-term-actions {
   display: flex;
   gap: var(--sp-2);

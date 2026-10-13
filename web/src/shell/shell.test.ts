@@ -85,3 +85,45 @@ describe('shell calls', () => {
     expect(() => shellList([{ ...info, session_id: null }])).toThrow('Invalid shell list');
   });
 });
+
+describe('paste', () => {
+  test('posts the image with the station-encoded path and returns the stored path', async () => {
+    const posts: [string, unknown][] = [];
+    const actions = shellActions(
+      async () => [],
+      async (path, body) => {
+        posts.push([path, body]);
+        return { path: '/tmp/fd/paste-1.png' };
+      },
+    );
+    const path = await actions.paste('a b', {
+      uploadId: 'up-12345678',
+      ext: 'png',
+      dataBase64: 'AAEC',
+    });
+    expect(path).toBe('/tmp/fd/paste-1.png');
+    expect(posts).toEqual([
+      ['/api/stations/a%20b/paste', { upload_id: 'up-12345678', ext: 'png', data_base64: 'AAEC' }],
+    ]);
+  });
+
+  test('a reply without a path is refused and a failed post throws its message', async () => {
+    const image = { uploadId: 'up-12345678', ext: 'webp', dataBase64: 'AA' } as const;
+    for (const reply of [null, {}, { path: 7 }, { path: '' }, []]) {
+      const actions = shellActions(
+        async () => [],
+        async () => reply,
+      );
+      await expect(actions.paste('s', image)).rejects.toThrow(
+        'The deck gave an answer that the board cannot read.',
+      );
+    }
+    const failing = shellActions(
+      async () => [],
+      async () => {
+        throw new Error('The image is too large.');
+      },
+    );
+    await expect(failing.paste('s', image)).rejects.toThrow('The image is too large.');
+  });
+});

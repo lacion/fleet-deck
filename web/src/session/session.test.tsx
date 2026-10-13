@@ -104,6 +104,7 @@ const shells = (): ShellActions => ({
   close: async () => {},
   handover: async () => 'tui-1',
   release: async () => {},
+  paste: async () => '/tmp/x.png',
   socketPath: () => '/x',
 });
 

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { ShellActions } from '../shell/shell';
 import { KeyBar, ctrlByte } from './KeyBar';
 import { oscCopyText } from './osc';
+import { insertText, newUploadId, prepareImage, toBase64 } from './paste';
 
 type Props = {
   readonly station: string;
@@ -20,6 +21,32 @@ type Props = {
 type Status = 'connecting' | 'live' | 'closed';
 
 type Handles = { fit: () => void; focus: () => void };
+
+/** The line over the terminal while an image is pasted (DL-147). */
+export type PasteNoteState = { readonly tone: 'busy' | 'error'; readonly text: string };
+
+const PASTE_ERROR_MS = 6000;
+
+/** The first image of a paste, or null when the paste holds no image file. */
+function pastedImage(event: ClipboardEvent): File | null {
+  for (const item of Array.from(event.clipboardData?.items ?? [])) {
+    if (item.kind === 'file' && item.type.startsWith('image/')) return item.getAsFile();
+  }
+  return null;
+}
+
+export function PasteNote({ note }: { readonly note: PasteNoteState | null }) {
+  if (note === null) return null;
+  return (
+    <div
+      className="fd-term-note"
+      data-tone={note.tone}
+      role={note.tone === 'error' ? 'alert' : 'status'}
+    >
+      {note.text}
+    </div>
+  );
+}
 
 const RESIZE_DEBOUNCE_MS = 150;
 
@@ -44,6 +71,7 @@ export function Terminal({ station, shellId, kind, actions, active, touch, onEnd
   const [status, setStatus] = useState<Status>('connecting');
   const [attempt, setAttempt] = useState(0);
   const [ctrl, setCtrlState] = useState(false);
+  const [note, setNote] = useState<PasteNoteState | null>(null);
   const ctrlRef = useRef(false);
   const activeRef = useRef(active);
   const handles = useRef<Handles | null>(null);
@@ -58,6 +86,7 @@ export function Terminal({ station, shellId, kind, actions, active, touch, onEnd
     let disposed = false;
     let cleanup = () => {};
     setStatus('connecting');
+    setNote(null);
     void (async () => {
       const [{ Terminal: XTerm }, { FitAddon }] = await Promise.all([
         import('@xterm/xterm'),
@@ -161,6 +190,51 @@ export function Terminal({ station, shellId, kind, actions, active, touch, onEnd
           write(ctrlByte(d));
         } else write(d);
       });
+      // An image on the clipboard goes to the station; its path is typed (never Enter).
+      let inflight = 0;
+      let noteTimer: ReturnType<typeof setTimeout> | undefined;
+      const fail = (reason: string) => {
+        if (disposed) return;
+        setNote({ tone: 'error', text: `Image not pasted: ${reason}` });
+        noteTimer = setTimeout(() => setNote(null), PASTE_ERROR_MS);
+      };
+      const pasteImage = async (file: Blob) => {
+        if (noteTimer !== undefined) clearTimeout(noteTimer);
+        inflight += 1;
+        setNote({ tone: 'busy', text: 'Pasting image…' });
+        try {
+          const image = await prepareImage(file);
+          if ('error' in image) {
+            fail(image.error);
+            return;
+          }
+          const path = await actions.paste(station, {
+            uploadId: newUploadId(),
+            ext: image.ext,
+            dataBase64: toBase64(image.bytes),
+          });
+          const text = insertText(path);
+          if (text === null) {
+            fail('The station gave a path that the board cannot type.');
+            return;
+          }
+          if (disposed) return;
+          term.paste(text);
+          if (inflight === 1) setNote(null);
+        } catch (error) {
+          fail(error instanceof Error ? error.message : 'The request failed.');
+        } finally {
+          inflight -= 1;
+        }
+      };
+      const onPaste = (event: ClipboardEvent) => {
+        const file = pastedImage(event);
+        if (file === null) return;
+        event.preventDefault();
+        event.stopPropagation();
+        void pasteImage(file);
+      };
+      el.addEventListener('paste', onPaste, true);
       let sent: { cols: number; rows: number } | null = null;
       let timer: ReturnType<typeof setTimeout> | undefined;
       const sendSize = () => {
@@ -183,6 +257,8 @@ export function Terminal({ station, shellId, kind, actions, active, touch, onEnd
       cleanup = () => {
         if (timer !== undefined) clearTimeout(timer);
         observer.disconnect();
+        el.removeEventListener('paste', onPaste, true);
+        if (noteTimer !== undefined) clearTimeout(noteTimer);
         input.dispose();
         osc.dispose();
         window.removeEventListener('fd:theme', onTheme);
@@ -214,6 +290,7 @@ export function Terminal({ station, shellId, kind, actions, active, touch, onEnd
   return (
     <div className="fd-term" style={{ height: '100%' }} data-terminal={shellId}>
       <div className="fd-term-host" ref={host} />
+      <PasteNote note={note} />
       {status === 'connecting' ? (
         <div className="fd-term-overlay" role="status">
           <p>Connecting…</p>
