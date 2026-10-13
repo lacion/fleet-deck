@@ -22,6 +22,8 @@ import {
   Workflow,
   Zap,
 } from '../ui/icons';
+import { useIntegrations } from '../integrations/context';
+import { FolderGit2 } from '../integrations/icons';
 import { shortModel } from '../ui/format';
 import { archived as archivedSet } from '../ui/archive';
 import { priority, sessionRef } from '../ui/localSet';
@@ -255,6 +257,8 @@ export function Sidebar({
     !empty && model.groups.length === 0 && model.needs.length === 0 && model.archived.length === 0;
   const full = variant === 'full';
   const first = model.needs[0];
+  // R3: the projects are the owner's (the deck answers 403 to any other login).
+  const projectsLink = useIntegrations()?.actions.canAdmin === true;
   return (
     <aside className="fd-sidebar" aria-label="Sessions" data-variant={variant}>
       <div className="fd-sidebar-top">
@@ -367,6 +371,17 @@ export function Sidebar({
               <Icon of={Paperclip} />
               Artifacts
             </a>
+            {projectsLink ? (
+              <a
+                href="#/projects"
+                aria-current={
+                  route.name === 'projects' || route.name === 'project' ? 'page' : undefined
+                }
+              >
+                <Icon of={FolderGit2} />
+                Projects
+              </a>
+            ) : null}
             <a href="#/files" aria-current={route.name === 'files' ? 'page' : undefined}>
               <Icon of={Folder} />
               Files

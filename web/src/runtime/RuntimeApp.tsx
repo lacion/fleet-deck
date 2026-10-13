@@ -7,6 +7,8 @@ import { raceSummary } from '../compare/compare';
 import { workspaceFiles } from '../session/workspace';
 import { planActions } from '../board/plans';
 import { automationActions } from '../automations/automations';
+import { integrationActions } from '../integrations/actions';
+import { integrationHttp } from '../integrations/http';
 import type { FleetExtras, SessionKey } from '../gen';
 import { sessionActions } from '../session/commands';
 import { shellActions } from '../shell/shell';
@@ -25,6 +27,8 @@ import { viewsActions } from './views';
 
 /** The deck waits up to 20 s for a station; the board waits a little longer. */
 const ARTIFACT_WAIT_MS = 25_000;
+/** The deck waits up to 75 s for the station's answer to an issue or pull request read (R3). */
+const INTEGRATION_WAIT_MS = 80_000;
 
 export function RuntimeApp({ connection }: { readonly connection: Connection }) {
   const state = useSyncExternalStore(
@@ -138,6 +142,22 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
             (path, init) => fetch(path, init),
             () => connection.getSnapshot().login?.csrf ?? null,
             ARTIFACT_WAIT_MS,
+          ),
+        },
+        scopeText.split(' '),
+      ),
+    [connection, scopeText],
+  );
+  const integrations = useMemo(
+    () =>
+      integrationActions(
+        {
+          get: (path) => connection.get(path, INTEGRATION_WAIT_MS),
+          post: (path, body) => connection.post(path, body, INTEGRATION_WAIT_MS),
+          ...integrationHttp(
+            (path, init) => fetch(path, init),
+            () => connection.getSnapshot().login?.csrf ?? null,
+            INTEGRATION_WAIT_MS,
           ),
         },
         scopeText.split(' '),
@@ -294,6 +314,7 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
       fleet={fleet}
       feed={state.feed}
       artifacts={artifacts}
+      integrations={integrations}
       plans={plans}
       automations={automations}
       conflicts={conflicts}
