@@ -1,5 +1,5 @@
 //! The board HTTP API (M2 P3-8; PLAN §9). Every route goes through the
-//! [`guard`] with the scope of the [`methods::API`] table. The listener
+//! [`guard`] with the scope of the [`methods::api`] table. The listener
 //! accepts only the deck's board addresses (D13; checked in `DeckConfig`).
 //! The deck serves HTTPS itself ([`tls`]; D13: no reverse proxy, DL-054).
 
@@ -26,6 +26,8 @@ pub mod project_writes;
 pub mod projects_routes;
 pub mod read_routes;
 pub mod schedule_routes;
+pub mod secrets_routes;
+pub mod settings_routes;
 pub mod share_routes;
 pub mod shell_routes;
 pub mod station_routes;
@@ -80,6 +82,16 @@ pub struct Board {
     pub pairing: Option<Arc<crate::link::DeckNode>>,
     /// The board web client (P4-4).
     pub assets: assets::BoardAssets,
+    /// The live settings of the deck, read per use (DL-172, design 1.4).
+    pub live: crate::live::LiveCell,
+    /// The elevation codes and the elevations of the owner (DL-172).
+    pub elevations: Arc<crate::elevation::Elevations>,
+    /// The settings file of the deck (`None`: the settings routes answer 503).
+    pub settings: Option<settings_routes::DeckSettings>,
+    /// Restarts the deck process (`None`: the restart route answers 501).
+    pub restart: Option<Arc<dyn fleetdeck_core::restart::Restart>>,
+    /// The local station of `fleetdeck up`; set after the pairing.
+    pub local_station: Arc<std::sync::OnceLock<fleetdeck_proto::StationId>>,
 }
 
 /// The board API router.
@@ -92,6 +104,22 @@ pub fn router(board: Arc<Board>) -> Router {
         r = r.route(&methods::route_of(api), post(command_routes::command));
     }
     r.route("/api/auth/login", post(auth_routes::password))
+        .route("/api/auth/elevate", post(auth_routes::elevate))
+        .route(
+            "/api/settings/deck",
+            get(settings_routes::deck_get).post(settings_routes::deck_set),
+        )
+        .route("/api/settings/restart", post(settings_routes::restart))
+        .route(
+            "/api/stations/{station}/settings",
+            get(settings_routes::station_get).post(settings_routes::station_set),
+        )
+        .route(
+            "/api/secrets/stations/{station}/settings",
+            post(secrets_routes::station_settings).layer(axum::extract::DefaultBodyLimit::max(
+                secrets_routes::MAX_BODY,
+            )),
+        )
         .route("/api/auth/link", post(auth_routes::link))
         .route("/api/auth/join", post(auth_routes::join))
         .route("/api/auth/device-link", post(auth_routes::device_link))

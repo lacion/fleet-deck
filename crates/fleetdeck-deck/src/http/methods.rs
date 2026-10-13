@@ -66,7 +66,13 @@ pub fn is_socket(name: &str) -> bool {
 
 #[path = "methods_table.rs"]
 mod table;
-pub use table::API;
+#[path = "methods_table_rest.rs"]
+mod table_rest;
+
+/// Every board-API method, in table order.
+pub fn api() -> impl Iterator<Item = &'static ApiMethod> {
+    table::API.iter().chain(table_rest::API_REST.iter())
+}
 
 /// The route prefix of the command methods.
 pub const COMMAND_PREFIX: &str = "/api/commands/";
@@ -97,7 +103,7 @@ pub fn route_of(api: &ApiMethod) -> String {
 
 /// The command methods of the table.
 pub fn command_methods() -> impl Iterator<Item = &'static ApiMethod> {
-    API.iter().filter(|a| !a.path.starts_with('/'))
+    api().filter(|a| !a.path.starts_with('/'))
 }
 
 /// The table entry of a matched route.
@@ -106,8 +112,7 @@ pub fn find(method: &Method, path: &str) -> Option<&'static ApiMethod> {
     let key = path
         .strip_prefix(COMMAND_PREFIX)
         .filter(|k| !k.starts_with('{'));
-    API.iter()
-        .find(|m| m.method == *method && (m.path == path || key.is_some_and(|k| m.path == k)))
+    api().find(|m| m.method == *method && (m.path == path || key.is_some_and(|k| m.path == k)))
 }
 
 #[cfg(test)]

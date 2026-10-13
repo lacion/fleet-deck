@@ -52,7 +52,9 @@ use crate::orchestration::{
 use crate::plans::{DeckPlan, PlanMarkRequest, PlanStatus};
 use crate::session::{CardStatus, SessionSummary};
 use crate::settings::{
-    Apply, Durability, FieldKind, FieldMeta, SecretSet, SettingsChange, SettingsSaved, SettingsView,
+    Apply, Durability, FieldKind, FieldMeta, RestartAnswer, RestartItem, RestartKind,
+    RestartRequest, SecretSet, SecretSetParams, SettingsChange, SettingsSaved, SettingsSetParams,
+    SettingsView,
 };
 use crate::share::{
     ChatMessage, ChatPost, DriveGrant, DriverState, JoinRequest, NewShare, NewSpace, ShareCreated,
@@ -269,6 +271,12 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         acc::Container::export_all(&cfg),
         acc::Containers::export_all(&cfg),
         acc::AccountsList::export_all(&cfg),
+        SettingsSetParams::export_all(&cfg),
+        SecretSetParams::export_all(&cfg),
+        RestartRequest::export_all(&cfg),
+        RestartKind::export_all(&cfg),
+        RestartItem::export_all(&cfg),
+        RestartAnswer::export_all(&cfg),
         AssistKind::export_all(&cfg),
         AssistRequest::export_all(&cfg),
         AssistAnswer::export_all(&cfg),

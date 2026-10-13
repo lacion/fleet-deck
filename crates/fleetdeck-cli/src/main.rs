@@ -6,6 +6,7 @@ mod deck;
 mod doctor;
 mod invite;
 mod pairing;
+mod restart;
 mod station;
 mod up;
 mod upgrade;
@@ -17,6 +18,8 @@ use clap::Parser as _;
 use crate::cli::{Cli, Command, DeckCommand, StationCommand};
 
 fn main() -> ExitCode {
+    // The restart executes the process again with this context (DL-172).
+    let startup = restart::StartupContext::capture();
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         // clap would print the unexpected argument: never echo an
@@ -46,7 +49,12 @@ fn main() -> ExitCode {
         }
         _ => {}
     }
-    match run(cli) {
+    let handle = restart::RestartHandle::default();
+    match run(cli, &handle) {
+        // The runtime is dropped and the drain is done: execute again.
+        Ok(code) if handle.requested() && code == ExitCode::SUCCESS => {
+            restart::restart_failed(&startup.exec())
+        }
         Ok(code) => code,
         Err(err) => {
             eprintln!("fleetdeck: {err:#}");
@@ -55,7 +63,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(cli: Cli) -> anyhow::Result<ExitCode> {
+fn run(cli: Cli, restart: &restart::RestartHandle) -> anyhow::Result<ExitCode> {
     fleetdeck_core::logging::init(cli.log_format)?;
     let env = fleetdeck_core::paths::Env::from_process();
     let dirs = fleetdeck_core::paths::NodeDirs::resolve(cli.data_dir.as_deref(), &env)?;
@@ -77,9 +85,12 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
     };
     let done = |result: anyhow::Result<()>| result.map(|()| ExitCode::SUCCESS);
     match &cli.command {
-        Command::Deck { command } => done(runtime()?.block_on(deck_main(command.as_ref(), &dirs))),
-        Command::Up(args) => done(runtime()?.block_on(up::up(&dirs, &env, args))),
-        Command::Open => done(runtime()?.block_on(auth::open(&dirs))),
+        Command::Deck { command } => {
+            done(runtime()?.block_on(deck_main(command.as_ref(), &dirs, restart)))
+        }
+        Command::Up(args) => done(runtime()?.block_on(up::up(&dirs, &env, args, restart))),
+        Command::Open { elevate: false } => done(runtime()?.block_on(auth::open(&dirs))),
+        Command::Open { elevate: true } => done(runtime()?.block_on(auth::elevate(&dirs))),
         Command::Doctor => Ok(runtime()?.block_on(doctor::run(&dirs, &env))),
         Command::Station { .. } | Command::Shim { .. } | Command::ShimExec { .. } => {
             anyhow::bail!("internal error: the command was not dispatched")
@@ -95,10 +106,11 @@ fn exit_code(code: i32) -> ExitCode {
 async fn deck_main(
     command: Option<&DeckCommand>,
     dirs: &fleetdeck_core::paths::NodeDirs,
+    restart: &restart::RestartHandle,
 ) -> anyhow::Result<()> {
     match command {
-        None => deck::serve(dirs, &cli::ServeArgs { listen: None }).await,
-        Some(DeckCommand::Serve(args)) => deck::serve(dirs, args).await,
+        None => deck::serve(dirs, &cli::ServeArgs { listen: None }, restart).await,
+        Some(DeckCommand::Serve(args)) => deck::serve(dirs, args, restart).await,
         Some(DeckCommand::Invite) => deck::invite(dirs).await,
         Some(DeckCommand::AddStation(args)) => deck::add_station(dirs, args).await,
         Some(DeckCommand::Stations { json }) => deck::stations(dirs, *json).await,

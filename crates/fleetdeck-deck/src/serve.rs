@@ -8,14 +8,17 @@
 use std::future::Future;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use fleetdeck_core::config::DeckConfig;
 use fleetdeck_core::identity::{Identity, IdentityError};
 use fleetdeck_core::localsock::BindError;
-use fleetdeck_core::paths::{NodeDirs, ensure_private_dir};
+use fleetdeck_core::paths::{Env, NodeDirs, ensure_private_dir};
+use fleetdeck_core::restart::Restart;
+use fleetdeck_core::settings::{DeckHolder, SettingsWriter};
 use fleetdeck_core::{SharedClock, SharedIds, SystemClock, UlidSource};
 use fleetdeck_link::reconnect::BackoffPolicy;
+use fleetdeck_proto::StationId;
 use tokio::sync::watch;
 
 use crate::http::tls::TlsError;
@@ -46,6 +49,21 @@ pub enum ServeError {
     Board(crate::http::BindError<TlsError>),
 }
 
+/// What the process that runs the deck tells it (DL-172).
+#[derive(Debug, Clone, Default)]
+pub struct StartOptions {
+    /// `(key, flag)` of the settings that the process took from the command
+    /// line, for example `("listen", "--listen")`.
+    pub overrides: Vec<(String, String)>,
+    /// Restarts the process. `None` in `fleetdeck up` mode (the local
+    /// station restarts the process) and in tests.
+    pub restart: Option<Arc<dyn Restart>>,
+    /// The id of the local station in `fleetdeck up` mode; the caller sets
+    /// it after the pairing. A restart of the deck then restarts that
+    /// station.
+    pub local_station: Arc<OnceLock<StationId>>,
+}
+
 /// Runs the deck until `stop` completes.
 ///
 /// # Errors
@@ -54,9 +72,10 @@ pub async fn serve(
     dirs: &NodeDirs,
     config: &DeckConfig,
     backoff: BackoffPolicy,
+    options: StartOptions,
     stop: impl Future<Output = ()>,
 ) -> Result<(), ServeError> {
-    let deck = RunningDeck::start(dirs, config, backoff).await?;
+    let deck = RunningDeck::start(dirs, config, backoff, options).await?;
     stop.await;
     deck.stop().await;
     Ok(())
@@ -89,6 +108,7 @@ impl RunningDeck {
         dirs: &NodeDirs,
         config: &DeckConfig,
         backoff: BackoffPolicy,
+        options: StartOptions,
     ) -> Result<Self, ServeError> {
         let deck_dir = dirs.deck();
         ensure_private_dir(&deck_dir).map_err(|source| ServeError::Dir {
@@ -115,6 +135,15 @@ impl RunningDeck {
         let board_link = Arc::clone(node.link());
         let board_node = Arc::clone(&node);
         let tls_dir = deck_dir.clone();
+        let elevations = Arc::new(crate::elevation::Elevations::default());
+        let board_elevations = Arc::clone(&elevations);
+        let live = crate::live::DeckLive::of(config);
+        let settings_path = dirs.deck_config();
+        let StartOptions {
+            overrides,
+            restart,
+            local_station,
+        } = options;
         let board = BoardServer::bind(
             &config.listen,
             move |bound| {
@@ -132,6 +161,19 @@ impl RunningDeck {
                     ws_recheck: crate::http::ws::RECHECK,
                     pairing: Some(board_node),
                     assets: crate::http::assets::BoardAssets::Embedded,
+                    live: crate::live::LiveCell::new(live),
+                    elevations: board_elevations,
+                    settings: Some(crate::http::settings_routes::DeckSettings {
+                        writer: Arc::new(SettingsWriter::<DeckHolder>::new(
+                            &settings_path,
+                            None,
+                            &Env::default(),
+                        )),
+                        path: settings_path,
+                        overrides,
+                    }),
+                    restart,
+                    local_station,
                 });
                 Ok((board, tls))
             },
@@ -156,6 +198,7 @@ impl RunningDeck {
         let local = Arc::new(LocalDeck {
             node: Arc::clone(&node),
             board: endpoint.clone(),
+            elevations,
         });
         let server = tokio::spawn(local::serve(listener, local, rx.clone()));
         let scheduler = crate::scheduler::spawn(store.clone(), Arc::clone(node.link()), rx);

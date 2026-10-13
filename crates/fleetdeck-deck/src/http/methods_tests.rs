@@ -2,8 +2,9 @@ use super::*;
 
 #[test]
 fn names_and_routes_are_unique_and_only_login_is_public() {
-    for (i, a) in API.iter().enumerate() {
-        for b in &API[i + 1..] {
+    let all: Vec<&ApiMethod> = api().collect();
+    for (i, a) in all.iter().enumerate() {
+        for b in &all[i + 1..] {
             assert_ne!(a.name, b.name);
             assert!(a.method != b.method || a.path != b.path, "{}", a.name);
         }
@@ -39,7 +40,7 @@ fn names_and_routes_are_unique_and_only_login_is_public() {
 /// A new method is owner-only until it is added here on purpose.
 #[test]
 fn exactly_these_methods_are_open_to_a_member() {
-    let mut open: Vec<&str> = API.iter().filter(|a| a.member).map(|a| a.name).collect();
+    let mut open: Vec<&str> = api().filter(|a| a.member).map(|a| a.name).collect();
     open.sort_unstable();
     assert_eq!(
         open,
@@ -76,10 +77,7 @@ fn exactly_these_methods_are_open_to_a_member() {
         "spaces.create",
         "shells.command",
     ] {
-        assert!(
-            !API.iter().find(|a| a.name == name).unwrap().member,
-            "{name}"
-        );
+        assert!(!api().find(|a| a.name == name).unwrap().member, "{name}");
     }
 }
 
@@ -94,4 +92,30 @@ fn every_command_method_has_the_scope_of_its_link_method() {
         n += 1;
     }
     assert_eq!(n, 16);
+}
+
+/// The settings, secret relay, restart and elevation routes (DL-172) are
+/// `admin` and closed to a member; their handlers also refuse a token.
+#[test]
+fn the_settings_routes_are_admin_and_owner_only() {
+    let names = [
+        "settings.deck_get",
+        "settings.deck_set",
+        "settings.station_get",
+        "settings.station_set",
+        "settings.station_secret_set",
+        "settings.restart",
+        "auth.elevate",
+    ];
+    for name in names {
+        let api = api().find(|a| a.name == name).unwrap();
+        assert_eq!(api.scope, Some(Scope::Admin), "{name}");
+        assert!(!api.member, "{name}");
+        assert_eq!(api.mutating, api.method == Method::POST, "{name}");
+    }
+    assert_eq!(api().filter(|a| a.name.starts_with("settings.")).count(), 6);
+    assert_eq!(
+        find(&Method::POST, "/api/secrets/stations/{station}/settings").map(|m| m.name),
+        Some("settings.station_secret_set")
+    );
 }

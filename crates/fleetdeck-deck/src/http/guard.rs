@@ -1,6 +1,6 @@
 //! The board-API guard (M2 P3-8; PLAN §9, A13, L15). For every request:
 //!
-//! 1. The matched route must be in [`super::methods::API`] (fail closed).
+//! 1. The matched route must be in [`super::methods::api`] (fail closed).
 //! 2. An `Origin` header must name a board address of this deck (its
 //!    listen addresses, `localhost` for loopback ones, and the tailnet
 //!    host name). This also covers the login methods.
@@ -49,6 +49,9 @@ pub struct ApiError {
     pub status: StatusCode,
     pub code: &'static str,
     pub message: String,
+    /// Fields that join the top level of the body, next to `error` and
+    /// `message` (for example `keys` or `would_stop`).
+    pub details: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 impl ApiError {
@@ -58,7 +61,16 @@ impl ApiError {
             status,
             code,
             message: message.into(),
+            details: None,
         }
+    }
+
+    /// Adds fields to the top level of the error body. `error` and
+    /// `message` cannot be replaced.
+    #[must_use]
+    pub fn with_details(mut self, details: serde_json::Map<String, serde_json::Value>) -> Self {
+        self.details = Some(details);
+        self
     }
 
     #[must_use]
@@ -74,11 +86,10 @@ impl ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (
-            self.status,
-            axum::Json(json!({ "error": self.code, "message": self.message })),
-        )
-            .into_response()
+        let mut body = self.details.unwrap_or_default();
+        body.insert("error".to_owned(), json!(self.code));
+        body.insert("message".to_owned(), json!(self.message));
+        (self.status, axum::Json(serde_json::Value::Object(body))).into_response()
     }
 }
 

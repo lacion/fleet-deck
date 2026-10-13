@@ -8,6 +8,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use axum::Json;
+use axum::extract::rejection::JsonRejection;
 use axum::extract::{Extension, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -413,6 +414,101 @@ pub async fn device_link(
     }))
 }
 
+/// The body of `POST /api/auth/elevate`: the owner password or a one-time
+/// code of `fleetdeck open --elevate`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ElevateBody {
+    #[serde(default)]
+    password: Option<String>,
+    #[serde(default)]
+    code: Option<String>,
+}
+
+/// The answer to `POST /api/auth/elevate` (DL-172, design 1.5).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Elevated {
+    pub elevation: String,
+    pub expires_at: i64,
+}
+
+async fn refused_elevation(board: &Board, code: &'static str) {
+    board
+        .store
+        .audit_or_log(NewAudit::new("owner", "auth.elevate", AuditResult::Refused).detail(code))
+        .await;
+}
+
+/// `POST /api/auth/elevate { password }` or `{ code }` (DL-172): an
+/// elevation for the danger changes and the restart of the settings. Only
+/// the owner's board login may call it. A failure counts in the same limiter
+/// as a failed login. Neither the password, the code nor the elevation goes
+/// to a log or to the audit row.
+///
+/// # Errors
+/// 400 `invalid_request`; 401 `invalid_credentials`; 403 `owner_only`; 429
+/// `too_many_attempts`; 500 `internal`.
+pub async fn elevate(
+    State(board): State<Arc<Board>>,
+    Extension(principal): Extension<Principal>,
+    body: Result<Json<ElevateBody>, JsonRejection>,
+) -> Result<Json<Elevated>, ApiError> {
+    const ACTION: &str = "auth.elevate";
+    let session =
+        super::settings_routes::owner(&board, &principal, ACTION, "", "can ask for an elevation")
+            .await?;
+    let refuse = |code: &'static str| refused_elevation(&board, code);
+    if let Some(e) = throttled(&board) {
+        refuse(e.code).await;
+        return Err(e);
+    }
+    let invalid = || {
+        ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "send either `password` or `code`",
+        )
+    };
+    let Ok(Json(body)) = body else {
+        refuse("invalid_request").await;
+        return Err(invalid());
+    };
+    let now = board.store.now_ms();
+    let valid = match (body.password, body.code) {
+        (Some(password), None) => board
+            .store
+            .check_password(Secret::new(password))
+            .await
+            .map_err(ApiError::internal)?,
+        (None, Some(code)) => board.elevations.redeem_code(&code, now),
+        _ => {
+            refuse("invalid_request").await;
+            return Err(invalid());
+        }
+    };
+    if !valid {
+        board.limiter.failed(now);
+        refuse("invalid_credentials").await;
+        return Err(ApiError::new(
+            StatusCode::UNAUTHORIZED,
+            "invalid_credentials",
+            "the password or the code is not valid",
+        ));
+    }
+    let (token, expires_at) = board
+        .elevations
+        .issue(&session.session_hash, now)
+        .map_err(ApiError::internal)?;
+    board
+        .store
+        .audit_or_log(NewAudit::new("owner", ACTION, AuditResult::Ok))
+        .await;
+    Ok(Json(Elevated {
+        elevation: token.expose().clone(),
+        expires_at,
+    }))
+}
+
 /// `POST /api/auth/logout`: ends the cookie login.
 pub async fn logout(
     State(board): State<Arc<Board>>,
@@ -420,7 +516,10 @@ pub async fn logout(
 ) -> Response {
     let actor = principal.actor();
     let ended = match principal {
-        Principal::Owner(session) => board.store.end_login(session.session_hash).await,
+        Principal::Owner(session) => {
+            board.elevations.end_session(&session.session_hash);
+            board.store.end_login(session.session_hash).await
+        }
         Principal::Member(_, grant) => board.store.end_member_login(grant.session_hash).await,
         Principal::Token(..) => Ok(true),
     };

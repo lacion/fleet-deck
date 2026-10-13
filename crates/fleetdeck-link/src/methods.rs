@@ -242,6 +242,38 @@ pub const METHODS: &[MethodSpec] = &[
         Some(feature::ASSIST),
         false,
     ),
+    // The settings of a station and its restart (DL-172). They change the
+    // station's policy and its process, so they need `admin`. None is a
+    // receipt mutation: the revision makes a retry of a save safe, and a
+    // secret never goes through the receipts (the credential relay).
+    m(
+        "settings.get",
+        DeckToStation,
+        Scope::Admin,
+        Some(feature::SETTINGS),
+        false,
+    ),
+    m(
+        "settings.set",
+        DeckToStation,
+        Scope::Admin,
+        Some(feature::SETTINGS),
+        false,
+    ),
+    m(
+        "settings.secret_set",
+        DeckToStation,
+        Scope::Admin,
+        Some(feature::SETTINGS),
+        false,
+    ),
+    m(
+        "station.restart",
+        DeckToStation,
+        Scope::Admin,
+        Some(feature::SETTINGS),
+        false,
+    ),
     m(
         "files.list",
         DeckToStation,

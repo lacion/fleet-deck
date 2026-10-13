@@ -142,6 +142,66 @@ impl fmt::Debug for SecretSet {
     }
 }
 
+/// The params of `settings.set` (DL-172). The deck checks the owner's
+/// elevation and sends `elevated`; `change.elevation` is always `None` here.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "settings/")]
+pub struct SettingsSetParams {
+    pub change: SettingsChange,
+    pub elevated: bool,
+}
+
+/// The params of `settings.secret_set` (the credential relay, DL-173). The
+/// value is never stored or logged on the deck; `Debug` hides it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "settings/")]
+pub struct SecretSetParams {
+    pub secret: SecretSet,
+    /// The revision of the config file that the board read.
+    pub revision: String,
+    pub elevated: bool,
+}
+
+/// The params of `station.restart`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "settings/")]
+pub struct RestartRequest {
+    /// Stop the live sessions that a restart ends.
+    pub stop_direct_sessions: bool,
+    pub elevated: bool,
+}
+
+/// What a restart ends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "settings/")]
+pub enum RestartKind {
+    Session,
+    Shell,
+    Setup,
+}
+
+/// One thing that a restart ends.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "settings/")]
+pub struct RestartItem {
+    pub kind: RestartKind,
+    pub id: String,
+    pub title: String,
+}
+
+/// The answer to `station.restart`. When `restarting` is false,
+/// `would_stop` is not empty.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "settings/")]
+pub struct RestartAnswer {
+    pub restarting: bool,
+    pub would_stop: Vec<RestartItem>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -155,6 +215,38 @@ mod tests {
         let text = format!("{s:?} {s:#?}");
         assert!(!text.contains("canary-value-1"), "{text}");
         assert!(text.contains("provider_instance.work.env.TOKEN"));
+    }
+
+    #[test]
+    fn secret_set_params_debug_hides_the_value() {
+        let p = SecretSetParams {
+            secret: SecretSet {
+                key: "provider_instance.work.env.TOKEN".into(),
+                value: "canary-value-2".into(),
+            },
+            revision: "ab".into(),
+            elevated: true,
+        };
+        let text = format!("{p:?} {p:#?}");
+        assert!(!text.contains("canary-value-2"), "{text}");
+    }
+
+    #[test]
+    fn restart_shapes_round_trip() {
+        let a = RestartAnswer {
+            restarting: false,
+            would_stop: vec![RestartItem {
+                kind: RestartKind::Session,
+                id: "s1".into(),
+                title: "Fix the build".into(),
+            }],
+        };
+        let v = serde_json::to_value(&a).unwrap();
+        assert_eq!(v["would_stop"][0]["kind"], "session");
+        assert_eq!(serde_json::from_value::<RestartAnswer>(v).unwrap(), a);
+        let r: RestartRequest =
+            serde_json::from_str(r#"{"stop_direct_sessions":true,"elevated":false}"#).unwrap();
+        assert!(r.stop_direct_sessions && !r.elevated);
     }
 
     #[test]
