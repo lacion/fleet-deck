@@ -13,13 +13,21 @@
 //! untracked file (binary excluded, large, over [`MAX_UNTRACKED`]) sets
 //! `truncated`. When the tracked patch is cut, the untracked files are not
 //! listed. The summary counts the untracked files that the patch shows.
+//!
+//! A session without a worktree of its own works in a shared folder, where
+//! other people also change files. Its diff then keeps only the paths that
+//! the session changed (`scope = session_files`, DL-159): the paths of its
+//! `file.changed` events and of its turn checkpoints. A session that changed
+//! no file has an empty diff.
 
+use std::collections::BTreeSet;
+use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 use fleetdeck_proto::event::DiffSummary;
 use fleetdeck_proto::files::{
-    FileContent, FileRoot, MAX_DIFF_BYTES, MAX_READ_BYTES, SessionDiff, SessionDiffQuery, code,
-    hidden_path,
+    DiffScope, FileContent, FileRoot, MAX_DIFF_BYTES, MAX_READ_BYTES, SessionDiff,
+    SessionDiffQuery, code, hidden_path,
 };
 
 use super::checkpoint::{Limits, Worktree};
@@ -28,7 +36,7 @@ use super::git::nul_fields;
 use super::restore::visible_pathspec;
 use super::{Git, GitOptions};
 use crate::manager::policy::Policy;
-use crate::store::Store;
+use crate::store::{RowSide, Store, TurnCheckpointRow};
 
 /// The longest a session diff may take.
 pub const DIFF_TIMEOUT: Duration = Duration::from_secs(15);
@@ -36,6 +44,18 @@ pub const DIFF_TIMEOUT: Duration = Duration::from_secs(15);
 pub const MAX_UNTRACKED: usize = 200;
 /// The most `git` output that a file listing or a numstat reads.
 const LIST_MAX: usize = 4 * 1024 * 1024;
+/// The most paths that one `git diff-tree` call gets as a pathspec.
+const MAX_PATHSPEC: usize = 500;
+
+/// What the store knows about the files of a session without a worktree.
+struct Shared {
+    /// The paths of the `file.changed` events, as the provider reported them.
+    events: Vec<String>,
+    /// The turn checkpoints of the session.
+    turns: Vec<TurnCheckpointRow>,
+    /// The `cwd` of the session as stored (it can be a link).
+    cwd: Option<PathBuf>,
+}
 
 /// True for a full hexadecimal commit id (SHA-1 or SHA-256).
 fn is_oid(text: &str) -> bool {
@@ -79,7 +99,28 @@ pub async fn run(
         .max_bytes
         .unwrap_or(MAX_DIFF_BYTES)
         .min(MAX_DIFF_BYTES) as usize;
-    let work = compute(root, base.oid.clone(), options, max);
+    let shared = if summary.worktree.is_none() {
+        let internal = |e: &dyn std::fmt::Display| FileError::new("internal", e.to_string());
+        Some(Shared {
+            events: store
+                .session_changed_paths(query.session_id.clone())
+                .await
+                .map_err(|e| internal(&e))?,
+            turns: store
+                .turn_checkpoints(query.session_id.clone())
+                .await
+                .map_err(|e| internal(&e))?,
+            cwd: summary.cwd.as_deref().map(PathBuf::from),
+        })
+    } else {
+        None
+    };
+    let scope = if shared.is_some() {
+        DiffScope::SessionFiles
+    } else {
+        DiffScope::Worktree
+    };
+    let work = compute(root, base.oid.clone(), options, max, shared);
     let (summary, patch, truncated) = tokio::time::timeout(DIFF_TIMEOUT, work)
         .await
         .map_err(|_| FileError::new(code::TIMEOUT, "the diff took too long"))??;
@@ -89,14 +130,16 @@ pub async fn run(
         summary,
         patch,
         truncated,
+        scope,
     })
 }
 
 async fn compute(
-    root: std::path::PathBuf,
+    root: PathBuf,
     base: String,
     options: GitOptions,
     max: usize,
+    shared: Option<Shared>,
 ) -> Result<(DiffSummary, String, bool), FileError> {
     let internal = |e: &dyn std::fmt::Display| FileError::new("internal", e.to_string());
     let no_diff = |why: String| FileError::new(code::NO_DIFF, why);
@@ -118,6 +161,13 @@ async fn compute(
             "the base commit is not in the repository",
         ));
     }
+    let only = match &shared {
+        Some(shared) => Some(session_paths(git, &worktree, &root, shared).await?),
+        None => None,
+    };
+    if only.as_ref().is_some_and(BTreeSet::is_empty) {
+        return Ok((numstat(""), String::new(), false));
+    }
     let tree = match worktree
         .snapshot_tree(Limits::default())
         .await
@@ -131,48 +181,17 @@ async fn compute(
             )));
         }
     };
-    let spec = visible_pathspec();
-    let mut args = vec![
-        "diff-tree",
-        "-p",
-        "-r",
-        "-M",
-        "--no-ext-diff",
-        "--no-textconv",
-        "--no-color",
-        base.as_str(),
-        tree.as_str(),
-    ];
-    args.extend(spec.iter().map(String::as_str));
-    let (status, out, cut) = git.bounded(&args, max).await.map_err(|e| internal(&e))?;
-    if status != 0 && !cut {
-        return Err(internal(&format!("git diff-tree failed ({status})")));
-    }
-    let mut patch = String::from_utf8_lossy(&out).into_owned();
-    let mut args = vec![
-        "diff-tree",
-        "-r",
-        "-M",
-        "--numstat",
-        base.as_str(),
-        tree.as_str(),
-    ];
-    args.extend(spec.iter().map(String::as_str));
-    let (status, out, _) = git
-        .bounded(&args, LIST_MAX)
-        .await
-        .map_err(|e| internal(&e))?;
-    if status != 0 {
-        return Err(internal(&format!(
-            "git diff-tree --numstat failed ({status})"
-        )));
-    }
-    let mut summary = numstat(&String::from_utf8_lossy(&out));
+    let (mut summary, mut patch, cut) = match &only {
+        Some(only) => tracked_in(git, &base, &tree, only, max).await?,
+        None => tracked(git, &base, &tree, &visible_pathspec(), max).await?,
+    };
     if cut {
-        patch.push_str("\n[diff truncated]\n");
         return Ok((summary, patch, true));
     }
-    let (paths, listing_cut) = untracked(git).await?;
+    let (mut paths, listing_cut) = untracked(git).await?;
+    if let Some(only) = &only {
+        paths.retain(|path| only.contains(path));
+    }
     let mut truncated = listing_cut || paths.len() > MAX_UNTRACKED;
     let paths: Vec<String> = paths.into_iter().take(MAX_UNTRACKED).collect();
     let remaining = max.saturating_sub(patch.len());
@@ -189,6 +208,187 @@ async fn compute(
     summary.insertions += rendered.summary.insertions;
     truncated |= rendered.truncated;
     Ok((summary, patch, truncated))
+}
+
+/// The tracked diff of `base` and `tree` under `spec`: the summary, the patch
+/// (at most `max` bytes) and true when the patch was cut.
+async fn tracked(
+    git: &Git,
+    base: &str,
+    tree: &str,
+    spec: &[String],
+    max: usize,
+) -> Result<(DiffSummary, String, bool), FileError> {
+    let internal = |e: &dyn std::fmt::Display| FileError::new("internal", e.to_string());
+    let mut args = vec![
+        "diff-tree",
+        "-p",
+        "-r",
+        "-M",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-color",
+        base,
+        tree,
+    ];
+    args.extend(spec.iter().map(String::as_str));
+    let (status, out, cut) = git.bounded(&args, max).await.map_err(|e| internal(&e))?;
+    if status != 0 && !cut {
+        return Err(internal(&format!("git diff-tree failed ({status})")));
+    }
+    let mut patch = String::from_utf8_lossy(&out).into_owned();
+    let mut args = vec!["diff-tree", "-r", "-M", "--numstat", base, tree];
+    args.extend(spec.iter().map(String::as_str));
+    let (status, out, _) = git
+        .bounded(&args, LIST_MAX)
+        .await
+        .map_err(|e| internal(&e))?;
+    if status != 0 {
+        return Err(internal(&format!(
+            "git diff-tree --numstat failed ({status})"
+        )));
+    }
+    let summary = numstat(&String::from_utf8_lossy(&out));
+    if cut {
+        patch.push_str("\n[diff truncated]\n");
+    }
+    Ok((summary, patch, cut))
+}
+
+/// The tracked diff of only the paths in `only` (the files of a session in a
+/// shared folder). The paths that really differ go to Git in groups of
+/// [`MAX_PATHSPEC`], in path order, so the patch has the order of a whole diff.
+async fn tracked_in(
+    git: &Git,
+    base: &str,
+    tree: &str,
+    only: &BTreeSet<String>,
+    max: usize,
+) -> Result<(DiffSummary, String, bool), FileError> {
+    let internal = |e: &dyn std::fmt::Display| FileError::new("internal", e.to_string());
+    let mut args = vec![
+        "diff-tree",
+        "-r",
+        "--no-renames",
+        "--name-only",
+        "-z",
+        base,
+        tree,
+    ];
+    let spec = visible_pathspec();
+    args.extend(spec.iter().map(String::as_str));
+    let (status, out, _) = git
+        .bounded(&args, LIST_MAX)
+        .await
+        .map_err(|e| internal(&e))?;
+    if status != 0 {
+        return Err(internal(&format!(
+            "git diff-tree --name-only failed ({status})"
+        )));
+    }
+    let chosen: BTreeSet<&str> = nul_fields(&out)
+        .into_iter()
+        .filter_map(|field| std::str::from_utf8(field).ok())
+        .filter(|path| only.contains(*path))
+        .collect();
+    let chosen: Vec<&str> = chosen.into_iter().collect();
+    let mut summary = numstat("");
+    let mut patch = String::new();
+    for group in chosen.chunks(MAX_PATHSPEC) {
+        let spec = literal_pathspec(group);
+        let (part, text, cut) =
+            tracked(git, base, tree, &spec, max.saturating_sub(patch.len())).await?;
+        summary.files_changed = summary.files_changed.saturating_add(part.files_changed);
+        summary.insertions += part.insertions;
+        summary.deletions += part.deletions;
+        patch.push_str(&text);
+        if cut {
+            return Ok((summary, patch, true));
+        }
+    }
+    Ok((summary, patch, false))
+}
+
+/// [`visible_pathspec`] with the given paths (literal, no pattern) in place
+/// of the whole worktree.
+fn literal_pathspec(paths: &[&str]) -> Vec<String> {
+    let mut spec = visible_pathspec();
+    spec.splice(1..2, paths.iter().map(|path| format!(":(literal){path}")));
+    spec
+}
+
+/// The paths that a session without a worktree changed, from the top of the
+/// worktree: its `file.changed` events and the files that differ between the
+/// two sides of each of its turn checkpoints.
+async fn session_paths(
+    git: &Git,
+    worktree: &Worktree,
+    session_dir: &Path,
+    shared: &Shared,
+) -> Result<BTreeSet<String>, FileError> {
+    let mut paths: BTreeSet<String> = shared
+        .events
+        .iter()
+        .filter_map(|raw| repo_path(raw, session_dir, shared.cwd.as_deref(), worktree.root()))
+        .collect();
+    for row in &shared.turns {
+        let (RowSide::Available(start), RowSide::Available(end)) = (&row.start, &row.end) else {
+            continue;
+        };
+        if row.worktree_id.as_deref() != Some(worktree.id()) {
+            continue;
+        }
+        let args = [
+            "diff-tree",
+            "-r",
+            "--no-renames",
+            "--name-only",
+            "-z",
+            start.as_str(),
+            end.as_str(),
+        ];
+        let (status, out, cut) = git
+            .bounded(&args, LIST_MAX)
+            .await
+            .map_err(|e| FileError::new("internal", e.to_string()))?;
+        if status != 0 && !cut {
+            tracing::warn!(app_turn = %row.app_turn, status, "the files of a turn checkpoint are not listed");
+            continue;
+        }
+        paths.extend(
+            nul_fields(&out)
+                .into_iter()
+                .filter_map(|field| std::str::from_utf8(field).ok())
+                .filter(|path| !hidden_path(path))
+                .map(str::to_owned),
+        );
+    }
+    Ok(paths)
+}
+
+/// The path that a provider reported (absolute, or relative to the session
+/// folder) as a path from `top`, the worktree root; `None` for a path outside
+/// the worktree, with `..`, or private.
+fn repo_path(raw: &str, session_dir: &Path, cwd: Option<&Path>, top: &Path) -> Option<String> {
+    let path = Path::new(raw);
+    let full = if path.is_absolute() {
+        match (path.strip_prefix(top), cwd.map(|c| path.strip_prefix(c))) {
+            (Ok(_), _) => path.to_path_buf(),
+            (_, Some(Ok(rest))) => session_dir.join(rest),
+            _ => return None,
+        }
+    } else {
+        session_dir.join(path)
+    };
+    let mut parts = Vec::new();
+    for part in full.strip_prefix(top).ok()?.components() {
+        let Component::Normal(name) = part else {
+            return None;
+        };
+        parts.push(name.to_str()?);
+    }
+    let joined = parts.join("/");
+    (!joined.is_empty() && !hidden_path(&joined)).then_some(joined)
 }
 
 /// The sizes of `git diff-tree --numstat` output; a binary file counts as

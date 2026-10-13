@@ -9,6 +9,7 @@ import { summary } from '../testing/summary';
 import { envelopes } from '../testing/timeline';
 import { sessionActions } from './commands';
 import { type PaneTab, SessionView } from './SessionView';
+import { SinceNotes } from './TurnsPanel';
 import {
   fileActions,
   finalizedTurns,
@@ -252,13 +253,47 @@ describe('the diff since the session started (R1.2)', () => {
     expect(html).toContain('Loading the diff');
   });
 
-  test('a guessed base is marked, and without a base there is no toggle', () => {
-    const guessed = view(codex({ base: { oid: base.oid, inferred: true } }), []);
-    expect(guessed).toContain('<code>a commit</code>');
-    expect(guessed).toContain('(guessed)');
+  test('a guessed base opens "By turn" and without a base there is no toggle', () => {
+    const guessed = view(
+      codex({ base: { git_ref: 'origin/HEAD', oid: base.oid, inferred: true } }),
+      [finalized('t1')],
+    );
+    expect(guessed).toContain('aria-label="Changes view"');
+    expect(guessed).toMatch(/aria-pressed="false"[^>]*>Since spawn</);
+    expect(guessed).toMatch(/aria-pressed="true"[^>]*>By turn</);
+    expect(guessed).toContain('Show the diff');
+    expect(guessed).not.toContain('Since the session started');
     const plain = view(codex(), [finalized('t1')]);
     expect(plain).not.toContain('Changes view');
     expect(plain).toContain('Show the diff');
+  });
+
+  test('the "Since spawn" view says when the start commit was guessed', () => {
+    const html = renderToStaticMarkup(
+      <SinceNotes
+        base={{ git_ref: 'origin/HEAD', oid: base.oid, inferred: true }}
+        scope="worktree"
+      />,
+    );
+    expect(html).toContain(
+      'The start commit was guessed (origin/HEAD), because this session started before Fleet Deck recorded it.',
+    );
+    expect(html).not.toContain('shared folder');
+    const noRef = renderToStaticMarkup(
+      <SinceNotes base={{ oid: base.oid, inferred: true }} scope={undefined} />,
+    );
+    expect(noRef).toContain('The start commit was guessed (a commit),');
+    const recorded = renderToStaticMarkup(<SinceNotes base={base} scope="worktree" />);
+    expect(recorded).toBe('');
+  });
+
+  test('a session in a shared folder says that the diff shows only its own files', () => {
+    const html = renderToStaticMarkup(<SinceNotes base={base} scope="session_files" />);
+    expect(html).toContain(
+      'This session works in a shared folder. The diff shows only the files that this session changed.',
+    );
+    expect(html).not.toContain('guessed');
+    expect(renderToStaticMarkup(<SinceNotes base={base} scope={undefined} />)).toBe('');
   });
 
   test('the session diff uses the session path', async () => {

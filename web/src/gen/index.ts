@@ -102,6 +102,7 @@ export * from "./event/ToolStatus";
 export * from "./event/TurnCheckpoint";
 export * from "./event/TurnStatus";
 export * from "./event/Usage";
+export * from "./files/DiffScope";
 export * from "./files/FileContent";
 export * from "./files/FileEntry";
 export * from "./files/FileKind";
