@@ -119,6 +119,55 @@ describe('ChatView', () => {
     expect(view({ items, onOpenChanges: () => {} })).toContain('Review changes');
   });
 
+  test('a done turn with 0 changed files renders no diff line', () => {
+    const items: Item[] = [
+      {
+        type: 'turn',
+        key: '1',
+        status: 'done',
+        turn_id: 't1',
+        diff: { files_changed: 0, insertions: 0, deletions: 0 },
+      },
+    ];
+    const html = view({ items, onOpenChanges: () => {} });
+    expect(html).not.toContain('fd-chat-diff');
+    expect(html).not.toContain('Review changes');
+  });
+
+  test('a turn with 1 file and no line counts says 1 file changed and hides +0 and −0', () => {
+    const items: Item[] = [
+      {
+        type: 'turn',
+        key: '1',
+        status: 'done',
+        turn_id: 't1',
+        diff: { files_changed: 1, insertions: 0, deletions: 0 },
+      },
+    ];
+    const html = view({ items });
+    expect(html).toContain('1 file changed');
+    expect(html).not.toContain('1 files');
+    expect(html).not.toContain('+0');
+    expect(html).not.toContain('−0');
+  });
+
+  test('a turn with 3 files +5 −2 shows all parts and Review changes', () => {
+    const items: Item[] = [
+      {
+        type: 'turn',
+        key: '1',
+        status: 'done',
+        turn_id: 't1',
+        diff: { files_changed: 3, insertions: 5, deletions: 2 },
+      },
+    ];
+    const html = view({ items, onOpenChanges: () => {} });
+    expect(html).toContain('3 files changed');
+    expect(html).toContain('<span class="fd-add">+5</span>');
+    expect(html).toContain('<span class="fd-del">−2</span>');
+    expect(html).toContain('Review changes');
+  });
+
   test('a done turn without a diff renders nothing; a failed turn says so', () => {
     const turn = (status: 'done' | 'failed'): Item => ({
       type: 'turn',

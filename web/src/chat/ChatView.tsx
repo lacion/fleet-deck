@@ -1,6 +1,7 @@
 // The chat view of a session: the primary projection of the canonical events
 // (UI-PLAN §2.1). It renders `Item`s from `buildTimeline`; it owns no data.
 import { type ReactNode, useLayoutEffect, useRef, useState } from 'react';
+import { hasChanges } from '../session/changes';
 import { type Item, type Subagent, type SubagentStatus, subagentLabel } from '../session/timeline';
 import {
   ArrowDown,
@@ -249,16 +250,22 @@ function ItemView(props: { item: Item; onOpenChanges: OpenChanges }) {
         </div>
       );
     case 'turn':
-      if (item.status === 'done' && item.diff === null) return null;
+      if (item.status === 'done' && !hasChanges(item.diff)) return null;
       return (
         <div className="fd-chat-turn">
           {item.status !== 'done' ? <p className="fd-chat-line">{`Turn ${item.status}`}</p> : null}
-          {item.diff ? (
+          {item.diff && hasChanges(item.diff) ? (
             <div className="fd-chat-diff">
               <Icon of={GitCompare} size={14} />
-              <span>{item.diff.files_changed} files changed</span>
-              <span className="fd-add">+{item.diff.insertions}</span>
-              <span className="fd-del">−{item.diff.deletions}</span>
+              <span>
+                {item.diff.files_changed} {item.diff.files_changed === 1 ? 'file' : 'files'} changed
+              </span>
+              {item.diff.insertions > 0 ? (
+                <span className="fd-add">+{item.diff.insertions}</span>
+              ) : null}
+              {item.diff.deletions > 0 ? (
+                <span className="fd-del">−{item.diff.deletions}</span>
+              ) : null}
               {props.onOpenChanges ? (
                 <button
                   type="button"
