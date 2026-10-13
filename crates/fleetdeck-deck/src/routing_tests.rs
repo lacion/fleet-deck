@@ -121,6 +121,26 @@ fn assign_auto_breaks_a_tie_by_the_instance_with_the_most_room() {
         ),
         "unknown"
     );
+    // The quota wins over recency: the tight instance is the most recent session.
+    let recent = vec![
+        limited(
+            card("tight-new", CardStatus::Idle, "/p/app", 9),
+            "a",
+            Some(90.0),
+        ),
+        limited(
+            card("roomy-old", CardStatus::Idle, "/p/app", 1),
+            "b",
+            Some(20.0),
+        ),
+    ];
+    assert_eq!(pick(&recent), "roomy-old");
+    // Equal quota: the most recent session wins.
+    let equal = vec![
+        limited(card("old", CardStatus::Idle, "/p/app", 1), "a", Some(20.0)),
+        limited(card("new", CardStatus::Idle, "/p/app", 9), "b", Some(20.0)),
+    ];
+    assert_eq!(pick(&equal), "new");
     // A better fit still wins over more room.
     let mut busy_roomy = cards.clone();
     busy_roomy[1].status = CardStatus::Working;
