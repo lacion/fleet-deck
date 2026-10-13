@@ -212,7 +212,7 @@ async fn the_owner_trashes_restores_and_purges_a_worktree_and_every_call_is_audi
         receipt(&board, &list_h, "trash-0001").await["state"],
         "accepted"
     );
-    let row = inventory(&board, &list_h, |w| w["verdict"] == "trashed").await;
+    let row = inventory(&board, &list_h, |w| w["trash"]["state"] == "trashed").await;
     assert_eq!(row["trash"]["state"], "trashed");
     let trash_path = PathBuf::from(row["trash"]["trash_path"].as_str().unwrap());
     assert!(trash_path.is_dir());
@@ -252,7 +252,7 @@ async fn the_owner_trashes_restores_and_purges_a_worktree_and_every_call_is_audi
     )
     .await;
     assert_eq!(r.status, 200, "{}", r.body);
-    let row = inventory(&board, &list_h, |w| w["verdict"] == "trashed").await;
+    let row = inventory(&board, &list_h, |w| w["trash"]["state"] == "trashed").await;
     let trash_path = PathBuf::from(row["trash"]["trash_path"].as_str().unwrap());
     let r = act(
         &board,
