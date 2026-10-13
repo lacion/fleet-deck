@@ -234,6 +234,31 @@ pub struct WsTicket {
     pub expires_at: i64,
 }
 
+/// One login link of a [`DeviceLink`]: the same single-use token on one
+/// board address.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "board/")]
+pub struct DeviceLinkEntry {
+    /// For example `Tailnet deck.tail1234.ts.net`, `Network 192.168.1.5` or
+    /// `This computer`.
+    pub label: String,
+    /// `<board origin>/#login=<token>`.
+    pub url: String,
+}
+
+/// `POST /api/auth/device-link` (DL-146): a one-time login link for a new
+/// device. Every entry of `links` carries the same single-use token.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "board/")]
+pub struct DeviceLink {
+    pub links: Vec<DeviceLinkEntry>,
+    pub expires_at: i64,
+    /// The SHA-256 of the board certificate, for the browser check.
+    pub certificate_sha256: String,
+    /// The certificate is the deck's self-signed one.
+    pub self_signed: bool,
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]

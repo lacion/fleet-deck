@@ -147,13 +147,14 @@ impl RunningStation {
             program: None,
             instances: terminal_instances(config),
         }));
-        let node = StationNode::start_with_shells(
+        let node = StationNode::start_with_paste_dir(
             Arc::clone(&manager),
             Arc::clone(&identity),
             config.name.clone(),
             &config.listen,
             BackoffPolicy::default(),
             Arc::clone(&shells),
+            Some(station_dir.join("paste")),
         )
         .await?;
         tracing::info!(

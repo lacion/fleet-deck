@@ -94,6 +94,7 @@ async fn fixture(shells: ShellConfig) -> Fixture {
         name: "box".to_owned(),
         shells: Arc::new(fleetdeck_station::shell::Shells::new(shells)),
         coordinator: fleetdeck_station::coordinator::LinkForward::default(),
+        paste_dir: None,
     });
     Fixture {
         _det: det,

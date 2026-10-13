@@ -355,6 +355,28 @@ pub struct Preflight {
     pub hint: Option<String>,
 }
 
+/// `files.write_temp` params (DL-147): one pasted image. The `upload_id`
+/// makes a retry return the same path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "link/")]
+pub struct PasteImage {
+    /// 8 to 64 characters of `[A-Za-z0-9_-]`.
+    pub upload_id: String,
+    /// `png`, `jpg`, `gif` or `webp`.
+    pub ext: String,
+    /// The image bytes in standard base64.
+    pub data_base64: String,
+}
+
+/// The `files.write_temp` answer (DL-147): the absolute path of the stored
+/// image on the station.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "link/")]
+pub struct PastedImage {
+    pub path: String,
+}
+
 /// `workspace.worktrees` params (DL-142): none.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields)]

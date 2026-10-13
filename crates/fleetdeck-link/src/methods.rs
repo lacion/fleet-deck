@@ -116,6 +116,15 @@ pub const METHODS: &[MethodSpec] = &[
         Some(feature::PREFLIGHT),
         false,
     ),
+    // A pasted image on the station (DL-147). Not a receipt mutation: the
+    // upload id makes a retry return the same path.
+    m(
+        "files.write_temp",
+        DeckToStation,
+        Scope::Admin,
+        Some(feature::WRITE_TEMP),
+        false,
+    ),
     m(
         "files.list",
         DeckToStation,
