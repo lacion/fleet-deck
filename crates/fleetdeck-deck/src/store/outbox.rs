@@ -323,7 +323,11 @@ fn holds(conn: &Connection, item: &OutboxItem, cmd: &commands::DeckCommand) -> R
     let Some(text) = text else {
         return Ok(false);
     };
-    let summary: SessionSummary = serde_json::from_str(&text)?;
+    // A summary that does not parse holds nothing: the item is dead as
+    // before, and the reconcile goes on with the other items.
+    let Ok(summary) = serde_json::from_str::<SessionSummary>(&text) else {
+        return Ok(false);
+    };
     Ok(matches!(
         summary.state,
         SessionState::Exited | SessionState::Lost
