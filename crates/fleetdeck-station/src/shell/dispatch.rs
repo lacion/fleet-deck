@@ -27,6 +27,14 @@ pub fn decide(
     envelope: &ShellEnvelope,
 ) -> Result<CommandResult, DecideError> {
     let pending = shell_effects::pending(d.connection())?;
+    // A folder in the trash, or being moved, takes no shell (DL-150). The
+    // check comes first: the original folder is missing while it is held.
+    if let ShellChange::Open { cwd, .. } = &envelope.change {
+        crate::manager::trash::custody(d, cwd)?;
+        if let Ok(canonical) = policy.workspace(cwd) {
+            crate::manager::trash::custody(d, &canonical.to_string_lossy())?;
+        }
+    }
     shells.check(&envelope.change, policy, &pending)?;
     match &envelope.change {
         ShellChange::Open { shell_id, .. } => handover::free_of_holds(d, shell_id)?,

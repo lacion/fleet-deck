@@ -44,6 +44,7 @@ pub mod shim_writes;
 pub mod shims;
 pub mod terminal;
 mod turn_checkpoints;
+pub mod worktree_ops;
 
 use std::path::Path;
 use std::sync::Arc;
@@ -66,7 +67,7 @@ use tokio::sync::watch;
 
 pub use effects::{
     Dispatch, Effect, EffectId, EffectPayload, EffectState, FIRST_INPUT_NOT_SENT,
-    FIRST_INPUT_UNKNOWN, InputRecord, ProcessIncarnation, WorkspacePlan,
+    FIRST_INPUT_UNKNOWN, InputRecord, ProcessIncarnation, WorkspacePlan, WorktreeAction,
 };
 pub use receipts::{Caller, DecideError, Decided, Decision};
 pub use recovery::RecoveryReport;
@@ -74,12 +75,14 @@ pub use requests::{
     AnswerClaim, AnswerReceipt, REASON_REQUEST_EXPIRED, RequestState, RequestTime, RuntimeRequest,
 };
 pub use reverts::{NewRevert, RevertRow, RevertStep};
+pub use sharing::overlaps;
 pub use shim_driver::{FrameState, ShimFrame, ShimTransition};
 pub use shim_writes::ClaimedWrite;
 pub use shims::{NewShim, OutputCommit, OutputMeta, ShimRow, ShimState};
 pub use turn_checkpoints::{
     AppTurnId, Finalized, NewTurnCheckpoint, RowSide, RowState, TurnCheckpointRow, Which,
 };
+pub use worktree_ops::{NewWorktreeOp, WorktreeOp};
 
 /// The default event retention after the deck acknowledged the events.
 pub const EVENT_RETENTION_MS: i64 = 7 * 24 * 60 * 60 * 1000;

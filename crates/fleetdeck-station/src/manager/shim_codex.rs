@@ -83,7 +83,8 @@ impl DurableCore for CodexCore {
             EffectPayload::Start { prompt: None, .. }
             | EffectPayload::Resume { .. }
             | EffectPayload::Stop { .. }
-            | EffectPayload::Revert { .. } => Err(not_a_command()),
+            | EffectPayload::Revert { .. }
+            | EffectPayload::Worktree { .. } => Err(not_a_command()),
         }?;
         Ok(split(out))
     }

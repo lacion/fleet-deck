@@ -55,6 +55,7 @@ const VERDICTS: Record<WorktreeVerdict, { label: string; tone: string }> = {
   live: { label: 'Live', tone: 'info' },
   missing: { label: 'Missing', tone: 'muted' },
   unknown: { label: 'Unknown', tone: 'muted' },
+  trashed: { label: 'In the trash', tone: 'muted' },
 };
 
 const count = (n: number | null) => (n === null ? '?' : String(n));

@@ -135,6 +135,9 @@ impl StationNode {
         shells: Arc<Shells>,
         paste_dir: Option<std::path::PathBuf>,
     ) -> Result<Arc<Self>, NodeError> {
+        // The trash decisions and the file work read the open shells
+        // (DL-150).
+        manager.set_shells(Arc::clone(&shells));
         let store = manager.store().clone();
         let peers = StationPeers::load(store.clone()).await?;
         let invitations = Invitations::new();

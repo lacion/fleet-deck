@@ -103,6 +103,22 @@ pub fn router(board: Arc<Board>) -> Router {
             get(worktree_routes::list),
         )
         .route(
+            "/api/stations/{station}/worktrees/trash",
+            post(worktree_routes::trash),
+        )
+        .route(
+            "/api/stations/{station}/worktrees/restore",
+            post(worktree_routes::restore),
+        )
+        .route(
+            "/api/stations/{station}/worktrees/purge",
+            post(worktree_routes::purge),
+        )
+        .route(
+            "/api/stations/{station}/worktrees/release",
+            post(worktree_routes::release),
+        )
+        .route(
             "/api/stations/{station}/shells",
             get(shell_routes::list).post(shell_routes::command),
         )

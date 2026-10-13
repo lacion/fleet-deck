@@ -106,6 +106,10 @@ fn commands() -> Vec<SessionCommand> {
         json!({"op": "resolve_revert", "session_id": s, "revert_id": "rv-1", "resolution": "retry_restore"}),
         json!({"op": "coordinator_renew", "session_id": s, "grant_id": "g-1", "generation": 2}),
         json!({"op": "coordinator_revoke", "session_id": s, "grant_id": "g-1"}),
+        json!({"op": "worktree_trash", "session_id": s}),
+        json!({"op": "worktree_restore", "session_id": s}),
+        json!({"op": "worktree_purge", "session_id": s, "confirm_name": "app--fd-x--01j000000000"}),
+        json!({"op": "worktree_release", "session_id": s}),
     ];
     let commands: Vec<SessionCommand> = samples
         .into_iter()
@@ -130,7 +134,11 @@ fn commands() -> Vec<SessionCommand> {
             | SessionCommand::ResolveRevert { .. }
             | SessionCommand::SetAutoContinue { .. }
             | SessionCommand::CoordinatorRenew { .. }
-            | SessionCommand::CoordinatorRevoke { .. } => {}
+            | SessionCommand::CoordinatorRevoke { .. }
+            | SessionCommand::WorktreeTrash { .. }
+            | SessionCommand::WorktreeRestore { .. }
+            | SessionCommand::WorktreePurge { .. }
+            | SessionCommand::WorktreeRelease { .. } => {}
         }
     }
     commands
@@ -140,13 +148,15 @@ fn commands() -> Vec<SessionCommand> {
 fn every_session_command_is_a_mutating_deck_to_station_method_of_the_adr_table() {
     let table = method_table();
     let commands = commands();
-    assert_eq!(commands.len(), 16);
+    assert_eq!(commands.len(), 20);
     for c in &commands {
         let r = row(&table, c.method());
         assert!(r.mutating, "`{}` must be mutating", c.method());
         assert_eq!(r.direction, "deck → station", "{}", c.method());
         let scope = if c.method() == "approval.answer" {
             "approve"
+        } else if c.method().starts_with("session.worktree_") {
+            "admin"
         } else {
             "drive"
         };

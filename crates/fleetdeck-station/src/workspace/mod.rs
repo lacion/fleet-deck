@@ -13,6 +13,7 @@ pub mod restore;
 pub mod settle;
 pub mod setup;
 pub mod setup_cleanup;
+pub mod trash;
 pub mod worktrees;
 
 pub use checkpoint::{

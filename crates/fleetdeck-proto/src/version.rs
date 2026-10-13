@@ -54,6 +54,9 @@ pub mod feature {
     /// `files.write_temp`: store a pasted image in the station's paste
     /// directory (DL-147).
     pub const WRITE_TEMP: &str = "files.write_temp.v1";
+    /// `session.worktree_trash`, `_restore`, `_purge` and `_release`: the
+    /// worktree trash (DL-150).
+    pub const TRASH: &str = "workspace.trash.v1";
 
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
@@ -72,6 +75,7 @@ pub mod feature {
         WORKTREES,
         PREFLIGHT,
         WRITE_TEMP,
+        TRASH,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];

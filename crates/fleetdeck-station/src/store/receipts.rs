@@ -145,6 +145,12 @@ impl Decision<'_> {
         self.conn
     }
 
+    /// The id of the command that this decision decides.
+    #[must_use]
+    pub fn command_id(&self) -> &CommandId {
+        &self.command_id
+    }
+
     /// A new id from the station's id source.
     #[must_use]
     pub fn new_id<I: From<String>>(&self) -> I {

@@ -239,6 +239,36 @@ pub const API: &[ApiMethod] = &[
         Some(Scope::Admin),
         false,
     ),
+    // The worktree trash (DL-150): `admin`, and the handlers also require
+    // the owner's board login (DL-138).
+    m(
+        "worktree.trash",
+        Method::POST,
+        "/api/stations/{station}/worktrees/trash",
+        Some(Scope::Admin),
+        true,
+    ),
+    m(
+        "worktree.restore",
+        Method::POST,
+        "/api/stations/{station}/worktrees/restore",
+        Some(Scope::Admin),
+        true,
+    ),
+    m(
+        "worktree.purge",
+        Method::POST,
+        "/api/stations/{station}/worktrees/purge",
+        Some(Scope::Admin),
+        true,
+    ),
+    m(
+        "worktree.release",
+        Method::POST,
+        "/api/stations/{station}/worktrees/release",
+        Some(Scope::Admin),
+        true,
+    ),
     // The human shell (PLAN §6.8, DL-404): `admin`, and the handlers also
     // require the owner's board login (DL-138).
     m(

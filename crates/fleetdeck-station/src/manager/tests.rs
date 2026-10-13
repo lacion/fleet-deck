@@ -771,3 +771,6 @@ async fn a_station_local_start_with_a_coordinator_spec_is_rejected() {
     st.start(&ws, None).await;
     st.manager.shutdown(StopMode::Kill).await;
 }
+
+#[path = "trash_wired_tests.rs"]
+mod trash_wired;

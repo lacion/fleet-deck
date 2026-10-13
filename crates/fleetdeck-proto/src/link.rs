@@ -407,12 +407,10 @@ pub struct WorktreeInfo {
     pub exists: bool,
     /// `git worktree list --porcelain` names this path.
     pub registered: bool,
-    /// Changed and untracked entries (`git status --porcelain=v1 -z
-    /// --untracked-files=all`).
+    /// Changed, staged and untracked entries (DL-143).
     #[serde(default)]
     pub dirty: Option<u32>,
-    /// Ignored entries (`git status --porcelain=v1 -z --ignored=matching`,
-    /// the entries that start with `!!`).
+    /// Ignored entries (`git ls-files --others --ignored`).
     #[serde(default)]
     pub ignored: Option<u32>,
     /// Commits of the branch on no fetched remote ref (`git rev-list --count
@@ -432,6 +430,28 @@ pub struct WorktreeInfo {
     /// allowed roots`.
     #[serde(default)]
     pub note: Option<String>,
+    /// The trash operation of this worktree, while one is open or failed
+    /// (DL-150).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub trash: Option<WorktreeTrash>,
+}
+
+/// The state of the trash operation of a worktree (DL-150).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "link/")]
+pub struct WorktreeTrash {
+    /// `trashing`, `trashed`, `restoring`, `purging` or `failed`.
+    pub state: String,
+    /// With `failed`: `trash`, `restore` or `purge`.
+    #[serde(default)]
+    pub phase: Option<String>,
+    #[serde(default)]
+    pub message: Option<String>,
+    pub trash_path: String,
+    /// Unix ms.
+    #[ts(type = "number")]
+    pub trashed_at: i64,
 }
 
 /// The newest commit of a worktree.
@@ -453,6 +473,8 @@ pub enum WorktreeVerdict {
     HasWork,
     Clean,
     Unknown,
+    /// The folder is in the trash, or a move runs (DL-150).
+    Trashed,
 }
 
 /// The `workspace.worktrees` answer: newest session first.

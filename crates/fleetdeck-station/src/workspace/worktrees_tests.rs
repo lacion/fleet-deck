@@ -78,9 +78,15 @@ fn session(id: &str, path: &Path, state: SessionState) -> SessionSummary {
 }
 
 async fn one(policy: &Policy, s: SessionSummary) -> WorktreeInfo {
-    let mut out = list(vec![s], policy, &git_options(), Duration::from_secs(60))
-        .await
-        .worktrees;
+    let mut out = list(
+        vec![s],
+        &[],
+        policy,
+        &git_options(),
+        Duration::from_secs(60),
+    )
+    .await
+    .worktrees;
     assert_eq!(out.len(), 1);
     out.remove(0)
 }
@@ -292,6 +298,7 @@ async fn sessions_without_a_worktree_are_left_out_and_the_newest_comes_first() {
     none.updated_at = 30;
     let out = list(
         vec![old, none, new],
+        &[],
         &policy(f.root.path()),
         &git_options(),
         Duration::from_secs(60),
@@ -313,6 +320,7 @@ async fn a_passed_deadline_leaves_every_worktree_unchecked() {
             session("s1", &f.wt, SessionState::Exited),
             session("s2", &f.wt, SessionState::Exited),
         ],
+        &[],
         &policy(f.root.path()),
         &git_options(),
         Duration::ZERO,
