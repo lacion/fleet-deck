@@ -28,6 +28,7 @@ use serde_json::{Value, json};
 
 use crate::manager::SessionManager;
 use crate::shell::Shells;
+use crate::workspace::PrivatePaths;
 
 /// The wait between the answer of `station.restart` and the restart request.
 pub const RESTART_DELAY: Duration = Duration::from_millis(200);
@@ -49,6 +50,9 @@ pub struct StationSettings {
     /// How long an admission waits for the starts in flight.
     settle: Duration,
     restart: Option<Arc<dyn Restart>>,
+    /// Gets the inode of the config file and of every secret file after a
+    /// write (PRE-PR r2 finding 1).
+    private: Arc<PrivatePaths>,
 }
 
 impl std::fmt::Debug for StationSettings {
@@ -92,9 +96,16 @@ fn save_failed(e: &SaveError) -> Outcome {
 impl StationSettings {
     /// Creates the holder of the config file `path` with the secret store
     /// `store`, and collects the orphan secrets (design 1.1, U1). Call it
-    /// before the link starts.
+    /// before the link starts. After every save the config file and the
+    /// secret directory are registered in `private`.
     #[must_use]
-    pub fn new(path: &Path, store: &Path, env: Env, restart: Option<Arc<dyn Restart>>) -> Self {
+    pub fn new(
+        path: &Path,
+        store: &Path,
+        env: Env,
+        restart: Option<Arc<dyn Restart>>,
+        private: Arc<PrivatePaths>,
+    ) -> Self {
         let writer = SettingsWriter::<StationHolder>::new(path, Some(store), &env);
         let gone = writer.collect_orphans();
         if !gone.is_empty() {
@@ -109,6 +120,7 @@ impl StationSettings {
             restart_gate: tokio::sync::Mutex::new(()),
             settle: RESTART_SETTLE,
             restart,
+            private,
         }
     }
 
@@ -145,12 +157,16 @@ impl StationSettings {
             Arc::clone(&self.gate),
             Arc::clone(manager),
         );
+        let registry = self.registrar();
         let task = tokio::task::spawn_blocking(move || {
             let _gate = gate
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let (saved, _config, prepared) =
-                writer.save(&params.change, params.elevated, |c| manager.prepare(c))?;
+            let saved_to = writer.save(&params.change, params.elevated, |c| manager.prepare(c));
+            // The rename may have happened also when the save reports an
+            // error after it: register what is on disk in every case.
+            registry();
+            let (saved, _config, prepared) = saved_to?;
             // The rename is the commit point: publish also when the disk did
             // not confirm the write (design 1.3).
             manager.publish(prepared);
@@ -170,18 +186,35 @@ impl StationSettings {
             Arc::clone(&self.gate),
             Arc::clone(manager),
         );
+        let registry = self.registrar();
         let task = tokio::task::spawn_blocking(move || {
             let _gate = gate
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let (saved, _config, prepared) =
+            let saved_to =
                 writer.set_secret(&params.secret, &params.revision, params.elevated, |c| {
                     manager.prepare(c)
-                })?;
+                });
+            registry();
+            let (saved, _config, prepared) = saved_to?;
             manager.publish(prepared);
             Ok::<_, SaveError>(saved)
         });
         Self::answer(task.await)
+    }
+
+    /// The step that registers the config file and the secret files in the
+    /// inode registry: it runs under the save gate, after the write.
+    fn registrar(&self) -> impl FnOnce() + Send + 'static {
+        let (private, path, store) = (
+            Arc::clone(&self.private),
+            self.path.clone(),
+            self.store.clone(),
+        );
+        move || {
+            private.register(&path);
+            private.register_dir(&store);
+        }
     }
 
     fn answer(
@@ -242,6 +275,12 @@ impl StationSettings {
                 restarting: false,
                 would_stop,
             });
+        }
+        // The accepted starts that the freeze holds end here, with a reason,
+        // so the recovery after the restart finds nothing ambiguous.
+        if manager.fail_queued_starts().await.is_err() {
+            manager.end_restart();
+            return fixed("internal", "the queued starts cannot be ended");
         }
         manager.commit_restart();
         tokio::spawn(async move {

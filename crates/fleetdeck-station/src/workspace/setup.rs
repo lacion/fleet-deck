@@ -113,8 +113,46 @@ pub async fn run(
     cwd: &Path,
     env: &ChildEnv,
     timeout: Duration,
-    mut cancel: watch::Receiver<bool>,
+    cancel: watch::Receiver<bool>,
 ) -> Result<(), SetupError> {
+    let held = run_held(store, effect_id, session_id, cmd, cwd, env, timeout, cancel).await;
+    if held.end_row {
+        end_row(store, effect_id).await;
+    }
+    held.result
+}
+
+/// Deletes the `setup_runs` row of a run that [`run_held`] left.
+pub async fn end_row(store: &Store, effect_id: &str) {
+    if let Err(e) = store.setup_run_end(effect_id.to_owned()).await {
+        tracing::warn!(error = %e, effect = effect_id, "the setup run row was not deleted");
+    }
+}
+
+/// The end of [`run_held`].
+#[derive(Debug)]
+pub struct Held {
+    pub result: Result<(), SetupError>,
+    /// True: the caller deletes the row with [`end_row`]. False: a process of
+    /// the run is left, and the row stays for the cleanup at the next start.
+    pub end_row: bool,
+}
+
+/// [`run`] without the delete of the `setup_runs` row at the end: the row
+/// stays, and the restart admission lists it, until the caller calls
+/// [`end_row`] (PRE-PR r2 finding 2). The start task takes its restart claim
+/// between the end of the run and the delete.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_held(
+    store: &Store,
+    effect_id: &str,
+    session_id: &SessionId,
+    cmd: &str,
+    cwd: &Path,
+    env: &ChildEnv,
+    timeout: Duration,
+    mut cancel: watch::Receiver<bool>,
+) -> Held {
     let mut command = Command::new("/bin/sh");
     command
         .args(["-c", WRAPPER, "fleetdeck-setup", cmd])
@@ -126,16 +164,28 @@ pub async fn run(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut child = command
-        .spawn()
-        .map_err(|e| SetupError::new(format!("the setup command did not start: {e}")))?;
+    // Before the row exists: nothing to delete on these two returns.
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(e) => {
+            return Held {
+                result: Err(SetupError::new(format!(
+                    "the setup command did not start: {e}"
+                ))),
+                end_row: false,
+            };
+        }
+    };
     let Some(pgid) = child
         .id()
         .and_then(|p| i32::try_from(p).ok())
         .and_then(Pid::from_raw)
     else {
         let _ = child.kill().await;
-        return Err(SetupError::new("the setup command has no process id"));
+        return Held {
+            result: Err(SetupError::new("the setup command has no process id")),
+            end_row: false,
+        };
     };
     let tail = Arc::new(Tail::default());
     let readers: Vec<_> = [
@@ -169,15 +219,15 @@ pub async fn run(
         }
     }
     if !gone || left {
-        return Err(SetupError {
-            message: "a setup process did not stop".into(),
-            output_tail: tail.text(),
-        });
+        return Held {
+            result: Err(SetupError {
+                message: "a setup process did not stop".into(),
+                output_tail: tail.text(),
+            }),
+            end_row: false,
+        };
     }
-    if let Err(e) = store.setup_run_end(effect_id.to_owned()).await {
-        tracing::warn!(error = %e, effect = effect_id, "the setup run row was not deleted");
-    }
-    match outcome {
+    let result = match outcome {
         Outcome::Exited(status) if status.success() => Ok(()),
         Outcome::Exited(status) => Err(SetupError {
             message: match (status.code(), status.signal()) {
@@ -199,6 +249,10 @@ pub async fn run(
             message,
             output_tail: tail.text(),
         }),
+    };
+    Held {
+        result,
+        end_row: true,
     }
 }
 

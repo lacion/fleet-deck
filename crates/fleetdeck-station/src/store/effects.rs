@@ -213,6 +213,12 @@ pub(super) fn session_effects(conn: &Connection, session: &SessionId) -> Result<
     select(conn, "session_id = ?1", [session.as_str()])
 }
 
+/// The start and resume effects that are accepted and not claimed yet, the
+/// oldest first (the restart admission lists them, PRE-PR r2 finding 3).
+pub(super) fn queued_start_effects(conn: &Connection) -> Result<Vec<Effect>> {
+    select(conn, "state = 'queued' AND kind IN ('start', 'resume')", [])
+}
+
 /// The live process of a session, if any.
 pub(super) fn live_process(
     conn: &Connection,

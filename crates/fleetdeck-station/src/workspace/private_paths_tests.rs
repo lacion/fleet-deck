@@ -179,8 +179,9 @@ fn a_symlink_to_a_private_path_is_private_after_canonicalization() {
     assert!(p.is_private(&home.join("shortcut/secrets/jira_token")));
     assert!(p.is_private(&home.join("shortcut/not-yet")));
     // The lexical comparison does not follow it: callers pass canonical
-    // paths there.
-    assert!(!p.is_private_canonical(&home.join("shortcut/secrets/jira_token")));
+    // paths there. (A file that exists is private by its inode, whatever
+    // its name: use a path that has no file.)
+    assert!(!p.is_private_canonical(&home.join("shortcut/not-yet")));
 }
 
 #[test]
@@ -280,4 +281,69 @@ fn canonical_of_joins_the_missing_tail_to_the_nearest_existing_ancestor() {
         home.join("real/a/b.txt")
     );
     assert_eq!(canonical_of(&home.join("alias")), home.join("real"));
+}
+
+#[test]
+fn the_start_registers_the_account_and_secret_files_and_a_restart_loads_them() {
+    use std::os::unix::fs::MetadataExt;
+    let (_t, home) = home();
+    let dirs = layout(&home);
+    let station = dirs.station();
+    std::fs::create_dir_all(station.join("accounts")).unwrap();
+    std::fs::write(station.join("accounts/acct-jira-0a1b2c3d.json"), "{}").unwrap();
+    // A link and then the removal of the original: the link has one link.
+    let link = home.join("alias-account.txt");
+    let alias_secret = home.join("alias-secret.txt");
+    let first = PrivatePaths::new(&dirs, Some(&home), None, &PrivateEnv::default());
+    std::fs::hard_link(station.join("accounts/acct-jira-0a1b2c3d.json"), &link).unwrap();
+    std::fs::hard_link(station.join("secrets/jira_token"), &alias_secret).unwrap();
+    std::fs::remove_file(station.join("accounts/acct-jira-0a1b2c3d.json")).unwrap();
+    std::fs::remove_file(station.join("secrets/jira_token")).unwrap();
+    for path in [&link, &alias_secret] {
+        let meta = std::fs::metadata(path).unwrap();
+        assert_eq!(meta.nlink(), 1);
+        assert!(first.is_private_file(&meta), "{path:?}");
+        assert!(first.is_private(path), "{path:?}");
+        assert!(first.is_private_opened(&meta, "x"), "{path:?}");
+    }
+    // The registry file is in the station directory, mode 0600.
+    let file = station.join(super::REGISTRY_FILE);
+    assert_eq!(
+        std::fs::metadata(&file).unwrap().mode() & 0o777,
+        0o600,
+        "{file:?}"
+    );
+    // A restart: a new set loads the file.
+    let again = PrivatePaths::new(&dirs, Some(&home), None, &PrivateEnv::default());
+    for path in [&link, &alias_secret] {
+        assert!(again.is_private(path), "{path:?}");
+        assert!(again.is_private_opened(&std::fs::metadata(path).unwrap(), "x"));
+    }
+    // A normal file with one link is not refused.
+    assert!(!again.is_private_opened(&std::fs::metadata(home.join("notes.txt")).unwrap(), "x"));
+}
+
+#[test]
+fn register_adds_a_file_that_the_start_did_not_see() {
+    let (_t, home) = home();
+    let dirs = layout(&home);
+    let p = PrivatePaths::new(&dirs, Some(&home), None, &PrivateEnv::default());
+    let new = dirs.station().join("accounts/acct-linear-0a0a0a0a.json");
+    std::fs::create_dir_all(new.parent().unwrap()).unwrap();
+    std::fs::write(&new, "{}").unwrap();
+    let link = home.join("late-link.txt");
+    std::fs::hard_link(&new, &link).unwrap();
+    std::fs::remove_file(&new).unwrap();
+    assert!(!p.is_private_file(&std::fs::metadata(&link).unwrap()));
+    // The same file again, registered by its identity through the link
+    // (the call of the account store registers the temp file before the
+    // rename).
+    p.register(&link);
+    assert!(p.is_private_file(&std::fs::metadata(&link).unwrap()));
+    // The clones of a set share the registry.
+    let clone = p.clone();
+    let other = home.join("other-link.txt");
+    std::fs::write(&other, "x").unwrap();
+    clone.register(&other);
+    assert!(p.is_private_file(&std::fs::metadata(&other).unwrap()));
 }

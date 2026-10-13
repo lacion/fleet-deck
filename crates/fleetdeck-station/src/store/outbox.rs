@@ -189,6 +189,15 @@ impl Store {
         .await
     }
 
+    /// The start and resume effects that are queued: accepted, and not
+    /// claimed by the worker yet.
+    ///
+    /// # Errors
+    /// A database or JSON error.
+    pub async fn queued_start_effects(&self) -> Result<Vec<Effect>> {
+        call(&self.inner.db, |conn| effects::queued_start_effects(conn)).await
+    }
+
     /// One runtime request.
     ///
     /// # Errors

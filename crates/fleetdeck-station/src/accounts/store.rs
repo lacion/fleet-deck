@@ -16,6 +16,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use fleetdeck_core::Secret;
 use fleetdeck_core::paths::ensure_private_dir;
@@ -23,6 +24,8 @@ use fleetdeck_proto::accounts::{AccountKind, AccountMethod};
 use ring::rand::{SecureRandom, SystemRandom};
 use rustix::fs::OFlags;
 use serde::{Deserialize, Serialize};
+
+use crate::workspace::PrivatePaths;
 
 /// Why the store cannot read or write.
 #[derive(Debug, thiserror::Error)]
@@ -187,6 +190,9 @@ fn random_hex(bytes: usize) -> Result<String, StoreError> {
 #[derive(Debug, Clone)]
 pub struct AccountStore {
     dir: PathBuf,
+    /// The private paths of the station: every file that a write makes is
+    /// registered by its inode (PRE-PR r2 finding 1).
+    private: Option<Arc<PrivatePaths>>,
 }
 
 impl AccountStore {
@@ -203,7 +209,17 @@ impl AccountStore {
         }
         Ok(Self {
             dir: dir.to_owned(),
+            private: None,
         })
+    }
+
+    /// The store registers the inode of every file that it writes in
+    /// `private` (the temporary file, before the rename: its inode becomes
+    /// the final file).
+    #[must_use]
+    pub fn with_private(mut self, private: Arc<PrivatePaths>) -> Self {
+        self.private = Some(private);
+        self
     }
 
     #[must_use]
@@ -380,6 +396,9 @@ impl AccountStore {
                 .open(&tmp)?;
             file.write_all(bytes)?;
             file.sync_all()?;
+            if let Some(private) = &self.private {
+                private.register(&tmp);
+            }
             fs::rename(&tmp, self.dir.join(name))?;
             Ok(())
         })();

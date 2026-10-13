@@ -17,6 +17,9 @@ fn folder(path: &str) -> &str {
         .unwrap_or(path)
 }
 
+/// The reason of a queued start that a restart discards.
+pub const QUEUED_START_LOST: &str = "the station restarted before this session started";
+
 impl SessionManager {
     /// Lists what a restart would end now.
     ///
@@ -33,6 +36,16 @@ impl SessionManager {
                 kind: RestartKind::Session,
                 id: id.as_str().to_owned(),
                 title,
+            });
+        }
+        // An accepted start that the worker holds (the restart freeze) has
+        // no session yet: the restart would end it (finding 3).
+        for effect in self.store.queued_start_effects().await? {
+            let label = self.session_label(&effect.session_id).await?;
+            items.push(RestartItem {
+                kind: RestartKind::Session,
+                id: effect.session_id.as_str().to_owned(),
+                title: format!("Queued start of {label}"),
             });
         }
         for shell in shells.list() {
@@ -60,6 +73,24 @@ impl SessionManager {
             });
         }
         Ok(items)
+    }
+
+    /// Ends every queued start or resume that a restart now discards, as a
+    /// failed start with [`QUEUED_START_LOST`]. The effect rows stay queued:
+    /// the recovery at the next start retires them, and finds no session
+    /// that is ambiguous. Call it after the consent and before the restart
+    /// commits.
+    ///
+    /// # Errors
+    /// A database error.
+    pub(crate) async fn fail_queued_starts(&self) -> Result<usize> {
+        let queued = self.store.queued_start_effects().await?;
+        for effect in &queued {
+            self.target
+                .start_failed(&effect.session_id, QUEUED_START_LOST)
+                .await;
+        }
+        Ok(queued.len())
     }
 
     /// The title of a session, else its callsign, else its id.
