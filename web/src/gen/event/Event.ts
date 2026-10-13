@@ -8,6 +8,7 @@ import type { ProviderInstanceId } from "../ids/ProviderInstanceId";
 import type { RequestId } from "../ids/RequestId";
 import type { RunId } from "../ids/RunId";
 import type { TurnId } from "../ids/TurnId";
+import type { IssueRef } from "../integrations/IssueRef";
 import type { JsonValue } from "../serde_json/JsonValue";
 import type { BatchRef } from "../session/BatchRef";
 import type { RepoInfo } from "../session/RepoInfo";
@@ -85,7 +86,7 @@ checkpoint: TurnCheckpoint | null,
 /**
  * Set when both checkpoint sides are available.
  */
-diff_summary: DiffSummary | null, } | { "kind": "revert.updated", revert_id: string, turn_id: TurnId, turns: number, state: RevertState, reason: string | null, } | { "kind": "session.renamed", title: string | null, } | { "kind": "session.named", callsign: string, worktree: string | null, } | { "kind": "session.auto_continue_changed", enabled: boolean, } | { "kind": "session.auto_continue_skipped", reason: string, } | { "kind": "coordinator.bound", binding_id: string, grant_id: string, generation: number, provider_instance: string, native_id: string, } | { "kind": "coordinator.ended", binding_id: string, generation: number, reason: string, } | { "kind": "session.output_gap", from: number, to: number, reason: OutputGapReason, } | { "kind": "session.terminal", shell_id?: string, pid?: number, reason?: string, } | { "kind": "session.slash_commands", commands: Array<string>, } | { "kind": "session.notice", code: string, text: string, } | { "kind": "session.models", models: Array<ModelChoice>, } | { "kind": "session.base", git_ref?: string, oid: string, 
+diff_summary: DiffSummary | null, } | { "kind": "revert.updated", revert_id: string, turn_id: TurnId, turns: number, state: RevertState, reason: string | null, } | { "kind": "session.renamed", title: string | null, } | { "kind": "session.named", callsign: string, worktree: string | null, } | { "kind": "session.issue", issue: IssueRef, } | { "kind": "session.auto_continue_changed", enabled: boolean, } | { "kind": "session.auto_continue_skipped", reason: string, } | { "kind": "coordinator.bound", binding_id: string, grant_id: string, generation: number, provider_instance: string, native_id: string, } | { "kind": "coordinator.ended", binding_id: string, generation: number, reason: string, } | { "kind": "session.output_gap", from: number, to: number, reason: OutputGapReason, } | { "kind": "session.terminal", shell_id?: string, pid?: number, reason?: string, } | { "kind": "session.slash_commands", commands: Array<string>, } | { "kind": "session.notice", code: string, text: string, } | { "kind": "session.models", models: Array<ModelChoice>, } | { "kind": "session.base", git_ref?: string, oid: string, 
 /**
  * The station guessed the base (an import or a resume).
  */

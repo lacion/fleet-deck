@@ -265,6 +265,8 @@ async fn a_shim_session_keeps_its_turn_checkpoints_and_survives_a_station_restar
                 workspace: None,
                 setup_cmd: None,
                 batch: None,
+                issue: None,
+                origin_text: false,
             },
         )
         .await;
@@ -342,6 +344,8 @@ async fn start_session(rig: &mut Rig, station: &Station, prompt: &str) -> Sessio
                 workspace: None,
                 setup_cmd: None,
                 batch: None,
+                issue: None,
+                origin_text: false,
             },
         )
         .await;

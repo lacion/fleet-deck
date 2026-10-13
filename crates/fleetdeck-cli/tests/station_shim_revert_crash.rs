@@ -182,6 +182,8 @@ impl Rig {
             workspace: None,
             setup_cmd: None,
             batch: None,
+            issue: None,
+            origin_text: false,
         });
         let session = receipt.result.and_then(|r| r.session_id).unwrap();
         self.wait("the thread opens", &session, |s| {

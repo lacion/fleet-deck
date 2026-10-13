@@ -184,6 +184,8 @@ async fn an_open_revert_holds_the_worktree_against_other_sessions() {
             workspace: None,
             setup_cmd: None,
             batch: None,
+            issue: None,
+            origin_text: false,
         },
     )
     .await;

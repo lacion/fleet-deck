@@ -69,6 +69,10 @@ pub mod feature {
     /// station (R5, DL-168).
     pub const PRECHECK: &str = "workspace.precheck.v1";
 
+    /// `integrations.status`, `issues.*` and `prs.*`: GitHub, GitLab, Jira
+    /// and Linear through the station (R3, DL-164).
+    pub const INTEGRATIONS: &str = "integrations.v1";
+
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
         CONTROL,
@@ -90,6 +94,7 @@ pub mod feature {
         SESSION_DIFF,
         ARTIFACTS,
         PRECHECK,
+        INTEGRATIONS,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];

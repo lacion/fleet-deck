@@ -24,6 +24,11 @@ use crate::netscope::{self, AddrError};
 use crate::paths::{Env, PathError, expand_path};
 use crate::secret::Secret;
 
+#[path = "config_trackers.rs"]
+mod trackers_cfg;
+use trackers_cfg::{RawTracker, parse_trackers};
+pub use trackers_cfg::{TokenError, TokenSource, TrackerConfig};
+
 pub const DEFAULT_MAX_SESSIONS: u32 = 12;
 pub const DEFAULT_MAX_SHELLS: u32 = 8;
 /// The default shim output buffer in MiB (ADR-005 §4.1).
@@ -256,6 +261,9 @@ pub struct StationConfig {
     /// stops a session gracefully so that the board can resume it (R6.6,
     /// DL-169). 0 (the default) turns hibernation off.
     pub hibernate_after_min: u32,
+    /// The `[[trackers]]` entries: Jira and Linear (R3, DL-164). GitHub and
+    /// GitLab need no entry, only their CLIs.
+    pub trackers: Vec<TrackerConfig>,
 }
 
 #[derive(Deserialize)]
@@ -274,6 +282,7 @@ struct RawStation {
     shim_buffer_mib: Option<u32>,
     repo_groups: Option<BTreeMap<String, String>>,
     hibernate_after_min: Option<u32>,
+    trackers: Option<Vec<RawTracker>>,
 }
 
 #[derive(Deserialize)]
@@ -370,6 +379,7 @@ impl StationConfig {
                 expand_path(&path, home).map_err(|source| ConfigError::Path { field, source })?;
             repo_groups.insert(path, group);
         }
+        let trackers = parse_trackers(raw.trackers.unwrap_or_default(), home)?;
         Ok(Self {
             name,
             allowed_roots,
@@ -384,6 +394,7 @@ impl StationConfig {
             shim_buffer_mib,
             repo_groups,
             hibernate_after_min,
+            trackers,
         })
     }
 

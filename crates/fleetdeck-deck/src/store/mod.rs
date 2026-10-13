@@ -31,6 +31,7 @@ pub mod fleet;
 pub mod grants;
 pub mod outbox;
 pub mod plans;
+pub mod projects;
 pub mod read_cursors;
 pub mod read_model;
 pub mod schedules;

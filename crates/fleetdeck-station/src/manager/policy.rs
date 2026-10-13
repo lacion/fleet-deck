@@ -46,6 +46,9 @@ pub struct Policy {
     /// authenticates against them, and the owner's renew and revoke
     /// commands change them (DL-212). Shared, not configuration.
     coordinator: crate::coordinator::Bindings,
+    /// GitHub, GitLab, Jira and Linear (R3, DL-164). Shared, not
+    /// configuration: it holds a response cache and the recent writes.
+    integrations: std::sync::Arc<crate::integrations::Integrations>,
 }
 
 impl Policy {
@@ -77,6 +80,9 @@ impl Policy {
             repo_groups: BTreeMap::new(),
             hibernate_after_min: config.hibernate_after_min,
             coordinator: crate::coordinator::Bindings::default(),
+            integrations: std::sync::Arc::new(crate::integrations::Integrations::new(
+                config.trackers.clone(),
+            )),
         }
         .with_repo_groups(&config.repo_groups)
     }
@@ -146,7 +152,21 @@ impl Policy {
             repo_groups: BTreeMap::new(),
             hibernate_after_min: 0,
             coordinator: crate::coordinator::Bindings::default(),
+            integrations: std::sync::Arc::default(),
         }
+    }
+
+    /// The integration service of this station (R3, DL-164).
+    #[must_use]
+    pub fn integrations(&self) -> &std::sync::Arc<crate::integrations::Integrations> {
+        &self.integrations
+    }
+
+    /// The same policy with another integration service (tests).
+    #[must_use]
+    pub fn with_integrations(mut self, service: crate::integrations::Integrations) -> Self {
+        self.integrations = std::sync::Arc::new(service);
+        self
     }
 
     /// The same policy with setup commands on or off (DL-148).

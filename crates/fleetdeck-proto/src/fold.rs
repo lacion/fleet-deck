@@ -185,6 +185,7 @@ impl SessionSummary {
                 self.callsign = Some(callsign.clone());
                 self.worktree.clone_from(worktree);
             }
+            Event::SessionIssue { issue } => self.issue = Some(issue.clone()),
             Event::AutoContinueChanged { enabled } => self.auto_continue = *enabled,
             Event::SessionTerminal {
                 shell_id: Some(shell_id),

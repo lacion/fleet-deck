@@ -1,5 +1,7 @@
 use std::path::Path;
 
+use fleetdeck_proto::integrations::TrackerKind;
+
 use super::*;
 
 fn env() -> Env {
@@ -361,4 +363,97 @@ fn hibernate_after_min_is_off_by_default_and_bounded() {
     let c = StationConfig::parse("hibernate_after_min = 10080", &env()).unwrap();
     assert_eq!(c.hibernate_after_min, MAX_HIBERNATE_AFTER_MIN);
     assert!(err("hibernate_after_min = 10081").contains("hibernate_after_min"));
+}
+
+const TRACKERS: &str = r#"
+[[trackers]]
+id = "acme"
+kind = "jira"
+site = "https://acme.atlassian.net/"
+email = "ana@acme.test"
+token_env = "JIRA_API_TOKEN"
+
+[[trackers]]
+id = "lin"
+kind = "linear"
+token_file = "~/.config/fleetdeck/linear.token"
+"#;
+
+#[test]
+fn trackers_parse_with_a_site_an_email_and_a_token_source() {
+    let c = StationConfig::parse(TRACKERS, &env()).unwrap();
+    assert_eq!(c.trackers.len(), 2);
+    let jira = &c.trackers[0];
+    assert_eq!(jira.kind, TrackerKind::Jira);
+    assert_eq!(jira.site.as_deref(), Some("https://acme.atlassian.net"));
+    assert_eq!(jira.email.as_deref(), Some("ana@acme.test"));
+    assert_eq!(jira.token, TokenSource::Env("JIRA_API_TOKEN".into()));
+    let linear = &c.trackers[1];
+    assert_eq!(linear.site, None);
+    assert_eq!(
+        linear.token,
+        TokenSource::File(PathBuf::from("/home/ana/.config/fleetdeck/linear.token"))
+    );
+    assert!(
+        StationConfig::parse("", &env())
+            .unwrap()
+            .trackers
+            .is_empty()
+    );
+}
+
+#[test]
+fn a_bad_tracker_entry_is_refused() {
+    let jira = |extra: &str| {
+        format!(
+            "[[trackers]]\nid = \"a\"\nkind = \"jira\"\nsite = \"https://x.test\"\nemail = \"a@x.test\"\n{extra}"
+        )
+    };
+    assert!(StationConfig::parse(&jira("token_env = \"T\""), &env()).is_ok());
+    for bad in [
+        jira(""),
+        jira("token_env = \"T\"\ntoken_file = \"/t\""),
+        jira("token_env = \"has space\""),
+        jira("token_file = \"relative\""),
+        "[[trackers]]\nid = \"a\"\nkind = \"jira\"\nemail = \"a@x\"\ntoken_env = \"T\"".to_owned(),
+        "[[trackers]]\nid = \"a\"\nkind = \"jira\"\nsite = \"http://x.test\"\nemail = \"a@x\"\ntoken_env = \"T\"".to_owned(),
+        "[[trackers]]\nid = \"a\"\nkind = \"jira\"\nsite = \"https://x.test/path\"\nemail = \"a@x\"\ntoken_env = \"T\"".to_owned(),
+        "[[trackers]]\nid = \"a\"\nkind = \"linear\"\nsite = \"https://x.test\"\ntoken_env = \"T\"".to_owned(),
+        "[[trackers]]\nid = \"A!\"\nkind = \"linear\"\ntoken_env = \"T\"".to_owned(),
+        "[[trackers]]\nid = \"a\"\nkind = \"svn\"\ntoken_env = \"T\"".to_owned(),
+        format!("{}{}", jira("token_env = \"T\"\n"), jira("token_env = \"T\"")),
+    ] {
+        assert!(StationConfig::parse(&bad, &env()).is_err(), "{bad}");
+    }
+}
+
+#[test]
+fn a_token_file_must_be_private_and_clean() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("t");
+    std::fs::write(&path, "  secret-token\n").unwrap();
+    let tracker = TrackerConfig {
+        id: "a".into(),
+        kind: TrackerKind::Linear,
+        site: None,
+        email: None,
+        token: TokenSource::File(path.clone()),
+    };
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(matches!(tracker.read_token(), Err(TokenError::Mode { .. })));
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(tracker.read_token().unwrap().expose(), "secret-token");
+    std::fs::write(&path, "bad\ntoken").unwrap();
+    assert!(matches!(tracker.read_token(), Err(TokenError::Bad)));
+    std::fs::write(&path, "  \n").unwrap();
+    assert!(matches!(tracker.read_token(), Err(TokenError::Bad)));
+    let missing = TrackerConfig {
+        token: TokenSource::Env("FLEETDECK_TEST_NO_SUCH_VARIABLE".into()),
+        ..tracker
+    };
+    assert!(matches!(
+        missing.read_token(),
+        Err(TokenError::EnvMissing(_))
+    ));
 }

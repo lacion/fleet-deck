@@ -243,6 +243,8 @@ async fn live_round(kind: ProviderKind) {
             workspace: None,
             setup_cmd: None,
             batch: None,
+            issue: None,
+            origin_text: false,
         },
     )
     .await;

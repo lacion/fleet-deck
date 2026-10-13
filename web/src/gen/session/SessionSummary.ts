@@ -9,6 +9,7 @@ import type { ProviderInstanceId } from "../ids/ProviderInstanceId";
 import type { RunId } from "../ids/RunId";
 import type { SessionId } from "../ids/SessionId";
 import type { TurnId } from "../ids/TurnId";
+import type { IssueRef } from "../integrations/IssueRef";
 import type { Activity } from "./Activity";
 import type { BatchRef } from "./BatchRef";
 import type { OpenRequest } from "./OpenRequest";
@@ -117,6 +118,11 @@ batch?: BatchRef,
  * It stays set until the session starts again.
  */
 hibernated: boolean, 
+/**
+ * The issue that the session works on, from `session.issue` (R3,
+ * DL-164). Absent when the session was not started from an issue.
+ */
+issue?: IssueRef, 
 /**
  * The highest `session_seq` folded into this summary.
  */

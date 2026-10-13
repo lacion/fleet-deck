@@ -201,6 +201,8 @@ impl Rig {
                 workspace: None,
                 setup_cmd: None,
                 batch: None,
+                issue: None,
+                origin_text: false,
             })
             .await;
         d.receipt.result.unwrap().session_id.unwrap()

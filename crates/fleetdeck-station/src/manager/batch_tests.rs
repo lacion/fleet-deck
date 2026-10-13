@@ -21,6 +21,8 @@ fn start_in(cwd: &str, batch: Option<BatchRef>) -> SessionCommand {
         workspace: None,
         setup_cmd: None,
         batch: batch.map(Box::new),
+        issue: None,
+        origin_text: false,
     }
 }
 

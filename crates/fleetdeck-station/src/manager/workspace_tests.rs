@@ -42,6 +42,8 @@ fn start_cmd(cwd: &str, workspace: Option<WorkspaceRequest>) -> SessionCommand {
         workspace: workspace.map(Box::new),
         setup_cmd: None,
         batch: None,
+        issue: None,
+        origin_text: false,
     }
 }
 

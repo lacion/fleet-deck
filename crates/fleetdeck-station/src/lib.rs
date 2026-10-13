@@ -17,6 +17,9 @@ pub mod coordinator;
 
 pub mod fault;
 
+/// GitHub, GitLab, Jira and Linear (R3, DL-164).
+pub mod integrations;
+
 /// The station side of a deck link (M2 P3-5).
 pub mod link;
 

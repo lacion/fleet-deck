@@ -184,6 +184,14 @@ async fn precheck(ctx: &StationLink, params: serde_json::Value) -> Outcome {
     }
 }
 
+/// The `integrations.v1` methods (R3, DL-164): issues, pull requests and
+/// their writes. The service owns the error codes.
+async fn integration(ctx: &StationLink, method: &str, params: serde_json::Value) -> Outcome {
+    let policy = ctx.manager.policy();
+    let resolve = |path: &str| policy.workspace(path).ok();
+    policy.integrations().call(method, params, &resolve).await
+}
+
 /// The `files.v1` methods (M3 DL-088). A [`FileError`] keeps its code.
 ///
 /// [`FileError`]: crate::workspace::files::FileError
@@ -317,6 +325,7 @@ async fn read(ctx: &StationLink, req: InboundRequest) -> Outcome {
         "workspace.preflight" => preflight(ctx, req.params).await,
         "workspace.precheck" => precheck(ctx, req.params).await,
         "files.write_temp" => write_temp(ctx, req.params).await,
+        m if crate::integrations::Integrations::serves(m) => integration(ctx, m, req.params).await,
         "files.list" | "files.read" | "files.search" | "files.diff" | "files.session_diff" => {
             file_method(ctx, &req.method, req.params).await
         }

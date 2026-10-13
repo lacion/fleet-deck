@@ -71,6 +71,8 @@ fn start_with_setup(cwd: &str, cmd: &str) -> SessionCommand {
         workspace: None,
         setup_cmd: Some(cmd.to_owned()),
         batch: None,
+        issue: None,
+        origin_text: false,
     }
 }
 

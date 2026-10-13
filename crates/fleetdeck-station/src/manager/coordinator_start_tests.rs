@@ -111,6 +111,8 @@ async fn a_deck_start_with_a_grant_hands_the_credential_to_the_child_environment
             workspace: None,
             setup_cmd: None,
             batch: None,
+            issue: None,
+            origin_text: false,
         },
     };
     let command = envelope.command.clone();

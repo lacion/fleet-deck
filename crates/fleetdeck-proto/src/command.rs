@@ -14,6 +14,7 @@ use crate::ids::{
     CommandId, IncarnationId, InputId, ProviderInstanceId, RequestId, SessionId, TurnId,
 };
 pub use crate::input::{ImageInput, UserInput};
+use crate::integrations::IssueRef;
 use crate::session::BatchRef;
 
 /// The deck retries a command for at most this long after it accepted it (G3).
@@ -139,6 +140,17 @@ pub enum SessionCommand {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         batch: Option<Box<BatchRef>>,
+        /// The issue that the session works on (R3, DL-164). The station
+        /// emits `session.issue` after the start.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        issue: Option<Box<IssueRef>>,
+        /// The first prompt holds third-party text (an issue, a pull
+        /// request): the station runs the session in the most restrictive
+        /// mode of its provider and refuses any other mode (R3.1).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        #[ts(optional, as = "Option<bool>")]
+        origin_text: bool,
     },
     Resume {
         session_id: SessionId,

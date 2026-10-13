@@ -145,6 +145,8 @@ impl Station {
                 workspace: None,
                 setup_cmd: None,
                 batch: None,
+                issue: None,
+                origin_text: false,
             })
             .await;
         d.receipt.result.unwrap().session_id.unwrap()
@@ -414,6 +416,8 @@ async fn the_station_policy_decides_in_the_command_transaction() {
                 workspace: None,
                 setup_cmd: None,
                 batch: None,
+                issue: None,
+                origin_text: false,
             })
             .await,
             code
@@ -429,6 +433,8 @@ async fn the_station_policy_decides_in_the_command_transaction() {
             workspace: None,
             setup_cmd: None,
             batch: None,
+            issue: None,
+            origin_text: false,
         })
         .await,
         RejectCode::Forbidden
@@ -442,6 +448,8 @@ async fn the_station_policy_decides_in_the_command_transaction() {
             workspace: None,
             setup_cmd: None,
             batch: None,
+            issue: None,
+            origin_text: false,
         })
         .await,
         RejectCode::Forbidden,
@@ -723,6 +731,8 @@ mod rename;
 
 #[path = "batch_tests.rs"]
 mod batch;
+#[path = "origin_text_tests.rs"]
+mod origin_text_tests;
 
 #[path = "setup_tests.rs"]
 mod setup;
@@ -774,6 +784,8 @@ async fn a_station_local_start_with_a_coordinator_spec_is_rejected() {
             workspace: None,
             setup_cmd: None,
             batch: None,
+            issue: None,
+            origin_text: false,
         })
         .await,
         RejectCode::InvalidCommand

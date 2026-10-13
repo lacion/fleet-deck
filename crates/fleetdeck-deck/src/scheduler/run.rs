@@ -412,6 +412,8 @@ impl LinkBackend {
             })),
             setup_cmd: None,
             batch: None,
+            issue: None,
+            origin_text: false,
         })
     }
 }
