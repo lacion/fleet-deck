@@ -217,6 +217,11 @@
   gap: var(--sp-3);
   min-width: 0;
 }
+.fd-spawn-branch-field {
+  display: grid;
+  gap: var(--sp-1);
+  min-width: 0;
+}
 .fd-spawn-url {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

@@ -19,29 +19,45 @@ export function BranchFields({ branch, base, onBranch, onBase }: Props) {
   return (
     <div className="fd-spawn-branch">
       <div className="fd-spawn-branch-row">
-        <label>
-          Branch
-          <input
-            value={branch}
-            placeholder="fd/<callsign>, new"
-            spellCheck={false}
-            autoCapitalize="off"
-            onChange={(event) => onBranch(event.target.value)}
-          />
-          {branchError === null ? null : <span role="alert">{sentence(branchError)}</span>}
-        </label>
-        {name === '' ? null : (
+        <div className="fd-spawn-branch-field">
           <label>
-            Base
+            Branch
             <input
-              value={base}
-              placeholder="HEAD"
+              value={branch}
+              placeholder="fd/<callsign>, new"
               spellCheck={false}
               autoCapitalize="off"
-              onChange={(event) => onBase(event.target.value)}
+              aria-invalid={branchError === null ? undefined : true}
+              aria-describedby={branchError === null ? undefined : 'fd-spawn-branch-error'}
+              onChange={(event) => onBranch(event.target.value)}
             />
-            {baseError === null ? null : <span role="alert">{sentence(baseError)}</span>}
           </label>
+          {branchError === null ? null : (
+            <span id="fd-spawn-branch-error" role="alert">
+              {sentence(branchError)}
+            </span>
+          )}
+        </div>
+        {name === '' ? null : (
+          <div className="fd-spawn-branch-field">
+            <label>
+              Base
+              <input
+                value={base}
+                placeholder="HEAD"
+                spellCheck={false}
+                autoCapitalize="off"
+                aria-invalid={baseError === null ? undefined : true}
+                aria-describedby={baseError === null ? undefined : 'fd-spawn-base-error'}
+                onChange={(event) => onBase(event.target.value)}
+              />
+            </label>
+            {baseError === null ? null : (
+              <span id="fd-spawn-base-error" role="alert">
+                {sentence(baseError)}
+              </span>
+            )}
+          </div>
         )}
       </div>
       <p className="fd-note">

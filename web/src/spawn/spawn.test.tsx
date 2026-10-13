@@ -465,8 +465,13 @@ describe('spawn form (P4-4)', () => {
     expect(named).toContain('Base');
     expect(named).toContain('placeholder="HEAD"');
     expect(named).not.toContain('role="alert"');
-    expect(render('a..b')).toContain('<span role="alert">The branch name is not valid.</span>');
-    expect(render('feat', '-x')).toContain('<span role="alert">The base is not valid.</span>');
+    expect(render('a..b')).toContain(
+      '<span id="fd-spawn-branch-error" role="alert">The branch name is not valid.</span>',
+    );
+    expect(render('a..b')).toContain('aria-describedby="fd-spawn-branch-error"');
+    expect(render('feat', '-x')).toContain(
+      '<span id="fd-spawn-base-error" role="alert">The base is not valid.</span>',
+    );
   });
 
   test('the clone access check: idle, checking, ok, failed and error states (DL-144)', () => {
