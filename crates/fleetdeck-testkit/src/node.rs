@@ -137,7 +137,11 @@ impl TempNode {
 
     /// Loads `station.toml` the same way the station does.
     pub fn station_config(&self) -> Result<StationConfig, ConfigError> {
-        StationConfig::load(&self.dirs.station_config(), &self.env)
+        StationConfig::load_with_store(
+            &self.dirs.station_config(),
+            &self.env,
+            &self.dirs.station().join("secrets"),
+        )
     }
 }
 

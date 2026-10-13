@@ -50,6 +50,9 @@ use crate::orchestration::{
 };
 use crate::plans::{DeckPlan, PlanMarkRequest, PlanStatus};
 use crate::session::{CardStatus, SessionSummary};
+use crate::settings::{
+    Apply, Durability, FieldKind, FieldMeta, SecretSet, SettingsChange, SettingsSaved, SettingsView,
+};
 use crate::share::{
     ChatMessage, ChatPost, DriveGrant, DriverState, JoinRequest, NewShare, NewSpace, ShareCreated,
     ShareInfo, ShareKind, ShareRole, SharedScope, SpaceSession, SpaceView, Steering,
@@ -239,6 +242,14 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         ChatPost::export_all(&cfg),
         DriveGrant::export_all(&cfg),
         DriverState::export_all(&cfg),
+        FieldKind::export_all(&cfg),
+        Apply::export_all(&cfg),
+        FieldMeta::export_all(&cfg),
+        Durability::export_all(&cfg),
+        SettingsView::export_all(&cfg),
+        SettingsChange::export_all(&cfg),
+        SettingsSaved::export_all(&cfg),
+        SecretSet::export_all(&cfg),
         AssistKind::export_all(&cfg),
         AssistRequest::export_all(&cfg),
         AssistAnswer::export_all(&cfg),

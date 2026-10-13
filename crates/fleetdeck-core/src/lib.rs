@@ -15,6 +15,7 @@ pub mod logging;
 pub mod netscope;
 pub mod paths;
 pub mod secret;
+pub mod settings;
 
 pub use childenv::ChildEnv;
 pub use clock::{Clock, ManualClock, SharedClock, SystemClock};

@@ -21,7 +21,7 @@ use crate::cli::{ApproveArgs, RunArgs};
 /// `fleetdeck station serve`: runs until SIGINT or SIGTERM.
 pub async fn serve(dirs: &NodeDirs, env: &Env) -> anyhow::Result<()> {
     let path = dirs.station_config();
-    let config = StationConfig::load(&path, env)?;
+    let config = StationConfig::load_with_store(&path, env, &dirs.station().join("secrets"))?;
     fleetdeck_station::serve::serve(dirs, &config, shutdown_signal()).await?;
     Ok(())
 }

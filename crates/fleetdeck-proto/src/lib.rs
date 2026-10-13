@@ -25,6 +25,7 @@ pub mod mutation;
 pub mod orchestration;
 pub mod plans;
 pub mod session;
+pub mod settings;
 pub mod share;
 pub mod shell;
 pub mod status;

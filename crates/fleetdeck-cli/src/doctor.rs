@@ -154,11 +154,12 @@ fn check_file<T>(
 /// An absent `station.toml` gives the defaults, which the station uses too.
 fn load_station(report: &mut Report, dirs: &NodeDirs, env: &Env) -> Loaded<StationConfig> {
     let path = dirs.station_config();
+    let store = dirs.station().join("secrets");
     let loaded = check_file(report, "station.toml", &path, || {
-        StationConfig::load(&path, env)
+        StationConfig::load_with_store(&path, env, &store)
     });
     match loaded {
-        Loaded::Absent => match StationConfig::load(&path, env) {
+        Loaded::Absent => match StationConfig::load_with_store(&path, env, &store) {
             Ok(config) => Loaded::Config(config),
             Err(e) => {
                 report.fail("station.toml", e);
