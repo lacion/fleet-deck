@@ -1,11 +1,12 @@
 // DL-140: the header of a session: title, status, provider, model, where it
 // runs, and the actions (interrupt, resume, terminal) with one overflow menu (DL-141).
-import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { formatHash } from '../app/routes';
 import { relativeAge } from '../app/sessions';
 import { stationName } from '../board/fleet';
 import type { DeckSession, ModelChoice, StationView } from '../gen';
 import { digestLines, GeneratedMark } from '../ui/generated';
+import { Menu } from '../ui/Menu';
 import {
   Archive,
   ArchiveRestore,
@@ -171,41 +172,6 @@ function Details({ session, now }: { readonly session: DeckSession; readonly now
         <dd>{s.session_seq}</dd>
       </div>
     </dl>
-  );
-}
-
-/** A `<details>` menu. Escape closes it and returns the focus to its summary. */
-function Menu(props: {
-  readonly summary: ReactNode;
-  readonly label?: string;
-  readonly summaryClass?: string;
-  readonly onClosed?: () => void;
-  readonly children: (close: () => void) => ReactNode;
-}) {
-  const ref = useRef<HTMLDetailsElement>(null);
-  const close = () => {
-    if (ref.current) ref.current.open = false;
-  };
-  const onKeyDown = (event: KeyboardEvent<HTMLDetailsElement>) => {
-    if (event.key !== 'Escape' || !ref.current?.open) return;
-    event.stopPropagation();
-    close();
-    ref.current.querySelector('summary')?.focus();
-  };
-  return (
-    <details
-      className="fd-menu"
-      ref={ref}
-      onKeyDown={onKeyDown}
-      onToggle={(event) => {
-        if (!event.currentTarget.open) props.onClosed?.();
-      }}
-    >
-      <summary className={props.summaryClass} aria-label={props.label}>
-        {props.summary}
-      </summary>
-      <div className="fd-menu-body">{props.children(close)}</div>
-    </details>
   );
 }
 

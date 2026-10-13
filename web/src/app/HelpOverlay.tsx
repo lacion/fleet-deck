@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { useDismiss } from '../ui/dismiss';
 import { trapTab, useFocusReturn } from './focus';
 import { useOverlay } from './overlay';
 
@@ -102,6 +103,7 @@ export function HelpOverlay({ onClose }: { readonly onClose: () => void }) {
   const close = useRef<HTMLButtonElement>(null);
   useFocusReturn(root, close);
   useOverlay();
+  useDismiss(root, true, onClose);
   // The Close button has the focus; the long dialog still opens at its top.
   useEffect(() => root.current?.scrollTo({ top: 0 }), []);
   return (

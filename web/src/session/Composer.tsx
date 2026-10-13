@@ -8,6 +8,7 @@ import {
   useState,
 } from 'react';
 import type { ImageInput } from '../gen';
+import { useDismiss } from '../ui/dismiss';
 import { ArrowUp, Icon, Paperclip } from '../ui/icons';
 import type { InputKind } from './commands';
 import { IMAGE_TYPES, imageFiles, imagesProblem, readImage, toDataUrl } from './images';
@@ -64,8 +65,22 @@ function coarsePointer(): boolean {
 /** The wait after the last key before the `@` search starts. */
 const AT_DELAY_MS = 200;
 
-/** One row of a menu: `text` is the label, `badge` an optional tag. */
-export type MenuRow = { readonly key: string; readonly text: string; readonly badge?: string };
+/**
+ * One row of a menu: `text` is the label, `badge` an optional tag. A `status` row is a note
+ * (not a choice): it is disabled, and the keys skip it.
+ */
+export type MenuRow = {
+  readonly key: string;
+  readonly text: string;
+  readonly badge?: string;
+  readonly status?: true;
+};
+
+/** The error message that the `@` status row shows, or the fallback text. */
+export function searchFailure(error: unknown): string {
+  const text = error instanceof Error ? error.message : '';
+  return text !== '' && text.length <= 120 ? text : 'the station did not answer';
+}
 
 /** The menu above the text box: the commands (`/`) or the file paths (`@`). */
 export function ComposerMenu(props: {
@@ -77,25 +92,39 @@ export function ComposerMenu(props: {
 }) {
   return (
     <div className="fd-composer-menu" role="listbox" aria-label={props.label} id={props.id}>
-      {props.rows.map((row, n) => (
-        <div
-          key={row.key}
-          id={`${props.id}-${n}`}
-          role="option"
-          tabIndex={-1}
-          aria-selected={n === props.current}
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={() => props.onChoose(n)}
-          onKeyDown={() => {}}
-        >
-          {row.text}
-          {row.badge ? (
-            <span className="fd-badge" data-tone="muted" style={{ marginLeft: 'auto' }}>
-              {row.badge}
-            </span>
-          ) : null}
-        </div>
-      ))}
+      {props.rows.map((row, n) =>
+        row.status ? (
+          <div
+            key={row.key}
+            id={`${props.id}-${n}`}
+            role="option"
+            tabIndex={-1}
+            aria-disabled="true"
+            aria-selected="false"
+            className="fd-composer-status"
+          >
+            {row.text}
+          </div>
+        ) : (
+          <div
+            key={row.key}
+            id={`${props.id}-${n}`}
+            role="option"
+            tabIndex={-1}
+            aria-selected={n === props.current}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => props.onChoose(n)}
+            onKeyDown={() => {}}
+          >
+            {row.text}
+            {row.badge ? (
+              <span className="fd-badge" data-tone="muted" style={{ marginLeft: 'auto' }}>
+                {row.badge}
+              </span>
+            ) : null}
+          </div>
+        ),
+      )}
     </div>
   );
 }
@@ -110,10 +139,12 @@ export function Composer(props: Props) {
   const [active, setActive] = useState(0);
   const [menuClosed, setMenuClosed] = useState(false);
   const [cursor, setCursor] = useState(0);
-  const [found, setFound] = useState<{ query: string; paths: readonly string[] }>({
-    query: '',
-    paths: [],
-  });
+  const [found, setFound] = useState<{
+    query: string;
+    paths: readonly string[];
+    failure: string | null;
+  }>({ query: '', paths: [], failure: null });
+  const root = useRef<HTMLFormElement>(null);
   const box = useRef<HTMLTextAreaElement>(null);
   const listId = useId();
   const caretTo = useRef<number | null>(null);
@@ -135,18 +166,35 @@ export function Composer(props: Props) {
   const canSearch = props.searchFiles != null;
   const at = canSearch && slash === null ? matchAt(text, cursor) : null;
   const atQuery = at !== null && at.query.length >= MIN_AT_QUERY ? at.query : null;
-  const atPaths = atQuery !== null && found.query === atQuery ? found.paths : [];
-  const rows: MenuRow[] =
+  const choices: MenuRow[] =
     slash !== null
       ? slash.options.map((o) => ({
           key: o.name,
           text: `/${o.name}`,
           ...(o.skill ? { badge: 'skill' } : {}),
         }))
-      : atPaths.map((path) => ({ key: path, text: path }));
+      : atQuery !== null
+        ? found.paths.map((path) => ({ key: path, text: path }))
+        : [];
+  // `@` status: how many letters are missing, the search runs, it found nothing, or it failed.
+  const status: string | null =
+    slash !== null || at === null
+      ? null
+      : atQuery === null
+        ? 'Type 2 or more letters to search files'
+        : found.query !== atQuery
+          ? 'Searching…'
+          : found.failure !== null
+            ? `File search failed: ${found.failure}`
+            : found.paths.length === 0
+              ? 'No matching files'
+              : null;
+  const rows: MenuRow[] =
+    status === null ? choices : [...choices, { key: '\u0000status', text: status, status: true }];
   const menuOpen = props.enabled && !menuClosed && rows.length > 0;
-  const current = Math.min(active, Math.max(rows.length - 1, 0));
+  const current = Math.min(active, Math.max(choices.length - 1, 0));
   const optionId = (n: number) => `${listId}-${n}`;
+  useDismiss(root, menuOpen, () => setMenuClosed(true));
 
   // `@` search: 200 ms after the last key; an answer of an older call is ignored.
   useEffect(() => {
@@ -159,11 +207,12 @@ export function Composer(props: Props) {
       call(atQuery, MAX_AT_OPTIONS).then(
         (paths) => {
           if (calls.current === run)
-            setFound({ query: atQuery, paths: paths.slice(0, MAX_AT_OPTIONS) });
+            setFound({ query: atQuery, paths: paths.slice(0, MAX_AT_OPTIONS), failure: null });
         },
-        () => {
-          // A failed or refused search closes the menu, with no notice.
-          if (calls.current === run) setFound({ query: atQuery, paths: [] });
+        (error: unknown) => {
+          // A failed or refused search shows its reason in the menu.
+          if (calls.current === run)
+            setFound({ query: atQuery, paths: [], failure: searchFailure(error) });
         },
       );
     }, AT_DELAY_MS);
@@ -251,17 +300,21 @@ export function Composer(props: Props) {
     const composing = event.nativeEvent.isComposing || event.keyCode === 229;
     if (composing) return;
     if (menuOpen) {
-      if (event.key === 'ArrowDown') {
+      // With status rows only, the keys keep their usual work (caret, send, focus).
+      if (choices.length > 0 && event.key === 'ArrowDown') {
         event.preventDefault();
-        setActive((current + 1) % rows.length);
+        setActive((current + 1) % choices.length);
         return;
       }
-      if (event.key === 'ArrowUp') {
+      if (choices.length > 0 && event.key === 'ArrowUp') {
         event.preventDefault();
-        setActive((current - 1 + rows.length) % rows.length);
+        setActive((current - 1 + choices.length) % choices.length);
         return;
       }
-      if ((event.key === 'Enter' && !event.shiftKey) || event.key === 'Tab') {
+      if (
+        choices.length > 0 &&
+        ((event.key === 'Enter' && !event.shiftKey) || event.key === 'Tab')
+      ) {
         event.preventDefault();
         choose(current);
         return;
@@ -285,6 +338,7 @@ export function Composer(props: Props) {
 
   return (
     <form
+      ref={root}
       className="fd-composer"
       aria-label="Composer"
       onSubmit={(event) => {
@@ -313,7 +367,7 @@ export function Composer(props: Props) {
         placeholder={placeholder}
         aria-autocomplete={hasCommands || canSearch ? 'list' : undefined}
         aria-controls={menuOpen ? listId : undefined}
-        aria-activedescendant={menuOpen ? optionId(current) : undefined}
+        aria-activedescendant={menuOpen && choices.length > 0 ? optionId(current) : undefined}
         onChange={(event) => edit(event.target.value, event.target.selectionStart)}
         onSelect={(event) => setCursor(event.currentTarget.selectionStart)}
         onKeyDown={onKeyDown}

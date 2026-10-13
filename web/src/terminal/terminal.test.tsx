@@ -137,13 +137,48 @@ describe('ctrlByte', () => {
 describe('KeyBar', () => {
   test('renders the keys with labels and the Ctrl toggle state', () => {
     const html = renderToStaticMarkup(
-      <KeyBar send={() => undefined} ctrl={true} setCtrl={() => undefined} />,
+      <KeyBar
+        send={() => undefined}
+        ctrl={true}
+        setCtrl={() => undefined}
+        onPaste={() => undefined}
+      />,
     );
     for (const label of ['Esc', 'Tab', 'Ctrl']) expect(html).toContain(`>${label}<`);
     for (const aria of ['Up', 'Down', 'Left', 'Right']) {
       expect(html).toContain(`aria-label="${aria}"`);
     }
     expect(html).toContain('aria-pressed="true"');
+  });
+
+  test('has paging, Home, End, the hidden characters and Paste, in this order after the arrows', () => {
+    const html = renderToStaticMarkup(
+      <KeyBar
+        send={() => undefined}
+        ctrl={false}
+        setCtrl={() => undefined}
+        onPaste={() => undefined}
+      />,
+    );
+    const labels = [...html.matchAll(/<button[^>]*>([^<]*)<\/button>/g)].map((m) => m[1]);
+    expect(labels).toEqual([
+      'Esc',
+      'Tab',
+      'Ctrl',
+      '↑',
+      '↓',
+      '←',
+      '→',
+      'PgUp',
+      'PgDn',
+      'Home',
+      'End',
+      '|',
+      '/',
+      '~',
+      '-',
+      'Paste',
+    ]);
   });
 });
 

@@ -28,6 +28,9 @@ export type PasteNoteState = { readonly tone: 'busy' | 'error'; readonly text: s
 
 const PASTE_ERROR_MS = 6000;
 
+/** The note when the key bar cannot read the clipboard. */
+const PASTE_BLOCKED = 'Paste is blocked by the browser. Long-press the terminal to paste.';
+
 /** The first image of a paste, or null when the paste holds no image file. */
 function pastedImage(event: ClipboardEvent): File | null {
   for (const item of Array.from(event.clipboardData?.items ?? [])) {
@@ -116,7 +119,10 @@ export function Terminal({ station, shellId, kind, actions, active, touch, onEnd
   const activeRef = useRef(active);
   const handles = useRef<Handles | null>(null);
   const sender = useRef<(bytes: string) => void>(() => undefined);
+  const clipboardPaste = useRef<() => void>(() => undefined);
+  const touchRef = useRef(touch);
   activeRef.current = active;
+  touchRef.current = touch;
   const setCtrl = (on: boolean) => {
     ctrlRef.current = on;
     setCtrlState(on);
@@ -252,11 +258,13 @@ export function Terminal({ station, shellId, kind, actions, active, touch, onEnd
       // An image on the clipboard goes to the station; its path is typed (never Enter).
       let inflight = 0;
       let noteTimer: ReturnType<typeof setTimeout> | undefined;
-      const fail = (reason: string) => {
+      const flash = (text: string) => {
         if (disposed) return;
-        setNote({ tone: 'error', text: `Image not pasted: ${reason}` });
+        if (noteTimer !== undefined) clearTimeout(noteTimer);
+        setNote({ tone: 'error', text });
         noteTimer = setTimeout(() => setNote(null), PASTE_ERROR_MS);
       };
+      const fail = (reason: string) => flash(`Image not pasted: ${reason}`);
       const pasteImage = async (file: Blob) => {
         if (noteTimer !== undefined) clearTimeout(noteTimer);
         inflight += 1;
@@ -294,6 +302,49 @@ export function Terminal({ station, shellId, kind, actions, active, touch, onEnd
         void pasteImage(file);
       };
       el.addEventListener('paste', onPaste, true);
+      // The Paste key of the key bar: the clipboard text goes in as a paste event does.
+      clipboardPaste.current = () => {
+        const clipboard = navigator.clipboard;
+        if (typeof clipboard?.readText !== 'function') {
+          flash(PASTE_BLOCKED);
+          return;
+        }
+        clipboard.readText().then(
+          (text) => {
+            if (disposed) return;
+            if (text !== '') term.paste(text);
+            term.focus();
+          },
+          () => flash(PASTE_BLOCKED),
+        );
+      };
+      // A finger swipe scrolls the scrollback of the normal buffer; a TUI (alternate buffer) keeps
+      // its touches.
+      let touchY: number | null = null;
+      let touchRows = 0;
+      const onTouchStart = (e: TouchEvent) => {
+        if (!touchRef.current) return;
+        touchY = e.touches.length === 1 ? (e.touches[0]?.clientY ?? null) : null;
+        touchRows = 0;
+      };
+      const onTouchMove = (e: TouchEvent) => {
+        const y = e.touches[0]?.clientY;
+        if (!touchRef.current || touchY === null || e.touches.length !== 1 || y === undefined)
+          return;
+        const dy = y - touchY;
+        touchY = y;
+        if (term.buffer.active.type !== 'normal') return;
+        const cellHeight = el.clientHeight / term.rows;
+        if (!(cellHeight > 0)) return;
+        e.preventDefault();
+        touchRows += -dy / cellHeight;
+        const lines = Math.trunc(touchRows);
+        if (lines === 0) return;
+        touchRows -= lines;
+        term.scrollLines(lines);
+      };
+      el.addEventListener('touchstart', onTouchStart, { passive: true });
+      el.addEventListener('touchmove', onTouchMove, { passive: false });
       let sent: { cols: number; rows: number } | null = null;
       let timer: ReturnType<typeof setTimeout> | undefined;
       const sendSize = () => {
@@ -317,6 +368,9 @@ export function Terminal({ station, shellId, kind, actions, active, touch, onEnd
         if (timer !== undefined) clearTimeout(timer);
         observer.disconnect();
         el.removeEventListener('paste', onPaste, true);
+        el.removeEventListener('touchstart', onTouchStart);
+        el.removeEventListener('touchmove', onTouchMove);
+        clipboardPaste.current = () => undefined;
         if (noteTimer !== undefined) clearTimeout(noteTimer);
         input.dispose();
         osc.dispose();
@@ -371,7 +425,14 @@ export function Terminal({ station, shellId, kind, actions, active, touch, onEnd
           </div>
         </div>
       ) : null}
-      {touch ? <KeyBar send={send} ctrl={ctrl} setCtrl={setCtrl} /> : null}
+      {touch ? (
+        <KeyBar
+          send={send}
+          ctrl={ctrl}
+          setCtrl={setCtrl}
+          onPaste={() => clipboardPaste.current()}
+        />
+      ) : null}
     </div>
   );
 }

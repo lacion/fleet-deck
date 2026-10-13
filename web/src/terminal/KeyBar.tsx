@@ -4,6 +4,8 @@ type Props = {
   /** Ctrl is armed: the next typed character goes out as a control code. */
   readonly ctrl: boolean;
   readonly setCtrl: (on: boolean) => void;
+  /** The Paste key: the terminal reads the clipboard and pastes it. */
+  readonly onPaste: () => void;
 };
 
 /** The control byte of one typed character (Ctrl+<ch>); other characters stay as they are. */
@@ -43,8 +45,21 @@ const ARROWS: readonly { readonly label: string; readonly aria: string; readonly
     { label: '→', aria: 'Right', bytes: '\x1b[C' },
   ];
 
+/** After the arrows: paging and the characters that a touch keyboard hides. */
+const MORE: readonly { readonly label: string; readonly aria?: string; readonly bytes: string }[] =
+  [
+    { label: 'PgUp', bytes: '\x1b[5~' },
+    { label: 'PgDn', bytes: '\x1b[6~' },
+    { label: 'Home', bytes: '\x1b[H' },
+    { label: 'End', bytes: '\x1b[F' },
+    { label: '|', bytes: '|' },
+    { label: '/', bytes: '/' },
+    { label: '~', bytes: '~' },
+    { label: '-', bytes: '-' },
+  ];
+
 /** Keys that a touch keyboard lacks. A press never takes the focus from the terminal. */
-export function KeyBar({ send, ctrl, setCtrl }: Props) {
+export function KeyBar({ send, ctrl, setCtrl, onPaste }: Props) {
   const keep = (e: { preventDefault(): void }) => e.preventDefault();
   const key = (label: string, bytes: string, aria?: string) => (
     <button
@@ -71,6 +86,10 @@ export function KeyBar({ send, ctrl, setCtrl }: Props) {
         Ctrl
       </button>
       {ARROWS.map((k) => key(k.label, k.bytes, k.aria))}
+      {MORE.map((k) => key(k.label, k.bytes, k.aria))}
+      <button type="button" className="fd-keybar-key" onPointerDown={keep} onClick={onPaste}>
+        Paste
+      </button>
     </div>
   );
 }

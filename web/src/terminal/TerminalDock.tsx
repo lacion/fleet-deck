@@ -1,4 +1,4 @@
-import { type KeyboardEvent, type PointerEvent, type ReactNode, useRef, useState } from 'react';
+import { type KeyboardEvent, type PointerEvent, useRef, useState } from 'react';
 import type { ShellActions } from '../shell/shell';
 import {
   ChevronDown,
@@ -11,6 +11,7 @@ import {
   Undo2,
   X,
 } from '../ui/icons';
+import { Menu } from '../ui/Menu';
 import { Terminal } from './Terminal';
 import { MIN_HEIGHT, type TermTab, type TerminalStore, useDock } from './store';
 
@@ -32,40 +33,6 @@ const message = (e: unknown) => (e instanceof Error ? e.message : 'Request faile
 /** The tallest the dock may be: 70% of the window, never below the minimum. */
 const maxHeight = (): number =>
   typeof window === 'undefined' ? 640 : Math.max(MIN_HEIGHT, Math.floor(window.innerHeight * 0.7));
-
-/** A `<details>` popover that closes on Escape. The body gets a `close` function. */
-function Menu(props: {
-  readonly summary: ReactNode;
-  readonly label: string;
-  readonly onClosed?: () => void;
-  readonly children: (close: () => void) => ReactNode;
-}) {
-  const ref = useRef<HTMLDetailsElement>(null);
-  const close = () => {
-    if (ref.current) ref.current.open = false;
-  };
-  const onKeyDown = (event: KeyboardEvent<HTMLDetailsElement>) => {
-    if (event.key !== 'Escape' || !ref.current?.open) return;
-    event.stopPropagation();
-    close();
-    ref.current.querySelector('summary')?.focus();
-  };
-  return (
-    <details
-      className="fd-menu"
-      ref={ref}
-      onKeyDown={onKeyDown}
-      onToggle={(event) => {
-        if (!event.currentTarget.open) props.onClosed?.();
-      }}
-    >
-      <summary className="fd-iconbtn" aria-label={props.label} title={props.label}>
-        {props.summary}
-      </summary>
-      <div className="fd-menu-body">{props.children(close)}</div>
-    </details>
-  );
-}
 
 /**
  * The terminals of the board (DL-140): shell and TUI tabs that live in a store, so that
@@ -221,7 +188,9 @@ export function TerminalDock({
           ) : (
             <Menu
               summary={<Icon of={Ellipsis} />}
+              summaryClass="fd-iconbtn"
               label="Terminal menu"
+              title="Terminal menu"
               onClosed={() => setConfirming(null)}
             >
               {(close) =>
