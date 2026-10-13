@@ -127,7 +127,8 @@
       "usage": {
         "input_tokens": 12030,
         "output_tokens": 73,
-        "cost_usd": null
+        "cost_usd": 0.0045355,
+        "cost_inferred": true
       },
       "rate_limits": []
     }
@@ -144,7 +145,8 @@
       "usage": {
         "input_tokens": null,
         "output_tokens": null,
-        "cost_usd": null
+        "cost_usd": null,
+        "cost_inferred": false
       },
       "rate_limits": [
         {
@@ -203,7 +205,8 @@
       "usage": {
         "input_tokens": 20905,
         "output_tokens": 56,
-        "cost_usd": null
+        "cost_usd": 0.01430725,
+        "cost_inferred": true
       },
       "rate_limits": []
     }
@@ -220,7 +223,8 @@
       "usage": {
         "input_tokens": null,
         "output_tokens": null,
-        "cost_usd": null
+        "cost_usd": null,
+        "cost_inferred": false
       },
       "rate_limits": [
         {
@@ -278,7 +282,8 @@
       "usage": {
         "input_tokens": null,
         "output_tokens": null,
-        "cost_usd": null
+        "cost_usd": null,
+        "cost_inferred": false
       },
       "rate_limits": [
         {
@@ -316,7 +321,8 @@
       "usage": {
         "input_tokens": 21019,
         "output_tokens": 61,
-        "cost_usd": null
+        "cost_usd": 0.00413175,
+        "cost_inferred": true
       },
       "rate_limits": []
     }
@@ -333,7 +339,8 @@
       "usage": {
         "input_tokens": null,
         "output_tokens": null,
-        "cost_usd": null
+        "cost_usd": null,
+        "cost_inferred": false
       },
       "rate_limits": [
         {
@@ -398,7 +405,8 @@
       "usage": {
         "input_tokens": 21192,
         "output_tokens": 6,
-        "cost_usd": null
+        "cost_usd": 0.003798,
+        "cost_inferred": true
       },
       "rate_limits": []
     }
@@ -415,7 +423,8 @@
       "usage": {
         "input_tokens": null,
         "output_tokens": null,
-        "cost_usd": null
+        "cost_usd": null,
+        "cost_inferred": false
       },
       "rate_limits": [
         {

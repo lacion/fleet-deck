@@ -645,8 +645,13 @@ fn row_usage_reports_tokens_for_both_and_cost_for_claude_only() {
         assert!(!usages.is_empty(), "{p:?}");
         for u in usages {
             assert_eq!(u.input_tokens.is_some(), c.usage.tokens, "{p:?}");
-            // Unknown cost is `None`, never zero.
-            assert_eq!(u.cost_usd.is_some(), c.usage.cost, "{p:?}");
+            // Unknown cost is `None`, never zero. An inferred cost (R4.6) is
+            // not a reported one.
+            assert_eq!(
+                u.cost_usd.is_some() && !u.cost_inferred,
+                c.usage.cost,
+                "{p:?}"
+            );
         }
     }
 }

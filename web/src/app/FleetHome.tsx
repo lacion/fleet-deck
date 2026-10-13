@@ -21,6 +21,7 @@ import { record } from '../board/activity';
 import { COLUMNS, columnCards, FleetBoard, FleetCard, OfflineTools } from '../board/FleetBoard';
 import { NeedsYouRail } from '../board/NeedsYouRail';
 import { UsageMeters } from '../board/UsageMeters';
+import { limitChip, rateMeters } from '../board/usage';
 import type { FleetActions } from '../fleet/fleet';
 import { FleetPanel } from '../fleet/FleetPanel';
 import type { DeckSession, SessionKey, StationView } from '../gen';
@@ -218,6 +219,7 @@ export function FleetHome({
     filter.repo !== ALL ||
     filter.search.trim() !== '';
 
+  const limit = limitChip(rateMeters(sessions, stations));
   const header = (
     <header className="fd-home-head">
       <h1 className="fd-wordmark">FLEET</h1>
@@ -233,6 +235,14 @@ export function FleetHome({
             </span>
           </>
         ) : null}
+        {limit === null ? null : (
+          <>
+            {' · '}
+            <span className="fd-badge" data-tone={limit.tone}>
+              {limit.text}
+            </span>
+          </>
+        )}
       </p>
       <div className="fd-field">
         <Icon of={Search} />

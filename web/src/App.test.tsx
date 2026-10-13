@@ -36,7 +36,7 @@ describe('App', () => {
                 input_summary: 'cargo test',
               },
             ],
-            usage: { input_tokens: 12, output_tokens: 0, cost_usd: 0 },
+            usage: { input_tokens: 12, output_tokens: 0, cost_usd: 0, cost_inferred: false },
           }),
           card('s2', 'working', 'station-a'),
         ]}

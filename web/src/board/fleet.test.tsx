@@ -134,7 +134,7 @@ describe('fleet projections', () => {
     expect(
       usageText(
         card('a', 'idle', 'station-a', {
-          usage: { input_tokens: 0, output_tokens: 0, cost_usd: 0 },
+          usage: { input_tokens: 0, output_tokens: 0, cost_usd: 0, cost_inferred: false },
         }),
       ),
     ).toBe('Input 0 · Output 0 · Cost $0.0000');

@@ -124,6 +124,7 @@ fn samples() -> Vec<Event> {
                 input_tokens: Some(1),
                 output_tokens: Some(2),
                 cost_usd: None,
+                cost_inferred: false,
             }),
         },
         Event::TurnFinalized {

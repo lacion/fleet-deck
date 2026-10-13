@@ -375,11 +375,7 @@ impl CodexCore {
             "thread/tokenUsage/updated" if self.own_thread(p) => {
                 let last = p.pointer("/tokenUsage/last").cloned().unwrap_or_default();
                 vec![Output::Emit(Event::UsageUpdated {
-                    usage: Usage {
-                        input_tokens: last.get("inputTokens").and_then(Value::as_u64),
-                        output_tokens: last.get("outputTokens").and_then(Value::as_u64),
-                        cost_usd: None,
-                    },
+                    usage: super::prices::usage_of(self.thread_model.as_deref(), &last),
                     rate_limits: Vec::new(),
                 })]
             }

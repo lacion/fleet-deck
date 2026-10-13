@@ -20,6 +20,8 @@ mod driver;
 mod host_cmd;
 mod limits;
 mod map;
+/// The local price table of Codex models (R4.6, DL-161).
+pub mod prices;
 mod probe;
 mod requests;
 mod rollback;

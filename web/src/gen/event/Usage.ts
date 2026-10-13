@@ -3,4 +3,9 @@
 /**
  * Token usage. `None` means unknown, which is not zero.
  */
-export type Usage = { input_tokens: number | null, output_tokens: number | null, cost_usd: number | null, };
+export type Usage = { input_tokens: number | null, output_tokens: number | null, cost_usd: number | null, 
+/**
+ * `cost_usd` comes from a local price table (R4.6, DL-161), not from
+ * the provider.
+ */
+cost_inferred: boolean, };

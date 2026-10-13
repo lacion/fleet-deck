@@ -202,6 +202,10 @@ pub struct Usage {
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
     pub cost_usd: Option<f64>,
+    /// `cost_usd` comes from a local price table (R4.6, DL-161), not from
+    /// the provider.
+    #[serde(default)]
+    pub cost_inferred: bool,
 }
 
 /// One provider rate limit window.

@@ -29,10 +29,12 @@ test('the fleet shows usage totals and live rate-limit meters', async ({ page })
   const deck = new FakeDeck();
   deck.stations = [stationView(ST, 'Alpha')];
   const quiet = session('s2', 10, {
-    usage: { input_tokens: null, output_tokens: null, cost_usd: null },
+    usage: { input_tokens: null, output_tokens: null, cost_usd: null, cost_inferred: false },
   });
   deck.sessions = [
-    session('s1', 30, { usage: { input_tokens: 1000, output_tokens: null, cost_usd: 0.5 } }),
+    session('s1', 30, {
+      usage: { input_tokens: 1000, output_tokens: null, cost_usd: 0.5, cost_inferred: false },
+    }),
     quiet,
   ];
   await deck.install(page);

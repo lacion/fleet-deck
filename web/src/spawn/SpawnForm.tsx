@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
+import { instanceLimit, mostRoom, rateMeters } from '../board/usage';
 import type { DeckSession, SessionKey, StationView, WorkspaceListing } from '../gen';
 import type { Freshness } from '../runtime/state';
 import { Icon, Pin, PinOff } from '../ui/icons';
+import { useNow } from '../ui/useNow';
 import { BranchFields } from './BranchFields';
 import { CloneAccess } from './CloneAccess';
 import { ModelField } from './ModelField';
@@ -13,7 +15,7 @@ import {
   importIdProblem,
   knownModels,
   lastParts,
-  providerLabel,
+  providerChoiceLabel,
   type PreflightResult,
   readPins,
   readSetupCmds,
@@ -43,6 +45,8 @@ type Props = {
   readonly initialStation?: string | undefined;
   /** DL-141: the fleet, for the recent directories of a station. */
   readonly sessions?: readonly DeckSession[] | undefined;
+  /** Unix ms of now for the reset times of the limits (tests). */
+  readonly now?: number | undefined;
 };
 
 /** PLAN §11 spawn form for M2: station, provider, directory picker, mode,
@@ -56,6 +60,7 @@ export function SpawnForm({
   initialPrompt = '',
   initialStation,
   sessions = [],
+  now: givenNow,
 }: Props) {
   const targets = spawnTargets(stations);
   const [stationId, setStationId] = useState(
@@ -67,6 +72,12 @@ export function SpawnForm({
   const providers = station?.info?.providers ?? [];
   const [instance, setInstance] = useState(providers[0]?.instance ?? '');
   const provider = providers.find((p) => p.instance === instance);
+  const now = useNow(givenNow, 30000);
+  const meters = rateMeters(sessions, stations);
+  const limits = new Map(
+    providers.map((p) => [p.instance, instanceLimit(meters, stationId, p.instance)]),
+  );
+  const roomiest = mostRoom(limits);
   const [listing, setListing] = useState<WorkspaceListing | null>(initialListing);
   const [cwd, setCwd] = useState<string | null>(null);
   const [browseError, setBrowseError] = useState<string | null>(null);
@@ -455,7 +466,12 @@ export function SpawnForm({
               >
                 {providers.map((p) => (
                   <option key={p.instance} value={p.instance}>
-                    {providerLabel(p)}
+                    {providerChoiceLabel(
+                      p,
+                      limits.get(p.instance) ?? null,
+                      now,
+                      p.instance === roomiest,
+                    )}
                   </option>
                 ))}
               </select>

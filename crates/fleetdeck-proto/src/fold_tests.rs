@@ -162,6 +162,7 @@ fn usage_sums_known_parts_and_keeps_unknown_parts_unknown() {
             input_tokens: i,
             output_tokens: None,
             cost_usd: c,
+            cost_inferred: false,
         },
         rate_limits: vec![],
     };
@@ -178,6 +179,7 @@ fn usage_sums_known_parts_and_keeps_unknown_parts_unknown() {
             input_tokens: Some(99),
             output_tokens: Some(99),
             cost_usd: Some(9.0),
+            cost_inferred: false,
         }),
     });
     assert_eq!(s.usage.input_tokens, Some(15));
@@ -632,4 +634,27 @@ fn a_summary_decodes_without_terminal_and_encodes_none_without_the_key() {
     object.remove("terminal");
     let s: SessionSummary = serde_json::from_value(v).unwrap();
     assert_eq!(s.terminal, None);
+}
+
+#[test]
+fn an_inferred_cost_part_makes_the_total_inferred() {
+    let mut f = Feed::new();
+    f.push(started());
+    let usage = |cost, inferred| Event::UsageUpdated {
+        usage: Usage {
+            input_tokens: Some(1),
+            output_tokens: Some(1),
+            cost_usd: cost,
+            cost_inferred: inferred,
+        },
+        rate_limits: vec![],
+    };
+    let s = f.push(usage(Some(0.5), false));
+    assert!(!s.usage.cost_inferred);
+    // An inferred flag without a cost is not a part.
+    let s = f.push(usage(None, true));
+    assert!(!s.usage.cost_inferred);
+    let s = f.push(usage(Some(0.25), true));
+    assert!(s.usage.cost_inferred);
+    assert_eq!(s.usage.cost_usd, Some(0.75));
 }

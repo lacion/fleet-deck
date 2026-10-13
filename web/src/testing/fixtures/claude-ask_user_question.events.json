@@ -501,7 +501,8 @@
       "usage": {
         "input_tokens": 18,
         "output_tokens": 203,
-        "cost_usd": 0.012171
+        "cost_usd": 0.012171,
+        "cost_inferred": false
       },
       "rate_limits": []
     }
@@ -520,7 +521,8 @@
       "usage": {
         "input_tokens": 18,
         "output_tokens": 203,
-        "cost_usd": 0.012171
+        "cost_usd": 0.012171,
+        "cost_inferred": false
       }
     }
   },

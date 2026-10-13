@@ -6,7 +6,8 @@
 //!
 //! The session ranking is v0's: idle first, then queued, then busy; then
 //! the least buried (fewest undelivered mails); then the most recent
-//! activity. The station terms of v2: the link is up (the card is not
+//! activity; then the provider instance with the most room (R4.4, DL-161).
+//! The station terms of v2: the link is up (the card is not
 //! `unreachable`), the session works in the repository, and it runs the
 //! provider.
 
@@ -52,6 +53,35 @@ pub fn in_repo(cwd: &str, repo: &str) -> bool {
             .is_some_and(|rest| rest.starts_with('/') || rest.starts_with("--fd-"))
 }
 
+/// The used percent that stands for an instance whose limits are unknown.
+pub const UNKNOWN_USED_PERCENT: f64 = 50.0;
+
+/// How tight the provider instance of a session is: the highest
+/// `used_percent` of its latest windows, or [`UNKNOWN_USED_PERCENT`] when
+/// no session of the same station and instance reported one. A window of a
+/// scope comes from the most recently updated session that reported it
+/// (the same rule as the board's meters).
+#[must_use]
+pub fn used_percent_of(sessions: &[DeckSession], of: &DeckSession) -> f64 {
+    let same = |s: &&DeckSession| {
+        s.station_id == of.station_id && s.summary.provider_instance == of.summary.provider_instance
+    };
+    let mut latest: BTreeMap<&str, (i64, Option<f64>)> = BTreeMap::new();
+    for s in sessions.iter().filter(same) {
+        for limit in &s.summary.rate_limits {
+            let seen = latest.get(limit.scope.as_str());
+            if seen.is_none_or(|(at, _)| *at < s.summary.updated_at) {
+                latest.insert(&limit.scope, (s.summary.updated_at, limit.used_percent));
+            }
+        }
+    }
+    latest
+        .values()
+        .filter_map(|(_, used)| *used)
+        .reduce(f64::max)
+        .unwrap_or(UNKNOWN_USED_PERCENT)
+}
+
 /// The best session for the task, or `None`.
 #[must_use]
 pub fn pick_session<'a>(
@@ -75,17 +105,15 @@ pub fn pick_session<'a>(
                 }
             }
             let mail = buried.get(&s.summary.session_id).copied().unwrap_or(0);
-            Some((
-                (
-                    rank,
-                    mail,
-                    Reverse(s.summary.updated_at),
-                    &s.summary.session_id,
-                ),
-                s,
-            ))
+            Some(((rank, mail, Reverse(s.summary.updated_at)), s))
         })
-        .min_by(|a, b| a.0.cmp(&b.0))
+        .min_by(|a, b| {
+            a.0.cmp(&b.0)
+                .then_with(|| {
+                    used_percent_of(sessions, a.1).total_cmp(&used_percent_of(sessions, b.1))
+                })
+                .then_with(|| a.1.summary.session_id.cmp(&b.1.summary.session_id))
+        })
         .map(|(_, s)| s)
 }
 
