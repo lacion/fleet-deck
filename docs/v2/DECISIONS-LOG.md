@@ -2299,6 +2299,21 @@ Format: context, options, choice, reason, owner review.
 - Not done: removal from the board; it needs a quarantine/retention design, stable command ids with phases, remote verification and an expected-old-value branch deletion, then a new adversary round.
 - Owner review: pending.
 
+## DL-143 — Worktree inspection without `git status` (closes the DL-142 filter-race BLOCKER)
+
+- Context: the DL-142 inventory probed `git config --get-regexp '^filter\.'` and then ran `git status`. A filter that the repository configured after the probe could run inside `status` (adversary BLOCKER on DL-142).
+- Choice: the inventory runs no `git status` and no command that can run a repository-configured program. Each command has `GIT_NO_LAZY_FETCH=1` and the existing safe configuration (no hooks, no fsmonitor, no external diff). The scan (`crates/fleetdeck-station/src/workspace/worktree_scan.rs`) counts as work: unmerged paths (`ls-files --unmerged`); index against HEAD (`diff-index --cached --raw --no-ext-diff --no-textconv`; an unborn branch, `rev-parse --verify HEAD` exit 1, counts every index entry); work tree against index (`ls-files --stage --debug` plus the station's own `lstat`: type, executable bit, size, mtime, ctime and inode; when the metadata differs or the entry is racily clean, the station hashes the file or link target itself as a Git blob and compares the object id, so a touched but unchanged file stays clean; a repository with a clean filter or eol conversion over-reports); submodules (HEAD against the gitlink, then the same scan, depth ≤ 3); untracked files (`ls-files --others --exclude-standard`). Ignored files are counted for information only. A sparse checkout, a too-deep submodule or any Git failure gives the verdict `unknown`. An unborn branch has `unpushed = 0` and no `compared_with`.
+- Adversary: design rounds 1–2 (`/tmp/fd-briefs/night2-design-review-r1.md`, `-r2.md`): lazy fetch, staged changes and metadata-only checks were found in round 1 and fixed in round 2.
+- Tests: `worktrees_tests.rs` (filters and fsmonitor never run; a staged edit, a staged deletion, an equal-size rewrite with the old mtime, a `chmod +x`, an unborn branch with a staged file and a submodule commit are work; a touched clean file is clean), parser and blob-hash unit tests.
+- Owner review: pending.
+
+## DL-144 — Spawn parity: Git access check, branch choice, ticket callsigns
+
+- Context: v1 checked Git access before a clone, let the owner choose the branch of a worktree, and named sessions after the ticket in the branch. v2 had none of these.
+- Choice: link method `workspace.preflight { url }` (Drive, read-only, feature `workspace.preflight.v1`): the clone URL rules, then `git ls-remote --exit-code --heads` with the owner's credentials, `BatchMode=yes`, no prompt and a 20 s limit; the answer `{ ok, message, hint }` carries the scrubbed end of the Git error and a hint for the common causes (SSH key, https credentials, missing repository, unknown host, timeout). Deck route `POST /api/stations/{station}/workspace/preflight` (30 s wait). `WorkspaceRequest::Worktree { branch?, base? }`: an existing branch is checked out (a base is then refused); a new branch starts at `base` or HEAD (`rev-parse --verify --end-of-options <base>^{commit}`); names are checked by syntax in the decision and by Git in the effect. A ticket key `[A-Z][A-Z0-9]{1,9}-[0-9]{1,6}` in the chosen branch (or the current branch of a start in place) makes the callsign candidates `<animal>-<KEY>` first. `SessionCommand::Start.workspace` is boxed in Rust (clippy `large_enum_variant`); the wire shape is unchanged. The spawn form shows Branch and Base for a worktree start and a "Check access" button for a clone URL.
+- Tests: station unit tests (branch rules, ticket keys, callsign order, preflight against local repositories, refused URLs, hint table), a deck relay test, board tests for the form pieces.
+- Owner review: pending.
+
 ## DL-145 — Conflict whisper (v1 parity, DL-306 follow-up)
 
 - Context: the conflict radar (DL-306) shows the files that two sessions changed, but only on the board. The two agents do not know. v1 told both sessions with a "whisper".
