@@ -265,6 +265,10 @@ export class Connection {
       this.reconnect('The timeline request could not be sent');
     }
   }
+  /** The presence heartbeat of an open session (R11.5, DL-166); a closed socket drops it. */
+  presence = (key: SessionKey): void => {
+    if (this.state.transport === 'connected') this.send({ type: 'presence', ...key });
+  };
   watch(key: SessionKey): Cancel {
     const id = sessionKey(key);
     let w = this.watches.get(id);

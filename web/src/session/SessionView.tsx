@@ -16,6 +16,11 @@ import { SessionArtifacts } from '../artifacts/SessionArtifacts';
 import { ChatView } from '../chat/ChatView';
 import type { DeckSession, StationView } from '../gen';
 import type { Freshness, Timeline } from '../runtime/state';
+import { usePeople } from '../sharing/context';
+import { usePresenceHeartbeat, useSessionPeople } from '../sharing/hooks';
+import { roleAccess } from '../sharing/member';
+import { MobStrip } from '../sharing/MobStrip';
+import { SideChat } from '../sharing/SideChat';
 import type { ShellActions } from '../shell/shell';
 import { releaseHold, type Watch } from '../terminal/handover';
 import type { TerminalStore } from '../terminal/store';
@@ -32,7 +37,7 @@ import { buildTimeline, sessionModels, slashCommands } from './timeline';
 import { RevertStatus, TurnsPanel } from './TurnsPanel';
 import { finalizedTurns } from './workspace';
 
-export type PaneTab = 'chat' | 'changes' | 'files' | 'artifacts';
+export type PaneTab = 'chat' | 'changes' | 'files' | 'artifacts' | 'people';
 
 export type SessionViewProps = {
   readonly session: DeckSession;
@@ -120,11 +125,27 @@ export function SessionView(props: SessionViewProps) {
   );
   const controller = useSessionController(session, freshness, actions ?? null);
   const { flags, busy } = controller;
+  // R11 (DL-166): a member is a guest of the owner's deck: its role decides what the pane offers.
+  const env = usePeople();
+  const guest = env.member;
+  const access =
+    guest === null ? { composer: true, questions: true, approvals: true } : roleAccess(guest.role);
+  usePresenceHeartbeat(key);
+  const people = useSessionPeople(key);
+  const [driveNote, setDriveNote] = useState<{ ok: boolean; text: string } | null>(null);
+  const [driveBusy, setDriveBusy] = useState(false);
+  const drive = (call: () => Promise<{ ok: boolean; text: string }>) => {
+    setDriveBusy(true);
+    void call().then((r) => {
+      setDriveNote(r.ok ? null : r);
+      setDriveBusy(false);
+    });
+  };
   const events = timeline?.events ?? [];
   const tree = buildTimeline(events);
   const turns = finalizedTurns(events);
   const filesOffered = actions?.files != null;
-  const wakes = isHibernated(session) && flags.canResume;
+  const wakes = isHibernated(session) && flags.canResume && guest === null;
   const wide = useWide();
   const [filesOpen, toggleFiles] = useFilesOpen();
   const sidePanel = layout === 'desktop' && wide && filesOffered;
@@ -133,8 +154,11 @@ export function SessionView(props: SessionViewProps) {
   const artifactsEnv = useArtifacts();
   const artifactsOffered = artifactsEnv !== undefined;
   const wanted: PaneTab = props.tab ?? 'chat';
+  const peopleOffered = people.offered;
   const tab: PaneTab =
-    (wanted === 'files' && !tabsOffered) || (wanted === 'artifacts' && !artifactsOffered)
+    (wanted === 'files' && !tabsOffered) ||
+    (wanted === 'artifacts' && !artifactsOffered) ||
+    (wanted === 'people' && !peopleOffered)
       ? 'chat'
       : wanted;
   // The artifact that the Artifacts tab shows; a chat chip and a publish set it.
@@ -172,6 +196,7 @@ export function SessionView(props: SessionViewProps) {
     'changes',
     ...(tabsOffered ? (['files'] as const) : []),
     ...(artifactsOffered ? (['artifacts'] as const) : []),
+    ...(peopleOffered ? (['people'] as const) : []),
   ];
   const labels: Record<PaneTab, ReactNode> = {
     chat: 'Chat',
@@ -192,6 +217,14 @@ export function SessionView(props: SessionViewProps) {
       ) : (
         'Artifacts'
       ),
+    people:
+      people.who.length >= 2 ? (
+        <>
+          People <span className="fd-count">{people.who.length}</span>
+        </>
+      ) : (
+        'People'
+      ),
   };
   const onTabKey = (event: KeyboardEvent<HTMLDivElement>) => {
     const at = order.indexOf(tab);
@@ -208,7 +241,8 @@ export function SessionView(props: SessionViewProps) {
     tabs.current[target]?.focus();
   };
   const panelAct = (call: Parameters<typeof controller.act>[1]) => controller.act('turns', call);
-  const filesReady = flags.live && actions?.canDrive === true;
+  // A viewer has no drive scope but sees the files of the shared session.
+  const filesReady = flags.live && (actions?.canDrive === true || guest !== null);
   const [fileRequest, setFileRequest] = useState<{ readonly path: string; readonly seq: number }>();
   const requests = useRef(0);
   const onOpenFile = (path: string) => {
@@ -339,34 +373,66 @@ export function SessionView(props: SessionViewProps) {
                 onOpenChanges={() => onTab('changes')}
               />
               <div className="fd-pane-foot">
-                <ApprovalDock
-                  requests={s.open_requests}
-                  answerable={caps?.approvals === true}
-                  enabled={flags.approve && busy === null}
-                  busy={busy !== null}
-                  onAnswer={(request, option, reply) =>
-                    actions &&
-                    controller.act('answer', () => actions.answer(request, option, reply))
-                  }
-                />
-                <Composer
-                  enabled={(flags.drive || wakes) && busy === null}
-                  working={s.current_run !== null}
-                  steer={caps?.steer === true}
-                  nativeQueue={caps?.native_follow_up === true}
-                  onSend={(kind, text, images) =>
-                    actions &&
-                    controller.act('send', () =>
-                      // R6.6: a hibernated session resumes first, then takes the prompt.
-                      wakes
-                        ? resumeThenSend(actions, kind, text, images)
-                        : actions.send(kind, text, images),
-                    )
-                  }
-                  disabledReason={wakes ? null : disabledReason(flags, actions)}
-                  slashCommands={slashCommands(events)}
-                  draftKey={`${session.station_id}/${s.session_id}`}
-                />
+                {access.questions ? (
+                  <ApprovalDock
+                    requests={
+                      access.approvals
+                        ? s.open_requests
+                        : s.open_requests.filter((r) => r.request_kind === 'question')
+                    }
+                    answerable={caps?.approvals === true}
+                    enabled={
+                      (guest !== null ? flags.live && !flags.ended : flags.approve) && busy === null
+                    }
+                    busy={busy !== null}
+                    onAnswer={(request, option, reply) =>
+                      actions &&
+                      controller.act('answer', () => actions.answer(request, option, reply))
+                    }
+                  />
+                ) : null}
+                {people.drive !== null && access.composer ? (
+                  <MobStrip
+                    view={people.drive}
+                    busy={driveBusy}
+                    note={driveNote}
+                    onRequest={() => drive(people.requestDrive)}
+                    onHandOver={(to) => drive(() => people.handOver(to))}
+                    onRelease={() => drive(people.release)}
+                  />
+                ) : null}
+                {access.composer ? (
+                  <Composer
+                    enabled={
+                      (flags.drive || wakes) && busy === null && people.drive?.locked !== true
+                    }
+                    working={s.current_run !== null}
+                    steer={caps?.steer === true}
+                    nativeQueue={caps?.native_follow_up === true}
+                    onSend={(kind, text, images) =>
+                      actions &&
+                      controller.act('send', () =>
+                        // R6.6: a hibernated session resumes first, then takes the prompt.
+                        wakes
+                          ? resumeThenSend(actions, kind, text, images)
+                          : actions.send(kind, text, images),
+                      )
+                    }
+                    disabledReason={
+                      people.drive?.locked === true
+                        ? 'Request to drive to send prompts.'
+                        : wakes
+                          ? null
+                          : disabledReason(flags, actions)
+                    }
+                    slashCommands={slashCommands(events)}
+                    draftKey={`${session.station_id}/${s.session_id}`}
+                  />
+                ) : guest?.role === 'viewer' ? (
+                  <p className="fd-viewer-note" role="note">
+                    You are a viewer.
+                  </p>
+                ) : null}
               </div>
             </>
           ) : null}
@@ -376,8 +442,8 @@ export function SessionView(props: SessionViewProps) {
                 <RevertStatus
                   summary={s}
                   turns={turns}
-                  actions={actions}
-                  drive={flags.drive}
+                  actions={guest === null ? actions : undefined}
+                  drive={flags.drive && guest === null}
                   live={flags.live}
                   busy={busy !== null}
                   act={panelAct}
@@ -386,7 +452,7 @@ export function SessionView(props: SessionViewProps) {
                   summary={s}
                   turns={turns}
                   actions={actions}
-                  drive={flags.drive}
+                  drive={flags.drive && guest === null}
                   live={flags.live}
                   busy={busy !== null}
                   act={panelAct}
@@ -408,6 +474,15 @@ export function SessionView(props: SessionViewProps) {
                 Files are available when the board is live and you have the drive scope.
               </p>
             )
+          ) : null}
+          {tab === 'people' ? (
+            <SideChat
+              messages={people.messages}
+              self={env.self}
+              loading={people.loading}
+              error={people.error}
+              onSend={people.say}
+            />
           ) : null}
           {tab === 'artifacts' && artifactsEnv !== undefined ? (
             <SessionArtifacts

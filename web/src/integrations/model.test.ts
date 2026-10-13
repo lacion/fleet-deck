@@ -11,6 +11,7 @@ import {
   inputOf,
   outsideNote,
   projectOfIssue,
+  projectOfSession,
   sessionsOfPr,
   ticketModes,
   unfence,
@@ -162,5 +163,21 @@ describe('start rules', () => {
     ).toBe(
       'Fix the failing checks of pull request #12 (https://github.com/acme/atlas/pull/12) on branch feature/x. Read the check logs with the forge CLI first.',
     );
+  });
+});
+
+describe('projectOfSession (R3.9)', () => {
+  const atlas = project();
+  const noForge = project({ project_id: 'p2', path: '/work/notes', forge: null, trackers: [] });
+  test('the issue names the project, else the folder of a project with a forge', () => {
+    const issue = { system: 'jira', key: 'PROJ-1', url: 'https://x.test/PROJ-1', title: 'T' };
+    expect(projectOfSession([atlas], 'station-a', { issue, cwd: '/tmp/wt' })).toBe(atlas);
+    expect(projectOfSession([atlas], 'station-a', { cwd: '/work/atlas/sub' })).toBe(atlas);
+    expect(projectOfSession([atlas], 'station-a', { cwd: '/work/atlas' })).toBe(atlas);
+  });
+  test('another station, a sibling folder or a project without a forge is no match', () => {
+    expect(projectOfSession([atlas], 'station-b', { cwd: '/work/atlas' })).toBeUndefined();
+    expect(projectOfSession([atlas], 'station-a', { cwd: '/work/atlas2' })).toBeUndefined();
+    expect(projectOfSession([noForge], 'station-a', { cwd: '/work/notes' })).toBeUndefined();
   });
 });

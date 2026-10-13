@@ -64,6 +64,27 @@ export function boardMessage(raw: string): BoardServerMessage {
     case 'timeline_events':
       valid = key(v) && list(v['events'], envelope);
       break;
+    // The people features of a shared session (R11, DL-166).
+    case 'presence':
+      valid = key(v) && list(v['who'], text);
+      break;
+    case 'chat': {
+      const m = v['message'];
+      valid =
+        key(v) &&
+        object(m) &&
+        sequence(m['seq']) &&
+        text(m['author']) &&
+        text(m['text']) &&
+        typeof m['at'] === 'number';
+      break;
+    }
+    case 'driver':
+      valid = key(v) && optionalText(v['driver']);
+      break;
+    case 'drive_request':
+      valid = key(v) && list(v['requests'], text);
+      break;
     case 'error':
       valid = text(v['code']) && text(v['message']);
       break;

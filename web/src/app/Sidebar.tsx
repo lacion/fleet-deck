@@ -19,6 +19,7 @@ import {
   SquareTerminal,
   Star,
   TriangleAlert,
+  Users,
   Workflow,
   Zap,
 } from '../ui/icons';
@@ -28,6 +29,7 @@ import { shortModel } from '../ui/format';
 import { GeneratedMark } from '../ui/generated';
 import { archived as archivedSet } from '../ui/archive';
 import { priority, sessionRef } from '../ui/localSet';
+import { canShare, usePeople } from '../sharing/context';
 import { isHibernated } from '../views/hibernate';
 import { FocusLine, UnreadMark, unreadOf } from '../views/marks';
 import type { Chrome } from './chrome';
@@ -261,13 +263,16 @@ export function Sidebar({
   const first = model.needs[0];
   // R3: the projects are the owner's (the deck answers 403 to any other login).
   const projectsLink = useIntegrations()?.actions.canAdmin === true;
+  // R11.4: a guest sees the fleet and the watch page only; the owner sees Shares.
+  const people = usePeople();
+  const guest = people.member !== null;
   return (
     <aside className="fd-sidebar" aria-label="Sessions" data-variant={variant}>
       <div className="fd-sidebar-top">
         <div className="fd-sidebar-brand">
           <Icon of={Zap} />
           <span className="fd-wordmark">FLEET DECK</span>
-          {full ? null : (
+          {full || guest ? null : (
             <button
               type="button"
               className="fd-iconbtn"
@@ -287,7 +292,7 @@ export function Sidebar({
             <span className="fd-vh">: {chrome?.label ?? 'Not connected'}</span>
           </span>
         </div>
-        {full ? (
+        {full && !guest ? (
           <button
             type="button"
             className="fd-primary fd-newbtn"
@@ -349,51 +354,66 @@ export function Sidebar({
               <Icon of={Eye} />
               Watch
             </a>
-            <a href="#/activity" aria-current={route.name === 'activity' ? 'page' : undefined}>
-              <Icon of={MessagesSquare} />
-              Activity
-            </a>
-            <a href="#/plans" aria-current={route.name === 'plans' ? 'page' : undefined}>
-              <Icon of={FileText} />
-              Plans
-            </a>
-            <a
-              href="#/automations"
-              aria-current={route.name === 'automations' ? 'page' : undefined}
-            >
-              <Icon of={Workflow} />
-              Automations
-            </a>
-            <a
-              href="#/artifacts"
-              aria-current={
-                route.name === 'artifacts' || route.name === 'artifact' ? 'page' : undefined
-              }
-            >
-              <Icon of={Paperclip} />
-              Artifacts
-            </a>
-            {projectsLink ? (
+            {guest ? null : (
+              <>
+                <a href="#/activity" aria-current={route.name === 'activity' ? 'page' : undefined}>
+                  <Icon of={MessagesSquare} />
+                  Activity
+                </a>
+                <a href="#/plans" aria-current={route.name === 'plans' ? 'page' : undefined}>
+                  <Icon of={FileText} />
+                  Plans
+                </a>
+                <a
+                  href="#/automations"
+                  aria-current={route.name === 'automations' ? 'page' : undefined}
+                >
+                  <Icon of={Workflow} />
+                  Automations
+                </a>
+                <a
+                  href="#/artifacts"
+                  aria-current={
+                    route.name === 'artifacts' || route.name === 'artifact' ? 'page' : undefined
+                  }
+                >
+                  <Icon of={Paperclip} />
+                  Artifacts
+                </a>
+                {projectsLink ? (
+                  <a
+                    href="#/projects"
+                    aria-current={
+                      route.name === 'projects' || route.name === 'project' ? 'page' : undefined
+                    }
+                  >
+                    <Icon of={FolderGit2} />
+                    Projects
+                  </a>
+                ) : null}
+                <a href="#/files" aria-current={route.name === 'files' ? 'page' : undefined}>
+                  <Icon of={Folder} />
+                  Files
+                </a>
+                <a href="#/stations" aria-current={route.name === 'stations' ? 'page' : undefined}>
+                  <Icon of={Server} />
+                  Stations
+                  <span className="fd-count">{stations.length}</span>
+                </a>
+              </>
+            )}
+            {canShare(people) ? (
               <a
-                href="#/projects"
+                href="#/shares"
                 aria-current={
-                  route.name === 'projects' || route.name === 'project' ? 'page' : undefined
+                  route.name === 'shares' || route.name === 'spaces' ? 'page' : undefined
                 }
               >
-                <Icon of={FolderGit2} />
-                Projects
+                <Icon of={Users} />
+                Shares
               </a>
             ) : null}
-            <a href="#/files" aria-current={route.name === 'files' ? 'page' : undefined}>
-              <Icon of={Folder} />
-              Files
-            </a>
-            <a href="#/stations" aria-current={route.name === 'stations' ? 'page' : undefined}>
-              <Icon of={Server} />
-              Stations
-              <span className="fd-count">{stations.length}</span>
-            </a>
-            {terminalCount > 0 ? (
+            {terminalCount > 0 && !guest ? (
               <button type="button" className="fd-linkbtn" onClick={onOpenTerminals}>
                 <Icon of={SquareTerminal} />
                 Terminals

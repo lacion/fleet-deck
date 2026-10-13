@@ -12,8 +12,10 @@ import {
   Server,
   Smartphone,
   SquareTerminal,
+  Users,
   Workflow,
 } from '../ui/icons';
+import { canShare, usePeople } from '../sharing/context';
 import type { Chrome } from './chrome';
 import { DeviceLinkDialog } from './DeviceLinkDialog';
 import { PrefsRow } from './Prefs';
@@ -28,6 +30,9 @@ type Props = {
 export function More({ stationCount, terminalCount, chrome }: Props) {
   const [addingDevice, setAddingDevice] = useState(false);
   const projectsLink = useIntegrations()?.actions.canAdmin === true;
+  // R11.4: a guest sees the Watch page only; the owner also sees Shares.
+  const people = usePeople();
+  const guest = people.member !== null;
   return (
     <section className="fd-screen fd-more" aria-label="More">
       <h1 className="fd-screen-title">More</h1>
@@ -39,58 +44,72 @@ export function More({ stationCount, terminalCount, chrome }: Props) {
               Watch
             </a>
           </li>
-          <li>
-            <a href="#/activity">
-              <Icon of={MessagesSquare} />
-              Activity
-            </a>
-          </li>
-          <li>
-            <a href="#/plans">
-              <Icon of={FileText} />
-              Plans
-            </a>
-          </li>
-          <li>
-            <a href="#/automations">
-              <Icon of={Workflow} />
-              Automations
-            </a>
-          </li>
-          <li>
-            <a href="#/artifacts">
-              <Icon of={Paperclip} />
-              Artifacts
-            </a>
-          </li>
-          {projectsLink ? (
+          {guest ? null : (
+            <>
+              <li>
+                <a href="#/activity">
+                  <Icon of={MessagesSquare} />
+                  Activity
+                </a>
+              </li>
+              <li>
+                <a href="#/plans">
+                  <Icon of={FileText} />
+                  Plans
+                </a>
+              </li>
+              <li>
+                <a href="#/automations">
+                  <Icon of={Workflow} />
+                  Automations
+                </a>
+              </li>
+              <li>
+                <a href="#/artifacts">
+                  <Icon of={Paperclip} />
+                  Artifacts
+                </a>
+              </li>
+              {projectsLink ? (
+                <li>
+                  <a href="#/projects">
+                    <Icon of={FolderGit2} />
+                    Projects
+                  </a>
+                </li>
+              ) : null}
+              <li>
+                <a href="#/files">
+                  <Icon of={Folder} />
+                  Files
+                </a>
+              </li>
+              <li>
+                <a href="#/stations">
+                  <Icon of={Server} />
+                  Stations
+                  <span className="fd-count">{stationCount}</span>
+                </a>
+              </li>
+            </>
+          )}
+          {canShare(people) ? (
             <li>
-              <a href="#/projects">
-                <Icon of={FolderGit2} />
-                Projects
+              <a href="#/shares">
+                <Icon of={Users} />
+                Shares
               </a>
             </li>
           ) : null}
-          <li>
-            <a href="#/files">
-              <Icon of={Folder} />
-              Files
-            </a>
-          </li>
-          <li>
-            <a href="#/stations">
-              <Icon of={Server} />
-              Stations
-              <span className="fd-count">{stationCount}</span>
-            </a>
-          </li>
-          <li>
-            <a href="#/terminals">
-              <Icon of={SquareTerminal} />
-              Terminals
-              <span className="fd-count">{terminalCount}</span>
-            </a>
-          </li>
+          {guest ? null : (
+            <li>
+              <a href="#/terminals">
+                <Icon of={SquareTerminal} />
+                Terminals
+                <span className="fd-count">{terminalCount}</span>
+              </a>
+            </li>
+          )}
         </ul>
       </nav>
       <PrefsRow />

@@ -1,0 +1,319 @@
+import { describe, expect, test } from 'bun:test';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { card, station } from '../testing/fleet';
+import { canShare, PeopleProvider } from './context';
+import { fakeShareCalls, NOW, DAY, env, share, space } from './fixtures';
+import { sharedSets } from './ownerShares';
+import {
+  defaultForm,
+  EXPIRY_DAYS,
+  ShareDialog,
+  ShareFields,
+  ShareResult,
+  shareBody,
+  USES,
+} from './ShareDialog';
+import { SharesPage, SharesView, shareState, targetText } from './SharesPage';
+import { closeShare, openShare, sharesChanged } from './shareStore';
+import { SpaceCard, SpacesPage, SpacesView } from './SpacesPage';
+
+const request = { kind: 'session', target: 'station-a/s1', label: 'Review' } as const;
+const dialog = (extra: Partial<Parameters<typeof ShareDialog>[0]> = {}) =>
+  renderToStaticMarkup(
+    <ShareDialog request={request} calls={fakeShareCalls()} onClose={() => {}} {...extra} />,
+  );
+
+describe('share dialog (R11.4)', () => {
+  test('the fields: three roles with their lines, expiry and uses', () => {
+    const html = dialog();
+    expect(html).toContain('role="dialog"');
+    expect(html).toContain('aria-label="Share session"');
+    expect(html).toContain('sees the chat, the files and the changes');
+    expect(html).toContain('also sends prompts and steers');
+    expect(html).toContain('also answers approvals and questions');
+    expect(html.match(/type="radio"/g)).toHaveLength(3);
+    expect(html).toMatch(/checked="" value="viewer"/);
+    for (const label of ['1 day', '7 days', '30 days', '90 days']) expect(html).toContain(label);
+    for (const label of ['1 person', '5 people', '25 people']) expect(html).toContain(label);
+    expect(html).toMatch(/<option value="7" selected/);
+    expect(html).toMatch(/<option value="1" selected/);
+    expect(html).not.toContain('Steering');
+  });
+
+  test('the defaults and the choices', () => {
+    expect(EXPIRY_DAYS).toEqual([1, 7, 30, 90]);
+    expect(USES).toEqual([1, 5, 25]);
+    expect(defaultForm).toEqual({ role: 'viewer', steering: 'open', days: 7, uses: 1 });
+  });
+
+  test('steering shows for a collaborator only', () => {
+    const html = renderToStaticMarkup(
+      <ShareFields
+        request={request}
+        form={{ ...defaultForm, role: 'collaborator' }}
+        busy={false}
+        onChange={() => {}}
+        onSubmit={() => {}}
+      />,
+    );
+    expect(html).toContain('Steering');
+    expect(html).toContain('Open (anyone steers)');
+    expect(html).toContain('Mob (one driver at a time)');
+    expect(html).toMatch(/checked="" value="open"/);
+  });
+
+  test('the body of the call: steering only for the roles that steer', () => {
+    expect(shareBody(request, defaultForm)).toEqual({
+      kind: 'session',
+      target: 'station-a/s1',
+      role: 'viewer',
+      expires_in_days: 7,
+      uses: 1,
+    });
+    expect(
+      shareBody(
+        { kind: 'board', target: '', label: '' },
+        { role: 'collaborator', steering: 'mob', days: 30, uses: 5 },
+      ),
+    ).toEqual({
+      kind: 'board',
+      target: '',
+      role: 'collaborator',
+      steering: 'mob',
+      expires_in_days: 30,
+      uses: 5,
+    });
+    expect(
+      shareBody(request, { role: 'approver', steering: 'mob', days: 1, uses: 25 }).steering,
+    ).toBe('mob');
+    expect(
+      shareBody(request, { role: 'viewer', steering: 'mob', days: 1, uses: 25 }).steering,
+    ).toBe(undefined);
+  });
+
+  test('the result: the URL with Copy, the QR code and who can join', () => {
+    const html = dialog({
+      initialLink: {
+        link: { share_id: 'sh1', url: 'https://deck.test/#join=abc', expires_at: NOW + 7 * DAY },
+        role: 'collaborator',
+      },
+    });
+    expect(html).toContain('value="https://deck.test/#join=abc"');
+    expect(html).toContain('Copy link');
+    expect(html).toContain('aria-label="QR code of the invite link"');
+    expect(html).toContain('Anyone with this link can join as collaborator until 2026-10-20.');
+    expect(html).toContain('Revoke it in Shares.');
+  });
+
+  test('the title follows the kind, and an error is an alert', () => {
+    expect(dialog({ request: { kind: 'board', target: '', label: '' } })).toContain(
+      'aria-label="Share board"',
+    );
+    expect(dialog({ request: { kind: 'space', target: 'sp1', label: 'Alpha' } })).toContain(
+      'aria-label="Share space"',
+    );
+    const html = dialog({ initialError: 'owner only' });
+    expect(html).toContain('role="alert"');
+    expect(html).toContain('owner only');
+  });
+
+  test('the result alone', () => {
+    const html = renderToStaticMarkup(
+      <ShareResult
+        link={{ share_id: 's', url: 'https://d/#join=x', expires_at: NOW }}
+        joinAs="viewer"
+      />,
+    );
+    expect(html).toContain('join as viewer until 2026-10-13.');
+  });
+
+  test('openShare asks for the dialog and closeShare ends it', () => {
+    openShare(request);
+    closeShare();
+    sharesChanged();
+  });
+
+  test('only the owner login with share calls can share', () => {
+    expect(canShare(env())).toBe(false);
+    expect(canShare(env({ shares: fakeShareCalls() }))).toBe(true);
+    expect(
+      canShare(
+        env({
+          shares: fakeShareCalls(),
+          member: { role: 'viewer', name: 'Ana', scope: null },
+        }),
+      ),
+    ).toBe(false);
+  });
+});
+
+const sessions = [card('s1', 'working', 'station-a', { title: 'Review' }), card('s2')];
+const stations = [station('station-a')];
+
+describe('shares page (R11.4)', () => {
+  const view = (state: Parameters<typeof SharesView>[0]['state'], extra = {}) =>
+    renderToStaticMarkup(
+      <SharesView state={state} now={NOW} sessions={sessions} stations={stations} {...extra} />,
+    );
+
+  test('loading, error and empty states', () => {
+    expect(view({ kind: 'loading' })).toContain('Loading the shares…');
+    const error = view({ kind: 'error', text: 'owner only' });
+    expect(error).toContain('role="alert"');
+    expect(error).toContain('Try again');
+    expect(view({ kind: 'ok', value: [] })).toContain('No shares yet.');
+  });
+
+  test('a row: kind, target, role, steering, members, uses, expiry', () => {
+    const html = view({
+      kind: 'ok',
+      value: [
+        share('a', {
+          role: 'collaborator',
+          steering: 'mob',
+          members: ['Ana', 'Bo'],
+          uses_left: 3,
+        }),
+      ],
+    });
+    expect(html).toContain('>session<');
+    expect(html).toContain('Alpha / Review');
+    expect(html).toContain('>collaborator<');
+    expect(html).toContain('>mob<');
+    expect(html).toContain('Members: Ana, Bo');
+    expect(html).toContain('3 uses left');
+    expect(html).toContain('expires 2026-10-18');
+    expect(html).toContain('aria-label="Revoke the share of Alpha / Review"');
+  });
+
+  test('revoked and expired shares have a badge and no Revoke', () => {
+    const html = view({
+      kind: 'ok',
+      value: [
+        share('r', { revoked_at: NOW - 1000, uses_left: 0 }),
+        share('e', { expires_at: NOW - 1000 }),
+      ],
+    });
+    expect(html).toContain('Revoked');
+    expect(html).toContain('Expired');
+    expect(html).toContain('revoked 2026-10-13');
+    expect(html).not.toContain('>Revoke<');
+    expect(shareState(share('r', { revoked_at: 1 }), NOW)).toBe('revoked');
+    expect(shareState(share('e', { expires_at: NOW }), NOW)).toBe('expired');
+    expect(shareState(share('l'), NOW)).toBe('live');
+  });
+
+  test('the revoke asks for a confirm first', () => {
+    const html = view({ kind: 'ok', value: [share('a')] }, { confirming: 'a' });
+    expect(html).toContain('role="group" aria-label="Revoke the share"');
+    expect(html).toContain('Revoke this share? The members lose access at once.');
+    expect(html).toContain('Cancel');
+    expect(view({ kind: 'ok', value: [share('a')] }, { confirming: 'a', revoking: 'a' })).toContain(
+      'Revoking…',
+    );
+  });
+
+  test('the target of a board share and of a space share', () => {
+    expect(targetText(share('b', { kind: 'board', target: '' }), sessions, stations)).toBe(
+      'The whole board',
+    );
+    expect(targetText(share('c', { kind: 'space', target: 'sp9' }), sessions, stations)).toBe(
+      'Space sp9',
+    );
+    expect(targetText(share('d', { target: 'station-a/gone' }), sessions, stations)).toBe(
+      'Alpha / gone',
+    );
+  });
+
+  test('the page of a member or a token says that only the owner sees it', () => {
+    const html = renderToStaticMarkup(
+      <PeopleProvider value={env()}>
+        <SharesPageProbe />
+      </PeopleProvider>,
+    );
+    expect(html).toContain('Only the owner of the deck sees the shares.');
+  });
+});
+
+const SharesPageProbe = () => <SharesPage sessions={sessions} stations={stations} />;
+
+describe('spaces page (R11.3)', () => {
+  const view = (state: Parameters<typeof SpacesView>[0]['state']) =>
+    renderToStaticMarkup(<SpacesView state={state} sessions={sessions} stations={stations} />);
+
+  test('loading, error and empty states', () => {
+    expect(view({ kind: 'loading' })).toContain('Loading the spaces…');
+    expect(view({ kind: 'error', text: 'nope' })).toContain('role="alert"');
+    const empty = view({ kind: 'ok', value: [] });
+    expect(empty).toContain('No spaces yet.');
+    expect(empty).toContain('aria-label="New space"');
+    expect(empty).toContain('New space</button>');
+    expect(empty).toContain('maxLength="80"');
+  });
+
+  test('a space lists its sessions, "Add a session" and "Share space…"', () => {
+    const html = view({
+      kind: 'ok',
+      value: [space('sp1', 'Alpha', [{ station_id: 'station-a', session_id: 's1' }])],
+    });
+    expect(html).toContain('>Alpha<');
+    expect(html).toContain('Alpha / Review');
+    // Only the sessions that are not in the space can be added.
+    expect(html).toContain('Alpha / s2');
+    expect(html.match(/<option value="station-a\/s1"/g)).toBeNull();
+    expect(html).toContain('Add a session');
+    expect(html).toContain('Share space…');
+  });
+
+  test('a space without sessions, and nothing left to add', () => {
+    const html = renderToStaticMarkup(
+      <ul>
+        <SpaceCard
+          space={space('sp2', 'Empty')}
+          sessions={[]}
+          stations={stations}
+          busy={false}
+          onAdd={() => {}}
+          onShare={() => {}}
+        />
+      </ul>,
+    );
+    expect(html).toContain('No sessions in this space yet.');
+    expect(html).toContain('No more sessions');
+    expect(html).toMatch(/<select[^>]*disabled/);
+  });
+
+  test('the page of a non-owner', () => {
+    const html = renderToStaticMarkup(
+      <PeopleProvider value={env()}>
+        <SpacesPage sessions={sessions} stations={stations} />
+      </PeopleProvider>,
+    );
+    expect(html).toContain('Only the owner of the deck sees the spaces.');
+  });
+});
+
+describe('the sessions that the owner shares', () => {
+  const s1 = JSON.stringify(['station-a', 's1']);
+  const s2 = JSON.stringify(['station-a', 's2']);
+  test('a live share covers its session, its space and the board', () => {
+    const sets = sharedSets(
+      [
+        share('a', { steering: 'mob' }),
+        share('b', { kind: 'space', target: 'sp1' }),
+        share('c', { revoked_at: 1, target: 'station-a/s3' }),
+        share('d', { expires_at: NOW - 1, target: 'station-a/s4' }),
+      ],
+      [space('sp1', 'Alpha', [{ station_id: 'station-a', session_id: 's2' }])],
+      NOW,
+    );
+    expect([...sets.shared].sort()).toEqual([s1, s2].sort());
+    expect([...sets.mob]).toEqual([s1]);
+  });
+
+  test('a board share covers every session', () => {
+    const sets = sharedSets([share('a', { kind: 'board', target: '', steering: 'mob' })], [], NOW);
+    expect(sets.shared.has('*')).toBe(true);
+    expect(sets.mob.has('*')).toBe(true);
+  });
+});

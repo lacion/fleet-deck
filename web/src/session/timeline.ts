@@ -19,7 +19,17 @@ import type {
 export type SubagentStatus = 'running' | 'background' | 'done' | 'failed' | 'ended';
 
 export type Item =
-  | { type: 'run'; key: string; run_id: string; input: string; origin: string }
+  | {
+      type: 'run';
+      key: string;
+      run_id: string;
+      input: string;
+      origin: string;
+      /** `member:<name>` when a member typed the input (R11.5); the owner has none. */
+      author?: string;
+      /** Unix ms of the run start; set with `author`. */
+      at?: number;
+    }
   | { type: 'message'; key: string; text: string; done: boolean }
   | {
       type: 'tool';
@@ -46,6 +56,8 @@ export type Item =
       options: readonly ApprovalOption[];
       state: 'open' | 'answered' | 'expired';
       outcome: string | null;
+      /** `member:<name>` when a member answered (R11.5); the owner has none. */
+      answered_by?: string;
     }
   | { type: 'turn'; key: string; status: TurnStatus; turn_id: string; diff: DiffSummary | null }
   | { type: 'notice'; key: string; text: string; tone: 'info' | 'error' }
@@ -173,6 +185,7 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
           run_id: e.run_id,
           input: e.input_summary,
           origin: e.origin,
+          ...(e.author === undefined ? {} : { author: e.author, at: env.at }),
         });
         messages.delete('');
         break;
@@ -331,6 +344,7 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
           Object.assign(item, {
             state: 'answered',
             outcome: `${label ?? e.option_id} (by ${e.by})`,
+            ...(e.answered_by === undefined ? {} : { answered_by: e.answered_by }),
           });
         }
         break;

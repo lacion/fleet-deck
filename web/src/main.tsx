@@ -25,6 +25,7 @@ import './styles/views.css';
 import './styles/artifacts.css';
 import './styles/modelhelp.css';
 import './styles/integrations.css';
+import './styles/sharing.css';
 
 initTheme();
 initDensity();

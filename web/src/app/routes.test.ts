@@ -29,6 +29,8 @@ describe('routes', () => {
       'activity',
       'terminals',
       'more',
+      'shares',
+      'spaces',
     ] as const) {
       expect(parseHash(`#/${name}`)).toEqual({ name });
       expect(formatHash({ name })).toBe(`#/${name}`);
@@ -42,6 +44,18 @@ describe('routes', () => {
       session('station-a', 's1', 'changes'),
     );
     expect(parseHash('#/s/station-a/s1?tab=files')).toEqual(session('station-a', 's1', 'files'));
+  });
+
+  test('the people tab of a session is in the URL (R11.6)', () => {
+    expect(parseHash('#/s/a/b?tab=people')).toEqual({
+      name: 'session',
+      station: 'a',
+      session: 'b',
+      tab: 'people',
+    });
+    expect(formatHash({ name: 'session', station: 'a', session: 'b', tab: 'people' })).toBe(
+      '#/s/a/b?tab=people',
+    );
   });
 
   test('the compare route carries the batch id (R1.4)', () => {

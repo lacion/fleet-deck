@@ -24,6 +24,12 @@ import { archived } from '../ui/archive';
 import type { Connection } from './connection';
 import { deviceLinkAction } from './deviceLink';
 import { viewsActions } from './views';
+import { JoinPage } from '../sharing/JoinPage';
+import { join, joinToken } from '../sharing/join';
+import { type PeopleEnv, PeopleProvider } from '../sharing/context';
+import { memberOf, writeStoredMember } from '../sharing/member';
+import { useOwnerShares } from '../sharing/ownerShares';
+import { peopleCalls, shareCalls } from '../sharing/people';
 
 /** The deck waits up to 20 s for a station; the board waits a little longer. */
 const ARTIFACT_WAIT_MS = 25_000;
@@ -36,9 +42,12 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
     connection.getSnapshot,
     connection.getSnapshot,
   );
+  // R11: a member is a guest of the owner's deck; the board hides what the deck refuses.
+  const member = useMemo(() => memberOf(state.login, sessionStorageOrNull()), [state.login]);
+  const guest = member !== null;
   // DL-149: the archived sessions live on the deck; attach once logged in,
   // and again after a new login.
-  const loggedIn = state.login !== null;
+  const loggedIn = state.login !== null && !guest;
   useEffect(
     () =>
       loggedIn
@@ -50,9 +59,32 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
     [connection, loggedIn],
   );
   const [password, setPassword] = useState('');
+  const [joinHash, setJoinHash] = useState<string | null>(() =>
+    typeof window === 'undefined' ? null : joinToken(window.location.hash),
+  );
   const [busy, setBusy] = useState(false);
   const [logoutError, setLogoutError] = useState<string | null>(null);
   const canAdmin = state.login?.scopes.includes('admin') === true;
+  const owner = state.login?.actor === 'owner';
+  const sharing = useMemo(
+    () =>
+      owner && canAdmin
+        ? shareCalls(
+            (path) => connection.get(path),
+            (path, body) => connection.post(path, body),
+          )
+        : undefined,
+    [connection, owner, canAdmin],
+  );
+  const ownerShares = useOwnerShares(sharing);
+  const calls = useMemo(
+    () =>
+      peopleCalls(
+        (path) => connection.get(path),
+        (path, body) => connection.post(path, body),
+      ),
+    [connection],
+  );
   const actions = useMemo(
     () => ({
       ...stationActions((path, body) => connection.post(path, body), canAdmin),
@@ -86,40 +118,48 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
   }, [connection, scopeText]);
   const spawn = useMemo(
     () =>
-      spawnActions(
-        (path) => connection.get(path),
-        // The deck waits up to 30 s for a station's Git access check (DL-144).
-        (path, body) =>
-          connection.post(path, body, path.endsWith('/workspace/preflight') ? 35_000 : undefined),
-        scopeText.split(' '),
-      ),
-    [connection, scopeText],
+      guest
+        ? undefined
+        : spawnActions(
+            (path) => connection.get(path),
+            // The deck waits up to 30 s for a station's Git access check (DL-144).
+            (path, body) =>
+              connection.post(
+                path,
+                body,
+                path.endsWith('/workspace/preflight') ? 35_000 : undefined,
+              ),
+            scopeText.split(' '),
+          ),
+    [connection, scopeText, guest],
   );
   const assign = useMemo(
     () =>
-      scopeText.split(' ').includes('drive')
+      !guest && scopeText.split(' ').includes('drive')
         ? assignActions((path, body) => connection.post(path, body))
         : undefined,
-    [connection, scopeText],
+    [connection, scopeText, guest],
   );
   const fleet = useMemo(
     () =>
-      scopeText.split(' ').includes('drive')
+      !guest && scopeText.split(' ').includes('drive')
         ? fleetActions(
             (path) => connection.get(path),
             (path, body) => connection.post(path, body),
           )
         : undefined,
-    [connection, scopeText],
+    [connection, scopeText, guest],
   );
   const plans = useMemo(
     () =>
-      planActions(
-        (path) => connection.get(path),
-        (path, body) => connection.post(path, body),
-        scopeText.split(' '),
-      ),
-    [connection, scopeText],
+      guest
+        ? undefined
+        : planActions(
+            (path) => connection.get(path),
+            (path, body) => connection.post(path, body),
+            scopeText.split(' '),
+          ),
+    [connection, scopeText, guest],
   );
   // The deck's automation routes are owner-only: no admin scope, no automations.
   const automations = useMemo(
@@ -134,19 +174,25 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
   );
   const artifacts = useMemo(
     () =>
-      artifactActions(
-        {
-          get: (path) => connection.get(path, ARTIFACT_WAIT_MS),
-          post: (path, body) => connection.post(path, body, ARTIFACT_WAIT_MS),
-          ...artifactHttp(
-            (path, init) => fetch(path, init),
-            () => connection.getSnapshot().login?.csrf ?? null,
-            ARTIFACT_WAIT_MS,
+      guest
+        ? undefined
+        : artifactActions(
+            {
+              get: (path) => connection.get(path, ARTIFACT_WAIT_MS),
+              post: (path, body) => connection.post(path, body, ARTIFACT_WAIT_MS),
+              ...artifactHttp(
+                (path, init) => fetch(path, init),
+                () => connection.getSnapshot().login?.csrf ?? null,
+                ARTIFACT_WAIT_MS,
+              ),
+            },
+            scopeText.split(' '),
           ),
-        },
-        scopeText.split(' '),
-      ),
-    [connection, scopeText],
+    [connection, scopeText, guest],
+  );
+  const conflicts = useMemo(
+    () => (guest ? undefined : conflictLoader((path) => connection.get(path))),
+    [connection, guest],
   );
   const integrations = useMemo(
     () =>
@@ -164,11 +210,13 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
       ),
     [connection, scopeText],
   );
-  const conflicts = useMemo(() => conflictLoader((path) => connection.get(path)), [connection]);
   const filesFor = useMemo(
-    () => (station: string, workspace: string) =>
-      workspaceFiles((path) => connection.get(path), station, workspace),
-    [connection],
+    () =>
+      guest
+        ? undefined
+        : (station: string, workspace: string) =>
+            workspaceFiles((path) => connection.get(path), station, workspace),
+    [connection, guest],
   );
   const extras = useMemo(
     () => async (): Promise<FleetExtras> => {
@@ -182,11 +230,13 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
   );
   const views = useMemo(
     () =>
-      viewsActions(
-        (path) => connection.get(path),
-        (path, body) => connection.post(path, body),
-      ),
-    [connection],
+      guest
+        ? undefined
+        : viewsActions(
+            (path) => connection.get(path),
+            (path, body) => connection.post(path, body),
+          ),
+    [connection, guest],
   );
   const watch = useMemo(() => (key: SessionKey) => connection.watch(key), [connection]);
   // R10.5: a model call takes up to 60 s on the station.
@@ -234,6 +284,62 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
       },
     [actions, commands, summaryWatch, terminals],
   );
+  const self = state.login?.actor ?? 'owner';
+  const people = useMemo<PeopleEnv>(
+    () => ({
+      self,
+      member,
+      shares: sharing,
+      calls,
+      shared: ownerShares.shared,
+      mob: ownerShares.mob,
+      presence: state.presence,
+      chat: state.chat,
+      driver: state.driver,
+      driveRequests: state.driveRequests,
+      heartbeat: connection.presence,
+      leave: () => {
+        writeStoredMember(sessionStorageOrNull(), null);
+        void connection.logout().catch(() => {
+          setLogoutError(
+            'The deck did not confirm logout. Close the page or reconnect to try again.',
+          );
+        });
+      },
+    }),
+    [
+      self,
+      member,
+      sharing,
+      calls,
+      ownerShares,
+      state.presence,
+      state.chat,
+      state.driver,
+      state.driveRequests,
+      connection,
+    ],
+  );
+  if (state.login === null && joinHash !== null) {
+    // R11.4: an invite link comes before the login page.
+    return (
+      <JoinPage
+        onJoin={(name) => join((path, init) => fetch(path, init), joinHash, name)}
+        onJoined={(result) => {
+          writeStoredMember(sessionStorageOrNull(), result.joined);
+          window.history.replaceState(
+            null,
+            '',
+            `${window.location.pathname}${window.location.search}#/`,
+          );
+          setJoinHash(null);
+          // The cookie is set: the connection asks the deck who this is.
+          connection.stop();
+          connection.start();
+        }}
+      />
+    );
+  }
   if (state.login === null) {
     return (
       <main className="fd-login">
@@ -288,6 +394,7 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
     freshness: state.freshness,
     onLogout: () => {
       setPassword('');
+      writeStoredMember(sessionStorageOrNull(), null);
       void connection.logout().catch(() => {
         setLogoutError(
           'The deck did not confirm logout. Close the page or reconnect to try again.',
@@ -300,31 +407,42 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
     addDevice: canAdmin ? addDevice : undefined,
   };
   return (
-    <App
-      sessions={state.sessions}
-      stations={state.stations}
-      freshness={state.freshness}
-      actions={actions}
-      timelines={state.timelines}
-      watch={watch}
-      sessionActions={commands}
-      filesFor={filesFor}
-      spawn={spawn}
-      assign={assign}
-      fleet={fleet}
-      feed={state.feed}
-      artifacts={artifacts}
-      integrations={integrations}
-      plans={plans}
-      automations={automations}
-      conflicts={conflicts}
-      extras={extras}
-      chrome={chrome}
-      terminals={terminals}
-      summaryWatch={summaryWatch}
-      onReturnTerminal={returnTerminal}
-      race={race}
-      views={views}
-    />
+    <PeopleProvider value={people}>
+      <App
+        sessions={state.sessions}
+        stations={state.stations}
+        freshness={state.freshness}
+        actions={actions}
+        timelines={state.timelines}
+        watch={watch}
+        sessionActions={commands}
+        filesFor={filesFor}
+        spawn={spawn}
+        assign={assign}
+        fleet={fleet}
+        feed={state.feed}
+        artifacts={artifacts}
+        integrations={integrations}
+        plans={plans}
+        automations={automations}
+        conflicts={conflicts}
+        extras={extras}
+        chrome={chrome}
+        terminals={terminals}
+        summaryWatch={summaryWatch}
+        onReturnTerminal={returnTerminal}
+        race={race}
+        views={views}
+      />
+    </PeopleProvider>
   );
+}
+
+/** `sessionStorage`, or `null` when the browser blocks it. */
+function sessionStorageOrNull(): Storage | null {
+  try {
+    return typeof window === 'undefined' ? null : window.sessionStorage;
+  } catch {
+    return null;
+  }
 }

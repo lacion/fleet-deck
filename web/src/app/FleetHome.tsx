@@ -28,7 +28,9 @@ import { FleetPanel } from '../fleet/FleetPanel';
 import type { DeckSession, SessionKey, StationView } from '../gen';
 import type { Freshness } from '../runtime/state';
 import type { SessionActions } from '../session/commands';
-import { ChevronDown, ChevronUp, CircleHelp, Icon, Plus, Search } from '../ui/icons';
+import { canShare, usePeople } from '../sharing/context';
+import { openShare } from '../sharing/shareStore';
+import { ChevronDown, ChevronUp, CircleHelp, Icon, Plus, Search, Users } from '../ui/icons';
 import { archived } from '../ui/archive';
 import { priority, sessionRef } from '../ui/localSet';
 import { useNow } from '../ui/useNow';
@@ -186,6 +188,9 @@ export function FleetHome({
   extras,
 }: Props) {
   const cardExtras = useExtras(extras);
+  // R11.4: a guest has no new session and no mail; the owner can share the whole board.
+  const people = usePeople();
+  const guest = people.member !== null;
   const [, setActivity] = useState(0);
   // The cards read the buckets while they render, so a record asks for one more render.
   useEffect(() => {
@@ -255,6 +260,17 @@ export function FleetHome({
           onChange={(event) => setFilter({ ...filter, search: event.target.value })}
         />
       </div>
+      {canShare(people) ? (
+        <button
+          type="button"
+          className="fd-ghost fd-sm"
+          onClick={() =>
+            openShare({ kind: 'board', target: '', label: 'Every session of the deck' })
+          }
+        >
+          <Icon of={Users} size={14} /> Share board…
+        </button>
+      ) : null}
     </header>
   );
   const radar =
@@ -358,13 +374,17 @@ export function FleetHome({
       <div className="fd-lanes-empty">
         <p className="fd-empty">
           {sessions.length === 0
-            ? 'No sessions yet. Start one with New session.'
+            ? guest
+              ? 'No shared sessions yet.'
+              : 'No sessions yet. Start one with New session.'
             : 'No session matches the filters.'}
         </p>
         <div className="fd-lanes-empty-actions">
-          <button type="button" className="fd-primary" onClick={onSpawn}>
-            <Icon of={Plus} /> New session
-          </button>
+          {guest ? null : (
+            <button type="button" className="fd-primary" onClick={onSpawn}>
+              <Icon of={Plus} /> New session
+            </button>
+          )}
           {onHelp === undefined ? null : (
             <button type="button" className="fd-ghost" onClick={onHelp}>
               <Icon of={CircleHelp} /> What is this?
@@ -376,6 +396,7 @@ export function FleetHome({
   const panel = (
     <HomePanel
       hasAssign={assign !== undefined}
+      guest={guest}
       stations={stations}
       sessions={sessions}
       visible={visible}
@@ -497,6 +518,7 @@ function PhoneColumns({
 /** The bottom panel: activity, mail and tasks, assign, usage. */
 function HomePanel({
   hasAssign,
+  guest,
   stations,
   sessions,
   visible,
@@ -508,6 +530,8 @@ function HomePanel({
   request,
 }: {
   hasAssign: boolean;
+  /** A guest has no mail and no assign tab (the deck refuses the calls). */
+  guest: boolean;
   stations: readonly StationView[];
   sessions: readonly DeckSession[];
   visible: readonly DeckSession[];
@@ -536,8 +560,11 @@ function HomePanel({
     setState(next);
     writePanel(next);
   };
-  const tab: PanelTab = state.tab === 'assign' && !hasAssign ? 'activity' : state.tab;
-  const tabs = PANEL_TABS.filter((t) => t !== 'assign' || hasAssign);
+  const tab: PanelTab =
+    (state.tab === 'assign' && !hasAssign) || (guest && state.tab === 'mail')
+      ? 'activity'
+      : state.tab;
+  const tabs = PANEL_TABS.filter((t) => (t !== 'assign' || hasAssign) && !(guest && t === 'mail'));
   return (
     <section className="fd-homepanel" data-open={state.open} aria-label="Fleet panel">
       <div className="fd-homepanel-head">
@@ -574,7 +601,7 @@ function HomePanel({
         hidden={!state.open}
       >
         {tab === 'activity' ? <Feed items={feed} onOpen={onOpen} /> : null}
-        {tab === 'mail' ? (
+        {tab === 'mail' && !guest ? (
           <FleetPanel actions={fleet} sessions={sessions} stations={stations} />
         ) : null}
         {tab === 'assign' && assign !== undefined ? (

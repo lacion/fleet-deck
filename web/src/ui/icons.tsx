@@ -57,6 +57,7 @@ export {
   Trash2,
   TriangleAlert,
   Undo2,
+  Users,
   Workflow,
   Wrench,
   X,

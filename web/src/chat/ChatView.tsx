@@ -23,6 +23,8 @@ import {
   X,
 } from '../ui/icons';
 import { ArtifactChip, SuggestedChip } from '../artifacts/ArtifactChips';
+import { memberName } from '../sharing/member';
+import { clock } from '../sharing/people';
 import { runLabel } from './labels';
 import { Markdown } from './Markdown';
 
@@ -203,15 +205,23 @@ function SubagentView(props: { item: Subagent; onOpenChanges: OpenChanges }) {
 function ItemView(props: { item: Item; onOpenChanges: OpenChanges }) {
   const { item } = props;
   switch (item.type) {
-    case 'run':
+    case 'run': {
+      // R11.5: a prompt of a member shows its name after the time; the owner shows nothing extra.
+      const name = item.author === undefined ? null : memberName(item.author);
       return (
         <div className="fd-chat-run">
           {runLabel(item.origin) !== 'You' ? (
             <span className="fd-chat-run-label">{runLabel(item.origin)}</span>
           ) : null}
           <div className="fd-chat-bubble">{item.input}</div>
+          {name === null ? null : (
+            <span className="fd-chat-run-label fd-chat-author">
+              {item.at === undefined ? '' : `${clock(item.at)} `}— {name}
+            </span>
+          )}
         </div>
       );
+    }
     case 'message':
       return (
         <div className={item.done ? 'fd-chat-message' : 'fd-chat-message fd-chat-streaming'}>
@@ -241,6 +251,9 @@ function ItemView(props: { item: Item; onOpenChanges: OpenChanges }) {
       ) : (
         <p className="fd-chat-line" data-state={item.state}>
           {`${item.title} · ${item.outcome ?? 'expired'}`}
+          {item.answered_by !== undefined && memberName(item.answered_by) !== null
+            ? ` · answered by ${memberName(item.answered_by)}`
+            : ''}
         </p>
       );
     case 'plan':

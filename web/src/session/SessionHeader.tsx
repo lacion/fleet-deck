@@ -4,10 +4,7 @@ import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from 
 import { formatHash } from '../app/routes';
 import { relativeAge } from '../app/sessions';
 import { stationName } from '../board/fleet';
-import { providerLabel } from '../board/lanes';
-import { limitChip, rateMeters } from '../board/usage';
 import type { DeckSession, ModelChoice, StationView } from '../gen';
-import { modelFamily, shortModel } from '../ui/format';
 import { digestLines, GeneratedMark } from '../ui/generated';
 import {
   Archive,
@@ -29,14 +26,24 @@ import {
   Star,
   TriangleAlert,
   Undo2,
+  Users,
   X,
 } from '../ui/icons';
+import { canShare, usePeople } from '../sharing/context';
+import { Avatars } from '../sharing/Avatars';
+import { roleAccess } from '../sharing/member';
+import { openShare } from '../sharing/shareStore';
 import { archived } from '../ui/archive';
-import { isHibernated } from '../views/hibernate';
+import { sessionKey } from '../runtime/state';
 import { priority, sessionRef } from '../ui/localSet';
 import { useNow } from '../ui/useNow';
 import type { Outcome, SessionActions } from './commands';
 import type { Controller } from './controller';
+import { useProjects } from '../integrations/context';
+import { GitPullRequest } from '../integrations/icons';
+import { projectOfSession } from '../integrations/model';
+import { OpenPrDialog } from '../integrations/OpenPrDialog';
+import { Badges, Place } from './HeaderBadges';
 import { RenameForm } from './RenameForm';
 import { ModeLadder, ModelPicker } from './SessionSettings';
 
@@ -200,93 +207,6 @@ function Menu(props: {
   );
 }
 
-/** The tone of the status badge. */
-function statusTone(status: string): 'act' | 'ok' | 'info' | 'hazard' | 'muted' {
-  switch (status) {
-    case 'needs_you':
-      return 'act';
-    case 'working':
-      return 'ok';
-    case 'verifying':
-      return 'info';
-    case 'unreachable':
-    case 'lost':
-      return 'hazard';
-    default:
-      return 'muted';
-  }
-}
-
-/** The tone of the permission mode badge. */
-function modeTone(mode: string): 'plan' | 'info' | 'hazard' | 'muted' {
-  switch (mode) {
-    case 'plan':
-      return 'plan';
-    case 'acceptEdits':
-      return 'info';
-    case 'bypassPermissions':
-    case 'dontAsk':
-      return 'hazard';
-    default:
-      return 'muted';
-  }
-}
-
-/** The status, model, mode and provider badges of a session (the phone menu puts the mode last). */
-function Badges({
-  session,
-  modeLast = false,
-}: {
-  readonly session: DeckSession;
-  readonly modeLast?: boolean;
-}) {
-  const s = session.summary;
-  const limit = limitChip(rateMeters([session], []));
-  const mode = s.mode ? (
-    <span className="fd-badge" data-tone={modeTone(s.mode)} title="Permission mode">
-      {s.mode}
-    </span>
-  ) : null;
-  return (
-    <>
-      <span className="fd-badge" data-tone={statusTone(session.status)}>
-        {isHibernated(session) ? 'hibernated' : session.status.replaceAll('_', ' ')}
-      </span>
-      <span
-        className="fd-badge"
-        data-family={modelFamily(s.model) ?? undefined}
-        title={s.model ?? 'default model'}
-      >
-        {shortModel(s.model)}
-      </span>
-      {modeLast ? null : mode}
-      <span className="fd-badge" data-provider={s.provider}>
-        {providerLabel(s.provider)}
-      </span>
-      {limit === null ? null : (
-        <span className="fd-badge" data-tone={limit.tone}>
-          {limit.text}
-        </span>
-      )}
-      {modeLast ? mode : null}
-    </>
-  );
-}
-
-/** The station, the branch and the directory of a session. */
-function Place({ parts, cwd }: { readonly parts: readonly string[]; readonly cwd: string | null }) {
-  return (
-    <p className="fd-sh-place">
-      {parts.map((part, n) => (
-        <span key={part} title={n === parts.length - 1 && cwd ? cwd : undefined}>
-          {n > 0 ? ' · ' : ''}
-          {part}
-        </span>
-      ))}
-    </p>
-  );
-}
-
 export function SessionHeader({
   session,
   stations,
@@ -303,23 +223,31 @@ export function SessionHeader({
   const caps = s.capabilities;
   const { flags, busy } = controller;
   const phone = layout === 'phone';
+  // R11 (DL-166): a member never renames, stops, resumes, sets the mode or the model, or opens a
+  // shell; the owner can share the session.
+  const people = usePeople();
+  const guest = people.member !== null;
+  const mayPrompt = people.member === null || roleAccess(people.member.role).composer;
   const [renaming, setRenaming] = useState(false);
   const [confirm, setConfirm] = useState<'kill' | 'open' | null>(null);
   const [termConfirm, setTermConfirm] = useState(false);
+  // R3.9 (DL-164): a pull request from the session's branch, for a project with a forge.
+  const prProject = projectOfSession(useProjects(), session.station_id, s);
+  const [prOpen, setPrOpen] = useState(false);
   const run = (name: string, call: (a: SessionActions) => Promise<Outcome>) => {
     if (actions) controller.act(name, () => call(actions));
   };
   const title = s.title ?? s.callsign ?? s.session_id;
-  const canRename = flags.live && actions?.canDrive === true && busy === null;
+  const canRename = !guest && flags.live && actions?.canDrive === true && busy === null;
   const canTerminalOpen =
     terminal?.available === true &&
     caps?.resume === true &&
     flags.live &&
     actions?.canDrive === true;
   const settingsEnabled = flags.drive && busy === null;
-  const hasModes = caps?.set_mode === true && caps.modes.length > 0;
-  const hasModel = caps?.set_model === true;
-  const hasAuto = caps?.resume === true;
+  const hasModes = !guest && caps?.set_mode === true && caps.modes.length > 0;
+  const hasModel = !guest && caps?.set_model === true;
+  const hasAuto = !guest && caps?.resume === true;
   const place = [
     stationName(session.station_id, stations),
     s.branch,
@@ -374,17 +302,19 @@ export function SessionHeader({
   /** The items of the session menu that every layout has. */
   const menuItems = (close: () => void) => (
     <>
-      <button
-        type="button"
-        disabled={!canRename}
-        onClick={() => {
-          close();
-          setRenaming(true);
-        }}
-      >
-        <Icon of={Pencil} /> Rename
-      </button>
-      {flags.canStop ? (
+      {guest ? null : (
+        <button
+          type="button"
+          disabled={!canRename}
+          onClick={() => {
+            close();
+            setRenaming(true);
+          }}
+        >
+          <Icon of={Pencil} /> Rename
+        </button>
+      )}
+      {flags.canStop && !guest ? (
         <>
           <button
             type="button"
@@ -406,7 +336,7 @@ export function SessionHeader({
           </button>
         </>
       ) : null}
-      {flags.drive ? (
+      {flags.drive && mayPrompt ? (
         <button
           type="button"
           disabled={busy !== null}
@@ -418,7 +348,7 @@ export function SessionHeader({
           <Icon of={Send} /> Ask for a status update
         </button>
       ) : null}
-      {s.batch !== undefined && s.batch.size >= 2 ? (
+      {s.batch !== undefined && s.batch.size >= 2 && !guest ? (
         <button
           type="button"
           onClick={() => {
@@ -441,9 +371,35 @@ export function SessionHeader({
           <Icon of={FileText} /> Summarize
         </button>
       ) : null}
+      {prProject !== undefined && !guest && actions?.canDrive === true && s.branch ? (
+        <button
+          type="button"
+          onClick={() => {
+            close();
+            setPrOpen(true);
+          }}
+        >
+          <Icon of={GitPullRequest} /> Open a pull request…
+        </button>
+      ) : null}
       <button type="button" onClick={() => priority.toggle(ref)}>
         <Icon of={Star} /> {starred ? 'Unstar' : 'Star'}
       </button>
+      {canShare(people) ? (
+        <button
+          type="button"
+          onClick={() => {
+            close();
+            openShare({
+              kind: 'session',
+              target: `${session.station_id}/${s.session_id}`,
+              label: title,
+            });
+          }}
+        >
+          <Icon of={Users} /> Share session…
+        </button>
+      ) : null}
       {canArchive ? (
         <button type="button" onClick={() => archived.toggle(ref)}>
           <Icon of={isArchived ? ArchiveRestore : Archive} /> {isArchived ? 'Unarchive' : 'Archive'}
@@ -484,7 +440,7 @@ export function SessionHeader({
           ) : null}
         </>
       ) : null}
-      {onNewShell ? (
+      {onNewShell && !guest ? (
         <>
           <div className="fd-menu-sep" />
           <button
@@ -498,7 +454,7 @@ export function SessionHeader({
           </button>
         </>
       ) : null}
-      {terminal !== null && !terminal.available ? (
+      {terminal !== null && !terminal.available && !guest ? (
         <>
           <div className="fd-menu-sep" />
           <p className="fd-menu-text">
@@ -553,7 +509,7 @@ export function SessionHeader({
             <div className="fd-menu-sep" />
             <Details session={session} now={now} />
             <div className="fd-menu-sep" />
-            {flags.held && terminal ? (
+            {guest ? null : flags.held && terminal ? (
               <button
                 type="button"
                 disabled={!flags.live || actions?.canDrive !== true || busy !== null}
@@ -583,7 +539,7 @@ export function SessionHeader({
 
   /** The "Terminal" menu of the desktop header: the shell item, and the TUI handover when it is possible. */
   const showTerminalMenu =
-    onNewShell !== undefined || (canTerminalOpen && terminal !== null && !flags.held);
+    !guest && (onNewShell !== undefined || (canTerminalOpen && terminal !== null && !flags.held));
   const terminalMenu = showTerminalMenu ? (
     <Menu
       summary={
@@ -663,7 +619,7 @@ export function SessionHeader({
                     <Icon of={Star} size={14} />
                   </span>
                 ) : null}
-                {phone ? null : (
+                {phone || guest ? null : (
                   <button
                     type="button"
                     className="fd-iconbtn fd-sm"
@@ -681,7 +637,15 @@ export function SessionHeader({
           {phone ? null : <Place parts={place} cwd={s.cwd} />}
         </div>
         <div className="fd-sh-actions">
-          {flags.canInterrupt ? (
+          <Avatars
+            who={
+              people.presence[
+                sessionKey({ station_id: session.station_id, session_id: s.session_id })
+              ] ?? []
+            }
+            self={people.self}
+          />
+          {flags.canInterrupt && mayPrompt ? (
             phone ? (
               <button
                 type="button"
@@ -702,7 +666,7 @@ export function SessionHeader({
               </button>
             )
           ) : null}
-          {flags.canResume ? (
+          {flags.canResume && !guest ? (
             phone ? (
               <button
                 type="button"
@@ -792,6 +756,9 @@ export function SessionHeader({
             <Icon of={X} />
           </button>
         </div>
+      ) : null}
+      {prOpen && prProject !== undefined ? (
+        <OpenPrDialog project={prProject} session={session} onClose={() => setPrOpen(false)} />
       ) : null}
     </div>
   );

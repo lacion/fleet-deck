@@ -12,6 +12,7 @@ import type {
   ProjectInput,
   ProviderKind,
   ReviewState,
+  SessionSummary,
   TrackerKind,
 } from '../gen';
 
@@ -238,3 +239,24 @@ export const lastSegment = (url: string): string => url.split('/').filter(Boolea
 
 /** The URL when it is a web link; a text from a system never becomes a `javascript:` link. */
 export const webUrl = (url: string): string | null => (/^https?:\/\//i.test(url) ? url : null);
+
+/**
+ * The project of a session, for "Open a pull request": the project of its issue, else a project of
+ * its station with a forge whose path holds the session folder.
+ */
+export function projectOfSession(
+  projects: readonly Project[],
+  station: string,
+  summary: Pick<SessionSummary, 'issue' | 'cwd'>,
+): Project | undefined {
+  const byIssue =
+    summary.issue === undefined ? undefined : projectOfIssue(summary.issue, projects, station);
+  if (byIssue?.forge) return byIssue;
+  const cwd = summary.cwd ?? '';
+  return projects.find(
+    (p) =>
+      p.station_id === station &&
+      p.forge !== null &&
+      (cwd === p.path || cwd.startsWith(`${p.path}/`)),
+  );
+}

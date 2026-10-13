@@ -57,6 +57,11 @@ import { priority } from './ui/localSet';
 import { useNow } from './ui/useNow';
 import { useMarkRead } from './views/markRead';
 import { unreadOf } from './views/marks';
+import { usePeople } from './sharing/context';
+import { GUEST_HIDDEN_ROUTES } from './sharing/member';
+import { ShareHost } from './sharing/ShareDialog';
+import { SharesPage } from './sharing/SharesPage';
+import { SpacesPage } from './sharing/SpacesPage';
 import { WatchPage } from './watch/WatchPage';
 
 type Props = {
@@ -172,8 +177,11 @@ export function App({
   const touch = useTouch();
   const phone = layout === 'phone';
   // 'more' and 'terminals' are phone screens: elsewhere they show the home (see the effect).
+  // R11.4: a guest of the owner's deck opens the pages that the deck allows; the others are home.
+  const guest = usePeople().member !== null;
   const route: Route =
-    !phone && (urlRoute.name === 'more' || urlRoute.name === 'terminals')
+    (!phone && (urlRoute.name === 'more' || urlRoute.name === 'terminals')) ||
+    (guest && GUEST_HIDDEN_ROUTES.includes(urlRoute.name))
       ? { name: 'home' }
       : urlRoute;
   const routeKey = formatHash(route);
@@ -562,6 +570,10 @@ export function App({
             onOpen={open}
           />
         );
+      case 'shares':
+        return <SharesPage sessions={sessions} stations={stations} />;
+      case 'spaces':
+        return <SpacesPage sessions={sessions} stations={stations} />;
       case 'artifacts':
         return <ArtifactsPage actions={artifacts} stations={stations} sessions={sessions} />;
       case 'artifact':
@@ -647,6 +659,7 @@ export function App({
       }}
       overlays={
         <>
+          <ShareHost />
           {help ? <HelpOverlay onClose={() => setHelp(false)} /> : null}
           {palette ? (
             <Palette
