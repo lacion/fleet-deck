@@ -93,6 +93,10 @@ impl DurableCore for ClaudeCore {
     fn ended(&self) -> bool {
         self.has_ended()
     }
+
+    fn is_idle(&self) -> bool {
+        Self::is_idle(self)
+    }
 }
 
 impl DurableDriver<ClaudeCore> {
@@ -111,5 +115,36 @@ impl DurableDriver<ClaudeCore> {
         this.internal(|c| c.initialize().map(split)).await?;
         this.wait(|c| c.models().is_some(), "initialize").await?;
         Ok(this)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use fleetdeck_proto::InputId;
+    use fleetdeck_proto::command::UserInput;
+    use fleetdeck_proto::event::RunOrigin;
+    use fleetdeck_providers::adapter::HostInput;
+    use fleetdeck_providers::claude::capabilities;
+
+    use super::*;
+
+    #[test]
+    fn the_durable_claude_core_is_idle_until_an_input_waits() {
+        let mut core = <ClaudeCore as DurableCore>::create(CoreConfig {
+            provider_instance: "claude".into(),
+            cwd: "/w".to_owned(),
+            capabilities: capabilities(false),
+            resumed: None,
+        });
+        assert!(DurableCore::is_idle(&core));
+        core.prompt(&HostInput {
+            id: InputId::from("01J00000000000000000000001"),
+            origin: RunOrigin::Board,
+            input: UserInput::new("hello".to_owned()),
+        })
+        .unwrap();
+        assert!(!DurableCore::is_idle(&core));
     }
 }

@@ -35,7 +35,7 @@ use crate::adapter::{
     ProviderAdapter, ProviderError, ProviderProbe, Result, canonical_workspace, require,
 };
 use crate::coordinator::CoordinatorLaunch;
-use crate::host::{ProcessControl, ProcessSpec, SessionHost, StopPolicy};
+use crate::host::{DEFAULT_IDLE_GRACE, ProcessControl, ProcessSpec, SessionHost, StopPolicy};
 
 /// How long a host command waits until its frames are in the stdin pipe.
 /// A process that stops reading stdin fills the pipe; the command then
@@ -92,7 +92,7 @@ impl ClaudeAdapterConfig {
             extra_args: Vec::new(),
             raw_log: None,
             stop: StopPolicy::default(),
-            idle_grace: Duration::from_secs(3),
+            idle_grace: DEFAULT_IDLE_GRACE,
             delivery_grace: Duration::from_secs(5),
             probe_timeout: Duration::from_secs(10),
         }
@@ -633,11 +633,14 @@ impl LiveSession for ClaudeSession {
     /// Graceful: write the queued frames, close stdin, wait the rest of the
     /// grace time, then signal the group (ADR-001 §2.9). The grace time
     /// includes the queued writes. An idle session gets `idle_grace` (at most
-    /// the full grace) instead of the full grace. When the core is busy
-    /// (locked by the reader), the stop counts the session as not idle. Returns after the exit events were emitted,
-    /// or with [`ProviderError::EventsUndelivered`] when the event sink stays
-    /// full for `delivery_grace` after the process ended. The process is
-    /// stopped in both cases.
+    /// the full grace) instead of the full grace. A busy session keeps the
+    /// full grace, but when its turn ends before that, the rest of the grace
+    /// becomes `idle_grace` (at most what is left) from that moment. When the
+    /// core is busy (locked by the reader), the stop counts the session as
+    /// not idle. Returns after the exit events were emitted, or with
+    /// [`ProviderError::EventsUndelivered`] when the event sink stays full
+    /// for `delivery_grace` after the process ended. The process is stopped
+    /// in both cases.
     async fn stop(&mut self, how: StopMode) -> Result<()> {
         match how {
             StopMode::Graceful => {
@@ -648,14 +651,21 @@ impl LiveSession for ClaudeSession {
                     self.stop.grace
                 };
                 let started = tokio::time::Instant::now();
+                let deadline = started + grace;
                 let _ = self.writes.send(Write::Close);
                 if let Some(mut writer) = self.writer.take()
                     && tokio::time::timeout(grace, &mut writer).await.is_err()
                 {
                     writer.abort();
                 }
+                let turn_ended = !idle && self.wait_turn_end(deadline).await;
+                let left = deadline.saturating_duration_since(tokio::time::Instant::now());
                 let policy = StopPolicy {
-                    grace: grace.saturating_sub(started.elapsed()),
+                    grace: if turn_ended {
+                        self.idle_grace.min(left)
+                    } else {
+                        left
+                    },
                     ..self.stop
                 };
                 self.control.stop(policy).await
@@ -663,6 +673,29 @@ impl LiveSession for ClaudeSession {
             StopMode::Kill => self.control.kill().await,
         };
         self.join().await
+    }
+}
+
+impl ClaudeSession {
+    /// Waits until the core is idle, the process ended, or `deadline`. True
+    /// only when the core became idle.
+    async fn wait_turn_end(&self, deadline: tokio::time::Instant) -> bool {
+        let mut frames = self.frames.clone();
+        let idle = async {
+            loop {
+                if self.shared.core.try_lock().is_ok_and(|core| core.is_idle()) {
+                    return true;
+                }
+                if frames.changed().await.is_err() {
+                    // The reader ended: the process is gone.
+                    return false;
+                }
+            }
+        };
+        tokio::select! {
+            idle = tokio::time::timeout_at(deadline, idle) => idle.unwrap_or(false),
+            _ = self.control.wait() => false,
+        }
     }
 }
 

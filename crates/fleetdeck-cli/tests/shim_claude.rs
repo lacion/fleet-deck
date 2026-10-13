@@ -25,6 +25,7 @@ use fleetdeck_providers::claude::{CoreConfig, capabilities};
 use fleetdeck_providers::host::ProcessSpec;
 use fleetdeck_providers::host::shim::host::{AckMode, Attached, ShimHost, ShimHostConfig};
 use fleetdeck_station::manager::shim_claude::DurableClaude;
+use fleetdeck_station::manager::shim_station::Durable;
 use fleetdeck_station::manager::shims::{Recovered, launch_shim, recover_shims};
 use fleetdeck_station::store::{
     Caller, Dispatch, Effect, EffectPayload, InputRecord, NewSession, OfflineApprovalPolicy,
@@ -469,4 +470,34 @@ async fn a_reattached_claude_session_answers_an_approval_opened_before_the_crash
     .await;
     assert_eq!(rig.control_count("initialize"), 1);
     assert_eq!(rig.user_messages().len(), 1);
+}
+
+#[tokio::test]
+async fn a_claude_driver_is_idle_before_a_prompt_and_not_while_a_turn_runs() {
+    let rig = Rig::new().await;
+    let driver = rig.open().await;
+    let durable = Durable::Claude(Arc::clone(&driver));
+    assert!(driver.idle());
+    assert!(durable.idle());
+    let prompt = rig
+        .claimed(EffectPayload::Prompt {
+            input: input(IN_1, "wait here"),
+        })
+        .await;
+    assert_eq!(driver.apply(&prompt).await, Dispatch::Sent);
+    rig.wait_event("turn.started", turn_started).await;
+    assert!(!driver.idle());
+    assert!(!durable.idle());
+    let interrupt = rig.claimed(EffectPayload::Interrupt).await;
+    assert_eq!(driver.apply(&interrupt).await, Dispatch::Sent);
+    rig.wait_event("turn.completed", |e| {
+        matches!(e, Event::TurnCompleted { .. })
+    })
+    .await;
+    // The pump commits the turn's end, then the core is idle again.
+    let deadline = tokio::time::Instant::now() + WAIT;
+    while !driver.idle() {
+        assert!(tokio::time::Instant::now() < deadline, "never idle again");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
 }

@@ -8,6 +8,9 @@
 //! - `ask ...`: a `Bash` tool call that needs an approval; allow runs it,
 //!   deny reports a denied tool;
 //! - `wait ...`: a turn that streams and waits until the host interrupts;
+//! - `slow ...`: the turn stays open; at stdin EOF the sim waits 1 s, finishes
+//!   the turn, then lingers (a CLI that finishes its turn before an async
+//!   Stop hook holds it);
 //! - anything else: a reply `echo: <text>`.
 //!
 //! Inputs that arrive while a turn runs are queued and run in order.
@@ -39,6 +42,8 @@ enum Turn {
     },
     /// A host interrupt.
     Interrupt { input: Input },
+    /// A host interrupt, like `Interrupt`; at stdin EOF the sim finishes it.
+    Slow { input: Input },
 }
 
 struct Sim<W: Write> {
@@ -97,6 +102,12 @@ pub fn run() -> ExitCode {
             continue;
         };
         if sim.on_frame(&frame).is_err() {
+            return ExitCode::from(1);
+        }
+    }
+    if let Some(Turn::Slow { input }) = sim.turn.take() {
+        std::thread::sleep(std::time::Duration::from_millis(1000));
+        if sim.finish(&input, "done").is_err() {
             return ExitCode::from(1);
         }
     }
@@ -186,7 +197,9 @@ impl<W: Write> Sim<W> {
             "interrupt" => {
                 self.control_response(&id, json!({"still_queued": []}))?;
                 match self.turn.take() {
-                    Some(Turn::Interrupt { input }) => self.interrupted(&input),
+                    Some(Turn::Interrupt { input } | Turn::Slow { input }) => {
+                        self.interrupted(&input)
+                    }
                     Some(Turn::Approval {
                         input, request_id, ..
                     }) => {
@@ -307,6 +320,12 @@ impl<W: Write> Sim<W> {
                 "session_id": session, "event": {"type": "content_block_delta",
                 "index": 0, "delta": {"type": "text_delta", "text": "working"}}}))?;
             self.turn = Some(Turn::Interrupt { input });
+            Ok(())
+        } else if input.text.starts_with("slow") {
+            self.emit(&json!({"type": "stream_event", "parent_tool_use_id": null,
+                "session_id": session, "event": {"type": "content_block_delta",
+                "index": 0, "delta": {"type": "text_delta", "text": "working"}}}))?;
+            self.turn = Some(Turn::Slow { input });
             Ok(())
         } else {
             let reply = format!("echo: {}", input.text);
