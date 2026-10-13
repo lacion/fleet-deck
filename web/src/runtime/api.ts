@@ -4,6 +4,8 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /** The `error` code of the deck's answer (`not_driver`, `invalid_invite`), when it has one. */
+    readonly code: string | null = null,
   ) {
     super(message);
   }
@@ -40,7 +42,14 @@ export async function request(
       typeof value.message === 'string'
         ? value.message
         : `Request failed (${response.status})`;
-    throw new ApiError(response.status, message);
+    const code =
+      typeof value === 'object' &&
+      value !== null &&
+      'error' in value &&
+      typeof value.error === 'string'
+        ? value.error
+        : null;
+    throw new ApiError(response.status, message, code);
   }
   return value;
 }

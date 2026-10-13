@@ -11,6 +11,8 @@ import {
   X,
   Zap,
 } from '../ui/icons';
+import { usePeople } from '../sharing/context';
+import { MemberBanner } from '../sharing/MemberBanner';
 import type { Notice } from './chrome';
 import { failureText, type StartFailure } from './failures';
 import { trapTab, useFocusReturn } from './focus';
@@ -101,25 +103,29 @@ const BAR_ROUTES: readonly Route['name'][] = [
   'watch',
   'activity',
   'more',
+  'shares',
+  'spaces',
 ];
 
-function BottomBar({ route }: { readonly route: Route }) {
-  const items: readonly {
+function BottomBar({ route, guest }: { readonly route: Route; readonly guest: boolean }) {
+  const all: readonly {
     href: string;
     label: string;
     icon: LucideIcon;
     on: readonly Route['name'][];
+    guest?: false;
   }[] = [
     { href: '#/', label: 'Sessions', icon: MessagesSquare, on: ['home'] },
     { href: '#/fleet', label: 'Fleet', icon: LayoutGrid, on: ['fleet'] },
-    { href: '#/new', label: 'New', icon: Plus, on: ['new'] },
+    { href: '#/new', label: 'New', icon: Plus, on: ['new'], guest: false },
     {
       href: '#/more',
       label: 'More',
       icon: Ellipsis,
-      on: ['more', 'plans', 'stations', 'watch', 'activity'],
+      on: ['more', 'plans', 'stations', 'watch', 'activity', 'shares', 'spaces'],
     },
   ];
+  const items = guest ? all.filter((item) => item.guest !== false) : all;
   return (
     <nav className="fd-bottombar" aria-label="Board">
       {items.map((item) => (
@@ -195,6 +201,8 @@ export function Layout({
   children,
 }: Props) {
   const showBar = layout === 'phone' && BAR_ROUTES.includes(route.name);
+  // R11.4: a guest of the owner's deck sees the banner and a smaller board.
+  const people = usePeople();
   return (
     <div className="fd-app" data-layout={layout} data-route={route.name}>
       {layout === 'desktop' ? sidebar : null}
@@ -228,12 +236,15 @@ export function Layout({
             <h1 className="fd-topbar-title">Terminals</h1>
           </header>
         ) : null}
+        {people.member === null ? null : (
+          <MemberBanner member={people.member} onLeave={people.leave} />
+        )}
         <Notices notices={notices} />
         <StartFailures failures={failures} onOpen={onOpenFailure} onDismiss={onDismissFailure} />
         <div className="fd-route">{children}</div>
         {layout === 'phone' ? null : dock}
       </div>
-      {showBar ? <BottomBar route={route} /> : null}
+      {showBar ? <BottomBar route={route} guest={people.member !== null} /> : null}
       {layout === 'tablet' && drawerOpen ? (
         <Drawer onClose={() => onDrawer(false)}>{sidebar}</Drawer>
       ) : null}

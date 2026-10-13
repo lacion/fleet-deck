@@ -23,6 +23,7 @@ import './styles/terminal.css';
 import './styles/spawn.css';
 import './styles/views.css';
 import './styles/artifacts.css';
+import './styles/sharing.css';
 
 initTheme();
 initDensity();

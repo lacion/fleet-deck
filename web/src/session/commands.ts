@@ -4,6 +4,7 @@
 // command by itself: the deck owns retries, and an `ambiguous` command is
 // shown as such (A9, PLAN §8). The station answers a refused command with a
 // receipt; its message is shown as is.
+import { ApiError } from '../runtime/api';
 import type { DeckCommand, ImageInput, RevertResolution, SessionCommand, SessionKey } from '../gen';
 import type { Reply } from './question';
 import { type FileActions, fileActions } from './workspace';
@@ -116,6 +117,10 @@ export function sessionActions(
       const body = { station: key.station_id, command_id: newId(), command };
       return outcomeOf(await post(`/api/commands/${METHODS[command.op]}`, body));
     } catch (error) {
+      // R11.7: in mob mode a member who does not drive is refused.
+      if (error instanceof ApiError && error.code === 'not_driver') {
+        return { ok: false, text: 'Ask to drive first.' };
+      }
       return { ok: false, text: error instanceof Error ? error.message : 'The request failed.' };
     }
   };

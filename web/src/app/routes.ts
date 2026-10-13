@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 
-export type Tab = 'chat' | 'changes' | 'files' | 'artifacts';
+export type Tab = 'chat' | 'changes' | 'files' | 'artifacts' | 'people';
 
 export type Route =
   | { readonly name: 'home' }
@@ -16,6 +16,8 @@ export type Route =
   | { readonly name: 'more' }
   | { readonly name: 'compare'; readonly batch: string }
   | { readonly name: 'artifacts' }
+  | { readonly name: 'shares' }
+  | { readonly name: 'spaces' }
   | {
       readonly name: 'artifact';
       readonly station: string;
@@ -44,6 +46,8 @@ const PLAIN = [
   'terminals',
   'more',
   'artifacts',
+  'shares',
+  'spaces',
 ] as const;
 
 /** `#/artifact/<station>/<id>[/<version>]`; a bad part is the home. */
@@ -95,7 +99,10 @@ export function parseHash(hash: string): Route {
       name: 'session',
       station,
       session,
-      tab: tab === 'changes' || tab === 'files' || tab === 'artifacts' ? tab : 'chat',
+      tab:
+        tab === 'changes' || tab === 'files' || tab === 'artifacts' || tab === 'people'
+          ? tab
+          : 'chat',
     };
   } catch {
     return HOME;
