@@ -391,20 +391,95 @@ fn a_session_without_a_grant_gets_a_fleet_only_binding_when_the_handoff_works() 
     let other: SessionId = "s-2".into();
     let unverified = Bindings::default();
     unverified.set_endpoint(URL.to_owned());
+    unverified.record_version(ProviderKind::Claude, "1.0.0".to_owned());
     let no_endpoint = Bindings::default().with_handoff(verified);
-    for (bindings, resumed) in [(&unverified, false), (&no_endpoint, false), (&ok, true)] {
-        assert!(
-            coordinator_start::prepare_fleet(
-                bindings,
-                ProviderKind::Claude,
-                &other,
-                &spec,
-                resumed
-            )
-            .is_none()
+    for (bindings, durable, why) in [
+        (
+            &unverified,
+            false,
+            coordinator_start::NoTools::Unverified("1.0.0".to_owned()),
+        ),
+        (&no_endpoint, false, coordinator_start::NoTools::NoEndpoint),
+        (&ok, true, coordinator_start::NoTools::Durable),
+    ] {
+        let r = coordinator_start::prepare_fleet(
+            bindings,
+            ProviderKind::Claude,
+            &other,
+            &spec,
+            durable,
         );
+        assert_eq!(r.err(), Some(why));
         assert!(bindings.get("s-2:fleet").is_none());
     }
+}
+
+/// DL-165: a resume gets a launch on the direct host, and a new binding that
+/// replaces the old one of the same id.
+#[test]
+fn a_resume_on_the_direct_host_gets_a_launch_and_replaces_the_old_binding() {
+    let spec = SessionSpec {
+        provider_instance: "claude".into(),
+        cwd: "/w".to_owned(),
+        mode: None,
+        model: None,
+        title: None,
+        coordinator: None,
+    };
+    let session: SessionId = "s-4".into();
+    let bindings = Bindings::default().with_handoff(verified);
+    bindings.set_endpoint(URL.to_owned());
+    let first =
+        coordinator_start::prepare_fleet(&bindings, ProviderKind::Claude, &session, &spec, false)
+            .expect("the first handoff");
+    let started = |native: &str| Event::SessionStarted {
+        provider: ProviderKind::Claude,
+        provider_instance: "claude".into(),
+        provider_version: None,
+        model: None,
+        cwd: "/w".to_owned(),
+        mode: None,
+        capabilities: Box::new(fleetdeck_proto::Capabilities::minimal()),
+        resumed: None,
+        title: None,
+        branch: None,
+        repo: None,
+        provider_refs: serde_json::json!({"session_id": native})
+            .as_object()
+            .unwrap()
+            .clone(),
+    };
+    coordinator_start::bound_events(&bindings, &session, &[started("native-1")]);
+    assert_eq!(
+        bindings.get("s-4:fleet").unwrap().state,
+        BindingState::Active
+    );
+    // The process ends (stop), then the session resumes in the same run.
+    assert!(coordinator_start::ended_events(&bindings, &session).is_empty());
+    assert_eq!(
+        bindings.get("s-4:fleet").unwrap().state,
+        BindingState::Revoked
+    );
+    let second =
+        coordinator_start::prepare_fleet(&bindings, ProviderKind::Claude, &session, &spec, false)
+            .expect("a handoff for the resume");
+    assert_eq!(
+        bindings.get("s-4:fleet").unwrap().state,
+        BindingState::Pending
+    );
+    assert_ne!(first.token.expose(), second.token.expose());
+    // The old credential fails: its entry is gone.
+    assert!(!bindings.has_digest(&digest(first.token.expose())));
+    // The resumed `session.started` activates the new binding.
+    coordinator_start::bound_events(&bindings, &session, &[started("native-1")]);
+    let b = bindings.get("s-4:fleet").unwrap();
+    assert_eq!(b.state, BindingState::Active);
+    assert_eq!(b.native_id.as_deref(), Some("native-1"));
+    assert!(coordinator_start::ended_events(&bindings, &session).is_empty());
+    assert_eq!(
+        bindings.get("s-4:fleet").unwrap().state,
+        BindingState::Revoked
+    );
 }
 
 /// DL-165: a Codex session gets the same fleet-only tools, through

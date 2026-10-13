@@ -268,26 +268,6 @@ impl CodexAdapter {
         }
         Ok(session)
     }
-
-    /// Runs one probe command. `Ok(None)`: it did not start or timed out.
-    async fn run_probe(&self, args: &[&str]) -> Option<(bool, String)> {
-        let mut cmd = tokio::process::Command::new(&self.config.program);
-        cmd.args(args)
-            .env_clear()
-            .envs(self.config.env.iter())
-            .stdin(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .kill_on_drop(true);
-        let run = tokio::time::timeout(self.config.probe_timeout, cmd.output())
-            .await
-            .ok()?;
-        run.ok().map(|o| {
-            (
-                o.status.success(),
-                String::from_utf8_lossy(&o.stdout).into_owned(),
-            )
-        })
-    }
 }
 
 #[async_trait]
@@ -347,6 +327,18 @@ impl ProviderAdapter for CodexAdapter {
     ) -> Result<Box<dyn LiveSession>> {
         let origin = Origin::Resume(native_id.clone());
         Ok(Box::new(self.start_session(spec, sink, origin).await?))
+    }
+
+    async fn resume_coordinated(
+        &self,
+        native_id: &NativeSessionId,
+        spec: SessionSpec,
+        sink: EventSink,
+        launch: CoordinatorLaunch,
+    ) -> Result<Box<dyn LiveSession>> {
+        let origin = Origin::Resume(native_id.clone());
+        let session = self.start_session_with(spec, sink, origin, Some(&launch));
+        Ok(Box::new(session.await?))
     }
 
     async fn fork(
@@ -793,4 +785,6 @@ impl Drop for CodexSession {
 mod durable_launch;
 #[path = "driver_poll.rs"]
 mod poll;
+#[path = "driver_probe.rs"]
+mod probe_cmd;
 use poll::poll_loop;

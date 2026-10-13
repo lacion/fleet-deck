@@ -240,6 +240,18 @@ impl Bindings {
         }
     }
 
+    /// The probed versions of one provider kind, in the order they were
+    /// recorded (empty before the first probe).
+    #[must_use]
+    pub fn versions(&self, provider: ProviderKind) -> Vec<String> {
+        self.versions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&provider)
+            .cloned()
+            .unwrap_or_default()
+    }
+
     /// The same bindings with another handoff check (station tests).
     #[cfg(test)]
     #[must_use]
@@ -254,14 +266,18 @@ impl Bindings {
         self.lock().contains_key(digest)
     }
 
-    /// Add a binding for a credential digest.
+    /// Add a binding for a credential digest. It replaces every entry with
+    /// the same binding id (a resumed session gets a new credential under
+    /// the old id, DL-165); the old credential then fails.
     pub fn insert(&self, digest: String, binding: Binding) {
         let entry = Entry {
             binding,
             inflight: Arc::new(Semaphore::new(BINDING_CONCURRENCY)),
             window: (Instant::now(), 0),
         };
-        self.lock().insert(digest, entry);
+        let mut map = self.lock();
+        map.retain(|_, e| e.binding.binding_id != entry.binding.binding_id);
+        map.insert(digest, entry);
     }
 
     /// Change a binding. Returns false for an unknown binding id.

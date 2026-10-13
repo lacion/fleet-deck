@@ -5,7 +5,9 @@
 //! and gives the adapter the arguments and the credential. The station
 //! checks the handoff again here: a provider without a verified handoff,
 //! a missing ingress, a resume and a shim-hosted start fail the start
-//! instead of running a coordinator session without its credential.
+//! instead of running a coordinator session without its credential. A
+//! session without a grant gets the session's own tools on a start and on
+//! a resume when it can (DL-165).
 
 use fleetdeck_proto::command::{CoordinatorSpec, SessionSpec};
 use fleetdeck_proto::event::ProviderKind;
@@ -125,26 +127,65 @@ pub(super) fn prepare(
     Ok(handoff.into_launch())
 }
 
+/// Why a session has no session tools (DL-165). The text goes to the
+/// station log; it never holds a credential.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum NoTools {
+    /// A shim-hosted session has no handoff path.
+    Durable,
+    /// The provider version has no verified handoff (the probed versions).
+    Unverified(String),
+    /// The ingress does not listen.
+    NoEndpoint,
+    /// The provider (or its adapter) refused the handoff.
+    Refused,
+}
+
+impl std::fmt::Display for NoTools {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Durable => f.write_str("durable host"),
+            Self::Unverified(versions) => write!(
+                f,
+                "provider version not verified for the handoff ({versions})"
+            ),
+            Self::NoEndpoint => f.write_str("no tool endpoint"),
+            Self::Refused => f.write_str("the provider refused the handoff"),
+        }
+    }
+}
+
 /// The fleet-only handoff of a session that has no coordinator grant
 /// (DL-165): the session gets the loopback MCP endpoint and a credential
 /// for its own tools (`publish_artifact`, `set_focus`, `ask_coordinator`).
+/// A start and a resume get it alike (a resume replaces the old binding of
+/// the same id).
 ///
-/// `None` when the session cannot have it: a resume or a shim-hosted start
-/// has no handoff path, the provider version has no verified handoff, or
-/// the endpoint does not listen. The session then starts without the
-/// tools; that is not an error.
+/// # Errors
+/// [`NoTools`] when the session cannot have it: a shim-hosted start has no
+/// handoff path, the provider version has no verified handoff, the
+/// endpoint does not listen, or the provider refuses. The session then
+/// starts without the tools; that is not an error of the start.
 pub(super) fn prepare_fleet(
     bindings: &Bindings,
     provider: ProviderKind,
     session_id: &SessionId,
     spec: &SessionSpec,
-    resumed_or_durable: bool,
-) -> Option<CoordinatorLaunch> {
-    if resumed_or_durable || bindings.handoff(provider, None).is_err() {
-        return None;
+    durable: bool,
+) -> Result<CoordinatorLaunch, NoTools> {
+    if durable {
+        return Err(NoTools::Durable);
     }
-    let url = bindings.endpoint()?;
-    let handoff = Handoff::prepare(provider, &url).ok()?;
+    if bindings.handoff(provider, None).is_err() {
+        let versions = bindings.versions(provider);
+        return Err(NoTools::Unverified(if versions.is_empty() {
+            "unknown".to_owned()
+        } else {
+            versions.join(", ")
+        }));
+    }
+    let url = bindings.endpoint().ok_or(NoTools::NoEndpoint)?;
+    let handoff = Handoff::prepare(provider, &url).map_err(|_| NoTools::Refused)?;
     bindings.insert(
         handoff.digest.clone(),
         Binding {
@@ -159,7 +200,17 @@ pub(super) fn prepare_fleet(
             control_skill: FLEET_SKILL.to_owned(),
         },
     );
-    Some(handoff.into_launch())
+    Ok(handoff.into_launch())
+}
+
+/// The info line of a session that got its tools (a start or a resume).
+pub(super) fn log_attached(session_id: &SessionId, provider: ProviderKind) {
+    tracing::info!(session = %session_id, provider = ?provider, "session tools attached");
+}
+
+/// The info line of a session that has no tools, with the reason.
+pub(super) fn log_no_tools(session_id: &SessionId, provider: ProviderKind, why: &NoTools) {
+    tracing::info!(session = %session_id, provider = ?provider, "no session tools: {why}");
 }
 
 /// The name part of a fleet-only binding id.

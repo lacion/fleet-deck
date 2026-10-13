@@ -292,6 +292,20 @@ impl ProviderAdapter for ClaudeAdapter {
         Ok(Box::new(self.start_session(spec, sink, origin).await?))
     }
 
+    async fn resume_coordinated(
+        &self,
+        native_id: &NativeSessionId,
+        spec: SessionSpec,
+        sink: EventSink,
+        launch: CoordinatorLaunch,
+    ) -> Result<Box<dyn LiveSession>> {
+        let origin = Origin::Resume(native_id.clone());
+        let session = self
+            .start_session_with(spec, sink, origin, Some(&launch))
+            .await?;
+        Ok(Box::new(session))
+    }
+
     async fn fork(
         &self,
         native_id: &NativeSessionId,
