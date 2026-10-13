@@ -24,7 +24,7 @@ import { useGlobalKeys } from './app/keys';
 import { Layout } from './app/Layout';
 import { More } from './app/More';
 import { Palette } from './app/Palette';
-import { formatHash, type Navigate, type Route, useRoute } from './app/routes';
+import { formatHash, type Navigate, parseHash, type Route, useRoute } from './app/routes';
 import { SessionRoute } from './app/SessionRoute';
 import { basename, sidebarModel, sidebarOrder } from './app/sessions';
 import { Sidebar } from './app/Sidebar';
@@ -209,10 +209,16 @@ export function App({
   const order = sidebarOrder(sidebarModel(sessions, stations, '', { starred, archived: cleared }));
   const step = (by: 1 | -1) => {
     if (order.length === 0) return;
+    // The URL, not the last render: a fast second key press comes before React renders the
+    // route of the first one, and would step from the old session.
+    const now: Route =
+      typeof window === 'undefined' || initialRoute !== undefined
+        ? route
+        : parseHash(window.location.hash);
     const at =
-      route.name === 'session'
+      now.name === 'session'
         ? order.findIndex(
-            (c) => c.station_id === route.station && c.summary.session_id === route.session,
+            (c) => c.station_id === now.station && c.summary.session_id === now.session,
           )
         : -1;
     const next =
