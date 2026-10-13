@@ -158,6 +158,35 @@ async fn a_refusal_of_the_target_retires_the_effect() {
 }
 
 #[tokio::test]
+async fn a_deferred_effect_is_not_settled_and_the_target_settles_it_later() {
+    let det = Det::new();
+    let s = running(&det).await;
+    let e = queue(&s, &det, "c1").await;
+    let probe = Probe::new(&s, Dispatch::Deferred);
+    let worker = EffectWorker::register(s.clone(), probe.clone())
+        .await
+        .unwrap();
+    let ran = worker.run_once().await.unwrap().unwrap();
+    assert_eq!(ran.effect_id, e.effect_id);
+    assert_eq!(ran.state, EffectState::Claimed);
+    let stored = s.effect(e.effect_id.clone()).await.unwrap().unwrap();
+    assert_eq!(
+        stored.state,
+        EffectState::Claimed,
+        "the worker stored nothing"
+    );
+    assert!(worker.run_once().await.unwrap().is_none(), "no second run");
+    // The target settles with the fence of the claim.
+    let fence = stored.fence_token.unwrap();
+    let settled = s
+        .settle(e.effect_id, fence, Dispatch::Confirmed)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(settled.state, EffectState::Confirmed);
+}
+
+#[tokio::test]
 async fn the_worker_wakes_on_new_effects_and_stops_on_shutdown() {
     let det = Det::new();
     let s = running(&det).await;

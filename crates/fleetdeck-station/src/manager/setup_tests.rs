@@ -172,3 +172,96 @@ async fn a_failing_setup_command_ends_the_start_with_its_exit_and_output() {
     assert_eq!(summary.state, SessionState::Exited);
     st.manager.shutdown(StopMode::Kill).await;
 }
+
+/// Whether any process of the station's user carries the marker (Linux).
+#[cfg(target_os = "linux")]
+fn marked(effect_id: &str) -> bool {
+    let marker = format!("{}={effect_id}", crate::workspace::setup::MARKER_VAR);
+    std::fs::read_dir("/proc").unwrap().flatten().any(|e| {
+        std::fs::read(e.path().join("environ"))
+            .is_ok_and(|b| b.split(|c| *c == 0).any(|v| v == marker.as_bytes()))
+    })
+}
+
+/// The effect id of the start of `session`.
+async fn start_effect(st: &Station, session: &SessionId) -> String {
+    st.manager
+        .store()
+        .session_effects(session.clone())
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|e| e.payload.kind() == "start")
+        .unwrap()
+        .effect_id
+        .as_str()
+        .to_owned()
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_slow_setup_does_not_block_other_sessions_and_a_stop_ends_it() {
+    let mut st = station(true).await;
+    let ws_a = st.workspace();
+    let a = st
+        .accepted(start_with_setup(&ws_a, "sleep 30"))
+        .await
+        .receipt
+        .result
+        .unwrap()
+        .session_id
+        .unwrap();
+    // The row of A exists while its command runs.
+    let deadline = tokio::time::Instant::now() + WAIT;
+    while st.manager.store().setup_runs().await.unwrap().is_empty() {
+        assert!(tokio::time::Instant::now() < deadline, "no setup row");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let effect_a = start_effect(&st, &a).await;
+    assert!(marked(&effect_a), "the setup of A runs");
+    // B starts and gets its first prompt answered while A still waits.
+    let ws_b = st.workspace();
+    let b = st.start(&ws_b, Some("hello b")).await;
+    let reply = tokio::time::timeout(WAIT, async {
+        loop {
+            let found = st.events().await.iter().any(|e| {
+                e.session_id == b
+                    && matches!(&e.event, EventBody::Known(Event::TurnCompleted { .. }))
+            });
+            if found {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await;
+    assert!(reply.is_ok(), "B was blocked by the setup of A");
+    // A stop of A cancels its setup and ends the session.
+    st.accepted(SessionCommand::Stop {
+        session_id: a.clone(),
+        how: StopMode::Graceful,
+    })
+    .await;
+    let deadline = tokio::time::Instant::now() + WAIT;
+    loop {
+        let ended = st.events().await.iter().any(|e| {
+            e.session_id == a
+                && matches!(
+                    &e.event,
+                    EventBody::Known(Event::Error { code, message, .. })
+                        if code == "start_failed"
+                            && message.starts_with("the session was stopped during its setup command")
+                )
+        });
+        if ended {
+            break;
+        }
+        assert!(tokio::time::Instant::now() < deadline, "A was not stopped");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(st.manager.store().setup_runs().await.unwrap().is_empty());
+    assert!(!marked(&effect_a), "no process of the setup is left");
+    assert_eq!(st.state(&a).await, SessionState::Exited);
+    st.settled(&a).await;
+    st.manager.shutdown(StopMode::Kill).await;
+}

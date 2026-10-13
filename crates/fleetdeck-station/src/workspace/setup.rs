@@ -6,9 +6,11 @@
 //! shell waits for a go signal on stdin, and the go signal comes only after
 //! the `setup_runs` row is durable, so no setup process runs without a row.
 //! When the shell ends, times out or fails, the whole process group is
-//! stopped (TERM, then KILL). The row ends only when the group is gone; a
-//! row that stays is found by the restart cleanup
-//! ([`super::setup_cleanup`]).
+//! stopped (TERM, then KILL), and then every process that carries the marker
+//! is killed, also in another process group (a detached child). The row ends
+//! only when the group is gone and no marked process is left; a row that
+//! stays is found by the restart cleanup ([`super::setup_cleanup`]). A cancel
+//! signal stops the run the same way.
 
 use std::collections::VecDeque;
 use std::os::unix::process::ExitStatusExt;
@@ -22,6 +24,7 @@ use fleetdeck_proto::SessionId;
 use rustix::process::{Pid, Signal, kill_process_group, test_kill_process_group};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, Command};
+use tokio::sync::watch;
 use tokio::time::{Instant, sleep, timeout as time_limit};
 
 use crate::store::Store;
@@ -36,6 +39,10 @@ const GROUP_WAIT: Duration = Duration::from_secs(5);
 const GROUP_POLL: Duration = Duration::from_millis(100);
 /// The wait for the output readers after the process group is gone.
 const READER_WAIT: Duration = Duration::from_secs(1);
+/// The wait for the marked processes after the group is gone.
+const MARKED_WAIT: Duration = Duration::from_secs(5);
+/// The message of a run that the cancel signal stopped.
+pub const STOPPED_MESSAGE: &str = "the session was stopped during its setup command";
 /// The size of the output tail that a failure reports.
 const TAIL_BYTES: usize = 64 * 1024;
 /// The shell script of the wrapper: wait for the go line, then run `$1`.
@@ -90,11 +97,14 @@ async fn read_into(mut stream: impl AsyncRead + Unpin, tail: Arc<Tail>) {
 }
 
 /// Runs `cmd` in `cwd` with `env` and waits for it to end. When this returns,
-/// no process of the run is left, unless the error says so.
+/// no process of the run is left, unless the error says so. A `true` on
+/// `cancel` stops the run with [`STOPPED_MESSAGE`].
 ///
 /// # Errors
 /// [`SetupError`] when the command cannot start, exits non-zero, is killed,
-/// times out after `timeout`, or leaves a process that does not stop.
+/// is cancelled, times out after `timeout`, or leaves a process that does not
+/// stop.
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     store: &Store,
     effect_id: &str,
@@ -103,6 +113,7 @@ pub async fn run(
     cwd: &Path,
     env: &ChildEnv,
     timeout: Duration,
+    mut cancel: watch::Receiver<bool>,
 ) -> Result<(), SetupError> {
     let mut command = Command::new("/bin/sh");
     command
@@ -140,14 +151,24 @@ pub async fn run(
     .into_iter()
     .flatten()
     .collect();
-    let outcome = go_and_wait(store, effect_id, session_id, pgid, &mut child, timeout).await;
+    let outcome = go_and_wait(
+        store,
+        effect_id,
+        session_id,
+        pgid,
+        &mut child,
+        timeout,
+        &mut cancel,
+    )
+    .await;
     let gone = stop_group(pgid, &mut child).await;
+    let left = kill_marked(effect_id).await;
     for mut reader in readers {
         if time_limit(READER_WAIT, &mut reader).await.is_err() {
             reader.abort();
         }
     }
-    if !gone {
+    if !gone || left {
         return Err(SetupError {
             message: "a setup process did not stop".into(),
             output_tail: tail.text(),
@@ -166,6 +187,10 @@ pub async fn run(
             },
             output_tail: tail.text(),
         }),
+        Outcome::Cancelled => Err(SetupError {
+            message: STOPPED_MESSAGE.into(),
+            output_tail: tail.text(),
+        }),
         Outcome::TimedOut => Err(SetupError {
             message: format!("the setup command timed out after {}", describe(timeout)),
             output_tail: tail.text(),
@@ -180,6 +205,7 @@ pub async fn run(
 enum Outcome {
     Exited(ExitStatus),
     TimedOut,
+    Cancelled,
     NotStarted(String),
 }
 
@@ -191,6 +217,7 @@ async fn go_and_wait(
     pgid: Pid,
     child: &mut Child,
     timeout: Duration,
+    cancel: &mut watch::Receiver<bool>,
 ) -> Outcome {
     if let Err(e) = store
         .setup_run_begin(
@@ -213,10 +240,41 @@ async fn go_and_wait(
         return Outcome::NotStarted(format!("the setup command was not started: {e}"));
     }
     drop(stdin);
-    match time_limit(timeout, child.wait()).await {
-        Ok(Ok(status)) => Outcome::Exited(status),
-        Ok(Err(e)) => Outcome::NotStarted(format!("the setup command status is unknown: {e}")),
-        Err(_) => Outcome::TimedOut,
+    // A dropped sender never cancels.
+    let cancelled = async {
+        if cancel.wait_for(|stop| *stop).await.is_err() {
+            std::future::pending::<()>().await;
+        }
+    };
+    tokio::select! {
+        waited = time_limit(timeout, child.wait()) => match waited {
+            Ok(Ok(status)) => Outcome::Exited(status),
+            Ok(Err(e)) => Outcome::NotStarted(format!("the setup command status is unknown: {e}")),
+            Err(_) => Outcome::TimedOut,
+        },
+        () = cancelled => Outcome::Cancelled,
+    }
+}
+
+/// Kills every process that carries the run marker (a detached child is in
+/// another process group). Returns true when one may be left or the scan
+/// cannot run.
+async fn kill_marked(effect_id: &str) -> bool {
+    let effect = effect_id.to_owned();
+    match tokio::task::spawn_blocking(move || {
+        super::setup_cleanup::kill_marked(&effect, MARKED_WAIT)
+    })
+    .await
+    {
+        Ok(Ok(left)) => left > 0,
+        Ok(Err(e)) => {
+            tracing::error!(error = %e, effect = effect_id, "the setup processes cannot be listed");
+            true
+        }
+        Err(e) => {
+            tracing::error!(error = %e, effect = effect_id, "the setup scan stopped");
+            true
+        }
     }
 }
 
@@ -298,6 +356,7 @@ mod tests {
                 self.dir.path(),
                 &self.env,
                 timeout,
+                watch::channel(false).1,
             )
             .await
         }
@@ -424,6 +483,45 @@ mod tests {
         assert!(rig.store.setup_runs().await.unwrap().is_empty());
     }
 
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn a_detached_child_in_another_process_group_is_killed_before_the_row_ends() {
+        let rig = rig().await;
+        rig.run("e9", "setsid sh -c 'sleep 60' >/dev/null 2>&1 &", LONG)
+            .await
+            .unwrap();
+        assert!(!marked("e9"), "the detached child was killed");
+        assert!(rig.store.setup_runs().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_cancel_stops_the_run_with_its_children() {
+        let rig = rig().await;
+        let (stop, cancel) = watch::channel(false);
+        let started = Instant::now();
+        let canceller = tokio::spawn(async move {
+            sleep(Duration::from_millis(500)).await;
+            stop.send(true).unwrap();
+        });
+        let e = run(
+            &rig.store,
+            "e10",
+            &SessionId::from("s1"),
+            "sleep 30 & sleep 30",
+            rig.dir.path(),
+            &rig.env,
+            LONG,
+            cancel,
+        )
+        .await
+        .unwrap_err();
+        canceller.await.unwrap();
+        assert_eq!(e.message, STOPPED_MESSAGE);
+        assert!(started.elapsed() < Duration::from_secs(10));
+        assert!(!marked("e10"), "no process of the run is left");
+        assert!(rig.store.setup_runs().await.unwrap().is_empty());
+    }
+
     #[tokio::test]
     async fn a_missing_workspace_is_a_start_error() {
         let rig = rig().await;
@@ -435,6 +533,7 @@ mod tests {
             &rig.path("missing"),
             &rig.env,
             LONG,
+            watch::channel(false).1,
         )
         .await
         .unwrap_err();
