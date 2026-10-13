@@ -9,6 +9,7 @@ import { sessionFlags } from '../session/controller';
 import type { SessionActions } from '../session/commands';
 import { runningSubagents } from '../session/timeline';
 import { useDiffTotal } from '../session/workspace';
+import { batchCountOf, batchCounts, MIN_SIBLINGS } from '../compare/compare';
 import { modelFamily, shortModel } from '../ui/format';
 import {
   Archive,
@@ -45,6 +46,21 @@ type Props = {
   /** DL-141: the card extras (mail, touched files), by `sessionRef`. */
   readonly extras?: ReadonlyMap<string, SessionExtras> | undefined;
 };
+
+/** The chip under a batch card (R1.4): a link to the compare page; the card is a link too, so it sits beside it. */
+function CompareChip({ card, count }: { readonly card: DeckSession; readonly count: number }) {
+  const batch = card.summary.batch;
+  if (batch === undefined || count < MIN_SIBLINGS) return null;
+  return (
+    <a
+      className="fd-card-compare"
+      href={formatHash({ name: 'compare', batch: batch.batch_id })}
+      title="Compare the sessions of this batch side by side"
+    >
+      Compare {count}
+    </a>
+  );
+}
 
 /** The five columns of the board; a column holds one or more deck statuses, in this order. */
 export const COLUMNS: readonly {
@@ -167,6 +183,7 @@ export function FleetCard({
   showStation,
   contested,
   extra,
+  batchCount = 0,
 }: {
   readonly card: DeckSession;
   readonly stations: readonly StationView[];
@@ -175,6 +192,8 @@ export function FleetCard({
   readonly showStation: boolean;
   readonly contested?: Contested | undefined;
   readonly extra?: SessionExtras | undefined;
+  /** How many sessions of the card's batch are on the board (R1.4); the chip shows for two or more. */
+  readonly batchCount?: number;
 }) {
   const s = card.summary;
   const ref = sessionRef(card.station_id, s.session_id);
@@ -303,6 +322,7 @@ export function FleetCard({
           <span className="fd-card-age">{relativeAge(s.updated_at, now)}</span>
         </span>
       </a>
+      <CompareChip card={card} count={batchCount} />
     </li>
   );
 }
@@ -448,6 +468,7 @@ export function FleetBoard({
   const now = useNow(given, 30000);
   const starred = priority.use();
   const groups = statusGroups(sessions);
+  const batches = batchCounts(sessions);
   const counts = COLUMNS.map((column) => columnCards(groups, column.statuses).length);
   // An empty column stays visible but narrow, so the cards get the width.
   const cols = counts.map((n) => (n > 0 ? 'minmax(190px, 1fr)' : 'minmax(96px, 0.4fr)'));
@@ -511,6 +532,7 @@ export function FleetBoard({
                         sessionRef(card.station_id, card.summary.session_id),
                       )}
                       extra={extras?.get(sessionRef(card.station_id, card.summary.session_id))}
+                      batchCount={batchCountOf(card, batches)}
                     />
                   ))}
                 </ul>

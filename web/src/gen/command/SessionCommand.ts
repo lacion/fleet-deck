@@ -2,6 +2,7 @@
 import type { RequestId } from "../ids/RequestId";
 import type { SessionId } from "../ids/SessionId";
 import type { TurnId } from "../ids/TurnId";
+import type { BatchRef } from "../session/BatchRef";
 import type { ApprovalDecision } from "./ApprovalDecision";
 import type { RevertResolution } from "./RevertResolution";
 import type { SessionSpec } from "./SessionSpec";
@@ -23,4 +24,9 @@ workspace?: WorkspaceRequest,
  * provider starts (DL-148). Only the owner sets it, and only a
  * station with `allow_setup_cmd = true` runs it.
  */
-setup_cmd?: string, } | { "op": "resume", session_id: SessionId, } | { "op": "import", spec: SessionSpec, native_session_id: string, prompt: UserInput | null, } | { "op": "prompt", session_id: SessionId, input: UserInput, } | { "op": "steer", session_id: SessionId, input: UserInput, } | { "op": "follow_up", session_id: SessionId, input: UserInput, } | { "op": "interrupt", session_id: SessionId, } | { "op": "answer", session_id: SessionId, request_id: RequestId, decision: ApprovalDecision, } | { "op": "set_mode", session_id: SessionId, mode: string, } | { "op": "set_model", session_id: SessionId, model: string, } | { "op": "fork", session_id: SessionId, } | { "op": "stop", session_id: SessionId, how: StopMode, } | { "op": "revert", session_id: SessionId, turn_id: TurnId, } | { "op": "rename", session_id: SessionId, title: string | null, } | { "op": "resolve_revert", session_id: SessionId, revert_id: string, resolution: RevertResolution, } | { "op": "set_auto_continue", session_id: SessionId, enabled: boolean, } | { "op": "coordinator_renew", session_id: SessionId, grant_id: string, generation: number, } | { "op": "coordinator_revoke", session_id: SessionId, grant_id: string, } | { "op": "worktree_trash", session_id: SessionId, } | { "op": "worktree_restore", session_id: SessionId, } | { "op": "worktree_purge", session_id: SessionId, confirm_name: string, } | { "op": "worktree_release", session_id: SessionId, };
+setup_cmd?: string, 
+/**
+ * The `Nx` batch of this start (R1.4, DL-170). The station emits
+ * `session.batch` after the start; the board compares the siblings.
+ */
+batch?: BatchRef, } | { "op": "resume", session_id: SessionId, } | { "op": "import", spec: SessionSpec, native_session_id: string, prompt: UserInput | null, } | { "op": "prompt", session_id: SessionId, input: UserInput, } | { "op": "steer", session_id: SessionId, input: UserInput, } | { "op": "follow_up", session_id: SessionId, input: UserInput, } | { "op": "interrupt", session_id: SessionId, } | { "op": "answer", session_id: SessionId, request_id: RequestId, decision: ApprovalDecision, } | { "op": "set_mode", session_id: SessionId, mode: string, } | { "op": "set_model", session_id: SessionId, model: string, } | { "op": "fork", session_id: SessionId, } | { "op": "stop", session_id: SessionId, how: StopMode, } | { "op": "revert", session_id: SessionId, turn_id: TurnId, } | { "op": "rename", session_id: SessionId, title: string | null, } | { "op": "resolve_revert", session_id: SessionId, revert_id: string, resolution: RevertResolution, } | { "op": "set_auto_continue", session_id: SessionId, enabled: boolean, } | { "op": "coordinator_renew", session_id: SessionId, grant_id: string, generation: number, } | { "op": "coordinator_revoke", session_id: SessionId, grant_id: string, } | { "op": "worktree_trash", session_id: SessionId, } | { "op": "worktree_restore", session_id: SessionId, } | { "op": "worktree_purge", session_id: SessionId, confirm_name: string, } | { "op": "worktree_release", session_id: SessionId, };

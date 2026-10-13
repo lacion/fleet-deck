@@ -177,6 +177,15 @@ describe('session header (DL-140)', () => {
     expect(header(session())).not.toContain('Limit ');
   });
 
+  test('a session of a batch has Compare batch in its menu (R1.4); others have none', () => {
+    const inBatch = session({ batch: { batch_id: 'B1', index: 1, size: 3 } });
+    expect(header(inBatch)).toContain('Compare batch');
+    expect(header(session({ batch: { batch_id: 'B1', index: 1, size: 1 } }))).not.toContain(
+      'Compare batch',
+    );
+    expect(header(session())).not.toContain('Compare batch');
+  });
+
   test('a running session offers Interrupt and Stop', () => {
     const html = header(session());
     expect(html).toContain('aria-label="Session header"');

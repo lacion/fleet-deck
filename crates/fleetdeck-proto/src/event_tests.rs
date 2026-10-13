@@ -1,5 +1,6 @@
 use super::*;
 use crate::capability::Capabilities;
+use crate::session::BatchRef;
 use serde_json::json;
 
 fn refs() -> ProviderRefs {
@@ -242,6 +243,13 @@ fn samples() -> Vec<Event> {
             git_ref: Some("main".into()),
             oid: "0123456789abcdef0123456789abcdef01234567".into(),
             inferred: false,
+        },
+        Event::SessionBatch {
+            batch: BatchRef {
+                batch_id: "01JABCDEFGHJKMNPQRSTVWXYZ0".into(),
+                index: 1,
+                size: 3,
+            },
         },
     ]
 }

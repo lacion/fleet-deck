@@ -14,6 +14,7 @@ use crate::ids::{
     CommandId, IncarnationId, InputId, ProviderInstanceId, RequestId, SessionId, TurnId,
 };
 pub use crate::input::{ImageInput, UserInput};
+use crate::session::BatchRef;
 
 /// The deck retries a command for at most this long after it accepted it (G3).
 pub const RETRY_WINDOW_MS: i64 = 15 * 60 * 1000;
@@ -133,6 +134,11 @@ pub enum SessionCommand {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         setup_cmd: Option<String>,
+        /// The `Nx` batch of this start (R1.4, DL-170). The station emits
+        /// `session.batch` after the start; the board compares the siblings.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        batch: Option<Box<BatchRef>>,
     },
     Resume {
         session_id: SessionId,

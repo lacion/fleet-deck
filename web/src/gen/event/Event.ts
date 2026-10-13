@@ -8,6 +8,7 @@ import type { RequestId } from "../ids/RequestId";
 import type { RunId } from "../ids/RunId";
 import type { TurnId } from "../ids/TurnId";
 import type { JsonValue } from "../serde_json/JsonValue";
+import type { BatchRef } from "../session/BatchRef";
 import type { RepoInfo } from "../session/RepoInfo";
 import type { ApprovalOption } from "./ApprovalOption";
 import type { BackgroundTask } from "./BackgroundTask";
@@ -87,7 +88,7 @@ diff_summary: DiffSummary | null, } | { "kind": "revert.updated", revert_id: str
 /**
  * The station guessed the base (an import or a resume).
  */
-inferred: boolean, } | { "kind": "run.completed", run_id: RunId, status: TurnStatus, 
+inferred: boolean, } | { "kind": "session.batch", batch: BatchRef, } | { "kind": "run.completed", run_id: RunId, status: TurnStatus, 
 /**
  * Background work still runs; the session is not idle (L7).
  */

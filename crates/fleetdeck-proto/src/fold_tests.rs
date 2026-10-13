@@ -5,6 +5,7 @@ use crate::event::{
     RequestKind, ResolvedBy, ResponseChannel, RunOrigin, TurnStatus,
 };
 use crate::ids::SessionId;
+use crate::session::BatchRef;
 
 struct Feed {
     summary: SessionSummary,
@@ -613,6 +614,42 @@ fn session_base_sets_the_base_of_the_summary() {
         }),
         before
     );
+}
+
+#[test]
+fn session_batch_sets_the_batch_of_the_summary() {
+    let mut f = Feed::new();
+    f.push(started());
+    assert_eq!(f.summary.batch, None);
+    let batch = BatchRef {
+        batch_id: "b1".to_owned(),
+        index: 2,
+        size: 4,
+    };
+    let s = f.push(Event::SessionBatch {
+        batch: batch.clone(),
+    });
+    assert_eq!(s.batch, Some(batch));
+}
+
+#[test]
+fn a_batch_reference_is_valid_only_inside_its_limits() {
+    let ok = |id: &str, index, size| {
+        BatchRef {
+            batch_id: id.to_owned(),
+            index,
+            size,
+        }
+        .problem()
+    };
+    assert_eq!(ok("01J-ab_Z9", 1, 1), None);
+    assert_eq!(ok("b", 100, 100), None);
+    assert!(ok("", 1, 2).is_some());
+    assert!(ok("a b", 1, 2).is_some());
+    assert!(ok(&"a".repeat(65), 1, 2).is_some());
+    assert!(ok("b", 0, 2).is_some());
+    assert!(ok("b", 3, 2).is_some());
+    assert!(ok("b", 1, 101).is_some());
 }
 
 fn terminal(shell_id: Option<&str>, pid: Option<u32>, reason: Option<&str>) -> Event {

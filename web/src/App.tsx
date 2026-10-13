@@ -6,6 +6,8 @@ import { stationName } from './board/fleet';
 import { markOnStart, type PlanActions } from './board/plans';
 import type { StationActions } from './board/pairing';
 import { PlanLibrary } from './board/PlanLibrary';
+import type { RaceSummary } from './compare/compare';
+import { ComparePage } from './compare/ComparePage';
 import { StationsPanel } from './board/StationsPanel';
 import type { FleetActions } from './fleet/fleet';
 import type {
@@ -82,6 +84,8 @@ type Props = {
   readonly summaryWatch?: ((key: SessionKey) => Watch) | undefined;
   /** "Return to board control" of a TUI tab. */
   readonly onReturnTerminal?: ((tab: TermTab) => Promise<Outcome>) | undefined;
+  /** The race summary of the compare page (R10.5); absent: the page has no summary slot. */
+  readonly race?: ((keys: readonly SessionKey[]) => Promise<RaceSummary>) | undefined;
 };
 
 const message = (e: unknown) => (e instanceof Error ? e.message : 'Request failed');
@@ -129,6 +133,7 @@ export function App({
   terminals,
   summaryWatch,
   onReturnTerminal,
+  race,
 }: Props) {
   const [urlRoute, navigate] = useRoute(initialRoute);
   const measured = useLayout();
@@ -294,6 +299,12 @@ export function App({
       (e: unknown) => notify({ text: message(e), tone: 'error' }, route),
     );
   };
+  // R1.4: "Keep this one" moves the other worktrees to the trash; the trash is owner only.
+  const worktreeAction = actions?.worktreeAction;
+  const compareTrash =
+    worktreeAction === undefined
+      ? undefined
+      : (key: SessionKey) => worktreeAction(key.station_id, 'trash', key.session_id);
   const cwd = selected?.summary.cwd ?? null;
   // DL-141: a station that reports `allow_shell = false` refuses every shell; offer none.
   const shellsOff =
@@ -453,6 +464,21 @@ export function App({
         );
       case 'files':
         return <FilesPage stations={stations} sessions={sessions} filesFor={filesFor} />;
+      case 'compare':
+        return (
+          <ComparePage
+            batchId={route.batch}
+            sessions={sessions}
+            stations={stations}
+            timelines={timelines}
+            freshness={freshness}
+            watch={watch}
+            sessionActions={sessionActions}
+            trash={compareTrash}
+            race={race}
+            onOpen={open}
+          />
+        );
       case 'more':
         return <More stationCount={stations.length} terminalCount={tabCount} chrome={chrome} />;
       case 'terminals':

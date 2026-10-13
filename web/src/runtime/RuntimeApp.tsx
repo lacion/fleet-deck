@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { App } from '../App';
 import { stationActions, worktreeActor, worktreeLoader } from '../board/pairing';
 import { conflictLoader } from '../board/conflicts';
+import { raceSummary } from '../compare/compare';
 import { workspaceFiles } from '../session/workspace';
 import { planActions } from '../board/plans';
 import type { FleetExtras, SessionKey } from '../gen';
@@ -127,6 +128,12 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
     [connection],
   );
   const watch = useMemo(() => (key: SessionKey) => connection.watch(key), [connection]);
+  // R10.5: a model call takes up to 60 s on the station.
+  const race = useMemo(
+    () => (keys: readonly SessionKey[]) =>
+      raceSummary((path, body) => connection.post(path, body, 70_000), keys),
+    [connection],
+  );
   // The terminals survive a reload through sessionStorage.
   const terminals = useMemo(() => {
     let storage: Storage | null = null;
@@ -252,6 +259,7 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
       terminals={terminals}
       summaryWatch={summaryWatch}
       onReturnTerminal={returnTerminal}
+      race={race}
     />
   );
 }

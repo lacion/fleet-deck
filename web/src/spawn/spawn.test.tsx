@@ -243,6 +243,38 @@ describe('spawn form (P4-4)', () => {
     expect(JSON.stringify(second?.body)).toContain('"prompt":null');
   });
 
+  test('a start of a batch carries the batch reference (R1.4); an import never does', async () => {
+    const posts: { path: string; body: unknown }[] = [];
+    const actions = spawnActions(
+      async () => listing,
+      async (path, body) => {
+        posts.push({ path, body });
+        return {
+          state: 'done',
+          receipt: { state: 'accepted', result: { session_id: 's-b' }, reject: null },
+        };
+      },
+      ['read', 'drive'],
+      () => 'b-batch',
+    );
+    const spec = {
+      provider_instance: 'claude',
+      cwd: '/home/me/projects/app',
+      mode: null,
+      model: null,
+      title: null,
+    };
+    const batch = { batch_id: '01JABCDEFGHJKMNPQRSTVWXYZ0', index: 2, size: 3 };
+    await actions.start('station-a', spec, 'task', null, undefined, undefined, batch);
+    await actions.start('station-a', spec, 'task');
+    await actions.start('station-a', spec, 'task', null, 'native-1', undefined, batch);
+    const commands = posts.map((p) => (p.body as { command: Record<string, unknown> }).command);
+    expect(commands[0]).toEqual({ op: 'start', spec, prompt: { text: 'task' }, batch });
+    expect(commands[1]).not.toHaveProperty('batch');
+    expect(commands[2]).toMatchObject({ op: 'import' });
+    expect(commands[2]).not.toHaveProperty('batch');
+  });
+
   test('an import sends one session.import with the native id; a flag-like id is refused', async () => {
     const posts: { path: string; body: unknown }[] = [];
     const actions = spawnActions(

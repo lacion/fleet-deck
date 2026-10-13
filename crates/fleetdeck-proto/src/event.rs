@@ -17,7 +17,7 @@ use crate::capability::Capabilities;
 use crate::ids::{
     InputId, NodeId, PlanId, ProviderInstanceId, RequestId, RunId, SessionId, TurnId,
 };
-use crate::session::RepoInfo;
+use crate::session::{BatchRef, RepoInfo};
 
 /// Native ids of a provider, scoped by provider + session (L6). Never a global key.
 pub type ProviderRefs = serde_json::Map<String, Value>;
@@ -554,6 +554,11 @@ pub enum Event {
         #[serde(default)]
         inferred: bool,
     },
+    /// The `Nx` batch that the session started in (R1.4). The station
+    /// emits it after the start, like `session.base`. The fold keeps it in
+    /// `summary.batch`.
+    #[serde(rename = "session.batch")]
+    SessionBatch { batch: BatchRef },
     #[serde(rename = "run.completed")]
     RunCompleted {
         run_id: RunId,
@@ -601,7 +606,7 @@ pub enum Event {
 
 impl Event {
     /// Every known kind name, in declaration order.
-    pub const KINDS: [&'static str; 39] = [
+    pub const KINDS: [&'static str; 40] = [
         "session.started",
         "session.state",
         "run.started",
@@ -641,6 +646,7 @@ impl Event {
         "session.notice",
         "session.models",
         "session.base",
+        "session.batch",
     ];
 
     /// The dotted kind name.
@@ -686,6 +692,7 @@ impl Event {
             Self::SessionNotice { .. } => "session.notice",
             Self::SessionModels { .. } => "session.models",
             Self::SessionBase { .. } => "session.base",
+            Self::SessionBatch { .. } => "session.batch",
         }
     }
 

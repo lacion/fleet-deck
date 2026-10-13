@@ -218,6 +218,7 @@ impl SessionSummary {
                     inferred: *inferred,
                 });
             }
+            Event::SessionBatch { batch } => self.batch = Some(batch.clone()),
             Event::SessionEnded { .. } => {
                 if !matches!(self.state, SessionState::Lost) {
                     self.state = SessionState::Exited;

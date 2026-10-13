@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { instanceLimit, mostRoom, rateMeters } from '../board/usage';
+import { batchRef, newBatchId } from '../compare/compare';
 import type { DeckSession, SessionKey, StationView, WorkspaceListing } from '../gen';
 import type { Freshness } from '../runtime/state';
 import { Icon, Pin, PinOff } from '../ui/icons';
@@ -15,6 +16,7 @@ import {
   importIdProblem,
   knownModels,
   lastParts,
+  MAX_BATCH_REF,
   providerChoiceLabel,
   type PreflightResult,
   readPins,
@@ -266,10 +268,15 @@ export function SpawnForm({
             const id = station.station_id;
             const setup = setupShown ? setupCmd : undefined;
             const key = setupKey(id, cwd);
+            // R1.4: one batch id for each press; the compare page groups the sessions by it.
+            const batchId =
+              prompts.length >= 2 && prompts.length <= MAX_BATCH_REF && !importing
+                ? newBatchId()
+                : null;
             void (async () => {
               let last: SpawnOutcome | null = null;
               let started = 0;
-              for (const p of prompts) {
+              for (const [i, p] of prompts.entries()) {
                 last = await actions.start(
                   id,
                   spec,
@@ -277,6 +284,7 @@ export function SpawnForm({
                   workspace,
                   importing ? native : undefined,
                   setup,
+                  batchId === null ? undefined : batchRef(batchId, i + 1, prompts.length),
                 );
                 if (!last.ok) break;
                 if (started === 0 && setup !== undefined) {

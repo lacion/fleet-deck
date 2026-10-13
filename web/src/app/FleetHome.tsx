@@ -19,6 +19,7 @@ import {
 } from '../board/fleet';
 import { record } from '../board/activity';
 import { COLUMNS, columnCards, FleetBoard, FleetCard, OfflineTools } from '../board/FleetBoard';
+import { batchCountOf, batchCounts } from '../compare/compare';
 import { NeedsYouRail } from '../board/NeedsYouRail';
 import { UsageMeters } from '../board/UsageMeters';
 import { limitChip, rateMeters } from '../board/usage';
@@ -457,6 +458,7 @@ function PhoneColumns({
   const now = useNow(undefined, 30000);
   const starred = priority.use();
   const groups = statusGroups(visible);
+  const batches = batchCounts(visible);
   return (
     <>
       {COLUMNS.map((column) => {
@@ -481,6 +483,7 @@ function PhoneColumns({
                   showStation
                   contested={contested.get(sessionRef(card.station_id, card.summary.session_id))}
                   extra={extras?.get(sessionRef(card.station_id, card.summary.session_id))}
+                  batchCount={batchCountOf(card, batches)}
                 />
               ))}
             </ul>
