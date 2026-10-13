@@ -202,6 +202,38 @@ pub const METHODS: &[MethodSpec] = &[
         Some(feature::SHELL_HANDOVER),
         true,
     ),
+    // The artifact service (R12, DL-165). A publish copies bytes into the
+    // station's data directory, so it needs `drive`; the reads need `read`.
+    // None is a receipt mutation: a publish of identical content makes no
+    // new version, so a retry is safe.
+    m(
+        "artifacts.publish",
+        DeckToStation,
+        Scope::Drive,
+        Some(feature::ARTIFACTS),
+        false,
+    ),
+    m(
+        "artifacts.list",
+        DeckToStation,
+        Scope::Read,
+        Some(feature::ARTIFACTS),
+        false,
+    ),
+    m(
+        "artifacts.get",
+        DeckToStation,
+        Scope::Read,
+        Some(feature::ARTIFACTS),
+        false,
+    ),
+    m(
+        "artifacts.file",
+        DeckToStation,
+        Scope::Read,
+        Some(feature::ARTIFACTS),
+        false,
+    ),
     drive("session.start"),
     drive("session.resume"),
     drive("session.fork"),

@@ -538,6 +538,24 @@ pub enum Event {
     /// fold ignores it.
     #[serde(rename = "session.models")]
     SessionModels { models: Vec<ModelChoice> },
+    /// The station stored a version of an artifact for the session (R12,
+    /// DL-165). The fold counts the artifacts of the session.
+    #[serde(rename = "artifact.published")]
+    ArtifactPublished {
+        artifact_id: String,
+        version: u32,
+        title: String,
+        /// Named `artifact_kind` because `kind` is the event tag.
+        artifact_kind: crate::artifacts::ArtifactKind,
+    },
+    /// The session wrote an HTML file that may be meant to be opened; the
+    /// board offers "Keep as artifact". Once per path and session.
+    #[serde(rename = "artifact.suggested")]
+    ArtifactSuggested { path: String },
+    /// The session's one-line current focus, set by its `set_focus` MCP
+    /// tool (R6, DL-165). Empty text clears it.
+    #[serde(rename = "session.focus")]
+    SessionFocus { text: String },
     #[serde(rename = "run.completed")]
     RunCompleted {
         run_id: RunId,
@@ -585,7 +603,7 @@ pub enum Event {
 
 impl Event {
     /// Every known kind name, in declaration order.
-    pub const KINDS: [&'static str; 38] = [
+    pub const KINDS: [&'static str; 41] = [
         "session.started",
         "session.state",
         "run.started",
@@ -624,6 +642,9 @@ impl Event {
         "session.slash_commands",
         "session.notice",
         "session.models",
+        "artifact.published",
+        "artifact.suggested",
+        "session.focus",
     ];
 
     /// The dotted kind name.
@@ -668,6 +689,9 @@ impl Event {
             Self::SlashCommands { .. } => "session.slash_commands",
             Self::SessionNotice { .. } => "session.notice",
             Self::SessionModels { .. } => "session.models",
+            Self::ArtifactPublished { .. } => "artifact.published",
+            Self::ArtifactSuggested { .. } => "artifact.suggested",
+            Self::SessionFocus { .. } => "session.focus",
         }
     }
 

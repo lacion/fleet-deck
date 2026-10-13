@@ -633,3 +633,37 @@ fn a_summary_decodes_without_terminal_and_encodes_none_without_the_key() {
     let s: SessionSummary = serde_json::from_value(v).unwrap();
     assert_eq!(s.terminal, None);
 }
+
+#[test]
+fn artifacts_count_new_artifacts_once_and_the_focus_follows_the_last_event() {
+    use crate::artifacts::ArtifactKind;
+    let published = |id: &str, version: u32| Event::ArtifactPublished {
+        artifact_id: id.to_owned(),
+        version,
+        title: "Design".to_owned(),
+        artifact_kind: ArtifactKind::Html,
+    };
+    let mut f = Feed::new();
+    f.push(started());
+    assert_eq!(
+        (f.summary.artifacts_count, f.summary.focus.clone()),
+        (0, None)
+    );
+    f.push(published("a", 1));
+    f.push(published("a", 2));
+    let s = f.push(published("b", 1));
+    assert_eq!(s.artifacts_count, 2);
+    // A suggestion changes no count.
+    let s = f.push(Event::ArtifactSuggested {
+        path: "out/a.html".to_owned(),
+    });
+    assert_eq!(s.artifacts_count, 2);
+    let s = f.push(Event::SessionFocus {
+        text: "fixing the login test".to_owned(),
+    });
+    assert_eq!(s.focus.as_deref(), Some("fixing the login test"));
+    let s = f.push(Event::SessionFocus {
+        text: String::new(),
+    });
+    assert_eq!(s.focus, None);
+}

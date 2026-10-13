@@ -207,6 +207,16 @@ impl SessionSummary {
             | Event::SlashCommands { .. }
             | Event::SessionNotice { .. } => {}
             Event::SessionModels { models } => self.models = Some(models.clone()),
+            // A new artifact counts once; a later version does not (R12).
+            Event::ArtifactPublished { version, .. } => {
+                if *version <= 1 {
+                    self.artifacts_count += 1;
+                }
+            }
+            Event::ArtifactSuggested { .. } => {}
+            Event::SessionFocus { text } => {
+                self.focus = Some(text.clone()).filter(|t| !t.is_empty());
+            }
             Event::SessionEnded { .. } => {
                 if !matches!(self.state, SessionState::Lost) {
                     self.state = SessionState::Exited;
