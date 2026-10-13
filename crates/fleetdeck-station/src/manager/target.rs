@@ -469,7 +469,7 @@ impl SessionTarget {
     }
 
     /// A start that never got a process ends the session (`exited`).
-    pub(super) async fn start_failed(&self, session_id: &SessionId, message: &str) {
+    async fn start_failed(&self, session_id: &SessionId, message: &str) {
         let events = vec![
             NewEvent::from(Event::Error {
                 code: "start_failed".into(),

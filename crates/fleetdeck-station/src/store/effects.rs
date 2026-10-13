@@ -219,6 +219,51 @@ pub(super) fn queued_start_effects(conn: &Connection) -> Result<Vec<Effect>> {
     select(conn, "state = 'queued' AND kind IN ('start', 'resume')", [])
 }
 
+/// Ends every queued start or resume effect for a planned restart, in the
+/// caller's transaction: the effect is retired (`RetiredNotDispatched`,
+/// [`REASON_STATION_RESTART`]) and its session gets the events of a failed
+/// start (`start_failed` with `message`). Returns the sessions. No effect
+/// stays queued next to an ended session.
+pub(super) fn fail_queued_starts(
+    conn: &Connection,
+    message: &str,
+    now: i64,
+    out: &mut Vec<EventEnvelope>,
+) -> Result<Vec<SessionId>> {
+    let queued = queued_start_effects(conn)?;
+    let mut sessions = Vec::with_capacity(queued.len());
+    for effect in &queued {
+        transition(
+            conn,
+            effect,
+            EffectState::RetiredNotDispatched,
+            REASON_STATION_RESTART,
+            now,
+            out,
+        )?;
+        for event in [
+            Event::Error {
+                code: "start_failed".into(),
+                message: message.to_owned(),
+                retry_at: None,
+            },
+            Event::SessionEnded {
+                reason: "start_failed".into(),
+                exit_code: None,
+            },
+        ] {
+            out.push(log::append_one(
+                conn,
+                &effect.session_id,
+                event.into(),
+                now,
+            )?);
+        }
+        sessions.push(effect.session_id.clone());
+    }
+    Ok(sessions)
+}
+
 /// The live process of a session, if any.
 pub(super) fn live_process(
     conn: &Connection,

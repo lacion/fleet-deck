@@ -75,22 +75,19 @@ impl SessionManager {
         Ok(items)
     }
 
-    /// Ends every queued start or resume that a restart now discards, as a
-    /// failed start with [`QUEUED_START_LOST`]. The effect rows stay queued:
-    /// the recovery at the next start retires them, and finds no session
-    /// that is ambiguous. Call it after the consent and before the restart
-    /// commits.
+    /// Ends every queued start or resume that a restart now discards: the
+    /// effect is retired and its session ends as a failed start with
+    /// [`QUEUED_START_LOST`], in one transaction. Call it after the consent
+    /// and before the restart commits.
     ///
     /// # Errors
     /// A database error.
     pub(crate) async fn fail_queued_starts(&self) -> Result<usize> {
-        let queued = self.store.queued_start_effects().await?;
-        for effect in &queued {
-            self.target
-                .start_failed(&effect.session_id, QUEUED_START_LOST)
-                .await;
-        }
-        Ok(queued.len())
+        let sessions = self
+            .store
+            .fail_queued_starts(QUEUED_START_LOST.to_owned())
+            .await?;
+        Ok(sessions.len())
     }
 
     /// The title of a session, else its callsign, else its id.

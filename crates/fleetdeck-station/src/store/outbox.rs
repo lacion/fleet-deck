@@ -198,6 +198,19 @@ impl Store {
         call(&self.inner.db, |conn| effects::queued_start_effects(conn)).await
     }
 
+    /// Ends every queued start or resume effect for a planned restart, in
+    /// one transaction: each effect is retired (`station_restart`) and its
+    /// session ends as a failed start with `message`. Returns the sessions.
+    ///
+    /// # Errors
+    /// A database error; nothing is stored.
+    pub async fn fail_queued_starts(&self, message: String) -> Result<Vec<SessionId>> {
+        let (sessions, _) = self
+            .write(move |conn, now, out| effects::fail_queued_starts(conn, &message, now, out))
+            .await?;
+        Ok(sessions)
+    }
+
     /// One runtime request.
     ///
     /// # Errors

@@ -236,6 +236,12 @@ async fn a_restart_with_consent_fails_a_queued_start_and_the_recovery_finds_noth
     let summary = store.summary("held-2".into()).await.unwrap().unwrap();
     assert_eq!(summary.state, SessionState::Exited);
     assert_eq!(rig.manager.live_sessions(), 0);
+    // The effect is retired already: none stays queued next to the ended
+    // session.
+    let effects = store.session_effects("held-2".into()).await.unwrap();
+    assert_eq!(effects.len(), 1);
+    assert_eq!(effects[0].state, EffectState::RetiredNotDispatched);
+    assert_eq!(effects[0].reason.as_deref(), Some("station_restart"));
     // The shutdown, then the recovery at the next start.
     rig.manager.shutdown(StopMode::Kill).await;
     let report = store.recover(Vec::new()).await.unwrap();
@@ -245,4 +251,5 @@ async fn a_restart_with_consent_fails_a_queued_start_and_the_recovery_finds_noth
     let effects = store.session_effects("held-2".into()).await.unwrap();
     assert_eq!(effects.len(), 1);
     assert_eq!(effects[0].state, EffectState::RetiredNotDispatched);
+    assert_eq!(rig.manager.live_sessions(), 0);
 }
