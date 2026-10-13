@@ -16,6 +16,7 @@ use crate::artifacts::{
     Artifact, ArtifactDetail, ArtifactFile, ArtifactFileQuery, ArtifactGetQuery, ArtifactKind,
     ArtifactList, ArtifactListQuery, ArtifactPublish, ArtifactPublishRequest, ArtifactPublished,
     ArtifactVersion, DeckArtifact, DeckArtifactDetail, ShareLink, ShareRequest, ShareView,
+    ViewLink, ViewRequest,
 };
 use crate::board::{
     AddStationRequest, ArchiveChange, ArchiveItem, ArchiveList, ArchiveRef, BoardClientMessage,
@@ -146,6 +147,8 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         ShareRequest::export_all(&cfg),
         ShareLink::export_all(&cfg),
         ShareView::export_all(&cfg),
+        ViewRequest::export_all(&cfg),
+        ViewLink::export_all(&cfg),
     ];
     for result in results {
         result.map_err(io::Error::other)?;

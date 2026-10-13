@@ -308,29 +308,54 @@ pub struct ShareRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export_to = "artifacts/")]
 pub struct ShareLink {
-    /// `https://<deck>/a/<share_token>/`. Anyone who can reach the deck and
-    /// holds the URL can read the artifact.
+    /// `https://<deck>/a/<token>/`. Anyone who can reach the deck and holds
+    /// the URL can read the artifact.
     pub url: String,
-    pub token: String,
+    /// The id that lists and revokes the share; it is not the secret.
+    pub share_id: String,
     pub version: Option<u32>,
     #[ts(type = "number")]
     pub expires_at: i64,
 }
 
-/// A share as the owner lists it (never the token itself after creation).
+/// A share as the owner lists it. The URL is shown once, at creation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export_to = "artifacts/")]
 pub struct ShareView {
-    /// The first 8 characters of the token, for the owner's list.
-    pub token_prefix: String,
+    pub share_id: String,
+    /// Absent: always the latest version.
     pub version: Option<u32>,
     #[ts(type = "number")]
     pub created_at: i64,
     #[ts(type = "number")]
     pub expires_at: i64,
     pub revoked: bool,
+    /// How many times the document was opened through the share.
     #[ts(type = "number")]
     pub views: u64,
+}
+
+/// The body of `POST /api/artifacts/{station}/{id}/view`: a link for the
+/// board's own viewer.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "artifacts/")]
+pub struct ViewRequest {
+    /// Absent: the latest version.
+    #[serde(default)]
+    pub version: Option<u32>,
+}
+
+/// A short-lived link for the board's viewer. The viewer loads it in a
+/// sandboxed frame: the page and its bundled files then load without the
+/// board cookie, which a sandboxed frame never sends.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "artifacts/")]
+pub struct ViewLink {
+    /// A path on the deck: `/a/<token>/`.
+    pub url: String,
+    #[ts(type = "number")]
+    pub expires_at: i64,
 }
 
 /// The answer of `GET /api/artifacts/{station}/{id}`: the index row, every
@@ -343,9 +368,57 @@ pub struct DeckArtifactDetail {
     pub shares: Vec<ShareView>,
 }
 
+/// The content type of a bundle file, by its extension. Unknown types are
+/// `application/octet-stream`, which a browser downloads.
+#[must_use]
+pub fn content_type_of(path: &str) -> &'static str {
+    let ext = path
+        .rsplit('/')
+        .next()
+        .and_then(|name| name.rsplit_once('.'))
+        .map(|(_, ext)| ext.to_ascii_lowercase())
+        .unwrap_or_default();
+    match ext.as_str() {
+        "html" | "htm" => "text/html; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "js" | "mjs" => "text/javascript; charset=utf-8",
+        "json" | "map" => "application/json",
+        "md" | "markdown" => "text/markdown; charset=utf-8",
+        "txt" | "csv" | "log" => "text/plain; charset=utf-8",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "avif" => "image/avif",
+        "bmp" => "image/bmp",
+        "ico" => "image/x-icon",
+        "pdf" => "application/pdf",
+        "woff" => "font/woff",
+        "woff2" => "font/woff2",
+        "ttf" => "font/ttf",
+        "otf" => "font/otf",
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "wasm" => "application/wasm",
+        _ => "application/octet-stream",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn content_types_follow_the_extension() {
+        assert_eq!(content_type_of("a/B.HTML"), "text/html; charset=utf-8");
+        assert_eq!(content_type_of("x.svg"), "image/svg+xml");
+        assert_eq!(content_type_of("x.woff2"), "font/woff2");
+        assert_eq!(content_type_of("x.exe"), "application/octet-stream");
+        assert_eq!(content_type_of("noext"), "application/octet-stream");
+    }
 
     #[test]
     fn the_kind_follows_the_extension() {

@@ -157,6 +157,59 @@ pub const API: &[ApiMethod] = &[
         Some(Scope::Drive),
         false,
     ),
+    // Artifacts (R12, DL-165). Reads need `read`; a publish needs `drive`;
+    // a share link is `admin` and the handler also requires the owner's
+    // board login (DL-138). The board's own view link only reads, but it
+    // writes a short-lived row, so it is mutating and needs the CSRF token.
+    m(
+        "artifacts.list",
+        Method::GET,
+        "/api/artifacts",
+        Some(Scope::Read),
+        false,
+    ),
+    m(
+        "artifacts.publish",
+        Method::POST,
+        "/api/artifacts/publish",
+        Some(Scope::Drive),
+        true,
+    ),
+    m(
+        "artifacts.get",
+        Method::GET,
+        "/api/artifacts/{station}/{id}",
+        Some(Scope::Read),
+        false,
+    ),
+    m(
+        "artifacts.raw",
+        Method::GET,
+        "/api/artifacts/{station}/{id}/{version}/raw/{*path}",
+        Some(Scope::Read),
+        false,
+    ),
+    m(
+        "artifacts.view",
+        Method::POST,
+        "/api/artifacts/{station}/{id}/view",
+        Some(Scope::Read),
+        true,
+    ),
+    m(
+        "artifacts.share",
+        Method::POST,
+        "/api/artifacts/{station}/{id}/shares",
+        Some(Scope::Admin),
+        true,
+    ),
+    m(
+        "artifacts.share_revoke",
+        Method::DELETE,
+        "/api/artifacts/{station}/{id}/shares/{token}",
+        Some(Scope::Admin),
+        true,
+    ),
     m(
         "conflicts.list",
         Method::GET,

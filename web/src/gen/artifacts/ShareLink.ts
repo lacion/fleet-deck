@@ -5,7 +5,11 @@
  */
 export type ShareLink = { 
 /**
- * `https://<deck>/a/<share_token>/`. Anyone who can reach the deck and
- * holds the URL can read the artifact.
+ * `https://<deck>/a/<token>/`. Anyone who can reach the deck and holds
+ * the URL can read the artifact.
  */
-url: string, token: string, version: number | null, expires_at: number, };
+url: string, 
+/**
+ * The id that lists and revokes the share; it is not the secret.
+ */
+share_id: string, version: number | null, expires_at: number, };

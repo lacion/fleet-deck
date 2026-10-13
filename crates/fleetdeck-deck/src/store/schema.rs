@@ -300,6 +300,60 @@ CREATE TABLE archive_mutations (
 );
 ";
 
+/// Artifacts (R12, DL-165): the index that the folded `artifact.published`
+/// events feed, the version metadata, the byte cache that a share or a view
+/// fills (so a share works while the station is off), and the share links.
+/// A share row keeps the SHA-256 of its token, never the token. `kind` is
+/// `share` (the owner's link) or `view` (a short link for the board's own
+/// viewer). No foreign key to `stations`: the cache and the shares stay
+/// when the station is removed.
+const V14: &str = "
+CREATE TABLE artifacts (
+    station_id     TEXT    NOT NULL,
+    artifact_id    TEXT    NOT NULL,
+    session_id     TEXT,
+    title          TEXT    NOT NULL,
+    kind           TEXT    NOT NULL,
+    latest_version INTEGER NOT NULL,
+    updated_at     INTEGER NOT NULL,
+    PRIMARY KEY (station_id, artifact_id)
+);
+CREATE INDEX artifacts_by_time ON artifacts (updated_at DESC);
+CREATE INDEX artifacts_by_session ON artifacts (station_id, session_id);
+CREATE TABLE artifact_versions (
+    station_id  TEXT    NOT NULL,
+    artifact_id TEXT    NOT NULL,
+    version     INTEGER NOT NULL,
+    size        INTEGER NOT NULL,
+    sha256      TEXT    NOT NULL,
+    files       TEXT    NOT NULL,
+    created_at  INTEGER NOT NULL,
+    PRIMARY KEY (station_id, artifact_id, version)
+);
+CREATE TABLE artifact_cache (
+    station_id  TEXT    NOT NULL,
+    artifact_id TEXT    NOT NULL,
+    version     INTEGER NOT NULL,
+    path        TEXT    NOT NULL,
+    bytes       BLOB    NOT NULL,
+    PRIMARY KEY (station_id, artifact_id, version, path)
+);
+CREATE TABLE artifact_shares (
+    token_hash  TEXT    PRIMARY KEY,
+    share_id    TEXT    NOT NULL UNIQUE,
+    station_id  TEXT    NOT NULL,
+    artifact_id TEXT    NOT NULL,
+    version     INTEGER,
+    kind        TEXT    NOT NULL CHECK (kind IN ('share', 'view')),
+    created_by  TEXT    NOT NULL,
+    created_at  INTEGER NOT NULL,
+    expires_at  INTEGER NOT NULL,
+    revoked_at  INTEGER,
+    views       INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX artifact_shares_by_artifact ON artifact_shares (station_id, artifact_id);
+";
+
 /// The `deck.db` migrations.
 #[must_use]
 pub fn migrations() -> Migrations<'static> {
@@ -316,6 +370,7 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V10),
         M::up(V11),
         M::up(V12),
+        M::up(V14),
     ])
 }
 

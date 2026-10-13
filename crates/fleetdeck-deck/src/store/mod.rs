@@ -16,6 +16,7 @@
 //! in memory and the board status projection reads it (§7.2).
 
 pub mod archive;
+pub mod artifacts;
 pub mod audit;
 pub mod auth;
 pub mod commands;

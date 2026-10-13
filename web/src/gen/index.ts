@@ -16,6 +16,8 @@ export * from "./artifacts/DeckArtifactDetail";
 export * from "./artifacts/ShareLink";
 export * from "./artifacts/ShareRequest";
 export * from "./artifacts/ShareView";
+export * from "./artifacts/ViewLink";
+export * from "./artifacts/ViewRequest";
 export * from "./board/AddStationRequest";
 export * from "./board/ArchiveChange";
 export * from "./board/ArchiveItem";
