@@ -6,8 +6,8 @@
 //!
 //! The session ranking is v0's: idle first, then queued, then busy; then
 //! the least buried (fewest undelivered mails); then the most recent
-//! activity; then the provider instance with the most room (R4.4, DL-161).
-//! The station terms of v2: the link is up (the card is not
+//! activity. The provider instance with the most room (R4.4, DL-161)
+//! comes after the burial and before the recency. The station terms of v2: the link is up (the card is not
 //! `unreachable`), the session works in the repository, and it runs the
 //! provider.
 
@@ -105,13 +105,14 @@ pub fn pick_session<'a>(
                 }
             }
             let mail = buried.get(&s.summary.session_id).copied().unwrap_or(0);
-            Some(((rank, mail, Reverse(s.summary.updated_at)), s))
+            Some(((rank, mail), s))
         })
         .min_by(|a, b| {
             a.0.cmp(&b.0)
                 .then_with(|| {
                     used_percent_of(sessions, a.1).total_cmp(&used_percent_of(sessions, b.1))
                 })
+                .then_with(|| Reverse(a.1.summary.updated_at).cmp(&Reverse(b.1.summary.updated_at)))
                 .then_with(|| a.1.summary.session_id.cmp(&b.1.summary.session_id))
         })
         .map(|(_, s)| s)
