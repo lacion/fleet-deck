@@ -98,6 +98,31 @@ async fn a_secret_crosses_the_deck_once_and_no_deck_table_or_log_holds_it() {
         .await;
     expect(&r, 400, "invalid_body");
     assert!(!r.text.contains(CANARY), "{}", r.text);
+    // A value of the wrong type that holds the canary: serde would quote it.
+    let r = c
+        .req(
+            "POST",
+            SECRET_PATH,
+            &refs(&h),
+            Some(json!({ "key": KEY, "value": [CANARY], "revision": "r1" })),
+        )
+        .await;
+    expect(&r, 400, "invalid_body");
+    assert_eq!(
+        r.body["message"],
+        "the request body is not a valid secret request"
+    );
+    assert!(!r.text.contains(CANARY), "{}", r.text);
+    let r = c
+        .req(
+            "POST",
+            SECRET_PATH,
+            &refs(&h),
+            Some(json!({ "key": KEY, "value": CANARY, "revision": "r1", CANARY: 1 })),
+        )
+        .await;
+    expect(&r, 400, "invalid_body");
+    assert!(!r.text.contains(CANARY), "{}", r.text);
     let big = json!({ "key": KEY, "value": "x".repeat(17 * 1024), "revision": "r1" });
     let r = c.req("POST", SECRET_PATH, &refs(&h), Some(big)).await;
     assert_eq!(r.status, 413, "{}", r.text);
@@ -276,7 +301,7 @@ async fn in_up_mode_a_deck_restart_goes_to_the_local_station() {
 }
 
 #[tokio::test]
-async fn a_deck_without_a_restart_handle_and_without_a_local_station_answers_501() {
+async fn a_deck_without_a_restart_handle_and_without_a_local_station_answers_409() {
     let f = fixture().await;
     let c = board_with_extras(Arc::clone(&f.ctx), Extras::default()).await;
     set_password(&c).await;
@@ -289,5 +314,5 @@ async fn a_deck_without_a_restart_handle_and_without_a_local_station_answers_501
         json!({ "target": "deck", "elevation": elevation }),
     )
     .await;
-    expect(&r, 501, "restart_unsupported");
+    expect(&r, 409, "station_not_paired");
 }

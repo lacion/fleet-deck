@@ -473,7 +473,7 @@ pub struct RestartBody {
 /// # Errors
 /// 400 `invalid_body`, `elevation_required` (`keys: ["restart"]`); 403
 /// `owner_only`; 404 `unknown_station`; 409 `station_unreachable`,
-/// `restart_would_stop_sessions` (with `would_stop`); 501
+/// `station_not_paired`, `restart_would_stop_sessions` (with `would_stop`); 501
 /// `restart_unsupported`; 502 `station_error`; 504 `timeout`.
 pub async fn restart(
     State(board): State<Arc<Board>>,
@@ -519,8 +519,14 @@ async fn restart_target(board: &Board, body: &RestartBody) -> Result<RestartAnsw
     if let Some(id) = board.local_station.get() {
         return restart_station(board, &id.0, body.stop_direct_sessions).await;
     }
+    // No handle and no local station yet: the process is `fleetdeck up`
+    // and the pairing has not finished.
     let Some(handle) = board.restart.clone() else {
-        return Err(unsupported());
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "station_not_paired",
+            "the local station is not paired yet; try again in a moment",
+        ));
     };
     tokio::spawn(async move {
         tokio::time::sleep(RESTART_DELAY).await;

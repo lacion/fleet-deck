@@ -13,7 +13,7 @@
 use std::sync::Arc;
 
 use axum::Json;
-use axum::extract::rejection::JsonRejection;
+use axum::body::Bytes;
 use axum::extract::{Extension, Path, State};
 use axum::http::StatusCode;
 use fleetdeck_core::Secret;
@@ -77,7 +77,7 @@ impl RelayError {
             Self::InvalidBody => (
                 StatusCode::BAD_REQUEST,
                 "invalid_body",
-                "the request body is not valid",
+                "the request body is not a valid secret request",
             ),
             Self::ElevationRequired => (
                 StatusCode::BAD_REQUEST,
@@ -202,7 +202,7 @@ pub async fn station_settings(
     State(board): State<Arc<Board>>,
     Extension(principal): Extension<Principal>,
     Path(name): Path<String>,
-    body: Result<Json<SecretBody>, JsonRejection>,
+    body: Result<Bytes, axum::extract::rejection::BytesRejection>,
 ) -> Result<Json<SettingsSaved>, ApiError> {
     let session = owner(&board, &principal, ACTION, &name, "sets a station secret").await?;
     let result = relay_checked(&board, &session, &name, body).await;
@@ -228,9 +228,11 @@ async fn relay_checked(
     board: &Board,
     session: &crate::store::auth::LoginSession,
     name: &str,
-    body: Result<Json<SecretBody>, JsonRejection>,
+    body: Result<Bytes, axum::extract::rejection::BytesRejection>,
 ) -> Relayed {
-    let Json(body) = body.map_err(|e| {
+    // The body is parsed here, not by the `Json` extractor: a serde error
+    // text can quote the input, and the input can be the secret.
+    let bytes = body.map_err(|e| {
         let kind = if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
             RelayError::TooLarge
         } else {
@@ -238,6 +240,9 @@ async fn relay_checked(
         };
         (String::new(), kind)
     })?;
+    let body: SecretBody =
+        serde_json::from_slice(&bytes).map_err(|_| (String::new(), RelayError::InvalidBody))?;
+    drop(bytes);
     let key = audit_key(&body.key).to_owned();
     let SecretBody {
         key: raw_key,
