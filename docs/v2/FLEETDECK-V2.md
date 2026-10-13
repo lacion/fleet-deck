@@ -182,7 +182,7 @@ The owner creates a project on the board. A preflight checks each binding from t
 
    A batch uses the existing batch spawn (`Nx` also works per ticket). Built (DL-164).
 5. **Pull and merge requests per project.** A PR/MR view with these groups: **review requested from you**, **yours** (open, draft, approved, changes requested), **pending** (waiting on review or checks), and **merged or closed** recently. Each row shows its CI checks, review state, mergeability, ticket key and age. Built (DL-164).
-6. **Session ↔ PR links.** A session links to a PR when the PR's head branch is the session's branch, or when the PR names the session's ticket key. The card shows a PR chip with its state, and the PR row shows its sessions. Built (DL-164): the card shows the issue chip, and the PR row shows its sessions; a PR chip on the card is open.
+6. **Session ↔ PR links.** A session links to a PR when the PR's head branch is the session's branch, or when the PR names the session's ticket key. The card shows a PR chip with its state, and the PR row shows its sessions. Built (DL-164): the card shows the issue chip, and the PR row shows its sessions; the card and the header show the PR chip.
 7. **Review in one click.** On a PR or MR (in "review requested from you" or any row), "Start review session" makes a worktree on the PR head and starts a supervised reviewer session. The reviewer uses the user's installed review skill or the project's review prompt, and gets the PR description and the diff summary in the envelope. Built (DL-164).
 8. **"Fix the broken checks":** a session gets the failing check names, the links and the log tails of a PR or MR. Built (DL-164).
 9. **Writes, later:**

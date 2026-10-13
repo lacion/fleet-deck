@@ -7,6 +7,7 @@ import type {
   ForgeBinding,
   ForgeKind,
   IssueRef,
+  PrGroups,
   PrSummary,
   Project,
   ProjectInput,
@@ -198,6 +199,41 @@ export function sessionsOfPr(
       ((s.summary.branch !== null && s.summary.branch === pr.head_branch) ||
         (pr.ticket_key !== null && s.summary.issue?.key === pr.ticket_key)),
   );
+}
+
+/** The pull requests of the four groups of a list, once each (by number). */
+export function allPrs(groups: PrGroups): PrSummary[] {
+  const seen = new Map<number, PrSummary>();
+  for (const pr of [
+    ...groups.review_requested,
+    ...groups.mine,
+    ...groups.pending,
+    ...groups.recent_closed,
+  ]) {
+    if (!seen.has(pr.number)) seen.set(pr.number, pr);
+  }
+  return [...seen.values()];
+}
+
+/**
+ * The pull request of a session (R3.6): in a project of the card's station, by the same rule as
+ * `sessionsOfPr`. An open one comes first, then the newest `updated_at`.
+ */
+export function prOfSession(
+  prs: ReadonlyMap<string, readonly PrSummary[]>,
+  projects: readonly Project[],
+  card: DeckSession,
+): { project: Project; pr: PrSummary } | undefined {
+  const found: { project: Project; pr: PrSummary }[] = [];
+  for (const project of projects) {
+    if (project.station_id !== card.station_id) continue;
+    for (const pr of prs.get(project.project_id) ?? []) {
+      if (sessionsOfPr(pr, [card], project.station_id).length > 0) found.push({ project, pr });
+    }
+  }
+  const open = (m: { pr: PrSummary }): number => (m.pr.state === 'open' ? 0 : 1);
+  found.sort((a, b) => open(a) - open(b) || b.pr.updated_at - a.pr.updated_at);
+  return found[0];
 }
 
 /** The project of a session's issue: same station, and a tracker or the forge of that system. */

@@ -313,6 +313,17 @@
 a.fd-int-issuechip:hover {
   color: var(--text);
 }
+.fd-int-prchip {
+  display: inline-flex;
+  text-decoration: none;
+}
+a.fd-int-prchip:hover {
+  color: var(--text);
+}
+/* On the card, the chip sits under the card link beside the issue chip. */
+.fd-cardwrap > .fd-int-prchip {
+  margin: 4px 0 0 12px;
+}
 
 /* ---------- a phone: one pane at a time ---------- */
 
