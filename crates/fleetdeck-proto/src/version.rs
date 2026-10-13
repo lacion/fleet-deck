@@ -57,6 +57,9 @@ pub mod feature {
     /// `session.worktree_trash`, `_restore`, `_purge` and `_release`: the
     /// worktree trash (DL-150).
     pub const TRASH: &str = "workspace.trash.v1";
+    /// `files.session_diff`: the working tree of a session against its
+    /// base commit (R1.2).
+    pub const SESSION_DIFF: &str = "files.session_diff.v1";
 
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
@@ -76,6 +79,7 @@ pub mod feature {
         PREFLIGHT,
         WRITE_TEMP,
         TRASH,
+        SESSION_DIFF,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];

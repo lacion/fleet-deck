@@ -684,6 +684,75 @@ fieldset:disabled .fd-opt {
   font-size: 12.5px;
 }
 
+/* since spawn, the view toggle and the line notes (R1.1 to R1.3) */
+.fd-viewtoggle {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.fd-since {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.fd-since-alert {
+  margin: 0;
+  color: var(--hazard);
+  font-size: 12.5px;
+}
+.fd-dl-n {
+  display: inline-block;
+  min-width: 3.5ch;
+  height: auto;
+  min-height: 0;
+  margin-right: 8px;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  color: var(--faint);
+  font: inherit;
+  text-align: right;
+  cursor: pointer;
+}
+.fd-dl-n:hover:not(:disabled) {
+  background: none;
+  color: var(--text);
+}
+.fd-dl-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 10px 2px 52px;
+  background: var(--surface);
+  color: var(--text);
+  white-space: normal;
+}
+.fd-dl-note[data-sent="true"] {
+  color: var(--dim);
+}
+.fd-dl-input {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+.fd-notes {
+  margin-top: 12px;
+}
+.fd-notes ul {
+  margin: 0 0 8px;
+  padding-left: 18px;
+  font-family: var(--font-data);
+  font-size: 12px;
+}
+.fd-notes li[data-sent="true"] {
+  color: var(--dim);
+}
+.fd-notes-actions {
+  display: flex;
+  gap: 6px;
+}
+
 /* the rename form */
 .fd-rename {
   display: flex;

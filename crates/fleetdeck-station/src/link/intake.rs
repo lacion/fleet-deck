@@ -178,6 +178,10 @@ async fn file_method(ctx: &StationLink, method: &str, params: serde_json::Value)
             Ok(q) => done(files::diff(store, policy, &git, q).await),
             Err(e) => bad_params(e),
         },
+        "files.session_diff" => match serde_json::from_value(params) {
+            Ok(q) => done(crate::workspace::session_diff::run(store, policy, &git, q).await),
+            Err(e) => bad_params(e),
+        },
         other => Outcome::Err(WireError::new(
             NOT_IMPLEMENTED,
             format!("`{other}` is not served by this station build"),
@@ -232,7 +236,7 @@ async fn read(ctx: &StationLink, req: InboundRequest) -> Outcome {
         "workspace.worktrees" => worktrees(ctx, req.params).await,
         "workspace.preflight" => preflight(ctx, req.params).await,
         "files.write_temp" => write_temp(ctx, req.params).await,
-        "files.list" | "files.read" | "files.search" | "files.diff" => {
+        "files.list" | "files.read" | "files.search" | "files.diff" | "files.session_diff" => {
             file_method(ctx, &req.method, req.params).await
         }
         "shell.list" => ok(ctx.shells.list()),

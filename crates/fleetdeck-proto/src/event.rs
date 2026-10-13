@@ -542,6 +542,18 @@ pub enum Event {
     /// fold ignores it.
     #[serde(rename = "session.models")]
     SessionModels { models: Vec<ModelChoice> },
+    /// The commit that the session started from (R1.1). The station
+    /// emits it, not the provider. The fold keeps it in `summary.base`.
+    #[serde(rename = "session.base")]
+    SessionBase {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        git_ref: Option<String>,
+        oid: String,
+        /// The station guessed the base (an import or a resume).
+        #[serde(default)]
+        inferred: bool,
+    },
     #[serde(rename = "run.completed")]
     RunCompleted {
         run_id: RunId,
@@ -589,7 +601,7 @@ pub enum Event {
 
 impl Event {
     /// Every known kind name, in declaration order.
-    pub const KINDS: [&'static str; 38] = [
+    pub const KINDS: [&'static str; 39] = [
         "session.started",
         "session.state",
         "run.started",
@@ -628,6 +640,7 @@ impl Event {
         "session.slash_commands",
         "session.notice",
         "session.models",
+        "session.base",
     ];
 
     /// The dotted kind name.
@@ -672,6 +685,7 @@ impl Event {
             Self::SlashCommands { .. } => "session.slash_commands",
             Self::SessionNotice { .. } => "session.notice",
             Self::SessionModels { .. } => "session.models",
+            Self::SessionBase { .. } => "session.base",
         }
     }
 

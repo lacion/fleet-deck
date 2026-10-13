@@ -1,5 +1,6 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { notesStorageKey, resetNotes, setNotes } from '../chat/notes';
 import type { CheckpointSide, DeckSession, DiffSummary, Event, SessionRevert } from '../gen';
 import type { Timeline } from '../runtime/state';
 import { claudeCaps, codexCaps } from '../testing/capabilities';
@@ -15,10 +16,23 @@ import {
   parentPath,
   revertBlock,
   revertText,
+  setDiffTotal,
+  useDiffTotal,
   workspaceFiles,
 } from './workspace';
 
 const key = { station_id: 'station-a', session_id: 's1' };
+function Total({ id }: { readonly id: string }) {
+  const total = useDiffTotal(id);
+  return (
+    <b>
+      {total === undefined
+        ? 'none'
+        : `${total.files_changed}/${total.insertions}/${total.deletions}`}
+    </b>
+  );
+}
+const totalOf = (id: string) => renderToStaticMarkup(<Total id={id} />);
 const ok = (commit: string): CheckpointSide => ({ state: 'available', commit });
 const gone = (reason: string): CheckpointSide => ({ state: 'unavailable', reason });
 
@@ -218,6 +232,94 @@ describe('turns and reverts (DL-097)', () => {
     const done = view(codex({ revert: { ...recon, state: 'succeeded', reason: null } }), []);
     expect(done).toContain('role="status">The revert succeeded');
     expect(done).not.toContain('Mark as reconciled');
+  });
+});
+
+describe('the diff since the session started (R1.2)', () => {
+  const base = {
+    git_ref: 'main',
+    oid: '0123456789abcdef0123456789abcdef01234567',
+    inferred: false,
+  };
+
+  test('with a base the Changes tab opens "Since spawn", also before the first turn', () => {
+    const html = view(codex({ base }), []);
+    expect(html).toContain('aria-label="Changes view"');
+    expect(html).toMatch(/aria-pressed="true"[^>]*>Since spawn</);
+    expect(html).toMatch(/aria-pressed="false"[^>]*>By turn</);
+    expect(html).toContain('Since the session started');
+    expect(html).toContain('<code>main</code> <code>01234567</code>');
+    expect(html).toContain('Loading the diff');
+  });
+
+  test('a guessed base is marked, and without a base there is no toggle', () => {
+    const guessed = view(codex({ base: { oid: base.oid, inferred: true } }), []);
+    expect(guessed).toContain('<code>a commit</code>');
+    expect(guessed).toContain('(guessed)');
+    const plain = view(codex(), [finalized('t1')]);
+    expect(plain).not.toContain('Changes view');
+    expect(plain).toContain('Show the diff');
+  });
+
+  test('the session diff uses the session path', async () => {
+    const asked: string[] = [];
+    const diff = {
+      summary: { files_changed: 0, insertions: 0, deletions: 0 },
+      patch: '',
+      truncated: false,
+    };
+    const files = fileActions(async (path) => {
+      asked.push(path);
+      return diff;
+    }, key);
+    await files.sessionDiff();
+    expect(asked).toEqual(['/api/stations/station-a/sessions/s1/diff']);
+    await expect(workspaceFiles(async () => ({}), 'station-a', '/w').sessionDiff()).rejects.toThrow(
+      'A folder has no session diff.',
+    );
+  });
+
+  test('the card total is kept per session', () => {
+    setDiffTotal('station-a/s1', { files_changed: 2, insertions: 5, deletions: 1 });
+    expect(totalOf('station-a/s1')).toBe('<b>2/5/1</b>');
+    expect(totalOf('station-a/other')).toBe('<b>none</b>');
+  });
+});
+
+describe('line notes in the Changes tab (R1.3)', () => {
+  afterEach(() => resetNotes());
+
+  test('the notes bar lists the notes, marks the sent ones and offers Send notes and Clear', () => {
+    setNotes(notesStorageKey('station-a', 's1'), [
+      { file: 'a.ts', line: 3, text: 'rename it', sent: false },
+      { file: 'b.ts', line: 9, text: 'why?', sent: true },
+    ]);
+    const html = view(codex(), [finalized('t1')]);
+    expect(html).toContain('Notes (2)');
+    expect(html).toContain('a.ts L3: rename it');
+    expect(html).toContain('b.ts L9: why?<span class="fd-note-sent"> (sent)</span>');
+    expect(html).toMatch(/<button type="button" class="fd-sm">Send notes<\/button>/);
+    expect(html).toContain('>Clear</button>');
+  });
+
+  test('Send notes is disabled without drive or when every note is sent', () => {
+    setNotes(notesStorageKey('station-a', 's1'), [
+      { file: 'a.ts', line: 3, text: 'rename it', sent: false },
+    ]);
+    const readOnly = view(codex(), [finalized('t1')], ['read']);
+    expect(readOnly).toMatch(
+      /<button type="button" class="fd-sm" disabled="" title="[^"]*">Send notes/,
+    );
+    setNotes(notesStorageKey('station-a', 's1'), [
+      { file: 'a.ts', line: 3, text: 'rename it', sent: true },
+    ]);
+    expect(view(codex(), [finalized('t1')])).toMatch(
+      /<button type="button" class="fd-sm" disabled="">Send notes/,
+    );
+  });
+
+  test('without notes there is no bar', () => {
+    expect(view(codex(), [finalized('t1')])).not.toContain('Notes (');
   });
 });
 

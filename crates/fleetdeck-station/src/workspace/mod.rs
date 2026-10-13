@@ -2,14 +2,17 @@
 //! refs, diffs between checkpoints, the restore of tracked content, and the
 //! consistent checkpoint boundary of a session.
 
+pub mod base;
 pub mod boundary;
 pub mod checkpoint;
+pub mod checkpoint_refs;
 pub mod files;
 pub mod git;
 pub mod paste;
 pub mod preflight;
 pub mod provision;
 pub mod restore;
+pub mod session_diff;
 pub mod settle;
 pub mod setup;
 pub mod setup_cleanup;

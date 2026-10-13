@@ -30,6 +30,45 @@ describe('Diff', () => {
     expect(html.match(/fd-dl-file/g)).toHaveLength(1);
   });
 
+  test('line numbers are buttons only with notes, and a note shows under its line', () => {
+    const plain = renderToStaticMarkup(<Diff patch={patch} truncated={false} id="t1" />);
+    expect(plain).not.toContain('fd-dl-n');
+    const html = renderToStaticMarkup(
+      <Diff
+        patch={patch}
+        truncated={false}
+        id="t1"
+        notes={{
+          notes: [
+            { file: 'src/a.ts', line: 1, text: 'use a map', sent: false },
+            { file: 'src/a.ts', line: 1, text: 'ignored: same line', sent: true },
+          ],
+          onSet: () => {},
+        }}
+      />,
+    );
+    // The new line `+new` is line 1; the old line `-old` has no number.
+    expect(html.match(/class="fd-dl-n"/g)).toHaveLength(1);
+    expect(html).toContain('aria-label="Note on src/a.ts line 1"');
+    expect(html).toContain('<span class="fd-dl-note">use a map</span>');
+  });
+
+  test('a sent note is marked', () => {
+    const html = renderToStaticMarkup(
+      <Diff
+        patch={patch}
+        truncated={false}
+        id="t1"
+        notes={{
+          notes: [{ file: 'src/a.ts', line: 1, text: 'done', sent: true }],
+          onSet: () => {},
+        }}
+      />,
+    );
+    expect(html).toContain('data-sent="true"');
+    expect(html).toContain('(sent)');
+  });
+
   test('splitDiffFileLine takes the path after b/', () => {
     expect(splitDiffFileLine('diff --git a/x/old.ts b/x/new.ts')).toEqual({
       head: 'diff --git a/x/old.ts b/',

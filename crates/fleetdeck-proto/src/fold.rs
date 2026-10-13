@@ -15,8 +15,8 @@
 
 use crate::event::{Event, EventEnvelope, RateLimit, SessionState, Usage};
 use crate::session::{
-    Activity, MAX_RUNNING_TOOLS, OpenRequest, RunningTool, SUBAGENT_TASK_KINDS, SessionError,
-    SessionRevert, SessionSummary, TerminalHold,
+    Activity, MAX_RUNNING_TOOLS, OpenRequest, RunningTool, SUBAGENT_TASK_KINDS, SessionBase,
+    SessionError, SessionRevert, SessionSummary, TerminalHold,
 };
 
 impl SessionSummary {
@@ -207,6 +207,17 @@ impl SessionSummary {
             | Event::SlashCommands { .. }
             | Event::SessionNotice { .. } => {}
             Event::SessionModels { models } => self.models = Some(models.clone()),
+            Event::SessionBase {
+                git_ref,
+                oid,
+                inferred,
+            } => {
+                self.base = Some(SessionBase {
+                    git_ref: git_ref.clone(),
+                    oid: oid.clone(),
+                    inferred: *inferred,
+                });
+            }
             Event::SessionEnded { .. } => {
                 if !matches!(self.state, SessionState::Lost) {
                     self.state = SessionState::Exited;

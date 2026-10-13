@@ -4,6 +4,8 @@
 //! - `GET /api/stations/{station}/files/read?session=|workspace=&path=&max_bytes=`
 //! - `GET /api/stations/{station}/files/search?session=|workspace=&q=&mode=&max_hits=`
 //! - `GET /api/stations/{station}/sessions/{session}/turns/{turn}/diff?max_bytes=`
+//! - `GET /api/stations/{station}/sessions/{session}/diff?max_bytes=` (the
+//!   working tree against the base commit of the session, R1.2)
 //!
 //! The deck forwards each query to the station's `files.*` method on a live
 //! link and returns the answer. The station resolves the root and enforces
@@ -18,7 +20,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use fleetdeck_proto::files::{
     FileContent, FileListQuery, FileListing, FileReadQuery, FileRoot, FileSearch, FileSearchQuery,
-    MAX_PATH_CHARS, SearchMode, TurnDiff, TurnDiffQuery,
+    MAX_PATH_CHARS, SearchMode, SessionDiff, SessionDiffQuery, TurnDiff, TurnDiffQuery,
 };
 use fleetdeck_proto::link::Outcome;
 use fleetdeck_proto::{SessionId, TurnId};
@@ -139,6 +141,7 @@ fn station_error(code: &str, message: String) -> ApiError {
         | c::MISSING_WORKSPACE
         | c::OUTSIDE_ROOTS => StatusCode::BAD_REQUEST,
         c::NOT_FOUND | c::UNKNOWN_SESSION | c::NO_DIFF => StatusCode::NOT_FOUND,
+        c::NO_BASE => StatusCode::CONFLICT,
         c::BUSY => StatusCode::TOO_MANY_REQUESTS,
         c::TIMEOUT => StatusCode::GATEWAY_TIMEOUT,
         _ => {
@@ -158,6 +161,7 @@ fn station_error(code: &str, message: String) -> ApiError {
         c::NOT_FOUND,
         c::UNKNOWN_SESSION,
         c::NO_DIFF,
+        c::NO_BASE,
         c::BUSY,
         c::TIMEOUT,
     ]
@@ -245,4 +249,25 @@ pub async fn diff(
         max_bytes: p.max_bytes,
     };
     forward(&board, &station, "files.diff", params(&query)?).await
+}
+
+/// `GET /api/stations/{station}/sessions/{session}/diff` (R1.2).
+///
+/// # Errors
+/// 404 `unknown_station`, `unknown_session`, `no_diff`; 400
+/// `outside_roots`, `missing_workspace`; 409 `no_base`,
+/// `station_unreachable`; 502 `station_error`; 504 `timeout`.
+pub async fn session_diff(
+    State(board): State<Arc<Board>>,
+    Path((station, session)): Path<(String, String)>,
+    Query(p): Query<FileParams>,
+) -> Result<Json<SessionDiff>, ApiError> {
+    if !text_ok(&session) {
+        return Err(bad("invalid_path", "the session id is too long"));
+    }
+    let query = SessionDiffQuery {
+        session_id: SessionId::from(session.as_str()),
+        max_bytes: p.max_bytes,
+    };
+    forward(&board, &station, "files.session_diff", params(&query)?).await
 }

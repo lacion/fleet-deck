@@ -13,6 +13,7 @@ import type { Activity } from "./Activity";
 import type { OpenRequest } from "./OpenRequest";
 import type { RepoInfo } from "./RepoInfo";
 import type { RunningTool } from "./RunningTool";
+import type { SessionBase } from "./SessionBase";
 import type { SessionError } from "./SessionError";
 import type { SessionRevert } from "./SessionRevert";
 import type { TerminalHold } from "./TerminalHold";
@@ -90,6 +91,11 @@ terminal?: TerminalHold,
  * `session.models` (DL-151). Absent before the first one.
  */
 models?: Array<ModelChoice>, 
+/**
+ * The commit that the session started from, from `session.base`
+ * (R1.1). Absent before the first one and outside a repository.
+ */
+base?: SessionBase, 
 /**
  * The highest `session_seq` folded into this summary.
  */

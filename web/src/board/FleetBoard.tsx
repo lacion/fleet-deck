@@ -4,9 +4,11 @@ import { formatHash } from '../app/routes';
 import { basename, relativeAge } from '../app/sessions';
 import type { CardStatus, DeckSession, SessionExtras, SessionKey, StationView } from '../gen';
 import type { Freshness } from '../runtime/state';
+import { hasChanges } from '../session/changes';
 import { sessionFlags } from '../session/controller';
 import type { SessionActions } from '../session/commands';
 import { runningSubagents } from '../session/timeline';
+import { useDiffTotal } from '../session/workspace';
 import { modelFamily, shortModel } from '../ui/format';
 import {
   Archive,
@@ -191,6 +193,7 @@ export function FleetCard({
       </>
     ) : null;
   const files = extra?.files ?? [];
+  const total = useDiffTotal(ref);
   const activity = buckets(ref, now);
   const station = showStation
     ? `${stationName(card.station_id, stations)}${where === null ? '' : ' · '}`
@@ -249,6 +252,12 @@ export function FleetCard({
                 {basename(path)}
               </span>
             ))}
+          </span>
+        )}
+        {total === undefined || !hasChanges(total) ? null : (
+          <span className="fd-card-diff" title="Changed since the session started">
+            <span className="fd-add">+{total.insertions}</span>{' '}
+            <span className="fd-del">−{total.deletions}</span>
           </span>
         )}
         {contested === undefined ? null : (

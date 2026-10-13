@@ -158,6 +158,13 @@ pub const API: &[ApiMethod] = &[
         false,
     ),
     m(
+        "files.session_diff",
+        Method::GET,
+        "/api/stations/{station}/sessions/{session}/diff",
+        Some(Scope::Read),
+        false,
+    ),
+    m(
         "conflicts.list",
         Method::GET,
         "/api/conflicts",

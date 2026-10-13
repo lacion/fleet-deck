@@ -142,6 +142,10 @@ pub fn router(board: Arc<Board>) -> Router {
             get(file_routes::diff),
         )
         .route(
+            "/api/stations/{station}/sessions/{session}/diff",
+            get(file_routes::session_diff),
+        )
+        .route(
             "/api/archive",
             get(archive_routes::list).post(archive_routes::change),
         )

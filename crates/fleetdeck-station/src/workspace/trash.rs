@@ -22,6 +22,7 @@ use crate::store::worktree_ops::{
     PHASE_PURGE, PHASE_RESTORE, PHASE_TRASH, PURGED, RESTORED, TRASHED, expected_state,
 };
 use crate::store::{Dispatch, Store, StoreError, WorktreeAction, WorktreeOp};
+use crate::workspace::checkpoint_refs;
 use crate::workspace::worktrees::scan;
 use crate::workspace::{Git, GitOptions};
 
@@ -508,6 +509,17 @@ async fn purge(
             Err(Checked::Io(e)) => {
                 let m = format!("the Git worktree record was not deleted: {e}");
                 return Ok(Step::Fail(PHASE_PURGE, m));
+            }
+        }
+    }
+    // (3) The checkpoint refs of the session (R1.5). The folder is gone
+    // already, so a failure here is logged and does not fail the purge.
+    if !row.main.is_empty() {
+        let git = Git::new(row.main.as_str(), options.clone());
+        match checkpoint_refs::delete_session_refs(&git, row.session_id.as_str()).await {
+            Ok(n) => tracing::debug!(op = %row.op_id, refs = n, "checkpoint refs deleted"),
+            Err(e) => {
+                tracing::warn!(op = %row.op_id, error = %e, "the checkpoint refs were not deleted");
             }
         }
     }
