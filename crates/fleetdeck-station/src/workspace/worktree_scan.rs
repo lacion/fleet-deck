@@ -130,8 +130,14 @@ pub(in crate::workspace) async fn scan(git: &Git, root: &Path, depth: u8) -> Res
         )
         .await?;
         changed.extend(raw_paths(&raw)?);
-    } else {
+    } else if head.0 == 1 {
+        // An unborn branch: every index entry is new work.
         changed.extend(entries.iter().map(|e| e.path.clone()));
+    } else {
+        return Err(format!(
+            "git rev-parse HEAD failed ({}): {}",
+            head.0, head.2
+        ));
     }
 
     // c. Work tree against the index.

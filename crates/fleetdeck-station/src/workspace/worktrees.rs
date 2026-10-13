@@ -263,8 +263,11 @@ async fn unpushed(
     let head = scan::status(git, &["rev-parse", "--verify", "--quiet", "HEAD"])
         .await
         .map_err(|e| e.to_string())?;
-    if head.0 != 0 {
-        return Ok((0, None));
+    match head.0 {
+        0 => {}
+        // An unborn branch.
+        1 => return Ok((0, None)),
+        code => return Err(format!("git rev-parse HEAD failed ({code}): {}", head.2)),
     }
     let refs = scan::text(git, &["for-each-ref", "--count=1", "refs/remotes"])
         .await
