@@ -77,7 +77,7 @@ pub async fn resolve(
     if let (Some(w), (RowSide::Available(_), Some(from)), (RowSide::Available(_), Some(to))) =
         (worktree.as_ref(), &start, &end)
     {
-        diff_summary = w.diff_summary(from, to).await.ok();
+        diff_summary = w.diff_summary(from, to, &[]).await.ok();
     }
     Resolution {
         start: start.0,

@@ -11,6 +11,7 @@ pub mod git;
 pub mod paste;
 pub mod precheck;
 pub mod preflight;
+pub mod private_paths;
 pub mod provision;
 pub mod restore;
 pub mod session_diff;
@@ -25,6 +26,7 @@ pub use checkpoint::{
     Unavailable, Worktree,
 };
 pub use git::{Git, GitError, GitOptions};
+pub use private_paths::{PrivateEnv, PrivatePaths};
 pub use restore::{Diff, Rejected, RestorePlan, RestoreReport};
 pub use settle::{Resolution, SettleReport, resolve, settle_unsettled};
 

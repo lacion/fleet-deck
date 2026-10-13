@@ -22,8 +22,8 @@ use super::{Slot, blocking, diff, list, read, search};
 use crate::manager::turns::turns_tests::{
     S1, completed, dispatch, git, input, repo, setup, started,
 };
-use crate::workspace::GitOptions;
 use crate::workspace::files::private_root;
+use crate::workspace::{GitOptions, PrivatePaths};
 
 /// A content search of a Git worktree while a tracked child directory is
 /// exchanged with a symlink to a directory outside the allowed roots: Git
@@ -74,7 +74,9 @@ async fn a_git_content_search_never_reads_a_child_directory_swapped_for_a_symlin
             mode: SearchMode::Content,
             max_hits: None,
         };
-        let found = search(&s, &p, &git_options, query).await.unwrap();
+        let found = search(&s, &p, &PrivatePaths::default(), &git_options, query)
+            .await
+            .unwrap();
         assert_eq!(found.backend, SearchBackend::Git);
         for hit in &found.hits {
             let text = hit.text.as_deref().unwrap_or_default();
@@ -113,6 +115,7 @@ async fn a_private_directory_never_serves_as_a_root() {
         let err = read(
             &store_with_session(&det, &top).await,
             &p,
+            &PrivatePaths::default(),
             FileReadQuery {
                 root: ws(&dir),
                 path: "id_test".into(),
@@ -127,6 +130,7 @@ async fn a_private_directory_never_serves_as_a_root() {
         let err = read(
             &s,
             &p,
+            &PrivatePaths::default(),
             FileReadQuery {
                 root: session(),
                 path: "id_test".into(),
@@ -139,6 +143,7 @@ async fn a_private_directory_never_serves_as_a_root() {
         let err = list(
             &s,
             &p,
+            &PrivatePaths::default(),
             FileListQuery {
                 root: session(),
                 path: String::new(),
@@ -150,6 +155,7 @@ async fn a_private_directory_never_serves_as_a_root() {
         let err = search(
             &s,
             &p,
+            &PrivatePaths::default(),
             &GitOptions::isolated(),
             FileSearchQuery {
                 root: session(),
@@ -169,6 +175,7 @@ async fn a_private_directory_never_serves_as_a_root() {
     let content = read(
         &s,
         &policy(&top),
+        &PrivatePaths::default(),
         FileReadQuery {
             root: session(),
             path: "a.txt".into(),
@@ -238,6 +245,7 @@ async fn a_turn_diff_leaves_out_private_paths_in_the_patch_and_the_summary() {
     let d = diff(
         &s,
         &p,
+        &PrivatePaths::default(),
         &GitOptions::isolated(),
         TurnDiffQuery {
             session_id: S1.into(),
@@ -286,6 +294,7 @@ async fn a_large_diff_stops_at_the_budget() {
     let d = diff(
         &s,
         &policy(&dir),
+        &PrivatePaths::default(),
         &GitOptions::isolated(),
         TurnDiffQuery {
             session_id: S1.into(),

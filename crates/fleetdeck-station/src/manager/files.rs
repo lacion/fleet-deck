@@ -19,7 +19,7 @@ use fleetdeck_proto::files::{
 use super::policy::{Policy, WorkspaceError};
 use crate::store::{RowSide, RowState, Store};
 use crate::workspace::files::{self, FileError, Found, walk_search_for};
-use crate::workspace::{CheckpointKey, Git, GitOptions, Phase, Worktree};
+use crate::workspace::{CheckpointKey, Git, GitOptions, Phase, PrivatePaths, Worktree};
 
 /// The longest a list or read may take.
 pub const READ_TIMEOUT: Duration = Duration::from_secs(5);
@@ -38,11 +38,17 @@ pub const MAX_READS: usize = 16;
 static SEARCHES: AtomicUsize = AtomicUsize::new(0);
 static READS: AtomicUsize = AtomicUsize::new(0);
 
-/// The canonical root of a query.
+/// The canonical root of a query. A root that is a private path of the
+/// station, or lies inside one, is refused (DL-173).
 ///
 /// # Errors
 /// `unknown_session`, `missing_workspace` or `outside_roots`.
-pub async fn root(store: &Store, policy: &Policy, root: &FileRoot) -> Result<PathBuf, FileError> {
+pub async fn root(
+    store: &Store,
+    policy: &Policy,
+    private: &PrivatePaths,
+    root: &FileRoot,
+) -> Result<PathBuf, FileError> {
     let cwd = match root {
         FileRoot::Workspace(path) => path.clone(),
         FileRoot::Session(id) => {
@@ -62,15 +68,15 @@ pub async fn root(store: &Store, policy: &Policy, root: &FileRoot) -> Result<Pat
         WorkspaceError::Missing(_) => FileError::new(code::MISSING_WORKSPACE, e.to_string()),
         WorkspaceError::Outside(_) => FileError::new(code::OUTSIDE_ROOTS, e.to_string()),
     })?;
-    refuse_private(policy, &canonical)?;
+    refuse_private(policy, private, &canonical)?;
     Ok(canonical)
 }
 
 /// Refuses a root that is a private directory (`.git` or a credential
 /// directory) or lies inside one, for both root forms (finding 2 of
-/// sa-13931f53).
-fn refuse_private(policy: &Policy, root: &Path) -> Result<(), FileError> {
-    if files::private_root(root, policy.allowed_roots()) {
+/// sa-13931f53), or a private path of the station ([`PrivatePaths`]).
+fn refuse_private(policy: &Policy, private: &PrivatePaths, root: &Path) -> Result<(), FileError> {
+    if files::private_root(root, policy.allowed_roots()) || private.is_private(root) {
         return Err(FileError::new(
             code::OUTSIDE_ROOTS,
             "the root is a private directory or lies inside one",
@@ -111,9 +117,10 @@ async fn blocking<T: Send + 'static>(
 pub async fn list(
     store: &Store,
     policy: &Policy,
+    private: &PrivatePaths,
     query: FileListQuery,
 ) -> Result<FileListing, FileError> {
-    list_as(store, policy, query, false).await
+    list_as(store, policy, private, query, false).await
 }
 
 /// `files.list` for the owner (`member` false) or for a member of a shared
@@ -124,14 +131,16 @@ pub async fn list(
 pub async fn list_as(
     store: &Store,
     policy: &Policy,
+    private: &PrivatePaths,
     query: FileListQuery,
     member: bool,
 ) -> Result<FileListing, FileError> {
-    let root = member_root(store, policy, &query.root, member).await?;
+    let root = member_root(store, policy, private, &query.root, member).await?;
     let deny = member.then(|| policy.member_deny().clone());
+    let private = private.clone();
     let slot = Slot::take(&READS, MAX_READS)?;
     blocking(READ_TIMEOUT, slot, move || {
-        files::list_for(&root, &query.path, deny.as_ref())
+        files::list_for(&root, &query.path, deny.as_ref(), &private)
     })
     .await
 }
@@ -141,6 +150,7 @@ pub async fn list_as(
 async fn member_root(
     store: &Store,
     policy: &Policy,
+    private: &PrivatePaths,
     query: &FileRoot,
     member: bool,
 ) -> Result<PathBuf, FileError> {
@@ -150,7 +160,7 @@ async fn member_root(
             "a member browses the workspace of a shared session only",
         ));
     }
-    root(store, policy, query).await
+    root(store, policy, private, query).await
 }
 
 /// `files.read`.
@@ -160,9 +170,10 @@ async fn member_root(
 pub async fn read(
     store: &Store,
     policy: &Policy,
+    private: &PrivatePaths,
     query: FileReadQuery,
 ) -> Result<FileContent, FileError> {
-    read_as(store, policy, query, false).await
+    read_as(store, policy, private, query, false).await
 }
 
 /// `files.read` for the owner (`member` false) or for a member (R11.9).
@@ -172,14 +183,16 @@ pub async fn read(
 pub async fn read_as(
     store: &Store,
     policy: &Policy,
+    private: &PrivatePaths,
     query: FileReadQuery,
     member: bool,
 ) -> Result<FileContent, FileError> {
-    let root = member_root(store, policy, &query.root, member).await?;
+    let root = member_root(store, policy, private, &query.root, member).await?;
     let deny = member.then(|| policy.member_deny().clone());
+    let private = private.clone();
     let slot = Slot::take(&READS, MAX_READS)?;
     blocking(READ_TIMEOUT, slot, move || {
-        files::read_for(&root, &query.path, query.max_bytes, deny.as_ref())
+        files::read_for(&root, &query.path, query.max_bytes, deny.as_ref(), &private)
     })
     .await
 }
@@ -220,10 +233,11 @@ impl Drop for Slot {
 pub async fn search(
     store: &Store,
     policy: &Policy,
+    private: &PrivatePaths,
     git: &GitOptions,
     query: FileSearchQuery,
 ) -> Result<FileSearch, FileError> {
-    search_as(store, policy, git, query, false).await
+    search_as(store, policy, private, git, query, false).await
 }
 
 /// `files.search` for the owner (`member` false) or for a member: a path
@@ -234,6 +248,7 @@ pub async fn search(
 pub async fn search_as(
     store: &Store,
     policy: &Policy,
+    private: &PrivatePaths,
     git: &GitOptions,
     query: FileSearchQuery,
     member: bool,
@@ -246,7 +261,8 @@ pub async fn search_as(
             format!("a search text has {MIN_QUERY_CHARS} to {MAX_QUERY_CHARS} characters"),
         ));
     }
-    let root = member_root(store, policy, &query.root, member).await?;
+    let root = member_root(store, policy, private, &query.root, member).await?;
+    let private = private.clone();
     let max = query
         .max_hits
         .unwrap_or(MAX_SEARCH_HITS)
@@ -286,12 +302,20 @@ pub async fn search_as(
         if let Some(deny) = &deny {
             paths.retain(|p| !deny.denies(p));
         }
+        paths.retain(|p| !private.is_private_canonical(&root.join(p)));
         (paths, cut)
     });
     let Some((paths, cut)) = listed else {
         drop(base);
         let found = blocking(SEARCH_TIMEOUT, slot, move || {
-            Ok(walk_search_for(&root, &needle, content, max, deny.as_ref()))
+            Ok(walk_search_for(
+                &root,
+                &needle,
+                content,
+                max,
+                deny.as_ref(),
+                &private,
+            ))
         })
         .await?;
         return Ok(FileSearch {
@@ -302,7 +326,9 @@ pub async fn search_as(
     };
     let mut found = if content {
         blocking(SEARCH_TIMEOUT, slot, move || {
-            Ok(files::grep_paths(&base, &paths, &needle, max))
+            Ok(files::grep_paths(
+                &base, &root, &paths, &needle, max, &private,
+            ))
         })
         .await?
     } else {
@@ -381,10 +407,11 @@ async fn candidates(git: &Git) -> Result<(Vec<String>, bool), FileError> {
 pub async fn diff(
     store: &Store,
     policy: &Policy,
+    private: &PrivatePaths,
     git: &GitOptions,
     query: TurnDiffQuery,
 ) -> Result<TurnDiff, FileError> {
-    diff_as(store, policy, git, query, false).await
+    diff_as(store, policy, private, git, query, false).await
 }
 
 /// `files.diff` for the owner (`member` false) or for a member: the hunks of
@@ -396,6 +423,7 @@ pub async fn diff(
 pub async fn diff_as(
     store: &Store,
     policy: &Policy,
+    private: &PrivatePaths,
     git: &GitOptions,
     query: TurnDiffQuery,
     member: bool,
@@ -433,7 +461,7 @@ pub async fn diff_as(
         WorkspaceError::Missing(_) => no_diff("the worktree is gone"),
         WorkspaceError::Outside(_) => FileError::new(code::OUTSIDE_ROOTS, e.to_string()),
     })?;
-    refuse_private(policy, &canonical)?;
+    refuse_private(policy, private, &canonical)?;
     let options = GitOptions {
         timeout: DIFF_TIMEOUT,
         ..git.clone()
@@ -461,12 +489,15 @@ pub async fn diff_as(
         if &start.commit != from || &end.commit != to {
             return Err(no_diff("a checkpoint ref changed"));
         }
+        // The private paths of the station are left out by git itself, for
+        // every caller; the member deny filters the text afterwards.
+        let excludes = private.excludes_for(worktree.root());
         let summary = worktree
-            .diff_summary(&start, &end)
+            .diff_summary(&start, &end, &excludes)
             .await
             .map_err(|e| internal(&e))?;
         let patch = worktree
-            .diff(&start, &end, max)
+            .diff(&start, &end, max, &excludes)
             .await
             .map_err(|e| internal(&e))?;
         let (mut summary, mut patch_text, mut hidden_files) = (summary, patch.patch, 0);
@@ -512,3 +543,7 @@ mod files_review3_tests;
 #[cfg(test)]
 #[path = "files_member_tests.rs"]
 mod files_member_tests;
+
+#[cfg(test)]
+#[path = "files_private_tests.rs"]
+mod files_private_tests;

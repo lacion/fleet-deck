@@ -22,19 +22,27 @@ use crate::coordinator::{Caller, FleetTools};
 use crate::manager::policy::Policy;
 use crate::manager::policy_hub::PolicyHub;
 use crate::store::{NewSession, OfflineApprovalPolicy, Store, StoreConfig};
+use crate::workspace::PrivatePaths;
 
 const S1: &str = "s1";
 
-struct Rig {
+pub(super) struct Rig {
     _tmp: tempfile::TempDir,
-    store: Store,
-    service: ArtifactService,
+    pub(super) store: Store,
+    pub(super) service: ArtifactService,
     /// The session workspace (canonical).
-    work: PathBuf,
-    root: PathBuf,
+    pub(super) work: PathBuf,
+    pub(super) root: PathBuf,
+    /// The allowed root that holds the workspace and the station layout.
+    pub(super) base: PathBuf,
 }
 
 async fn rig() -> Rig {
+    rig_with(|_| PrivatePaths::default()).await
+}
+
+/// A rig whose private paths come from `private`, given the allowed root.
+pub(super) async fn rig_with(private: impl FnOnce(&Path) -> PrivatePaths) -> Rig {
     let tmp = tempfile::tempdir().unwrap();
     let base = tmp.path().canonicalize().unwrap();
     let work = base.join("work");
@@ -65,22 +73,28 @@ async fn rig() -> Rig {
         BTreeMap::new(),
     )));
     let root = base.join("data/artifacts");
-    let service = ArtifactService::new(store.clone(), policy, root.clone());
+    let service = ArtifactService::new(
+        store.clone(),
+        policy,
+        root.clone(),
+        Arc::new(private(&base)),
+    );
     Rig {
         _tmp: tmp,
         store,
         service,
         work,
         root,
+        base,
     }
 }
 
-fn write(path: &Path, text: &str) {
+pub(super) fn write(path: &Path, text: &str) {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(path, text).unwrap();
 }
 
-fn publish(path: &str) -> ArtifactPublish {
+pub(super) fn publish(path: &str) -> ArtifactPublish {
     ArtifactPublish {
         session_id: Some(S1.into()),
         path: path.to_owned(),

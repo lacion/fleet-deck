@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use fleetdeck_core::config::{HostChoice, StationConfig};
 use fleetdeck_core::identity::{Identity, IdentityError};
-use fleetdeck_core::paths::{NodeDirs, ensure_private_dir};
+use fleetdeck_core::paths::{Env, NodeDirs, ensure_private_dir};
 use fleetdeck_core::{SharedClock, SharedIds, SystemClock, UlidSource};
 use fleetdeck_link::reconnect::BackoffPolicy;
 use fleetdeck_proto::command::StopMode;
@@ -24,6 +24,7 @@ use crate::local;
 use crate::manager::target::ShimSettings;
 use crate::manager::{Policy, SessionManager, adapters_from_config, setup_envs_from_config};
 use crate::store::{Store, StoreConfig};
+use crate::workspace::{PrivateEnv, PrivatePaths};
 
 /// How long the shutdown waits for the pumps to store the last events.
 pub const PUMP_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
@@ -81,7 +82,7 @@ pub async fn serve(
     config: &StationConfig,
     stop: impl Future<Output = ()>,
 ) -> Result<(), ServeError> {
-    let station = RunningStation::start(dirs, config).await?;
+    let station = RunningStation::start(dirs, config, None).await?;
     stop.await;
     station.stop().await;
     Ok(())
@@ -104,11 +105,17 @@ pub struct RunningStation {
 
 impl RunningStation {
     /// Opens and recovers `station.db`, starts the manager, the link node
-    /// and the local socket.
+    /// and the local socket. `deck` is the deck config file and the deck
+    /// data directory when the deck runs in this process (`fleetdeck up`);
+    /// they are private paths of the station too (DL-173).
     ///
     /// # Errors
     /// [`ServeError`].
-    pub async fn start(dirs: &NodeDirs, config: &StationConfig) -> Result<Self, ServeError> {
+    pub async fn start(
+        dirs: &NodeDirs,
+        config: &StationConfig,
+        deck: Option<(PathBuf, PathBuf)>,
+    ) -> Result<Self, ServeError> {
         let station_dir = dirs.station();
         ensure_private_dir(&station_dir).map_err(|source| ServeError::Dir {
             path: station_dir.clone(),
@@ -146,6 +153,14 @@ impl RunningStation {
             assist_instances(config),
         ));
         manager.set_assist(Arc::clone(&assist));
+        // Before the link starts: the file and artifact methods refuse the
+        // station's own credential and config locations (DL-173).
+        manager.set_private_paths(Arc::new(PrivatePaths::new(
+            dirs,
+            Env::from_process().home.as_deref(),
+            deck.as_ref().map(|(c, d)| (c.as_path(), d.as_path())),
+            &PrivateEnv::from_process(),
+        )));
         let (shutdown, rx) = watch::channel(false);
         let assist_task = tokio::spawn(crate::assist::watch::run(
             assist,

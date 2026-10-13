@@ -371,7 +371,7 @@ async fn the_diff_between_start_and_completion_comes_from_the_checkpoints() {
     std::fs::remove_file(dir.join("src/lib.rs")).unwrap();
     let end = published(&wt, &key("T1", Phase::Completion)).await;
     write(&dir, "a.txt", "a later turn\n");
-    let diff = wt.diff(&start, &end, 1 << 20).await.unwrap();
+    let diff = wt.diff(&start, &end, 1 << 20, &[]).await.unwrap();
     assert!(diff.patch.contains("-one\n+two\n"), "{}", diff.patch);
     assert!(diff.patch.contains("deleted file mode"));
     assert!(
@@ -379,7 +379,7 @@ async fn the_diff_between_start_and_completion_comes_from_the_checkpoints() {
         "later writes are not in it"
     );
     assert!(!diff.truncated);
-    let cut = wt.diff(&start, &end, 10).await.unwrap();
+    let cut = wt.diff(&start, &end, 10, &[]).await.unwrap();
     assert!(cut.truncated);
 }
 

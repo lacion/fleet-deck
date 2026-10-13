@@ -22,7 +22,7 @@ use crate::manager::turns::turns_tests::{
     S1, completed, dispatch, git, input, repo, setup, started,
 };
 use crate::store::{OfflineApprovalPolicy, Store};
-use crate::workspace::GitOptions;
+use crate::workspace::{GitOptions, PrivatePaths};
 
 pub(super) fn policy(root: &Path) -> Policy {
     Policy::new(
@@ -92,6 +92,7 @@ async fn list_shows_dirs_first_marks_symlinks_and_hides_credential_dirs() {
     let listing = list(
         &s,
         &p,
+        &PrivatePaths::default(),
         FileListQuery {
             root: ws(&root),
             path: String::new(),
@@ -125,6 +126,7 @@ async fn list_shows_dirs_first_marks_symlinks_and_hides_credential_dirs() {
     let by_session = list(
         &s,
         &p,
+        &PrivatePaths::default(),
         FileListQuery {
             root: session(),
             path: "src".into(),
@@ -149,6 +151,7 @@ async fn paths_that_escape_follow_a_symlink_or_name_a_hidden_dir_are_refused() {
             read(
                 &s,
                 &p,
+                &PrivatePaths::default(),
                 FileReadQuery {
                     root: ws(&root),
                     path,
@@ -180,6 +183,7 @@ async fn paths_that_escape_follow_a_symlink_or_name_a_hidden_dir_are_refused() {
     let list_err = list(
         &s,
         &p,
+        &PrivatePaths::default(),
         FileListQuery {
             root: ws(&root),
             path: "linkdir".into(),
@@ -191,6 +195,7 @@ async fn paths_that_escape_follow_a_symlink_or_name_a_hidden_dir_are_refused() {
     let list_err = list(
         &s,
         &p,
+        &PrivatePaths::default(),
         FileListQuery {
             root: ws(&root),
             path: "README.md".into(),
@@ -211,6 +216,7 @@ async fn a_fifo_is_refused_without_blocking() {
     let err = read(
         &s,
         &p,
+        &PrivatePaths::default(),
         FileReadQuery {
             root: ws(&root),
             path: "pipe".into(),
@@ -234,18 +240,31 @@ async fn a_read_is_bounded_and_binary_content_is_not_returned() {
         path: path.into(),
         max_bytes: max,
     };
-    let full = read(&s, &p, q("README.md", None)).await.unwrap();
+    let full = read(&s, &p, &PrivatePaths::default(), q("README.md", None))
+        .await
+        .unwrap();
     assert_eq!(full.text.as_deref(), Some("Hello from the readme\n"));
     assert!(!full.truncated && !full.binary);
-    let cut = read(&s, &p, q("README.md", Some(5))).await.unwrap();
+    let cut = read(&s, &p, &PrivatePaths::default(), q("README.md", Some(5)))
+        .await
+        .unwrap();
     assert_eq!(cut.text.as_deref(), Some("Hello"));
     assert!(cut.truncated);
     assert_eq!(cut.size, 22);
-    let bin = read(&s, &p, q("bin.dat", None)).await.unwrap();
+    let bin = read(&s, &p, &PrivatePaths::default(), q("bin.dat", None))
+        .await
+        .unwrap();
     assert!(bin.binary);
     assert_eq!(bin.text, None);
     // A huge max_bytes is capped.
-    let capped = read(&s, &p, q("README.md", Some(u64::MAX))).await.unwrap();
+    let capped = read(
+        &s,
+        &p,
+        &PrivatePaths::default(),
+        q("README.md", Some(u64::MAX)),
+    )
+    .await
+    .unwrap();
     assert!(!capped.truncated);
 }
 
@@ -259,6 +278,7 @@ async fn roots_outside_the_policy_or_unknown_sessions_are_refused() {
     let err = list(
         &s,
         &p,
+        &PrivatePaths::default(),
         FileListQuery {
             root: session(),
             path: String::new(),
@@ -270,6 +290,7 @@ async fn roots_outside_the_policy_or_unknown_sessions_are_refused() {
     let err = list(
         &s,
         &p,
+        &PrivatePaths::default(),
         FileListQuery {
             root: ws(outside.path()),
             path: String::new(),
@@ -282,6 +303,7 @@ async fn roots_outside_the_policy_or_unknown_sessions_are_refused() {
     let err = list(
         &s,
         &policy(&root),
+        &PrivatePaths::default(),
         FileListQuery {
             root: ws(&root.join("linkdir")),
             path: String::new(),
@@ -293,6 +315,7 @@ async fn roots_outside_the_policy_or_unknown_sessions_are_refused() {
     let err = list(
         &s,
         &policy(&root),
+        &PrivatePaths::default(),
         FileListQuery {
             root: ws(&root.join("gone")),
             path: String::new(),
@@ -304,6 +327,7 @@ async fn roots_outside_the_policy_or_unknown_sessions_are_refused() {
     let err = list(
         &s,
         &policy(&root),
+        &PrivatePaths::default(),
         FileListQuery {
             root: FileRoot::Session("nope".into()),
             path: String::new(),
@@ -327,15 +351,27 @@ async fn a_walk_search_skips_symlinks_hidden_and_pruned_dirs() {
         mode,
         max_hits: None,
     };
-    let names = search(&s, &p, &git, q("MAIN", SearchMode::Name))
-        .await
-        .unwrap();
+    let names = search(
+        &s,
+        &p,
+        &PrivatePaths::default(),
+        &git,
+        q("MAIN", SearchMode::Name),
+    )
+    .await
+    .unwrap();
     assert_eq!(names.backend, SearchBackend::Walk);
     let paths: Vec<&str> = names.hits.iter().map(|h| h.path.as_str()).collect();
     assert_eq!(paths, ["src/main.rs"]);
-    let content = search(&s, &p, &git, q("hello", SearchMode::Content))
-        .await
-        .unwrap();
+    let content = search(
+        &s,
+        &p,
+        &PrivatePaths::default(),
+        &git,
+        q("hello", SearchMode::Content),
+    )
+    .await
+    .unwrap();
     let hits: Vec<(&str, Option<u32>)> = content
         .hits
         .iter()
@@ -347,6 +383,7 @@ async fn a_walk_search_skips_symlinks_hidden_and_pruned_dirs() {
     let one = search(
         &s,
         &p,
+        &PrivatePaths::default(),
         &git,
         FileSearchQuery {
             max_hits: Some(1),
@@ -358,9 +395,15 @@ async fn a_walk_search_skips_symlinks_hidden_and_pruned_dirs() {
     assert_eq!(one.hits.len(), 1);
     assert!(one.truncated);
     for bad in ["h", ""] {
-        let err = search(&s, &p, &git, q(bad, SearchMode::Name))
-            .await
-            .unwrap_err();
+        let err = search(
+            &s,
+            &p,
+            &PrivatePaths::default(),
+            &git,
+            q(bad, SearchMode::Name),
+        )
+        .await
+        .unwrap_err();
         assert_eq!(err.code, code::INVALID_QUERY);
     }
 }
@@ -385,9 +428,15 @@ async fn a_git_search_covers_tracked_and_untracked_files_but_not_ignored_ones() 
         mode,
         max_hits: None,
     };
-    let found = search(&s, &p, &git_options, q("NEEDLE", SearchMode::Content))
-        .await
-        .unwrap();
+    let found = search(
+        &s,
+        &p,
+        &PrivatePaths::default(),
+        &git_options,
+        q("NEEDLE", SearchMode::Content),
+    )
+    .await
+    .unwrap();
     assert_eq!(found.backend, SearchBackend::Git);
     let hits: Vec<(&str, Option<u32>)> = found
         .hits
@@ -395,14 +444,26 @@ async fn a_git_search_covers_tracked_and_untracked_files_but_not_ignored_ones() 
         .map(|h| (h.path.as_str(), h.line))
         .collect();
     assert_eq!(hits, [("a.txt", Some(2)), ("new.txt", Some(1))]);
-    let names = search(&s, &p, &git_options, q(".txt", SearchMode::Name))
-        .await
-        .unwrap();
+    let names = search(
+        &s,
+        &p,
+        &PrivatePaths::default(),
+        &git_options,
+        q(".txt", SearchMode::Name),
+    )
+    .await
+    .unwrap();
     let paths: Vec<&str> = names.hits.iter().map(|h| h.path.as_str()).collect();
     assert_eq!(paths, ["a.txt", "b.txt", "new.txt"]);
-    let none = search(&s, &p, &git_options, q("absent-text", SearchMode::Content))
-        .await
-        .unwrap();
+    let none = search(
+        &s,
+        &p,
+        &PrivatePaths::default(),
+        &git_options,
+        q("absent-text", SearchMode::Content),
+    )
+    .await
+    .unwrap();
     assert!(none.hits.is_empty() && !none.truncated);
 }
 
@@ -467,7 +528,7 @@ async fn a_git_search_never_runs_in_a_repository_swapped_in_above_the_root() {
             mode: SearchMode::Content,
             max_hits: None,
         };
-        match search(&s, &p, &git_options, query).await {
+        match search(&s, &p, &PrivatePaths::default(), &git_options, query).await {
             Ok(found) => {
                 for hit in &found.hits {
                     let text = hit.text.as_deref().unwrap_or_default();
@@ -523,26 +584,55 @@ async fn a_turn_diff_comes_from_the_checkpoint_refs_and_fails_closed() {
         turn_id: TurnId::from(turn),
         max_bytes: max,
     };
-    let d = diff(&s, &p, &git_options, q("turn-1", None)).await.unwrap();
+    let d = diff(
+        &s,
+        &p,
+        &PrivatePaths::default(),
+        &git_options,
+        q("turn-1", None),
+    )
+    .await
+    .unwrap();
     assert_eq!(d.summary.files_changed, 1);
     assert!(d.patch.contains("+more"), "{}", d.patch);
     assert!(!d.truncated);
     assert_ne!(d.from_commit, d.to_commit);
     // A later workspace change does not alter the recorded diff.
     std::fs::write(dir.join("b.txt"), "changed later\n").unwrap();
-    let again = diff(&s, &p, &git_options, q("turn-1", None)).await.unwrap();
+    let again = diff(
+        &s,
+        &p,
+        &PrivatePaths::default(),
+        &git_options,
+        q("turn-1", None),
+    )
+    .await
+    .unwrap();
     assert_eq!(again.patch, d.patch);
-    let cut = diff(&s, &p, &git_options, q("turn-1", Some(10)))
-        .await
-        .unwrap();
+    let cut = diff(
+        &s,
+        &p,
+        &PrivatePaths::default(),
+        &git_options,
+        q("turn-1", Some(10)),
+    )
+    .await
+    .unwrap();
     assert!(cut.truncated);
-    let err = diff(&s, &p, &git_options, q("turn-9", None))
-        .await
-        .unwrap_err();
+    let err = diff(
+        &s,
+        &p,
+        &PrivatePaths::default(),
+        &git_options,
+        q("turn-9", None),
+    )
+    .await
+    .unwrap_err();
     assert_eq!(err.code, code::NO_DIFF);
     let err = diff(
         &s,
         &policy(&dir.join("sub-none")),
+        &PrivatePaths::default(),
         &git_options,
         q("turn-1", None),
     )
@@ -551,6 +641,7 @@ async fn a_turn_diff_comes_from_the_checkpoint_refs_and_fails_closed() {
     let err = diff(
         &s,
         &p,
+        &PrivatePaths::default(),
         &git_options,
         TurnDiffQuery {
             session_id: "nope".into(),
@@ -574,8 +665,14 @@ async fn a_turn_diff_comes_from_the_checkpoint_refs_and_fails_closed() {
         .unwrap()
         .to_owned();
     git(&dir, &["update-ref", "-d", &end]);
-    let err = diff(&s, &p, &git_options, q("turn-1", None))
-        .await
-        .unwrap_err();
+    let err = diff(
+        &s,
+        &p,
+        &PrivatePaths::default(),
+        &git_options,
+        q("turn-1", None),
+    )
+    .await
+    .unwrap_err();
     assert_eq!(err.code, code::NO_DIFF);
 }

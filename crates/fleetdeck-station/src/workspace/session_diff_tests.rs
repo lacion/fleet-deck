@@ -11,7 +11,10 @@ use fleetdeck_testkit::Det;
 use super::{new_file_patch, repo_path, run};
 use crate::manager::policy::Policy;
 use crate::store::{NewEvent, NewSession, OfflineApprovalPolicy, Store, StoreConfig};
-use crate::workspace::GitOptions;
+use crate::workspace::private_paths::private_paths_tests::{
+    NEEDLE, NORMAL, PRIVATE_FILES, private_of,
+};
+use crate::workspace::{GitOptions, PrivatePaths};
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
@@ -44,6 +47,8 @@ struct Rig {
     base: String,
     store: Store,
     policy: Policy,
+    /// The private paths of the station; empty unless a test sets them.
+    private: PrivatePaths,
 }
 
 /// A repository with `a.txt`, `b.txt` and a `.gitignore` (for `ignored.txt`)
@@ -98,6 +103,7 @@ async fn rig(with_base: bool) -> Rig {
         base,
         store,
         policy,
+        private: PrivatePaths::default(),
     }
 }
 
@@ -134,6 +140,7 @@ impl Rig {
         run(
             &self.store,
             &self.policy,
+            &self.private,
             &GitOptions::isolated(),
             SessionDiffQuery {
                 session_id: "s1".into(),
@@ -208,6 +215,7 @@ async fn a_session_without_a_base_or_unknown_or_with_a_lost_base_is_refused() {
     let err = run(
         &r.store,
         &r.policy,
+        &PrivatePaths::default(),
         &GitOptions::isolated(),
         SessionDiffQuery {
             session_id: "nope".into(),
@@ -345,4 +353,140 @@ fn a_reported_path_becomes_a_path_from_the_top_of_the_worktree() {
     assert_eq!(of("../../outside.txt"), None);
     assert_eq!(of("/w/repo/.git/config"), None);
     assert_eq!(of("/w/repo"), None);
+}
+
+/// Writes the private files and the normal files of the default split layout
+/// into the repository; the tracked ones are committed (with the base before
+/// them) and then changed.
+fn private_layout(r: &Rig) -> PrivatePaths {
+    crate::workspace::private_paths::private_paths_tests::layout(&r.dir);
+    git(&r.dir, &["add", "-A", "-f"]);
+    git(&r.dir, &["commit", "-q", "-m", "layout"]);
+    for file in PRIVATE_FILES.iter().chain(NORMAL) {
+        std::fs::write(r.dir.join(file), format!("{NEEDLE} changed {file}\n")).unwrap();
+    }
+    // Untracked files in the private places.
+    for file in [
+        ".local/share/fleetdeck/station/secrets/new_secret",
+        ".config/fleetdeck/station.toml.tmp-new",
+        ".ssh/id_new",
+        "fresh.txt",
+    ] {
+        std::fs::write(r.dir.join(file), format!("{NEEDLE} untracked {file}\n")).unwrap();
+    }
+    private_of(&r.dir)
+}
+
+fn assert_no_private(d: &fleetdeck_proto::files::SessionDiff) {
+    for name in [
+        "station.toml",
+        "station.db",
+        "jira_token",
+        "new_secret",
+        ".tmp-x",
+        ".tmp-new",
+        "id_ed25519",
+        "id_new",
+        "hosts.yml",
+        ".credentials.json",
+    ] {
+        assert!(!d.patch.contains(name), "{name}\n{}", d.patch);
+    }
+}
+
+#[tokio::test]
+async fn the_diff_of_a_session_with_its_own_worktree_leaves_out_the_private_paths() {
+    let mut r = rig(true).await;
+    r.own_worktree().await;
+    r.private = private_layout(&r);
+    // The control: without the private set the patch holds the station files.
+    let open = rig(true).await;
+    open.own_worktree().await;
+    private_layout(&open);
+    let all = open.diff(None).await.unwrap();
+    assert!(all.patch.contains("station.toml.tmp-x"), "{}", all.patch);
+    assert!(all.patch.contains("jira_token"), "{}", all.patch);
+    assert!(all.patch.contains("new_secret"), "{}", all.patch);
+    let d = r.diff(None).await.unwrap();
+    assert_no_private(&d);
+    for file in NORMAL.iter().chain(&["fresh.txt"]) {
+        assert!(d.patch.contains(file), "{file}\n{}", d.patch);
+    }
+    // The normal files only: three changed, plus the layout files that the
+    // base did not have are new tracked files, and `fresh.txt` is untracked.
+    assert_eq!(
+        d.summary.files_changed,
+        NORMAL.len() as u32 + 1,
+        "{}",
+        d.patch
+    );
+}
+
+#[tokio::test]
+async fn the_diff_of_a_session_in_a_shared_folder_leaves_out_the_private_paths() {
+    let mut r = rig(true).await;
+    r.private = private_layout(&r);
+    // The session reports every file, private ones too.
+    for file in PRIVATE_FILES.iter().chain(NORMAL) {
+        r.reports(file).await;
+    }
+    r.reports(".local/share/fleetdeck/station/secrets/new_secret")
+        .await;
+    r.reports(".config/fleetdeck/station.toml.tmp-new").await;
+    r.reports("fresh.txt").await;
+    let d = r.diff(None).await.unwrap();
+    assert_eq!(d.scope, DiffScope::SessionFiles);
+    assert_no_private(&d);
+    for file in NORMAL.iter().chain(&["fresh.txt"]) {
+        assert!(d.patch.contains(file), "{file}\n{}", d.patch);
+    }
+    assert_eq!(d.summary.files_changed, NORMAL.len() as u32 + 1);
+}
+
+#[tokio::test]
+async fn a_session_whose_folder_is_private_has_no_diff() {
+    let mut r = rig(true).await;
+    r.own_worktree().await;
+    r.private = private_layout(&r);
+    // The session folder is the station data directory.
+    let station = r.dir.join(".local/share/fleetdeck/station");
+    let store = r.store.clone();
+    store
+        .create_session(NewSession {
+            session_id: "s2".into(),
+            provider: ProviderKind::Claude,
+            provider_instance: "claude".into(),
+            cwd: station.display().to_string(),
+            worktree: None,
+            branch: None,
+            mode: None,
+            title: None,
+            offline_approval_policy: OfflineApprovalPolicy::Wait,
+        })
+        .await
+        .unwrap();
+    store
+        .append(
+            "s2".into(),
+            vec![NewEvent::from(Event::SessionBase {
+                git_ref: Some("main".to_owned()),
+                oid: r.base.clone(),
+                inferred: false,
+            })],
+        )
+        .await
+        .unwrap();
+    let err = run(
+        &r.store,
+        &r.policy,
+        &r.private,
+        &GitOptions::isolated(),
+        SessionDiffQuery {
+            session_id: "s2".into(),
+            max_bytes: None,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.code, code::OUTSIDE_ROOTS);
 }
