@@ -76,12 +76,9 @@ pub struct SessionTarget {
     /// This target as an `Arc`, for the tasks that outlive one dispatch;
     /// empty until [`Self::shared`].
     this: Weak<SessionTarget>,
-    /// Holds a start task before its provider start (tests only).
+    /// The points where a test holds a start (tests only).
     #[cfg(test)]
-    start_hook: setup_task::StartHook,
-    /// Holds a start before its first input (tests only).
-    #[cfg(test)]
-    input_hook: setup_task::StartHook,
+    hooks: setup_task::Hooks,
 }
 
 impl std::fmt::Debug for SessionTarget {
@@ -109,22 +106,14 @@ impl SessionTarget {
             setups: Arc::default(),
             this: Weak::new(),
             #[cfg(test)]
-            start_hook: setup_task::StartHook::default(),
-            #[cfg(test)]
-            input_hook: setup_task::StartHook::default(),
+            hooks: setup_task::Hooks::default(),
         }
     }
 
-    /// The hook that holds a start task before its provider start.
+    /// The points where a test holds a start.
     #[cfg(test)]
-    pub(super) fn start_hook(&self) -> &setup_task::StartHook {
-        &self.start_hook
-    }
-
-    /// The hook that holds a start before its first input.
-    #[cfg(test)]
-    pub(super) fn input_hook(&self) -> &setup_task::StartHook {
-        &self.input_hook
+    pub(super) fn hooks(&self) -> &setup_task::Hooks {
+        &self.hooks
     }
 
     /// The target in an `Arc` that knows itself. A start with a setup command
@@ -314,18 +303,27 @@ impl SessionTarget {
         turns.set_process(process.clone());
         let mut sent_prompt = Ok(());
         #[cfg(test)]
-        self.input_hook.hold().await;
+        self.hooks.input.hold().await;
         // A stop that came during the setup: the first input is not sent.
-        let cancelled_input = prompt.is_some() && setup_task::cancelled(cancel);
+        let mut cancelled_input = prompt.is_some() && setup_task::cancelled(cancel);
         if let Some(input) = prompt.filter(|_| !cancelled_input) {
             let fence = turns.fence().await;
             turns.begin_input(&fence, &input.input_id).await;
-            turns.input_sent(&input.input_id);
-            sent_prompt = session.prompt(host_input(input)).await;
-            if let Err(e) = &sent_prompt
-                && matches!(classify(e), Dispatch::NotDispatched(_))
-            {
+            #[cfg(test)]
+            self.hooks.checkpoint.hold().await;
+            // The fence and the checkpoint work can wait for long: the last
+            // check is right before the delivery, with no await between.
+            if setup_task::cancelled(cancel) {
                 turns.input_not_sent(&input.input_id).await;
+                cancelled_input = true;
+            } else {
+                turns.input_sent(&input.input_id);
+                sent_prompt = session.prompt(host_input(input)).await;
+                if let Err(e) = &sent_prompt
+                    && matches!(classify(e), Dispatch::NotDispatched(_))
+                {
+                    turns.input_not_sent(&input.input_id).await;
+                }
             }
         }
         if let Ok(mut map) = self.sessions.lock() {

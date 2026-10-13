@@ -340,7 +340,7 @@ async fn a_stop_before_the_provider_spawn_spawns_nothing() {
     let log = log.path().join("stdin.log");
     let mut st = station_with(true, Some(&log)).await;
     let target = Arc::clone(&st.manager.target);
-    let hook = target.start_hook();
+    let hook = &target.hooks().start;
     hook.arm();
     let a = session_of(&mut st, "true").await;
     // The task left its setup and waits before the provider start.
@@ -363,7 +363,7 @@ async fn a_stop_after_the_spawn_does_not_send_the_first_prompt_and_ends_the_sess
     let log = log.path().join("stdin.log");
     let mut st = station_with(true, Some(&log)).await;
     let target = Arc::clone(&st.manager.target);
-    let hook = target.input_hook();
+    let hook = &target.hooks().input;
     hook.arm();
     let a = session_of(&mut st, "true").await;
     // The provider is spawned; the first prompt is not sent yet.
@@ -410,7 +410,7 @@ async fn a_shutdown_during_the_provider_start_waits_and_leaves_no_provider() {
     let log = log.path().join("stdin.log");
     let mut st = station_with(true, Some(&log)).await;
     let target = Arc::clone(&st.manager.target);
-    let hook = target.input_hook();
+    let hook = &target.hooks().input;
     hook.arm();
     let a = session_of(&mut st, "true").await;
     tokio::time::timeout(WAIT, hook.reached.notified())
@@ -436,7 +436,7 @@ async fn a_shutdown_before_the_provider_spawn_spawns_nothing() {
     let log = log.path().join("stdin.log");
     let mut st = station_with(true, Some(&log)).await;
     let target = Arc::clone(&st.manager.target);
-    let hook = target.start_hook();
+    let hook = &target.hooks().start;
     hook.arm();
     let a = session_of(&mut st, "true").await;
     tokio::time::timeout(WAIT, hook.reached.notified())
@@ -462,5 +462,54 @@ async fn without_a_stop_the_first_prompt_reaches_the_provider_after_the_setup() 
     })
     .await;
     assert_eq!(StdinLog::read(&log).count("hello"), 1);
+    st.manager.shutdown(StopMode::Kill).await;
+}
+
+#[tokio::test]
+async fn a_stop_during_the_checkpoint_work_does_not_send_the_first_prompt() {
+    use crate::worker::EffectTarget;
+    let log = tempfile::tempdir().unwrap();
+    let log = log.path().join("stdin.log");
+    let mut st = station_with(true, Some(&log)).await;
+    let target = Arc::clone(&st.manager.target);
+    let hook = &target.hooks().checkpoint;
+    hook.arm();
+    let a = session_of(&mut st, "true").await;
+    // The fence and the checkpoint work are done; the delivery is next.
+    tokio::time::timeout(WAIT, hook.reached.notified())
+        .await
+        .unwrap();
+    let stop = unbound_stop(&a, StopMode::Graceful);
+    assert_eq!(target.dispatch(&stop).await, Dispatch::Confirmed);
+    hook.release.notify_one();
+    wait_ended(&st, &a).await;
+    wait_no_live(&st).await;
+    let stdin = StdinLog::read(&log);
+    assert_eq!(stdin.pids.len(), 1, "the provider was spawned");
+    assert_eq!(stdin.count("hello"), 0, "{:?}", stdin.lines);
+    st.manager.shutdown(StopMode::Kill).await;
+}
+
+#[tokio::test]
+async fn a_stop_between_the_provider_registration_and_the_task_end_stops_the_provider() {
+    use crate::worker::EffectTarget;
+    let log = tempfile::tempdir().unwrap();
+    let log = log.path().join("stdin.log");
+    let mut st = station_with(true, Some(&log)).await;
+    let target = Arc::clone(&st.manager.target);
+    let hook = &target.hooks().end;
+    hook.arm();
+    let a = session_of(&mut st, "true").await;
+    // The provider is registered and the effect is settled; the task is
+    // about to decide its end.
+    tokio::time::timeout(WAIT, hook.reached.notified())
+        .await
+        .unwrap();
+    assert_eq!(st.manager.live_sessions(), 1);
+    let stop = unbound_stop(&a, StopMode::Kill);
+    assert_eq!(target.dispatch(&stop).await, Dispatch::Confirmed);
+    hook.release.notify_one();
+    wait_ended(&st, &a).await;
+    wait_no_live(&st).await;
     st.manager.shutdown(StopMode::Kill).await;
 }

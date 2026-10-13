@@ -35,9 +35,27 @@ pub(super) struct SetupTask {
     cancel: watch::Sender<bool>,
     /// Taken by the shutdown, which waits for it.
     handle: Option<JoinHandle<()>>,
-    /// The mode of the stop that cancelled the task: Kill replaces
+    /// The mode of a stop that the task has not applied yet: Kill replaces
     /// Graceful, and Graceful never replaces Kill.
     how: Option<StopMode>,
+    /// The mode that the task applies now (the entry stays until it ends).
+    stopping: Option<StopMode>,
+}
+
+impl SetupTask {
+    /// Records a stop. A stop that is not stronger than the one that the task
+    /// applies now adds nothing: that stop is already on its way.
+    fn record(&mut self, how: StopMode) {
+        let wanted = merge(self.how, how);
+        if self.stopping == Some(StopMode::Kill)
+            || (self.stopping == Some(StopMode::Graceful) && wanted == StopMode::Graceful)
+        {
+            return;
+        }
+        self.how = Some(wanted);
+        // The cancel goes out under the registry lock.
+        self.cancel.send_replace(true);
+    }
 }
 
 pub(super) type SetupTasks = Arc<StdMutex<HashMap<SessionId, SetupTask>>>;
@@ -53,8 +71,22 @@ struct SetupRun {
     env: ChildEnv,
 }
 
-/// Holds the task right after it left its setup, before the provider starts
-/// (tests only).
+/// The points where a test holds a start (tests only).
+#[cfg(test)]
+#[derive(Default)]
+pub(in crate::manager) struct Hooks {
+    /// Right after the task left its setup, before the provider start.
+    pub start: StartHook,
+    /// After the provider spawn, before the first input work.
+    pub input: StartHook,
+    /// After the fence and the checkpoint work, right before the delivery
+    /// check of the first input.
+    pub checkpoint: StartHook,
+    /// After the provider registration, right before the task ends.
+    pub end: StartHook,
+}
+
+/// One point where a test holds a start (tests only).
 #[cfg(test)]
 #[derive(Default)]
 pub(in crate::manager) struct StartHook {
@@ -144,6 +176,7 @@ impl SessionTarget {
             cancel,
             handle: Some(handle),
             how: None,
+            stopping: None,
         };
         tasks.insert(session_id.clone(), task);
         Dispatch::Deferred
@@ -188,7 +221,7 @@ impl SessionTarget {
         let dispatch = match failure {
             None => {
                 #[cfg(test)]
-                self.start_hook.hold().await;
+                self.hooks.start.hold().await;
                 self.start(&effect, &spec, prompt.as_ref(), None, Some(&stop_flag))
                     .await
             }
@@ -216,12 +249,16 @@ impl SessionTarget {
             tracing::warn!(error = %e, effect = %effect.effect_id, "the start effect was not settled");
         }
         // The entry stays until the provider that this task started is gone,
-        // so that a shutdown waits for it.
-        if let (true, Some(how)) = (started, self.recorded_stop(&session_id)) {
-            // A stop came while the provider started: the new session ends.
-            self.stop_started(&session_id, how).await;
+        // so that a shutdown waits for it, and until no stop is left to apply.
+        if started {
+            #[cfg(test)]
+            self.hooks.end.hold().await;
+            while let Some(how) = self.finish_or_take_stop(&session_id) {
+                self.stop_started(&session_id, how).await;
+            }
+        } else {
+            self.leave_setup(&session_id);
         }
-        self.leave_setup(&session_id);
     }
 
     /// Stops the live session of a start that a stop cancelled, and waits for
@@ -257,9 +294,25 @@ impl SessionTarget {
         *stop.borrow()
     }
 
-    /// The mode of the stop that came during the task, if any.
-    fn recorded_stop(&self, session_id: &SessionId) -> Option<StopMode> {
-        self.setups.lock().ok()?.get(session_id)?.how
+    /// Decides the end of the task under one lock. A recorded stop is taken
+    /// out (the entry stays, as `stopping`) and returned. With no stop the
+    /// entry is removed and `None` is returned, so no stop can come between
+    /// the check and the removal.
+    fn finish_or_take_stop(&self, session_id: &SessionId) -> Option<StopMode> {
+        let Ok(mut tasks) = self.setups.lock() else {
+            return None;
+        };
+        let task = tasks.get_mut(session_id)?;
+        match task.how.take() {
+            Some(how) => {
+                task.stopping = Some(merge(task.stopping, how));
+                Some(how)
+            }
+            None => {
+                tasks.remove(session_id);
+                None
+            }
+        }
     }
 
     /// Takes the session out of the registry.
@@ -278,8 +331,7 @@ impl SessionTarget {
         let Some(task) = tasks.get_mut(session_id) else {
             return false;
         };
-        task.how = Some(merge(task.how, how));
-        task.cancel.send_replace(true);
+        task.record(how);
         true
     }
 
@@ -294,9 +346,7 @@ impl SessionTarget {
             Ok(mut tasks) => tasks
                 .iter_mut()
                 .filter_map(|(session_id, task)| {
-                    task.how = Some(merge(task.how, how));
-                    // The cancel goes out under the lock, as for a stop.
-                    task.cancel.send_replace(true);
+                    task.record(how);
                     task.handle.take().map(|h| (session_id.clone(), h))
                 })
                 .collect(),
