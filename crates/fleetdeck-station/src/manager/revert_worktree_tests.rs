@@ -183,6 +183,8 @@ async fn an_open_revert_holds_the_worktree_against_other_sessions() {
             prompt: Some(text("hello")),
             workspace: None,
             setup_cmd: None,
+            issue: None,
+            origin_text: false,
         },
     )
     .await;

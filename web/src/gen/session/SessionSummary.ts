@@ -9,6 +9,7 @@ import type { ProviderInstanceId } from "../ids/ProviderInstanceId";
 import type { RunId } from "../ids/RunId";
 import type { SessionId } from "../ids/SessionId";
 import type { TurnId } from "../ids/TurnId";
+import type { IssueRef } from "../integrations/IssueRef";
 import type { Activity } from "./Activity";
 import type { OpenRequest } from "./OpenRequest";
 import type { RepoInfo } from "./RepoInfo";
@@ -90,6 +91,11 @@ terminal?: TerminalHold,
  * `session.models` (DL-151). Absent before the first one.
  */
 models?: Array<ModelChoice>, 
+/**
+ * The issue that the session works on, from `session.issue` (R3,
+ * DL-164). Absent when the session was not started from an issue.
+ */
+issue?: IssueRef, 
 /**
  * The highest `session_seq` folded into this summary.
  */

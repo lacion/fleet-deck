@@ -190,6 +190,14 @@ fn samples() -> Vec<Event> {
             callsign: "otter-ab12".into(),
             worktree: Some("/r/app--fd-otter-ab12".into()),
         },
+        Event::SessionIssue {
+            issue: crate::integrations::IssueRef {
+                system: "jira".into(),
+                key: "PROJ-123".into(),
+                url: "https://acme.atlassian.net/browse/PROJ-123".into(),
+                title: "Fix login".into(),
+            },
+        },
         Event::OutputGap {
             from: 10,
             to: 65_546,

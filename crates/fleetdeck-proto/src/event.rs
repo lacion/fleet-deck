@@ -17,6 +17,7 @@ use crate::capability::Capabilities;
 use crate::ids::{
     InputId, NodeId, PlanId, ProviderInstanceId, RequestId, RunId, SessionId, TurnId,
 };
+use crate::integrations::IssueRef;
 use crate::session::RepoInfo;
 
 /// Native ids of a provider, scoped by provider + session (L6). Never a global key.
@@ -480,6 +481,10 @@ pub enum Event {
         callsign: String,
         worktree: Option<String>,
     },
+    /// The session works on an issue (R3, DL-164): the station emits it
+    /// once after a start that names an issue.
+    #[serde(rename = "session.issue")]
+    SessionIssue { issue: IssueRef },
     /// The owner turned auto-continue on or off (ADR-007 §2.1).
     #[serde(rename = "session.auto_continue_changed")]
     AutoContinueChanged { enabled: bool },
@@ -585,7 +590,7 @@ pub enum Event {
 
 impl Event {
     /// Every known kind name, in declaration order.
-    pub const KINDS: [&'static str; 38] = [
+    pub const KINDS: [&'static str; 39] = [
         "session.started",
         "session.state",
         "run.started",
@@ -615,6 +620,7 @@ impl Event {
         "revert.updated",
         "session.renamed",
         "session.named",
+        "session.issue",
         "session.output_gap",
         "session.auto_continue_changed",
         "session.auto_continue_skipped",
@@ -659,6 +665,7 @@ impl Event {
             Self::RevertUpdated { .. } => "revert.updated",
             Self::SessionRenamed { .. } => "session.renamed",
             Self::SessionNamed { .. } => "session.named",
+            Self::SessionIssue { .. } => "session.issue",
             Self::AutoContinueChanged { .. } => "session.auto_continue_changed",
             Self::AutoContinueSkipped { .. } => "session.auto_continue_skipped",
             Self::CoordinatorBound { .. } => "coordinator.bound",

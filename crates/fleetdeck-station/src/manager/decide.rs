@@ -61,9 +61,16 @@ pub fn decide(
             prompt,
             workspace,
             setup_cmd,
+            issue,
+            origin_text,
         } => {
             if let Some(cmd) = &setup_cmd {
                 check_setup_cmd(policy, origin_run, cmd)?;
+            }
+            if let Some(issue) = &issue {
+                issue
+                    .check()
+                    .map_err(|why| reject(RejectCode::InvalidCommand, why))?;
             }
             start(
                 d,
@@ -74,6 +81,10 @@ pub fn decide(
                 workspace.map(|w| *w),
                 None,
                 setup_cmd,
+                StartFacts {
+                    issue: issue.map(|i| *i),
+                    origin_text,
+                },
             )
         }
         SessionCommand::Import {
@@ -92,6 +103,7 @@ pub fn decide(
                 None,
                 Some(native_session_id),
                 None,
+                StartFacts::default(),
             )
         }
         SessionCommand::Resume { session_id } => {
@@ -348,6 +360,49 @@ pub(super) fn result(session_id: &SessionId, input_id: Option<InputId>) -> Comma
     }
 }
 
+/// What a start knows about the text of its first prompt (R3, DL-164).
+#[derive(Debug, Default)]
+struct StartFacts {
+    issue: Option<fleetdeck_proto::integrations::IssueRef>,
+    origin_text: bool,
+}
+
+/// The modes that a start from third-party text may use, and the mode that
+/// it gets when none is chosen (R3.1): the most restrictive of its provider.
+///
+/// Claude: `default` or `plan`. Codex: the approval policy `untrusted` with
+/// any sandbox but full access.
+fn restrict_mode(kind: ProviderKind, chosen: Option<&str>) -> Result<String, DecideError> {
+    use fleetdeck_providers::{claude, codex};
+    let (safest, allowed) = match kind {
+        ProviderKind::Claude => (
+            claude::SAFEST_MODE,
+            chosen.is_none_or(|m| matches!(m, "default" | "plan")),
+        ),
+        ProviderKind::Codex => (
+            codex::SAFEST_MODE,
+            chosen.is_none_or(|m| {
+                codex::Mode::parse(m).is_some_and(|m| {
+                    m.approval_policy == "untrusted" && m.sandbox != codex::FULL_ACCESS_SANDBOX
+                })
+            }),
+        ),
+        ProviderKind::Unknown => {
+            return Err(reject(
+                RejectCode::Forbidden,
+                "a start from issue or pull request text needs a known provider",
+            ));
+        }
+    };
+    if !allowed {
+        return Err(reject(
+            RejectCode::Forbidden,
+            "a start from issue or pull request text runs in a restrictive mode only",
+        ));
+    }
+    Ok(chosen.unwrap_or(safest).to_owned())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn start(
     d: &mut Decision<'_>,
@@ -358,6 +413,7 @@ fn start(
     workspace: Option<WorkspaceRequest>,
     import: Option<String>,
     setup_cmd: Option<String>,
+    facts: StartFacts,
 ) -> Result<CommandResult, DecideError> {
     let provider = policy.instance(&spec.provider_instance).ok_or_else(|| {
         reject(
@@ -368,6 +424,9 @@ fn start(
             ),
         )
     })?;
+    if facts.origin_text {
+        spec.mode = Some(restrict_mode(provider, spec.mode.as_deref())?);
+    }
     if let Some(coordinator) = &spec.coordinator {
         super::coordinator_command::check_spec(
             origin,
@@ -485,6 +544,12 @@ fn start(
         &session_id,
         fleetdeck_proto::event::Event::SessionNamed { callsign, worktree }.into(),
     )?;
+    if let Some(issue) = facts.issue {
+        d.append(
+            &session_id,
+            fleetdeck_proto::event::Event::SessionIssue { issue }.into(),
+        )?;
+    }
     let prompt = prompt.map(|input| InputRecord {
         input_id: d.new_id(),
         origin,

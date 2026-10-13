@@ -41,6 +41,8 @@ async fn a_draining_station_refuses_new_work_and_reports_the_busy_sessions() {
             prompt: None,
             workspace: None,
             setup_cmd: None,
+            issue: None,
+            origin_text: false,
         })
         .await,
         RejectCode::InvalidState

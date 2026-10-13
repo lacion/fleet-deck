@@ -227,6 +227,8 @@ impl Rig {
                 prompt: Some(UserInput::new("hello".to_owned())),
                 workspace: None,
                 setup_cmd: None,
+                issue: None,
+                origin_text: false,
             })
             .await;
         let result = d.receipt.result.unwrap();

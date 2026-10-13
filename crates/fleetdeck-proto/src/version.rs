@@ -57,6 +57,9 @@ pub mod feature {
     /// `session.worktree_trash`, `_restore`, `_purge` and `_release`: the
     /// worktree trash (DL-150).
     pub const TRASH: &str = "workspace.trash.v1";
+    /// `integrations.status`, `issues.*` and `prs.*`: GitHub, GitLab, Jira
+    /// and Linear through the station (R3, DL-164).
+    pub const INTEGRATIONS: &str = "integrations.v1";
 
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
@@ -76,6 +79,7 @@ pub mod feature {
         PREFLIGHT,
         WRITE_TEMP,
         TRASH,
+        INTEGRATIONS,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];

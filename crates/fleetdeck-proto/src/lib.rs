@@ -15,6 +15,7 @@ pub mod files;
 pub mod fold;
 pub mod ids;
 pub mod input;
+pub mod integrations;
 pub mod link;
 pub mod mutation;
 pub mod orchestration;
@@ -23,6 +24,7 @@ pub mod session;
 pub mod shell;
 pub mod status;
 pub mod ts;
+pub mod untrusted;
 pub mod version;
 
 pub use capability::{Capabilities, Degradation, Operation, Unsupported};

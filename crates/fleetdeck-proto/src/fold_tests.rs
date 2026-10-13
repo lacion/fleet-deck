@@ -517,6 +517,23 @@ fn a_late_turn_finalized_changes_neither_the_turn_nor_the_activity() {
 }
 
 #[test]
+fn an_issue_event_sets_the_issue_link() {
+    let mut f = Feed::new();
+    f.push(started());
+    let issue = crate::integrations::IssueRef {
+        system: "linear".into(),
+        key: "ENG-42".into(),
+        url: "https://linear.app/acme/issue/ENG-42".into(),
+        title: "Slow start".into(),
+    };
+    let s = f.push(Event::SessionIssue {
+        issue: issue.clone(),
+    });
+    assert_eq!(s.issue, Some(issue));
+    assert_eq!(s.activity, Activity::Idle);
+}
+
+#[test]
 fn a_rename_sets_and_clears_the_title_and_an_old_reader_skips_it() {
     let mut f = Feed::new();
     f.push(started());

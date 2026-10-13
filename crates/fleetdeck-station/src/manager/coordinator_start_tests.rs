@@ -110,6 +110,8 @@ async fn a_deck_start_with_a_grant_hands_the_credential_to_the_child_environment
             prompt: Some(super::tests::text("hello")),
             workspace: None,
             setup_cmd: None,
+            issue: None,
+            origin_text: false,
         },
     };
     let command = envelope.command.clone();

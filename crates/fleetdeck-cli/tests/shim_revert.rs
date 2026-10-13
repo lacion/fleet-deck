@@ -214,6 +214,8 @@ impl Rig {
                     prompt: Some(text(first)),
                     workspace: None,
                     setup_cmd: None,
+                    issue: None,
+                    origin_text: false,
                 },
             )
             .await;

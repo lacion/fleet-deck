@@ -70,6 +70,8 @@ fn start_with_setup(cwd: &str, cmd: &str) -> SessionCommand {
         prompt: Some(text("hello")),
         workspace: None,
         setup_cmd: Some(cmd.to_owned()),
+        issue: None,
+        origin_text: false,
     }
 }
 

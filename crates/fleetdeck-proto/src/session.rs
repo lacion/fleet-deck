@@ -12,6 +12,7 @@ use crate::event::{
     RevertState, SessionState, ToolKind, Usage,
 };
 use crate::ids::{NodeId, ProviderInstanceId, RequestId, RunId, SessionId, TurnId};
+use crate::integrations::IssueRef;
 
 /// What a session does now, for the board's lanes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -118,6 +119,11 @@ pub struct SessionSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub models: Option<Vec<ModelChoice>>,
+    /// The issue that the session works on, from `session.issue` (R3,
+    /// DL-164). Absent when the session was not started from an issue.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub issue: Option<IssueRef>,
     /// The highest `session_seq` folded into this summary.
     pub session_seq: u64,
     /// Unix ms of the last folded event.
@@ -157,6 +163,7 @@ impl SessionSummary {
             auto_continue: false,
             terminal: None,
             models: None,
+            issue: None,
             session_seq: 0,
             updated_at: 0,
         }
