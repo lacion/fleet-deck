@@ -16,6 +16,8 @@ export type Route =
   | { readonly name: 'more' }
   | { readonly name: 'compare'; readonly batch: string }
   | { readonly name: 'artifacts' }
+  | { readonly name: 'projects' }
+  | { readonly name: 'project'; readonly id: string }
   | {
       readonly name: 'artifact';
       readonly station: string;
@@ -44,6 +46,7 @@ const PLAIN = [
   'terminals',
   'more',
   'artifacts',
+  'projects',
 ] as const;
 
 /** `#/artifact/<station>/<id>[/<version>]`; a bad part is the home. */
@@ -82,6 +85,15 @@ export function parseHash(hash: string): Route {
       return HOME;
     }
   }
+  // R3: `#/project/<id>`.
+  if (parts.length === 3 && parts[0] === '' && parts[1] === 'project') {
+    try {
+      const id = decodeURIComponent(parts[2] ?? '');
+      return id === '' ? HOME : { name: 'project', id };
+    } catch {
+      return HOME;
+    }
+  }
   if (parts[0] === '' && parts[1] === 'artifact' && (parts.length === 4 || parts.length === 5)) {
     return parseArtifact(parts);
   }
@@ -113,6 +125,8 @@ export function formatHash(route: Route): string {
     }
     case 'compare':
       return `#/compare/${encodeURIComponent(route.batch)}`;
+    case 'project':
+      return `#/project/${encodeURIComponent(route.id)}`;
     case 'artifact': {
       const base = `#/artifact/${encodeURIComponent(route.station)}/${encodeURIComponent(route.id)}`;
       return route.version === null ? base : `${base}/${route.version}`;

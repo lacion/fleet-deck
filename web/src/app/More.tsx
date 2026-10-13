@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { useIntegrations } from '../integrations/context';
+import { FolderGit2 } from '../integrations/icons';
 import {
   Eye,
   FileText,
@@ -25,6 +27,7 @@ type Props = {
 /** The phone's "More" page: the pages that have no place in the bottom bar. */
 export function More({ stationCount, terminalCount, chrome }: Props) {
   const [addingDevice, setAddingDevice] = useState(false);
+  const projectsLink = useIntegrations()?.actions.canAdmin === true;
   return (
     <section className="fd-screen fd-more" aria-label="More">
       <h1 className="fd-screen-title">More</h1>
@@ -60,6 +63,14 @@ export function More({ stationCount, terminalCount, chrome }: Props) {
               Artifacts
             </a>
           </li>
+          {projectsLink ? (
+            <li>
+              <a href="#/projects">
+                <Icon of={FolderGit2} />
+                Projects
+              </a>
+            </li>
+          ) : null}
           <li>
             <a href="#/files">
               <Icon of={Folder} />

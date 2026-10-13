@@ -55,6 +55,18 @@ describe('routes', () => {
     }
   });
 
+  test('the projects routes (R3): the list and one project', () => {
+    expect(parseHash('#/projects')).toEqual({ name: 'projects' });
+    expect(formatHash({ name: 'projects' })).toBe('#/projects');
+    expect(parseHash('#/project/p%201')).toEqual({ name: 'project', id: 'p 1' });
+    expect(formatHash({ name: 'project', id: 'p 1' })).toBe('#/project/p%201');
+    const route: Route = { name: 'project', id: 'a/b' };
+    expect(parseHash(formatHash(route))).toEqual(route);
+    for (const hash of ['#/project', '#/project/', '#/project/a/b', '#/project/%E0%A4%A']) {
+      expect(parseHash(hash)).toEqual({ name: 'home' });
+    }
+  });
+
   test('an unknown tab is the chat tab', () => {
     expect(parseHash('#/s/a/b?tab=nope')).toEqual(session('a', 'b'));
     expect(parseHash('#/s/a/b?x=1')).toEqual(session('a', 'b'));

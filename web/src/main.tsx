@@ -24,6 +24,7 @@ import './styles/spawn.css';
 import './styles/views.css';
 import './styles/artifacts.css';
 import './styles/modelhelp.css';
+import './styles/integrations.css';
 
 initTheme();
 initDensity();

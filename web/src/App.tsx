@@ -17,6 +17,10 @@ import { ComparePage } from './compare/ComparePage';
 import { StationsPanel } from './board/StationsPanel';
 import { ActivityPage } from './activity/ActivityPage';
 import type { FleetActions } from './fleet/fleet';
+import type { IntegrationActions } from './integrations/actions';
+import { IntegrationsProvider } from './integrations/context';
+import { ProjectPage } from './integrations/ProjectPage';
+import { ProjectsPage } from './integrations/ProjectsPage';
 import type {
   DeckPlan,
   DeckSession,
@@ -81,6 +85,8 @@ type Props = {
   readonly feed?: readonly FeedItem[];
   /** The artifact calls (R12, DL-165); absent in tests without a deck. */
   readonly artifacts?: ArtifactActions | undefined;
+  /** The projects, issues and pull requests (R3, DL-164); absent in tests without a deck. */
+  readonly integrations?: IntegrationActions | undefined;
   /** The plan library (DL-301). */
   readonly plans?: PlanActions | undefined;
   /** The automations (R5, DL-168); absent without the owner login. */
@@ -143,6 +149,7 @@ export function App({
   initialListing = null,
   feed = [],
   artifacts,
+  integrations,
   plans,
   automations,
   conflicts,
@@ -216,11 +223,14 @@ export function App({
   // The plan that the spawn form starts; the plan is marked executed after a start that worked (R7.2).
   const [planId, setPlanId] = useState<string | null>(null);
   const [spawnStation, setSpawnStation] = useState<string | null>(null);
+  // R3: the directory that "Fix checks" of a project gives the spawn form.
+  const [spawnCwd, setSpawnCwd] = useState<string | null>(null);
   useEffect(() => {
     if (route.name !== 'new') {
       setPlanPrompt('');
       setPlanId(null);
       setSpawnStation(null);
+      setSpawnCwd(null);
     }
   }, [route.name]);
   // The `c` key asks the fleet home to open its panel on Mail & tasks.
@@ -458,9 +468,10 @@ export function App({
         return (
           <div className="fd-screen">
             <SpawnForm
-              key={`${planPrompt}|${spawnStation ?? ''}`}
+              key={`${planPrompt}|${spawnStation ?? ''}|${spawnCwd ?? ''}`}
               initialPrompt={planPrompt}
               initialStation={spawnStation ?? undefined}
+              initialCwd={spawnCwd ?? undefined}
               sessions={sessions}
               stations={stations}
               freshness={freshness}
@@ -563,6 +574,23 @@ export function App({
             onVersion={(version) => navigate({ ...route, version }, { replace: true })}
           />
         );
+      case 'projects':
+        return <ProjectsPage stations={stations} />;
+      case 'project':
+        return (
+          <ProjectPage
+            id={route.id}
+            stations={stations}
+            sessions={sessions}
+            onFixChecks={(station, cwd, prompt) => {
+              setPlanPrompt(prompt);
+              setPlanId(null);
+              setSpawnStation(station);
+              setSpawnCwd(cwd);
+              navigate({ name: 'new' });
+            }}
+          />
+        );
       case 'more':
         return <More stationCount={stations.length} terminalCount={tabCount} chrome={chrome} />;
       case 'terminals':
@@ -640,9 +668,15 @@ export function App({
       {content}
     </Layout>
   );
-  return artifactsEnv === undefined ? (
-    layoutNode
+  const framed =
+    artifactsEnv === undefined ? (
+      layoutNode
+    ) : (
+      <ArtifactsProvider value={artifactsEnv}>{layoutNode}</ArtifactsProvider>
+    );
+  return integrations === undefined ? (
+    framed
   ) : (
-    <ArtifactsProvider value={artifactsEnv}>{layoutNode}</ArtifactsProvider>
+    <IntegrationsProvider actions={integrations}>{framed}</IntegrationsProvider>
   );
 }

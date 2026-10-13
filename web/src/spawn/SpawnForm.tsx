@@ -46,6 +46,8 @@ type Props = {
   readonly initialPrompt?: string;
   /** DL-141: the station chosen at the first render (an unrouted task). */
   readonly initialStation?: string | undefined;
+  /** R3: the directory chosen at the first render ("Fix checks" of a project). */
+  readonly initialCwd?: string | undefined;
   /** DL-141: the fleet, for the recent directories of a station. */
   readonly sessions?: readonly DeckSession[] | undefined;
   /** Unix ms of now for the reset times of the limits (tests). */
@@ -62,6 +64,7 @@ export function SpawnForm({
   initialListing = null,
   initialPrompt = '',
   initialStation,
+  initialCwd,
   sessions = [],
   now: givenNow,
 }: Props) {
@@ -82,7 +85,7 @@ export function SpawnForm({
   );
   const roomiest = mostRoom(limits);
   const [listing, setListing] = useState<WorkspaceListing | null>(initialListing);
-  const [cwd, setCwd] = useState<string | null>(null);
+  const [cwd, setCwd] = useState<string | null>(initialCwd ?? null);
   const [browseError, setBrowseError] = useState<string | null>(null);
   const [mode, setMode] = useState('');
   const [model, setModel] = useState('');

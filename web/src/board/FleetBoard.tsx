@@ -30,6 +30,8 @@ import { archived } from '../ui/archive';
 import { isHibernated } from '../views/hibernate';
 import { FocusLine, UnreadMark, unreadOf } from '../views/marks';
 import { priority, sessionRef } from '../ui/localSet';
+import { useProjects } from '../integrations/context';
+import { IssueChip } from '../integrations/IssueChip';
 import { useNow } from '../ui/useNow';
 import { buckets } from './activity';
 import { type Contested, cardKey, NO_REPO, repoName, stationName, statusGroups } from './fleet';
@@ -209,6 +211,7 @@ export function FleetCard({
   const s = card.summary;
   const ref = sessionRef(card.station_id, s.session_id);
   const starred = priority.use().has(ref);
+  const projects = useProjects();
   const cleared = archived.use().has(ref) && (card.status === 'ended' || card.status === 'lost');
   const bypass = s.mode === 'bypassPermissions' || s.mode === 'dontAsk';
   const subagents = runningSubagents(s);
@@ -348,6 +351,7 @@ export function FleetCard({
         </span>
       </a>
       <CompareChip card={card} count={batchCount} />
+      <IssueChip summary={s} projects={projects} station={card.station_id} />
     </li>
   );
 }
