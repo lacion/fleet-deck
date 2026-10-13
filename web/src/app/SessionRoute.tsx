@@ -6,6 +6,7 @@ import { SessionView } from '../session/SessionView';
 import type { ShellActions } from '../shell/shell';
 import type { Watch } from '../terminal/handover';
 import type { TerminalStore } from '../terminal/store';
+import { canGoBack } from './backNav';
 import type { Navigate, Route, Tab } from './routes';
 import type { Layout } from './viewport';
 
@@ -56,7 +57,14 @@ export function buildPaneProps(input: BuildInput): PaneProps {
     layout,
     tab: route.tab,
     onTab: (tab) => navigate({ ...route, tab }),
-    ...(layout === 'desktop' ? {} : { onBack: () => navigate({ name: 'home' }) }),
+    ...(layout === 'desktop'
+      ? {}
+      : {
+          onBack: () => {
+            if (canGoBack()) window.history.back();
+            else navigate({ name: 'home' });
+          },
+        }),
     ...(onTerminalOpened === undefined ? {} : { onTerminalOpened }),
     ...(onNewShell === undefined ? {} : { onNewShell }),
   };

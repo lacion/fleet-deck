@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useOverlay } from '../app/overlay';
+import { Dialog } from '../integrations/Dialog';
 import type { PairingInvitation } from '../gen';
 import { expiresText, requestedName, type StationActions } from './pairing';
 
@@ -18,7 +18,6 @@ const message = (error: unknown) =>
  * stays in this dialog's memory only and is gone when the dialog closes.
  */
 export function PairingDialog({ actions, onClose }: Props) {
-  useOverlay();
   const [direction, setDirection] = useState<Direction>('station_dials');
   const [invitation, setInvitation] = useState<PairingInvitation | null>(null);
   const [pasted, setPasted] = useState('');
@@ -35,9 +34,15 @@ export function PairingDialog({ actions, onClose }: Props) {
       .finally(() => setBusy(false));
   };
 
+  // Every way out (Close, Escape, an outside click) drops the secrets from memory first.
+  const close = () => {
+    setInvitation(null);
+    setPasted('');
+    onClose();
+  };
+
   return (
-    <div className="fd-dialog" role="dialog" aria-modal="true" aria-labelledby="fd-pair-title">
-      <h3 id="fd-pair-title">Add station</h3>
+    <Dialog title="Add station" onClose={close}>
       <fieldset>
         <legend>Which side dials?</legend>
         <label>
@@ -135,16 +140,9 @@ export function PairingDialog({ actions, onClose }: Props) {
       )}
       {paired === null ? null : <p role="status">Paired station {paired}.</p>}
       {error === null ? null : <p role="alert">{error}</p>}
-      <button
-        type="button"
-        onClick={() => {
-          setInvitation(null);
-          setPasted('');
-          onClose();
-        }}
-      >
+      <button type="button" onClick={close}>
         Close
       </button>
-    </div>
+    </Dialog>
   );
 }

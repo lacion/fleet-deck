@@ -36,6 +36,7 @@ import { FleetHome } from './app/FleetHome';
 import { HelpNotice, useHelpNotice } from './app/HelpNotice';
 import { HelpOverlay } from './app/HelpOverlay';
 import { useGlobalKeys } from './app/keys';
+import { noteNavigation } from './app/backNav';
 import { Layout } from './app/Layout';
 import { More } from './app/More';
 import { Palette } from './app/Palette';
@@ -174,6 +175,11 @@ export function App({
   settings,
 }: Props) {
   const [urlRoute, navigate] = useRoute(initialRoute);
+  // The phone's Back of a session goes back in the history only after the board navigated.
+  useEffect(() => {
+    window.addEventListener('hashchange', noteNavigation);
+    return () => window.removeEventListener('hashchange', noteNavigation);
+  }, []);
   const artifactsEnv = useMemo(
     () => (artifacts === undefined ? undefined : { actions: artifacts }),
     [artifacts],
@@ -626,7 +632,15 @@ export function App({
           />
         );
       case 'more':
-        return <More stationCount={stations.length} terminalCount={tabCount} chrome={chrome} />;
+        return (
+          <More
+            stationCount={stations.length}
+            terminalCount={tabCount}
+            chrome={chrome}
+            onPalette={() => setPalette(true)}
+            onHelp={() => setHelp(true)}
+          />
+        );
       case 'terminals':
         return tabCount > 0 && dock !== null ? (
           dock

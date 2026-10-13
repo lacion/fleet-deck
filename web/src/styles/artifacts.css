@@ -144,6 +144,11 @@
   gap: 4px;
   text-decoration: none;
 }
+@media (pointer: coarse) {
+  .fd-art-back {
+    min-height: 44px;
+  }
+}
 
 .fd-art-body {
   display: flex;

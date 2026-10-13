@@ -180,7 +180,7 @@ export function PlanLibrary({
                     </button>
                   </p>
                   <details>
-                    <summary>Show plan</summary>
+                    <summary className="fd-tap">Show plan</summary>
                     <pre className="fd-plan-text">{p.markdown}</pre>
                     {p.truncated ? (
                       <p className="fd-note">The deck keeps only the start of this long plan.</p>
