@@ -13,6 +13,7 @@ use ts_rs::TS;
 use crate::command::{CommandEnvelope, Reject, RejectCode, SessionSpec, UserInput, admit};
 use crate::event::ProviderKind;
 use crate::ids::{CommandId, IncarnationId, ProviderInstanceId, SessionId, StationId};
+use crate::orchestration::{MailGroup, TaskState};
 use crate::shell::ShellEnvelope;
 
 /// Domain separation of a key rotation signature (ADR-004 §9.5).
@@ -261,10 +262,29 @@ pub enum CoordinatorOp {
         task: String,
         requirements: AssignRequirements,
     },
-    /// Complete a task that was assigned to the caller.
+    /// Complete a task that was assigned to the caller. `state` is `done`
+    /// when absent; `reason` and `question` follow the rules of
+    /// `TaskCompletion::check` (R2.1).
     CompleteTask {
         task_id: String,
         result: Option<String>,
+        #[serde(default)]
+        state: Option<TaskState>,
+        #[serde(default)]
+        reason: Option<String>,
+        #[serde(default)]
+        question: Option<String>,
+    },
+    /// The caller asks its coordinator a question (R2.3): a `question`
+    /// completion of the caller's open task and a mail to the coordinator
+    /// session that created the task.
+    AskCoordinator { question: String },
+    /// Mail to every live session of a group (R2.5), on the grant's
+    /// stations, without the caller.
+    SendGroup {
+        group: MailGroup,
+        text: String,
+        delivery: CoordinatorDelivery,
     },
 }
 
@@ -316,6 +336,9 @@ pub enum CoordinatorQuery {
     ListSessions,
     /// Wait for the end of a task on the grant's stations (`read` class).
     WaitTask { task_id: String },
+    /// Wait for the first of several tasks that is not `open` any more
+    /// (`read` class, R2.4).
+    WaitTasks { task_ids: Vec<String> },
     /// The receipt of an own `coordinator.call` (any mutating class).
     CommandStatus { command_id: CommandId },
 }

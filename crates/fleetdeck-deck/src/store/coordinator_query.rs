@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use fleetdeck_proto::link::Scope;
 use fleetdeck_proto::mutation::{CoordinatorBinding, CoordinatorQuery, CoordinatorQueryEnvelope};
-use fleetdeck_proto::orchestration::TaskState;
+use fleetdeck_proto::orchestration::{MAX_WAIT_IDS, TaskState};
 use fleetdeck_proto::{Reject, RejectCode, SessionId, StationId};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
@@ -115,7 +115,9 @@ impl DeckStore {
             )));
         }
         let longest = match env.query {
-            CoordinatorQuery::WaitTask { .. } => WAIT_DEADLINE_MS,
+            CoordinatorQuery::WaitTask { .. } | CoordinatorQuery::WaitTasks { .. } => {
+                WAIT_DEADLINE_MS
+            }
             _ => QUERY_DEADLINE_MS,
         };
         if env.deadline < now {
@@ -198,6 +200,39 @@ impl DeckStore {
                     return Ok(Err(r));
                 }
             },
+            CoordinatorQuery::WaitTasks { task_ids } => {
+                if task_ids.is_empty() || task_ids.len() > MAX_WAIT_IDS {
+                    return Ok(Err(reject(
+                        RejectCode::InvalidCommand,
+                        "a wait names 1 to 50 tasks",
+                    )));
+                }
+                loop {
+                    let tasks = match self.tasks_by_ids(task_ids.clone()).await? {
+                        Ok(tasks) => tasks,
+                        Err(_) => {
+                            return Ok(Err(reject(RejectCode::UnknownRequest, "no such task")));
+                        }
+                    };
+                    if tasks
+                        .iter()
+                        .any(|t| !grant.stations.contains(&t.station_id))
+                    {
+                        return Ok(Err(reject(
+                            RejectCode::Forbidden,
+                            "a task is outside the grant",
+                        )));
+                    }
+                    let ready = tasks.into_iter().find(|t| t.state != TaskState::Open);
+                    if ready.is_some() || self.now_ms() >= env.deadline {
+                        break json!({ "task": ready });
+                    }
+                    tokio::time::sleep(WAIT_TICK).await;
+                    if let Err(r) = self.query_grant(&station, &env).await? {
+                        return Ok(Err(r));
+                    }
+                }
+            }
         };
         let now = self.now_ms();
         call(&self.inner.db, move |conn| touch(conn, &grant, now)).await?;

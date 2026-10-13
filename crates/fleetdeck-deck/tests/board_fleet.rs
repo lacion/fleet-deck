@@ -14,9 +14,10 @@ use std::time::Duration;
 use common::board::{BoardClient, Http, board};
 use common::*;
 use fleetdeck_deck::store::AuditResult;
-use fleetdeck_proto::SessionSummary;
-use fleetdeck_proto::event::{ProviderKind, SessionState};
+use fleetdeck_proto::event::{Event, EventBody, ProviderKind, SessionState};
 use fleetdeck_proto::link::Scope;
+use fleetdeck_proto::session::Activity;
+use fleetdeck_proto::{EventEnvelope, SessionSummary};
 use serde_json::{Value, json};
 
 fn card(id: &str) -> SessionSummary {
@@ -24,6 +25,13 @@ fn card(id: &str) -> SessionSummary {
     s.state = SessionState::Running;
     s.cwd = Some("/p/app".to_owned());
     s.provider = Some(ProviderKind::Claude);
+    s
+}
+
+fn idle_card(id: &str, provider: ProviderKind) -> SessionSummary {
+    let mut s = card(id);
+    s.provider = Some(provider);
+    s.activity = Activity::Idle;
     s
 }
 
@@ -213,6 +221,190 @@ async fn a_task_is_delivered_completed_once_and_its_waiter_sees_the_end() {
     no_request(&mut station, Duration::from_millis(200)).await;
     assert_eq!(c.audited("tasks.create", AuditResult::Ok).await.len(), 1);
     assert_eq!(c.audited("tasks.complete", AuditResult::Ok).await.len(), 1);
+}
+
+#[tokio::test]
+async fn a_group_mail_reaches_each_live_session_of_the_group_once() {
+    let mut f = fixture().await;
+    let mut station = f.connect().await;
+    let cards = vec![
+        idle_card("s1", ProviderKind::Claude),
+        idle_card("s2", ProviderKind::Codex),
+    ];
+    f.store
+        .apply_snapshot(f.station.clone(), f.inc.clone(), 0, cards)
+        .await
+        .unwrap();
+    let c = board(std::sync::Arc::clone(&f.ctx)).await;
+    let h = owner(&c).await;
+
+    let body = json!({ "mail_id": "g1", "group": "@claude", "text": " pause " });
+    let r = post(&c, &h, "/api/mail/group", body.clone()).await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    let rows = r.body.as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        (&rows[0]["mail_id"], &rows[0]["session_id"]),
+        (&json!("g1-1"), &json!("s1"))
+    );
+    let req = Fixture::answer(&mut station, accepted).await;
+    assert_eq!(req.method, "session.follow_up");
+    assert_eq!(req.params["command"]["session_id"], "s1");
+    assert_eq!(
+        req.params["command"]["input"]["text"],
+        "[FLEETDECK MAIL from owner] pause"
+    );
+    // A resend stores and sends nothing new.
+    let again = post(&c, &h, "/api/mail/group", body).await;
+    assert_eq!(
+        (again.status, again.body.as_array().map(Vec::len)),
+        (200, Some(1))
+    );
+    no_request(&mut station, Duration::from_millis(300)).await;
+
+    // `@idle` names both sessions; `steer` goes into the turn.
+    let body = json!({ "mail_id": "g2", "group": "@idle", "text": "status?", "delivery": "steer" });
+    let r = post(&c, &h, "/api/mail/group", body).await;
+    assert_eq!(r.body.as_array().map(Vec::len), Some(2), "{}", r.body);
+    for _ in 0..2 {
+        let req = Fixture::answer(&mut station, accepted).await;
+        assert_eq!(req.method, "session.steer");
+    }
+    // `@codex` names the one Codex session.
+    let r = post(
+        &c,
+        &h,
+        "/api/mail/group",
+        json!({ "mail_id": "g3", "group": "@codex", "text": "x" }),
+    )
+    .await;
+    assert_eq!(r.body.as_array().map(Vec::len), Some(1));
+    Fixture::answer(&mut station, accepted).await;
+
+    let long = "m".repeat(57);
+    for (body, code) in [
+        (
+            json!({ "mail_id": "g4", "group": "@everyone", "text": "x" }),
+            "invalid_body",
+        ),
+        (
+            json!({ "mail_id": long, "group": "@idle", "text": "x" }),
+            "invalid_id",
+        ),
+        (
+            json!({ "mail_id": "g4", "group": "@idle", "text": " " }),
+            "invalid_text",
+        ),
+    ] {
+        let r = post(&c, &h, "/api/mail/group", body).await;
+        assert_eq!((r.status, r.code()), (400, code));
+    }
+    assert_eq!(c.audited("mail.send_group", AuditResult::Ok).await.len(), 4);
+    assert_eq!(
+        c.audited("mail.send_group", AuditResult::Refused)
+            .await
+            .len(),
+        3
+    );
+}
+
+#[tokio::test]
+async fn blocked_and_question_completions_wake_a_wait_over_several_tasks() {
+    let mut f = fixture().await;
+    let mut station = f.connect().await;
+    f.store
+        .apply_snapshot(f.station.clone(), f.inc.clone(), 0, vec![card("s1")])
+        .await
+        .unwrap();
+    let c = board(std::sync::Arc::clone(&f.ctx)).await;
+    let h = owner(&c).await;
+    let st = f.station.0.clone();
+    for id in ["t1", "t2"] {
+        let body = json!({ "task_id": id, "title": "work", "station": st, "session_id": "s1" });
+        assert_eq!(post(&c, &h, "/api/tasks", body).await.status, 200);
+        Fixture::answer(&mut station, accepted).await;
+    }
+
+    // All open: the wait ends at its deadline with no task.
+    let r = get(&c, &h, "/api/tasks/wait?ids=t1,t2&timeout_ms=50").await;
+    assert_eq!(
+        (r.status, r.body["task"].is_null()),
+        (200, true),
+        "{}",
+        r.body
+    );
+    for (path, code) in [
+        ("/api/tasks/wait?timeout_ms=10", "invalid_ids"),
+        ("/api/tasks/wait?ids=t1,,t2", "invalid_ids"),
+    ] {
+        let r = get(&c, &h, path).await;
+        assert_eq!((r.status, r.code()), (400, code), "{path}");
+    }
+    let r = get(&c, &h, "/api/tasks/wait?ids=t1,nope&timeout_ms=10").await;
+    assert_eq!((r.status, r.code()), (404, "unknown_task"));
+
+    // A waiter sees the question that arrives while it waits.
+    let waiter = get(&c, &h, "/api/tasks/wait?ids=t1,t2&timeout_ms=10000");
+    let ask = async {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        post(
+            &c,
+            &h,
+            "/api/tasks/t2/complete",
+            json!({ "state": "question", "reason": "stuck", "question": "which branch?" }),
+        )
+        .await
+    };
+    let (w, asked) = tokio::join!(waiter, ask);
+    assert_eq!(asked.status, 200, "{}", asked.body);
+    assert_eq!(w.body["task"]["task_id"], "t2", "{}", w.body);
+    assert_eq!(w.body["task"]["state"], "question");
+    assert_eq!(w.body["task"]["question"], "which branch?");
+    assert_eq!(w.body["task"]["completion_reason"], "stuck");
+
+    // The question does not end the task: it can end as blocked, once.
+    let r = post(
+        &c,
+        &h,
+        "/api/tasks/t2/complete",
+        json!({ "state": "blocked", "reason": "no access" }),
+    )
+    .await;
+    assert_eq!((r.status, r.body["state"].as_str()), (200, Some("blocked")));
+    let r = post(&c, &h, "/api/tasks/t2/complete", json!({ "state": "done" })).await;
+    assert_eq!((r.status, r.code()), (409, "task_ended"));
+    for body in [
+        json!({ "state": "blocked" }),
+        json!({ "state": "question", "reason": "r" }),
+        json!({ "state": "done", "reason": "r" }),
+    ] {
+        let r = post(&c, &h, "/api/tasks/t1/complete", body).await;
+        assert_eq!((r.status, r.code()), (400, "invalid_state"));
+    }
+
+    // The worker of `t1` exits without a completion: the deck ends `t1`.
+    let exited = EventEnvelope {
+        station_seq: 1,
+        session_id: "s1".into(),
+        session_seq: 1,
+        at: 1_000,
+        proto_version: 1,
+        raw_ref: None,
+        event: EventBody::Known(Event::SessionStateChanged {
+            state: SessionState::Exited,
+            detail: None,
+        }),
+    };
+    f.store
+        .apply_events(f.station.clone(), f.inc.clone(), vec![exited])
+        .await
+        .unwrap();
+    let r = get(&c, &h, "/api/tasks/t1/wait?timeout_ms=10").await;
+    assert_eq!(r.body["state"], "blocked", "{}", r.body);
+    assert_eq!(
+        r.body["completion_reason"],
+        "the worker session ended without a completion (exited)"
+    );
 }
 
 #[tokio::test]

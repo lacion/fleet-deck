@@ -11,11 +11,15 @@ use fleetdeck_proto::board::DeckSession;
 use fleetdeck_proto::command::{SessionCommand, SessionSpec, StopMode, UserInput};
 use fleetdeck_proto::link::StationInfo;
 use fleetdeck_proto::mutation::{CoordinatorDelivery, CoordinatorOp, CoordinatorTarget};
-use fleetdeck_proto::orchestration::{ASSIGNMENT_PREFIX, MAX_TASK_CHARS, mail_frame, task_frame};
+use fleetdeck_proto::orchestration::{
+    ASSIGNMENT_PREFIX, MAX_TASK_CHARS, TaskCompletion, TaskState, mail_frame, task_frame,
+};
 use fleetdeck_proto::{ProviderInstanceId, SessionId, StationId};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use super::Result;
+use super::coordinator_fleet::{ask, send_group};
+use super::fleet::write_completion;
 use super::grants::{Grant, GrantClass};
 use super::outbox::{NewOutboxItem, insert_item};
 use crate::link::router::CommandKind;
@@ -64,6 +68,8 @@ fn class_of(op: &CoordinatorOp) -> GrantClass {
         CoordinatorOp::Send { .. }
         | CoordinatorOp::Assign { .. }
         | CoordinatorOp::AssignAuto { .. }
+        | CoordinatorOp::SendGroup { .. }
+        | CoordinatorOp::AskCoordinator { .. }
         | CoordinatorOp::CompleteTask { .. } => GrantClass::Mail,
         CoordinatorOp::Interrupt { .. } | CoordinatorOp::Stop { .. } => GrantClass::Drive,
         CoordinatorOp::Spawn { .. } => GrantClass::Spawn,
@@ -103,7 +109,11 @@ fn family_of(info: Option<&StationInfo>, instance: &ProviderInstanceId) -> Optio
         .map(str::to_owned)
 }
 
-fn session_known(tx: &Connection, station: &StationId, session: &SessionId) -> Result<bool> {
+pub(super) fn session_known(
+    tx: &Connection,
+    station: &StationId,
+    session: &SessionId,
+) -> Result<bool> {
     Ok(tx
         .query_row(
             "SELECT 1 FROM sessions WHERE station_id = ?1 AND session_id = ?2",
@@ -114,9 +124,19 @@ fn session_known(tx: &Connection, station: &StationId, session: &SessionId) -> R
         .is_some())
 }
 
-fn enqueue(
+pub(super) fn enqueue(
     tx: &Connection,
     ctx: &Context,
+    station: &StationId,
+    command: SessionCommand,
+    now: i64,
+) -> Result<()> {
+    enqueue_as(tx, &ctx.outbox_id, station, command, now)
+}
+
+pub(super) fn enqueue_as(
+    tx: &Connection,
+    outbox_id: &str,
     station: &StationId,
     command: SessionCommand,
     now: i64,
@@ -127,11 +147,11 @@ fn enqueue(
         payload: serde_json::to_value(CommandKind::Session { command })?,
         expires_at: now.saturating_add(INTENT_TTL_MS),
     };
-    insert_item(tx, &ctx.outbox_id, &item, now)?;
+    insert_item(tx, outbox_id, &item, now)?;
     Ok(())
 }
 
-fn check_text(text: &str) -> Option<Decision> {
+pub(super) fn check_text(text: &str) -> Option<Decision> {
     let t = text.trim();
     (t.is_empty() || t.chars().count() > MAX_TASK_CHARS).then(|| {
         Decision::Rejected(
@@ -204,6 +224,7 @@ pub(crate) fn decide(
             assign_to(
                 tx,
                 ctx,
+                grant,
                 &sender,
                 command_id,
                 task,
@@ -213,8 +234,28 @@ pub(crate) fn decide(
             )?;
             Ok(Decision::Accepted(Some(to.session_id.clone())))
         }
-        CoordinatorOp::CompleteTask { task_id, result } => {
-            complete(tx, grant, task_id, result.as_deref(), now)
+        CoordinatorOp::SendGroup {
+            group,
+            text,
+            delivery,
+        } => send_group(tx, grant, ctx, (*group, text, *delivery), command_id, now),
+        CoordinatorOp::AskCoordinator { question } => {
+            ask(tx, grant, ctx, question, command_id, now)
+        }
+        CoordinatorOp::CompleteTask {
+            task_id,
+            result,
+            state,
+            reason,
+            question,
+        } => {
+            let completion = TaskCompletion {
+                state: state.unwrap_or(TaskState::Done),
+                result: result.clone(),
+                reason: reason.clone(),
+                question: question.clone(),
+            };
+            complete(tx, grant, task_id, &completion, now)
         }
         CoordinatorOp::Interrupt {
             station,
@@ -280,7 +321,9 @@ pub(crate) fn decide(
             };
             if let Some(s) = pick_session(&mine, &needs, &ctx.buried) {
                 let (station, session) = (s.station_id.clone(), s.summary.session_id.clone());
-                assign_to(tx, ctx, &sender, command_id, task, &station, &session, now)?;
+                assign_to(
+                    tx, ctx, grant, &sender, command_id, task, &station, &session, now,
+                )?;
                 return Ok(Decision::Accepted(Some(session)));
             }
             let Some(repo) = requirements.repo.clone() else {
@@ -339,6 +382,7 @@ fn check_target(
 fn assign_to(
     tx: &Connection,
     ctx: &Context,
+    grant: &Grant,
     sender: &str,
     command_id: &str,
     task: &str,
@@ -353,14 +397,16 @@ fn assign_to(
     enqueue(tx, ctx, station, command, now)?;
     tx.execute(
         "INSERT INTO tasks (task_id, title, creator, station_id, session_id, state,
-             outbox_id, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, 'open', ?6, ?7, ?7)",
+             coordinator_station, coordinator_session, outbox_id, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, 'open', ?6, ?7, ?8, ?9, ?9)",
         params![
             command_id,
             task.trim(),
             sender,
             station.as_str(),
             session.0,
+            grant.station_id.as_str(),
+            grant.session_id.0,
             ctx.outbox_id,
             now
         ],
@@ -372,7 +418,7 @@ fn complete(
     tx: &Connection,
     grant: &Grant,
     task_id: &str,
-    result: Option<&str>,
+    completion: &TaskCompletion,
     now: i64,
 ) -> Result<Decision> {
     let row: Option<(String, String, String)> = tx
@@ -391,17 +437,13 @@ fn complete(
             "the task is not assigned to the caller",
         );
     }
-    if state != "open" {
+    if !matches!(state.as_str(), "open" | "question") {
         return no(RejectCode::InvalidState, "the task has ended");
     }
-    if result.is_some_and(|r| r.chars().count() > MAX_TASK_CHARS) {
-        return no(RejectCode::InvalidCommand, "the result is too long");
+    if let Err(message) = completion.check() {
+        return no(RejectCode::InvalidCommand, message);
     }
-    tx.execute(
-        "UPDATE tasks SET state = 'done', result = ?2, updated_at = ?3, completed_at = ?3
-         WHERE task_id = ?1 AND state = 'open'",
-        params![task_id, result, now],
-    )?;
+    write_completion(tx, task_id, completion, now)?;
     Ok(Decision::Accepted(Some(grant.session_id.clone())))
 }
 

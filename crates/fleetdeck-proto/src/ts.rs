@@ -35,8 +35,8 @@ use crate::mutation::{
     StationConfigureEnvelope,
 };
 use crate::orchestration::{
-    AssignOutcome, AssignRequest, GrantView, MailRequest, MailView, TaskCompletion, TaskRequest,
-    TaskView,
+    AssignOutcome, AssignRequest, GrantView, GroupMailRequest, MailRequest, MailView,
+    TaskCompletion, TaskRequest, TaskView, TaskWaitAnswer,
 };
 use crate::plans::{DeckPlan, PlanMarkRequest, PlanStatus};
 use crate::session::{CardStatus, SessionSummary};
@@ -118,9 +118,11 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         AssignOutcome::export_all(&cfg),
         MailRequest::export_all(&cfg),
         MailView::export_all(&cfg),
+        GroupMailRequest::export_all(&cfg),
         TaskRequest::export_all(&cfg),
         TaskCompletion::export_all(&cfg),
         TaskView::export_all(&cfg),
+        TaskWaitAnswer::export_all(&cfg),
         GrantView::export_all(&cfg),
         DeckPlan::export_all(&cfg),
         FileConflict::export_all(&cfg),

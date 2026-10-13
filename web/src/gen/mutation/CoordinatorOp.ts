@@ -3,6 +3,8 @@ import type { SessionSpec } from "../command/SessionSpec";
 import type { UserInput } from "../command/UserInput";
 import type { SessionId } from "../ids/SessionId";
 import type { StationId } from "../ids/StationId";
+import type { MailGroup } from "../orchestration/MailGroup";
+import type { TaskState } from "../orchestration/TaskState";
 import type { AssignRequirements } from "./AssignRequirements";
 import type { CoordinatorDelivery } from "./CoordinatorDelivery";
 import type { CoordinatorTarget } from "./CoordinatorTarget";
@@ -12,4 +14,4 @@ import type { CoordinatorTarget } from "./CoordinatorTarget";
  * ADR-006 §6.1). Read operations use `coordinator.query`. An unknown op is
  * rejected.
  */
-export type CoordinatorOp = { "op": "spawn", station: StationId, spec: SessionSpec, prompt: UserInput | null, } | { "op": "send", to: CoordinatorTarget, text: string, delivery: CoordinatorDelivery, } | { "op": "interrupt", station: StationId, session_id: SessionId, } | { "op": "stop", station: StationId, session_id: SessionId, } | { "op": "assign", task: string, to: CoordinatorTarget, } | { "op": "assign_auto", task: string, requirements: AssignRequirements, } | { "op": "complete_task", task_id: string, result: string | null, };
+export type CoordinatorOp = { "op": "spawn", station: StationId, spec: SessionSpec, prompt: UserInput | null, } | { "op": "send", to: CoordinatorTarget, text: string, delivery: CoordinatorDelivery, } | { "op": "interrupt", station: StationId, session_id: SessionId, } | { "op": "stop", station: StationId, session_id: SessionId, } | { "op": "assign", task: string, to: CoordinatorTarget, } | { "op": "assign_auto", task: string, requirements: AssignRequirements, } | { "op": "complete_task", task_id: string, result: string | null, state: TaskState | null, reason: string | null, question: string | null, } | { "op": "ask_coordinator", question: string, } | { "op": "send_group", group: MailGroup, text: string, delivery: CoordinatorDelivery, };

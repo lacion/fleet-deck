@@ -8,6 +8,7 @@
 //! deck-owned intent (A5) and the receipts of `coordinator.call` (G7). Auth
 //! and audit tables follow in P3-8 (V5). V6 (M3 6-6): the plan
 //! library. V7 (M3 6-2, 6-4): mail and tasks. V8 (M3 6-7): file touches.
+//! V13 (R2.1): the `blocked` and `question` task states.
 
 use rusqlite_migration::{M, Migrations};
 
@@ -300,6 +301,40 @@ CREATE TABLE archive_mutations (
 );
 ";
 
+/// Task completion kinds `blocked` and `question` (R2.1, DL-160): the state
+/// check of `tasks` grows, and a task keeps the reason of its completion
+/// the question of a worker, and the coordinator that assigned it. SQLite cannot change a CHECK in place, so
+/// the table is rebuilt with its rows.
+const V13: &str = "
+CREATE TABLE tasks_v13 (
+    task_id           TEXT PRIMARY KEY,
+    title             TEXT NOT NULL,
+    creator           TEXT NOT NULL,
+    station_id        TEXT NOT NULL,
+    session_id        TEXT NOT NULL,
+    state             TEXT NOT NULL
+        CHECK (state IN ('open', 'done', 'failed', 'blocked', 'question')),
+    result            TEXT,
+    completion_reason TEXT,
+    question          TEXT,
+    -- The coordinator session that created the task (an `ask_coordinator`
+    -- mail goes there); both NULL for a task of the owner.
+    coordinator_station TEXT,
+    coordinator_session TEXT,
+    outbox_id         TEXT NOT NULL REFERENCES outbox (outbox_id),
+    created_at        INTEGER NOT NULL,
+    updated_at        INTEGER NOT NULL,
+    completed_at      INTEGER
+) STRICT;
+INSERT INTO tasks_v13 (task_id, title, creator, station_id, session_id, state, result,
+        outbox_id, created_at, updated_at, completed_at)
+    SELECT task_id, title, creator, station_id, session_id, state, result,
+        outbox_id, created_at, updated_at, completed_at FROM tasks;
+DROP TABLE tasks;
+ALTER TABLE tasks_v13 RENAME TO tasks;
+CREATE INDEX tasks_by_session ON tasks (station_id, session_id, created_at);
+";
+
 /// The `deck.db` migrations.
 #[must_use]
 pub fn migrations() -> Migrations<'static> {
@@ -316,6 +351,7 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V10),
         M::up(V11),
         M::up(V12),
+        M::up(V13),
     ])
 }
 

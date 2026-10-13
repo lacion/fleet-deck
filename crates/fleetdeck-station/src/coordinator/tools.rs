@@ -24,7 +24,9 @@ fn target() -> Value {
 
 fn send() -> Value {
     json!({"type": "object", "required": ["to", "text"], "properties": {
-        "to": target(), "text": {"type": "string"},
+        "to": {"description": "A session, or a group address: @idle, @claude or @codex.",
+               "oneOf": [target(), {"type": "string", "enum": ["@idle", "@claude", "@codex"]}]},
+        "text": {"type": "string"},
         "delivery": {"type": "string", "enum": ["follow_up", "steer"]}}})
 }
 
@@ -41,8 +43,21 @@ fn assign_auto() -> Value {
 }
 
 fn complete() -> Value {
-    json!({"type": "object", "required": ["task_id"],
-           "properties": {"task_id": {"type": "string"}, "result": {"type": "string"}}})
+    json!({"type": "object", "required": ["task_id"], "properties": {
+        "task_id": {"type": "string"}, "result": {"type": "string"},
+        "state": {"type": "string", "enum": ["done", "failed", "blocked", "question"]},
+        "reason": {"type": "string"}, "question": {"type": "string"}}})
+}
+
+fn ask() -> Value {
+    json!({"type": "object", "required": ["question"],
+           "properties": {"question": {"type": "string"}}})
+}
+
+fn tasks() -> Value {
+    json!({"type": "object", "required": ["task_ids"], "properties": {
+        "task_ids": {"type": "array", "items": {"type": "string"},
+                     "minItems": 1, "maxItems": 50}}})
 }
 
 fn spawn() -> Value {
@@ -78,6 +93,12 @@ pub const TOOLS: &[Tool] = &[
         schema: task,
     },
     Tool {
+        name: "wait_tasks",
+        class: ToolClass::Read,
+        description: "Wait for the first of several tasks to end, block or ask a question.",
+        schema: tasks,
+    },
+    Tool {
         name: "send_mail",
         class: ToolClass::Mail,
         description: "Send mail to a session.",
@@ -98,8 +119,15 @@ pub const TOOLS: &[Tool] = &[
     Tool {
         name: "complete_task",
         class: ToolClass::Mail,
-        description: "Report the end of a task assigned to you.",
+        description: "Report the end of a task assigned to you: done, failed, blocked (with a \
+                      reason) or question (with a reason and a question).",
         schema: complete,
+    },
+    Tool {
+        name: "ask_coordinator",
+        class: ToolClass::Mail,
+        description: "Ask the coordinator that gave you a task a question.",
+        schema: ask,
     },
     Tool {
         name: "interrupt",
@@ -137,7 +165,7 @@ pub fn catalog(classes: &BTreeSet<ToolClass>) -> Value {
 }
 
 /// The `coordinator.call` operation of a mutating tool call. Read tools
-/// (`list_sessions`, `wait_task`) are queries and give `Ok(None)`. Arguments
+/// (`list_sessions`, `wait_task`, `wait_tasks`) are queries and give `Ok(None)`. Arguments
 /// that are not in the tool's schema are refused: no argument can name the
 /// caller (ADR-006 §5.3).
 pub fn to_op(
@@ -149,10 +177,17 @@ pub fn to_op(
     };
     let mut obj = obj.clone();
     let op = match tool {
-        "list_sessions" | "wait_task" => return Ok(None),
+        "list_sessions" | "wait_task" | "wait_tasks" => return Ok(None),
         "send_mail" => {
             obj.entry("delivery").or_insert(json!("follow_up"));
-            "send"
+            if obj.get("to").is_some_and(Value::is_string) {
+                if let Some(group) = obj.remove("to") {
+                    obj.insert("group".to_owned(), group);
+                }
+                "send_group"
+            } else {
+                "send"
+            }
         }
         "assign_auto" => {
             obj.entry("requirements").or_insert(json!({}));
@@ -175,7 +210,7 @@ pub fn to_op(
             }
             "spawn"
         }
-        "assign" | "interrupt" | "stop" => tool,
+        "assign" | "interrupt" | "stop" | "ask_coordinator" => tool,
         _ => return Err("forbidden: the grant has no such tool".to_owned()),
     };
     obj.insert("op".to_owned(), json!(op));
@@ -189,6 +224,7 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use fleetdeck_proto::mutation::{CoordinatorDelivery, CoordinatorOp};
+    use fleetdeck_proto::orchestration::{MailGroup, TaskState};
 
     use super::*;
 
@@ -222,6 +258,46 @@ mod tests {
                 .is_some()
         );
         assert!(to_op("list_sessions", &json!({})).unwrap().is_none());
+        assert!(
+            to_op("wait_tasks", &json!({"task_ids": ["a"]}))
+                .unwrap()
+                .is_none()
+        );
+        // A group address in `to` is a group send; a target stays a send.
+        let Some(CoordinatorOp::SendGroup { group, .. }) =
+            to_op("send_mail", &json!({"to": "@idle", "text": "hi"})).unwrap()
+        else {
+            panic!("group");
+        };
+        assert_eq!(group, MailGroup::Idle);
+        assert!(
+            to_op("send_mail", &json!({"to": "@everyone", "text": "hi"}))
+                .unwrap_err()
+                .starts_with("invalid_params")
+        );
+        // `complete_task` carries its kind; `ask_coordinator` its question.
+        let Some(CoordinatorOp::CompleteTask {
+            state,
+            reason,
+            question,
+            ..
+        }) = to_op(
+            "complete_task",
+            &json!({"task_id": "t", "state": "question", "reason": "r", "question": "q?"}),
+        )
+        .unwrap()
+        else {
+            panic!("complete");
+        };
+        assert_eq!(
+            (state, reason.as_deref(), question.as_deref()),
+            (Some(TaskState::Question), Some("r"), Some("q?"))
+        );
+        assert!(matches!(
+            to_op("ask_coordinator", &json!({"question": "q?"})).unwrap(),
+            Some(CoordinatorOp::AskCoordinator { .. })
+        ));
+        assert!(to_op("ask_coordinator", &json!({})).is_err());
         // An argument that names another caller is refused, not ignored.
         let forged = json!({"to": to, "text": "hi", "caller": "victim-1"});
         assert!(

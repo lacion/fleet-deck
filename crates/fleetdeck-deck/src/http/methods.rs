@@ -349,6 +349,13 @@ pub const API: &[ApiMethod] = &[
         true,
     ),
     m(
+        "mail.send_group",
+        Method::POST,
+        "/api/mail/group",
+        Some(Scope::Drive),
+        true,
+    ),
+    m(
         "tasks.list",
         Method::GET,
         "/api/tasks",
@@ -373,6 +380,13 @@ pub const API: &[ApiMethod] = &[
         "tasks.wait",
         Method::GET,
         "/api/tasks/{task_id}/wait",
+        Some(Scope::Read),
+        false,
+    ),
+    m(
+        "tasks.wait_any",
+        Method::GET,
+        "/api/tasks/wait",
         Some(Scope::Read),
         false,
     ),

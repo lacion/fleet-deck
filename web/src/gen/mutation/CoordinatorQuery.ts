@@ -5,4 +5,4 @@ import type { CommandId } from "../ids/CommandId";
  * A read of a coordinator agent (`coordinator.query`, ADR-006 §6.6). It
  * keeps no receipt.
  */
-export type CoordinatorQuery = { "query": "list_sessions" } | { "query": "wait_task", task_id: string, } | { "query": "command_status", command_id: CommandId, };
+export type CoordinatorQuery = { "query": "list_sessions" } | { "query": "wait_task", task_id: string, } | { "query": "wait_tasks", task_ids: Array<string>, } | { "query": "command_status", command_id: CommandId, };
