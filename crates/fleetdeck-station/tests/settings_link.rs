@@ -14,7 +14,7 @@ use std::time::Duration;
 use fleetdeck_core::childenv::ChildEnv;
 use fleetdeck_core::config::StationConfig;
 use fleetdeck_core::identity::Identity;
-use fleetdeck_core::paths::Env;
+use fleetdeck_core::paths::{Env, NodeDirs};
 use fleetdeck_core::restart::Restart;
 use fleetdeck_link::control::Control;
 use fleetdeck_link::hello::LocalHello;
@@ -36,6 +36,10 @@ use fleetdeck_station::settings_svc::StationSettings;
 use fleetdeck_station::shell::ShellConfig;
 use fleetdeck_station::store::peers::PairedKey;
 use fleetdeck_station::store::{Caller, Store, StoreConfig};
+use fleetdeck_station::workspace::{PrivateEnv, PrivatePaths};
+
+#[path = "settings_link/extra.rs"]
+mod extra;
 use fleetdeck_testkit::fake::SCENARIO_ENV;
 use fleetdeck_testkit::{Det, FakeAgent};
 use serde_json::{Value, json};
@@ -64,6 +68,8 @@ struct Rig {
     listener: LinkListener,
     deck_node: NodeConfig,
     restart: Arc<FakeRestart>,
+    /// The private paths of the station: the settings registers in it.
+    private: Arc<PrivatePaths>,
 }
 
 fn config_text(root: &Path, max_sessions: u32) -> String {
@@ -101,6 +107,16 @@ impl Rig {
         let config = cfg_dir.join("station.toml");
         std::fs::write(&config, config_text(&root, max_sessions)).unwrap();
         let store_dir = root.join("data/station/secrets");
+        std::fs::create_dir_all(root.join("data/station")).unwrap();
+        let private = Arc::new(PrivatePaths::new(
+            &NodeDirs {
+                config: cfg_dir.clone(),
+                data: root.join("data"),
+            },
+            Some(&root),
+            None,
+            &PrivateEnv::default(),
+        ));
         let env = Env {
             home: Some(root.clone()),
             ..Env::default()
@@ -124,7 +140,7 @@ impl Rig {
         let handle: Option<Arc<dyn Restart>> =
             handle.then(|| Arc::clone(&restart) as Arc<dyn Restart>);
         manager.set_settings(Arc::new(
-            StationSettings::new(&config, &store_dir, env, handle)
+            StationSettings::new(&config, &store_dir, env, handle, Arc::clone(&private))
                 .with_settle(Duration::from_millis(400)),
         ));
         let deck = Arc::new(Identity::generate().unwrap());
@@ -175,6 +191,7 @@ impl Rig {
             listener,
             deck_node,
             restart,
+            private,
         }
     }
 

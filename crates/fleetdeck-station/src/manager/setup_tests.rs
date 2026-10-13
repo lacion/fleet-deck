@@ -516,3 +516,71 @@ async fn a_stop_between_the_provider_registration_and_the_task_end_stops_the_pro
     wait_no_live(&st).await;
     st.manager.shutdown(StopMode::Kill).await;
 }
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_restart_during_the_setup_command_lists_the_setup() {
+    use crate::shell::{ShellConfig, Shells};
+    use fleetdeck_proto::settings::RestartKind;
+    let mut st = station(true).await;
+    let a = session_of(&mut st, "sleep 30").await;
+    let deadline = tokio::time::Instant::now() + WAIT;
+    while st.manager.store().setup_runs().await.unwrap().is_empty() {
+        assert!(tokio::time::Instant::now() < deadline, "no setup row");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    st.manager.begin_restart();
+    // The claim of the worker ended with the dispatch: the admission does
+    // not wait for the setup command.
+    assert!(st.manager.settle_starts(Duration::from_millis(500)).await);
+    let listed = st
+        .manager
+        .restart_would_stop(&Shells::new(ShellConfig::default()))
+        .await
+        .unwrap();
+    assert_eq!(listed.len(), 1, "{listed:?}");
+    assert_eq!(listed[0].kind, RestartKind::Setup);
+    assert_eq!(listed[0].id, a.as_str());
+    st.manager.end_restart();
+    st.manager.shutdown(StopMode::Kill).await;
+}
+
+#[tokio::test]
+async fn a_restart_in_the_gap_after_the_setup_waits_and_then_lists_the_session() {
+    use crate::shell::{ShellConfig, Shells};
+    let mut st = station(true).await;
+    let target = Arc::clone(&st.manager.target);
+    let hook = &target.hooks().start;
+    hook.arm();
+    session_of(&mut st, "true").await;
+    // The command ended and its row is gone; the provider is not registered.
+    tokio::time::timeout(WAIT, hook.reached.notified())
+        .await
+        .unwrap();
+    assert!(st.manager.store().setup_runs().await.unwrap().is_empty());
+    st.manager.begin_restart();
+    let shells = Shells::new(ShellConfig::default());
+    assert!(
+        st.manager
+            .restart_would_stop(&shells)
+            .await
+            .unwrap()
+            .is_empty(),
+        "nothing is listed in the gap: only the wait protects it"
+    );
+    assert!(
+        tokio::time::timeout(
+            Duration::from_millis(300),
+            st.manager.settle_starts(Duration::from_secs(5))
+        )
+        .await
+        .is_err(),
+        "the admission waits for the deferred start"
+    );
+    hook.release.notify_one();
+    assert!(st.manager.settle_starts(WAIT).await);
+    let listed = st.manager.restart_would_stop(&shells).await.unwrap();
+    assert_eq!(listed.len(), 1, "{listed:?}");
+    st.manager.end_restart();
+    st.manager.shutdown(StopMode::Kill).await;
+}

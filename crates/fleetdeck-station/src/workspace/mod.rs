@@ -12,6 +12,7 @@ pub mod paste;
 pub mod precheck;
 pub mod preflight;
 pub mod private_paths;
+pub mod private_registry;
 pub mod provision;
 pub mod restore;
 pub mod session_diff;

@@ -191,3 +191,76 @@ async fn a_service_without_private_paths_refuses_every_publish() {
     let err = r.service.publish(publish("a.html")).await.unwrap_err();
     assert_eq!(err.code, code::OUTSIDE_ROOTS);
 }
+
+#[tokio::test]
+async fn a_link_to_a_deleted_or_replaced_credential_is_not_published() {
+    use std::os::unix::fs::MetadataExt;
+    let mut kept = None;
+    let r = rig_with(|base| {
+        let private = private_of_layout(base);
+        kept = Some(private.clone());
+        private
+    })
+    .await;
+    let private = kept.unwrap();
+    let dirs = layout(&r.base);
+    let station = dirs.station();
+    let store = crate::accounts::store::AccountStore::open(&station.join("accounts"))
+        .unwrap()
+        .with_private(std::sync::Arc::new(private.clone()));
+    let account = |token: &str| crate::accounts::store::StoredAccount {
+        kind: fleetdeck_proto::accounts::AccountKind::Jira,
+        method: fleetdeck_proto::accounts::AccountMethod::Oauth,
+        site: None,
+        cloud_id: None,
+        user: "Ana".into(),
+        access_token: fleetdeck_core::Secret::new(token.into()),
+        refresh_token: None,
+        expires_at: None,
+        email: None,
+        generation: 0,
+    };
+    let swap = |path: &std::path::Path, text: &str| {
+        let tmp = path.with_extension("tmp-swap");
+        write(&tmp, text);
+        std::fs::rename(&tmp, path).unwrap();
+    };
+    let mut names = Vec::new();
+    let mut link = |source: &std::path::Path, name: &str| {
+        std::fs::hard_link(source, r.work.join(name)).unwrap();
+        names.push(name.to_owned());
+    };
+    // A logout.
+    store.put_account("jira-0a1b2c3d", &account("t1")).unwrap();
+    link(
+        &station.join("accounts/acct-jira-0a1b2c3d.json"),
+        "gone-logout.txt",
+    );
+    store.delete_account("jira-0a1b2c3d").unwrap();
+    // An atomic replacement of an account.
+    store.put_account("jira-0a1b2c3e", &account("t2")).unwrap();
+    link(
+        &station.join("accounts/acct-jira-0a1b2c3e.json"),
+        "gone-replaced.txt",
+    );
+    store.put_account("jira-0a1b2c3e", &account("t3")).unwrap();
+    // A secret that a `set_secret` replaced.
+    let secret = station.join("secrets/provider-claude-1");
+    swap(&secret, "secret-1\n");
+    private.register_dir(&station.join("secrets"));
+    link(&secret, "gone-secret.txt");
+    swap(&secret, "secret-2\n");
+    private.register_dir(&station.join("secrets"));
+    // The station.toml after a save.
+    let config = dirs.station_config();
+    swap(&config, "config-1\n");
+    private.register(&config);
+    link(&config, "gone-config.txt");
+    swap(&config, "config-2\n");
+    private.register(&config);
+    for name in &names {
+        assert_eq!(std::fs::metadata(r.work.join(name)).unwrap().nlink(), 1);
+        let err = r.service.publish(publish(name)).await.unwrap_err();
+        assert_eq!(err.code, code::NOT_FOUND, "{name}");
+    }
+}

@@ -154,14 +154,21 @@ impl RunningStation {
                 SessionManager::start_with_shims(store, policy, adapters, ids, shims).await?
             }
         });
+        // The station's own credential and config locations (DL-173): the
+        // set loads and scans its inode registry here, before any store
+        // writes a credential and before the link starts.
+        let private = Arc::new(PrivatePaths::new(
+            dirs,
+            Env::from_process().home.as_deref(),
+            deck.as_ref().map(|(c, d)| (c.as_path(), d.as_path())),
+            &PrivateEnv::from_process(),
+        ));
         // The credential store of the connected accounts (DL-173): mode
         // 0700, durable before the first account is written.
-        manager
-            .integrations()
-            .accounts()
-            .attach(crate::accounts::store::AccountStore::open(
-                &station_dir.join("accounts"),
-            )?);
+        manager.integrations().accounts().attach(
+            crate::accounts::store::AccountStore::open(&station_dir.join("accounts"))?
+                .with_private(Arc::clone(&private)),
+        );
         let assist = Arc::new(crate::assist::Assist::new(
             Arc::clone(manager.policy_hub()),
             manager.store().clone(),
@@ -170,17 +177,13 @@ impl RunningStation {
         manager.set_assist(Arc::clone(&assist));
         // Before the link starts: the file and artifact methods refuse the
         // station's own credential and config locations (DL-173).
-        manager.set_private_paths(Arc::new(PrivatePaths::new(
-            dirs,
-            Env::from_process().home.as_deref(),
-            deck.as_ref().map(|(c, d)| (c.as_path(), d.as_path())),
-            &PrivateEnv::from_process(),
-        )));
+        manager.set_private_paths(Arc::clone(&private));
         manager.set_settings(Arc::new(crate::settings_svc::StationSettings::new(
             &dirs.station_config(),
             &station_dir.join("secrets"),
             Env::from_process(),
             restart,
+            private,
         )));
         let (shutdown, rx) = watch::channel(false);
         let assist_task = tokio::spawn(crate::assist::watch::run(

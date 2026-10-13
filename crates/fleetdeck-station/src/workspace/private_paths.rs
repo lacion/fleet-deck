@@ -5,21 +5,30 @@
 //! workspace root. The check does not depend on `member_deny`.
 //!
 //! The set is built once at start ([`PrivatePaths::new`]); it never changes
-//! while the process runs, so it is not part of the live policy snapshot. A
+//! while the process runs, so it is not part of the live policy snapshot
+//! (the inode registry below grows, see [`PrivatePaths::register`]). A
 //! manager that never received a set refuses every path
 //! ([`PrivatePaths::deny_all`]).
 //!
 //! Every comparison is on canonical paths. The file service walks without
 //! following a symlink, so the root joined with the validated relative path
 //! is already canonical there ([`PrivatePaths::is_private_canonical`]). A
-//! file that exists at build time also counts by its (device, inode), so a
-//! hard link to it is private too.
+//! credential file also counts by its (device, inode), so a hard link to it
+//! is private too, also after the original is deleted or replaced: the
+//! inode registry ([`super::private_registry`]) keeps every identity that
+//! the station has seen or written (PRE-PR r2 finding 1).
 
 use std::borrow::Cow;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 
 use fleetdeck_core::paths::NodeDirs;
+
+use super::private_registry::Registry;
+
+/// The name of the inode registry file in the station data directory.
+pub const REGISTRY_FILE: &str = "private-inodes";
 
 /// The process environment values that name more credential directories.
 #[derive(Debug, Clone, Default)]
@@ -61,8 +70,9 @@ pub struct PrivatePaths {
     /// A name pattern `<prefix>*` below a directory: the temp files of an
     /// atomic config write (`<config file name>.tmp-*`).
     temp: Vec<(PathBuf, String)>,
-    /// The (device, inode) of the exact entries that existed at build time.
-    ids: Vec<(u64, u64)>,
+    /// The (device, inode) of every credential file that the station has
+    /// seen or written. It is shared by the clones of the set.
+    registry: Arc<Registry>,
 }
 
 /// The canonical form of `path`; for a path that does not exist, the
@@ -116,6 +126,10 @@ impl PrivatePaths {
     /// - `deck`: the deck config file and the deck data directory, when the
     ///   deck runs in the same process;
     /// - `env`: the environment values that name more credential directories.
+    ///
+    /// The inode registry is loaded from `<station data>/private-inodes`.
+    /// Then every regular file in `<station data>/accounts/` and
+    /// `<station data>/secrets/`, and every exact entry, is registered.
     #[must_use]
     pub fn new(
         dirs: &NodeDirs,
@@ -123,7 +137,10 @@ impl PrivatePaths {
         deck: Option<(&Path, &Path)>,
         env: &PrivateEnv,
     ) -> Self {
-        let mut out = Self::default();
+        let mut out = Self {
+            registry: Arc::new(Registry::load(dirs.station().join(REGISTRY_FILE))),
+            ..Self::default()
+        };
         out.add_dir(&dirs.station());
         out.add_config_file(&dirs.station_config());
         if let Some((config, data)) = deck {
@@ -151,7 +168,34 @@ impl PrivatePaths {
         if let Some(gh) = &env.gh_config_dir {
             out.add_dir(gh);
         }
+        out.scan();
         out
+    }
+
+    /// Registers the credential files that exist now: the account and the
+    /// secret directories of the station, and the exact entries.
+    fn scan(&self) {
+        // The first `dirs` entry is the station data directory.
+        if let Some(station) = self.dirs.first() {
+            self.register_dir(&station.join("accounts"));
+            self.register_dir(&station.join("secrets"));
+        }
+        for file in &self.exact {
+            self.register(file);
+        }
+    }
+
+    /// Registers the identity of the file at `path` (opened without
+    /// following a link) in the inode registry. The registry file write is
+    /// best effort: a failure logs one warning and keeps the entry in memory.
+    /// Call it after every credential write.
+    pub fn register(&self, path: &Path) {
+        self.registry.register(path);
+    }
+
+    /// [`Self::register`] for every regular file below `dir`.
+    pub fn register_dir(&self, dir: &Path) {
+        self.registry.register_dir(dir);
     }
 
     /// A set that refuses every path: the state of a manager that has no
@@ -169,14 +213,7 @@ impl PrivatePaths {
     }
 
     fn add_file(&mut self, file: &Path) {
-        let canonical = canonical_of(file);
-        if let Some(meta) = std::fs::metadata(&canonical)
-            .ok()
-            .filter(std::fs::Metadata::is_file)
-        {
-            self.ids.push((meta.dev(), meta.ino()));
-        }
-        self.exact.push(canonical);
+        self.exact.push(canonical_of(file));
     }
 
     /// A config file, and the temp files that an atomic write leaves next to
@@ -193,7 +230,7 @@ impl PrivatePaths {
 
     /// True when the canonical `path` equals an exact entry, lies under a
     /// directory entry, is a temp file of a config file, or is a hard link
-    /// to an exact entry that existed at build time.
+    /// to a credential file of the inode registry.
     #[must_use]
     pub fn is_private_canonical(&self, path: &Path) -> bool {
         if self.deny_all {
@@ -223,18 +260,18 @@ impl PrivatePaths {
                         .starts_with(fold_text(prefix).as_ref())
                 })
         });
-        // A hard link to an exact entry has another path and the same
+        // A hard link to a credential file has another path and the same
         // inode. The link itself is not followed.
-        temp || (!self.ids.is_empty()
+        temp || (!self.registry.is_empty()
             && std::fs::symlink_metadata(path).is_ok_and(|m| self.is_private_file(&m)))
     }
 
     /// True when `meta` (of a file that is open or not followed) is a
-    /// private file by its (device, inode): an exact entry that existed at
-    /// build time, or a hard link to one.
+    /// private file by its (device, inode): a file of the inode registry,
+    /// or a hard link to one, whatever its link count.
     #[must_use]
     pub fn is_private_file(&self, meta: &std::fs::Metadata) -> bool {
-        self.deny_all || (meta.is_file() && self.ids.contains(&(meta.dev(), meta.ino())))
+        self.deny_all || (meta.is_file() && self.registry.contains((meta.dev(), meta.ino())))
     }
 
     /// True when the opened file must not be read, searched or staged:

@@ -476,3 +476,141 @@ async fn a_walk_search_skips_a_hard_link_to_a_credential_file() {
         }
     }
 }
+
+fn stored_account(token: &str) -> crate::accounts::store::StoredAccount {
+    use fleetdeck_proto::accounts::{AccountKind, AccountMethod};
+    crate::accounts::store::StoredAccount {
+        kind: AccountKind::Jira,
+        method: AccountMethod::Oauth,
+        site: None,
+        cloud_id: None,
+        user: "Ana".into(),
+        access_token: fleetdeck_core::Secret::new(token.into()),
+        refresh_token: None,
+        expires_at: None,
+        email: None,
+        generation: 0,
+    }
+}
+
+/// Writes `text` over `path` by rename of a temp file, as a save does.
+fn replace(path: &Path, text: &str) {
+    let tmp = path.with_extension("tmp-swap");
+    std::fs::write(&tmp, text).unwrap();
+    std::fs::rename(&tmp, path).unwrap();
+}
+
+/// The links of PRE-PR r2 finding 1 inside `home`: each to a credential
+/// file whose original is deleted or replaced, so that the link is the only
+/// name of its inode. Returns the names of the links.
+fn orphaned_credential_links(home: &Path, private: &PrivatePaths) -> Vec<String> {
+    use std::os::unix::fs::MetadataExt;
+    let dirs = layout(home);
+    let station = dirs.station();
+    let store = crate::accounts::store::AccountStore::open(&station.join("accounts"))
+        .unwrap()
+        .with_private(Arc::new(private.clone()));
+    let link = |source: &Path, name: &str| {
+        std::fs::hard_link(source, home.join(name)).unwrap();
+        name.to_owned()
+    };
+    let mut names = Vec::new();
+    // A logout: the account file is deleted.
+    store
+        .put_account("jira-0a1b2c3d", &stored_account("canary-credential-a"))
+        .unwrap();
+    names.push(link(
+        &station.join("accounts/acct-jira-0a1b2c3d.json"),
+        "gone-logout.txt",
+    ));
+    store.delete_account("jira-0a1b2c3d").unwrap();
+    // An atomic replacement of an account.
+    store
+        .put_account("jira-0a1b2c3e", &stored_account("canary-credential-b"))
+        .unwrap();
+    names.push(link(
+        &station.join("accounts/acct-jira-0a1b2c3e.json"),
+        "gone-replaced.txt",
+    ));
+    store
+        .put_account("jira-0a1b2c3e", &stored_account("canary-credential-c"))
+        .unwrap();
+    // A secret that a `set_secret` replaced: the settings register the
+    // directory after each write.
+    let secret = station.join("secrets/provider-claude-1");
+    replace(&secret, "canary-credential-secret-1\n");
+    private.register_dir(&station.join("secrets"));
+    names.push(link(&secret, "gone-secret.txt"));
+    replace(&secret, "canary-credential-secret-2\n");
+    private.register_dir(&station.join("secrets"));
+    // The station.toml after a save.
+    let config = dirs.station_config();
+    replace(&config, "canary-credential-config-1\n");
+    private.register(&config);
+    names.push(link(&config, "gone-config.txt"));
+    replace(&config, "canary-credential-config-2\n");
+    private.register(&config);
+    for name in &names {
+        assert_eq!(
+            std::fs::metadata(home.join(name)).unwrap().nlink(),
+            1,
+            "{name}: the premise is a link that is the only name"
+        );
+    }
+    names
+}
+
+#[tokio::test]
+async fn a_link_to_a_deleted_or_replaced_credential_is_not_read_or_searched() {
+    let det = Det::new();
+    let (_t, home, private) = world();
+    let links = orphaned_credential_links(&home, &private);
+    let s = store_with_session(&det, &home).await;
+    let p = policy(&home);
+    // The set of a restarted station loads the registry file.
+    let restarted = PrivatePaths::new(
+        &layout(&home),
+        Some(&home),
+        None,
+        &crate::workspace::PrivateEnv::default(),
+    );
+    for (label, set) in [("running", &private), ("restarted", &restarted)] {
+        for member in [false, true] {
+            for name in &links {
+                let err = read_as(
+                    &s,
+                    &p,
+                    set,
+                    FileReadQuery {
+                        root: session(),
+                        path: name.clone(),
+                        max_bytes: None,
+                    },
+                    member,
+                )
+                .await
+                .unwrap_err();
+                assert_eq!(err.code, code::NOT_FOUND, "{label} member {member}: {name}");
+            }
+            let (found, backend) =
+                search_paths(&home, set, member, SearchMode::Content, "canary-credential").await;
+            assert_eq!(backend, SearchBackend::Walk);
+            assert!(found.is_empty(), "{label} member {member}: {found:?}");
+        }
+    }
+    // The control: the links are readable without the registry.
+    let open = read_as(
+        &s,
+        &p,
+        &PrivatePaths::default(),
+        FileReadQuery {
+            root: session(),
+            path: links[0].clone(),
+            max_bytes: None,
+        },
+        false,
+    )
+    .await
+    .unwrap();
+    assert!(open.text.unwrap().contains("canary-credential"));
+}

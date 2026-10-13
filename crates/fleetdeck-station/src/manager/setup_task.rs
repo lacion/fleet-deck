@@ -196,7 +196,7 @@ impl SessionTarget {
         } = run;
         let session_id = effect.session_id.clone();
         let stop_flag = cancel.clone();
-        let result = crate::workspace::setup::run(
+        let held = crate::workspace::setup::run_held(
             &self.store,
             effect.effect_id.as_str(),
             &session_id,
@@ -207,7 +207,15 @@ impl SessionTarget {
             cancel,
         )
         .await;
-        let failure = match result {
+        // The row stays (the restart admission lists it) until the claim is
+        // counted; then the row ends (PRE-PR r2 finding 2). The count drops
+        // after the provider start returned: the session is registered, or
+        // the start failed.
+        let claim = self.restart.enter_claim();
+        if held.end_row {
+            crate::workspace::setup::end_row(&self.store, effect.effect_id.as_str()).await;
+        }
+        let failure = match held.result {
             // A stop that came after the command ended is a stop. The check
             // is under the lock that a stop uses.
             Ok(()) if self.stop_pending(&stop_flag) => Some(SetupError {
@@ -248,6 +256,7 @@ impl SessionTarget {
         {
             tracing::warn!(error = %e, effect = %effect.effect_id, "the start effect was not settled");
         }
+        drop(claim);
         // The entry stays until the provider that this task started is gone,
         // so that a shutdown waits for it, and until no stop is left to apply.
         if started {
