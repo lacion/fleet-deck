@@ -199,7 +199,7 @@ The owner creates a project on the board. A preflight checks each binding from t
 2. **An 80% warning on the fleet home and on the session header,** not only inside the Usage tab. Built (DL-161).
 3. **The limit of each provider instance in the spawn picker,** so the owner sees "account A resets in 15 min, use B". Built (DL-161).
 4. **Assign by quota:** `assign auto` prefers the instance with the most room. Built (DL-161).
-5. **Claude windows that show before a limit.** Partial: the adapter maps `rate_limit_event` (`claude/map.rs`), but the CLI sends it mostly near a limit, so the meters are often empty. Research whether `/usage` or another protocol source gives the windows earlier. Research note in DL-161; open.
+5. **Claude windows that show before a limit.** The adapter asks the CLI for the plan windows with the stream-json control request `get_usage` (after `init`, then after a turn, at most every 5 minutes), and the answer feeds the same meters as `rate_limit_event` (`claude/usage.rs`). Built (DL-161).
 6. **Codex cost from a local price table, labeled "inferred"** (owner decision DL-157). Built (DL-161).
 
 ### R5. Automations

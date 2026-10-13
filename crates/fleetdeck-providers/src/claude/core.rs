@@ -119,6 +119,8 @@ pub(super) enum HostRequest {
     SetMode(String),
     /// `None` is the default-model sentinel (trap 2).
     SetModel(Option<String>),
+    /// `get_usage`: the plan limit windows (R4.5).
+    Usage,
 }
 
 /// A tool node of the session.
@@ -169,6 +171,17 @@ pub struct ClaudeCore {
     pub(super) early: Vec<Event>,
     /// Background work that the CLI reports as running (traps 4 and 5).
     pub(super) background: Vec<BackgroundTask>,
+    /// When the last `get_usage` request was written (R4.5). Not part of the
+    /// checkpoint: a restored core may ask once more.
+    #[serde(skip)]
+    pub(super) usage_asked: Option<std::time::Instant>,
+    /// The CLI refused `get_usage` or answered in another shape: no more asks.
+    #[serde(default)]
+    pub(super) usage_stopped: bool,
+    /// Counter of the `fd-usage-N` request ids. `get_usage` keeps its own
+    /// counter so the ids of the other host requests do not move.
+    #[serde(default)]
+    pub(super) usage_seq: u64,
 }
 
 impl ClaudeCore {
@@ -197,6 +210,9 @@ impl ClaudeCore {
             unknown_frames: 0,
             early: Vec::new(),
             background: Vec::new(),
+            usage_asked: None,
+            usage_stopped: false,
+            usage_seq: 0,
         }
     }
 
