@@ -44,6 +44,7 @@ How to use it: read the row, read the file, run the test, and write "reviewed" a
 ## Designed but not built (adversary DESIGN REVIEW required before code)
 
 | DL | Surface | Risk to review |
+| --- | --- | --- |
 | — | (none: every designed surface is built) | — |
 
 Update this file when a design lands. Each row above becomes a "Built surfaces" row with its file and proof.
