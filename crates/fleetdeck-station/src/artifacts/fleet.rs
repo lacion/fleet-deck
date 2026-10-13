@@ -64,6 +64,8 @@ impl FleetTools for StationFleet {
                 let service = self.artifacts.as_ref().ok_or_else(|| {
                     "unsupported: this station has no artifact directory".to_owned()
                 })?;
+                // A session updates only its own artifacts (PRE-PR r3).
+                let owner_session = Some(caller.session_id.clone());
                 let session_id = Some(caller.session_id);
                 let author = Some(AUTHOR_AGENT.to_owned());
                 let published = match (args.path, args.content) {
@@ -72,13 +74,16 @@ impl FleetTools for StationFleet {
                             return Err(invalid("`name` goes with `content`, not with `path`"));
                         }
                         service
-                            .publish(ArtifactPublish {
-                                session_id,
-                                path,
-                                title: args.title,
-                                artifact_id: args.artifact_id,
-                                author,
-                            })
+                            .publish_owned(
+                                ArtifactPublish {
+                                    session_id,
+                                    path,
+                                    title: args.title,
+                                    artifact_id: args.artifact_id,
+                                    author,
+                                },
+                                owner_session,
+                            )
                             .await
                     }
                     (None, Some(content)) => {
@@ -86,14 +91,17 @@ impl FleetTools for StationFleet {
                             .name
                             .ok_or_else(|| invalid("`content` needs a `name`"))?;
                         service
-                            .publish_content(ContentPublish {
-                                session_id,
-                                name,
-                                content,
-                                title: args.title,
-                                artifact_id: args.artifact_id,
-                                author,
-                            })
+                            .publish_content(
+                                ContentPublish {
+                                    session_id,
+                                    name,
+                                    content,
+                                    title: args.title,
+                                    artifact_id: args.artifact_id,
+                                    author,
+                                },
+                                owner_session,
+                            )
                             .await
                     }
                     _ => return Err(invalid("give exactly one of `path` or `content`")),

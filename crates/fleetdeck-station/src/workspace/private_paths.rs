@@ -70,6 +70,10 @@ pub struct PrivatePaths {
     /// A name pattern `<prefix>*` below a directory: the temp files of an
     /// atomic config write (`<config file name>.tmp-*`).
     temp: Vec<(PathBuf, String)>,
+    /// The credential directories of the user (`~/.ssh`, the `gh` and
+    /// `glab-cli` config directories): every file below them is registered
+    /// by [`Self::scan`] (PRE-PR r3 finding 1).
+    credential_dirs: Vec<PathBuf>,
     /// The (device, inode) of every credential file that the station has
     /// seen or written. It is shared by the clones of the set.
     registry: Arc<Registry>,
@@ -150,7 +154,7 @@ impl PrivatePaths {
         match home {
             Some(home) => {
                 for dir in [".config/gh", ".config/glab-cli", ".ssh"] {
-                    out.add_dir(&home.join(dir));
+                    out.add_credential_dir(&home.join(dir));
                 }
                 for file in [".claude/.credentials.json", ".codex/auth.json"] {
                     out.add_file(&home.join(file));
@@ -162,27 +166,42 @@ impl PrivatePaths {
             ),
         }
         if let Some(xdg) = &env.xdg_config_home {
-            out.add_dir(&xdg.join("gh"));
-            out.add_dir(&xdg.join("glab-cli"));
+            out.add_credential_dir(&xdg.join("gh"));
+            out.add_credential_dir(&xdg.join("glab-cli"));
         }
         if let Some(gh) = &env.gh_config_dir {
-            out.add_dir(gh);
+            out.add_credential_dir(gh);
         }
         out.scan();
         out
     }
 
     /// Registers the credential files that exist now: the account and the
-    /// secret directories of the station, and the exact entries.
+    /// secret directories of the station, the credential directories of the
+    /// user (`~/.ssh`, `gh`, `glab-cli`; depth 4, 10,000 files each) and the
+    /// exact entries. The station runs it at start and every minute
+    /// ([`Self::rescan`]), so a credential that a tool created or rotated
+    /// after the start is registered within one interval. A link to a file
+    /// that is created and rotated within one interval stays unregistered
+    /// (accepted residual risk, DL-173).
     fn scan(&self) {
         // The first `dirs` entry is the station data directory.
         if let Some(station) = self.dirs.first() {
             self.register_dir(&station.join("accounts"));
             self.register_dir(&station.join("secrets"));
         }
+        for dir in &self.credential_dirs {
+            self.registry.register_credential_dir(dir);
+        }
         for file in &self.exact {
             self.register(file);
         }
+    }
+
+    /// Scans again (blocking file system work): the periodic task of the
+    /// station and the tests call it.
+    pub fn rescan(&self) {
+        self.scan();
     }
 
     /// Registers the identity of the file at `path` (opened without
@@ -210,6 +229,12 @@ impl PrivatePaths {
 
     fn add_dir(&mut self, dir: &Path) {
         self.dirs.push(canonical_of(dir));
+    }
+
+    /// A private directory whose files the scan registers too.
+    fn add_credential_dir(&mut self, dir: &Path) {
+        self.add_dir(dir);
+        self.credential_dirs.push(canonical_of(dir));
     }
 
     fn add_file(&mut self, file: &Path) {

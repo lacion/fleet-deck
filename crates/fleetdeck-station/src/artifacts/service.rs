@@ -207,11 +207,24 @@ impl ArtifactService {
         Ok((root, rel))
     }
 
-    /// `artifacts.publish` and the `publish_artifact` MCP tool.
+    /// `artifacts.publish`: the board publish. It updates any artifact.
     ///
     /// # Errors
     /// [`ArtifactError`] with a code of [`code`].
     pub async fn publish(&self, req: ArtifactPublish) -> Result<ArtifactPublished, ArtifactError> {
+        self.publish_owned(req, None).await
+    }
+
+    /// The `publish_artifact` MCP tool. With `owner_session` set, an
+    /// `artifact_id` must name an artifact of that session (`forbidden`).
+    ///
+    /// # Errors
+    /// [`ArtifactError`] with a code of [`code`], or `forbidden`.
+    pub async fn publish_owned(
+        &self,
+        req: ArtifactPublish,
+        owner_session: Option<SessionId>,
+    ) -> Result<ArtifactPublished, ArtifactError> {
         let author = check_author(req.author.as_deref())?;
         let title = check_title(req.title.as_deref())?;
         let (root, rel) = self.resolve(req.session_id.as_ref(), &req.path).await?;
@@ -241,6 +254,7 @@ impl ArtifactService {
                 artifact_id: req.artifact_id,
                 author,
             },
+            owner_session,
         )
         .await
     }
@@ -249,12 +263,16 @@ impl ArtifactService {
     /// text becomes a single-file artifact. Nothing is written into the
     /// workspace; the bytes go to a fresh staging file.
     ///
+    /// `owner_session` works as in [`Self::publish_owned`].
+    ///
     /// # Errors
     /// [`ArtifactError`] with a code of [`code`]: `invalid_params` for a bad
-    /// `name`, an empty or too large `content`, a `title` or an `author`.
+    /// `name`, an empty or too large `content`, a `title` or an `author`;
+    /// `forbidden` for the artifact of another session.
     pub async fn publish_content(
         &self,
         req: ContentPublish,
+        owner_session: Option<SessionId>,
     ) -> Result<ArtifactPublished, ArtifactError> {
         let author = check_author(req.author.as_deref())?;
         let title = check_title(req.title.as_deref())?;
@@ -282,6 +300,7 @@ impl ArtifactService {
                 artifact_id: req.artifact_id,
                 author,
             },
+            owner_session,
         )
         .await
     }
@@ -292,8 +311,9 @@ impl ArtifactService {
         &self,
         staging: &Path,
         version: NewVersion,
+        owner_session: Option<SessionId>,
     ) -> Result<ArtifactPublished, ArtifactError> {
-        let committed = self.store.artifact_commit(version).await;
+        let committed = self.store.artifact_commit(version, owner_session).await;
         // On success the staging directory moved; otherwise it is waste.
         let _ = std::fs::remove_dir_all(staging);
         match committed {
@@ -309,6 +329,10 @@ impl ArtifactService {
             Err(CommitError::UnknownSession(id)) => Err(ArtifactError::new(
                 code::UNKNOWN_SESSION,
                 format!("unknown session `{id}`"),
+            )),
+            Err(CommitError::NotOwner) => Err(ArtifactError::new(
+                "forbidden",
+                "the artifact belongs to another session",
             )),
             Err(e) => Err(internal(e)),
         }

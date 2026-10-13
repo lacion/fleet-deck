@@ -347,3 +347,66 @@ fn register_adds_a_file_that_the_start_did_not_see() {
     clone.register(&other);
     assert!(p.is_private_file(&std::fs::metadata(&other).unwrap()));
 }
+
+#[test]
+fn the_credential_directories_are_registered_at_start_and_by_a_rescan() {
+    use std::os::unix::fs::MetadataExt;
+    let (_t, home) = home();
+    let dirs = layout(&home);
+    let xdg = home.join("xdg");
+    let ghdir = home.join("ghdir");
+    for (dir, file) in [
+        (home.join(".ssh/keys/deep"), "id_rsa"),
+        (home.join(".config/glab-cli"), "config.yml"),
+        (xdg.join("gh"), "hosts.yml"),
+        (xdg.join("glab-cli"), "config.yml"),
+        (ghdir.clone(), "hosts.yml"),
+    ] {
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(file), "secret").unwrap();
+    }
+    let env = PrivateEnv {
+        xdg_config_home: Some(xdg.clone()),
+        gh_config_dir: Some(ghdir.clone()),
+    };
+    let p = PrivatePaths::new(&dirs, Some(&home), None, &env);
+    let files = [
+        home.join(".ssh/id_ed25519"),
+        home.join(".ssh/keys/deep/id_rsa"),
+        home.join(".config/gh/hosts.yml"),
+        home.join(".config/glab-cli/config.yml"),
+        xdg.join("gh/hosts.yml"),
+        xdg.join("glab-cli/config.yml"),
+        ghdir.join("hosts.yml"),
+        home.join(".claude/.credentials.json"),
+    ];
+    for file in &files {
+        assert!(
+            p.is_private_file(&std::fs::metadata(file).unwrap()),
+            "{file:?}"
+        );
+    }
+    // A file that a tool creates later is registered by the next rescan,
+    // not before.
+    let late = home.join(".ssh/id_late");
+    std::fs::write(&late, "secret").unwrap();
+    let meta = std::fs::metadata(&late).unwrap();
+    assert!(!p.is_private_file(&meta));
+    p.rescan();
+    assert!(p.is_private_file(&meta));
+    // A symlink in a credential directory is not followed.
+    let outside = home.join("notes.txt");
+    std::os::unix::fs::symlink(&outside, home.join(".ssh/pointer")).unwrap();
+    p.rescan();
+    assert!(!p.is_private_file(&std::fs::metadata(&outside).unwrap()));
+    // The registry file keeps the new identity for a restart.
+    let again = PrivatePaths::new(&dirs, Some(&home), None, &env);
+    assert!(again.is_private_file(&std::fs::metadata(&late).unwrap()));
+    assert_eq!(
+        std::fs::metadata(dirs.station().join(super::REGISTRY_FILE))
+            .unwrap()
+            .mode()
+            & 0o777,
+        0o600
+    );
+}

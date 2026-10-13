@@ -8,7 +8,7 @@ use fleetdeck_proto::{EventEnvelope, RequestId, SessionId};
 use rusqlite::Connection;
 use tokio::sync::watch;
 
-use super::effects::{self, Dispatch, Effect, EffectId, ProcessIncarnation};
+use super::effects::{self, Dispatch, Effect, EffectId, EffectState, ProcessIncarnation};
 use super::recovery::{self, RecoveryReport};
 use super::requests::{self, RuntimeRequest};
 use super::{Result, Store, call};
@@ -211,6 +211,27 @@ impl Store {
         Ok(sessions)
     }
 
+    /// Ends a claimed start effect that the restart discards, in one
+    /// transaction: the effect is retired (`station_restart`) and its
+    /// session ends as a failed start with `message`. False, and nothing
+    /// stored, when the effect is no longer claimed with this fence.
+    ///
+    /// # Errors
+    /// [`super::StoreError::Fenced`] or a database error.
+    pub async fn fail_claimed_start(
+        &self,
+        effect_id: EffectId,
+        fence: u64,
+        message: String,
+    ) -> Result<bool> {
+        let (done, _) = self
+            .write(move |conn, now, out| {
+                fail_claimed_start(conn, &effect_id, fence, &message, now, out)
+            })
+            .await?;
+        Ok(done)
+    }
+
     /// One runtime request.
     ///
     /// # Errors
@@ -254,4 +275,39 @@ impl Store {
     pub fn nudge_worker(&self) {
         self.wake_worker();
     }
+}
+
+/// Ends a start effect that this worker claimed and has not dispatched, for
+/// a planned restart, in the caller's transaction: the effect is retired
+/// (`RetiredNotDispatched`, [`effects::REASON_STATION_RESTART`]) and its session
+/// gets the events of a failed start. False, and nothing stored, when the
+/// effect is no longer `Claimed` with this fence token.
+///
+/// # Errors
+/// [`StoreError::Fenced`] or a database error.
+fn fail_claimed_start(
+    conn: &Connection,
+    id: &EffectId,
+    fence: u64,
+    message: &str,
+    now: i64,
+    out: &mut Vec<EventEnvelope>,
+) -> Result<bool> {
+    effects::check_fence(conn, fence)?;
+    let Some(found) = effects::effect(conn, id)? else {
+        return Ok(false);
+    };
+    if found.state != EffectState::Claimed || found.fence_token != Some(fence) {
+        return Ok(false);
+    }
+    effects::transition(
+        conn,
+        &found,
+        EffectState::RetiredNotDispatched,
+        effects::REASON_STATION_RESTART,
+        now,
+        out,
+    )?;
+    effects::start_failed_events(conn, &found.session_id, message, now, out)?;
+    Ok(true)
 }

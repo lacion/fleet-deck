@@ -92,6 +92,8 @@ pub enum CommitError {
     UnknownArtifact(String),
     #[error("unknown session {0}")]
     UnknownSession(SessionId),
+    #[error("the artifact belongs to another session")]
+    NotOwner,
     #[error("the bytes could not be stored: {0}")]
     Io(String),
     #[error(transparent)]
@@ -180,7 +182,9 @@ fn move_staged(staged: &Path, target: &Path) -> std::io::Result<()> {
 
 impl Store {
     /// Commits one version of an artifact (new artifact when
-    /// `artifact_id` is `None`).
+    /// `artifact_id` is `None`). When `owner_session` is `Some` and
+    /// `artifact_id` names an artifact, the artifact must belong to that
+    /// session; the check runs inside the commit transaction.
     ///
     /// # Errors
     /// [`CommitError`]. On every error the staging directory stays for the
@@ -188,11 +192,12 @@ impl Store {
     pub async fn artifact_commit(
         &self,
         new: NewVersion,
+        owner_session: Option<SessionId>,
     ) -> std::result::Result<Committed, CommitError> {
         let now = self.now();
         let fresh = self.inner.ids.next_ulid().to_string();
         let out = call(&self.inner.db, move |conn| {
-            Ok(commit(conn, &new, &fresh, now))
+            Ok(commit(conn, &new, owner_session.as_ref(), &fresh, now))
         })
         .await?;
         if let Ok((_, Some(seq))) = &out {
@@ -279,6 +284,7 @@ impl Store {
 fn commit(
     conn: &mut Connection,
     new: &NewVersion,
+    owner_session: Option<&SessionId>,
     fresh_id: &str,
     now: i64,
 ) -> std::result::Result<(Committed, Option<u64>), CommitError> {
@@ -306,6 +312,9 @@ fn commit(
         Some(id) => {
             let existing =
                 load_artifact(&tx, id)?.ok_or_else(|| CommitError::UnknownArtifact(id.clone()))?;
+            if owner_session.is_some_and(|owner| existing.session_id.as_ref() != Some(owner)) {
+                return Err(CommitError::NotOwner);
+            }
             let latest: Option<(String, String)> = tx
                 .query_row(
                     "SELECT manifest_sha256, files FROM artifact_versions

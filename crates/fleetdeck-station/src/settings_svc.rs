@@ -257,6 +257,10 @@ impl StationSettings {
             return unsupported("this station cannot restart itself");
         };
         let _admission = self.restart_gate.lock().await;
+        // The handoff of a deferred setup start waits for the end of this
+        // check: the counts, the lists and the commit see one state
+        // (PRE-PR r3 finding 2).
+        let _handoff = manager.restart_state().lock_handoff().await;
         manager.begin_restart();
         if !manager.settle_starts(self.settle).await {
             manager.end_restart();

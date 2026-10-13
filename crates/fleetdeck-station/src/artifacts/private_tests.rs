@@ -115,6 +115,28 @@ async fn a_hard_link_to_a_credential_file_is_not_published() {
 }
 
 #[tokio::test]
+async fn a_link_to_a_native_credential_is_not_published_after_the_original_is_gone() {
+    let r = private_rig().await;
+    let key = r.base.join(".ssh/id_ed25519");
+    let hosts = r.base.join(".config/gh/hosts.yml");
+    std::fs::hard_link(&key, r.work.join("link-ssh.txt")).unwrap();
+    std::fs::remove_file(&key).unwrap();
+    // A login replaces the hosts file after the start; the next rescan
+    // registers the new identity.
+    let temp = r.base.join(".config/gh/hosts.yml.tmp-login");
+    write(&temp, "rotated once\n");
+    std::fs::rename(&temp, &hosts).unwrap();
+    r.private.rescan();
+    std::fs::hard_link(&hosts, r.work.join("link-gh.txt")).unwrap();
+    write(&temp, "rotated twice\n");
+    std::fs::rename(&temp, &hosts).unwrap();
+    for name in ["link-ssh.txt", "link-gh.txt"] {
+        let err = r.service.publish(publish(name)).await.unwrap_err();
+        assert_eq!(err.code, code::NOT_FOUND, "{name}");
+    }
+}
+
+#[tokio::test]
 async fn an_html_page_does_not_bundle_a_private_file_that_it_names() {
     let r = private_rig().await;
     // The page lies in the config directory: its sibling `station.toml`
