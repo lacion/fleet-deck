@@ -6,6 +6,7 @@
 pub mod archive_routes;
 pub mod assets;
 pub mod assign_routes;
+pub mod assist_routes;
 pub mod auth_routes;
 pub mod command_routes;
 pub mod file_routes;
@@ -144,6 +145,11 @@ pub fn router(board: Arc<Board>) -> Router {
         .route(
             "/api/archive",
             get(archive_routes::list).post(archive_routes::change),
+        )
+        .route("/api/assist/{kind}", post(assist_routes::generate))
+        .route(
+            "/api/stations/{station}/sessions/{session}/digest",
+            post(assist_routes::digest),
         )
         .route("/api/conflicts", get(plan_routes::conflicts))
         .route("/api/plans", get(plan_routes::list))

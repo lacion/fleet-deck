@@ -16,6 +16,7 @@
 //! in memory and the board status projection reads it (§7.2).
 
 pub mod archive;
+mod assist;
 pub mod audit;
 pub mod auth;
 pub mod commands;
@@ -130,6 +131,8 @@ struct Inner {
     infos: Mutex<BTreeMap<StationId, (StationInfo, i64)>>,
     /// Whether two sessions that change one file get a mail (DL-145).
     conflict_mail: AtomicBool,
+    /// The conflict mails that wait for a generated sentence (DL-167).
+    sentence_jobs: Mutex<Vec<conflicts::SentenceJob>>,
 }
 
 /// The deck store. Clones share one database thread.
@@ -208,6 +211,7 @@ impl DeckStore {
                 reachable: Mutex::default(),
                 infos: Mutex::default(),
                 conflict_mail: AtomicBool::new(true),
+                sentence_jobs: Mutex::default(),
             }),
         })
     }

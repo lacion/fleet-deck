@@ -285,3 +285,175 @@ async fn a_replayed_old_touch_is_no_conflict_with_a_recent_one() {
     .unwrap();
     assert!(s.mails(10).await.unwrap().is_empty());
 }
+
+fn info_with_model_help(assist: bool) -> fleetdeck_proto::link::StationInfo {
+    fleetdeck_proto::link::StationInfo {
+        name: "alpha".to_owned(),
+        incarnation: "alpha-db".to_owned().into(),
+        head: 0,
+        live_sessions: 2,
+        version: None,
+        max_sessions: Some(8),
+        allow_shell: None,
+        allow_setup_cmd: None,
+        providers: Vec::new(),
+        assist_tokens_today: assist.then_some(0),
+        assist_cap: assist.then_some(200_000),
+    }
+}
+
+fn outbox_text(item: &fleetdeck_deck::store::OutboxItem) -> String {
+    let kind: fleetdeck_deck::link::CommandKind =
+        serde_json::from_value(item.payload.clone()).unwrap();
+    let fleetdeck_deck::link::CommandKind::Session {
+        command: SessionCommand::FollowUp { input, .. },
+    } = kind
+    else {
+        panic!("a follow-up is expected: {item:?}");
+    };
+    input.text
+}
+
+#[tokio::test]
+async fn a_station_without_model_help_gets_the_plain_mail_at_once_and_no_job() {
+    let det = Det::new();
+    let (s, station, inc) = setup(&det, SessionState::Running).await;
+    s.set_station_info(&station, info_with_model_help(false));
+    let at = now(&det);
+    s.apply_events(
+        station.clone(),
+        inc,
+        vec![changed(1, "s1", at - 2_000), changed(2, "s2", at - 1_000)],
+    )
+    .await
+    .unwrap();
+    assert_eq!(s.due_outbox(station).await.unwrap().len(), 2);
+    assert!(s.take_conflict_jobs().is_empty());
+}
+
+#[tokio::test]
+async fn a_station_with_model_help_holds_the_mail_until_its_sentence_is_stored() {
+    let det = Det::new();
+    let (s, station, inc) = setup(&det, SessionState::Running).await;
+    s.set_station_info(&station, info_with_model_help(true));
+    let at = now(&det);
+    s.apply_events(
+        station.clone(),
+        inc,
+        vec![changed(1, "s1", at - 2_000), changed(2, "s2", at - 1_000)],
+    )
+    .await
+    .unwrap();
+    // Both mails exist with the plain text, but neither is due yet.
+    assert_eq!(s.mails(10).await.unwrap().len(), 2);
+    assert!(s.due_outbox(station.clone()).await.unwrap().is_empty());
+    let jobs = s.take_conflict_jobs();
+    assert_eq!(jobs.len(), 2, "{jobs:?}");
+    assert!(s.take_conflict_jobs().is_empty(), "each job comes out once");
+    let first = &jobs[0];
+    assert_eq!(first.station, station);
+    assert!(
+        first.input.starts_with("File: src/lib.rs\n"),
+        "{}",
+        first.input
+    );
+    assert!(first.input.contains("<<<UNTRUSTED TEXT"));
+    assert!(first.input.contains("Alpha fix") && first.input.contains("Beta fix"));
+
+    // A stored sentence goes after the plain text, in the mail and in the
+    // delivery, and the delivery is due.
+    s.finish_conflict_sentence(
+        first.mail_id.clone(),
+        Some("Alpha edited the parser and Beta the printer.".to_owned()),
+    )
+    .await
+    .unwrap();
+    let mails = s.mails(10).await.unwrap();
+    let with = mails.iter().find(|m| m.mail_id == first.mail_id).unwrap();
+    assert!(
+        with.text.ends_with(
+            "Coordinate before you change it further. Alpha edited the parser and Beta the printer."
+        ),
+        "{}",
+        with.text
+    );
+    let due = s.due_outbox(station.clone()).await.unwrap();
+    assert_eq!(due.len(), 1);
+    assert_eq!(
+        outbox_text(&due[0]),
+        format!("[FLEETDECK MAIL from fleetdeck] {}", with.text)
+    );
+
+    // A failed call releases the plain mail unchanged.
+    let second = &jobs[1];
+    s.finish_conflict_sentence(second.mail_id.clone(), None)
+        .await
+        .unwrap();
+    let due = s.due_outbox(station).await.unwrap();
+    assert_eq!(due.len(), 2);
+    let plain = mails.iter().find(|m| m.mail_id == second.mail_id).unwrap();
+    assert!(
+        plain
+            .text
+            .ends_with("Coordinate before you change it further.")
+    );
+    assert!(
+        due.iter()
+            .any(|i| outbox_text(i) == format!("[FLEETDECK MAIL from fleetdeck] {}", plain.text))
+    );
+}
+
+#[tokio::test]
+async fn a_sentence_for_a_mail_that_was_sent_already_changes_nothing() {
+    let det = Det::new();
+    let (s, station, inc) = setup(&det, SessionState::Running).await;
+    s.set_station_info(&station, info_with_model_help(true));
+    let at = now(&det);
+    s.apply_events(
+        station.clone(),
+        inc,
+        vec![changed(1, "s1", at - 2_000), changed(2, "s2", at - 1_000)],
+    )
+    .await
+    .unwrap();
+    let jobs = s.take_conflict_jobs();
+    // The hold ends: the plain mails are due and one goes out.
+    det.advance(std::time::Duration::from_millis(
+        u64::try_from(fleetdeck_deck::store::conflicts::SENTENCE_HOLD_MS).unwrap() + 1,
+    ));
+    let due = s.due_outbox(station.clone()).await.unwrap();
+    assert_eq!(due.len(), 2);
+    let item = &due[0];
+    let before = outbox_text(item);
+    let mails = s.mails(10).await.unwrap();
+    let sent = mails
+        .iter()
+        .find(|m| format!("[FLEETDECK MAIL from fleetdeck] {}", m.text) == before)
+        .unwrap();
+    assert!(jobs.iter().any(|j| j.mail_id == sent.mail_id));
+    s.start_attempt(
+        item.outbox_id.clone(),
+        fleetdeck_deck::store::NewCommand {
+            command_id: "late-cmd".into(),
+            station_id: station,
+            method: "session.follow_up".to_owned(),
+            origin: "mail".to_owned(),
+            envelope: serde_json::json!({ "command_id": "late-cmd" }),
+            retry_until: item.expires_at,
+        },
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    s.finish_conflict_sentence(sent.mail_id.clone(), Some("Too late.".to_owned()))
+        .await
+        .unwrap();
+    let mails = s.mails(10).await.unwrap();
+    assert!(mails.iter().all(|m| !m.text.contains("Too late.")));
+    let after = s
+        .outbox_item(item.outbox_id.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(outbox_text(&after), before);
+}

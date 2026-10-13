@@ -294,7 +294,11 @@ impl Sync {
             .apply_events(self.station.clone(), incarnation.clone(), batch)
             .await;
         match result {
-            Ok(_) => self.ack(incarnation, top).await,
+            Ok(_) => {
+                // Conflict mails that wait for a generated sentence (DL-167).
+                crate::http::assist_routes::spawn_conflict_sentences(&self.ctx);
+                self.ack(incarnation, top).await;
+            }
             Err(DeckError::IncarnationMismatch { expected, got, .. }) => {
                 tracing::info!(?expected, %got, "station incarnation changed; resync");
                 self.resyncing = true;
