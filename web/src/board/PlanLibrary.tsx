@@ -1,7 +1,9 @@
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { sessionTitle } from '../app/sessions';
 import type { DeckPlan, DeckSession, PlanStatus, SessionKey, StationView } from '../gen';
+import { FileText, Icon, RefreshCw } from '../ui/icons';
 import { sessionRef } from '../ui/localSet';
+import { EmptyState, Page } from '../ui/page';
 import { stationName } from './fleet';
 import { liveProposer, type PlanActions, planTitle, proposerNote, STATUS_LABEL } from './plans';
 
@@ -120,26 +122,39 @@ export function PlanLibrary({
       .finally(() => setBusy(null));
   };
   return (
-    <main className="fd-plans" aria-label="Plan library">
-      <h2>Plans</h2>
-      <div className="fd-plan-tools">
-        <label>
-          <input
-            type="checkbox"
-            checked={archived}
-            onChange={(event) => setArchived(event.target.checked)}
-          />{' '}
-          Show archived
-        </label>
-        <button type="button" onClick={load} disabled={actions === undefined}>
-          Refresh
-        </button>
-      </div>
+    <Page
+      title="Plans"
+      label="Plan library"
+      actions={
+        <>
+          <label className="fd-checkrow">
+            <input
+              type="checkbox"
+              checked={archived}
+              onChange={(event) => setArchived(event.target.checked)}
+            />
+            Show archived
+          </label>
+          <button
+            type="button"
+            className="fd-ghost"
+            onClick={load}
+            disabled={actions === undefined}
+          >
+            <Icon of={RefreshCw} /> Refresh
+          </button>
+        </>
+      }
+    >
       {error ? <p role="alert">{error}</p> : null}
       {plans === null ? (
         <p role="status">Loading plans…</p>
       ) : plans.length === 0 ? (
-        <p className="fd-note">No plans yet. A session in plan mode adds its plan here.</p>
+        <EmptyState
+          icon={FileText}
+          title="No plans yet"
+          body="A session in plan mode adds its plan here."
+        />
       ) : (
         <ol className="fd-plan-list">
           {plans.map((p) => {
@@ -279,6 +294,6 @@ export function PlanLibrary({
           })}
         </ol>
       )}
-    </main>
+    </Page>
   );
 }

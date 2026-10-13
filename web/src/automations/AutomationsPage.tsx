@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { stationName } from '../board/fleet';
-import type { Schedule, ScheduleRun, ScheduleView, StationView } from '../gen';
+import type { DeckSession, Schedule, ScheduleRun, ScheduleView, StationView } from '../gen';
 import { spawnTargets } from '../spawn/spawn';
+import type { ListWorkspaces } from '../ui/FolderPicker';
+import { Icon, Plus, RefreshCw, Workflow } from '../ui/icons';
+import { EmptyState, Page } from '../ui/page';
 import { useNow } from '../ui/useNow';
 import {
   type AutomationActions,
@@ -33,6 +36,9 @@ type Props = {
   readonly now?: number;
   /** The form at the first render (tests): a draft for a new automation. */
   readonly initialForm?: Draft | null;
+  /** Reads a folder of a station, for the folder picker of the form. */
+  readonly list?: ListWorkspaces | undefined;
+  readonly sessions?: readonly DeckSession[] | undefined;
 };
 
 const message = (e: unknown) => (e instanceof Error ? e.message : 'The deck did not answer.');
@@ -106,6 +112,8 @@ export function AutomationsPage({
   initial = null,
   now: given,
   initialForm = null,
+  list: listFolders,
+  sessions,
 }: Props) {
   const now = useNow(given, 30_000);
   const [list, setList] = useState<readonly ScheduleView[] | null>(initial);
@@ -197,27 +205,36 @@ export function AutomationsPage({
   const newDraft = () =>
     emptyDraft(first?.station_id ?? '', first?.info?.providers[0]?.instance ?? '');
   return (
-    <main className="fd-plans fd-auto" aria-label="Automations">
-      <h2>Automations</h2>
-      <p className="fd-note">
-        The deck starts a session at each due time. A precheck runs on the station first; a non-zero
-        exit skips the run.
-      </p>
-      <div className="fd-plan-tools">
-        <button
-          type="button"
-          disabled={!can || form !== null || targets.length === 0}
-          onClick={() => {
-            setSaveError(null);
-            setForm({ id: null, draft: newDraft() });
-          }}
-        >
-          New automation
-        </button>
-        <button type="button" onClick={load} disabled={actions === undefined}>
-          Refresh
-        </button>
-      </div>
+    <Page
+      title="Automations"
+      description="The deck starts a session at each due time. A check on the station can run first; a non-zero exit skips the run."
+      actions={
+        <>
+          {form === null ? (
+            <button
+              type="button"
+              className="fd-primary"
+              disabled={!can || targets.length === 0}
+              onClick={() => {
+                setSaveError(null);
+                setForm({ id: null, draft: newDraft() });
+              }}
+            >
+              <Icon of={Plus} /> New automation
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="fd-ghost"
+            onClick={load}
+            disabled={actions === undefined}
+          >
+            <Icon of={RefreshCw} /> Refresh
+          </button>
+        </>
+      }
+      className="fd-auto"
+    >
       {actions === undefined ? (
         <p className="fd-note">Automations need the owner’s login.</p>
       ) : targets.length === 0 && form === null ? (
@@ -235,6 +252,8 @@ export function AutomationsPage({
           editing={form.id !== null}
           onSave={save}
           onCancel={() => setForm(null)}
+          list={listFolders}
+          sessions={sessions}
         />
       )}
       {list === null ? (
@@ -242,9 +261,11 @@ export function AutomationsPage({
           <p role="status">Loading automations…</p>
         )
       ) : list.length === 0 ? (
-        <p className="fd-note">
-          No automations yet. Add one to run a triage, a nightly test fix or a review sweep.
-        </p>
+        <EmptyState
+          icon={Workflow}
+          title="No automations yet"
+          body="Add one to run a triage, a nightly test fix or a review sweep."
+        />
       ) : (
         <ol className="fd-plan-list">
           {list.map(({ schedule: s, next_run_at: next, last_run: last }) => {
@@ -365,6 +386,6 @@ export function AutomationsPage({
           })}
         </ol>
       )}
-    </main>
+    </Page>
   );
 }

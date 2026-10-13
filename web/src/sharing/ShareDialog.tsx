@@ -3,7 +3,17 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { trapTab, useFocusReturn } from '../app/focus';
 import { useOverlay } from '../app/overlay';
-import type { NewShare, ShareCreated, ShareRole, Steering } from '../gen';
+import { sessionTitle } from '../app/sessions';
+import { stationName } from '../board/fleet';
+import type {
+  DeckSession,
+  NewShare,
+  ShareCreated,
+  ShareRole,
+  SpaceView,
+  StationView,
+  Steering,
+} from '../gen';
 import { Icon, X } from '../ui/icons';
 import { canShare, usePeople } from './context';
 import { ROLE_TEXT, roleLabel } from './member';
@@ -51,6 +61,51 @@ export function shareBody(request: ShareRequest, form: ShareForm): NewShare {
     expires_in_days: form.days,
     uses: form.uses,
   };
+}
+
+/** One thing that "New share" can share: the board, a space or a session. */
+export type ShareTarget = {
+  readonly value: string;
+  readonly label: string;
+  readonly group: 'board' | 'space' | 'session';
+  readonly request: ShareRequest;
+};
+
+/** The targets of "New share": the whole board, the spaces (when any), then the sessions by title. */
+export function shareTargets(
+  sessions: readonly DeckSession[],
+  stations: readonly StationView[],
+  spaces: readonly SpaceView[],
+): readonly ShareTarget[] {
+  return [
+    {
+      value: 'board',
+      label: 'The whole board',
+      group: 'board',
+      request: { kind: 'board', target: '', label: '' },
+    },
+    ...spaces.map(
+      (space): ShareTarget => ({
+        value: `space:${space.space_id}`,
+        label: `Space ${space.name}`,
+        group: 'space',
+        request: { kind: 'space', target: space.space_id, label: space.name },
+      }),
+    ),
+    ...sessions.map((card): ShareTarget => {
+      const title = sessionTitle(card);
+      return {
+        value: `session:${card.station_id}/${card.summary.session_id}`,
+        label: `${title} (${stationName(card.station_id, stations)})`,
+        group: 'session',
+        request: {
+          kind: 'session',
+          target: `${card.station_id}/${card.summary.session_id}`,
+          label: title,
+        },
+      };
+    }),
+  ];
 }
 
 const TITLE: Record<ShareRequest['kind'], string> = {
@@ -186,6 +241,10 @@ type Props = {
   readonly initialError?: string;
   /** The form values at the first render (tests). */
   readonly initialForm?: ShareForm;
+  /** "New share": the dialog starts with a select of what to share; `request` is not used then. */
+  readonly targets?: readonly ShareTarget[];
+  /** The value of the target at the first render (tests). */
+  readonly initialTarget?: string;
 };
 
 /** "Share…": the dialog of one share request (a session, a space or the whole board). */
@@ -196,11 +255,15 @@ export function ShareDialog({
   initialLink,
   initialError,
   initialForm,
+  targets,
+  initialTarget,
 }: Props) {
   const root = useRef<HTMLDivElement>(null);
   const close = useRef<HTMLButtonElement>(null);
   useFocusReturn(root, close);
   useOverlay();
+  const [pick, setPick] = useState(initialTarget ?? targets?.[0]?.value ?? '');
+  const active = targets?.find((t) => t.value === pick)?.request ?? request;
   const [form, setForm] = useState<ShareForm>(initialForm ?? defaultForm);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(initialError ?? null);
@@ -218,7 +281,7 @@ export function ShareDialog({
     setError(null);
     setMade(null);
     try {
-      const link = await calls.create(shareBody(request, form));
+      const link = await calls.create(shareBody(active, form));
       if (!alive.current) return;
       setMade({ link, role: form.role });
       sharesChanged();
@@ -229,7 +292,7 @@ export function ShareDialog({
     }
   };
 
-  const title = TITLE[request.kind];
+  const title = targets === undefined ? TITLE[request.kind] : 'New share';
   return (
     // The overlay click is a mouse shortcut; the Close button and Escape serve the keyboard.
     <div
@@ -252,9 +315,55 @@ export function ShareDialog({
         }}
       >
         <h2>{title}</h2>
-        {request.label === '' ? null : <p className="fd-note">{request.label}</p>}
+        {targets === undefined ? (
+          request.label === '' ? null : (
+            <p className="fd-note">{request.label}</p>
+          )
+        ) : (
+          <label className="fd-share-target">
+            What to share
+            <select
+              value={pick}
+              onChange={(e) => {
+                setPick(e.target.value);
+                setMade(null);
+                setError(null);
+              }}
+            >
+              {targets
+                .filter((t) => t.group === 'board')
+                .map((t) => (
+                  <option key={t.value} value={t.value}>
+                    {t.label}
+                  </option>
+                ))}
+              {targets.some((t) => t.group === 'space') ? (
+                <optgroup label="Spaces">
+                  {targets
+                    .filter((t) => t.group === 'space')
+                    .map((t) => (
+                      <option key={t.value} value={t.value}>
+                        {t.label}
+                      </option>
+                    ))}
+                </optgroup>
+              ) : null}
+              {targets.some((t) => t.group === 'session') ? (
+                <optgroup label="Sessions">
+                  {targets
+                    .filter((t) => t.group === 'session')
+                    .map((t) => (
+                      <option key={t.value} value={t.value}>
+                        {t.label}
+                      </option>
+                    ))}
+                </optgroup>
+              ) : null}
+            </select>
+          </label>
+        )}
         <ShareFields
-          request={request}
+          request={active}
           form={form}
           busy={busy}
           onChange={setForm}
@@ -272,6 +381,26 @@ export function ShareDialog({
       </div>
     </div>
   );
+}
+
+/** "New share" of the Shares page: the dialog with a select of the board, the spaces and the sessions. */
+export function NewShareDialog({
+  sessions,
+  stations,
+  spaces,
+  calls,
+  onClose,
+}: {
+  readonly sessions: readonly DeckSession[];
+  readonly stations: readonly StationView[];
+  readonly spaces: readonly SpaceView[];
+  readonly calls: Pick<ShareCalls, 'create'>;
+  readonly onClose: () => void;
+}) {
+  const targets = shareTargets(sessions, stations, spaces);
+  const first = targets[0];
+  if (first === undefined) return null;
+  return <ShareDialog request={first.request} targets={targets} calls={calls} onClose={onClose} />;
 }
 
 /** Renders the dialog when an entry point asked for it; mount it once. */

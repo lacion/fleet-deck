@@ -3,6 +3,8 @@ import { useState } from 'react';
 import { sessionTitle } from '../app/sessions';
 import { stationName } from '../board/fleet';
 import type { DeckSession, SpaceView, StationView } from '../gen';
+import { Icon, Layers, Plus } from '../ui/icons';
+import { EmptyState, Field, FormActions, FormGrid, Page } from '../ui/page';
 import { canShare, usePeople } from './context';
 import { sharesChanged } from './shareStore';
 import { MAX_SPACE_NAME_CHARS, openSpaceShare } from './spaceShare';
@@ -22,7 +24,7 @@ type SpaceProps = {
   readonly onShare: () => void;
 };
 
-/** One space: its sessions, "Add a session" and "Share space…". */
+/** One space as a table row: its sessions, "Add a session" and "Share space…". */
 export function SpaceCard({ space, sessions, stations, busy, onAdd, onShare }: SpaceProps) {
   const members = space.sessions.map((key) => ({
     key,
@@ -33,60 +35,64 @@ export function SpaceCard({ space, sessions, stations, busy, onAdd, onShare }: S
   const chosen = free.find((s) => `${s.station_id}/${s.summary.session_id}` === pick);
   const label = (s: DeckSession) => `${stationName(s.station_id, stations)} / ${sessionTitle(s)}`;
   return (
-    <li className="fd-space" data-space={space.space_id}>
-      <div className="fd-space-head">
-        <h2 className="fd-space-name">{space.name}</h2>
+    <tr data-space={space.space_id}>
+      <td className="fd-cell-name">{space.name}</td>
+      <td data-label="Sessions">
+        {members.length === 0 ? (
+          <span className="fd-note">No sessions in this space yet.</span>
+        ) : (
+          <ul className="fd-space-sessions" aria-label={`Sessions of ${space.name}`}>
+            {members.map(({ key, card }) => (
+              <li key={`${key.station_id}/${key.session_id}`}>
+                {card === undefined
+                  ? `${stationName(key.station_id, stations)} / ${key.session_id}`
+                  : label(card)}
+              </li>
+            ))}
+          </ul>
+        )}
+      </td>
+      <td data-label="Add">
+        <form
+          className="fd-space-add"
+          aria-label={`Add a session to ${space.name}`}
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (chosen !== undefined) {
+              onAdd(chosen.station_id, chosen.summary.session_id);
+              setPick('');
+            }
+          }}
+        >
+          <label>
+            <span className="fd-vh">Session to add to {space.name}</span>
+            <select
+              value={pick}
+              onChange={(e) => setPick(e.target.value)}
+              disabled={free.length === 0}
+            >
+              <option value="">{free.length === 0 ? 'No more sessions' : 'Pick a session…'}</option>
+              {free.map((s) => (
+                <option
+                  key={`${s.station_id}/${s.summary.session_id}`}
+                  value={`${s.station_id}/${s.summary.session_id}`}
+                >
+                  {label(s)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button type="submit" className="fd-sm" disabled={busy || chosen === undefined}>
+            Add a session
+          </button>
+        </form>
+      </td>
+      <td className="fd-cell-actions">
         <button type="button" className="fd-ghost fd-sm" onClick={onShare}>
           Share space…
         </button>
-      </div>
-      {members.length === 0 ? (
-        <p className="fd-note">No sessions in this space yet.</p>
-      ) : (
-        <ul className="fd-space-sessions" aria-label={`Sessions of ${space.name}`}>
-          {members.map(({ key, card }) => (
-            <li key={`${key.station_id}/${key.session_id}`}>
-              {card === undefined
-                ? `${stationName(key.station_id, stations)} / ${key.session_id}`
-                : label(card)}
-            </li>
-          ))}
-        </ul>
-      )}
-      <form
-        className="fd-space-add"
-        aria-label={`Add a session to ${space.name}`}
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (chosen !== undefined) {
-            onAdd(chosen.station_id, chosen.summary.session_id);
-            setPick('');
-          }
-        }}
-      >
-        <label>
-          <span className="fd-vh">Session to add to {space.name}</span>
-          <select
-            value={pick}
-            onChange={(e) => setPick(e.target.value)}
-            disabled={free.length === 0}
-          >
-            <option value="">{free.length === 0 ? 'No more sessions' : 'Pick a session…'}</option>
-            {free.map((s) => (
-              <option
-                key={`${s.station_id}/${s.summary.session_id}`}
-                value={`${s.station_id}/${s.summary.session_id}`}
-              >
-                {label(s)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button type="submit" className="fd-sm" disabled={busy || chosen === undefined}>
-          Add a session
-        </button>
-      </form>
-    </li>
+      </td>
+    </tr>
   );
 }
 
@@ -100,6 +106,8 @@ type ViewProps = {
   readonly onCreate?: (name: string) => void;
   readonly onAdd?: (space: SpaceView, station: string, session: string) => void;
   readonly onShare?: (space: SpaceView) => void;
+  /** The name form is open at the first render (tests). */
+  readonly initialCreating?: boolean;
 };
 
 /** The page of one state: loading, error, the spaces with "New space". */
@@ -113,8 +121,10 @@ export function SpacesView({
   onCreate,
   onAdd,
   onShare,
+  initialCreating = false,
 }: ViewProps) {
   const [name, setName] = useState('');
+  const [creating, setCreating] = useState(initialCreating);
   const trimmed = name.trim();
   let body: React.ReactNode;
   if (state.kind === 'loading') {
@@ -135,63 +145,103 @@ export function SpacesView({
       </div>
     );
   } else if (state.value.length === 0) {
-    body = <p className="fd-empty">No spaces yet. Make one, then add sessions to it.</p>;
+    body = (
+      <EmptyState
+        icon={Layers}
+        title="No spaces yet"
+        body="A space is a named set of sessions. Make one, then add sessions to it. One share of a space covers all of them."
+      />
+    );
   } else {
     body = (
-      <ul className="fd-spaces" aria-label="Spaces">
-        {state.value.map((space) => (
-          <SpaceCard
-            key={space.space_id}
-            space={space}
-            sessions={sessions}
-            stations={stations}
-            busy={busy}
-            onAdd={(station, session) => onAdd?.(space, station, session)}
-            onShare={() => onShare?.(space)}
-          />
-        ))}
-      </ul>
+      <div className="fd-panel fd-tablepanel">
+        <div className="fd-tablewrap">
+          <table className="fd-table" aria-label="Spaces">
+            <thead>
+              <tr>
+                <th scope="col">Space</th>
+                <th scope="col">Sessions</th>
+                <th scope="col">Add</th>
+                <th scope="col">
+                  <span className="fd-vh">Actions</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {state.value.map((space) => (
+                <SpaceCard
+                  key={space.space_id}
+                  space={space}
+                  sessions={sessions}
+                  stations={stations}
+                  busy={busy}
+                  onAdd={(station, session) => onAdd?.(space, station, session)}
+                  onShare={() => onShare?.(space)}
+                />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
     );
   }
   return (
-    <section className="fd-spaces-page" aria-label="Spaces">
-      <h1 className="fd-screen-title">Spaces</h1>
-      <p className="fd-note">
-        A space is a named set of sessions. One share of a space covers all of them, also the ones
-        that you add later.
-      </p>
-      <form
-        className="fd-space-new"
-        aria-label="New space"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (trimmed !== '') {
-            onCreate?.(trimmed);
-            setName('');
-          }
-        }}
-      >
-        <label>
-          Name
-          <input
-            type="text"
-            value={name}
-            maxLength={MAX_SPACE_NAME_CHARS}
-            autoComplete="off"
-            onChange={(e) => setName(e.target.value)}
-          />
-        </label>
-        <button type="submit" className="fd-primary" disabled={busy || trimmed === ''}>
-          New space
-        </button>
-      </form>
+    <Page
+      title="Spaces"
+      wide
+      description="A space is a named set of sessions. One share of a space covers all of them, also the ones that you add later."
+      actions={
+        creating ? null : (
+          <button type="button" className="fd-primary" onClick={() => setCreating(true)}>
+            <Icon of={Plus} /> New space
+          </button>
+        )
+      }
+    >
+      {creating ? (
+        <div className="fd-panel fd-formpanel">
+          <form
+            className="fd-space-new"
+            aria-label="New space"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (trimmed !== '') {
+                onCreate?.(trimmed);
+                setName('');
+                setCreating(false);
+              }
+            }}
+          >
+            <h2 className="fd-form-title">New space</h2>
+            <FormGrid>
+              <Field label="Name">
+                <input
+                  type="text"
+                  value={name}
+                  maxLength={MAX_SPACE_NAME_CHARS}
+                  autoComplete="off"
+                  onChange={(e) => setName(e.target.value)}
+                />
+              </Field>
+            </FormGrid>
+            <FormActions>
+              <button type="button" className="fd-ghost" onClick={() => setCreating(false)}>
+                Cancel
+              </button>
+              <button type="submit" className="fd-primary" disabled={busy || trimmed === ''}>
+                Create space
+              </button>
+            </FormActions>
+          </form>
+        </div>
+      ) : null}
       {error === null ? null : (
         <p role="alert" className="fd-note fd-share-error">
           {error}
         </p>
       )}
       {body}
-    </section>
+    </Page>
   );
 }
 
@@ -212,10 +262,10 @@ export function SpacesPage({ sessions, stations }: Props) {
   const [error, setError] = useState<string | null>(null);
   if (!canShare(people) || calls === undefined) {
     return (
-      <div className="fd-screen">
+      <Page title="Spaces">
         <p>Only the owner of the deck sees the spaces.</p>
         <a href="#/">Back to the fleet</a>
-      </div>
+      </Page>
     );
   }
   const run = async (call: () => Promise<unknown>) => {
@@ -234,20 +284,18 @@ export function SpacesPage({ sessions, stations }: Props) {
     }
   };
   return (
-    <div className="fd-screen">
-      <SpacesView
-        state={state}
-        sessions={sessions}
-        stations={stations}
-        busy={busy}
-        error={error}
-        onRetry={reload}
-        onCreate={(name) => void run(() => calls.createSpace(name))}
-        onAdd={(space, station, session) =>
-          void run(() => calls.addToSpace(space.space_id, station, session))
-        }
-        onShare={openSpaceShare}
-      />
-    </div>
+    <SpacesView
+      state={state}
+      sessions={sessions}
+      stations={stations}
+      busy={busy}
+      error={error}
+      onRetry={reload}
+      onCreate={(name) => void run(() => calls.createSpace(name))}
+      onAdd={(space, station, session) =>
+        void run(() => calls.addToSpace(space.space_id, station, session))
+      }
+      onShare={openSpaceShare}
+    />
   );
 }

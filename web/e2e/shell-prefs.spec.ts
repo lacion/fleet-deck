@@ -68,17 +68,21 @@ test('c opens the fleet page', async ({ page }) => {
   await expect(page).toHaveURL(/#\/fleet$/);
 });
 
-test('the help opens once on the first visit and not again', async ({ page }) => {
+test('a first visit shows the help notice once; the help dialog does not open by itself', async ({
+  page,
+}) => {
   const deck = new FakeDeck();
   await deck.install(page, { firstRun: true });
   await logIn(page);
+  const notice = page.getByText('Press ? for the keys and a short guide.');
+  await expect(notice).toBeVisible();
   const help = page.getByRole('dialog', { name: 'Keyboard and help' });
-  await expect(help).toBeVisible();
-  await expect(help).toContainText('Concepts');
-  await page.keyboard.press('Escape');
   await expect(help).toHaveCount(0);
+  await page.getByRole('button', { name: 'Dismiss the help notice' }).click();
+  await expect(notice).toHaveCount(0);
   expect(await page.evaluate(() => localStorage.getItem('fd-help-seen'))).toBe('1');
   await page.reload();
   await expect(page.getByRole('navigation', { name: 'Board' })).toBeVisible();
+  await expect(notice).toHaveCount(0);
   await expect(help).toHaveCount(0);
 });

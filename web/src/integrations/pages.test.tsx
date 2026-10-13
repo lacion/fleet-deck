@@ -61,7 +61,9 @@ describe('projects page', () => {
   });
 
   test('an empty list says so', () => {
-    expect(provide(<ProjectsPage stations={[station()]} />, [])).toContain('No projects yet.');
+    const html = provide(<ProjectsPage stations={[station()]} />, []);
+    expect(html).toContain('No projects yet');
+    expect(html).toContain('fd-emptystate');
   });
 
   test('the form: station select, forge select, tracker rows, prompts', () => {
@@ -86,7 +88,8 @@ describe('projects page', () => {
     expect(html).toContain('aria-label="Tracker 1"');
     expect(html).toContain('Prompt template');
     expect(html).toContain('Review prompt');
-    expect(html).toContain('The repository is owner/name.');
+    // A fresh form shows no error before a field was touched or a submit was tried (DL-171).
+    expect(html).not.toContain('The repository is owner/name.');
   });
 
   test('the form of an edit has the title Edit project', () => {

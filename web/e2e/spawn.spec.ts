@@ -68,13 +68,13 @@ function picker(deck: FakeDeck): void {
 async function chooseApp(page: import('@playwright/test').Page): Promise<void> {
   await page.getByRole('button', { name: 'New session' }).click();
   const form = page.getByRole('region', { name: 'New session' });
-  await form.getByRole('button', { name: 'Browse the station' }).click();
+  await form.getByRole('button', { name: 'Browse…' }).click();
   await form.getByRole('button', { name: 'Open projects' }).click();
   await expect(form.getByRole('button', { name: 'Open app' })).toContainText('git');
   await form.getByRole('button', { name: 'Open app' }).click();
-  await expect(form.getByRole('button', { name: 'Up one level' })).toBeVisible();
-  await form.getByRole('button', { name: 'Use this directory' }).click();
-  await expect(form).toContainText(`Chosen: ${ROOT}/app`);
+  await expect(form.getByRole('navigation', { name: 'Folder path' })).toContainText('app');
+  await form.getByRole('button', { name: 'Use this folder' }).click();
+  await expect(form.getByLabel('Directory path')).toHaveValue(`${ROOT}/app`);
 }
 
 test('a session starts from the form with a picked directory and opens', async ({ page }) => {
@@ -215,7 +215,7 @@ test('a read-only login cannot browse or start', async ({ page }) => {
   await page.getByRole('button', { name: 'New session' }).click();
   const form = page.getByRole('region', { name: 'New session' });
   await expect(form).toContainText('Starting sessions needs the drive scope.');
-  await expect(form.getByRole('button', { name: 'Browse the station' })).toBeDisabled();
+  await expect(form.getByRole('button', { name: 'Browse…' })).toBeDisabled();
   await expect(form.getByRole('button', { name: 'Start session' })).toBeDisabled();
   expect(deck.calls.filter((c) => c.path.includes('/workspaces'))).toHaveLength(0);
 });
@@ -386,6 +386,7 @@ test('a recent directory chip selects its directory for the start', async ({ pag
   await logIn(page);
   await page.getByRole('button', { name: 'New session' }).click();
   const form = page.getByRole('region', { name: 'New session' });
+  await form.getByRole('button', { name: 'Browse…' }).click();
   const recent = form.getByLabel('Recent directories');
   await expect(recent.getByRole('button')).toHaveText(['projects/app', 'projects/notes']);
   await expect(recent.getByRole('button', { name: 'projects/app' })).toHaveAttribute(
@@ -393,7 +394,7 @@ test('a recent directory chip selects its directory for the start', async ({ pag
     `${ROOT}/app`,
   );
   await recent.getByRole('button', { name: 'projects/notes' }).click();
-  await expect(form).toContainText(`Chosen: ${ROOT}/notes`);
+  await expect(form.getByLabel('Directory path')).toHaveValue(`${ROOT}/notes`);
   await form.getByRole('button', { name: 'Start session' }).click();
   await expect(page).toHaveURL(/#\/s\/st-alpha\/s-r$/);
   const starts = deck.calls.filter((c) => c.path === '/api/commands/session.start');
@@ -408,17 +409,20 @@ test('a pinned directory stays after a reload and unpins again', async ({ page }
   await logIn(page);
   await chooseApp(page);
   const form = page.getByRole('region', { name: 'New session' });
+  await form.getByRole('button', { name: 'Browse…' }).click();
   await expect(form.getByLabel('Recent directories')).toHaveCount(0);
   await form.getByRole('button', { name: 'Pin this directory' }).click();
   await expect(form.getByRole('button', { name: 'Unpin this directory' })).toBeVisible();
   await expect(form.getByLabel('Recent directories')).toContainText('Pinned and recent');
   await page.reload();
-  const recent = page.getByRole('region', { name: 'New session' }).getByLabel('Recent directories');
+  const again = page.getByRole('region', { name: 'New session' });
+  await again.getByRole('button', { name: 'Browse…' }).click();
+  const recent = again.getByLabel('Recent directories');
   await expect(recent.getByRole('button', { name: 'projects/app' })).toBeVisible();
   await recent.getByRole('button', { name: 'projects/app' }).click();
-  const again = page.getByRole('region', { name: 'New session' });
-  await expect(again).toContainText(`Chosen: ${ROOT}/app`);
+  await expect(again.getByLabel('Directory path')).toHaveValue(`${ROOT}/app`);
   await again.getByRole('button', { name: 'Unpin this directory' }).click();
+  await again.getByRole('button', { name: 'Browse…' }).click();
   await expect(again.getByLabel('Recent directories')).toHaveCount(0);
   expect(await page.evaluate(() => localStorage.getItem('fd-dir-pins'))).toBe('{"st-alpha":[]}');
 });

@@ -4,6 +4,7 @@ import { FilesPanel } from '../session/FilesPanel';
 import type { FileActions } from '../session/workspace';
 import { lastParts, readPins } from '../spawn/spawn';
 import { Icon, Pin } from '../ui/icons';
+import { Page } from '../ui/page';
 
 /** The most recent session folders that the chip row offers. */
 const MAX_FOLDERS = 8;
@@ -90,8 +91,7 @@ export function FilesPage({
   const pinned = readPins()[station] ?? [];
   const recent = sessionFolders(sessions, station, pinned);
   return (
-    <section className="fd-screen fd-files-page" aria-label="Files">
-      <h1 className="fd-screen-title">Files</h1>
+    <Page title="Files" className="fd-files-page" wide>
       <div className="fd-panel fd-files-folder">
         <form
           aria-label="Open a folder"
@@ -165,6 +165,6 @@ export function FilesPage({
           />
         </div>
       ) : null}
-    </section>
+    </Page>
   );
 }

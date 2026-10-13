@@ -3,7 +3,7 @@ import { instanceLimit, mostRoom, rateMeters } from '../board/usage';
 import { batchRef, newBatchId } from '../compare/compare';
 import type { DeckSession, SessionKey, StationView, WorkspaceListing } from '../gen';
 import type { Freshness } from '../runtime/state';
-import { Icon, Pin, PinOff } from '../ui/icons';
+import { FolderPicker } from '../ui/FolderPicker';
 import { useNow } from '../ui/useNow';
 import { BranchFields } from './BranchFields';
 import { CloneAccess } from './CloneAccess';
@@ -15,13 +15,10 @@ import {
   branchProblem,
   importIdProblem,
   knownModels,
-  lastParts,
   MAX_BATCH_REF,
   providerChoiceLabel,
   type PreflightResult,
-  readPins,
   readSetupCmds,
-  recentDirs,
   rememberSetupCmd,
   setupKey,
   setupProblem,
@@ -29,10 +26,8 @@ import {
   type SpawnOutcome,
   spawnModes,
   spawnTargets,
-  togglePin,
   versionWarning,
   workspaceRequest,
-  writePins,
 } from './spawn';
 
 type Props = {
@@ -84,9 +79,9 @@ export function SpawnForm({
     providers.map((p) => [p.instance, instanceLimit(meters, stationId, p.instance)]),
   );
   const roomiest = mostRoom(limits);
-  const [listing, setListing] = useState<WorkspaceListing | null>(initialListing);
-  const [cwd, setCwd] = useState<string | null>(initialCwd ?? null);
-  const [browseError, setBrowseError] = useState<string | null>(null);
+  // The directory as typed or picked; `cwd` is the trimmed text, or `null` when it is empty.
+  const [cwdText, setCwd] = useState<string | null>(initialCwd ?? null);
+  const cwd = cwdText === null || cwdText.trim() === '' ? null : cwdText.trim();
   const [mode, setMode] = useState('');
   const [model, setModel] = useState('');
   const [title, setTitle] = useState('');
@@ -107,7 +102,6 @@ export function SpawnForm({
   const [coordinator, setCoordinator] = useState(false);
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<SpawnOutcome | null>(null);
-  const [pins, setPins] = useState(readPins);
   const [setupCmd, setSetupCmd] = useState('');
   const [setupRemember, setSetupRemember] = useState(false);
   // True once the user types in the setup field; a change of station or
@@ -135,24 +129,11 @@ export function SpawnForm({
 
   const live = freshness === 'live';
   const canDrive = actions?.canDrive === true;
-  const browse = (path: string | null) => {
-    if (actions === undefined || station === undefined) return;
-    setBrowseError(null);
-    actions.list(station.station_id, path).then(setListing, (error: unknown) => {
-      setBrowseError(error instanceof Error ? error.message : 'The station did not answer.');
-    });
-  };
   const modes = spawnModes(provider);
-  const pinned = pins[stationId] ?? [];
-  const recent = recentDirs(sessions, stationId, pinned);
   const batchLines = batchPrompts(prompt);
   const importing = importId.trim() !== '';
   // A clone is one session and an import ignores the batch (DL-308): no preview then.
   const previewing = batch && place !== 'clone' && !importing && batchLines.length >= 2;
-  const chooseDir = (path: string) => {
-    setCwd(path);
-    browse(path);
-  };
   const setupShown = station?.info?.allow_setup_cmd === true && !importing;
   const setupBad = setupShown && setupProblem(setupCmd) !== null;
   const importProblem = importId.trim() === '' ? null : importIdProblem(importId.trim());
@@ -189,7 +170,7 @@ export function SpawnForm({
     !busy &&
     station !== undefined &&
     provider !== undefined &&
-    cwd !== null &&
+    cwd?.startsWith('/') === true &&
     cloneReady &&
     !setupBad &&
     !refProblem;
@@ -200,9 +181,9 @@ export function SpawnForm({
     canDrive ? null : 'your login needs the drive scope',
     station === undefined ? 'choose a station' : null,
     provider === undefined ? 'choose a provider' : null,
-    cwd === null
-      ? 'choose a directory (Browse the station, open a folder, then Use this directory)'
-      : null,
+    cwd?.startsWith('/') === true
+      ? null
+      : 'choose a directory (type an absolute path, or Browse… and Use this folder)',
     cloneReady ? null : 'enter the clone URL and the new directory name',
     branchFields && branchName !== '' && branchProblem(branchName) !== null
       ? 'fix the branch name'
@@ -322,7 +303,6 @@ export function SpawnForm({
                 value={stationId}
                 onChange={(event) => {
                   setStationId(event.target.value);
-                  setListing(null);
                   setCwd(null);
                   setMode('');
                   setModel('');
@@ -335,100 +315,20 @@ export function SpawnForm({
                 ))}
               </select>
             </label>
-            <fieldset className="fd-picker" aria-label="Directory">
-              <legend>Directory</legend>
-              <div className="fd-chosen">
-                <p data-cwd>{cwd === null ? 'No directory chosen.' : `Chosen: ${cwd}`}</p>
-                {cwd === null ? null : (
-                  <button
-                    type="button"
-                    className="fd-iconbtn fd-sm"
-                    aria-label={
-                      pinned.includes(cwd) ? 'Unpin this directory' : 'Pin this directory'
-                    }
-                    title={pinned.includes(cwd) ? 'Unpin this directory' : 'Pin this directory'}
-                    onClick={() => {
-                      const next = togglePin(pins, stationId, cwd);
-                      setPins(next);
-                      writePins(next);
-                    }}
-                  >
-                    <Icon of={pinned.includes(cwd) ? PinOff : Pin} />
-                  </button>
-                )}
-              </div>
-              {listing === null ? (
-                <button type="button" disabled={!live || !canDrive} onClick={() => browse(null)}>
-                  Browse the station
-                </button>
-              ) : (
-                <>
-                  <p className="fd-path">{listing.path ?? 'Allowed roots'}</p>
-                  <div className="fd-picker-actions">
-                    {listing.path === null ? null : (
-                      <button type="button" onClick={() => browse(listing.parent)}>
-                        {listing.parent === null ? 'Back to the roots' : 'Up one level'}
-                      </button>
-                    )}
-                    {listing.path === null ? null : (
-                      <button type="button" onClick={() => setCwd(listing.path)}>
-                        Use this directory
-                      </button>
-                    )}
-                  </div>
-                  {listing.entries.length === 0 ? <p>No sub-directories.</p> : null}
-                  <ul>
-                    {listing.entries.map((entry) => (
-                      <li key={entry.path}>
-                        <button
-                          type="button"
-                          aria-label={`Open ${entry.name}`}
-                          onClick={() => browse(entry.path)}
-                        >
-                          {entry.name}
-                          {entry.repository ? <span className="fd-tag">git</span> : null}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                  {listing.truncated ? (
-                    <p className="fd-note">The station shows only the first entries.</p>
-                  ) : null}
-                </>
-              )}
-              {browseError === null ? null : <p role="alert">{browseError}</p>}
-            </fieldset>
-            {pinned.length === 0 && recent.length === 0 ? null : (
-              <div className="fd-recent" aria-label="Recent directories">
-                <span className="fd-label">
-                  {pinned.length > 0 ? 'Pinned and recent' : 'Recent'}
-                </span>
-                {pinned.map((path) => (
-                  <button
-                    key={`pin:${path}`}
-                    type="button"
-                    className="fd-chip"
-                    data-pinned
-                    title={path}
-                    onClick={() => chooseDir(path)}
-                  >
-                    <Icon of={Pin} size={12} />
-                    {lastParts(path)}
-                  </button>
-                ))}
-                {recent.map((path) => (
-                  <button
-                    key={path}
-                    type="button"
-                    className="fd-chip"
-                    title={path}
-                    onClick={() => chooseDir(path)}
-                  >
-                    {lastParts(path)}
-                  </button>
-                ))}
-              </div>
-            )}
+            <div className="fd-fieldwrap" role="group" aria-label="Directory">
+              <span className="fd-fieldlabel">Directory</span>
+              <FolderPicker
+                stationId={stationId}
+                value={cwdText ?? ''}
+                onChange={(path) => setCwd(path)}
+                list={actions?.list}
+                sessions={sessions}
+                label="Directory path"
+                browseDisabled={!live || !canDrive}
+                initialOpen={initialListing !== null}
+                initialListing={initialListing}
+              />
+            </div>
             <label>
               Workspace
               <select

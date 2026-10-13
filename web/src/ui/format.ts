@@ -22,3 +22,44 @@ export function shortModel(model: string | null): string {
   const name = family.charAt(0).toUpperCase() + family.slice(1);
   return version.length > 0 ? `${name} ${version.join('.')}` : name;
 }
+
+/** A line of chat as plain text: no heading marks, emphasis marks, code ticks or link syntax. */
+export function plainLine(text: string): string {
+  return text
+    .replace(/^\s{0,3}#{1,6}\s+/, '')
+    .replace(/^\s*>\s?/, '')
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/(\*\*|__)(.+?)\1/g, '$2')
+    .replace(/(^|\W)(\*|_)(?=\S)(.+?)(?<=\S)\2(?=\W|$)/g, '$1$3')
+    .replace(/~~(.+?)~~/g, '$1')
+    .replace(/`+([^`]*)`+/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Reasons that a card can show in a sentence of their own. */
+const REASONS: Readonly<Record<string, string>> = {
+  already_stopping: 'the session was already stopping',
+};
+
+const capital = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1);
+
+/**
+ * The error line of a card. A `code: detail` text keeps the detail only, in a sentence:
+ * `not_dispatched: stop was not sent: already_stopping` gives `Stop was not sent: the session was
+ * already stopping.` Any other text is returned as it is.
+ */
+export function errorSentence(text: string): string {
+  if (!/^[a-z_]+: /.test(text)) return text;
+  const detail = text.replace(/^[a-z_]+: /, '').trim();
+  const cut = detail.lastIndexOf(': ');
+  const reason = cut < 0 ? undefined : REASONS[detail.slice(cut + 2)];
+  const shown = reason === undefined ? detail : `${detail.slice(0, cut)}: ${reason}`;
+  return `${capital(shown)}${/[.!?]$/.test(shown) ? '' : '.'}`;
+}
+
+/** The permission modes that skip the approvals of the provider: the only badges in hazard red. */
+const RISKY_MODES: readonly string[] = ['dontAsk', 'bypassPermissions', 'danger-full-access'];
+
+export const isRiskyMode = (mode: string | null | undefined): boolean =>
+  mode !== null && mode !== undefined && RISKY_MODES.includes(mode);

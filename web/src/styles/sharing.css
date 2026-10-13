@@ -28,77 +28,40 @@
   width: auto;
 }
 
-/* ---------- Shares and Spaces ---------- */
-
-.fd-shares,
-.fd-spaces-page {
+/* "New share": the select of what to share sits over the fields. */
+.fd-share-target {
   display: grid;
-  gap: var(--sp-3);
-  min-width: 0;
+  gap: 6px;
+  color: var(--dim);
+  font-size: 12px;
+  font-weight: 500;
 }
-.fd-shares-list,
-.fd-spaces,
-.fd-space-sessions,
-.fd-mob-requests {
+.fd-share-target select {
+  width: 100%;
+}
+
+/* ---------- Shares and Spaces (tables of the page frame, DL-171) ---------- */
+
+.fd-mob-requests,
+.fd-space-sessions {
   display: grid;
-  gap: var(--sp-2);
+  gap: var(--sp-1);
   margin: 0;
   padding: 0;
   list-style: none;
 }
-.fd-shares-row,
-.fd-space {
-  display: grid;
-  gap: var(--sp-2);
-  padding: var(--sp-3);
-  background: var(--surface);
-  border: 1px solid var(--border-soft);
-  border-radius: var(--r-card);
+.fd-space-sessions {
+  color: var(--dim);
+  font-size: var(--fs-body);
 }
-.fd-shares-row[data-state="revoked"],
-.fd-shares-row[data-state="expired"] {
-  opacity: 0.7;
-}
-.fd-shares-main,
-.fd-space-head,
-.fd-shares-confirm,
-.fd-space-add,
-.fd-space-new {
+.fd-space-add {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--sp-2);
 }
-.fd-space-new,
-.fd-space-add {
-  align-items: end;
-}
-.fd-space-new label,
 .fd-space-add label {
-  display: grid;
-  gap: 6px;
-  color: var(--dim);
-  font-size: 12px;
-}
-.fd-shares-target {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  font-weight: 500;
-}
-.fd-shares-facts {
-  margin: 0;
-}
-.fd-space-head {
-  justify-content: space-between;
-}
-.fd-space-name {
-  margin: 0;
-  font-size: var(--fs-heading);
-}
-.fd-space-sessions {
-  gap: var(--sp-1);
-  color: var(--dim);
-  font-size: var(--fs-body);
+  display: block;
 }
 
 /* ---------- the member banner and the viewer note ---------- */

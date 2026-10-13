@@ -23,6 +23,22 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* ── links ──────────────────────────────────────────────────────── */
+/* A link is comet blue, with no underline; the underline shows on hover and on focus. A visited
+   link keeps the color, and a link inside a note too. `:where()` keeps the rules at zero
+   specificity: a class of a card, a row or a nav item still sets its own look. */
+:where(a, a:visited, .fd-note a, .fd-note a:visited) {
+  color: var(--m-comet);
+  text-decoration: none;
+}
+:where(a:hover, a:focus-visible) {
+  text-decoration: underline;
+}
+:where(a:focus-visible) {
+  outline: 2px solid var(--act);
+  outline-offset: 2px;
+}
+
 /* ── motion and scrollbars ──────────────────────────────────────── */
 @keyframes fd-pulse {
   0%,

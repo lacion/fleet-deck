@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { stationName } from '../board/fleet';
 import { sessionTitle } from '../app/sessions';
 import type { ArtifactKind, DeckArtifact, DeckSession, StationView } from '../gen';
+import { Paperclip } from '../ui/icons';
+import { EmptyState, Page } from '../ui/page';
 import { useNow } from '../ui/useNow';
 import type { ArtifactActions } from './actions';
 import { ArtifactList, visible } from './ArtifactList';
@@ -52,11 +54,15 @@ export function ArtifactsListBody({
   }
   if (state.items.length === 0) {
     return (
-      <p className="fd-empty">
-        {filtered
-          ? 'No artifact matches.'
-          : 'No artifacts yet. A session publishes one, or you publish a file from its Files tab.'}
-      </p>
+      <EmptyState
+        icon={Paperclip}
+        title={filtered ? 'No artifact matches' : 'No artifacts yet'}
+        body={
+          filtered
+            ? 'Change the search or a filter to see more.'
+            : 'A session publishes one, or you publish a file from its Files tab.'
+        }
+      />
     );
   }
   return <ArtifactList items={state.items} now={now} where={where} />;
@@ -90,10 +96,9 @@ export function ArtifactsPage({ actions, stations, sessions, now: givenNow, init
   const [retry, setRetry] = useState(0);
   if (actions === undefined) {
     return (
-      <section className="fd-screen fd-art-page" aria-label="Artifacts">
-        <h1 className="fd-screen-title">Artifacts</h1>
+      <Page title="Artifacts" className="fd-art-page">
         <p className="fd-note">Artifacts need a live board.</p>
-      </section>
+      </Page>
     );
   }
   return (
@@ -163,8 +168,7 @@ function Loaded({
     return card === undefined ? station : `${station} · ${sessionTitle(card)}`;
   };
   return (
-    <section className="fd-screen fd-art-page" aria-label="Artifacts">
-      <h1 className="fd-screen-title">Artifacts</h1>
+    <Page title="Artifacts" className="fd-art-page" wide>
       <form
         className="fd-art-filters"
         aria-label="Filter the artifacts"
@@ -231,6 +235,6 @@ function Loaded({
         where={where}
         onRetry={onRetry}
       />
-    </section>
+    </Page>
   );
 }

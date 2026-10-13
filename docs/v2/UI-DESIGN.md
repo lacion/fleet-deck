@@ -183,6 +183,37 @@ Never leave a control that looks active and then fails with a silent error.
 - Every overlay component calls `useOverlay()` (`web/src/app/overlay.ts`). While one is mounted, the board hotkeys (`j k / n f c t ?`) are off. `Mod+K` and `Esc` still work.
 - A test (`web/src/app/feedback.test.tsx`) reads the sources: each file with an `aria-modal="true"` dialog must call `useOverlay()`.
 
+### 3.6 Secondary pages and forms (DL-171)
+
+Every page that is not the fleet home, a session or the spawn form uses `Page` (`web/src/ui/page.tsx`). Worker briefs copy from this section.
+
+**Page.** `<section class="fd-page">`, centered, `max-width` 1040 px (1280 px for `wide`: tables, the wall, Activity), padding 24px 32px (16px on a phone). The header row holds the title (`h1`, Plex Sans 600, 20 px), an optional `.fd-count`, and the page actions at the right (gap 8 px). The description is 13 px `--dim`, at most 80ch, 4 px under the header and 20 px above the content.
+
+```
+┌ Projects  3                                   [+ New project] [↻ Refresh] ┐
+│ A project is a repository on a station with its forge and its trackers.   │
+│ ┌ table ──────────────────────────────────────────────────────────────┐   │
+│ │ NAME     STATION   FOLDER          FORGE        TRACKERS        …   │   │
+```
+
+**Section and empty state.** `Section`: a `.fd-label` row, then the content in a `.fd-panel` (padding 16 px). `EmptyState`: a `.fd-panel`, centered, padding 40px 24px: a 24 px icon in `--faint`, the title (14 px 600), a sentence (13 px `--dim`, at most 60ch) and one action. Every empty list uses it.
+
+**Primary action.** The main action of a page is `.fd-primary` in the page header ("New project", "New automation", "New share", "New space", "Add station"). While its form is open the button is hidden. It is never dimmed. "Refresh" is `.fd-ghost` with the `RefreshCw` icon.
+
+**Form.** The form sits in a `.fd-panel` (padding 16 px). `FormGrid` has 2 columns of 1fr from 900 px, gap 16px 20px, else 1 column. `Field`: the label is 12 px 500 `--dim`, 6 px above the control; the hint is 12 px `--faint` under the control; the error is 12 px `--hazard` and replaces the hint. A control keeps the width of its cell; a field that needs the row has `span={2}`. Blocks of one form (What, Where, When, Safety; Forge; Issue trackers) are a `.fd-formsec`: a `.fd-label` and a top border `--border-soft`. A rare field goes into a collapsed "Advanced" `<details>`. `FormActions`: a top border `--border-soft`, padding-top 12 px, aligned right: Cancel (`.fd-ghost`), then the primary submit (`.fd-primary`). A refusal of the deck shows at the left of that bar. The submit button is not disabled for an invalid draft: the submit try shows the errors.
+
+**Errors.** A field shows its error only after it was touched (the focus left it) or after a submit try. A fresh form shows none.
+
+**Tables.** A list of records is a table in a `.fd-panel` (`.fd-table`): head cells are `.fd-label` style, rows are 10px 12px with a `--border-soft` line, hover `--raised`; paths are mono 12 px `--dim`; the action cell is right-aligned with `.fd-sm` buttons. A destructive action asks inline ("Delete this project?" Delete, Keep). A dim row (revoked, expired) has opacity .6.
+
+**Links.** `a` is `--m-comet`, no underline, underline on hover and focus-visible. A visited link and a link in `.fd-note` keep the color. The rule has zero specificity: a class of a card, a row or a nav item sets its own look.
+
+**Folder picker.** `FolderPicker` is a text input and "Browse…" (and a pin button when there is a path). The panel under the input has the breadcrumbs (Roots, then each part of the path), the folders (a git icon and the text "git repository" for a repository), pinned and recent folders, "Use this folder" and "Close". Typing a path works. The spawn, Projects and Automations forms use it.
+
+**Help.** The help dialog opens only on `?`, from the palette or from the Fleet home. A first visit shows the notice strip "Press ? for the keys and a short guide." with a dismiss button (key `fd-help-seen`).
+
+**Badges.** Only the mode badge of a session uses `data-tone="hazard"`, and only for `dontAsk`, `bypassPermissions` and `danger-full-access`; `plan` has the `plan` tone, other modes have no tone. A model badge uses `data-family`, a provider badge `data-provider`. Amber stays for "yours to act".
+
 ## 4. Fleet home (wave 1, worker A2)
 
 ### 4.1 Desktop and tablet

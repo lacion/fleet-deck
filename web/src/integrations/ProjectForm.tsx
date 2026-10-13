@@ -1,11 +1,15 @@
-// R3.2 (DL-164): one form for "New project" and "Edit".
-import type { IntegrationsStatus, StationView, TrackerKind } from '../gen';
+// R3.2 (DL-164, DL-171): one form for "New project" and "Edit".
+import { useState } from 'react';
+import type { DeckSession, ForgeKind, IntegrationsStatus, StationView, TrackerKind } from '../gen';
+import { FolderPicker, type ListWorkspaces } from '../ui/FolderPicker';
 import { Icon, Plus, X } from '../ui/icons';
+import { Field, FormActions, FormGrid, fieldError } from '../ui/page';
 import {
   draftProblem,
   FORGE_HOST,
   MAX_TRACKERS,
   type ProjectDraft,
+  systemLabel,
   type TrackerDraft,
 } from './model';
 
@@ -16,13 +20,60 @@ type Props = {
   readonly editing: boolean;
   readonly saving: boolean;
   readonly error: string | null;
-  /** The status of the station from the last "Check": the tracker ids it knows. */
+  /** The status of the station from a "Check": the tracker accounts it knows. */
   readonly status: IntegrationsStatus | null;
   readonly onSave: () => void;
   readonly onCancel: () => void;
+  /** Reads a folder of the station (the folder picker); absent: the folder is typed only. */
+  readonly list?: ListWorkspaces | undefined;
+  readonly sessions?: readonly DeckSession[] | undefined;
+  /** The fields that show their error at the first render (tests). */
+  readonly initialTried?: boolean;
 };
 
 const KINDS: readonly TrackerKind[] = ['jira', 'linear'];
+
+/** A draft that passes every rule: one field of a draft is checked on this base. */
+const SOUND: ProjectDraft = {
+  name: 'x',
+  station: 's',
+  path: '/p',
+  forge: 'none',
+  host: '',
+  repo: '',
+  trackers: [],
+  promptTemplate: '',
+  reviewPrompt: '',
+};
+
+type FieldName = 'name' | 'station' | 'path' | 'repo' | 'trackers';
+
+/** The rule of one field of the draft, or `null`. */
+function problemOf(field: FieldName, d: ProjectDraft): string | null {
+  switch (field) {
+    case 'name':
+      return draftProblem({ ...SOUND, name: d.name });
+    case 'station':
+      return draftProblem({ ...SOUND, station: d.station });
+    case 'path':
+      return draftProblem({ ...SOUND, path: d.path });
+    case 'repo':
+      return draftProblem({ ...SOUND, forge: d.forge, repo: d.repo });
+    case 'trackers':
+      return draftProblem({ ...SOUND, trackers: d.trackers });
+  }
+}
+
+/** The host after a forge change: the default of the new forge while it is empty or the other default. */
+export function hostAfterForge(forge: ProjectDraft['forge'], host: string): string {
+  if (forge === 'none') return '';
+  const other: ForgeKind = forge === 'github' ? 'gitlab' : 'github';
+  return host === '' || host === FORGE_HOST[other] ? FORGE_HOST[forge] : host;
+}
+
+/** The label of a reported tracker account: `acme.atlassian.net (jira-main)`. */
+const accountLabel = (t: IntegrationsStatus['trackers'][number]): string =>
+  `${t.site ?? systemLabel(t.kind)} (${t.id})`;
 
 export function ProjectForm({
   stations,
@@ -34,201 +85,240 @@ export function ProjectForm({
   status,
   onSave,
   onCancel,
+  list,
+  sessions,
+  initialTried = false,
 }: Props) {
+  const [touched, setTouched] = useState<ReadonlySet<FieldName>>(new Set());
+  const [tried, setTried] = useState(initialTried);
+  const touch = (field: FieldName) => setTouched((cur) => new Set(cur).add(field));
+  const shown = (field: FieldName) =>
+    fieldError(problemOf(field, draft), touched.has(field), tried);
   const problem = draftProblem(draft);
   const set = (patch: Partial<ProjectDraft>) => onChange({ ...draft, ...patch });
   const setTracker = (i: number, patch: Partial<TrackerDraft>) =>
     set({ trackers: draft.trackers.map((t, at) => (at === i ? { ...t, ...patch } : t)) });
+  const reported = status?.trackers ?? [];
+  const title = editing ? 'Edit project' : 'New project';
   return (
-    <form
-      className="fd-int-form fd-int-projectform"
-      aria-label={editing ? 'Edit project' : 'New project'}
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (problem === null && !saving) onSave();
-      }}
-    >
-      <h3>{editing ? 'Edit project' : 'New project'}</h3>
-      <label>
-        Name
-        <input
-          value={draft.name}
-          maxLength={80}
-          autoComplete="off"
-          onChange={(e) => set({ name: e.target.value })}
-        />
-      </label>
-      <label>
-        Station
-        <select value={draft.station} onChange={(e) => set({ station: e.target.value })}>
-          {stations.map((s) => (
-            <option key={s.station_id} value={s.station_id}>
-              {s.name}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label>
-        Path (a repository on the station)
-        <input
-          value={draft.path}
-          autoComplete="off"
-          placeholder="/home/me/code/app"
-          onChange={(e) => set({ path: e.target.value })}
-        />
-      </label>
-      <fieldset className="fd-int-fieldset">
-        <legend>Forge</legend>
-        <label>
-          Forge
-          <select
-            value={draft.forge}
-            onChange={(e) => {
-              const forge = e.target.value as ProjectDraft['forge'];
-              const known = Object.values(FORGE_HOST);
-              set({
-                forge,
-                host:
-                  forge === 'none' || known.includes(draft.host) || draft.host === ''
-                    ? ''
-                    : draft.host,
-              });
-            }}
+    <div className="fd-panel fd-formpanel">
+      <form
+        aria-label={title}
+        noValidate
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (saving) return;
+          if (problem === null) onSave();
+          else setTried(true);
+        }}
+      >
+        <h2 className="fd-form-title">{title}</h2>
+        <FormGrid>
+          <Field label="Name" error={shown('name')} onBlur={() => touch('name')}>
+            <input
+              value={draft.name}
+              maxLength={80}
+              autoComplete="off"
+              onChange={(e) => set({ name: e.target.value })}
+            />
+          </Field>
+          <Field label="Station" error={shown('station')} onBlur={() => touch('station')}>
+            <select value={draft.station} onChange={(e) => set({ station: e.target.value })}>
+              {stations.map((s) => (
+                <option key={s.station_id} value={s.station_id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field
+            label="Folder (a repository on the station)"
+            span={2}
+            group
+            error={shown('path')}
+            onBlur={() => touch('path')}
           >
-            <option value="none">None</option>
-            <option value="github">GitHub</option>
-            <option value="gitlab">GitLab</option>
-          </select>
-        </label>
-        {draft.forge === 'none' ? null : (
-          <>
-            <label>
-              Host
-              <input
-                value={draft.host}
-                autoComplete="off"
-                placeholder={FORGE_HOST[draft.forge]}
-                onChange={(e) => set({ host: e.target.value })}
-              />
-            </label>
-            <label>
-              Repository (owner/name)
-              <input
-                value={draft.repo}
-                autoComplete="off"
-                placeholder="owner/name"
-                onChange={(e) => set({ repo: e.target.value })}
-              />
-            </label>
-          </>
-        )}
-      </fieldset>
-      <fieldset className="fd-int-fieldset">
-        <legend>Trackers</legend>
-        {draft.trackers.length === 0 ? <p className="fd-note">No trackers.</p> : null}
-        {draft.trackers.map((t, i) => (
-          <div className="fd-int-tracker" key={i} role="group" aria-label={`Tracker ${i + 1}`}>
-            <label>
-              Tracker id
-              <input
-                value={t.tracker}
-                list="fd-int-tracker-ids"
-                autoComplete="off"
-                onChange={(e) => setTracker(i, { tracker: e.target.value })}
-              />
-            </label>
-            <label>
-              Kind
+            <FolderPicker
+              stationId={draft.station}
+              value={draft.path}
+              onChange={(path) => set({ path })}
+              list={list}
+              sessions={sessions}
+              label="Folder"
+            />
+          </Field>
+        </FormGrid>
+        <div className="fd-formsec" role="group" aria-label="Forge">
+          <h3 className="fd-label">Forge</h3>
+          <FormGrid>
+            <Field label="Forge">
               <select
-                value={t.kind}
-                onChange={(e) => setTracker(i, { kind: e.target.value as TrackerKind })}
+                value={draft.forge}
+                onChange={(e) => {
+                  const forge = e.target.value as 'none' | ForgeKind;
+                  set({ forge, host: hostAfterForge(forge, draft.host) });
+                }}
               >
-                {KINDS.map((k) => (
-                  <option key={k} value={k}>
-                    {k}
-                  </option>
-                ))}
+                <option value="none">None</option>
+                <option value="github">GitHub</option>
+                <option value="gitlab">GitLab</option>
               </select>
-            </label>
-            <label>
-              Key
-              <input
-                value={t.key}
-                autoComplete="off"
-                placeholder="PROJ"
-                onChange={(e) => setTracker(i, { key: e.target.value })}
-              />
-            </label>
+            </Field>
+            {draft.forge === 'none' ? null : (
+              <>
+                <Field label="Host">
+                  <input
+                    value={draft.host}
+                    autoComplete="off"
+                    placeholder={FORGE_HOST[draft.forge]}
+                    onChange={(e) => set({ host: e.target.value })}
+                  />
+                </Field>
+                <Field
+                  label="Repository"
+                  span={2}
+                  error={shown('repo')}
+                  onBlur={() => touch('repo')}
+                >
+                  <input
+                    value={draft.repo}
+                    autoComplete="off"
+                    placeholder={draft.forge === 'gitlab' ? 'group/subgroup/name' : 'owner/name'}
+                    onChange={(e) => set({ repo: e.target.value })}
+                  />
+                </Field>
+              </>
+            )}
+          </FormGrid>
+        </div>
+        <div className="fd-formsec" role="group" aria-label="Trackers">
+          <h3 className="fd-label">Issue trackers</h3>
+          {reported.length === 0 ? (
+            <p className="fd-note">
+              No Jira or Linear account on this station yet.{' '}
+              <a href="#/settings/accounts">How to connect</a>
+            </p>
+          ) : null}
+          {draft.trackers.map((t, i) => {
+            const accounts = reported.filter((r) => r.kind === t.kind);
+            const known = accounts.some((r) => r.id === t.tracker);
+            return (
+              <div className="fd-trackerrow" key={i} role="group" aria-label={`Tracker ${i + 1}`}>
+                <Field label="Kind">
+                  <select
+                    value={t.kind}
+                    onChange={(e) =>
+                      setTracker(i, { kind: e.target.value as TrackerKind, tracker: '' })
+                    }
+                  >
+                    {KINDS.map((k) => (
+                      <option key={k} value={k}>
+                        {systemLabel(k)}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Account">
+                  {accounts.length === 0 ? (
+                    <input
+                      value={t.tracker}
+                      autoComplete="off"
+                      placeholder="Account id"
+                      onChange={(e) => setTracker(i, { tracker: e.target.value })}
+                    />
+                  ) : (
+                    <select
+                      value={t.tracker}
+                      onChange={(e) => setTracker(i, { tracker: e.target.value })}
+                    >
+                      <option value="">Choose an account</option>
+                      {known || t.tracker === '' ? null : (
+                        <option value={t.tracker}>{t.tracker} (not reported)</option>
+                      )}
+                      {accounts.map((r) => (
+                        <option key={r.id} value={r.id}>
+                          {accountLabel(r)}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </Field>
+                <Field label={t.kind === 'linear' ? 'Team key' : 'Project key'}>
+                  <input
+                    value={t.key}
+                    autoComplete="off"
+                    placeholder={t.kind === 'linear' ? 'ENG' : 'PROJ'}
+                    onChange={(e) => setTracker(i, { key: e.target.value })}
+                  />
+                </Field>
+                <button
+                  type="button"
+                  className="fd-ghost fd-sm"
+                  aria-label={`Remove tracker ${i + 1}`}
+                  onClick={() => set({ trackers: draft.trackers.filter((_, at) => at !== i) })}
+                >
+                  <Icon of={X} size={14} /> Remove
+                </button>
+              </div>
+            );
+          })}
+          {shown('trackers') === null ? null : (
+            <p className="fd-fielderror" role="alert">
+              {shown('trackers')}
+            </p>
+          )}
+          <div>
             <button
               type="button"
               className="fd-ghost fd-sm"
-              aria-label={`Remove tracker ${i + 1}`}
-              onClick={() => set({ trackers: draft.trackers.filter((_, at) => at !== i) })}
+              disabled={draft.trackers.length >= MAX_TRACKERS}
+              onClick={() =>
+                set({ trackers: [...draft.trackers, { tracker: '', kind: 'jira', key: '' }] })
+              }
             >
-              <Icon of={X} size={14} /> Remove
+              <Icon of={Plus} size={14} /> Add a tracker
             </button>
           </div>
-        ))}
-        <datalist id="fd-int-tracker-ids">
-          {(status?.trackers ?? []).map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.kind}
-            </option>
-          ))}
-        </datalist>
-        <div>
-          <button
-            type="button"
-            className="fd-ghost fd-sm"
-            disabled={draft.trackers.length >= MAX_TRACKERS}
-            onClick={() =>
-              set({ trackers: [...draft.trackers, { tracker: '', kind: 'jira', key: '' }] })
-            }
-          >
-            <Icon of={Plus} size={14} /> Add a tracker
-          </button>
         </div>
-        <p className="fd-note">
-          The tracker id is the id of a <code>[[trackers]]</code> entry in the station config. Press
-          Check on a saved project to list the ids that the station knows.
-        </p>
-      </fieldset>
-      <label>
-        Prompt template (sessions from tickets)
-        <textarea
-          rows={4}
-          value={draft.promptTemplate}
-          maxLength={4000}
-          onChange={(e) => set({ promptTemplate: e.target.value })}
-        />
-      </label>
-      <label>
-        Review prompt (review sessions)
-        <textarea
-          rows={4}
-          value={draft.reviewPrompt}
-          maxLength={4000}
-          onChange={(e) => set({ reviewPrompt: e.target.value })}
-        />
-      </label>
-      <p className="fd-note">A prompt left empty uses the default prompt of the deck.</p>
-      {error === null ? (
-        problem === null ? null : (
-          <p className="fd-note">{problem}</p>
-        )
-      ) : (
-        <p className="fd-note fd-int-error" role="alert">
-          {error}
-        </p>
-      )}
-      <div className="fd-plan-actions">
-        <button type="submit" className="fd-primary" disabled={problem !== null || saving}>
-          {saving ? 'Saving…' : 'Save'}
-        </button>
-        <button type="button" className="fd-ghost" onClick={onCancel}>
-          Cancel
-        </button>
-      </div>
-    </form>
+        <details className="fd-advanced">
+          <summary>Advanced</summary>
+          <FormGrid>
+            <Field
+              label="Prompt template (sessions from tickets)"
+              hint="A prompt left empty uses the default prompt of the deck."
+              span={2}
+            >
+              <textarea
+                rows={4}
+                value={draft.promptTemplate}
+                maxLength={4000}
+                onChange={(e) => set({ promptTemplate: e.target.value })}
+              />
+            </Field>
+            <Field label="Review prompt (review sessions)" span={2}>
+              <textarea
+                rows={4}
+                value={draft.reviewPrompt}
+                maxLength={4000}
+                onChange={(e) => set({ reviewPrompt: e.target.value })}
+              />
+            </Field>
+          </FormGrid>
+        </details>
+        <FormActions>
+          {error === null ? null : (
+            <span className="fd-formerror" role="alert">
+              {error}
+            </span>
+          )}
+          <button type="button" className="fd-ghost" onClick={onCancel}>
+            Cancel
+          </button>
+          <button type="submit" className="fd-primary" disabled={saving}>
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </FormActions>
+      </form>
+    </div>
   );
 }

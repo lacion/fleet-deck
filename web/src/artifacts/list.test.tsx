@@ -75,9 +75,9 @@ describe('artifacts page states', () => {
     const failed = body({ state: { kind: 'error', text: 'the deck is down' } });
     expect(failed).toContain('role="alert"');
     expect(failed).toContain('Try again');
-    expect(body({ state: { kind: 'ok', items: [] } })).toContain('No artifacts yet.');
+    expect(body({ state: { kind: 'ok', items: [] } })).toContain('No artifacts yet');
     expect(body({ state: { kind: 'ok', items: [] }, filtered: true })).toContain(
-      'No artifact matches.',
+      'No artifact matches',
     );
   });
 
@@ -91,7 +91,7 @@ describe('artifacts page states', () => {
         initial={{ kind: 'ok', items: [deckArtifact('a1', { title: 'Plan' })] }}
       />,
     );
-    expect(html).toContain('<h1 class="fd-screen-title">Artifacts</h1>');
+    expect(html).toContain('<h1 class="fd-page-title">Artifacts</h1>');
     expect(html).toContain('aria-label="Search by title"');
     expect(html).toContain('All kinds');
     expect(html).toContain('>Markdown<');

@@ -314,7 +314,7 @@ describe('station projections', () => {
       );
     expect(render(true, 'live')).toContain('Add station');
     expect(render(true, 'live')).toContain('Remove station');
-    expect(render(true, 'stale')).toMatch(/<button[^>]*disabled=""[^>]*>Add station/);
+    expect(render(true, 'stale')).toMatch(/<button[^>]*disabled=""[^>]*>[\s\S]*?Add station/);
     expect(render(false, 'live')).toContain('Pairing needs the admin scope.');
     expect(render(false, 'live')).not.toContain('Remove station');
     expect(
@@ -340,7 +340,7 @@ describe('station projections', () => {
   test('an empty panel reports no paired stations', () => {
     expect(
       renderToStaticMarkup(<StationsPanel stations={[]} sessions={[]} freshness="live" />),
-    ).toContain('No paired stations.');
+    ).toContain('No paired stations');
   });
   test('last seen distinguishes no link, epoch zero and invalid input', () => {
     expect(lastSeen(null)).toBe('Never');
@@ -459,7 +459,7 @@ describe('fleet cards, DL-141', () => {
         ],
       }),
     ]);
-    expect(out.match(/fd-card-error">rate_limit: Try later</g)).toHaveLength(1);
+    expect(out.match(/fd-card-error">Try later\.</g)).toHaveLength(1);
     expect(out).toMatch(/data-session="i"[\s\S]*?fd-card-error/);
     expect(out).toContain('Working</span>');
   });

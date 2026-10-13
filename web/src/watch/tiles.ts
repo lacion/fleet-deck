@@ -2,6 +2,7 @@
 // A wall of compact live tiles: the model of one tile and of the page. Nothing here is
 // shared with the rest of the board, so the owner can pick another form later.
 import { repoName } from '../board/fleet';
+import { plainLine } from '../ui/format';
 import type { DeckSession, EventEnvelope, OpenRequest } from '../gen';
 import { buildTimeline, type Item } from '../session/timeline';
 import { questionForm } from '../session/question';
@@ -37,18 +38,19 @@ export type TileLine = {
   readonly text: string;
 };
 
-const cut = (text: string): string => {
+/** The first non-empty line, cut to `LINE_CHARS`. Chat text loses its Markdown marks; a tool call keeps its text. */
+const cut = (text: string, markdown = false): string => {
   const line =
     text
       .split('\n')
-      .map((l) => l.trim())
+      .map((l) => (markdown ? plainLine(l) : l.trim()))
       .find((l) => l !== '') ?? '';
   return line.length <= LINE_CHARS ? line : `${line.slice(0, LINE_CHARS - 1)}…`;
 };
 
 function lineOf(item: Item): TileLine | null {
   if (item.type === 'message') {
-    const text = cut(item.text);
+    const text = cut(item.text, true);
     return text === '' ? null : { key: item.key, kind: 'message', text };
   }
   if (item.type === 'tool') {

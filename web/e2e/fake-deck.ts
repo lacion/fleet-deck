@@ -69,14 +69,14 @@ export class FakeDeck {
     return release;
   }
 
-  /** `firstRun: true` keeps the help overlay of a first visit (every other test has seen it). */
+  /** `firstRun: true` keeps the help notice of a first visit (every other test has seen it). */
   async install(page: Page, options: { firstRun?: boolean } = {}): Promise<void> {
     if (options.firstRun !== true) {
       await page.addInitScript(() => {
         try {
           localStorage.setItem('fd-help-seen', '1');
         } catch {
-          // The overlay may open; the test sees it.
+          // The help notice may show; the test sees it.
         }
       });
     }

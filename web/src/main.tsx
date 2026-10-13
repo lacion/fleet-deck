@@ -15,6 +15,7 @@ import '@fontsource/ibm-plex-mono/latin-600.css';
 import '@xterm/xterm/css/xterm.css';
 import './styles/tokens.css';
 import './styles/base.css';
+import './styles/page.css';
 import './styles/shell.css';
 import './styles/home.css';
 import './styles/session.css';

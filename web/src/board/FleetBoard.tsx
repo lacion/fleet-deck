@@ -10,7 +10,7 @@ import type { SessionActions } from '../session/commands';
 import { runningSubagents } from '../session/timeline';
 import { useDiffTotal } from '../session/workspace';
 import { batchCountOf, batchCounts, MIN_SIBLINGS } from '../compare/compare';
-import { modelFamily, shortModel } from '../ui/format';
+import { errorSentence, isRiskyMode, modelFamily, shortModel } from '../ui/format';
 import { digestLine, GeneratedMark } from '../ui/generated';
 import {
   Archive,
@@ -167,9 +167,7 @@ function CardNote({ card }: { card: DeckSession }) {
   ) {
     return (
       <span className="fd-card-note">
-        <span className="fd-card-error">
-          {error.code}: {error.message}
-        </span>
+        <span className="fd-card-error">{errorSentence(`${error.code}: ${error.message}`)}</span>
       </span>
     );
   }
@@ -213,7 +211,7 @@ export function FleetCard({
   const starred = priority.use().has(ref);
   const projects = useProjects();
   const cleared = archived.use().has(ref) && (card.status === 'ended' || card.status === 'lost');
-  const bypass = s.mode === 'bypassPermissions' || s.mode === 'dontAsk';
+  const bypass = isRiskyMode(s.mode);
   const subagents = runningSubagents(s);
   const where =
     s.branch !== null && s.branch !== '' ? (
