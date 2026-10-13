@@ -793,3 +793,56 @@ fn hibernation_is_kept_through_the_stop_and_cleared_by_the_next_start() {
     assert!(!s.hibernated);
     assert_eq!(s.activity, Activity::Idle);
 }
+
+#[test]
+fn a_generated_title_is_marked_until_the_owner_renames_the_session() {
+    let mut f = Feed::new();
+    f.push(started());
+    assert!(!f.summary.title_generated);
+    // The station renames first, then marks the title as generated.
+    f.push(Event::SessionRenamed {
+        title: Some("Fix the login redirect".to_owned()),
+    });
+    let s = f.push(Event::SessionTitleGenerated {
+        title: "Fix the login redirect".to_owned(),
+    });
+    assert_eq!(s.title.as_deref(), Some("Fix the login redirect"));
+    assert!(s.title_generated);
+    // An owner rename removes the mark, also with the same text.
+    let s = f.push(Event::SessionRenamed {
+        title: Some("Fix the login redirect".to_owned()),
+    });
+    assert!(!s.title_generated);
+    // A marker for a title that is not the current one marks nothing.
+    let s = f.push(Event::SessionTitleGenerated {
+        title: "Another title".to_owned(),
+    });
+    assert!(!s.title_generated);
+    f.push(Event::SessionRenamed { title: None });
+    assert!(!f.summary.title_generated);
+}
+
+#[test]
+fn a_digest_sets_the_summary_digest_and_the_newest_wins() {
+    let mut f = Feed::new();
+    f.push(started());
+    assert_eq!(f.summary.digest, None);
+    f.push(Event::SessionDigest {
+        text: "- one".to_owned(),
+    });
+    let s = f.push(Event::SessionDigest {
+        text: "- two".to_owned(),
+    });
+    assert_eq!(s.digest.as_deref(), Some("- two"));
+}
+
+#[test]
+fn a_summary_decodes_without_the_digest_fields() {
+    let mut v = serde_json::to_value(SessionSummary::new(SessionId::from("s1"))).unwrap();
+    let object = v.as_object_mut().unwrap();
+    assert!(!object.contains_key("digest"), "None is not serialized");
+    object.remove("title_generated");
+    let s: SessionSummary = serde_json::from_value(v).unwrap();
+    assert!(!s.title_generated);
+    assert_eq!(s.digest, None);
+}

@@ -8,6 +8,7 @@ import { providerLabel } from '../board/lanes';
 import { limitChip, rateMeters } from '../board/usage';
 import type { DeckSession, ModelChoice, StationView } from '../gen';
 import { modelFamily, shortModel } from '../ui/format';
+import { digestLines, GeneratedMark } from '../ui/generated';
 import {
   Archive,
   ArchiveRestore,
@@ -15,6 +16,7 @@ import {
   ChevronLeft,
   Copy,
   Ellipsis,
+  FileText,
   Folder,
   GitCompare,
   Icon,
@@ -117,6 +119,7 @@ function retryText(retryAt: number | null, now: number): string | null {
 /** The facts of a session: its id (with a copy button), callsign, worktree, age and event count. */
 function Details({ session, now }: { readonly session: DeckSession; readonly now: number }) {
   const s = session.summary;
+  const digest = digestLines(s.digest);
   return (
     <dl className="fd-sh-details">
       <div>
@@ -136,6 +139,18 @@ function Details({ session, now }: { readonly session: DeckSession; readonly now
         <div>
           <dt>Worktree</dt>
           <dd>{s.worktree}</dd>
+        </div>
+      ) : null}
+      {digest.length > 0 ? (
+        <div data-field="digest">
+          <dt>Summary (generated)</dt>
+          <dd>
+            <ul className="fd-sh-digest">
+              {digest.map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+          </dd>
         </div>
       ) : null}
       <div>
@@ -414,6 +429,18 @@ export function SessionHeader({
           <Icon of={GitCompare} /> Compare batch
         </button>
       ) : null}
+      {flags.live && actions?.canDrive === true ? (
+        <button
+          type="button"
+          disabled={busy !== null}
+          onClick={() => {
+            close();
+            run('summarize', (a) => a.summarize());
+          }}
+        >
+          <Icon of={FileText} /> Summarize
+        </button>
+      ) : null}
       <button type="button" onClick={() => priority.toggle(ref)}>
         <Icon of={Star} /> {starred ? 'Unstar' : 'Star'}
       </button>
@@ -630,6 +657,7 @@ export function SessionHeader({
             ) : (
               <>
                 <h2 className="fd-sh-title">{title}</h2>
+                {s.title !== null && s.title_generated ? <GeneratedMark /> : null}
                 {starred ? (
                   <span className="fd-sh-star" aria-hidden="true">
                     <Icon of={Star} size={14} />

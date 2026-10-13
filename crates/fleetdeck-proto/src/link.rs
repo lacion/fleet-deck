@@ -265,6 +265,16 @@ pub struct StationInfo {
     /// The configured provider instances with their probed versions.
     #[serde(default)]
     pub providers: Vec<StationProvider>,
+    /// The tokens that the station's model help used today (DL-167, R10).
+    /// Absent from a station without model help, or with it switched off.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub assist_tokens_today: Option<u64>,
+    /// The daily token cap of the station's model help. Absent when the
+    /// model help is off.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub assist_cap: Option<u64>,
 }
 
 /// One configured provider instance of a station (`[[provider_instance]]`,

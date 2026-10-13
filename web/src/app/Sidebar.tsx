@@ -23,6 +23,7 @@ import {
   Zap,
 } from '../ui/icons';
 import { shortModel } from '../ui/format';
+import { GeneratedMark } from '../ui/generated';
 import { archived as archivedSet } from '../ui/archive';
 import { priority, sessionRef } from '../ui/localSet';
 import { isHibernated } from '../views/hibernate';
@@ -96,6 +97,7 @@ function Row({
           <span className="fd-vh">{statusLabel(card)}: </span>
           {sessionTitle(card)}
           <UnreadMark count={unreadOf(card)} />
+          {s.title !== null && s.title_generated ? <GeneratedMark /> : null}
           {starred ? (
             <span className="fd-srow-star" role="img" aria-label="Starred">
               <Icon of={Star} size={12} />

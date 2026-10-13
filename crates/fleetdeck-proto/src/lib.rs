@@ -7,6 +7,7 @@
 //! from it ([`ts::export_all`]).
 
 pub mod artifacts;
+pub mod assist;
 pub mod automation;
 pub mod board;
 pub mod capability;

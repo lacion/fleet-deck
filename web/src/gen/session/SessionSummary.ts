@@ -42,7 +42,17 @@ worktree: string | null,
 /**
  * The repository of `cwd` (M3 6-7, DL-306). Absent before M3.
  */
-repo: RepoInfo | null, title: string | null, state: SessionState, activity: Activity, mode: string | null, model: string | null, capabilities: Capabilities | null, current_run: RunId | null, current_turn: TurnId | null, open_requests: Array<OpenRequest>, 
+repo: RepoInfo | null, title: string | null, 
+/**
+ * The title came from the station's model help and the owner did not
+ * change it since (DL-167, R10.1). Absent before DL-167.
+ */
+title_generated: boolean, 
+/**
+ * The generated digest of the session (DL-167, R10.2): a few lines of
+ * "what the agent did". Absent until one exists.
+ */
+digest?: string, state: SessionState, activity: Activity, mode: string | null, model: string | null, capabilities: Capabilities | null, current_run: RunId | null, current_turn: TurnId | null, open_requests: Array<OpenRequest>, 
 /**
  * Ids of running background tasks (L7).
  */

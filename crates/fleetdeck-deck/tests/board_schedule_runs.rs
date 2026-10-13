@@ -30,6 +30,8 @@ fn info() -> StationInfo {
         allow_shell: None,
         allow_setup_cmd: Some(true),
         providers: Vec::new(),
+        assist_tokens_today: None,
+        assist_cap: None,
     }
 }
 

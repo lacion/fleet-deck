@@ -72,6 +72,15 @@ pub struct SessionSummary {
     #[serde(default)]
     pub repo: Option<RepoInfo>,
     pub title: Option<String>,
+    /// The title came from the station's model help and the owner did not
+    /// change it since (DL-167, R10.1). Absent before DL-167.
+    #[serde(default)]
+    pub title_generated: bool,
+    /// The generated digest of the session (DL-167, R10.2): a few lines of
+    /// "what the agent did". Absent until one exists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub digest: Option<String>,
     pub state: SessionState,
     pub activity: Activity,
     pub mode: Option<String>,
@@ -168,6 +177,8 @@ impl SessionSummary {
             worktree: None,
             repo: None,
             title: None,
+            title_generated: false,
+            digest: None,
             state: SessionState::Starting,
             activity: Activity::Idle,
             mode: None,

@@ -11,6 +11,7 @@ import { runningSubagents } from '../session/timeline';
 import { useDiffTotal } from '../session/workspace';
 import { batchCountOf, batchCounts, MIN_SIBLINGS } from '../compare/compare';
 import { modelFamily, shortModel } from '../ui/format';
+import { digestLine, GeneratedMark } from '../ui/generated';
 import {
   Archive,
   ArchiveRestore,
@@ -223,6 +224,7 @@ export function FleetCard({
     ) : null;
   const files = extra?.files ?? [];
   const total = useDiffTotal(ref);
+  const digest = digestLine(s.digest);
   const activity = buckets(ref, now);
   const station = showStation
     ? `${stationName(card.station_id, stations)}${where === null ? '' : ' · '}`
@@ -246,6 +248,7 @@ export function FleetCard({
         <span className="fd-card-head">
           <span className="fd-dot" data-status={card.status} aria-hidden="true" />
           <span className="fd-card-title">{s.title ?? s.callsign ?? s.session_id}</span>
+          {s.title !== null && s.title_generated ? <GeneratedMark /> : null}
           {starred ? (
             <span className="fd-card-star" title="Priority">
               <Icon of={Star} size={12} />
@@ -271,6 +274,11 @@ export function FleetCard({
         </span>
         <CardNote card={card} />
         <FocusLine summary={s} />
+        {digest === null ? null : (
+          <span className="fd-card-digest" title="Generated summary">
+            {digest}
+          </span>
+        )}
         {files.length === 0 ? null : (
           <span className="fd-card-files">
             {files.map((path) => (

@@ -9,9 +9,11 @@
 //! the mail id is stable for the pair, the file and the recipient, so the
 //! stored mail is the dedup record and survives a restart.
 
-use std::collections::BTreeMap;
+use std::cell::RefCell;
+use std::collections::{BTreeMap, BTreeSet};
 
 use fleetdeck_core::ids::{IdSource, new_id};
+use fleetdeck_proto::assist::fence_untrusted;
 use fleetdeck_proto::command::{CommandOrigin, SessionCommand, UserInput};
 use fleetdeck_proto::conflicts::{
     CONFLICT_WINDOW_MS, FileConflict, FileTouch, MAX_CONFLICTS, touch_key,
@@ -36,12 +38,31 @@ const MAX_PATH_BYTES: usize = 1024;
 pub const CONFLICT_MAIL_TTL_MS: i64 = 2 * 60 * 60 * 1000;
 /// The sender of a conflict mail.
 const MAIL_SENDER: &str = "fleetdeck";
+/// How long the delivery of a conflict mail waits for its generated
+/// sentence (DL-167). The wait ends when the sentence is stored or when the
+/// call failed; the hold only bounds a call that never answers.
+pub const SENTENCE_HOLD_MS: i64 = 30_000;
+
+/// A conflict mail that waits for a generated sentence (R10.6, DL-167).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SentenceJob {
+    pub mail_id: String,
+    /// The station of the recipient: it runs the model call.
+    pub station: StationId,
+    /// The model input: the file and what each session did, fenced.
+    pub input: String,
+}
 
 /// What the conflict mail needs from the caller of [`record_touches`].
 pub(super) struct MailContext<'a> {
     pub ids: &'a dyn IdSource,
     /// The deck time in Unix ms.
     pub now: i64,
+    /// The stations whose model help is on: a mail to one of their sessions
+    /// waits for a generated sentence (DL-167).
+    pub assist: &'a BTreeSet<StationId>,
+    /// The mails that wait for a sentence.
+    pub jobs: &'a RefCell<Vec<SentenceJob>>,
 }
 
 /// One session of a conflict.
@@ -120,8 +141,10 @@ fn mail_party(
     if matches!(summary.state, SessionState::Exited | SessionState::Lost) {
         return Ok(());
     }
-    let other_name = stored_summary(tx, other)?
-        .and_then(|s| s.title)
+    let other_summary = stored_summary(tx, other)?;
+    let other_name = other_summary
+        .as_ref()
+        .and_then(|s| s.title.clone())
         .unwrap_or_else(|| other.session.as_str().to_owned());
     let other_station = station_name(tx, &other.station)?;
     let text = format!(
@@ -142,7 +165,7 @@ fn mail_party(
     insert_mail(
         tx,
         &NewMail {
-            mail_id,
+            mail_id: mail_id.clone(),
             sender: MAIL_SENDER.to_owned(),
             session_id: recipient.session.clone(),
             delivery: MailDelivery::FollowUp,
@@ -152,7 +175,48 @@ fn mail_party(
         &outbox_id,
         mail.now,
     )?;
+    if mail.assist.contains(&recipient.station) {
+        // The delivery waits for the generated sentence (R10.6, DL-167);
+        // the plain text goes out when the hold ends.
+        tx.execute(
+            "UPDATE outbox SET next_at = ?2 WHERE outbox_id = ?1",
+            params![outbox_id, mail.now.saturating_add(SENTENCE_HOLD_MS)],
+        )?;
+        let me = (
+            summary
+                .title
+                .as_deref()
+                .unwrap_or(recipient.session.as_str()),
+            station_name(tx, &recipient.station)?,
+            summary.digest.as_deref(),
+        );
+        let them = (
+            other_name.as_str(),
+            other_station.clone(),
+            other_summary.as_ref().and_then(|s| s.digest.as_deref()),
+        );
+        mail.jobs.borrow_mut().push(SentenceJob {
+            mail_id,
+            station: recipient.station.clone(),
+            input: conflict_input(file, [me, them]),
+        });
+    }
     Ok(())
+}
+
+/// The model input of a conflict sentence: the file and, for each session,
+/// its title and digest. Session text comes from agents, so it is fenced.
+fn conflict_input(file: &str, sessions: [(&str, String, Option<&str>); 2]) -> String {
+    let mut text = format!("File: {file}\n");
+    for (n, (title, station, digest)) in sessions.into_iter().enumerate() {
+        let what = digest.unwrap_or("no summary yet");
+        text.push_str(&format!(
+            "Session {}:\n{}\n",
+            n + 1,
+            fence_untrusted(&format!("\"{title}\" on {station}: {what}"))
+        ));
+    }
+    text
 }
 
 /// Mails both sessions of each pair that touched `(group, file)` in the
@@ -260,6 +324,75 @@ pub(super) fn record_touches(
 }
 
 impl DeckStore {
+    /// The conflict mails that wait for a generated sentence, once each
+    /// (R10.6, DL-167). The link takes them after a fold and asks the
+    /// station; [`Self::finish_conflict_sentence`] ends each wait.
+    pub fn take_conflict_jobs(&self) -> Vec<SentenceJob> {
+        std::mem::take(
+            &mut *self
+                .inner
+                .sentence_jobs
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
+    }
+
+    /// Ends the wait of one conflict mail: with `Some(sentence)` the
+    /// sentence goes after the plain text, in the mail and in its queued
+    /// delivery; either way the delivery is due now. A mail that was sent
+    /// already (the hold ended first) is not changed.
+    ///
+    /// # Errors
+    /// A database or JSON error.
+    pub async fn finish_conflict_sentence(
+        &self,
+        mail_id: String,
+        sentence: Option<String>,
+    ) -> Result<()> {
+        let now = self.now_ms();
+        call(&self.inner.db, move |conn| {
+            let tx = conn.transaction()?;
+            let row: Option<(String, String, String, String)> = tx
+                .query_row(
+                    "SELECT m.text, m.outbox_id, o.payload, o.state FROM mail m
+                     JOIN outbox o ON o.outbox_id = m.outbox_id WHERE m.mail_id = ?1",
+                    [&mail_id],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                )
+                .optional()?;
+            let Some((text, outbox_id, payload, state)) = row else {
+                return Ok(());
+            };
+            if state != "queued" {
+                return Ok(());
+            }
+            let mut payload: serde_json::Value = serde_json::from_str(&payload)?;
+            if let Some(sentence) = sentence {
+                let text = format!("{text} {sentence}");
+                let mut kind: CommandKind = serde_json::from_value(payload)?;
+                if let CommandKind::Session {
+                    command: SessionCommand::FollowUp { input, .. },
+                } = &mut kind
+                {
+                    *input = UserInput::new(mail_frame(MAIL_SENDER, &text));
+                }
+                payload = serde_json::to_value(&kind)?;
+                tx.execute(
+                    "UPDATE mail SET text = ?2 WHERE mail_id = ?1",
+                    params![mail_id, text],
+                )?;
+            }
+            tx.execute(
+                "UPDATE outbox SET payload = ?2, next_at = min(next_at, ?3), updated_at = ?3
+                 WHERE outbox_id = ?1 AND state = 'queued'",
+                params![outbox_id, serde_json::to_string(&payload)?, now],
+            )?;
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+    }
+
     /// The files that two or more sessions touched in the last
     /// [`CONFLICT_WINDOW_MS`], the newest conflict first.
     ///

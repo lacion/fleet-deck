@@ -180,7 +180,16 @@ impl SessionSummary {
                     reason: reason.clone(),
                 });
             }
-            Event::SessionRenamed { title } => self.title.clone_from(title),
+            Event::SessionRenamed { title } => {
+                self.title.clone_from(title);
+                self.title_generated = false;
+            }
+            // The marker counts only while the title is the one that the
+            // model help set; an owner rename in between wins (DL-167).
+            Event::SessionTitleGenerated { title } => {
+                self.title_generated = self.title.as_deref() == Some(title.as_str());
+            }
+            Event::SessionDigest { text } => self.digest = Some(text.clone()),
             Event::SessionNamed { callsign, worktree } => {
                 self.callsign = Some(callsign.clone());
                 self.worktree.clone_from(worktree);

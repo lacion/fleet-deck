@@ -1,6 +1,15 @@
 import type { DeckSession, StationView } from '../gen';
 import { useNow } from '../ui/useNow';
-import { costTotalText, fleetUsage, meterText, rateMeters, tokens, totalText } from './usage';
+import {
+  assistMeters,
+  assistText,
+  costTotalText,
+  fleetUsage,
+  meterText,
+  rateMeters,
+  tokens,
+  totalText,
+} from './usage';
 
 type Props = {
   readonly sessions: readonly DeckSession[];
@@ -14,6 +23,7 @@ export function UsageMeters({ sessions, stations, now: given }: Props) {
   const now = useNow(given, 30000);
   const usage = fleetUsage(sessions);
   const meters = rateMeters(sessions, stations);
+  const assist = assistMeters(stations);
   return (
     <section className="fd-usage-meters" aria-label="Usage">
       <h2 className="fd-vh">Usage</h2>
@@ -52,6 +62,23 @@ export function UsageMeters({ sessions, stations, now: given }: Props) {
                 />
               )}
               <span className="fd-usage-text">{meterText(m, now)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {assist.length === 0 ? null : (
+        <ul className="fd-usage-meterlist" aria-label="Fleet Deck model help">
+          {assist.map((m) => (
+            <li key={m.key} className="fd-usage-meter" data-scope="fleetdeck">
+              <span className="fd-usage-name">{m.label}</span>
+              <meter
+                min={0}
+                max={m.cap}
+                high={m.cap * 0.8}
+                value={Math.min(m.tokens, m.cap)}
+                aria-label={m.label}
+              />
+              <span className="fd-usage-text">{assistText(m)}</span>
             </li>
           ))}
         </ul>

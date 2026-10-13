@@ -10,6 +10,8 @@ pub mod host {
 
 /// Artifacts: versioned files that a session or a person publishes (R12).
 pub mod artifacts;
+/// Model help on the station (R10, DL-167).
+pub mod assist;
 
 /// Crash injection at the effect boundaries (M2 P2-8).
 /// The coordinator MCP endpoint (M3 6-5, ADR-006).

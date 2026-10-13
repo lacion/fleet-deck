@@ -730,6 +730,8 @@ mod revert_wired;
 #[path = "rename_tests.rs"]
 mod rename;
 
+#[path = "assist_wired_tests.rs"]
+mod assist_wired;
 #[path = "batch_tests.rs"]
 mod batch;
 #[path = "origin_text_tests.rs"]

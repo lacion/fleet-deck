@@ -136,6 +136,22 @@ pub const API: &[ApiMethod] = &[
         Some(Scope::Drive),
         true,
     ),
+    // Model help (R10, DL-167): `drive`, because it spends the owner's
+    // tokens; mutating, for the CSRF check and the audit row.
+    m(
+        "assist.generate",
+        Method::POST,
+        "/api/assist/{kind}",
+        Some(Scope::Drive),
+        true,
+    ),
+    m(
+        "session.digest",
+        Method::POST,
+        "/api/stations/{station}/sessions/{session}/digest",
+        Some(Scope::Drive),
+        true,
+    ),
     // A pasted image (DL-147): `admin`, and the handler also requires the
     // owner's board login (DL-138).
     m(

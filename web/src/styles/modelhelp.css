@@ -1,0 +1,33 @@
+/* DL-167: text from the model help is labeled as generated. */
+.fd-generated {
+  flex: none;
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 0 5px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  color: var(--faint);
+  font-size: 10px;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.fd-sh-line > .fd-generated {
+  align-self: center;
+  margin-top: 0;
+}
+.fd-card-digest {
+  display: -webkit-box;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--faint);
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+}
+.fd-sh-digest {
+  margin: 0;
+  padding-left: 16px;
+}

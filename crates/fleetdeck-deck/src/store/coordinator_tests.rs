@@ -72,6 +72,8 @@ fn info(name: &str) -> StationInfo {
             provider("claude", ProviderKind::Claude),
             provider("codex", ProviderKind::Codex),
         ],
+        assist_tokens_today: None,
+        assist_cap: None,
     }
 }
 

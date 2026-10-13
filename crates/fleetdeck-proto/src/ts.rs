@@ -18,6 +18,7 @@ use crate::artifacts::{
     ArtifactVersion, DeckArtifact, DeckArtifactDetail, ShareLink, ShareRequest, ShareView,
     ViewLink, ViewRequest,
 };
+use crate::assist::{AssistAnswer, AssistKind, AssistRequest, AssistRoute, AssistSession};
 use crate::automation::{Schedule, ScheduleInput, ScheduleRun, ScheduleRunState, ScheduleView};
 use crate::board::{
     ActivityItem, ActivityKind, ActivityList, AddStationRequest, ArchiveChange, ArchiveItem,
@@ -236,6 +237,11 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         ChatPost::export_all(&cfg),
         DriveGrant::export_all(&cfg),
         DriverState::export_all(&cfg),
+        AssistKind::export_all(&cfg),
+        AssistRequest::export_all(&cfg),
+        AssistAnswer::export_all(&cfg),
+        AssistRoute::export_all(&cfg),
+        AssistSession::export_all(&cfg),
     ];
     for result in results {
         result.map_err(io::Error::other)?;

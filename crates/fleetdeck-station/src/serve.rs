@@ -98,6 +98,8 @@ pub struct RunningStation {
     shutdown: watch::Sender<bool>,
     socket: PathBuf,
     shells: Arc<crate::shell::Shells>,
+    /// The model-help watcher (R10, DL-167).
+    assist: tokio::task::JoinHandle<()>,
 }
 
 impl RunningStation {
@@ -138,6 +140,18 @@ impl RunningStation {
                 SessionManager::start_with_shims(store, policy, adapters, ids, shims).await?
             }
         });
+        let assist = Arc::new(crate::assist::Assist::new(
+            config.model_help.clone(),
+            manager.store().clone(),
+            assist_instances(config),
+        ));
+        manager.set_assist(Arc::clone(&assist));
+        let (shutdown, rx) = watch::channel(false);
+        let assist_task = tokio::spawn(crate::assist::watch::run(
+            assist,
+            Arc::clone(&manager),
+            rx.clone(),
+        ));
         let identity = Arc::new(Identity::load_or_create(&station_dir)?);
         // A station restart ends every shell (PLAN §6.8, A10): the PTYs
         // close with the process.
@@ -165,7 +179,6 @@ impl RunningStation {
             listen = ?node.listen_addrs().await,
             "station ready"
         );
-        let (shutdown, rx) = watch::channel(false);
         let server = tokio::spawn(local::serve(
             listener,
             Arc::clone(&manager),
@@ -180,6 +193,7 @@ impl RunningStation {
             shutdown,
             socket,
             shells,
+            assist: assist_task,
         })
     }
 
@@ -189,6 +203,7 @@ impl RunningStation {
         tracing::info!("station stopping");
         let _ = self.shutdown.send(true);
         let _ = self.server.await;
+        let _ = self.assist.await;
         self.node.shutdown();
         // The stop waits for the terminal processes (up to the hangup grace).
         let shells = Arc::clone(&self.shells);
@@ -205,6 +220,30 @@ impl RunningStation {
             tracing::debug!(error = %e, "socket file");
         }
     }
+}
+
+/// The provider instances that the model help can call (R10, DL-167): each
+/// with its binary and its scrubbed environment. An instance whose
+/// environment does not build is left out.
+fn assist_instances(config: &StationConfig) -> Vec<crate::assist::AssistInstance> {
+    let base = fleetdeck_core::childenv::ChildEnv::from_process();
+    let mut out = Vec::new();
+    for instance in &config.provider_instances {
+        match fleetdeck_core::childenv::ChildEnv::for_instance(base.clone(), instance) {
+            Ok(env) => out.push(crate::assist::AssistInstance {
+                id: instance.id.clone(),
+                driver: instance.driver,
+                binary: instance.binary.clone(),
+                env,
+            }),
+            Err(e) => tracing::warn!(
+                instance = %instance.id,
+                error = %e,
+                "no model help for this provider instance"
+            ),
+        }
+    }
+    out
 }
 
 /// The provider instances that a terminal handover can start (DL-140): each

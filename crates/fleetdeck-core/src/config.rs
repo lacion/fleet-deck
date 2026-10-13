@@ -54,6 +54,11 @@ impl HostChoice {
         }
     }
 }
+/// The default models of the station's model help (R10, DL-167).
+pub const DEFAULT_ASSIST_CLAUDE_MODEL: &str = "claude-haiku-5-5";
+pub const DEFAULT_ASSIST_CODEX_MODEL: &str = "gpt-5.6-luna";
+pub const DEFAULT_ASSIST_MAX_OUTPUT_TOKENS: u32 = 400;
+pub const DEFAULT_ASSIST_DAILY_TOKEN_CAP: u64 = 200_000;
 pub const DEFAULT_BOARD_LISTEN: &str = "127.0.0.1:7420";
 pub const DEFAULT_LINK_LISTEN: &str = "127.0.0.1:7421";
 
@@ -268,6 +273,102 @@ pub struct StationConfig {
     /// shared session (R11.9, DL-166). The station adds them to its default
     /// deny list; they never remove a default pattern.
     pub member_deny: Vec<String>,
+    /// `[model_help]`: small generated text from the owner's own provider
+    /// login (R10, DL-167).
+    pub model_help: ModelHelpConfig,
+}
+
+/// The `[model_help]` table of `station.toml` (R10, DL-167). It is also the
+/// off switch: `enabled = false` makes every call answer `disabled`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelHelpConfig {
+    pub enabled: bool,
+    pub claude_model: String,
+    pub codex_model: String,
+    /// The driver to use. `None`: the first provider instance that is
+    /// signed in.
+    pub provider: Option<Driver>,
+    /// The output limit of one call, in tokens.
+    pub per_call_max_output_tokens: u32,
+    /// The tokens (input and output) that the station spends in one UTC day.
+    pub daily_token_cap: u64,
+}
+
+impl Default for ModelHelpConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            claude_model: DEFAULT_ASSIST_CLAUDE_MODEL.to_owned(),
+            codex_model: DEFAULT_ASSIST_CODEX_MODEL.to_owned(),
+            provider: None,
+            per_call_max_output_tokens: DEFAULT_ASSIST_MAX_OUTPUT_TOKENS,
+            daily_token_cap: DEFAULT_ASSIST_DAILY_TOKEN_CAP,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawModelHelp {
+    enabled: Option<bool>,
+    claude_model: Option<String>,
+    codex_model: Option<String>,
+    provider: Option<Driver>,
+    per_call_max_output_tokens: Option<u32>,
+    daily_token_cap: Option<u64>,
+}
+
+impl RawModelHelp {
+    fn validate(self) -> Result<ModelHelpConfig, ConfigError> {
+        let model = |field: &str, value: Option<String>, default: &str| {
+            let value = value.unwrap_or_else(|| default.to_owned());
+            // A model name is a command line argument: it must not look
+            // like an option.
+            let ok = (1..=100).contains(&value.len())
+                && !value.starts_with('-')
+                && value
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b':'));
+            if ok {
+                Ok(value)
+            } else {
+                Err(invalid(
+                    format!("model_help.{field}"),
+                    "use 1-100 of A-Z, a-z, 0-9, `-`, `_`, `.`, `:`, not starting with `-`",
+                ))
+            }
+        };
+        let per_call = self
+            .per_call_max_output_tokens
+            .unwrap_or(DEFAULT_ASSIST_MAX_OUTPUT_TOKENS);
+        if !(1..=4000).contains(&per_call) {
+            return Err(invalid(
+                "model_help.per_call_max_output_tokens",
+                "use a value from 1 to 4000",
+            ));
+        }
+        let cap = self
+            .daily_token_cap
+            .unwrap_or(DEFAULT_ASSIST_DAILY_TOKEN_CAP);
+        if !(1..=1_000_000_000).contains(&cap) {
+            return Err(invalid(
+                "model_help.daily_token_cap",
+                "use a value from 1 to 1000000000",
+            ));
+        }
+        Ok(ModelHelpConfig {
+            enabled: self.enabled.unwrap_or(true),
+            claude_model: model(
+                "claude_model",
+                self.claude_model,
+                DEFAULT_ASSIST_CLAUDE_MODEL,
+            )?,
+            codex_model: model("codex_model", self.codex_model, DEFAULT_ASSIST_CODEX_MODEL)?,
+            provider: self.provider,
+            per_call_max_output_tokens: per_call,
+            daily_token_cap: cap,
+        })
+    }
 }
 
 #[derive(Deserialize)]
@@ -288,6 +389,7 @@ struct RawStation {
     hibernate_after_min: Option<u32>,
     trackers: Option<Vec<RawTracker>>,
     member_deny: Option<Vec<String>>,
+    model_help: Option<RawModelHelp>,
 }
 
 #[derive(Deserialize)]
@@ -396,6 +498,10 @@ impl StationConfig {
             fleetdeck_proto::member_deny::check_pattern(pattern)
                 .map_err(|m| invalid(format!("member_deny[{i}]"), m))?;
         }
+        let model_help = match raw.model_help {
+            Some(raw) => raw.validate()?,
+            None => ModelHelpConfig::default(),
+        };
         Ok(Self {
             name,
             allowed_roots,
@@ -412,6 +518,7 @@ impl StationConfig {
             hibernate_after_min,
             trackers,
             member_deny,
+            model_help,
         })
     }
 

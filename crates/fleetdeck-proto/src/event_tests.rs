@@ -274,6 +274,12 @@ fn samples() -> Vec<Event> {
             },
         },
         Event::SessionHibernated { after_min: 30 },
+        Event::SessionTitleGenerated {
+            title: "Fix the login redirect".into(),
+        },
+        Event::SessionDigest {
+            text: "- Read the router\n- Fixed the redirect".into(),
+        },
     ]
 }
 

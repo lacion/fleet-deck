@@ -18,6 +18,7 @@
 pub mod activity;
 pub mod archive;
 pub mod artifacts;
+mod assist;
 pub mod audit;
 pub mod auth;
 pub mod chat;
@@ -151,6 +152,8 @@ struct Inner {
     presence: Mutex<presence::PresenceMap>,
     /// The next id of a board socket.
     sockets: std::sync::atomic::AtomicU64,
+    /// The conflict mails that wait for a generated sentence (DL-167).
+    sentence_jobs: Mutex<Vec<conflicts::SentenceJob>>,
 }
 
 /// The deck store. Clones share one database thread.
@@ -232,6 +235,7 @@ impl DeckStore {
                 social: broadcast::channel(LIVE_BUFFER).0,
                 presence: Mutex::default(),
                 sockets: std::sync::atomic::AtomicU64::new(1),
+                sentence_jobs: Mutex::default(),
             }),
         })
     }

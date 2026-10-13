@@ -179,8 +179,16 @@ impl DeckStore {
             .conflict_mail
             .load(Ordering::Relaxed)
             .then(|| Arc::clone(&self.inner.ids));
+        // The stations whose model help is on (DL-167): a conflict mail to
+        // one of their sessions waits for a generated sentence.
+        let assist: BTreeSet<StationId> = self
+            .station_infos()
+            .into_iter()
+            .filter(|(_, (info, _))| info.assist_cap.is_some())
+            .map(|(id, _)| id)
+            .collect();
         let (id, inc) = (station.clone(), incarnation.clone());
-        let (applied, folded) = call(&self.inner.db, move |conn| {
+        let (applied, folded, jobs) = call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             let rec = station_by_id(&tx, &station)?
                 .ok_or_else(|| DeckError::UnknownStation(station.0.clone()))?;
@@ -195,6 +203,7 @@ impl DeckStore {
             let mut applied = 0;
             let mut touched = BTreeSet::new();
             let mut folded = Vec::new();
+            let jobs = std::cell::RefCell::new(Vec::new());
             for e in events {
                 if e.station_seq <= cursor {
                     continue;
@@ -210,6 +219,8 @@ impl DeckStore {
                 let mail = mail_ids.as_ref().map(|ids| super::conflicts::MailContext {
                     ids: ids.as_ref(),
                     now,
+                    assist: &assist,
+                    jobs: &jobs,
                 });
                 super::conflicts::record_touches(&tx, &station, &e, &summary, mail.as_ref())?;
                 touched.insert(e.session_id.clone());
@@ -222,9 +233,16 @@ impl DeckStore {
             }
             set_cursor(&tx, &station, &incarnation, cursor)?;
             tx.commit()?;
-            Ok((Applied { applied, cursor }, folded))
+            Ok((Applied { applied, cursor }, folded, jobs.into_inner()))
         })
         .await?;
+        if !jobs.is_empty() {
+            self.inner
+                .sentence_jobs
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .extend(jobs);
+        }
         if !folded.is_empty() {
             self.board_changed();
             self.publish_live(LiveEvents {

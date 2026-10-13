@@ -224,6 +224,15 @@ pub const METHODS: &[MethodSpec] = &[
         Some(feature::INTEGRATIONS),
         false,
     ),
+    // Model help on the station (R10, DL-167). It runs a model call on the
+    // owner's subscription, so it needs `drive`; it changes no session.
+    m(
+        "assist.generate",
+        DeckToStation,
+        Scope::Drive,
+        Some(feature::ASSIST),
+        false,
+    ),
     m(
         "files.list",
         DeckToStation,

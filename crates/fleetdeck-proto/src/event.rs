@@ -597,6 +597,17 @@ pub enum Event {
     /// shows the session as hibernated and resumes it on the next input.
     #[serde(rename = "session.hibernated")]
     SessionHibernated { after_min: u32 },
+    /// The station's model help named the session (DL-167, R10.1). It
+    /// follows the internal `session.renamed` that set `title`; the fold
+    /// marks the title as generated while the title is still the same.
+    /// Older peers decode this kind as unknown.
+    #[serde(rename = "session.title_generated")]
+    SessionTitleGenerated { title: String },
+    /// The station's model help summarized the session (DL-167, R10.2).
+    /// The text is generated; a newer digest replaces the older one.
+    /// Older peers decode this kind as unknown.
+    #[serde(rename = "session.digest")]
+    SessionDigest { text: String },
     #[serde(rename = "run.completed")]
     RunCompleted {
         run_id: RunId,
@@ -644,7 +655,7 @@ pub enum Event {
 
 impl Event {
     /// Every known kind name, in declaration order.
-    pub const KINDS: [&'static str; 45] = [
+    pub const KINDS: [&'static str; 47] = [
         "session.started",
         "session.state",
         "run.started",
@@ -690,6 +701,8 @@ impl Event {
         "session.focus",
         "session.batch",
         "session.hibernated",
+        "session.title_generated",
+        "session.digest",
     ];
 
     /// The dotted kind name.
@@ -741,6 +754,8 @@ impl Event {
             Self::SessionFocus { .. } => "session.focus",
             Self::SessionBatch { .. } => "session.batch",
             Self::SessionHibernated { .. } => "session.hibernated",
+            Self::SessionTitleGenerated { .. } => "session.title_generated",
+            Self::SessionDigest { .. } => "session.digest",
         }
     }
 

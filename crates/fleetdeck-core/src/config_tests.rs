@@ -472,3 +472,56 @@ fn a_token_file_must_be_private_and_clean() {
         Err(TokenError::EnvMissing(_))
     ));
 }
+
+#[test]
+fn model_help_defaults_are_on_with_the_owner_budget() {
+    let c = StationConfig::parse("", &env()).unwrap();
+    assert_eq!(c.model_help, ModelHelpConfig::default());
+    assert!(c.model_help.enabled);
+    assert_eq!(c.model_help.claude_model, "claude-haiku-5-5");
+    assert_eq!(c.model_help.codex_model, "gpt-5.6-luna");
+    assert_eq!(c.model_help.provider, None);
+    assert_eq!(c.model_help.per_call_max_output_tokens, 400);
+    assert_eq!(c.model_help.daily_token_cap, 200_000);
+}
+
+#[test]
+fn a_model_help_table_sets_each_field() {
+    let c = StationConfig::parse(
+        r#"
+[model_help]
+enabled = false
+claude_model = "claude-haiku-5-5"
+codex_model = "luna-2"
+provider = "codex"
+per_call_max_output_tokens = 120
+daily_token_cap = 5000
+"#,
+        &env(),
+    )
+    .unwrap();
+    assert!(!c.model_help.enabled);
+    assert_eq!(c.model_help.codex_model, "luna-2");
+    assert_eq!(c.model_help.provider, Some(Driver::Codex));
+    assert_eq!(c.model_help.per_call_max_output_tokens, 120);
+    assert_eq!(c.model_help.daily_token_cap, 5000);
+}
+
+#[test]
+fn a_bad_model_help_value_is_refused() {
+    for (text, field) in [
+        ("[model_help]\nclaude_model = \"--help\"", "claude_model"),
+        ("[model_help]\ncodex_model = \"a b\"", "codex_model"),
+        ("[model_help]\nclaude_model = \"\"", "claude_model"),
+        (
+            "[model_help]\nper_call_max_output_tokens = 0",
+            "per_call_max_output_tokens",
+        ),
+        ("[model_help]\ndaily_token_cap = 0", "daily_token_cap"),
+    ] {
+        let message = err(text);
+        assert!(message.contains(field), "{text}: {message}");
+    }
+    assert!(err("[model_help]\nprovider = \"pi\"").contains("unknown variant"));
+    assert!(err("[model_help]\nbogus = 1").contains("unknown field"));
+}

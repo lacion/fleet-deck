@@ -129,6 +129,9 @@ pub struct SessionManager {
     shells: target::ShellsSlot,
     /// The artifact service, once the station gave it a directory (DL-165).
     artifacts: std::sync::OnceLock<crate::artifacts::ArtifactService>,
+    /// The model help of the station, once the station process set it
+    /// (R10, DL-167).
+    assist: std::sync::OnceLock<Arc<crate::assist::Assist>>,
 }
 
 impl std::fmt::Debug for SessionManager {
@@ -289,6 +292,7 @@ impl SessionManager {
             draining: std::sync::atomic::AtomicBool::new(false),
             shells,
             artifacts: std::sync::OnceLock::new(),
+            assist: std::sync::OnceLock::new(),
         })
     }
 
@@ -315,6 +319,18 @@ impl SessionManager {
     #[must_use]
     pub fn artifacts(&self) -> Option<&crate::artifacts::ArtifactService> {
         self.artifacts.get()
+    }
+
+    /// Gives the manager the model help of the station (R10, DL-167). The
+    /// first call wins.
+    pub fn set_assist(&self, assist: Arc<crate::assist::Assist>) {
+        let _ = self.assist.set(assist);
+    }
+
+    /// The model help, if the station process set it.
+    #[must_use]
+    pub fn assist(&self) -> Option<Arc<crate::assist::Assist>> {
+        self.assist.get().cloned()
     }
 
     #[must_use]

@@ -531,6 +531,25 @@ CREATE TABLE artifact_suggestions (
 );
 ";
 
+const V22: &str = "
+-- DL-167 (R10): the cache and the daily token use of the model help. A cache
+-- row is keyed by the SHA-256 of the kind, the model and the prompt, so the
+-- same input never costs twice; `day` is the UTC day number (Unix days).
+CREATE TABLE assist_cache (
+    input_hash    TEXT    PRIMARY KEY,
+    kind          TEXT    NOT NULL,
+    output        TEXT    NOT NULL,
+    input_tokens  INTEGER NOT NULL,
+    output_tokens INTEGER NOT NULL,
+    created_at    INTEGER NOT NULL
+) STRICT;
+CREATE INDEX assist_cache_age ON assist_cache (created_at);
+CREATE TABLE assist_usage (
+    day    INTEGER PRIMARY KEY,
+    tokens INTEGER NOT NULL
+) STRICT;
+";
+
 /// The `station.db` migrations. V4 is the link epochs table of
 /// `fleetdeck-link` (G1).
 #[must_use]
@@ -557,6 +576,7 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V19),
         M::up(V20),
         M::up(V21),
+        M::up(V22),
     ])
 }
 
@@ -670,6 +690,32 @@ mod tests {
             )
             .unwrap();
         assert!(index.contains("'queued', 'claimed'"));
+    }
+
+    #[test]
+    fn v22_adds_the_assist_cache_and_the_daily_usage() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrations().to_latest(&mut conn).unwrap();
+        conn.execute(
+            "INSERT INTO assist_cache VALUES ('h', 'title', 'A title', 10, 3, 5)",
+            [],
+        )
+        .unwrap();
+        assert!(
+            conn.execute(
+                "INSERT INTO assist_cache VALUES ('h', 'title', 'Other', 1, 1, 6)",
+                [],
+            )
+            .is_err(),
+            "one row per input hash"
+        );
+        conn.execute("INSERT INTO assist_usage VALUES (20000, 13)", [])
+            .unwrap();
+        assert!(
+            conn.execute("INSERT INTO assist_usage VALUES (20000, 1)", [])
+                .is_err(),
+            "one row per day"
+        );
     }
 
     #[test]

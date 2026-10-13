@@ -30,6 +30,7 @@ A missing file gives the defaults. An unknown key is an error.
 | `hibernate_after_min` | `0` (off) | Minutes of idleness after which the station stops a live, idle session gracefully (`session.hibernated`). The board resumes it with the next input (R6.6, DL-169). Up to 10080. |
 | `repo_groups` | (empty) | Repository path → group name, for the conflict radar. |
 | `[[trackers]]` | (none) | A Jira or Linear tracker for the board's issue views (R3, DL-164). See "Trackers" below. |
+| `[model_help]` | on | Small generated text from the station's own provider login (R10, DL-167): `enabled` (the off switch), `claude_model` (`claude-haiku-5-5`), `codex_model` (`gpt-5.6-luna`), `provider` (`claude` or `codex`; default the first signed-in instance), `per_call_max_output_tokens` (`400`), `daily_token_cap` (`200000`, one UTC day). The use shows on the usage panel as "Fleet Deck". |
 | `[[provider_instance]]` | `claude` and `codex` | `id`, `driver` (`claude` or `codex`), `binary`, `config_home`, `env` (values are secrets; they never leave the station). |
 
 Example:

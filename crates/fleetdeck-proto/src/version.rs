@@ -73,6 +73,9 @@ pub mod feature {
     /// and Linear through the station (R3, DL-164).
     pub const INTEGRATIONS: &str = "integrations.v1";
 
+    /// `assist.generate`: model help on the station (R10, DL-167).
+    pub const ASSIST: &str = "assist.v1";
+
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
         CONTROL,
@@ -95,6 +98,7 @@ pub mod feature {
         ARTIFACTS,
         PRECHECK,
         INTEGRATIONS,
+        ASSIST,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];

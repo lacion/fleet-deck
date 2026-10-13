@@ -18,6 +18,7 @@ export function summary(
     callsign: null,
     worktree: null,
     title: null,
+    title_generated: false,
     state: 'running',
     activity,
     mode: null,
