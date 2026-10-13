@@ -27,6 +27,16 @@ use rustix::fs::OFlags;
 /// The most entries of the registry.
 pub const REGISTRY_CAP: usize = 20_000;
 
+/// The depth of the walk of `register_dir` (accounts and secrets).
+const DEEP: usize = 8;
+
+/// The depth below a credential directory of the user (`~/.ssh`,
+/// `~/.config/gh`): `dir/a/b/c/d/file` is the deepest file.
+pub const CREDENTIAL_DEPTH: usize = 4;
+
+/// The most files that a scan registers for one credential directory.
+pub const CREDENTIAL_FILES: usize = 10_000;
+
 /// The (device, inode) of a file.
 pub type FileId = (u64, u64);
 
@@ -216,11 +226,34 @@ impl Registry {
 
     /// Registers every regular file below `dir`. A link is not followed.
     pub fn register_dir(&self, dir: &Path) {
-        self.walk(dir, 0);
+        self.walk(dir, 0, DEEP, &mut Budget::unlimited());
     }
 
-    fn walk(&self, dir: &Path, depth: usize) {
-        const MAX_DEPTH: usize = 8;
+    /// [`Self::register_dir`] for a credential directory of the user: at
+    /// most [`CREDENTIAL_DEPTH`] levels below `dir` and
+    /// [`CREDENTIAL_FILES`] files. A directory over the budget is logged
+    /// once; the files after the budget stay unregistered.
+    pub fn register_credential_dir(&self, dir: &Path) {
+        self.register_credential_dir_with(dir, CREDENTIAL_DEPTH, CREDENTIAL_FILES);
+    }
+
+    /// [`Self::register_credential_dir`] with other limits (tests).
+    pub fn register_credential_dir_with(&self, dir: &Path, depth: usize, files: usize) {
+        let mut budget = Budget {
+            files,
+            exceeded: false,
+        };
+        self.walk(dir, 0, depth, &mut budget);
+        if budget.exceeded {
+            tracing::warn!(
+                path = %dir.display(),
+                files,
+                "a credential directory has more files than the scan registers"
+            );
+        }
+    }
+
+    fn walk(&self, dir: &Path, depth: usize, max_depth: usize, budget: &mut Budget) {
         let entries = match std::fs::read_dir(dir) {
             Ok(e) => e,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
@@ -238,10 +271,34 @@ impl Registry {
                 continue;
             };
             if kind.is_file() {
+                if budget.files == 0 {
+                    budget.exceeded = true;
+                    return;
+                }
+                budget.files -= 1;
                 self.register(&entry.path());
-            } else if kind.is_dir() && depth < MAX_DEPTH {
-                self.walk(&entry.path(), depth + 1);
+            } else if kind.is_dir() && depth < max_depth {
+                self.walk(&entry.path(), depth + 1, max_depth, budget);
+                if budget.exceeded {
+                    return;
+                }
             }
+        }
+    }
+}
+
+/// How many regular files a walk may still register.
+struct Budget {
+    files: usize,
+    /// A file was left out because `files` ran out.
+    exceeded: bool,
+}
+
+impl Budget {
+    fn unlimited() -> Self {
+        Self {
+            files: usize::MAX,
+            exceeded: false,
         }
     }
 }

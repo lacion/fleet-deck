@@ -219,6 +219,31 @@ pub(super) fn queued_start_effects(conn: &Connection) -> Result<Vec<Effect>> {
     select(conn, "state = 'queued' AND kind IN ('start', 'resume')", [])
 }
 
+/// The events of a start that never got a process: `start_failed`, then
+/// `session.ended`.
+pub(super) fn start_failed_events(
+    conn: &Connection,
+    session: &SessionId,
+    message: &str,
+    now: i64,
+    out: &mut Vec<EventEnvelope>,
+) -> Result<()> {
+    for event in [
+        Event::Error {
+            code: "start_failed".into(),
+            message: message.to_owned(),
+            retry_at: None,
+        },
+        Event::SessionEnded {
+            reason: "start_failed".into(),
+            exit_code: None,
+        },
+    ] {
+        out.push(log::append_one(conn, session, event.into(), now)?);
+    }
+    Ok(())
+}
+
 /// Ends every queued start or resume effect for a planned restart, in the
 /// caller's transaction: the effect is retired (`RetiredNotDispatched`,
 /// [`REASON_STATION_RESTART`]) and its session gets the events of a failed
@@ -241,24 +266,7 @@ pub(super) fn fail_queued_starts(
             now,
             out,
         )?;
-        for event in [
-            Event::Error {
-                code: "start_failed".into(),
-                message: message.to_owned(),
-                retry_at: None,
-            },
-            Event::SessionEnded {
-                reason: "start_failed".into(),
-                exit_code: None,
-            },
-        ] {
-            out.push(log::append_one(
-                conn,
-                &effect.session_id,
-                event.into(),
-                now,
-            )?);
-        }
+        start_failed_events(conn, &effect.session_id, message, now, out)?;
         sessions.push(effect.session_id.clone());
     }
     Ok(sessions)
@@ -342,7 +350,7 @@ fn current_fence(conn: &Connection) -> Result<u64> {
     to_u64(fence)
 }
 
-fn check_fence(conn: &Connection, fence: u64) -> Result<()> {
+pub(super) fn check_fence(conn: &Connection, fence: u64) -> Result<()> {
     let current = current_fence(conn)?;
     if current == fence {
         Ok(())

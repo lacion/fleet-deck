@@ -29,7 +29,7 @@ const WAIT: Duration = Duration::from_secs(10);
 
 struct Station {
     det: Det,
-    manager: SessionManager,
+    manager: Arc<SessionManager>,
     root: tempfile::TempDir,
     next: u32,
 }
@@ -92,7 +92,7 @@ impl Station {
             .unwrap();
         Self {
             det,
-            manager,
+            manager: Arc::new(manager),
             root,
             next: 0,
         }

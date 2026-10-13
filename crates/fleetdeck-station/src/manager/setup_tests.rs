@@ -58,7 +58,7 @@ async fn station_with(allow: bool, log: Option<&std::path::Path>) -> Station {
         .unwrap();
     Station {
         det,
-        manager,
+        manager: Arc::new(manager),
         root,
         next: 0,
     }
@@ -582,5 +582,215 @@ async fn a_restart_in_the_gap_after_the_setup_waits_and_then_lists_the_session()
     let listed = st.manager.restart_would_stop(&shells).await.unwrap();
     assert_eq!(listed.len(), 1, "{listed:?}");
     st.manager.end_restart();
+    st.manager.shutdown(StopMode::Kill).await;
+}
+
+/// The `station.restart` handler on this station, with a counting
+/// `Restart` and a short settle wait.
+fn settings_of(
+    st: &Station,
+    settle: Duration,
+) -> (
+    crate::settings_svc::StationSettings,
+    Arc<std::sync::atomic::AtomicUsize>,
+) {
+    #[derive(Debug, Default)]
+    struct Counter(Arc<std::sync::atomic::AtomicUsize>);
+    impl fleetdeck_core::restart::Restart for Counter {
+        fn request(&self) {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let dir = st.root.path();
+    let settings = crate::settings_svc::StationSettings::new(
+        &dir.join("cfg/station.toml"),
+        &dir.join("data/secrets"),
+        fleetdeck_core::paths::Env::default(),
+        Some(Arc::new(Counter(Arc::clone(&count)))),
+        Arc::new(crate::workspace::PrivatePaths::default()),
+    )
+    .with_settle(settle);
+    (settings, count)
+}
+
+/// Holds a setup start after its command ended, starts the restart
+/// admission, and holds the admission in its settle wait until the task
+/// waits for the handoff lock. Returns the admission, the submit guard that
+/// holds the settle wait, and the session.
+async fn setup_ends_during_admission(
+    st: &mut Station,
+    settings: Arc<crate::settings_svc::StationSettings>,
+    stop_direct_sessions: bool,
+) -> (
+    tokio::task::JoinHandle<fleetdeck_proto::link::Outcome>,
+    crate::manager::restart_gate::InFlight,
+    SessionId,
+) {
+    use crate::shell::{ShellConfig, Shells};
+    let target = Arc::clone(&st.manager.target);
+    let hook = &target.hooks().handoff;
+    hook.arm();
+    let a = session_of(st, "true").await;
+    tokio::time::timeout(WAIT, hook.reached.notified())
+        .await
+        .unwrap();
+    // The command ended; its row stays until the handoff.
+    assert_eq!(st.manager.store().setup_runs().await.unwrap().len(), 1);
+    let held = st.manager.restart_state().enter_submit();
+    let manager = Arc::clone(&st.manager);
+    let admission = tokio::spawn(async move {
+        let shells = Shells::new(ShellConfig::default());
+        settings
+            .restart(
+                &manager,
+                &shells,
+                serde_json::json!({
+                    "stop_direct_sessions": stop_direct_sessions,
+                    "elevated": true
+                }),
+            )
+            .await
+    });
+    let deadline = tokio::time::Instant::now() + WAIT;
+    while !st.manager.restart_state().restarting() {
+        assert!(tokio::time::Instant::now() < deadline, "no admission");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    // The task now reaches the handoff while the admission holds the lock.
+    hook.release.notify_one();
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert_eq!(
+        st.manager.store().setup_runs().await.unwrap().len(),
+        1,
+        "the row stays while the admission holds the lock"
+    );
+    (admission, held, a)
+}
+
+fn answer_of(outcome: fleetdeck_proto::link::Outcome) -> fleetdeck_proto::settings::RestartAnswer {
+    match outcome {
+        fleetdeck_proto::link::Outcome::Ok(v) => serde_json::from_value(v).unwrap(),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_setup_that_ends_during_the_admission_is_listed_and_starts_after_a_refusal() {
+    use fleetdeck_proto::settings::RestartKind;
+    let mut st = station(true).await;
+    let (settings, count) = settings_of(&st, Duration::from_secs(5));
+    let (admission, held, a) =
+        setup_ends_during_admission(&mut st, Arc::new(settings), false).await;
+    drop(held);
+    let answer = answer_of(
+        tokio::time::timeout(WAIT, admission)
+            .await
+            .unwrap()
+            .unwrap(),
+    );
+    assert!(!answer.restarting);
+    assert_eq!(answer.would_stop.len(), 1, "{:?}", answer.would_stop);
+    assert_eq!(answer.would_stop[0].kind, RestartKind::Setup);
+    assert_eq!(answer.would_stop[0].id, a.as_str());
+    // The refusal cleared the freeze: the task takes its claim and starts.
+    let deadline = tokio::time::Instant::now() + WAIT;
+    while st.manager.live_sessions() == 0 {
+        assert!(tokio::time::Instant::now() < deadline, "no provider start");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(st.manager.store().setup_runs().await.unwrap().is_empty());
+    assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 0);
+    st.manager.shutdown(StopMode::Kill).await;
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_setup_that_ends_during_a_committed_admission_ends_failed_and_never_starts() {
+    let mut st = station(true).await;
+    let (settings, _count) = settings_of(&st, Duration::from_secs(5));
+    let (admission, held, a) = setup_ends_during_admission(&mut st, Arc::new(settings), true).await;
+    drop(held);
+    let answer = answer_of(
+        tokio::time::timeout(WAIT, admission)
+            .await
+            .unwrap()
+            .unwrap(),
+    );
+    assert!(answer.restarting);
+    wait_ended(&st, &a).await;
+    assert_eq!(st.manager.live_sessions(), 0, "no provider was started");
+    assert!(st.manager.store().setup_runs().await.unwrap().is_empty());
+    let reasons: Vec<String> = st
+        .events()
+        .await
+        .into_iter()
+        .filter_map(|e| match e.event {
+            EventBody::Known(Event::Error { code, message, .. }) if code == "start_failed" => {
+                Some(message)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        reasons,
+        ["the station restarted before this session started"]
+    );
+    let effects = st.manager.store().session_effects(a.clone()).await.unwrap();
+    assert_eq!(effects.len(), 1);
+    assert_eq!(effects[0].state, EffectState::RetiredNotDispatched);
+    assert_eq!(effects[0].reason.as_deref(), Some("station_restart"));
+    st.manager.shutdown(StopMode::Kill).await;
+}
+
+#[tokio::test]
+async fn ending_a_claimed_start_for_a_restart_is_a_no_op_unless_it_is_still_claimed() {
+    let mut st = station(false).await;
+    let cwd = st.workspace();
+    let d = st
+        .accepted(SessionCommand::Start {
+            spec: spec(&cwd, "claude"),
+            prompt: None,
+            workspace: None,
+            setup_cmd: None,
+            batch: None,
+            issue: None,
+            origin_text: false,
+        })
+        .await;
+    let session = d.receipt.result.unwrap().session_id.unwrap();
+    let store = st.manager.store().clone();
+    let deadline = tokio::time::Instant::now() + WAIT;
+    let effect = loop {
+        let found = store.session_effects(session.clone()).await.unwrap();
+        if let Some(e) = found
+            .into_iter()
+            .find(|e| e.state == EffectState::Confirmed)
+        {
+            break e;
+        }
+        assert!(tokio::time::Instant::now() < deadline, "start not settled");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    let fence = effect.fence_token.unwrap();
+    let before = st.events().await.len();
+    // A settled effect is left alone: nothing is stored.
+    let done = store
+        .fail_claimed_start(effect.effect_id.clone(), fence, "x".to_owned())
+        .await
+        .unwrap();
+    assert!(!done);
+    // An unknown effect too.
+    let done = store
+        .fail_claimed_start("no-such-effect".into(), fence, "x".to_owned())
+        .await
+        .unwrap();
+    assert!(!done);
+    assert_eq!(st.events().await.len(), before);
+    assert_eq!(
+        store.effect(effect.effect_id).await.unwrap().unwrap().state,
+        EffectState::Confirmed
+    );
     st.manager.shutdown(StopMode::Kill).await;
 }

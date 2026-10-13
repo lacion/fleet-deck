@@ -12,6 +12,13 @@
 //!   and the admission sets the flag before it reads the counts, so one of
 //!   the two always sees the other.
 //!
+//! - The admission holds [`RestartState::lock_handoff`] for its whole
+//!   check. A start task with a setup command takes the same lock after its
+//!   command ended, before it takes its claim and ends its setup row, so no
+//!   handoff can come between the counts, the lists and the commit of one
+//!   admission (PRE-PR r3 finding 2). A task that finds the freeze set waits
+//!   for the end of the admission ([`RestartState::wait_resolved`]).
+//!
 //! The flag stays set after a restart is committed. A refused or failed
 //! admission clears it.
 
@@ -38,6 +45,11 @@ pub struct RestartState {
     committed: AtomicBool,
     submits: AtomicUsize,
     claims: AtomicUsize,
+    /// Held by the admission for its whole check, and by the handoff of a
+    /// deferred setup start.
+    handoff: tokio::sync::Mutex<()>,
+    /// Wakes [`Self::wait_resolved`] when the flag changes.
+    changed: tokio::sync::Notify,
 }
 
 impl RestartState {
@@ -48,12 +60,43 @@ impl RestartState {
         self.restarting.load(Ordering::SeqCst)
     }
 
+    /// True after a restart is committed.
+    #[must_use]
+    pub fn committed(&self) -> bool {
+        self.committed.load(Ordering::SeqCst)
+    }
+
+    /// The lock of the handoff: the admission holds it for its whole check,
+    /// and the task of a deferred setup start takes it for its handoff.
+    pub async fn lock_handoff(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.handoff.lock().await
+    }
+
+    /// Waits until the restart is committed (true) or the flag is cleared
+    /// (false).
+    pub async fn wait_resolved(&self) -> bool {
+        loop {
+            let woken = self.changed.notified();
+            tokio::pin!(woken);
+            woken.as_mut().enable();
+            if self.committed() {
+                return true;
+            }
+            if !self.restarting() {
+                return false;
+            }
+            woken.await;
+        }
+    }
+
     pub(super) fn begin(&self) {
         self.restarting.store(true, Ordering::SeqCst);
+        self.changed.notify_waiters();
     }
 
     pub(super) fn commit(&self) {
         self.committed.store(true, Ordering::SeqCst);
+        self.changed.notify_waiters();
     }
 
     /// Clears the flag, unless a restart is committed already.
@@ -61,6 +104,7 @@ impl RestartState {
         if !self.committed.load(Ordering::SeqCst) {
             self.restarting.store(false, Ordering::SeqCst);
         }
+        self.changed.notify_waiters();
     }
 
     fn idle(&self) -> bool {

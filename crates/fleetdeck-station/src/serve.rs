@@ -30,6 +30,36 @@ use crate::workspace::{PrivateEnv, PrivatePaths};
 /// How long the shutdown waits for the pumps to store the last events.
 pub const PUMP_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// How often the station scans its credential locations again for new
+/// identities (DL-173, PRE-PR r3 finding 1).
+pub const CREDENTIAL_RESCAN: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Scans the credential locations of `private` every `every` until
+/// `shutdown` is set. The first scan ran when the set was built.
+pub async fn rescan_credentials(
+    private: Arc<PrivatePaths>,
+    every: std::time::Duration,
+    mut shutdown: watch::Receiver<bool>,
+) {
+    let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + every, every);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tokio::select! {
+            _ = tick.tick() => {
+                let set = Arc::clone(&private);
+                if let Err(e) = tokio::task::spawn_blocking(move || set.rescan()).await {
+                    tracing::warn!(error = %e, "the credential rescan failed");
+                }
+            }
+            changed = shutdown.changed() => {
+                if changed.is_err() || *shutdown.borrow() {
+                    return;
+                }
+            }
+        }
+    }
+}
+
 /// Why the station cannot start.
 #[derive(Debug, thiserror::Error)]
 pub enum ServeError {
@@ -105,6 +135,8 @@ pub struct RunningStation {
     shells: Arc<crate::shell::Shells>,
     /// The model-help watcher (R10, DL-167).
     assist: tokio::task::JoinHandle<()>,
+    /// The periodic scan of the credential locations (DL-173).
+    rescan: tokio::task::JoinHandle<()>,
 }
 
 impl RunningStation {
@@ -183,9 +215,10 @@ impl RunningStation {
             &station_dir.join("secrets"),
             Env::from_process(),
             restart,
-            private,
+            Arc::clone(&private),
         )));
         let (shutdown, rx) = watch::channel(false);
+        let rescan = tokio::spawn(rescan_credentials(private, CREDENTIAL_RESCAN, rx.clone()));
         let assist_task = tokio::spawn(crate::assist::watch::run(
             assist,
             Arc::clone(&manager),
@@ -231,6 +264,7 @@ impl RunningStation {
             socket,
             shells,
             assist: assist_task,
+            rescan,
         })
     }
 
@@ -241,6 +275,7 @@ impl RunningStation {
         let _ = self.shutdown.send(true);
         let _ = self.server.await;
         let _ = self.assist.await;
+        let _ = self.rescan.await;
         self.node.shutdown();
         // The stop waits for the terminal processes (up to the hangup grace).
         let shells = Arc::clone(&self.shells);
@@ -312,4 +347,37 @@ fn terminal_instances(
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::workspace::private_paths::private_paths_tests::private_of;
+
+    #[tokio::test]
+    async fn the_rescan_task_registers_new_credentials_and_stops_with_the_station() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().canonicalize().unwrap();
+        let private = Arc::new(private_of(&home));
+        let late = home.join(".ssh/id_late");
+        std::fs::write(&late, "secret").unwrap();
+        let meta = std::fs::metadata(&late).unwrap();
+        assert!(!private.is_private_file(&meta));
+        let (stop, rx) = watch::channel(false);
+        let task = tokio::spawn(rescan_credentials(
+            Arc::clone(&private),
+            std::time::Duration::from_millis(10),
+            rx,
+        ));
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(1);
+        while !private.is_private_file(&meta) {
+            assert!(tokio::time::Instant::now() < deadline, "not registered");
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        stop.send(true).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(1), task)
+            .await
+            .unwrap()
+            .unwrap();
+    }
 }

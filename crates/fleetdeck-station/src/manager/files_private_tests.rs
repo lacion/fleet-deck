@@ -614,3 +614,78 @@ async fn a_link_to_a_deleted_or_replaced_credential_is_not_read_or_searched() {
     .unwrap();
     assert!(open.text.unwrap().contains("canary-credential"));
 }
+
+/// The links of PRE-PR r3 finding 1 inside `home`: one to the SSH key and
+/// one to a `gh` hosts file that was replaced after the start, each the
+/// only name of its inode once the original is gone. `private` rescans
+/// after the replacement, as the station does every minute. Returns the
+/// names of the links.
+fn native_credential_links(home: &Path, private: &PrivatePaths) -> Vec<String> {
+    use std::os::unix::fs::MetadataExt;
+    let mut names = Vec::new();
+    let key = home.join(".ssh/id_ed25519");
+    std::fs::hard_link(&key, home.join("link-ssh.txt")).unwrap();
+    names.push("link-ssh.txt".to_owned());
+    std::fs::remove_file(&key).unwrap();
+    // A login rotates the hosts file: the new inode is unknown at start.
+    let hosts = home.join(".config/gh/hosts.yml");
+    replace(&hosts, &format!("{NEEDLE} rotated once\n"));
+    private.rescan();
+    std::fs::hard_link(&hosts, home.join("link-gh.txt")).unwrap();
+    names.push("link-gh.txt".to_owned());
+    replace(&hosts, &format!("{NEEDLE} rotated twice\n"));
+    for name in &names {
+        assert_eq!(
+            std::fs::metadata(home.join(name)).unwrap().nlink(),
+            1,
+            "{name}: the premise is a link that is the only name"
+        );
+    }
+    names
+}
+
+#[tokio::test]
+async fn a_link_to_a_native_credential_is_not_read_or_searched_after_the_original_is_gone() {
+    let det = Det::new();
+    let (_t, home, private) = world();
+    let links = native_credential_links(&home, &private);
+    let s = store_with_session(&det, &home).await;
+    let p = policy(&home);
+    for member in [false, true] {
+        for name in &links {
+            let err = read_as(
+                &s,
+                &p,
+                &private,
+                FileReadQuery {
+                    root: session(),
+                    path: name.clone(),
+                    max_bytes: None,
+                },
+                member,
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(err.code, code::NOT_FOUND, "member {member}: {name}");
+        }
+        let (found, backend) =
+            search_paths(&home, &private, member, SearchMode::Content, NEEDLE).await;
+        assert_eq!(backend, SearchBackend::Walk);
+        assert_eq!(found, normal_set(), "member {member}");
+    }
+    // The control: the links are readable without the registry.
+    let open = read_as(
+        &s,
+        &p,
+        &PrivatePaths::default(),
+        FileReadQuery {
+            root: session(),
+            path: "link-gh.txt".into(),
+            max_bytes: None,
+        },
+        false,
+    )
+    .await
+    .unwrap();
+    assert!(open.text.unwrap().contains("rotated once"));
+}

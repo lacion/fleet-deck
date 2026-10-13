@@ -168,7 +168,6 @@ async fn the_watcher_titles_a_session_once_and_digests_it_when_it_ends() {
     let s = st.start(&ws, None).await;
     let (assist, fake) = assist(&st);
     let Station { manager, det, .. } = st;
-    let manager = Arc::new(manager);
     let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
     let watcher = tokio::spawn(watch::run(assist, Arc::clone(&manager), stop_rx));
     let send = |n: u32, command| {

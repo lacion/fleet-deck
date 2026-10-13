@@ -75,6 +75,9 @@ struct SetupRun {
 #[cfg(test)]
 #[derive(Default)]
 pub(in crate::manager) struct Hooks {
+    /// Right after the command ended, before the task takes the restart
+    /// handoff lock.
+    pub handoff: StartHook,
     /// Right after the task left its setup, before the provider start.
     pub start: StartHook,
     /// After the provider spawn, before the first input work.
@@ -207,14 +210,18 @@ impl SessionTarget {
             cancel,
         )
         .await;
-        // The row stays (the restart admission lists it) until the claim is
-        // counted; then the row ends (PRE-PR r2 finding 2). The count drops
-        // after the provider start returned: the session is registered, or
-        // the start failed.
-        let claim = self.restart.enter_claim();
-        if held.end_row {
-            crate::workspace::setup::end_row(&self.store, effect.effect_id.as_str()).await;
-        }
+        // The row stays (the restart admission lists it) until the handoff:
+        // under the lock of the restart admission, the task takes its claim
+        // and ends the row, or finds the freeze set. The count drops after
+        // the provider start returned: the session is registered, or the
+        // start failed (PRE-PR r3 finding 2).
+        #[cfg(test)]
+        self.hooks.handoff.hold().await;
+        let Some(claim) = self.handoff(&effect, fence, held.end_row).await else {
+            // The restart is committed: the start never ran.
+            self.leave_setup(&session_id);
+            return;
+        };
         let failure = match held.result {
             // A stop that came after the command ended is a stop. The check
             // is under the lock that a stop uses.
@@ -268,6 +275,49 @@ impl SessionTarget {
         } else {
             self.leave_setup(&session_id);
         }
+    }
+
+    /// The handoff of a deferred start to the restart count. Under the
+    /// handoff lock: with no freeze it takes the claim and ends the setup
+    /// row. With the freeze set it waits for the end of the admission:
+    /// committed, the setup row ends and the session ends as a failed start
+    /// in one transaction (`None`); cleared, it tries again.
+    async fn handoff(
+        &self,
+        effect: &Effect,
+        fence: u64,
+        end_row: bool,
+    ) -> Option<crate::manager::restart_gate::InFlight> {
+        loop {
+            let guard = self.restart.lock_handoff().await;
+            if !self.restart.restarting() {
+                let claim = self.restart.enter_claim();
+                if end_row {
+                    crate::workspace::setup::end_row(&self.store, effect.effect_id.as_str()).await;
+                }
+                drop(guard);
+                return Some(claim);
+            }
+            drop(guard);
+            if self.restart.wait_resolved().await {
+                break;
+            }
+        }
+        if end_row {
+            crate::workspace::setup::end_row(&self.store, effect.effect_id.as_str()).await;
+        }
+        let ended = self
+            .store
+            .fail_claimed_start(
+                effect.effect_id.clone(),
+                fence,
+                crate::manager::restart_check::QUEUED_START_LOST.to_owned(),
+            )
+            .await;
+        if let Err(e) = ended {
+            tracing::warn!(error = %e, effect = %effect.effect_id, "the start was not ended for the restart");
+        }
+        None
     }
 
     /// Stops the live session of a start that a stop cancelled, and waits for

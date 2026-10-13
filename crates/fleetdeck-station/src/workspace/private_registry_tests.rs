@@ -129,3 +129,32 @@ fn a_file_that_cannot_be_written_keeps_the_entry_in_memory() {
     assert!(r.contains((4, 44)));
     assert_eq!(std::fs::read_to_string(&target).unwrap(), "");
 }
+
+#[test]
+fn a_credential_directory_walk_stops_at_the_depth_and_at_the_file_budget() {
+    let tmp = tempfile::tempdir().unwrap();
+    let r = Registry::load(tmp.path().join("private-inodes"));
+    let dir = tmp.path().join("cred");
+    let deep = dir.join("a/b/c/d/e");
+    std::fs::create_dir_all(&deep).unwrap();
+    let id = |p: &Path| {
+        let m = std::fs::metadata(p).unwrap();
+        (m.dev(), m.ino())
+    };
+    let ok = dir.join("a/b/c/d/ok");
+    let too_deep = deep.join("deep");
+    std::fs::write(&ok, "x").unwrap();
+    std::fs::write(&too_deep, "x").unwrap();
+    r.register_credential_dir(&dir);
+    assert!(r.contains(id(&ok)));
+    assert!(!r.contains(id(&too_deep)));
+    // The file budget: a directory over it registers the budget only.
+    let many = tmp.path().join("many");
+    std::fs::create_dir_all(&many).unwrap();
+    for i in 0..5 {
+        std::fs::write(many.join(format!("f{i}")), "x").unwrap();
+    }
+    let other = Registry::load(tmp.path().join("private-inodes-2"));
+    other.register_credential_dir_with(&many, 4, 3);
+    assert_eq!(other.len(), 3);
+}

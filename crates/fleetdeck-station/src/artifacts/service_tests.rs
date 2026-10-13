@@ -35,6 +35,8 @@ pub(super) struct Rig {
     pub(super) root: PathBuf,
     /// The allowed root that holds the workspace and the station layout.
     pub(super) base: PathBuf,
+    /// The private paths that the service uses.
+    pub(super) private: Arc<PrivatePaths>,
 }
 
 async fn rig() -> Rig {
@@ -73,12 +75,8 @@ pub(super) async fn rig_with(private: impl FnOnce(&Path) -> PrivatePaths) -> Rig
         BTreeMap::new(),
     )));
     let root = base.join("data/artifacts");
-    let service = ArtifactService::new(
-        store.clone(),
-        policy,
-        root.clone(),
-        Arc::new(private(&base)),
-    );
+    let private = Arc::new(private(&base));
+    let service = ArtifactService::new(store.clone(), policy, root.clone(), Arc::clone(&private));
     Rig {
         _tmp: tmp,
         store,
@@ -86,6 +84,7 @@ pub(super) async fn rig_with(private: impl FnOnce(&Path) -> PrivatePaths) -> Rig
         work,
         root,
         base,
+        private,
     }
 }
 
