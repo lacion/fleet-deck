@@ -11,7 +11,6 @@ use std::time::Duration;
 
 use fleetdeck_proto::event::Event;
 use rustix::process::{Pid, Signal, kill_process, kill_process_group};
-use tokio::time::{Instant, sleep};
 
 use super::setup::MARKER_VAR;
 use crate::store::setup_runs::SetupRun;
@@ -87,28 +86,45 @@ async fn report_left(store: &Store, run: &SetupRun) {
 /// Kills what the scan finds, until it finds nothing or the time is up.
 /// Returns true when a process may be left (also when the scan cannot run).
 async fn stop_run(run: &SetupRun) -> bool {
-    let deadline = Instant::now() + SCAN_WAIT;
+    let (effect, pgid) = (run.effect_id.clone(), run.pgid);
+    match tokio::task::spawn_blocking(move || kill_marked_in(&effect, pgid, SCAN_WAIT)).await {
+        Ok(Ok(left)) => left > 0,
+        Ok(Err(e)) => {
+            tracing::error!(error = %e, "the setup processes cannot be listed");
+            true
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "the setup scan stopped");
+            true
+        }
+    }
+}
+
+/// SIGKILLs every process of the station's user that carries the marker of
+/// `effect_id`, in any process group, and scans again until none is left or
+/// `wait` has passed. Returns the number of processes that the last scan
+/// still found. It blocks the thread: call it from a blocking context.
+///
+/// # Errors
+/// The text of the error when the processes cannot be listed.
+pub(crate) fn kill_marked(effect_id: &str, wait: Duration) -> Result<usize, String> {
+    kill_marked_in(effect_id, 0, wait)
+}
+
+/// [`kill_marked`] with the process group of the run, which is also killed
+/// when all of its processes carry the marker.
+fn kill_marked_in(effect_id: &str, pgid: i32, wait: Duration) -> Result<usize, String> {
+    let deadline = std::time::Instant::now() + wait;
     loop {
-        let (effect, pgid) = (run.effect_id.clone(), run.pgid);
-        let found = match tokio::task::spawn_blocking(move || scan(&effect, pgid)).await {
-            Ok(Ok(found)) => found,
-            Ok(Err(e)) => {
-                tracing::error!(error = %e, "the setup processes cannot be listed");
-                return true;
-            }
-            Err(e) => {
-                tracing::error!(error = %e, "the setup scan stopped");
-                return true;
-            }
-        };
+        let found = scan(effect_id, pgid).map_err(|e| e.to_string())?;
         if found.marked.is_empty() {
-            return false;
+            return Ok(0);
         }
-        kill_found(&found, run.pgid);
-        if Instant::now() >= deadline {
-            return true;
+        if std::time::Instant::now() >= deadline {
+            return Ok(found.marked.len());
         }
-        sleep(SCAN_POLL).await;
+        kill_found(&found, pgid);
+        std::thread::sleep(SCAN_POLL);
     }
 }
 

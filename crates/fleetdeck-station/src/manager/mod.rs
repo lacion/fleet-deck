@@ -237,7 +237,7 @@ impl SessionManager {
         if let Some(settings) = shims {
             target = target.with_shims(settings);
         }
-        let target = Arc::new(target);
+        let target = target.shared();
         target
             .adopt(
                 restored,

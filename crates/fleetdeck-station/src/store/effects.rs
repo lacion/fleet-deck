@@ -137,6 +137,10 @@ pub enum Dispatch {
     NotDispatched(String),
     /// The I/O failed half-way: the station cannot tell what arrived.
     Unknown(String),
+    /// The target settles the effect itself later (a start that waits for
+    /// its setup command, DL-148). The worker does not settle it; it stays
+    /// `claimed`.
+    Deferred,
 }
 
 /// Reasons the store writes itself.
@@ -235,7 +239,17 @@ pub(super) fn enqueue(
     payload: EffectPayload,
 ) -> Result<Effect> {
     let process = if payload.needs_process() {
-        Some(live_process(conn, session)?.ok_or_else(|| StoreError::NoProcess(session.clone()))?)
+        match live_process(conn, session)? {
+            Some(process) => Some(process),
+            // A stop during the setup command of a start has no process to
+            // target (DL-148).
+            None if matches!(payload, EffectPayload::Stop { .. })
+                && super::setup_runs::setup_run_for(conn, session)? =>
+            {
+                None
+            }
+            None => return Err(StoreError::NoProcess(session.clone())),
+        }
     } else {
         None
     };
@@ -363,7 +377,7 @@ pub(super) fn settle(
         return Ok(Some(found));
     }
     match dispatch {
-        Dispatch::Sent => {}
+        Dispatch::Sent | Dispatch::Deferred => {}
         Dispatch::Confirmed => {
             transition(conn, &found, EffectState::Confirmed, "", now, out)?;
         }
@@ -441,7 +455,7 @@ pub(super) fn first_input_failed(
                 retry_at: None,
             }],
         ),
-        Dispatch::Sent | Dispatch::Confirmed => return Ok(false),
+        Dispatch::Sent | Dispatch::Confirmed | Dispatch::Deferred => return Ok(false),
     };
     conn.execute(
         "UPDATE effects SET reason = ?2, updated_at = ?3 WHERE effect_id = ?1",

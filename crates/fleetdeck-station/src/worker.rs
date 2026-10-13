@@ -9,7 +9,8 @@
 //!    incarnation (in the row since enqueue) — **before** any I/O;
 //! 2. calls [`EffectTarget::dispatch`], the only place with provider I/O;
 //! 3. stores the [`Dispatch`] result. `Sent` keeps the claim until provider
-//!    evidence confirms it.
+//!    evidence confirms it. `Deferred` stores nothing: the target settles
+//!    the effect itself later (a start that waits for its setup command).
 //!
 //! A worker that a newer generation replaced gets
 //! [`StoreError::Fenced`] at its next claim or settle and stops. A crash
@@ -81,6 +82,10 @@ impl EffectWorker {
         crate::fault::hit(crate::fault::FaultPoint::AfterClaim, kind);
         let dispatch = self.target.dispatch(&effect).await;
         crate::fault::hit(crate::fault::FaultPoint::AfterSend, kind);
+        if dispatch == Dispatch::Deferred {
+            // The target settles this effect itself, later; it stays claimed.
+            return Ok(Some(effect));
+        }
         let settled = self
             .store
             .settle(effect.effect_id.clone(), self.fence, dispatch)

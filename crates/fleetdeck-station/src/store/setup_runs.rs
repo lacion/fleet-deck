@@ -7,7 +7,7 @@
 //! restart cleanup ([`crate::workspace::setup_cleanup`]) looks for it.
 
 use fleetdeck_proto::SessionId;
-use rusqlite::params;
+use rusqlite::{Connection, params};
 
 use super::{Result, Store, call};
 
@@ -18,6 +18,16 @@ pub struct SetupRun {
     pub session_id: SessionId,
     pub pgid: i32,
     pub started_at: i64,
+}
+
+/// Whether a setup run is stored for the session, so its start waits for the
+/// setup command (a stop is then possible without a process, DL-148).
+pub(crate) fn setup_run_for(conn: &Connection, session_id: &SessionId) -> Result<bool> {
+    Ok(conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM setup_runs WHERE session_id = ?1)",
+        [session_id.as_str()],
+        |r| r.get(0),
+    )?)
 }
 
 impl Store {

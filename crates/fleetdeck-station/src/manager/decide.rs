@@ -237,7 +237,11 @@ pub fn decide(
             resolution,
         } => super::revert::decide_resolve(d, policy, &session_id, &revert_id, resolution),
         SessionCommand::Stop { session_id, how } => {
-            live_session(d, &session_id, Operation::Stop)?;
+            // A start that waits for its setup command has no process yet; its
+            // stop cancels the setup (DL-148).
+            if !crate::store::setup_runs::setup_run_for(d.connection(), &session_id)? {
+                live_session(d, &session_id, Operation::Stop)?;
+            }
             plain_effect(d, &session_id, EffectPayload::Stop { how })
         }
     }
