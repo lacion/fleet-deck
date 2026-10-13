@@ -9,6 +9,9 @@ import { planActions } from '../board/plans';
 import { automationActions } from '../automations/automations';
 import { integrationActions } from '../integrations/actions';
 import { integrationHttp } from '../integrations/http';
+import { accountActions } from '../accounts/actions';
+import { settingsActions } from '../settings/actions';
+import { deckHttp } from '../settings/http';
 import type { FleetExtras, SessionKey } from '../gen';
 import { sessionActions } from '../session/commands';
 import { shellActions } from '../shell/shell';
@@ -35,6 +38,8 @@ import { peopleCalls, shareCalls } from '../sharing/people';
 const ARTIFACT_WAIT_MS = 25_000;
 /** The deck waits up to 75 s for the station's answer to an issue or pull request read (R3). */
 const INTEGRATION_WAIT_MS = 80_000;
+/** The deck waits up to 15 s for a station; the settings calls wait a little longer. */
+const SETTINGS_WAIT_MS = 20_000;
 
 export function RuntimeApp({ connection }: { readonly connection: Connection }) {
   const state = useSyncExternalStore(
@@ -210,6 +215,16 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
       ),
     [connection, scopeText],
   );
+  // The settings and accounts are the owner's login only; the elevation lives in these actions.
+  const settings = useMemo(() => {
+    if (!owner || !canAdmin || guest) return undefined;
+    const io = deckHttp(
+      (path, init) => fetch(path, init),
+      () => connection.getSnapshot().login?.csrf ?? null,
+      SETTINGS_WAIT_MS,
+    );
+    return { settings: settingsActions(io), accounts: accountActions(io) };
+  }, [connection, owner, canAdmin, guest]);
   const filesFor = useMemo(
     () =>
       guest
@@ -433,6 +448,7 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
         onReturnTerminal={returnTerminal}
         race={race}
         views={views}
+        settings={settings}
       />
     </PeopleProvider>
   );

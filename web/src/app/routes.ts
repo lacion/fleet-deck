@@ -20,6 +20,18 @@ export type Route =
   | { readonly name: 'project'; readonly id: string }
   | { readonly name: 'shares' }
   | { readonly name: 'spaces' }
+  | { readonly name: 'settings'; readonly tab: 'deck' }
+  | { readonly name: 'settings'; readonly tab: 'station'; readonly station: string }
+  | {
+      readonly name: 'settings';
+      readonly tab: 'accounts';
+      /** `?station=<id>`; `null`: the first station. */
+      readonly station: string | null;
+      /** `?finish=<transaction>`: the OAuth callback came back to the board. */
+      readonly finish: string | null;
+      /** `?oauth_error=<code>`: the provider or the deck refused the login. */
+      readonly oauthError: string | null;
+    }
   | {
       readonly name: 'artifact';
       readonly station: string;
@@ -69,6 +81,34 @@ function parseArtifact(parts: readonly string[]): Route {
   }
 }
 
+/** `#/settings`, `#/settings/station/<id>` and `#/settings/accounts[?station=&finish=&oauth_error=]` (DL-172, DL-173). */
+function parseSettings(parts: readonly string[], query: string): Route {
+  if (parts.length === 2) return { name: 'settings', tab: 'deck' };
+  if (parts.length === 3 && parts[2] === 'accounts') {
+    const q = new URLSearchParams(query);
+    const text = (name: string) => {
+      const v = q.get(name);
+      return v === null || v === '' ? null : v;
+    };
+    return {
+      name: 'settings',
+      tab: 'accounts',
+      station: text('station'),
+      finish: text('finish'),
+      oauthError: text('oauth_error'),
+    };
+  }
+  if (parts.length === 4 && parts[2] === 'station') {
+    try {
+      const station = decodeURIComponent(parts[3] ?? '');
+      return station === '' ? HOME : { name: 'settings', tab: 'station', station };
+    } catch {
+      return HOME;
+    }
+  }
+  return HOME;
+}
+
 /** Hash routes (DL-140): the browser's back button works on a phone. Anything unknown is home. */
 export function parseHash(hash: string): Route {
   const text = hash.startsWith('#') ? hash.slice(1) : hash;
@@ -80,6 +120,7 @@ export function parseHash(hash: string): Route {
     if (text === `/${name}`) return { name };
   }
   const parts = path.split('/');
+  if (parts[0] === '' && parts[1] === 'settings') return parseSettings(parts, query);
   // R1.4: `#/compare/<batch id>`.
   if (parts.length === 3 && parts[0] === '' && parts[1] === 'compare') {
     try {
@@ -121,6 +162,17 @@ export function parseHash(hash: string): Route {
   }
 }
 
+function formatSettings(route: Extract<Route, { name: 'settings' }>): string {
+  if (route.tab === 'deck') return '#/settings';
+  if (route.tab === 'station') return `#/settings/station/${encodeURIComponent(route.station)}`;
+  const q = new URLSearchParams();
+  if (route.station !== null) q.set('station', route.station);
+  if (route.finish !== null) q.set('finish', route.finish);
+  if (route.oauthError !== null) q.set('oauth_error', route.oauthError);
+  const text = q.toString();
+  return text === '' ? '#/settings/accounts' : `#/settings/accounts?${text}`;
+}
+
 /** The inverse of `parseHash`. */
 export function formatHash(route: Route): string {
   switch (route.name) {
@@ -134,6 +186,8 @@ export function formatHash(route: Route): string {
       return `#/compare/${encodeURIComponent(route.batch)}`;
     case 'project':
       return `#/project/${encodeURIComponent(route.id)}`;
+    case 'settings':
+      return formatSettings(route);
     case 'artifact': {
       const base = `#/artifact/${encodeURIComponent(route.station)}/${encodeURIComponent(route.id)}`;
       return route.version === null ? base : `${base}/${route.version}`;

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useIntegrations } from '../integrations/context';
+import { useSettings } from '../settings/context';
 import { FolderGit2 } from '../integrations/icons';
 import {
   Eye,
@@ -10,6 +11,7 @@ import {
   MessagesSquare,
   Paperclip,
   Server,
+  Settings,
   Smartphone,
   SquareTerminal,
   Users,
@@ -31,6 +33,7 @@ type Props = {
 export function More({ stationCount, terminalCount, chrome }: Props) {
   const [addingDevice, setAddingDevice] = useState(false);
   const projectsLink = useIntegrations()?.actions.canAdmin === true;
+  const settingsLink = useSettings() !== undefined;
   // R11.4: a guest sees the Watch page only; the owner also sees Shares.
   const people = usePeople();
   const guest = people.member !== null;
@@ -98,6 +101,14 @@ export function More({ stationCount, terminalCount, chrome }: Props) {
               <a href="#/shares">
                 <Icon of={Users} />
                 Shares
+              </a>
+            </li>
+          ) : null}
+          {settingsLink && !guest ? (
+            <li>
+              <a href="#/settings">
+                <Icon of={Settings} />
+                Settings
               </a>
             </li>
           ) : null}

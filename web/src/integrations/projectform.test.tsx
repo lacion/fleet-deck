@@ -1,24 +1,34 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import type { IntegrationsStatus } from '../gen';
+import type { AccountsList, AccountView } from '../gen';
 import { station } from '../testing/fleet';
 import { emptyDraft } from './model';
-import { hostAfterForge, ProjectForm } from './ProjectForm';
+import {
+  ContainerPicker,
+  forgeUser,
+  hostAfterForge,
+  ProjectForm,
+  trackerAccounts,
+} from './ProjectForm';
 
-const status: IntegrationsStatus = {
-  gh: { present: true, authenticated: true, user: 'ana', message: '' },
-  glab: { present: false, authenticated: false, user: null, message: '' },
-  trackers: [
-    {
-      id: 'jira-main',
-      kind: 'jira',
-      site: 'acme.atlassian.net',
-      ok: true,
-      user: 'ana',
-      message: '',
-    },
-    { id: 'lin', kind: 'linear', site: null, ok: true, user: 'ana', message: '' },
+const account = (
+  extra: Partial<AccountView> & Pick<AccountView, 'account_id' | 'kind'>,
+): AccountView => ({
+  method: 'oauth',
+  status: 'ok',
+  message: '',
+  ...extra,
+});
+
+const accounts: AccountsList = {
+  accounts: [
+    account({ account_id: 'jira-main', kind: 'jira', site: 'acme.atlassian.net', user: 'ana' }),
+    account({ account_id: 'lin', kind: 'linear', method: 'token', user: 'ana' }),
+    account({ account_id: 'gh-1', kind: 'github', method: 'cli', site: 'github.com', user: 'ana' }),
+    account({ account_id: 'jira-old', kind: 'jira', method: 'cli' }),
   ],
+  apps: [],
+  env_tokens: [],
 };
 
 const form = (
@@ -33,7 +43,7 @@ const form = (
       editing={false}
       saving={false}
       error={null}
-      status={null}
+      accounts={null}
       onSave={() => {}}
       onCancel={() => {}}
       {...extra}
@@ -79,7 +89,7 @@ describe('the project form (DL-171)', () => {
   test('with no account reported: the text and the link', () => {
     const html = form();
     expect(html).toContain('No Jira or Linear account on this station yet.');
-    expect(html).toContain('<a href="#/settings/accounts">How to connect</a>');
+    expect(html).toContain('<a href="#/settings/accounts?station=station-a">How to connect</a>');
   });
 
   test('the tracker rows: kind first, then the account select of that kind, then the key', () => {
@@ -87,7 +97,7 @@ describe('the project form (DL-171)', () => {
       ...emptyDraft('station-a'),
       trackers: [{ tracker: 'jira-main', kind: 'jira' as const, key: 'PROJ' }],
     };
-    const html = form(draft, { status });
+    const html = form(draft, { accounts });
     expect(html).not.toContain('No Jira or Linear account');
     const kind = html.indexOf('>Kind<');
     const account = html.indexOf('>Account<');
@@ -108,10 +118,82 @@ describe('the project form (DL-171)', () => {
       ...emptyDraft('station-a'),
       trackers: [{ tracker: 'lin', kind: 'linear' as const, key: 'ENG' }],
     };
-    const html = form(draft, { status });
+    const html = form(draft, { accounts });
     expect(html).toContain('<option value="lin" selected="">Linear (lin)</option>');
     expect(html).toContain('>Team key<');
     expect(html).toContain('placeholder="ENG"');
     expect(html).not.toContain('(jira-main)');
+  });
+
+  test('the account select offers oauth, token and config accounts of the kind', () => {
+    expect(trackerAccounts(accounts, 'jira').map((a) => a.account_id)).toEqual(['jira-main']);
+    expect(trackerAccounts(accounts, 'linear').map((a) => a.account_id)).toEqual(['lin']);
+    expect(trackerAccounts(null, 'jira')).toEqual([]);
+  });
+
+  test('the container select lists the projects of the account; the value is the key', () => {
+    const html = renderToStaticMarkup(
+      <ContainerPicker
+        kind="jira"
+        value="OPS"
+        station="station-a"
+        accountId="jira-main"
+        load={undefined}
+        onChange={() => {}}
+        initial={{
+          containers: [
+            { key: 'PROJ', name: 'Platform' },
+            { key: 'OPS', name: 'Operations' },
+          ],
+        }}
+      />,
+    );
+    expect(html).toContain('>Jira project<');
+    expect(html).toContain('<option value="OPS" selected="">Operations (OPS)</option>');
+    expect(html).toContain('<option value="PROJ">Platform (PROJ)</option>');
+    const linear = renderToStaticMarkup(
+      <ContainerPicker
+        kind="linear"
+        value=""
+        station="station-a"
+        accountId="lin"
+        load={undefined}
+        onChange={() => {}}
+        initial={{ containers: [{ key: 'ENG', name: 'Engineering' }] }}
+      />,
+    );
+    expect(linear).toContain('>Linear team<');
+  });
+
+  test('without a list the key is typed', () => {
+    const html = renderToStaticMarkup(
+      <ContainerPicker
+        kind="linear"
+        value="ENG"
+        station="station-a"
+        accountId=""
+        load={undefined}
+        onChange={() => {}}
+      />,
+    );
+    expect(html).toContain('>Team key<');
+    expect(html).toContain('value="ENG"');
+  });
+
+  test('the forge shows who is signed in, or the way to connect', () => {
+    expect(forgeUser(accounts, 'github', 'github.com')).toBe('ana');
+    expect(forgeUser(accounts, 'github', '')).toBe('ana');
+    expect(forgeUser(accounts, 'gitlab', 'gitlab.com')).toBeNull();
+    const github = { ...emptyDraft('station-a'), forge: 'github' as const, host: 'github.com' };
+    expect(form(github, { accounts })).toContain('Signed in as ana');
+    const gitlab = { ...emptyDraft('station-a'), forge: 'gitlab' as const, host: 'gitlab.com' };
+    const html = form(gitlab, { accounts });
+    expect(html).toContain('Not connected. Connect it in');
+    expect(html).toContain(
+      '<a href="#/settings/accounts?station=station-a">Settings → Accounts</a>',
+    );
+    // The accounts did not load: the form says nothing about the login.
+    expect(form(github)).not.toContain('Signed in as');
+    expect(form(github)).not.toContain('Not connected');
   });
 });

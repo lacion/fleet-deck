@@ -1,0 +1,437 @@
+/* DL-172, DL-173: the settings page: tabs, sections of fields, the save bar, the dialogs, the
+   accounts tab. Primitives come from base.css and page.css, tokens from tokens.css. */
+
+/* ── the tabs ───────────────────────────────────────────────────── */
+.fd-set-tabs {
+  padding: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+.fd-set-tabs [role="tab"] {
+  flex: none;
+  white-space: nowrap;
+}
+.fd-set-tabs [role="tab"]:focus-visible {
+  outline: 2px solid var(--act);
+  outline-offset: -2px;
+}
+.fd-settings [role="tabpanel"] {
+  min-width: 0;
+}
+
+/* ── a tab: sections, fields ────────────────────────────────────── */
+.fd-set-tab {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  /* room for the save bar so that it never covers the last field */
+  padding-bottom: 72px;
+}
+.fd-set-tab > * {
+  min-width: 0;
+}
+.fd-set-tab .fd-fieldwrap {
+  position: relative;
+}
+.fd-set-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.fd-set-tab .fd-fieldhint {
+  display: block;
+}
+
+/* the checkbox as a switch */
+.fd-switch {
+  appearance: none;
+  position: relative;
+  flex: none;
+  width: 34px;
+  height: 20px;
+  min-height: 0;
+  padding: 0;
+  background: var(--code);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  cursor: pointer;
+  transition:
+    background var(--t-fast),
+    border-color var(--t-fast);
+}
+.fd-switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  background: var(--dim);
+  border-radius: 50%;
+  transition:
+    transform var(--t-fast),
+    background var(--t-fast);
+}
+.fd-switch:checked {
+  background: var(--act-bg);
+  border-color: var(--act);
+}
+.fd-switch:checked::after {
+  background: var(--act);
+  transform: translateX(14px);
+}
+.fd-switch:focus-visible {
+  outline: 2px solid var(--act);
+  outline-offset: 2px;
+}
+.fd-switch:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+@media (pointer: coarse) {
+  .fd-switch {
+    min-height: 0;
+    width: 44px;
+    height: 26px;
+  }
+  .fd-switch::after {
+    width: 20px;
+    height: 20px;
+  }
+  .fd-switch:checked::after {
+    transform: translateX(18px);
+  }
+}
+
+/* lists of texts, folders and pairs */
+.fd-set-rows {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.fd-set-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+.fd-set-row > input,
+.fd-set-row > .fd-folder {
+  flex: 1;
+  min-width: 0;
+}
+.fd-set-row > button {
+  flex: none;
+}
+.fd-set-pair > input:first-child {
+  flex: 3;
+}
+.fd-set-pair > input:nth-child(2) {
+  flex: 2;
+}
+input[data-mono="true"] {
+  font-family: var(--font-data);
+  font-size: 12px;
+}
+@media (max-width: 640px) {
+  .fd-set-pair {
+    flex-wrap: wrap;
+  }
+  .fd-set-pair > input {
+    flex: 1 1 100%;
+  }
+}
+
+/* the provider logins */
+.fd-set-instances {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.fd-set-insttable td {
+  vertical-align: middle;
+}
+.fd-set-insttable td input,
+.fd-set-insttable td select {
+  width: 100%;
+  min-width: 0;
+}
+.fd-set-insttable .fd-set-envrow td {
+  padding-top: 0;
+}
+.fd-set-env {
+  display: grid;
+  gap: 6px;
+  padding: 8px 12px;
+  background: var(--code);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-ctl);
+}
+.fd-set-envlist {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.fd-set-envlist > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.fd-set-envlist code {
+  font-family: var(--font-data);
+  font-size: 12px;
+}
+@media (max-width: 640px) {
+  .fd-set-insttable .fd-set-envrow {
+    padding-top: 0;
+  }
+}
+
+/* trackers from the file */
+.fd-set-trackers {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* ── notices ────────────────────────────────────────────────────── */
+.fd-set-notices {
+  display: grid;
+  gap: 8px;
+  scroll-margin-top: 16px;
+}
+.fd-set-notices:empty {
+  display: none;
+}
+.fd-set-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 8px 12px;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctl);
+  color: var(--dim);
+  font-size: 12.5px;
+}
+.fd-set-notice > span {
+  flex: 1;
+  min-width: 0;
+}
+.fd-set-notice[data-tone="warn"] {
+  background: var(--act-bg);
+  border-color: var(--act);
+  color: var(--act);
+}
+.fd-set-notice[data-tone="error"] {
+  background: var(--hazard-bg);
+  border-color: var(--hazard);
+  color: var(--hazard);
+}
+
+/* ── the save bar ───────────────────────────────────────────────── */
+.fd-set-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  padding: 10px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-panel);
+  box-shadow: var(--shadow-pop);
+}
+.fd-set-bar-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* ── dialogs ────────────────────────────────────────────────────── */
+.fd-set-dialogform {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.fd-set-dialogform > p {
+  margin: 0;
+}
+.fd-set-dialogform .fd-formactions {
+  margin-top: 4px;
+}
+.fd-set-stoplist {
+  display: grid;
+  gap: 6px;
+  max-height: 240px;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+.fd-set-stoplist > li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+}
+.fd-set-steps {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 20px;
+  font-size: 13px;
+}
+.fd-set-redirect {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--code);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-ctl);
+}
+.fd-set-redirect > code {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-data);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.fd-set-restart {
+  z-index: 40;
+  align-items: center;
+  background: rgba(0, 0, 0, 0.7);
+}
+.fd-set-restart .fd-dialog {
+  justify-items: center;
+  text-align: center;
+}
+.fd-set-restart p {
+  margin: 0;
+  color: var(--dim);
+}
+.fd-set-spinner {
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--border);
+  border-top-color: var(--act);
+  border-radius: 50%;
+  animation: fd-set-spin 0.9s linear infinite;
+}
+@keyframes fd-set-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fd-set-spinner {
+    animation: none;
+  }
+}
+
+/* ── the accounts tab ───────────────────────────────────────────── */
+.fd-set-stationpick {
+  max-width: 320px;
+}
+.fd-set-forges {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.fd-set-connectrow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-soft);
+}
+@media (min-width: 900px) {
+  .fd-set-connectrow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.fd-set-connect {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  min-width: 0;
+}
+.fd-set-connect > button {
+  justify-self: start;
+}
+.fd-set-problem {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+.fd-set-problem > p {
+  margin: 0;
+}
+.fd-set-device {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+  padding: 14px 16px;
+  background: var(--code);
+  border: 1px solid var(--border);
+  border-radius: var(--r-panel);
+}
+.fd-set-device > p {
+  margin: 0;
+}
+.fd-set-code {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.fd-set-code > code {
+  font-family: var(--font-data);
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: 4px;
+  color: var(--text);
+}
+.fd-set-ok {
+  color: var(--ok);
+  font-size: 13px;
+}
+.fd-set-trackerlist {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
+}
+.fd-set-tracker {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  min-width: 0;
+}
+.fd-set-tracker + .fd-set-tracker {
+  padding-top: 20px;
+  border-top: 1px solid var(--border-soft);
+}
+.fd-set-tracker > p {
+  margin: 0;
+}
+.fd-set-trackerhead {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.fd-set-trackeractions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
