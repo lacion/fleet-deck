@@ -408,6 +408,36 @@ describe('spawn form (P4-4)', () => {
     expect(render()).toContain('<option value="station-a" selected="">Alpha</option>');
   });
 
+  test('the clone mode asks for a repository and shows the URL that it clones', () => {
+    const render = (initialRepo: string) =>
+      renderToStaticMarkup(
+        <SpawnForm
+          stations={[reported('station-a')]}
+          freshness="live"
+          onOpen={() => {}}
+          initialPlace="clone"
+          initialRepo={initialRepo}
+        />,
+      );
+    const html = render('acme/app');
+    expect(html).toContain('Clone a repository into a new directory here');
+    expect(html).not.toContain('Clone URL');
+    expect(html).toContain('Repository');
+    expect(html).toContain('placeholder="owner/name, host/owner/name or a URL"');
+    expect(html).toContain('<p class="fd-note">Clones https://github.com/acme/app.git</p>');
+    // The directory name follows the repository.
+    expect(html).toContain('New directory name<input value="app"/>');
+    // A bare name without a default organization shows the error (no alert before the field was left).
+    const bare = render('app');
+    expect(bare).toContain(
+      '<p class="fd-note">Set a default organization in Settings, or enter owner/name.</p>',
+    );
+    expect(bare).toMatch(/data-missing="true">To start: [^<]*enter owner\/name\.</);
+    expect(render('git@gitlab.com:g/sub/tool.git')).toContain(
+      '<p class="fd-note">Clones git@gitlab.com:g/sub/tool.git</p>',
+    );
+  });
+
   test('the recent directories are the newest cwd of the station, once each, not pinned', () => {
     const at = (id: string, cwd: string | null, updated: number, st = 'station-a') =>
       card(id, 'idle', st, { cwd, updated_at: updated });

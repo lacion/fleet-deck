@@ -18,6 +18,7 @@ use crate::store::{
     AnswerClaim, DecideError, Decision, EffectPayload, InputRecord, NewSession, RequestState,
     RuntimeRequest, WorkspacePlan,
 };
+use crate::workspace::clone_reuse::{self, CloneTarget};
 use crate::workspace::provision;
 
 /// The run origin of an input from `origin` (PLAN §6.3).
@@ -480,9 +481,10 @@ fn start(
     };
     let (mut cwd, mut plan) = match &workspace {
         Some(WorkspaceRequest::Clone { url }) => {
-            let (plan, path) =
-                provision::clone_plan(url, &spec.cwd, canonical_inside).map_err(refused)?;
-            (path, Some(plan))
+            match clone_reuse::clone_or_reuse(url, &spec.cwd, canonical_inside).map_err(refused)? {
+                CloneTarget::Clone(plan, path) => (path, Some(plan)),
+                CloneTarget::Reuse(path) => (path, None),
+            }
         }
         _ => (
             policy.workspace(&spec.cwd).map_err(|e| match e {

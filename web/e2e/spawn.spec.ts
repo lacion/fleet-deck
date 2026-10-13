@@ -280,7 +280,7 @@ test('a clone start sends the URL and the new directory (M3 6-1)', async ({ page
   await chooseApp(page);
   const form = page.getByRole('region', { name: 'New session' });
   await form.getByLabel('Workspace').selectOption('clone');
-  await form.getByLabel('Clone URL').fill('https://github.com/acme/app.git');
+  await form.getByLabel('Repository', { exact: true }).fill('https://github.com/acme/app.git');
   await form.getByLabel('New directory name').fill('app-copy');
   await form.getByRole('button', { name: 'Start session' }).click();
   await expect(page).toHaveURL(/#\/s\/st-alpha\/s-c$/);
