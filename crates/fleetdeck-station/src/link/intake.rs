@@ -225,6 +225,7 @@ async fn read(ctx: &StationLink, req: InboundRequest) -> Outcome {
             version: Some(env!("CARGO_PKG_VERSION").to_owned()),
             max_sessions: Some(ctx.manager.policy().max_sessions()),
             allow_shell: Some(ctx.shells.allowed()),
+            allow_setup_cmd: Some(ctx.manager.policy().allow_setup_cmd()),
             providers: ctx.manager.providers().await,
         }),
         "workspace.list" => workspaces(ctx, req.params).await,

@@ -241,6 +241,7 @@ async fn live_round(kind: ProviderKind) {
             spec,
             prompt: Some(super::tests::text(prompt)),
             workspace: None,
+            setup_cmd: None,
         },
     )
     .await;

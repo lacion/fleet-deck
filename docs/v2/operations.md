@@ -21,7 +21,7 @@ A missing file gives the defaults. An unknown key is an error.
 | `name` | the host name | The station name on the board. |
 | `allowed_roots` | `["~"]` (the home directory) | The directories where sessions, worktrees and clones may run. An explicit list must have at least one entry. |
 | `max_sessions` | `12` | The most sessions with a live process. A start or resume above the limit is refused. |
-| `allow_setup_cmd` | `false` | Allow a workspace setup command. |
+| `allow_setup_cmd` | `false` | Allow a session start to run the owner's setup command in its workspace (DL-148). |
 | `allow_shell` / `max_shells` | `false` / `8` | The human shell (PLAN §6.8). |
 | `offline_approval_policy` | `wait` | What happens to an approval when no deck is reachable: `wait`, or `deny_after(<n>s)` (also `m` or `h`). |
 | `listen` | (empty) | Link listen addresses when the deck dials this station. |

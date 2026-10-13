@@ -143,6 +143,40 @@ async fn route(
     };
     let station = Some(rec.station_id.0.clone());
     let mut command = req.command;
+    // A setup command runs shell code on the station: only the owner sends
+    // one, and only to a station that reports it runs setup commands
+    // (an older station would ignore the field, DL-148).
+    if let SessionCommand::Start {
+        setup_cmd: Some(_), ..
+    } = &command
+    {
+        if !owner {
+            return Err((
+                station.clone(),
+                id.clone(),
+                ApiError::new(
+                    StatusCode::FORBIDDEN,
+                    "owner_only",
+                    "only the owner's board login starts a session with a setup command".to_owned(),
+                ),
+            ));
+        }
+        let runs_setup = board
+            .store
+            .station_info(&rec.station_id)
+            .is_some_and(|(info, _)| info.allow_setup_cmd == Some(true));
+        if !runs_setup {
+            return Err((
+                station.clone(),
+                id.clone(),
+                ApiError::new(
+                    StatusCode::CONFLICT,
+                    "setup_not_supported",
+                    "this station does not run setup commands".to_owned(),
+                ),
+            ));
+        }
+    }
     // An owner start with a coordinator request: the deck creates the grant
     // and fills in its id and the control skill (ADR-006 §4, DL-217). Only
     // the owner creates a grant (ADR-006 §4): a bearer token is refused

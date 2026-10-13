@@ -282,6 +282,7 @@ async fn a_reconciliation_while_the_rollback_has_no_answer_keeps_the_fence_until
             spec: spec(&ws, "claude"),
             prompt: Some(text("hello")),
             workspace: None,
+            setup_cmd: None,
         })
         .await,
         RejectCode::InvalidState

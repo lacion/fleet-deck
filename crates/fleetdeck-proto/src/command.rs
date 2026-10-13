@@ -127,6 +127,12 @@ pub enum SessionCommand {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         workspace: Option<Box<WorkspaceRequest>>,
+        /// A shell command that the station runs in the workspace before the
+        /// provider starts (DL-148). Only the owner sets it, and only a
+        /// station with `allow_setup_cmd = true` runs it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        setup_cmd: Option<String>,
     },
     Resume {
         session_id: SessionId,

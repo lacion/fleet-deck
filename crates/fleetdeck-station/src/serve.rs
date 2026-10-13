@@ -22,7 +22,7 @@ use tokio::sync::watch;
 use crate::link::{NodeError, StationNode};
 use crate::local;
 use crate::manager::target::ShimSettings;
-use crate::manager::{Policy, SessionManager, adapters_from_config};
+use crate::manager::{Policy, SessionManager, adapters_from_config, setup_envs_from_config};
 use crate::store::{Store, StoreConfig};
 
 /// How long the shutdown waits for the pumps to store the last events.
@@ -130,7 +130,7 @@ impl RunningStation {
         let adapters = adapters_from_config(config, &host, Some(station_dir.join("raw")))?;
         let socket = local::socket_path(&station_dir);
         let listener = local::bind(&socket).await?;
-        let policy = Policy::from_config(config);
+        let policy = Policy::from_config(config).with_setup_envs(setup_envs_from_config(config)?);
         let manager = Arc::new(match config.host {
             HostChoice::Direct => SessionManager::start(store, policy, adapters, ids).await?,
             HostChoice::Shim => {

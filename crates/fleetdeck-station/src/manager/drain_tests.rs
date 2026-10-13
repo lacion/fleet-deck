@@ -40,6 +40,7 @@ async fn a_draining_station_refuses_new_work_and_reports_the_busy_sessions() {
             spec: spec(&cwd, "claude"),
             prompt: None,
             workspace: None,
+            setup_cmd: None,
         })
         .await,
         RejectCode::InvalidState

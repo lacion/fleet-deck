@@ -60,15 +60,22 @@ pub fn decide(
             spec,
             prompt,
             workspace,
-        } => start(
-            d,
-            policy,
-            origin_run,
-            spec,
-            prompt,
-            workspace.map(|w| *w),
-            None,
-        ),
+            setup_cmd,
+        } => {
+            if let Some(cmd) = &setup_cmd {
+                check_setup_cmd(policy, origin_run, cmd)?;
+            }
+            start(
+                d,
+                policy,
+                origin_run,
+                spec,
+                prompt,
+                workspace.map(|w| *w),
+                None,
+                setup_cmd,
+            )
+        }
         SessionCommand::Import {
             spec,
             native_session_id,
@@ -84,6 +91,7 @@ pub fn decide(
                 prompt,
                 None,
                 Some(native_session_id),
+                None,
             )
         }
         SessionCommand::Resume { session_id } => {
@@ -328,6 +336,7 @@ pub(super) fn result(session_id: &SessionId, input_id: Option<InputId>) -> Comma
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn start(
     d: &mut Decision<'_>,
     policy: &Policy,
@@ -336,6 +345,7 @@ fn start(
     prompt: Option<fleetdeck_proto::command::UserInput>,
     workspace: Option<WorkspaceRequest>,
     import: Option<String>,
+    setup_cmd: Option<String>,
 ) -> Result<CommandResult, DecideError> {
     let provider = policy.instance(&spec.provider_instance).ok_or_else(|| {
         reject(
@@ -481,10 +491,38 @@ fn start(
             spec,
             prompt,
             workspace: plan,
+            setup_cmd,
         },
     };
     d.enqueue(&session_id, payload)?;
     Ok(result(&session_id, input_id))
+}
+
+/// The longest setup command, in characters (DL-148).
+const MAX_SETUP_CMD_CHARS: usize = 4096;
+
+/// The refusals of a setup command, in this order: the station policy, a
+/// coordinator origin, then the text (DL-148).
+fn check_setup_cmd(policy: &Policy, origin: RunOrigin, cmd: &str) -> Result<(), DecideError> {
+    if !policy.allow_setup_cmd() {
+        return Err(reject(
+            RejectCode::Forbidden,
+            "setup commands are off on this station (allow_setup_cmd = false)",
+        ));
+    }
+    if origin == RunOrigin::Coordinator {
+        return Err(reject(
+            RejectCode::Forbidden,
+            "a coordinator start cannot carry a setup command",
+        ));
+    }
+    if cmd.trim().is_empty() || cmd.chars().count() > MAX_SETUP_CMD_CHARS || cmd.contains('\0') {
+        return Err(reject(
+            RejectCode::InvalidCommand,
+            "the setup command must be 1 to 4096 characters without NUL",
+        ));
+    }
+    Ok(())
 }
 
 /// The first free callsign of the station for a new session (DL-200).

@@ -143,6 +143,7 @@ impl Station {
                 spec,
                 prompt: prompt.map(text),
                 workspace: None,
+                setup_cmd: None,
             })
             .await;
         d.receipt.result.unwrap().session_id.unwrap()
@@ -409,7 +410,8 @@ async fn the_station_policy_decides_in_the_command_transaction() {
             st.rejected(SessionCommand::Start {
                 spec,
                 prompt: None,
-                workspace: None
+                workspace: None,
+                setup_cmd: None,
             })
             .await,
             code
@@ -423,6 +425,7 @@ async fn the_station_policy_decides_in_the_command_transaction() {
             spec: spec(&link.to_string_lossy(), "claude"),
             prompt: None,
             workspace: None,
+            setup_cmd: None,
         })
         .await,
         RejectCode::Forbidden
@@ -434,6 +437,7 @@ async fn the_station_policy_decides_in_the_command_transaction() {
             spec: spec(&ws, "claude"),
             prompt: None,
             workspace: None,
+            setup_cmd: None,
         })
         .await,
         RejectCode::Forbidden,
@@ -713,6 +717,9 @@ mod revert_wired;
 #[path = "rename_tests.rs"]
 mod rename;
 
+#[path = "setup_tests.rs"]
+mod setup;
+
 #[path = "workspace_tests.rs"]
 mod workspace_provision;
 
@@ -755,6 +762,7 @@ async fn a_station_local_start_with_a_coordinator_spec_is_rejected() {
             spec: granted,
             prompt: None,
             workspace: None,
+            setup_cmd: None,
         })
         .await,
         RejectCode::InvalidCommand

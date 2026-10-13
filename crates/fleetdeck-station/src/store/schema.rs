@@ -459,6 +459,18 @@ CREATE INDEX shell_effects_open ON shell_effects (state, created_at)
     WHERE state IN ('queued', 'claimed');
 ";
 
+const V19: &str = "
+-- DL-148: a setup command of a session start. The row is durable before the
+-- command can run; it holds the process group so that a station restart can
+-- find and stop a process that outlived the station.
+CREATE TABLE setup_runs (
+    effect_id  TEXT    PRIMARY KEY,
+    session_id TEXT    NOT NULL,
+    pgid       INTEGER NOT NULL,
+    started_at INTEGER NOT NULL
+);
+";
+
 /// The `station.db` migrations. V4 is the link epochs table of
 /// `fleetdeck-link` (G1).
 #[must_use]
@@ -482,6 +494,7 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V16),
         M::up(V17),
         M::up(V18),
+        M::up(V19),
     ])
 }
 
