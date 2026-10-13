@@ -200,16 +200,21 @@ The owner creates a project on the board. A preflight checks each binding from t
 3. **The limit of each provider instance in the spawn picker,** so the owner sees "account A resets in 15 min, use B". Missing; the data is already on the board.
 4. **Assign by quota:** `assign auto` prefers the instance with the most room. Missing.
 5. **Claude windows that show before a limit.** Partial: the adapter maps `rate_limit_event` (`claude/map.rs`), but the CLI sends it mostly near a limit, so the meters are often empty. Research whether `/usage` or another protocol source gives the windows earlier.
-6. **Codex cost from a local price table, labeled "inferred".** Partial (Codex reports tokens only). Optional: it conflicts in spirit with rule 4, unless the label is clear.
+6. **Codex cost from a local price table, labeled "inferred"** (owner decision DL-157). Partial (Codex reports tokens only). The board shows it as "≈ $1.20 inferred", never mixed silently with reported cost. The price table is versioned, and a model that is not in it stays unknown (rule 4).
 
 ### R5. Automations
 
-1. **Scheduled runs:** a cron expression or a preset, a prompt, a repository, a station and a provider instance. A shell precheck runs on the station (never on the deck). A non-zero precheck records a "skipped" run. A missed run gets a grace period, and a run can reuse a session. The deck owns the schedule because it is always on. Missing.
+1. **Scheduled runs (all kinds, DL-157):** daily triage, nightly test fixes, PR review sweeps, dependency updates, and any owner-defined schedule. Each has a cron expression or a preset, a prompt, a repository, a station and a provider instance. A shell precheck runs on the station (never on the deck). A non-zero precheck records a "skipped" run. A missed run gets a grace period, and a run can reuse a session. The deck owns the schedule because it is always on. Missing.
 
 ### R6. Views at fifteen or more sessions
 
 1. **Unread state per session** with a stored read cursor: "what did I miss" on a phone. Missing.
-2. **A terminal wall (grid) with view-only close.** Deferred (DL-131); needs an owner decision.
+2. **Watch many sessions at once: explore another form than a terminal wall** (DL-157). The owner does not need a grid of terminals, but wants a way to watch the fleet. Candidates to explore:
+   - a "live wall" of compact chat tiles (the last lines and the current tool of each session);
+   - a focus mode that cycles through the sessions that need attention;
+   - split panes of two to four session chats.
+
+   Explore first, with mockups; build the one that the owner picks.
 3. **"No match, start a session" row** in the palette. Missing.
 4. **A one-line "current focus" that the agent writes** (through MCP) and the card shows. Partial (the current tool and the title exist).
 5. **A merged activity stream with a channel per session or repository.** Missing; build it after a 15-session load test (v1 called it "a real subsystem").
@@ -331,7 +336,7 @@ Owner answers (DL-156): (e) yes, a public share link may reach people outside th
 
 ## 7. Proposed sequence
 
-Each step has its cut line: the part that drops first if time runs short.
+All the work in this table is planned (DL-157). The steps set the order of the work, and the cut line names what moves to a later step if a step runs long.
 
 | Step | Contents | Cut line |
 | --- | --- | --- |
@@ -351,13 +356,25 @@ Each step has its cut line: the part that drops first if time runs short.
 
 ## 8. Owner decisions needed
 
-1. **Integrations (R3):** decided (DL-152, DL-156). Still open: the order of the four systems in M5, and whether the writes (R3.9) follow in the same milestone.
-2. **Terminal wall (R6.2):** still wanted, now that the dock and the TUI handover exist?
-3. **Inferred Codex cost (R4.6):** acceptable when it is labeled "inferred", or keep "unknown"?
-4. **Automations (R5):** which first schedules matter (daily triage, nightly test fix, PR review)? They decide the precheck design.
-5. **The 2.0.0 cut:** does M4.3 come before or after M4.1 and M4.2?
+1. **Integrations (R3):** decided (DL-152, DL-156, DL-157): all four systems, reads and writes. All of the work is planned, so the milestones only set the order of the work.
+2. **Watching many sessions (R6.2):** no terminal wall. Explore another form (DL-157).
+3. **Inferred Codex cost (R4.6):** yes, labeled "inferred" (DL-157).
+4. **Automations (R5):** all kinds (DL-157).
+5. **When to release 2.0.0:** open; see the note below.
 6. **Shared fleet (R11):** decided (DL-154, DL-156).
 7. **Artifacts (R12):** decided (DL-155, DL-156).
+
+**About decision 5.** "2.0.0" is the first release of v2 that replaces v1 for daily use: the cutover in `docs/v2/cutover.md`. M4.3 is the release hardening:
+- the macOS CI lane;
+- the minimum provider version;
+- the security review of everything new since the last design review;
+- the proof columns, and the documents fixed.
+
+The question is when to cut that release:
+- **(A) Cut early:** hardening now, release 2.0.0, use v2 every day, then build the rest as 2.1, 2.2 and so on. You get real use and real bug reports sooner.
+- **(B) Cut late:** build the rest first (harvest, unattended fleet, integrations, sharing, artifacts, …), then harden and release once.
+
+Recommendation: (A). Reason: real daily use finds problems that tests do not find, and every later feature then lands on a hardened base.
 
 ---
 

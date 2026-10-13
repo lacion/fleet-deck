@@ -2467,3 +2467,12 @@ Owner review: pending.
   - (g) there is no size cap; the board shows the total size, and an HTML page is published with the local files that it names.
 - Review: the high-risk parts (member principals, the file deny list, untrusted text from trackers, the HTML sandbox, public links) get an adversary DESIGN REVIEW before freeze.
 - Owner review: decided by the owner.
+
+## DL-157 — Owner answers: all of the roadmap, cost, automations, and how to watch many sessions (2026-10-13)
+
+- All of the work in `FLEETDECK-V2.md` is planned, including the R3 writes. The milestones set only the order of the work, and nothing is cut.
+- Watching many sessions: no terminal wall. Explore another form (compact live chat tiles, a focus mode, split panes) with mockups first (R6.2).
+- Codex cost from a versioned local price table, shown as "inferred" (R4.6).
+- Automations: all kinds (R5).
+- Open: when to cut the 2.0.0 release, early (hardening first) or late (after all features). The architect recommends early.
+- Owner review: decided by the owner.
