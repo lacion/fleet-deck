@@ -33,6 +33,9 @@ pub mod manager;
 
 /// `fleetdeck station serve` (M2 P2-7).
 pub mod serve;
+/// The settings holder and the station handlers of `settings.*` and
+/// `station.restart` (DL-172).
+pub mod settings_svc;
 /// The human shell service (PLAN §6.8, D10).
 pub mod shell;
 

@@ -75,7 +75,7 @@ fn run(cli: Cli, restart: &restart::RestartHandle) -> anyhow::Result<ExitCode> {
             .enable_all()
             .build()?;
         return runtime
-            .block_on(local_main(local, &dirs, &env))
+            .block_on(local_main(local, &dirs, &env, restart))
             .map(|()| ExitCode::SUCCESS);
     }
     let runtime = || {
@@ -161,9 +161,10 @@ async fn local_main(
     local: Local<'_>,
     dirs: &fleetdeck_core::paths::NodeDirs,
     env: &fleetdeck_core::paths::Env,
+    restart: &restart::RestartHandle,
 ) -> anyhow::Result<()> {
     match local {
-        Local::Serve => station::serve(dirs, env).await,
+        Local::Serve => station::serve(dirs, env, restart).await,
         Local::Sessions { json } => station::sessions(dirs, json).await,
         Local::Run(args) => station::run(dirs, args).await,
         Local::Approve(args) => station::approve(dirs, args).await,

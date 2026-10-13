@@ -6,9 +6,10 @@
 //! a limit of 60 s. When it ends or times out, the whole process group is
 //! stopped (TERM, then KILL), so a background child does not stay.
 
-use std::collections::VecDeque;
-use std::path::Path;
+use std::collections::{BTreeMap, VecDeque};
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -64,6 +65,45 @@ pub fn check_cmd(cmd: &str) -> Result<(), PrecheckError> {
     Ok(())
 }
 
+/// The prechecks that run now, by number, with their folder (DL-172: the
+/// restart list names what a restart would end).
+static RUNNING: Mutex<BTreeMap<u64, PathBuf>> = Mutex::new(BTreeMap::new());
+static NEXT: AtomicU64 = AtomicU64::new(1);
+
+/// The entry of one running precheck; it leaves the registry on drop.
+struct Registered(u64);
+
+impl Registered {
+    fn new(cwd: &Path) -> Self {
+        let n = NEXT.fetch_add(1, Ordering::Relaxed);
+        RUNNING
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(n, cwd.to_path_buf());
+        Self(n)
+    }
+}
+
+impl Drop for Registered {
+    fn drop(&mut self) {
+        RUNNING
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&self.0);
+    }
+}
+
+/// The prechecks that run now: their number and folder, oldest first.
+#[must_use]
+pub fn running() -> Vec<(u64, PathBuf)> {
+    RUNNING
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .iter()
+        .map(|(n, cwd)| (*n, cwd.clone()))
+        .collect()
+}
+
 /// The captured output: the last [`TAIL_BYTES`] bytes of both streams.
 #[derive(Default)]
 struct Tail(Mutex<VecDeque<u8>>);
@@ -107,6 +147,7 @@ pub async fn run(
     timeout: Duration,
 ) -> Result<PrecheckResult, PrecheckError> {
     check_cmd(cmd)?;
+    let _registered = Registered::new(cwd);
     let mut child = Command::new("/bin/sh")
         .args(["-c", cmd])
         .current_dir(cwd)
@@ -221,6 +262,24 @@ mod tests {
             .unwrap();
         assert_eq!(bad.exit_code, Some(3));
         assert_eq!(bad.output_tail.trim(), "no");
+    }
+
+    #[tokio::test]
+    async fn a_running_precheck_is_listed_until_it_ends() {
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = dir.path().to_path_buf();
+        let task = tokio::spawn({
+            let cwd = cwd.clone();
+            async move { run("sleep 30", &cwd, &env(), Duration::from_millis(800)).await }
+        });
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !running().iter().any(|(_, c)| *c == cwd) {
+            assert!(Instant::now() < deadline, "the precheck is not listed");
+            sleep(Duration::from_millis(10)).await;
+        }
+        let r = task.await.unwrap().unwrap();
+        assert!(r.timed_out);
+        assert!(!running().iter().any(|(_, c)| *c == cwd));
     }
 
     #[tokio::test]

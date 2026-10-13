@@ -12,6 +12,7 @@ use std::sync::Arc;
 use fleetdeck_core::config::{HostChoice, StationConfig};
 use fleetdeck_core::identity::{Identity, IdentityError};
 use fleetdeck_core::paths::{Env, NodeDirs, ensure_private_dir};
+use fleetdeck_core::restart::Restart;
 use fleetdeck_core::{SharedClock, SharedIds, SystemClock, UlidSource};
 use fleetdeck_link::reconnect::BackoffPolicy;
 use fleetdeck_proto::command::StopMode;
@@ -80,9 +81,10 @@ fn shim_settings(
 pub async fn serve(
     dirs: &NodeDirs,
     config: &StationConfig,
+    restart: Option<Arc<dyn Restart>>,
     stop: impl Future<Output = ()>,
 ) -> Result<(), ServeError> {
-    let station = RunningStation::start(dirs, config, None).await?;
+    let station = RunningStation::start(dirs, config, None, restart).await?;
     stop.await;
     station.stop().await;
     Ok(())
@@ -107,7 +109,9 @@ impl RunningStation {
     /// Opens and recovers `station.db`, starts the manager, the link node
     /// and the local socket. `deck` is the deck config file and the deck
     /// data directory when the deck runs in this process (`fleetdeck up`);
-    /// they are private paths of the station too (DL-173).
+    /// they are private paths of the station too (DL-173). `restart` is the
+    /// restart request of the process (DL-172); without it `station.restart`
+    /// answers `unsupported`.
     ///
     /// # Errors
     /// [`ServeError`].
@@ -115,6 +119,7 @@ impl RunningStation {
         dirs: &NodeDirs,
         config: &StationConfig,
         deck: Option<(PathBuf, PathBuf)>,
+        restart: Option<Arc<dyn Restart>>,
     ) -> Result<Self, ServeError> {
         let station_dir = dirs.station();
         ensure_private_dir(&station_dir).map_err(|source| ServeError::Dir {
@@ -160,6 +165,12 @@ impl RunningStation {
             Env::from_process().home.as_deref(),
             deck.as_ref().map(|(c, d)| (c.as_path(), d.as_path())),
             &PrivateEnv::from_process(),
+        )));
+        manager.set_settings(Arc::new(crate::settings_svc::StationSettings::new(
+            &dirs.station_config(),
+            &station_dir.join("secrets"),
+            Env::from_process(),
+            restart,
         )));
         let (shutdown, rx) = watch::channel(false);
         let assist_task = tokio::spawn(crate::assist::watch::run(

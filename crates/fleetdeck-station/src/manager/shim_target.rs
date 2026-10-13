@@ -209,6 +209,26 @@ impl SessionTarget {
         );
     }
 
+    /// The sessions with a live process that a station restart ends: the
+    /// ones that are not under a shim (DL-172 §1.6), sorted by id.
+    pub(in crate::manager) async fn direct_sessions(&self) -> Vec<SessionId> {
+        let all: Vec<_> = match self.sessions.lock() {
+            Ok(s) => s
+                .iter()
+                .map(|(id, l)| (id.clone(), Arc::clone(l)))
+                .collect(),
+            Err(_) => return Vec::new(),
+        };
+        let mut out = Vec::new();
+        for (id, live) in all {
+            if live.lock().await.durable.is_none() {
+                out.push(id);
+            }
+        }
+        out.sort();
+        out
+    }
+
     /// A station stop leaves every session under a shim running: its
     /// driver and observer stop, its shim and provider do not (ADR-005).
     pub(super) async fn detach_durable(live: &mut Live) {

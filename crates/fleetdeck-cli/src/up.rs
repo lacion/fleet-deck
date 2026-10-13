@@ -87,8 +87,8 @@ pub async fn up(
     restart: &RestartHandle,
 ) -> anyhow::Result<()> {
     let mut deck_config = DeckConfig::load(&dirs.deck_config())?;
-    // The station worker connects `restart` to the station side; until then
-    // the deck asks the local station, which answers `unsupported`.
+    // The deck asks the local station to restart (one process), and the
+    // station holds the same restart handle.
     let mut options = StartOptions::default();
     if let Some(listen) = args.listen {
         fleetdeck_core::netscope::check_bind(listen)
@@ -104,7 +104,14 @@ pub async fn up(
     )?;
     let deck = RunningDeck::start(dirs, &deck_config, BackoffPolicy::default(), options).await?;
     let deck_paths = Some((dirs.deck_config(), dirs.deck()));
-    let station = match RunningStation::start(dirs, &station_config, deck_paths).await {
+    let station = match RunningStation::start(
+        dirs,
+        &station_config,
+        deck_paths,
+        Some(Arc::new(restart.clone())),
+    )
+    .await
+    {
         Ok(s) => s,
         Err(e) => {
             deck.stop().await;
@@ -176,6 +183,7 @@ mod tests {
             home.dirs(),
             &home.station_config().unwrap(),
             Some((home.dirs().deck_config(), home.dirs().deck())),
+            None,
         )
         .await
         .unwrap();

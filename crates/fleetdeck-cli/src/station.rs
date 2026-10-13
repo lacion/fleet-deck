@@ -6,6 +6,7 @@
 
 use std::fmt::Write as _;
 use std::path::Path;
+use std::sync::Arc;
 
 use anyhow::{Context, bail};
 use fleetdeck_core::config::StationConfig;
@@ -17,12 +18,20 @@ use fleetdeck_proto::command::{
 use fleetdeck_station::local::{LocalClient, LocalRequest, LocalResponse, socket_path};
 
 use crate::cli::{ApproveArgs, RunArgs};
+use crate::restart::{RestartHandle, stop_or_restart};
 
-/// `fleetdeck station serve`: runs until SIGINT or SIGTERM.
-pub async fn serve(dirs: &NodeDirs, env: &Env) -> anyhow::Result<()> {
+/// `fleetdeck station serve`: runs until SIGINT or SIGTERM, or until a
+/// restart is requested (DL-172).
+pub async fn serve(dirs: &NodeDirs, env: &Env, restart: &RestartHandle) -> anyhow::Result<()> {
     let path = dirs.station_config();
     let config = StationConfig::load_with_store(&path, env, &dirs.station().join("secrets"))?;
-    fleetdeck_station::serve::serve(dirs, &config, shutdown_signal()).await?;
+    fleetdeck_station::serve::serve(
+        dirs,
+        &config,
+        Some(Arc::new(restart.clone())),
+        stop_or_restart(restart),
+    )
+    .await?;
     Ok(())
 }
 
