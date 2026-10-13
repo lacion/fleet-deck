@@ -2449,3 +2449,21 @@ Owner review: pending.
 - Not decided yet: the open owner questions (e)–(g) of R12.
 - Review: high risk (untrusted HTML and JavaScript next to the board, links to outsiders). It needs an adversary DESIGN REVIEW before freeze.
 - Owner review: decided by the owner.
+
+## DL-156 — Owner answers: integration projects, PR/MR views, sharing and artifacts (2026-10-13)
+
+- Integrations (adds to DL-152; `FLEETDECK-V2.md` R3):
+  - A Fleet Deck project is a station repository with bindings to its forge (GitHub or GitLab) and to Jira or Linear projects. The references are Jira Cloud REST API v3 and the Linear GraphQL API.
+  - People browse issues with rich previews and start one or a batch of sessions from tickets. A session is prefixed with its ticket id in its title, callsign and branch, and it keeps an `issue` link.
+  - The PR/MR view shows "review requested from you", "yours", "pending" and "merged or closed". It links PRs to sessions by branch or ticket key, and it offers "Start review session" in one click.
+- Sharing (DL-154; R11):
+  - (a) the invite level sets the role, and only an approver answers tool approvals;
+  - (b) members are local accounts;
+  - (c) the member file browser shows only the session's workspace, and the station hides sensitive files (a default deny list for `.env*`, keys and credential files, which the owner extends per project) from the browser, search, reads and diffs;
+  - (d) a shared session can run in mob or pairing mode, with one driver and "request to drive".
+- Artifacts (DL-155; R12):
+  - (e) a public share link may reach people outside the team;
+  - (f) there is no CDN allowlist: an HTML artifact may load anything, the team owns that risk, and the opaque-origin sandbox stays only to protect the board's login and API;
+  - (g) there is no size cap; the board shows the total size, and an HTML page is published with the local files that it names.
+- Review: the high-risk parts (member principals, the file deny list, untrusted text from trackers, the HTML sandbox, public links) get an adversary DESIGN REVIEW before freeze.
+- Owner review: decided by the owner.

@@ -150,24 +150,48 @@ Each theme lists its items best first. Every item names its v2 status.
 4. **Wait for any event:** a long-poll over several tasks or sessions (done, blocked, question or error). Partial: `wait_task` waits for one task.
 5. **Group mail addresses** `@idle` and `@<provider>`, built only when a coordinator needs them. Partial.
 
-### R3. Integrations: GitHub, GitLab, Jira and Linear (owner decision DL-152)
+### R3. Integrations: GitHub, GitLab, Jira and Linear (owner decisions DL-152, DL-156)
 
-The board works with issues and pull requests from four systems. The station does all forge and tracker I/O, with its own user's credentials (rule 5). The deck relays the station's answers and holds no token.
+The board works with issues and pull requests from four systems. The station does all forge and tracker I/O with its own user's credentials (rule 5). The deck relays the answers and stores only bindings: a site URL, a project key, a repository. It never stores a token.
 
-| System | Station access | Issues | Pull or merge requests |
-| --- | --- | --- | --- |
-| GitHub | the user's `gh` CLI | yes | yes |
-| GitLab | the user's `glab` CLI | yes | yes |
-| Jira (Cloud) | REST API v3, site + email + API token from the station's env or a token file | yes | no (links to GitHub or GitLab PRs only) |
-| Linear | GraphQL API, personal API key from the station's env or a token file | yes | no (links only) |
+| System | Station access | Used for |
+| --- | --- | --- |
+| GitHub | the user's `gh` CLI (REST and GraphQL through `gh api`) | issues, pull requests, reviews, checks |
+| GitLab | the user's `glab` CLI (`glab api`) | issues, merge requests, approvals, pipelines |
+| Jira Cloud | REST API v3 (`/rest/api/3/...`, issue bodies in Atlassian Document Format); site + email + API token from the station's env or a token file | issues |
+| Linear | GraphQL API (`https://api.linear.app/graphql`), personal API key from the station's env or a token file; OAuth later | issues |
 
-1. **The injection envelope first:** fenced, labeled untrusted text, a forced supervised mode for every spawn from issue, PR or tracker text, and the fixture "an issue body that asks for `--dangerously-skip-permissions` still gives a supervised worker". Missing; this is the gate for everything below.
-2. **The station's integration service:** a `trackers` section in `station.toml` (`[[trackers]]` with `kind = "jira" | "linear"`, the site, and `token_env` or `token_file`; GitHub and GitLab need only their CLIs). Link methods to list, search and read issues; the station returns the text inside the envelope. A preflight like the Git one (DL-144) says "the station can read Jira at <site>". Missing.
-3. **A read-only issue browser on the board and spawn from issues:** one worker per selected issue from any of the four systems. The ticket key becomes the callsign (`otter-PROJ-123`, which exists) and the branch name. Missing.
-4. **"Fix the broken checks":** hand an agent the failing CI check names and links of a PR (GitHub and GitLab). Missing.
-5. **A PR reviewer:** point at a PR URL; the station checks the branch out in a worktree and starts a reviewer session with the user's installed review skill. Missing.
-6. **Writes, later:** create a PR, post a review or comment, and move a Jira or Linear issue (for example to "In review" with the PR link). Each needs a verb allowlist, an identity preview ("posts as @user"), one board confirm per write, an audit line, and it is never batched or automatic. Missing. Stopping rule: build the writes only with the full security set; otherwise stay read-only.
-7. **GitLab details:** subgroup paths with three or more segments, and SSH and https remotes that name the same project. Partial (the clone preflight exists, DL-144).
+**Projects.** A Fleet Deck *project* is a repository on a station (station + path, or a clone URL) with optional bindings:
+- a forge: the GitHub or GitLab remote, found from the repository's `origin`;
+- one or more trackers: a Jira site and project key (for example `PROJ`), or a Linear team or project.
+
+The owner creates a project on the board. A preflight checks each binding from the station ("the station can read Jira project PROJ at acme.atlassian.net"), like the Git preflight (DL-144).
+
+1. **The injection envelope first.** Fenced, labeled untrusted text, and a forced supervised mode for every spawn from issue, PR or tracker text. The fixture is "an issue body that asks for `--dangerously-skip-permissions` still gives a supervised worker". Missing; this is the gate for everything below.
+2. **The station integration service.** A `[[trackers]]` section in `station.toml` (`kind = "jira" | "linear"`, the site, and `token_env` or `token_file`; GitHub and GitLab need only their CLIs). It adds link methods to list, search and read issues and PRs, and a response cache with a short TTL. A Jira query uses JQL; a Linear query uses an issue filter. The station returns all third-party text inside the envelope. Missing.
+3. **Issues on the board, with rich previews.** A project's Issues view lists issues with search and filters: status, assignee ("mine"), priority, label, sprint or cycle. A rich preview shows:
+   - the rendered body (Jira ADF and Linear Markdown, with no raw HTML);
+   - the status, assignee, priority, labels and estimate;
+   - the comments and the linked PRs;
+   - images, through a station proxy, because the deck holds no token.
+   Missing.
+4. **Sessions from tickets, one or a batch.** Select one or more issues, then "Start sessions". Each session:
+   - is named after its ticket: the title is `PROJ-123 <issue title>`, the callsign `<animal>-PROJ-123` (exists, DL-144), and the branch `PROJ-123-<short-slug>` in its own worktree;
+   - gets the issue text in the envelope as its first prompt context, together with a prompt template that the owner can edit per project;
+   - keeps an `issue` link (system, key, URL) in its summary, so the card shows a ticket chip and the issue view shows its sessions.
+
+   A batch uses the existing batch spawn (`Nx` also works per ticket). Missing.
+5. **Pull and merge requests per project.** A PR/MR view with these groups: **review requested from you**, **yours** (open, draft, approved, changes requested), **pending** (waiting on review or checks), and **merged or closed** recently. Each row shows its CI checks, review state, mergeability, ticket key and age. Missing.
+6. **Session ↔ PR links.** A session links to a PR when the PR's head branch is the session's branch, or when the PR names the session's ticket key. The card shows a PR chip with its state, and the PR row shows its sessions. Missing.
+7. **Review in one click.** On a PR or MR (in "review requested from you" or any row), "Start review session" makes a worktree on the PR head and starts a supervised reviewer session. The reviewer uses the user's installed review skill or the project's review prompt, and gets the PR description and the diff summary in the envelope. Missing.
+8. **"Fix the broken checks":** a session gets the failing check names, the links and the log tails of a PR or MR. Missing.
+9. **Writes, later:**
+   - create a PR or MR from a finished session (with model-help text, R10.3);
+   - post a review or comment;
+   - move a Jira or Linear issue (for example to "In review" with the PR link).
+
+   Each write needs a verb allowlist, an identity preview ("posts as @user"), one board confirm per write and an audit line, and it is never batched or automatic. Missing. Stopping rule: ship the writes only with the full security set.
+10. **GitLab details:** subgroup paths with three or more segments, and SSH and https remotes that name the same project. Partial (the clone preflight exists, DL-144).
 
 ### R4. Usage and accounts
 
@@ -226,7 +250,7 @@ Small, cheap, optional text from the owner's own subscription (rule 3). It runs 
 
 1. **Session titles** from the first prompt, for sessions without a title (one call per session, about 100 output tokens).
 2. **A summary of a finished session or turn** ("what did this agent do"), on the card and in "what did I miss". This works with R6.1 unread.
-3. **PR and commit text** from the whole-session diff (R1.2) and the session summary, for R3.6 writes, always shown for the owner to edit.
+3. **PR and commit text** from the whole-session diff (R1.2) and the session summary, for R3.9 writes, always shown for the owner to edit.
 4. **An issue digest** for the R3 issue browser: a two-line gist of a long issue. Fenced untrusted text goes in, and the digest is labeled as generated from untrusted text.
 5. **A race summary** for R1.4: what each sibling session changed, side by side. The owner picks.
 6. **A conflict explanation** for the conflict mail: which change of each session touched the same file.
@@ -256,23 +280,22 @@ Design sketch (recommended defaults; the adversary reviews it before it is froze
    - **Collaborator:** a viewer that can also send prompts, steers and follow-ups, interrupt, and answer the agent's questions.
    - **Approver:** a collaborator that can also answer tool approvals.
 
-   No role can raise the permission mode above the one that the owner set, change the model provider, or start a session in bypass mode.
+   The invite level sets the role: a collaborator invite cannot answer tool approvals, an approver invite can (DL-156). No role can raise the permission mode above the one that the owner set, change the model provider, or start a session in bypass mode.
 3. **Always owner-only:** shells and the TUI handover (a shell is the machine), the setup command, worktree delete, station pairing and configuration, device links, coordinator grants, tracker and forge credentials, model-help budgets, and the creation of shares.
-4. **The invite URI** is `https://<deck>/#join=<token>`. It is single-use or limited to N uses, and it expires. The person who opens it picks a display name, and the deck makes a member login: a cookie tied to that member and that share. The token travels only in the fragment, as login links do (DL-146). The first version has local members only. A later version can add a GitHub or OIDC login, or a passkey per member.
+4. **The invite URI** is `https://<deck>/#join=<token>`. It is single-use or limited to N uses, and it expires. The person who opens it picks a display name, and the deck makes a member login: a cookie tied to that member and that share. The token travels only in the fragment, as login links do (DL-146). Members are local accounts on the deck (DL-156). A later version can add a GitHub or OIDC login, or a passkey per member.
 5. **Attribution and presence:**
    - every input event carries its author (owner or member name), and the chat shows it;
    - the board shows who watches a session now;
    - approvals record who answered them;
    - the audit log has every member action.
-6. **Concurrent steering:** messages queue in order as they do today (steer and follow-up). An optional "driver" baton lets one person take the composer for a while; it is advisory, not a lock.
+6. **Concurrent steering and mob mode:** a shared session has a steering mode (DL-156).
+   - **Open:** everyone with the collaborator role steers, and the messages queue in order, as they do today.
+   - **Mob (pairing):** one driver at a time. Another person sends a "request to drive". The driver or the owner hands the composer over with one click. The others still see everything and can comment in the session's side chat (people only; the agent does not read it).
 7. **Reach:** the deck must be reachable for the team, through a LAN, a tailnet (Tailscale sharing), or the owner's own tunnel. Never through a hosted relay. A self-signed certificate is a problem for guests, so the docs recommend a tailnet name or a real certificate.
 8. **Exposure:** a shared session shows its code, diffs and transcript. The invite shows what the person will see. A share of a session never shows other sessions, stations, usage or credentials.
+9. **The file browser for members** shows only the session's workspace (DL-156). The station hides sensitive files from members: in the browser, in search, in reads and in diffs. The default deny list is `.env*`, `*.pem`, `*.key`, `id_rsa*`, `id_ed25519*`, `.npmrc`, `.pypirc`, `.netrc`, `.git-credentials`, `credentials*.json`, `*.keystore`, `.aws/`, `.ssh/`, `.gnupg/` and `secrets*`. The owner can extend it per project. The owner still sees everything.
 
-Open owner decisions:
-- **(a)** May collaborators answer tool approvals, or only approvers?
-- **(b)** Local members only at first, or a GitHub login from the start?
-- **(c)** Do shared people see the Files browser, or only the diffs?
-- **(d)** Is the driver baton needed?
+Owner answers (DL-156): (a) the invite level decides, so only an approver invite answers tool approvals; (b) local accounts; (c) the file browser shows the session's workspace with sensitive files hidden; (d) mob and pairing sessions have "request to drive".
 
 ### R12. Artifacts as first-class citizens (owner decision DL-155)
 
@@ -286,7 +309,7 @@ Design sketch (recommended defaults; adversary review before freeze):
    - (b) the station suggests one when a session writes an `.html` file that is meant to be opened (for example the `/explain-html` output), and the owner keeps it with one click;
    - (c) a person picks "Publish as artifact" in the Files panel.
 
-   The station copies the bytes into its data directory (size cap, for example 10 MiB per version). The deck keeps a copy of each shared version, so a share works while the station is off.
+   The station copies the bytes into its data directory, with no size cap (DL-156). The board shows the total size so the owner can clean up. An HTML page that names local files next to it (images, CSS, JS) is published with those files as one bundle. The deck keeps a copy of each shared version, so a share works while the station is off.
 3. **Where it shows:**
    - an Artifacts tab per session;
    - a global Artifacts page with search, kind and session filters;
@@ -296,7 +319,7 @@ Design sketch (recommended defaults; adversary review before freeze):
 4. **The HTML sandbox:**
    - An HTML artifact renders in an `<iframe sandbox="allow-scripts">`, without `allow-same-origin`. It comes from a separate origin, or from a `blob:` URL with an opaque origin, under a strict CSP.
    - It cannot read the board's cookies, storage or API, cannot navigate the top window, and cannot open popups without a click.
-   - External scripts (CDN libraries that explain pages use) are allowed only from an allowlist that the owner can extend.
+   - **No CDN allowlist (DL-156).** An HTML artifact may load anything: CDN libraries, fonts, images, local files that the page names. The team owns that risk. The opaque-origin sandbox stays, because it protects the board's login and API, not the page's content.
 5. **Sharing:**
    - **A share link per artifact** (`https://<deck>/a/<id>#<token>`): read-only, one version or "always the latest", with an expiry, revocable, and recorded in the audit log.
    - **Download:** a person can download the file, for example to send it by mail.
@@ -304,10 +327,7 @@ Design sketch (recommended defaults; adversary review before freeze):
 6. **Model help (R10):** a one-line summary per artifact for the list, optional.
 7. **Later:** comments on an artifact; an artifact as the input of a new session ("work from this design").
 
-Open owner decisions:
-- **(e)** May a public share link reach people outside the team, if the deck is reachable for them?
-- **(f)** The default CDN allowlist for HTML artifacts.
-- **(g)** The size cap per version and in total.
+Owner answers (DL-156): (e) yes, a public share link may reach people outside the team; (f) no CDN allowlist; (g) no size cap.
 
 ## 7. Proposed sequence
 
@@ -319,25 +339,25 @@ Each step has its cut line: the part that drops first if time runs short.
 | **M4.1 Harvest** | R1.2 diff since spawn; R1.3 batched line notes; R1.5 checkpoint GC | Untracked files in the diff (label them "not in the diff") |
 | **M4.2 Unattended fleet** | R2.1–R2.4 | Wait-for-any (coordinators can loop over `wait_task`) |
 | **M4.3 Release hardening** | R8.1 macOS lane; R8.2 version gate; R9.1 security delta; R9.2 proof columns; R9.4 propagation debt; R9.7 gate | None: this is the 2.0.0 gate |
-| **M5 Integrations, read only** | R3.1 envelope and fixture; R3.2 station service (GitHub, GitLab, Jira, Linear); R3.3 issue browser and spawn; R3.5 PR reviewer; R3.4 fix checks | R3.4 |
+| **M5 Integrations, read only** | R3.1 envelope and fixture; R3.2 station service (GitHub, GitLab, Jira, Linear); projects and bindings; R3.3 issues with rich previews; R3.4 sessions from tickets (one or a batch); R3.5 PR/MR view; R3.6 session ↔ PR links; R3.7 review in one click; R3.8 fix checks | R3.8 |
 | **M5.1 Accounts** | R4.3 limits in the picker; R4.4 assign by quota; R4.5 Claude windows research | R4.5 |
 | **M5.2 Model help** | R10.1 titles; R10.2 session summaries; the budget, cache and off switch | R10.2 |
 | **M5.3 Artifacts** | R12.1–R12.5: publish (MCP tool, Files panel, the HTML suggestion), the viewer and sandbox, versions, share links | R12.2 (b) the automatic suggestion |
-| **M5.4 Shared fleet** | R11.1–R11.5, R11.7, R11.8: shares, roles, invite URI, member login, attribution, presence, audit | R11.6 the driver baton; spaces (start with session and board shares) |
+| **M5.4 Shared fleet** | R11.1–R11.9: shares, roles, invite URI, local member accounts, attribution, presence, audit, the member file deny list, mob mode with request to drive | Spaces (start with session and board shares) |
 | **M6** | R1.4 compare the winner; R5 automations; R6.1 unread; R6.3 palette row | R5 missed-run grace |
-| **Later, owner decision** | R3.6 writes (PRs, comments, issue moves); R6.2 terminal wall; R6.5 activity stream; R6.6 hibernation; R4.6 inferred cost; ACP for a third provider | — |
+| **Later, owner decision** | R3.9 writes (PRs, comments, issue moves); R6.2 terminal wall; R6.5 activity stream; R6.6 hibernation; R4.6 inferred cost; ACP for a third provider | — |
 
 ---
 
 ## 8. Owner decisions needed
 
-1. **Integrations (R3):** decided (DL-152): GitHub, GitLab, Jira and Linear are in scope. Still open: the order of the four, and whether the writes (R3.6) follow in the same milestone.
+1. **Integrations (R3):** decided (DL-152, DL-156). Still open: the order of the four systems in M5, and whether the writes (R3.9) follow in the same milestone.
 2. **Terminal wall (R6.2):** still wanted, now that the dock and the TUI handover exist?
 3. **Inferred Codex cost (R4.6):** acceptable when it is labeled "inferred", or keep "unknown"?
 4. **Automations (R5):** which first schedules matter (daily triage, nightly test fix, PR review)? They decide the precheck design.
 5. **The 2.0.0 cut:** does M4.3 come before or after M4.1 and M4.2?
-6. **Shared fleet (R11):** decided (DL-154). Open: (a) to (d) in R11.
-7. **Artifacts (R12):** decided (DL-155). Open: (e) to (g) in R12.
+6. **Shared fleet (R11):** decided (DL-154, DL-156).
+7. **Artifacts (R12):** decided (DL-155, DL-156).
 
 ---
 
