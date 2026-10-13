@@ -12,6 +12,8 @@ const LEGACY_KEY = 'fd-archived';
 const DEVICE_KEY = 'fd-device-id';
 const PATH = '/api/archive';
 const REFRESH_MS = 60_000;
+/** The most items of one `ArchiveChange` (the deck's limit). */
+const MAX_CHANGES = 500;
 
 export type ArchiveApi = {
   get(path: string): Promise<unknown>;
@@ -127,12 +129,15 @@ export function createArchive(): Archive {
       const missing = old.filter((r) => !deckRefs.includes(r));
       if (missing.length > 0) {
         const hash = await sha256Hex16(old.join('\n'));
-        const change: ArchiveChange = {
-          mutation_id: `migrate-${deviceId()}-${hash}`,
-          changes: missing.flatMap((r) => splitRef(r) ?? []),
-        };
-        const answer = parseList(await target.post(PATH, change));
-        if (api === target) set(new Set(answer));
+        const all = missing.flatMap((r) => splitRef(r) ?? []);
+        for (let i = 0; i < all.length; i += MAX_CHANGES) {
+          const change: ArchiveChange = {
+            mutation_id: `migrate-${deviceId()}-${hash}${i === 0 ? '' : `-${i / MAX_CHANGES}`}`,
+            changes: all.slice(i, i + MAX_CHANGES),
+          };
+          const answer = parseList(await target.post(PATH, change));
+          if (api === target) set(new Set(answer));
+        }
       }
       storage()?.removeItem(LEGACY_KEY);
     } catch (e) {
@@ -156,16 +161,22 @@ export function createArchive(): Archive {
     set(next);
     const target = api;
     if (target === null) return;
-    const body: ArchiveChange = { mutation_id: randomId(), changes: [...items] };
-    target.post(PATH, body).then(
-      (answer) => {
-        if (api === target) set(new Set(parseList(answer)));
-      },
-      (e) => {
-        console.warn('The archive change did not reach the deck.', e);
-        void reload();
-      },
-    );
+    // The deck takes at most MAX_CHANGES items in one change.
+    for (let i = 0; i < items.length; i += MAX_CHANGES) {
+      const body: ArchiveChange = {
+        mutation_id: randomId(),
+        changes: items.slice(i, i + MAX_CHANGES),
+      };
+      target.post(PATH, body).then(
+        (answer) => {
+          if (api === target) set(new Set(parseList(answer)));
+        },
+        (e) => {
+          console.warn('The archive change did not reach the deck.', e);
+          void reload();
+        },
+      );
+    }
   };
   const items = (refs: readonly string[], archived: boolean): ArchiveItem[] =>
     refs.flatMap((r) => {
