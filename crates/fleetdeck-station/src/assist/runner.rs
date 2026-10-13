@@ -105,7 +105,21 @@ impl Runner for CliRunner {
         .map_err(|_| RunError::Timeout)?;
         let output = finished.map_err(|e| RunError::Spawn(call.binary.display().to_string(), e))?;
         if !output.status.success() {
-            return Err(RunError::Exit(output.status.to_string()));
+            // The JSON `result` of a failed Claude call names the reason
+            // (for example a failed login); keep its first line, cut.
+            let reason = serde_json::from_slice::<Value>(&output.stdout)
+                .ok()
+                .and_then(|v| v.get("result").and_then(Value::as_str).map(str::to_owned))
+                .and_then(|r| {
+                    r.lines()
+                        .next()
+                        .map(|l| l.chars().take(160).collect::<String>())
+                })
+                .filter(|r| !r.trim().is_empty());
+            return Err(RunError::Exit(match reason {
+                Some(reason) => format!("{} ({reason})", output.status),
+                None => output.status.to_string(),
+            }));
         }
         let stdout = &output.stdout[..output.stdout.len().min(MAX_OUTPUT_BYTES)];
         let stdout = String::from_utf8_lossy(stdout);
@@ -116,9 +130,15 @@ impl Runner for CliRunner {
     }
 }
 
-/// `claude -p` with one turn, no tools, plan mode and JSON output. The
-/// context flags keep the preamble small: a default call sends about 20000
-/// input tokens of settings, memory and tool text that a title never needs.
+/// `claude -p` with one turn, no tools and JSON output. The context flags
+/// keep the preamble small: a default call sends about 20000 input tokens of
+/// settings, memory and tool text that a title never needs.
+///
+/// The user settings stay on (`--setting-sources user`): without them the
+/// CLI cannot refresh its OAuth login and every call fails with "OAuth
+/// session expired". `disableAllHooks` keeps the user's hooks (for example a
+/// SessionStart hook) from running for a model-help call. A call costs about
+/// 6000 input tokens.
 fn claude_command(call: &Call) -> Command {
     let mut command = Command::new(&call.binary);
     command
@@ -127,8 +147,8 @@ fn claude_command(call: &Call) -> Command {
         .args(["--output-format", "json"])
         .args(["--max-turns", "1"])
         .args(["--tools", ""])
-        .args(["--permission-mode", "plan"])
-        .args(["--setting-sources", ""])
+        .args(["--setting-sources", "user"])
+        .args(["--settings", r#"{"disableAllHooks":true}"#])
         .arg("--disable-slash-commands")
         .args(["--system-prompt", crate::assist::prompts::SYSTEM]);
     command

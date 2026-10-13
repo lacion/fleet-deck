@@ -388,3 +388,39 @@ fn a_session_without_a_grant_gets_a_fleet_only_binding_when_the_handoff_works() 
         assert!(bindings.get("s-2:fleet").is_none());
     }
 }
+
+/// DL-165: a Codex session gets the same fleet-only tools, through
+/// `mcp_servers.fleetdeck` with `bearer_token_env_var` (never the token on
+/// the command line), with the default (real) handoff check and a probed
+/// version that the live smoke verified.
+#[test]
+fn a_codex_session_without_a_grant_gets_the_fleet_tools_too() {
+    let spec = SessionSpec {
+        provider_instance: "codex".into(),
+        cwd: "/w".to_owned(),
+        mode: None,
+        model: None,
+        title: None,
+        coordinator: None,
+    };
+    let session: SessionId = "s-3".into();
+    let bindings = Bindings::default();
+    bindings.set_endpoint(URL.to_owned());
+    bindings.record_version(ProviderKind::Codex, "0.160.0".to_owned());
+    let launch =
+        coordinator_start::prepare_fleet(&bindings, ProviderKind::Codex, &session, &spec, false)
+            .expect("a Codex fleet handoff");
+    assert!(
+        launch
+            .args
+            .iter()
+            .any(|a| a.contains("mcp_servers.fleetdeck.bearer_token_env_var"))
+    );
+    assert!(launch.args.iter().all(|a| !a.contains("fdc1_")));
+    assert!(
+        bindings
+            .get("s-3:fleet")
+            .expect("the binding")
+            .is_fleet_only()
+    );
+}
