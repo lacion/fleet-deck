@@ -85,6 +85,12 @@ pub struct DeckSession {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub unread: Option<u32>,
+    /// The project of the session (DL-176): the owner's choice, else the
+    /// match by folder, repository or forge. Absent when there is none. The
+    /// deck fills it for the owner and for tokens, never for a member.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub project_id: Option<String>,
 }
 
 /// `POST /api/sessions/{station}/{session}/read` (R6.1, DL-169): the board

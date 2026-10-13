@@ -366,6 +366,7 @@ impl DeckStore {
                 summary,
                 status,
                 unread: None,
+                project_id: None,
             });
         }
         Ok(out)

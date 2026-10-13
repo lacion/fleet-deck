@@ -22,6 +22,7 @@ pub mod methods;
 pub mod paste_routes;
 pub mod people_routes;
 pub mod plan_routes;
+pub mod project_session_routes;
 pub mod project_writes;
 pub mod projects_routes;
 pub mod read_routes;
@@ -327,6 +328,18 @@ pub fn router(board: Arc<Board>) -> Router {
         .route(
             "/api/projects/{project}/prs/{number}/reviews",
             post(project_writes::pr_review),
+        )
+        .route(
+            "/api/projects/{project}/sessions/assign",
+            post(project_session_routes::assign),
+        )
+        .route(
+            "/api/sessions/{station}/{session}/project/clear",
+            post(project_session_routes::clear),
+        )
+        .route(
+            "/api/sessions/{station}/{session}/project/auto",
+            post(project_session_routes::auto),
         )
         .route(
             "/api/projects/{project}/sessions",

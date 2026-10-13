@@ -325,6 +325,33 @@ a.fd-int-prchip:hover {
   margin: 4px 0 0 12px;
 }
 
+/* ---------- the project of a session (DL-176) ---------- */
+
+.fd-int-projectchip {
+  display: inline-flex;
+  text-decoration: none;
+}
+a.fd-int-projectchip:hover {
+  color: var(--text);
+}
+.fd-cardwrap > .fd-int-projectchip {
+  margin: 4px 0 0 12px;
+}
+.fd-sidebar-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+  align-items: center;
+}
+.fd-int-sessions {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--sp-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
 /* ---------- a phone: one pane at a time ---------- */
 
 @media (max-width: 640px) {

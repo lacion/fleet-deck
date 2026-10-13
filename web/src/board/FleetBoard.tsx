@@ -2,7 +2,14 @@ import { type CSSProperties, useEffect, useRef, useState } from 'react';
 import { firstLine, isStartFailure } from '../app/failures';
 import { formatHash } from '../app/routes';
 import { basename, relativeAge } from '../app/sessions';
-import type { CardStatus, DeckSession, SessionExtras, SessionKey, StationView } from '../gen';
+import type {
+  CardStatus,
+  DeckSession,
+  Project,
+  SessionExtras,
+  SessionKey,
+  StationView,
+} from '../gen';
 import type { Freshness } from '../runtime/state';
 import { hasChanges } from '../session/changes';
 import { sessionFlags } from '../session/controller';
@@ -31,6 +38,8 @@ import { isHibernated } from '../views/hibernate';
 import { FocusLine, UnreadMark, unreadOf } from '../views/marks';
 import { priority, sessionRef } from '../ui/localSet';
 import { useProjects } from '../integrations/context';
+import { projectGroups } from '../integrations/projectGroups';
+import { ProjectChip } from '../integrations/ProjectChip';
 import { IssueChip } from '../integrations/IssueChip';
 import { PrChip } from '../integrations/PrChip';
 import { useNow } from '../ui/useNow';
@@ -39,13 +48,16 @@ import { type Contested, cardKey, NO_REPO, repoName, stationName, statusGroups }
 import { Sparkline } from './Sparkline';
 import { costText } from './usage';
 
+/** How the lanes of the board are made (DL-141, DL-176). */
+export type FleetGroup = 'station' | 'repo' | 'project';
+
 type Props = {
   readonly sessions: readonly DeckSession[];
   readonly stations: readonly StationView[];
   readonly freshness: Freshness;
   readonly now?: number | undefined;
   /** DL-141: how the lanes are made; the default is by station. */
-  readonly group?: 'station' | 'repo' | undefined;
+  readonly group?: FleetGroup | undefined;
   /** DL-141: the contested sessions, by `sessionRef`. */
   readonly contested?: ReadonlyMap<string, Contested> | undefined;
   /** DL-141: the actions of a session, for the Offline column's Resume all. */
@@ -352,6 +364,7 @@ export function FleetCard({
       <CompareChip card={card} count={batchCount} />
       <IssueChip summary={s} projects={projects} station={card.station_id} />
       <PrChip card={card} />
+      <ProjectChip card={card} />
     </li>
   );
 }
@@ -459,8 +472,17 @@ type Lane = {
 function lanesOf(
   sessions: readonly DeckSession[],
   stations: readonly StationView[],
-  group: 'station' | 'repo',
+  group: FleetGroup,
+  projects: readonly Project[],
 ): Lane[] {
+  if (group === 'project') {
+    return projectGroups(sessions, projects).map((g) => ({
+      id: g.id,
+      name: g.name,
+      label: `Project ${g.name}`,
+      cards: g.cards,
+    }));
+  }
   if (group === 'repo') {
     const names = [...new Set(sessions.map(repoName))].sort((a, b) =>
       a === b ? 0 : a === NO_REPO ? 1 : b === NO_REPO ? -1 : a.localeCompare(b),
@@ -496,6 +518,7 @@ export function FleetBoard({
 }: Props) {
   const now = useNow(given, 30000);
   const starred = priority.use();
+  const projects = useProjects();
   const groups = statusGroups(sessions);
   const batches = batchCounts(sessions);
   const counts = COLUMNS.map((column) => columnCards(groups, column.statuses).length);
@@ -520,7 +543,7 @@ export function FleetBoard({
           </span>
         ))}
       </div>
-      {lanesOf(sessions, stations, group).map((lane) => {
+      {lanesOf(sessions, stations, group, projects).map((lane) => {
         const ownGroups = statusGroups([...lane.cards]);
         const contestedCount =
           contested === undefined
@@ -534,6 +557,7 @@ export function FleetBoard({
             className="fd-swim"
             data-station={group === 'station' ? lane.id : undefined}
             data-repo={group === 'repo' ? lane.id : undefined}
+            data-project={group === 'project' ? lane.id : undefined}
             aria-label={lane.label}
           >
             <h2 className="fd-swim-head">
@@ -556,7 +580,7 @@ export function FleetBoard({
                       stations={stations}
                       freshness={freshness}
                       now={now}
-                      showStation={group === 'repo'}
+                      showStation={group !== 'station'}
                       contested={contested?.get(
                         sessionRef(card.station_id, card.summary.session_id),
                       )}

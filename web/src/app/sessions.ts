@@ -1,5 +1,6 @@
 import { stationName } from '../board/fleet';
-import type { CardStatus, DeckSession, StationView } from '../gen';
+import type { CardStatus, DeckSession, Project, StationView } from '../gen';
+import { projectGroups } from '../integrations/projectGroups';
 import { sessionRef } from '../ui/localSet';
 import { isHibernated } from '../views/hibernate';
 
@@ -79,38 +80,52 @@ export const isHidden = (card: DeckSession, archived: ReadonlySet<string>): bool
   !isHibernated(card) &&
   archived.has(refOf(card));
 
-/** The sidebar groups: needs you, then one group per station sorted by name. Starred rows first. */
+/**
+ * The sidebar groups: needs you, then one group per station sorted by name. Starred rows first.
+ * With `projects` (DL-176) the groups are the projects that hold a shown session, by name, and "No
+ * project" last; their `reachable` is always true.
+ */
 export function sidebarModel(
   sessions: readonly DeckSession[],
   stations: readonly StationView[],
   query: string,
   sets: SidebarSets = NO_SETS,
+  projects?: readonly Project[],
 ): SidebarModel {
   const matching = sessions.filter((c) => matchesQuery(c, query));
   const shown = matching.filter((c) => !isHidden(c, sets.archived));
   const starFirst = (a: DeckSession, b: DeckSession) =>
     Number(sets.starred.has(refOf(b))) - Number(sets.starred.has(refOf(a)));
+  const group = (
+    id: string,
+    name: string,
+    reachable: boolean,
+    own: readonly DeckSession[],
+  ): StationGroup => ({
+    id,
+    name,
+    reachable,
+    count: own.length,
+    live: own.filter(isLive).sort((a, b) => starFirst(a, b) || rank(a) - rank(b) || byNewest(a, b)),
+    ended: own.filter((c) => !isLive(c)).sort((a, b) => starFirst(a, b) || byNewest(a, b)),
+  });
   const ids = [
     ...new Set([...stations.map((s) => s.station_id), ...sessions.map((s) => s.station_id)]),
   ];
-  const groups = ids
-    .map((id): StationGroup => {
-      const own = shown.filter((c) => c.station_id === id);
-      const live = own
-        .filter(isLive)
-        .sort((a, b) => starFirst(a, b) || rank(a) - rank(b) || byNewest(a, b));
-      const ended = own.filter((c) => !isLive(c)).sort((a, b) => starFirst(a, b) || byNewest(a, b));
-      return {
-        id,
-        name: stationName(id, stations),
-        reachable: stations.find((s) => s.station_id === id)?.reachable === true,
-        count: own.length,
-        live,
-        ended,
-      };
-    })
-    .filter((g) => query.trim() === '' || g.count > 0)
-    .sort((a, b) => a.name.localeCompare(b.name));
+  const groups =
+    projects === undefined
+      ? ids
+          .map((id) =>
+            group(
+              id,
+              stationName(id, stations),
+              stations.find((s) => s.station_id === id)?.reachable === true,
+              shown.filter((c) => c.station_id === id),
+            ),
+          )
+          .filter((g) => query.trim() === '' || g.count > 0)
+          .sort((a, b) => a.name.localeCompare(b.name))
+      : projectGroups(shown, projects).map((g) => group(g.id, g.name, true, g.cards));
   return {
     needs: shown
       .filter((c) => c.status === 'needs_you')

@@ -18,7 +18,14 @@ import {
   statusGroups,
 } from '../board/fleet';
 import { record } from '../board/activity';
-import { COLUMNS, columnCards, FleetBoard, FleetCard, OfflineTools } from '../board/FleetBoard';
+import {
+  COLUMNS,
+  columnCards,
+  FleetBoard,
+  FleetCard,
+  type FleetGroup,
+  OfflineTools,
+} from '../board/FleetBoard';
 import { batchCountOf, batchCounts } from '../compare/compare';
 import { NeedsYouRail } from '../board/NeedsYouRail';
 import { UsageMeters } from '../board/UsageMeters';
@@ -28,6 +35,7 @@ import { FleetPanel } from '../fleet/FleetPanel';
 import type { DeckSession, SessionKey, StationView } from '../gen';
 import type { Freshness } from '../runtime/state';
 import type { SessionActions } from '../session/commands';
+import { useProjects } from '../integrations/context';
 import { canShare, usePeople } from '../sharing/context';
 import { openShare } from '../sharing/shareStore';
 import { ChevronDown, ChevronUp, CircleHelp, Icon, Plus, Search, Users } from '../ui/icons';
@@ -143,12 +151,13 @@ function writePanel(state: PanelState) {
   }
 }
 
-type Group = 'station' | 'repo';
+type Group = FleetGroup;
 const GROUP_KEY = 'fd-home-group';
 
 function readGroup(): Group {
   try {
-    return localStorage.getItem(GROUP_KEY) === 'repo' ? 'repo' : 'station';
+    const saved = localStorage.getItem(GROUP_KEY);
+    return saved === 'repo' || saved === 'project' ? saved : 'station';
   } catch {
     return 'station';
   }
@@ -198,7 +207,10 @@ export function FleetHome({
     setActivity((n) => n + 1);
   }, [sessions]);
   const [filter, setFilter] = useState<FleetFilter>(emptyFilter);
-  const [group, setGroup] = useState<Group>(readGroup);
+  const [picked, setGroup] = useState<Group>(readGroup);
+  // DL-176: the grouping "Project" needs the project list of the owner's login.
+  const hasProjects = useProjects().length > 0;
+  const group: Group = picked === 'project' && !hasProjects ? 'station' : picked;
   const [archivedOn, setArchivedOn] = useState(false);
   const cleared = archived.use();
   const { list, problem } = useConflicts(conflicts, fleetVersion(sessions));
@@ -350,6 +362,9 @@ export function FleetHome({
           <span className="fd-label">Group</span>
           {chip('Station', group === 'station', () => pickGroup('station'), 'g-station')}
           {chip('Repo', group === 'repo', () => pickGroup('repo'), 'g-repo')}
+          {hasProjects
+            ? chip('Project', group === 'project', () => pickGroup('project'), 'g-project')
+            : null}
         </>
       )}
       {filtered ? (

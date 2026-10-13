@@ -105,7 +105,7 @@ impl DeckStore {
     pub async fn create_project(&self, station_id: String, input: ProjectInput) -> Result<Project> {
         let id: String = new_id(self.inner.ids.as_ref());
         let now = self.now_ms();
-        call(&self.inner.db, move |conn| {
+        let out = call(&self.inner.db, move |conn| {
             conn.execute(
                 &format!(
                     "INSERT INTO projects ({COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
@@ -128,7 +128,10 @@ impl DeckStore {
             )?;
             find(conn, &id)?.ok_or_else(|| DeckError::Corrupt("a new project is missing".into()))
         })
-        .await
+        .await;
+        // A card's automatic project depends on the projects (DL-176).
+        self.board_changed();
+        out
     }
 
     /// Replaces every field of a project but its id and creation time.
@@ -142,7 +145,7 @@ impl DeckStore {
         station_id: String,
         input: ProjectInput,
     ) -> Result<Option<Project>> {
-        call(&self.inner.db, move |conn| {
+        let out = call(&self.inner.db, move |conn| {
             let changed = conn.execute(
                 "UPDATE projects SET name = ?2, station_id = ?3, path = ?4, forge = ?5,
                      trackers = ?6, prompt_template = ?7, review_prompt = ?8
@@ -167,7 +170,9 @@ impl DeckStore {
             }
             find(conn, &id)
         })
-        .await
+        .await;
+        self.board_changed();
+        out
     }
 
     /// Deletes a project; `false` when no project has `id`.
@@ -175,10 +180,12 @@ impl DeckStore {
     /// # Errors
     /// A database error.
     pub async fn delete_project(&self, id: String) -> Result<bool> {
-        call(&self.inner.db, move |conn| {
+        let out = call(&self.inner.db, move |conn| {
             Ok(conn.execute("DELETE FROM projects WHERE project_id = ?1", [id])? > 0)
         })
-        .await
+        .await;
+        self.board_changed();
+        out
     }
 }
 

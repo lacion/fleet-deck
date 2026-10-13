@@ -1,5 +1,5 @@
-// R3.3 and R3.7 (DL-164): one project (`#/project/<id>`) with the tabs "Issues" and
-// "Pull requests".
+// R3.3 and R3.7 (DL-164): one project (`#/project/<id>`) with the tabs "Sessions" (DL-176),
+// "Issues" and "Pull requests".
 import { useState } from 'react';
 import type { DeckSession, StationView } from '../gen';
 import { stationName } from '../board/fleet';
@@ -9,8 +9,10 @@ import { useIntegrations } from './context';
 import { IssuesTab } from './IssuesTab';
 import { ProjectChips } from './ProjectsPage';
 import { PrsTab } from './PrsTab';
+import { ProjectSessions } from './ProjectSessions';
+import type { Freshness } from '../runtime/state';
 
-type Tab = 'issues' | 'prs';
+type Tab = 'sessions' | 'issues' | 'prs';
 
 type Props = {
   readonly id: string;
@@ -18,6 +20,9 @@ type Props = {
   readonly sessions: readonly DeckSession[];
   /** "Fix checks": opens the spawn form with the project's station and path. */
   readonly onFixChecks: (station: string, cwd: string, prompt: string) => void;
+  /** DL-176: "New session in this project": the station, the project path (worktree on). */
+  readonly onNewSession?: ((station: string, cwd: string) => void) | undefined;
+  readonly freshness?: Freshness | undefined;
   /** Unix ms of "now" (tests). */
   readonly now?: number;
   readonly initialTab?: Tab;
@@ -28,8 +33,10 @@ export function ProjectPage({
   stations,
   sessions,
   onFixChecks,
+  onNewSession,
+  freshness = 'live',
   now: givenNow,
-  initialTab = 'issues',
+  initialTab = 'sessions',
 }: Props) {
   const env = useIntegrations();
   const now = useNow(givenNow, 30_000);
@@ -81,6 +88,16 @@ export function ProjectPage({
         <button
           type="button"
           role="tab"
+          id="fd-int-tab-sessions"
+          aria-selected={tab === 'sessions'}
+          aria-controls="fd-int-panel"
+          onClick={() => setTab('sessions')}
+        >
+          Sessions
+        </button>
+        <button
+          type="button"
+          role="tab"
           id="fd-int-tab-issues"
           aria-selected={tab === 'issues'}
           aria-controls="fd-int-panel"
@@ -100,7 +117,17 @@ export function ProjectPage({
         </button>
       </div>
       <div id="fd-int-panel" role="tabpanel" aria-labelledby={`fd-int-tab-${tab}`}>
-        {tab === 'issues' ? (
+        {tab === 'sessions' ? (
+          <ProjectSessions
+            project={project}
+            sessions={sessions}
+            stations={stations}
+            freshness={freshness}
+            now={now}
+            onNewSession={onNewSession ?? (() => {})}
+            canDrive={env.actions.canDrive && onNewSession !== undefined}
+          />
+        ) : tab === 'issues' ? (
           <IssuesTab project={project} actions={env.actions} stations={stations} now={now} />
         ) : (
           <PrsTab
