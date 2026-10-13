@@ -242,6 +242,7 @@ async fn live_round(kind: ProviderKind) {
             prompt: Some(super::tests::text(prompt)),
             workspace: None,
             setup_cmd: None,
+            batch: None,
         },
     )
     .await;

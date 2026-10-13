@@ -135,6 +135,7 @@ async fn a_start_on_a_broken_version_is_refused_with_the_reason() {
             prompt: Some(UserInput::new("hello".to_owned())),
             workspace: None,
             setup_cmd: None,
+            batch: None,
         },
     };
     let decided = manager.submit(envelope, Caller::local()).await.unwrap();

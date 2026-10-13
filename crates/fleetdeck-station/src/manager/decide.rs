@@ -8,6 +8,7 @@ use fleetdeck_proto::command::{
 use fleetdeck_proto::event::{
     ProviderKind, RequestKind, ResolvedBy, ResponseChannel, RunOrigin, SessionState,
 };
+use fleetdeck_proto::session::BatchRef;
 use fleetdeck_proto::{InputId, Operation, Reject, RejectCode, SessionId, SessionSummary};
 use fleetdeck_providers::codex::validate_question_answer;
 
@@ -61,9 +62,13 @@ pub fn decide(
             prompt,
             workspace,
             setup_cmd,
+            batch,
         } => {
             if let Some(cmd) = &setup_cmd {
                 check_setup_cmd(policy, origin_run, cmd)?;
+            }
+            if let Some(why) = batch.as_deref().and_then(BatchRef::problem) {
+                return Err(reject(RejectCode::InvalidCommand, why));
             }
             start(
                 d,
@@ -74,6 +79,7 @@ pub fn decide(
                 workspace.map(|w| *w),
                 None,
                 setup_cmd,
+                batch.map(|b| *b),
             )
         }
         SessionCommand::Import {
@@ -91,6 +97,7 @@ pub fn decide(
                 prompt,
                 None,
                 Some(native_session_id),
+                None,
                 None,
             )
         }
@@ -358,6 +365,7 @@ fn start(
     workspace: Option<WorkspaceRequest>,
     import: Option<String>,
     setup_cmd: Option<String>,
+    batch: Option<BatchRef>,
 ) -> Result<CommandResult, DecideError> {
     let provider = policy.instance(&spec.provider_instance).ok_or_else(|| {
         reject(
@@ -485,6 +493,14 @@ fn start(
         &session_id,
         fleetdeck_proto::event::Event::SessionNamed { callsign, worktree }.into(),
     )?;
+    // The batch of an `Nx` start (R1.4, DL-170): the station records it with
+    // the name, in the same decision, so a redelivered start adds nothing.
+    if let Some(batch) = batch {
+        d.append(
+            &session_id,
+            fleetdeck_proto::event::Event::SessionBatch { batch }.into(),
+        )?;
+    }
     let prompt = prompt.map(|input| InputRecord {
         input_id: d.new_id(),
         origin,

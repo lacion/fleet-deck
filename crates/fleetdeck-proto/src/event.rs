@@ -17,7 +17,7 @@ use crate::capability::Capabilities;
 use crate::ids::{
     InputId, NodeId, PlanId, ProviderInstanceId, RequestId, RunId, SessionId, TurnId,
 };
-use crate::session::RepoInfo;
+use crate::session::{BatchRef, RepoInfo};
 
 /// Native ids of a provider, scoped by provider + session (L6). Never a global key.
 pub type ProviderRefs = serde_json::Map<String, Value>;
@@ -572,6 +572,11 @@ pub enum Event {
     /// tool (R6, DL-165). Empty text clears it.
     #[serde(rename = "session.focus")]
     SessionFocus { text: String },
+    /// The `Nx` batch that the session started in (R1.4). The station
+    /// emits it after the start, like `session.base`. The fold keeps it in
+    /// `summary.batch`.
+    #[serde(rename = "session.batch")]
+    SessionBatch { batch: BatchRef },
     #[serde(rename = "run.completed")]
     RunCompleted {
         run_id: RunId,
@@ -619,7 +624,7 @@ pub enum Event {
 
 impl Event {
     /// Every known kind name, in declaration order.
-    pub const KINDS: [&'static str; 42] = [
+    pub const KINDS: [&'static str; 43] = [
         "session.started",
         "session.state",
         "run.started",
@@ -662,6 +667,7 @@ impl Event {
         "artifact.published",
         "artifact.suggested",
         "session.focus",
+        "session.batch",
     ];
 
     /// The dotted kind name.
@@ -710,6 +716,7 @@ impl Event {
             Self::ArtifactPublished { .. } => "artifact.published",
             Self::ArtifactSuggested { .. } => "artifact.suggested",
             Self::SessionFocus { .. } => "session.focus",
+            Self::SessionBatch { .. } => "session.batch",
         }
     }
 

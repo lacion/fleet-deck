@@ -10,6 +10,7 @@ import type { RunId } from "../ids/RunId";
 import type { SessionId } from "../ids/SessionId";
 import type { TurnId } from "../ids/TurnId";
 import type { Activity } from "./Activity";
+import type { BatchRef } from "./BatchRef";
 import type { OpenRequest } from "./OpenRequest";
 import type { RepoInfo } from "./RepoInfo";
 import type { RunningTool } from "./RunningTool";
@@ -106,6 +107,11 @@ artifacts_count: number,
  * DL-165). Absent before the first one, and after an empty one.
  */
 focus?: string, 
+/**
+ * The `Nx` batch that started the session, from `session.batch`
+ * (R1.4, DL-170). Absent for a session that is not in a batch.
+ */
+batch?: BatchRef, 
 /**
  * The highest `session_seq` folded into this summary.
  */

@@ -558,6 +558,7 @@ fn start(
             prompt,
             workspace: None,
             setup_cmd: None,
+            batch: None,
         },
         now,
     )?;

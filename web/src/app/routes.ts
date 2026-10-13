@@ -11,6 +11,7 @@ export type Route =
   | { readonly name: 'files' }
   | { readonly name: 'terminals' }
   | { readonly name: 'more' }
+  | { readonly name: 'compare'; readonly batch: string }
   | {
       readonly name: 'session';
       readonly station: string;
@@ -33,6 +34,15 @@ export function parseHash(hash: string): Route {
     if (text === `/${name}`) return { name };
   }
   const parts = path.split('/');
+  // R1.4: `#/compare/<batch id>`.
+  if (parts.length === 3 && parts[0] === '' && parts[1] === 'compare') {
+    try {
+      const batch = decodeURIComponent(parts[2] ?? '');
+      return batch === '' ? HOME : { name: 'compare', batch };
+    } catch {
+      return HOME;
+    }
+  }
   if (parts.length !== 4 || parts[0] !== '' || parts[1] !== 's') return HOME;
   try {
     const station = decodeURIComponent(parts[2] ?? '');
@@ -59,6 +69,8 @@ export function formatHash(route: Route): string {
       const base = `#/s/${encodeURIComponent(route.station)}/${encodeURIComponent(route.session)}`;
       return route.tab === 'chat' ? base : `${base}?tab=${route.tab}`;
     }
+    case 'compare':
+      return `#/compare/${encodeURIComponent(route.batch)}`;
     default:
       return `#/${route.name}`;
   }

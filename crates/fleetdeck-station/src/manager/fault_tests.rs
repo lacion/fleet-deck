@@ -200,6 +200,7 @@ impl Rig {
                 prompt: Some(text(prompt)),
                 workspace: None,
                 setup_cmd: None,
+                batch: None,
             })
             .await;
         d.receipt.result.unwrap().session_id.unwrap()

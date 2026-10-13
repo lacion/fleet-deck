@@ -41,6 +41,17 @@ describe('routes', () => {
     expect(parseHash('#/s/station-a/s1?tab=files')).toEqual(session('station-a', 's1', 'files'));
   });
 
+  test('the compare route carries the batch id (R1.4)', () => {
+    expect(parseHash('#/compare/01JABC')).toEqual({ name: 'compare', batch: '01JABC' });
+    expect(formatHash({ name: 'compare', batch: 'a b/c' })).toBe('#/compare/a%20b%2Fc');
+    const route: Route = { name: 'compare', batch: 'x y' };
+    expect(parseHash(formatHash(route))).toEqual(route);
+    // No id, too many parts and a bad escape are the home.
+    for (const hash of ['#/compare', '#/compare/', '#/compare/a/b', '#/compare/%E0%A4%A']) {
+      expect(parseHash(hash)).toEqual({ name: 'home' });
+    }
+  });
+
   test('an unknown tab is the chat tab', () => {
     expect(parseHash('#/s/a/b?tab=nope')).toEqual(session('a', 'b'));
     expect(parseHash('#/s/a/b?x=1')).toEqual(session('a', 'b'));

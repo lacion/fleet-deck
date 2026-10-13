@@ -9,6 +9,7 @@ import type { RequestId } from "../ids/RequestId";
 import type { RunId } from "../ids/RunId";
 import type { TurnId } from "../ids/TurnId";
 import type { JsonValue } from "../serde_json/JsonValue";
+import type { BatchRef } from "../session/BatchRef";
 import type { RepoInfo } from "../session/RepoInfo";
 import type { ApprovalOption } from "./ApprovalOption";
 import type { BackgroundTask } from "./BackgroundTask";
@@ -92,7 +93,7 @@ inferred: boolean, } | { "kind": "artifact.published", artifact_id: string, vers
 /**
  * Named `artifact_kind` because `kind` is the event tag.
  */
-artifact_kind: ArtifactKind, } | { "kind": "artifact.suggested", path: string, } | { "kind": "session.focus", text: string, } | { "kind": "run.completed", run_id: RunId, status: TurnStatus, 
+artifact_kind: ArtifactKind, } | { "kind": "artifact.suggested", path: string, } | { "kind": "session.focus", text: string, } | { "kind": "session.batch", batch: BatchRef, } | { "kind": "run.completed", run_id: RunId, status: TurnStatus, 
 /**
  * Background work still runs; the session is not idle (L7).
  */

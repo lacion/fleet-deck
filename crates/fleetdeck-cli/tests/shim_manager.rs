@@ -264,6 +264,7 @@ async fn a_shim_session_keeps_its_turn_checkpoints_and_survives_a_station_restar
                 prompt: Some(UserInput::new("hello".to_owned())),
                 workspace: None,
                 setup_cmd: None,
+                batch: None,
             },
         )
         .await;
@@ -340,6 +341,7 @@ async fn start_session(rig: &mut Rig, station: &Station, prompt: &str) -> Sessio
                 prompt: Some(UserInput::new(prompt.to_owned())),
                 workspace: None,
                 setup_cmd: None,
+                batch: None,
             },
         )
         .await;

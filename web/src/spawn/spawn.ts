@@ -7,6 +7,7 @@
 // worktree or a clone, and a batch starts one session for each line
 // (`3x task` starts three), each in its own worktree.
 import type {
+  BatchRef,
   DeckSession,
   ModelChoice,
   Preflight,
@@ -43,6 +44,8 @@ export type SpawnActions = {
     importId?: string,
     /** DL-148: a shell command that the station runs in the workspace before the agent starts. */
     setupCmd?: string,
+    /** R1.4: the batch of this start (an `Nx` or multi-line batch); only a plain start carries it. */
+    batch?: BatchRef,
   ): Promise<SpawnOutcome>;
 };
 
@@ -136,6 +139,9 @@ export function setupProblem(cmd: string): string | null {
 
 /** The most sessions that one batch line can ask for (`10x`). */
 export const MAX_BATCH = 10;
+
+/** The most sessions of one batch that carry a batch reference (the station refuses a larger size). */
+export const MAX_BATCH_REF = 100;
 
 /**
  * The prompts of a batch (v0 batch spawn, PLAN §16): one session for each
@@ -392,7 +398,7 @@ export function spawnActions(
         return { ok: false, text: error instanceof Error ? error.message : 'The request failed.' };
       }
     },
-    start: async (stationId, spec, prompt, workspace = null, importId, setupCmd) => {
+    start: async (stationId, spec, prompt, workspace = null, importId, setupCmd, batch) => {
       const first = prompt.trim() === '' ? null : { text: prompt };
       const native = importId?.trim() ?? '';
       const command =
@@ -403,6 +409,7 @@ export function spawnActions(
               prompt: first,
               ...(workspace === null ? {} : { workspace }),
               ...(setupCmd !== undefined && setupCmd.trim() !== '' ? { setup_cmd: setupCmd } : {}),
+              ...(batch === undefined ? {} : { batch }),
             }
           : { op: 'import', spec, native_session_id: native, prompt: first };
       const body = { station: stationId, command_id: newId(), command };

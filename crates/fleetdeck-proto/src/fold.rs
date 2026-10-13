@@ -228,6 +228,7 @@ impl SessionSummary {
             Event::SessionFocus { text } => {
                 self.focus = Some(text.clone()).filter(|t| !t.is_empty());
             }
+            Event::SessionBatch { batch } => self.batch = Some(batch.clone()),
             Event::SessionEnded { .. } => {
                 if !matches!(self.state, SessionState::Lost) {
                     self.state = SessionState::Exited;

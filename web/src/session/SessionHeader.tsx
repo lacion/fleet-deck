@@ -1,6 +1,7 @@
 // DL-140: the header of a session: title, status, provider, model, where it
 // runs, and the actions (interrupt, resume, terminal) with one overflow menu (DL-141).
 import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from 'react';
+import { formatHash } from '../app/routes';
 import { relativeAge } from '../app/sessions';
 import { stationName } from '../board/fleet';
 import { providerLabel } from '../board/lanes';
@@ -15,6 +16,7 @@ import {
   Copy,
   Ellipsis,
   Folder,
+  GitCompare,
   Icon,
   Pencil,
   Play,
@@ -398,6 +400,17 @@ export function SessionHeader({
           }}
         >
           <Icon of={Send} /> Ask for a status update
+        </button>
+      ) : null}
+      {s.batch !== undefined && s.batch.size >= 2 ? (
+        <button
+          type="button"
+          onClick={() => {
+            close();
+            window.location.hash = formatHash({ name: 'compare', batch: s.batch?.batch_id ?? '' });
+          }}
+        >
+          <Icon of={GitCompare} /> Compare batch
         </button>
       ) : null}
       <button type="button" onClick={() => priority.toggle(ref)}>

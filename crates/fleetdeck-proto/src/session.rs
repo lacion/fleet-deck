@@ -132,6 +132,11 @@ pub struct SessionSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub focus: Option<String>,
+    /// The `Nx` batch that started the session, from `session.batch`
+    /// (R1.4, DL-170). Absent for a session that is not in a batch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub batch: Option<BatchRef>,
     /// The highest `session_seq` folded into this summary.
     pub session_seq: u64,
     /// Unix ms of the last folded event.
@@ -174,6 +179,7 @@ impl SessionSummary {
             base: None,
             artifacts_count: 0,
             focus: None,
+            batch: None,
             session_seq: 0,
             updated_at: 0,
         }
@@ -208,6 +214,47 @@ pub struct SessionBase {
     /// The station guessed the base (an import or a resume).
     #[serde(default)]
     pub inferred: bool,
+}
+
+/// The batch that a session started in (R1.4, DL-170): one `batch_id` for each
+/// press of "Start N sessions", the position of the session in it, and the
+/// size of the batch. The board makes the id (a ULID); the station keeps it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "session/")]
+pub struct BatchRef {
+    pub batch_id: String,
+    /// The place in the batch, from 1.
+    pub index: u32,
+    /// How many sessions the batch asked for.
+    pub size: u32,
+}
+
+/// The most sessions that one batch holds (a refusal above it).
+pub const MAX_BATCH_SIZE: u32 = 100;
+
+impl BatchRef {
+    /// Why the reference is not valid, or `None`: a `batch_id` of 1 to 64
+    /// characters (`[0-9A-Za-z_-]`), `index` from 1 to `size`, and `size`
+    /// from 1 to [`MAX_BATCH_SIZE`].
+    #[must_use]
+    pub fn problem(&self) -> Option<&'static str> {
+        let id_ok = !self.batch_id.is_empty()
+            && self.batch_id.len() <= 64
+            && self
+                .batch_id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
+        if !id_ok {
+            return Some("the batch id must have 1 to 64 characters of [0-9A-Za-z_-]");
+        }
+        if self.size == 0 || self.size > MAX_BATCH_SIZE {
+            return Some("the batch size must be from 1 to 100");
+        }
+        if self.index == 0 || self.index > self.size {
+            return Some("the batch index must be from 1 to the batch size");
+        }
+        None
+    }
 }
 
 /// The most running tools that a summary keeps; the oldest goes first.

@@ -176,6 +176,7 @@ export * from "./plans/PlanMarkRequest";
 export * from "./plans/PlanStatus";
 export * from "./serde_json/JsonValue";
 export * from "./session/Activity";
+export * from "./session/BatchRef";
 export * from "./session/CardStatus";
 export * from "./session/OpenRequest";
 export * from "./session/RepoInfo";

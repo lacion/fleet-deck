@@ -1,5 +1,6 @@
 use super::*;
 use crate::capability::Capabilities;
+use crate::session::BatchRef;
 use serde_json::json;
 
 fn refs() -> ProviderRefs {
@@ -254,6 +255,13 @@ fn samples() -> Vec<Event> {
         },
         Event::SessionFocus {
             text: "fixing the login test".into(),
+        },
+        Event::SessionBatch {
+            batch: BatchRef {
+                batch_id: "01JABCDEFGHJKMNPQRSTVWXYZ0".into(),
+                index: 1,
+                size: 3,
+            },
         },
     ]
 }

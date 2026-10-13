@@ -399,6 +399,7 @@ async fn a_start_resume_shell_open_and_handover_are_refused_while_a_row_is_open(
                 prompt: None,
                 workspace: None,
                 setup_cmd: None,
+                batch: None,
             })
             .await;
         assert_eq!((code, message.as_str()), (RejectCode::InvalidState, HELD));
