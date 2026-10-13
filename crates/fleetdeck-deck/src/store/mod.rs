@@ -33,6 +33,7 @@ pub mod stations;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use fleetdeck_core::clock::SharedClock;
@@ -126,6 +127,8 @@ struct Inner {
     /// The last `station.info` of each station with its Unix ms, in this
     /// deck process (M2 P4-2: version, capacity, providers).
     infos: Mutex<BTreeMap<StationId, (StationInfo, i64)>>,
+    /// Whether two sessions that change one file get a mail (DL-145).
+    conflict_mail: AtomicBool,
 }
 
 /// The deck store. Clones share one database thread.
@@ -203,6 +206,7 @@ impl DeckStore {
                 live: broadcast::channel(LIVE_BUFFER).0,
                 reachable: Mutex::default(),
                 infos: Mutex::default(),
+                conflict_mail: AtomicBool::new(true),
             }),
         })
     }
@@ -217,6 +221,11 @@ impl DeckStore {
     #[must_use]
     pub fn db(&self) -> Db {
         self.inner.db.clone()
+    }
+
+    /// Turns the conflict mail on or off (`deck.toml` `conflict_mail`, DL-145).
+    pub fn set_conflict_mail(&self, on: bool) {
+        self.inner.conflict_mail.store(on, Ordering::Relaxed);
     }
 
     /// The deck clock in Unix milliseconds.

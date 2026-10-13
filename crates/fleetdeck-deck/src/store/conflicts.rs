@@ -4,22 +4,204 @@
 //! and keeps the latest touch of each file by each session (`file.changed`
 //! and the `files` of `tool.completed`). [`DeckStore::conflicts`] reports
 //! the files that two or more sessions touched inside the conflict window.
+//!
+//! The same transaction mails both sessions of a new conflict once (DL-145):
+//! the mail id is stable for the pair, the file and the recipient, so the
+//! stored mail is the dedup record and survives a restart.
 
 use std::collections::BTreeMap;
 
+use fleetdeck_core::ids::{IdSource, new_id};
+use fleetdeck_proto::command::{CommandOrigin, SessionCommand, UserInput};
 use fleetdeck_proto::conflicts::{
     CONFLICT_WINDOW_MS, FileConflict, FileTouch, MAX_CONFLICTS, touch_key,
 };
-use fleetdeck_proto::event::{Event, EventBody};
-use fleetdeck_proto::{EventEnvelope, SessionSummary, StationId};
-use rusqlite::{Transaction, params};
+use fleetdeck_proto::event::{Event, EventBody, SessionState};
+use fleetdeck_proto::orchestration::{MailDelivery, mail_frame};
+use fleetdeck_proto::{EventEnvelope, SessionId, SessionSummary, StationId};
+use ring::digest::{SHA256, digest};
+use rusqlite::{OptionalExtension, Transaction, params};
 
+use super::fleet::{NewMail, insert_mail};
+use super::outbox::NewOutboxItem;
 use super::{DeckStore, Result, call};
+use crate::link::router::{CommandKind, origin_name};
 
 /// The most files of one event that the radar records.
 const MAX_FILES_PER_EVENT: usize = 64;
 /// The longest path that the radar records.
 const MAX_PATH_BYTES: usize = 1024;
+/// How long the outbox tries to deliver a conflict mail; an old warning is
+/// noise.
+pub const CONFLICT_MAIL_TTL_MS: i64 = 2 * 60 * 60 * 1000;
+/// The sender of a conflict mail.
+const MAIL_SENDER: &str = "fleetdeck";
+
+/// What the conflict mail needs from the caller of [`record_touches`].
+pub(super) struct MailContext<'a> {
+    pub ids: &'a dyn IdSource,
+    /// The deck time in Unix ms.
+    pub now: i64,
+}
+
+/// One session of a conflict.
+struct Party {
+    station: StationId,
+    session: SessionId,
+}
+
+impl Party {
+    /// The identity of a session in a mail id.
+    fn identity(&self) -> String {
+        format!("{}/{}", self.station.as_str(), self.session.as_str())
+    }
+}
+
+fn sha256_hex(text: &str) -> String {
+    digest(&SHA256, text.as_bytes())
+        .as_ref()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// The stable id of the mail to `recipient` about `file` (`a` and `b` are
+/// the two identities in string order).
+fn conflict_mail_id(group: &str, file: &str, a: &str, b: &str, recipient: &str) -> String {
+    let hash = sha256_hex(&format!("{group}|{file}|{a}|{b}|{recipient}"));
+    format!("conflict-{}", &hash[..24])
+}
+
+fn stored_summary(tx: &Transaction<'_>, party: &Party) -> Result<Option<SessionSummary>> {
+    let text: Option<String> = tx
+        .query_row(
+            "SELECT summary FROM sessions WHERE station_id = ?1 AND session_id = ?2",
+            params![party.station.as_str(), party.session.as_str()],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(text.map(|t| serde_json::from_str(&t)).transpose()?)
+}
+
+fn station_name(tx: &Transaction<'_>, station: &StationId) -> Result<String> {
+    let name: Option<String> = tx
+        .query_row(
+            "SELECT name FROM stations WHERE station_id = ?1",
+            [station.as_str()],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(name.unwrap_or_else(|| station.as_str().to_owned()))
+}
+
+/// Queues the mail from `other` to `recipient` unless it exists already.
+fn mail_party(
+    tx: &Transaction<'_>,
+    mail: &MailContext<'_>,
+    group: &str,
+    file: &str,
+    (a, b): (&str, &str),
+    recipient: &Party,
+    other: &Party,
+) -> Result<()> {
+    let mail_id = conflict_mail_id(group, file, a, b, &recipient.identity());
+    let known = tx
+        .query_row("SELECT 1 FROM mail WHERE mail_id = ?1", [&mail_id], |_| {
+            Ok(())
+        })
+        .optional()?
+        .is_some();
+    if known {
+        return Ok(());
+    }
+    let Some(summary) = stored_summary(tx, recipient)? else {
+        return Ok(());
+    };
+    if matches!(summary.state, SessionState::Exited | SessionState::Lost) {
+        return Ok(());
+    }
+    let other_name = stored_summary(tx, other)?
+        .and_then(|s| s.title)
+        .unwrap_or_else(|| other.session.as_str().to_owned());
+    let other_station = station_name(tx, &other.station)?;
+    let text = format!(
+        "Fleet Deck: the session \"{other_name}\" on {other_station} also changed {file} in the \
+         last 30 minutes. Coordinate before you change it further."
+    );
+    let command = SessionCommand::FollowUp {
+        session_id: recipient.session.clone(),
+        input: UserInput::new(mail_frame(MAIL_SENDER, &text)),
+    };
+    let item = NewOutboxItem {
+        station_id: recipient.station.clone(),
+        origin: origin_name(CommandOrigin::Mail).to_owned(),
+        payload: serde_json::to_value(CommandKind::Session { command })?,
+        expires_at: mail.now.saturating_add(CONFLICT_MAIL_TTL_MS),
+    };
+    let outbox_id: String = new_id(mail.ids);
+    insert_mail(
+        tx,
+        &NewMail {
+            mail_id,
+            sender: MAIL_SENDER.to_owned(),
+            session_id: recipient.session.clone(),
+            delivery: MailDelivery::FollowUp,
+            text,
+            item,
+        },
+        &outbox_id,
+        mail.now,
+    )?;
+    Ok(())
+}
+
+/// Mails both sessions of each pair that touched `(group, file)` in the
+/// window before `e` and have no conflict mail yet.
+fn mail_conflicts(
+    tx: &Transaction<'_>,
+    mail: &MailContext<'_>,
+    station: &StationId,
+    e: &EventEnvelope,
+    group: &str,
+    file: &str,
+) -> Result<()> {
+    let mut stmt = tx.prepare(
+        "SELECT station_id, session_id FROM file_touches
+         WHERE group_key = ?1 AND file = ?2 AND touched_at >= ?3
+             AND NOT (station_id = ?4 AND session_id = ?5)
+         ORDER BY station_id, session_id",
+    )?;
+    let others: Vec<Party> = stmt
+        .query_map(
+            params![
+                group,
+                file,
+                e.at.saturating_sub(CONFLICT_WINDOW_MS),
+                station.as_str(),
+                e.session_id.as_str()
+            ],
+            |r| {
+                Ok(Party {
+                    station: StationId::from(r.get::<_, String>(0)?),
+                    session: SessionId::from(r.get::<_, String>(1)?),
+                })
+            },
+        )?
+        .collect::<rusqlite::Result<_>>()?;
+    drop(stmt);
+    let this = Party {
+        station: station.clone(),
+        session: e.session_id.clone(),
+    };
+    for other in &others {
+        let (x, y) = (this.identity(), other.identity());
+        let pair = if x <= y { (x, y) } else { (y, x) };
+        let pair = (pair.0.as_str(), pair.1.as_str());
+        mail_party(tx, mail, group, file, pair, &this, other)?;
+        mail_party(tx, mail, group, file, pair, other, &this)?;
+    }
+    Ok(())
+}
 
 /// Records the files that an event changed; other events do nothing.
 pub(super) fn record_touches(
@@ -27,6 +209,7 @@ pub(super) fn record_touches(
     station: &StationId,
     e: &EventEnvelope,
     summary: &SessionSummary,
+    mail: Option<&MailContext<'_>>,
 ) -> Result<()> {
     let paths: Vec<&str> = match &e.event {
         EventBody::Known(Event::FileChanged { path, .. }) => vec![path.as_str()],
@@ -61,6 +244,9 @@ pub(super) fn record_touches(
                 e.at,
             ],
         )?;
+        if let Some(mail) = mail {
+            mail_conflicts(tx, mail, station, e, &group, &file)?;
+        }
     }
     // Touches far outside the window are never read again.
     tx.execute(

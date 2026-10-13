@@ -448,6 +448,9 @@ pub struct DeckConfig {
     pub link_listen: Vec<SocketAddr>,
     /// The deck's tailnet host name, for the WS `Origin` check (§9).
     pub tailnet_hostname: Option<String>,
+    /// Tell both sessions once when two sessions change the same file
+    /// (DL-145). On by default.
+    pub conflict_mail: bool,
 }
 
 #[derive(Deserialize)]
@@ -457,6 +460,7 @@ struct RawDeck {
     listen: Option<Vec<String>>,
     link_listen: Option<Vec<String>>,
     tailnet_hostname: Option<String>,
+    conflict_mail: Option<bool>,
 }
 
 impl DeckConfig {
@@ -501,6 +505,7 @@ impl DeckConfig {
             listen,
             link_listen,
             tailnet_hostname,
+            conflict_mail: raw.conflict_mail.unwrap_or(true),
         })
     }
 }
