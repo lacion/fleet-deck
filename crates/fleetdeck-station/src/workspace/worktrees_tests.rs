@@ -10,10 +10,8 @@ use fleetdeck_proto::event::SessionState;
 use fleetdeck_proto::link::{WorktreeInfo, WorktreeVerdict};
 use fleetdeck_proto::session::SessionSummary;
 
-use super::worktrees::{
-    Count, GIT_FILTERS, NOT_CHECKED, OUTSIDE_ROOTS, count_entries, git_options, list,
-    parse_worktrees,
-};
+use super::worktrees::scan::{blob_oid, parse_debug, scan};
+use super::worktrees::{NOT_CHECKED, OUTSIDE_ROOTS, git_options, list, parse_worktrees};
 use crate::manager::policy::Policy;
 use crate::store::OfflineApprovalPolicy;
 
@@ -141,24 +139,31 @@ fn marker_script(dir: &Path) -> (PathBuf, PathBuf) {
 }
 
 #[tokio::test]
-async fn a_repository_with_git_filters_is_not_inspected() {
+async fn a_repository_with_git_filters_is_inspected_without_running_them() {
     let f = fixture();
     let tools = tempfile::tempdir().unwrap();
     let (script, marker) = marker_script(tools.path());
-    std::fs::write(f.main.join(".gitattributes"), "* filter=probe\n").unwrap();
-    git(
-        &f.main,
-        &["config", "filter.probe.clean", script.to_str().unwrap()],
-    );
+    std::fs::write(f.main.join(".gitattributes"), "* filter=x\n").unwrap();
+    git(&f.main, &["add", ".gitattributes"]);
+    git(&f.main, &["commit", "-q", "-m", "attributes"]);
+    git(&f.wt, &["reset", "-q", "--hard", "main"]);
+    for key in ["clean", "smudge", "process"] {
+        git(
+            &f.main,
+            &[
+                "config",
+                &format!("filter.x.{key}"),
+                script.to_str().unwrap(),
+            ],
+        );
+    }
+    let p = policy(f.root.path());
+    let info = one(&p, session("s1", &f.wt, SessionState::Exited)).await;
+    assert_eq!(info.verdict, WorktreeVerdict::Clean, "{info:?}");
     std::fs::write(f.wt.join("a.txt"), "changed\n").unwrap();
-    let info = one(
-        &policy(f.root.path()),
-        session("s1", &f.wt, SessionState::Exited),
-    )
-    .await;
-    assert_eq!(info.verdict, WorktreeVerdict::Unknown, "{info:?}");
-    assert_eq!(info.note.as_deref(), Some(GIT_FILTERS));
-    assert_eq!((info.dirty, info.ignored), (None, None));
+    let info = one(&p, session("s1", &f.wt, SessionState::Exited)).await;
+    assert_eq!(info.verdict, WorktreeVerdict::HasWork, "{info:?}");
+    assert_eq!(info.dirty, Some(1));
     assert!(!marker.exists(), "a filter ran");
 }
 
@@ -321,18 +326,190 @@ async fn a_passed_deadline_leaves_every_worktree_unchecked() {
 }
 
 #[test]
-fn the_status_count_skips_the_second_path_of_a_rename() {
-    let text = "R  new.txt\0old.txt\0 M a.txt\0?? b.txt\0!! target/\0";
-    assert_eq!(count_entries(text, Count::Changed), 3);
-    assert_eq!(count_entries(text, Count::Ignored), 1);
-    assert_eq!(count_entries("", Count::Changed), 0);
-}
-
-#[test]
 fn the_porcelain_list_gives_the_main_checkout_first() {
     let text = "worktree /r/repo\nHEAD aaa\nbranch refs/heads/main\n\nworktree /r/repo--fd-x\nHEAD bbb\nbranch refs/heads/fd/x\n";
     let entries = parse_worktrees(text);
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[0].path, "/r/repo");
     assert_eq!(entries[0].head.as_deref(), Some("aaa"));
+}
+
+async fn dirty_of(f: &Fixture) -> WorktreeInfo {
+    one(
+        &policy(f.root.path()),
+        session("s1", &f.wt, SessionState::Exited),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn a_staged_edit_and_a_staged_deletion_are_work() {
+    let f = fixture();
+    std::fs::write(f.wt.join("a.txt"), "changed\n").unwrap();
+    git(&f.wt, &["add", "a.txt"]);
+    let info = dirty_of(&f).await;
+    assert_eq!(info.verdict, WorktreeVerdict::HasWork, "{info:?}");
+    assert_eq!(info.dirty, Some(1));
+    git(&f.wt, &["reset", "-q", "--hard"]);
+    assert_eq!(dirty_of(&f).await.verdict, WorktreeVerdict::Clean);
+    git(&f.wt, &["rm", "-q", "a.txt"]);
+    let info = dirty_of(&f).await;
+    assert_eq!(info.verdict, WorktreeVerdict::HasWork, "{info:?}");
+    assert_eq!(info.dirty, Some(1));
+}
+
+#[tokio::test]
+async fn an_equal_size_rewrite_with_the_old_mtime_is_work() {
+    let f = fixture();
+    let file = f.wt.join("a.txt");
+    let mtime = std::fs::metadata(&file).unwrap().modified().unwrap();
+    std::fs::write(&file, "ONE\n").unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&file)
+        .unwrap()
+        .set_modified(mtime)
+        .unwrap();
+    let info = dirty_of(&f).await;
+    assert_eq!(info.verdict, WorktreeVerdict::HasWork, "{info:?}");
+    assert_eq!(info.dirty, Some(1));
+}
+
+#[tokio::test]
+async fn a_changed_executable_bit_is_work() {
+    use std::os::unix::fs::PermissionsExt;
+    let f = fixture();
+    let file = f.wt.join("a.txt");
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let info = dirty_of(&f).await;
+    assert_eq!(info.verdict, WorktreeVerdict::HasWork, "{info:?}");
+    assert_eq!(info.dirty, Some(1));
+}
+
+#[tokio::test]
+async fn a_touch_of_a_clean_file_is_not_work() {
+    let f = fixture();
+    let later = std::time::SystemTime::now() + Duration::from_secs(5);
+    std::fs::File::options()
+        .write(true)
+        .open(f.wt.join("a.txt"))
+        .unwrap()
+        .set_modified(later)
+        .unwrap();
+    let info = dirty_of(&f).await;
+    assert_eq!(info.verdict, WorktreeVerdict::Clean, "{info:?}");
+    assert_eq!(info.dirty, Some(0));
+}
+
+#[tokio::test]
+async fn an_unborn_branch_with_a_staged_file_is_work() {
+    let f = fixture();
+    let orphan = f.wt.parent().unwrap().join("repo--fd-orphan");
+    git(
+        &f.main,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "--orphan",
+            "-b",
+            "fd/orphan",
+            orphan.to_str().unwrap(),
+        ],
+    );
+    std::fs::write(orphan.join("new.txt"), "x\n").unwrap();
+    git(&orphan, &["add", "new.txt"]);
+    let info = one(
+        &policy(f.root.path()),
+        session("s1", &orphan, SessionState::Exited),
+    )
+    .await;
+    assert_eq!(info.verdict, WorktreeVerdict::HasWork, "{info:?}");
+    assert_eq!(info.dirty, Some(1));
+    assert_eq!(info.unpushed, Some(0));
+    assert_eq!(info.compared_with, None);
+}
+
+#[tokio::test]
+async fn a_new_commit_inside_a_submodule_is_work() {
+    let f = fixture();
+    let upstream = tempfile::tempdir().unwrap();
+    let sub_src = upstream.path().canonicalize().unwrap().join("lib");
+    std::fs::create_dir(&sub_src).unwrap();
+    git(&sub_src, &["init", "-q", "-b", "main"]);
+    std::fs::write(sub_src.join("l.txt"), "lib\n").unwrap();
+    git(&sub_src, &["add", "."]);
+    git(&sub_src, &["commit", "-q", "-m", "lib"]);
+    git(
+        &f.main,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            sub_src.to_str().unwrap(),
+            "lib",
+        ],
+    );
+    git(&f.main, &["commit", "-q", "-m", "submodule"]);
+    git(&f.wt, &["reset", "-q", "--hard", "main"]);
+    git(
+        &f.wt,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "update",
+            "-q",
+            "--init",
+        ],
+    );
+    let info = dirty_of(&f).await;
+    assert_eq!(info.verdict, WorktreeVerdict::Clean, "{info:?}");
+    let inner = f.wt.join("lib");
+    std::fs::write(inner.join("l.txt"), "more\n").unwrap();
+    git(&inner, &["commit", "-q", "-a", "-m", "inside"]);
+    let info = dirty_of(&f).await;
+    assert_eq!(info.verdict, WorktreeVerdict::HasWork, "{info:?}");
+    assert_eq!(info.dirty, Some(1));
+}
+
+#[test]
+fn the_debug_listing_is_parsed_with_its_stat_blocks() {
+    let text = b"100644 78981922613b2afb6025042ff6bd878ac1994e85 0\ta.txt\0  ctime: 1:2\n  mtime: 3:4\n  dev: 5\tino: 6\n  uid: 7\tgid: 8\n  size: 9\tflags: 0\n100755 e69de29bb2d1d6434b8b29ae775ad8c2e48c5391 0\tx\ny\0  ctime: 11:12\n  mtime: 13:14\n  dev: 15\tino: 16\n  uid: 17\tgid: 18\n  size: 19\tflags: 0\n";
+    let entries = parse_debug(text).unwrap();
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].mode, 0o100_644);
+    assert_eq!(entries[0].oid, "78981922613b2afb6025042ff6bd878ac1994e85");
+    assert_eq!(entries[0].stage, 0);
+    assert_eq!(entries[0].path, b"a.txt");
+    assert_eq!((entries[0].ctime, entries[0].mtime), ((1, 2), (3, 4)));
+    assert_eq!((entries[0].ino, entries[0].size), (6, 9));
+    assert_eq!(entries[1].mode, 0o100_755);
+    assert_eq!(entries[1].path, b"x\ny");
+    assert_eq!((entries[1].ino, entries[1].size), (16, 19));
+    assert!(parse_debug(b"").unwrap().is_empty());
+    assert!(parse_debug(b"100644 abc 0\ta\0  ctime: 1:2\n").is_err());
+}
+
+#[test]
+fn the_blob_id_is_the_git_hash_of_the_content() {
+    assert_eq!(
+        blob_oid(false, b"a\n"),
+        "78981922613b2afb6025042ff6bd878ac1994e85"
+    );
+    assert_eq!(
+        blob_oid(false, b""),
+        "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+    );
+    assert_eq!(blob_oid(true, b"a\n").len(), 64);
+}
+
+#[test]
+fn the_scan_future_can_move_between_threads() {
+    fn is_send<T: Send>(_: &T) {}
+    let git = crate::workspace::Git::new(".", git_options());
+    let fut = scan(&git, Path::new("."), 0);
+    is_send(&fut);
 }
