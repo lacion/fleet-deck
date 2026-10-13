@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 
 use ts_rs::{Config, TS};
 
+use crate::automation::{Schedule, ScheduleInput, ScheduleRun, ScheduleRunState, ScheduleView};
 use crate::board::{
     AddStationRequest, ArchiveChange, ArchiveItem, ArchiveList, ArchiveRef, BoardClientMessage,
     BoardServerMessage, CommandRequest, DeckCommand, DeckSession, DeviceLink, DeviceLinkEntry,
@@ -26,9 +27,9 @@ use crate::files::{
     TurnDiffQuery,
 };
 use crate::link::{
-    ControlFrame, PasteImage, PastedImage, Preflight, PreflightQuery, ReceiptQuery, ReplayParams,
-    Scope, StationInfo, StreamMode, StreamStart, WorkspaceListing, WorkspaceQuery, WorktreeList,
-    WorktreesQuery,
+    ControlFrame, PasteImage, PastedImage, PrecheckQuery, PrecheckResult, Preflight,
+    PreflightQuery, ReceiptQuery, ReplayParams, Scope, StationInfo, StreamMode, StreamStart,
+    WorkspaceListing, WorkspaceQuery, WorktreeList, WorktreesQuery,
 };
 use crate::mutation::{
     CoordinatorCallEnvelope, CoordinatorQueryEnvelope, KeyRotationEnvelope,
@@ -96,6 +97,13 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         WorktreesQuery::export_all(&cfg),
         PreflightQuery::export_all(&cfg),
         Preflight::export_all(&cfg),
+        PrecheckQuery::export_all(&cfg),
+        PrecheckResult::export_all(&cfg),
+        Schedule::export_all(&cfg),
+        ScheduleRun::export_all(&cfg),
+        ScheduleRunState::export_all(&cfg),
+        ScheduleView::export_all(&cfg),
+        ScheduleInput::export_all(&cfg),
         PasteImage::export_all(&cfg),
         PastedImage::export_all(&cfg),
         WorktreeList::export_all(&cfg),

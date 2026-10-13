@@ -7,6 +7,7 @@ pub mod checkpoint;
 pub mod files;
 pub mod git;
 pub mod paste;
+pub mod precheck;
 pub mod preflight;
 pub mod provision;
 pub mod restore;

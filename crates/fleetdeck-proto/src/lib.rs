@@ -6,6 +6,7 @@
 //! protocol version (§8.2). The TypeScript types of the board are generated
 //! from it ([`ts::export_all`]).
 
+pub mod automation;
 pub mod board;
 pub mod capability;
 pub mod command;

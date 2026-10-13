@@ -57,6 +57,9 @@ pub mod feature {
     /// `session.worktree_trash`, `_restore`, `_purge` and `_release`: the
     /// worktree trash (DL-150).
     pub const TRASH: &str = "workspace.trash.v1";
+    /// `workspace.precheck`: the shell precheck of a schedule, run on the
+    /// station (R5, DL-168).
+    pub const PRECHECK: &str = "workspace.precheck.v1";
 
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
@@ -76,6 +79,7 @@ pub mod feature {
         PREFLIGHT,
         WRITE_TEMP,
         TRASH,
+        PRECHECK,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];
