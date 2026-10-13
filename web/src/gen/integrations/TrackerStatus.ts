@@ -10,6 +10,10 @@ export type TrackerStatus = { id: string, kind: TrackerKind, site: string | null
  */
 ok: boolean, 
 /**
+ * The user that the token acts as, when `ok`.
+ */
+user: string | null, 
+/**
  * The scrubbed reason when not `ok`; empty otherwise.
  */
 message: string, };

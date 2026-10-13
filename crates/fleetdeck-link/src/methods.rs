@@ -125,6 +125,95 @@ pub const METHODS: &[MethodSpec] = &[
         Some(feature::WRITE_TEMP),
         false,
     ),
+    // GitHub, GitLab, Jira and Linear through the station (R3, DL-164). The
+    // reads use the station's credentials, so a caller needs `read` at most
+    // for a list and `drive` for a write. A write carries its `command_id`
+    // inside its params and is not a receipt mutation: the station keeps the
+    // answers of the last 500 writes in memory.
+    m(
+        "integrations.status",
+        DeckToStation,
+        Scope::Read,
+        Some(feature::INTEGRATIONS),
+        false,
+    ),
+    m(
+        "issues.search",
+        DeckToStation,
+        Scope::Read,
+        Some(feature::INTEGRATIONS),
+        false,
+    ),
+    m(
+        "issues.get",
+        DeckToStation,
+        Scope::Read,
+        Some(feature::INTEGRATIONS),
+        false,
+    ),
+    m(
+        "issues.asset",
+        DeckToStation,
+        Scope::Read,
+        Some(feature::INTEGRATIONS),
+        false,
+    ),
+    m(
+        "prs.list",
+        DeckToStation,
+        Scope::Read,
+        Some(feature::INTEGRATIONS),
+        false,
+    ),
+    m(
+        "prs.get",
+        DeckToStation,
+        Scope::Read,
+        Some(feature::INTEGRATIONS),
+        false,
+    ),
+    m(
+        "prs.checks",
+        DeckToStation,
+        Scope::Read,
+        Some(feature::INTEGRATIONS),
+        false,
+    ),
+    m(
+        "prs.create",
+        DeckToStation,
+        Scope::Drive,
+        Some(feature::INTEGRATIONS),
+        false,
+    ),
+    m(
+        "prs.comment",
+        DeckToStation,
+        Scope::Drive,
+        Some(feature::INTEGRATIONS),
+        false,
+    ),
+    m(
+        "prs.review",
+        DeckToStation,
+        Scope::Drive,
+        Some(feature::INTEGRATIONS),
+        false,
+    ),
+    m(
+        "issues.comment",
+        DeckToStation,
+        Scope::Drive,
+        Some(feature::INTEGRATIONS),
+        false,
+    ),
+    m(
+        "issues.transition",
+        DeckToStation,
+        Scope::Drive,
+        Some(feature::INTEGRATIONS),
+        false,
+    ),
     m(
         "files.list",
         DeckToStation,

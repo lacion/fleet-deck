@@ -9,6 +9,10 @@ export type CliStatus = { present: boolean,
  */
 authenticated: boolean, 
 /**
- * The scrubbed start of the CLI's own status text.
+ * The signed-in user, when `authenticated`.
+ */
+user: string | null, 
+/**
+ * The scrubbed reason when not `authenticated`; empty otherwise.
  */
 message: string, };

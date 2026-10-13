@@ -256,7 +256,9 @@ pub struct CliStatus {
     pub present: bool,
     /// The CLI reports a signed-in user.
     pub authenticated: bool,
-    /// The scrubbed start of the CLI's own status text.
+    /// The signed-in user, when `authenticated`.
+    pub user: Option<String>,
+    /// The scrubbed reason when not `authenticated`; empty otherwise.
     pub message: String,
 }
 
@@ -269,6 +271,8 @@ pub struct TrackerStatus {
     pub site: Option<String>,
     /// The token was found and the system accepted it.
     pub ok: bool,
+    /// The user that the token acts as, when `ok`.
+    pub user: Option<String>,
     /// The scrubbed reason when not `ok`; empty otherwise.
     pub message: String,
 }
