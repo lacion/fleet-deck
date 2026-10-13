@@ -1,8 +1,9 @@
 // R3.2 (DL-164): the Projects page (`#/projects`): the list, "New project", "Edit", "Check" and
 // "Delete". The deck keeps these routes for the owner; the page is empty without that login.
-import { Fragment, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { stationName } from '../board/fleet';
-import type { DeckSession, IntegrationsStatus, Project, StationView } from '../gen';
+import type { AccountsList, DeckSession, Project, StationView } from '../gen';
+import { useSettings } from '../settings/context';
 import type { ListWorkspaces } from '../ui/FolderPicker';
 import { FolderGit2, Icon, Plus, RefreshCw } from '../ui/icons';
 import { EmptyState, Page } from '../ui/page';
@@ -23,19 +24,6 @@ type Props = {
   readonly list?: ListWorkspaces | undefined;
   readonly sessions?: readonly DeckSession[] | undefined;
 };
-
-/** The tracker accounts that a station reported in the checks of its projects. */
-function statusOfStation(
-  station: string,
-  projects: readonly Project[],
-  statuses: Readonly<Record<string, IntegrationsStatus>>,
-): IntegrationsStatus | null {
-  for (const p of projects) {
-    const status = statuses[p.project_id];
-    if (p.station_id === station && status !== undefined) return status;
-  }
-  return null;
-}
 
 /** The chips of a project: its forge and its trackers. */
 export function ProjectChips({ project }: { readonly project: Project }) {
@@ -70,13 +58,24 @@ export function ProjectsPage({
   const [confirming, setConfirming] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [checks, setChecks] = useState<Readonly<Record<string, ProjectPreflight>>>(initialChecks);
-  const [statuses, setStatuses] = useState<Readonly<Record<string, IntegrationsStatus>>>(() => {
-    const out: Record<string, IntegrationsStatus> = {};
-    for (const [id, result] of Object.entries(initialChecks)) {
-      if (result.status !== null) out[id] = result.status;
-    }
-    return out;
-  });
+  // DL-173: the form's account and container pickers read the accounts of the project's station.
+  const settings = useSettings();
+  const formStation = form?.draft.station ?? null;
+  const [accounts, setAccounts] = useState<{
+    readonly station: string;
+    readonly list: AccountsList;
+  } | null>(null);
+  useEffect(() => {
+    if (formStation === null || settings === undefined) return undefined;
+    let live = true;
+    settings.accounts.list(formStation).then(
+      (list) => live && setAccounts({ station: formStation, list }),
+      () => live && setAccounts(null),
+    );
+    return () => {
+      live = false;
+    };
+  }, [formStation, settings]);
   if (env === undefined || !env.actions.canAdmin) {
     return (
       <Page title="Projects">
@@ -109,8 +108,6 @@ export function ProjectsPage({
       .preflight(p.project_id)
       .then((result) => {
         setChecks((cur) => ({ ...cur, [p.project_id]: result }));
-        const status = result.status;
-        if (status !== null) setStatuses((cur) => ({ ...cur, [p.project_id]: status }));
       })
       .catch((e: unknown) => setError(message(e)))
       .finally(() => setBusy(null));
@@ -163,7 +160,8 @@ export function ProjectsPage({
           editing={form.id !== null}
           saving={saving}
           error={saveError}
-          status={statusOfStation(form.draft.station, list ?? [], statuses)}
+          accounts={accounts?.station === form.draft.station ? accounts.list : null}
+          loadContainers={settings?.accounts.containers}
           onSave={save}
           onCancel={() => setForm(null)}
           list={listFolders}

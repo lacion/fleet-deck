@@ -52,6 +52,7 @@ export {
   Search,
   Send,
   Server,
+  Settings,
   Share2,
   Smartphone,
   Square,

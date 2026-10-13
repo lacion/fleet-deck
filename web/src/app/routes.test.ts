@@ -123,4 +123,43 @@ describe('routes', () => {
     expect(parseHash('/fleet')).toEqual({ name: 'fleet' });
     expect(parseHash('/s/a/b')).toEqual(session('a', 'b'));
   });
+
+  test('the settings routes parse and format back (DL-172, DL-173)', () => {
+    expect(parseHash('#/settings')).toEqual({ name: 'settings', tab: 'deck' });
+    expect(formatHash({ name: 'settings', tab: 'deck' })).toBe('#/settings');
+    const station: Route = { name: 'settings', tab: 'station', station: 'st a' };
+    expect(formatHash(station)).toBe('#/settings/station/st%20a');
+    expect(parseHash('#/settings/station/st%20a')).toEqual(station);
+    expect(parseHash('#/settings/station/')).toEqual({ name: 'home' });
+    expect(parseHash('#/settings/accounts')).toEqual({
+      name: 'settings',
+      tab: 'accounts',
+      station: null,
+      finish: null,
+      oauthError: null,
+    });
+    expect(parseHash('#/settings/accounts?station=s1&finish=t-1')).toEqual({
+      name: 'settings',
+      tab: 'accounts',
+      station: 's1',
+      finish: 't-1',
+      oauthError: null,
+    });
+    expect(parseHash('#/settings/accounts?oauth_error=invalid_state')).toEqual({
+      name: 'settings',
+      tab: 'accounts',
+      station: null,
+      finish: null,
+      oauthError: 'invalid_state',
+    });
+    const back: Route = {
+      name: 'settings',
+      tab: 'accounts',
+      station: 's1',
+      finish: 'x',
+      oauthError: null,
+    };
+    expect(parseHash(formatHash(back))).toEqual(back);
+    expect(parseHash('#/settings/nope')).toEqual({ name: 'home' });
+  });
 });

@@ -63,6 +63,8 @@ import { GUEST_HIDDEN_ROUTES } from './sharing/member';
 import { ShareHost } from './sharing/ShareDialog';
 import { SharesPage } from './sharing/SharesPage';
 import { SpacesPage } from './sharing/SpacesPage';
+import { SettingsProvider, type SettingsEnv } from './settings/context';
+import { SettingsPage } from './settings/SettingsPage';
 import { WatchPage } from './watch/WatchPage';
 
 type Props = {
@@ -115,6 +117,8 @@ type Props = {
   readonly race?: ((keys: readonly SessionKey[]) => Promise<RaceSummary>) | undefined;
   /** The read cursor and the activity stream (R6, DL-169); absent in tests without a deck. */
   readonly views?: ViewsActions | undefined;
+  /** The settings and account calls (DL-172, DL-173); only for the owner's login. */
+  readonly settings?: SettingsEnv | undefined;
 };
 
 const message = (e: unknown) => (e instanceof Error ? e.message : 'Request failed');
@@ -167,6 +171,7 @@ export function App({
   onReturnTerminal,
   race,
   views,
+  settings,
 }: Props) {
   const [urlRoute, navigate] = useRoute(initialRoute);
   const artifactsEnv = useMemo(
@@ -596,6 +601,17 @@ export function App({
             }}
           />
         );
+      case 'settings':
+        return (
+          <SettingsPage
+            route={route}
+            stations={stations}
+            navigate={navigate}
+            live={freshness === 'live'}
+            list={folderList}
+            sessions={sessions}
+          />
+        );
       case 'more':
         return <More stationCount={stations.length} terminalCount={tabCount} chrome={chrome} />;
       case 'terminals':
@@ -681,9 +697,11 @@ export function App({
     ) : (
       <ArtifactsProvider value={artifactsEnv}>{layoutNode}</ArtifactsProvider>
     );
+  const withSettings =
+    settings === undefined ? framed : <SettingsProvider env={settings}>{framed}</SettingsProvider>;
   return integrations === undefined ? (
-    framed
+    withSettings
   ) : (
-    <IntegrationsProvider actions={integrations}>{framed}</IntegrationsProvider>
+    <IntegrationsProvider actions={integrations}>{withSettings}</IntegrationsProvider>
   );
 }

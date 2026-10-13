@@ -15,6 +15,7 @@ import {
   Plus,
   Search,
   Server,
+  Settings,
   Smartphone,
   SquareTerminal,
   Star,
@@ -24,6 +25,7 @@ import {
   Zap,
 } from '../ui/icons';
 import { useIntegrations } from '../integrations/context';
+import { useSettings } from '../settings/context';
 import { FolderGit2 } from '../integrations/icons';
 import { shortModel } from '../ui/format';
 import { GeneratedMark } from '../ui/generated';
@@ -263,6 +265,8 @@ export function Sidebar({
   const first = model.needs[0];
   // R3: the projects are the owner's (the deck answers 403 to any other login).
   const projectsLink = useIntegrations()?.actions.canAdmin === true;
+  // DL-172: the settings are the owner's login only (no token, no member).
+  const settingsLink = useSettings() !== undefined;
   // R11.4: a guest sees the fleet and the watch page only; the owner sees Shares.
   const people = usePeople();
   const guest = people.member !== null;
@@ -411,6 +415,12 @@ export function Sidebar({
               >
                 <Icon of={Users} />
                 Shares
+              </a>
+            ) : null}
+            {settingsLink && !guest ? (
+              <a href="#/settings" aria-current={route.name === 'settings' ? 'page' : undefined}>
+                <Icon of={Settings} />
+                Settings
               </a>
             ) : null}
             {terminalCount > 0 && !guest ? (
