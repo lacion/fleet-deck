@@ -274,6 +274,27 @@ test('the a key answers the selected request of the rail with its first option',
   });
 });
 
+test('the rail keys do nothing behind the Help dialog', async ({ page }) => {
+  const deck = new FakeDeck();
+  deck.sessions = twoWaiting();
+  deck.on('/api/commands/approval.answer', (body) => ({
+    status: 200,
+    body: receipt(idOf(body), 'done'),
+  }));
+  await setUp(page, deck);
+  await openFleet(page);
+  const answers = () => deck.calls.filter((c) => c.path === '/api/commands/approval.answer');
+  await page.keyboard.press('?');
+  const help = page.getByRole('dialog', { name: 'Keyboard and help' });
+  await expect(help).toBeVisible();
+  await page.keyboard.press('a');
+  await page.keyboard.press('Escape');
+  await expect(help).toHaveCount(0);
+  expect(answers()).toHaveLength(0);
+  await page.keyboard.press('a');
+  await expect.poll(() => answers().length).toBe(1);
+});
+
 test('the bracket keys move the selection and d answers with the last option', async ({ page }) => {
   const deck = new FakeDeck();
   deck.sessions = twoWaiting();

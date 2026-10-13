@@ -1,7 +1,16 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { repoName, repoNames, stationName } from '../board/fleet';
 import type { DeckSession, GrantView, StationView, TaskView } from '../gen';
-import { type FleetActions, type FleetResult, grantStatus, taskStatus } from './fleet';
+import {
+  type FleetActions,
+  type FleetResult,
+  grantStatus,
+  nextSends,
+  type SendEntry,
+  type SendRecord,
+  type SendTarget,
+  taskStatus,
+} from './fleet';
 
 type Props = {
   readonly actions: FleetActions | undefined;
@@ -42,6 +51,7 @@ export function FleetPanel({ actions, sessions, stations }: Props) {
   const [many, setMany] = useState<ManyResult | null>(null);
   const [tasks, setTasks] = useState<readonly TaskView[]>([]);
   const [grants, setGrants] = useState<readonly GrantView[]>([]);
+  const sends = useRef<SendRecord | null>(null);
   useEffect(() => {
     if (actions === undefined) return undefined;
     let current = true;
@@ -75,25 +85,60 @@ export function FleetPanel({ actions, sessions, stations }: Props) {
     setMany(null);
     setResult(null);
   };
+  const toSend = (s: DeckSession): SendTarget => ({
+    ref: keyOf(s),
+    target: { stationId: s.station_id, sessionId: s.summary.session_id },
+  });
+  /** Sends what the record still owes, each mail with its own id, and keeps the record. */
+  const deliver = async (list: readonly SendTarget[]) => {
+    const { record, todo } = nextSends(sends.current, list, text.trim(), steer);
+    sends.current = record;
+    const results = new Map<string, FleetResult>();
+    const done = new Map<string, SendEntry>();
+    for (const e of todo) {
+      let r: FleetResult;
+      try {
+        r = await actions.mail(e.target, record.text, record.steer, e.mailId);
+      } catch (error) {
+        r = { ok: false, text: error instanceof Error ? error.message : String(error) };
+      }
+      results.set(e.ref, r);
+      done.set(e.ref, r.ok ? { ...e, state: 'sent' } : { ...e, state: 'failed', error: r.text });
+    }
+    const entries = record.entries.map((e) => done.get(e.ref) ?? e);
+    sends.current = entries.every((e) => e.state === 'sent') ? null : { ...record, entries };
+    return { entries, results };
+  };
   const sendMany = async () => {
     if (targets.length === 0 || text.trim() === '' || busy) return;
     setBusy(true);
     setMany(null);
-    let ok = 0;
-    const failures: { title: string; text: string }[] = [];
-    for (const t of targets) {
-      const to = { stationId: t.station_id, sessionId: t.summary.session_id };
-      try {
-        const r = await actions.mail(to, text.trim(), steer);
-        if (r.ok) ok += 1;
-        else failures.push({ title: nameOf(t), text: r.text });
-      } catch (e) {
-        failures.push({ title: nameOf(t), text: e instanceof Error ? e.message : String(e) });
-      }
-    }
-    setMany({ ok, total: targets.length, failures });
-    if (failures.length === 0) setText('');
+    const names = new Map(targets.map((t) => [keyOf(t), nameOf(t)]));
+    const { entries } = await deliver(targets.map(toSend));
+    const failed = entries.filter((e) => e.state === 'failed');
+    setMany({
+      ok: entries.length - failed.length,
+      total: entries.length,
+      failures: failed.map((e) => ({
+        title: names.get(e.ref) ?? e.ref,
+        text: e.error ?? '',
+      })),
+    });
+    if (failed.length === 0) setText('');
     setBusy(false);
+  };
+  const sendOne = () => {
+    if (chosen === undefined || text.trim() === '' || busy) return;
+    setBusy(true);
+    const ref = keyOf(chosen);
+    void deliver([toSend(chosen)])
+      .then(async ({ entries, results }) => {
+        const r = results.get(ref);
+        setResult(r ?? { ok: false, text: 'Mail not sent' });
+        if (entries.every((e) => e.state === 'sent')) setText('');
+        setTasks(await actions.tasks());
+      })
+      .finally(() => setBusy(false));
   };
   const run = (send: (to: { stationId: string; sessionId: string }) => Promise<FleetResult>) => {
     if (chosen === undefined || text.trim() === '' || busy) return;
@@ -112,7 +157,7 @@ export function FleetPanel({ actions, sessions, stations }: Props) {
         className="fd-fleet-form"
         onSubmit={(event) => {
           event.preventDefault();
-          if (audience === 'one') run((to) => actions.mail(to, text.trim(), steer));
+          if (audience === 'one') sendOne();
           else void sendMany();
         }}
       >

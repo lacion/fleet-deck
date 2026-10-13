@@ -87,6 +87,9 @@ export function NeedsYouRail({
   const anyAnswerable = waiting.some((w) => answerableOf(w) !== null);
   const keys = useRef<(e: KeyboardEvent) => void>(() => {});
   keys.current = (e) => {
+    // Help, the palette and the drawer are modal: the rail keys do nothing behind them.
+    if (document.querySelector('[role="dialog"][aria-modal="true"]') !== null) return;
+    if (e.target instanceof Element && e.target.closest('[role="dialog"]') !== null) return;
     if (!anyAnswerable || shouldIgnore(e) || e.shiftKey) return;
     if (e.key === '[' || e.key === ']') {
       e.preventDefault();

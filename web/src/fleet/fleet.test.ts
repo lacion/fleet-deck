@@ -1,6 +1,15 @@
 import { describe, expect, test } from 'bun:test';
 import type { TaskView } from '../gen';
-import { fleetActions, grantList, grantStatus, taskList, taskStatus } from './fleet';
+import {
+  fleetActions,
+  grantList,
+  grantStatus,
+  nextSends,
+  type SendRecord,
+  type SendTarget,
+  taskList,
+  taskStatus,
+} from './fleet';
 
 const task = (extra: Partial<TaskView> = {}): TaskView => ({
   task_id: 't1',
@@ -39,6 +48,22 @@ describe('fleet mail and tasks', () => {
       ],
       ['/api/tasks', { task_id: 'id1', title: 'write the docs', station: 'st', session_id: 's1' }],
     ]);
+  });
+
+  test('a mail with an explicit mailId posts it, else a new id', async () => {
+    const posts: unknown[] = [];
+    const a = fleetActions(
+      async () => [],
+      async (_path, body) => {
+        posts.push(body);
+        return {};
+      },
+      () => 'new1',
+    );
+    const to = { stationId: 'st', sessionId: 's1' };
+    await a.mail(to, 'rebase', false, 'old7');
+    await a.mail(to, 'rebase', false);
+    expect(posts).toMatchObject([{ mail_id: 'old7' }, { mail_id: 'new1' }]);
   });
 
   test('a refused request says why', async () => {
@@ -136,5 +161,52 @@ describe('coordinator grants', () => {
       ok: false,
       text: 'Grant not renewed: 409 not_renewable',
     });
+  });
+});
+
+describe('the record of the last mail send', () => {
+  const target = (ref: string): SendTarget => ({
+    ref,
+    target: { stationId: 'st', sessionId: ref },
+  });
+  const ids = () => {
+    let n = 0;
+    return () => `id${++n}`;
+  };
+
+  test('a new send gets a new id for each target', () => {
+    const { record, todo } = nextSends(null, [target('a'), target('b')], 'hi', false, ids());
+    expect(todo.map((e) => [e.ref, e.mailId, e.state])).toEqual([
+      ['a', 'id1', 'failed'],
+      ['b', 'id2', 'failed'],
+    ]);
+    expect(record.entries).toEqual(todo);
+  });
+
+  test('the same input sends only the failed entries, with their old ids', () => {
+    const first = nextSends(null, [target('a'), target('b')], 'hi', false, ids()).record;
+    const [a, b] = first.entries;
+    if (a === undefined || b === undefined) throw new Error('two entries');
+    const after: SendRecord = { ...first, entries: [{ ...a, state: 'sent' }, b] };
+    // the order of the targets does not matter
+    const again = nextSends(after, [target('b'), target('a')], 'hi', false, ids());
+    expect(again.record).toBe(after);
+    expect(again.todo).toEqual([b]);
+    expect(again.todo[0]?.mailId).toBe('id2');
+  });
+
+  test('a changed text, steer flag or target set starts a new record with new ids', () => {
+    const first = nextSends(null, [target('a'), target('b')], 'hi', false, ids()).record;
+    for (const [targets, text, steer] of [
+      [[target('a'), target('b')], 'other', false],
+      [[target('a'), target('b')], 'hi', true],
+      [[target('a')], 'hi', false],
+      [[target('a'), target('c')], 'hi', false],
+    ] as const) {
+      const next = nextSends(first, targets, text, steer, ids());
+      expect(next.record).not.toBe(first);
+      expect(next.todo).toHaveLength(targets.length);
+      expect(next.todo.map((e) => e.mailId)).toEqual(targets.map((_, i) => `id${i + 1}`));
+    }
   });
 });
