@@ -12,6 +12,10 @@
 //!    binding that differs from the deck's → `binding_stale`, not stored.
 //!    Because this comes before the replay, a replay after a revocation
 //!    never returns the old acceptance.
+//!    A call without a grant id is the worker path (R2.3): only
+//!    `ask_coordinator`, for a session of the calling station, at most ten
+//!    per hour ([`super::coordinator_fleet::decide_worker`]); the grant
+//!    checks do not apply, and the call is audited as `session:<id>`.
 //! 4. A stored receipt with the same method, caller and payload hash → that
 //!    receipt (also after `retry_until`); the same id with another method,
 //!    caller or payload → `command_id_reused`, not stored.
@@ -21,17 +25,19 @@
 //!    only for an accepted new call.
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use fleetdeck_proto::command::CommandResult;
 use fleetdeck_proto::link::Scope;
 use fleetdeck_proto::mutation::{CoordinatorCallEnvelope, Mutation};
-use fleetdeck_proto::{Receipt, Reject, RejectCode, StationId};
+use fleetdeck_proto::{CommandId, Receipt, Reject, RejectCode, SessionId, StationId};
 use ring::digest::{SHA256, digest};
 use rusqlite::{OptionalExtension, params};
 
+use super::coordinator_fleet::decide_worker;
 use super::coordinator_ops::{Context, Decision, decide};
 use super::grants::{GrantState, caller_grant};
-use super::{DeckStore, Result, call, new_id};
+use super::{AuditResult, DeckStore, NewAudit, Result, call, new_id};
 
 const METHOD: &str = "coordinator.call";
 
@@ -80,6 +86,9 @@ impl DeckStore {
         }
         let admitted = mutation.admit(now, &incarnation);
         let payload = sha256_hex(&mutation.canonical_payload());
+        let worker = binding.grant_id.is_empty();
+        let inner = Arc::clone(&self.inner);
+        let audit = (station.clone(), caller_session.clone(), command_id.clone());
         let receipt = call(&self.inner.db, move |conn| {
             let rejected = |code, message: &str| {
                 Receipt::rejected(command_id.clone(), Reject::new(code, message), now)
@@ -104,39 +113,44 @@ impl DeckStore {
                     "the station is not paired or has no `coordinate` grant",
                 ));
             }
-            let Some(grant) = caller_grant(&tx, &station, &caller_session)? else {
-                return Ok(rejected(
-                    RejectCode::Forbidden,
-                    "the caller has no coordinator grant",
-                ));
+            let grant = if worker {
+                None
+            } else {
+                let Some(grant) = caller_grant(&tx, &station, &caller_session)? else {
+                    return Ok(rejected(
+                        RejectCode::Forbidden,
+                        "the caller has no coordinator grant",
+                    ));
+                };
+                if grant.state != GrantState::Active || now > grant.expires_at {
+                    return Ok(rejected(
+                        RejectCode::Forbidden,
+                        "the coordinator grant is revoked or expired",
+                    ));
+                }
+                if grant.binding.as_ref() != Some(&binding) {
+                    return Ok(rejected(
+                        RejectCode::BindingStale,
+                        "the coordinator binding is not the deck's binding of the grant",
+                    ));
+                }
+                if grant
+                    .last_used_at
+                    .is_some_and(|t| now.saturating_sub(t) > grant.idle_ttl_ms)
+                {
+                    tx.execute(
+                        "UPDATE tokens SET state = 'expired', revoked_reason = 'idle'
+                         WHERE grant_id = ?1 AND state = 'active'",
+                        [grant.grant_id.as_str()],
+                    )?;
+                    tx.commit()?;
+                    return Ok(rejected(
+                        RejectCode::Forbidden,
+                        "the coordinator grant expired after its idle time",
+                    ));
+                }
+                Some(grant)
             };
-            if grant.state != GrantState::Active || now > grant.expires_at {
-                return Ok(rejected(
-                    RejectCode::Forbidden,
-                    "the coordinator grant is revoked or expired",
-                ));
-            }
-            if grant.binding.as_ref() != Some(&binding) {
-                return Ok(rejected(
-                    RejectCode::BindingStale,
-                    "the coordinator binding is not the deck's binding of the grant",
-                ));
-            }
-            if grant
-                .last_used_at
-                .is_some_and(|t| now.saturating_sub(t) > grant.idle_ttl_ms)
-            {
-                tx.execute(
-                    "UPDATE tokens SET state = 'expired', revoked_reason = 'idle'
-                     WHERE grant_id = ?1 AND state = 'active'",
-                    [grant.grant_id.as_str()],
-                )?;
-                tx.commit()?;
-                return Ok(rejected(
-                    RejectCode::Forbidden,
-                    "the coordinator grant expired after its idle time",
-                ));
-            }
             let prior: Option<(String, String, String, String)> = tx
                 .query_row(
                     "SELECT method, caller, payload_sha256, receipt FROM coordinator_receipts
@@ -158,12 +172,26 @@ impl DeckStore {
             if let Err(reject) = admitted {
                 return Ok(Receipt::rejected(command_id.clone(), reject, now));
             }
-            let receipt = match decide(&tx, &grant, &op, &ctx, command_id.as_str(), now)? {
+            let decision = match &grant {
+                Some(grant) => decide(&tx, grant, &op, &ctx, command_id.as_str(), now)?,
+                None => decide_worker(
+                    &tx,
+                    &inner.ask_limits,
+                    &ctx,
+                    (&station, &caller_session),
+                    &op,
+                    command_id.as_str(),
+                    now,
+                )?,
+            };
+            let receipt = match decision {
                 Decision::Accepted(session_id) => {
-                    tx.execute(
-                        "UPDATE tokens SET last_used_at = ?2 WHERE grant_id = ?1",
-                        params![grant.grant_id, now],
-                    )?;
+                    if let Some(grant) = &grant {
+                        tx.execute(
+                            "UPDATE tokens SET last_used_at = ?2 WHERE grant_id = ?1",
+                            params![grant.grant_id, now],
+                        )?;
+                    }
                     Receipt::accepted(
                         command_id.clone(),
                         0,
@@ -194,7 +222,37 @@ impl DeckStore {
             Ok(receipt)
         })
         .await?;
+        if worker {
+            self.audit_worker_ask(audit, &receipt).await;
+        }
         Ok(receipt)
+    }
+
+    /// The audit row of a worker's `ask_coordinator` (R2.3): the actor is
+    /// `session:<id>`; the question is not in the row.
+    async fn audit_worker_ask(
+        &self,
+        (station, session, command_id): (StationId, SessionId, CommandId),
+        receipt: &Receipt,
+    ) {
+        let row = match &receipt.reject {
+            None => NewAudit::new(
+                format!("session:{session}"),
+                "coordinator.ask",
+                AuditResult::Ok,
+            ),
+            Some(reject) => NewAudit::new(
+                format!("session:{session}"),
+                "coordinator.ask",
+                AuditResult::Refused,
+            )
+            .detail(reject.message.clone()),
+        };
+        self.audit_or_log(
+            row.target(format!("{station}/{session}"))
+                .command(command_id),
+        )
+        .await;
     }
 
     /// The number of stored coordinator receipts.

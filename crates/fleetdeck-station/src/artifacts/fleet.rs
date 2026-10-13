@@ -1,7 +1,8 @@
-//! The session's own MCP tools (R12, R6, R2; DL-165): `publish_artifact`,
-//! `set_focus` and `ask_coordinator`. Every session with a fleet MCP
-//! endpoint gets them. The station answers them itself; the caller is the
-//! session that the binding names, and no argument can change it.
+//! The session's own MCP tools (R12, R6; DL-165): `publish_artifact` and
+//! `set_focus`. Every session with a fleet MCP endpoint gets them, and
+//! `ask_coordinator`, which the station forwards to the deck (R2.3). The
+//! station answers the own tools itself; the caller is the session that
+//! the binding names, and no argument can change it.
 
 use async_trait::async_trait;
 use fleetdeck_proto::Event;
@@ -12,9 +13,6 @@ use serde_json::{Value, json};
 use super::ArtifactService;
 use crate::coordinator::{Caller, FleetTools};
 use crate::store::{NewEvent, Store};
-
-/// The longest question that `ask_coordinator` takes, in characters.
-pub const MAX_QUESTION_CHARS: usize = 4000;
 
 /// The station side of the session's own tools.
 #[derive(Debug, Clone)]
@@ -43,12 +41,6 @@ struct PublishArgs {
 #[serde(deny_unknown_fields)]
 struct FocusArgs {
     text: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct AskArgs {
-    question: String,
 }
 
 fn invalid(e: impl std::fmt::Display) -> String {
@@ -97,18 +89,6 @@ impl FleetTools for StationFleet {
                     .await
                     .map_err(|e| format!("internal: {e}"))?;
                 Ok(json!({ "focus": text }))
-            }
-            "ask_coordinator" => {
-                let args: AskArgs = serde_json::from_value(args).map_err(invalid)?;
-                if args.question.trim().is_empty()
-                    || args.question.chars().count() > MAX_QUESTION_CHARS
-                {
-                    return Err(invalid(format!(
-                        "`question` has 1 to {MAX_QUESTION_CHARS} characters"
-                    )));
-                }
-                // The escalation path of R2 is not wired into this build.
-                Err("no_coordinator: this session has no coordinator".to_owned())
             }
             other => Err(format!("forbidden: no such tool `{other}`")),
         }

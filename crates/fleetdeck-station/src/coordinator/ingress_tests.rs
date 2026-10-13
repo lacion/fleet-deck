@@ -501,7 +501,8 @@ impl FleetTools for OwnTools {
 
 /// DL-165: a session without a grant sees only its own tools, the station
 /// answers them (the deck forward is not asked), and a coordinator tool is
-/// refused.
+/// refused. R2.3: `ask_coordinator` is the one tool that goes to the deck
+/// forward.
 #[tokio::test]
 async fn a_fleet_only_binding_sees_its_own_tools_and_the_station_answers_them() {
     let bindings = Bindings::default();
@@ -541,8 +542,16 @@ async fn a_fleet_only_binding_sees_its_own_tools_and_the_station_answers_them() 
         forward.calls.lock().unwrap().is_empty(),
         "the deck is not asked"
     );
+    let reply = send(call("ask_coordinator", json!({"question": "which key?"}))).await;
+    assert!(!tool_result(&reply).0, "{}", reply.body);
     let calls = own.calls.lock().unwrap();
-    assert_eq!(calls.len(), 1);
+    assert_eq!(calls.len(), 1, "ask_coordinator is not a local tool");
     assert_eq!(calls[0].1, "set_focus");
     assert_eq!(calls[0].0.session_id.as_str(), "coord-1");
+    let forwarded = forward.calls.lock().unwrap();
+    assert_eq!(forwarded.len(), 1);
+    assert_eq!(forwarded[0].1, "ask_coordinator");
+    assert_eq!(forwarded[0].0.session_id.as_str(), "coord-1");
+    assert!(forwarded[0].0.grant_id.is_empty());
+    assert_eq!(forwarded[0].2, json!({"question": "which key?"}));
 }

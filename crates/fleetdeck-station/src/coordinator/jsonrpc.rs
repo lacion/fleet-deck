@@ -71,7 +71,7 @@ pub async fn answer(
                 ),
                 Some(tool) => match (binding.state, binding.caller()) {
                     (BindingState::Active, Some(caller)) => {
-                        let outcome = if tool.is_own(&binding.classes) {
+                        let outcome = if tool.is_own() {
                             match fleet {
                                 Some(fleet) => fleet.call(caller, tool.name, args).await,
                                 None => {

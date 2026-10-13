@@ -314,3 +314,151 @@ async fn wait_tasks_returns_the_first_task_that_is_not_open() {
         Err(RejectCode::UnknownRequest)
     );
 }
+
+/// The binding of a session without a grant (R2.3): an empty grant id.
+fn plain_worker() -> CoordinatorBinding {
+    CoordinatorBinding {
+        binding_id: "w-1".to_owned(),
+        grant_id: String::new(),
+        generation: 1,
+        provider_instance: "claude".into(),
+        native_id: "native-w".to_owned(),
+    }
+}
+
+async fn assigned(w: &World) {
+    let boss = grant(w, &[GrantClass::Mail], 0, &[]).await;
+    let assign = CoordinatorOp::Assign {
+        task: "check it".to_owned(),
+        to: target(&w.alpha, "worker-1"),
+    };
+    let r = decide(w, env(w, &boss, "t-1", assign)).await;
+    assert_eq!(r.state, ReceiptState::Accepted, "{r:?}");
+}
+
+fn reason(r: &Receipt) -> String {
+    r.reject
+        .as_ref()
+        .map(|j| j.message.clone())
+        .unwrap_or_default()
+}
+
+#[tokio::test]
+async fn a_worker_without_a_grant_asks_the_coordinator_that_assigned_its_task() {
+    let w = world().await;
+    assigned(&w).await;
+    let r = decide(
+        &w,
+        from_worker(&w, &plain_worker(), "q1", ask_op("  which key?  ")),
+    )
+    .await;
+    assert_eq!(r.state, ReceiptState::Accepted, "{r:?}");
+    let task = w.s.task("t-1".to_owned()).await.unwrap().unwrap();
+    assert_eq!(task.state, TaskState::Question);
+    assert_eq!(task.question.as_deref(), Some("which key?"));
+    let mails = w.s.mails(10).await.unwrap();
+    assert_eq!(mails.len(), 1);
+    assert_eq!(mails[0].session_id.0, "coord-1");
+    assert_eq!(mails[0].sender, "worker worker-1");
+    let outbox = w.s.outbox().await.unwrap();
+    let text = outbox
+        .iter()
+        .filter_map(|o| o.payload["command"]["input"]["text"].as_str())
+        .find(|t| t.contains("QUESTION"))
+        .unwrap();
+    assert_eq!(text, "[FLEETDECK QUESTION from worker-1] which key?");
+    // The call is audited as the session; the question is not in the row.
+    let log = w.s.audit_log(10).await.unwrap();
+    let row = log.iter().find(|a| a.action == "coordinator.ask").unwrap();
+    assert_eq!(row.actor, "session:worker-1");
+    assert_eq!(row.command_id, Some(CommandId::from("q1")));
+    assert!(!format!("{row:?}").contains("which key"));
+    // A replay stores no second mail.
+    decide(
+        &w,
+        from_worker(&w, &plain_worker(), "q1", ask_op("  which key?  ")),
+    )
+    .await;
+    assert_eq!(w.s.mails(10).await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_worker_without_a_task_of_a_coordinator_gets_no_coordinator() {
+    let w = world().await;
+    let r = decide(&w, from_worker(&w, &plain_worker(), "q0", ask_op("hi?"))).await;
+    assert_eq!(code(&r), Some(RejectCode::InvalidState));
+    assert_eq!(
+        reason(&r),
+        "no_coordinator: no open task of this session has a coordinator"
+    );
+    // A task of the owner has no coordinator session either.
+    w.s.create_task(owner_task(&w.alpha, "t-owner", "worker-1"))
+        .await
+        .unwrap();
+    let r = decide(&w, from_worker(&w, &plain_worker(), "q1", ask_op("hi?"))).await;
+    assert!(reason(&r).starts_with("no_coordinator"), "{r:?}");
+    assert!(w.s.mails(10).await.unwrap().is_empty());
+    let task = w.s.task("t-owner".to_owned()).await.unwrap().unwrap();
+    assert_eq!(task.state, TaskState::Open);
+}
+
+#[tokio::test]
+async fn a_worker_without_a_grant_may_call_ask_coordinator_only() {
+    let w = world().await;
+    assigned(&w).await;
+    let send = CoordinatorOp::Send {
+        to: target(&w.alpha, "coord-1"),
+        text: "hi".to_owned(),
+        delivery: CoordinatorDelivery::FollowUp,
+    };
+    let done = CoordinatorOp::CompleteTask {
+        task_id: "t-1".to_owned(),
+        result: Some("ok".to_owned()),
+        state: None,
+        reason: None,
+        question: None,
+    };
+    for (i, op) in [send, done].into_iter().enumerate() {
+        let r = decide(&w, from_worker(&w, &plain_worker(), &format!("o{i}"), op)).await;
+        assert_eq!(code(&r), Some(RejectCode::Forbidden), "{r:?}");
+    }
+    assert!(w.s.mails(10).await.unwrap().is_empty());
+    let task = w.s.task("t-1".to_owned()).await.unwrap().unwrap();
+    assert_eq!(task.state, TaskState::Open);
+}
+
+#[tokio::test]
+async fn a_station_cannot_ask_for_a_session_of_another_station() {
+    let w = world().await;
+    assigned(&w).await;
+    // `beta` has no `worker-1`.
+    let e = from_worker(&w, &plain_worker(), "q1", ask_op("hi?"));
+    let r = w.s.decide_coordinator(w.beta.clone(), e).await.unwrap();
+    assert_eq!(code(&r), Some(RejectCode::Forbidden), "{r:?}");
+    assert!(w.s.mails(10).await.unwrap().is_empty());
+    let task = w.s.task("t-1".to_owned()).await.unwrap().unwrap();
+    assert_eq!(task.state, TaskState::Open);
+}
+
+#[tokio::test]
+async fn the_eleventh_question_of_a_session_in_one_hour_is_rate_limited() {
+    let w = world().await;
+    assigned(&w).await;
+    for n in 0..10 {
+        let id = format!("q{n}");
+        let r = decide(&w, from_worker(&w, &plain_worker(), &id, ask_op("hi?"))).await;
+        assert_eq!(r.state, ReceiptState::Accepted, "{n}: {r:?}");
+    }
+    let r = decide(&w, from_worker(&w, &plain_worker(), "q10", ask_op("hi?"))).await;
+    assert!(reason(&r).starts_with("rate_limited"), "{r:?}");
+    assert_eq!(w.s.mails(20).await.unwrap().len(), 10);
+    // Another session has its own count.
+    let mut other = from_worker(&w, &plain_worker(), "q-other", ask_op("hi?"));
+    other.call.caller = "coord-1".into();
+    let r = decide(&w, other).await;
+    assert!(reason(&r).starts_with("no_coordinator"), "{r:?}");
+    // The window moves on.
+    w.det.advance(std::time::Duration::from_secs(61 * 60));
+    let r = decide(&w, from_worker(&w, &plain_worker(), "q11", ask_op("hi?"))).await;
+    assert_eq!(r.state, ReceiptState::Accepted, "{r:?}");
+}
