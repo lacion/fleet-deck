@@ -13,6 +13,7 @@ use std::time::Duration;
 use fleetdeck_core::Secret;
 use fleetdeck_core::localsock::{self, BindError, LineClient, read_line, send};
 use fleetdeck_proto::command::CommandOrigin;
+use fleetdeck_proto::settings::{SettingsChange, SettingsSaved, SettingsView};
 use serde::{Deserialize, Serialize};
 use tokio::io::BufReader;
 use tokio::net::{UnixListener, UnixStream};
@@ -34,6 +35,11 @@ pub struct LocalDeck {
     pub board: Option<crate::local_auth::BoardEndpoint>,
     /// The elevation codes and elevations that the board checks (DL-172).
     pub elevations: Arc<crate::elevation::Elevations>,
+    /// The settings file of the deck (`None`: the settings requests answer
+    /// `settings_unavailable`).
+    pub settings: Option<crate::http::settings_routes::DeckSettings>,
+    /// The live settings that a save publishes (shared with the board).
+    pub live: crate::live::LiveCell,
 }
 
 /// The socket's file name in the deck directory.
@@ -78,6 +84,12 @@ pub enum DeckRequest {
     /// `fleetdeck open --elevate`: a one-time elevation code for the board
     /// (DL-172, design 1.5).
     ElevateCode,
+    /// `fleetdeck settings get`: the settings of the deck (DL-172).
+    SettingsGet,
+    /// `fleetdeck settings set|secret`: a change of the deck settings. The
+    /// local socket is the owner, so it counts as elevated; the
+    /// `elevation` field of the change is not used.
+    SettingsSet { change: SettingsChange },
 }
 
 /// How long `deck command` waits for a receipt before it answers with the
@@ -142,6 +154,19 @@ pub enum DeckResponse {
     ElevateCode {
         code: InvitationText,
         expires_at: i64,
+    },
+    /// The answer to [`DeckRequest::SettingsGet`].
+    Settings {
+        view: SettingsView,
+    },
+    /// The answer to [`DeckRequest::SettingsSet`].
+    SettingsSaved {
+        saved: SettingsSaved,
+    },
+    /// A settings request that failed, with its fixed error code.
+    SettingsError {
+        code: String,
+        message: String,
     },
     Error {
         message: String,
@@ -227,6 +252,8 @@ async fn handle(deck: &LocalDeck, request: DeckRequest) -> DeckResponse {
         DeckRequest::Auth { auth } => {
             local_auth::respond(local_auth::handle(store, deck.board.as_ref(), auth).await)
         }
+        DeckRequest::SettingsGet => settings_get(deck).await,
+        DeckRequest::SettingsSet { change } => settings_set(deck, change).await,
         DeckRequest::ElevateCode => {
             let made = deck.elevations.new_code(store.now_ms());
             let row = NewAudit::new(
@@ -294,6 +321,61 @@ async fn handle(deck: &LocalDeck, request: DeckRequest) -> DeckResponse {
             Ok(commands) => DeckResponse::Commands { commands },
             Err(e) => error(e.to_string()),
         },
+    }
+}
+
+fn settings_error(code: &str, message: impl Into<String>) -> DeckResponse {
+    DeckResponse::SettingsError {
+        code: code.to_owned(),
+        message: message.into(),
+    }
+}
+
+fn settings_unavailable() -> DeckResponse {
+    settings_error(
+        "settings_unavailable",
+        "this deck has no settings file set up",
+    )
+}
+
+async fn settings_get(deck: &LocalDeck) -> DeckResponse {
+    let Some(settings) = deck.settings.as_ref() else {
+        return settings_unavailable();
+    };
+    match crate::http::settings_routes::deck_view(settings).await {
+        Ok(view) => DeckResponse::Settings { view },
+        Err(e) => {
+            tracing::warn!(error = %e, "deck settings");
+            settings_error(
+                "settings_unreadable",
+                "the deck config file cannot be read or does not parse; see the deck log",
+            )
+        }
+    }
+}
+
+/// Saves a change as the local owner and audits the keys, never a value.
+async fn settings_set(deck: &LocalDeck, change: SettingsChange) -> DeckResponse {
+    const ACTION: &str = "settings.deck_set";
+    let Some(settings) = deck.settings.as_ref() else {
+        return settings_unavailable();
+    };
+    let store = &deck.node.link().store;
+    let mut keys: Vec<String> = change.changes.keys().cloned().collect();
+    keys.sort();
+    let keys = keys.join(",");
+    let saved =
+        crate::http::settings_routes::save_and_publish(settings, store, &deck.live, change, true)
+            .await;
+    let row = match &saved {
+        Ok(_) => NewAudit::new(LOCAL_ACTOR, ACTION, AuditResult::Ok).detail(keys),
+        Err(e) => NewAudit::new(LOCAL_ACTOR, ACTION, AuditResult::Failed)
+            .detail(format!("{}: {keys}", e.code())),
+    };
+    store.audit_or_log(row.target("deck")).await;
+    match saved {
+        Ok(saved) => DeckResponse::SettingsSaved { saved },
+        Err(e) => settings_error(e.code(), e.to_string()),
     }
 }
 
