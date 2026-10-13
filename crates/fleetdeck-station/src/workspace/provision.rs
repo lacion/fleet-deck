@@ -8,6 +8,8 @@
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
+use tokio::sync::watch;
+
 use crate::store::WorkspacePlan;
 use crate::workspace::{Git, GitOptions};
 
@@ -289,12 +291,7 @@ pub(crate) fn check_url(
 /// # Errors
 /// The `git` failure as text.
 pub async fn provision(plan: &WorkspacePlan, program: &Path) -> Result<(), String> {
-    let options = |timeout| GitOptions {
-        program: program.to_path_buf(),
-        timeout,
-        // Clone needs the owner's credential helpers and SSH settings.
-        isolated: false,
-    };
+    let options = |timeout| git_options(program, timeout);
     match plan {
         WorkspacePlan::Worktree {
             repo,
@@ -379,6 +376,122 @@ pub async fn provision(plan: &WorkspacePlan, program: &Path) -> Result<(), Strin
                 .await
                 .map(|_| ())
                 .map_err(|e| scrub(&e.to_string()))
+        }
+    }
+}
+
+/// The options of a `git` call of the Git work of a plan.
+fn git_options(program: &Path, timeout: Duration) -> GitOptions {
+    GitOptions {
+        program: program.to_path_buf(),
+        timeout,
+        // Clone needs the owner's credential helpers and SSH settings.
+        isolated: false,
+    }
+}
+
+/// Why [`provision_cancellable`] did not create the workspace.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProvisionError {
+    /// The `git` failure as text.
+    Failed(String),
+    /// The cancel signal came first; `git` was stopped.
+    Stopped,
+}
+
+/// [`provision`] that a cancel signal (`true` on `cancel`) stops. Dropping the
+/// `provision` future kills the `git` child (`kill_on_drop`).
+///
+/// # Errors
+/// [`ProvisionError::Failed`] with the `git` failure, or
+/// [`ProvisionError::Stopped`] when the cancel came first.
+pub async fn provision_cancellable(
+    plan: &WorkspacePlan,
+    program: &Path,
+    mut cancel: watch::Receiver<bool>,
+) -> Result<(), ProvisionError> {
+    if *cancel.borrow() {
+        return Err(ProvisionError::Stopped);
+    }
+    tokio::select! {
+        r = provision(plan, program) => r.map_err(ProvisionError::Failed),
+        _ = cancel.wait_for(|c| *c) => Err(ProvisionError::Stopped),
+    }
+}
+
+/// What existed before the Git work of a plan, so that [`undo_partial`]
+/// removes only what the plan created.
+#[derive(Debug, Clone, Copy)]
+pub struct Before {
+    path_existed: bool,
+    branch_existed: bool,
+}
+
+/// Reads [`Before`] for `plan`. When `git show-ref` cannot run, everything
+/// counts as existing, so that [`undo_partial`] removes nothing.
+pub async fn before(plan: &WorkspacePlan, program: &Path) -> Before {
+    let path = match plan {
+        WorkspacePlan::Worktree { path, .. } | WorkspacePlan::Clone { path, .. } => path,
+    };
+    let path_existed = Path::new(path).exists();
+    let WorkspacePlan::Worktree { repo, branch, .. } = plan else {
+        return Before {
+            path_existed,
+            branch_existed: false,
+        };
+    };
+    let git = Git::new(repo, git_options(program, WORKTREE_TIMEOUT));
+    let heads_ref = format!("refs/heads/{branch}");
+    match git
+        .status(&["show-ref", "--verify", "--quiet", &heads_ref], &[], None)
+        .await
+    {
+        Ok((code, ..)) => Before {
+            path_existed,
+            branch_existed: code == 0,
+        },
+        Err(e) => {
+            tracing::warn!(error = %e, "the branch of the plan could not be read; nothing is undone after a stop");
+            Before {
+                path_existed: true,
+                branch_existed: true,
+            }
+        }
+    }
+}
+
+/// Removes what a stopped [`provision_cancellable`] left: a new clone
+/// directory, or a new worktree and its new branch. Best effort: a failure is
+/// logged and the rest goes on.
+pub async fn undo_partial(plan: &WorkspacePlan, program: &Path, before: &Before) {
+    if before.path_existed {
+        return;
+    }
+    match plan {
+        WorkspacePlan::Clone { path, .. } => match tokio::fs::remove_dir_all(path).await {
+            Ok(()) => {}
+            // The clone did not create the directory yet.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => tracing::warn!(error = %e, path, "the partial clone was not removed"),
+        },
+        WorkspacePlan::Worktree {
+            repo, path, branch, ..
+        } => {
+            let git = Git::new(repo, git_options(program, WORKTREE_TIMEOUT));
+            let steps: [&[&str]; 2] = [
+                &["worktree", "remove", "--force", "--", path],
+                &["worktree", "prune"],
+            ];
+            for args in steps {
+                if let Err(e) = git.run(args).await {
+                    tracing::warn!(error = %e, ?args, "the partial worktree was not removed");
+                }
+            }
+            if !before.branch_existed
+                && let Err(e) = git.run(&["branch", "-D", "--", branch]).await
+            {
+                tracing::warn!(error = %e, branch, "the new branch was not removed");
+            }
         }
     }
 }

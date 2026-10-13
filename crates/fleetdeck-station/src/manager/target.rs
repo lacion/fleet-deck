@@ -34,7 +34,6 @@ pub use super::shells_slot::ShellsSlot;
 use super::turns::SessionTurns;
 use crate::store::{
     Dispatch, Effect, EffectPayload, InputRecord, NewEvent, ProcessIncarnation, Store,
-    WorkspacePlan,
 };
 use crate::worker::EffectTarget;
 use crate::workspace::setup::STOPPED_MESSAGE;
@@ -76,7 +75,8 @@ pub struct SessionTarget {
     /// The station policy for the dispatch recheck of an auto-continue
     /// (ADR-007 §2.4 rules 2 and 10, DL-133).
     policy: Option<Arc<super::policy_hub::PolicyHub>>,
-    /// The starts that wait for their setup command, by session (DL-148).
+    /// The starts that wait for their setup command or workspace, by session
+    /// (DL-148).
     setups: setup_task::SetupTasks,
     /// This target as an `Arc`, for the tasks that outlive one dispatch;
     /// empty until [`Self::shared`].
@@ -153,7 +153,8 @@ impl SessionTarget {
     }
 
     /// The target in an `Arc` that knows itself. A start with a setup command
-    /// needs it: the setup runs in a task after the dispatch returned.
+    /// or a workspace needs it: the setup and the workspace work run in a
+    /// task after the dispatch returned.
     #[must_use]
     pub fn shared(mut self) -> Arc<Self> {
         Arc::new_cyclic(|weak| {
@@ -611,28 +612,25 @@ impl EffectTarget for SessionTarget {
                 } else {
                     None
                 };
-                // The Git work of the start (M3 6-1, DL-200) runs in the
-                // effect, before the provider starts.
-                if let Some(plan) = workspace
-                    && let Err(e) =
-                        crate::workspace::provision::provision(plan, &self.git.program).await
-                {
-                    let text = format!("the workspace was not created: {e}");
-                    self.start_failed(&effect.session_id, &text).await;
-                    return Dispatch::NotDispatched("workspace_failed".into());
+                // The Git work of the start (M3 6-1, DL-200) and its setup
+                // command run in a task of their own: the effect worker
+                // goes on with the other sessions.
+                if workspace.is_some() || setup_cmd.is_some() {
+                    return self
+                        .defer_start(
+                            effect,
+                            spec,
+                            prompt.as_ref(),
+                            workspace.as_ref(),
+                            setup_cmd.as_deref(),
+                            wants_base,
+                            planned,
+                        )
+                        .await;
                 }
-                let base = match (planned, workspace) {
-                    (None, Some(WorkspacePlan::Clone { path, .. })) if wants_base => {
-                        crate::workspace::base::at_head(&self.git, Path::new(path)).await
-                    }
-                    (planned, _) => planned,
-                };
-                let started = match setup_cmd {
-                    Some(cmd) => self.defer_setup(effect, spec, prompt.as_ref(), cmd).await,
-                    None => self.start(effect, spec, prompt.as_ref(), None, None).await,
-                };
+                let started = self.start(effect, spec, prompt.as_ref(), None, None).await;
                 if matches!(started, Dispatch::Confirmed | Dispatch::Deferred) {
-                    self.record_base(&effect.session_id, base).await;
+                    self.record_base(&effect.session_id, planned).await;
                 }
                 started
             }
@@ -662,7 +660,7 @@ impl EffectTarget for SessionTarget {
                 }
                 started
             }
-            // A stop during the setup command cancels it; the setup task ends
+            // A stop during the setup command or the workspace work cancels it; the task ends
             // the session.
             EffectPayload::Stop { how } if self.cancel_setup(&effect.session_id, *how) => {
                 Dispatch::Confirmed

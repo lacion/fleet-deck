@@ -57,12 +57,26 @@ impl SessionManager {
                 });
             }
         }
-        for run in self.store.setup_runs().await? {
+        let runs = self.store.setup_runs().await?;
+        for run in &runs {
             let label = self.session_label(&run.session_id).await?;
             items.push(RestartItem {
                 kind: RestartKind::Setup,
                 id: run.session_id.as_str().to_owned(),
                 title: format!("Setup command of {label}"),
+            });
+        }
+        // A start that clones or adds a worktree: the restart stops it. A
+        // session that also has a setup row is listed once, above.
+        for id in self.store.provisioning_starts().await? {
+            if runs.iter().any(|run| run.session_id == id) {
+                continue;
+            }
+            let label = self.session_label(&id).await?;
+            items.push(RestartItem {
+                kind: RestartKind::Setup,
+                id: id.as_str().to_owned(),
+                title: format!("Workspace of {label}"),
             });
         }
         for (n, cwd) in crate::workspace::precheck::running() {

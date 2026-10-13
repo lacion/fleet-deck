@@ -300,10 +300,11 @@ pub(super) fn enqueue(
     let process = if payload.needs_process() {
         match live_process(conn, session)? {
             Some(process) => Some(process),
-            // A stop during the setup command of a start has no process to
-            // target (DL-148).
+            // A stop during the setup command or the workspace work of a
+            // start has no process to target (DL-148).
             None if matches!(payload, EffectPayload::Stop { .. })
-                && super::setup_runs::setup_run_for(conn, session)? =>
+                && (super::setup_runs::setup_run_for(conn, session)?
+                    || super::provisioning::provisioning_for(conn, session)?) =>
             {
                 None
             }
