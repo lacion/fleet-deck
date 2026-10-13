@@ -15,6 +15,9 @@ const files: FileActions = {
   diff: async () => {
     throw new Error('not used');
   },
+  sessionDiff: async () => {
+    throw new Error('not used');
+  },
 };
 
 const store = (items: Record<string, string>) => {

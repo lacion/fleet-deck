@@ -218,6 +218,10 @@ async fn the_file_routes_browse_read_and_search_through_the_link() {
         )
         .await;
     expect(&r, 404, "unknown_session");
+    let r = board
+        .get("/api/stations/alpha/sessions/nope/diff", &refs(&h))
+        .await;
+    expect(&r, 404, "unknown_session");
     // The deck refuses a query without exactly one root, and a bad mode.
     let r = board.get("/api/stations/alpha/files/list", &refs(&h)).await;
     expect(&r, 400, "invalid_root");
@@ -268,6 +272,14 @@ async fn the_file_routes_browse_read_and_search_through_the_link() {
             .await;
         assert_eq!(r.status, 403, "{path}: {}", r.body);
     }
+    // The session diff needs only the read scope (R1.2).
+    let r = board
+        .get(
+            "/api/stations/alpha/sessions/nope/diff",
+            &[("Authorization", bearer.as_str())],
+        )
+        .await;
+    expect(&r, 404, "unknown_session");
 
     st.shutdown();
     node.shutdown();

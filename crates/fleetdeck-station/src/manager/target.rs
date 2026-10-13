@@ -19,6 +19,7 @@ use std::sync::{Arc, Mutex as StdMutex, Weak};
 use async_trait::async_trait;
 use fleetdeck_core::{SharedIds, new_id};
 use fleetdeck_proto::command::{SessionSpec, StopMode};
+use fleetdeck_proto::session::SessionBase;
 use fleetdeck_proto::{Event, ProviderInstanceId, SessionId};
 use fleetdeck_providers::host::HostError;
 use fleetdeck_providers::{
@@ -30,6 +31,7 @@ use tokio::sync::{Mutex, mpsc, oneshot, watch};
 use super::turns::SessionTurns;
 use crate::store::{
     Dispatch, Effect, EffectPayload, InputRecord, NewEvent, ProcessIncarnation, Store,
+    WorkspacePlan,
 };
 use crate::worker::EffectTarget;
 use crate::workspace::setup::STOPPED_MESSAGE;
@@ -390,6 +392,35 @@ impl SessionTarget {
         Dispatch::Confirmed
     }
 
+    /// True when the session has a base already, or when the summary cannot
+    /// be read (no base is then recorded).
+    async fn has_base(&self, session_id: &SessionId) -> bool {
+        match self.store.summary(session_id.clone()).await {
+            Ok(summary) => summary.is_some_and(|s| s.base.is_some()),
+            Err(e) => {
+                tracing::warn!(error = %e, "the summary is unreadable; no base is recorded");
+                true
+            }
+        }
+    }
+
+    /// Appends `session.base` (R1.1). The station emits it, not the provider.
+    async fn record_base(&self, session_id: &SessionId, base: Option<SessionBase>) {
+        let Some(base) = base else { return };
+        let event = Event::SessionBase {
+            git_ref: base.git_ref,
+            oid: base.oid,
+            inferred: base.inferred,
+        };
+        if let Err(e) = self
+            .store
+            .append(session_id.clone(), vec![NewEvent::from(event)])
+            .await
+        {
+            tracing::warn!(error = %e, "the session base was not stored");
+        }
+    }
+
     /// A start that never got a process ends the session (`exited`).
     async fn start_failed(&self, session_id: &SessionId, message: &str) {
         let events = vec![
@@ -520,6 +551,13 @@ impl EffectTarget for SessionTarget {
                 workspace,
                 setup_cmd,
             } => {
+                // The base commit is read before the worktree is made (R1.1).
+                let wants_base = !self.has_base(&effect.session_id).await;
+                let planned = if wants_base {
+                    crate::workspace::base::planned(&self.git, workspace.as_ref(), &spec.cwd).await
+                } else {
+                    None
+                };
                 // The Git work of the start (M3 6-1, DL-200) runs in the
                 // effect, before the provider starts.
                 if let Some(plan) = workspace
@@ -530,10 +568,20 @@ impl EffectTarget for SessionTarget {
                     self.start_failed(&effect.session_id, &text).await;
                     return Dispatch::NotDispatched("workspace_failed".into());
                 }
-                if let Some(cmd) = setup_cmd {
-                    return self.defer_setup(effect, spec, prompt.as_ref(), cmd).await;
+                let base = match (planned, workspace) {
+                    (None, Some(WorkspacePlan::Clone { path, .. })) if wants_base => {
+                        crate::workspace::base::at_head(&self.git, Path::new(path)).await
+                    }
+                    (planned, _) => planned,
+                };
+                let started = match setup_cmd {
+                    Some(cmd) => self.defer_setup(effect, spec, prompt.as_ref(), cmd).await,
+                    None => self.start(effect, spec, prompt.as_ref(), None, None).await,
+                };
+                if matches!(started, Dispatch::Confirmed | Dispatch::Deferred) {
+                    self.record_base(&effect.session_id, base).await;
                 }
-                self.start(effect, spec, prompt.as_ref(), None, None).await
+                started
             }
             EffectPayload::Resume {
                 native_session_id,
@@ -546,8 +594,19 @@ impl EffectTarget for SessionTarget {
                 {
                     return Dispatch::NotDispatched(code);
                 }
-                self.start(effect, spec, prompt.as_ref(), Some(native_session_id), None)
-                    .await
+                // An import or a resume of a session without a base (R1.1).
+                let base = if self.has_base(&effect.session_id).await {
+                    None
+                } else {
+                    crate::workspace::base::inferred(&self.git, Path::new(&spec.cwd)).await
+                };
+                let started = self
+                    .start(effect, spec, prompt.as_ref(), Some(native_session_id), None)
+                    .await;
+                if matches!(started, Dispatch::Confirmed | Dispatch::Deferred) {
+                    self.record_base(&effect.session_id, base).await;
+                }
+                started
             }
             // A stop during the setup command cancels it; the setup task ends
             // the session.

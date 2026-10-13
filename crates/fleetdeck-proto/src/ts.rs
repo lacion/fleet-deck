@@ -22,8 +22,8 @@ use crate::command::{CommandEnvelope, DeckCommandState, Receipt};
 use crate::conflicts::FileConflict;
 use crate::event::{Event, EventEnvelope};
 use crate::files::{
-    FileContent, FileListQuery, FileListing, FileReadQuery, FileSearch, FileSearchQuery, TurnDiff,
-    TurnDiffQuery,
+    FileContent, FileListQuery, FileListing, FileReadQuery, FileSearch, FileSearchQuery,
+    SessionDiff, SessionDiffQuery, TurnDiff, TurnDiffQuery,
 };
 use crate::link::{
     ControlFrame, PasteImage, PastedImage, Preflight, PreflightQuery, ReceiptQuery, ReplayParams,
@@ -108,6 +108,8 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         FileSearch::export_all(&cfg),
         TurnDiffQuery::export_all(&cfg),
         TurnDiff::export_all(&cfg),
+        SessionDiffQuery::export_all(&cfg),
+        SessionDiff::export_all(&cfg),
         SessionSummary::export_all(&cfg),
         CardStatus::export_all(&cfg),
         VersionOffer::export_all(&cfg),

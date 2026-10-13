@@ -319,7 +319,7 @@ export function SessionView(props: SessionViewProps) {
             </>
           ) : null}
           {tab === 'changes' ? (
-            s.revert || turns.length > 0 ? (
+            s.revert || turns.length > 0 || s.base ? (
               <>
                 <RevertStatus
                   summary={s}
@@ -339,6 +339,7 @@ export function SessionView(props: SessionViewProps) {
                   busy={busy !== null}
                   act={panelAct}
                   onOpenFile={onOpenFile}
+                  station={session.station_id}
                 />
               </>
             ) : (

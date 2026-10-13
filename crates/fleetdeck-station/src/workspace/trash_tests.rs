@@ -341,6 +341,12 @@ async fn a_purge_needs_the_folder_name_and_deletes_the_folder_and_the_git_record
     assert_eq!(r.row(&row.op_id).await.state, "trashed");
     assert!(Path::new(&row.trash_path).is_dir());
 
+    // Checkpoint refs of the session and of another one (R1.5).
+    let mine = format!("refs/fleetdeck/checkpoints/inc1/wid1/{SESSION}/turn1/start");
+    let other = "refs/fleetdeck/checkpoints/inc1/wid1/other-session/turn1/start";
+    git(&r.main, &["update-ref", &mine, "HEAD"]);
+    git(&r.main, &["update-ref", other, "HEAD"]);
+
     r.ok(Rig::purge_cmd(&name)).await;
     assert_eq!(r.row(&row.op_id).await.state, "purging");
     assert_eq!(
@@ -350,6 +356,11 @@ async fn a_purge_needs_the_folder_name_and_deletes_the_folder_and_the_git_record
     assert_eq!(r.row(&row.op_id).await.state, "purged");
     assert!(!Path::new(&row.trash_path).exists());
     assert!(!Path::new(&row.admin_dir).exists());
+    let refs = git(
+        &r.main,
+        &["for-each-ref", "--format=%(refname)", "refs/fleetdeck/"],
+    );
+    assert_eq!(refs.trim(), other, "only the purged session's refs go");
     // The branch stays.
     assert!(git(&r.main, &["branch", "--list", "fd/x"]).contains("fd/x"));
     assert!(!r.listed().contains("repo--fd-x"));

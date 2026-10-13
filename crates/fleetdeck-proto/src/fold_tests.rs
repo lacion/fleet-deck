@@ -586,6 +586,33 @@ fn session_models_set_the_models_of_the_summary_and_the_last_list_wins() {
     assert_eq!(s.models, Some(vec![choice("sonnet"), choice("haiku")]));
 }
 
+#[test]
+fn session_base_sets_the_base_of_the_summary() {
+    let mut f = Feed::new();
+    f.push(started());
+    assert_eq!(f.summary.base, None);
+    let s = f.push(Event::SessionBase {
+        git_ref: Some("main".to_owned()),
+        oid: "abc123".to_owned(),
+        inferred: true,
+    });
+    let base = s.base.clone().unwrap();
+    assert_eq!(base.git_ref.as_deref(), Some("main"));
+    assert_eq!(base.oid, "abc123");
+    assert!(base.inferred);
+    // A replay of the same sequence changes nothing.
+    let before = s.clone();
+    f.seq -= 1;
+    assert_eq!(
+        *f.push(Event::SessionBase {
+            git_ref: None,
+            oid: "other".to_owned(),
+            inferred: false,
+        }),
+        before
+    );
+}
+
 fn terminal(shell_id: Option<&str>, pid: Option<u32>, reason: Option<&str>) -> Event {
     Event::SessionTerminal {
         shell_id: shell_id.map(str::to_owned),

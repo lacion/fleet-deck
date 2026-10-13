@@ -1,7 +1,8 @@
 //! The read-only file service of a station (PLAN §6.6 "File browse, search,
 //! read; diffs", M3 DL-088): the params and answers of the link methods
 //! `files.list`, `files.read`, `files.search` and `files.diff` (feature
-//! `files.v1`, deck → station, scope `drive`, not mutating).
+//! `files.v1`, deck → station, scope `drive`, not mutating) and
+//! `files.session_diff` (feature `files.session_diff.v1`, scope `read`).
 //!
 //! Every path in a query is relative to a root that the station resolves
 //! itself: the working directory of a session, or a workspace directory
@@ -51,6 +52,8 @@ pub mod code {
     pub const MISSING_WORKSPACE: &str = "missing_workspace";
     /// The turn has no finalized pair of available checkpoints.
     pub const NO_DIFF: &str = "no_diff";
+    /// The session has no recorded base commit (`session.base`).
+    pub const NO_BASE: &str = "no_base";
     /// Too many searches run on this station.
     pub const BUSY: &str = "busy";
     /// The file system or `git` took too long.
@@ -227,6 +230,36 @@ pub struct TurnDiff {
     /// The patch (`git diff-tree -p --binary`), lossy UTF-8.
     pub patch: String,
     /// The patch was cut at the byte limit.
+    pub truncated: bool,
+}
+
+/// `files.session_diff` params: the working tree of a session against the
+/// commit that it started from (R1.2).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "files/")]
+pub struct SessionDiffQuery {
+    pub session_id: SessionId,
+    /// At most [`MAX_DIFF_BYTES`]; that is also the default.
+    #[serde(default)]
+    #[ts(type = "number | null")]
+    pub max_bytes: Option<u64>,
+}
+
+/// The `files.session_diff` answer: the same parts as [`TurnDiff`], against
+/// the base commit of the session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "files/")]
+pub struct SessionDiff {
+    pub session_id: SessionId,
+    /// The base commit (`session.base`).
+    pub base_oid: String,
+    pub summary: DiffSummary,
+    /// The patch: tracked files against the base (`git diff`), then each
+    /// untracked file as a new file. Lossy UTF-8.
+    pub patch: String,
+    /// The patch was cut at the byte limit, or a binary, a large or an
+    /// excess untracked file was left out.
     pub truncated: bool,
 }
 

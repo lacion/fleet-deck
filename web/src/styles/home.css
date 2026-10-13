@@ -363,6 +363,17 @@
   display: inline;
   vertical-align: -1px;
 }
+.fd-card-diff {
+  font-family: var(--font-data);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.fd-card-diff .fd-add {
+  color: var(--ok);
+}
+.fd-card-diff .fd-del {
+  color: var(--hazard);
+}
 .fd-card-tool {
   font-family: var(--font-data);
   font-size: var(--fs-data);

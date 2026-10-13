@@ -153,6 +153,14 @@ pub const METHODS: &[MethodSpec] = &[
         Some(feature::FILES),
         false,
     ),
+    // The working tree of a session against its base commit (R1.2).
+    m(
+        "files.session_diff",
+        DeckToStation,
+        Scope::Read,
+        Some(feature::SESSION_DIFF),
+        false,
+    ),
     m(
         "shell.list",
         DeckToStation,

@@ -237,6 +237,11 @@ fn samples() -> Vec<Event> {
                 },
             ],
         },
+        Event::SessionBase {
+            git_ref: Some("main".into()),
+            oid: "0123456789abcdef0123456789abcdef01234567".into(),
+            inferred: false,
+        },
     ]
 }
 
@@ -390,4 +395,20 @@ fn a_model_choice_without_a_description_decodes() {
         panic!("expected session.models");
     };
     assert_eq!(models[0].description, None);
+}
+
+#[test]
+fn a_session_base_without_a_ref_or_the_inferred_flag_decodes() {
+    let body: EventBody = serde_json::from_value(
+        json!({"kind": "session.base", "oid": "0123456789abcdef0123456789abcdef01234567"}),
+    )
+    .unwrap();
+    let Some(Event::SessionBase {
+        git_ref, inferred, ..
+    }) = body.known()
+    else {
+        panic!("expected session.base");
+    };
+    assert_eq!(*git_ref, None);
+    assert!(!*inferred);
 }

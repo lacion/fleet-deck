@@ -118,6 +118,11 @@ pub struct SessionSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub models: Option<Vec<ModelChoice>>,
+    /// The commit that the session started from, from `session.base`
+    /// (R1.1). Absent before the first one and outside a repository.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub base: Option<SessionBase>,
     /// The highest `session_seq` folded into this summary.
     pub session_seq: u64,
     /// Unix ms of the last folded event.
@@ -157,6 +162,7 @@ impl SessionSummary {
             auto_continue: false,
             terminal: None,
             models: None,
+            base: None,
             session_seq: 0,
             updated_at: 0,
         }
@@ -176,6 +182,21 @@ pub struct TerminalHold {
     pub since: i64,
     /// The reason of the newest `session.terminal` of this hold.
     pub reason: Option<String>,
+}
+
+/// The commit that a session started from (R1.1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "session/")]
+pub struct SessionBase {
+    /// The branch or ref name that the base came from, when there is one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub git_ref: Option<String>,
+    /// The commit id.
+    pub oid: String,
+    /// The station guessed the base (an import or a resume).
+    #[serde(default)]
+    pub inferred: bool,
 }
 
 /// The most running tools that a summary keeps; the oldest goes first.
