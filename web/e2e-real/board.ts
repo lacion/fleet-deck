@@ -60,7 +60,10 @@ export class Phone {
    * its Back button returns to the session list first. */
   async bar(): Promise<Locator> {
     const bar = this.page.getByRole('navigation', { name: 'Board', exact: true });
-    if ((await bar.count()) === 0) await this.page.getByRole('button', { name: 'Back' }).click();
+    const back = this.page.getByRole('button', { name: 'Back' });
+    // Wait for the screen first: the bar, or a screen with Back (a session).
+    await expect(bar.or(back).first()).toBeVisible();
+    if (!(await bar.isVisible())) await back.click();
     await expect(bar).toBeVisible();
     return bar;
   }
