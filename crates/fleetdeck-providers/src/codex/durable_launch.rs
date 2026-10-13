@@ -36,6 +36,7 @@ impl CodexAdapter {
                     capabilities: caps,
                     resumed: None,
                     client: self.config.client.clone(),
+                    request_models: self.config.request_models,
                 },
                 thread: super::super::SessionSpec {
                     model: spec.model.clone(),

@@ -107,6 +107,7 @@ fn core_events(records: &[Value], cwd: &Path) -> Vec<Event> {
         capabilities: capabilities(false),
         resumed: matches!(origin_of(&open), Origin::Resume(_)).then_some(true),
         client: recorder_client(),
+        request_models: false,
     });
     let mut events = Vec::new();
     let mut push = |out: Vec<Output>| {
@@ -215,6 +216,7 @@ async fn play(path: &Path, index: usize, records: &[Value], root: &Path, cwd: &P
     let mut config =
         CodexAdapterConfig::new("codex".into(), FakeAgent::Codex.locate().unwrap(), env);
     config.client = recorder_client();
+    config.request_models = false;
     config.effort = effort;
     config.background_poll = None;
     config.stop = StopPolicy {

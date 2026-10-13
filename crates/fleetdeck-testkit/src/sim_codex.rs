@@ -213,6 +213,17 @@ impl<W: Write> Sim<W> {
             Some("turn/steer") => self.on_steer(&id, &params),
             Some("turn/interrupt") => self.on_interrupt(&id),
             Some("thread/backgroundTerminals/list") => self.on_list(&id),
+            Some("model/list") => self.reply(
+                &id,
+                json!({"data": [{
+                    "id": SIM_MODEL,
+                    "model": SIM_MODEL,
+                    "displayName": "Sim model",
+                    "description": "The model of the sim",
+                    "hidden": false,
+                    "isDefault": true,
+                }], "nextCursor": null}),
+            ),
             Some("thread/rollback") => self.on_rollback(&id, &params),
             Some(_) if !id.is_null() => self.error(&id, "method not supported by the sim"),
             Some(_) => Ok(()),

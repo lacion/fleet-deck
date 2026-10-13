@@ -224,6 +224,17 @@ pub struct BackgroundTask {
     pub task_kind: String,
 }
 
+/// One model that a session can switch to (DL-151).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "event/")]
+pub struct ModelChoice {
+    /// What the provider takes to select the model (`set_model`).
+    pub value: String,
+    pub label: String,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
 /// One side (start or completion) of a turn checkpoint (PLAN §6.6, L13).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "state", rename_all = "snake_case")]
@@ -523,6 +534,10 @@ pub enum Event {
     /// the user. The fold ignores it.
     #[serde(rename = "session.notice")]
     SessionNotice { code: String, text: String },
+    /// The models that the provider offers in this session (DL-151). The
+    /// fold ignores it.
+    #[serde(rename = "session.models")]
+    SessionModels { models: Vec<ModelChoice> },
     #[serde(rename = "run.completed")]
     RunCompleted {
         run_id: RunId,
@@ -570,7 +585,7 @@ pub enum Event {
 
 impl Event {
     /// Every known kind name, in declaration order.
-    pub const KINDS: [&'static str; 37] = [
+    pub const KINDS: [&'static str; 38] = [
         "session.started",
         "session.state",
         "run.started",
@@ -608,6 +623,7 @@ impl Event {
         "session.terminal",
         "session.slash_commands",
         "session.notice",
+        "session.models",
     ];
 
     /// The dotted kind name.
@@ -651,6 +667,7 @@ impl Event {
             Self::SessionTerminal { .. } => "session.terminal",
             Self::SlashCommands { .. } => "session.slash_commands",
             Self::SessionNotice { .. } => "session.notice",
+            Self::SessionModels { .. } => "session.models",
         }
     }
 

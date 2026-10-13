@@ -77,6 +77,9 @@ pub struct CodexAdapterConfig {
     pub effort: Option<String>,
     /// The `clientInfo` of `initialize` (the fixtures name the recorder).
     pub client: ClientInfo,
+    /// Ask for the models after the thread opens (`model/list`, DL-151);
+    /// replays of recordings without it turn it off.
+    pub request_models: bool,
     /// Interval of the background-terminal poll (DL-024); `None` turns the
     /// automatic poll off (replays apply the recorded polls instead).
     pub background_poll: Option<Duration>,
@@ -105,6 +108,7 @@ impl CodexAdapterConfig {
             allow_full_access: false,
             effort: None,
             client: ClientInfo::fleetdeck(),
+            request_models: true,
             background_poll: Some(Duration::from_secs(5)),
             raw_log: None,
             stop: StopPolicy::default(),
@@ -204,6 +208,7 @@ impl CodexAdapter {
             capabilities: caps.clone(),
             resumed: matches!(origin, Origin::Resume(_)).then_some(true),
             client: self.config.client.clone(),
+            request_models: self.config.request_models,
         });
         let raw_dir = raw.as_ref().map(|r| r.dir().to_path_buf());
         let shared = Arc::new(Shared {

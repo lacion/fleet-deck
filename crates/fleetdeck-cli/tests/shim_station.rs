@@ -68,6 +68,7 @@ fn codex_config(cwd: String) -> CoreConfig {
         capabilities: capabilities(false),
         resumed: None,
         client: ClientInfo::fleetdeck(),
+        request_models: false,
     }
 }
 

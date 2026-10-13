@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use fleetdeck_proto::command::UserInput;
 use fleetdeck_proto::event::{
-    BackgroundTask, ExpiredReason, InputState, ProviderKind, RunOrigin, TurnStatus,
+    BackgroundTask, ExpiredReason, InputState, ModelChoice, ProviderKind, RunOrigin, TurnStatus,
 };
 use fleetdeck_proto::{Capabilities, Event, InputId, NodeId, PlanId, RunId, TurnId};
 use serde_json::{Value, json};
@@ -103,6 +103,12 @@ pub(super) enum HostRequest {
     Interrupt(Option<String>),
     /// `thread/rollback` (DL-087).
     Rollback,
+    /// `model/list` after the thread opened (DL-151): the follow-up pages
+    /// requested so far, and the models of the pages received so far.
+    ModelList {
+        pages: u8,
+        models: Vec<ModelChoice>,
+    },
 }
 
 /// The sans-IO Codex adapter core of one app-server process.

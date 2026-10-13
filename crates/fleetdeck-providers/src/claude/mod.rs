@@ -27,4 +27,6 @@ pub use requests::request_kind;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod tests_models;
+#[cfg(test)]
 mod tests_traps;
