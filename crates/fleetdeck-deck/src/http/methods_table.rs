@@ -35,6 +35,73 @@ pub const API: &[ApiMethod] = &[
         false,
     )
     .member(),
+    // The accounts of a station (DL-173). The owner-only rows are `admin`,
+    // and every handler also requires the owner's board login (DL-138); the
+    // containers read needs `read` and is closed to members. The relay rows
+    // (`/api/secrets/...`) carry a secret and never go through commands.
+    m(
+        "accounts.list",
+        Method::GET,
+        "/api/stations/{station}/accounts",
+        Some(Scope::Admin),
+        false,
+    ),
+    m(
+        "accounts.forge_login",
+        Method::POST,
+        "/api/stations/{station}/accounts/forge/login",
+        Some(Scope::Admin),
+        true,
+    ),
+    m(
+        "accounts.forge_login_status",
+        Method::GET,
+        "/api/stations/{station}/accounts/forge/login/{login_id}",
+        Some(Scope::Admin),
+        false,
+    ),
+    m(
+        "accounts.logout",
+        Method::POST,
+        "/api/stations/{station}/accounts/{account_id}/logout",
+        Some(Scope::Admin),
+        true,
+    ),
+    m(
+        "accounts.containers",
+        Method::GET,
+        "/api/stations/{station}/accounts/{account_id}/containers",
+        Some(Scope::Read),
+        false,
+    ),
+    m(
+        "accounts.app_set",
+        Method::POST,
+        "/api/secrets/stations/{station}/accounts/apps",
+        Some(Scope::Admin),
+        true,
+    ),
+    m(
+        "accounts.token_set",
+        Method::POST,
+        "/api/secrets/stations/{station}/accounts/token",
+        Some(Scope::Admin),
+        true,
+    ),
+    m(
+        "accounts.oauth_start",
+        Method::POST,
+        "/api/accounts/oauth/start",
+        Some(Scope::Admin),
+        true,
+    ),
+    m(
+        "accounts.oauth_finish",
+        Method::POST,
+        "/api/accounts/oauth/finish",
+        Some(Scope::Admin),
+        true,
+    ),
     m(
         "stations.list",
         Method::GET,

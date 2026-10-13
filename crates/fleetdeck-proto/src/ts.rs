@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 
 use ts_rs::{Config, TS};
 
+use crate::accounts as acc;
 use crate::artifacts::{
     Artifact, ArtifactDetail, ArtifactFile, ArtifactFileQuery, ArtifactGetQuery, ArtifactKind,
     ArtifactList, ArtifactListQuery, ArtifactPublish, ArtifactPublishRequest, ArtifactPublished,
@@ -250,6 +251,24 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         SettingsChange::export_all(&cfg),
         SettingsSaved::export_all(&cfg),
         SecretSet::export_all(&cfg),
+        acc::AccountKind::export_all(&cfg),
+        acc::AccountMethod::export_all(&cfg),
+        acc::AccountStatus::export_all(&cfg),
+        acc::AccountView::export_all(&cfg),
+        acc::AppView::export_all(&cfg),
+        acc::AppSet::export_all(&cfg),
+        acc::TokenSet::export_all(&cfg),
+        acc::ForgeLoginStart::export_all(&cfg),
+        acc::ForgeLogin::export_all(&cfg),
+        acc::ForgeLoginState::export_all(&cfg),
+        acc::ForgeLoginQuery::export_all(&cfg),
+        acc::AccountRef::export_all(&cfg),
+        acc::OAuthStartParams::export_all(&cfg),
+        acc::OAuthStarted::export_all(&cfg),
+        acc::OAuthFinishParams::export_all(&cfg),
+        acc::Container::export_all(&cfg),
+        acc::Containers::export_all(&cfg),
+        acc::AccountsList::export_all(&cfg),
         AssistKind::export_all(&cfg),
         AssistRequest::export_all(&cfg),
         AssistAnswer::export_all(&cfg),

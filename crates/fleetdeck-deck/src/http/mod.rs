@@ -4,6 +4,8 @@
 //! The deck serves HTTPS itself ([`tls`]; D13: no reverse proxy, DL-054).
 
 pub mod access;
+pub mod account_routes;
+pub mod account_secrets;
 pub mod activity_routes;
 pub mod archive_routes;
 pub mod artifact_routes;
@@ -37,6 +39,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::Router;
+use axum::extract::Extension;
 use axum::middleware;
 use axum::routing::{delete, get, post};
 use std::time::Duration;
@@ -81,6 +84,9 @@ pub struct Board {
 
 /// The board API router.
 pub fn router(board: Arc<Board>) -> Router {
+    // The open OAuth transactions (DL-173): in memory, one set for this
+    // router and its clones.
+    let oauth = Arc::new(crate::oauth::Transactions::default());
     let mut r = Router::new();
     for api in methods::command_methods() {
         r = r.route(&methods::route_of(api), post(command_routes::command));
@@ -298,6 +304,49 @@ pub fn router(board: Arc<Board>) -> Router {
             "/api/projects/{project}/sessions",
             post(project_writes::sessions),
         )
+        // The accounts of a station (DL-173). The static `forge` segment wins
+        // over `{account_id}`.
+        .route(
+            "/api/stations/{station}/accounts",
+            get(account_routes::list),
+        )
+        .route(
+            "/api/stations/{station}/accounts/forge/login",
+            post(account_routes::forge_login),
+        )
+        .route(
+            "/api/stations/{station}/accounts/forge/login/{login_id}",
+            get(account_routes::forge_login_status),
+        )
+        .route(
+            "/api/stations/{station}/accounts/{account_id}/logout",
+            post(account_routes::logout),
+        )
+        .route(
+            "/api/stations/{station}/accounts/{account_id}/containers",
+            get(account_routes::containers),
+        )
+        // The credential relay (DL-173, design section 0): 16 KiB bodies.
+        .route(
+            "/api/secrets/stations/{station}/accounts/apps",
+            post(account_secrets::app_set).layer(axum::extract::DefaultBodyLimit::max(
+                account_secrets::MAX_BODY,
+            )),
+        )
+        .route(
+            "/api/secrets/stations/{station}/accounts/token",
+            post(account_secrets::token_set).layer(axum::extract::DefaultBodyLimit::max(
+                account_secrets::MAX_BODY,
+            )),
+        )
+        .route(
+            "/api/accounts/oauth/start",
+            post(account_routes::oauth_start).layer(Extension(Arc::clone(&oauth))),
+        )
+        .route(
+            "/api/accounts/oauth/finish",
+            post(account_routes::oauth_finish).layer(Extension(Arc::clone(&oauth))),
+        )
         .route("/api/commands", get(read_routes::commands))
         .route(
             "/api/commands/{command_id}",
@@ -347,6 +396,16 @@ pub fn router(board: Arc<Board>) -> Router {
         .route("/a/{token}", get(artifact_routes::public_slash))
         .route("/a/{token}/", get(artifact_routes::public_main))
         .route("/a/{token}/{*path}", get(artifact_routes::public))
+        // The OAuth return of Jira and Linear (DL-173, design section 2.3).
+        // It is outside the guard on purpose: the provider redirect is a
+        // cross-site navigation, so the SameSite=Strict login cookie is not
+        // sent and no CSRF header can be added. The one-use `state` of an
+        // open transaction is its only credential, and the answer is a 303
+        // to a page that checks the cookie (`oauth_finish`).
+        .route(
+            "/oauth/callback",
+            get(crate::oauth::callback).layer(Extension(oauth)),
+        )
         .fallback(board_files)
         .with_state(board)
 }

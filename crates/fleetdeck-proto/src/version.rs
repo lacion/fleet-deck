@@ -76,6 +76,10 @@ pub mod feature {
     /// `assist.generate`: model help on the station (R10, DL-167).
     pub const ASSIST: &str = "assist.v1";
 
+    /// `accounts.*` and `issues.containers`: the connected GitHub, GitLab,
+    /// Jira and Linear accounts of a station (DL-173).
+    pub const ACCOUNTS: &str = "accounts.v1";
+
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
         CONTROL,
@@ -99,6 +103,7 @@ pub mod feature {
         PRECHECK,
         INTEGRATIONS,
         ASSIST,
+        ACCOUNTS,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];

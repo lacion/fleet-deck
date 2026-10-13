@@ -6,6 +6,7 @@ pub mod http;
 pub mod link;
 pub mod local;
 pub mod local_auth;
+pub mod oauth;
 pub mod peers;
 pub mod routing;
 pub mod scheduler;
