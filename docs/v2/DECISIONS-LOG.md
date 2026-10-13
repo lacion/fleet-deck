@@ -2489,3 +2489,14 @@ Owner review: pending.
 - Release: the owner cuts 2.0.0 when they decide. Until then, all work is on the `v2` branch.
 - Invalidates: the GATE-M1 G13 note that CI runs on every push (the workflow header is updated), and the "macOS CI lane" and "security delta" rows of `FLEETDECK-V2.md` R8 and R9, which are corrected in the same commit.
 - Owner review: decided by the owner.
+
+## DL-163 — Honest feedback: spawn failures, plan atomicity, refused controls, overlays, palette start row (R7, R6.3)
+
+- Context: a clone, worktree or setup failure ended the session with a `start_failed` error that only the session page showed (R7.1). The plan library marked a plan `executed` in a second call (R7.2). The refused-control rule and the overlay order were not written, and the hotkeys checked only the palette and the help (R7.3, R7.4).
+- Choice:
+  - R7.1: a session with status `ended` and `last_error.code = start_failed` gets an error banner in the app frame: "Session <title> did not start: <first line>", with Open and Dismiss. One banner for each session (by station and session id). A failure older than 10 minutes is not announced (a page that opens later); the card shows "Failed to start: <first line>" always. The text is shown as the station sent it.
+  - R7.2: the board marks the plan `executed` only after the spawn start returned ok (`markOnStart`); a failed start keeps it `proposed` and the spawn form shows the error. A proposed plan whose proposer session is still live shows "The proposer session <callsign> is still running; this starts a new session." The assign path marks after a successful mail only (as before).
+  - R7.3, R7.4: the rules are in `UI-DESIGN.md` §3.5. One hook `useOverlay()` marks an overlay as open; `useGlobalKeys` ignores every key but `Mod+K` and `Esc` while one is open. The drawer, the help, the palette and the two dialogs call it.
+  - R6.3: when no session matches, the palette shows "Start a session: “<query>”", which opens the spawn form with the query as the first prompt.
+- Tests: `web/src/app/feedback.test.tsx` (banner and card text, dedupe and window, plan mark on start, proposer note, palette row, key gating, the source scan for `useOverlay`).
+- Owner review: pending.

@@ -3,6 +3,7 @@ import { stationName } from '../board/fleet';
 import { STATUS_LANES } from '../board/fleet';
 import type { DeckSession, SessionKey, StationView } from '../gen';
 import { trapTab, useFocusReturn } from './focus';
+import { useOverlay } from './overlay';
 import { paletteMatches, sessionTitle } from './sessions';
 
 type Props = {
@@ -10,18 +11,30 @@ type Props = {
   readonly stations: readonly StationView[];
   readonly onOpen: (key: SessionKey) => void;
   readonly onClose: () => void;
+  /** R6.3: when no session matches, the row "Start a session" opens the spawn form with the query. */
+  readonly onStart?: ((prompt: string) => void) | undefined;
+  /** The query at the first render (tests). */
+  readonly initialQuery?: string;
 };
 
 const statusLabel = (card: DeckSession) =>
   STATUS_LANES.find((lane) => lane.status === card.status)?.label ?? card.status;
 
 /** "Go to session": type a name, pick with the arrow keys, Enter opens it. */
-export function Palette({ sessions, stations, onOpen, onClose }: Props) {
-  const [query, setQuery] = useState('');
+export function Palette({
+  sessions,
+  stations,
+  onOpen,
+  onClose,
+  onStart,
+  initialQuery = '',
+}: Props) {
+  const [query, setQuery] = useState(initialQuery);
   const [active, setActive] = useState(0);
   const root = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLInputElement>(null);
   useFocusReturn(root, input);
+  useOverlay();
   const matches = paletteMatches(sessions, query);
   const at = Math.min(active, Math.max(0, matches.length - 1));
   const pick = (card: DeckSession) => {
@@ -29,6 +42,13 @@ export function Palette({ sessions, stations, onOpen, onClose }: Props) {
     onOpen({ station_id: card.station_id, session_id: card.summary.session_id });
   };
   const optionId = (i: number) => `fd-palette-option-${i}`;
+  const prompt = query.trim();
+  const canStart = matches.length === 0 && prompt !== '' && onStart !== undefined;
+  const start = () => {
+    if (onStart === undefined) return;
+    onClose();
+    onStart(prompt);
+  };
   return (
     <div className="fd-overlay">
       <div
@@ -46,7 +66,7 @@ export function Palette({ sessions, stations, onOpen, onClose }: Props) {
           aria-label="Session name"
           aria-expanded="true"
           aria-controls="fd-palette-list"
-          aria-activedescendant={matches.length === 0 ? undefined : optionId(at)}
+          aria-activedescendant={matches.length === 0 && !canStart ? undefined : optionId(at)}
           placeholder="Go to session…"
           autoComplete="off"
           value={query}
@@ -68,6 +88,7 @@ export function Palette({ sessions, stations, onOpen, onClose }: Props) {
               e.preventDefault();
               const card = matches[at];
               if (card !== undefined) pick(card);
+              else if (canStart) start();
             }
           }}
         />
@@ -92,8 +113,25 @@ export function Palette({ sessions, stations, onOpen, onClose }: Props) {
               </span>
             </div>
           ))}
+          {canStart ? (
+            <div
+              id={optionId(0)}
+              role="option"
+              tabIndex={-1}
+              aria-selected="true"
+              data-action="start"
+              onClick={start}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') start();
+              }}
+            >
+              <span className="fd-palette-title">Start a session: “{prompt}”</span>
+            </div>
+          ) : null}
         </div>
-        {matches.length === 0 ? <p className="fd-empty">No matching sessions.</p> : null}
+        {matches.length === 0 && !canStart ? (
+          <p className="fd-empty">No matching sessions.</p>
+        ) : null}
       </div>
     </div>
   );

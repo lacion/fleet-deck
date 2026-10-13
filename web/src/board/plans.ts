@@ -2,7 +2,8 @@
 // session proposed (Claude `ExitPlanMode`, Codex plan items); the board
 // lists them, shows the text, sets the owner's status and starts a new
 // session with a plan as its first prompt.
-import type { DeckPlan, PlanStatus } from '../gen';
+import type { DeckPlan, DeckSession, PlanStatus } from '../gen';
+import type { SpawnActions } from '../spawn/spawn';
 
 type Get = (path: string) => Promise<unknown>;
 type Post = (path: string, body: unknown) => Promise<unknown>;
@@ -67,3 +68,42 @@ export const STATUS_LABEL: Readonly<Record<PlanStatus, string>> = {
   executed: 'Executed',
   archived: 'Archived',
 };
+
+/** The live session that proposed a plan, or `undefined` (R7.2). */
+export function liveProposer(
+  plan: DeckPlan,
+  sessions: readonly DeckSession[],
+): DeckSession | undefined {
+  return sessions.find(
+    (c) =>
+      c.station_id === plan.station_id &&
+      c.summary.session_id === plan.session_id &&
+      c.status !== 'ended' &&
+      c.status !== 'lost' &&
+      c.status !== 'unreachable',
+  );
+}
+
+/** The note under a proposed plan whose proposer session still runs. */
+export const proposerNote = (callsign: string) =>
+  `The proposer session ${callsign} is still running; this starts a new session.`;
+
+/**
+ * `spawn`, where a start that returned ok also marks the plan `executed` (R7.2). A failed start
+ * leaves the plan `proposed`. A failed mark goes to `onMarkError`; the session still started.
+ */
+export function markOnStart(
+  spawn: SpawnActions,
+  plans: PlanActions,
+  planId: string,
+  onMarkError: (e: unknown) => void,
+): SpawnActions {
+  return {
+    ...spawn,
+    start: async (...args) => {
+      const outcome = await spawn.start(...args);
+      if (outcome.ok) plans.mark(planId, 'executed').catch(onMarkError);
+      return outcome;
+    },
+  };
+}

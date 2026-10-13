@@ -167,6 +167,22 @@ Top bar (48 px, `--surface`, bottom border): `PanelLeft` icon button "Sessions" 
 - Palette and help: the v1 compose modal shell: top 12vh, width 560 px (max 92vw), `--surface`, radius 12 px, `--shadow-pop`, backdrop `rgba(0,0,0,.5)`. Palette input: 40 px, no border, 15 px; result rows 34 px (title + mono faint meta); the active row `--raised`. Help: key rows with `.fd-kbd`.
 - Screens (New session, Plans, Stations, More): content max-width 880 px, centered, padding 24px 24px 48px; screen title 18 px 600; each section a `.fd-panel` with padding 16 px.
 
+### 3.5 Refused controls, and the Esc and overlay order (R7.3, R7.4; DL-163)
+
+**Refused controls.** A control has one of three states:
+
+- The provider does not support the action: hide the control. Example: the model picker of a provider that reports no models.
+- A permission or a state blocks the action: show the control, disable it, and show the reason in text near the control (not only in a tooltip). Example: "Start a session" without the `drive` scope.
+- The action is allowed: show it enabled.
+
+Never leave a control that looks active and then fails with a silent error.
+
+**Overlays.** An overlay is a dialog (`role="dialog"`, `aria-modal="true"`), a menu or the sessions drawer. From top to bottom the order is: dialogs, menus, the drawer, the help, the palette.
+
+- `Esc` closes the topmost overlay only. A dialog, a menu and the drawer handle `Esc` themselves when the focus is inside; the global handler closes the next one in the order when the focus is outside.
+- Every overlay component calls `useOverlay()` (`web/src/app/overlay.ts`). While one is mounted, the board hotkeys (`j k / n f c t ?`) are off. `Mod+K` and `Esc` still work.
+- A test (`web/src/app/feedback.test.tsx`) reads the sources: each file with an `aria-modal="true"` dialog must call `useOverlay()`.
+
 ## 4. Fleet home (wave 1, worker A2)
 
 ### 4.1 Desktop and tablet

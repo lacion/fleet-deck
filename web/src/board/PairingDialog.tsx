@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useOverlay } from '../app/overlay';
 import type { PairingInvitation } from '../gen';
 import { expiresText, requestedName, type StationActions } from './pairing';
 
@@ -17,6 +18,7 @@ const message = (error: unknown) =>
  * stays in this dialog's memory only and is gone when the dialog closes.
  */
 export function PairingDialog({ actions, onClose }: Props) {
+  useOverlay();
   const [direction, setDirection] = useState<Direction>('station_dials');
   const [invitation, setInvitation] = useState<PairingInvitation | null>(null);
   const [pasted, setPasted] = useState('');

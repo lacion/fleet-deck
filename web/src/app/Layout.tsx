@@ -8,10 +8,13 @@ import {
   MessagesSquare,
   PanelLeft,
   Plus,
+  X,
   Zap,
 } from '../ui/icons';
 import type { Notice } from './chrome';
+import { failureText, type StartFailure } from './failures';
 import { trapTab, useFocusReturn } from './focus';
+import { useOverlay } from './overlay';
 import type { Route } from './routes';
 import type { Layout as LayoutName } from './viewport';
 
@@ -23,6 +26,10 @@ type Props = {
   readonly drawerOpen: boolean;
   readonly onDrawer: (open: boolean) => void;
   readonly notices: readonly Notice[];
+  /** The sessions that did not start (R7.1), one banner for each. */
+  readonly failures?: readonly StartFailure[];
+  readonly onOpenFailure?: (failure: StartFailure) => void;
+  readonly onDismissFailure?: (failure: StartFailure) => void;
   /** The terminal dock under the route (desktop and tablet). */
   readonly dock: ReactNode;
   /** The back button of the phone's terminals screen. */
@@ -45,6 +52,39 @@ export function Notices({ notices }: { readonly notices: readonly Notice[] }) {
         >
           {n.text}
         </p>
+      ))}
+    </div>
+  );
+}
+
+/** One error banner for each session that ended before it started (R7.1). */
+function StartFailures({
+  failures,
+  onOpen,
+  onDismiss,
+}: {
+  readonly failures: readonly StartFailure[];
+  readonly onOpen: ((failure: StartFailure) => void) | undefined;
+  readonly onDismiss: ((failure: StartFailure) => void) | undefined;
+}) {
+  if (failures.length === 0) return null;
+  return (
+    <div className="fd-notices">
+      {failures.map((f) => (
+        <div key={f.ref} className="fd-notice fd-notice-row" data-tone="error" role="alert">
+          <span className="fd-notice-text">{failureText(f)}</span>
+          <button type="button" className="fd-ghost fd-sm" onClick={() => onOpen?.(f)}>
+            Open
+          </button>
+          <button
+            type="button"
+            className="fd-iconbtn fd-sm"
+            aria-label={`Dismiss: session ${f.title} did not start`}
+            onClick={() => onDismiss?.(f)}
+          >
+            <Icon of={X} size={14} />
+          </button>
+        </div>
       ))}
     </div>
   );
@@ -98,6 +138,7 @@ function Drawer({
 }) {
   const root = useRef<HTMLDivElement>(null);
   useFocusReturn(root);
+  useOverlay();
   return (
     <div className="fd-drawer-layer">
       <button
@@ -138,6 +179,9 @@ export function Layout({
   drawerOpen,
   onDrawer,
   notices,
+  failures = [],
+  onOpenFailure,
+  onDismissFailure,
   dock,
   onTerminalsBack,
   overlays,
@@ -178,6 +222,7 @@ export function Layout({
           </header>
         ) : null}
         <Notices notices={notices} />
+        <StartFailures failures={failures} onOpen={onOpenFailure} onDismiss={onDismissFailure} />
         <div className="fd-route">{children}</div>
         {layout === 'phone' ? null : dock}
       </div>

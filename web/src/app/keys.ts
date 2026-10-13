@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { overlayOpen } from './overlay';
 
 /** The parts of a keyboard event that the rules read (a real event fits). */
 export type KeyLike = {
@@ -60,6 +61,13 @@ export function keyAction(e: KeyLike): KeyAction | null {
   return KEYS[e.key] ?? null;
 }
 
+/** While an overlay is open only Mod+K (toggles the palette) and Escape (closes the top one) work. */
+export function globalAction(e: KeyLike, overlay: boolean): KeyAction | null {
+  const action = keyAction(e);
+  if (overlay && action !== 'palette' && action !== 'escape') return null;
+  return action;
+}
+
 export type KeyHandlers = Readonly<Record<KeyAction, () => void>>;
 
 /** One document listener for the global keys (DL-140 §2.8). Handlers may change every render. */
@@ -68,7 +76,7 @@ export function useGlobalKeys(handlers: KeyHandlers): void {
   latest.current = handlers;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const action = keyAction(e);
+      const action = globalAction(e, overlayOpen());
       if (action === null) return;
       e.preventDefault();
       latest.current[action]();

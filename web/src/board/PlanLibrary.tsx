@@ -3,7 +3,7 @@ import { sessionTitle } from '../app/sessions';
 import type { DeckPlan, DeckSession, PlanStatus, SessionKey, StationView } from '../gen';
 import { sessionRef } from '../ui/localSet';
 import { stationName } from './fleet';
-import { type PlanActions, planTitle, STATUS_LABEL } from './plans';
+import { liveProposer, type PlanActions, planTitle, proposerNote, STATUS_LABEL } from './plans';
 
 /** The mail of the fleet that carries a plan to a live session. */
 type Assign = (
@@ -144,6 +144,7 @@ export function PlanLibrary({
         <ol className="fd-plan-list">
           {plans.map((p) => {
             const title = planTitle(p.markdown);
+            const proposer = p.status === 'proposed' ? liveProposer(p, sessions) : undefined;
             return (
               <li key={p.id} data-plan-status={p.status}>
                 <article aria-label={`Plan ${title}`}>
@@ -217,6 +218,11 @@ export function PlanLibrary({
                       </button>
                     ) : null}
                   </div>
+                  {proposer === undefined ? null : (
+                    <p className="fd-note">
+                      {proposerNote(proposer.summary.callsign ?? sessionTitle(proposer))}
+                    </p>
+                  )}
                   {sent !== null && sent.plan === p.id ? <p role="status">{sent.text}</p> : null}
                   {assigning !== null && assigning.plan === p.id ? (
                     <form className="fd-plan-assign" onSubmit={(event) => assign(p, event)}>
