@@ -25,7 +25,7 @@ import { useSessionController } from './controller';
 import { FilesPanel } from './FilesPanel';
 import { handoverFlow } from './handoverFlow';
 import { SessionHeader } from './SessionHeader';
-import { buildTimeline, slashCommands } from './timeline';
+import { buildTimeline, sessionModels, slashCommands } from './timeline';
 import { RevertStatus, TurnsPanel } from './TurnsPanel';
 import { finalizedTurns } from './workspace';
 
@@ -204,6 +204,7 @@ export function SessionView(props: SessionViewProps) {
         layout={layout}
         onNewShell={onNewShell}
         {...(sidePanel ? { filesPanel: { open: filesOpen, toggle: toggleFiles } } : {})}
+        models={sessionModels(events)}
       />
       {hold ? (
         <div className="fd-pane-notice" role="note">

@@ -1,7 +1,7 @@
 // DL-140: the session controls (controller flags, header, approval dock, composer, slash menu).
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import type { DeckSession, OpenRequest } from '../gen';
+import type { DeckSession, ModelChoice, OpenRequest } from '../gen';
 import { claudeCaps, minimalCaps } from '../testing/capabilities';
 import { card, station } from '../testing/fleet';
 import { ApprovalDock } from './ApprovalDock';
@@ -9,6 +9,7 @@ import { sessionActions } from './commands';
 import { Composer } from './Composer';
 import { type Controller, sessionFlags } from './controller';
 import { SessionHeader } from './SessionHeader';
+import { ModelPicker } from './SessionSettings';
 import { matchSlash } from './slash';
 
 const key = { station_id: 'station-a', session_id: 's1' };
@@ -461,5 +462,55 @@ describe('stop and resume commands (DL-140)', () => {
       { op: 'stop', session_id: 's1', how: 'kill' },
       { op: 'resume', session_id: 's1' },
     ]);
+  });
+});
+
+describe('model picker (DL-151)', () => {
+  const models: ModelChoice[] = [
+    { value: 'default', label: 'Default', description: 'The recommended model' },
+    { value: 'opus', label: 'Opus', description: null },
+  ];
+  const picker = (current: string | null, list: readonly ModelChoice[] | null, enabled = true) =>
+    renderToStaticMarkup(
+      <ModelPicker current={current} models={list} enabled={enabled} onSet={() => {}} />,
+    );
+
+  test('a list renders a select with the models and Other…', () => {
+    const html = picker('opus', models);
+    expect(html).toContain('<select');
+    expect(html).toContain('aria-label="Model"');
+    expect(html).toContain('Model (now opus)');
+    expect(html).toContain('>Default</option>');
+    expect(html).toContain('title="The recommended model"');
+    expect(html).toContain('>Other…</option>');
+    // no text form until "Other…" is chosen
+    expect(html).not.toContain('Set model');
+  });
+
+  test('the option that equals the current model is selected', () => {
+    const html = picker('opus', models);
+    expect(html).toMatch(/<option value="opus" selected/);
+    expect(html).not.toMatch(/<option value="" disabled="" selected/);
+  });
+
+  test('a current id that matches no value selects the placeholder', () => {
+    const html = picker('claude-opus-5-5[1m]', models);
+    expect(html).toMatch(/<option value="" disabled="" selected="">Choose a model<\/option>/);
+    expect(html).toContain('Model (now claude-opus-5-5[1m])');
+  });
+
+  test('without models the free-text form stays', () => {
+    for (const list of [null, []]) {
+      const html = picker(null, list);
+      expect(html).not.toContain('<select');
+      expect(html).toContain('Model (now unknown)');
+      expect(html).toContain('placeholder="Model id or alias"');
+      expect(html).toContain('Set model');
+    }
+  });
+
+  test('a disabled picker disables the select', () => {
+    expect(picker('opus', models, false)).toMatch(/<select[^>]*disabled/);
+    expect(picker('opus', null, false)).toMatch(/<input[^>]*disabled/);
   });
 });
