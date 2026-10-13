@@ -16,7 +16,8 @@ use fleetdeck_link::methods::code;
 use fleetdeck_link::revoke::{RotateError, check_rotation, finish_rotation};
 use fleetdeck_proto::command::{CommandResult, ReceiptState};
 use fleetdeck_proto::link::{
-    Outcome, PreflightQuery, ReceiptQuery, StationInfo, WireError, WorkspaceQuery, WorktreesQuery,
+    Outcome, PasteImage, PreflightQuery, ReceiptQuery, StationInfo, WireError, WorkspaceQuery,
+    WorktreesQuery,
 };
 use fleetdeck_proto::mutation::Mutation;
 use fleetdeck_proto::{Receipt, Reject, RejectCode};
@@ -88,6 +89,32 @@ async fn worktrees(ctx: &StationLink, params: serde_json::Value) -> Outcome {
     .await
     {
         Ok(list) => ok(list),
+        Err(e) => internal(e),
+    }
+}
+
+/// `files.write_temp` (DL-147): stores a pasted image in the paste
+/// directory. Error codes `unsupported` (no paste directory), `invalid_params`,
+/// `too_large`, `conflict`, `no_space` and `internal`.
+async fn write_temp(ctx: &StationLink, params: serde_json::Value) -> Outcome {
+    use crate::workspace::paste;
+    let query: PasteImage = match serde_json::from_value(params) {
+        Ok(q) => q,
+        Err(e) => return bad_params(e),
+    };
+    let Some(dir) = ctx.paste_dir.clone() else {
+        return Outcome::Err(WireError::new(
+            "unsupported",
+            "this station has no paste directory",
+        ));
+    };
+    let _guard = paste::LOCK.lock().await;
+    let task = tokio::task::spawn_blocking(move || {
+        paste::write(&dir, &query, std::time::SystemTime::now())
+    });
+    match task.await {
+        Ok(Ok(answer)) => ok(answer),
+        Ok(Err(e)) => Outcome::Err(WireError::new(e.code, e.message)),
         Err(e) => internal(e),
     }
 }
@@ -203,6 +230,7 @@ async fn read(ctx: &StationLink, req: InboundRequest) -> Outcome {
         "workspace.list" => workspaces(ctx, req.params).await,
         "workspace.worktrees" => worktrees(ctx, req.params).await,
         "workspace.preflight" => preflight(ctx, req.params).await,
+        "files.write_temp" => write_temp(ctx, req.params).await,
         "files.list" | "files.read" | "files.search" | "files.diff" => {
             file_method(ctx, &req.method, req.params).await
         }

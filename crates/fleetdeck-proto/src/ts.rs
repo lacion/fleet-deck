@@ -14,7 +14,8 @@ use ts_rs::{Config, TS};
 
 use crate::board::{
     AddStationRequest, BoardClientMessage, BoardServerMessage, CommandRequest, DeckCommand,
-    DeckSession, FleetExtras, PairingInvitation, SessionKey, StationView, WsTicket,
+    DeckSession, DeviceLink, DeviceLinkEntry, FleetExtras, PairingInvitation, SessionKey,
+    StationView, WsTicket,
 };
 use crate::capability::{Capabilities, Operation, Unsupported};
 use crate::command::{CommandEnvelope, DeckCommandState, Receipt};
@@ -25,8 +26,9 @@ use crate::files::{
     TurnDiffQuery,
 };
 use crate::link::{
-    ControlFrame, Preflight, PreflightQuery, ReceiptQuery, ReplayParams, Scope, StationInfo,
-    StreamMode, StreamStart, WorkspaceListing, WorkspaceQuery, WorktreeList, WorktreesQuery,
+    ControlFrame, PasteImage, PastedImage, Preflight, PreflightQuery, ReceiptQuery, ReplayParams,
+    Scope, StationInfo, StreamMode, StreamStart, WorkspaceListing, WorkspaceQuery, WorktreeList,
+    WorktreesQuery,
 };
 use crate::mutation::{
     CoordinatorCallEnvelope, CoordinatorQueryEnvelope, KeyRotationEnvelope,
@@ -75,6 +77,8 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         BoardServerMessage::export_all(&cfg),
         BoardClientMessage::export_all(&cfg),
         WsTicket::export_all(&cfg),
+        DeviceLink::export_all(&cfg),
+        DeviceLinkEntry::export_all(&cfg),
         PairingInvitation::export_all(&cfg),
         AddStationRequest::export_all(&cfg),
         ControlFrame::export_all(&cfg),
@@ -88,6 +92,8 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         WorktreesQuery::export_all(&cfg),
         PreflightQuery::export_all(&cfg),
         Preflight::export_all(&cfg),
+        PasteImage::export_all(&cfg),
+        PastedImage::export_all(&cfg),
         WorktreeList::export_all(&cfg),
         ReceiptQuery::export_all(&cfg),
         FileListQuery::export_all(&cfg),

@@ -6,6 +6,7 @@ pub mod boundary;
 pub mod checkpoint;
 pub mod files;
 pub mod git;
+pub mod paste;
 pub mod preflight;
 pub mod provision;
 pub mod restore;

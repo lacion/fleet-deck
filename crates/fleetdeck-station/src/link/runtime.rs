@@ -117,6 +117,24 @@ impl StationNode {
         backoff: BackoffPolicy,
         shells: Arc<Shells>,
     ) -> Result<Arc<Self>, NodeError> {
+        Self::start_with_paste_dir(manager, identity, name, listen, backoff, shells, None).await
+    }
+
+    /// [`StationNode::start_with_shells`] with the paste directory of
+    /// `files.write_temp` (DL-147). Without it the method answers
+    /// `unsupported`.
+    ///
+    /// # Errors
+    /// As [`StationNode::start`].
+    pub async fn start_with_paste_dir(
+        manager: Arc<SessionManager>,
+        identity: Arc<Identity>,
+        name: String,
+        listen: &[SocketAddr],
+        backoff: BackoffPolicy,
+        shells: Arc<Shells>,
+        paste_dir: Option<std::path::PathBuf>,
+    ) -> Result<Arc<Self>, NodeError> {
         let store = manager.store().clone();
         let peers = StationPeers::load(store.clone()).await?;
         let invitations = Invitations::new();
@@ -148,6 +166,7 @@ impl StationNode {
                 name,
                 shells,
                 coordinator: forward,
+                paste_dir,
             }),
             invitations,
             listening: tokio::sync::Mutex::default(),

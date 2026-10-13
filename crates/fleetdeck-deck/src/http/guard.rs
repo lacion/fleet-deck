@@ -114,9 +114,59 @@ impl Origins {
         Self(set)
     }
 
+    /// Every origin, in the order of a device link: the tailnet host names,
+    /// then the non-loopback addresses, then loopback and `localhost`.
+    #[must_use]
+    pub fn list(&self) -> Vec<String> {
+        let mut origins: Vec<String> = self.0.iter().cloned().collect();
+        origins.sort_by_key(|o| origin_kind(o));
+        origins
+    }
+
     #[must_use]
     pub fn allows(&self, origin: &str) -> bool {
         self.0.contains(&origin.to_ascii_lowercase())
+    }
+}
+
+/// What an origin names; the variants are in the order of
+/// [`Origins::list`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum OriginKind {
+    Tailnet,
+    Network,
+    ThisComputer,
+}
+
+/// The host of `https://host[:port]` without brackets and port.
+fn origin_host(origin: &str) -> &str {
+    let rest = origin.strip_prefix("https://").unwrap_or(origin);
+    if let Some(v6) = rest.strip_prefix('[') {
+        return v6.split(']').next().unwrap_or(v6);
+    }
+    rest.split(':').next().unwrap_or(rest)
+}
+
+fn origin_kind(origin: &str) -> OriginKind {
+    let host = origin_host(origin);
+    if host == "localhost" {
+        return OriginKind::ThisComputer;
+    }
+    match host.parse::<IpAddr>() {
+        Ok(ip) if ip.is_loopback() => OriginKind::ThisComputer,
+        Ok(_) => OriginKind::Network,
+        Err(_) => OriginKind::Tailnet,
+    }
+}
+
+/// The label of an origin in a device link: `Tailnet <host>`,
+/// `Network <ip>` or `This computer`.
+#[must_use]
+pub fn origin_label(origin: &str) -> String {
+    match origin_kind(origin) {
+        OriginKind::Tailnet => format!("Tailnet {}", origin_host(origin)),
+        OriginKind::Network => format!("Network {}", origin_host(origin)),
+        OriginKind::ThisComputer => "This computer".to_owned(),
     }
 }
 
@@ -386,6 +436,37 @@ mod tests {
             "null",
         ] {
             assert!(!o.allows(refused), "{refused}");
+        }
+    }
+
+    #[test]
+    fn a_device_link_lists_tailnet_then_network_then_this_computer() {
+        let o = origins(
+            &[
+                "127.0.0.1:7420",
+                "192.168.1.5:7420",
+                "[fd7a:115c:a1e0::1]:7420",
+            ],
+            Some("deck.tail1234.ts.net"),
+        );
+        let list = o.list();
+        let labels: Vec<String> = list.iter().map(|u| origin_label(u)).collect();
+        assert_eq!(
+            labels,
+            [
+                "Tailnet deck.tail1234.ts.net",
+                "Network 192.168.1.5",
+                "Network fd7a:115c:a1e0::1",
+                "This computer",
+                "This computer",
+            ]
+        );
+        assert_eq!(list[0], "https://deck.tail1234.ts.net:7420");
+        assert_eq!(list[1], "https://192.168.1.5:7420");
+        assert!(list[3..].contains(&"https://localhost:7420".to_owned()));
+        assert!(list[3..].contains(&"https://127.0.0.1:7420".to_owned()));
+        for origin in &list {
+            assert!(o.allows(origin), "{origin}");
         }
     }
 

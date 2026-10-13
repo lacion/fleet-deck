@@ -62,6 +62,15 @@ pub const API: &[ApiMethod] = &[
         Some(Scope::Read),
         true,
     ),
+    // A device link (DL-146): `admin`, and the handler also requires the
+    // owner's board login (DL-138).
+    m(
+        "auth.device_link",
+        Method::POST,
+        "/api/auth/device-link",
+        Some(Scope::Admin),
+        true,
+    ),
     m(
         "auth.session",
         Method::GET,
@@ -109,6 +118,15 @@ pub const API: &[ApiMethod] = &[
         Method::POST,
         "/api/stations/{station}/workspace/preflight",
         Some(Scope::Drive),
+        true,
+    ),
+    // A pasted image (DL-147): `admin`, and the handler also requires the
+    // owner's board login (DL-138).
+    m(
+        "files.paste",
+        Method::POST,
+        "/api/stations/{station}/paste",
+        Some(Scope::Admin),
         true,
     ),
     m(

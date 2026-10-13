@@ -51,6 +51,9 @@ pub mod feature {
     pub const WORKTREES: &str = "workspace.worktrees.v1";
     /// `workspace.preflight`: the Git access check of a clone URL (DL-144).
     pub const PREFLIGHT: &str = "workspace.preflight.v1";
+    /// `files.write_temp`: store a pasted image in the station's paste
+    /// directory (DL-147).
+    pub const WRITE_TEMP: &str = "files.write_temp.v1";
 
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
@@ -68,6 +71,7 @@ pub mod feature {
         IMPORT,
         WORKTREES,
         PREFLIGHT,
+        WRITE_TEMP,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];

@@ -47,6 +47,9 @@ pub struct StationLink {
     /// The deck side of the coordinator endpoint (M3 6-5): it follows the
     /// current deck link.
     pub coordinator: crate::coordinator::LinkForward,
+    /// The directory of `files.write_temp` (DL-147); `None` answers
+    /// `unsupported`.
+    pub paste_dir: Option<std::path::PathBuf>,
 }
 
 /// Serves `link` until it ends; returns why it ended.

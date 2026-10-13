@@ -12,6 +12,7 @@ pub mod fleet_routes;
 pub mod grant_routes;
 pub mod guard;
 pub mod methods;
+pub mod paste_routes;
 pub mod plan_routes;
 pub mod read_routes;
 pub mod shell_routes;
@@ -37,7 +38,7 @@ use hyper_util::service::TowerToHyperService;
 use tokio::task::{JoinHandle, JoinSet};
 use tokio_rustls::TlsAcceptor;
 
-pub use auth_routes::{LoginLimiter, SessionView};
+pub use auth_routes::{DeviceLinkLimiter, LoginLimiter, SessionView};
 pub use guard::{ApiError, Origins};
 pub use tls::BoardTls;
 
@@ -52,6 +53,12 @@ pub struct Board {
     pub link: Arc<DeckLink>,
     pub origins: Origins,
     pub limiter: LoginLimiter,
+    /// The rate limit of `POST /api/auth/device-link` (DL-146).
+    pub device_links: DeviceLinkLimiter,
+    /// The SHA-256 of the board certificate, for a device link.
+    pub certificate_sha256: String,
+    /// The board certificate is the deck's self-signed one.
+    pub self_signed: bool,
     /// Single-use WebSocket tickets of bearer clients.
     pub tickets: ws::Tickets,
     /// How often an open WebSocket checks its login ([`ws::RECHECK`]).
@@ -70,6 +77,7 @@ pub fn router(board: Arc<Board>) -> Router {
     }
     r.route("/api/auth/login", post(auth_routes::password))
         .route("/api/auth/link", post(auth_routes::link))
+        .route("/api/auth/device-link", post(auth_routes::device_link))
         .route("/api/auth/logout", post(auth_routes::logout))
         .route("/api/auth/session", get(auth_routes::session))
         .route(
@@ -100,6 +108,11 @@ pub fn router(board: Arc<Board>) -> Router {
         .route(
             "/api/stations/{station}/shells/{shell}/attach",
             get(shell_routes::attach),
+        )
+        .route(
+            "/api/stations/{station}/paste",
+            post(paste_routes::paste)
+                .layer(axum::extract::DefaultBodyLimit::max(paste_routes::MAX_BODY)),
         )
         .route("/api/stations/{station}/files/list", get(file_routes::list))
         .route("/api/stations/{station}/files/read", get(file_routes::read))

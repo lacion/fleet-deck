@@ -12,12 +12,14 @@ use axum::extract::{Extension, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use fleetdeck_core::Secret;
+use fleetdeck_proto::board::{DeviceLink, DeviceLinkEntry};
 use fleetdeck_proto::link::Scope;
 use serde::{Deserialize, Serialize};
 
 use super::Board;
-use super::guard::{ApiError, COOKIE};
-use crate::store::auth::SESSION_MAX_MS;
+use super::guard::{ApiError, COOKIE, origin_label, owner_only};
+use crate::local_auth::login_url;
+use crate::store::auth::{LOGIN_LINK_TTL_MS, SESSION_MAX_MS};
 use crate::store::{AuditResult, LoginMethod, NewAudit, NewLogin, Principal};
 
 /// Failed logins in one window before the deck refuses logins.
@@ -49,6 +51,37 @@ impl LoginLimiter {
 
     fn failed(&self, now: i64) {
         self.recent(now).push_back(now);
+    }
+}
+
+/// Successful device links in one window.
+pub const MAX_DEVICE_LINKS: usize = 10;
+
+/// The device links of the last window (DL-146).
+#[derive(Debug, Default)]
+pub struct DeviceLinkLimiter(Mutex<VecDeque<i64>>);
+
+impl DeviceLinkLimiter {
+    /// Records a link at `now`; false when the window holds
+    /// [`MAX_DEVICE_LINKS`] already.
+    fn reserve(&self, now: i64) -> bool {
+        let mut q = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        while q.front().is_some_and(|t| *t <= now - FAILURE_WINDOW_MS) {
+            q.pop_front();
+        }
+        if q.len() >= MAX_DEVICE_LINKS {
+            return false;
+        }
+        q.push_back(now);
+        true
+    }
+
+    /// Takes back the record of `reserve(now)` (the link was not made).
+    fn release(&self, now: i64) {
+        let mut q = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(i) = q.iter().rposition(|t| *t == now) {
+            q.remove(i);
+        }
     }
 }
 
@@ -191,6 +224,63 @@ pub async fn link(State(board): State<Arc<Board>>, Json(body): Json<LinkLogin>) 
     login(&board, "auth.link", LoginMethod::Link, valid).await
 }
 
+/// `POST /api/auth/device-link` (DL-146): a one-time login link for a new
+/// device, for the owner's board login only. One single-use token, one link
+/// for each board origin. Neither the token nor a URL goes to a log or to
+/// the audit row.
+///
+/// # Errors
+/// 403 `owner_only`; 429 `too_many_requests`; 500 `internal`.
+pub async fn device_link(
+    State(board): State<Arc<Board>>,
+    Extension(principal): Extension<Principal>,
+) -> Result<Json<DeviceLink>, ApiError> {
+    const ACTION: &str = "auth.device_link";
+    if let Err(e) = owner_only(&principal, "adds a device") {
+        board
+            .store
+            .audit_or_log(
+                NewAudit::new(principal.actor(), ACTION, AuditResult::Refused).detail(e.code),
+            )
+            .await;
+        return Err(e);
+    }
+    let now = board.store.now_ms();
+    if !board.device_links.reserve(now) {
+        return Err(ApiError::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "too_many_requests",
+            "Wait a minute before you add another device.",
+        ));
+    }
+    let token = match board.store.create_login_link().await {
+        Ok(token) => token,
+        Err(e) => {
+            board.device_links.release(now);
+            return Err(ApiError::internal(e));
+        }
+    };
+    board
+        .store
+        .audit_or_log(NewAudit::new(principal.actor(), ACTION, AuditResult::Ok))
+        .await;
+    let links = board
+        .origins
+        .list()
+        .into_iter()
+        .map(|origin| DeviceLinkEntry {
+            label: origin_label(&origin),
+            url: login_url(&origin, &token).expose().clone(),
+        })
+        .collect();
+    Ok(Json(DeviceLink {
+        links,
+        expires_at: now + LOGIN_LINK_TTL_MS,
+        certificate_sha256: board.certificate_sha256.clone(),
+        self_signed: board.self_signed,
+    }))
+}
+
 /// `POST /api/auth/logout`: ends the cookie login.
 pub async fn logout(
     State(board): State<Arc<Board>>,
@@ -230,6 +320,21 @@ pub async fn session(Extension(principal): Extension<Principal>) -> Json<Session
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_eleventh_device_link_in_a_minute_waits() {
+        let l = DeviceLinkLimiter::default();
+        for t in 0..10 {
+            assert!(l.reserve(t * 1000));
+        }
+        assert!(!l.reserve(10_000));
+        // A link that was not made frees its place.
+        l.release(9000);
+        assert!(l.reserve(10_001));
+        // The first link leaves the window.
+        assert!(l.reserve(60_000));
+        assert!(!l.reserve(60_001));
+    }
 
     #[test]
     fn five_failures_lock_logins_until_the_window_passes() {

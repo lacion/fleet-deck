@@ -41,6 +41,7 @@ ed25519-dalek = { version = "3", features = ["pkcs8", "alloc"] }
 async-trait = "0.1"
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring"] }
 ring = "0.17"
+base64 = "0.22.1"
 rusqlite = { version = "0.40", features = ["bundled"] }
 rusqlite_migration = "2.6"
 rustls-pki-types = "1"
