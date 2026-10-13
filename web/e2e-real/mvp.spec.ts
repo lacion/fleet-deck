@@ -120,16 +120,14 @@ async function spawn(station: Station, title: string, prompt: string): Promise<s
     .getByRole('combobox', { name: 'Station', exact: true })
     .selectOption({ label: station.name });
   await expect(form.getByLabel('Provider')).toContainText(`${PROVIDER} · claude · 2.1.999`);
-  await form.getByRole('button', { name: 'Browse the station' }).click();
+  await form.getByRole('button', { name: 'Browse…' }).click();
   // The root list shows the station's absolute allowed roots.
   await form.getByRole('button', { name: `Open ${station.home}/projects` }).click();
   await expect(form.getByRole('button', { name: 'Open demo' })).toContainText('git');
   await form.getByRole('button', { name: 'Open demo' }).click();
-  // Wait for the demo listing: "Use this directory" takes the path on
-  // screen, and the projects listing has the same button (DL-069).
-  await expect(form.locator('.fd-path')).toHaveText(station.workspace);
-  await form.getByRole('button', { name: 'Use this directory' }).click();
-  await expect(form).toContainText(`Chosen: ${station.workspace}`);
+  await expect(form.getByRole('navigation', { name: 'Folder path' })).toContainText('demo');
+  await form.getByRole('button', { name: 'Use this folder' }).click();
+  await expect(form.getByLabel('Directory path')).toHaveValue(station.workspace);
   await form.getByLabel('Title (optional)').fill(title);
   await form.getByLabel('First prompt (optional)').fill(prompt);
   expect(await fitsWidth()).toBe(true);
@@ -190,7 +188,9 @@ test('the board logs in and pairs a dialing and a listening station', async () =
   await expect(dialog.getByRole('status')).toHaveText('Paired station alpha.');
   await dialog.getByRole('button', { name: 'Close' }).click();
 
-  await expect(page.getByRole('heading', { name: 'Stations 2' })).toBeVisible();
+  await expect(
+    page.getByRole('region', { name: 'Stations' }).getByRole('heading', { level: 3 }),
+  ).toHaveCount(2);
   for (const name of ['alpha', 'bravo']) {
     const st = stationCard(name);
     await expect(st).toContainText('Link up');

@@ -97,6 +97,10 @@ async fn a_save_and_a_secret_set_register_the_files_that_they_replace() {
             "elevated": true,
         })
     };
+    // The control file exists before any save, so a replaced file that is
+    // deleted cannot give its inode number to it (a reused inode is refused).
+    let plain = projects.join("plain.txt");
+    std::fs::write(&plain, "x").unwrap();
     // A secret, linked into the workspace, then replaced by a second one.
     let rev = revision(&deck.control).await;
     ok(call(
@@ -165,8 +169,6 @@ async fn a_save_and_a_secret_set_register_the_files_that_they_replace() {
         assert!(refused(&again, link), "{link:?}");
     }
     // The control: a file that is not a credential is not refused.
-    let plain = projects.join("plain.txt");
-    std::fs::write(&plain, "x").unwrap();
     assert!(!refused(&again, &plain));
 }
 

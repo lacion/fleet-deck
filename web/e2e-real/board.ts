@@ -137,7 +137,9 @@ export class Phone {
     await dialog.getByRole('button', { name: 'Pair station' }).click();
     await expect(dialog.getByRole('status')).toHaveText(`Paired station ${listening.name}.`);
     await dialog.getByRole('button', { name: 'Close' }).click();
-    await expect(page.getByRole('heading', { name: 'Stations 2' })).toBeVisible();
+    await expect(
+      page.getByRole('region', { name: 'Stations' }).getByRole('heading', { level: 3 }),
+    ).toHaveCount(2);
   }
 
   /** Starts a session from the spawn form with the provider whose label is
@@ -150,14 +152,12 @@ export class Phone {
       .getByRole('combobox', { name: 'Station', exact: true })
       .selectOption({ label: station.name });
     await form.getByRole('combobox', { name: 'Provider' }).selectOption({ label: provider });
-    await form.getByRole('button', { name: 'Browse the station' }).click();
+    await form.getByRole('button', { name: 'Browse…' }).click();
     await form.getByRole('button', { name: `Open ${station.home}/projects` }).click();
     await form.getByRole('button', { name: 'Open demo' }).click();
-    // Wait for the demo listing: "Use this directory" takes the path on
-    // screen, and the projects listing has the same button (DL-069).
-    await expect(form.locator('.fd-path')).toHaveText(station.workspace);
-    await form.getByRole('button', { name: 'Use this directory' }).click();
-    await expect(form).toContainText(`Chosen: ${station.workspace}`);
+    await expect(form.getByRole('navigation', { name: 'Folder path' })).toContainText('demo');
+    await form.getByRole('button', { name: 'Use this folder' }).click();
+    await expect(form.getByLabel('Directory path')).toHaveValue(station.workspace);
     await form.getByLabel('Title (optional)').fill(title);
     await form.getByLabel('First prompt (optional)').fill(prompt);
     expect(await this.fitsWidth()).toBe(true);
