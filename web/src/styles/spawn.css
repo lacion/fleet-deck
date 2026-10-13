@@ -206,3 +206,38 @@
     align-items: stretch;
   }
 }
+.fd-spawn-branch {
+  display: grid;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.fd-spawn-branch-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: var(--sp-3);
+  min-width: 0;
+}
+.fd-spawn-url {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.fd-spawn-access {
+  display: grid;
+  gap: var(--sp-2);
+  margin: 0;
+  min-width: 0;
+}
+.fd-spawn-access p {
+  margin: 0;
+}
+.fd-spawn-access .fd-code {
+  max-height: 12rem;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+.fd-spawn-url > .fd-spawn-access {
+  grid-column: 1 / -1;
+}

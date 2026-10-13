@@ -2,11 +2,16 @@ import { useEffect, useState } from 'react';
 import type { DeckSession, SessionKey, StationView, WorkspaceListing } from '../gen';
 import type { Freshness } from '../runtime/state';
 import { Icon, Pin, PinOff } from '../ui/icons';
+import { BranchFields } from './BranchFields';
+import { CloneAccess } from './CloneAccess';
 import {
+  baseProblem,
   batchPrompts,
+  branchProblem,
   importIdProblem,
   lastParts,
   providerLabel,
+  type PreflightResult,
   readPins,
   recentDirs,
   type SpawnActions,
@@ -14,6 +19,7 @@ import {
   spawnModes,
   spawnTargets,
   togglePin,
+  workspaceRequest,
   writePins,
 } from './spawn';
 
@@ -65,6 +71,14 @@ export function SpawnForm({
   const [place, setPlace] = useState<'here' | 'worktree' | 'clone'>('here');
   const [cloneUrl, setCloneUrl] = useState('');
   const [cloneName, setCloneName] = useState('');
+  const [branch, setBranch] = useState('');
+  const [base, setBase] = useState('');
+  const [access, setAccess] = useState<{
+    readonly stationId: string;
+    readonly url: string;
+    readonly result: PreflightResult | null;
+  } | null>(null);
+  const [checking, setChecking] = useState(false);
   const [batch, setBatch] = useState(false);
   const [coordinator, setCoordinator] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -101,6 +115,29 @@ export function SpawnForm({
     browse(path);
   };
   const importProblem = importId.trim() === '' ? null : importIdProblem(importId.trim());
+  const branchName = branch.trim();
+  const branchFields = place === 'worktree' && !batch;
+  const refProblem =
+    branchFields &&
+    branchName !== '' &&
+    (branchProblem(branchName) !== null ||
+      (base.trim() !== '' && baseProblem(base.trim()) !== null));
+  // The access result belongs to the station and the URL that it checked.
+  const accessResult =
+    access !== null && access.stationId === stationId && access.url === cloneUrl.trim()
+      ? access.result
+      : null;
+  const checkAccess = () => {
+    if (actions === undefined || station === undefined || checking) return;
+    const id = station.station_id;
+    const url = cloneUrl.trim();
+    setChecking(true);
+    setAccess(null);
+    void actions
+      .preflight(id, url)
+      .then((result) => setAccess({ stationId: id, url, result }))
+      .finally(() => setChecking(false));
+  };
   const cloneReady =
     place !== 'clone' ||
     importId.trim() !== '' ||
@@ -112,7 +149,8 @@ export function SpawnForm({
     station !== undefined &&
     provider !== undefined &&
     cwd !== null &&
-    cloneReady;
+    cloneReady &&
+    !refProblem;
   // Say why the start button is off: a disabled button alone looks like a
   // button that does nothing (owner report after M3).
   const missing = [
@@ -124,6 +162,12 @@ export function SpawnForm({
       ? 'choose a directory (Browse the station, open a folder, then Use this directory)'
       : null,
     cloneReady ? null : 'enter the clone URL and the new directory name',
+    branchFields && branchName !== '' && branchProblem(branchName) !== null
+      ? 'fix the branch name'
+      : null,
+    branchFields && branchName !== '' && base.trim() !== '' && baseProblem(base.trim()) !== null
+      ? 'fix the base'
+      : null,
   ].filter((m): m is string => m !== null);
 
   return (
@@ -179,11 +223,7 @@ export function SpawnForm({
             };
             const workspace = importing
               ? null
-              : place === 'clone'
-                ? { kind: 'clone' as const, url: cloneUrl.trim() }
-                : place === 'worktree' || batch
-                  ? { kind: 'worktree' as const }
-                  : null;
+              : workspaceRequest(place, batch, cloneUrl, branch, base);
             const prompts = batch && place !== 'clone' && !importing ? batchLines : [prompt];
             const id = station.station_id;
             void (async () => {
@@ -337,12 +377,23 @@ export function SpawnForm({
                 <option value="clone">Clone a URL into a new directory here</option>
               </select>
             </label>
+            {branchFields ? (
+              <BranchFields branch={branch} base={base} onBranch={setBranch} onBase={setBase} />
+            ) : null}
             {place === 'clone' ? (
               <>
-                <label>
-                  Clone URL
-                  <input value={cloneUrl} onChange={(event) => setCloneUrl(event.target.value)} />
-                </label>
+                <div className="fd-spawn-url">
+                  <label>
+                    Clone URL
+                    <input value={cloneUrl} onChange={(event) => setCloneUrl(event.target.value)} />
+                  </label>
+                  <CloneAccess
+                    url={cloneUrl}
+                    checking={checking}
+                    result={accessResult}
+                    onCheck={checkAccess}
+                  />
+                </div>
                 <label>
                   New directory name
                   <input value={cloneName} onChange={(event) => setCloneName(event.target.value)} />

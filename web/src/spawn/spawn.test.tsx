@@ -1,12 +1,16 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { App } from '../App';
+import { BranchFields } from './BranchFields';
+import { CloneAccess } from './CloneAccess';
 import { SpawnForm } from './SpawnForm';
 import type { StationInfo, StationView, WorkspaceListing } from '../gen';
 import { claudeCaps, codexCaps } from '../testing/capabilities';
 import { card, station } from '../testing/fleet';
 import {
+  baseProblem,
   batchPrompts,
+  branchProblem,
   importIdProblem,
   lastParts,
   listingView,
@@ -16,6 +20,7 @@ import {
   spawnModes,
   spawnTargets,
   togglePin,
+  workspaceRequest,
 } from './spawn';
 
 const info = (extra: Partial<StationInfo> = {}): StationInfo => ({
@@ -401,5 +406,135 @@ describe('spawn form (P4-4)', () => {
     const list = (full as Record<string, string[]>)['a'] ?? [];
     expect(list).toHaveLength(20);
     expect(list[0]).toBe('/p/24');
+  });
+
+  test('branchProblem and baseProblem mirror the station rules (DL-144)', () => {
+    expect(branchProblem('feature/PROJ-1')).toBeNull();
+    expect(branchProblem('a'.repeat(200))).toBeNull();
+    for (const bad of ['-x', 'a b', 'a..b', 'a~1', 'x.lock', 'a/', 'a\tb', 'a:b', 'a[b', '']) {
+      expect(branchProblem(bad)).toBe('the branch name is not valid');
+    }
+    expect(branchProblem('a'.repeat(201))).toBe('the branch name is not valid');
+    expect(baseProblem('HEAD~1')).toBeNull();
+    expect(baseProblem('origin/main')).toBeNull();
+    expect(baseProblem('-x')).toBe('the base is not valid');
+    expect(baseProblem('a b')).toBe('the base is not valid');
+    expect(baseProblem('')).toBe('the base is not valid');
+  });
+
+  test('workspaceRequest builds the workspace of a start (DL-144)', () => {
+    expect(workspaceRequest('here', false, '', '', '')).toBeNull();
+    expect(workspaceRequest('here', true, '', 'x', 'y')).toEqual({ kind: 'worktree' });
+    expect(workspaceRequest('worktree', false, '', '', '')).toEqual({ kind: 'worktree' });
+    expect(workspaceRequest('worktree', false, '', ' feat/x ', ' main ')).toEqual({
+      kind: 'worktree',
+      branch: 'feat/x',
+      base: 'main',
+    });
+    expect(workspaceRequest('worktree', false, '', 'feat/x', '  ')).toEqual({
+      kind: 'worktree',
+      branch: 'feat/x',
+    });
+    // A base needs a branch.
+    expect(workspaceRequest('worktree', false, '', '  ', 'main')).toEqual({ kind: 'worktree' });
+    // A batch never carries a branch.
+    expect(workspaceRequest('worktree', true, '', 'feat/x', 'main')).toEqual({ kind: 'worktree' });
+    expect(workspaceRequest('clone', false, ' https://h/o/r.git ', 'x', 'y')).toEqual({
+      kind: 'clone',
+      url: 'https://h/o/r.git',
+    });
+  });
+
+  test('the branch fields show Base only after a branch, and the problem of a bad name', () => {
+    const render = (branch: string, base = '') =>
+      renderToStaticMarkup(
+        <BranchFields branch={branch} base={base} onBranch={() => {}} onBase={() => {}} />,
+      );
+    const empty = render('');
+    expect(empty).toContain('placeholder="fd/&lt;callsign&gt;, new"');
+    expect(empty).toContain('Empty: a new branch fd/&lt;callsign&gt;.');
+    expect(empty).not.toContain('Base');
+    expect(empty).not.toContain('role="alert"');
+    expect(render('   ')).not.toContain('Base');
+    const named = render('feature/PROJ-1');
+    expect(named).toContain('Base');
+    expect(named).toContain('placeholder="HEAD"');
+    expect(named).not.toContain('role="alert"');
+    expect(render('a..b')).toContain('<span role="alert">The branch name is not valid.</span>');
+    expect(render('feat', '-x')).toContain('<span role="alert">The base is not valid.</span>');
+  });
+
+  test('the clone access check: idle, checking, ok, failed and error states (DL-144)', () => {
+    const render = (props: Partial<Parameters<typeof CloneAccess>[0]>) =>
+      renderToStaticMarkup(
+        <CloneAccess
+          url="https://h/o/r.git"
+          checking={false}
+          result={null}
+          onCheck={() => {}}
+          {...props}
+        />,
+      );
+    expect(render({})).toContain('>Check access</button>');
+    expect(render({})).not.toContain('disabled');
+    expect(render({ url: '  ' })).toContain('disabled=""');
+    const busy = render({ checking: true });
+    expect(busy).toContain('disabled=""');
+    expect(busy).toContain('>Checking…</button>');
+    const ok = render({ result: { ok: true, preflight: { ok: true, message: '', hint: null } } });
+    expect(ok).toContain('<span class="fd-badge" data-tone="ok">Access OK</span>');
+    expect(ok).toContain('The station can read this repository.');
+    const failed = render({
+      result: {
+        ok: true,
+        preflight: {
+          ok: false,
+          message: 'fatal: Authentication failed',
+          hint: 'Add a deploy key.',
+        },
+      },
+    });
+    expect(failed).toContain('<p role="alert">Add a deploy key.</p>');
+    expect(failed).toContain('<summary>Git said</summary>');
+    expect(failed).toContain('<pre class="fd-code">fatal: Authentication failed</pre>');
+    const bare = render({
+      result: { ok: true, preflight: { ok: false, message: '', hint: null } },
+    });
+    expect(bare).toContain('<p role="alert">The station cannot read this repository.</p>');
+    expect(bare).not.toContain('Git said');
+    const error = render({ result: { ok: false, text: 'The station did not answer.' } });
+    expect(error).toContain('role="alert">The station did not answer.</p>');
+  });
+
+  test('spawnActions preflight posts the URL and maps a bad reply and an error (DL-144)', async () => {
+    const calls: { path: string; body: unknown }[] = [];
+    const make = (reply: () => unknown) =>
+      spawnActions(
+        async () => listing,
+        async (path, body) => {
+          calls.push({ path, body });
+          return reply();
+        },
+        ['drive'],
+      );
+    const pre = { ok: false, message: 'denied', hint: null };
+    const good = await make(() => pre).preflight('st/a', 'https://h/o/r.git');
+    expect(good).toEqual({ ok: true, preflight: pre });
+    expect(calls[0]).toEqual({
+      path: '/api/stations/st%2Fa/workspace/preflight',
+      body: { url: 'https://h/o/r.git' },
+    });
+    expect(await make(() => ({ ok: 'yes' })).preflight('a', 'u')).toEqual({
+      ok: false,
+      text: 'The station gave an answer that the board cannot read.',
+    });
+    expect(await make(() => null).preflight('a', 'u')).toEqual({
+      ok: false,
+      text: 'The station gave an answer that the board cannot read.',
+    });
+    const failing = make(() => {
+      throw new Error('station_unreachable');
+    });
+    expect(await failing.preflight('a', 'u')).toEqual({ ok: false, text: 'station_unreachable' });
   });
 });
