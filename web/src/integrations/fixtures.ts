@@ -113,6 +113,9 @@ export function fakeActions(extra: Partial<IntegrationActions> = {}): Integratio
     commentPr: never,
     reviewPr: never,
     openPr: never,
+    assignSession: never,
+    clearSessionProject: never,
+    autoSessionProject: never,
     ...extra,
   };
 }

@@ -24,7 +24,7 @@ import {
   Workflow,
   Zap,
 } from '../ui/icons';
-import { useIntegrations } from '../integrations/context';
+import { useIntegrations, useProjects } from '../integrations/context';
 import { useSettings } from '../settings/context';
 import { FolderGit2 } from '../integrations/icons';
 import { shortModel } from '../ui/format';
@@ -159,14 +159,36 @@ function Rows({
   );
 }
 
+/** DL-176: how the sidebar groups the sessions. A browser setting, like the home grouping. */
+export type SidebarGroup = 'station' | 'project';
+const GROUP_KEY = 'fd-sidebar-group';
+
+function readGroup(): SidebarGroup {
+  try {
+    return localStorage.getItem(GROUP_KEY) === 'project' ? 'project' : 'station';
+  } catch {
+    return 'station';
+  }
+}
+
+function writeGroup(group: SidebarGroup) {
+  try {
+    localStorage.setItem(GROUP_KEY, group);
+  } catch {
+    // Storage is blocked: the grouping still works for this visit.
+  }
+}
+
 function Groups({
   model,
+  by,
   route,
   now,
   withNeeds,
   starred,
 }: {
   model: SidebarModel;
+  by: SidebarGroup;
   route: Route;
   now: number;
   withNeeds: boolean;
@@ -185,17 +207,22 @@ function Groups({
         <section
           key={group.id}
           className="fd-sgroup"
-          data-station={group.id}
-          aria-label={`Station ${group.name}`}
+          data-station={by === 'station' ? group.id : undefined}
+          data-project={by === 'project' ? group.id : undefined}
+          aria-label={`${by === 'project' ? 'Project' : 'Station'} ${group.name}`}
         >
           <h3 className="fd-sgroup-title">
-            <span
-              className="fd-rdot"
-              data-reachable={group.reachable ? 'true' : 'false'}
-              aria-hidden="true"
-            />
+            {by === 'project' ? null : (
+              <span
+                className="fd-rdot"
+                data-reachable={group.reachable ? 'true' : 'false'}
+                aria-hidden="true"
+              />
+            )}
             <span className="fd-sgroup-name fd-label">{group.name}</span>
-            <span className="fd-vh">{group.reachable ? 'reachable' : 'unreachable'}</span>
+            {by === 'project' ? null : (
+              <span className="fd-vh">{group.reachable ? 'reachable' : 'unreachable'}</span>
+            )}
             <span className="fd-count">{group.count}</span>
           </h3>
           <Rows cards={group.live} route={route} now={now} starred={starred} />
@@ -257,7 +284,17 @@ export function Sidebar({
   const now = useNow(givenNow, 30000);
   const starred = priority.use();
   const archived = archivedSet.use();
-  const model = sidebarModel(sessions, stations, query, { starred, archived });
+  const projects = useProjects();
+  const [group, setGroup] = useState<SidebarGroup>(readGroup);
+  // The choice "Project" shows only while the board knows a project (the owner's login).
+  const by: SidebarGroup = group === 'project' && projects.length > 0 ? 'project' : 'station';
+  const model = sidebarModel(
+    sessions,
+    stations,
+    query,
+    { starred, archived },
+    by === 'project' ? projects : undefined,
+  );
   const empty = sessions.length === 0;
   const nothingFound =
     !empty && model.groups.length === 0 && model.needs.length === 0 && model.archived.length === 0;
@@ -337,6 +374,25 @@ export function Sidebar({
             {model.needs.length === 1 ? '1 needs you' : `${model.needs.length} need you`}
           </a>
         ) : null}
+        {projects.length > 0 ? (
+          <div className="fd-sidebar-group" role="group" aria-label="Group sessions by">
+            <span className="fd-label">Group</span>
+            {(['station', 'project'] as const).map((choice) => (
+              <button
+                key={choice}
+                type="button"
+                className="fd-chip"
+                aria-pressed={by === choice}
+                onClick={() => {
+                  setGroup(choice);
+                  writeGroup(choice);
+                }}
+              >
+                {choice === 'station' ? 'Station' : 'Project'}
+              </button>
+            ))}
+          </div>
+        ) : null}
       </div>
       <div className="fd-sidebar-list">
         {empty ? (
@@ -344,7 +400,14 @@ export function Sidebar({
         ) : nothingFound ? (
           <p className="fd-empty">No matching sessions.</p>
         ) : (
-          <Groups model={model} route={route} now={now} withNeeds={!full} starred={starred} />
+          <Groups
+            model={model}
+            by={by}
+            route={route}
+            now={now}
+            withNeeds={!full}
+            starred={starred}
+          />
         )}
       </div>
       {full ? (

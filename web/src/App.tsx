@@ -239,12 +239,15 @@ export function App({
   const [spawnStation, setSpawnStation] = useState<string | null>(null);
   // R3: the directory that "Fix checks" of a project gives the spawn form.
   const [spawnCwd, setSpawnCwd] = useState<string | null>(null);
+  // DL-176: "New session in this project" opens the form with a new worktree.
+  const [spawnWorktree, setSpawnWorktree] = useState(false);
   useEffect(() => {
     if (route.name !== 'new') {
       setPlanPrompt('');
       setPlanId(null);
       setSpawnStation(null);
       setSpawnCwd(null);
+      setSpawnWorktree(false);
     }
   }, [route.name]);
   // The `c` key asks the fleet home to open its panel on Mail & tasks.
@@ -478,10 +481,11 @@ export function App({
         return (
           <div className="fd-screen">
             <SpawnForm
-              key={`${planPrompt}|${spawnStation ?? ''}|${spawnCwd ?? ''}`}
+              key={`${planPrompt}|${spawnStation ?? ''}|${spawnCwd ?? ''}|${spawnWorktree}`}
               initialPrompt={planPrompt}
               initialStation={spawnStation ?? undefined}
               initialCwd={spawnCwd ?? undefined}
+              initialPlace={spawnWorktree ? 'worktree' : 'here'}
               sessions={sessions}
               stations={stations}
               freshness={freshness}
@@ -599,6 +603,15 @@ export function App({
               setSpawnCwd(cwd);
               navigate({ name: 'new' });
             }}
+            onNewSession={(station, cwd) => {
+              setPlanPrompt('');
+              setPlanId(null);
+              setSpawnStation(station);
+              setSpawnCwd(cwd);
+              setSpawnWorktree(true);
+              navigate({ name: 'new' });
+            }}
+            freshness={freshness}
           />
         );
       case 'settings':

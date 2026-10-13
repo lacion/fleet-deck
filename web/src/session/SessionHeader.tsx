@@ -15,6 +15,7 @@ import {
   Ellipsis,
   FileText,
   Folder,
+  FolderGit2,
   GitCompare,
   Icon,
   Pencil,
@@ -39,11 +40,12 @@ import { priority, sessionRef } from '../ui/localSet';
 import { useNow } from '../ui/useNow';
 import type { Outcome, SessionActions } from './commands';
 import type { Controller } from './controller';
-import { useProjects } from '../integrations/context';
+import { useIntegrations, useProjects } from '../integrations/context';
 import { GitPullRequest } from '../integrations/icons';
 import { projectOfSession } from '../integrations/model';
 import { OpenPrDialog } from '../integrations/OpenPrDialog';
 import { Badges, Place } from './HeaderBadges';
+import { MoveToProject } from './MoveToProject';
 import { RenameForm } from './RenameForm';
 import { ModeLadder, ModelPicker } from './SessionSettings';
 
@@ -234,6 +236,9 @@ export function SessionHeader({
   // R3.9 (DL-164): a pull request from the session's branch, for a project with a forge.
   const prProject = projectOfSession(useProjects(), session.station_id, s);
   const [prOpen, setPrOpen] = useState(false);
+  // DL-176: the owner moves a session to a project; the deck needs the drive scope.
+  const canMove = useIntegrations()?.actions.canDrive === true && !guest;
+  const [moving, setMoving] = useState(false);
   const run = (name: string, call: (a: SessionActions) => Promise<Outcome>) => {
     if (actions) controller.act(name, () => call(actions));
   };
@@ -398,6 +403,17 @@ export function SessionHeader({
           }}
         >
           <Icon of={Users} /> Share session…
+        </button>
+      ) : null}
+      {canMove ? (
+        <button
+          type="button"
+          onClick={() => {
+            close();
+            setMoving(true);
+          }}
+        >
+          <Icon of={FolderGit2} /> Move to project…
         </button>
       ) : null}
       {canArchive ? (
@@ -757,6 +773,7 @@ export function SessionHeader({
           </button>
         </div>
       ) : null}
+      {moving ? <MoveToProject session={session} onClose={() => setMoving(false)} /> : null}
       {prOpen && prProject !== undefined ? (
         <OpenPrDialog project={prProject} session={session} onClose={() => setPrOpen(false)} />
       ) : null}

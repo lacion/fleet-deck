@@ -58,6 +58,12 @@ export type IntegrationActions = {
   commentPr(id: string, number: number, body: CommentBody): Promise<WriteResult>;
   reviewPr(id: string, number: number, body: ReviewBody): Promise<WriteResult>;
   openPr(id: string, body: PrCreateBody): Promise<WriteResult>;
+  /** DL-176: the session belongs to the project (a project of the session's station). */
+  assignSession(id: string, station: string, session: string): Promise<void>;
+  /** DL-176: the session has no project, whatever its folder. */
+  clearSessionProject(station: string, session: string): Promise<void>;
+  /** DL-176: back to the automatic match by folder. */
+  autoSessionProject(station: string, session: string): Promise<void>;
 };
 
 const record = (v: unknown): v is Record<string, unknown> =>
@@ -74,6 +80,10 @@ const seg = encodeURIComponent;
 
 /** `/api/projects/<id>`: the base of one project's routes. */
 export const projectPath = (id: string): string => `/api/projects/${seg(id)}`;
+
+/** `/api/sessions/<station>/<session>`: the base of the routes of one session. */
+const sessionPath = (station: string, session: string): string =>
+  `/api/sessions/${seg(station)}/${seg(session)}`;
 
 /** `?source=&query=&mine=&status=` of the issue list, only the filters that are set. */
 export function issuesPath(id: string, filter: IssueQuery = {}): string {
@@ -181,5 +191,14 @@ export function integrationActions(
     reviewPr: (id, number, body) =>
       result(io.post(`${projectPath(id)}/prs/${number}/reviews`, body)),
     openPr: (id, body) => result(io.post(`${projectPath(id)}/prs`, body)),
+    assignSession: async (id, station, session) => {
+      await io.post(`${projectPath(id)}/sessions/assign`, { station, session_id: session });
+    },
+    clearSessionProject: async (station, session) => {
+      await io.post(`${sessionPath(station, session)}/project/clear`, {});
+    },
+    autoSessionProject: async (station, session) => {
+      await io.post(`${sessionPath(station, session)}/project/auto`, {});
+    },
   };
 }

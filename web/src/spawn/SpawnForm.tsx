@@ -43,6 +43,8 @@ type Props = {
   readonly initialStation?: string | undefined;
   /** R3: the directory chosen at the first render ("Fix checks" of a project). */
   readonly initialCwd?: string | undefined;
+  /** DL-176: the workspace choice at the first render ("New session in this project": worktree). */
+  readonly initialPlace?: 'here' | 'worktree' | undefined;
   /** DL-141: the fleet, for the recent directories of a station. */
   readonly sessions?: readonly DeckSession[] | undefined;
   /** Unix ms of now for the reset times of the limits (tests). */
@@ -60,6 +62,7 @@ export function SpawnForm({
   initialPrompt = '',
   initialStation,
   initialCwd,
+  initialPlace = 'here',
   sessions = [],
   now: givenNow,
 }: Props) {
@@ -87,7 +90,7 @@ export function SpawnForm({
   const [title, setTitle] = useState('');
   const [prompt, setPrompt] = useState(initialPrompt);
   const [importId, setImportId] = useState('');
-  const [place, setPlace] = useState<'here' | 'worktree' | 'clone'>('here');
+  const [place, setPlace] = useState<'here' | 'worktree' | 'clone'>(initialPlace);
   const [cloneUrl, setCloneUrl] = useState('');
   const [cloneName, setCloneName] = useState('');
   const [branch, setBranch] = useState('');
