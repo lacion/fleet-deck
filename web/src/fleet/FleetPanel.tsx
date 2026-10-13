@@ -7,8 +7,10 @@ import {
   grantStatus,
   nextSends,
   type SendEntry,
+  type SendIntent,
   type SendRecord,
   type SendTarget,
+  sameIntent,
   taskStatus,
 } from './fleet';
 
@@ -52,6 +54,7 @@ export function FleetPanel({ actions, sessions, stations }: Props) {
   const [tasks, setTasks] = useState<readonly TaskView[]>([]);
   const [grants, setGrants] = useState<readonly GrantView[]>([]);
   const sends = useRef<SendRecord | null>(null);
+  const [, redraw] = useState(0);
   useEffect(() => {
     if (actions === undefined) return undefined;
     let current = true;
@@ -89,16 +92,34 @@ export function FleetPanel({ actions, sessions, stations }: Props) {
     ref: keyOf(s),
     target: { stationId: s.station_id, sessionId: s.summary.session_id },
   });
+  const selection =
+    audience === 'station'
+      ? stationId
+      : audience === 'repo'
+        ? repo
+        : audience === 'one'
+          ? chosen === undefined
+            ? ''
+            : keyOf(chosen)
+          : '';
+  const intent: SendIntent = { text: text.trim(), steer, audience, selection };
+  const owed =
+    audience !== 'one' &&
+    sends.current !== null &&
+    sameIntent(sends.current.intent, intent) &&
+    sends.current.entries.some((e) => e.state === 'failed')
+      ? sends.current
+      : null;
   /** Sends what the record still owes, each mail with its own id, and keeps the record. */
   const deliver = async (list: readonly SendTarget[]) => {
-    const { record, todo } = nextSends(sends.current, list, text.trim(), steer);
+    const { record, todo } = nextSends(sends.current, intent, list);
     sends.current = record;
     const results = new Map<string, FleetResult>();
     const done = new Map<string, SendEntry>();
     for (const e of todo) {
       let r: FleetResult;
       try {
-        r = await actions.mail(e.target, record.text, record.steer, e.mailId);
+        r = await actions.mail(e.target, record.intent.text, record.intent.steer, e.mailId);
       } catch (error) {
         r = { ok: false, text: error instanceof Error ? error.message : String(error) };
       }
@@ -113,7 +134,7 @@ export function FleetPanel({ actions, sessions, stations }: Props) {
     if (targets.length === 0 || text.trim() === '' || busy) return;
     setBusy(true);
     setMany(null);
-    const names = new Map(targets.map((t) => [keyOf(t), nameOf(t)]));
+    const names = new Map(sessions.map((s) => [keyOf(s), nameOf(s)]));
     const { entries } = await deliver(targets.map(toSend));
     const failed = entries.filter((e) => e.state === 'failed');
     setMany({
@@ -260,6 +281,26 @@ export function FleetPanel({ actions, sessions, stations }: Props) {
                 {f.title}: {f.text}
               </p>
             ))}
+          </>
+        )}
+        {owed === null ? null : (
+          <>
+            <p className="fd-note">
+              Send again retries the {owed.entries.filter((e) => e.state === 'failed').length}{' '}
+              failed of the first {owed.entries.length} recipients.
+            </p>
+            <button
+              type="button"
+              className="fd-ghost fd-sm"
+              onClick={() => {
+                sends.current = null;
+                setMany(null);
+                setResult(null);
+                redraw((n) => n + 1);
+              }}
+            >
+              Start over
+            </button>
           </>
         )}
       </form>

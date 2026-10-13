@@ -32,35 +32,47 @@ export type SendEntry = SendTarget & {
   readonly error?: string;
 };
 
-/** The last send: its text, steer flag, target set (`key`) and one entry for each target. */
-export type SendRecord = {
+/** What a send means: the text (trimmed), the steer flag, who is addressed and the chosen one. */
+export type SendIntent = {
   readonly text: string;
   readonly steer: boolean;
-  readonly key: string;
+  readonly audience: 'one' | 'station' | 'repo' | 'all';
+  /** The session ref, station id or repository name that was chosen; empty for everyone. */
+  readonly selection: string;
+};
+
+/** The last send: its intent and the entries of the recipients that the first send took. */
+export type SendRecord = {
+  readonly intent: SendIntent;
   readonly entries: readonly SendEntry[];
 };
 
 /** A new `mail_id`, the generator `fleetActions` uses by default. */
 export const newMailId = (): string => commandId();
 
+const intentKey = (i: SendIntent): string =>
+  JSON.stringify([i.text, i.steer, i.audience, i.selection]);
+
+/** Whether two sends have the same text, steer flag, audience and selection. */
+export const sameIntent = (a: SendIntent, b: SendIntent): boolean => intentKey(a) === intentKey(b);
+
 /**
- * What to send now. The same text, steer flag and target set (any order) as the
- * record: only its failed entries, with their own ids. Anything else: a new record
- * with a new id for each target. An entry starts `failed` until its mail is sent.
+ * What to send now. The same intent as the record: only its failed entries, with their
+ * own ids; the current `targets` are ignored, so a session that came or left since the
+ * first send changes nothing. Any other intent: a new record with a new id for each
+ * target. An entry starts `failed` until its mail is sent.
  */
 export function nextSends(
   record: SendRecord | null,
+  intent: SendIntent,
   targets: readonly SendTarget[],
-  text: string,
-  steer: boolean,
   newId: () => string = newMailId,
 ): { readonly record: SendRecord; readonly todo: readonly SendEntry[] } {
-  const key = JSON.stringify(targets.map((t) => t.ref).sort());
-  if (record !== null && record.text === text && record.steer === steer && record.key === key) {
+  if (record !== null && sameIntent(record.intent, intent)) {
     return { record, todo: record.entries.filter((e) => e.state === 'failed') };
   }
   const entries = targets.map((t): SendEntry => ({ ...t, mailId: newId(), state: 'failed' }));
-  return { record: { text, steer, key, entries }, todo: entries };
+  return { record: { intent, entries }, todo: entries };
 }
 
 const record = (v: unknown): v is Record<string, unknown> =>
