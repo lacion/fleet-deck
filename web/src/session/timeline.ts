@@ -397,6 +397,11 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
         add(root, { type: 'notice', key, text, tone: 'info' });
         break;
       }
+      case 'session.notice': {
+        const e = event as Extract<Event, { kind: 'session.notice' }>;
+        add(root, { type: 'notice', key, text: e.text, tone: 'info' });
+        break;
+      }
       case 'mode.changed': {
         const e = event as Extract<Event, { kind: 'mode.changed' }>;
         add(root, { type: 'notice', key, text: `Mode: ${e.mode}`, tone: 'info' });

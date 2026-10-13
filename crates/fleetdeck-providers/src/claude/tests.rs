@@ -687,6 +687,40 @@ fn the_first_init_emits_the_slash_commands_without_the_terminal_only_ones() {
 }
 
 #[test]
+fn the_first_init_with_the_v1_plugin_emits_a_notice_right_after_the_session_start() {
+    let mut core = ClaudeCore::new(config(false));
+    let frame = json!({"type":"system","subtype":"init","session_id":"s-1",
+        "slash_commands":["compact"],
+        "plugins":[
+            {"name":"other","path":"/p/other","source":"other@m"},
+            {"name":"fleetdeck","path":"/p/fleetdeck","source":"fleetdeck@fleetdeck","version":"0.23.6"}]});
+    let events = emits(&feed(&mut core, frame.clone()));
+    assert!(matches!(events[0], Event::SessionStarted { .. }));
+    let Event::SessionNotice { code, text } = &events[1] else {
+        panic!("expected a notice, got {:?}", events[1]);
+    };
+    assert_eq!(code, "v1_plugin");
+    assert!(text.starts_with("The Fleet Deck v1 plugin is active in this session."));
+    assert!(matches!(events[2], Event::SlashCommands { .. }));
+    assert_eq!(events.len(), 3);
+    // Claude sends `init` again for each turn: no second notice.
+    assert!(emits(&feed(&mut core, frame)).is_empty());
+}
+
+#[test]
+fn an_init_without_the_v1_plugin_emits_no_notice() {
+    let mut core = ClaudeCore::new(config(false));
+    let frame = json!({"type":"system","subtype":"init","session_id":"s-1",
+        "plugins":[{"name":"other","path":"/p/other","source":"other@m"}]});
+    let events = emits(&feed(&mut core, frame));
+    assert_eq!(events.len(), 1);
+    assert!(matches!(events[0], Event::SessionStarted { .. }));
+    let mut core = ClaudeCore::new(config(false));
+    let frame = json!({"type":"system","subtype":"init","session_id":"s-2","plugins":"fleetdeck"});
+    assert_eq!(emits(&feed(&mut core, frame)).len(), 1);
+}
+
+#[test]
 fn an_init_without_slash_commands_emits_only_the_session_start() {
     let mut core = ClaudeCore::new(config(false));
     let events = init(&mut core);

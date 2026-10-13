@@ -519,6 +519,10 @@ pub enum Event {
     /// The slash commands that the provider offers in this session (DL-140).
     #[serde(rename = "session.slash_commands")]
     SlashCommands { commands: Vec<String> },
+    /// A notice for the session chat. `code` names the cause; `text` is for
+    /// the user. The fold ignores it.
+    #[serde(rename = "session.notice")]
+    SessionNotice { code: String, text: String },
     #[serde(rename = "run.completed")]
     RunCompleted {
         run_id: RunId,
@@ -566,7 +570,7 @@ pub enum Event {
 
 impl Event {
     /// Every known kind name, in declaration order.
-    pub const KINDS: [&'static str; 36] = [
+    pub const KINDS: [&'static str; 37] = [
         "session.started",
         "session.state",
         "run.started",
@@ -603,6 +607,7 @@ impl Event {
         "coordinator.ended",
         "session.terminal",
         "session.slash_commands",
+        "session.notice",
     ];
 
     /// The dotted kind name.
@@ -645,6 +650,7 @@ impl Event {
             Self::OutputGap { .. } => "session.output_gap",
             Self::SessionTerminal { .. } => "session.terminal",
             Self::SlashCommands { .. } => "session.slash_commands",
+            Self::SessionNotice { .. } => "session.notice",
         }
     }
 

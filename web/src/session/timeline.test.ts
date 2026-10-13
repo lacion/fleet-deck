@@ -160,18 +160,18 @@ describe('session timeline tree (PLAN D15)', () => {
   test('the recorded background subagent runs on after its tool call and then finishes', () => {
     const events = recorded('subagent');
     const at = (seq: number) => buildTimeline(events.filter((e) => e.session_seq <= seq));
-    const started = at(7);
+    const started = at(8);
     expect(started.running).toBe(1);
     expect(started.subagents.map((s) => [s.title, s.input, s.status])).toEqual([
       ['Agent', 'Test subagent', 'running'],
     ]);
-    // seq 8 announces a local_agent task; seq 9 completes the tool call.
-    const background = at(9).subagents[0];
+    // seq 9 announces a local_agent task; seq 10 completes the tool call.
+    const background = at(10).subagents[0];
     expect(background?.status).toBe('background');
     expect(background?.task_id).toBe('aec7cbebd3902b8ce');
-    expect(at(20).running).toBe(1);
-    // seq 21: the task leaves the list, so the child is done.
-    const after = at(21);
+    expect(at(21).running).toBe(1);
+    // seq 22: the task leaves the list, so the child is done.
+    const after = at(22);
     expect(after.running).toBe(0);
     expect(after.subagents[0]?.status).toBe('done');
     const full = buildTimeline(events);
@@ -182,6 +182,7 @@ describe('session timeline tree (PLAN D15)', () => {
     ]);
     expect(full.items.map((i) => i.type)).toEqual([
       'run',
+      'notice',
       'subagent',
       'message',
       'run',
@@ -419,6 +420,15 @@ describe('chat timeline items (DL-140)', () => {
       'Opened in a terminal.',
       'Returned to board control: tui exited',
       'Returned to board control',
+    ]);
+  });
+
+  test('session.notice is an info notice with its text', () => {
+    const tree = buildTimeline(
+      envelopes('n', [{ kind: 'session.notice', code: 'v1_plugin', text: 'The v1 plugin is on.' }]),
+    );
+    expect(tree.items).toMatchObject([
+      { type: 'notice', text: 'The v1 plugin is on.', tone: 'info' },
     ]);
   });
 

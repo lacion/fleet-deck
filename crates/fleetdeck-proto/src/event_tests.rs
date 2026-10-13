@@ -219,6 +219,10 @@ fn samples() -> Vec<Event> {
         Event::SlashCommands {
             commands: vec!["review".into(), "compact".into()],
         },
+        Event::SessionNotice {
+            code: "v1_plugin".into(),
+            text: "The Fleet Deck v1 plugin is active in this session.".into(),
+        },
     ]
 }
 
