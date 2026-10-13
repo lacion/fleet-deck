@@ -50,6 +50,35 @@ pub fn shell_in(shells: Option<&Shells>, path: &str) -> bool {
     shells.is_some_and(|s| s.list().iter().any(|i| overlaps(&i.cwd, path)))
 }
 
+/// The refusal for a terminal that is about to open in a worktree.
+pub const OPENING: &str = "a terminal is opening in this worktree; wait";
+
+/// True when a start folder in `cwds` (the folders of queued or claimed
+/// shell effects) overlaps `path`; the folder is compared as written and as
+/// the policy resolves it.
+#[must_use]
+pub fn cwd_overlaps(cwds: &[String], policy: &Policy, path: &str) -> bool {
+    cwds.iter().any(|cwd| {
+        overlaps(cwd, path)
+            || policy
+                .workspace(cwd)
+                .is_ok_and(|c| overlaps(&c.to_string_lossy(), path))
+    })
+}
+
+fn opening_refusal() -> DecideError {
+    reject(RejectCode::InvalidState, OPENING)
+}
+
+/// Refuses when a queued or claimed shell effect will open in `path`.
+fn pending_shell(d: &Decision<'_>, policy: &Policy, path: &str) -> Result<(), DecideError> {
+    let cwds = crate::store::shell_effects::pending_cwds(d.connection())?;
+    if cwd_overlaps(&cwds, policy, path) {
+        return Err(opening_refusal());
+    }
+    Ok(())
+}
+
 const OWNER_ONLY: &str = "only the owner's board changes worktrees";
 
 /// Decides one of the four worktree commands.
@@ -188,6 +217,7 @@ fn trash(
     if shell_in(shells, &stored) {
         return Err(shell_refusal());
     }
+    pending_shell(d, policy, &stored)?;
     let canonical = policy.workspace(&stored).map_err(|e| match e {
         WorkspaceError::Missing(_) => reject(RejectCode::InvalidState, e.to_string()),
         WorkspaceError::Outside(_) => reject(RejectCode::Forbidden, e.to_string()),
@@ -314,6 +344,8 @@ fn purge(
     if shell_in(shells, &row.trash_path) || shell_in(shells, &row.original_path) {
         return Err(shell_refusal());
     }
+    pending_shell(d, policy, &row.trash_path)?;
+    pending_shell(d, policy, &row.original_path)?;
     if !d.move_worktree_op(&row.op_id, &row.state, PURGING)? {
         return Err(wrong_state(&row, "deleted"));
     }

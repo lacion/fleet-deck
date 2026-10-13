@@ -262,6 +262,15 @@ impl Store {
         call(&self.inner.db, move |conn| select(conn, OPEN, [])).await
     }
 
+    /// The open operation whose original or trash folder overlaps `path`
+    /// (the custody hold), outside a command.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn worktree_op_over(&self, path: String) -> Result<Option<WorktreeOp>> {
+        call(&self.inner.db, move |conn| open_over(conn, &path)).await
+    }
+
     /// The claim guard: the row, when it is in the state `expected`;
     /// otherwise `None` (the effect is superseded).
     ///

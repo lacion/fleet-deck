@@ -81,7 +81,10 @@ pub async fn dispatch(
         let policy = policy.clone();
         let now = store.now_ms();
         let change = effect.change;
-        let outcome = if let ShellChange::Handover {
+        let held = custody_refusal(store, &policy, &change).await?;
+        let outcome = if let Some(text) = held {
+            Err(text)
+        } else if let ShellChange::Handover {
             shell_id,
             session_id,
             cols,
@@ -101,6 +104,31 @@ pub async fn dispatch(
         done += 1;
     }
     Ok(done)
+}
+
+/// A shell open in a folder that a worktree operation holds: the effect
+/// was admitted before the hold began, and it fails now, before it spawns
+/// the PTY (DL-150). The decision of a trash or a purge refuses while an
+/// open is queued or claimed, so a claimed open that passes this check is
+/// seen by every later trash decision.
+async fn custody_refusal(
+    store: &Store,
+    policy: &Policy,
+    change: &ShellChange,
+) -> Result<Option<String>, StoreError> {
+    let ShellChange::Open { cwd, .. } = change else {
+        return Ok(None);
+    };
+    let mut paths = vec![cwd.clone()];
+    if let Ok(canonical) = policy.workspace(cwd) {
+        paths.push(canonical.to_string_lossy().into_owned());
+    }
+    for path in paths {
+        if store.worktree_op_over(path).await?.is_some() {
+            return Ok(Some(crate::manager::trash::HELD.to_owned()));
+        }
+    }
+    Ok(None)
 }
 
 /// The PTY I/O of one `shell.handover`: starts the TUI and records its pid

@@ -16,7 +16,7 @@ use std::os::unix::fs::{DirBuilderExt, MetadataExt};
 use std::path::{Path, PathBuf};
 
 use crate::manager::policy::Policy;
-use crate::manager::trash::{TRASH_DIR, shell_in};
+use crate::manager::trash::{OPENING, TRASH_DIR, cwd_overlaps, shell_in};
 use crate::shell::Shells;
 use crate::store::worktree_ops::{
     PHASE_PURGE, PHASE_RESTORE, PHASE_TRASH, PURGED, RESTORED, TRASHED, expected_state,
@@ -56,7 +56,7 @@ pub async fn run(
     let step = match action {
         WorktreeAction::Trash => trash(store, policy, options, shells, &row).await,
         WorktreeAction::Restore => restore(options, &row).await,
-        WorktreeAction::Purge => purge(options, shells, &row).await,
+        WorktreeAction::Purge => purge(store, policy, options, shells, &row).await,
     };
     let settled = match step {
         Ok(Step::Go) => {
@@ -93,6 +93,78 @@ fn identity(path: &str) -> Result<Option<(u64, u64)>, String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(format!("`{path}`: {e}")),
     }
+}
+
+/// Why a checked file operation did not happen.
+#[derive(Debug, PartialEq, Eq)]
+enum Checked {
+    /// The folder is not the recorded one (or the destination is taken):
+    /// nothing was changed.
+    Changed,
+    Io(String),
+}
+
+/// One rename in one blocking call: the source must still have the
+/// recorded identity and the destination must be absent, checked right
+/// before the `rename(2)`. No `await` lies between the check and the call.
+fn move_checked(from: &str, to: &str, expect: (u64, u64)) -> Result<(), Checked> {
+    match identity(from) {
+        Ok(Some(id)) if id == expect => {}
+        Ok(_) => return Err(Checked::Changed),
+        Err(m) => return Err(Checked::Io(m)),
+    }
+    match identity(to) {
+        Ok(None) => {}
+        Ok(Some(_)) => return Err(Checked::Changed),
+        Err(m) => return Err(Checked::Io(m)),
+    }
+    std::fs::rename(from, to).map_err(|e| Checked::Io(e.to_string()))
+}
+
+/// The deletion of the trash folder in one blocking call: only a folder
+/// with the recorded identity is deleted, checked right before
+/// `remove_dir_all`. A folder that is gone counts as deleted.
+fn delete_checked(path: &str, expect: (u64, u64)) -> Result<(), Checked> {
+    match identity(path) {
+        Ok(Some(id)) if id == expect => {
+            std::fs::remove_dir_all(path).map_err(|e| Checked::Io(e.to_string()))
+        }
+        Ok(Some(_)) => Err(Checked::Changed),
+        Ok(None) => Ok(()),
+        Err(m) => Err(Checked::Io(m)),
+    }
+}
+
+/// The deletion of the Git admin directory in one blocking call: it must be
+/// inside `<common>/worktrees/` and its `gitdir` file must name the trash
+/// folder, checked right before `remove_dir_all`. A directory that is gone
+/// counts as deleted.
+fn delete_admin_checked(admin_dir: &str, common: &Path, trash_path: &str) -> Result<(), Checked> {
+    let admin = match Path::new(admin_dir).canonicalize() {
+        Ok(a) => a,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(_) => return Err(Checked::Changed),
+    };
+    if !admin.starts_with(common.join("worktrees")) {
+        return Err(Checked::Changed);
+    }
+    let names = std::fs::read_to_string(admin.join("gitdir"))
+        .ok()
+        .map(|t| PathBuf::from(t.trim()))
+        .and_then(|p| p.parent().map(Path::to_path_buf));
+    if names.as_deref() != Some(Path::new(trash_path)) {
+        return Err(Checked::Changed);
+    }
+    std::fs::remove_dir_all(&admin).map_err(|e| Checked::Io(e.to_string()))
+}
+
+/// Runs a blocking file operation.
+async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, Checked> + Send + 'static,
+) -> Result<T, Checked> {
+    tokio::task::spawn_blocking(work)
+        .await
+        .unwrap_or_else(|e| Err(Checked::Io(format!("file task: {e}"))))
 }
 
 fn changed(row: &WorktreeOp) -> String {
@@ -236,6 +308,12 @@ async fn trash(
             let m = "a shell is open in this worktree; close it first";
             return Ok(Step::Fail(PHASE_TRASH, m.to_owned()));
         }
+        let pending = store.pending_shell_cwds().await?;
+        if cwd_overlaps(&pending, policy, &row.original_path)
+            || cwd_overlaps(&pending, policy, &row.trash_path)
+        {
+            return Ok(Step::Fail(PHASE_TRASH, OPENING.to_owned()));
+        }
         if policy.workspace(&row.original_path).is_err() && orig.is_some() {
             let m = "the worktree is outside the allowed roots";
             return Ok(Step::Fail(PHASE_TRASH, m.to_owned()));
@@ -266,11 +344,17 @@ async fn trash(
     // Step 2: reconcile by identity, then move.
     match (orig, moved) {
         (Some(o), None) if o == rec => {
-            if let Err(e) = std::fs::rename(&row.original_path, &row.trash_path) {
-                let m = format!(
-                    "the worktree was not moved ({e}); the trash folder must be on the same disk"
-                );
-                return Ok(Step::Fail(PHASE_TRASH, m));
+            // The identity is checked again inside the call that renames.
+            let (from, to) = (row.original_path.clone(), row.trash_path.clone());
+            match blocking(move || move_checked(&from, &to, rec)).await {
+                Ok(()) => {}
+                Err(Checked::Changed) => return Ok(Step::Fail(PHASE_TRASH, changed(&row))),
+                Err(Checked::Io(e)) => {
+                    let m = format!(
+                        "the worktree was not moved ({e}); the trash folder must be on the same disk"
+                    );
+                    return Ok(Step::Fail(PHASE_TRASH, m));
+                }
             }
         }
         (None, Some(t)) if t == rec => {}
@@ -304,6 +388,13 @@ fn ensure_trash_dir(trash_path: &str) -> Result<(), String> {
     }
 }
 
+fn not_there(row: &WorktreeOp) -> String {
+    format!(
+        "the worktree folder is not where Fleet Deck left it; check {} and {}",
+        row.original_path, row.trash_path
+    )
+}
+
 async fn restore(options: &GitOptions, row: &WorktreeOp) -> Res<Step> {
     let rec = (row.dev, row.ino);
     let (orig, moved) = match (identity(&row.original_path), identity(&row.trash_path)) {
@@ -313,18 +404,17 @@ async fn restore(options: &GitOptions, row: &WorktreeOp) -> Res<Step> {
     match (orig, moved) {
         (Some(o), None) if o == rec => {}
         (None, Some(t)) if t == rec => {
-            if let Err(e) = std::fs::rename(&row.trash_path, &row.original_path) {
-                let m = format!("the worktree was not moved back ({e})");
-                return Ok(Step::Fail(PHASE_RESTORE, m));
+            let (from, to) = (row.trash_path.clone(), row.original_path.clone());
+            match blocking(move || move_checked(&from, &to, rec)).await {
+                Ok(()) => {}
+                Err(Checked::Changed) => return Ok(Step::Fail(PHASE_RESTORE, not_there(row))),
+                Err(Checked::Io(e)) => {
+                    let m = format!("the worktree was not moved back ({e})");
+                    return Ok(Step::Fail(PHASE_RESTORE, m));
+                }
             }
         }
-        _ => {
-            let m = format!(
-                "the worktree folder is not where Fleet Deck left it; check {} and {}",
-                row.original_path, row.trash_path
-            );
-            return Ok(Step::Fail(PHASE_RESTORE, m));
-        }
+        _ => return Ok(Step::Fail(PHASE_RESTORE, not_there(row))),
     }
     // A move that failed before Git was read left the folder in place and
     // Git untouched: nothing to repair.
@@ -361,10 +451,22 @@ async fn common_dir(options: &GitOptions, main: &str) -> Result<PathBuf, String>
         .map_err(|e| os_error(&dir.to_string_lossy(), &e))
 }
 
-async fn purge(options: &GitOptions, shells: Option<&Shells>, row: &WorktreeOp) -> Res<Step> {
+async fn purge(
+    store: &Store,
+    policy: &Policy,
+    options: &GitOptions,
+    shells: Option<&Shells>,
+    row: &WorktreeOp,
+) -> Res<Step> {
     if shell_in(shells, &row.trash_path) || shell_in(shells, &row.original_path) {
         let m = "a shell is open in this worktree; close it first";
         return Ok(Step::Fail(PHASE_PURGE, m.to_owned()));
+    }
+    let pending = store.pending_shell_cwds().await?;
+    if cwd_overlaps(&pending, policy, &row.trash_path)
+        || cwd_overlaps(&pending, policy, &row.original_path)
+    {
+        return Ok(Step::Fail(PHASE_PURGE, OPENING.to_owned()));
     }
     if Path::new(&row.trash_path)
         .parent()
@@ -374,25 +476,19 @@ async fn purge(options: &GitOptions, shells: Option<&Shells>, row: &WorktreeOp) 
         let m = "the trash path is not inside a .fleetdeck-trash folder";
         return Ok(Step::Fail(PHASE_PURGE, m.to_owned()));
     }
-    // (1) The folder: only the one with the recorded identity.
-    match identity(&row.trash_path) {
-        Err(m) => return Ok(Step::Fail(PHASE_PURGE, m)),
-        Ok(Some(id)) if id == (row.dev, row.ino) => {
-            let path = row.trash_path.clone();
-            let removed = tokio::task::spawn_blocking(move || std::fs::remove_dir_all(&path))
-                .await
-                .map_err(|e| std::io::Error::other(e.to_string()))
-                .and_then(|r| r);
-            if let Err(e) = removed {
-                let m = format!("the folder was not fully deleted: {e}");
-                return Ok(Step::Fail(PHASE_PURGE, m));
-            }
-        }
-        Ok(Some(_)) => {
+    // (1) The folder: only the one with the recorded identity; the check
+    // and the deletion run in one blocking call.
+    let (path, rec) = (row.trash_path.clone(), (row.dev, row.ino));
+    match blocking(move || delete_checked(&path, rec)).await {
+        Ok(()) => {}
+        Err(Checked::Changed) => {
             let m = "the trash folder changed; nothing was deleted";
             return Ok(Step::Fail(PHASE_PURGE, m.to_owned()));
         }
-        Ok(None) => {}
+        Err(Checked::Io(e)) => {
+            let m = format!("the folder was not fully deleted: {e}");
+            return Ok(Step::Fail(PHASE_PURGE, m));
+        }
     }
     // (2) The Git record: only when it is still the one of this folder.
     if !row.admin_dir.is_empty() && Path::new(&row.admin_dir).exists() {
@@ -405,27 +501,14 @@ async fn purge(options: &GitOptions, shells: Option<&Shells>, row: &WorktreeOp) 
         let Ok(common) = common_dir(options, &row.main).await else {
             return record_changed();
         };
-        let Ok(admin) = Path::new(&row.admin_dir).canonicalize() else {
-            return record_changed();
-        };
-        if !admin.starts_with(common.join("worktrees")) {
-            return record_changed();
-        }
-        let names = std::fs::read_to_string(admin.join("gitdir"))
-            .ok()
-            .map(|t| PathBuf::from(t.trim()))
-            .and_then(|p| p.parent().map(Path::to_path_buf));
-        if names.as_deref() != Some(Path::new(&row.trash_path)) {
-            return record_changed();
-        }
-        let dir = row.admin_dir.clone();
-        let removed = tokio::task::spawn_blocking(move || std::fs::remove_dir_all(&dir))
-            .await
-            .map_err(|e| std::io::Error::other(e.to_string()))
-            .and_then(|r| r);
-        if let Err(e) = removed {
-            let m = format!("the Git worktree record was not deleted: {e}");
-            return Ok(Step::Fail(PHASE_PURGE, m));
+        let (admin, trash) = (row.admin_dir.clone(), row.trash_path.clone());
+        match blocking(move || delete_admin_checked(&admin, &common, &trash)).await {
+            Ok(()) => {}
+            Err(Checked::Changed) => return record_changed(),
+            Err(Checked::Io(e)) => {
+                let m = format!("the Git worktree record was not deleted: {e}");
+                return Ok(Step::Fail(PHASE_PURGE, m));
+            }
         }
     }
     Ok(Step::Go)

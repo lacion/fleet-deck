@@ -448,7 +448,7 @@ async fn a_start_resume_shell_open_and_handover_are_refused_while_a_row_is_open(
                 CommandEnvelope {
                     command_id: CommandId::from("01JTRASHFREE1"),
                     target_incarnation: None,
-                    retry_until: i64::MAX,
+                    retry_until: i64::try_from(r.det.now_ms()).unwrap() + RETRY_WINDOW_MS,
                     origin: CommandOrigin::Board,
                     command: SessionCommand::Rename {
                         session_id: SESSION.into(),
@@ -757,3 +757,6 @@ async fn an_open_shell_in_the_folder_refuses_a_trash_and_a_purge_and_fails_the_e
         )
         .unwrap();
 }
+
+#[path = "trash_race_tests.rs"]
+mod race;
