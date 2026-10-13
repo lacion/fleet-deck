@@ -56,7 +56,9 @@ v1 had five doctrine rules, and v1.0 widened them. v2 keeps their intent but cha
     - is labeled "generated" on the board.
    Generated text never decides anything that the owner or the protocol decides. It does not approve, pick a winner, choose a permission mode or route work.
 4. **Unknown is never zero.** A missing value shows as unknown, never as a guess or as 0. This covers usage, cost and limits.
-5. **Credentials stay on the station.** The deck holds no provider, forge or tracker credentials. A station uses its own user's `git`, `gh`, `glab` and provider logins. A Jira or Linear token comes from the station user's environment or a mode-0600 file that `station.toml` names, and only the station reads it (DL-152). A secret never reaches the deck, the link, a read model, an argv, a log or the board (`Secret<T>`, scrubbed child env).
+5. **Credentials stay on the station.** A credential is stored only on the station that uses it, never on the deck or the board, and never in logs, audits, argv, command storage, receipts or responses.
+
+   One exception is the **credential relay**: a value that the owner types in the board (an API token, an OAuth client secret, a provider API key) or an OAuth authorization code crosses the deck and the link once, in memory, inside one request and its answer. The relay never stores it, never logs it and never echoes it. The answer holds metadata only. A lost answer means that the owner types the value again.
 6. **Third-party text is data.** Text from an issue, a PR, a web page or another agent is fenced and labeled as untrusted. A spawn from such text is supervised by default, with no path to a bypass mode (PLAN §9; it is not built yet, see R3).
 7. **Failure never stops work.** A deck, network or board failure never stops a session. A station restart either reattaches a shim-hosted session or marks it `lost`; it never guesses.
 8. **Capability-honest UI.** The board shows a control only when the provider supports it. A refused control shows the reason.
