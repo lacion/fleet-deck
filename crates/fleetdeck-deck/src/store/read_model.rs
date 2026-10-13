@@ -325,7 +325,7 @@ impl DeckStore {
                 station_id,
                 summary,
                 status,
-                unread: 0,
+                unread: None,
             });
         }
         Ok(out)

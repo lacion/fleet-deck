@@ -88,7 +88,6 @@ export function card(title = 'initial'): DeckSession {
     station_id: key.station_id,
     summary: summary(key.session_id, 'idle', 1, { title }),
     status: 'idle',
-    unread: 0,
   };
 }
 export function envelope(seq: number, text = 'hello'): EventEnvelope {

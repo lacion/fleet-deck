@@ -110,7 +110,7 @@ impl DeckStore {
         let counts = self.unread_counts(principal_key(principal)).await?;
         for card in &mut cards {
             let key = (card.station_id.clone(), card.summary.session_id.clone());
-            card.unread = counts.get(&key).copied().unwrap_or(0);
+            card.unread = counts.get(&key).copied().filter(|n| *n > 0);
         }
         Ok(cards)
     }

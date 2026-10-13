@@ -10,6 +10,7 @@ import type { SessionSummary } from "../session/SessionSummary";
 export type DeckSession = { station_id: StationId, summary: SessionSummary, status: CardStatus, 
 /**
  * The events after the caller's read cursor that are agent output or
- * need the caller (R6.1, DL-169). The deck fills it per caller.
+ * need the caller (R6.1, DL-169). The deck fills it per caller; it is
+ * absent when zero.
  */
-unread: number, };
+unread?: number, };

@@ -74,9 +74,11 @@ pub struct DeckSession {
     pub summary: SessionSummary,
     pub status: CardStatus,
     /// The events after the caller's read cursor that are agent output or
-    /// need the caller (R6.1, DL-169). The deck fills it per caller.
-    #[serde(default)]
-    pub unread: u32,
+    /// need the caller (R6.1, DL-169). The deck fills it per caller; it is
+    /// absent when zero.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub unread: Option<u32>,
 }
 
 /// `POST /api/sessions/{station}/{session}/read` (R6.1, DL-169): the board
