@@ -204,4 +204,23 @@ describe('App', () => {
     expect(html).toContain('Log out');
     expect(html).toContain('Cached data is read-only until the deck reconnects.');
   });
+
+  test('the watch and activity routes render their pages, linked from the sidebar and More', () => {
+    const watch = renderToStaticMarkup(
+      <App initialRoute={{ name: 'watch' }} stations={[station()]} sessions={[card('w1')]} />,
+    );
+    expect(watch).toContain('aria-label="Watch"');
+    expect(watch).toContain('data-session="w1"');
+    expect(watch).toContain('href="#/watch" aria-current="page"');
+    const activity = renderToStaticMarkup(
+      <App initialRoute={{ name: 'activity' }} stations={[station()]} sessions={[card('w1')]} />,
+    );
+    expect(activity).toContain('aria-label="Activity"');
+    expect(activity).toContain('href="#/activity" aria-current="page"');
+    const more = renderToStaticMarkup(
+      <App initialLayout="phone" initialRoute={{ name: 'more' }} stations={[station()]} />,
+    );
+    expect(more).toContain('href="#/watch"');
+    expect(more).toContain('href="#/activity"');
+  });
 });

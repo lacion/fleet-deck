@@ -137,6 +137,10 @@ pub struct SessionSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub batch: Option<BatchRef>,
+    /// The station stopped the session because it was idle (R6.6, DL-169).
+    /// It stays set until the session starts again.
+    #[serde(default)]
+    pub hibernated: bool,
     /// The highest `session_seq` folded into this summary.
     pub session_seq: u64,
     /// Unix ms of the last folded event.
@@ -180,6 +184,7 @@ impl SessionSummary {
             artifacts_count: 0,
             focus: None,
             batch: None,
+            hibernated: false,
             session_seq: 0,
             updated_at: 0,
         }

@@ -1,11 +1,14 @@
 import { stationName } from '../board/fleet';
 import type { CardStatus, DeckSession, StationView } from '../gen';
 import { sessionRef } from '../ui/localSet';
+import { isHibernated } from '../views/hibernate';
 
 /** Statuses of a session that runs or waits, in the order the sidebar lists them. */
 const LIVE_ORDER: readonly CardStatus[] = ['needs_you', 'working', 'verifying', 'queued', 'idle'];
 
-export const isLive = (card: DeckSession): boolean => LIVE_ORDER.includes(card.status);
+/** A hibernated session is resumable, so it lists with the live ones, after the idle ones (R6.6). */
+export const isLive = (card: DeckSession): boolean =>
+  LIVE_ORDER.includes(card.status) || isHibernated(card);
 
 /** The name a session goes by: title, then callsign, then session id. */
 export const sessionTitle = (card: DeckSession): string =>
@@ -39,7 +42,10 @@ export function basename(path: string): string {
 }
 
 const byNewest = (a: DeckSession, b: DeckSession) => b.summary.updated_at - a.summary.updated_at;
-const rank = (card: DeckSession) => LIVE_ORDER.indexOf(card.status);
+const rank = (card: DeckSession) => {
+  const at = LIVE_ORDER.indexOf(card.status);
+  return at < 0 ? LIVE_ORDER.length : at;
+};
 
 export type StationGroup = {
   readonly id: string;
@@ -69,7 +75,9 @@ const refOf = (card: DeckSession) => sessionRef(card.station_id, card.summary.se
 
 /** An archived session hides only while it is ended or lost; any other status shows it. */
 export const isHidden = (card: DeckSession, archived: ReadonlySet<string>): boolean =>
-  (card.status === 'ended' || card.status === 'lost') && archived.has(refOf(card));
+  (card.status === 'ended' || card.status === 'lost') &&
+  !isHibernated(card) &&
+  archived.has(refOf(card));
 
 /** The sidebar groups: needs you, then one group per station sorted by name. Starred rows first. */
 export function sidebarModel(

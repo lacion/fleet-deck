@@ -278,6 +278,11 @@ impl DeckStore {
                     "DELETE FROM timeline WHERE station_id = ?1",
                     [station.as_str()],
                 )?;
+                // The sequence numbers of the new incarnation start again.
+                tx.execute(
+                    "DELETE FROM read_cursors WHERE station_id = ?1",
+                    [station.as_str()],
+                )?;
             }
             tx.execute(
                 "DELETE FROM sessions WHERE station_id = ?1",
@@ -342,6 +347,7 @@ impl DeckStore {
                 station_id,
                 summary,
                 status,
+                unread: None,
             });
         }
         Ok(out)

@@ -432,6 +432,7 @@ fn card(id: &str, provider: ProviderKind, state: SessionState, activity: Activit
         station_id: StationId::from("st".to_owned()),
         status: card_status(&summary, true),
         summary,
+        unread: None,
     }
 }
 

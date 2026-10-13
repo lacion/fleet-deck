@@ -40,6 +40,8 @@ pub struct Policy {
     instances: BTreeMap<ProviderInstanceId, ProviderKind>,
     /// Canonical repository path → the owner's group (DL-201).
     repo_groups: BTreeMap<PathBuf, String>,
+    /// `hibernate_after_min` of `station.toml`; 0 is off (R6.6, DL-169).
+    hibernate_after_min: u32,
     /// The coordinator bindings of this station (ADR-006 §5): the ingress
     /// authenticates against them, and the owner's renew and revoke
     /// commands change them (DL-212). Shared, not configuration.
@@ -73,6 +75,7 @@ impl Policy {
                 .map(|i| (i.id.clone(), i.driver.kind()))
                 .collect(),
             repo_groups: BTreeMap::new(),
+            hibernate_after_min: config.hibernate_after_min,
             coordinator: crate::coordinator::Bindings::default(),
         }
         .with_repo_groups(&config.repo_groups)
@@ -86,6 +89,20 @@ impl Policy {
             .map(|(p, g)| (p.canonicalize().unwrap_or_else(|_| p.clone()), g.clone()))
             .collect();
         self
+    }
+
+    /// The same policy with hibernation on after `minutes` of idleness
+    /// (0 turns it off).
+    #[must_use]
+    pub fn with_hibernate_after_min(mut self, minutes: u32) -> Self {
+        self.hibernate_after_min = minutes;
+        self
+    }
+
+    /// Minutes of idleness after which a session hibernates; 0 is off.
+    #[must_use]
+    pub fn hibernate_after_min(&self) -> u32 {
+        self.hibernate_after_min
     }
 
     /// The coordinator bindings of this station.
@@ -127,6 +144,7 @@ impl Policy {
             offline,
             instances,
             repo_groups: BTreeMap::new(),
+            hibernate_after_min: 0,
             coordinator: crate::coordinator::Bindings::default(),
         }
     }

@@ -20,9 +20,10 @@ use crate::artifacts::{
 };
 use crate::automation::{Schedule, ScheduleInput, ScheduleRun, ScheduleRunState, ScheduleView};
 use crate::board::{
-    AddStationRequest, ArchiveChange, ArchiveItem, ArchiveList, ArchiveRef, BoardClientMessage,
-    BoardServerMessage, CommandRequest, DeckCommand, DeckSession, DeviceLink, DeviceLinkEntry,
-    FleetExtras, PairingInvitation, SessionKey, StationView, WsTicket,
+    ActivityItem, ActivityKind, ActivityList, AddStationRequest, ArchiveChange, ArchiveItem,
+    ArchiveList, ArchiveRef, BoardClientMessage, BoardServerMessage, CommandRequest, DeckCommand,
+    DeckSession, DeviceLink, DeviceLinkEntry, FleetExtras, PairingInvitation, ReadMark, SessionKey,
+    StationView, WsTicket,
 };
 use crate::capability::{Capabilities, Operation, Unsupported};
 use crate::command::{CommandEnvelope, DeckCommandState, Receipt};
@@ -125,6 +126,10 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         SessionDiffQuery::export_all(&cfg),
         SessionDiff::export_all(&cfg),
         SessionSummary::export_all(&cfg),
+        ReadMark::export_all(&cfg),
+        ActivityItem::export_all(&cfg),
+        ActivityKind::export_all(&cfg),
+        ActivityList::export_all(&cfg),
         CardStatus::export_all(&cfg),
         VersionOffer::export_all(&cfg),
         Negotiated::export_all(&cfg),

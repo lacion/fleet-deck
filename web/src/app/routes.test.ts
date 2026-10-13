@@ -25,6 +25,8 @@ describe('routes', () => {
       'automations',
       'stations',
       'files',
+      'watch',
+      'activity',
       'terminals',
       'more',
     ] as const) {

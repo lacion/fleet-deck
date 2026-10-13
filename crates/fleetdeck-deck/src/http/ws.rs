@@ -156,14 +156,17 @@ struct Session {
 /// The board view: the paired stations and every card. A free function
 /// (not a method of [`Session`]): the socket inside a session is not
 /// `Sync`, so no `&Session` may live across an await.
-async fn view(store: &DeckStore) -> Result<(Vec<StationView>, Vec<DeckSession>), WsError> {
+async fn view(
+    store: &DeckStore,
+    principal: &Principal,
+) -> Result<(Vec<StationView>, Vec<DeckSession>), WsError> {
     let stations = store
         .stations()
         .await?
         .iter()
         .map(|st| station_view(st, store))
         .collect();
-    Ok((stations, store.sessions().await?))
+    Ok((stations, store.sessions_for(principal).await?))
 }
 
 async fn incarnation_of(
@@ -211,7 +214,7 @@ impl Session {
         })
         .await?;
         let version = *board_rx.borrow_and_update();
-        let (stations, sessions) = view(&self.board.store).await?;
+        let (stations, sessions) = view(&self.board.store, &self.principal).await?;
         self.cards = sessions.iter().map(|c| (key(c), c.clone())).collect();
         self.stations.clone_from(&stations);
         self.send(&BoardServerMessage::Snapshot {
@@ -268,7 +271,7 @@ impl Session {
     /// Sends what changed since the last snapshot or delta, and restarts
     /// the subscriptions of a station with a new incarnation.
     async fn delta(&mut self, version: u64) -> Result<(), WsError> {
-        let (stations, sessions) = view(&self.board.store).await?;
+        let (stations, sessions) = view(&self.board.store, &self.principal).await?;
         let mut next: BTreeMap<SessionKey, DeckSession> =
             sessions.into_iter().map(|c| (key(&c), c)).collect();
         let changed: Vec<DeckSession> = next

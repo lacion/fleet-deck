@@ -263,6 +263,7 @@ fn samples() -> Vec<Event> {
                 size: 3,
             },
         },
+        Event::SessionHibernated { after_min: 30 },
     ]
 }
 

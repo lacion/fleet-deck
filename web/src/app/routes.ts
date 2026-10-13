@@ -10,6 +10,8 @@ export type Route =
   | { readonly name: 'automations' }
   | { readonly name: 'stations' }
   | { readonly name: 'files' }
+  | { readonly name: 'watch' }
+  | { readonly name: 'activity' }
   | { readonly name: 'terminals' }
   | { readonly name: 'more' }
   | { readonly name: 'compare'; readonly batch: string }
@@ -29,6 +31,8 @@ const PLAIN = [
   'automations',
   'stations',
   'files',
+  'watch',
+  'activity',
   'terminals',
   'more',
 ] as const;

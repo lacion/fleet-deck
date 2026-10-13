@@ -284,6 +284,17 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
         });
         break;
       }
+      // R6.6: the station stopped an idle session; the next prompt resumes it.
+      case 'session.hibernated': {
+        const e = event as Extract<Event, { kind: 'session.hibernated' }>;
+        add(root, {
+          type: 'notice',
+          key,
+          text: `Hibernated after ${e.after_min} min idle. Send a prompt to resume it.`,
+          tone: 'info',
+        });
+        break;
+      }
       case 'approval.requested': {
         const e = event as Extract<Event, { kind: 'approval.requested' }>;
         const parentList = (e.node_id && where.get(e.node_id)) || root;

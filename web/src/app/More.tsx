@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import {
+  Eye,
   FileText,
   Folder,
   Icon,
   LogOut,
+  MessagesSquare,
   Server,
   Smartphone,
   SquareTerminal,
@@ -27,6 +29,18 @@ export function More({ stationCount, terminalCount, chrome }: Props) {
       <h1 className="fd-screen-title">More</h1>
       <nav aria-label="More pages">
         <ul className="fd-more-links">
+          <li>
+            <a href="#/watch">
+              <Icon of={Eye} />
+              Watch
+            </a>
+          </li>
+          <li>
+            <a href="#/activity">
+              <Icon of={MessagesSquare} />
+              Activity
+            </a>
+          </li>
           <li>
             <a href="#/plans">
               <Icon of={FileText} />

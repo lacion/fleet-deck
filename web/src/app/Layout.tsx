@@ -98,6 +98,8 @@ const BAR_ROUTES: readonly Route['name'][] = [
   'plans',
   'stations',
   'files',
+  'watch',
+  'activity',
   'more',
 ];
 
@@ -111,7 +113,12 @@ function BottomBar({ route }: { readonly route: Route }) {
     { href: '#/', label: 'Sessions', icon: MessagesSquare, on: ['home'] },
     { href: '#/fleet', label: 'Fleet', icon: LayoutGrid, on: ['fleet'] },
     { href: '#/new', label: 'New', icon: Plus, on: ['new'] },
-    { href: '#/more', label: 'More', icon: Ellipsis, on: ['more', 'plans', 'stations'] },
+    {
+      href: '#/more',
+      label: 'More',
+      icon: Ellipsis,
+      on: ['more', 'plans', 'stations', 'watch', 'activity'],
+    },
   ];
   return (
     <nav className="fd-bottombar" aria-label="Board">

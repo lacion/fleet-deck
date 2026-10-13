@@ -30,6 +30,7 @@ import {
   X,
 } from '../ui/icons';
 import { archived } from '../ui/archive';
+import { isHibernated } from '../views/hibernate';
 import { priority, sessionRef } from '../ui/localSet';
 import { useNow } from '../ui/useNow';
 import type { Outcome, SessionActions } from './commands';
@@ -234,7 +235,7 @@ function Badges({
   return (
     <>
       <span className="fd-badge" data-tone={statusTone(session.status)}>
-        {session.status.replaceAll('_', ' ')}
+        {isHibernated(session) ? 'hibernated' : session.status.replaceAll('_', ' ')}
       </span>
       <span
         className="fd-badge"

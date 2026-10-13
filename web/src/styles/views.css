@@ -1,0 +1,261 @@
+/* R6 (DL-169): unread marks, focus lines, the watch wall and the activity stream. */
+
+.fd-unread {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: var(--r-pill);
+  background: var(--act);
+  color: var(--act-ink);
+  font-family: var(--font-data);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.fd-focus {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dim);
+  font-size: var(--fs-data);
+  font-style: italic;
+}
+
+.fd-srow .fd-focus {
+  grid-column: 2 / -1;
+}
+
+.fd-card[data-status="working"] .fd-focus,
+.fd-card .fd-focus {
+  margin: 2px 0 0;
+}
+
+/* Watch: a wall of compact tiles. */
+.fd-wbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
+}
+
+.fd-wfilter select {
+  max-width: 100%;
+}
+
+.fd-wall {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--sp-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fd-wall[data-focus="true"] {
+  grid-template-columns: minmax(0, 720px);
+}
+
+.fd-wtile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-width: 0;
+  padding: var(--sp-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.fd-wtile[data-status="needs_you"] {
+  border-color: var(--act);
+}
+
+.fd-wtile-open {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.fd-wtile-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.fd-wtile-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.fd-wtile-where,
+.fd-wtile-empty,
+.fd-wtile-note {
+  color: var(--faint);
+  font-family: var(--font-data);
+  font-size: var(--fs-micro);
+}
+
+.fd-wtile-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.fd-wtile-line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-data);
+}
+
+.fd-wtile-line[data-kind="tool"] {
+  color: var(--dim);
+  font-family: var(--font-data);
+}
+
+.fd-wtile-tool {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ok);
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+}
+
+.fd-wtile-ask {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding-top: var(--sp-2);
+  border-top: 1px solid var(--border-soft);
+}
+
+/* Activity: the channel list and the stream. */
+.fd-awrap {
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) minmax(0, 1fr);
+  gap: var(--sp-4);
+  align-items: start;
+}
+
+.fd-achans {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.fd-achans h2 {
+  margin: var(--sp-3) 0 var(--sp-1);
+}
+
+.fd-achan {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  padding: 5px 8px;
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text);
+  text-align: left;
+}
+
+.fd-achan:hover,
+.fd-achan[aria-pressed="true"] {
+  background: var(--raised);
+}
+
+.fd-achan-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fd-apost {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
+}
+
+.fd-apost input {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.fd-alist {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fd-arow {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  gap: var(--sp-2);
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.fd-arow[data-kind="approval"] .fd-arow-kind {
+  color: var(--act);
+}
+
+.fd-arow-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.fd-arow-session {
+  font-weight: 600;
+}
+
+.fd-arow-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dim);
+  font-size: var(--fs-data);
+}
+
+.fd-arow-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  color: var(--faint);
+  font-family: var(--font-data);
+  font-size: var(--fs-micro);
+}
+
+@media (max-width: 720px) {
+  .fd-awrap {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .fd-achans {
+    flex-direction: row;
+    flex-wrap: wrap;
+    max-height: none;
+  }
+}

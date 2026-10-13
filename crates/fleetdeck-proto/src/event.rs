@@ -577,6 +577,11 @@ pub enum Event {
     /// `summary.batch`.
     #[serde(rename = "session.batch")]
     SessionBatch { batch: BatchRef },
+    /// The station stops this idle session after `after_min` minutes
+    /// without activity (R6.6, DL-169). It comes before the stop; the board
+    /// shows the session as hibernated and resumes it on the next input.
+    #[serde(rename = "session.hibernated")]
+    SessionHibernated { after_min: u32 },
     #[serde(rename = "run.completed")]
     RunCompleted {
         run_id: RunId,
@@ -624,7 +629,7 @@ pub enum Event {
 
 impl Event {
     /// Every known kind name, in declaration order.
-    pub const KINDS: [&'static str; 43] = [
+    pub const KINDS: [&'static str; 44] = [
         "session.started",
         "session.state",
         "run.started",
@@ -668,6 +673,7 @@ impl Event {
         "artifact.suggested",
         "session.focus",
         "session.batch",
+        "session.hibernated",
     ];
 
     /// The dotted kind name.
@@ -717,6 +723,7 @@ impl Event {
             Self::ArtifactSuggested { .. } => "artifact.suggested",
             Self::SessionFocus { .. } => "session.focus",
             Self::SessionBatch { .. } => "session.batch",
+            Self::SessionHibernated { .. } => "session.hibernated",
         }
     }
 

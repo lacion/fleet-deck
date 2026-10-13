@@ -36,6 +36,7 @@ export function summary(
     revert: null,
     auto_continue: false,
     artifacts_count: 0,
+    hibernated: false,
     session_seq: 0,
     updated_at: updatedAt,
     ...extra,

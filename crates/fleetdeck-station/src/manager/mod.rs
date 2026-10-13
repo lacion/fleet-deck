@@ -16,6 +16,7 @@ pub mod decide;
 pub mod drain;
 pub mod durable;
 pub mod files;
+pub mod hibernate;
 pub mod policy;
 pub mod resume;
 pub mod revert;
@@ -267,6 +268,15 @@ impl SessionManager {
                 tracing::error!(error = %e, "effect worker stopped");
             }
         }));
+        let hibernate_after = policy.hibernate_after_min();
+        if hibernate_after > 0 {
+            tasks.push(tokio::spawn(hibernate::ticker(
+                store.clone(),
+                policy.clone(),
+                hibernate_after,
+                rx.clone(),
+            )));
+        }
         tasks.push(tokio::spawn(deny_ticker(store.clone(), rx)));
         Ok(Self {
             store,

@@ -11,6 +11,7 @@ import { PlanLibrary } from './board/PlanLibrary';
 import type { RaceSummary } from './compare/compare';
 import { ComparePage } from './compare/ComparePage';
 import { StationsPanel } from './board/StationsPanel';
+import { ActivityPage } from './activity/ActivityPage';
 import type { FleetActions } from './fleet/fleet';
 import type {
   DeckPlan,
@@ -35,6 +36,7 @@ import { basename, sidebarModel, sidebarOrder } from './app/sessions';
 import { Sidebar } from './app/Sidebar';
 import { type Layout as LayoutName, useLayout, useTouch } from './app/viewport';
 import type { Freshness, Timeline } from './runtime/state';
+import type { ViewsActions } from './runtime/views';
 import type { Outcome, SessionActions } from './session/commands';
 import type { FileActions } from './session/workspace';
 import type { SpawnActions } from './spawn/spawn';
@@ -45,6 +47,9 @@ import { type TermTab, type TerminalStore, tabId } from './terminal/store';
 import { archived } from './ui/archive';
 import { priority } from './ui/localSet';
 import { useNow } from './ui/useNow';
+import { useMarkRead } from './views/markRead';
+import { unreadOf } from './views/marks';
+import { WatchPage } from './watch/WatchPage';
 
 type Props = {
   readonly sessions?: readonly DeckSession[];
@@ -90,6 +95,8 @@ type Props = {
   readonly onReturnTerminal?: ((tab: TermTab) => Promise<Outcome>) | undefined;
   /** The race summary of the compare page (R10.5); absent: the page has no summary slot. */
   readonly race?: ((keys: readonly SessionKey[]) => Promise<RaceSummary>) | undefined;
+  /** The read cursor and the activity stream (R6, DL-169); absent in tests without a deck. */
+  readonly views?: ViewsActions | undefined;
 };
 
 const message = (e: unknown) => (e instanceof Error ? e.message : 'Request failed');
@@ -139,6 +146,7 @@ export function App({
   summaryWatch,
   onReturnTerminal,
   race,
+  views,
 }: Props) {
   const [urlRoute, navigate] = useRoute(initialRoute);
   const measured = useLayout();
@@ -174,6 +182,23 @@ export function App({
           (s) => s.station_id === route.station && s.summary.session_id === route.session,
         )
       : undefined;
+
+  // R6.1: the deck keeps a read cursor for this login; it moves while the chat shows the timeline end.
+  const openTimeline =
+    route.name === 'session'
+      ? timelines[JSON.stringify([route.station, route.session])]
+      : undefined;
+  useMarkRead({
+    key:
+      selected === undefined
+        ? null
+        : { station_id: selected.station_id, session_id: selected.summary.session_id },
+    ready: openTimeline?.ready === true && freshness === 'live',
+    events: openTimeline?.events ?? [],
+    unread: selected === undefined ? 0 : unreadOf(selected),
+    visible: route.name === 'session' && route.tab === 'chat',
+    send: views?.markRead,
+  });
 
   // The first prompt of the spawn form when a plan starts a session.
   const [planPrompt, setPlanPrompt] = useState('');
@@ -476,6 +501,27 @@ export function App({
               actions={actions}
             />
           </div>
+        );
+      case 'watch':
+        return (
+          <WatchPage
+            sessions={sessions}
+            stations={stations}
+            freshness={freshness}
+            timelines={timelines}
+            watch={watch}
+            sessionActions={sessionActions}
+          />
+        );
+      case 'activity':
+        return (
+          <ActivityPage
+            sessions={sessions}
+            stations={stations}
+            live={freshness === 'live'}
+            views={views}
+            fleet={fleet}
+          />
         );
       case 'files':
         return <FilesPage stations={stations} sessions={sessions} filesFor={filesFor} />;

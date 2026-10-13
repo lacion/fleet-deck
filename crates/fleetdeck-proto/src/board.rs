@@ -73,6 +73,71 @@ pub struct DeckSession {
     pub station_id: StationId,
     pub summary: SessionSummary,
     pub status: CardStatus,
+    /// The events after the caller's read cursor that are agent output or
+    /// need the caller (R6.1, DL-169). The deck fills it per caller; it is
+    /// absent when zero.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub unread: Option<u32>,
+}
+
+/// `POST /api/sessions/{station}/{session}/read` (R6.1, DL-169): the board
+/// shows the timeline of a session up to `seq` (a `session_seq`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "board/")]
+pub struct ReadMark {
+    pub seq: u64,
+}
+
+/// The kind of an [`ActivityItem`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "board/")]
+pub enum ActivityKind {
+    /// A completed agent message.
+    Message,
+    /// A completed tool call.
+    Tool,
+    /// An approval or a question: requested, resolved or expired.
+    Approval,
+    /// Mail to the session.
+    Mail,
+    /// A session started, ended, was hibernated or was named.
+    Lifecycle,
+}
+
+/// One row of the activity stream (R6.5, DL-169).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "board/")]
+pub struct ActivityItem {
+    pub station_id: StationId,
+    pub session_id: SessionId,
+    /// The title of the session, when it has one.
+    pub session_title: Option<String>,
+    /// The repository of the session: its origin, else its root.
+    pub repo: Option<String>,
+    pub kind: ActivityKind,
+    /// A one-line text, at most [`ACTIVITY_TEXT_CHARS`] characters.
+    pub text: String,
+    /// Unix ms.
+    pub at: i64,
+    /// The `station_seq` of a timeline row; absent for mail.
+    pub station_seq: Option<u64>,
+}
+
+/// The longest [`ActivityItem::text`] in characters.
+pub const ACTIVITY_TEXT_CHARS: usize = 200;
+/// The default and the largest page of `GET /api/activity`.
+pub const ACTIVITY_DEFAULT_LIMIT: u32 = 100;
+pub const ACTIVITY_MAX_LIMIT: u32 = 500;
+
+/// `GET /api/activity?since=&repo=&session=&limit=` (R6.5): the newest rows
+/// first.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "board/")]
+pub struct ActivityList {
+    pub items: Vec<ActivityItem>,
 }
 
 /// `GET /api/fleet/extras` (DL-141): what the cards show besides the summary.

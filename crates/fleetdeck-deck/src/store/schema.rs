@@ -8,7 +8,8 @@
 //! deck-owned intent (A5) and the receipts of `coordinator.call` (G7). Auth
 //! and audit tables follow in P3-8 (V5). V6 (M3 6-6): the plan
 //! library. V7 (M3 6-2, 6-4): mail and tasks. V8 (M3 6-7): file touches.
-//! V13 (R2.1): the `blocked` and `question` task states.
+//! V13 (R2.1): the `blocked` and `question` task states. V14 (R12): artifacts.
+//! V16 (R5): automations. V17 (R6): read cursors.
 
 use rusqlite_migration::{M, Migrations};
 
@@ -434,6 +435,29 @@ CREATE TABLE schedule_runs (
 ) STRICT;
 ";
 
+/// The read cursors of the board (R6.1, DL-169): the highest `session_seq`
+/// that a caller has seen of a session. `principal` is `owner` or the actor
+/// name of another caller. No foreign key: a cursor outlives a snapshot that
+/// drops and re-adds the session. The owner starts with every stored session
+/// read, so an upgrade shows no unread dots. The timeline gets its event
+/// time as an indexed column for the activity stream (R6.5).
+const V17: &str = "
+CREATE TABLE read_cursors (
+    principal   TEXT    NOT NULL,
+    station_id  TEXT    NOT NULL,
+    session_id  TEXT    NOT NULL,
+    seq         INTEGER NOT NULL CHECK (seq >= 0),
+    at          INTEGER NOT NULL,
+    PRIMARY KEY (principal, station_id, session_id)
+) STRICT;
+INSERT INTO read_cursors (principal, station_id, session_id, seq, at)
+    SELECT 'owner', station_id, session_id, MAX(session_seq),
+           CAST(strftime('%s', 'now') AS INTEGER) * 1000
+    FROM timeline GROUP BY station_id, session_id;
+ALTER TABLE timeline ADD COLUMN at INTEGER GENERATED ALWAYS AS (json_extract(envelope, '$.at')) VIRTUAL;
+CREATE INDEX timeline_by_time ON timeline (at DESC, station_seq DESC);
+";
+
 /// The `deck.db` migrations.
 #[must_use]
 pub fn migrations() -> Migrations<'static> {
@@ -455,6 +479,7 @@ pub fn migrations() -> Migrations<'static> {
         // R5 is named V16 so that it does not clash with V13 to V15 of the
         // other v2 goal branches; the list position decides at the merge.
         M::up(V16),
+        M::up(V17),
     ])
 }
 

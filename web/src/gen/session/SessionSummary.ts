@@ -113,6 +113,11 @@ focus?: string,
  */
 batch?: BatchRef, 
 /**
+ * The station stopped the session because it was idle (R6.6, DL-169).
+ * It stays set until the session starts again.
+ */
+hibernated: boolean, 
+/**
  * The highest `session_seq` folded into this summary.
  */
 session_seq: number, 

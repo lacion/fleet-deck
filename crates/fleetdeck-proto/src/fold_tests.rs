@@ -756,3 +756,21 @@ fn artifacts_count_new_artifacts_once_and_the_focus_follows_the_last_event() {
     });
     assert_eq!(s.focus, None);
 }
+
+#[test]
+fn hibernation_is_kept_through_the_stop_and_cleared_by_the_next_start() {
+    let mut f = Feed::new();
+    f.push(started());
+    assert!(!f.summary.hibernated);
+    f.push(Event::SessionHibernated { after_min: 30 });
+    assert!(f.summary.hibernated);
+    let s = f.push(Event::SessionEnded {
+        reason: "stopped".to_owned(),
+        exit_code: Some(0),
+    });
+    assert!(s.hibernated);
+    assert_eq!(s.activity, Activity::Ended);
+    let s = f.push(started());
+    assert!(!s.hibernated);
+    assert_eq!(s.activity, Activity::Idle);
+}

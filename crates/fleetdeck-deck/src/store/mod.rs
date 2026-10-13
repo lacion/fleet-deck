@@ -15,6 +15,7 @@
 //! Station reachability is link state, not stored state: the deck keeps it
 //! in memory and the board status projection reads it (§7.2).
 
+pub mod activity;
 pub mod archive;
 pub mod artifacts;
 pub mod audit;
@@ -30,6 +31,7 @@ pub mod fleet;
 pub mod grants;
 pub mod outbox;
 pub mod plans;
+pub mod read_cursors;
 pub mod read_model;
 pub mod schedules;
 pub mod schema;

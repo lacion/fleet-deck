@@ -27,6 +27,7 @@ A missing file gives the defaults. An unknown key is an error.
 | `listen` | (empty) | Link listen addresses when the deck dials this station. |
 | `host` | `direct` | `direct`: the agents are children of the station and stop with it. `shim`: each agent runs under a `fleetdeck shim` process and survives a station restart or upgrade (ADR-005). |
 | `shim_buffer_mib` | `16` | The shim output buffer, 1–256 MiB. |
+| `hibernate_after_min` | `0` (off) | Minutes of idleness after which the station stops a live, idle session gracefully (`session.hibernated`). The board resumes it with the next input (R6.6, DL-169). Up to 10080. |
 | `repo_groups` | (empty) | Repository path → group name, for the conflict radar. |
 | `[[provider_instance]]` | `claude` and `codex` | `id`, `driver` (`claude` or `codex`), `binary`, `config_home`, `env` (values are secrets; they never leave the station). |
 

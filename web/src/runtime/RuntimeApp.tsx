@@ -20,6 +20,7 @@ import type { Watch } from '../terminal/handover';
 import { archived } from '../ui/archive';
 import type { Connection } from './connection';
 import { deviceLinkAction } from './deviceLink';
+import { viewsActions } from './views';
 
 export function RuntimeApp({ connection }: { readonly connection: Connection }) {
   const state = useSyncExternalStore(
@@ -137,6 +138,14 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
       }
       return v as FleetExtras;
     },
+    [connection],
+  );
+  const views = useMemo(
+    () =>
+      viewsActions(
+        (path) => connection.get(path),
+        (path, body) => connection.post(path, body),
+      ),
     [connection],
   );
   const watch = useMemo(() => (key: SessionKey) => connection.watch(key), [connection]);
@@ -273,6 +282,7 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
       summaryWatch={summaryWatch}
       onReturnTerminal={returnTerminal}
       race={race}
+      views={views}
     />
   );
 }
