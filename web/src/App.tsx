@@ -1,4 +1,8 @@
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import type { ArtifactActions } from './artifacts/actions';
+import { ArtifactPage } from './artifacts/ArtifactViewer';
+import { ArtifactsPage } from './artifacts/ArtifactsPage';
+import { ArtifactsProvider } from './artifacts/context';
 import type { AssignActions } from './assign/assign';
 import type { FeedItem } from './board/feed';
 import type { ConflictLoader } from './board/conflicts';
@@ -66,6 +70,8 @@ type Props = {
   readonly initialListing?: WorkspaceListing | null;
   /** The event feed since the page opened (DL-095). */
   readonly feed?: readonly FeedItem[];
+  /** The artifact calls (R12, DL-165); absent in tests without a deck. */
+  readonly artifacts?: ArtifactActions | undefined;
   /** The plan library (DL-301). */
   readonly plans?: PlanActions | undefined;
   /** The conflict radar (M3 6-7); absent in tests without a deck. */
@@ -121,6 +127,7 @@ export function App({
   initialLayout,
   initialListing = null,
   feed = [],
+  artifacts,
   plans,
   conflicts,
   extras,
@@ -131,6 +138,10 @@ export function App({
   onReturnTerminal,
 }: Props) {
   const [urlRoute, navigate] = useRoute(initialRoute);
+  const artifactsEnv = useMemo(
+    () => (artifacts === undefined ? undefined : { actions: artifacts }),
+    [artifacts],
+  );
   const measured = useLayout();
   const layout = initialLayout ?? measured;
   const touch = useTouch();
@@ -453,6 +464,18 @@ export function App({
         );
       case 'files':
         return <FilesPage stations={stations} sessions={sessions} filesFor={filesFor} />;
+      case 'artifacts':
+        return <ArtifactsPage actions={artifacts} stations={stations} sessions={sessions} />;
+      case 'artifact':
+        return (
+          <ArtifactPage
+            actions={artifacts}
+            station={route.station}
+            id={route.id}
+            version={route.version}
+            onVersion={(version) => navigate({ ...route, version }, { replace: true })}
+          />
+        );
       case 'more':
         return <More stationCount={stations.length} terminalCount={tabCount} chrome={chrome} />;
       case 'terminals':
@@ -491,7 +514,7 @@ export function App({
     }
   })();
 
-  return (
+  const layoutNode = (
     <Layout
       layout={layout}
       route={route}
@@ -529,5 +552,10 @@ export function App({
     >
       {content}
     </Layout>
+  );
+  return artifactsEnv === undefined ? (
+    layoutNode
+  ) : (
+    <ArtifactsProvider value={artifactsEnv}>{layoutNode}</ArtifactsProvider>
   );
 }

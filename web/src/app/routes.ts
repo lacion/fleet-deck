@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 
-export type Tab = 'chat' | 'changes' | 'files';
+export type Tab = 'chat' | 'changes' | 'files' | 'artifacts';
 
 export type Route =
   | { readonly name: 'home' }
@@ -11,6 +11,14 @@ export type Route =
   | { readonly name: 'files' }
   | { readonly name: 'terminals' }
   | { readonly name: 'more' }
+  | { readonly name: 'artifacts' }
+  | {
+      readonly name: 'artifact';
+      readonly station: string;
+      readonly id: string;
+      /** `null`: the latest version. */
+      readonly version: number | null;
+    }
   | {
       readonly name: 'session';
       readonly station: string;
@@ -20,7 +28,32 @@ export type Route =
 
 const HOME: Route = { name: 'home' };
 
-const PLAIN = ['fleet', 'new', 'plans', 'stations', 'files', 'terminals', 'more'] as const;
+const PLAIN = [
+  'fleet',
+  'new',
+  'plans',
+  'stations',
+  'files',
+  'terminals',
+  'more',
+  'artifacts',
+] as const;
+
+/** `#/artifact/<station>/<id>[/<version>]`; a bad part is the home. */
+function parseArtifact(parts: readonly string[]): Route {
+  try {
+    const station = decodeURIComponent(parts[2] ?? '');
+    const id = decodeURIComponent(parts[3] ?? '');
+    if (station === '' || id === '') return HOME;
+    if (parts.length === 4) return { name: 'artifact', station, id, version: null };
+    const version = Number(parts[4]);
+    return Number.isInteger(version) && version >= 1
+      ? { name: 'artifact', station, id, version }
+      : HOME;
+  } catch {
+    return HOME;
+  }
+}
 
 /** Hash routes (DL-140): the browser's back button works on a phone. Anything unknown is home. */
 export function parseHash(hash: string): Route {
@@ -33,6 +66,9 @@ export function parseHash(hash: string): Route {
     if (text === `/${name}`) return { name };
   }
   const parts = path.split('/');
+  if (parts[0] === '' && parts[1] === 'artifact' && (parts.length === 4 || parts.length === 5)) {
+    return parseArtifact(parts);
+  }
   if (parts.length !== 4 || parts[0] !== '' || parts[1] !== 's') return HOME;
   try {
     const station = decodeURIComponent(parts[2] ?? '');
@@ -43,7 +79,7 @@ export function parseHash(hash: string): Route {
       name: 'session',
       station,
       session,
-      tab: tab === 'changes' || tab === 'files' ? tab : 'chat',
+      tab: tab === 'changes' || tab === 'files' || tab === 'artifacts' ? tab : 'chat',
     };
   } catch {
     return HOME;
@@ -58,6 +94,10 @@ export function formatHash(route: Route): string {
     case 'session': {
       const base = `#/s/${encodeURIComponent(route.station)}/${encodeURIComponent(route.session)}`;
       return route.tab === 'chat' ? base : `${base}?tab=${route.tab}`;
+    }
+    case 'artifact': {
+      const base = `#/artifact/${encodeURIComponent(route.station)}/${encodeURIComponent(route.id)}`;
+      return route.version === null ? base : `${base}/${route.version}`;
     }
     default:
       return `#/${route.name}`;

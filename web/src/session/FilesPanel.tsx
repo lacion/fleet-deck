@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
+import { useArtifacts } from '../artifacts/context';
+import { publishedText, PublishDialog } from '../artifacts/PublishDialog';
+import { artifactHref, publishable } from '../artifacts/kinds';
 import { Markdown } from '../chat/Markdown';
-import type { FileContent, FileListing, FileSearch } from '../gen';
-import { FileText, Folder, Icon } from '../ui/icons';
+import type { ArtifactPublished, FileContent, FileListing, FileSearch } from '../gen';
+import { FileText, Folder, Icon, Paperclip } from '../ui/icons';
 import { CopyButton } from './SessionHeader';
 import { type FileActions, joinPath, parentPath, type SearchModeName } from './workspace';
 
@@ -18,10 +21,13 @@ export function FileView({
   file,
   root,
   onBack,
+  onPublish,
 }: {
   readonly file: FileContent;
   readonly root: string | null;
   readonly onBack: () => void;
+  /** "Publish as artifact" (R12); absent: the button is not shown. */
+  readonly onPublish?: (() => void) | undefined;
 }) {
   const [rendered, setRendered] = useState(true);
   const markdown = /\.(md|markdown)$/i.test(file.path);
@@ -56,6 +62,11 @@ export function FileView({
           </>
         ) : null}
         <CopyButton text={root ? `${root}/${file.path}` : file.path} label="Copy the path" />
+        {onPublish !== undefined && publishable(file.path) ? (
+          <button type="button" className="fd-ghost fd-sm" onClick={onPublish}>
+            <Icon of={Paperclip} size={14} /> Publish as artifact
+          </button>
+        ) : null}
       </div>
       {file.binary ? (
         <p className="fd-note">A binary file is not shown.</p>
@@ -96,6 +107,11 @@ export function FilesPanel({
   const [folder, setFolder] = useState('');
   const [query, setQuery] = useState('');
   const [mode, setMode] = useState<SearchModeName>('name');
+  // R12: "Publish as artifact" is there for a session's files when the login can drive.
+  const artifacts = useArtifacts();
+  const canPublish = artifacts?.actions.canPublish === true && artifacts.session !== undefined;
+  const [publishing, setPublishing] = useState<string | null>(null);
+  const [published, setPublished] = useState<ArtifactPublished | null>(null);
   // The actions object changes on every render of the parent; the effect keys on "has files".
   const latest = useRef(files);
   latest.current = files;
@@ -207,6 +223,30 @@ export function FilesPanel({
           </span>
         ) : null}
       </nav>
+      {published === null || artifacts?.session === undefined ? null : (
+        <p role="status" className="fd-note fd-files-published">
+          {publishedText(published)}{' '}
+          <a
+            href={artifactHref(
+              artifacts.session.station,
+              published.artifact.artifact_id,
+              published.version.version,
+            )}
+          >
+            Open it
+          </a>
+        </p>
+      )}
+      {publishing === null ? null : (
+        <PublishDialog
+          path={publishing}
+          onClose={() => setPublishing(null)}
+          onPublished={(done) => {
+            setPublishing(null);
+            setPublished(done);
+          }}
+        />
+      )}
       {view.kind === 'loading' ? (
         <p role="status" className="fd-note">
           Loading…
@@ -235,8 +275,24 @@ export function FilesPanel({
             {view.listing.entries.map((e) => {
               const path = joinPath(view.listing.path, e.name);
               const size = e.size !== null ? <span className="fd-size"> {e.size} B</span> : null;
+              const offer = e.kind === 'file' && canPublish && publishable(e.name);
               return (
-                <li key={e.name} data-entry-kind={e.kind}>
+                <li
+                  key={e.name}
+                  data-entry-kind={e.kind}
+                  className={offer ? 'fd-files-item' : undefined}
+                >
+                  {offer ? (
+                    <button
+                      type="button"
+                      className="fd-iconbtn fd-sm fd-files-publish"
+                      aria-label={`Publish ${e.name} as artifact`}
+                      title="Publish as artifact"
+                      onClick={() => setPublishing(path)}
+                    >
+                      <Icon of={Paperclip} size={14} />
+                    </button>
+                  ) : null}
                   {e.kind === 'dir' || e.kind === 'file' ? (
                     <button
                       type="button"
@@ -274,6 +330,7 @@ export function FilesPanel({
           file={view.file}
           root={root}
           onBack={() => open(parentPath(view.file.path))}
+          onPublish={canPublish ? () => setPublishing(view.file.path) : undefined}
         />
       ) : null}
       {view.kind === 'search' ? (

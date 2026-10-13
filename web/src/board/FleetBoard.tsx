@@ -18,6 +18,7 @@ import {
   Icon,
   Layers,
   Mail,
+  Paperclip,
   RotateCcw,
   Star,
   TriangleAlert,
@@ -240,6 +241,11 @@ export function FleetCard({
           </span>
         </span>
         <CardNote card={card} />
+        {s.focus === undefined || s.focus === '' ? null : (
+          <span className="fd-card-focus" title={s.focus}>
+            {s.focus}
+          </span>
+        )}
         {files.length === 0 ? null : (
           <span className="fd-card-files">
             {files.map((path) => (
@@ -279,6 +285,11 @@ export function FleetCard({
           {subagents > 0 ? (
             <span className="fd-badge" title="Subagents running" data-running-subagents={subagents}>
               <Icon of={Workflow} size={12} /> {subagents}
+            </span>
+          ) : null}
+          {s.artifacts_count > 0 ? (
+            <span className="fd-badge" title="Artifacts" data-artifacts={s.artifacts_count}>
+              <Icon of={Paperclip} size={12} /> {s.artifacts_count}
             </span>
           ) : null}
           {s.background_tasks.length > 0 ? (

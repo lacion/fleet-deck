@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { App } from '../App';
+import { artifactActions, artifactHttp } from '../artifacts/actions';
 import { stationActions, worktreeActor, worktreeLoader } from '../board/pairing';
 import { conflictLoader } from '../board/conflicts';
 import { workspaceFiles } from '../session/workspace';
@@ -18,6 +19,9 @@ import type { Watch } from '../terminal/handover';
 import { archived } from '../ui/archive';
 import type { Connection } from './connection';
 import { deviceLinkAction } from './deviceLink';
+
+/** The deck waits up to 20 s for a station; the board waits a little longer. */
+const ARTIFACT_WAIT_MS = 25_000;
 
 export function RuntimeApp({ connection }: { readonly connection: Connection }) {
   const state = useSyncExternalStore(
@@ -106,6 +110,22 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
       planActions(
         (path) => connection.get(path),
         (path, body) => connection.post(path, body),
+        scopeText.split(' '),
+      ),
+    [connection, scopeText],
+  );
+  const artifacts = useMemo(
+    () =>
+      artifactActions(
+        {
+          get: (path) => connection.get(path, ARTIFACT_WAIT_MS),
+          post: (path, body) => connection.post(path, body, ARTIFACT_WAIT_MS),
+          ...artifactHttp(
+            (path, init) => fetch(path, init),
+            () => connection.getSnapshot().login?.csrf ?? null,
+            ARTIFACT_WAIT_MS,
+          ),
+        },
         scopeText.split(' '),
       ),
     [connection, scopeText],
@@ -245,6 +265,7 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
       assign={assign}
       fleet={fleet}
       feed={state.feed}
+      artifacts={artifacts}
       plans={plans}
       conflicts={conflicts}
       extras={extras}

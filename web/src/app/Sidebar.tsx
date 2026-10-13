@@ -5,6 +5,7 @@ import {
   Archive,
   Folder,
   GitBranch,
+  Paperclip,
   Icon,
   LayoutGrid,
   LogOut,
@@ -332,6 +333,15 @@ export function Sidebar({
             <a href="#/plans" aria-current={route.name === 'plans' ? 'page' : undefined}>
               <Icon of={FileText} />
               Plans
+            </a>
+            <a
+              href="#/artifacts"
+              aria-current={
+                route.name === 'artifacts' || route.name === 'artifact' ? 'page' : undefined
+              }
+            >
+              <Icon of={Paperclip} />
+              Artifacts
             </a>
             <a href="#/files" aria-current={route.name === 'files' ? 'page' : undefined}>
               <Icon of={Folder} />

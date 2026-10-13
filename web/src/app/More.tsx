@@ -1,5 +1,14 @@
 import { useState } from 'react';
-import { FileText, Folder, Icon, LogOut, Server, Smartphone, SquareTerminal } from '../ui/icons';
+import {
+  FileText,
+  Folder,
+  Icon,
+  LogOut,
+  Paperclip,
+  Server,
+  Smartphone,
+  SquareTerminal,
+} from '../ui/icons';
 import type { Chrome } from './chrome';
 import { DeviceLinkDialog } from './DeviceLinkDialog';
 import { PrefsRow } from './Prefs';
@@ -22,6 +31,12 @@ export function More({ stationCount, terminalCount, chrome }: Props) {
             <a href="#/plans">
               <Icon of={FileText} />
               Plans
+            </a>
+          </li>
+          <li>
+            <a href="#/artifacts">
+              <Icon of={Paperclip} />
+              Artifacts
             </a>
           </li>
           <li>
