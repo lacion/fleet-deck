@@ -39,6 +39,8 @@ export type SpawnActions = {
     prompt: string,
     workspace?: WorkspaceRequest | null,
     importId?: string,
+    /** DL-148: a shell command that the station runs in the workspace before the agent starts. */
+    setupCmd?: string,
   ): Promise<SpawnOutcome>;
 };
 
@@ -112,6 +114,22 @@ export function workspaceRequest(
   const b = batch ? '' : branch.trim();
   const from = base.trim();
   return { kind: 'worktree', ...(b ? { branch: b } : {}), ...(b && from ? { base: from } : {}) };
+}
+
+/** The longest setup command that the station accepts (characters). */
+export const MAX_SETUP_CMD = 4096;
+
+/**
+ * Why a setup command cannot be sent, or `null` (mirrors the station: 1 to
+ * 4096 characters, no NUL). An empty or blank command means no setup.
+ */
+export function setupProblem(cmd: string): string | null {
+  if (cmd.trim() === '') return null;
+  if (Array.from(cmd).length > MAX_SETUP_CMD) {
+    return 'The setup command is longer than 4096 characters.';
+  }
+  if (cmd.includes('\0')) return 'The setup command contains a NUL character.';
+  return null;
 }
 
 /** The most sessions that one batch line can ask for (`10x`). */
@@ -217,6 +235,47 @@ export function togglePin(pins: DirPins, stationId: string, path: string): DirPi
   return { ...pins, [stationId]: next };
 }
 
+/** The most remembered setup commands. */
+export const MAX_SETUP_CMDS = 50;
+const SETUP_KEY = 'fd-setup-cmds';
+
+/** The memory key of a setup command: one for each station and directory. */
+export function setupKey(stationId: string, cwd: string): string {
+  return `${stationId}\n${cwd}`;
+}
+
+/** The remembered setup commands of this browser (DL-148); empty when storage fails. */
+export function readSetupCmds(): Record<string, string> {
+  try {
+    const raw: unknown = JSON.parse(localStorage.getItem(SETUP_KEY) ?? '{}');
+    if (!record(raw)) return {};
+    const out: Record<string, string> = {};
+    for (const [key, cmd] of Object.entries(raw)) {
+      if (typeof cmd === 'string') out[key] = cmd;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+/** Remembers `cmd` for `key`, or forgets the key when `cmd` is `null` (50 keys at most, oldest dropped). */
+export function rememberSetupCmd(key: string, cmd: string | null): void {
+  try {
+    const all = readSetupCmds();
+    if (cmd === null) {
+      delete all[key];
+    } else {
+      all[key] = cmd;
+      const keys = Object.keys(all);
+      for (const old of keys.slice(0, Math.max(0, keys.length - MAX_SETUP_CMDS))) delete all[old];
+    }
+    localStorage.setItem(SETUP_KEY, JSON.stringify(all));
+  } catch {
+    // Storage is blocked or full: nothing is remembered.
+  }
+}
+
 /** The last two parts of a path (`/home/me/app` gives `me/app`); `/` stays `/`. */
 export function lastParts(path: string): string {
   const parts = path.split('/').filter((p) => p !== '');
@@ -285,12 +344,18 @@ export function spawnActions(
         return { ok: false, text: error instanceof Error ? error.message : 'The request failed.' };
       }
     },
-    start: async (stationId, spec, prompt, workspace = null, importId) => {
+    start: async (stationId, spec, prompt, workspace = null, importId, setupCmd) => {
       const first = prompt.trim() === '' ? null : { text: prompt };
       const native = importId?.trim() ?? '';
       const command =
         native === ''
-          ? { op: 'start', spec, prompt: first, ...(workspace === null ? {} : { workspace }) }
+          ? {
+              op: 'start',
+              spec,
+              prompt: first,
+              ...(workspace === null ? {} : { workspace }),
+              ...(setupCmd !== undefined && setupCmd.trim() !== '' ? { setup_cmd: setupCmd } : {}),
+            }
           : { op: 'import', spec, native_session_id: native, prompt: first };
       const body = { station: stationId, command_id: newId(), command };
       try {

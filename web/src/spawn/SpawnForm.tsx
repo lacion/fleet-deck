@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { DeckSession, SessionKey, StationView, WorkspaceListing } from '../gen';
 import type { Freshness } from '../runtime/state';
 import { Icon, Pin, PinOff } from '../ui/icons';
 import { BranchFields } from './BranchFields';
 import { CloneAccess } from './CloneAccess';
+import { SetupField } from './SetupField';
 import {
   baseProblem,
   batchPrompts,
@@ -13,7 +14,11 @@ import {
   providerLabel,
   type PreflightResult,
   readPins,
+  readSetupCmds,
   recentDirs,
+  rememberSetupCmd,
+  setupKey,
+  setupProblem,
   type SpawnActions,
   type SpawnOutcome,
   spawnModes,
@@ -84,6 +89,11 @@ export function SpawnForm({
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<SpawnOutcome | null>(null);
   const [pins, setPins] = useState(readPins);
+  const [setupCmd, setSetupCmd] = useState('');
+  const [setupRemember, setSetupRemember] = useState(false);
+  // True once the user types in the setup field; a change of station or
+  // directory then keeps the typed text instead of the remembered one.
+  const setupEdited = useRef(false);
 
   // A station that goes away (or the first one that appears) resets the
   // choice; a directory belongs to its station.
@@ -93,6 +103,16 @@ export function SpawnForm({
   useEffect(() => {
     if (provider === undefined && providers[0] !== undefined) setInstance(providers[0].instance);
   }, [provider, providers[0]?.instance]);
+  // DL-148: the setup command follows the station and the directory, unless
+  // the user edited the field since the last change.
+  useEffect(() => {
+    if (!setupEdited.current) {
+      const stored = cwd === null ? undefined : readSetupCmds()[setupKey(stationId, cwd)];
+      setSetupCmd(stored ?? '');
+      setSetupRemember(stored !== undefined);
+    }
+    setupEdited.current = false;
+  }, [stationId, cwd]);
 
   const live = freshness === 'live';
   const canDrive = actions?.canDrive === true;
@@ -114,6 +134,8 @@ export function SpawnForm({
     setCwd(path);
     browse(path);
   };
+  const setupShown = station?.info?.allow_setup_cmd === true && !importing;
+  const setupBad = setupShown && setupProblem(setupCmd) !== null;
   const importProblem = importId.trim() === '' ? null : importIdProblem(importId.trim());
   const branchName = branch.trim();
   const branchFields = place === 'worktree' && !batch;
@@ -150,6 +172,7 @@ export function SpawnForm({
     provider !== undefined &&
     cwd !== null &&
     cloneReady &&
+    !setupBad &&
     !refProblem;
   // Say why the start button is off: a disabled button alone looks like a
   // button that does nothing (owner report after M3).
@@ -168,6 +191,7 @@ export function SpawnForm({
     branchFields && branchName !== '' && base.trim() !== '' && baseProblem(base.trim()) !== null
       ? 'fix the base'
       : null,
+    setupBad ? 'fix the setup command' : null,
   ].filter((m): m is string => m !== null);
 
   return (
@@ -226,12 +250,25 @@ export function SpawnForm({
               : workspaceRequest(place, batch, cloneUrl, branch, base);
             const prompts = batch && place !== 'clone' && !importing ? batchLines : [prompt];
             const id = station.station_id;
+            const setup = setupShown ? setupCmd : undefined;
+            const key = setupKey(id, cwd);
             void (async () => {
               let last: SpawnOutcome | null = null;
               let started = 0;
               for (const p of prompts) {
-                last = await actions.start(id, spec, p, workspace, importing ? native : undefined);
+                last = await actions.start(
+                  id,
+                  spec,
+                  p,
+                  workspace,
+                  importing ? native : undefined,
+                  setup,
+                );
                 if (!last.ok) break;
+                if (started === 0 && setup !== undefined) {
+                  if (!setupRemember) rememberSetupCmd(key, null);
+                  else if (setup.trim() !== '') rememberSetupCmd(key, setup);
+                }
                 started += 1;
               }
               if (last !== null && prompts.length > 1) {
@@ -474,6 +511,17 @@ export function SpawnForm({
           </div>
           <div className="fd-panel">
             <h3 className="fd-label">Options</h3>
+            {setupShown ? (
+              <SetupField
+                value={setupCmd}
+                remember={setupRemember}
+                onValue={(v) => {
+                  setupEdited.current = true;
+                  setSetupCmd(v);
+                }}
+                onRemember={setSetupRemember}
+              />
+            ) : null}
             <label className="fd-spawn-opt">
               <input
                 type="checkbox"

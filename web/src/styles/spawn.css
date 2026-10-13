@@ -241,3 +241,15 @@
 .fd-spawn-url > .fd-spawn-access {
   grid-column: 1 / -1;
 }
+.fd-spawn-setup-field {
+  display: grid;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.fd-spawn-setup-field p {
+  margin: 0;
+}
+.fd-spawn textarea.fd-spawn-setup {
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+}
