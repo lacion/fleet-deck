@@ -19,7 +19,7 @@ Commands: Rust tests run with `cargo nextest run -E 'test(<name>)'`, board unit 
 | Live terminal (xterm.js on tmux) | Session view; separate human shell (D10) | `web/e2e/session.spec.ts` "steer, follow-up, interrupt and the mode ladder send one command each"; `web/e2e/shell.spec.ts` "an admin opens a station shell, types into it, reattaches, and closes it" | done |
 | Terminal grid | Session grid | — | deferred (DL-131) |
 | Shift+Enter, Ctrl+V screenshot paste | Composer newline; image paste | `web/e2e/parity.spec.ts` "Shift+Enter in the composer adds a newline and sends nothing (v0 parity)" (new in 6-13); `web/e2e/images.spec.ts` "a picked or pasted image goes with the prompt" | done |
-| Revive | Native resume | `crates/fleetdeck-station/src/manager/resume_tests.rs` `row_resume_reopens_the_same_native_session_with_its_memory`; `crates/fleetdeck-providers/tests/codex_core_replay.rs` `resume_and_fork_start_sessions_on_the_recorded_threads` | done (station and deck API); board button deferred (DL-131) |
+| Revive | Native resume | `crates/fleetdeck-station/src/manager/resume_tests.rs` `row_resume_reopens_the_same_native_session_with_its_memory`; `crates/fleetdeck-providers/tests/codex_core_replay.rs` `resume_and_fork_start_sessions_on_the_recorded_threads` | done (station, deck API, and the board's Resume and Resume all, DL-140, DL-141) |
 | Remote control (claude.ai) | Dropped | — (PLAN: dropped) | not applicable |
 | Plan library | Capture from the protocol | `web/e2e/plans.spec.ts` "a captured plan is read, archived, restored and starts a session" | done |
 | Workspace tools (files, worktrees, rename, event feed) | Per station | `web/e2e/revert.spec.ts` "the files of a session are browsed, read and searched; a symlink is not opened"; `a_worktree_start_creates_the_callsign_worktree_on_its_branch`; `web/e2e/workspace.spec.ts` "a session is renamed from the board, also after it ended", "the event feed shows fleet changes newest first, filters them and opens a session" | done |
@@ -56,6 +56,9 @@ Commands: Rust tests run with `cargo nextest run -E 'test(<name>)'`, board unit 
 ## Deferred (DL-131, owner decision needed)
 
 1. Session grid (many live session views at once).
-2. A resume button on the board for an ended session (native resume works through the station and the deck API `session.resume`).
-3. LAN station discovery (mDNS, `mdns-sd`); owners add dial targets by hand.
-4. A per-provider minimum CLI version that refuses an older CLI (the probe reports the version).
+2. LAN station discovery (mDNS, `mdns-sd`); owners add dial targets by hand.
+3. A per-provider minimum CLI version that refuses an older CLI (the probe reports the version).
+
+## Board parity with the v1 board (DL-141, DL-142)
+
+The v1 board's features and their v2 status are in the parity audit of DL-141 (a 139-row matrix). Built in DL-141: the v1 columns and cards, the answerable Needs-you rail with keys, conflict marks, repo grouping, Resume all, Clear and per-browser archive, stars, the bypass mark, the last error, mail to a station, a repo or everyone, compact density, light/dark/system theme, help with concepts and first-run help, the mail key `c`, plan assign to a live session, the batch preview, recent and pinned directories, card mail badges, file chips and the activity sparkline, the global Files page, Markdown view and copy path, TUI Shift+Enter, OSC 52 copy, the deck version, and the read-only worktree list (DL-142). Not built yet: worktree removal from the board (needs a quarantine design, DL-142), a LAN link and QR code for a phone, the git access preflight and branch choice in the spawn form, the conflict warning to the agents, ticket callsigns, the setup command, image paste into a TUI tab, and `fleetdeck doctor`.

@@ -20,10 +20,9 @@ The repository side of the cutover (PLAN Phase 7, item 7-7) happens on the `v2` 
 
 The full parity table is PLAN §16.
 
-Item 6-13 records the test for each parity row in [PARITY.md](./PARITY.md). Four v1 behaviours have no v2 equivalent yet; they are deferred for an owner decision (DL-131):
+Item 6-13 records the test for each parity row in [PARITY.md](./PARITY.md). Three v1 behaviours have no v2 equivalent yet; they are deferred for an owner decision (DL-131):
 
 - the terminal grid (v2: a session grid)
-- a resume button on the board (native resume works through the station and the deck API)
 - station discovery on the LAN (add dial targets by hand)
 - a minimum CLI version per provider (the probe reports the version)
 
