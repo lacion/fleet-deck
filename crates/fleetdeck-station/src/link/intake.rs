@@ -196,6 +196,15 @@ async fn integration(ctx: &StationLink, method: &str, params: serde_json::Value)
         .await
 }
 
+/// The `accounts.*` methods and `issues.containers` (DL-173): the connected
+/// accounts. The service owns the error codes.
+async fn accounts(ctx: &StationLink, method: &str, params: serde_json::Value) -> Outcome {
+    ctx.manager
+        .integrations()
+        .call_accounts(method, params)
+        .await
+}
+
 /// `assist.generate` (DL-167): one model-help text. Error codes `disabled`,
 /// `budget`, `no_provider`, `invalid_params` and `failed`; a caller keeps
 /// its plain fallback for each of them.
@@ -369,6 +378,9 @@ async fn read(ctx: &StationLink, req: InboundRequest) -> Outcome {
         "assist.generate" => assist(ctx, req.params).await,
         "files.write_temp" => write_temp(ctx, req.params).await,
         m if crate::integrations::Integrations::serves(m) => integration(ctx, m, req.params).await,
+        m if crate::integrations::Integrations::serves_accounts(m) => {
+            accounts(ctx, m, req.params).await
+        }
         "files.list" | "files.read" | "files.search" | "files.diff" | "files.session_diff" => {
             file_method(ctx, &req.method, req.params).await
         }

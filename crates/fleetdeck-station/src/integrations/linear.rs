@@ -1,6 +1,7 @@
 //! Linear GraphQL (`https://api.linear.app/graphql`). Every user value goes
 //! in a GraphQL variable, never into the query text.
 
+use fleetdeck_proto::accounts::Container;
 use fleetdeck_proto::integrations::{
     IssueComment, IssueDetail, IssueRef, IssueSearch, IssueSummary, code,
 };
@@ -224,6 +225,52 @@ pub async fn transition(t: &Tracker<'_>, key: &str, to: &str) -> Result<String, 
         .or(issue["url"].as_str())
         .unwrap_or_default()
         .to_owned())
+}
+
+/// The user name and the workspace key of the credential.
+pub async fn identity(t: &Tracker<'_>) -> Result<(String, Option<String>), Fail> {
+    let data = call(
+        t,
+        "query { viewer { name email organization { urlKey } } }",
+        &json!({}),
+    )
+    .await?;
+    let viewer = &data["viewer"];
+    let user = viewer["name"]
+        .as_str()
+        .or(viewer["email"].as_str())
+        .map(str::to_owned)
+        .ok_or_else(|| Fail::bad_answer("Linear gave no user name"))?;
+    let key = viewer["organization"]["urlKey"]
+        .as_str()
+        .filter(|k| {
+            (1..=64).contains(&k.len())
+                && k.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+        })
+        .map(str::to_owned);
+    Ok((user, key))
+}
+
+/// The teams of the account (up to 100).
+pub async fn containers(t: &Tracker<'_>) -> Result<Vec<Container>, Fail> {
+    let data = call(
+        t,
+        "query { teams(first: 100) { nodes { key name } } }",
+        &json!({}),
+    )
+    .await?;
+    Ok(data["teams"]["nodes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|n| {
+            Some(Container {
+                key: n["key"].as_str()?.to_owned(),
+                name: n["name"].as_str().unwrap_or_default().to_owned(),
+            })
+        })
+        .collect())
 }
 
 pub async fn whoami(t: &Tracker<'_>) -> Result<String, Fail> {

@@ -31,13 +31,14 @@ mod writes;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use fleetdeck_core::config::{TokenSource, TrackerConfig};
+use fleetdeck_proto::accounts::{AccountKind, AccountRef, Containers};
 use fleetdeck_proto::integrations::{
     Asset, AssetQuery, Binding, CliStatus, ForgeBinding, ForgeKind, IntegrationsStatus, IssueGet,
-    IssueList, IssueSearch, PrFetchHead, PrRef, PrsList, StatusQuery, TrackerBinding,
+    IssueList, IssueSearch, PrFetchHead, PrRef, PrsList, StatusQuery, TrackerBinding, TrackerKind,
     TrackerStatus, code,
 };
 use fleetdeck_proto::link::{Outcome, WireError};
@@ -45,6 +46,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
+use crate::accounts::Accounts;
 use exec::{Fail, Programs};
 use forge::Forge;
 use tracker::Tracker;
@@ -80,6 +82,8 @@ pub struct Integrations {
     hidden: Vec<String>,
     cache: Mutex<HashMap<String, (Instant, Value)>>,
     writes: tokio::sync::Mutex<writes::Log>,
+    /// The connected accounts (DL-173). A rebuilt service shares them.
+    accounts: Arc<Accounts>,
 }
 
 impl Default for Integrations {
@@ -99,7 +103,15 @@ impl Integrations {
     /// (DL-172 §1.4). The cache and the recent writes start empty.
     #[must_use]
     pub fn rebuilt(&self, trackers: Vec<TrackerConfig>) -> Self {
-        Self::with_programs(trackers, self.programs.clone())
+        let mut service = Self::with_programs(trackers, self.programs.clone());
+        service.accounts = Arc::clone(&self.accounts);
+        service
+    }
+
+    /// The connected accounts of this station (DL-173).
+    #[must_use]
+    pub fn accounts(&self) -> &Arc<Accounts> {
+        &self.accounts
     }
 
     /// The `[[trackers]]` entries of this service.
@@ -119,6 +131,7 @@ impl Integrations {
             })
             .collect();
         Self {
+            accounts: Arc::new(Accounts::new(programs.clone())),
             programs,
             trackers,
             hidden,
@@ -221,25 +234,93 @@ impl Integrations {
         }
     }
 
-    /// The `[[trackers]]` entry of `binding`.
+    /// The tracker of `binding`: a `[[trackers]]` entry with this id, or an
+    /// account of the store (DL-173).
     pub(crate) fn tracker<'a>(&'a self, binding: &'a TrackerBinding) -> Result<Tracker<'a>, Fail> {
-        let cfg = self
-            .trackers
-            .iter()
-            .find(|t| t.id == binding.tracker)
-            .ok_or_else(|| {
-                Fail::unavailable(format!(
-                    "this station has no tracker `{}` in its station.toml",
-                    binding.tracker
-                ))
-            })?;
-        if cfg.kind != binding.kind {
-            return Err(Fail::new(
+        match self.trackers.iter().find(|t| t.id == binding.tracker) {
+            Some(cfg) if cfg.kind != binding.kind => Err(Fail::new(
                 code::INVALID_PARAMS,
                 format!("tracker `{}` is not of the kind of the binding", cfg.id),
+            )),
+            Some(cfg) => Tracker::open(&self.programs, cfg, &binding.key),
+            None => self.account_tracker(&binding.tracker, binding.kind, &binding.key),
+        }
+    }
+
+    /// The tracker of the store account `id`.
+    fn account_tracker<'a>(
+        &'a self,
+        id: &str,
+        kind: TrackerKind,
+        key: &'a str,
+    ) -> Result<Tracker<'a>, Fail> {
+        let Some(meta) = self.accounts.meta(id)? else {
+            return Err(Fail::unavailable(format!(
+                "this station has no tracker `{id}` in its station.toml or its accounts"
+            )));
+        };
+        let account_kind = match kind {
+            TrackerKind::Jira => AccountKind::Jira,
+            TrackerKind::Linear => AccountKind::Linear,
+        };
+        if meta.kind != account_kind {
+            return Err(Fail::new(
+                code::INVALID_PARAMS,
+                format!("tracker `{id}` is not of the kind of the binding"),
             ));
         }
-        Tracker::open(&self.programs, cfg, &binding.key)
+        Ok(Tracker::for_account(
+            &self.programs,
+            &self.accounts,
+            id,
+            meta,
+            kind,
+            key,
+        ))
+    }
+
+    /// True for a method that the account service answers.
+    #[must_use]
+    pub fn serves_accounts(method: &str) -> bool {
+        crate::accounts::serves(method) || method == "issues.containers"
+    }
+
+    /// Answers `accounts.*` and `issues.containers` (DL-173).
+    pub async fn call_accounts(&self, method: &str, params: Value) -> Outcome {
+        let result = if method == "issues.containers" {
+            self.containers(params).await
+        } else {
+            self.accounts.call(method, params, &self.trackers).await
+        };
+        match result {
+            Ok(value) => Outcome::Ok(value),
+            Err(fail) => Outcome::Err(WireError::new(fail.code, fail.message)),
+        }
+    }
+
+    /// `issues.containers`: the Jira projects or Linear teams of an account.
+    async fn containers(&self, params: Value) -> Result<Value, Fail> {
+        let q: AccountRef = serde_json::from_value(params)
+            .map_err(|_| Fail::new(code::INVALID_PARAMS, "the params are not valid"))?;
+        let tracker = match self.trackers.iter().find(|t| t.id == q.account_id) {
+            Some(cfg) => Tracker::open(&self.programs, cfg, "")?,
+            None => {
+                let kind = match self.accounts.meta(&q.account_id)? {
+                    Some(m) if m.kind == AccountKind::Jira => TrackerKind::Jira,
+                    Some(m) if m.kind == AccountKind::Linear => TrackerKind::Linear,
+                    _ => {
+                        return Err(Fail::new(
+                            code::INVALID_PARAMS,
+                            "this account is not a Jira or Linear account",
+                        ));
+                    }
+                };
+                self.account_tracker(&q.account_id, kind, "")?
+            }
+        };
+        to_value(&Containers {
+            containers: tracker.containers().await?,
+        })
     }
 
     /// A cached list answer: a hit inside [`CACHE_TTL`] gives the stored
