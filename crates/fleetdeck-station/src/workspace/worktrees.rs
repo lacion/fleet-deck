@@ -5,6 +5,12 @@
 //! The inventory runs only Git commands that read, one at a time per
 //! worktree, each with a 10 s limit. It never fetches and never writes. A
 //! path outside the allowed roots is never passed to Git.
+//!
+//! `git status` can run the clean and process filters that the repository
+//! configures (`filter.<driver>.*`). A repository with Git filters is not
+//! inspected with `status`: its `dirty` and `ignored` stay unknown and its
+//! verdict is `unknown` (see [`GIT_FILTERS`]). `status` also ignores
+//! submodules, which have their own configuration.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -29,6 +35,8 @@ pub const NOT_CHECKED: &str = "not checked: the time limit passed";
 pub const OUTSIDE_ROOTS: &str = "outside the allowed roots";
 /// The note of a worktree that Git does not list.
 pub const NOT_LISTED: &str = "not listed by git worktree list";
+/// The note of a worktree whose repository configures Git filters.
+pub const GIT_FILTERS: &str = "the repository configures Git filters; the board does not run them";
 
 /// `git` from `PATH`, 10 s per call, no system or user configuration.
 #[must_use]
@@ -177,16 +185,24 @@ async fn check(
         Err(e) => fail(&mut note, e),
     }
 
-    info.dirty = match status_count(&git, &["--untracked-files=all"], Count::Changed).await {
-        Ok(n) => Some(n),
-        Err(e) => {
-            fail(&mut note, e);
-            None
+    match filters_configured(&git).await {
+        Ok(false) => {
+            info.dirty = match status_count(&git, &["--untracked-files=all"], Count::Changed).await
+            {
+                Ok(n) => Some(n),
+                Err(e) => {
+                    fail(&mut note, e);
+                    None
+                }
+            };
+            info.ignored = status_count(&git, &["--ignored=matching"], Count::Ignored)
+                .await
+                .ok();
         }
-    };
-    info.ignored = status_count(&git, &["--ignored=matching"], Count::Ignored)
-        .await
-        .ok();
+        // No `status`: it could run a filter. The note replaces earlier ones.
+        Ok(true) => note = Some(GIT_FILTERS.to_owned()),
+        Err(e) => note = Some(e),
+    }
 
     match unpushed(&git, main_head.as_deref()).await {
         Ok((n, with)) => {
@@ -248,6 +264,21 @@ fn same_path(listed: &str, canonical: &Path) -> bool {
     listed.canonicalize().unwrap_or(listed) == canonical
 }
 
+/// Whether the repository configures a Git filter (`git config
+/// --get-regexp '^filter\.'`): exit 1 with no output means none. Any other
+/// exit is an error, and the caller then does not run `status`.
+async fn filters_configured(git: &Git) -> Result<bool, String> {
+    let (code, out, stderr) = git
+        .status(&["config", "--get-regexp", r"^filter\."], &[], None)
+        .await
+        .map_err(|e| e.to_string())?;
+    match code {
+        0 => Ok(!out.is_empty()),
+        1 => Ok(false),
+        _ => Err(format!("git config filter check failed ({code}): {stderr}")),
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(super) enum Count {
     Changed,
@@ -262,6 +293,7 @@ async fn status_count(git: &Git, extra: &[&str], which: Count) -> Result<u32, Gi
         "-c",
         "status.showUntrackedFiles=all",
         "status",
+        "--ignore-submodules=all",
         "--porcelain=v1",
         "-z",
     ];
