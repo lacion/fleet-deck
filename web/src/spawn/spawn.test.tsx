@@ -13,6 +13,7 @@ import {
   batchPrompts,
   branchProblem,
   importIdProblem,
+  knownModels,
   lastParts,
   listingView,
   providerLabel,
@@ -391,6 +392,67 @@ describe('spawn form (P4-4)', () => {
     expect(html).toContain('title="/w/two"');
     expect(html).toContain('>w/two</button>');
     expect(html).not.toContain('/w/other');
+  });
+
+  describe('the model field (DL-151)', () => {
+    const list = (...values: string[]) =>
+      values.map((value) => ({ value, label: value.toUpperCase(), description: `The ${value}.` }));
+    const withModels = (
+      id: string,
+      models: ReturnType<typeof list> | undefined,
+      updated: number,
+      instance = 'claude',
+      st = 'station-a',
+    ) =>
+      card(id, 'idle', st, {
+        provider_instance: instance,
+        updated_at: updated,
+        ...(models === undefined ? {} : { models }),
+      });
+
+    test('knownModels takes the newest session of the station and the instance', () => {
+      expect(knownModels([], 'station-a', 'claude')).toBeNull();
+      const fleet = [
+        withModels('a', list('old'), 10),
+        withModels('b', list('new'), 30),
+        withModels('c', list('codex'), 50, 'codex'),
+        withModels('d', list('beta'), 60, 'claude', 'station-b'),
+        withModels('e', [], 70),
+        withModels('f', undefined, 80),
+      ];
+      expect(knownModels(fleet, 'station-a', 'claude')?.map((m) => m.value)).toEqual(['new']);
+      expect(knownModels(fleet, 'station-a', 'codex')?.map((m) => m.value)).toEqual(['codex']);
+      expect(knownModels(fleet, 'station-b', 'codex')).toBeNull();
+      expect(knownModels([withModels('e', [], 70)], 'station-a', 'claude')).toBeNull();
+    });
+
+    const render = (sessions: ReturnType<typeof card>[]) =>
+      renderToStaticMarkup(
+        <SpawnForm
+          stations={[reported()]}
+          freshness="live"
+          onOpen={() => {}}
+          sessions={sessions}
+        />,
+      );
+
+    test('a known list makes the field a select with the default, the models and Other…', () => {
+      const html = render([withModels('a', list('opus', 'haiku'), 10)]);
+      expect(html).toContain('<select aria-label="Model (optional)"');
+      expect(html).toContain('<option value="" selected="">Provider default</option>');
+      expect(html).toContain('<option value="opus" title="The opus.">OPUS</option>');
+      expect(html).toContain('<option value="haiku" title="The haiku.">HAIKU</option>');
+      expect(html).toContain('<option value="__other__">Other…</option>');
+      expect(html).toContain('From the last session of this provider on this station.');
+      expect(html).not.toContain('Model id or alias');
+    });
+
+    test('without a known list the field is the text input', () => {
+      const html = render([withModels('a', list('opus'), 10, 'codex')]);
+      expect(html).toContain('Model (optional)<input value=""/>');
+      expect(html).not.toContain('Provider default');
+      expect(html).not.toContain('From the last session');
+    });
   });
 
   test('a path shows its last two parts', () => {

@@ -204,7 +204,7 @@ export function SessionView(props: SessionViewProps) {
         layout={layout}
         onNewShell={onNewShell}
         {...(sidePanel ? { filesPanel: { open: filesOpen, toggle: toggleFiles } } : {})}
-        models={sessionModels(events)}
+        models={s.models ?? sessionModels(events)}
       />
       {hold ? (
         <div className="fd-pane-notice" role="note">
