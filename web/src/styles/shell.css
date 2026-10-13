@@ -1143,6 +1143,28 @@ body:has(.fd-app[data-layout="tablet"]) {
   justify-self: start;
 }
 
+.fd-wt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.fd-wt-confirm {
+  display: grid;
+  gap: var(--sp-2);
+}
+
+.fd-wt-body .fd-wt-path {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+  color: var(--faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .fd-wt-line {
   display: flex;
   flex-wrap: wrap;

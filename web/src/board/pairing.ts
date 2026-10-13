@@ -1,3 +1,5 @@
+import { basename } from '../app/sessions';
+import { commandId, type Outcome, outcomeOf } from '../session/commands';
 import type { ShellActions } from '../shell/shell';
 import type {
   AddStationRequest,
@@ -17,6 +19,8 @@ export type StationActions = {
   readonly shells?: ShellActions | undefined;
   /** The read-only worktree inventory of a station (DL-142); owner only: admin scope. */
   readonly worktrees?: ((station: string) => Promise<WorktreeList>) | undefined;
+  /** Move to trash, restore, delete permanently or stop tracking a worktree (DL-150); owner only. */
+  readonly worktreeAction?: ReturnType<typeof worktreeActor> | undefined;
 };
 
 type Post = (path: string, body: unknown) => Promise<unknown>;
@@ -66,6 +70,63 @@ export function worktreeLoader(get: Get): (station: string) => Promise<WorktreeL
     }
     return v as WorktreeList;
   };
+}
+
+export type WorktreeAction = 'trash' | 'restore' | 'purge' | 'release';
+
+const PENDING: Record<WorktreeAction, string> = {
+  trash: 'Moving the worktree to the trash…',
+  restore: 'Restoring the worktree…',
+  purge: 'Deleting the trashed folder…',
+  release: 'Fleet Deck no longer tracks this folder.',
+};
+
+/**
+ * `POST /api/stations/{station}/worktrees/{action}` (DL-150). An accepted command only starts the
+ * work: the outcome shows in the worktree inventory.
+ */
+export function worktreeActor(
+  post: Post,
+): (
+  station: string,
+  action: WorktreeAction,
+  sessionId: string,
+  confirmName?: string,
+) => Promise<Outcome> {
+  return async (station, action, sessionId, confirmName) => {
+    try {
+      const body = {
+        session_id: sessionId,
+        command_id: commandId(),
+        ...(confirmName ? { confirm_name: confirmName } : {}),
+      };
+      const answer = await post(
+        `/api/stations/${encodeURIComponent(station)}/worktrees/${action}`,
+        body,
+      );
+      if (record(answer) && answer['state'] === 'done' && record(answer['receipt'])) {
+        const receipt = answer['receipt'];
+        if (receipt['state'] === 'accepted') return { ok: true, text: PENDING[action] };
+        if (receipt['state'] === 'rejected') {
+          const reject = receipt['reject'];
+          const message = record(reject) ? reject['message'] : undefined;
+          return {
+            ok: false,
+            text: typeof message === 'string' ? message : 'The station refused it.',
+          };
+        }
+      }
+      return outcomeOf(answer);
+    } catch (error) {
+      return { ok: false, text: error instanceof Error ? error.message : 'The request failed.' };
+    }
+  };
+}
+
+/** True when the typed text is exactly the name of the trash folder. */
+export function confirmMatches(input: string, trashPath: string): boolean {
+  const name = basename(trashPath);
+  return name !== '' && input === name;
 }
 
 /** Single-quotes a value for a POSIX shell: `'` becomes `'\''`. */
