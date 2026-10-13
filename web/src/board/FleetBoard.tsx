@@ -32,6 +32,7 @@ import { FocusLine, UnreadMark, unreadOf } from '../views/marks';
 import { priority, sessionRef } from '../ui/localSet';
 import { useProjects } from '../integrations/context';
 import { IssueChip } from '../integrations/IssueChip';
+import { PrChip } from '../integrations/PrChip';
 import { useNow } from '../ui/useNow';
 import { buckets } from './activity';
 import { type Contested, cardKey, NO_REPO, repoName, stationName, statusGroups } from './fleet';
@@ -350,6 +351,7 @@ export function FleetCard({
       </a>
       <CompareChip card={card} count={batchCount} />
       <IssueChip summary={s} projects={projects} station={card.station_id} />
+      <PrChip card={card} />
     </li>
   );
 }

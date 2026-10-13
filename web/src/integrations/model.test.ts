@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { card } from '../testing/fleet';
-import { project } from './fixtures';
+import { prSummary, project } from './fixtures';
 import {
+  allPrs,
   dataUrl,
   draftOf,
   draftProblem,
@@ -10,6 +11,7 @@ import {
   imageAlt,
   inputOf,
   outsideNote,
+  prOfSession,
   projectOfIssue,
   projectOfSession,
   sessionsOfPr,
@@ -179,5 +181,44 @@ describe('projectOfSession (R3.9)', () => {
     expect(projectOfSession([atlas], 'station-b', { cwd: '/work/atlas' })).toBeUndefined();
     expect(projectOfSession([atlas], 'station-a', { cwd: '/work/atlas2' })).toBeUndefined();
     expect(projectOfSession([noForge], 'station-a', { cwd: '/work/notes' })).toBeUndefined();
+  });
+});
+
+describe('prOfSession (R3.6)', () => {
+  const atlas = project();
+  const mine = card('s1', 'working', 'station-a', { branch: 'feature/1' });
+  const prs = (...list: ReturnType<typeof prSummary>[]) => new Map([['p1', list]]);
+
+  test('the branch or the ticket key of the session matches', () => {
+    expect(prOfSession(prs(prSummary(1)), [atlas], mine)?.pr.number).toBe(1);
+    const byKey = card('s2', 'working', 'station-a', {
+      issue: { system: 'jira', key: 'PROJ-9', url: 'u', title: 't' },
+    });
+    const pr = prSummary(5, { head_branch: 'x', ticket_key: 'PROJ-9' });
+    expect(prOfSession(prs(pr), [atlas], byKey)?.pr.number).toBe(5);
+    expect(prOfSession(prs(prSummary(2)), [atlas], mine)).toBeUndefined();
+  });
+
+  test('a project of another station does not count', () => {
+    const away = card('s3', 'working', 'station-b', { branch: 'feature/1' });
+    expect(prOfSession(prs(prSummary(1)), [atlas], away)).toBeUndefined();
+  });
+
+  test('an open pull request comes before a merged one, then the newest', () => {
+    const merged = prSummary(1, { head_branch: 'feature/1', state: 'merged', updated_at: 900 });
+    const open = prSummary(2, { head_branch: 'feature/1', state: 'open', updated_at: 100 });
+    expect(prOfSession(prs(merged, open), [atlas], mine)?.pr.number).toBe(2);
+    const older = prSummary(3, { head_branch: 'feature/1', state: 'merged', updated_at: 100 });
+    expect(prOfSession(prs(older, merged), [atlas], mine)?.pr.number).toBe(1);
+  });
+
+  test('the four groups make one list, once each by number', () => {
+    const a = prSummary(1);
+    const b = prSummary(2);
+    expect(
+      allPrs({ review_requested: [a], mine: [a, b], pending: [], recent_closed: [b] }).map(
+        (p) => p.number,
+      ),
+    ).toEqual([1, 2]);
   });
 });

@@ -4,6 +4,7 @@ import { limitChip, rateMeters } from '../board/usage';
 import type { DeckSession } from '../gen';
 import { useProjects } from '../integrations/context';
 import { IssueChip } from '../integrations/IssueChip';
+import { PrChip } from '../integrations/PrChip';
 import { isRiskyMode, modelFamily, shortModel } from '../ui/format';
 import { isHibernated } from '../views/hibernate';
 
@@ -46,6 +47,7 @@ export function Badges({
   return (
     <>
       <IssueChip summary={s} projects={projects} station={session.station_id} />
+      <PrChip card={session} />
       <span className="fd-badge" data-tone={statusTone(session.status)}>
         {isHibernated(session) ? 'hibernated' : session.status.replaceAll('_', ' ')}
       </span>
