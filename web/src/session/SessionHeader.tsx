@@ -26,7 +26,8 @@ import {
   Undo2,
   X,
 } from '../ui/icons';
-import { archived, priority, sessionRef } from '../ui/localSet';
+import { archived } from '../ui/archive';
+import { priority, sessionRef } from '../ui/localSet';
 import { useNow } from '../ui/useNow';
 import type { Outcome, SessionActions } from './commands';
 import type { Controller } from './controller';

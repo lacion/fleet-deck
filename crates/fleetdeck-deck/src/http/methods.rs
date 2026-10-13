@@ -164,6 +164,22 @@ pub const API: &[ApiMethod] = &[
         Some(Scope::Read),
         false,
     ),
+    // The archived sessions of the board (DL-149): a bearer token with `drive`
+    // may change the set, because a change only hides cards.
+    m(
+        "archive.list",
+        Method::GET,
+        "/api/archive",
+        Some(Scope::Read),
+        false,
+    ),
+    m(
+        "archive.change",
+        Method::POST,
+        "/api/archive",
+        Some(Scope::Drive),
+        true,
+    ),
     m(
         "plans.list",
         Method::GET,

@@ -20,7 +20,8 @@ import {
   TriangleAlert,
   Workflow,
 } from '../ui/icons';
-import { archived, priority, sessionRef } from '../ui/localSet';
+import { archived } from '../ui/archive';
+import { priority, sessionRef } from '../ui/localSet';
 import { useNow } from '../ui/useNow';
 import { buckets } from './activity';
 import { type Contested, cardKey, NO_REPO, repoName, stationName, statusGroups } from './fleet';

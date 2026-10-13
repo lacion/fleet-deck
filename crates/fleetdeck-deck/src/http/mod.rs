@@ -3,6 +3,7 @@
 //! accepts only the deck's board addresses (D13; checked in `DeckConfig`).
 //! The deck serves HTTPS itself ([`tls`]; D13: no reverse proxy, DL-054).
 
+pub mod archive_routes;
 pub mod assets;
 pub mod assign_routes;
 pub mod auth_routes;
@@ -123,6 +124,10 @@ pub fn router(board: Arc<Board>) -> Router {
         .route(
             "/api/stations/{station}/sessions/{session}/turns/{turn}/diff",
             get(file_routes::diff),
+        )
+        .route(
+            "/api/archive",
+            get(archive_routes::list).post(archive_routes::change),
         )
         .route("/api/conflicts", get(plan_routes::conflicts))
         .route("/api/plans", get(plan_routes::list))

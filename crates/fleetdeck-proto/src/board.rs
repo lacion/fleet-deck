@@ -259,6 +259,81 @@ pub struct DeviceLink {
     pub self_signed: bool,
 }
 
+/// One archived (cleared) session of the board (DL-149).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "board/")]
+pub struct ArchiveRef {
+    pub station_id: StationId,
+    pub session_id: SessionId,
+}
+
+/// `GET /api/archive` and the answer of `POST /api/archive` (DL-149): the
+/// sessions that the owner archived, ordered by station and session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "board/")]
+pub struct ArchiveList {
+    pub archived: Vec<ArchiveRef>,
+}
+
+/// One change of an [`ArchiveChange`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "board/")]
+pub struct ArchiveItem {
+    pub station_id: StationId,
+    pub session_id: SessionId,
+    /// `true` archives the session, `false` brings it back.
+    pub archived: bool,
+}
+
+/// `POST /api/archive` (DL-149): changes of the archived set. A resend
+/// with the same `mutation_id` changes nothing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "board/")]
+pub struct ArchiveChange {
+    /// 8 to 128 characters from `[A-Za-z0-9_.:-]`.
+    pub mutation_id: String,
+    /// 1 to 500 items.
+    pub changes: Vec<ArchiveItem>,
+}
+
+/// The shortest and longest `mutation_id` of an [`ArchiveChange`].
+pub const ARCHIVE_MUTATION_ID_CHARS: std::ops::RangeInclusive<usize> = 8..=128;
+/// The number of items of an [`ArchiveChange`].
+pub const ARCHIVE_CHANGES: std::ops::RangeInclusive<usize> = 1..=500;
+/// The length of a station id or a session id of an [`ArchiveItem`].
+pub const ARCHIVE_ID_CHARS: std::ops::RangeInclusive<usize> = 1..=256;
+
+impl ArchiveChange {
+    /// Checks the lengths and the characters of the change.
+    ///
+    /// # Errors
+    /// The text of the first rule that the change breaks.
+    pub fn validate(&self) -> Result<(), &'static str> {
+        let id = &self.mutation_id;
+        if !ARCHIVE_MUTATION_ID_CHARS.contains(&id.len())
+            || !id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b':' | b'-'))
+        {
+            return Err("mutation_id must be 8 to 128 characters from [A-Za-z0-9_.:-]");
+        }
+        if !ARCHIVE_CHANGES.contains(&self.changes.len()) {
+            return Err("changes must hold 1 to 500 items");
+        }
+        let ok = |s: &str| ARCHIVE_ID_CHARS.contains(&s.chars().count());
+        if !self
+            .changes
+            .iter()
+            .all(|c| ok(c.station_id.as_str()) && ok(c.session_id.as_str()))
+        {
+            return Err("station_id and session_id must be 1 to 256 characters");
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
@@ -292,6 +367,60 @@ mod tests {
         assert!(
             serde_json::from_str::<BoardClientMessage>(
                 r#"{"type":"unsubscribe","station_id":"a","session_id":"s","x":1}"#
+            )
+            .is_err()
+        );
+    }
+
+    fn item(station: &str, session: &str) -> ArchiveItem {
+        ArchiveItem {
+            station_id: station.into(),
+            session_id: session.into(),
+            archived: true,
+        }
+    }
+
+    #[test]
+    fn archive_changes_are_checked() {
+        let ok = ArchiveChange {
+            mutation_id: "migrate-a.b:c_d".to_owned(),
+            changes: vec![item("st", "s1")],
+        };
+        assert_eq!(ok.validate(), Ok(()));
+        let mut c = ok.clone();
+        c.mutation_id = "short".to_owned();
+        assert!(c.validate().is_err());
+        c.mutation_id = "x".repeat(129);
+        assert!(c.validate().is_err());
+        c.mutation_id = "has space 123".to_owned();
+        assert!(c.validate().is_err());
+        let mut c = ok.clone();
+        c.changes = vec![];
+        assert!(c.validate().is_err());
+        c.changes = vec![item("st", "s1"); 501];
+        assert!(c.validate().is_err());
+        c.changes = vec![item("st", "s1"); 500];
+        assert_eq!(c.validate(), Ok(()));
+        let mut c = ok.clone();
+        c.changes = vec![item("", "s1")];
+        assert!(c.validate().is_err());
+        c.changes = vec![item("st", &"s".repeat(257))];
+        assert!(c.validate().is_err());
+        c.changes = vec![item("st", &"s".repeat(256))];
+        assert_eq!(c.validate(), Ok(()));
+    }
+
+    #[test]
+    fn archive_bodies_are_strict() {
+        assert!(
+            serde_json::from_str::<ArchiveChange>(
+                r#"{"mutation_id":"abcdefgh","changes":[],"x":1}"#
+            )
+            .is_err()
+        );
+        assert!(
+            serde_json::from_str::<ArchiveItem>(
+                r#"{"station_id":"a","session_id":"s","archived":true,"x":1}"#
             )
             .is_err()
         );

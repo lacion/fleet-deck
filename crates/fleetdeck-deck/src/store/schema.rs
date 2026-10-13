@@ -283,6 +283,23 @@ CREATE UNIQUE INDEX tokens_by_start_command ON tokens (start_command_id)
     WHERE start_command_id IS NOT NULL;
 ";
 
+/// The archived (cleared) sessions of the board (DL-149) and the ids of the
+/// archive mutations that were applied (never pruned: a stale resend of an
+/// old mutation must stay a no-op).
+const V12: &str = "
+CREATE TABLE archived_sessions (
+    station_id TEXT    NOT NULL,
+    session_id TEXT    NOT NULL,
+    archived   INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (station_id, session_id)
+);
+CREATE TABLE archive_mutations (
+    mutation_id TEXT    PRIMARY KEY,
+    applied_at  INTEGER NOT NULL
+);
+";
+
 /// The `deck.db` migrations.
 #[must_use]
 pub fn migrations() -> Migrations<'static> {
@@ -298,6 +315,7 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V9),
         M::up(V10),
         M::up(V11),
+        M::up(V12),
     ])
 }
 
