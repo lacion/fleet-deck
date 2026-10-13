@@ -9,7 +9,16 @@ import { stationName } from '../board/fleet';
 import type { ActivityItem, DeckSession, StationView } from '../gen';
 import type { FleetActions } from '../fleet/fleet';
 import type { ViewsActions } from '../runtime/views';
-import { Icon, Mail, MessageSquare, Play, TriangleAlert, Wrench } from '../ui/icons';
+import {
+  Icon,
+  Mail,
+  MessageSquare,
+  MessagesSquare,
+  Play,
+  TriangleAlert,
+  Wrench,
+} from '../ui/icons';
+import { EmptyState, Page } from '../ui/page';
 import { useNow } from '../ui/useNow';
 import {
   ALL_CHANNEL,
@@ -218,8 +227,7 @@ export function ActivityPage({
   }, [views, live, id, load]);
 
   return (
-    <section className="fd-screen fd-activity" aria-label="Activity">
-      <h1 className="fd-screen-title">Activity</h1>
+    <Page title="Activity" className="fd-activity" wide>
       <div className="fd-awrap">
         <nav className="fd-achans" aria-label="Channels">
           <ChannelButton
@@ -257,7 +265,11 @@ export function ActivityPage({
           {items === null ? (
             <p className="fd-empty">{live ? 'Loading…' : 'The stream needs a live connection.'}</p>
           ) : shown.length === 0 ? (
-            <p className="fd-empty">Nothing happened here yet.</p>
+            <EmptyState
+              icon={MessagesSquare}
+              title="Nothing happened here yet"
+              body="Turns, tools, asks and mail of the sessions show up here."
+            />
           ) : (
             <ol className="fd-alist" aria-label="Activity, newest first">
               {shown.map((item, n) => (
@@ -272,6 +284,6 @@ export function ActivityPage({
           )}
         </div>
       </div>
-    </section>
+    </Page>
   );
 }

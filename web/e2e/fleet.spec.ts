@@ -429,7 +429,7 @@ test('the cards show the bypass mode, the last error and the conflict', async ({
   await expect(a).toContainText('bypassPermissions');
   await expect(a).toHaveAttribute('data-contested', 'true');
   await expect(a).toContainText('contested with Alpha two');
-  await expect(page.locator('a.fd-card[data-session="i"]')).toContainText('rate_limit: Try later');
+  await expect(page.locator('a.fd-card[data-session="i"]')).toContainText('Try later.');
   await expect(page.getByText('1 conflict', { exact: true })).toBeVisible();
 });
 

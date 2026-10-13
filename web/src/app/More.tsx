@@ -18,6 +18,7 @@ import {
 import { canShare, usePeople } from '../sharing/context';
 import type { Chrome } from './chrome';
 import { DeviceLinkDialog } from './DeviceLinkDialog';
+import { Page } from '../ui/page';
 import { PrefsRow } from './Prefs';
 
 type Props = {
@@ -34,8 +35,7 @@ export function More({ stationCount, terminalCount, chrome }: Props) {
   const people = usePeople();
   const guest = people.member !== null;
   return (
-    <section className="fd-screen fd-more" aria-label="More">
-      <h1 className="fd-screen-title">More</h1>
+    <Page title="More" className="fd-more">
       <nav aria-label="More pages">
         <ul className="fd-more-links">
           <li>
@@ -131,6 +131,6 @@ export function More({ stationCount, terminalCount, chrome }: Props) {
           deck {chrome.version}
         </p>
       )}
-    </section>
+    </Page>
   );
 }

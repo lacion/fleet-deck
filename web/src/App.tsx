@@ -33,6 +33,7 @@ import type { Chrome, Notice } from './app/chrome';
 import { startFailures } from './app/failures';
 import { FilesPage } from './app/FilesPage';
 import { FleetHome } from './app/FleetHome';
+import { HelpNotice, useHelpNotice } from './app/HelpNotice';
 import { HelpOverlay } from './app/HelpOverlay';
 import { useGlobalKeys } from './app/keys';
 import { Layout } from './app/Layout';
@@ -253,18 +254,12 @@ export function App({
   const drawerOpen = layout === 'tablet' && drawerAt === routeKey;
   const [help, setHelp] = useState(false);
   const [palette, setPalette] = useState(false);
-  // The first time the owner sees a live board, the help opens once.
-  const live = chrome?.freshness === 'live';
-  useEffect(() => {
-    if (!live) return;
-    try {
-      if (localStorage.getItem('fd-help-seen') === '1') return;
-      localStorage.setItem('fd-help-seen', '1');
-    } catch {
-      return;
-    }
+  // DL-171: the help never opens by itself; a first visit shows a one-time notice that points to it.
+  const helpNotice = useHelpNotice(chrome?.freshness === 'live');
+  const openHelp = () => {
+    if (helpNotice.show) helpNotice.dismiss();
     setHelp(true);
-  }, [live]);
+  };
 
   // A notice of this screen (a shell that did not open, the outcome of "Return …").
   const [local, setLocal] = useState<{ notice: Notice; at: string } | null>(null);
@@ -329,7 +324,7 @@ export function App({
       setPanelRequest((r) => ({ tab: 'mail', seq: (r?.seq ?? 0) + 1 }));
     },
     terminals: toggleDock,
-    help: () => setHelp(true),
+    help: openHelp,
     palette: () => {
       setHelp(false);
       setPalette(!palette);
@@ -444,7 +439,7 @@ export function App({
       onOpen={open}
       onSpawn={() => navigate({ name: 'new' })}
       panelRequest={panelRequest}
-      onHelp={() => setHelp(true)}
+      onHelp={openHelp}
       onSpawnWith={(station, prompt) => {
         setPlanPrompt(prompt);
         setPlanId(null);
@@ -466,6 +461,8 @@ export function App({
         );
 
   const back: Navigate = navigate;
+  // The folder picker of the Projects and Automations forms: only with the drive scope.
+  const folderList = spawn?.canDrive === true && freshness === 'live' ? spawn.list : undefined;
   const content = (() => {
     switch (route.name) {
       case 'home':
@@ -491,46 +488,42 @@ export function App({
         );
       case 'plans':
         return (
-          <div className="fd-screen">
-            <PlanLibrary
-              stations={stations}
-              sessions={sessions}
-              actions={plans}
-              live={freshness === 'live'}
-              initial={initialPlans}
-              onOpen={open}
-              onAssign={
-                fleet === undefined ? undefined : (target, text) => fleet.mail(target, text, false)
-              }
-              onExecute={(plan) => {
-                setPlanPrompt(plan.markdown);
-                setPlanId(plan.id);
-                setSpawnStation(null);
-                navigate({ name: 'new' });
-              }}
-            />
-          </div>
+          <PlanLibrary
+            stations={stations}
+            sessions={sessions}
+            actions={plans}
+            live={freshness === 'live'}
+            initial={initialPlans}
+            onOpen={open}
+            onAssign={
+              fleet === undefined ? undefined : (target, text) => fleet.mail(target, text, false)
+            }
+            onExecute={(plan) => {
+              setPlanPrompt(plan.markdown);
+              setPlanId(plan.id);
+              setSpawnStation(null);
+              navigate({ name: 'new' });
+            }}
+          />
         );
       case 'automations':
         return (
-          <div className="fd-screen">
-            <AutomationsPage
-              stations={stations}
-              actions={automations}
-              live={freshness === 'live'}
-            />
-          </div>
+          <AutomationsPage
+            stations={stations}
+            actions={automations}
+            live={freshness === 'live'}
+            list={folderList}
+            sessions={sessions}
+          />
         );
       case 'stations':
         return (
-          <div className="fd-screen">
-            <StationsPanel
-              stations={stations}
-              sessions={sessions}
-              freshness={freshness}
-              actions={actions}
-            />
-          </div>
+          <StationsPanel
+            stations={stations}
+            sessions={sessions}
+            freshness={freshness}
+            actions={actions}
+          />
         );
       case 'watch':
         return (
@@ -587,7 +580,7 @@ export function App({
           />
         );
       case 'projects':
-        return <ProjectsPage stations={stations} />;
+        return <ProjectsPage stations={stations} list={folderList} sessions={sessions} />;
       case 'project':
         return (
           <ProjectPage
@@ -649,6 +642,7 @@ export function App({
       drawerOpen={drawerOpen}
       onDrawer={(next) => setDrawerAt(next ? routeKey : null)}
       notices={notices}
+      banner={helpNotice.show ? <HelpNotice onDismiss={helpNotice.dismiss} /> : null}
       failures={failures}
       onOpenFailure={(f) => open(f.key)}
       onDismissFailure={(f) => setDismissed((set) => new Set(set).add(f.ref))}

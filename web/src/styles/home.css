@@ -133,21 +133,27 @@
 
 /* ── columns and swimlanes ──────────────────────────────────────── */
 .fd-board {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.fd-colheads,
-.fd-swim-grid {
+  /* One grid for the column heads and the lanes: a head sits over its column. The rows are
+     subgrids of this grid, so every row uses the same tracks. */
   display: grid;
   grid-template-columns: var(--fd-cols, repeat(5, minmax(170px, 1fr)));
-  gap: 10px;
+  column-gap: 10px;
+  align-content: start;
+  row-gap: 4px;
+}
+.fd-colheads,
+.fd-swim,
+.fd-swim-grid {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  column-gap: 10px;
 }
 .fd-colheads {
   position: sticky;
   top: 0;
   z-index: 2;
-  padding: 8px 2px 6px;
+  padding: 8px 0 6px;
   background: var(--bg);
 }
 .fd-colhead {
@@ -161,7 +167,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 2px;
-  margin-left: auto;
+  flex-basis: 100%;
   letter-spacing: normal;
   text-transform: none;
 }
@@ -170,10 +176,11 @@
   color: var(--dim);
 }
 .fd-swim {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  row-gap: 8px;
   padding: 10px 0 14px;
+}
+.fd-swim > .fd-swim-head {
+  grid-column: 1 / -1;
 }
 .fd-swim-head {
   display: flex;

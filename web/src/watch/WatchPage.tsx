@@ -8,7 +8,8 @@ import { repoName, stationName } from '../board/fleet';
 import type { DeckSession, SessionKey, StationView } from '../gen';
 import type { Freshness, Timeline } from '../runtime/state';
 import type { SessionActions } from '../session/commands';
-import { Icon, TriangleAlert } from '../ui/icons';
+import { Eye, Icon, TriangleAlert } from '../ui/icons';
+import { EmptyState, Page } from '../ui/page';
 import { FocusLine, UnreadMark, unreadOf } from '../views/marks';
 import {
   ALL,
@@ -249,8 +250,7 @@ export function WatchPage({
     </label>
   );
   return (
-    <section className="fd-screen fd-watch" aria-label="Watch">
-      <h1 className="fd-screen-title">Watch</h1>
+    <Page title="Watch" className="fd-watch" wide>
       <div className="fd-wbar">
         {select(
           'Station',
@@ -293,11 +293,21 @@ export function WatchPage({
         </p>
       ) : null}
       {focusOn && current === null ? (
-        <p className="fd-empty">Nothing needs you right now. Focus waits for the next request.</p>
+        <EmptyState
+          icon={Eye}
+          title="Nothing needs you right now"
+          body="Focus waits for the next request."
+        />
       ) : visible.length === 0 ? (
-        <p className="fd-empty">
-          {sessions.length === 0 ? 'No sessions yet.' : 'No live session matches.'}
-        </p>
+        <EmptyState
+          icon={Eye}
+          title={sessions.length === 0 ? 'No sessions yet' : 'No live session matches'}
+          body={
+            sessions.length === 0
+              ? 'A live session shows here as a tile.'
+              : 'Change a filter to see more.'
+          }
+        />
       ) : (
         <ul className="fd-wall" data-focus={focusOn ? 'true' : undefined}>
           {visible.map((card) => (
@@ -319,6 +329,6 @@ export function WatchPage({
           ))}
         </ul>
       )}
-    </section>
+    </Page>
   );
 }

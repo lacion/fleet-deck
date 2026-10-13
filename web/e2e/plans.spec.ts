@@ -68,7 +68,7 @@ test('a captured plan is read, archived, restored and starts a session', async (
   await logIn(page);
 
   await openMore(page, 'Plans');
-  const library = page.getByRole('main', { name: 'Plan library' });
+  const library = page.getByRole('region', { name: 'Plan library' });
   const p1 = library.getByRole('article', { name: 'Plan Cache plan p1' });
   await expect(library.getByRole('article')).toHaveCount(2);
   await expect(p1).toContainText('Proposed');

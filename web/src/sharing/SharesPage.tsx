@@ -2,11 +2,14 @@
 import { useEffect, useState } from 'react';
 import { sessionTitle } from '../app/sessions';
 import { stationName } from '../board/fleet';
-import type { DeckSession, ShareInfo, StationView } from '../gen';
+import type { DeckSession, ShareInfo, SpaceView, StationView } from '../gen';
+import { untilText } from '../automations/automations';
+import { Icon, Plus, Share2 } from '../ui/icons';
+import { EmptyState, Page } from '../ui/page';
 import { useNow } from '../ui/useNow';
 import { canShare, usePeople } from './context';
 import { roleLabel } from './member';
-import { day } from './ShareDialog';
+import { day, NewShareDialog } from './ShareDialog';
 import { sharesChanged, useSharesVersion } from './shareStore';
 import { type Loaded, useLoad } from './useLoad';
 
@@ -43,6 +46,13 @@ type RowProps = {
   readonly onRevoke: () => void;
 };
 
+/** The expiry of a share, relative to now: `in 5 days`, `revoked 2026-10-13`, `expired 2026-10-12`. */
+function expiryText(share: ShareInfo, state: ReturnType<typeof shareState>, now: number): string {
+  if (state === 'revoked') return `revoked ${day(share.revoked_at ?? 0)}`;
+  if (state === 'expired') return `expired ${day(share.expires_at)}`;
+  return untilText(share.expires_at, now);
+}
+
 function ShareRow({
   share,
   now,
@@ -57,39 +67,48 @@ function ShareRow({
   const state = shareState(share, now);
   const where = targetText(share, sessions, stations);
   return (
-    <li className="fd-shares-row" data-state={state}>
-      <div className="fd-shares-main">
-        <span className="fd-badge" data-tone="info">
-          {share.kind}
-        </span>
-        <span className="fd-shares-target">{where}</span>
-        <span className="fd-badge" data-tone={share.role === 'viewer' ? 'muted' : 'act'}>
-          {roleLabel(share.role)}
-        </span>
-        {share.role !== 'viewer' ? (
-          <span className="fd-badge" data-tone="muted">
-            {share.steering === 'mob' ? 'mob' : 'open'}
+    <tr data-state={state} data-dim={state === 'live' ? undefined : 'true'}>
+      <td>
+        <span className="fd-cellbadges">
+          <span className="fd-badge" data-tone="info">
+            {share.kind}
           </span>
-        ) : null}
-        {state === 'live' ? null : (
-          <span className="fd-badge" data-tone="muted">
-            {state === 'revoked' ? 'Revoked' : 'Expired'}
+          <span className="fd-cell-name">{where}</span>
+        </span>
+      </td>
+      <td data-label="Role">
+        <span className="fd-cellbadges">
+          <span className="fd-badge" data-tone={share.role === 'viewer' ? 'muted' : 'act'}>
+            {roleLabel(share.role)}
           </span>
-        )}
-      </div>
-      <p className="fd-note fd-shares-facts">
-        {share.members.length === 0 ? 'No members yet' : `Members: ${share.members.join(', ')}`}
-        {' · '}
-        {share.uses_left} {share.uses_left === 1 ? 'use' : 'uses'} left
-        {' · '}
-        {state === 'revoked'
-          ? `revoked ${day(share.revoked_at ?? 0)}`
-          : `expires ${day(share.expires_at)}`}
-      </p>
-      {state === 'live' ? (
-        confirming ? (
-          <div className="fd-shares-confirm" role="group" aria-label="Revoke the share">
-            <p className="fd-note">Revoke this share? The members lose access at once.</p>
+          {share.role !== 'viewer' ? (
+            <span className="fd-badge" data-tone="muted">
+              {share.steering === 'mob' ? 'mob' : 'open'}
+            </span>
+          ) : null}
+          {state === 'live' ? null : (
+            <span className="fd-badge" data-tone="muted">
+              {state === 'revoked' ? 'Revoked' : 'Expired'}
+            </span>
+          )}
+        </span>
+      </td>
+      <td data-label="Members">
+        {share.members.length === 0 ? 'No members yet' : share.members.join(', ')}
+      </td>
+      <td className="fd-cell-path" data-label="Uses left">
+        {share.uses_left}
+      </td>
+      <td
+        data-label="Expires"
+        title={day(state === 'revoked' ? (share.revoked_at ?? 0) : share.expires_at)}
+      >
+        {expiryText(share, state, now)}
+      </td>
+      <td className="fd-cell-actions">
+        {state !== 'live' ? null : confirming ? (
+          <span role="group" aria-label="Revoke the share">
+            <span>Revoke this share? The members lose access at once.</span>
             <button
               type="button"
               className="fd-danger fd-sm"
@@ -102,7 +121,7 @@ function ShareRow({
             <button type="button" className="fd-ghost fd-sm" disabled={busy} onClick={onCancel}>
               Cancel
             </button>
-          </div>
+          </span>
         ) : (
           <button
             type="button"
@@ -112,9 +131,9 @@ function ShareRow({
           >
             Revoke
           </button>
-        )
-      ) : null}
-    </li>
+        )}
+      </td>
+    </tr>
   );
 }
 
@@ -130,6 +149,8 @@ type ViewProps = {
   readonly onRetry?: () => void;
   readonly onAsk?: (id: string | null) => void;
   readonly onRevoke?: (share: ShareInfo) => void;
+  /** "New share": opens the dialog with a target select. */
+  readonly onNew?: () => void;
 };
 
 /** The list of one state: loading, error with "Try again", empty, or the rows. */
@@ -144,7 +165,13 @@ export function SharesView({
   onRetry,
   onAsk,
   onRevoke,
+  onNew,
 }: ViewProps) {
+  const newShare = (
+    <button type="button" className="fd-primary" onClick={onNew}>
+      <Icon of={Plus} /> New share
+    </button>
+  );
   let body: React.ReactNode;
   if (state.kind === 'loading') {
     body = (
@@ -165,44 +192,70 @@ export function SharesView({
     );
   } else if (state.value.length === 0) {
     body = (
-      <p className="fd-empty">
-        No shares yet. Use Share… in a session menu, on the fleet home or on a space.
-      </p>
+      <EmptyState
+        icon={Share2}
+        title="No shares yet"
+        body="Share a session, a space or the whole board with a link. People join with a name you can see, in the role you pick."
+        action={newShare}
+      />
     );
   } else {
     body = (
-      <ul className="fd-shares-list" aria-label="Shares">
-        {state.value.map((share) => (
-          <ShareRow
-            key={share.share_id}
-            share={share}
-            now={now}
-            sessions={sessions}
-            stations={stations}
-            confirming={confirming === share.share_id}
-            busy={revoking === share.share_id}
-            onAsk={() => onAsk?.(share.share_id)}
-            onCancel={() => onAsk?.(null)}
-            onRevoke={() => onRevoke?.(share)}
-          />
-        ))}
-      </ul>
+      <div className="fd-panel fd-tablepanel">
+        <div className="fd-tablewrap">
+          <table className="fd-table" aria-label="Shares">
+            <thead>
+              <tr>
+                <th scope="col">Shared</th>
+                <th scope="col">Role</th>
+                <th scope="col">Members</th>
+                <th scope="col">Uses left</th>
+                <th scope="col">Expires</th>
+                <th scope="col">
+                  <span className="fd-vh">Actions</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {state.value.map((share) => (
+                <ShareRow
+                  key={share.share_id}
+                  share={share}
+                  now={now}
+                  sessions={sessions}
+                  stations={stations}
+                  confirming={confirming === share.share_id}
+                  busy={revoking === share.share_id}
+                  onAsk={() => onAsk?.(share.share_id)}
+                  onCancel={() => onAsk?.(null)}
+                  onRevoke={() => onRevoke?.(share)}
+                />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
     );
   }
   return (
-    <section className="fd-shares" aria-label="Shares">
-      <h1 className="fd-screen-title">Shares</h1>
-      <p className="fd-note">
-        People join through a link. A revoke ends the link and every login that came from it. See{' '}
-        <a href="#/spaces">Spaces</a> for sets of sessions.
-      </p>
+    <Page
+      title="Shares"
+      wide
+      description={
+        <>
+          People join through a link. A revoke ends the link and every login that came from it. See{' '}
+          <a href="#/spaces">Spaces</a> for sets of sessions.
+        </>
+      }
+      actions={newShare}
+    >
       {error === null ? null : (
         <p role="alert" className="fd-note fd-share-error">
           {error}
         </p>
       )}
       {body}
-    </section>
+    </Page>
   );
 }
 
@@ -221,19 +274,24 @@ export function SharesPage({ sessions, stations }: Props) {
     () => (calls === undefined ? Promise.resolve([]) : calls.shares()),
     [calls, version],
   );
+  const spaces = useLoad<readonly SpaceView[]>(
+    () => (calls === undefined ? Promise.resolve([]) : calls.spaces()),
+    [calls],
+  );
   const [confirming, setConfirming] = useState<string | null>(null);
   const [revoking, setRevoking] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [making, setMaking] = useState(false);
   useEffect(() => {
     // A new share elsewhere (the dialog) shows here after the next load.
     setConfirming(null);
   }, [version]);
   if (!canShare(people) || calls === undefined) {
     return (
-      <div className="fd-screen">
+      <Page title="Shares">
         <p>Only the owner of the deck sees the shares.</p>
         <a href="#/">Back to the fleet</a>
-      </div>
+      </Page>
     );
   }
   const revoke = async (share: ShareInfo) => {
@@ -250,7 +308,7 @@ export function SharesPage({ sessions, stations }: Props) {
     }
   };
   return (
-    <div className="fd-screen">
+    <>
       <SharesView
         state={state}
         now={now}
@@ -262,7 +320,17 @@ export function SharesPage({ sessions, stations }: Props) {
         onRetry={reload}
         onAsk={setConfirming}
         onRevoke={(share) => void revoke(share)}
+        onNew={() => setMaking(true)}
       />
-    </div>
+      {making ? (
+        <NewShareDialog
+          sessions={sessions}
+          stations={stations}
+          spaces={spaces.state.kind === 'ok' ? spaces.state.value : []}
+          calls={calls}
+          onClose={() => setMaking(false)}
+        />
+      ) : null}
+    </>
   );
 }

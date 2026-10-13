@@ -28,6 +28,8 @@ type Props = {
   readonly drawerOpen: boolean;
   readonly onDrawer: (open: boolean) => void;
   readonly notices: readonly Notice[];
+  /** A strip under the notices (the one-time help notice). */
+  readonly banner?: ReactNode;
   /** The sessions that did not start (R7.1), one banner for each. */
   readonly failures?: readonly StartFailure[];
   readonly onOpenFailure?: (failure: StartFailure) => void;
@@ -192,6 +194,7 @@ export function Layout({
   drawerOpen,
   onDrawer,
   notices,
+  banner,
   failures = [],
   onOpenFailure,
   onDismissFailure,
@@ -240,6 +243,7 @@ export function Layout({
           <MemberBanner member={people.member} onLeave={people.leave} />
         )}
         <Notices notices={notices} />
+        {banner}
         <StartFailures failures={failures} onOpen={onOpenFailure} onDismiss={onDismissFailure} />
         <div className="fd-route">{children}</div>
         {layout === 'phone' ? null : dock}

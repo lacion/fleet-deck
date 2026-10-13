@@ -4,11 +4,11 @@ import { limitChip, rateMeters } from '../board/usage';
 import type { DeckSession } from '../gen';
 import { useProjects } from '../integrations/context';
 import { IssueChip } from '../integrations/IssueChip';
-import { modelFamily, shortModel } from '../ui/format';
+import { isRiskyMode, modelFamily, shortModel } from '../ui/format';
 import { isHibernated } from '../views/hibernate';
 
-/** The tone of the status badge. */
-function statusTone(status: string): 'act' | 'ok' | 'info' | 'hazard' | 'muted' {
+/** The tone of the status badge. No status is hazard red (DL-171): the dot and the card say it. */
+function statusTone(status: string): 'act' | 'ok' | 'info' | 'muted' {
   switch (status) {
     case 'needs_you':
       return 'act';
@@ -16,27 +16,15 @@ function statusTone(status: string): 'act' | 'ok' | 'info' | 'hazard' | 'muted' 
       return 'ok';
     case 'verifying':
       return 'info';
-    case 'unreachable':
-    case 'lost':
-      return 'hazard';
     default:
       return 'muted';
   }
 }
 
-/** The tone of the permission mode badge. */
-function modeTone(mode: string): 'plan' | 'info' | 'hazard' | 'muted' {
-  switch (mode) {
-    case 'plan':
-      return 'plan';
-    case 'acceptEdits':
-      return 'info';
-    case 'bypassPermissions':
-    case 'dontAsk':
-      return 'hazard';
-    default:
-      return 'muted';
-  }
+/** The tone of the permission mode badge: hazard only for a mode that skips the approvals, `plan` for plan, none else. */
+export function modeTone(mode: string): 'plan' | 'hazard' | undefined {
+  if (isRiskyMode(mode)) return 'hazard';
+  return mode === 'plan' ? 'plan' : undefined;
 }
 
 /** The status, model, mode and provider badges of a session (the phone menu puts the mode last). */

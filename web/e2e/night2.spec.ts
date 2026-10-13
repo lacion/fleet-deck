@@ -67,11 +67,11 @@ function deckWithStation(): FakeDeck {
 async function chooseApp(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'New session' }).click();
   const form = page.getByRole('region', { name: 'New session' });
-  await form.getByRole('button', { name: 'Browse the station' }).click();
+  await form.getByRole('button', { name: 'Browse…' }).click();
   await form.getByRole('button', { name: 'Open projects' }).click();
   await form.getByRole('button', { name: 'Open app' }).click();
-  await form.getByRole('button', { name: 'Use this directory' }).click();
-  await expect(form).toContainText(`Chosen: ${ROOT}/app`);
+  await form.getByRole('button', { name: 'Use this folder' }).click();
+  await expect(form.getByLabel('Directory path')).toHaveValue(`${ROOT}/app`);
 }
 
 test('a worktree start sends the branch, the base and the setup command', async ({ page }) => {

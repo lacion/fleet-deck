@@ -127,16 +127,16 @@ describe('spawn form (P4-4)', () => {
     expect(html).toContain('<h2>New session</h2>');
     expect(html).toContain('<option value="station-a" selected="">Alpha</option>');
     expect(html).toContain('claude · claude · 2.1.999');
-    expect(html).toContain('Browse the station');
+    expect(html).toContain('Browse…');
     expect(html).toContain('<option value="" selected="">Station default</option>');
     expect(html).toContain('<option value="plan">plan</option>');
-    expect(html).toContain('No directory chosen.');
+    expect(html).toContain('aria-label="Directory path"');
     // No directory yet: the start button is off and the form says why.
     expect(html).toMatch(
       /<button type="submit" class="fd-primary" disabled="" aria-describedby="fd-spawn-missing">Start session<\/button>/,
     );
     expect(html).toContain(
-      'To start: choose a directory (Browse the station, open a folder, then Use this directory).',
+      'To start: choose a directory (type an absolute path, or Browse… and Use this folder).',
     );
   });
 
@@ -171,15 +171,16 @@ describe('spawn form (P4-4)', () => {
     const html = form([reported()], ['read', 'drive'], 'live', listing);
     expect(html).toContain('/home/me/projects');
     expect(html).toContain('aria-label="Open app"');
-    expect(html).toContain('<span class="fd-tag">git</span>');
-    expect(html).toContain('Back to the roots');
-    expect(html).toContain('Use this directory');
+    expect(html).toContain('git repository');
+    expect(html).toContain('aria-label="Folder path"');
+    expect(html).toContain('>Roots</button>');
+    expect(html).toContain('Use this folder');
     expect(html).toContain('The station shows only the first entries.');
   });
 
   test('without the drive scope, stale data or providers the form is off', () => {
     expect(form([reported()], ['read'])).toContain('Starting sessions needs the drive scope.');
-    expect(form([reported()], ['read'])).toMatch(/disabled="">Browse the station/);
+    expect(form([reported()], ['read'])).toMatch(/disabled=""><svg[\s\S]*?<\/svg> Browse…/);
     expect(form([reported()], ['read', 'drive'], 'stale')).toContain(
       'The form is off until the board is live.',
     );
@@ -430,8 +431,20 @@ describe('spawn form (P4-4)', () => {
       '/m/3',
     ]);
     const html = renderToStaticMarkup(
-      <SpawnForm stations={[reported()]} freshness="live" onOpen={() => {}} sessions={fleet} />,
+      <SpawnForm
+        stations={[reported()]}
+        freshness="live"
+        onOpen={() => {}}
+        sessions={fleet}
+        initialListing={listing}
+        actions={spawnActions(
+          async () => listing,
+          async () => ({}),
+          ['read', 'drive'],
+        )}
+      />,
     );
+    // The recent folders sit in the open panel of the picker.
     expect(html).toContain('aria-label="Recent directories"');
     expect(html).toContain('<span class="fd-label">Recent</span>');
     expect(html).toContain('title="/w/two"');

@@ -95,6 +95,23 @@ describe('tile lines', () => {
     expect(lines[1]?.text).toBe('Bash: false (failed)');
   });
 
+  test('chat lines are plain text: no emphasis, code ticks or heading marks (DL-171)', () => {
+    const lines = tileLines(
+      envelopes('s1', [
+        said('**Finished:** Nothing yet.'),
+        said('## Plan'),
+        said('Current model: `Opus 5.5` (effort: high)'),
+        started('n1', 'Bash', 'echo `date`'),
+      ]),
+    );
+    expect(lines.map((l) => l.text)).toEqual([
+      'Finished: Nothing yet.',
+      'Plan',
+      'Current model: Opus 5.5 (effort: high)',
+      'Bash: echo `date`',
+    ]);
+  });
+
   test('no events, no lines', () => {
     expect(tileLines([])).toEqual([]);
   });
@@ -237,6 +254,6 @@ describe('the watch page', () => {
 
   test('the page counts the live sessions and states an empty board', () => {
     expect(page([card('a', 'working'), card('b', 'idle')])).toContain('2 live');
-    expect(page([])).toContain('No sessions yet.');
+    expect(page([])).toContain('No sessions yet');
   });
 });

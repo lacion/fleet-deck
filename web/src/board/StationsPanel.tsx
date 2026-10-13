@@ -4,7 +4,8 @@ import { basename, relativeAge } from '../app/sessions';
 import type { DeckSession, StationView, WorktreeInfo, WorktreeVerdict } from '../gen';
 import { ApiError } from '../runtime/api';
 import type { Freshness } from '../runtime/state';
-import { ArchiveRestore, Check, Copy, Icon, RotateCcw, Trash2 } from '../ui/icons';
+import { ArchiveRestore, Check, Copy, Icon, Plus, RotateCcw, Server, Trash2 } from '../ui/icons';
+import { EmptyState, Page } from '../ui/page';
 import { useNow } from '../ui/useNow';
 import { ShellPanel } from '../shell/ShellPanel';
 import { PairingDialog } from './PairingDialog';
@@ -439,22 +440,37 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
   const now = useNow(undefined, 30000);
   const canPair = actions?.canAdmin === true && freshness === 'live';
   return (
-    <section className="fd-stations" aria-label="Stations">
-      <h2>
-        Stations <span className="fd-count">{stations.length}</span>
-      </h2>
-      {actions === undefined ? null : actions.canAdmin ? (
-        <button type="button" disabled={!canPair} onClick={() => setAdding(true)}>
-          Add station
-        </button>
-      ) : (
+    <Page
+      title="Stations"
+      count={stations.length}
+      className="fd-stations"
+      actions={
+        actions?.canAdmin === true ? (
+          <button
+            type="button"
+            className="fd-primary"
+            disabled={!canPair}
+            onClick={() => setAdding(true)}
+          >
+            <Icon of={Plus} /> Add station
+          </button>
+        ) : undefined
+      }
+    >
+      {actions === undefined || actions.canAdmin ? null : (
         <p className="fd-note">Pairing needs the admin scope.</p>
       )}
       {adding && actions !== undefined ? (
         <PairingDialog actions={actions} onClose={() => setAdding(false)} />
       ) : null}
       {removeError === null ? null : <p role="alert">{removeError}</p>}
-      {stations.length === 0 ? <p>No paired stations.</p> : null}
+      {stations.length === 0 ? (
+        <EmptyState
+          icon={Server}
+          title="No paired stations"
+          body="Pair a station to start sessions on its machine."
+        />
+      ) : null}
       <ul className="fd-station-list">
         {stations.map((station) => {
           const cards = sessions.filter((card) => card.station_id === station.station_id);
@@ -607,6 +623,6 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
           );
         })}
       </ul>
-    </section>
+    </Page>
   );
 }

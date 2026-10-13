@@ -144,7 +144,7 @@ describe('the activity page', () => {
       initialItems: [],
     });
     expect(none).not.toContain('fd-apost');
-    expect(none).toContain('Nothing happened here yet.');
+    expect(none).toContain('Nothing happened here yet');
   });
 
   test('before the first answer the page says it loads, and offline it says so', () => {

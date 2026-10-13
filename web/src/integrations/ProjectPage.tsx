@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import type { DeckSession, StationView } from '../gen';
 import { stationName } from '../board/fleet';
+import { Page } from '../ui/page';
 import { useNow } from '../ui/useNow';
 import { useIntegrations } from './context';
 import { IssuesTab } from './IssuesTab';
@@ -35,16 +36,15 @@ export function ProjectPage({
   const [tab, setTab] = useState<Tab>(initialTab);
   if (env === undefined) {
     return (
-      <section className="fd-screen fd-int" aria-label="Project">
+      <Page title="Project">
         <p className="fd-note">Projects need a live board.</p>
-      </section>
+      </Page>
     );
   }
   const project = env.projects?.find((p) => p.project_id === id);
   if (project === undefined) {
     return (
-      <section className="fd-screen fd-int" aria-label="Project">
-        <h1 className="fd-screen-title">Project</h1>
+      <Page title="Project">
         {env.projects === null ? (
           env.error === null ? (
             env.actions.canAdmin ? (
@@ -63,12 +63,16 @@ export function ProjectPage({
           <p className="fd-empty">This project does not exist.</p>
         )}
         <a href="#/projects">All projects</a>
-      </section>
+      </Page>
     );
   }
   return (
-    <section className="fd-screen fd-int fd-int-project" aria-label={`Project ${project.name}`}>
-      <h1 className="fd-screen-title">{project.name}</h1>
+    <Page
+      title={project.name}
+      label={`Project ${project.name}`}
+      wide
+      className="fd-int fd-int-project"
+    >
       <p className="fd-plan-meta">
         {stationName(project.station_id, stations)} · <code>{project.path}</code>
       </p>
@@ -109,6 +113,6 @@ export function ProjectPage({
           />
         )}
       </div>
-    </section>
+    </Page>
   );
 }

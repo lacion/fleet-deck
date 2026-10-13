@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { modelFamily, shortModel } from './format';
+import { errorSentence, isRiskyMode, modelFamily, plainLine, shortModel } from './format';
 
 describe('shortModel', () => {
   test('a Claude id becomes the family and the version', () => {
@@ -32,5 +32,49 @@ describe('modelFamily', () => {
     expect(modelFamily('gpt-5-codex')).toBeNull();
     expect(modelFamily('')).toBeNull();
     expect(modelFamily(null)).toBeNull();
+  });
+});
+
+describe('plainLine (DL-171)', () => {
+  test('strips heading marks, emphasis, code ticks and links', () => {
+    expect(plainLine('## Plan')).toBe('Plan');
+    expect(plainLine('**Finished:** Nothing yet.')).toBe('Finished: Nothing yet.');
+    expect(plainLine('Current model: `Opus 5.5 (1M context)` (effort: high)')).toBe(
+      'Current model: Opus 5.5 (1M context) (effort: high)',
+    );
+    expect(plainLine('See [the docs](https://x.test/a) and *this* and _that_.')).toBe(
+      'See the docs and this and that.',
+    );
+    expect(plainLine('> quoted ~~gone~~')).toBe('quoted gone');
+  });
+
+  test('keeps a snake_case word and a lone star, and collapses spaces', () => {
+    expect(plainLine('a snake_case_name and 2 * 3')).toBe('a snake_case_name and 2 * 3');
+    expect(plainLine('  two   spaces  ')).toBe('two spaces');
+  });
+});
+
+describe('errorSentence (DL-171)', () => {
+  test('a code: detail text becomes the detail in a sentence', () => {
+    expect(errorSentence('rate_limit: Try later')).toBe('Try later.');
+    expect(errorSentence('not_dispatched: stop was not sent: already_stopping')).toBe(
+      'Stop was not sent: the session was already stopping.',
+    );
+  });
+
+  test('a text without a code is not changed', () => {
+    expect(errorSentence('The station did not answer.')).toBe('The station did not answer.');
+    expect(errorSentence('Failed: x')).toBe('Failed: x');
+  });
+});
+
+describe('isRiskyMode (DL-171)', () => {
+  test('only the modes that skip the approvals', () => {
+    for (const m of ['dontAsk', 'bypassPermissions', 'danger-full-access']) {
+      expect(isRiskyMode(m)).toBe(true);
+    }
+    for (const m of ['plan', 'default', 'acceptEdits', null, undefined]) {
+      expect(isRiskyMode(m)).toBe(false);
+    }
   });
 });

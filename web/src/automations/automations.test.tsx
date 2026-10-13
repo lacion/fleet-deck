@@ -280,7 +280,9 @@ describe('automations page', () => {
   test('without the owner login there are no actions and the page says why', () => {
     const html = page({ actions: undefined });
     expect(html).toContain('need the owner');
-    expect(html).toMatch(/<button type="button" disabled="">New automation/);
+    expect(html).toMatch(
+      /<button type="button" class="fd-primary" disabled="">[\s\S]*?New automation/,
+    );
   });
 
   test('Run now is disabled with the reason when the station is not linked', () => {
@@ -331,7 +333,7 @@ describe('automation form', () => {
       'Time zone',
       'Grace period',
       'Reuse the session of the last run',
-      'Shell command',
+      'Run first (optional shell check on the station; a non-zero exit skips the run)',
     ]) {
       expect(html).toContain(text);
     }
@@ -339,8 +341,9 @@ describe('automation form', () => {
       expect(html).toContain(preset);
     }
     expect(html).toContain('Create automation');
-    // A new draft is not valid yet: the save button is disabled.
-    expect(html).toMatch(/<button type="submit" disabled="">Create automation/);
+    // The submit stays enabled: a try shows the errors (DL-171). A fresh form shows none.
+    expect(html).toMatch(/<button type="submit" class="fd-primary">Create automation/);
+    expect(html).not.toContain('role="alert"');
   });
 
   test('the cron field shows only for a custom expression', () => {

@@ -258,12 +258,18 @@ describe('session header (DL-140)', () => {
   test('the mode badge shows the mode with its tone, and is absent without a mode', () => {
     const badge = (mode: string) =>
       new RegExp(
-        `<span class="fd-badge" data-tone="([a-z]+)" title="Permission mode">${mode}</span>`,
+        `<span class="fd-badge"(?: data-tone="([a-z]+)")? title="Permission mode">${mode}</span>`,
       );
     const tone = (mode: string) => badge(mode).exec(header(session({ mode })))?.[1];
     expect(tone('plan')).toBe('plan');
-    expect(tone('dontAsk')).toBe('hazard');
-    expect(tone('default')).toBe('muted');
+    // DL-171: hazard red only for a mode that skips the approvals; the other modes have no tone.
+    for (const risky of ['dontAsk', 'bypassPermissions', 'danger-full-access']) {
+      expect(tone(risky)).toBe('hazard');
+    }
+    for (const calm of ['default', 'acceptEdits', 'auto']) {
+      expect(badge(calm).test(header(session({ mode: calm })))).toBe(true);
+      expect(tone(calm)).toBeUndefined();
+    }
     expect(header(session({ mode: null }))).not.toContain('Permission mode');
   });
 

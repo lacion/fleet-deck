@@ -7,10 +7,12 @@ import { sharedSets } from './ownerShares';
 import {
   defaultForm,
   EXPIRY_DAYS,
+  NewShareDialog,
   ShareDialog,
   ShareFields,
   ShareResult,
   shareBody,
+  shareTargets,
   USES,
 } from './ShareDialog';
 import { SharesPage, SharesView, shareState, targetText } from './SharesPage';
@@ -161,7 +163,14 @@ describe('shares page (R11.4)', () => {
     const error = view({ kind: 'error', text: 'owner only' });
     expect(error).toContain('role="alert"');
     expect(error).toContain('Try again');
-    expect(view({ kind: 'ok', value: [] })).toContain('No shares yet.');
+    const empty = view({ kind: 'ok', value: [] });
+    expect(empty).toContain('No shares yet');
+    expect(empty).toContain(
+      'Share a session, a space or the whole board with a link. People join with a name you can see, in the role you pick.',
+    );
+    // The page action and the empty state both offer "New share".
+    expect(empty.match(/New share<\/button>/g)).toHaveLength(2);
+    expect(empty).toContain('class="fd-primary"');
   });
 
   test('a row: kind, target, role, steering, members, uses, expiry', () => {
@@ -180,9 +189,12 @@ describe('shares page (R11.4)', () => {
     expect(html).toContain('Alpha / Review');
     expect(html).toContain('>collaborator<');
     expect(html).toContain('>mob<');
-    expect(html).toContain('Members: Ana, Bo');
-    expect(html).toContain('3 uses left');
-    expect(html).toContain('expires 2026-10-18');
+    expect(html).toContain('<table class="fd-table" aria-label="Shares">');
+    for (const head of ['Role', 'Members', 'Uses left', 'Expires']) expect(html).toContain(head);
+    expect(html).toContain('data-label="Members">Ana, Bo</td>');
+    expect(html).toContain('data-label="Uses left">3</td>');
+    expect(html).toContain('in 5 days');
+    expect(html).toContain('title="2026-10-18"');
     expect(html).toContain('aria-label="Revoke the share of Alpha / Review"');
   });
 
@@ -245,10 +257,22 @@ describe('spaces page (R11.3)', () => {
     expect(view({ kind: 'loading' })).toContain('Loading the spaces…');
     expect(view({ kind: 'error', text: 'nope' })).toContain('role="alert"');
     const empty = view({ kind: 'ok', value: [] });
-    expect(empty).toContain('No spaces yet.');
-    expect(empty).toContain('aria-label="New space"');
+    expect(empty).toContain('No spaces yet');
+    // The page action opens the name form; a fresh page shows the button, not the form.
     expect(empty).toContain('New space</button>');
-    expect(empty).toContain('maxLength="80"');
+    expect(empty).not.toContain('aria-label="New space"');
+    const open = renderToStaticMarkup(
+      <SpacesView
+        state={{ kind: 'ok', value: [] }}
+        sessions={sessions}
+        stations={stations}
+        initialCreating
+      />,
+    );
+    expect(open).toContain('aria-label="New space"');
+    expect(open).toContain('Create space');
+    expect(open).toContain('maxLength="80"');
+    expect(open).not.toContain('class="fd-primary"><svg');
   });
 
   test('a space lists its sessions, "Add a session" and "Share space…"', () => {
@@ -267,16 +291,18 @@ describe('spaces page (R11.3)', () => {
 
   test('a space without sessions, and nothing left to add', () => {
     const html = renderToStaticMarkup(
-      <ul>
-        <SpaceCard
-          space={space('sp2', 'Empty')}
-          sessions={[]}
-          stations={stations}
-          busy={false}
-          onAdd={() => {}}
-          onShare={() => {}}
-        />
-      </ul>,
+      <table>
+        <tbody>
+          <SpaceCard
+            space={space('sp2', 'Empty')}
+            sessions={[]}
+            stations={stations}
+            busy={false}
+            onAdd={() => {}}
+            onShare={() => {}}
+          />
+        </tbody>
+      </table>,
     );
     expect(html).toContain('No sessions in this space yet.');
     expect(html).toContain('No more sessions');
@@ -315,5 +341,49 @@ describe('the sessions that the owner shares', () => {
     const sets = sharedSets([share('a', { kind: 'board', target: '', steering: 'mob' })], [], NOW);
     expect(sets.shared.has('*')).toBe(true);
     expect(sets.mob.has('*')).toBe(true);
+  });
+});
+
+describe('new share (DL-171)', () => {
+  test('the targets: the board, the spaces, then the sessions by title', () => {
+    const targets = shareTargets(sessions, stations, [space('sp1', 'Alpha team')]);
+    expect(targets.slice(0, 3).map((t) => t.label)).toEqual([
+      'The whole board',
+      'Space Alpha team',
+      'Review (Alpha)',
+    ]);
+    expect(targets).toHaveLength(4);
+    expect(targets[0]?.request).toEqual({ kind: 'board', target: '', label: '' });
+    expect(targets[1]?.request).toEqual({ kind: 'space', target: 'sp1', label: 'Alpha team' });
+    expect(targets[2]?.request).toEqual({
+      kind: 'session',
+      target: 'station-a/s1',
+      label: 'Review',
+    });
+  });
+
+  test('without a space there is no Spaces group', () => {
+    const targets = shareTargets(sessions, stations, []);
+    expect(targets.some((t) => t.group === 'space')).toBe(false);
+    expect(targets[0]?.group).toBe('board');
+  });
+
+  test('the dialog has a target select and the title New share', () => {
+    const html = renderToStaticMarkup(
+      <NewShareDialog
+        sessions={sessions}
+        stations={stations}
+        spaces={[space('sp1', 'Alpha team')]}
+        calls={fakeShareCalls()}
+        onClose={() => {}}
+      />,
+    );
+    expect(html).toContain('aria-label="New share"');
+    expect(html).toContain('What to share');
+    expect(html).toContain('>The whole board<');
+    expect(html).toContain('<optgroup label="Spaces">');
+    expect(html).toContain('>Space Alpha team<');
+    expect(html).toContain('<optgroup label="Sessions">');
+    expect(html).toContain('>Review (Alpha)<');
   });
 });
