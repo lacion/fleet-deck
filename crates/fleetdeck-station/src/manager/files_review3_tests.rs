@@ -12,8 +12,8 @@ use fleetdeck_testkit::Det;
 use super::files_tests::{policy, session, store_with_session};
 use super::search;
 use crate::manager::turns::turns_tests::repo;
-use crate::workspace::GitOptions;
 use crate::workspace::files::WALK_FILE_BYTES;
+use crate::workspace::{GitOptions, PrivatePaths};
 
 async fn content_search(dir: &Path, needle: &str) -> FileSearch {
     let det = Det::new();
@@ -21,6 +21,7 @@ async fn content_search(dir: &Path, needle: &str) -> FileSearch {
     search(
         &s,
         &policy(dir.parent().unwrap()),
+        &PrivatePaths::default(),
         &GitOptions::isolated(),
         FileSearchQuery {
             root: session(),

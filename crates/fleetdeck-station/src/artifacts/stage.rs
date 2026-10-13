@@ -21,6 +21,7 @@ use rustix::fs::{FileType, Mode, OFlags};
 use super::ArtifactError;
 use super::bundle;
 use crate::store::artifacts::{Staged, StagedFile};
+use crate::workspace::PrivatePaths;
 use crate::workspace::files::open_root;
 
 const CHUNK: usize = 64 * 1024;
@@ -55,11 +56,16 @@ fn descend(base: &OwnedFd, segments: &[&str]) -> rustix::io::Result<OwnedFd> {
 }
 
 /// Opens the regular file `name` of `dir`. `None` for anything else: a
-/// missing name, a symlink, a directory, a FIFO or a device.
-fn open_regular(dir: &OwnedFd, name: &str) -> Option<File> {
+/// missing name, a symlink, a directory, a FIFO, a device, or a hard link to
+/// a private file of the station.
+fn open_regular(dir: &OwnedFd, name: &str, private: &PrivatePaths) -> Option<File> {
     let fd = rustix::fs::openat(dir, name, file_flags(), Mode::empty()).ok()?;
     let stat = rustix::fs::fstat(fd.as_fd()).ok()?;
-    (FileType::from_raw_mode(stat.st_mode) == FileType::RegularFile).then(|| File::from(fd))
+    if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile {
+        return None;
+    }
+    let file = File::from(fd);
+    (!file.metadata().is_ok_and(|m| private.is_private_file(&m))).then_some(file)
 }
 
 /// Streams `source` into `target` and returns its size and SHA-256.
@@ -103,11 +109,19 @@ fn copy_hashed(mut source: File, target: &Path) -> Result<(u64, String), Artifac
 }
 
 /// Copies the file `rel` below `root` and, for an HTML page, the local
-/// files that it names, into `staging`. The main file comes first.
+/// files that it names, into `staging`. The main file comes first. A private
+/// path of the station ([`PrivatePaths`]) is never copied: the main file is
+/// not found, and a bundled file that is private is left out like a missing
+/// one.
 ///
 /// # Errors
 /// `invalid_path`, `not_found` or `internal`.
-pub fn stage(root: &Path, rel: &str, staging: &Path) -> Result<Staged, ArtifactError> {
+pub fn stage(
+    root: &Path,
+    rel: &str,
+    staging: &Path,
+    private: &PrivatePaths,
+) -> Result<Staged, ArtifactError> {
     let segments = path_segments(rel).map_err(|c| {
         if c == code::NOT_FOUND {
             not_found(rel)
@@ -118,9 +132,13 @@ pub fn stage(root: &Path, rel: &str, staging: &Path) -> Result<Staged, ArtifactE
     let Some((name, parents)) = segments.split_last() else {
         return Err(ArtifactError::new(code::INVALID_PATH, "the path is empty"));
     };
+    let page_path = parents.iter().fold(root.to_path_buf(), |p, s| p.join(s));
+    if private.is_private_canonical(&page_path.join(name)) {
+        return Err(not_found(rel));
+    }
     let base = open_root(root).map_err(|_| not_found(rel))?;
     let page_dir = descend(&base, parents).map_err(|_| not_found(rel))?;
-    let main = open_regular(&page_dir, name).ok_or_else(|| not_found(rel))?;
+    let main = open_regular(&page_dir, name, private).ok_or_else(|| not_found(rel))?;
     fs::create_dir_all(staging).map_err(|e| io_error("staging directory", e))?;
     let (size, sha256) = copy_hashed(main, &staging.join(name))?;
     let mut files = vec![StagedFile {
@@ -146,12 +164,16 @@ pub fn stage(root: &Path, rel: &str, staging: &Path) -> Result<Staged, ArtifactE
         let Some((last, dirs)) = parts.split_last() else {
             continue;
         };
-        // A missing file, a symlink, a directory or a file that cannot be
-        // opened is not part of the bundle: the page keeps its link.
+        // A missing file, a symlink, a directory, a private file or a file
+        // that cannot be opened is not part of the bundle: the page keeps
+        // its link.
+        if private.is_private_canonical(&page_path.join(&reference)) {
+            continue;
+        }
         let Ok(dir) = descend(&page_dir, dirs) else {
             continue;
         };
-        let Some(file) = open_regular(&dir, last) else {
+        let Some(file) = open_regular(&dir, last, private) else {
             continue;
         };
         let (size, sha256) = copy_hashed(file, &staging.join(&reference))?;

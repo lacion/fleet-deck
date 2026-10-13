@@ -237,6 +237,9 @@ async fn file_method(ctx: &StationLink, method: &str, params: serde_json::Value)
     // The snapshot of this call: the roots and `member_deny` of the moment.
     let current = ctx.manager.policy();
     let policy = &*current;
+    // The private paths of the station (DL-173): refused for every caller.
+    let private_paths = ctx.manager.private_paths();
+    let private = &*private_paths;
     let git = GitOptions::isolated();
     // The deck marks a call for a member of a shared session (R11.9); the
     // station hides the files of the member deny list from it.
@@ -244,23 +247,25 @@ async fn file_method(ctx: &StationLink, method: &str, params: serde_json::Value)
     let member = fleetdeck_proto::member_deny::take_member_flag(&mut params);
     match method {
         "files.list" => match serde_json::from_value(params) {
-            Ok(q) => done(files::list_as(store, policy, q, member).await),
+            Ok(q) => done(files::list_as(store, policy, private, q, member).await),
             Err(e) => bad_params(e),
         },
         "files.read" => match serde_json::from_value(params) {
-            Ok(q) => done(files::read_as(store, policy, q, member).await),
+            Ok(q) => done(files::read_as(store, policy, private, q, member).await),
             Err(e) => bad_params(e),
         },
         "files.search" => match serde_json::from_value(params) {
-            Ok(q) => done(files::search_as(store, policy, &git, q, member).await),
+            Ok(q) => done(files::search_as(store, policy, private, &git, q, member).await),
             Err(e) => bad_params(e),
         },
         "files.diff" => match serde_json::from_value(params) {
-            Ok(q) => done(files::diff_as(store, policy, &git, q, member).await),
+            Ok(q) => done(files::diff_as(store, policy, private, &git, q, member).await),
             Err(e) => bad_params(e),
         },
         "files.session_diff" => match serde_json::from_value(params) {
-            Ok(q) => done(crate::workspace::session_diff::run(store, policy, &git, q).await),
+            Ok(q) => {
+                done(crate::workspace::session_diff::run(store, policy, private, &git, q).await)
+            }
             Err(e) => bad_params(e),
         },
         other => Outcome::Err(WireError::new(

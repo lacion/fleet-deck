@@ -34,5 +34,8 @@ impl ArtifactError {
 }
 
 #[cfg(test)]
+#[path = "private_tests.rs"]
+mod private_tests;
+#[cfg(test)]
 #[path = "service_tests.rs"]
 mod service_tests;

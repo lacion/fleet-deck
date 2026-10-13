@@ -22,7 +22,7 @@ use crate::manager::turns::turns_tests::{
     S1, completed, dispatch, git, input, repo, setup, started,
 };
 use crate::store::OfflineApprovalPolicy;
-use crate::workspace::GitOptions;
+use crate::workspace::{GitOptions, PrivatePaths};
 
 /// A policy whose deny list has one more pattern.
 fn deny_policy(root: &Path, extra: &[&str]) -> Policy {
@@ -65,17 +65,31 @@ async fn a_member_list_leaves_out_the_hidden_files_and_the_owner_sees_all() {
         root: session(),
         path: path.to_owned(),
     };
-    let member = names(list_as(&s, &p, q(""), true).await.unwrap());
+    let member = names(
+        list_as(&s, &p, &PrivatePaths::default(), q(""), true)
+            .await
+            .unwrap(),
+    );
     assert_eq!(member, ["src", "README.md"]);
-    let owner = names(list_as(&s, &p, q(""), false).await.unwrap());
+    let owner = names(
+        list_as(&s, &p, &PrivatePaths::default(), q(""), false)
+            .await
+            .unwrap(),
+    );
     for hidden in [".env", "secrets", "private"] {
         assert!(owner.iter().any(|n| n == hidden), "{hidden}");
     }
-    let src = names(list_as(&s, &p, q("src"), true).await.unwrap());
+    let src = names(
+        list_as(&s, &p, &PrivatePaths::default(), q("src"), true)
+            .await
+            .unwrap(),
+    );
     assert_eq!(src, ["main.rs"]);
     // A hidden directory is not found, not listed as empty.
     for path in ["secrets", "private"] {
-        let err = list_as(&s, &p, q(path), true).await.unwrap_err();
+        let err = list_as(&s, &p, &PrivatePaths::default(), q(path), true)
+            .await
+            .unwrap_err();
         assert_eq!(err.code, code::NOT_FOUND, "{path}");
     }
 }
@@ -97,11 +111,20 @@ async fn a_member_read_of_a_hidden_file_is_not_found() {
         "secrets/db.txt",
         "private/plan.txt",
     ] {
-        let err = read_as(&s, &p, q(path), true).await.unwrap_err();
+        let err = read_as(&s, &p, &PrivatePaths::default(), q(path), true)
+            .await
+            .unwrap_err();
         assert_eq!(err.code, code::NOT_FOUND, "{path}");
-        assert!(read_as(&s, &p, q(path), false).await.is_ok(), "{path}");
+        assert!(
+            read_as(&s, &p, &PrivatePaths::default(), q(path), false)
+                .await
+                .is_ok(),
+            "{path}"
+        );
     }
-    let ok = read_as(&s, &p, q("README.md"), true).await.unwrap();
+    let ok = read_as(&s, &p, &PrivatePaths::default(), q("README.md"), true)
+        .await
+        .unwrap();
     assert_eq!(ok.text.as_deref(), Some("token_here readme\n"));
 }
 
@@ -122,13 +145,19 @@ async fn a_member_search_never_names_or_reads_a_hidden_file() {
             mode,
             max_hits: None,
         };
-        let member = search_as(&s, &p, &git, q(), true).await.unwrap().hits;
+        let member = search_as(&s, &p, &PrivatePaths::default(), &git, q(), true)
+            .await
+            .unwrap()
+            .hits;
         for hit in &member {
             for hidden in [".env", "server.pem", "secrets", "private"] {
                 assert!(!hit.path.contains(hidden), "{mode:?}: {}", hit.path);
             }
         }
-        let owner = search_as(&s, &p, &git, q(), false).await.unwrap().hits;
+        let owner = search_as(&s, &p, &PrivatePaths::default(), &git, q(), false)
+            .await
+            .unwrap()
+            .hits;
         assert!(
             owner
                 .iter()
@@ -139,6 +168,7 @@ async fn a_member_search_never_names_or_reads_a_hidden_file() {
     let hits = search_as(
         &s,
         &p,
+        &PrivatePaths::default(),
         &git,
         FileSearchQuery {
             root: session(),
@@ -165,6 +195,7 @@ async fn a_member_browses_the_session_workspace_only() {
     let err = list_as(
         &s,
         &p,
+        &PrivatePaths::default(),
         FileListQuery {
             root: ws(&root),
             path: String::new(),
@@ -178,6 +209,7 @@ async fn a_member_browses_the_session_workspace_only() {
         list_as(
             &s,
             &p,
+            &PrivatePaths::default(),
             FileListQuery {
                 root: ws(&root),
                 path: String::new(),
@@ -216,10 +248,14 @@ async fn a_member_diff_loses_the_hunks_of_hidden_files() {
         turn_id: TurnId::from("turn-1"),
         max_bytes: None,
     };
-    let owner = diff_as(&s, &p, &git, q(), false).await.unwrap();
+    let owner = diff_as(&s, &p, &PrivatePaths::default(), &git, q(), false)
+        .await
+        .unwrap();
     assert!(owner.patch.contains("TOKEN=abc"), "{}", owner.patch);
     assert_eq!(owner.hidden_files, 0);
-    let member = diff_as(&s, &p, &git, q(), true).await.unwrap();
+    let member = diff_as(&s, &p, &PrivatePaths::default(), &git, q(), true)
+        .await
+        .unwrap();
     assert!(member.patch.contains("+more"), "{}", member.patch);
     assert!(!member.patch.contains("TOKEN"), "{}", member.patch);
     assert!(!member.patch.contains(".env"), "{}", member.patch);
@@ -243,14 +279,26 @@ async fn a_publish_with_a_new_deny_pattern_hides_the_files_from_the_next_member_
         root: session(),
         path: String::new(),
     };
-    let before = names(list_as(&s, &hub.current(), q(), true).await.unwrap());
+    let before = names(
+        list_as(&s, &hub.current(), &PrivatePaths::default(), q(), true)
+            .await
+            .unwrap(),
+    );
     assert!(before.iter().any(|n| n == "private"), "{before:?}");
 
     let config = crate::manager::policy_hub::test_config(&root, "member_deny = [\"private/\"]\n");
     hub.swap(hub.current().reconfigured(&config));
-    let after = names(list_as(&s, &hub.current(), q(), true).await.unwrap());
+    let after = names(
+        list_as(&s, &hub.current(), &PrivatePaths::default(), q(), true)
+            .await
+            .unwrap(),
+    );
     assert!(!after.iter().any(|n| n == "private"), "{after:?}");
     // The owner still sees it.
-    let owner = names(list_as(&s, &hub.current(), q(), false).await.unwrap());
+    let owner = names(
+        list_as(&s, &hub.current(), &PrivatePaths::default(), q(), false)
+            .await
+            .unwrap(),
+    );
     assert!(owner.iter().any(|n| n == "private"), "{owner:?}");
 }

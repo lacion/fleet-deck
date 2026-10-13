@@ -142,6 +142,9 @@ pub struct SessionManager {
     /// The model help of the station, once the station process set it
     /// (R10, DL-167).
     assist: std::sync::OnceLock<Arc<crate::assist::Assist>>,
+    /// The private paths of the station (DL-173), once the station process
+    /// set them. Built once; not part of the live policy snapshot.
+    private_paths: std::sync::OnceLock<Arc<crate::workspace::PrivatePaths>>,
 }
 
 impl std::fmt::Debug for SessionManager {
@@ -336,6 +339,7 @@ impl SessionManager {
             shells,
             artifacts: std::sync::OnceLock::new(),
             assist: std::sync::OnceLock::new(),
+            private_paths: std::sync::OnceLock::new(),
         })
     }
 
@@ -349,13 +353,30 @@ impl SessionManager {
     /// Gives the manager the directory of the artifact bytes (DL-165). The
     /// first call wins; without it the artifact methods answer
     /// `unsupported`.
-    pub fn set_artifacts_dir(&self, root: PathBuf) {
+    pub fn set_artifacts_dir(&self, root: PathBuf, private: Arc<crate::workspace::PrivatePaths>) {
         let service = crate::artifacts::ArtifactService::new(
             self.store.clone(),
             Arc::clone(&self.policy),
             root,
+            private,
         );
         let _ = self.artifacts.set(service);
+    }
+
+    /// Gives the manager the private paths of the station (DL-173), before
+    /// the link starts. The first call wins.
+    pub fn set_private_paths(&self, private: Arc<crate::workspace::PrivatePaths>) {
+        let _ = self.private_paths.set(private);
+    }
+
+    /// The private paths of the station. Without a set the answer refuses
+    /// every path (fail closed).
+    #[must_use]
+    pub fn private_paths(&self) -> Arc<crate::workspace::PrivatePaths> {
+        self.private_paths.get().map_or_else(
+            || Arc::new(crate::workspace::PrivatePaths::deny_all()),
+            Arc::clone,
+        )
     }
 
     /// The artifact service, if the station has a directory for it.

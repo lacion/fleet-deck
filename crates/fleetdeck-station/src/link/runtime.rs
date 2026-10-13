@@ -159,7 +159,7 @@ impl StationNode {
         artifacts_dir: Option<std::path::PathBuf>,
     ) -> Result<Arc<Self>, NodeError> {
         if let Some(dir) = artifacts_dir {
-            manager.set_artifacts_dir(dir);
+            manager.set_artifacts_dir(dir, manager.private_paths());
         }
         // The trash decisions and the file work read the open shells
         // (DL-150).

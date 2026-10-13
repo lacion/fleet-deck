@@ -22,6 +22,7 @@ use crate::manager::PolicyHub;
 use crate::manager::policy::WorkspaceError;
 use crate::store::Store;
 use crate::store::artifacts::{CommitError, NewVersion};
+use crate::workspace::PrivatePaths;
 use crate::workspace::files::{open_root, private_root};
 
 /// The artifact service of one station.
@@ -32,6 +33,8 @@ pub struct ArtifactService {
     policy: Arc<PolicyHub>,
     /// `<station data>/artifacts`.
     root: PathBuf,
+    /// The private paths of the station: never published (DL-173).
+    private: Arc<PrivatePaths>,
 }
 
 fn internal(e: impl std::fmt::Display) -> ArtifactError {
@@ -54,12 +57,18 @@ impl ArtifactService {
     /// A service that keeps its bytes in `root`. Leftovers of a publish
     /// that a crash interrupted are removed.
     #[must_use]
-    pub fn new(store: Store, policy: Arc<PolicyHub>, root: PathBuf) -> Self {
+    pub fn new(
+        store: Store,
+        policy: Arc<PolicyHub>,
+        root: PathBuf,
+        private: Arc<PrivatePaths>,
+    ) -> Self {
         let _ = std::fs::remove_dir_all(root.join(".staging"));
         Self {
             store,
             policy,
             root,
+            private,
         }
     }
 
@@ -145,7 +154,7 @@ impl ArtifactService {
                     "the file is outside the session workspace and the allowed roots",
                 )
             })?;
-        if private_root(&root, allowed) {
+        if private_root(&root, allowed) || self.private.is_private(&root) {
             return Err(ArtifactError::new(
                 code::OUTSIDE_ROOTS,
                 "the root is a private directory or lies inside one",
@@ -191,9 +200,11 @@ impl ArtifactService {
         let default_title = rel.rsplit('/').next().unwrap_or(&rel).to_owned();
         let staging = stage::staging_dir(&self.root, &unique()?);
         let (src_root, src_rel, dir) = (root, rel, staging.clone());
-        let staged = tokio::task::spawn_blocking(move || stage::stage(&src_root, &src_rel, &dir))
-            .await
-            .map_err(internal)?;
+        let private = Arc::clone(&self.private);
+        let staged =
+            tokio::task::spawn_blocking(move || stage::stage(&src_root, &src_rel, &dir, &private))
+                .await
+                .map_err(internal)?;
         let staged = match staged {
             Ok(s) => s,
             Err(e) => {

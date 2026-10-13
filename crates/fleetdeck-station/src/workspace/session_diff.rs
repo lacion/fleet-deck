@@ -5,7 +5,9 @@
 //! checkpoints: a snapshot tree through a private index (no clean filter,
 //! no external diff, no text conversion), then `git diff-tree` of the base
 //! commit and that tree, with the private paths left out
-//! ([`visible_pathspec`]). Each untracked file (not ignored) is read by the
+//! ([`visible_pathspec`]) and the station's own private paths
+//! ([`PrivatePaths`], DL-173): git excludes them from the tracked patch, and
+//! an untracked file below one is not listed or read. Each untracked file (not ignored) is read by the
 //! file service (no symlink is followed) and rendered as a new file; a
 //! binary or a large one is a header line only.
 //!
@@ -33,6 +35,7 @@ use fleetdeck_proto::files::{
 use super::checkpoint::{Limits, Worktree};
 use super::files::{self, FileError};
 use super::git::nul_fields;
+use super::private_paths::PrivatePaths;
 use super::restore::visible_pathspec;
 use super::{Git, GitOptions};
 use crate::manager::policy::Policy;
@@ -70,6 +73,7 @@ fn is_oid(text: &str) -> bool {
 pub async fn run(
     store: &Store,
     policy: &Policy,
+    private: &PrivatePaths,
     git: &GitOptions,
     query: SessionDiffQuery,
 ) -> Result<SessionDiff, FileError> {
@@ -88,9 +92,13 @@ pub async fn run(
         .base
         .filter(|b| is_oid(&b.oid))
         .ok_or_else(|| FileError::new(code::NO_BASE, "the session has no base commit"))?;
-    let root =
-        crate::manager::files::root(store, policy, &FileRoot::Session(query.session_id.clone()))
-            .await?;
+    let root = crate::manager::files::root(
+        store,
+        policy,
+        private,
+        &FileRoot::Session(query.session_id.clone()),
+    )
+    .await?;
     let options = GitOptions {
         timeout: DIFF_TIMEOUT,
         ..git.clone()
@@ -120,7 +128,7 @@ pub async fn run(
     } else {
         DiffScope::Worktree
     };
-    let work = compute(root, base.oid.clone(), options, max, shared);
+    let work = compute(root, base.oid.clone(), options, max, shared, private);
     let (summary, patch, truncated) = tokio::time::timeout(DIFF_TIMEOUT, work)
         .await
         .map_err(|_| FileError::new(code::TIMEOUT, "the diff took too long"))??;
@@ -140,6 +148,7 @@ async fn compute(
     options: GitOptions,
     max: usize,
     shared: Option<Shared>,
+    private: &PrivatePaths,
 ) -> Result<(DiffSummary, String, bool), FileError> {
     let internal = |e: &dyn std::fmt::Display| FileError::new("internal", e.to_string());
     let no_diff = |why: String| FileError::new(code::NO_DIFF, why);
@@ -147,6 +156,7 @@ async fn compute(
         .await
         .map_err(|_| no_diff("the working directory is not a Git worktree".to_owned()))?;
     let git = worktree.git();
+    let excludes = private.excludes_for(worktree.root());
     let has_base = git
         .status(
             &["cat-file", "-e", &format!("{base}^{{commit}}")],
@@ -162,7 +172,7 @@ async fn compute(
         ));
     }
     let only = match &shared {
-        Some(shared) => Some(session_paths(git, &worktree, &root, shared).await?),
+        Some(shared) => Some(session_paths(git, &worktree, &root, shared, private).await?),
         None => None,
     };
     if only.as_ref().is_some_and(BTreeSet::is_empty) {
@@ -182,13 +192,19 @@ async fn compute(
         }
     };
     let (mut summary, mut patch, cut) = match &only {
-        Some(only) => tracked_in(git, &base, &tree, only, max).await?,
-        None => tracked(git, &base, &tree, &visible_pathspec(), max).await?,
+        Some(only) => tracked_in(git, &base, &tree, only, max, &excludes).await?,
+        None => {
+            let mut spec = visible_pathspec();
+            spec.extend_from_slice(&excludes);
+            tracked(git, &base, &tree, &spec, max).await?
+        }
     };
     if cut {
         return Ok((summary, patch, true));
     }
     let (mut paths, listing_cut) = untracked(git).await?;
+    let top = worktree.root().to_path_buf();
+    paths.retain(|path| !private.is_private_canonical(&top.join(path)));
     if let Some(only) = &only {
         paths.retain(|path| only.contains(path));
     }
@@ -197,10 +213,11 @@ async fn compute(
     let remaining = max.saturating_sub(patch.len());
     // `git ls-files` names paths from the worktree root, which is above the
     // session folder when the session started in a subdirectory.
-    let top = worktree.root().to_path_buf();
-    let rendered = tokio::task::spawn_blocking(move || render_untracked(&top, &paths, remaining))
-        .await
-        .map_err(|e| internal(&e))?;
+    let private = private.clone();
+    let rendered =
+        tokio::task::spawn_blocking(move || render_untracked(&top, &paths, remaining, &private))
+            .await
+            .map_err(|e| internal(&e))?;
     patch.push_str(&rendered.patch);
     summary.files_changed = summary
         .files_changed
@@ -264,6 +281,7 @@ async fn tracked_in(
     tree: &str,
     only: &BTreeSet<String>,
     max: usize,
+    excludes: &[String],
 ) -> Result<(DiffSummary, String, bool), FileError> {
     let internal = |e: &dyn std::fmt::Display| FileError::new("internal", e.to_string());
     let mut args = vec![
@@ -275,7 +293,8 @@ async fn tracked_in(
         base,
         tree,
     ];
-    let spec = visible_pathspec();
+    let mut spec = visible_pathspec();
+    spec.extend_from_slice(excludes);
     args.extend(spec.iter().map(String::as_str));
     let (status, out, _) = git
         .bounded(&args, LIST_MAX)
@@ -295,7 +314,7 @@ async fn tracked_in(
     let mut summary = numstat("");
     let mut patch = String::new();
     for group in chosen.chunks(MAX_PATHSPEC) {
-        let spec = literal_pathspec(group);
+        let spec = literal_pathspec(group, excludes);
         let (part, text, cut) =
             tracked(git, base, tree, &spec, max.saturating_sub(patch.len())).await?;
         summary.files_changed = summary.files_changed.saturating_add(part.files_changed);
@@ -310,10 +329,11 @@ async fn tracked_in(
 }
 
 /// [`visible_pathspec`] with the given paths (literal, no pattern) in place
-/// of the whole worktree.
-fn literal_pathspec(paths: &[&str]) -> Vec<String> {
+/// of the whole worktree, and the private `excludes`.
+fn literal_pathspec(paths: &[&str], excludes: &[String]) -> Vec<String> {
     let mut spec = visible_pathspec();
     spec.splice(1..2, paths.iter().map(|path| format!(":(literal){path}")));
+    spec.extend_from_slice(excludes);
     spec
 }
 
@@ -325,6 +345,7 @@ async fn session_paths(
     worktree: &Worktree,
     session_dir: &Path,
     shared: &Shared,
+    private: &PrivatePaths,
 ) -> Result<BTreeSet<String>, FileError> {
     let mut paths: BTreeSet<String> = shared
         .events
@@ -363,6 +384,7 @@ async fn session_paths(
                 .map(str::to_owned),
         );
     }
+    paths.retain(|path| !private.is_private_canonical(&worktree.root().join(path)));
     Ok(paths)
 }
 
@@ -447,14 +469,19 @@ struct Rendered {
 /// Renders each untracked path as a new file, in order, until the patch
 /// would pass `budget` bytes. A file that cannot be read without following
 /// a symlink (a link, a FIFO, a file that vanished) is left out.
-fn render_untracked(root: &std::path::Path, paths: &[String], budget: usize) -> Rendered {
+fn render_untracked(
+    root: &std::path::Path,
+    paths: &[String],
+    budget: usize,
+    private: &PrivatePaths,
+) -> Rendered {
     let mut out = Rendered {
         patch: String::new(),
         summary: numstat(""),
         truncated: false,
     };
     for path in paths {
-        let Ok(content) = files::read(root, path, Some(MAX_READ_BYTES)) else {
+        let Ok(content) = files::read_for(root, path, Some(MAX_READ_BYTES), None, private) else {
             continue;
         };
         let (piece, lines) = new_file_patch(path, &content);

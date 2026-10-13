@@ -103,7 +103,8 @@ pub async fn up(
         &dirs.station().join("secrets"),
     )?;
     let deck = RunningDeck::start(dirs, &deck_config, BackoffPolicy::default(), options).await?;
-    let station = match RunningStation::start(dirs, &station_config).await {
+    let deck_paths = Some((dirs.deck_config(), dirs.deck()));
+    let station = match RunningStation::start(dirs, &station_config, deck_paths).await {
         Ok(s) => s,
         Err(e) => {
             deck.stop().await;
@@ -171,9 +172,13 @@ mod tests {
         let other = TempNode::new("other").unwrap();
         home.write_station_toml("name = \"home\"\nallowed_roots = [\"~/projects\"]\n")
             .unwrap();
-        let station = RunningStation::start(home.dirs(), &home.station_config().unwrap())
-            .await
-            .unwrap();
+        let station = RunningStation::start(
+            home.dirs(),
+            &home.station_config().unwrap(),
+            Some((home.dirs().deck_config(), home.dirs().deck())),
+        )
+        .await
+        .unwrap();
         let first = deck(&home).await;
         assert_eq!(pair_local(&first, &station).await.unwrap(), Pairing::Joined);
         assert_eq!(pair_local(&first, &station).await.unwrap(), Pairing::Kept);

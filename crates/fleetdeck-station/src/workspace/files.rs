@@ -18,6 +18,13 @@
 //! - `.git` and credential directories are never listed, opened or searched,
 //!   and neither is a root inside one ([`private_root`]; finding 2 of
 //!   sa-13931f53);
+//! - the station's own credential and config locations
+//!   ([`PrivatePaths`], DL-173 section 2.1) are refused for every caller,
+//!   the owner too: a private path is not found, a private child is left
+//!   out of a listing, and a search neither names nor opens one. The check
+//!   comes before any open; the root is canonical and no symlink is
+//!   followed, so the root joined with the query path is the canonical
+//!   target;
 //! - every walk and read is bounded, and each cut is reported.
 
 use std::ffi::CStr;
@@ -32,6 +39,8 @@ use fleetdeck_proto::files::{
 };
 use fleetdeck_proto::member_deny::MemberDeny;
 use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags, Stat};
+
+use super::private_paths::PrivatePaths;
 
 /// The most directory entries read from one directory.
 pub const MAX_SCANNED: usize = 20_000;
@@ -235,12 +244,13 @@ fn names_in(dir: &OwnedFd, max: usize) -> (Vec<String>, bool) {
 /// # Errors
 /// [`FileError`] with `invalid_path`, `not_found` or `wrong_kind`.
 pub fn list(root: &Path, path: &str) -> Result<FileListing, FileError> {
-    list_for(root, path, None)
+    list_for(root, path, None, &PrivatePaths::default())
 }
 
 /// [`list`] for a member of a shared session when `deny` is set: the
 /// directory and the entries that the deny list hides are not found and not
-/// listed (R11.9).
+/// listed (R11.9). A private path of the station ([`PrivatePaths`]) is not
+/// found and a private child is not listed, for every caller.
 ///
 /// # Errors
 /// As [`list`].
@@ -248,11 +258,16 @@ pub fn list_for(
     root: &Path,
     path: &str,
     deny: Option<&MemberDeny>,
+    private: &PrivatePaths,
 ) -> Result<FileListing, FileError> {
     if deny.is_some_and(|d| d.denies(path)) {
         return Err(not_found(path));
     }
     let segments = segments_of(path)?;
+    let dir_path = segments.iter().fold(root.to_path_buf(), |p, s| p.join(s));
+    if private.is_private_canonical(&dir_path) {
+        return Err(not_found(path));
+    }
     let base = open_root(root).map_err(|_| not_found(path))?;
     let dir = match parent_and_last(&base, &segments, path)? {
         None => descend(&base, &[]).map_err(|_| not_found(path))?,
@@ -268,7 +283,7 @@ pub fn list_for(
     let mut entries = Vec::new();
     let prefix = path.trim_end_matches('/');
     for name in names {
-        if hidden_name(&name) {
+        if hidden_name(&name) || private.is_private_canonical(&dir_path.join(&name)) {
             continue;
         }
         if let Some(deny) = deny {
@@ -329,11 +344,12 @@ fn open_file(dir: &OwnedFd, name: &str, path: &str) -> Result<(File, u64), FileE
 /// # Errors
 /// [`FileError`] with `invalid_path`, `not_found` or `wrong_kind`.
 pub fn read(root: &Path, path: &str, max_bytes: Option<u64>) -> Result<FileContent, FileError> {
-    read_for(root, path, max_bytes, None)
+    read_for(root, path, max_bytes, None, &PrivatePaths::default())
 }
 
 /// [`read`] for a member of a shared session when `deny` is set: a file that
-/// the deny list hides is not found (R11.9).
+/// the deny list hides is not found (R11.9). A private path of the station
+/// ([`PrivatePaths`]) is not found, for every caller.
 ///
 /// # Errors
 /// As [`read`].
@@ -342,6 +358,7 @@ pub fn read_for(
     path: &str,
     max_bytes: Option<u64>,
     deny: Option<&MemberDeny>,
+    private: &PrivatePaths,
 ) -> Result<FileContent, FileError> {
     if deny.is_some_and(|d| d.denies(path)) {
         return Err(not_found(path));
@@ -350,6 +367,10 @@ pub fn read_for(
         return Err(FileError::new(code::WRONG_KIND, "the root is a directory"));
     }
     let segments = segments_of(path)?;
+    let target = segments.iter().fold(root.to_path_buf(), |p, s| p.join(s));
+    if private.is_private_canonical(&target) {
+        return Err(not_found(path));
+    }
     let base = open_root(root).map_err(|_| not_found(path))?;
     let Some((parent, last, kind)) = parent_and_last(&base, &segments, path)? else {
         return Err(FileError::new(code::WRONG_KIND, "the root is a directory"));
@@ -361,6 +382,11 @@ pub fn read_for(
         ));
     }
     let (file, size) = open_file(&parent, last, path)?;
+    // A hard link to a private file: the opened file is the check, not its
+    // name.
+    if file.metadata().is_ok_and(|m| private.is_private_file(&m)) {
+        return Err(not_found(path));
+    }
     let limit = max_bytes.unwrap_or(MAX_READ_BYTES).min(MAX_READ_BYTES);
     let mut buf = Vec::new();
     file.take(limit)
@@ -410,17 +436,20 @@ impl Found {
 /// never follows a symlink and never enters a hidden or pruned directory.
 /// `needle` is lower case already.
 pub fn walk_search(root: &Path, needle: &str, content: bool, max: usize) -> Found {
-    walk_search_for(root, needle, content, max, None)
+    walk_search_for(root, needle, content, max, None, &PrivatePaths::default())
 }
 
 /// [`walk_search`] for a member of a shared session when `deny` is set: a
-/// path that the deny list hides is neither named nor opened (R11.9).
+/// path that the deny list hides is neither named nor opened (R11.9). A
+/// private path of the station ([`PrivatePaths`]) is neither named, entered
+/// nor opened, for every caller.
 pub fn walk_search_for(
     root: &Path,
     needle: &str,
     content: bool,
     max: usize,
     deny: Option<&MemberDeny>,
+    private: &PrivatePaths,
 ) -> Found {
     let mut found = Found::default();
     let Ok(base) = open_root(root) else {
@@ -463,7 +492,9 @@ pub fn walk_search_for(
             } else {
                 format!("{rel}/{name}")
             };
-            if deny.is_some_and(|d| d.denies(&path)) {
+            if deny.is_some_and(|d| d.denies(&path))
+                || private.is_private_canonical(&root.join(&path))
+            {
                 continue;
             }
             if kind == FileKind::Dir {
@@ -500,7 +531,7 @@ pub fn walk_search_for(
                 found.truncated = true;
                 return found;
             }
-            if !grep_file(&dir, &name, &path, needle, max, &mut found) {
+            if !grep_file(&dir, &name, &path, needle, max, private, &mut found) {
                 return found;
             }
         }
@@ -531,13 +562,22 @@ pub fn private_root(root: &Path, allowed: &[std::path::PathBuf]) -> bool {
 /// symlink, so a candidate whose directory became a symlink is skipped:
 /// Git may name the candidates, but it never reads their content for the
 /// station (finding 1 of sa-13931f53). Hidden paths are skipped; at most
-/// [`WALK_FILE_MAX`] files open. `needle` is lower case already.
+/// [`WALK_FILE_MAX`] files open. A private path of the station
+/// ([`PrivatePaths`]) below `root` (the canonical directory that `base`
+/// holds) is skipped before it opens. `needle` is lower case already.
 #[must_use]
-pub fn grep_paths(base: &OwnedFd, paths: &[String], needle: &str, max: usize) -> Found {
+pub fn grep_paths(
+    base: &OwnedFd,
+    root: &Path,
+    paths: &[String],
+    needle: &str,
+    max: usize,
+    private: &PrivatePaths,
+) -> Found {
     let mut found = Found::default();
     let mut opened = 0usize;
     for path in paths {
-        if hidden_path(path) {
+        if hidden_path(path) || private.is_private_canonical(&root.join(path)) {
             continue;
         }
         let Ok(segments) = path_segments(path) else {
@@ -552,7 +592,7 @@ pub fn grep_paths(base: &OwnedFd, paths: &[String], needle: &str, max: usize) ->
             found.truncated = true;
             return found;
         }
-        if !grep_file(&parent, last, path, needle, max, &mut found) {
+        if !grep_file(&parent, last, path, needle, max, private, &mut found) {
             return found;
         }
     }
@@ -563,18 +603,23 @@ pub fn grep_paths(base: &OwnedFd, paths: &[String], needle: &str, max: usize) ->
 /// Only the first [`WALK_FILE_BYTES`] of a file are searched; a larger file
 /// or a read error marks the search `truncated`, so a match past the limit
 /// is never silently missing (finding 2 of sa-fbed2a6d). A binary file is
-/// skipped (as `git grep -I` does).
+/// skipped (as `git grep -I` does). A hard link to a private file is
+/// skipped by the identity of the opened file.
 fn grep_file(
     dir: &OwnedFd,
     name: &str,
     path: &str,
     needle: &str,
     max: usize,
+    private: &PrivatePaths,
     found: &mut Found,
 ) -> bool {
     let Ok((file, _size)) = open_file(dir, name, path) else {
         return true;
     };
+    if file.metadata().is_ok_and(|m| private.is_private_file(&m)) {
+        return true;
+    }
     // One byte past the budget tells a file of exactly the budget, read
     // completely, from a larger one (DL-109).
     let mut buf = Vec::new();

@@ -99,14 +99,22 @@ pub struct Diff {
 impl Worktree {
     /// The patch from `from` to `to`, at most `max_bytes` long. Both
     /// checkpoints must belong to this worktree. Private paths are left
-    /// out ([`visible_pathspec`]). Git's output is read up to the limit
-    /// only; with more output the process is killed (finding 4 of
-    /// sa-13931f53).
-    pub async fn diff(&self, from: &Checkpoint, to: &Checkpoint, max_bytes: usize) -> Result<Diff> {
+    /// out ([`visible_pathspec`]) and the pathspecs of `extra_excludes` (the
+    /// station's private paths, DL-173) are left out too. Git's output is
+    /// read up to the limit only; with more output the process is killed
+    /// (finding 4 of sa-13931f53).
+    pub async fn diff(
+        &self,
+        from: &Checkpoint,
+        to: &Checkpoint,
+        max_bytes: usize,
+        extra_excludes: &[String],
+    ) -> Result<Diff> {
         for c in [from, to] {
             self.own(c)?;
         }
-        let spec = visible_pathspec();
+        let mut spec = visible_pathspec();
+        spec.extend_from_slice(extra_excludes);
         let mut args = vec![
             "diff-tree",
             "-p",
@@ -136,12 +144,19 @@ impl Worktree {
 
     /// The size of the diff from `from` to `to` (`diff-tree --numstat`);
     /// a binary file counts as changed with no lines. Private paths are
-    /// left out ([`visible_pathspec`]).
-    pub async fn diff_summary(&self, from: &Checkpoint, to: &Checkpoint) -> Result<DiffSummary> {
+    /// left out ([`visible_pathspec`]), and so are the pathspecs of
+    /// `extra_excludes`.
+    pub async fn diff_summary(
+        &self,
+        from: &Checkpoint,
+        to: &Checkpoint,
+        extra_excludes: &[String],
+    ) -> Result<DiffSummary> {
         for c in [from, to] {
             self.own(c)?;
         }
-        let spec = visible_pathspec();
+        let mut spec = visible_pathspec();
+        spec.extend_from_slice(extra_excludes);
         let mut args = vec![
             "diff-tree",
             "-r",

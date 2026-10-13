@@ -14,8 +14,8 @@ use fleetdeck_testkit::Det;
 use super::files_tests::{policy, session, store_with_session, ws};
 use super::{list, read, search};
 use crate::manager::turns::turns_tests::repo;
-use crate::workspace::GitOptions;
 use crate::workspace::files::WALK_FILE_BYTES;
+use crate::workspace::{GitOptions, PrivatePaths};
 
 #[tokio::test]
 async fn a_configured_allowed_root_that_is_a_private_directory_never_serves() {
@@ -35,12 +35,15 @@ async fn a_configured_allowed_root_that_is_a_private_directory_never_serves() {
         };
         let s = store_with_session(&det, &dir).await;
         for root in [ws(&dir), session()] {
-            let err = read(&s, &p, query(root)).await.unwrap_err();
+            let err = read(&s, &p, &PrivatePaths::default(), query(root))
+                .await
+                .unwrap_err();
             assert_eq!(err.code, code::OUTSIDE_ROOTS, "{private}: {err}");
         }
         let err = list(
             &s,
             &p,
+            &PrivatePaths::default(),
             FileListQuery {
                 root: session(),
                 path: String::new(),
@@ -69,6 +72,7 @@ async fn content_search(dir: &Path, needle: &str) -> FileSearch {
     search(
         &s,
         &policy(dir.parent().unwrap()),
+        &PrivatePaths::default(),
         &GitOptions::isolated(),
         FileSearchQuery {
             root: session(),
