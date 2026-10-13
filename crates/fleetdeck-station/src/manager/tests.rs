@@ -251,6 +251,7 @@ fn answer(session: &SessionId, request: &RequestId, option: &str) -> SessionComm
         session_id: session.clone(),
         request_id: request.clone(),
         decision: ApprovalDecision {
+            answered_by: None,
             option_id: option.to_owned(),
             updated_input: None,
             text: None,

@@ -55,7 +55,12 @@ title?: string, branch?: string,
  * DL-306); the conflict radar groups file touches by it.
  * Boxed to keep the event small (clippy `large_enum_variant`).
  */
-repo?: RepoInfo, } | { "kind": "session.state", state: SessionState, detail: string | null, } | { "kind": "run.started", run_id: RunId, input_summary: string, origin: RunOrigin, } | { "kind": "turn.started", run_id: RunId, turn_id: TurnId, provider_refs: { [key in string]: JsonValue }, } | { "kind": "message.delta", turn_id: TurnId, 
+repo?: RepoInfo, } | { "kind": "session.state", state: SessionState, detail: string | null, } | { "kind": "run.started", run_id: RunId, input_summary: string, origin: RunOrigin, 
+/**
+ * Who typed the input, when it is not the owner: `member:<name>`
+ * (R11.5, DL-166). Older peers send no field.
+ */
+author?: string, } | { "kind": "turn.started", run_id: RunId, turn_id: TurnId, provider_refs: { [key in string]: JsonValue }, } | { "kind": "message.delta", turn_id: TurnId, 
 /**
  * The subagent tool call that produced the text, if any (L7).
  */
@@ -75,7 +80,12 @@ request_kind: RequestKind, title: string, details: string,
 /**
  * The tool input that an allow can edit (only with `edit_input`).
  */
-input: JsonValue | null, options: Array<ApprovalOption>, response: ResponseChannel, provider_refs: { [key in string]: JsonValue }, } | { "kind": "approval.resolved", request_id: RequestId, option_id: string, by: ResolvedBy, } | { "kind": "approval.expired", request_id: RequestId, reason: ExpiredReason, } | { "kind": "plan.proposed", plan_id: PlanId, turn_id: TurnId | null, markdown: string, } | { "kind": "usage.updated", usage: Usage, rate_limits: Array<RateLimit>, } | { "kind": "turn.completed", turn_id: TurnId, status: TurnStatus, usage: Usage | null, } | { "kind": "turn.finalized", turn_id: TurnId, 
+input: JsonValue | null, options: Array<ApprovalOption>, response: ResponseChannel, provider_refs: { [key in string]: JsonValue }, } | { "kind": "approval.resolved", request_id: RequestId, option_id: string, by: ResolvedBy, 
+/**
+ * Who answered, when it is not the owner: `member:<name>` (R11.5,
+ * DL-166). Older peers send no field.
+ */
+answered_by?: string, } | { "kind": "approval.expired", request_id: RequestId, reason: ExpiredReason, } | { "kind": "plan.proposed", plan_id: PlanId, turn_id: TurnId | null, markdown: string, } | { "kind": "usage.updated", usage: Usage, rate_limits: Array<RateLimit>, } | { "kind": "turn.completed", turn_id: TurnId, status: TurnStatus, usage: Usage | null, } | { "kind": "turn.finalized", turn_id: TurnId, 
 /**
  * Always set by a station with the workspace service.
  */

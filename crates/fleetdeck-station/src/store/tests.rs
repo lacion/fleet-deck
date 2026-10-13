@@ -38,6 +38,7 @@ fn new_session(id: &str) -> NewSession {
 
 fn run_started(n: u32) -> NewEvent {
     Event::RunStarted {
+        author: None,
         run_id: format!("run-{n}").into(),
         input_summary: "hi".to_owned(),
         origin: RunOrigin::Board,

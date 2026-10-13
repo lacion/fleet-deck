@@ -172,6 +172,7 @@ pub async fn approve(dirs: &NodeDirs, args: &ApproveArgs) -> anyhow::Result<()> 
             command_id: None,
             request_id: args.request.clone().into(),
             decision: ApprovalDecision {
+                answered_by: None,
                 option_id: args.option.clone(),
                 updated_input: None,
                 text: None,

@@ -9,6 +9,7 @@ use fleetdeck_core::ChildEnv;
 use fleetdeck_core::config::{OfflineApprovalPolicy as ConfigOffline, StationConfig};
 use fleetdeck_proto::ProviderInstanceId;
 use fleetdeck_proto::event::ProviderKind;
+use fleetdeck_proto::member_deny::MemberDeny;
 use fleetdeck_providers::adapter::canonical_workspace;
 
 use crate::store::OfflineApprovalPolicy;
@@ -44,6 +45,9 @@ pub struct Policy {
     /// authenticates against them, and the owner's renew and revoke
     /// commands change them (DL-212). Shared, not configuration.
     coordinator: crate::coordinator::Bindings,
+    /// The files hidden from the members of a shared session (R11.9,
+    /// DL-166): the default list plus `member_deny` of `station.toml`.
+    member_deny: MemberDeny,
 }
 
 impl Policy {
@@ -74,6 +78,7 @@ impl Policy {
                 .collect(),
             repo_groups: BTreeMap::new(),
             coordinator: crate::coordinator::Bindings::default(),
+            member_deny: MemberDeny::new(&config.member_deny),
         }
         .with_repo_groups(&config.repo_groups)
     }
@@ -128,7 +133,20 @@ impl Policy {
             instances,
             repo_groups: BTreeMap::new(),
             coordinator: crate::coordinator::Bindings::default(),
+            member_deny: MemberDeny::default(),
         }
+    }
+
+    /// The files that a member of a shared session must not see.
+    #[must_use]
+    pub fn member_deny(&self) -> &MemberDeny {
+        &self.member_deny
+    }
+
+    /// The same policy with another deck list (station tests).
+    #[cfg(test)]
+    pub(crate) fn set_member_deny(&mut self, deny: MemberDeny) {
+        self.member_deny = deny;
     }
 
     /// The same policy with setup commands on or off (DL-148).

@@ -33,6 +33,7 @@ fn samples() -> Vec<Event> {
             detail: None,
         },
         Event::RunStarted {
+            author: None,
             run_id: "run-1".into(),
             input_summary: "hi".into(),
             origin: RunOrigin::Local,
@@ -96,6 +97,7 @@ fn samples() -> Vec<Event> {
             provider_refs: refs(),
         },
         Event::ApprovalResolved {
+            answered_by: None,
             request_id: req.clone(),
             option_id: "allow".into(),
             by: ResolvedBy::Board,

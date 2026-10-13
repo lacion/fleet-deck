@@ -46,6 +46,12 @@ pub struct UserInput {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[ts(optional, as = "Option<Vec<ImageInput>>")]
     pub images: Vec<ImageInput>,
+    /// Who typed it, when it is not the owner: `member:<name>` (R11.5,
+    /// DL-166). The deck sets it for every command of a member and clears it
+    /// for every other caller; the station shows it in `run.started`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub author: Option<String>,
 }
 
 impl UserInput {
@@ -55,6 +61,7 @@ impl UserInput {
         Self {
             text: text.into(),
             images: Vec::new(),
+            author: None,
         }
     }
 
@@ -99,6 +106,17 @@ fn is_base64(s: &str) -> bool {
 }
 
 impl SessionCommand {
+    /// The user input that the command carries, if any, to change.
+    pub fn user_input_mut(&mut self) -> Option<&mut UserInput> {
+        match self {
+            Self::Start { prompt, .. } | Self::Import { prompt, .. } => prompt.as_mut(),
+            Self::Prompt { input, .. }
+            | Self::Steer { input, .. }
+            | Self::FollowUp { input, .. } => Some(input),
+            _ => None,
+        }
+    }
+
     /// The user input that the command carries, if any.
     #[must_use]
     pub fn user_input(&self) -> Option<&UserInput> {

@@ -160,6 +160,7 @@ async fn apply(session: &mut CodexSession, cmd: HostCmd) {
                 .answer(Answer {
                     request: RequestId::new(request_id.as_str()),
                     decision: ApprovalDecision {
+                        answered_by: None,
                         option_id,
                         updated_input,
                         text: message,

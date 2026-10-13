@@ -83,6 +83,7 @@ fn answer(request: &str, option: &str) -> EffectPayload {
     EffectPayload::Answer {
         request_id: request.into(),
         decision: ApprovalDecision {
+            answered_by: None,
             option_id: option.to_owned(),
             updated_input: None,
             text: None,
@@ -465,6 +466,7 @@ async fn answers_are_idempotent_per_request_and_confirmed_by_the_tool_node() {
     emit(
         &s,
         Event::ApprovalResolved {
+            answered_by: None,
             request_id: "req-1".into(),
             option_id: "allow".to_owned(),
             by: ResolvedBy::Board,
@@ -648,6 +650,7 @@ async fn crashed_station(det: &Det, path: &std::path::Path) -> (Effect, Effect) 
     emit(
         &s,
         Event::RunStarted {
+            author: None,
             run_id: "run-1".into(),
             input_summary: "hi".to_owned(),
             origin: RunOrigin::Board,

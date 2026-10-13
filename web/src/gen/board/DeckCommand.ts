@@ -20,4 +20,9 @@ envelope: JsonValue, retry_until: number, state: DeckCommandState, attempts: num
 /**
  * Why a command is `failed` or `ambiguous`.
  */
-reason: string | null, created_at: number, updated_at: number, };
+reason: string | null, 
+/**
+ * Who sent the command: `owner`, `member:<name>` or `token:<name>`
+ * (R11.5, DL-166). For an approval it is who answered.
+ */
+author?: string, created_at: number, updated_at: number, };

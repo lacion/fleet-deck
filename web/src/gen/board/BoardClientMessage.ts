@@ -6,4 +6,4 @@ import type { StationId } from "../ids/StationId";
 /**
  * A message of the board on the WebSocket.
  */
-export type BoardClientMessage = { "type": "subscribe", station_id: StationId, session_id: SessionId, incarnation: IncarnationId | null, after: number | null, } | { "type": "unsubscribe", station_id: StationId, session_id: SessionId, };
+export type BoardClientMessage = { "type": "subscribe", station_id: StationId, session_id: SessionId, incarnation: IncarnationId | null, after: number | null, } | { "type": "unsubscribe", station_id: StationId, session_id: SessionId, } | { "type": "presence", station_id: StationId, session_id: SessionId, };

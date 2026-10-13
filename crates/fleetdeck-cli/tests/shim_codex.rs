@@ -416,6 +416,7 @@ async fn a_reattached_codex_session_answers_an_approval_opened_before_the_crash_
         .claimed(EffectPayload::Answer {
             request_id: RequestId(request_id.0.clone()),
             decision: ApprovalDecision {
+                answered_by: None,
                 option_id: "accept".to_owned(),
                 updated_input: None,
                 text: None,

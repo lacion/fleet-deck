@@ -231,6 +231,7 @@ impl ClaudeCore {
                 request_id: request_id.clone(),
                 option_id: option_id.to_owned(),
                 by: answer.by,
+                answered_by: answer.decision.answered_by.clone(),
             }),
         ])
     }

@@ -18,7 +18,7 @@ use fleetdeck_proto::files::{
 
 use super::policy::{Policy, WorkspaceError};
 use crate::store::{RowSide, RowState, Store};
-use crate::workspace::files::{self, FileError, Found, walk_search};
+use crate::workspace::files::{self, FileError, Found, walk_search_for};
 use crate::workspace::{CheckpointKey, Git, GitOptions, Phase, Worktree};
 
 /// The longest a list or read may take.
@@ -113,9 +113,44 @@ pub async fn list(
     policy: &Policy,
     query: FileListQuery,
 ) -> Result<FileListing, FileError> {
-    let root = root(store, policy, &query.root).await?;
+    list_as(store, policy, query, false).await
+}
+
+/// `files.list` for the owner (`member` false) or for a member of a shared
+/// session (R11.9).
+///
+/// # Errors
+/// [`FileError`].
+pub async fn list_as(
+    store: &Store,
+    policy: &Policy,
+    query: FileListQuery,
+    member: bool,
+) -> Result<FileListing, FileError> {
+    let root = member_root(store, policy, &query.root, member).await?;
+    let deny = member.then(|| policy.member_deny().clone());
     let slot = Slot::take(&READS, MAX_READS)?;
-    blocking(READ_TIMEOUT, slot, move || files::list(&root, &query.path)).await
+    blocking(READ_TIMEOUT, slot, move || {
+        files::list_for(&root, &query.path, deny.as_ref())
+    })
+    .await
+}
+
+/// The root of a query. A member browses the workspace of a session only:
+/// a workspace root is refused (R11.9).
+async fn member_root(
+    store: &Store,
+    policy: &Policy,
+    query: &FileRoot,
+    member: bool,
+) -> Result<PathBuf, FileError> {
+    if member && !matches!(query, FileRoot::Session(_)) {
+        return Err(FileError::new(
+            code::OUTSIDE_ROOTS,
+            "a member browses the workspace of a shared session only",
+        ));
+    }
+    root(store, policy, query).await
 }
 
 /// `files.read`.
@@ -127,10 +162,24 @@ pub async fn read(
     policy: &Policy,
     query: FileReadQuery,
 ) -> Result<FileContent, FileError> {
-    let root = root(store, policy, &query.root).await?;
+    read_as(store, policy, query, false).await
+}
+
+/// `files.read` for the owner (`member` false) or for a member (R11.9).
+///
+/// # Errors
+/// [`FileError`].
+pub async fn read_as(
+    store: &Store,
+    policy: &Policy,
+    query: FileReadQuery,
+    member: bool,
+) -> Result<FileContent, FileError> {
+    let root = member_root(store, policy, &query.root, member).await?;
+    let deny = member.then(|| policy.member_deny().clone());
     let slot = Slot::take(&READS, MAX_READS)?;
     blocking(READ_TIMEOUT, slot, move || {
-        files::read(&root, &query.path, query.max_bytes)
+        files::read_for(&root, &query.path, query.max_bytes, deny.as_ref())
     })
     .await
 }
@@ -174,6 +223,22 @@ pub async fn search(
     git: &GitOptions,
     query: FileSearchQuery,
 ) -> Result<FileSearch, FileError> {
+    search_as(store, policy, git, query, false).await
+}
+
+/// `files.search` for the owner (`member` false) or for a member: a path
+/// that the deny list hides is neither named nor read (R11.9).
+///
+/// # Errors
+/// [`FileError`].
+pub async fn search_as(
+    store: &Store,
+    policy: &Policy,
+    git: &GitOptions,
+    query: FileSearchQuery,
+    member: bool,
+) -> Result<FileSearch, FileError> {
+    let deny = member.then(|| policy.member_deny().clone());
     let chars = query.query.chars().count();
     if !(MIN_QUERY_CHARS..=MAX_QUERY_CHARS).contains(&chars) || query.query.contains('\0') {
         return Err(FileError::new(
@@ -181,7 +246,7 @@ pub async fn search(
             format!("a search text has {MIN_QUERY_CHARS} to {MAX_QUERY_CHARS} characters"),
         ));
     }
-    let root = root(store, policy, &query.root).await?;
+    let root = member_root(store, policy, &query.root, member).await?;
     let max = query
         .max_hits
         .unwrap_or(MAX_SEARCH_HITS)
@@ -217,10 +282,16 @@ pub async fn search(
         }
         None => None,
     };
+    let listed = listed.map(|(mut paths, cut)| {
+        if let Some(deny) = &deny {
+            paths.retain(|p| !deny.denies(p));
+        }
+        (paths, cut)
+    });
     let Some((paths, cut)) = listed else {
         drop(base);
         let found = blocking(SEARCH_TIMEOUT, slot, move || {
-            Ok(walk_search(&root, &needle, content, max))
+            Ok(walk_search_for(&root, &needle, content, max, deny.as_ref()))
         })
         .await?;
         return Ok(FileSearch {
@@ -313,6 +384,23 @@ pub async fn diff(
     git: &GitOptions,
     query: TurnDiffQuery,
 ) -> Result<TurnDiff, FileError> {
+    diff_as(store, policy, git, query, false).await
+}
+
+/// `files.diff` for the owner (`member` false) or for a member: the hunks of
+/// a file that the deny list hides are removed and the summary leaves the
+/// file out (R11.9); `hidden_files` counts it.
+///
+/// # Errors
+/// [`FileError`].
+pub async fn diff_as(
+    store: &Store,
+    policy: &Policy,
+    git: &GitOptions,
+    query: TurnDiffQuery,
+    member: bool,
+) -> Result<TurnDiff, FileError> {
+    let deny = member.then(|| policy.member_deny().clone());
     let internal = |e: &dyn std::fmt::Display| FileError::new("internal", e.to_string());
     if store
         .summary(query.session_id.clone())
@@ -381,14 +469,23 @@ pub async fn diff(
             .diff(&start, &end, max)
             .await
             .map_err(|e| internal(&e))?;
+        let (mut summary, mut patch_text, mut hidden_files) = (summary, patch.patch, 0);
+        if let Some(deny) = &deny {
+            let f = deny.filter_patch(&patch_text);
+            summary.files_changed = summary.files_changed.saturating_sub(f.hidden_files);
+            summary.insertions = summary.insertions.saturating_sub(f.hidden_insertions);
+            summary.deletions = summary.deletions.saturating_sub(f.hidden_deletions);
+            (patch_text, hidden_files) = (f.patch, f.hidden_files);
+        }
         Ok(TurnDiff {
             session_id: query.session_id.clone(),
             turn_id: query.turn_id.clone(),
             from_commit: start.commit,
             to_commit: end.commit,
             summary,
-            patch: patch.patch,
+            patch: patch_text,
             truncated: patch.truncated,
+            hidden_files,
         })
     };
     tokio::time::timeout(DIFF_TIMEOUT, work)
@@ -411,3 +508,7 @@ mod files_review2_tests;
 #[cfg(test)]
 #[path = "files_review3_tests.rs"]
 mod files_review3_tests;
+
+#[cfg(test)]
+#[path = "files_member_tests.rs"]
+mod files_member_tests;

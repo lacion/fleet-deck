@@ -249,6 +249,10 @@ pub struct StationConfig {
     /// DL-201): repository path → group name, the owner's choice for repos
     /// with several or no remotes.
     pub repo_groups: BTreeMap<PathBuf, String>,
+    /// `member_deny`: more patterns that hide files from the members of a
+    /// shared session (R11.9, DL-166). The station adds them to its default
+    /// deny list; they never remove a default pattern.
+    pub member_deny: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -266,6 +270,7 @@ struct RawStation {
     host: Option<String>,
     shim_buffer_mib: Option<u32>,
     repo_groups: Option<BTreeMap<String, String>>,
+    member_deny: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -355,6 +360,17 @@ impl StationConfig {
                 expand_path(&path, home).map_err(|source| ConfigError::Path { field, source })?;
             repo_groups.insert(path, group);
         }
+        let member_deny = raw.member_deny.unwrap_or_default();
+        if member_deny.len() > MAX_MEMBER_DENY {
+            return Err(invalid(
+                "member_deny",
+                format!("give at most {MAX_MEMBER_DENY} patterns"),
+            ));
+        }
+        for (i, pattern) in member_deny.iter().enumerate() {
+            fleetdeck_proto::member_deny::check_pattern(pattern)
+                .map_err(|m| invalid(format!("member_deny[{i}]"), m))?;
+        }
         Ok(Self {
             name,
             allowed_roots,
@@ -368,6 +384,7 @@ impl StationConfig {
             host,
             shim_buffer_mib,
             repo_groups,
+            member_deny,
         })
     }
 
@@ -381,6 +398,9 @@ impl StationConfig {
         self.allowed_roots.iter().any(|root| path.starts_with(root))
     }
 }
+
+/// The most `member_deny` patterns.
+const MAX_MEMBER_DENY: usize = 200;
 
 fn parse_instances(
     list: Vec<RawInstance>,

@@ -30,6 +30,7 @@ use fleetdeck_proto::files::{
     FileContent, FileEntry, FileKind, FileListing, MAX_HIT_CHARS, MAX_LIST_ENTRIES, MAX_READ_BYTES,
     SearchHit, code, hidden_name, hidden_path, path_segments,
 };
+use fleetdeck_proto::member_deny::MemberDeny;
 use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags, Stat};
 
 /// The most directory entries read from one directory.
@@ -234,6 +235,23 @@ fn names_in(dir: &OwnedFd, max: usize) -> (Vec<String>, bool) {
 /// # Errors
 /// [`FileError`] with `invalid_path`, `not_found` or `wrong_kind`.
 pub fn list(root: &Path, path: &str) -> Result<FileListing, FileError> {
+    list_for(root, path, None)
+}
+
+/// [`list`] for a member of a shared session when `deny` is set: the
+/// directory and the entries that the deny list hides are not found and not
+/// listed (R11.9).
+///
+/// # Errors
+/// As [`list`].
+pub fn list_for(
+    root: &Path,
+    path: &str,
+    deny: Option<&MemberDeny>,
+) -> Result<FileListing, FileError> {
+    if deny.is_some_and(|d| d.denies(path)) {
+        return Err(not_found(path));
+    }
     let segments = segments_of(path)?;
     let base = open_root(root).map_err(|_| not_found(path))?;
     let dir = match parent_and_last(&base, &segments, path)? {
@@ -248,9 +266,20 @@ pub fn list(root: &Path, path: &str) -> Result<FileListing, FileError> {
     };
     let (names, mut truncated) = names_in(&dir, MAX_SCANNED);
     let mut entries = Vec::new();
+    let prefix = path.trim_end_matches('/');
     for name in names {
         if hidden_name(&name) {
             continue;
+        }
+        if let Some(deny) = deny {
+            let full = if prefix.is_empty() {
+                name.clone()
+            } else {
+                format!("{prefix}/{name}")
+            };
+            if deny.denies(&full) {
+                continue;
+            }
         }
         let Ok(stat) = stat_at(&dir, &name) else {
             continue;
@@ -300,6 +329,23 @@ fn open_file(dir: &OwnedFd, name: &str, path: &str) -> Result<(File, u64), FileE
 /// # Errors
 /// [`FileError`] with `invalid_path`, `not_found` or `wrong_kind`.
 pub fn read(root: &Path, path: &str, max_bytes: Option<u64>) -> Result<FileContent, FileError> {
+    read_for(root, path, max_bytes, None)
+}
+
+/// [`read`] for a member of a shared session when `deny` is set: a file that
+/// the deny list hides is not found (R11.9).
+///
+/// # Errors
+/// As [`read`].
+pub fn read_for(
+    root: &Path,
+    path: &str,
+    max_bytes: Option<u64>,
+    deny: Option<&MemberDeny>,
+) -> Result<FileContent, FileError> {
+    if deny.is_some_and(|d| d.denies(path)) {
+        return Err(not_found(path));
+    }
     if path.is_empty() {
         return Err(FileError::new(code::WRONG_KIND, "the root is a directory"));
     }
@@ -364,6 +410,18 @@ impl Found {
 /// never follows a symlink and never enters a hidden or pruned directory.
 /// `needle` is lower case already.
 pub fn walk_search(root: &Path, needle: &str, content: bool, max: usize) -> Found {
+    walk_search_for(root, needle, content, max, None)
+}
+
+/// [`walk_search`] for a member of a shared session when `deny` is set: a
+/// path that the deny list hides is neither named nor opened (R11.9).
+pub fn walk_search_for(
+    root: &Path,
+    needle: &str,
+    content: bool,
+    max: usize,
+    deny: Option<&MemberDeny>,
+) -> Found {
     let mut found = Found::default();
     let Ok(base) = open_root(root) else {
         return found;
@@ -405,6 +463,9 @@ pub fn walk_search(root: &Path, needle: &str, content: bool, max: usize) -> Foun
             } else {
                 format!("{rel}/{name}")
             };
+            if deny.is_some_and(|d| d.denies(&path)) {
+                continue;
+            }
             if kind == FileKind::Dir {
                 if SEARCH_PRUNED.iter().any(|p| p.eq_ignore_ascii_case(&name)) {
                     continue;

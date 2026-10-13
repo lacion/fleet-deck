@@ -93,6 +93,7 @@ async fn unsupported_operations_return_a_typed_degradation() {
     let answer = Answer {
         request: RequestId::new("req-1"),
         decision: ApprovalDecision {
+            answered_by: None,
             option_id: "allow".to_owned(),
             updated_input: None,
             text: None,

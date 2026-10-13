@@ -12,4 +12,10 @@ updated_input: JsonValue | null,
 /**
  * Free text: the answer to a question, or a reason for a deny.
  */
-text: string | null, };
+text: string | null, 
+/**
+ * Who answered, when it is not the owner: `member:<name>` (R11.5,
+ * DL-166). The deck sets it for every answer of a member and clears it
+ * for every other caller.
+ */
+answered_by?: string, };

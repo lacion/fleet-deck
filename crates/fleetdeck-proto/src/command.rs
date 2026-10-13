@@ -101,6 +101,12 @@ pub struct ApprovalDecision {
     pub updated_input: Option<Value>,
     /// Free text: the answer to a question, or a reason for a deny.
     pub text: Option<String>,
+    /// Who answered, when it is not the owner: `member:<name>` (R11.5,
+    /// DL-166). The deck sets it for every answer of a member and clears it
+    /// for every other caller.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub answered_by: Option<String>,
 }
 
 /// How to stop a session.
@@ -619,6 +625,7 @@ mod tests {
             session_id: "s1".into(),
             request_id: "req-1".into(),
             decision: ApprovalDecision {
+                answered_by: None,
                 option_id: "allow".into(),
                 updated_input: None,
                 text: None,
