@@ -3,7 +3,7 @@ import type { AssignActions } from '../assign/assign';
 import { AssignBar } from '../assign/AssignBar';
 import { ConflictRadar, useConflicts } from '../board/ConflictRadar';
 import type { ConflictLoader } from '../board/conflicts';
-import type { FleetExtras } from '../gen';
+import type { FleetExtras, SessionExtras } from '../gen';
 import type { FeedItem } from '../board/feed';
 import { Feed } from '../board/FeedPanel';
 import {
@@ -17,6 +17,7 @@ import {
   stationName,
   statusGroups,
 } from '../board/fleet';
+import { record } from '../board/activity';
 import { COLUMNS, columnCards, FleetBoard, FleetCard, OfflineTools } from '../board/FleetBoard';
 import { NeedsYouRail } from '../board/NeedsYouRail';
 import { UsageMeters } from '../board/UsageMeters';
@@ -58,6 +59,39 @@ function fleetVersion(sessions: readonly DeckSession[]): string {
   let newest = 0;
   for (const s of sessions) newest = Math.max(newest, s.summary.updated_at);
   return `${sessions.length}/${newest}`;
+}
+
+/** How often the card extras load again while the home is open. */
+const EXTRAS_MS = 15_000;
+
+/** The card extras by `sessionRef`; a failed load keeps the last good value. */
+function useExtras(
+  load: (() => Promise<FleetExtras>) | undefined,
+): ReadonlyMap<string, SessionExtras> | undefined {
+  const [map, setMap] = useState<ReadonlyMap<string, SessionExtras> | undefined>(undefined);
+  const loadRef = useRef(load);
+  loadRef.current = load;
+  const active = load !== undefined;
+  useEffect(() => {
+    if (!active) return undefined;
+    let live = true;
+    const run = () => {
+      loadRef
+        .current?.()
+        .then((value) => {
+          if (live)
+            setMap(new Map(value.sessions.map((x) => [sessionRef(x.station_id, x.session_id), x])));
+        })
+        .catch(() => {});
+    };
+    run();
+    const timer = setInterval(run, EXTRAS_MS);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [active]);
+  return map;
 }
 
 const WIDE = '(min-width: 1280px)';
@@ -146,7 +180,15 @@ export function FleetHome({
   panelRequest,
   onHelp,
   onSpawnWith,
+  extras,
 }: Props) {
+  const cardExtras = useExtras(extras);
+  const [, setActivity] = useState(0);
+  // The cards read the buckets while they render, so a record asks for one more render.
+  useEffect(() => {
+    record(sessions, Date.now());
+    setActivity((n) => n + 1);
+  }, [sessions]);
   const [filter, setFilter] = useState<FleetFilter>(emptyFilter);
   const [group, setGroup] = useState<Group>(readGroup);
   const [archivedOn, setArchivedOn] = useState(false);
@@ -351,6 +393,7 @@ export function FleetHome({
             freshness={freshness}
             contested={contested}
             sessionActions={sessionActions}
+            extras={cardExtras}
           />
         )}
         {panel}
@@ -372,6 +415,7 @@ export function FleetHome({
             group={group}
             contested={contested}
             sessionActions={sessionActions}
+            extras={cardExtras}
           />
           {empty}
         </div>
@@ -389,12 +433,14 @@ function PhoneColumns({
   freshness,
   contested,
   sessionActions,
+  extras,
 }: {
   visible: readonly DeckSession[];
   stations: readonly StationView[];
   freshness: Freshness;
   contested: ReturnType<typeof contestedBy>;
   sessionActions: ((key: SessionKey) => SessionActions) | undefined;
+  extras: ReadonlyMap<string, SessionExtras> | undefined;
 }) {
   const now = useNow(undefined, 30000);
   const starred = priority.use();
@@ -422,6 +468,7 @@ function PhoneColumns({
                   now={now}
                   showStation
                   contested={contested.get(sessionRef(card.station_id, card.summary.session_id))}
+                  extra={extras?.get(sessionRef(card.station_id, card.summary.session_id))}
                 />
               ))}
             </ul>
