@@ -53,16 +53,17 @@ async function confirmOpen(page: Page, text: string) {
     await sessionMenu(page).click();
     await header(page).getByRole('button', { name: 'Open in terminal…' }).click();
   } else {
-    await header(page).locator('summary[aria-label="Open in terminal"]').click();
+    await header(page).locator('summary[aria-label="Terminal"]').click();
+    await header(page).getByRole('button', { name: 'Open in terminal…' }).click();
   }
   const confirm = header(page).getByRole('group', { name: 'Open in terminal' });
   await expect(confirm).toContainText(text);
   await confirm.getByRole('button', { name: 'Open in terminal' }).click();
 }
 
-/** No way to open a terminal: no header menu on the desktop, no menu item on the phone. */
+/** No way to open a terminal: no item in the Terminal menu on the desktop, none in the session menu. */
 async function expectNoOpenInTerminal(page: Page) {
-  await expect(header(page).locator('summary[aria-label="Open in terminal"]')).toHaveCount(0);
+  await expect(header(page).locator('button', { hasText: 'Open in terminal…' })).toHaveCount(0);
   await sessionMenu(page).click();
   await expect(header(page).getByRole('button', { name: 'Open in terminal…' })).toHaveCount(0);
 }
@@ -113,7 +114,7 @@ test('a held session shows In terminal, keeps the composer off and offers no Res
     'A terminal holds this session. Return it to board control to send prompts.',
   );
   await expect(header(page).getByRole('button', { name: 'Resume', exact: true })).toHaveCount(0);
-  await expect(header(page).locator('summary[aria-label="Open in terminal"]')).toHaveCount(0);
+  await expect(header(page).locator('button', { hasText: 'Open in terminal…' })).toHaveCount(0);
   await expect(header(page).getByRole('button', { name: 'Open in terminal…' })).toHaveCount(0);
 });
 

@@ -268,13 +268,13 @@ describe('session pane (DL-140)', () => {
         stations: [station('station-a', { info: info(allowShell), info_at: 1 })],
       });
     const off = open(false);
-    expect(off).not.toContain('aria-label="Open in terminal"');
+    expect(off).not.toContain('Open in terminal…');
     expect(off).toContain(
       'Shells are off on this station. Set allow_shell = true in station.toml to open a terminal.',
     );
     for (const allowed of [true, null]) {
       const html = open(allowed);
-      expect(html).toContain('aria-label="Open in terminal"');
+      expect(html).toContain('Open in terminal…');
       expect(html).not.toContain('Shells are off');
     }
   });

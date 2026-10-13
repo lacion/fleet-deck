@@ -4,7 +4,7 @@ import type { SessionSummary } from '../gen';
 import type { ShellActions } from '../shell/shell';
 import { releaseHold, returnToBoard, startHandover, waitFor } from './handover';
 import { KeyBar, ctrlByte } from './KeyBar';
-import { PasteNote, Terminal } from './Terminal';
+import { PasteNote, Terminal, termTheme } from './Terminal';
 import { TerminalDock } from './TerminalDock';
 import { type DockState, type TermTab, createTerminalStore, tabId } from './store';
 
@@ -532,5 +532,71 @@ describe('image paste note (DL-147)', () => {
     );
     expect(html).toContain('fd-term-host');
     expect(html).not.toContain('fd-term-note');
+  });
+});
+
+describe('terminal palette', () => {
+  const tokens: Record<string, string> = {
+    '--code': '#0a0d13',
+    '--text': '#e7ecf5',
+    '--act': '#f0a63c',
+    '--bg': '#0b0e14',
+    '--hazard': '#ff6b54',
+    '--ok': '#57b98a',
+    '--m-comet': '#8fbcf7',
+    '--m-fable': '#c4b0ff',
+    '--m-quill': '#6fd6cd',
+    '--faint': '#5c6880',
+  };
+  const stub = (values: Record<string, string>) => ({
+    getPropertyValue: (name: string) => (values[name] === undefined ? '' : ` ${values[name]} `),
+  });
+
+  test('gives the 16 ANSI colors, the chrome and the fixed bright values', () => {
+    const t = termTheme(stub(tokens));
+    const ansi = [
+      'black',
+      'red',
+      'green',
+      'yellow',
+      'blue',
+      'magenta',
+      'cyan',
+      'white',
+      'brightBlack',
+      'brightRed',
+      'brightGreen',
+      'brightYellow',
+      'brightBlue',
+      'brightMagenta',
+      'brightCyan',
+      'brightWhite',
+    ];
+    for (const key of ansi) expect(t[key as keyof typeof t]).toMatch(/^#[0-9a-fA-F]{6}$/);
+    expect(t.background).toBe('#0a0d13');
+    expect(t.cursorAccent).toBe('#0a0d13');
+    expect(t.foreground).toBe('#e7ecf5');
+    expect(t.cursor).toBe('#f0a63c');
+    expect(t.yellow).toBe('#f0a63c');
+    expect(t.red).toBe('#ff6b54');
+    expect(t.blue).toBe('#8fbcf7');
+    expect(t.brightBlack).toBe('#5c6880');
+    expect(t.brightRed).toBe('#FF8A76');
+    expect(t.brightGreen).toBe('#7BD3A6');
+    expect(t.brightYellow).toBe('#F6BE6A');
+    expect(t.brightBlue).toBe('#AECFFA');
+    expect(t.brightMagenta).toBe('#D8CBFF');
+    expect(t.brightCyan).toBe('#9AE4DD');
+    expect(t.brightWhite).toBe('#FFFFFF');
+  });
+
+  test('the selection is --term-selection, else --act with a 44 alpha', () => {
+    expect(termTheme(stub(tokens)).selectionBackground).toBe('#f0a63c44');
+    const set = termTheme(stub({ ...tokens, '--term-selection': 'rgba(240, 166, 60, 0.3)' }));
+    expect(set.selectionBackground).toBe('rgba(240, 166, 60, 0.3)');
+  });
+
+  test('a missing token leaves the key out', () => {
+    expect(termTheme(stub({})).background).toBeUndefined();
   });
 });
