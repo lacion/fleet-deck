@@ -1,127 +1,182 @@
 # ADR-008 — Fleet control: fleet-scope grants, new tools, and approvals by a coordinator
 
-- **Status:** Proposed (revision 1, 2026-10-14). Needs an adversary DESIGN REVIEW PASS before code.
-- **Deciders:** owner (2026-10-14: "lets expand the mcp to allow full controls of the fleet … launch a session and that session could orchestrate a lot of things in the fleet"; on the scope question the owner chose "Full control incl. approvals"), architect.
-- **Extends:** ADR-006 (revision 4). Every ADR-006 rule stays in force unless this ADR names it and replaces it. In particular the credential handoff (§5.4), the binding states (§5.5), the decision order (§6.2), the station outbox and its fences (§6.5), and the same-UID boundary (§3) are unchanged.
+- **Status:** Proposed (revision 2, 2026-10-14). Revision 1 (commit 7cc02abe) got adversary DESIGN REVIEW FAIL (8 blockers, 4 major; report `/tmp/adversary-report-7cc02abe-codex-verbatim.md`); §12 maps each finding to its change. Needs a PASS before code.
+- **Deciders:** owner (2026-10-14: "lets expand the mcp to allow full controls of the fleet … launch a session and that session could orchestrate a lot of things in the fleet"; scope answer: "Full control incl. approvals"), architect.
+- **Extends:** ADR-006 (revision 4). Every ADR-006 rule stays in force unless this ADR names it and replaces it. The credential handoff (§5.4), the binding states (§5.5), the decision order (§6.2), the station outbox and its fences (§6.5) and the same-UID boundary (§3) are unchanged.
 
 ## 1. Context
 
-A coordinator today (ADR-006 §6.3) reads the sessions of its grant's stations, sends mail, assigns tasks, spawns sessions under a cap and a mode ceiling, and interrupts or stops only the sessions of its own lineage. It never answers an approval or a question (ADR-006 §6.3, §12). The owner wants one session that runs the fleet: drives any session, starts work in projects, reads what the fleet produced, and answers approvals.
+A coordinator today (ADR-006 §6.3) lists the sessions of its grant's stations, sends mail, assigns tasks, spawns under a cap and a mode ceiling, and interrupts or stops the sessions of its own lineage. It never answers an approval. The owner wants one session that runs the fleet: it drives any session, starts work in projects, reads what the fleet produced, and answers approvals and questions.
 
-Answering approvals is the largest new power. A coordinator reads third-party text (issues, PRs, files, the output of other sessions). A prompt injection in that text can make it approve a dangerous tool call in another session. This ADR accepts that risk at the owner's request and bounds it (§5).
+Answering approvals is the largest new power. A coordinator reads third-party text (issues, PRs, files, the output of other sessions). A prompt injection in that text can make it approve a dangerous tool call in another session. This ADR accepts that risk at the owner's request and bounds it (§5, §6).
 
 ## 2. Terms
 
 | Term | Meaning |
 | --- | --- |
-| Lineage scope | ADR-006 drive rule: a target session has this grant in its lineage. |
-| Fleet scope | New: a target session is any session on a station of the grant, minus the exclusions of §4.3. |
-| Fleet-control grant | A grant with `scope = fleet`, or with the class `answer`, or with the class `manage`. |
+| Lineage scope | ADR-006 drive rule: the target has this grant in its lineage. |
+| Fleet scope | New: the target is any session on a station of the grant, minus the exclusions of §4.2. |
+| Fleet-control class | `inspect`, `manage` or `answer` (new, §3). |
+| Fleet-control grant | A grant with `scope = fleet` or with at least one fleet-control class. |
+| Fleet-control op or query | Every op or query that this ADR adds, and every ADR-006 op called under a fleet-control grant. |
 
-## 3. Grant changes (deck `tokens` row, `CoordinatorSpec`)
+## 3. Grant changes
 
-- New field `scope`: `lineage` (default; today's behavior) or `fleet`.
-- New classes, added to `classes` ⊆ {`read`, `mail`, `drive`, `spawn`, `manage`, `answer`}. Unknown names still fail closed.
+- New field `scope`: `lineage` (default, ADR-006 behavior) or `fleet`.
+- New classes; `classes` ⊆ {`read`, `mail`, `drive`, `spawn`, `inspect`, `manage`, `answer`}. Unknown names fail closed.
+  - `inspect`: every new read query (§4.1). The ADR-006 `read` class keeps exactly its ADR-006 queries (`fleet_status`, `list_sessions`, `list_tasks`, `wait_task`, `wait_tasks`, `command_status`); an existing grant gains nothing.
   - `manage`: resume, rename, set mode, move to project, start in a project.
-  - `answer`: answer approvals and questions of target sessions (§5).
-- New field `answer_cap` (0–5000, default 500): a durable lifetime counter `answer_used`, the same accounting as `spawn_cap` (ADR-006 §6.4: counted in the decision transaction, never returned, a cap rejection `answer_cap_reached` is stored).
-- `CoordinatorSpec` gains `scope` (serde default `lineage`). The station needs it only to list tools; the deck decides every call.
-- **Creation of a fleet-control grant is an elevated owner action.** The spawn form shows "Fleet control" with three switches (fleet scope, manage, answer approvals). Turning any of them on needs the owner's elevation (the DL-172 elevation: the owner password or a `fleetdeck open --elevate` code). The deck refuses a start command whose grant has a fleet-control field without a fresh elevation (`elevation_required`). A member, a share guest or an API token never creates one.
-- **Station kill switch.** New station setting `allow_fleet_control` (default `false`, `apply: Live`, `danger: true`; turning it on needs elevation, turning it off does not). While it is off, the station lists no fleet-control tools and refuses fleet-control ops at intake (`not_granted`), and the deck refuses them (`forbidden`, stored). Turning it off takes effect at the next call (live policy, DL-172 §1.4); it does not revoke grants.
+  - `answer`: answer approvals and questions (§5).
+- New field `answer_cap` (0–5000, default 500) with a durable lifetime counter `answer_used`. Accounting is the ADR-006 §6.4 rule: counted in the decision transaction with the receipt and the intent; never returned; `answer_cap_reached` is a stored rejection.
+- **Creation needs elevation.** The spawn form shows "Fleet control" with switches: fleet scope, inspect, manage, answer approvals. Any switch on needs the owner's elevation (DL-172: the owner password, or a `fleetdeck open --elevate` code) in the same request; the deck refuses a start whose grant has a fleet-control field without a fresh elevation (`elevation_required`, stored). A member, a share guest or an API token never creates one.
+- **Version gate.** Link feature `coordinator.v2` (the existing feature is `coordinator.v1`, `crates/fleetdeck-proto/src/version.rs:48`). The deck refuses to create a fleet-control grant (`unsupported`, stored) unless the coordinator's station and every station in the grant's `stations` negotiated `coordinator.v2` on their current link. `CoordinatorSpec` serializes `scope`, `answer_cap` and the new classes only when the grant is a fleet-control grant (`skip_serializing_if` the ADR-006 defaults), so a lineage grant's start command stays byte-compatible with a `coordinator.v1` station (`CoordinatorSpec` has `deny_unknown_fields`).
+- **Kill switch.** New station setting `allow_fleet_control` (default `false`, `apply: Live`, `danger: true`; on needs elevation, off does not). It is checked at three points: station intake on the coordinator's station (fleet-control tools answer `not_granted`, never forwarded), deck decision (the deck mirrors each station's value from its settings view, refreshed on every station settings publish; unknown counts as off → `forbidden`, stored), and dispatch on the target station (§6.2). The tool catalog is fixed at process start (ADR-006 §5.3): fleet-control tools are listed when the grant has their classes, whatever the setting; calls fail while it is off.
 
 ## 4. Authorization
 
 ### 4.1 Tool and class matrix (adds to ADR-006 §6.3)
 
-| MCP tool | Class | Wire | Target rule |
+| MCP tool | Classes | Wire | Target rule |
 | --- | --- | --- | --- |
-| `read_session` | read | query `session_tail { session_id, max_items ≤ 200 }` (≤ 64 KiB) | ADR-006 rule (now built) |
-| `session_diff` | read | query `session_diff { session_id }` (≤ 256 KiB, the DL-159 diff) | sessions on stations of the grant |
-| `list_needs_you` | read + answer | query `needs_you` | open approvals and questions of target sessions (§4.2) |
-| `list_projects`, `project_items` | read | query `projects`, `project_items { project_id, kind: issues \| prs }` | projects whose station is in the grant |
-| `list_artifacts`, `read_artifact` | read | query `artifacts { session_id? }`, `artifact { artifact_id, version? }` (text kinds only, ≤ 256 KiB) | artifacts of sessions on stations of the grant |
-| `read_file`, `search_files` | read | query `file_read { session_id, path }` (≤ 256 KiB), `file_search { session_id, query, mode }` (≤ 50 hits) | the session root of a target session; the station's private-path and root rules apply unchanged (DL-173) |
-| `send_mail`, `create_task` | mail | unchanged | lineage scope: unchanged; fleet scope: §4.2 |
-| `interrupt_session`, `stop_session` | drive | unchanged | lineage scope: unchanged; fleet scope: §4.2 |
-| `resume_session` | manage | call `resume { station, session_id }` | §4.2; the station's resume rules apply |
+| `read_session` | inspect | query `session_tail { session_id, max_items ≤ 200 }` (≤ 64 KiB) | §4.2 rule 1 |
+| `session_diff` | inspect | query `session_diff { session_id }` (≤ 256 KiB) | rule 1; privacy rule §4.4 |
+| `list_needs_you` | inspect + answer | query `needs_you` | open requests of sessions that pass §4.2 |
+| `list_projects`, `project_items` | inspect | query `projects`, `project_items { project_id, kind: issues \| prs }` | projects whose station is in the grant |
+| `list_artifacts`, `read_artifact` | inspect | query `artifacts { session_id? }`, `artifact { artifact_id, version? }` (text kinds, ≤ 256 KiB) | artifacts of sessions on grant stations |
+| `read_file`, `search_files` | inspect | query `file_read { session_id, path }` (≤ 256 KiB), `file_search { session_id, query, mode }` (≤ 50 hits) | the session root of a rule-1 session; DL-173 private paths unchanged |
+| `send_mail`, `create_task` | mail | unchanged | lineage: unchanged; fleet: rule 1 |
+| `interrupt_session`, `stop_session` | drive | unchanged | §4.2 (both scopes) |
+| `resume_session` | manage | call `resume { station, session_id }` | §4.2; mode rule §5.2 |
 | `rename_session` | manage | call `rename { station, session_id, title }` | §4.2 |
-| `set_mode` | manage | call `set_mode { station, session_id, mode }` | §4.2; the mode must be within the grant's `max_modes` ceiling for that provider family, else `forbidden` |
-| `move_to_project` | manage | call `project_assign { station, session_id, project_id \| none \| auto }` | §4.2; DL-176 rules |
-| `start_in_project` | spawn + manage | call `project_start { project_id, prompt, provider_instance?, worktree: bool }` | the project's station is in the grant; counts against `spawn_cap`; the mode rule of `spawn` applies |
-| `answer_request` | answer | call `answer { station, session_id, request_id, option_id, text? }` | §4.2 and §5 |
+| `set_mode` | manage | call `set_mode { station, session_id, mode }` | §4.2; mode rule §5.2 |
+| `move_to_project` | manage | call `project_assign { station, session_id, target: project(id) \| none \| auto }` | §4.2; the project's station equals the session's station (else `wrong_station`, DL-176) |
+| `start_in_project` | spawn + manage | call `project_start { project_id, prompt, provider_instance?, worktree: bool }` | the project's station is in the grant; counts against `spawn_cap`; mode rule §5.2; the new session is in the grant's lineage |
+| `answer_request` | answer | call `answer { station, session_id, request_id, option_id?, question_answers?, text? }` | §4.2; §5 |
 
-- `tools/list` lists a tool only when the grant has all its classes, its scope allows it, and the station setting `allow_fleet_control` is on for fleet-control tools. The catalog is fixed at process start (ADR-006 §5.3), so a later change of the setting changes the station intake answer (`not_granted`), not the catalog.
-- Every new query is a `coordinator.query` (no receipt); every new op is a `coordinator.call` (receipt, outbox). New `CoordinatorOp` variants: `resume`, `rename`, `set_mode`, `project_assign`, `project_start`, `answer`. New `CoordinatorQuery` variants: `session_tail`, `session_diff`, `needs_you`, `projects`, `project_items`, `artifacts`, `artifact`, `file_read`, `file_search`.
-- Link feature `coordinator_v2`. A station enables fleet-control tools only on a link that negotiated it; a deck accepts the new shapes only on such a link. An older peer keeps ADR-006 behavior.
+- Every new query is a `coordinator.query` (no receipt); every new op is a `coordinator.call` (receipt, outbox). New `CoordinatorOp` variants: `resume`, `rename`, `set_mode`, `project_assign`, `project_start`, `answer`. New `CoordinatorQuery` variants: `session_tail`, `session_diff`, `needs_you`, `projects`, `project_items`, `artifacts`, `artifact`, `file_read`, `file_search`. Each is accepted only on a `coordinator.v2` link.
+- Every fleet-control op and query also requires `allow_fleet_control` on (§3) on the caller's station, and for ops on the target station.
 
-### 4.2 Fleet-scope target rule
+### 4.2 Target exclusions (both scopes; replaces the ADR-006 §6.3 lineage drive rule where it would allow more)
 
-A target session is allowed when all of these hold, checked by the deck in the decision transaction (ADR-006 §6.2 step 6):
+For `drive`, `manage` and `answer` ops, and for `inspect` queries where noted ("rule 1"), a target session is allowed only when all hold, checked in the deck decision transaction and again at target-station dispatch (§6.2):
 
-1. Its station is in the grant's `stations`.
-2. It is not the caller itself, for `drive`, `manage` and `answer` ops. (A coordinator never stops, re-modes or approves itself.)
-3. It holds no active grant of its own with a mutating class (`mail`, `drive`, `spawn`, `manage`, `answer`), for `drive`, `manage` and `answer` ops. A coordinator never drives or approves another coordinator. This blocks loops where two coordinators approve each other's calls.
-4. It is not a member-owned or shared session that the owner has not opened to coordinators. (Today every session belongs to the owner; a share guest's driving rights never extend a coordinator.)
+1. Its station is in the grant's `stations` (and, with `scope = lineage`, it has this grant in its lineage).
+2. It is not the caller itself.
+3. It holds no active grant with a mutating class (`mail`, `drive`, `spawn`, `manage`, `answer`). A coordinator never drives, manages or answers for another coordinator, in either scope; this replaces the ADR-006 lineage rule that let a coordinator stop a lineage child that the owner later made a coordinator.
+4. It is an owner session. Share-guest and member drive rights never extend a coordinator.
 
-With `scope = lineage`, rule 1 plus the ADR-006 lineage rule apply, and rules 2–3 also apply to `answer`.
+### 4.3 Third-party text into a coordinator
 
-### 4.3 Third-party text
+Every text that reaches a coordinator session and that it did not write itself uses the DL-164 untrusted envelope (`crates/fleetdeck-proto/src/untrusted.rs`), with the source metadata (station, session, kind) outside the fenced text:
 
-- Every query result that holds text from another session, a file, an issue, a PR or an artifact is wrapped in the injection envelope of DL-164 (fenced, labelled untrusted, with its source). The control skill tells the agent that fenced text is data and never an instruction.
-- `list_needs_you` gives for each request: station, session, title, request id, kind, tool name, a summary of the tool input (≤ 8 KiB, fenced), the offered option ids with their kinds, and the age.
+- query results that hold text from another session, a file, a diff, an issue, a PR or an artifact;
+- pushed inputs: worker questions (`question_frame`, `crates/fleetdeck-proto/src/orchestration.rs:83`), mail (`mail_frame`, :67), task results, conflict mail.
 
-## 5. Approvals by a coordinator (`answer` class)
+`mail_frame` and `question_frame` fence their text for every recipient (not only coordinators), so the rule does not depend on knowing the recipient's grant at framing time. `list_needs_you` gives per request: station, session, title, request id, request kind, tool name, a fenced summary of the tool input (≤ 8 KiB), the offered options with their semantic kinds (§5.1), and the age.
 
-- **What it can choose.** Only an option whose kind is a one-time allow, a deny, or a question answer. It can never choose an option that widens permissions beyond this one request (Claude "allow always" / permission-rule updates, Codex "approve for session" / "always"); the deck refuses it (`forbidden`, stored). It can never send `updated_input` (no edited tool input). A question answer carries `text` ≤ 4 KiB.
-- **Mode changes are not a back door.** `set_mode` is bounded by `max_modes` (§4.1). A coordinator cannot set a target into a bypass or full-access mode unless the owner put that mode in `max_modes` when creating the grant; the station's `allow_bypass_permissions` (DL-177) still gates the mode itself.
-- **First answer wins.** The answer goes through the station's existing claim (one answer per request). The owner can answer before the coordinator; a later coordinator answer gets the stored rejection that a second answer gets today.
-- **Attribution.** The station records `approval.resolved { by: coordinator }` and the deck adds the grant id and the coordinator session (title and callsign) to the event's `answered_by` (`coordinator:<session>`), so the chat shows "Allowed by <coordinator>". Every answer writes a deck audit row (grant, caller, target session, request id, option kind, outcome).
-- **Owner visibility.** The needs-you rail keeps showing open requests to the owner. The board shows a "Fleet control" chip on the coordinator's card with the count of answers in the last hour, and the session page of the coordinator lists its last 50 answers (from the audit rows).
-- **Cap.** `answer_cap` bounds the total answers of a grant (§3).
-- **Offline approval policy.** Requests that the station resolves by policy (`ResolvedBy::Policy`, `Timeout`) are unchanged; a coordinator answer is a normal answer.
+### 4.4 Privacy of coordinator reads
 
-## 6. Lifecycle
+- `file_read` and `file_search` use the station file routes unchanged (identity-aware, DL-173).
+- `session_diff` for a coordinator: the station builds the session diff as today, then, before rendering each file of the new side, opens the work-tree file without following links and checks its identity with the private-path registry and the hard-link rule of DL-173 (nlink > 1 outside `.git` refused). A refused file is replaced by one line `(hidden: private file)` in the diff; its content and stats are dropped. If the identity check cannot run for any file, the whole query fails with `privacy_unknown`. The DL-173 open point (a tracked hard link can show in a board diff) does not apply to this interface.
 
-- ADR-006 §7 applies unchanged: idle expiry, renewal, revocation, session end. The board's revoke of a grant also ends fleet control at once (deck first).
-- The station setting `allow_fleet_control` (§3) is a global stop for all fleet-control tools without revoking grants.
-- A resume never restores a grant (DL-165 continued). A coordinator that ends loses fleet control; the owner starts a new one.
+## 5. Approvals and questions by a coordinator
 
-## 7. Failure behaviour
+### 5.1 Semantic option kinds
+
+- `ApprovalOption` (`crates/fleetdeck-proto/src/event.rs:128`) gains `kind: Option<OptionKind>` (serde default, skipped when `None`), with `OptionKind = allow_once | allow_session | allow_always | deny | amend | other`. The provider adapter sets it from the native decision when it builds the request:
+  - Claude: allow → `allow_once`; an option that carries permission-rule updates or "always" → `allow_always`; deny → `deny`.
+  - Codex: `accept` → `allow_once`; `acceptForSession` → `allow_session`; any option with an amendment (`acceptWithExecpolicyAmendment`, `applyNetworkPolicyAmendment`, object-valued decisions with amendments) → `amend`; `decline`/`cancel` → `deny`; anything else → `other`.
+- A coordinator may choose only an option with `kind = allow_once` or `kind = deny`. `None` (a request stored before this ADR, or an option the adapter cannot classify), `allow_session`, `allow_always`, `amend` and `other` are refused (`forbidden`, stored). Adapter tests cover every native decision shape, including object-valued amendments.
+
+### 5.2 Modes
+
+- Superseding ADR-006 §6.3's spawn-mode rule for bypass modes: no coordinator operation may start, resume, or set a session into a bypass or full-access mode (Claude `bypassPermissions`; Codex `never` approval with `danger-full-access`), whatever `max_modes` or `allow_bypass_permissions` say.
+- `set_mode`, `start_in_project` and `spawn` need the target provider family to have a ceiling in `max_modes` and the mode within it.
+- `resume_session`: the deck computes the effective resumed mode (the session's stored mode, or the provider instance's default when none is stored) and refuses the resume (`forbidden`, stored) unless the family has a ceiling, the mode is within it, and it is not a bypass mode. The station's resume admission checks the same at dispatch with the mode it will really use.
+
+### 5.3 Answers
+
+- **Approvals:** `option_id` of an allowed kind; no edited input (`updated_input` is never sent for an approval).
+- **Questions** (`RequestKind::Question`): `question_answers` (a JSON object ≤ 16 KiB) for structured questions, validated by the station against the complete question schema with the existing `validate_question_answer` (`crates/fleetdeck-station/src/manager/decide.rs:326`) and translated into the provider's answer payload; or `text` (≤ 4 KiB) for a free-text question. A question answer never carries an approval option.
+- **First answer wins, with a clear result.** For an answer whose origin is a coordinator, a request that already has an answer gives a stored rejection `already_answered` (with the winner's `by`), instead of the general repeated-answer acceptance (`AnswerClaim::Repeated`, decide.rs:224), which stays for board answers. The tool result separates: accepted intent, the claim result, and the provider delivery.
+- **Attribution.** The station records `approval.resolved { by: coordinator }`; the deck sets `answered_by = "coordinator:<session id>"` on the command, so the chat shows "Allowed by <coordinator title>". Every answer writes a deck audit row (grant, caller, target, request id, option kind, outcome).
+- **Owner visibility.** The needs-you rail keeps showing open requests. The coordinator's card shows a "Fleet control" chip with the count of answers in the last hour; its session page lists its last 50 answers (from the audit rows).
+
+## 6. Authority until dispatch
+
+### 6.1 Provenance
+
+Every deck intent created by a fleet-control op carries `authority { grant_id, caller_station, caller_session, generation }` in the outbox item and in the routed command (new optional field on the routed session command envelope, sent only on `coordinator.v2` links). Fleet-control intents expire after 10 minutes (not 24 h).
+
+### 6.2 Rechecks
+
+- **Deck, before each attempt** (`start_attempt`): the grant is `active`, its binding generation equals `authority.generation`, the target still passes §4.2 (from the deck's session and grant view), and the deck's mirror of `allow_fleet_control` is on for the caller's and the target's station. Any failure ends the item `dead` (`authority_lost`); it is never sent.
+- **Target station, at decision and again at effect dispatch:** a command with `authority` is refused (`forbidden`, stored at decision; `NotDispatched("authority_lost")` at dispatch) when the target station's live `allow_fleet_control` is off, when the target session holds an active binding with a mutating class on this station (§4.2 rule 3), or when the target is the caller session (rule 2). A command with `authority` on a link without `coordinator.v2` is refused (`unsupported`).
+- **Revocation** (owner, deck first, ADR-006 §7) ends every intent that has not started an attempt (`dead`, `authority_lost`) in the revocation transaction. A command already accepted by the target station and queued there is fenced only by the station's own rechecks (kill switch, target exclusions); the residual window is the station's local effect queue. The operations guide states it.
+
+## 7. Lifecycle
+
+- ADR-006 §7 applies: idle expiry, renewal, revocation, session end.
+- `allow_fleet_control` off is a global stop without revoking grants (§3, §6.2).
+- A resume never restores a grant (DL-165 continued).
+
+## 8. Failure behaviour
 
 | Failure | Behaviour |
 | --- | --- |
-| The target session ended or changed between `list_needs_you` and `answer_request` | The station's claim rejects the answer (`request_closed` or the existing code); the receipt is stored; the tool reports it. |
-| The deck refuses a widening option | Stored `forbidden` with the text "a coordinator answers only once"; the tool reports it. |
-| The link drops after an answer is sent | ADR-006 §6.5: the row becomes `ambiguous` and is never resent; the tool says the outcome is unknown. |
-| The setting `allow_fleet_control` is turned off while a call waits | The deck decision (authority) refuses it; a call already accepted runs. |
+| The target request closed or was answered between `list_needs_you` and `answer_request` | `already_answered` or the existing closed-request rejection, stored. |
+| A widening option, an unclassified option, or a bypass mode | `forbidden`, stored. |
+| The link drops after an answer was sent | ADR-006 §6.5: `ambiguous`, never resent; the tool says the outcome is unknown. |
+| `allow_fleet_control` turned off, or the grant revoked, before an attempt or a dispatch | §6.2: never sent, or `authority_lost` at dispatch. |
+| A peer without `coordinator.v2` | No fleet-control grant can name it (§3); a stray `authority` command is `unsupported`. |
 
-## 8. Executable tests (written with the code)
+## 9. Tests (written with the code)
 
 Deck (`crates/fleetdeck-deck/src/store/fleet_control_tests.rs`):
-1. A fleet-control grant without a fresh elevation is refused (`elevation_required`); with it, it is stored with `scope`, the new classes and `answer_cap`.
-2. Fleet scope: `stop_session` on a session outside the lineage on a grant station is accepted; on a station outside the grant `forbidden`; on the caller itself `forbidden`; on a session that holds an active mutating grant `forbidden`.
-3. Lineage scope keeps ADR-006 results for every old tool (regression).
-4. `answer_request` with a one-time allow is accepted, increments `answer_used`, writes the audit row, and the command to the station carries `answered_by = coordinator:<session>`.
-5. `answer_request` with an "allow always"/"for session" option, or with `updated_input`, is `forbidden` (stored), and `answer_used` does not change.
-6. At `answer_cap`, `answer_cap_reached` (stored); a repeat of the same id returns it after the owner raises the cap.
-7. `set_mode` above `max_modes` is `forbidden`.
-8. With `allow_fleet_control = false`, every fleet-control op is `forbidden` (stored) and every fleet-control query is refused; lineage ops still work.
-9. Every query result with third-party text is fenced.
+1. A per-operation matrix: for every new op and query and each ADR-006 op under a fleet-control grant: class present/absent, scope lineage/fleet, target on/off a grant station, target = caller, target holds an active mutating grant, target is a member or guest session → the expected accept or stored rejection.
+2. Elevation: a fleet-control grant without a fresh elevation → `elevation_required`; with it → stored with the new fields.
+3. Version gate: a grant naming a station without `coordinator.v2` → `unsupported`; a lineage grant's start command serializes without the new fields (byte check against a recorded v1 command).
+4. `inspect`: an ADR-006 `read`-only grant gets `not_granted`/`forbidden` for every new query; with the setting off every fleet-control query is refused and the old reads still work.
+5. Answers: `allow_once` and `deny` accepted, `answer_used` +1, audit row, `answered_by`; `allow_session`, `allow_always`, `amend`, `other`, `None` refused without a count; cap reached (and two concurrent decisions for the last slot: exactly one wins); structured `question_answers` accepted and validated; a bad one refused.
+6. Modes: `set_mode`, `spawn`, `start_in_project` above the ceiling or bypass refused; `resume_session` of a session stored in a mode above the ceiling, in bypass, or with no stored mode and a default above the ceiling refused.
+7. `start_in_project`: counts against `spawn_cap`, the new session is in the lineage; `move_to_project` with a project of another station → `wrong_station`.
+8. Provenance: revocation, a generation change, a target that becomes a coordinator, and the setting turned off, each between acceptance and the first attempt → `dead` (`authority_lost`), never sent; an item past 10 minutes expires.
+9. Fencing: every new query result with third-party text, and `mail_frame`/`question_frame` output, is enveloped with the source outside the fence.
 Station (`crates/fleetdeck-station/src/coordinator/fleet_control_tests.rs`):
-10. `tools/list` for each class and scope combination, with the setting on and off.
-11. Intake refuses a fleet-control tool when the setting is off (`not_granted`, never forwarded).
-12. The answer reaches the provider once; a second answer to the same request gets the existing rejection.
-Board (`web/src/spawn/fleetcontrol.test.tsx`):
-13. The "Fleet control" switches ask for elevation; the start command carries the fields; the coordinator card shows the chip and the answers list.
+10. Intake refuses fleet-control tools with the setting off; the catalog lists tools by class.
+11. Dispatch recheck: a command with `authority` whose target became a coordinator, or with the setting turned off after decision, is `NotDispatched("authority_lost")`.
+12. `already_answered` for a coordinator answer after a board answer; a board answer after a board answer keeps today's result.
+13. `session_diff` for a coordinator hides a tracked work-tree file hard-linked to a private file, and fails with `privacy_unknown` when the identity check cannot run.
+14. Resume admission refuses a coordinator resume into a mode above the ceiling or into bypass.
+Providers: 15. `OptionKind` classification for every Claude and Codex decision shape, including object-valued amendments.
+Board (`web/src/spawn/fleetcontrol.test.tsx`): 16. The switches ask for elevation; the start command carries the fields; the chip and the answers list.
 
-## 9. Alternatives
+## 10. Alternatives
 
-- **No approvals (owner option 1).** Safer; rejected by the owner.
-- **Answer only for the coordinator's own lineage.** Smaller blast radius, but it does not run "the fleet"; kept as `scope = lineage` + `answer`.
-- **Answer any option, including "always".** Rejected: one injected answer would change permissions for all later calls of that session.
+- **No approvals (owner option 1).** Safer; the owner rejected it.
+- **Answer only in the lineage.** Kept as `scope = lineage` + `answer`.
+- **Any option, including "always" or amendments.** Rejected: one injected answer would widen permissions for all later calls.
 
-## 10. Risks
+## 11. Risks
 
-- **Prompt injection approves a dangerous call.** Bounded, not removed: one-time options only, no edited input, the mode ceiling, the cap, no coordinator-to-coordinator control, owner visibility, revoke and the global setting. The operations guide states that a fleet-control grant with `answer` should run only on trusted work.
-- **Data exfiltration across stations.** A coordinator with `read` can read files and diffs of every session on its stations and can send them to any session or URL that its own tools reach. Accepted: the grant's station list bounds it; private paths stay refused (DL-173).
+- **Prompt injection approves a dangerous call.** Bounded, not removed: one-time allow or deny only, no edited input, no bypass, the mode ceiling, the cap, no coordinator-to-coordinator control, fenced inputs, owner visibility, revoke and the kill switch. The operations guide says to run an `answer` grant only on trusted work.
+- **Exfiltration across stations.** An `inspect` grant reads files and diffs of every session on its stations and can send them on with its own tools. Accepted; bounded by the station list; private files stay refused (§4.4).
 - **Spend.** `start_in_project` counts against `spawn_cap`.
+- **Residual dispatch window** (§6.2) on the target station's local effect queue.
+
+## 12. Review map (revision 1 → revision 2)
+
+| Finding (rev 1) | Change |
+| --- | --- |
+| B1 new reads escape elevation and the kill switch | New class `inspect` (fleet-control, elevated, kill switch); `read` keeps only its ADR-006 queries (§3, §4.1, test 4). |
+| B2 bypass mode allowed through `max_modes` | §5.2 first rule (adopted replacement sentence). |
+| B3 resume bypasses the mode ceiling | §5.2 resume rule, deck and station (tests 6, 14). |
+| B4 lineage scope can control another coordinator | §4.2 applies to both scopes and replaces the lineage drive rule (test 1). |
+| B5 structured questions cannot be answered | §5.3 `question_answers` (test 5). |
+| B6 accepted intents survive revoke and kill switch | §6 provenance, rechecks before attempt and at dispatch, 10-minute expiry (tests 8, 11). |
+| B7 pushed inputs are not fenced | §4.3 fences mail, questions, task results and conflict mail for every recipient (test 9). |
+| B8 diff privacy inherits the tracked-hard-link gap | §4.4 identity check per file, `privacy_unknown` (test 13). |
+| M1 option kinds undefined | §5.1 `OptionKind`, provider-owned, fail closed (test 15). |
+| M2 start serialization breaks v1 stations | §3 version gate and conditional serialization (test 3). |
+| M3 first answer wins has no rejection | §5.3 `already_answered` for coordinator answers (test 12). |
+| M4 tests do not cover every rule | §9 matrix and the new tests. |
