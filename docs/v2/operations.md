@@ -168,7 +168,7 @@ Limits of this release (DL-127, follow-ups in `docs/v2/progress/m3-durable.md`):
 
 ## 11. Troubleshooting
 
-Run `fleetdeck doctor` first. It changes nothing. It prints one line for each check (`ok`, `warn` or `fail`) and then a summary, and its exit code is 1 when a check fails. It checks the data directory and its mode, `station.toml` and `deck.toml` (parse and mode), `git`, the `--version` of each provider binary, `allow_shell`, the deck local socket, the board listener, and the v1 Fleet Deck Claude plugin. Remove the v1 plugin after the cutover: its hooks slow every stop of a v2 session.
+Run `fleetdeck doctor` first. It changes nothing. It prints one line for each check (`ok`, `warn` or `fail`) and then a summary, and its exit code is 1 when a check fails. It checks the data directory and its mode, `station.toml` and `deck.toml` (parse and mode), `git`, the `--version` of each provider binary (a `warn` when it is older than the version that Fleet Deck is tested with, a `fail` when it is known to break the protocol), `allow_shell`, the deck local socket, the board listener, and the v1 Fleet Deck Claude plugin. Remove the v1 plugin after the cutover: its hooks slow every stop of a v2 session.
 
 | Symptom | What to do |
 | --- | --- |

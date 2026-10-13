@@ -19,6 +19,7 @@ use std::sync::{Arc, Mutex as StdMutex, Weak};
 use async_trait::async_trait;
 use fleetdeck_core::{SharedIds, new_id};
 use fleetdeck_proto::command::{SessionSpec, StopMode};
+use fleetdeck_proto::event::ProviderKind;
 use fleetdeck_proto::{Event, ProviderInstanceId, SessionId};
 use fleetdeck_providers::host::HostError;
 use fleetdeck_providers::{
@@ -97,6 +98,9 @@ pub struct SessionTarget {
     /// The points where a test holds a start (tests only).
     #[cfg(test)]
     hooks: setup_task::Hooks,
+    /// The instances whose probed version is on the adapter's deny list
+    /// (R8.2, DL-162): their starts are refused.
+    broken: Arc<StdMutex<BTreeMap<ProviderInstanceId, &'static str>>>,
     /// The shells of the station, for the file work of the worktree trash.
     shells: ShellsSlot,
 }
@@ -128,7 +132,29 @@ impl SessionTarget {
             #[cfg(test)]
             hooks: setup_task::Hooks::default(),
             shells: ShellsSlot::default(),
+            broken: Arc::default(),
         }
+    }
+
+    /// Refuses the starts of `instance`: its probed version is on the deny
+    /// list of its adapter (R8.2, DL-162).
+    pub fn mark_broken(&self, instance: &ProviderInstanceId, kind: ProviderKind) {
+        let name: &'static str = match kind {
+            ProviderKind::Claude => "claude",
+            ProviderKind::Codex => "codex",
+            ProviderKind::Unknown => "provider",
+        };
+        if let Ok(mut broken) = self.broken.lock() {
+            broken.insert(instance.clone(), name);
+        }
+    }
+
+    /// The refusal text of a start on a broken instance, if it is one.
+    fn broken_reason(&self, instance: &ProviderInstanceId) -> Option<String> {
+        let broken = self.broken.lock().ok()?;
+        broken
+            .get(instance)
+            .map(|name| format!("this {name} version is known to break the protocol"))
     }
 
     /// The points where a test holds a start.
@@ -235,6 +261,10 @@ impl SessionTarget {
         cancel: Option<&watch::Receiver<bool>>,
     ) -> Dispatch {
         let session_id = effect.session_id.clone();
+        if let Some(reason) = self.broken_reason(&spec.provider_instance) {
+            self.start_failed(&session_id, &reason).await;
+            return Dispatch::NotDispatched("provider_broken".into());
+        }
         let Some(adapter) = self.adapters.get(&spec.provider_instance).cloned() else {
             self.start_failed(&session_id, "the provider instance has no adapter")
                 .await;

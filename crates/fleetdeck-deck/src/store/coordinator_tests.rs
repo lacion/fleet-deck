@@ -57,6 +57,7 @@ fn info(name: &str) -> StationInfo {
         version: Some("1.0.0".to_owned()),
         auth: "signed_in".to_owned(),
         capabilities: None,
+        version_status: Default::default(),
     };
     StationInfo {
         name: name.to_owned(),

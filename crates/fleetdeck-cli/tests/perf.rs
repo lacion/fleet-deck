@@ -17,6 +17,11 @@
 //! The test is `#[ignore]`: `make perf` runs it in the release profile and
 //! writes `target/perf/report.md`. It fails when a bar fails. Loopback is not
 //! a LAN: the LAN approval round trip is an owner step (DL-401).
+//!
+//! A second test (R8.5 and R8.6, DL-162) measures that a turn with
+//! checkpoints costs at most 10 ms more than a turn without, and that a board
+//! with 15 live sessions serves its snapshot and its deltas within budget. It
+//! writes `target/perf/report-r8.md`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, reason = "test code")]
 
@@ -32,6 +37,16 @@ use serde_json::{Value, json};
 const SESSIONS: usize = 50;
 const STATIONS: usize = 10;
 const APPROVALS: usize = 20;
+/// R8.5: the turns that each arm (checkpoints, none) measures.
+const CHECKPOINT_TURNS: usize = 20;
+/// R8.5: a checkpoint may add this much to the median turn.
+const CHECKPOINT_BUDGET_MS: f64 = 10.0;
+/// R8.6: the live sessions of the board load bar.
+const LOAD_SESSIONS: usize = 15;
+/// R8.6: the board snapshot (`GET /api/sessions`) p95 budget.
+const SNAPSHOT_BUDGET_MS: f64 = 250.0;
+/// R8.6: from a follow-up to its card update, p95 (the read-model budget).
+const DELTA_BUDGET_MS: f64 = 500.0;
 
 fn rss_kib(pid: u32) -> u64 {
     let status = std::fs::read_to_string(format!("/proc/{pid}/status")).unwrap();
@@ -110,6 +125,63 @@ impl Board {
         deck.https(self.addr, method, path, &auth, body)
     }
 
+    /// The output tokens of the card of `session`. The `fake-claude sim` agent
+    /// reports 2 per completed turn, so the number counts finished turns.
+    fn output_tokens(&self, deck: &Deck, session: &str) -> u64 {
+        let r = self.call(deck, "GET", "/api/sessions", None);
+        assert_eq!(r.status, 200, "{}", r.body);
+        let cards = r
+            .body
+            .as_array()
+            .cloned()
+            .or_else(|| r.body["sessions"].as_array().cloned())
+            .unwrap_or_default();
+        cards
+            .iter()
+            .find(|c| c["summary"]["session_id"].as_str() == Some(session))
+            .and_then(|c| c["summary"]["usage"]["output_tokens"].as_u64())
+            .unwrap_or(0)
+    }
+
+    /// Waits for the first finished turn of `session`.
+    fn wait_first_turn(&self, deck: &Deck, session: &str) {
+        let t0 = Instant::now();
+        while self.output_tokens(deck, session) < 2 {
+            assert!(
+                t0.elapsed() < WAIT,
+                "{session}: the first turn did not finish"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// One board follow-up on `session`; returns the time to the card that
+    /// shows `turns` finished turns.
+    fn follow_up_and_wait(
+        &self,
+        deck: &Deck,
+        station: &str,
+        session: &str,
+        command_id: &str,
+        turns: u64,
+    ) -> f64 {
+        let body = json!({
+            "station": station,
+            "command_id": command_id,
+            "command": { "op": "follow_up", "session_id": session,
+                "input": { "text": format!("hello {command_id}") } }
+        });
+        let t0 = Instant::now();
+        let r = self.call(deck, "POST", "/api/commands/session.follow_up", Some(body));
+        assert_eq!(r.status, 200, "{}", r.body);
+        assert_eq!(r.body["receipt"]["state"], "accepted", "{}", r.body);
+        while self.output_tokens(deck, session) < 2 * turns {
+            assert!(t0.elapsed() < WAIT, "{command_id}: the turn did not finish");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        ms(t0.elapsed())
+    }
+
     /// The session ids of the board's cards.
     fn session_ids(&self, deck: &Deck) -> Vec<String> {
         let r = self.call(deck, "GET", "/api/sessions", None);
@@ -155,6 +227,50 @@ fn start_and_lag(station: &Station, deck: &Deck, board: &Board, prompt: &str) ->
         assert!(t0.elapsed() < WAIT, "the deck did not show {id}");
         std::thread::sleep(Duration::from_millis(2));
     }
+}
+
+/// A repository with a first commit and `files` small files, so that a turn
+/// checkpoint has a tree to capture.
+fn git_workspace(dir: &std::path::Path, files: usize) {
+    for n in 0..files {
+        std::fs::write(
+            dir.join(format!("file-{n:03}.txt")),
+            format!("content {n}\n"),
+        )
+        .unwrap();
+    }
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args([
+                "-c",
+                "user.name=perf",
+                "-c",
+                "user.email=perf@example.invalid",
+            ])
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {out:?}");
+    };
+    git(&["init", "-q"]);
+    git(&["add", "-A"]);
+    git(&["commit", "-q", "-m", "first"]);
+}
+
+/// A session on `station` in `cwd` (`fleetdeck station run`); returns its id.
+fn run_in(station: &Station, cwd: &std::path::Path, prompt: &str) -> String {
+    let provider = fleetdeck_testkit::FakeAgent::Claude.instance_id();
+    let out = station.ok(&[
+        "station",
+        "run",
+        "--provider",
+        provider,
+        "--cwd",
+        cwd.to_str().unwrap(),
+        prompt,
+    ]);
+    out.trim().to_owned()
 }
 
 fn host_line() -> String {
@@ -362,6 +478,142 @@ fn performance_bars_of_plan_section_13() {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/perf");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("report.md"), &report).unwrap();
+    println!("{report}");
+    let failed: Vec<&str> = bars.iter().filter(|b| !b.pass).map(|b| b.name).collect();
+    assert!(failed.is_empty(), "failed bars: {failed:?}\n{report}");
+}
+
+/// R8.5 and R8.6 (DL-162): the checkpoint latency bar and the 15-session
+/// board load bar, on one deck and one station.
+#[test]
+#[ignore = "performance harness: run with `make perf` (release profile)"]
+fn checkpoint_latency_and_fifteen_session_load_bars() {
+    let deck = Deck::start();
+    let board = Board::login(&deck);
+    let station = joined_station(&deck, "perf-r8");
+    let mut bars = Vec::new();
+
+    // R8.5: the same turn in a repository (checkpoints) and in a plain
+    // directory (no checkpoints), interleaved so that drift hits both arms.
+    let git_dir = station.node.workspace("with-checkpoints").unwrap();
+    git_workspace(&git_dir, 200);
+    let plain_dir = station.node.workspace("without-checkpoints").unwrap();
+    let with = run_in(&station, &git_dir, "hello first");
+    let without = run_in(&station, &plain_dir, "hello first");
+    for id in [&with, &without] {
+        board.wait_first_turn(&deck, id);
+    }
+    let (mut with_ms, mut without_ms) = (Vec::new(), Vec::new());
+    for n in 0..CHECKPOINT_TURNS {
+        let turns = n as u64 + 2;
+        with_ms.push(board.follow_up_and_wait(&deck, "perf-r8", &with, &format!("w{n}"), turns));
+        without_ms.push(board.follow_up_and_wait(
+            &deck,
+            "perf-r8",
+            &without,
+            &format!("o{n}"),
+            turns,
+        ));
+    }
+    let (with_p50, without_p50) = (percentile(&with_ms, 50.0), percentile(&without_ms, 50.0));
+    bars.push(Bar {
+        name: "Turn with checkpoints vs without (p50, R8.5)",
+        target: format!("with <= without + {CHECKPOINT_BUDGET_MS:.0} ms"),
+        measured: format!(
+            "with {with_p50:.1} ms (p95 {:.1}), without {without_p50:.1} ms (p95 {:.1})",
+            percentile(&with_ms, 95.0),
+            percentile(&without_ms, 95.0)
+        ),
+        pass: with_p50 <= without_p50 + CHECKPOINT_BUDGET_MS,
+    });
+
+    // R8.6: 15 live sessions; the snapshot and the deltas of the board.
+    let mut ids = vec![with, without];
+    while ids.len() < LOAD_SESSIONS {
+        ids.push(run_in(
+            &station,
+            &plain_dir,
+            &format!("hello load {}", ids.len()),
+        ));
+    }
+    for id in &ids {
+        board.wait_first_turn(&deck, id);
+    }
+    let mut snapshots = Vec::new();
+    let mut cards = 0;
+    for _ in 0..20 {
+        let t0 = Instant::now();
+        let r = board.call(&deck, "GET", "/api/sessions", None);
+        snapshots.push(ms(t0.elapsed()));
+        assert_eq!(r.status, 200, "{}", r.body);
+        cards = board.session_ids(&deck).len();
+    }
+    let snap_p95 = percentile(&snapshots, 95.0);
+    bars.push(Bar {
+        name: "Board snapshot with 15 sessions (p95, R8.6)",
+        target: format!("{LOAD_SESSIONS} cards, < {SNAPSHOT_BUDGET_MS:.0} ms"),
+        measured: format!(
+            "{cards} cards, p50 {:.1} ms, p95 {snap_p95:.1} ms",
+            percentile(&snapshots, 50.0)
+        ),
+        pass: cards >= LOAD_SESSIONS && snap_p95 < SNAPSHOT_BUDGET_MS,
+    });
+    let mut deltas = Vec::new();
+    for round in 0..3_u64 {
+        for (n, id) in ids.iter().enumerate() {
+            let id_turns = if n < 2 {
+                round + 2 + CHECKPOINT_TURNS as u64
+            } else {
+                round + 2
+            };
+            deltas.push(board.follow_up_and_wait(
+                &deck,
+                "perf-r8",
+                id,
+                &format!("d{round}-{n}"),
+                id_turns,
+            ));
+        }
+    }
+    let delta_p95 = percentile(&deltas, 95.0);
+    bars.push(Bar {
+        name: "Board delta with 15 sessions (follow-up to card, p95, R8.6)",
+        target: format!("< {DELTA_BUDGET_MS:.0} ms"),
+        measured: format!(
+            "p50 {:.1} ms, p95 {delta_p95:.1} ms, max {:.1} ms",
+            percentile(&deltas, 50.0),
+            percentile(&deltas, 100.0)
+        ),
+        pass: delta_p95 < DELTA_BUDGET_MS,
+    });
+
+    let mut report = String::new();
+    writeln!(
+        report,
+        "# Fleet Deck v2 performance report, R8 bars (`make perf`)\n"
+    )
+    .unwrap();
+    writeln!(report, "- Host: {}", host_line()).unwrap();
+    writeln!(
+        report,
+        "- Samples: {CHECKPOINT_TURNS} turns per checkpoint arm, 20 snapshots, {} deltas\n",
+        deltas.len()
+    )
+    .unwrap();
+    writeln!(report, "| Bar | Target | Measured | Result |").unwrap();
+    writeln!(report, "| --- | --- | --- | --- |").unwrap();
+    for b in &bars {
+        let result = if b.pass { "pass" } else { "FAIL" };
+        writeln!(
+            report,
+            "| {} | {} | {} | {result} |",
+            b.name, b.target, b.measured
+        )
+        .unwrap();
+    }
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/perf");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("report-r8.md"), &report).unwrap();
     println!("{report}");
     let failed: Vec<&str> = bars.iter().filter(|b| !b.pass).map(|b| b.name).collect();
     assert!(failed.is_empty(), "failed bars: {failed:?}\n{report}");

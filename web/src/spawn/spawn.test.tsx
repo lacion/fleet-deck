@@ -26,6 +26,7 @@ import {
   spawnModes,
   spawnTargets,
   togglePin,
+  versionWarning,
   workspaceRequest,
 } from './spawn';
 
@@ -43,6 +44,7 @@ const info = (extra: Partial<StationInfo> = {}): StationInfo => ({
       provider: 'claude',
       version: '2.1.999',
       auth: 'signed_in',
+      version_status: 'unknown',
       capabilities: claudeCaps(),
     },
     {
@@ -50,6 +52,7 @@ const info = (extra: Partial<StationInfo> = {}): StationInfo => ({
       provider: 'codex',
       version: null,
       auth: 'unknown',
+      version_status: 'unknown',
       capabilities: codexCaps(),
     },
   ],
@@ -104,9 +107,24 @@ describe('spawn form (P4-4)', () => {
         provider: 'codex',
         version: null,
         auth: 'x',
+        version_status: 'unknown',
         capabilities: null,
       }),
     ).toBe('codex · codex · version unknown');
+  });
+
+  test('an older CLI shows a warning under the provider select; an ok one shows none (R8.2)', () => {
+    const [claude, codex] = info().providers;
+    const older = { ...claude!, version: '2.0.1', version_status: 'older_than_tested' as const };
+    const html = form([reported('station-a', { info: info({ providers: [older, codex!] }) })]);
+    expect(html).toContain('data-version-warning');
+    expect(html).toContain('This claude CLI (2.0.1) is older than the version');
+    expect(form([reported()])).not.toContain('data-version-warning');
+    const ok = { ...claude!, version_status: 'ok' as const };
+    expect(versionWarning(ok)).toBeNull();
+    expect(versionWarning(undefined)).toBeNull();
+    const broken = { ...claude!, version_status: 'broken' as const };
+    expect(versionWarning(broken)).toContain('known to break the protocol');
   });
 
   test('the form offers station, provider, mode and the picker', () => {

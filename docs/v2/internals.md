@@ -113,3 +113,163 @@ Use this table to find the code of a feature. The tests of a feature are next to
 | Drain and upgrade | `manager/drain.rs`, `upgrade.rs`, `local.rs` | — | — (CLI: `fleetdeck station drain`, `fleetdeck station upgrade`) |
 
 The paths in the Station column are below `crates/fleetdeck-station/src/`, and the paths in the Deck column are below `crates/fleetdeck-deck/src/`, when no crate is named. The paths in the Board column are below `web/src/` or `web/`.
+
+## 9. Board HTTP route map
+
+The table is generated from the method table of the deck (`crates/fleetdeck-deck/src/http/methods.rs`). Regenerate it with `sh tools/route-map.sh` after a route change, and paste the output here. The deck guard refuses a route that is not in the table, so the table is complete by construction (DL-138, L15).
+
+How to read it:
+- **Scope** is the scope that a login or a token must hold. `none (login)` is for the two login routes.
+- **Mutating** routes need the CSRF token of a cookie login and write an audit row.
+- Some `admin` routes also need the owner's board login and refuse a token with `403 owner_only` (DL-138). They are the human shell (`shells.*`), the station pairing routes (`stations.add`, `stations.invite`, `stations.remove`), `auth.device_link`, `files.paste`, the worktree routes (`stations.worktrees`, `worktree.*`), the coordinator grant routes (`coordinator.revoke`, `coordinator.renew`), and a `session.start` that carries a setup command. The handler checks this, not the table.
+
+| Name | Method | Route | Scope | Mutating |
+| --- | --- | --- | --- | --- |
+| `auth.login` | POST | `/api/auth/login` | none (login) | yes |
+| `auth.link` | POST | `/api/auth/link` | none (login) | yes |
+| `auth.logout` | POST | `/api/auth/logout` | read | yes |
+| `auth.device_link` | POST | `/api/auth/device-link` | admin | yes |
+| `auth.session` | GET | `/api/auth/session` | read | no |
+| `stations.list` | GET | `/api/stations` | read | no |
+| `stations.add` | POST | `/api/stations` | admin | yes |
+| `stations.invite` | POST | `/api/stations/invite` | admin | yes |
+| `stations.remove` | POST | `/api/stations/{station}/remove` | admin | yes |
+| `stations.workspaces` | GET | `/api/stations/{station}/workspaces` | drive | no |
+| `workspace.preflight` | POST | `/api/stations/{station}/workspace/preflight` | drive | yes |
+| `files.paste` | POST | `/api/stations/{station}/paste` | admin | yes |
+| `files.list` | GET | `/api/stations/{station}/files/list` | drive | no |
+| `files.read` | GET | `/api/stations/{station}/files/read` | drive | no |
+| `files.search` | GET | `/api/stations/{station}/files/search` | drive | no |
+| `files.diff` | GET | `/api/stations/{station}/sessions/{session}/turns/{turn}/diff` | drive | no |
+| `conflicts.list` | GET | `/api/conflicts` | read | no |
+| `archive.list` | GET | `/api/archive` | read | no |
+| `archive.change` | POST | `/api/archive` | drive | yes |
+| `plans.list` | GET | `/api/plans` | read | no |
+| `plans.mark` | POST | `/api/plans/mark` | drive | yes |
+| `sessions.list` | GET | `/api/sessions` | read | no |
+| `fleet.extras` | GET | `/api/fleet/extras` | read | no |
+| `commands.list` | GET | `/api/commands` | read | no |
+| `audit.list` | GET | `/api/audit` | admin | no |
+| `commands.get` | GET | `/api/commands/{command_id}` | read | no |
+| `board.ws` | GET | `/api/ws` | read | no |
+| `stations.worktrees` | GET | `/api/stations/{station}/worktrees` | admin | no |
+| `worktree.trash` | POST | `/api/stations/{station}/worktrees/trash` | admin | yes |
+| `worktree.restore` | POST | `/api/stations/{station}/worktrees/restore` | admin | yes |
+| `worktree.purge` | POST | `/api/stations/{station}/worktrees/purge` | admin | yes |
+| `worktree.release` | POST | `/api/stations/{station}/worktrees/release` | admin | yes |
+| `shells.list` | GET | `/api/stations/{station}/shells` | admin | no |
+| `shells.command` | POST | `/api/stations/{station}/shells` | admin | yes |
+| `shells.attach` | GET | `/api/stations/{station}/shells/{shell}/attach` | admin | no |
+| `board.ws_ticket` | POST | `/api/ws/ticket` | read | yes |
+| `session.assign` | POST | `/api/assign` | drive | yes |
+| `mail.list` | GET | `/api/mail` | read | no |
+| `mail.send` | POST | `/api/mail` | drive | yes |
+| `coordinator.grants` | GET | `/api/coordinator/grants` | read | no |
+| `coordinator.revoke` | POST | `/api/coordinator/grants/{grant_id}/revoke` | drive | yes |
+| `coordinator.renew` | POST | `/api/coordinator/grants/{grant_id}/renew` | drive | yes |
+| `tasks.list` | GET | `/api/tasks` | read | no |
+| `tasks.create` | POST | `/api/tasks` | drive | yes |
+| `tasks.complete` | POST | `/api/tasks/{task_id}/complete` | drive | yes |
+| `tasks.wait` | GET | `/api/tasks/{task_id}/wait` | read | no |
+| `session.start` | POST | `/api/commands/session.start` | drive | yes |
+| `session.resume` | POST | `/api/commands/session.resume` | drive | yes |
+| `session.import` | POST | `/api/commands/session.import` | drive | yes |
+| `session.prompt` | POST | `/api/commands/session.prompt` | drive | yes |
+| `session.steer` | POST | `/api/commands/session.steer` | drive | yes |
+| `session.follow_up` | POST | `/api/commands/session.follow_up` | drive | yes |
+| `session.interrupt` | POST | `/api/commands/session.interrupt` | drive | yes |
+| `session.set_mode` | POST | `/api/commands/session.set_mode` | drive | yes |
+| `session.set_model` | POST | `/api/commands/session.set_model` | drive | yes |
+| `session.fork` | POST | `/api/commands/session.fork` | drive | yes |
+| `session.stop` | POST | `/api/commands/session.stop` | drive | yes |
+| `session.revert` | POST | `/api/commands/session.revert` | drive | yes |
+| `session.rename` | POST | `/api/commands/session.rename` | drive | yes |
+| `session.resolve_revert` | POST | `/api/commands/session.resolve_revert` | drive | yes |
+| `session.set_auto_continue` | POST | `/api/commands/session.set_auto_continue` | drive | yes |
+| `approval.answer` | POST | `/api/commands/approval.answer` | approve | yes |
+
+## 10. Session lifecycle
+
+The board shows the **lane** of a card (`CardStatus`, derived by the deck from the events). The station keeps the state of each **effect** (the outbox row of a command). The two diagrams show the lanes and the effect states. A lane never comes from a guess: each arrow is an event or a link state.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Queued: session.start accepted
+    Queued --> Working: turn.started
+    Queued --> Ended: start_failed (no process)
+    Working --> NeedsYou: open approval or question
+    NeedsYou --> Working: answer sent
+    Working --> Verifying: a test-runner tool runs
+    Verifying --> Working: the tool ends
+    Working --> Idle: turn.completed, no background work
+    Idle --> Working: prompt, steer or follow-up
+    Working --> Ended: session.ended
+    Idle --> Ended: stop, or the process exits
+    Working --> Lost: station restart, process gone
+    Idle --> Lost: station restart, process gone
+    Lost --> Queued: resume (native resume)
+    Working --> Unreachable: station link down
+    Idle --> Unreachable: station link down
+    NeedsYou --> Unreachable: station link down
+    Unreachable --> Working: link up, state replayed
+    Unreachable --> Idle: link up, state replayed
+    Ended --> [*]
+```
+
+An `Unreachable` card shows the last known lane. A command for an unreachable station waits in the deck outbox and goes out when the link is up (`retry_until`). A deck or network failure never stops the session (A10).
+
+```mermaid
+stateDiagram-v2
+    [*] --> queued: the decision commits the effect with its events
+    queued --> claimed: the effect worker claims it (fence)
+    claimed --> confirmed: the I/O is the provider acceptance (Dispatch::Confirmed)
+    claimed --> sent: the I/O happened, wait for evidence (Dispatch::Sent)
+    sent --> confirmed: provider evidence
+    claimed --> retired_not_dispatched: refused before any I/O (NotDispatched)
+    claimed --> outcome_unknown: the I/O failed half-way, or a restart found it claimed
+    queued --> retired_not_dispatched: the process died before dispatch (station start)
+    claimed --> claimed: Dispatch::Deferred, the target settles it later (setup command, DL-148)
+    confirmed --> [*]
+    retired_not_dispatched --> [*]
+    outcome_unknown --> [*]
+```
+
+`sent` is the in-memory step between the write and the evidence; the stored states are `queued`, `claimed`, `confirmed`, `retired_not_dispatched` and `outcome_unknown` (`crates/fleetdeck-station/src/store/effects.rs`). An effect in `outcome_unknown` is never replayed. The board shows it as unknown, and the owner decides.
+
+## 11. Stored tables (station.db and deck.db)
+
+The real tables, from the migrations (`store/schema.rs` of each crate). `PLAN.md` §10 is reconciled with this list (DL-162).
+
+**station.db** (20 migrations; V4 is `fleetdeck_link::LINK_EPOCHS_SQL`)
+
+| Migration | Tables (and columns that later migrations add) |
+| --- | --- |
+| V1 | `meta`, `pairing`, `deck_acks`, `sessions`, `events`, `commands`, `shells` |
+| V2 | `processes`, `effects`, `runtime_requests`; `meta.worker_fence` |
+| V3 | `meta.revocation_generation`; `pairing.fingerprint`, `pairing.role`, `pairing.scopes` |
+| V4 | `link_epochs` |
+| V5 | `listen_addrs` |
+| V6 | `turn_checkpoints` |
+| V7, V8 | `reverts` (V8 rebuilds it); `turn_checkpoints.reverted_by` |
+| V9 to V15 | `shims`, `shim_writes`, `shim_frames`, `shim_transitions`; columns `shims.input_blocked`, `shims.adapter_checkpoint`, `shims.adapter_gap`, `shims.protocol`, `shim_writes.frames`, `runtime_requests.time_proven` |
+| V16, V18 | `shell_effects` (V18 rebuilds it) |
+| V17 | `coordinator_outbox` |
+| V19 | `setup_runs` (DL-148) |
+| V20 | `worktree_ops` (DL-150) |
+
+**deck.db** (12 migrations; V2 is `fleetdeck_link::LINK_EPOCHS_SQL`)
+
+| Migration | Tables (and columns that later migrations add) |
+| --- | --- |
+| V1 | `meta`, `stations`, `sessions`, `timeline` |
+| V2 | `link_epochs` |
+| V3 | `commands` |
+| V4 | `outbox`, `coordinator_receipts` |
+| V5 | `owner`, `login_sessions`, `login_links`, `api_tokens`, `audit` |
+| V6 | `plans` |
+| V7 | `mail`, `tasks` |
+| V8 | `file_touches` |
+| V9 to V11 | `tokens`, `coordinator_lineage`; `tokens.renew_generation`, `tokens.start_command_id` |
+| V12 | `archived_sessions`, `archive_mutations` (DL-149) |
+
+The grants and the revocation generation of the sketch are columns (`pairing.role`, `pairing.scopes`, `meta.revocation_generation`) and the `tokens` table, not separate `links` and `grants` tables. Raw provider frames are not a table (bounded log files per session, L12).

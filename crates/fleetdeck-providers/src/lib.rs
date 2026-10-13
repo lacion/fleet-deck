@@ -13,6 +13,7 @@ pub mod durable;
 pub mod host;
 pub mod rawlog;
 mod stdio;
+pub mod version;
 
 pub use adapter::{
     Answer, AuthState, ControlId, Emitted, EventSink, HostInput, LiveSession, ModelId,

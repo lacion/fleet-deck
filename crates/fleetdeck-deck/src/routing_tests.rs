@@ -41,6 +41,7 @@ fn station(name: &str, reachable: bool, max: Option<u32>, live: u64, auth: &str)
                 version: Some("2.1.0".to_owned()),
                 auth: auth.to_owned(),
                 capabilities: None,
+                version_status: Default::default(),
             }],
         }),
         info_at: None,

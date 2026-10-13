@@ -2,6 +2,12 @@
 //! sans-IO core that maps `claude -p` stream-json frames to canonical events,
 //! and the process driver that wraps the core in a [`crate::LiveSession`].
 
+/// The oldest `claude` version that the recorded fixtures cover (their
+/// `init` frames report it; R8.2, DL-162).
+pub const TESTED_MIN_VERSION: &str = "2.1.289";
+/// `claude` versions that are known to break the protocol (none yet).
+pub const KNOWN_BROKEN: &[&str] = &[];
+
 pub mod args;
 pub mod control;
 pub mod driver;

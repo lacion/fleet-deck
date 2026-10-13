@@ -38,7 +38,7 @@ use std::time::Duration;
 use fleetdeck_core::config::{Driver, StationConfig};
 use fleetdeck_core::{ChildEnv, SharedIds};
 use fleetdeck_proto::command::{CommandEnvelope, SessionCommand, StopMode};
-use fleetdeck_proto::link::StationProvider;
+use fleetdeck_proto::link::{StationProvider, VersionStatus};
 use fleetdeck_providers::claude::{ClaudeAdapter, ClaudeAdapterConfig, RawLogSettings};
 use fleetdeck_providers::codex::{CodexAdapter, CodexAdapterConfig};
 use fleetdeck_providers::host::SessionHost;
@@ -326,6 +326,12 @@ impl SessionManager {
                         Some(AuthState::Unknown) | None => "unknown",
                     };
                     let version = probe.and_then(|p| p.version);
+                    let version_status =
+                        fleetdeck_providers::version::version_status(*kind, version.as_deref());
+                    if version_status == VersionStatus::Broken {
+                        // Starts of this instance are refused (R8.2, DL-162).
+                        self.target.mark_broken(instance, *kind);
+                    }
                     if let Some(v) = &version {
                         // The coordinator handoff check (DL-219).
                         self.policy
@@ -338,6 +344,7 @@ impl SessionManager {
                         version,
                         auth: auth.to_owned(),
                         capabilities: self.target.adapter(instance).map(|a| a.capabilities()),
+                        version_status,
                     });
                 }
                 out
@@ -489,3 +496,7 @@ mod coordinator_start_tests;
 #[cfg(test)]
 #[path = "coordinator_live_tests.rs"]
 mod coordinator_live_tests;
+
+#[cfg(test)]
+#[path = "version_tests.rs"]
+mod version_tests;

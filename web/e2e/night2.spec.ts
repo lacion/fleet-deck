@@ -23,6 +23,7 @@ const alpha = stationView('st-alpha', 'Alpha', {
         provider: 'claude',
         version: '2.1.5',
         auth: 'signed_in',
+        version_status: 'unknown',
         capabilities: claudeCaps(),
       },
     ],

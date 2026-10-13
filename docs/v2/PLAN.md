@@ -543,43 +543,54 @@ The adversary agent does a DESIGN REVIEW of this section and of §8 before Phase
 
 ---
 
-## 10. Data model (first sketch)
+## 10. Data model
+
+> **Reconciled with the real migrations (DL-162, R9.4).** This section started as a first sketch. The tables below are the tables that `crates/fleetdeck-station/src/store/schema.rs` (20 migrations) and `crates/fleetdeck-deck/src/store/schema.rs` (12 migrations) create. Where the sketch named a table or a column that was built differently, the line says so. `docs/v2/internals.md` §11 lists the tables by migration number.
 
 **station.db**
 
 | Table | Key columns |
 | --- | --- |
-| `meta` | `incarnation_id`, `station_seq_next`, identity key reference |
-| `pairing` | `deck_key`, `deck_url?`, `paired_at` |
-| `links` | link state (G1, G5): `link_epochs` (`peer_key`, `epoch`: the dialer's per-peer counter and the listener's highest accepted epoch), `grants` (`peer_key`, `scope`), `revocation_generation` |
+| `meta` | `incarnation_id`, `station_seq_next`, `worker_fence`, `revocation_generation`, identity key reference |
+| `pairing` | `deck_key`, `dial_url`, `fingerprint`, `role`, `scopes`, `paired_at`. The sketch's `links` grants are these columns; the dialer and listener epochs are the separate `link_epochs` table (G1, G5). |
+| `deck_acks` | `deck_key`, the highest `station_seq` that the deck acknowledged |
+| `link_epochs` | `peer_key`, dial epoch, accepted epoch (V4, from `fleetdeck-link`) |
+| `listen_addrs` | the addresses that `station invite --listen` added (V5, DL-048) |
 | `sessions` | `session_id`, `provider`, `native_session_id`, `cwd`, `worktree`, `mode`, `state`, `offline_approval_policy`, `created_at` |
 | `events` | `station_seq` PK, `session_id`, `session_seq`, `kind`, `payload` JSON (incl. `provider_refs`), `raw_ref?`, `at` |
+| `commands` | receipts: `command_id` PK, `method`, `state: accepted|rejected`, `station_seq`, `result` JSON, `at` |
+| `processes` | one row per provider process incarnation (V2) |
 | `effects` | outbox of the effect worker: `effect_id`, `command_id`, `session_id`, `process_incarnation`, `kind`, `payload`, `state: queued|claimed|confirmed|retired_not_dispatched|outcome_unknown`, `fence_token?`, `reason?` |
-| `runtime_requests` | `request_id`, `session_id`, `node_id?`, `kind`, `options` JSON (native option ids), `response_channel`, `state: open|resolved|expired`, `receipt?` |
+| `runtime_requests` | `request_id`, `session_id`, `node_id?`, `kind`, `options` JSON (native option ids), `response_channel`, `state: open|resolved|expired`, `receipt?`, `time_proven` |
+| `shells`, `shell_effects` | human shells (`shell_id`, `cwd`, `state`, `created_at`; scrollback stays in memory) and their effect outbox (V16, V18) |
+| `turn_checkpoints`, `reverts` | the turn checkpoint rows (V6) and the revert records (V7, V8). The sketch's `checkpoints` is `turn_checkpoints`. |
+| `shims`, `shim_writes`, `shim_frames`, `shim_transitions` | the ShimHost state (V9 to V15, DL-113) |
+| `coordinator_outbox` | durable coordinator commands (V17, DL-218) |
+| `setup_runs` | the process group of a running setup command (V19, DL-148) |
+| `worktree_ops` | worktree trash operations (V20, DL-150). The sketch's `repos` and `worktrees` tables do not exist: the station reads repositories and worktrees from Git, and `sessions.worktree` names the folder. |
 
 Raw provider frames are not a table: bounded rotating log files per session (L12).
-| `shells` | `shell_id`, `cwd`, `state`, `created_at` (scrollback stays in memory) |
-| `commands` | receipts: `command_id` PK, `method`, `state: accepted|rejected`, `station_seq`, `result` JSON, `at` |
-| `repos`, `worktrees`, `checkpoints` | workspace data |
 
 **deck.db**
 
 | Table | Key columns |
 | --- | --- |
 | `meta` | `incarnation_id` (targeted by `coordinator.call`, ADR-004 §9.3), identity key reference |
-| `owner`, `login_sessions` | auth |
+| `owner`, `login_sessions`, `login_links`, `api_tokens` | auth (V5). `api_tokens` are the board API tokens. |
 | `stations` | `station_id`, `name`, `key`, `role`, `dial_url?`, `direction`, `last_seen`, `incarnation_id`, `cursor` |
 | `sessions` | read model: `session_id`, `station_id`, `callsign`, `provider`, `status`, `model`, `repo_group`, ... |
 | `timeline` | condensed per-session timeline for the board |
 | `commands` | `command_id`, `station_id`, `state: pending|done|failed|ambiguous`, `origin`, the stored envelope (`target_incarnation`, `retry_until`, G3), `sent_at?` |
-| `links` | `link_epochs`, `grants`, `revocation_generation` as in station.db (G1, G5) |
+| `link_epochs` | as in station.db (G1, G5). The sketch's `links` table. |
 | `coordinator_receipts` | receipts of mutating `coordinator.call` commands, same rules as station receipts (G7) |
 | `outbox` | `command_id`, `station_id`, `kind`, `payload`, `attempts`, `next_at`, `expires_at` |
-| `mail`, `plans`, `tasks`, `completions` | fleet intent |
+| `mail`, `plans`, `tasks` | fleet intent. The sketch's `completions` are columns of `tasks` (`state`, `result`, `completed_at`). |
 | `file_touches` | conflict radar input |
-| `tokens` | coordinator token classes and caps |
+| `tokens`, `coordinator_lineage` | coordinator grants with their class, caps and generation (V9 to V11). The sketch's `tokens` table. |
 | `audit` | every mutation: who, what, when, result |
-| `settings` | deck settings |
+| `archived_sessions`, `archive_mutations` | the archive set and its idempotent mutation ids (V12, DL-149) |
+
+The sketch's deck `settings` table does not exist: deck settings are in `deck.toml`.
 
 ---
 
