@@ -158,6 +158,11 @@ fn station_error(code: &str) -> ApiError {
             "device_flow_unsupported",
             "this CLI or server has no device login; use a token",
         ),
+        "login_busy" => fixed(
+            StatusCode::CONFLICT,
+            "login_busy",
+            "this station already runs three logins; finish or cancel one first",
+        ),
         "unexpected_cli_output" => fixed(
             StatusCode::BAD_GATEWAY,
             "unexpected_cli_output",
