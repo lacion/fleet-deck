@@ -126,6 +126,8 @@ pub struct SessionManager {
     draining: std::sync::atomic::AtomicBool,
     /// The shells of the station, once the link node set them (DL-150).
     shells: target::ShellsSlot,
+    /// The artifact service, once the station gave it a directory (DL-165).
+    artifacts: std::sync::OnceLock<crate::artifacts::ArtifactService>,
 }
 
 impl std::fmt::Debug for SessionManager {
@@ -276,6 +278,7 @@ impl SessionManager {
             providers: tokio::sync::OnceCell::new(),
             draining: std::sync::atomic::AtomicBool::new(false),
             shells,
+            artifacts: std::sync::OnceLock::new(),
         })
     }
 
@@ -284,6 +287,24 @@ impl SessionManager {
     /// (DL-150). The first call wins.
     pub fn set_shells(&self, shells: Arc<crate::shell::Shells>) {
         self.shells.set(shells);
+    }
+
+    /// Gives the manager the directory of the artifact bytes (DL-165). The
+    /// first call wins; without it the artifact methods answer
+    /// `unsupported`.
+    pub fn set_artifacts_dir(&self, root: PathBuf) {
+        let service = crate::artifacts::ArtifactService::new(
+            self.store.clone(),
+            Arc::clone(&self.policy),
+            root,
+        );
+        let _ = self.artifacts.set(service);
+    }
+
+    /// The artifact service, if the station has a directory for it.
+    #[must_use]
+    pub fn artifacts(&self) -> Option<&crate::artifacts::ArtifactService> {
+        self.artifacts.get()
     }
 
     #[must_use]

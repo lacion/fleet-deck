@@ -496,6 +496,41 @@ CREATE UNIQUE INDEX worktree_ops_open ON worktree_ops(session_id)
     WHERE state NOT IN ('restored', 'purged', 'released');
 ";
 
+const V21: &str = "
+-- R12, DL-165: artifacts. The bytes of a version live under
+-- `<station data>/artifacts/<artifact_id>/<version>/`; these rows are the
+-- index. `manifest_sha256` is the hash of the bundle's path and file hashes,
+-- so a publish of identical content makes no new version. A suggestion row
+-- keeps `artifact.suggested` to one per path and session.
+CREATE TABLE artifacts (
+    artifact_id    TEXT    PRIMARY KEY,
+    session_id     TEXT,
+    title          TEXT    NOT NULL,
+    kind           TEXT    NOT NULL,
+    latest_version INTEGER NOT NULL,
+    author         TEXT    NOT NULL,
+    created_at     INTEGER NOT NULL,
+    updated_at     INTEGER NOT NULL
+);
+CREATE INDEX artifacts_by_session ON artifacts (session_id, updated_at);
+CREATE TABLE artifact_versions (
+    artifact_id     TEXT    NOT NULL REFERENCES artifacts (artifact_id),
+    version         INTEGER NOT NULL,
+    size            INTEGER NOT NULL,
+    sha256          TEXT    NOT NULL,
+    manifest_sha256 TEXT    NOT NULL,
+    files           TEXT    NOT NULL,
+    created_at      INTEGER NOT NULL,
+    PRIMARY KEY (artifact_id, version)
+);
+CREATE TABLE artifact_suggestions (
+    session_id TEXT    NOT NULL,
+    path       TEXT    NOT NULL,
+    at         INTEGER NOT NULL,
+    PRIMARY KEY (session_id, path)
+);
+";
+
 /// The `station.db` migrations. V4 is the link epochs table of
 /// `fleetdeck-link` (G1).
 #[must_use]
@@ -521,6 +556,7 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V18),
         M::up(V19),
         M::up(V20),
+        M::up(V21),
     ])
 }
 

@@ -61,6 +61,10 @@ pub mod feature {
     /// base commit (R1.2).
     pub const SESSION_DIFF: &str = "files.session_diff.v1";
 
+    /// `artifacts.publish`, `artifacts.list`, `artifacts.get` and
+    /// `artifacts.file`: the artifact service (R12, DL-165).
+    pub const ARTIFACTS: &str = "artifacts.v1";
+
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
         CONTROL,
@@ -80,6 +84,7 @@ pub mod feature {
         WRITE_TEMP,
         TRASH,
         SESSION_DIFF,
+        ARTIFACTS,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];

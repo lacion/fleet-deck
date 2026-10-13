@@ -32,6 +32,14 @@ pub trait Forward: Send + Sync {
     async fn call(&self, caller: Caller, tool: &str, args: Value) -> Result<Value, String>;
 }
 
+/// The station side of the session's own tools (`publish_artifact`,
+/// `set_focus`, `ask_coordinator`; DL-165): the station answers them, the
+/// deck is not asked.
+#[async_trait]
+pub trait FleetTools: Send + Sync {
+    async fn call(&self, caller: Caller, tool: &str, args: Value) -> Result<Value, String>;
+}
+
 /// The resource limits of §5.1. Tests use shorter times.
 #[derive(Debug, Clone)]
 pub struct Limits {
@@ -58,6 +66,7 @@ struct Shared {
     port: u16,
     bindings: Bindings,
     forward: Arc<dyn Forward>,
+    fleet: Option<Arc<dyn FleetTools>>,
     unauth: Arc<Semaphore>,
     limits: Limits,
 }
@@ -75,12 +84,24 @@ impl Ingress {
         forward: Arc<dyn Forward>,
         limits: Limits,
     ) -> std::io::Result<Self> {
+        Self::start_with(bindings, forward, None, limits).await
+    }
+
+    /// [`Ingress::start`] with the station's own tools for every session
+    /// (DL-165). Without them a call of such a tool is an error.
+    pub async fn start_with(
+        bindings: Bindings,
+        forward: Arc<dyn Forward>,
+        fleet: Option<Arc<dyn FleetTools>>,
+        limits: Limits,
+    ) -> std::io::Result<Self> {
         let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
         let addr = listener.local_addr()?;
         let shared = Arc::new(Shared {
             port: addr.port(),
             bindings,
             forward,
+            fleet,
             unauth: Arc::new(Semaphore::new(limits.unauthenticated)),
             limits,
         });
@@ -246,7 +267,14 @@ async fn handle(req: Request<Incoming>, shared: &Shared) -> Response<String> {
     if msg.is_array() {
         return plain(StatusCode::BAD_REQUEST);
     }
-    match jsonrpc::answer(msg, &binding, shared.forward.as_ref()).await {
+    match jsonrpc::answer(
+        msg,
+        &binding,
+        shared.forward.as_ref(),
+        shared.fleet.as_deref(),
+    )
+    .await
+    {
         Answer::Accepted => plain(StatusCode::ACCEPTED),
         Answer::Json(v) => json(StatusCode::OK, &v),
     }

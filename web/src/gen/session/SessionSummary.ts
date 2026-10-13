@@ -97,6 +97,16 @@ models?: Array<ModelChoice>,
  */
 base?: SessionBase, 
 /**
+ * How many artifacts the session published (R12, DL-165). Absent in
+ * an older summary.
+ */
+artifacts_count: number, 
+/**
+ * The one-line focus that the session set with `set_focus` (R6,
+ * DL-165). Absent before the first one, and after an empty one.
+ */
+focus?: string, 
+/**
  * The highest `session_seq` folded into this summary.
  */
 session_seq: number, 

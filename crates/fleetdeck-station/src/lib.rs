@@ -8,6 +8,9 @@ pub mod host {
     pub use fleetdeck_providers::host::*;
 }
 
+/// Artifacts: versioned files that a session or a person publishes (R12).
+pub mod artifacts;
+
 /// Crash injection at the effect boundaries (M2 P2-8).
 /// The coordinator MCP endpoint (M3 6-5, ADR-006).
 pub mod coordinator;

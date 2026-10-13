@@ -135,6 +135,32 @@ impl StationNode {
         shells: Arc<Shells>,
         paste_dir: Option<std::path::PathBuf>,
     ) -> Result<Arc<Self>, NodeError> {
+        Self::start_with_dirs(
+            manager, identity, name, listen, backoff, shells, paste_dir, None,
+        )
+        .await
+    }
+
+    /// [`StationNode::start_with_paste_dir`] with the artifact directory
+    /// (DL-165). Without it the artifact methods answer `unsupported` and
+    /// `publish_artifact` fails.
+    ///
+    /// # Errors
+    /// As [`StationNode::start`].
+    #[allow(clippy::too_many_arguments)]
+    pub async fn start_with_dirs(
+        manager: Arc<SessionManager>,
+        identity: Arc<Identity>,
+        name: String,
+        listen: &[SocketAddr],
+        backoff: BackoffPolicy,
+        shells: Arc<Shells>,
+        paste_dir: Option<std::path::PathBuf>,
+        artifacts_dir: Option<std::path::PathBuf>,
+    ) -> Result<Arc<Self>, NodeError> {
+        if let Some(dir) = artifacts_dir {
+            manager.set_artifacts_dir(dir);
+        }
         // The trash decisions and the file work read the open shells
         // (DL-150).
         manager.set_shells(Arc::clone(&shells));
@@ -152,9 +178,13 @@ impl StationNode {
         let bindings = manager.policy().coordinator_bindings().clone();
         // The durable coordinator outbox (ADR-006 §6.5, DL-218).
         let forward = crate::coordinator::LinkForward::with_outbox(store.clone(), bindings.clone());
-        let coordinator = crate::coordinator::Ingress::start(
+        // The session's own tools are answered by the station (DL-165).
+        let fleet =
+            crate::artifacts::fleet::StationFleet::new(store.clone(), manager.artifacts().cloned());
+        let coordinator = crate::coordinator::Ingress::start_with(
             bindings.clone(),
             Arc::new(forward.clone()),
+            Some(Arc::new(fleet)),
             crate::coordinator::Limits::default(),
         )
         .await

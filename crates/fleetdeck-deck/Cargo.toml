@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 ring = { workspace = true }
+base64 = { workspace = true }
 axum = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }

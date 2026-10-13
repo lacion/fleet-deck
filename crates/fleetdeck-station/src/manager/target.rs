@@ -279,8 +279,17 @@ impl SessionTarget {
                 .await;
             return Dispatch::NotDispatched(REASON_RESUME_UNSUPPORTED.into());
         }
+        let fleet_only = spec.coordinator.is_none();
         let coordinator = match spec.coordinator.as_deref() {
-            None => None,
+            // A session without a grant gets the session's own tools when
+            // its provider can take the handoff (DL-165).
+            None => super::coordinator_start::prepare_fleet(
+                &self.coordinator,
+                adapter.kind(),
+                &session_id,
+                spec,
+                resume.is_some() || self.shims.is_some(),
+            ),
             Some(c) => match super::coordinator_start::prepare(
                 &self.coordinator,
                 adapter.kind(),
@@ -334,7 +343,21 @@ impl SessionTarget {
                 let native = NativeSessionId(native.to_owned());
                 adapter.resume(&native, spec.clone(), sink).await
             }
-            (None, Some(launch)) => adapter.start_coordinated(spec.clone(), sink, launch).await,
+            (None, Some(launch)) => {
+                match adapter
+                    .start_coordinated(spec.clone(), sink.clone(), launch)
+                    .await
+                {
+                    // An adapter that cannot take the handoff still starts a
+                    // session that asked for no grant (DL-165).
+                    Err(ProviderError::CoordinatorHandoff(why)) if fleet_only => {
+                        tracing::debug!(reason = why, "no session tools for this start");
+                        self.coordinator.revoke_session(&session_id);
+                        adapter.start(spec.clone(), sink).await
+                    }
+                    other => other,
+                }
+            }
             (None, None) => adapter.start(spec.clone(), sink).await,
         };
         let mut session = match started {
@@ -727,6 +750,7 @@ async fn pump(
             tracing::error!(error = %e, "coordinator binding facts not stored; closing the session");
             break;
         }
+        crate::artifacts::suggest::observe(&store, &session_id, &observed).await;
         if turns.observe(&observed).await {
             tokio::spawn(Arc::clone(&turns).capture_due());
         }

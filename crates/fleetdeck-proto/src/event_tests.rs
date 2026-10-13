@@ -243,6 +243,18 @@ fn samples() -> Vec<Event> {
             oid: "0123456789abcdef0123456789abcdef01234567".into(),
             inferred: false,
         },
+        Event::ArtifactPublished {
+            artifact_id: "art-1".into(),
+            version: 1,
+            title: "Design".into(),
+            artifact_kind: crate::artifacts::ArtifactKind::Html,
+        },
+        Event::ArtifactSuggested {
+            path: "out/report.html".into(),
+        },
+        Event::SessionFocus {
+            text: "fixing the login test".into(),
+        },
     ]
 }
 

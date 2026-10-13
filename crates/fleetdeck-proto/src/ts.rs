@@ -12,6 +12,12 @@ use std::path::{Path, PathBuf};
 
 use ts_rs::{Config, TS};
 
+use crate::artifacts::{
+    Artifact, ArtifactDetail, ArtifactFile, ArtifactFileQuery, ArtifactGetQuery, ArtifactKind,
+    ArtifactList, ArtifactListQuery, ArtifactPublish, ArtifactPublishRequest, ArtifactPublished,
+    ArtifactVersion, DeckArtifact, DeckArtifactDetail, ShareLink, ShareRequest, ShareView,
+    ViewLink, ViewRequest,
+};
 use crate::board::{
     AddStationRequest, ArchiveChange, ArchiveItem, ArchiveList, ArchiveRef, BoardClientMessage,
     BoardServerMessage, CommandRequest, DeckCommand, DeckSession, DeviceLink, DeviceLinkEntry,
@@ -128,6 +134,25 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         FileConflict::export_all(&cfg),
         PlanStatus::export_all(&cfg),
         PlanMarkRequest::export_all(&cfg),
+        Artifact::export_all(&cfg),
+        ArtifactKind::export_all(&cfg),
+        ArtifactVersion::export_all(&cfg),
+        ArtifactPublish::export_all(&cfg),
+        ArtifactPublished::export_all(&cfg),
+        ArtifactListQuery::export_all(&cfg),
+        ArtifactList::export_all(&cfg),
+        ArtifactGetQuery::export_all(&cfg),
+        ArtifactDetail::export_all(&cfg),
+        ArtifactFileQuery::export_all(&cfg),
+        ArtifactFile::export_all(&cfg),
+        ArtifactPublishRequest::export_all(&cfg),
+        DeckArtifact::export_all(&cfg),
+        DeckArtifactDetail::export_all(&cfg),
+        ShareRequest::export_all(&cfg),
+        ShareLink::export_all(&cfg),
+        ShareView::export_all(&cfg),
+        ViewRequest::export_all(&cfg),
+        ViewLink::export_all(&cfg),
     ];
     for result in results {
         result.map_err(io::Error::other)?;

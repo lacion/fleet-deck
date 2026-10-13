@@ -2,8 +2,9 @@
 
 use serde_json::{Value, json};
 
+use super::bindings::ToolClass;
 use super::bindings::{Binding, BindingState};
-use super::ingress::Forward;
+use super::ingress::{FleetTools, Forward};
 use super::tools;
 
 /// The MCP protocol versions that the station accepts. `2025-11-25` is
@@ -32,7 +33,12 @@ fn tool_text(text: &str, is_error: bool) -> Value {
 }
 
 /// Answer one JSON-RPC message of an authenticated binding.
-pub async fn answer(msg: Value, binding: &Binding, forward: &dyn Forward) -> Answer {
+pub async fn answer(
+    msg: Value,
+    binding: &Binding,
+    forward: &dyn Forward,
+    fleet: Option<&dyn FleetTools>,
+) -> Answer {
     let Some(id) = msg.get("id").cloned() else {
         return Answer::Accepted;
     };
@@ -66,7 +72,17 @@ pub async fn answer(msg: Value, binding: &Binding, forward: &dyn Forward) -> Ans
                 ),
                 Some(tool) => match (binding.state, binding.caller()) {
                     (BindingState::Active, Some(caller)) => {
-                        match forward.call(caller, tool.name, args).await {
+                        let outcome = if tool.class == ToolClass::Own {
+                            match fleet {
+                                Some(fleet) => fleet.call(caller, tool.name, args).await,
+                                None => {
+                                    Err("unavailable: this station has no session tools".to_owned())
+                                }
+                            }
+                        } else {
+                            forward.call(caller, tool.name, args).await
+                        };
+                        match outcome {
                             Ok(v) => result(&id, tool_text(&v.to_string(), false)),
                             Err(e) => result(&id, tool_text(&e, true)),
                         }

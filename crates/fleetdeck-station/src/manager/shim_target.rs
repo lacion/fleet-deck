@@ -505,6 +505,7 @@ async fn observe(
             })
             .collect();
         let ended = observed.iter().any(Event::is_terminal_for_session);
+        crate::artifacts::suggest::observe(&store, &session_id, &observed).await;
         if !observed.is_empty() && turns.observe(&observed).await {
             tokio::spawn(Arc::clone(&turns).capture_due());
         }

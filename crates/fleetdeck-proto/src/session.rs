@@ -123,6 +123,15 @@ pub struct SessionSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub base: Option<SessionBase>,
+    /// How many artifacts the session published (R12, DL-165). Absent in
+    /// an older summary.
+    #[serde(default)]
+    pub artifacts_count: u32,
+    /// The one-line focus that the session set with `set_focus` (R6,
+    /// DL-165). Absent before the first one, and after an empty one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub focus: Option<String>,
     /// The highest `session_seq` folded into this summary.
     pub session_seq: u64,
     /// Unix ms of the last folded event.
@@ -163,6 +172,8 @@ impl SessionSummary {
             terminal: None,
             models: None,
             base: None,
+            artifacts_count: 0,
+            focus: None,
             session_seq: 0,
             updated_at: 0,
         }

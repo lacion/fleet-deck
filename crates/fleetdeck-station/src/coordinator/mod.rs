@@ -17,7 +17,7 @@ pub mod tools;
 pub use bindings::{Binding, BindingState, Bindings, Caller, ToolClass, digest, mint};
 pub use forward::{LinkForward, Transport};
 pub use handoff::{Handoff, HandoffError};
-pub use ingress::{Forward, Ingress, Limits};
+pub use ingress::{FleetTools, Forward, Ingress, Limits};
 pub use outbox::CallOutbox;
 
 #[cfg(test)]

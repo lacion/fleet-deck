@@ -4,6 +4,7 @@
 //! The deck serves HTTPS itself ([`tls`]; D13: no reverse proxy, DL-054).
 
 pub mod archive_routes;
+pub mod artifact_routes;
 pub mod assets;
 pub mod assign_routes;
 pub mod auth_routes;
@@ -29,7 +30,7 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::middleware;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::sync::watch;
@@ -179,6 +180,25 @@ pub fn router(board: Arc<Board>) -> Router {
             "/api/coordinator/grants/{grant_id}/renew",
             post(grant_routes::renew),
         )
+        .route("/api/artifacts", get(artifact_routes::list))
+        .route("/api/artifacts/publish", post(artifact_routes::publish))
+        .route("/api/artifacts/{station}/{id}", get(artifact_routes::get))
+        .route(
+            "/api/artifacts/{station}/{id}/shares",
+            post(artifact_routes::share),
+        )
+        .route(
+            "/api/artifacts/{station}/{id}/shares/{token}",
+            delete(artifact_routes::revoke),
+        )
+        .route(
+            "/api/artifacts/{station}/{id}/view",
+            post(artifact_routes::view),
+        )
+        .route(
+            "/api/artifacts/{station}/{id}/{version}/raw/{*path}",
+            get(artifact_routes::raw),
+        )
         .route("/api/commands", get(read_routes::commands))
         .route(
             "/api/commands/{command_id}",
@@ -191,6 +211,11 @@ pub fn router(board: Arc<Board>) -> Router {
             Arc::clone(&board),
             guard::guard,
         ))
+        // The public share route is outside the guard: the token is its
+        // credential (DL-165).
+        .route("/a/{token}", get(artifact_routes::public_slash))
+        .route("/a/{token}/", get(artifact_routes::public_main))
+        .route("/a/{token}/{*path}", get(artifact_routes::public))
         .fallback(board_files)
         .with_state(board)
 }
