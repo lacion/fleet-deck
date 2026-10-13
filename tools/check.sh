@@ -36,6 +36,8 @@ run() {
         printf 'ok     exit=0  %s\n' "$*"
     else
         printf 'FAILED exit=%s %s   (log: %s)\n' "$code" "$*" "$log"
+        # The end of the log, so that a CI run shows the cause.
+        tail -n 60 "$log" | sed 's/^/    | /'
         failed=$((failed + 1))
     fi
     # A short summary of the run, if the log has one.
