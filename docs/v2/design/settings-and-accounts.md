@@ -46,9 +46,13 @@ Owner decisions, 2026-10-13:
   - **Write order [T1]:**
     1. Write each new secret under a fresh, never-reused name (`<name>-<random>`): an O_EXCL 0600 temp file, write, fsync, rename to the final name, fsync the `secrets/` directory.
     2. Only then run the TOML commit of 1.3, which points to the new name.
-    3. Only after the TOML rename succeeds, delete the secrets that no reference names any more: the old name, and a plain inline value that was moved. A crash before step 3 leaves an orphan secret file, which is harmless. The holder deletes orphans at its next start.
-    4. A crash between steps 1 and 2 leaves the old TOML, which still has its old reference or its inline value.
-  - **Tests:** a crash test simulates a stop after each step (1, 2, 3) and checks that the installed TOML always resolves to a complete secret.
+    3. Delete the secrets that no reference names any more (the old name) only after the TOML rename **and** the fsync of the config directory both succeeded. When that fsync fails (the "uncertain durability" case of 1.3), delete nothing: the old secret stays until a later save or a start can confirm durability [U1].
+    4. **Orphan collection** runs only under the holder lock, before the holder accepts saves. It first fsyncs the config file and its directory. Only when both succeed does it delete the secret files that the installed TOML does not reference. When the fsync fails, it deletes nothing and logs one warning.
+    5. **The store directory [U2]:** the holder creates `secrets/` at start (mode 0700), then fsyncs the new directory and its parent, and every newly created ancestor up to the data directory. A save that needs the store refuses with `secret_store_unavailable` until that succeeded. It never renames a TOML that points to a store whose directory entry is not durable.
+    6. A crash between steps 1 and 2 leaves the old TOML, which still has its old reference or its inline value.
+  - **Tests:**
+    - A crash test simulates a stop after each step, and a failed config-directory fsync followed by a cleanup, a restart and a power loss (simulated by restoring the pre-rename TOML). It checks that the TOML that can come back always resolves to a complete secret.
+    - A first-migration test runs with a missing `secrets/` directory.
   - The deck has no secret-bearing settings.
   - The response allowlist is enforced in the holder: the read path builds the answer from the field table, and only fields with `secret: false` are copied. A test sets a canary secret and asserts that it is absent from the read and save answers.
 - **CLI overrides [R13]:**
@@ -279,6 +283,6 @@ The holder runs one save at a time, under a per-holder async mutex. Inside the l
 | Wrong auth scheme for OAuth | typed account kinds with their own headers and origins (R10) |
 | Leaks in history, logs, dumps | 303 to a clean URL, no-store, no-referrer, fixed codes, no core dumps (R11) |
 | Stolen board session | a server-checked elevation (owner password or a local one-time code) for danger changes (R11, S3) |
-| Secrets written to station.toml | secret store in the data dir with TOML references; config files are private paths (S4); fresh-name secret write, fsync before the TOML commit, old secret removed after it (T1) |
+| Secrets written to station.toml | secret store in the data dir with TOML references; config files are private paths (S4); fresh-name secret write, fsync before the TOML commit; old secrets and orphans removed only after the TOML and its directory are durable; the store directory made durable at start (T1, U1, U2) |
 | argv overrides | CliOverride fields shown read-only; immutable startup context (R13) |
 | Jira PKCE assumption | confidential client with a bound state; PKCE only for Linear (R14) |
