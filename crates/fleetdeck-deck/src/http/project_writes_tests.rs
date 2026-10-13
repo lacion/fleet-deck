@@ -1,6 +1,8 @@
 //! Tests of the session starts and the key routing of a project.
 
-use fleetdeck_proto::integrations::{IssueSummary, PrFile, PrState, PrSummary};
+use fleetdeck_proto::integrations::{
+    IssueSummary, PrFile, PrHead, PrState, PrSummary, valid_branch,
+};
 
 use super::*;
 
@@ -145,7 +147,7 @@ fn a_project_template_replaces_the_default_prompt() {
 }
 
 #[test]
-fn a_review_start_uses_the_head_branch_the_files_and_the_description() {
+fn a_review_start_uses_the_fetched_head_the_files_and_the_description() {
     let p = project();
     let pr = PrDetail {
         summary: PrSummary {
@@ -176,6 +178,11 @@ fn a_review_start_uses_the_head_branch_the_files_and_the_description() {
     let mut req = request(1);
     req.issues.clear();
     req.review_of_pr = Some(9);
+    req.batch_id = "Batch-CH07".into();
+    let head = PrHead {
+        ref_name: "refs/fleetdeck/pr/9".into(),
+        oid: "abc1234def5678abc1234def5678abc1234def56".into(),
+    };
     let SessionCommand::Start {
         spec,
         prompt,
@@ -183,16 +190,17 @@ fn a_review_start_uses_the_head_branch_the_files_and_the_description() {
         issue,
         origin_text,
         ..
-    } = review_start(&p, &req, &pr)
+    } = review_start(&p, &req, &pr, &head)
     else {
         panic!("a start");
     };
     assert!(origin_text && issue.is_none());
     assert_eq!(spec.title.as_deref(), Some("Review #9 Add login"));
-    let Some(WorkspaceRequest::Worktree { branch, .. }) = workspace.as_deref() else {
+    let Some(WorkspaceRequest::Worktree { branch, base }) = workspace.as_deref() else {
         panic!("a worktree");
     };
-    assert_eq!(branch.as_deref(), Some("PROJ-5-login"));
+    assert_eq!(branch.as_deref(), Some("review/pr-9-abc1234-ch07"));
+    assert_eq!(base.as_deref(), Some("refs/fleetdeck/pr/9"));
     let text = prompt.unwrap().text;
     assert!(text.starts_with(DEFAULT_REVIEW_PROMPT));
     assert!(text.contains("src/a.rs (+3 -1)"));
@@ -240,4 +248,27 @@ fn a_title_with_control_characters_passes_the_station_checks() {
     assert_eq!(r.title, "Fix login now");
     assert!(r.check().is_ok());
     assert_eq!(issue_ref(&detail("PROJ-1", "  ")).title, "PROJ-1");
+}
+
+#[test]
+fn a_review_branch_is_new_for_every_head_and_batch_and_is_a_valid_name() {
+    let head = |oid: &str| PrHead {
+        ref_name: "refs/fleetdeck/pr/12".into(),
+        oid: oid.into(),
+    };
+    let a = review_branch(12, &head("0123456789abcdef"), "batch-AB_9");
+    assert_eq!(a, "review/pr-12-0123456-ab_9");
+    assert_ne!(
+        a,
+        review_branch(12, &head("fedcba9876543210"), "batch-AB_9")
+    );
+    assert_ne!(
+        a,
+        review_branch(12, &head("0123456789abcdef"), "batch-ZZ_9")
+    );
+    assert_eq!(
+        review_branch(1, &head("0123456789abcdef"), "x"),
+        "review/pr-1-0123456-x"
+    );
+    assert!(valid_branch(&a));
 }

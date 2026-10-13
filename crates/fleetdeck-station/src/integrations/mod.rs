@@ -17,6 +17,7 @@
 pub mod adf;
 pub mod asset;
 pub mod exec;
+pub mod fetch;
 pub mod forge;
 pub mod github;
 pub mod gitlab;
@@ -36,7 +37,8 @@ use std::time::{Duration, Instant};
 use fleetdeck_core::config::{TokenSource, TrackerConfig};
 use fleetdeck_proto::integrations::{
     Asset, AssetQuery, Binding, CliStatus, ForgeBinding, ForgeKind, IntegrationsStatus, IssueGet,
-    IssueList, IssueSearch, PrRef, PrsList, StatusQuery, TrackerBinding, TrackerStatus, code,
+    IssueList, IssueSearch, PrFetchHead, PrRef, PrsList, StatusQuery, TrackerBinding,
+    TrackerStatus, code,
 };
 use fleetdeck_proto::link::{Outcome, WireError};
 use serde::Serialize;
@@ -61,6 +63,7 @@ pub const METHODS: &[(&str, bool)] = &[
     ("prs.list", false),
     ("prs.get", false),
     ("prs.checks", false),
+    ("prs.fetch_head", false),
     ("prs.create", true),
     ("prs.comment", true),
     ("prs.review", true),
@@ -181,6 +184,17 @@ impl Integrations {
                 let q: PrRef = parse(&params)?;
                 q.check().map_err(invalid)?;
                 to_value(&self.forge(&q.forge).pr_checks(q.number).await?)
+            }
+            "prs.fetch_head" => {
+                let q: PrFetchHead = parse(&params)?;
+                q.check().map_err(invalid)?;
+                let cwd = resolve(&q.path).ok_or_else(|| {
+                    Fail::new(
+                        code::OUTSIDE_ROOTS,
+                        "the path is outside the allowed roots of this station",
+                    )
+                })?;
+                to_value(&fetch::fetch_head(&q, &cwd).await?)
             }
             _ => self.write(method, params, resolve).await,
         }

@@ -103,6 +103,14 @@ pub fn callsign_candidates(session_id: &str, start: u64, ticket: Option<&str>) -
 /// The longest branch or base name that the station takes.
 pub const MAX_REF_CHARS: usize = 200;
 
+/// The ref that `prs.fetch_head` makes (R3.7) is `refs/fleetdeck/pr/<n>`: a
+/// base under that prefix must end in 1 to 20 digits. Other bases are not
+/// restricted here.
+fn pr_base_ok(base: &str) -> bool {
+    base.strip_prefix("refs/fleetdeck/pr/")
+        .is_none_or(|n| (1..=20).contains(&n.len()) && n.bytes().all(|b| b.is_ascii_digit()))
+}
+
 /// Checks the branch choice of a worktree start by syntax only; Git
 /// validates the names again in the effect.
 ///
@@ -126,7 +134,9 @@ pub fn check_branch_choice(branch: Option<&str>, base: Option<&str>) -> Result<(
         {
             Err(invalid(format!("the branch name `{b}` is not valid")))
         }
-        (_, Some(base)) if !plain(base) => Err(invalid(format!("the base `{base}` is not valid"))),
+        (_, Some(base)) if !plain(base) || !pr_base_ok(base) => {
+            Err(invalid(format!("the base `{base}` is not valid")))
+        }
         _ => Ok(()),
     }
 }
@@ -530,7 +540,24 @@ mod tests {
             check_branch_choice(None, Some("main")).unwrap_err().message,
             "a base needs a branch"
         );
-        for bad in ["", "-x", "a b", "a\nb", "a\u{7f}", &long] {
+        assert_eq!(
+            check_branch_choice(Some("review/pr-7"), Some("refs/fleetdeck/pr/123")),
+            Ok(())
+        );
+        let digits = format!("refs/fleetdeck/pr/{}", "9".repeat(21));
+        for bad in [
+            "",
+            "-x",
+            "a b",
+            "a\nb",
+            "a\u{7f}",
+            &long,
+            "refs/fleetdeck/pr/x",
+            "refs/fleetdeck/pr/",
+            "refs/fleetdeck/pr/12a",
+            "refs/fleetdeck/pr/1/2",
+            &digits,
+        ] {
             let err = check_branch_choice(Some("x"), Some(bad)).unwrap_err();
             assert_eq!(err.message, format!("the base `{bad}` is not valid"));
         }

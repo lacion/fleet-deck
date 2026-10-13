@@ -23,15 +23,20 @@ pub fn valid_host(host: &str) -> bool {
     name_ok && port_ok
 }
 
-/// A repository path: 2 to 10 segments of `[A-Za-z0-9._-]`, none starting
-/// with `-` or `.`.
+/// A repository path: `owner/name` on GitHub; 2 to 20 segments on GitLab
+/// (groups and subgroups). A segment has 1 to 255 characters from
+/// `[A-Za-z0-9._-]`, does not start with `-` or `.`, and is not `.` or `..`.
 #[must_use]
-pub fn valid_repo(repo: &str) -> bool {
+pub fn valid_repo(kind: ForgeKind, repo: &str) -> bool {
     let parts: Vec<&str> = repo.split('/').collect();
+    let count = match kind {
+        ForgeKind::Github => 2..=2,
+        ForgeKind::Gitlab => 2..=20,
+    };
     repo.chars().count() <= MAX_NAME_CHARS
-        && (2..=10).contains(&parts.len())
+        && count.contains(&parts.len())
         && parts.iter().all(|p| {
-            !p.is_empty()
+            (1..=255).contains(&p.len())
                 && !p.starts_with(['-', '.'])
                 && p.bytes()
                     .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
@@ -136,10 +141,13 @@ impl ForgeBinding {
         if !valid_host(&self.host) {
             return Err("the forge host is not a valid host name");
         }
-        if !valid_repo(&self.repo) {
-            return Err(
-                "the repository must be owner/name (2 to 10 segments of letters, digits, . _ -)",
-            );
+        if !valid_repo(self.kind, &self.repo) {
+            return Err(match self.kind {
+                ForgeKind::Github => "the repository must be owner/name (letters, digits, . _ -)",
+                ForgeKind::Gitlab => {
+                    "the repository must be 2 to 20 segments of letters, digits, . _ -"
+                }
+            });
         }
         Ok(())
     }
@@ -337,5 +345,18 @@ impl PrRef {
     pub fn check(&self) -> Result<(), &'static str> {
         self.forge.check()?;
         check_number(self.number)
+    }
+}
+
+impl PrFetchHead {
+    /// # Errors
+    /// The reason text for a malformed field.
+    pub fn check(&self) -> Result<(), &'static str> {
+        self.forge.check()?;
+        check_number(self.number)?;
+        if !plain(&self.path, 4096) || !self.path.starts_with('/') {
+            return Err("the path must be an absolute path");
+        }
+        Ok(())
     }
 }

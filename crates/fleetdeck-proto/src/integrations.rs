@@ -360,6 +360,29 @@ pub struct PrRef {
     pub number: u64,
 }
 
+/// `prs.fetch_head` params: fetch the head of a pull request (also a fork
+/// head) into the repository at `path`, a repository on the station inside
+/// the allowed roots.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "integrations/")]
+pub struct PrFetchHead {
+    pub forge: ForgeBinding,
+    pub number: u64,
+    pub path: String,
+}
+
+/// The `prs.fetch_head` answer: the local ref that holds the head and the
+/// commit that it names.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "integrations/")]
+pub struct PrHead {
+    /// `refs/fleetdeck/pr/<number>`.
+    pub ref_name: String,
+    /// The full commit id.
+    pub oid: String,
+}
+
 // ----- Params of the write methods -----
 
 /// `prs.create` params. `path` is a repository on the station inside the
@@ -458,6 +481,8 @@ pub mod code {
     pub const OUTSIDE_ROOTS: &str = "outside_roots";
     /// The answer was too large or not in the expected form.
     pub const BAD_ANSWER: &str = "bad_answer";
+    /// A `git` call of the station failed (`prs.fetch_head`).
+    pub const FAILED: &str = "failed";
 }
 
 mod checks;

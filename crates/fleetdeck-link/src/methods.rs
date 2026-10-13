@@ -189,6 +189,15 @@ pub const METHODS: &[MethodSpec] = &[
         Some(feature::INTEGRATIONS),
         false,
     ),
+    // The fetch writes only a local ref of the repository (R3.7); it needs
+    // `drive` like a write, and it is not a receipt mutation.
+    m(
+        "prs.fetch_head",
+        DeckToStation,
+        Scope::Drive,
+        Some(feature::INTEGRATIONS),
+        false,
+    ),
     m(
         "prs.create",
         DeckToStation,
