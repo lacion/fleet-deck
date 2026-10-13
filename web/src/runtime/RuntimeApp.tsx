@@ -17,6 +17,7 @@ import type { Outcome } from '../session/commands';
 import type { Watch } from '../terminal/handover';
 import { archived } from '../ui/archive';
 import type { Connection } from './connection';
+import { deviceLinkAction } from './deviceLink';
 
 export function RuntimeApp({ connection }: { readonly connection: Connection }) {
   const state = useSyncExternalStore(
@@ -204,6 +205,7 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
     ...(state.error ? [{ text: state.error, tone: 'error' as const }] : []),
     ...(logoutError ? [{ text: logoutError, tone: 'error' as const }] : []),
   ];
+  const addDevice = deviceLinkAction((path, body) => connection.post(path, body));
   const chrome: Chrome = {
     label,
     freshness: state.freshness,
@@ -217,6 +219,8 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
     },
     notices,
     version: state.login.deck_version,
+    // DL-146: the deck answers 403 `owner_only` for a token login.
+    addDevice: canAdmin ? addDevice : undefined,
   };
   return (
     <App
