@@ -53,6 +53,44 @@ fn unique() -> Result<String, ArtifactError> {
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
+/// The inline publish of the `publish_artifact` tool (DL-177).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContentPublish {
+    pub session_id: Option<SessionId>,
+    /// The file name, for example `report.html`.
+    pub name: String,
+    /// The text of the file.
+    pub content: String,
+    pub title: Option<String>,
+    /// Makes a new version of this artifact.
+    pub artifact_id: Option<String>,
+    pub author: Option<String>,
+}
+
+fn check_author(author: Option<&str>) -> Result<String, ArtifactError> {
+    match author.map(str::trim) {
+        None => Ok(AUTHOR_OWNER.to_owned()),
+        Some(a) if !a.is_empty() && a.chars().count() <= MAX_AUTHOR_CHARS && no_control(a) => {
+            Ok(a.to_owned())
+        }
+        Some(_) => Err(ArtifactError::new(
+            code::INVALID_PARAMS,
+            "`author` has 1 to 64 characters and no control character",
+        )),
+    }
+}
+
+fn check_title(title: Option<&str>) -> Result<Option<String>, ArtifactError> {
+    match title.map(str::trim) {
+        None | Some("") => Ok(None),
+        Some(t) if no_control(t) => Ok(Some(t.chars().take(MAX_TITLE_CHARS).collect())),
+        Some(_) => Err(ArtifactError::new(
+            code::INVALID_PARAMS,
+            "`title` has no control character",
+        )),
+    }
+}
+
 impl ArtifactService {
     /// A service that keeps its bytes in `root`. Leftovers of a publish
     /// that a crash interrupted are removed.
@@ -174,28 +212,8 @@ impl ArtifactService {
     /// # Errors
     /// [`ArtifactError`] with a code of [`code`].
     pub async fn publish(&self, req: ArtifactPublish) -> Result<ArtifactPublished, ArtifactError> {
-        let author = match req.author.as_deref().map(str::trim) {
-            None => AUTHOR_OWNER.to_owned(),
-            Some(a) if !a.is_empty() && a.chars().count() <= MAX_AUTHOR_CHARS && no_control(a) => {
-                a.to_owned()
-            }
-            Some(_) => {
-                return Err(ArtifactError::new(
-                    code::INVALID_PARAMS,
-                    "`author` has 1 to 64 characters and no control character",
-                ));
-            }
-        };
-        let title = match req.title.as_deref().map(str::trim) {
-            None | Some("") => None,
-            Some(t) if no_control(t) => Some(t.chars().take(MAX_TITLE_CHARS).collect::<String>()),
-            Some(_) => {
-                return Err(ArtifactError::new(
-                    code::INVALID_PARAMS,
-                    "`title` has no control character",
-                ));
-            }
-        };
+        let author = check_author(req.author.as_deref())?;
+        let title = check_title(req.title.as_deref())?;
         let (root, rel) = self.resolve(req.session_id.as_ref(), &req.path).await?;
         let default_title = rel.rsplit('/').next().unwrap_or(&rel).to_owned();
         let staging = stage::staging_dir(&self.root, &unique()?);
@@ -212,9 +230,9 @@ impl ArtifactService {
                 return Err(e);
             }
         };
-        let committed = self
-            .store
-            .artifact_commit(NewVersion {
+        self.commit(
+            &staging,
+            NewVersion {
                 staged,
                 root: self.root.clone(),
                 session_id: req.session_id,
@@ -222,10 +240,62 @@ impl ArtifactService {
                 default_title,
                 artifact_id: req.artifact_id,
                 author,
-            })
-            .await;
+            },
+        )
+        .await
+    }
+
+    /// The inline form of the `publish_artifact` MCP tool (DL-177): the
+    /// text becomes a single-file artifact. Nothing is written into the
+    /// workspace; the bytes go to a fresh staging file.
+    ///
+    /// # Errors
+    /// [`ArtifactError`] with a code of [`code`]: `invalid_params` for a bad
+    /// `name`, an empty or too large `content`, a `title` or an `author`.
+    pub async fn publish_content(
+        &self,
+        req: ContentPublish,
+    ) -> Result<ArtifactPublished, ArtifactError> {
+        let author = check_author(req.author.as_deref())?;
+        let title = check_title(req.title.as_deref())?;
+        stage::check_content(&req.name, &req.content)?;
+        let staging = stage::staging_dir(&self.root, &unique()?);
+        let (dir, name, content) = (staging.clone(), req.name.clone(), req.content);
+        let staged = tokio::task::spawn_blocking(move || stage::stage_text(&name, &content, &dir))
+            .await
+            .map_err(internal)?;
+        let staged = match staged {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = std::fs::remove_dir_all(&staging);
+                return Err(e);
+            }
+        };
+        self.commit(
+            &staging,
+            NewVersion {
+                staged,
+                root: self.root.clone(),
+                session_id: req.session_id,
+                title,
+                default_title: req.name,
+                artifact_id: req.artifact_id,
+                author,
+            },
+        )
+        .await
+    }
+
+    /// Commits the staged bytes as a version and removes the staging
+    /// directory.
+    async fn commit(
+        &self,
+        staging: &Path,
+        version: NewVersion,
+    ) -> Result<ArtifactPublished, ArtifactError> {
+        let committed = self.store.artifact_commit(version).await;
         // On success the staging directory moved; otherwise it is waste.
-        let _ = std::fs::remove_dir_all(&staging);
+        let _ = std::fs::remove_dir_all(staging);
         match committed {
             Ok(c) => Ok(ArtifactPublished {
                 artifact: c.artifact,

@@ -79,9 +79,12 @@ fn task() -> Value {
 }
 
 fn publish_artifact() -> Value {
-    json!({"type": "object", "required": ["path"], "properties": {
-        "path": {"type": "string", "description": "A file in your workspace (relative or absolute)."},
-        "title": {"type": "string", "description": "A short title for the artifact."}}})
+    json!({"type": "object", "properties": {
+        "path": {"type": "string", "description": "A file in your workspace"},
+        "name": {"type": "string", "description": "The file name of inline content, for example report.html"},
+        "content": {"type": "string", "description": "The full text of the file, when you cannot or do not want to write a file"},
+        "title": {"type": "string", "description": "A short title for the artifact."},
+        "artifact_id": {"type": "string", "description": "The artifact_id that an earlier publish_artifact call returned. The file becomes its next version. Leave it out for a new artifact."}}})
 }
 
 fn set_focus() -> Value {
@@ -162,7 +165,7 @@ pub const TOOLS: &[Tool] = &[
     Tool {
         name: "publish_artifact",
         class: ToolClass::Own,
-        description: "Keep a file of your workspace (HTML, Markdown, an image, SVG, PDF) as a versioned artifact that the owner opens in Fleet Deck. An HTML file is kept with the local files that it names.",
+        description: "Keep a file of your workspace (HTML, Markdown, an image, SVG, PDF), or inline text that you pass as `content` with a `name`, as a versioned artifact that the owner opens in Fleet Deck. An HTML file is kept with the local files that it names. Give exactly one of `path` or `content`.",
         schema: publish_artifact,
     },
     Tool {

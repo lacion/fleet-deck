@@ -168,5 +168,7 @@ const FLEET_GRANT: &str = "fleet";
 /// The MCP `instructions` of a session without a coordinator grant.
 const FLEET_SKILL: &str = "Fleet Deck session tools. `publish_artifact` keeps a file of your \
 workspace (an HTML page, Markdown, an image, SVG or PDF) as a versioned artifact that the owner \
-opens in Fleet Deck. `set_focus` sets the one line (at most 120 characters) on your card. \
+opens in Fleet Deck. To show a page or a document to the owner, call publish_artifact. When you \
+cannot write files (for example in dontAsk mode), pass the page as `content` with a `name` such as \
+report.html. To update a page, publish again with its artifact_id. `set_focus` sets the one line (at most 120 characters) on your card. \
 `ask_coordinator` asks the coordinator of your task a question. The tools need no credential.";

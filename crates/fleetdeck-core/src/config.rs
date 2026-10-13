@@ -207,6 +207,9 @@ pub struct StationConfig {
     pub max_sessions: u32,
     pub allow_setup_cmd: bool,
     pub allow_shell: bool,
+    /// `allow_bypass_permissions`: offer the mode that skips every permission
+    /// check (Claude `bypassPermissions`, Codex `danger-full-access`).
+    pub allow_bypass_permissions: bool,
     pub max_shells: u32,
     pub offline_approval_policy: OfflineApprovalPolicy,
     pub listen: Vec<SocketAddr>,
@@ -244,6 +247,7 @@ pub(crate) const RAW_STATION_KEYS: &[&str] = &[
     "max_sessions",
     "allow_setup_cmd",
     "allow_shell",
+    "allow_bypass_permissions",
     "max_shells",
     "offline_approval_policy",
     "listen",
@@ -265,6 +269,7 @@ struct RawStation {
     max_sessions: Option<u32>,
     allow_setup_cmd: Option<bool>,
     allow_shell: Option<bool>,
+    allow_bypass_permissions: Option<bool>,
     max_shells: Option<u32>,
     offline_approval_policy: Option<String>,
     listen: Option<Vec<String>>,
@@ -431,6 +436,7 @@ impl StationConfig {
             max_sessions,
             allow_setup_cmd: raw.allow_setup_cmd.unwrap_or(false),
             allow_shell: raw.allow_shell.unwrap_or(false),
+            allow_bypass_permissions: raw.allow_bypass_permissions.unwrap_or(false),
             max_shells,
             offline_approval_policy,
             listen,

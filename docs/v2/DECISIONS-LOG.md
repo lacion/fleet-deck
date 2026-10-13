@@ -2845,3 +2845,16 @@ Owner review: pending.
 - Small choices: the Codex read commands have tool kind shell, so they count as Commands (the timeline does not classify them as reads); when every row is hidden the chat shows "Every row is hidden by the filters."; the bar shows only when the chat is ready, has no error and has an item.
 - Tests: `chat/filter.test.tsx` (`classifyTool` for both providers, `applyChatFilter` with counts and subagents, `compactRuns` for 3+, the notes, turns, failures and running rows, the saved filter with a broken storage, static renders of the bar and of the fold), `chat/chat.test.tsx` (the fold).
 - Owner review: pending.
+
+## DL-177 — artifacts from inline content, and bypass permissions
+
+- Context: owner feedback 2026-10-13: "i cant create artifacts". A session in Claude's `dontAsk` mode denied every file write (also in /tmp), so `/explain-html` could not write its page. The owner also asked for "a way to bypass permissions". `ClaudeAdapterConfig.allow_bypass` and `CodexAdapterConfig.allow_full_access` existed but no code set them.
+- Choice:
+  - `publish_artifact` has a second form: `{ name, content, title?, artifact_id? }`, next to `{ path, title?, artifact_id? }`. Give exactly one of `path` or `content`; a `name` with `path`, or a `content` without `name`, is refused. All refusals are `invalid_params`.
+  - `name` is `[A-Za-z0-9._-]{1,128}`, does not start with `.`, and has a non-empty extension. An image or PDF extension is refused ("use `path` for an image or a PDF"). `content` is UTF-8 text of 1 byte to 8 MiB (empty: "the content is empty").
+  - The station writes the content to a fresh staging file (`.staging`, O_EXCL, mode 0600) and commits it as a single-file artifact (`ArtifactService::publish_content`). It never writes into the workspace. The title defaults to `name`.
+  - Versions: both forms take an optional `artifact_id` (the one that an earlier call returned). With it the publish makes the next version (the existing store rule); the store does not version by title. Without it the publish is a new artifact.
+  - FLEET_SKILL tells the agent to pass `content` with a `name` when it cannot write files, and to publish again with its `artifact_id` to update a page. The fleet MCP tools stay allowed in every mode.
+  - New station setting `allow_bypass_permissions` (default false, `apply: Restart`, `danger: true`, Sessions section of the board). `adapters_from_config` sets `allow_bypass` (Claude `bypassPermissions`) and `allow_full_access` (Codex `never/danger-full-access`) from it, so the mode ladder offers the mode. Turning it on is a danger change that needs elevation (`StationHolder::danger`); turning it off is not.
+- Tests: `artifacts/service_tests.rs` (inline publish, version bump with `artifact_id`, unknown id, path form with `artifact_id`, nothing written in the workspace, bad forms, bad names, binary kinds, the size limit and its edge, the tool schema), `config_tests.rs` (parse and default), `settings/tests/{fields,save}.rs` (field table entry, danger rule), `manager/adapters_bypass_tests.rs` (modes with the setting on and off).
+- Owner review: pending.

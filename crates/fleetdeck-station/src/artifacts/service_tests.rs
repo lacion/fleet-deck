@@ -487,3 +487,253 @@ async fn the_session_tools_publish_as_the_agent_set_the_focus_and_have_no_coordi
         .await;
     assert!(err.unwrap_err().starts_with("unsupported"));
 }
+
+fn content_call(extra: serde_json::Value) -> serde_json::Value {
+    let mut base = json!({"name": "report.html", "content": "<h1>one</h1>"});
+    base.as_object_mut()
+        .unwrap()
+        .extend(extra.as_object().unwrap().clone());
+    base
+}
+
+async fn file_text(r: &Rig, id: &str, version: u32, path: &str) -> String {
+    let file = r
+        .service
+        .file(ArtifactFileQuery {
+            artifact_id: id.to_owned(),
+            version,
+            path: path.to_owned(),
+            offset: None,
+            length: None,
+        })
+        .await
+        .unwrap();
+    String::from_utf8(STANDARD.decode(file.data_base64).unwrap()).unwrap()
+}
+
+#[tokio::test]
+async fn inline_content_is_published_and_an_artifact_id_makes_the_next_version() {
+    let r = rig().await;
+    let tools = StationFleet::new(r.store.clone(), Some(r.service.clone()));
+    let first = tools
+        .call(
+            caller(),
+            "publish_artifact",
+            content_call(json!({"title": "Report"})),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        (first["version"].clone(), first["created"].clone()),
+        (json!(1), json!(true))
+    );
+    assert_eq!(first["title"], "Report");
+    let id = first["artifact_id"].as_str().unwrap().to_owned();
+    assert_eq!(file_text(&r, &id, 1, "report.html").await, "<h1>one</h1>");
+    let listed = r.service.list(ArtifactListQuery::default()).await.unwrap();
+    assert_eq!(listed.artifacts[0].author, "agent");
+    assert_eq!(listed.artifacts[0].kind, ArtifactKind::Html);
+    assert_eq!(listed.artifacts[0].session_id, Some(S1.into()));
+    // The same `artifact_id` makes version 2; a title that is not given stays.
+    let second = tools
+        .call(
+            caller(),
+            "publish_artifact",
+            content_call(json!({"content": "<h1>two</h1>", "artifact_id": id})),
+        )
+        .await
+        .unwrap();
+    assert_eq!(second["version"], 2);
+    assert_eq!(second["title"], "Report");
+    assert_eq!(file_text(&r, &id, 2, "report.html").await, "<h1>two</h1>");
+    assert_eq!(file_text(&r, &id, 1, "report.html").await, "<h1>one</h1>");
+    // Without an `artifact_id` the same text is a new artifact.
+    let other = tools
+        .call(caller(), "publish_artifact", content_call(json!({})))
+        .await
+        .unwrap();
+    assert_ne!(other["artifact_id"], json!(id));
+    assert_eq!(other["version"], 1);
+    // An unknown `artifact_id` is refused, also for the path form.
+    write(&r.work.join("p.html"), "<p>p</p>");
+    for args in [
+        content_call(json!({"artifact_id": "nope"})),
+        json!({"path": "p.html", "artifact_id": "nope"}),
+    ] {
+        let err = tools
+            .call(caller(), "publish_artifact", args)
+            .await
+            .unwrap_err();
+        assert!(err.starts_with("unknown_artifact"), "{err}");
+    }
+    // The path form with an `artifact_id` makes a version too.
+    let by_path = tools
+        .call(
+            caller(),
+            "publish_artifact",
+            json!({"path": "p.html", "title": "P"}),
+        )
+        .await
+        .unwrap();
+    write(&r.work.join("p.html"), "<p>q</p>");
+    let bumped = tools
+        .call(
+            caller(),
+            "publish_artifact",
+            json!({"path": "p.html", "artifact_id": by_path["artifact_id"]}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(bumped["version"], 2);
+    // Nothing is written into the workspace, and no staging file stays.
+    let mut names: Vec<_> = std::fs::read_dir(&r.work)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["p.html"]);
+    assert!(
+        std::fs::read_dir(r.root.join(".staging"))
+            .map(|mut d| d.next().is_none())
+            .unwrap_or(true)
+    );
+}
+
+#[tokio::test]
+async fn inline_content_refuses_a_bad_form_name_kind_and_size() {
+    let r = rig().await;
+    let tools = StationFleet::new(r.store.clone(), Some(r.service.clone()));
+    write(&r.work.join("p.html"), "<p>p</p>");
+    let long = format!("{}.md", "a".repeat(126));
+    let big = "x".repeat(8 * 1024 * 1024 + 1);
+    let cases = [
+        // Both forms, neither form, and a half form.
+        (
+            json!({"path": "p.html", "name": "a.html", "content": "x"}),
+            "give exactly one",
+        ),
+        (json!({"title": "t"}), "give exactly one"),
+        (json!({"content": "x"}), "needs a `name`"),
+        (
+            json!({"path": "p.html", "name": "a.html"}),
+            "`name` goes with",
+        ),
+        // A bad name.
+        (
+            json!({"name": "../a.html", "content": "x"}),
+            "`name` has 1 to 128",
+        ),
+        (
+            json!({"name": "a/b.html", "content": "x"}),
+            "`name` has 1 to 128",
+        ),
+        (
+            json!({"name": ".hidden.html", "content": "x"}),
+            "`name` has 1 to 128",
+        ),
+        (json!({"name": "", "content": "x"}), "`name` has 1 to 128"),
+        (
+            json!({"name": "a b.html", "content": "x"}),
+            "`name` has 1 to 128",
+        ),
+        (json!({"name": long, "content": "x"}), "`name` has 1 to 128"),
+        (
+            json!({"name": "report", "content": "x"}),
+            "needs an extension",
+        ),
+        (
+            json!({"name": "report.", "content": "x"}),
+            "needs an extension",
+        ),
+        // A binary kind by name.
+        (
+            json!({"name": "a.png", "content": "x"}),
+            "use `path` for an image or a PDF",
+        ),
+        (
+            json!({"name": "a.PDF", "content": "x"}),
+            "use `path` for an image or a PDF",
+        ),
+        // The size.
+        (
+            json!({"name": "a.html", "content": ""}),
+            "the content is empty",
+        ),
+        (json!({"name": "a.html", "content": big}), "at most 8 MiB"),
+    ];
+    for (args, want) in cases {
+        let err = tools
+            .call(caller(), "publish_artifact", args.clone())
+            .await
+            .unwrap_err();
+        assert!(
+            err.starts_with("invalid_params") && err.contains(want),
+            "{args}: {err}"
+        );
+    }
+    assert!(
+        r.service
+            .list(ArtifactListQuery::default())
+            .await
+            .unwrap()
+            .artifacts
+            .is_empty()
+    );
+    // The limit itself, and the other text kinds, are accepted.
+    let edge = "y".repeat(8 * 1024 * 1024);
+    for (name, content) in [
+        ("a.md", "# t"),
+        ("a.svg", "<svg/>"),
+        ("a.txt", "t"),
+        ("big.txt", &edge),
+    ] {
+        let out = tools
+            .call(
+                caller(),
+                "publish_artifact",
+                json!({"name": name, "content": content}),
+            )
+            .await
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(out["version"], 1);
+    }
+    let kinds: Vec<_> = r
+        .service
+        .list(ArtifactListQuery::default())
+        .await
+        .unwrap()
+        .artifacts
+        .into_iter()
+        .map(|a| (a.title, a.kind))
+        .collect();
+    assert!(kinds.contains(&("a.md".to_owned(), ArtifactKind::Markdown)));
+    assert!(kinds.contains(&("a.svg".to_owned(), ArtifactKind::Svg)));
+    assert!(kinds.contains(&("a.txt".to_owned(), ArtifactKind::Other)));
+}
+
+#[test]
+fn the_publish_artifact_schema_names_both_forms_and_requires_neither() {
+    let classes = std::iter::once(crate::coordinator::ToolClass::Own).collect();
+    let catalog = crate::coordinator::tools::catalog(&classes);
+    let schema = catalog["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "publish_artifact")
+        .unwrap()["inputSchema"]
+        .clone();
+    let props = schema["properties"].as_object().unwrap();
+    let mut keys: Vec<_> = props.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(keys, ["artifact_id", "content", "name", "path", "title"]);
+    assert!(schema.get("required").is_none());
+    assert_eq!(props["path"]["description"], "A file in your workspace");
+    assert_eq!(
+        props["name"]["description"],
+        "The file name of inline content, for example report.html"
+    );
+    assert_eq!(
+        props["content"]["description"],
+        "The full text of the file, when you cannot or do not want to write a file"
+    );
+}

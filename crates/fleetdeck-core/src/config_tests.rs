@@ -76,6 +76,10 @@ fn an_empty_file_gives_the_defaults() {
         !c.allow_shell,
         "the human shell is off unless the owner turns it on"
     );
+    assert!(
+        !c.allow_bypass_permissions,
+        "bypass permissions are off unless the owner turns them on"
+    );
     let ids: Vec<&str> = c.provider_instances.iter().map(|i| i.id.as_str()).collect();
     assert_eq!(ids, ["claude", "codex"]);
 }
@@ -524,4 +528,11 @@ fn a_bad_model_help_value_is_refused() {
     }
     assert!(err("[model_help]\nprovider = \"pi\"").contains("unknown variant"));
     assert!(err("[model_help]\nbogus = 1").contains("unknown field"));
+}
+
+#[test]
+fn allow_bypass_permissions_parses() {
+    let c = StationConfig::parse("allow_bypass_permissions = true\n", &env()).unwrap();
+    assert!(c.allow_bypass_permissions);
+    assert!(StationConfig::parse("allow_bypass_permissions = \"yes\"\n", &env()).is_err());
 }

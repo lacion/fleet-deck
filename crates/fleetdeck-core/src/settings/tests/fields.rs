@@ -120,6 +120,9 @@ fn the_tables_are_well_formed() {
     assert!(get("trackers").read_only);
     assert!(get("provider_instance").secret && get("provider_instance").danger);
     assert!(get("listen").danger && get("host").danger);
+    let bypass = get("allow_bypass_permissions");
+    assert!(bypass.danger && bypass.apply == fleetdeck_proto::settings::Apply::Restart);
+    assert_eq!(bypass.kind, FieldKind::Bool);
     assert_eq!(get("max_sessions").max, Some(256));
 }
 
