@@ -76,6 +76,10 @@ pub mod feature {
     /// `assist.generate`: model help on the station (R10, DL-167).
     pub const ASSIST: &str = "assist.v1";
 
+    /// `settings.get`, `settings.set`, `settings.secret_set` and
+    /// `station.restart`: the settings of a station and its restart (DL-172).
+    pub const SETTINGS: &str = "settings.v1";
+
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
         CONTROL,
@@ -99,6 +103,7 @@ pub mod feature {
         PRECHECK,
         INTEGRATIONS,
         ASSIST,
+        SETTINGS,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];

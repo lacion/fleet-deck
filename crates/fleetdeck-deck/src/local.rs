@@ -32,6 +32,8 @@ pub struct LocalDeck {
     pub node: Arc<DeckNode>,
     /// The first board listener (login links), if any.
     pub board: Option<crate::local_auth::BoardEndpoint>,
+    /// The elevation codes and elevations that the board checks (DL-172).
+    pub elevations: Arc<crate::elevation::Elevations>,
 }
 
 /// The socket's file name in the deck directory.
@@ -73,6 +75,9 @@ pub enum DeckRequest {
     Commands,
     /// `fleetdeck open`, `deck password`, `deck token`, `deck audit`.
     Auth { auth: AuthRequest },
+    /// `fleetdeck open --elevate`: a one-time elevation code for the board
+    /// (DL-172, design 1.5).
+    ElevateCode,
 }
 
 /// How long `deck command` waits for a receipt before it answers with the
@@ -132,6 +137,11 @@ pub enum DeckResponse {
     },
     Auth {
         auth: AuthResponse,
+    },
+    /// The code of [`DeckRequest::ElevateCode`], shown once.
+    ElevateCode {
+        code: InvitationText,
+        expires_at: i64,
     },
     Error {
         message: String,
@@ -216,6 +226,26 @@ async fn handle(deck: &LocalDeck, request: DeckRequest) -> DeckResponse {
     match request {
         DeckRequest::Auth { auth } => {
             local_auth::respond(local_auth::handle(store, deck.board.as_ref(), auth).await)
+        }
+        DeckRequest::ElevateCode => {
+            let made = deck.elevations.new_code(store.now_ms());
+            let row = NewAudit::new(
+                LOCAL_ACTOR,
+                "auth.elevate_code",
+                if made.is_ok() {
+                    AuditResult::Ok
+                } else {
+                    AuditResult::Failed
+                },
+            );
+            store.audit_or_log(row).await;
+            match made {
+                Ok((code, expires_at)) => DeckResponse::ElevateCode {
+                    code: InvitationText(code.expose().clone()),
+                    expires_at,
+                },
+                Err(e) => error(e.to_string()),
+            }
         }
         DeckRequest::Invite => match audited(node, "station.invite", "", node.invite()).await {
             Ok(text) => DeckResponse::Invitation {

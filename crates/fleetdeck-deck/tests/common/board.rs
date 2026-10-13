@@ -4,12 +4,15 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use fleetdeck_core::restart::Restart;
 use fleetdeck_deck::DeckStore;
 use fleetdeck_deck::http::assets::BoardAssets;
+use fleetdeck_deck::http::settings_routes::DeckSettings;
 use fleetdeck_deck::http::tls::pinned_client;
 use fleetdeck_deck::http::{Board, BoardServer, BoardTls, LoginLimiter, Origins};
 use fleetdeck_deck::link::DeckLink;
 use fleetdeck_deck::store::AuditResult;
+use fleetdeck_proto::StationId;
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -92,6 +95,8 @@ impl Ws {
 
 pub struct BoardClient {
     pub store: DeckStore,
+    /// The board state, for the tests that read it (live settings).
+    pub state: Arc<Board>,
     pub addr: std::net::SocketAddr,
     tls: TlsConnector,
     _server: BoardServer,
@@ -118,12 +123,39 @@ pub async fn board_with_assets(
     serve(Arc::clone(node.link()), Some(node), assets).await
 }
 
+/// What a test gives the board besides the link (settings, restart).
+#[derive(Default)]
+#[allow(dead_code)]
+pub struct Extras {
+    pub settings: Option<DeckSettings>,
+    pub restart: Option<Arc<dyn Restart>>,
+    pub local_station: Option<StationId>,
+}
+
+/// Serves the board API of `link` with `extras`.
+#[allow(dead_code)]
+pub async fn board_with_extras(link: Arc<DeckLink>, extras: Extras) -> BoardClient {
+    serve_with(link, None, BoardAssets::None, extras).await
+}
+
 async fn serve(
     link: Arc<DeckLink>,
     pairing: Option<Arc<fleetdeck_deck::link::DeckNode>>,
     assets: BoardAssets,
 ) -> BoardClient {
+    serve_with(link, pairing, assets, Extras::default()).await
+}
+
+async fn serve_with(
+    link: Arc<DeckLink>,
+    pairing: Option<Arc<fleetdeck_deck::link::DeckNode>>,
+    assets: BoardAssets,
+    extras: Extras,
+) -> BoardClient {
     let store = link.store.clone();
+    let slot: Arc<std::sync::Mutex<Option<Arc<Board>>>> = Arc::default();
+    let board_slot = Arc::clone(&slot);
+    let mut extras = Some(extras);
     let (stop, rx) = watch::channel(false);
     let s = store.clone();
     let server = BoardServer::bind(
@@ -143,7 +175,26 @@ async fn serve(
                 ws_recheck: Duration::from_millis(200),
                 pairing: pairing.clone(),
                 assets: assets.clone(),
+                live: fleetdeck_deck::live::LiveCell::new(fleetdeck_deck::live::DeckLive {
+                    name: "test deck".to_owned(),
+                    conflict_mail: true,
+                }),
+                elevations: Arc::default(),
+                settings: extras.as_mut().and_then(|e| e.settings.take()),
+                restart: extras.as_mut().and_then(|e| e.restart.take()),
+                local_station: Arc::new(
+                    extras
+                        .as_mut()
+                        .and_then(|e| e.local_station.take())
+                        .map(|id| {
+                            let cell = std::sync::OnceLock::new();
+                            let _ = cell.set(id);
+                            cell
+                        })
+                        .unwrap_or_default(),
+                ),
             });
+            *board_slot.lock().unwrap() = Some(Arc::clone(&board));
             Ok::<_, fleetdeck_deck::http::tls::TlsError>((board, tls))
         },
         rx,
@@ -151,8 +202,10 @@ async fn serve(
     .await
     .unwrap();
     let tls = TlsConnector::from(pinned_client(server.tls.cert.clone()));
+    let state = slot.lock().unwrap().take().unwrap();
     BoardClient {
         store,
+        state,
         tls,
         addr: server.addrs[0],
         _server: server,

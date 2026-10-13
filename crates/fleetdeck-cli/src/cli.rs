@@ -47,7 +47,12 @@ pub enum Command {
     /// Check the local setup and say what is wrong (read-only).
     Doctor,
     /// Print a one-time board login URL (from the deck's owner-only socket).
-    Open,
+    Open {
+        /// Print a one-time elevation code for the board instead (single use,
+        /// valid for 5 minutes). The board asks for it before a danger change.
+        #[arg(long)]
+        elevate: bool,
+    },
     /// The durable provider shim (ADR-005 §2). The station starts it and
     /// sends the launch frame on its stdin; it is not a user command.
     #[command(hide = true)]
@@ -333,6 +338,7 @@ mod tests {
             &["station", "approve", "req-1", "--option", "deny"],
             &["station", "interrupt", "s-1"],
             &["open"],
+            &["open", "--elevate"],
             &["doctor"],
         ] {
             assert!(parse(args).is_ok(), "{args:?} should parse");

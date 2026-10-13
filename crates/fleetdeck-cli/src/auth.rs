@@ -41,6 +41,19 @@ pub async fn open(dirs: &NodeDirs) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `fleetdeck open --elevate`: prints a one-time elevation code (DL-172).
+pub async fn elevate(dirs: &NodeDirs) -> anyhow::Result<()> {
+    let DeckResponse::ElevateCode { code, .. } = call(dirs, &DeckRequest::ElevateCode).await?
+    else {
+        bail!("unexpected answer from the deck");
+    };
+    println!(
+        "Elevation code: {} (one use, valid for 5 minutes). Type it in the board.",
+        code.0
+    );
+    Ok(())
+}
+
 /// `fleetdeck deck password [--stdin]`.
 pub async fn password(dirs: &NodeDirs, stdin: bool) -> anyhow::Result<()> {
     let password = if stdin {

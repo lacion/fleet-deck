@@ -95,3 +95,34 @@ fn every_command_method_has_the_scope_of_its_link_method() {
     }
     assert_eq!(n, 16);
 }
+
+/// The settings, secret relay, restart and elevation routes (DL-172) are
+/// `admin` and closed to a member; their handlers also refuse a token.
+#[test]
+fn the_settings_routes_are_admin_and_owner_only() {
+    let names = [
+        "settings.deck_get",
+        "settings.deck_set",
+        "settings.station_get",
+        "settings.station_set",
+        "settings.station_secret_set",
+        "settings.restart",
+        "auth.elevate",
+    ];
+    for name in names {
+        let api = API.iter().find(|a| a.name == name).unwrap();
+        assert_eq!(api.scope, Some(Scope::Admin), "{name}");
+        assert!(!api.member, "{name}");
+        assert_eq!(api.mutating, api.method == Method::POST, "{name}");
+    }
+    assert_eq!(
+        API.iter()
+            .filter(|a| a.name.starts_with("settings."))
+            .count(),
+        6
+    );
+    assert_eq!(
+        find(&Method::POST, "/api/secrets/stations/{station}/settings").map(|m| m.name),
+        Some("settings.station_secret_set")
+    );
+}

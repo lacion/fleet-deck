@@ -111,6 +111,13 @@ A station stop with `host = "direct"` stops every agent; the sessions become `lo
 3. For scripts, make an API token: `fleetdeck deck token`. A token has a scope; keep it secret.
 4. Read the audit log: `fleetdeck deck audit`.
 
+### Settings, elevation and restart (DL-172)
+
+- Edit the settings in the board (`#/settings`). The deck and the station write their own config file with the board; edit by hand only while Fleet Deck is stopped.
+- A danger change (for example `allow_shell` on, a new allowed root, a `listen` address that is not loopback) and every restart need an elevation. In the board, give the owner password, or run `fleetdeck open --elevate` on the deck machine and type the code. The command prints one line: `Elevation code: XXXXX-XXXXX (one use, valid for 5 minutes). Type it in the board.` An elevation lives 10 minutes and only for the login that asked for it. Wrong tries count in the same limit as the login (5 in 1 minute, then HTTP 429).
+- Restart from the board (`POST /api/settings/restart`): the process executes itself again with the argv, the environment and the executable path that it had at start. It first stops as for SIGTERM. `fleetdeck up` restarts as one process.
+- **Exit code 75.** When the new `exec` fails after the process stopped, the process logs `restart failed: <errno>` and exits with code 75. The deck then shows as offline on the board. Read the log, repair the cause (for example a deleted or replaced binary), and start `fleetdeck` again.
+
 ## 6. Pair a station
 
 Station dials the deck (the station is behind NAT or on a laptop):

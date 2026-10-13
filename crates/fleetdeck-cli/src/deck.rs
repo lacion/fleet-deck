@@ -7,28 +7,46 @@
 //! prompt, stdin or a 0600 file (G12); the one of `invite` goes to stdout
 //! once.
 
+use std::sync::Arc;
+
 use anyhow::bail;
 use fleetdeck_core::config::DeckConfig;
 use fleetdeck_core::paths::NodeDirs;
 use fleetdeck_deck::link::CommandKind;
 use fleetdeck_deck::local::{DeckClient, DeckRequest, DeckResponse, InvitationText, StationView};
+use fleetdeck_deck::serve::StartOptions;
 use fleetdeck_deck::store::DeckCommand;
 use fleetdeck_link::reconnect::BackoffPolicy;
 use fleetdeck_proto::command::SessionCommand;
 
 use crate::cli::{AddStationArgs, ServeArgs};
-use crate::station::shutdown_signal;
+use crate::restart::{RestartHandle, stop_or_restart};
 
 /// `fleetdeck deck serve`: runs until SIGINT or SIGTERM.
-pub async fn serve(dirs: &NodeDirs, args: &ServeArgs) -> anyhow::Result<()> {
+pub async fn serve(
+    dirs: &NodeDirs,
+    args: &ServeArgs,
+    restart: &RestartHandle,
+) -> anyhow::Result<()> {
     let mut config = DeckConfig::load(&dirs.deck_config())?;
+    let mut options = StartOptions {
+        restart: Some(Arc::new(restart.clone())),
+        ..StartOptions::default()
+    };
     if let Some(listen) = args.listen {
         fleetdeck_core::netscope::check_bind(listen)
             .map_err(|e| anyhow::anyhow!("--listen: {e}"))?;
         config.listen = vec![listen];
+        options.overrides = vec![("listen".to_owned(), "--listen".to_owned())];
     }
-    fleetdeck_deck::serve::serve(dirs, &config, BackoffPolicy::default(), shutdown_signal())
-        .await?;
+    fleetdeck_deck::serve::serve(
+        dirs,
+        &config,
+        BackoffPolicy::default(),
+        options,
+        stop_or_restart(restart),
+    )
+    .await?;
     Ok(())
 }
 

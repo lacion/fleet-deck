@@ -27,6 +27,15 @@ pub const API: &[ApiMethod] = &[
         Some(Scope::Admin),
         true,
     ),
+    // The elevation of the owner for danger settings and a restart (DL-172):
+    // `admin`, and the handler also requires the owner's board login.
+    m(
+        "auth.elevate",
+        Method::POST,
+        "/api/auth/elevate",
+        Some(Scope::Admin),
+        true,
+    ),
     m(
         "auth.session",
         Method::GET,
@@ -61,6 +70,51 @@ pub const API: &[ApiMethod] = &[
         "stations.remove",
         Method::POST,
         "/api/stations/{station}/remove",
+        Some(Scope::Admin),
+        true,
+    ),
+    // The settings of the deck and the stations, the secret relay and the
+    // restart (DL-172): `admin`, and every handler also requires the owner's
+    // board login (DL-138); a member gets 403 `owner_only`.
+    m(
+        "settings.deck_get",
+        Method::GET,
+        "/api/settings/deck",
+        Some(Scope::Admin),
+        false,
+    ),
+    m(
+        "settings.deck_set",
+        Method::POST,
+        "/api/settings/deck",
+        Some(Scope::Admin),
+        true,
+    ),
+    m(
+        "settings.station_get",
+        Method::GET,
+        "/api/stations/{station}/settings",
+        Some(Scope::Admin),
+        false,
+    ),
+    m(
+        "settings.station_set",
+        Method::POST,
+        "/api/stations/{station}/settings",
+        Some(Scope::Admin),
+        true,
+    ),
+    m(
+        "settings.station_secret_set",
+        Method::POST,
+        "/api/secrets/stations/{station}/settings",
+        Some(Scope::Admin),
+        true,
+    ),
+    m(
+        "settings.restart",
+        Method::POST,
+        "/api/settings/restart",
         Some(Scope::Admin),
         true,
     ),

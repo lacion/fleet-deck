@@ -9,15 +9,18 @@
 //! and only reconnect. A station that is paired with another deck is an
 //! error: `up` never replaces a pairing (DL-061).
 
+use std::sync::{Arc, OnceLock};
+
 use anyhow::{Context as _, bail};
 use fleetdeck_core::config::{DeckConfig, StationConfig};
 use fleetdeck_core::paths::{Env, NodeDirs};
-use fleetdeck_deck::serve::RunningDeck;
+use fleetdeck_deck::serve::{RunningDeck, StartOptions};
 use fleetdeck_link::reconnect::BackoffPolicy;
+use fleetdeck_proto::StationId;
 use fleetdeck_station::serve::RunningStation;
 
 use crate::cli::ServeArgs;
-use crate::station::shutdown_signal;
+use crate::restart::{RestartHandle, stop_or_restart};
 
 /// What `up` did with the pairing of the local station.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,20 +62,47 @@ pub async fn pair_local(deck: &RunningDeck, station: &RunningStation) -> anyhow:
     Ok(Pairing::Joined)
 }
 
-/// `fleetdeck up [--listen ADDR]`: runs until SIGINT or SIGTERM.
-pub async fn up(dirs: &NodeDirs, env: &Env, args: &ServeArgs) -> anyhow::Result<()> {
+/// Tells the deck which station is the local one, so that a restart of the
+/// deck restarts that station (DL-172).
+async fn register_local_station(
+    deck: &RunningDeck,
+    station: &RunningStation,
+    local: &OnceLock<StationId>,
+) -> anyhow::Result<()> {
+    let record = deck
+        .store
+        .station_by_key(station.identity.public_key())
+        .await?
+        .context("the local station is not in the deck's registry")?;
+    let _ = local.set(record.station_id);
+    Ok(())
+}
+
+/// `fleetdeck up [--listen ADDR]`: runs until SIGINT or SIGTERM, or until a
+/// restart is requested.
+pub async fn up(
+    dirs: &NodeDirs,
+    env: &Env,
+    args: &ServeArgs,
+    restart: &RestartHandle,
+) -> anyhow::Result<()> {
     let mut deck_config = DeckConfig::load(&dirs.deck_config())?;
+    // The station worker connects `restart` to the station side; until then
+    // the deck asks the local station, which answers `unsupported`.
+    let mut options = StartOptions::default();
     if let Some(listen) = args.listen {
         fleetdeck_core::netscope::check_bind(listen)
             .map_err(|e| anyhow::anyhow!("--listen: {e}"))?;
         deck_config.listen = vec![listen];
+        options.overrides = vec![("listen".to_owned(), "--listen".to_owned())];
     }
+    let local_station = Arc::clone(&options.local_station);
     let station_config = StationConfig::load_with_store(
         &dirs.station_config(),
         env,
         &dirs.station().join("secrets"),
     )?;
-    let deck = RunningDeck::start(dirs, &deck_config, BackoffPolicy::default()).await?;
+    let deck = RunningDeck::start(dirs, &deck_config, BackoffPolicy::default(), options).await?;
     let station = match RunningStation::start(dirs, &station_config).await {
         Ok(s) => s,
         Err(e) => {
@@ -88,6 +118,11 @@ pub async fn up(dirs: &NodeDirs, env: &Env, args: &ServeArgs) -> anyhow::Result<
             return Err(e);
         }
     };
+    if let Err(e) = register_local_station(&deck, &station, &local_station).await {
+        station.stop().await;
+        deck.stop().await;
+        return Err(e);
+    }
     let url = deck
         .endpoint
         .as_ref()
@@ -102,7 +137,7 @@ pub async fn up(dirs: &NodeDirs, env: &Env, args: &ServeArgs) -> anyhow::Result<
         },
     );
     eprintln!("run `fleetdeck open` in another terminal for a one-time login link");
-    shutdown_signal().await;
+    stop_or_restart(restart).await;
     station.stop().await;
     deck.stop().await;
     Ok(())
@@ -120,9 +155,14 @@ mod tests {
         let config =
             DeckConfig::parse("listen = [\"127.0.0.1:0\"]\nlink_listen = [\"127.0.0.1:0\"]\n")
                 .unwrap();
-        RunningDeck::start(node.dirs(), &config, BackoffPolicy::default())
-            .await
-            .unwrap()
+        RunningDeck::start(
+            node.dirs(),
+            &config,
+            BackoffPolicy::default(),
+            StartOptions::default(),
+        )
+        .await
+        .unwrap()
     }
 
     #[tokio::test]
