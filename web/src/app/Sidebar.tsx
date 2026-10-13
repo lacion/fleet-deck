@@ -6,6 +6,7 @@ import {
   Eye,
   Folder,
   GitBranch,
+  Paperclip,
   Icon,
   LayoutGrid,
   LogOut,
@@ -356,6 +357,15 @@ export function Sidebar({
             >
               <Icon of={Workflow} />
               Automations
+            </a>
+            <a
+              href="#/artifacts"
+              aria-current={
+                route.name === 'artifacts' || route.name === 'artifact' ? 'page' : undefined
+              }
+            >
+              <Icon of={Paperclip} />
+              Artifacts
             </a>
             <a href="#/files" aria-current={route.name === 'files' ? 'page' : undefined}>
               <Icon of={Folder} />

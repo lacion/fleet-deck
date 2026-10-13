@@ -232,6 +232,8 @@ describe('overlays block the board hotkeys (R7.4)', () => {
         'Layout.tsx',
         'Palette.tsx',
         'PairingDialog.tsx',
+        'PublishDialog.tsx',
+        'ShareDialog.tsx',
       ].sort(),
     );
   });

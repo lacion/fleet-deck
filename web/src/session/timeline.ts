@@ -7,6 +7,7 @@
 // `background.updated` belongs to it until the task leaves the list (DL-060).
 import type {
   ApprovalOption,
+  ArtifactKind,
   DiffSummary,
   Event,
   EventEnvelope,
@@ -47,7 +48,17 @@ export type Item =
       outcome: string | null;
     }
   | { type: 'turn'; key: string; status: TurnStatus; turn_id: string; diff: DiffSummary | null }
-  | { type: 'notice'; key: string; text: string; tone: 'info' | 'error' };
+  | { type: 'notice'; key: string; text: string; tone: 'info' | 'error' }
+  // R12 (DL-165): a published artifact, and a file that the station suggests to keep.
+  | {
+      type: 'artifact';
+      key: string;
+      artifact_id: string;
+      version: number;
+      title: string;
+      artifact_kind: ArtifactKind;
+    }
+  | { type: 'suggestion'; key: string; path: string };
 
 export type Subagent = {
   type: 'subagent';
@@ -398,6 +409,23 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
         } else {
           add(root, { type: 'notice', key, text: `${e.path} ${e.change}`, tone: 'info' });
         }
+        break;
+      }
+      case 'artifact.published': {
+        const e = event as Extract<Event, { kind: 'artifact.published' }>;
+        add(root, {
+          type: 'artifact',
+          key,
+          artifact_id: e.artifact_id,
+          version: e.version,
+          title: e.title,
+          artifact_kind: e.artifact_kind,
+        });
+        break;
+      }
+      case 'artifact.suggested': {
+        const e = event as Extract<Event, { kind: 'artifact.suggested' }>;
+        add(root, { type: 'suggestion', key, path: e.path });
         break;
       }
       case 'model.changed': {

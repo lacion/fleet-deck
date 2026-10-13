@@ -22,6 +22,7 @@ import {
   Wrench,
   X,
 } from '../ui/icons';
+import { ArtifactChip, SuggestedChip } from '../artifacts/ArtifactChips';
 import { runLabel } from './labels';
 import { Markdown } from './Markdown';
 
@@ -279,6 +280,10 @@ function ItemView(props: { item: Item; onOpenChanges: OpenChanges }) {
           ) : null}
         </div>
       );
+    case 'artifact':
+      return <ArtifactChip chip={item} fromEvent />;
+    case 'suggestion':
+      return <SuggestedChip path={item.path} />;
     case 'notice':
       return (
         <p className={item.tone === 'error' ? 'fd-chat-line fd-chat-error' : 'fd-chat-line'}>

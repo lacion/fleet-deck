@@ -11,6 +11,8 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react';
+import { ArtifactsProvider, useArtifacts } from '../artifacts/context';
+import { SessionArtifacts } from '../artifacts/SessionArtifacts';
 import { ChatView } from '../chat/ChatView';
 import type { DeckSession, StationView } from '../gen';
 import type { Freshness, Timeline } from '../runtime/state';
@@ -30,7 +32,7 @@ import { buildTimeline, sessionModels, slashCommands } from './timeline';
 import { RevertStatus, TurnsPanel } from './TurnsPanel';
 import { finalizedTurns } from './workspace';
 
-export type PaneTab = 'chat' | 'changes' | 'files';
+export type PaneTab = 'chat' | 'changes' | 'files' | 'artifacts';
 
 export type SessionViewProps = {
   readonly session: DeckSession;
@@ -128,7 +130,19 @@ export function SessionView(props: SessionViewProps) {
   const sidePanel = layout === 'desktop' && wide && filesOffered;
   const sideOpen = sidePanel && filesOpen;
   const tabsOffered = filesOffered && !sideOpen;
-  const tab: PaneTab = props.tab === 'files' && !tabsOffered ? 'chat' : (props.tab ?? 'chat');
+  const artifactsEnv = useArtifacts();
+  const artifactsOffered = artifactsEnv !== undefined;
+  const wanted: PaneTab = props.tab ?? 'chat';
+  const tab: PaneTab =
+    (wanted === 'files' && !tabsOffered) || (wanted === 'artifacts' && !artifactsOffered)
+      ? 'chat'
+      : wanted;
+  // The artifact that the Artifacts tab shows; a chat chip and a publish set it.
+  const [openArtifact, setOpenArtifact] = useState<{
+    readonly id: string;
+    readonly version: number | null;
+  } | null>(null);
+  const [kept, setKept] = useState<ReadonlySet<string>>(() => new Set());
   const flow =
     actions && shells && terminals && watch
       ? handoverFlow({ key, title: s.title ?? s.session_id, watch, actions, shells, terminals })
@@ -153,7 +167,12 @@ export function SessionView(props: SessionViewProps) {
   const ids = useId();
   const tabs = useRef<Record<string, HTMLButtonElement | null>>({});
   const changed = turns.filter((t) => !t.reverted && hasChanges(t.diff)).length;
-  const order: PaneTab[] = tabsOffered ? ['chat', 'changes', 'files'] : ['chat', 'changes'];
+  const order: PaneTab[] = [
+    'chat',
+    'changes',
+    ...(tabsOffered ? (['files'] as const) : []),
+    ...(artifactsOffered ? (['artifacts'] as const) : []),
+  ];
   const labels: Record<PaneTab, ReactNode> = {
     chat: 'Chat',
     changes:
@@ -165,6 +184,14 @@ export function SessionView(props: SessionViewProps) {
         'Changes'
       ),
     files: 'Files',
+    artifacts:
+      s.artifacts_count > 0 ? (
+        <>
+          Artifacts <span className="fd-count">{s.artifacts_count}</span>
+        </>
+      ) : (
+        'Artifacts'
+      ),
   };
   const onTabKey = (event: KeyboardEvent<HTMLDivElement>) => {
     const at = order.indexOf(tab);
@@ -194,7 +221,24 @@ export function SessionView(props: SessionViewProps) {
     if (fileRequest && (tab === 'files' || sideOpen)) setFileRequest(undefined);
   }, [fileRequest, tab, sideOpen]);
 
-  return (
+  const artifactsValue = useMemo(
+    () =>
+      artifactsEnv === undefined
+        ? undefined
+        : {
+            actions: artifactsEnv.actions,
+            session: { station: session.station_id, session: s.session_id },
+            open: (id: string, version: number) => {
+              setOpenArtifact({ id, version });
+              onTab('artifacts');
+            },
+            kept,
+            keep: (key: string) => setKept((now) => new Set(now).add(key)),
+          },
+    [artifactsEnv, session.station_id, s.session_id, kept, onTab],
+  );
+
+  const pane = (
     <section className="fd-pane" aria-label="Session" data-layout={layout}>
       <SessionHeader
         session={session}
@@ -365,6 +409,16 @@ export function SessionView(props: SessionViewProps) {
               </p>
             )
           ) : null}
+          {tab === 'artifacts' && artifactsEnv !== undefined ? (
+            <SessionArtifacts
+              actions={artifactsEnv.actions}
+              session={key}
+              count={s.artifacts_count}
+              open={openArtifact}
+              onOpen={(id, version) => setOpenArtifact({ id, version })}
+              onClose={() => setOpenArtifact(null)}
+            />
+          ) : null}
         </div>
 
         {sideOpen ? (
@@ -385,5 +439,10 @@ export function SessionView(props: SessionViewProps) {
         ) : null}
       </div>
     </section>
+  );
+  return artifactsValue === undefined ? (
+    pane
+  ) : (
+    <ArtifactsProvider value={artifactsValue}>{pane}</ArtifactsProvider>
   );
 }

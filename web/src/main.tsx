@@ -22,6 +22,7 @@ import './styles/chat.css';
 import './styles/terminal.css';
 import './styles/spawn.css';
 import './styles/views.css';
+import './styles/artifacts.css';
 
 initTheme();
 initDensity();

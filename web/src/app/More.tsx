@@ -6,6 +6,7 @@ import {
   Icon,
   LogOut,
   MessagesSquare,
+  Paperclip,
   Server,
   Smartphone,
   SquareTerminal,
@@ -51,6 +52,12 @@ export function More({ stationCount, terminalCount, chrome }: Props) {
             <a href="#/automations">
               <Icon of={Workflow} />
               Automations
+            </a>
+          </li>
+          <li>
+            <a href="#/artifacts">
+              <Icon of={Paperclip} />
+              Artifacts
             </a>
           </li>
           <li>
