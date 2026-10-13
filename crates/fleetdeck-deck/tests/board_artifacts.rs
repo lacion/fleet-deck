@@ -25,6 +25,7 @@ use fleetdeck_station::link::StationNode;
 use fleetdeck_station::manager::{Adapters, Policy, SessionManager};
 use fleetdeck_station::shell::{ShellConfig, Shells};
 use fleetdeck_station::store::{NewSession, OfflineApprovalPolicy, Store, StoreConfig};
+use fleetdeck_station::workspace::PrivatePaths;
 use serde_json::{Value, json};
 
 const T: Duration = Duration::from_secs(10);
@@ -72,6 +73,7 @@ async fn station(dir: &Path, root: PathBuf, cwd: &Path) -> Arc<StationNode> {
     let manager = SessionManager::start(store, policy, Adapters::new(), ids)
         .await
         .unwrap();
+    manager.set_private_paths(Arc::new(PrivatePaths::default()));
     StationNode::start_with_dirs(
         Arc::new(manager),
         Arc::new(Identity::generate().unwrap()),
