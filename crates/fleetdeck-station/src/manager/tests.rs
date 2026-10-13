@@ -732,12 +732,16 @@ mod coordinator_command;
 mod drain;
 #[path = "hibernate_tests.rs"]
 mod hibernate_tests;
+#[path = "hibernated_input_tests.rs"]
+mod hibernated_input_tests;
 #[path = "import_tests.rs"]
 mod import_tests;
 #[path = "origin_text_tests.rs"]
 mod origin_text_tests;
 #[path = "policy_hub_tests.rs"]
 mod policy_hub_tests;
+#[path = "provision_task_tests.rs"]
+mod provision_task_tests;
 #[path = "rename_tests.rs"]
 mod rename;
 #[path = "restart_gate_tests.rs"]

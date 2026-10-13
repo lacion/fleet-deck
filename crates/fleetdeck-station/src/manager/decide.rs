@@ -145,18 +145,27 @@ pub fn decide(
             grant_id,
         } => super::coordinator_command::revoke(d, bindings, origin, &session_id, &grant_id),
         SessionCommand::Prompt { session_id, input } => {
+            if let Some(resumed) = resume_hibernated(d, policy, &session_id, origin_run, &input)? {
+                return Ok(resumed);
+            }
             let s = live_session(d, &session_id, Operation::Prompt)?;
             input_effect(d, &s, origin_run, input, |input| EffectPayload::Prompt {
                 input,
             })
         }
         SessionCommand::Steer { session_id, input } => {
+            if let Some(resumed) = resume_hibernated(d, policy, &session_id, origin_run, &input)? {
+                return Ok(resumed);
+            }
             let s = live_session(d, &session_id, Operation::Steer)?;
             input_effect(d, &s, origin_run, input, |input| EffectPayload::Steer {
                 input,
             })
         }
         SessionCommand::FollowUp { session_id, input } => {
+            if let Some(resumed) = resume_hibernated(d, policy, &session_id, origin_run, &input)? {
+                return Ok(resumed);
+            }
             let s = live_session(d, &session_id, Operation::FollowUp)?;
             input_effect(d, &s, origin_run, input, |input| EffectPayload::FollowUp {
                 input,
@@ -264,9 +273,12 @@ pub fn decide(
             resolution,
         } => super::revert::decide_resolve(d, policy, &session_id, &revert_id, resolution),
         SessionCommand::Stop { session_id, how } => {
-            // A start that waits for its setup command has no process yet; its
-            // stop cancels the setup (DL-148).
-            if !crate::store::setup_runs::setup_run_for(d.connection(), &session_id)? {
+            // A start that waits for its setup command or prepares its
+            // workspace has no process yet; its stop cancels that work
+            // (DL-148).
+            if !(crate::store::setup_runs::setup_run_for(d.connection(), &session_id)?
+                || crate::store::provisioning::provisioning_for(d.connection(), &session_id)?)
+            {
                 live_session(d, &session_id, Operation::Stop)?;
             }
             plain_effect(d, &session_id, EffectPayload::Stop { how })
@@ -719,6 +731,30 @@ pub(super) fn live_session(
         ));
     }
     Ok(s)
+}
+
+/// An input for a hibernated session resumes it with that input as the first
+/// input of the new process. `None`: the session is not hibernated (or does
+/// not exist), and the normal input checks apply.
+fn resume_hibernated(
+    d: &mut Decision<'_>,
+    policy: &Policy,
+    session_id: &SessionId,
+    origin: RunOrigin,
+    input: &fleetdeck_proto::command::UserInput,
+) -> Result<Option<CommandResult>, DecideError> {
+    let Some(summary) = d.summary(session_id)? else {
+        return Ok(None);
+    };
+    if summary.state != SessionState::Exited || !summary.hibernated {
+        return Ok(None);
+    }
+    let record = InputRecord {
+        input_id: d.new_id(),
+        origin,
+        input: input.clone(),
+    };
+    super::resume::admit_resume(d, policy, session_id, Some(record), None).map(Some)
 }
 
 fn input_effect(

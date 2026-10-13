@@ -31,6 +31,8 @@ mod log;
 mod outbox;
 mod payload;
 pub mod peers;
+/// The starts that prepare their workspace in a task of their own.
+pub mod provisioning;
 mod receipts;
 mod recovery;
 pub mod requests;

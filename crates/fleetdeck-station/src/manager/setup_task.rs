@@ -1,5 +1,6 @@
-//! The task of a start with a setup command (DL-148): the command runs in a
-//! task of its own, so the effect worker goes on with the other sessions.
+//! The task of a start with a setup command (DL-148) or a workspace to
+//! prepare: the Git work and the command run in a task of their own, so the
+//! effect worker goes on with the other sessions.
 //!
 //! The task stays in [`SetupTasks`] from the dispatch of the start until the
 //! provider start has returned and the start effect is settled. A stop that
@@ -17,21 +18,24 @@ use std::time::Duration;
 use fleetdeck_core::ChildEnv;
 use fleetdeck_proto::SessionId;
 use fleetdeck_proto::command::{SessionSpec, StopMode};
+use fleetdeck_proto::session::SessionBase;
 use fleetdeck_providers::host::ProcessControl;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 use super::SessionTarget;
-use crate::store::{Dispatch, Effect, InputRecord};
-use crate::workspace::setup::{STOPPED_MESSAGE, SetupError};
+use crate::store::{Dispatch, Effect, InputRecord, WorkspacePlan};
+use crate::workspace::provision::ProvisionError;
+use crate::workspace::setup::{Held, STOPPED_MESSAGE, SetupError};
 
 /// The wait for the setup tasks at the station shutdown: the Codex handshake
 /// (30 s) and a stop grace fit in it.
 const SETUP_STOP_WAIT: Duration = Duration::from_secs(60);
 
-/// One start that waits for its setup command, or starts its provider.
+/// One start that waits for its setup command or workspace, or starts its
+/// provider.
 pub(super) struct SetupTask {
-    /// `true` stops the setup command.
+    /// `true` stops the workspace work or the setup command.
     cancel: watch::Sender<bool>,
     /// Taken by the shutdown, which waits for it.
     handle: Option<JoinHandle<()>>,
@@ -58,23 +62,34 @@ impl SetupTask {
     }
 }
 
+/// The tasks of the starts with a setup command or a workspace, by session.
 pub(super) type SetupTasks = Arc<StdMutex<HashMap<SessionId, SetupTask>>>;
 
-/// What the task of a start with a setup command owns.
+/// What the task of a start with a setup command or a workspace owns.
 struct SetupRun {
     effect: Effect,
     /// The fence token that claimed the effect.
     fence: u64,
     spec: SessionSpec,
     prompt: Option<InputRecord>,
-    cmd: String,
-    env: ChildEnv,
+    /// The Git work that the task does before anything else.
+    workspace: Option<WorkspacePlan>,
+    /// Whether the session has no base yet (the base of a clone is read
+    /// after the clone).
+    wants_base: bool,
+    /// The base that was read before the workspace existed.
+    planned: Option<SessionBase>,
+    cmd: Option<String>,
+    /// The environment of the command; set with `cmd`.
+    env: Option<ChildEnv>,
 }
 
 /// The points where a test holds a start (tests only).
 #[cfg(test)]
 #[derive(Default)]
 pub(in crate::manager) struct Hooks {
+    /// After the plan was read, right before the Git work of the workspace.
+    pub provision: StartHook,
     /// Right after the command ended, before the task takes the restart
     /// handoff lock.
     pub handoff: StartHook,
@@ -132,26 +147,35 @@ fn merge(old: Option<StopMode>, new: StopMode) -> StopMode {
 }
 
 impl SessionTarget {
-    /// Registers a start with a setup command: the command runs in a task of
-    /// its own. The task starts the provider and settles the effect. A
-    /// failure before the task ends the start here and returns the dispatch
-    /// code.
-    pub(super) async fn defer_setup(
+    /// Registers a start that has a setup command or a workspace to prepare:
+    /// the Git work and the command run in a task of their own. The task
+    /// starts the provider and settles the effect. A failure before the task
+    /// ends the start here and returns the dispatch code.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) async fn defer_start(
         &self,
         effect: &Effect,
         spec: &SessionSpec,
         prompt: Option<&InputRecord>,
-        cmd: &str,
+        workspace: Option<&WorkspacePlan>,
+        cmd: Option<&str>,
+        wants_base: bool,
+        planned: Option<SessionBase>,
     ) -> Dispatch {
         let session_id = &effect.session_id;
-        let policy = self.current_policy();
-        let Some(env) = policy
-            .as_ref()
-            .and_then(|p| p.setup_env(&spec.provider_instance))
-        else {
-            let text = "the setup command has no environment for this provider instance";
-            self.start_failed(session_id, text).await;
-            return Dispatch::NotDispatched("setup_failed".into());
+        // The environment is needed only for a command.
+        let env = if cmd.is_some() {
+            let env = self
+                .current_policy()
+                .and_then(|p| p.setup_env(&spec.provider_instance).cloned());
+            let Some(env) = env else {
+                let text = "the setup command has no environment for this provider instance";
+                self.start_failed(session_id, text).await;
+                return Dispatch::NotDispatched("setup_failed".into());
+            };
+            Some(env)
+        } else {
+            None
         };
         let (Some(this), Some(fence)) = (self.this.upgrade(), effect.fence_token) else {
             let text = "the setup command cannot run: the effect has no owner";
@@ -163,8 +187,11 @@ impl SessionTarget {
             fence,
             spec: spec.clone(),
             prompt: prompt.cloned(),
-            cmd: cmd.to_owned(),
-            env: env.clone(),
+            workspace: workspace.cloned(),
+            wants_base,
+            planned,
+            cmd: cmd.map(str::to_owned),
+            env,
         };
         let (cancel, cancel_rx) = watch::channel(false);
         // The lock covers the spawn and the insert: the task removes itself
@@ -174,7 +201,7 @@ impl SessionTarget {
                 .await;
             return Dispatch::NotDispatched("setup_failed".into());
         };
-        let handle = tokio::spawn(this.setup_then_start(run, cancel_rx));
+        let handle = tokio::spawn(this.prepare_then_start(run, cancel_rx));
         let task = SetupTask {
             cancel,
             handle: Some(handle),
@@ -185,31 +212,106 @@ impl SessionTarget {
         Dispatch::Deferred
     }
 
-    /// The task of a start with a setup command: the command, then the
-    /// provider start, then the settle of the start effect. It leaves the
-    /// registry last; a stop that came in the meantime stops the new session.
-    async fn setup_then_start(self: Arc<Self>, run: SetupRun, cancel: watch::Receiver<bool>) {
+    /// The Git work of the workspace plan of a start, with its cancel. `false`:
+    /// the start ended here (failed or stopped), the effect is settled, and
+    /// the task must return.
+    async fn prepare_workspace(
+        &self,
+        effect: &Effect,
+        fence: u64,
+        plan: &WorkspacePlan,
+        cancel: &watch::Receiver<bool>,
+    ) -> bool {
+        let session_id = &effect.session_id;
+        let program = &self.git.program;
+        let before = crate::workspace::provision::before(plan, program).await;
+        #[cfg(test)]
+        self.hooks.provision.hold().await;
+        let provisioned =
+            crate::workspace::provision::provision_cancellable(plan, program, cancel.clone()).await;
+        let (text, reason) = match provisioned {
+            Ok(()) => return true,
+            Err(ProvisionError::Failed(e)) => (
+                format!("the workspace was not created: {e}"),
+                "workspace_failed",
+            ),
+            Err(ProvisionError::Stopped) => {
+                crate::workspace::provision::undo_partial(plan, program, &before).await;
+                (STOPPED_MESSAGE.to_owned(), "setup_stopped")
+            }
+        };
+        self.start_failed(session_id, &text).await;
+        let settled = self
+            .store
+            .settle(
+                effect.effect_id.clone(),
+                fence,
+                Dispatch::NotDispatched(reason.into()),
+            )
+            .await;
+        if let Err(e) = settled {
+            tracing::warn!(error = %e, effect = %effect.effect_id, "the start effect was not settled");
+        }
+        self.leave_setup(session_id);
+        false
+    }
+
+    /// The task of a start that prepares its workspace or runs a setup
+    /// command: the Git work, then the command, then the provider start, then
+    /// the settle of the start effect. It leaves the registry last; a stop
+    /// that came in the meantime stops the new session.
+    async fn prepare_then_start(self: Arc<Self>, run: SetupRun, cancel: watch::Receiver<bool>) {
         let SetupRun {
             effect,
             fence,
             spec,
             prompt,
+            workspace,
+            wants_base,
+            planned,
             cmd,
             env,
         } = run;
         let session_id = effect.session_id.clone();
         let stop_flag = cancel.clone();
-        let held = crate::workspace::setup::run_held(
-            &self.store,
-            effect.effect_id.as_str(),
-            &session_id,
-            &cmd,
-            Path::new(&spec.cwd),
-            &env,
-            crate::workspace::setup::DEFAULT_TIMEOUT,
-            cancel,
-        )
-        .await;
+        if let Some(plan) = &workspace
+            && !self.prepare_workspace(&effect, fence, plan, &cancel).await
+        {
+            return;
+        }
+        let base = match (planned, &workspace) {
+            (None, Some(WorkspacePlan::Clone { path, .. })) if wants_base => {
+                crate::workspace::base::at_head(&self.git, Path::new(path)).await
+            }
+            (planned, _) => planned,
+        };
+        let held = match (&cmd, &env) {
+            (Some(cmd), Some(env)) => {
+                crate::workspace::setup::run_held(
+                    &self.store,
+                    effect.effect_id.as_str(),
+                    &session_id,
+                    cmd,
+                    Path::new(&spec.cwd),
+                    env,
+                    crate::workspace::setup::DEFAULT_TIMEOUT,
+                    cancel,
+                )
+                .await
+            }
+            (Some(_), None) => Held {
+                result: Err(SetupError {
+                    message: "the setup command has no environment for this provider instance"
+                        .into(),
+                    output_tail: String::new(),
+                }),
+                end_row: false,
+            },
+            (None, _) => Held {
+                result: Ok(()),
+                end_row: false,
+            },
+        };
         // The row stays (the restart admission lists it) until the handoff:
         // under the lock of the restart admission, the task takes its claim
         // and ends the row, or finds the freeze set. The count drops after
@@ -237,8 +339,13 @@ impl SessionTarget {
             None => {
                 #[cfg(test)]
                 self.hooks.start.hold().await;
-                self.start(&effect, &spec, prompt.as_ref(), None, Some(&stop_flag))
-                    .await
+                let dispatch = self
+                    .start(&effect, &spec, prompt.as_ref(), None, Some(&stop_flag))
+                    .await;
+                if matches!(dispatch, Dispatch::Confirmed | Dispatch::Deferred) {
+                    self.record_base(&session_id, base).await;
+                }
+                dispatch
             }
             Some(e) => {
                 let stopped = e.message == STOPPED_MESSAGE;
@@ -381,7 +488,8 @@ impl SessionTarget {
         }
     }
 
-    /// Sends the cancel to the task of the session and records the mode.
+    /// Sends the cancel to the setup command or workspace task of the session
+    /// and records the mode.
     /// False when the session has no task.
     pub(super) fn cancel_setup(&self, session_id: &SessionId, how: StopMode) -> bool {
         let Ok(mut tasks) = self.setups.lock() else {
@@ -394,7 +502,8 @@ impl SessionTarget {
         true
     }
 
-    /// Cancels every task with `how` and waits for them (station shutdown).
+    /// Cancels every setup command or workspace task with `how` and waits for
+    /// them (station shutdown).
     /// A task that started its provider stops it and waits for its end before
     /// it ends. A task that does not end in time is aborted; its provider
     /// session, if it still holds one, is dropped, and a drop kills the
