@@ -1,5 +1,7 @@
-import { FileText, Folder, Icon, LogOut, Server, SquareTerminal } from '../ui/icons';
+import { useState } from 'react';
+import { FileText, Folder, Icon, LogOut, Server, Smartphone, SquareTerminal } from '../ui/icons';
 import type { Chrome } from './chrome';
+import { DeviceLinkDialog } from './DeviceLinkDialog';
 import { PrefsRow } from './Prefs';
 
 type Props = {
@@ -10,6 +12,7 @@ type Props = {
 
 /** The phone's "More" page: the pages that have no place in the bottom bar. */
 export function More({ stationCount, terminalCount, chrome }: Props) {
+  const [addingDevice, setAddingDevice] = useState(false);
   return (
     <section className="fd-screen fd-more" aria-label="More">
       <h1 className="fd-screen-title">More</h1>
@@ -44,6 +47,14 @@ export function More({ stationCount, terminalCount, chrome }: Props) {
         </ul>
       </nav>
       <PrefsRow />
+      {chrome?.addDevice === undefined ? null : (
+        <button type="button" className="fd-ghost fd-sm" onClick={() => setAddingDevice(true)}>
+          <Icon of={Smartphone} size={14} /> Add a device
+        </button>
+      )}
+      {addingDevice && chrome?.addDevice !== undefined ? (
+        <DeviceLinkDialog load={chrome.addDevice} onClose={() => setAddingDevice(false)} />
+      ) : null}
       {chrome === undefined ? null : (
         <button type="button" className="fd-ghost fd-sm" onClick={chrome.onLogout}>
           <Icon of={LogOut} size={14} /> Log out

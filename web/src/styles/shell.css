@@ -392,6 +392,7 @@ body:has(.fd-app[data-layout="tablet"]) {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: var(--sp-2);
 }
 
@@ -618,6 +619,51 @@ body:has(.fd-app[data-layout="tablet"]) {
 
 .fd-overlay .fd-dialog > button {
   justify-self: end;
+}
+
+/* Add a device (DL-146): the QR code is black on white in every theme. */
+.fd-devlink {
+  justify-items: start;
+}
+
+.fd-overlay .fd-devlink > button {
+  justify-self: start;
+}
+
+.fd-overlay .fd-devlink > .fd-devlink-close {
+  justify-self: end;
+}
+
+.fd-devlink-qr {
+  display: block;
+  width: 240px;
+  max-width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+  border-radius: var(--r-ctl);
+}
+
+.fd-devlink-url {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+}
+
+.fd-devlink-url input {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+}
+
+.fd-devlink-error {
+  color: var(--hazard);
+}
+
+.fd-devlink-left {
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums;
 }
 
 .fd-keys {

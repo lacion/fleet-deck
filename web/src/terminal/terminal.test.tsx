@@ -4,6 +4,7 @@ import type { SessionSummary } from '../gen';
 import type { ShellActions } from '../shell/shell';
 import { releaseHold, returnToBoard, startHandover, waitFor } from './handover';
 import { KeyBar, ctrlByte } from './KeyBar';
+import { PasteNote, Terminal } from './Terminal';
 import { TerminalDock } from './TerminalDock';
 import { type DockState, type TermTab, createTerminalStore, tabId } from './store';
 
@@ -503,5 +504,33 @@ describe('TerminalDock', () => {
     expect(html).toContain('Show terminals');
     expect(html).toContain('data-terminal="a"');
     expect(html).not.toContain('Resize terminals');
+  });
+});
+
+describe('image paste note (DL-147)', () => {
+  test('no note by default, a status while it works and an alert for an error', () => {
+    expect(renderToStaticMarkup(<PasteNote note={null} />)).toBe('');
+    const busy = renderToStaticMarkup(
+      <PasteNote note={{ tone: 'busy', text: 'Pasting image…' }} />,
+    );
+    expect(busy).toContain('class="fd-term-note"');
+    expect(busy).toContain('role="status"');
+    expect(busy).toContain('Pasting image…');
+    const error = renderToStaticMarkup(
+      <PasteNote
+        note={{ tone: 'error', text: 'Image not pasted: The image is too large to paste.' }}
+      />,
+    );
+    expect(error).toContain('role="alert"');
+    expect(error).toContain('data-tone="error"');
+    expect(error).toContain('Image not pasted: The image is too large to paste.');
+  });
+
+  test('a terminal starts without a paste note', () => {
+    const html = renderToStaticMarkup(
+      <Terminal station="s" shellId="sh-1" actions={{} as ShellActions} active touch={false} />,
+    );
+    expect(html).toContain('fd-term-host');
+    expect(html).not.toContain('fd-term-note');
   });
 });

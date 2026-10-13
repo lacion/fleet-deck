@@ -10,6 +10,14 @@ export type ShellActions = {
   handover(station: string, sessionId: string, cols: number, rows: number): Promise<string>;
   /** The owner clears a terminal hold whose process the station cannot see (DL-140). */
   release(station: string, shellId: string): Promise<void>;
+  /**
+   * Stores a pasted image on the station (DL-147) and returns its absolute path. The same
+   * `uploadId` returns the same path. Throws an Error with the deck's message on failure.
+   */
+  paste(
+    station: string,
+    image: { uploadId: string; ext: 'png' | 'jpg' | 'gif' | 'webp'; dataBase64: string },
+  ): Promise<string>;
   /** The WebSocket path of one shell (relative to the board origin). */
   socketPath(station: string, shellId: string): string;
 };
@@ -102,6 +110,17 @@ export function shellActions(
     },
     release: async (station, shellId) => {
       await send(station, { op: 'release', shell_id: shellId });
+    },
+    paste: async (station, image) => {
+      const reply = await post(`/api/stations/${encodeURIComponent(station)}/paste`, {
+        upload_id: image.uploadId,
+        ext: image.ext,
+        data_base64: image.dataBase64,
+      });
+      if (!record(reply) || typeof reply['path'] !== 'string' || reply['path'] === '') {
+        throw new Error('The deck gave an answer that the board cannot read.');
+      }
+      return reply['path'];
     },
     socketPath: (station, shellId) => `${base(station)}/${encodeURIComponent(shellId)}/attach`,
   };

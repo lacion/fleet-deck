@@ -49,6 +49,7 @@ export {
   Search,
   Send,
   Server,
+  Smartphone,
   Square,
   SquareTerminal,
   Star,

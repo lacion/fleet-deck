@@ -12,6 +12,7 @@ import {
   Plus,
   Search,
   Server,
+  Smartphone,
   SquareTerminal,
   Star,
   TriangleAlert,
@@ -20,6 +21,7 @@ import {
 import { shortModel } from '../ui/format';
 import { archived as archivedSet, priority, sessionRef } from '../ui/localSet';
 import type { Chrome } from './chrome';
+import { DeviceLinkDialog } from './DeviceLinkDialog';
 import { PrefsRow } from './Prefs';
 import { formatHash, type Route } from './routes';
 import { basename, relativeAge, type SidebarModel, sessionTitle, sidebarModel } from './sessions';
@@ -232,6 +234,7 @@ export function Sidebar({
   now: givenNow,
 }: Props) {
   const [query, setQuery] = useState('');
+  const [addingDevice, setAddingDevice] = useState(false);
   const now = useNow(givenNow, 30000);
   const starred = priority.use();
   const archived = archivedSet.use();
@@ -354,9 +357,21 @@ export function Sidebar({
                   deck {chrome.version}
                 </span>
               )}
+              {chrome.addDevice === undefined ? null : (
+                <button
+                  type="button"
+                  className="fd-ghost fd-sm"
+                  onClick={() => setAddingDevice(true)}
+                >
+                  <Icon of={Smartphone} size={14} /> Add a device
+                </button>
+              )}
               <button type="button" className="fd-ghost fd-sm" onClick={chrome.onLogout}>
                 <Icon of={LogOut} size={14} /> Log out
               </button>
+              {addingDevice && chrome.addDevice !== undefined ? (
+                <DeviceLinkDialog load={chrome.addDevice} onClose={() => setAddingDevice(false)} />
+              ) : null}
             </div>
           )}
         </div>
