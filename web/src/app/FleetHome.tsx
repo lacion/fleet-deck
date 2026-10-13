@@ -338,6 +338,7 @@ export function FleetHome({
       onOpen={onOpen}
       sessionActions={sessionActions}
       variant={variant}
+      freshness={freshness}
     />
   );
   const empty =

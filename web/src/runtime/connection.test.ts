@@ -313,6 +313,20 @@ describe('deck connection runtime', () => {
     connection.stop();
   });
 
+  test('a read call aborts after the timeout it is given, the default one otherwise', async () => {
+    const { env, connection } = await fixture();
+    const abortAt = async (call: () => Promise<unknown>) => {
+      const before = new Set(env.timers.keys());
+      const pending = call();
+      const added = [...env.timers.entries()].filter(([id]) => !before.has(id));
+      await pending;
+      return added.map(([, t]) => t.at - env.clock);
+    };
+    expect(await abortAt(() => connection.get('/api/slow', 65_000))).toEqual([65_000]);
+    expect(await abortAt(() => connection.get('/api/quick'))).toEqual([TIMEOUT_MS]);
+    connection.stop();
+  });
+
   test('the UI shows the owner login and separate stale/connected states', async () => {
     const env = new FakeEnvironment();
     const c = new Connection(env);
