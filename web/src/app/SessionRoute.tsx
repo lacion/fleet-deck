@@ -56,7 +56,8 @@ export function buildPaneProps(input: BuildInput): PaneProps {
     ...rest,
     layout,
     tab: route.tab,
-    onTab: (tab) => navigate({ ...route, tab }),
+    // A tab change replaces the history entry: Back leaves the session.
+    onTab: (tab) => navigate({ ...route, tab }, { replace: true }),
     ...(layout === 'desktop'
       ? {}
       : {

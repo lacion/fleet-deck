@@ -47,10 +47,10 @@ describe('buildPaneProps', () => {
     }
   });
 
-  test('onTab navigates to the same session with the new tab', () => {
+  test('onTab replaces the route with the same session and the new tab', () => {
     const { props, calls } = build('desktop');
     props.onTab('changes');
-    expect(calls).toEqual([{ route: route('changes') }]);
+    expect(calls).toEqual([{ route: route('changes'), opts: { replace: true } }]);
   });
 
   test('onTerminalOpened passes through only when given', () => {
