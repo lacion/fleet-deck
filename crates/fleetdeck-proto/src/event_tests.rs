@@ -223,6 +223,20 @@ fn samples() -> Vec<Event> {
             code: "v1_plugin".into(),
             text: "The Fleet Deck v1 plugin is active in this session.".into(),
         },
+        Event::SessionModels {
+            models: vec![
+                crate::event::ModelChoice {
+                    value: "default".into(),
+                    label: "Default (recommended)".into(),
+                    description: Some("Use the default model".into()),
+                },
+                crate::event::ModelChoice {
+                    value: "opus".into(),
+                    label: "Opus".into(),
+                    description: None,
+                },
+            ],
+        },
     ]
 }
 
@@ -364,4 +378,16 @@ mod decode_props {
             let _ = serde_json::from_str::<ControlFrame>(&text);
         }
     }
+}
+
+#[test]
+fn a_model_choice_without_a_description_decodes() {
+    let body: EventBody = serde_json::from_value(
+        json!({"kind": "session.models", "models": [{"value": "opus", "label": "Opus"}]}),
+    )
+    .unwrap();
+    let Some(Event::SessionModels { models }) = body.known() else {
+        panic!("expected session.models");
+    };
+    assert_eq!(models[0].description, None);
 }

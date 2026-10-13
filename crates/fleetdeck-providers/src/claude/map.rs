@@ -1,8 +1,8 @@
 //! Mapping of CLI frames to canonical events (ADR-001 §2.4).
 
 use fleetdeck_proto::event::{
-    BackgroundTask, ExpiredReason, FileChange, InputState, RateLimit, ToolKind, ToolStatus,
-    TurnStatus, Usage,
+    BackgroundTask, ExpiredReason, FileChange, InputState, ModelChoice, RateLimit, ToolKind,
+    ToolStatus, TurnStatus, Usage,
 };
 use fleetdeck_proto::{Event, NodeId};
 use serde_json::{Map, Value};
@@ -127,6 +127,10 @@ fn on_system(core: &mut ClaudeCore, subtype: &str, body: &Map<String, Value>) ->
                     code: V1_PLUGIN_NOTICE_CODE.to_owned(),
                     text: V1_PLUGIN_NOTICE_TEXT.to_owned(),
                 }));
+            }
+            let models = std::mem::take(&mut core.pending_models);
+            if !models.is_empty() {
+                out.push(Output::Emit(Event::SessionModels { models }));
             }
             let commands = slash_commands(body);
             if !commands.is_empty() {
@@ -547,6 +551,27 @@ pub(super) fn close_open_tools(core: &mut ClaudeCore) -> Vec<Output> {
         .collect()
 }
 
+/// The models of an `initialize` response for the board, in the CLI order:
+/// `value` is what `set_model` takes; an entry without `value` is dropped
+/// (DL-151).
+fn model_choices(response: &Value) -> Vec<ModelChoice> {
+    let text = |m: &Value, k: &str| m.get(k).and_then(Value::as_str).map(str::to_owned);
+    response
+        .get("models")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|m| {
+            let value = text(m, "value")?;
+            Some(ModelChoice {
+                label: text(m, "displayName").unwrap_or_else(|| value.clone()),
+                description: text(m, "description"),
+                value,
+            })
+        })
+        .collect()
+}
+
 /// The model values of an `initialize` response (`value` and `resolvedModel`).
 fn advertised_models(response: &Value) -> Vec<String> {
     let mut models: Vec<String> = response
@@ -599,7 +624,16 @@ fn on_control_response(core: &mut ClaudeCore, resp: &ControlResponse) -> Vec<Out
             {
                 core.mode = Some(mode.to_owned());
             }
-            Vec::new()
+            let models = model_choices(&resp.response);
+            if models.is_empty() {
+                Vec::new()
+            } else if core.started {
+                vec![Output::Emit(Event::SessionModels { models })]
+            } else {
+                // `session.models` never comes before `session.started`.
+                core.pending_models = models;
+                Vec::new()
+            }
         }
         HostRequest::SetMode(mode) => {
             core.mode = Some(mode.clone());

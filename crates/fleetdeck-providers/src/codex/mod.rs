@@ -29,6 +29,8 @@ mod tests;
 #[cfg(test)]
 mod tests_checkpoint;
 #[cfg(test)]
+mod tests_models;
+#[cfg(test)]
 mod tests_review;
 #[cfg(test)]
 mod tests_rollback;
@@ -244,4 +246,7 @@ pub struct CoreConfig {
     /// degradation, `None` for a new thread.
     pub resumed: Option<bool>,
     pub client: ClientInfo,
+    /// Send `model/list` after the thread opens (DL-151). Replays of
+    /// recordings that hold no `model/list` set it to false.
+    pub request_models: bool,
 }

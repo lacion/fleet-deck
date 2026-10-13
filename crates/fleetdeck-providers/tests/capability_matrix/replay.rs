@@ -135,6 +135,7 @@ pub(crate) fn codex_core() -> codex::CodexCore {
             name: "fleet-deck-spike".to_owned(),
             version: "0.0.0".to_owned(),
         },
+        request_models: false,
     })
 }
 

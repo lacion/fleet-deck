@@ -567,6 +567,24 @@ fn a_session_notice_does_not_change_the_summary() {
     assert_eq!(*s, expected);
 }
 
+#[test]
+fn session_models_does_not_change_the_summary() {
+    let mut f = Feed::new();
+    f.push(started());
+    let mut expected = f.summary.clone();
+    let s = f.push(Event::SessionModels {
+        models: vec![crate::event::ModelChoice {
+            value: "opus".to_owned(),
+            label: "Opus".to_owned(),
+            description: None,
+        }],
+    });
+    // Only the sequence and the time move; all other fields stay.
+    expected.session_seq = s.session_seq;
+    expected.updated_at = s.updated_at;
+    assert_eq!(*s, expected);
+}
+
 fn terminal(shell_id: Option<&str>, pid: Option<u32>, reason: Option<&str>) -> Event {
     Event::SessionTerminal {
         shell_id: shell_id.map(str::to_owned),

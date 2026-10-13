@@ -152,6 +152,27 @@ async fn a_session_is_open_when_start_returns_and_runs_turns() {
 }
 
 #[tokio::test]
+async fn the_models_of_the_app_server_arrive_after_the_session_start() {
+    let mut live = start(None, Origin::New).await;
+    let events = until(&mut live.rx, |e| matches!(e, Event::SessionModels { .. })).await;
+    assert!(
+        matches!(events.first(), Some(Event::SessionStarted { .. })),
+        "{events:#?}"
+    );
+    let Some(Event::SessionModels { models }) = events.last() else {
+        unreachable!()
+    };
+    assert_eq!(models.len(), 1);
+    assert_eq!(models[0].value, "gpt-sim-1");
+    assert_eq!(models[0].label, "Sim model");
+    assert_eq!(
+        models[0].description.as_deref(),
+        Some("The model of the sim")
+    );
+    live.session.stop(StopMode::Graceful).await.unwrap();
+}
+
+#[tokio::test]
 async fn approvals_steer_and_interrupt_reach_the_app_server() {
     let mut live = start(None, Origin::New).await;
     live.session

@@ -8,7 +8,8 @@
 use std::collections::BTreeMap;
 
 use fleetdeck_proto::event::{
-    ApprovalOption, BackgroundTask, ExpiredReason, InputState, ProviderKind, RunOrigin, TurnStatus,
+    ApprovalOption, BackgroundTask, ExpiredReason, InputState, ModelChoice, ProviderKind,
+    RunOrigin, TurnStatus,
 };
 use fleetdeck_proto::{
     Capabilities, Event, InputId, NodeId, PlanId, ProviderInstanceId, RequestId, RunId, TurnId,
@@ -143,6 +144,10 @@ pub struct ClaudeCore {
     pub(super) model: Option<String>,
     /// Model values from the `initialize` response; `None` until advertised (trap 1).
     pub(super) models: Option<Vec<String>>,
+    /// The models of an `initialize` answer that came before the first `init`;
+    /// `session.models` follows `session.started` (DL-151).
+    #[serde(default)]
+    pub(super) pending_models: Vec<ModelChoice>,
     /// Every input written in this process, in order.
     pub(super) inputs: Vec<InputEntry>,
     /// True after the first `command_lifecycle` frame: the CLI reports input
@@ -176,6 +181,7 @@ impl ClaudeCore {
             mode: None,
             model: None,
             models: None,
+            pending_models: Vec::new(),
             inputs: Vec::new(),
             lifecycle_seen: false,
             run: None,
