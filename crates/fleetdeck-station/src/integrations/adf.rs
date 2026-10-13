@@ -224,6 +224,13 @@ fn block(node: &Value, media: &MediaUrls, depth: usize, out: &mut String) {
             for (i, item) in children(node).enumerate() {
                 let mut inner = String::new();
                 for child in children(item) {
+                    // A nested list follows its item text with no blank line.
+                    if matches!(child["type"].as_str(), Some("bulletList" | "orderedList"))
+                        && !inner.is_empty()
+                    {
+                        inner.truncate(inner.trim_end().len());
+                        inner.push('\n');
+                    }
                     block(child, media, depth + 1, &mut inner);
                 }
                 let inner = inner.trim_end();

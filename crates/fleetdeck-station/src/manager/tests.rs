@@ -718,45 +718,34 @@ async fn a_started_session_records_the_branch_of_its_workspace() {
     st.manager.shutdown(StopMode::Kill).await;
 }
 
-#[path = "codex_tests.rs"]
-mod codex;
-
-#[path = "checkpoint_wired_tests.rs"]
-mod checkpoint_wired;
-
-#[path = "revert_wired_tests.rs"]
-mod revert_wired;
-
-#[path = "rename_tests.rs"]
-mod rename;
-
 #[path = "assist_wired_tests.rs"]
 mod assist_wired;
 #[path = "batch_tests.rs"]
 mod batch;
-#[path = "origin_text_tests.rs"]
-mod origin_text_tests;
-
-#[path = "setup_tests.rs"]
-mod setup;
-
-#[path = "workspace_tests.rs"]
-mod workspace_provision;
-
-#[path = "resume_tests.rs"]
-mod resume;
-
-#[path = "drain_tests.rs"]
-mod drain;
-
-#[path = "import_tests.rs"]
-mod import_tests;
-
-#[path = "hibernate_tests.rs"]
-mod hibernate_tests;
-
+#[path = "checkpoint_wired_tests.rs"]
+mod checkpoint_wired;
+#[path = "codex_tests.rs"]
+mod codex;
 #[path = "coordinator_command_tests.rs"]
 mod coordinator_command;
+#[path = "drain_tests.rs"]
+mod drain;
+#[path = "hibernate_tests.rs"]
+mod hibernate_tests;
+#[path = "import_tests.rs"]
+mod import_tests;
+#[path = "origin_text_tests.rs"]
+mod origin_text_tests;
+#[path = "rename_tests.rs"]
+mod rename;
+#[path = "resume_tests.rs"]
+mod resume;
+#[path = "revert_wired_tests.rs"]
+mod revert_wired;
+#[path = "setup_tests.rs"]
+mod setup;
+#[path = "workspace_tests.rs"]
+mod workspace_provision;
 
 /// A coordinator spec for the start checks (ADR-006 §4).
 pub(super) fn coordinator_spec() -> fleetdeck_proto::command::CoordinatorSpec {

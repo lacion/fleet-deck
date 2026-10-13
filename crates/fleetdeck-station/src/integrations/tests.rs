@@ -473,8 +473,8 @@ async fn bad_params_and_unknown_trackers_are_refused_before_any_call() {
     assert_eq!(c, code::INVALID_PARAMS);
     assert_eq!(
         calls(&tmp.path().join("gh")),
-        1,
-        "only the identity call ran, never a write"
+        0,
+        "no call ran, not even the identity call"
     );
     assert_eq!(calls(&tmp.path().join("curl")), 0);
 }

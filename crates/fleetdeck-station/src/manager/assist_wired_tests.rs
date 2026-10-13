@@ -182,15 +182,27 @@ async fn the_watcher_titles_a_session_once_and_digests_it_when_it_ends() {
         let manager = Arc::clone(&manager);
         async move { manager.submit(envelope, Caller::local()).await.unwrap() }
     };
-    send(
-        1,
-        SessionCommand::Prompt {
-            session_id: s.clone(),
-            input: text("hello"),
-        },
-    )
-    .await;
+    // The first prompt is rejected until the provider process runs.
     let deadline = tokio::time::Instant::now() + WAIT;
+    for n in 10.. {
+        let decided = send(
+            n,
+            SessionCommand::Prompt {
+                session_id: s.clone(),
+                input: text("hello"),
+            },
+        )
+        .await;
+        if decided.receipt.state == ReceiptState::Accepted {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the prompt was never accepted: {:?}",
+            decided.receipt
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
     loop {
         let summary = manager.store().summary(s.clone()).await.unwrap().unwrap();
         if summary.title_generated {

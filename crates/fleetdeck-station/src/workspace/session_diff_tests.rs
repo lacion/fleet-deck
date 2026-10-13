@@ -46,7 +46,8 @@ struct Rig {
     policy: Policy,
 }
 
-/// A repository with `a.txt` and `b.txt` committed, and a session in it
+/// A repository with `a.txt`, `b.txt` and a `.gitignore` (for `ignored.txt`)
+/// committed, and a session in it
 /// with the first commit as its base (unless `with_base` is false).
 async fn rig(with_base: bool) -> Rig {
     let det = Det::new();
@@ -57,6 +58,7 @@ async fn rig(with_base: bool) -> Rig {
     git(&dir, &["init", "-q", "-b", "main"]);
     std::fs::write(dir.join("a.txt"), "one\n").unwrap();
     std::fs::write(dir.join("b.txt"), "two\n").unwrap();
+    std::fs::write(dir.join(".gitignore"), "ignored.txt\n").unwrap();
     git(&dir, &["add", "."]);
     git(&dir, &["commit", "-q", "-m", "init"]);
     let base = git(&dir, &["rev-parse", "HEAD"]);
@@ -149,8 +151,6 @@ async fn the_diff_has_the_edits_after_the_base_commit_and_the_untracked_files() 
 #[tokio::test]
 async fn the_diff_leaves_out_ignored_and_private_paths_and_does_not_follow_a_link() {
     let r = rig(true).await;
-    std::fs::write(r.dir.join(".gitignore"), "ignored.txt\n").unwrap();
-    git(&r.dir, &["add", ".gitignore"]);
     std::fs::write(r.dir.join("ignored.txt"), "secret\n").unwrap();
     std::fs::create_dir(r.dir.join(".ssh")).unwrap();
     std::fs::write(r.dir.join(".ssh/key"), "private\n").unwrap();
