@@ -1,7 +1,7 @@
 import { type CSSProperties, useEffect, useRef, useState } from 'react';
 import { formatHash } from '../app/routes';
 import { basename, relativeAge } from '../app/sessions';
-import type { CardStatus, DeckSession, SessionKey, StationView } from '../gen';
+import type { CardStatus, DeckSession, SessionExtras, SessionKey, StationView } from '../gen';
 import type { Freshness } from '../runtime/state';
 import { sessionFlags } from '../session/controller';
 import type { SessionActions } from '../session/commands';
@@ -14,6 +14,7 @@ import {
   GitBranch,
   Icon,
   Layers,
+  Mail,
   RotateCcw,
   Star,
   TriangleAlert,
@@ -21,7 +22,9 @@ import {
 } from '../ui/icons';
 import { archived, priority, sessionRef } from '../ui/localSet';
 import { useNow } from '../ui/useNow';
+import { buckets } from './activity';
 import { type Contested, cardKey, NO_REPO, repoName, stationName, statusGroups } from './fleet';
+import { Sparkline } from './Sparkline';
 
 type Props = {
   readonly sessions: readonly DeckSession[];
@@ -34,6 +37,8 @@ type Props = {
   readonly contested?: ReadonlyMap<string, Contested> | undefined;
   /** DL-141: the actions of a session, for the Offline column's Resume all. */
   readonly sessionActions?: ((key: SessionKey) => SessionActions) | undefined;
+  /** DL-141: the card extras (mail, touched files), by `sessionRef`. */
+  readonly extras?: ReadonlyMap<string, SessionExtras> | undefined;
 };
 
 /** The five columns of the board; a column holds one or more deck statuses, in this order. */
@@ -149,6 +154,7 @@ export function FleetCard({
   now,
   showStation,
   contested,
+  extra,
 }: {
   readonly card: DeckSession;
   readonly stations: readonly StationView[];
@@ -156,6 +162,7 @@ export function FleetCard({
   readonly now: number;
   readonly showStation: boolean;
   readonly contested?: Contested | undefined;
+  readonly extra?: SessionExtras | undefined;
 }) {
   const s = card.summary;
   const ref = sessionRef(card.station_id, s.session_id);
@@ -173,6 +180,8 @@ export function FleetCard({
         <Icon of={Folder} size={12} /> {basename(s.cwd)}
       </>
     ) : null;
+  const files = extra?.files ?? [];
+  const activity = buckets(ref, now);
   const station = showStation
     ? `${stationName(card.station_id, stations)}${where === null ? '' : ' · '}`
     : '';
@@ -200,6 +209,11 @@ export function FleetCard({
               <Icon of={Star} size={12} />
             </span>
           ) : null}
+          {extra !== undefined && extra.mail_pending > 0 ? (
+            <span className="fd-card-mail" title="Mail waiting for delivery">
+              <Icon of={Mail} size={12} /> {extra.mail_pending}
+            </span>
+          ) : null}
         </span>
         <span className="fd-card-where">
           {station === '' && where === null ? null : (
@@ -213,6 +227,20 @@ export function FleetCard({
           </span>
         </span>
         <CardNote card={card} />
+        {files.length === 0 ? null : (
+          <span className="fd-card-files">
+            {files.map((path) => (
+              <span
+                key={path}
+                className="fd-filechip"
+                title={path}
+                data-hot={contested?.files.includes(path) ? 'true' : undefined}
+              >
+                {basename(path)}
+              </span>
+            ))}
+          </span>
+        )}
         {contested === undefined ? null : (
           <span className="fd-card-contested">
             <Icon of={TriangleAlert} size={12} /> contested with {contested.with.join(', ')}
@@ -252,6 +280,7 @@ export function FleetCard({
               Stale
             </span>
           ) : null}
+          {activity.some((n) => n > 0) ? <Sparkline values={activity} /> : null}
           <span className="fd-card-age">{relativeAge(s.updated_at, now)}</span>
         </span>
       </a>
@@ -395,6 +424,7 @@ export function FleetBoard({
   group = 'station',
   contested,
   sessionActions,
+  extras,
 }: Props) {
   const now = useNow(given, 30000);
   const starred = priority.use();
@@ -461,6 +491,7 @@ export function FleetBoard({
                       contested={contested?.get(
                         sessionRef(card.station_id, card.summary.session_id),
                       )}
+                      extra={extras?.get(sessionRef(card.station_id, card.summary.session_id))}
                     />
                   ))}
                 </ul>

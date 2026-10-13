@@ -270,6 +270,32 @@ test('the cards show the bypass mode, the last error and the conflict', async ({
   await expect(page.getByText('1 conflict', { exact: true })).toBeVisible();
 });
 
+test('a card shows the mail badge and the touched-file chips from the extras', async ({ page }) => {
+  const deck = new FakeDeck();
+  deck.stations = [stationView(ST, 'Alpha')];
+  deck.sessions = [sessionIn('a', 'Alpha one'), sessionIn('b', 'Alpha two')];
+  deck.on('/api/fleet/extras', () => ({
+    status: 200,
+    body: {
+      sessions: [
+        {
+          station_id: ST,
+          session_id: 'a',
+          mail_pending: 2,
+          files: ['src/app/main.rs', 'docs/NOTES.md'],
+        },
+      ],
+    },
+  }));
+  await deck.install(page);
+  await logIn(page);
+  await openFleet(page);
+  const a = page.locator('a.fd-card[data-session="a"]');
+  await expect(a.locator('.fd-card-mail')).toHaveText('2');
+  await expect(a.locator('.fd-card-files .fd-filechip')).toHaveText(['main.rs', 'NOTES.md']);
+  await expect(page.locator('a.fd-card[data-session="b"] .fd-card-mail')).toHaveCount(0);
+});
+
 test.describe('wide screen', () => {
   test.use({ viewport: { width: 1440, height: 900 }, isMobile: false, hasTouch: false });
 
