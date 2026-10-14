@@ -3,6 +3,7 @@
 - **Audit date:** 2026-10-14
 - **Revision:** `2ac95b7f763757150c252186d2b3acba66509abf`
 - **Result:** 0 critical, 0 high, 3 medium, and 2 low findings
+- **Review of the fixes:** adversary PRE-PR review FAIL (2 blockers, 2 major; `/tmp/adversary-report-ece9e5c4.md`), fixed in fa7d6768; RE-REVIEW PASS (`/tmp/adversary-report-9e562a46.md`).
 - **Remediation (2026-10-14):** all five findings are fixed on branch `v2` (FDV2-001 and FDV2-002 in a1e3eae3, FDV2-003 in 1d9bcbf1, FDV2-004 and FDV2-005 in 73d5abd4); `bun audit` passes with registry access. Each finding's Status line has the details.
 
 ## Executive summary
