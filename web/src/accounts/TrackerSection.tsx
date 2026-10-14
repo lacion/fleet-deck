@@ -45,6 +45,7 @@ export function TrackerBlock({
   kind,
   app,
   accounts,
+  linearBuiltin,
   origin,
   busy,
   waiting,
@@ -58,6 +59,8 @@ export function TrackerBlock({
   readonly kind: TrackerKind;
   readonly app: AppView | undefined;
   readonly accounts: readonly AccountView[];
+  /** The station offers the built-in Linear app (`accounts.list` `linear_builtin`). */
+  readonly linearBuiltin: boolean;
   /** The location of the board (`window.location.origin`). */
   readonly origin: string;
   readonly busy: string | null;
@@ -72,8 +75,9 @@ export function TrackerBlock({
   readonly onLogout: (account: AccountView) => void;
 }) {
   const label = KIND_LABEL[kind];
-  // Linear without an owner app uses the built-in app. Jira has none.
-  const builtin = kind === 'linear' && app === undefined;
+  // Linear without an owner app uses the built-in app when the station offers
+  // it. Jira has none.
+  const builtin = kind === 'linear' && app === undefined && linearBuiltin;
   return (
     <div className="fd-set-tracker" role="group" aria-label={label}>
       <h3 className="fd-set-trackerhead">{label}</h3>

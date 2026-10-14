@@ -99,6 +99,15 @@ fn station_error(code: &str, message: String) -> ApiError {
         "unavailable" => (StatusCode::CONFLICT, "integration_unavailable"),
         "upstream" => (StatusCode::BAD_GATEWAY, "upstream"),
         "timeout" => (StatusCode::GATEWAY_TIMEOUT, "timeout"),
+        // The Linear app of the account changed (DL-185): a fixed text, never
+        // the station message.
+        "app_changed" => {
+            return ApiError::new(
+                StatusCode::CONFLICT,
+                "app_changed",
+                "The Linear app of this account changed. Connect the account again.",
+            );
+        }
         "feature_not_negotiated" => (StatusCode::BAD_GATEWAY, "station_error"),
         _ => {
             return ApiError::new(
@@ -651,5 +660,14 @@ mod tests {
             (StatusCode::BAD_GATEWAY, "station_error")
         );
         assert!(other.message.starts_with("surprise: "));
+        let changed = station_error("app_changed", "station-text-canary".into());
+        assert_eq!(
+            (changed.status, changed.code),
+            (StatusCode::CONFLICT, "app_changed")
+        );
+        assert_eq!(
+            changed.message,
+            "The Linear app of this account changed. Connect the account again."
+        );
     }
 }

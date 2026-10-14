@@ -67,6 +67,8 @@ Linear does not document its redirect matching. Before the built-in app ships, t
 2. An authorize request with an unregistered redirect (`https://127.0.0.1:7421/oauth/callback`, `https://127.0.0.1:7420/oauth/callback2`, `http://127.0.0.1:7420/oauth/callback`, `https://[::1]:7420/oauth/callback`) is refused by Linear.
 If check 2 shows a loose match, the built-in app does not ship and this design returns to review.
 
+Until the checks pass, `LINEAR_BUILTIN_VERIFIED` is false: the built-in app is off unless the station runs with `FLEETDECK_LINEAR_BUILTIN=1` (for the checks).
+
 ## 5. Failure behaviour
 
 | Situation | Result |

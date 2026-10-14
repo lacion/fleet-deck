@@ -10,4 +10,9 @@ export type AccountsList = { accounts: Array<AccountView>, apps: Array<AppView>,
  * The names of the token variables found in the station environment
  * (`GH_TOKEN`, ...). Never their values.
  */
-env_tokens: Array<string>, };
+env_tokens: Array<string>, 
+/**
+ * True when the station offers the built-in Linear app (DL-185). Missing
+ * means false.
+ */
+linear_builtin?: boolean, };

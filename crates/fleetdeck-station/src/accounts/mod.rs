@@ -125,6 +125,8 @@ pub struct Accounts {
     pub(crate) limits: Limits,
     /// True when the named variable is set in the station environment.
     pub(crate) env_probe: fn(&str) -> bool,
+    /// True when the built-in Linear app is on (DL-185 release gate).
+    pub(crate) builtin_probe: fn() -> bool,
     pub(crate) logins: forge::Logins,
     pub(crate) login_gate: tokio::sync::Mutex<()>,
     pub(crate) needs_login: Mutex<HashSet<String>>,
@@ -160,6 +162,7 @@ impl Accounts {
             programs,
             limits: Limits::default(),
             env_probe: env_set,
+            builtin_probe: oauth::linear_builtin_enabled,
             logins: forge::Logins::default(),
             login_gate: tokio::sync::Mutex::new(()),
             needs_login: Mutex::new(HashSet::new()),
@@ -300,6 +303,7 @@ impl Accounts {
             accounts,
             apps,
             env_tokens: self.env_tokens(),
+            linear_builtin: (self.builtin_probe)(),
         })
     }
 
