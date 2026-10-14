@@ -98,6 +98,8 @@ pub struct BoardClient {
     /// The board state, for the tests that read it (live settings).
     pub state: Arc<Board>,
     pub addr: std::net::SocketAddr,
+    /// The optional addresses that were not bound, with the reason.
+    pub skipped: Vec<(std::net::SocketAddr, String)>,
     tls: TlsConnector,
     _server: BoardServer,
     _stop: watch::Sender<bool>,
@@ -132,6 +134,12 @@ pub struct Extras {
     pub local_station: Option<StationId>,
     /// The link node for the pairing routes, next to the settings.
     pub pairing: Option<Arc<fleetdeck_deck::link::DeckNode>>,
+    /// The host facts of the tailnet routes (default: a plain machine).
+    pub host: Option<fn() -> fleetdeck_core::tailscale_wsl::HostFacts>,
+    /// What the automatic tailnet start did (default: nothing).
+    pub tailnet_start: Option<fleetdeck_deck::tailnet_auto::TailnetStart>,
+    /// Optional board addresses (the automatic ones), bound with skipping.
+    pub optional: Vec<std::net::SocketAddr>,
 }
 
 /// Serves the board API of `link` with `extras`.
@@ -160,8 +168,13 @@ async fn serve_with(
     let mut extras = Some(extras);
     let (stop, rx) = watch::channel(false);
     let s = store.clone();
-    let server = BoardServer::bind(
+    let optional = extras
+        .as_ref()
+        .map(|e| e.optional.clone())
+        .unwrap_or_default();
+    let server = BoardServer::bind_with(
         &["127.0.0.1:0".parse().unwrap()],
+        &optional,
         move |bound| {
             let (cert, key) = BoardTls::generate(&["127.0.0.1".to_owned()])?;
             let tls = BoardTls::from_pem(&cert, &key, true)?;
@@ -198,6 +211,16 @@ async fn serve_with(
                         })
                         .unwrap_or_default(),
                 ),
+                tailnet_start: Arc::new(std::sync::Mutex::new(
+                    extras
+                        .as_mut()
+                        .and_then(|e| e.tailnet_start.take())
+                        .unwrap_or_default(),
+                )),
+                host: extras
+                    .as_ref()
+                    .and_then(|e| e.host)
+                    .unwrap_or(fleetdeck_core::tailscale_wsl::HostFacts::default),
             });
             *board_slot.lock().unwrap() = Some(Arc::clone(&board));
             Ok::<_, fleetdeck_deck::http::tls::TlsError>((board, tls))
@@ -212,6 +235,7 @@ async fn serve_with(
         store,
         state,
         tls,
+        skipped: server.skipped.clone(),
         addr: server.addrs[0],
         _server: server,
         _stop: stop,

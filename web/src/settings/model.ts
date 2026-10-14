@@ -34,7 +34,10 @@ const SECTIONS: readonly { readonly title: string; readonly keys: readonly strin
   },
   { title: 'Sharing', keys: ['member_deny'] },
   { title: 'Fleet control', keys: ['fleet_control', 'allow_fleet_control'] },
-  { title: 'Network', keys: ['listen', 'link_listen', 'tailnet_hostname', 'tailscale_bin'] },
+  {
+    title: 'Network',
+    keys: ['listen', 'link_listen', 'tailnet_hostname', 'tailscale_bin', 'tailnet_auto'],
+  },
   { title: 'Notifications', keys: ['conflict_mail'] },
   { title: 'New sessions', keys: ['clone_host', 'clone_org', 'clone_transport'] },
   { title: 'Trackers', keys: ['trackers'] },
@@ -42,8 +45,12 @@ const SECTIONS: readonly { readonly title: string; readonly keys: readonly strin
 
 export type Group = { readonly title: string; readonly fields: readonly FieldMeta[] };
 
-/** The fields in the sections of the page, in order. A key that no section names goes to "Other". */
-export function groupFields(fields: readonly FieldMeta[]): Group[] {
+/**
+ * The fields in the sections of the page, in order. A key that no section names goes to "Other".
+ * A hidden field (a key that only the deck writes) is left out.
+ */
+export function groupFields(all: readonly FieldMeta[]): Group[] {
+  const fields = all.filter((f) => f.hidden !== true);
   const used = new Set<string>();
   const groups: Group[] = [];
   for (const section of SECTIONS) {

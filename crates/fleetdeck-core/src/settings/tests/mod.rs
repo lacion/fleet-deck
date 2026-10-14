@@ -5,6 +5,7 @@ mod fault;
 mod fields;
 mod save;
 mod secrets;
+mod tailnet_auto;
 mod testfs;
 
 use std::path::PathBuf;

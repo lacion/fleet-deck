@@ -53,6 +53,7 @@ fn field(key: &str, apply: Apply, secret: bool) -> FieldMeta {
         danger: false,
         secret,
         read_only: false,
+        hidden: false,
         cli_flag: None,
     }
 }

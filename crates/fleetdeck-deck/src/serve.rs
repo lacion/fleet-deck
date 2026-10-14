@@ -16,6 +16,8 @@ use fleetdeck_core::localsock::BindError;
 use fleetdeck_core::paths::{Env, NodeDirs, ensure_private_dir};
 use fleetdeck_core::restart::Restart;
 use fleetdeck_core::settings::{DeckHolder, SettingsWriter};
+use fleetdeck_core::tailscale;
+use fleetdeck_core::tailscale_wsl::{self, HostFacts};
 use fleetdeck_core::{SharedClock, SharedIds, SystemClock, UlidSource};
 use fleetdeck_link::reconnect::BackoffPolicy;
 use fleetdeck_proto::StationId;
@@ -23,10 +25,11 @@ use tokio::sync::watch;
 
 use crate::http::tls::TlsError;
 use crate::http::{Board, BoardServer, BoardTls, LoginLimits, Origins};
-use crate::link::{DeckNode, NodeError};
+use crate::link::{DeckNode, NodeError, NodeOptions};
 use crate::local::{self, LocalDeck};
 use crate::local_auth::BoardEndpoint;
 use crate::store::{DeckError, DeckStore};
+use crate::tailnet_auto::{self, SharedStart, TailnetStart};
 
 /// Why the deck cannot start.
 #[derive(Debug, thiserror::Error)]
@@ -118,27 +121,6 @@ impl RunningDeck {
         let clock: SharedClock = Arc::new(SystemClock);
         let ids: SharedIds = Arc::new(UlidSource::new(Arc::clone(&clock)));
         let store = DeckStore::open(&dirs.deck_db(), clock, ids).await?;
-        store.set_conflict_mail(config.conflict_mail);
-        store.set_fleet_control(config.fleet_control);
-        let socket = local::socket_path(&deck_dir);
-        let listener = local::bind(&socket).await?;
-        let identity = Arc::new(Identity::load_or_create(&deck_dir)?);
-        let node = DeckNode::start(
-            store.clone(),
-            Arc::clone(&identity),
-            &config.link_listen,
-            backoff,
-        )
-        .await?;
-        let (shutdown, rx) = watch::channel(false);
-        let tailnet = config.tailnet_hostname.clone();
-        let board_store = store.clone();
-        let board_link = Arc::clone(node.link());
-        let board_node = Arc::clone(&node);
-        let tls_dir = deck_dir.clone();
-        let elevations = Arc::new(crate::elevation::Elevations::default());
-        let board_elevations = Arc::clone(&elevations);
-        let live = crate::live::DeckLive::of(config);
         let settings_path = dirs.deck_config();
         let StartOptions {
             overrides,
@@ -155,11 +137,54 @@ impl RunningDeck {
             overrides,
             gate: Arc::default(),
         };
+        // "Use Tailscale automatically" (tailnet design 14.4) runs before
+        // any listener binds.
+        let (config, mut start) = automatic_start(&store, &deck_settings, config).await;
+        let config = &config;
+        store.set_conflict_mail(config.conflict_mail);
+        store.set_fleet_control(config.fleet_control);
+        let socket = local::socket_path(&deck_dir);
+        let listener = local::bind(&socket).await?;
+        let identity = Arc::new(Identity::load_or_create(&deck_dir)?);
+        let overridden = |key: &str| deck_settings.overrides.iter().any(|(k, _)| k == key);
+        let (link_manual, link_auto) = if overridden("link_listen") {
+            (config.link_listen.clone(), Vec::new())
+        } else {
+            split(&config.link_listen, &config.tailnet_auto_link_listen)
+        };
+        let (board_manual, board_auto) = if overridden("listen") {
+            (config.listen.clone(), Vec::new())
+        } else {
+            split(&config.listen, &config.tailnet_auto_listen)
+        };
+        let node = DeckNode::start_with(
+            store.clone(),
+            Arc::clone(&identity),
+            &link_manual,
+            backoff,
+            NodeOptions {
+                optional_listen: link_auto,
+                ..NodeOptions::default()
+            },
+        )
+        .await?;
+        let (shutdown, rx) = watch::channel(false);
+        let tailnet = config.tailnet_hostname.clone();
+        let board_store = store.clone();
+        let board_link = Arc::clone(node.link());
+        let board_node = Arc::clone(&node);
+        let tls_dir = deck_dir.clone();
+        let elevations = Arc::new(crate::elevation::Elevations::default());
+        let board_elevations = Arc::clone(&elevations);
+        let live = crate::live::DeckLive::of(config);
         let board_settings = deck_settings.clone();
         let live_cell = crate::live::LiveCell::new(live);
         let board_live = live_cell.clone();
-        let board = BoardServer::bind(
-            &config.listen,
+        let tailnet_start: SharedStart = Arc::default();
+        let board_start = Arc::clone(&tailnet_start);
+        let board = BoardServer::bind_with(
+            &board_manual,
+            &board_auto,
             move |bound| {
                 let tls =
                     BoardTls::load_or_create(&tls_dir, &cert_names(bound, tailnet.as_deref()))?;
@@ -180,6 +205,8 @@ impl RunningDeck {
                     settings: Some(board_settings),
                     restart,
                     local_station,
+                    tailnet_start: board_start,
+                    host: tailscale_wsl::detect,
                 });
                 Ok((board, tls))
             },
@@ -187,6 +214,15 @@ impl RunningDeck {
         )
         .await
         .map_err(ServeError::Board)?;
+        start.skipped = node
+            .skipped()
+            .iter()
+            .chain(&board.skipped)
+            .cloned()
+            .collect();
+        *tailnet_start
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = start;
         let endpoint = board.addrs.first().map(|a| BoardEndpoint {
             url: format!("https://{a}"),
             certificate_sha256: board.tls.sha256.clone(),
@@ -235,6 +271,52 @@ impl RunningDeck {
             tracing::debug!(error = %e, "socket file");
         }
     }
+}
+
+/// Splits `list` into the entries that the automatic mode added (`auto`) and
+/// the manual ones.
+fn split(list: &[SocketAddr], auto: &[SocketAddr]) -> (Vec<SocketAddr>, Vec<SocketAddr>) {
+    list.iter().partition(|a| !auto.contains(a))
+}
+
+/// Runs the automatic tailnet start when the setting is on. The host checks
+/// run in a blocking task inside their own deadline of 3 s. Writes the audit
+/// row `tailnet.auto` when a save happened.
+async fn automatic_start(
+    store: &DeckStore,
+    settings: &crate::http::settings_routes::DeckSettings,
+    config: &DeckConfig,
+) -> (DeckConfig, TailnetStart) {
+    if !config.tailnet_auto {
+        return (config.clone(), TailnetStart::default());
+    }
+    let facts = tokio::time::timeout(
+        tailnet_auto::DEADLINE,
+        tokio::task::spawn_blocking(tailscale_wsl::detect),
+    )
+    .await;
+    let facts: HostFacts = match facts {
+        Ok(Ok(facts)) => facts,
+        Ok(Err(_)) | Err(_) => {
+            tracing::warn!("the host checks of the automatic tailnet start did not finish");
+            let start = TailnetStart {
+                enabled: true,
+                start_reason: Some(tailnet_auto::HOST_TIMEOUT.to_owned()),
+                skipped: Vec::new(),
+            };
+            return (config.clone(), start);
+        }
+    };
+    let (next, start) = tailnet_auto::apply_at_start(
+        settings,
+        config.clone(),
+        &settings.overrides,
+        &facts,
+        &tailscale::is_usable,
+    )
+    .await;
+    tailnet_auto::audit(store, config, &next).await;
+    (next, start)
 }
 
 /// The names of the board certificate: every bound address (an unspecified

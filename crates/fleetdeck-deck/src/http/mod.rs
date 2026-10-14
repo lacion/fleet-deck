@@ -102,6 +102,12 @@ pub struct Board {
     pub restart: Option<Arc<dyn fleetdeck_core::restart::Restart>>,
     /// The local station of `fleetdeck up`; set after the pairing.
     pub local_station: Arc<std::sync::OnceLock<fleetdeck_proto::StationId>>,
+    /// What the automatic tailnet start did (design 14.4); `serve` sets it
+    /// once, the Tailnet card reads it.
+    pub tailnet_start: Arc<std::sync::Mutex<crate::tailnet_auto::TailnetStart>>,
+    /// The facts about this machine that the tailnet routes read
+    /// (`tailscale_wsl::detect` in the deck; a test gives its own).
+    pub host: fn() -> fleetdeck_core::tailscale_wsl::HostFacts,
 }
 
 /// The board API router.
@@ -526,6 +532,8 @@ pub struct BoardServer {
     pub addrs: Vec<SocketAddr>,
     /// The certificate the listeners present.
     pub tls: BoardTls,
+    /// The optional addresses that were not used, with the reason.
+    pub skipped: Vec<(SocketAddr, String)>,
     admission: Arc<admission::Admission>,
     tasks: Vec<JoinHandle<()>>,
 }
@@ -549,7 +557,23 @@ impl BoardServer {
         build: impl FnOnce(&[SocketAddr]) -> Result<(Arc<Board>, BoardTls), E>,
         shutdown: watch::Receiver<bool>,
     ) -> Result<Self, BindError<E>> {
-        let mut listeners = Vec::with_capacity(addrs.len());
+        Self::bind_with(addrs, &[], build, shutdown).await
+    }
+
+    /// [`BoardServer::bind`] with `optional` addresses (design 14.4): each
+    /// one is bound after `addrs`, when it is assigned to a local interface;
+    /// one that is not, or that cannot be bound, is skipped with a warning
+    /// and listed in [`BoardServer::skipped`]. It never fails the bind.
+    ///
+    /// # Errors
+    /// As [`BoardServer::bind`], for `addrs` only.
+    pub async fn bind_with<E>(
+        addrs: &[SocketAddr],
+        optional: &[SocketAddr],
+        build: impl FnOnce(&[SocketAddr]) -> Result<(Arc<Board>, BoardTls), E>,
+        shutdown: watch::Receiver<bool>,
+    ) -> Result<Self, BindError<E>> {
+        let mut listeners = Vec::with_capacity(addrs.len() + optional.len());
         for addr in addrs {
             let l = TcpListener::bind(addr)
                 .await
@@ -558,6 +582,22 @@ impl BoardServer {
                     source,
                 })?;
             listeners.push(l);
+        }
+        let mut skipped = Vec::new();
+        for addr in optional {
+            let outcome = match crate::tailnet_auto::unusable(*addr) {
+                Some(reason) => Err(reason),
+                None => TcpListener::bind(addr)
+                    .await
+                    .map_err(|e| crate::tailnet_auto::bind_failed(e.kind())),
+            };
+            match outcome {
+                Ok(l) => listeners.push(l),
+                Err(reason) => {
+                    tracing::warn!(%addr, %reason, "an automatic tailnet board address is not used");
+                    skipped.push((*addr, reason));
+                }
+            }
         }
         let bound = listeners
             .iter()
@@ -589,6 +629,7 @@ impl BoardServer {
         Ok(Self {
             addrs: bound,
             tls,
+            skipped,
             admission,
             tasks,
         })

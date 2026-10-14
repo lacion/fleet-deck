@@ -36,6 +36,9 @@ pub use model_help_cfg::{
     DEFAULT_ASSIST_CLAUDE_MODEL, DEFAULT_ASSIST_CODEX_MODEL, DEFAULT_ASSIST_DAILY_TOKEN_CAP,
     DEFAULT_ASSIST_MAX_OUTPUT_TOKENS, ModelHelpConfig,
 };
+#[path = "config_clone.rs"]
+mod clone_cfg;
+use clone_cfg::{valid_clone_host, valid_clone_org};
 #[path = "config_fleet.rs"]
 mod fleet_cfg;
 #[path = "config_tailnet.rs"]
@@ -566,6 +569,9 @@ pub struct DeckConfig {
     pub clone_transport: CloneTransport,
     /// `tailscale_bin`: the absolute path of the program, or `None`: look it up.
     pub tailscale_bin: Option<PathBuf>,
+    pub tailnet_auto: bool,
+    pub tailnet_auto_listen: Vec<SocketAddr>,
+    pub tailnet_auto_link_listen: Vec<SocketAddr>,
 }
 
 /// How a clone reaches the Git host.
@@ -601,6 +607,9 @@ pub(crate) const RAW_DECK_KEYS: &[&str] = &[
     "clone_org",
     "clone_transport",
     "tailscale_bin",
+    "tailnet_auto",
+    "tailnet_auto_listen",
+    "tailnet_auto_link_listen",
 ];
 
 #[derive(Deserialize)]
@@ -616,6 +625,9 @@ struct RawDeck {
     clone_org: Option<String>,
     clone_transport: Option<String>,
     tailscale_bin: Option<String>,
+    tailnet_auto: Option<bool>,
+    tailnet_auto_listen: Option<Vec<String>>,
+    tailnet_auto_link_listen: Option<Vec<String>>,
 }
 
 impl DeckConfig {
@@ -663,6 +675,8 @@ impl DeckConfig {
             Some(_) => return Err(invalid("clone_transport", "use \"https\" or \"ssh\"")),
         };
         let tailscale_bin = tailnet_cfg::parse_deck(raw.tailscale_bin)?;
+        let (tailnet_auto_listen, tailnet_auto_link_listen) =
+            tailnet_cfg::parse_provenance(raw.tailnet_auto_listen, raw.tailnet_auto_link_listen)?;
         Ok(Self {
             name,
             listen,
@@ -674,6 +688,9 @@ impl DeckConfig {
             clone_org,
             clone_transport,
             tailscale_bin,
+            tailnet_auto: raw.tailnet_auto.unwrap_or(false),
+            tailnet_auto_listen,
+            tailnet_auto_link_listen,
         })
     }
 }
@@ -775,23 +792,6 @@ pub(crate) fn valid_env_key(key: &str) -> bool {
     !b.is_empty()
         && (b[0].is_ascii_alphabetic() || b[0] == b'_')
         && b.iter().all(|c| c.is_ascii_alphanumeric() || *c == b'_')
-}
-
-/// At least two labels of `[a-z0-9]([a-z0-9-]*[a-z0-9])?`, 1 to 253 bytes.
-fn valid_clone_host(host: &str) -> bool {
-    let edge = |c: u8| c.is_ascii_lowercase() || c.is_ascii_digit();
-    let label = |l: &str| {
-        l.bytes().next().is_some_and(edge)
-            && l.bytes().next_back().is_some_and(edge)
-            && l.bytes().all(|c| edge(c) || c == b'-')
-    };
-    host.len() <= 253 && host.contains('.') && host.split('.').all(label)
-}
-
-/// At most 200 bytes of `[A-Za-z0-9._-]+` segments that a `/` separates.
-fn valid_clone_org(org: &str) -> bool {
-    let name = |c: u8| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'-');
-    org.len() <= 200 && org.split('/').all(|s| !s.is_empty() && s.bytes().all(name))
 }
 
 #[cfg(test)]

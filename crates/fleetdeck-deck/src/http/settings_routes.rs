@@ -357,7 +357,9 @@ async fn deck_save(
 
 /// Saves a change of the deck settings and publishes the live fields. The
 /// board routes and the local socket both call it. The gate of the settings
-/// is held until the publish.
+/// is held until the publish. The same save reconciles the provenance lists
+/// of the automatic tailnet mode (design 14.4,
+/// [`crate::tailnet_auto::reconcile`]).
 ///
 /// # Errors
 /// [`SaveError`].
@@ -368,7 +370,38 @@ pub async fn save_and_publish(
     change: SettingsChange,
     elevated: bool,
 ) -> Result<SettingsSaved, SaveError> {
+    save_with(settings, store, live, change, elevated, true).await
+}
+
+/// [`save_and_publish`] for a caller that writes the provenance lists
+/// itself ("Use tailnet"): no reconciliation.
+pub(super) async fn save_unreconciled(
+    settings: &DeckSettings,
+    store: &DeckStore,
+    live: &LiveCell,
+    change: SettingsChange,
+    elevated: bool,
+) -> Result<SettingsSaved, SaveError> {
+    save_with(settings, store, live, change, elevated, false).await
+}
+
+async fn save_with(
+    settings: &DeckSettings,
+    store: &DeckStore,
+    live: &LiveCell,
+    mut change: SettingsChange,
+    elevated: bool,
+    reconcile: bool,
+) -> Result<SettingsSaved, SaveError> {
     let _gate = settings.gate.lock().await;
+    if reconcile && crate::tailnet_auto::touches_provenance(&change.changes) {
+        // An unreadable file gets no reconciliation here; the writer
+        // refuses it below.
+        match deck_view(settings).await {
+            Ok(view) => crate::tailnet_auto::reconcile(&view.values, &mut change.changes),
+            Err(e) => tracing::warn!(error = %e, "deck settings"),
+        }
+    }
     let writer = Arc::clone(&settings.writer);
     let saved = tokio::task::spawn_blocking(move || {
         writer.save(&change, elevated, |new| {

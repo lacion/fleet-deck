@@ -21,6 +21,7 @@ fn field(key: &str, label: &str, kind: FieldKind, apply: Apply, help: &str) -> F
         danger: false,
         secret: false,
         read_only: false,
+        hidden: false,
         cli_flag: None,
     })
 }
@@ -49,6 +50,11 @@ impl F {
 
     fn read_only(mut self) -> Self {
         self.0.read_only = true;
+        self
+    }
+
+    fn hidden(mut self) -> Self {
+        self.0.hidden = true;
         self
     }
 }
@@ -321,6 +327,30 @@ pub fn deck_fields() -> Vec<FieldMeta> {
             "The full path of the tailscale program. Leave it empty to find tailscale on PATH.",
         )
         .danger(),
+        field(
+            "tailnet_auto",
+            "Use Tailscale automatically",
+            K::Bool,
+            Restart,
+            "At each start, put the tailnet addresses of this machine in the listen lists.",
+        )
+        .danger(),
+        field(
+            "tailnet_auto_listen",
+            "Board addresses added automatically",
+            K::Addresses,
+            Restart,
+            "The board addresses that the automatic mode added. Only the deck writes this list.",
+        )
+        .hidden(),
+        field(
+            "tailnet_auto_link_listen",
+            "Link addresses added automatically",
+            K::Addresses,
+            Restart,
+            "The station link addresses that the automatic mode added. Only the deck writes this list.",
+        )
+        .hidden(),
     ]
     .into_iter()
     .map(|f| f.0)

@@ -113,6 +113,7 @@ pub async fn start_node(
             hub,
             tailnet: None,
             listener_kind: kind,
+            optional_listen: Vec::new(),
         },
     )
     .await
