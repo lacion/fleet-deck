@@ -26,11 +26,27 @@ use super::checkpoint::{
     CAPTURE_VERIFIED, Checkpoint, CheckpointError, Limits, PrivateIndex, Result, Snapshot,
     Unavailable, Worktree,
 };
+use super::files::{descend, open_root};
 use super::git::nul_fields;
 use super::private_paths::PrivatePaths;
 use super::stage::IndexTrust;
 use fleetdeck_proto::event::DiffSummary;
 use fleetdeck_proto::files::HIDDEN_NAMES;
+use rustix::fs::AtFlags;
+use rustix::io::Errno;
+
+/// The error of a parent directory that changed after the plan (NV-32): a
+/// link or a file now, or an error of the walk itself.
+fn parent_error(path: &str, errno: Errno) -> CheckpointError {
+    if matches!(errno, Errno::LOOP | Errno::NOTDIR) {
+        std::io::Error::other(format!(
+            "a parent directory of `{path}` changed during the restore"
+        ))
+        .into()
+    } else {
+        std::io::Error::from(errno).into()
+    }
+}
 
 /// The pathspec of every path that a diff may show: everything except the
 /// private names of [`HIDDEN_NAMES`] (`.git` and credential files and
@@ -291,11 +307,34 @@ impl Worktree {
                 "private files were left unchanged by a restore"
             );
         }
-        for path in &plan.remove {
-            match std::fs::remove_file(self.root().join(path)) {
-                Ok(()) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => return Err(e.into()),
+        // NV-32: the plan checked the ancestors by name. The walk below opens
+        // every parent without following a link, so a parent that was swapped
+        // for a link after the plan is refused.
+        if !plan.remove.is_empty() || !plan.write.is_empty() {
+            let root = open_root(self.root()).map_err(std::io::Error::from)?;
+            for path in &plan.remove {
+                let mut segments: Vec<&str> = path.split('/').collect();
+                let Some(last) = segments.pop() else { continue };
+                match descend(&root, &segments) {
+                    Ok(parent) => match rustix::fs::unlinkat(&parent, last, AtFlags::empty()) {
+                        Ok(()) => {}
+                        Err(Errno::NOENT) => {}
+                        Err(e) => return Err(std::io::Error::from(e).into()),
+                    },
+                    Err(Errno::NOENT) => {}
+                    Err(e) => return Err(parent_error(path, e)),
+                }
+            }
+            // The same walk for the parents of the paths to write, before
+            // Git writes them by name. A missing parent ends the check: Git
+            // creates the rest.
+            for path in &plan.write {
+                let mut segments: Vec<&str> = path.split('/').collect();
+                segments.pop();
+                match descend(&root, &segments) {
+                    Ok(_) | Err(Errno::NOENT) => {}
+                    Err(e) => return Err(parent_error(path, e)),
+                }
             }
         }
         if !plan.write.is_empty() {
@@ -431,5 +470,134 @@ impl Worktree {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+
+    use super::*;
+    use crate::workspace::GitOptions;
+    use crate::workspace::checkpoint::{Captured, CheckpointKey, Phase};
+
+    fn git(dir: &Path, args: &[&str]) {
+        let out = Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@t")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@t")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    fn write(dir: &Path, path: &str, text: &str) {
+        let p = dir.join(path);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, text).unwrap();
+    }
+
+    /// A repository with `src/lib.rs`, and an empty directory `outside`
+    /// next to it.
+    fn repo() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let dir = root.join("repo");
+        std::fs::create_dir(&dir).unwrap();
+        git(&dir, &["init", "-q", "-b", "main"]);
+        write(&dir, "src/lib.rs", "fn a() {}\n");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-q", "-m", "init"]);
+        let outside = root.join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        (tmp, dir, outside)
+    }
+
+    async fn start_checkpoint(wt: &Worktree) -> Checkpoint {
+        let key = CheckpointKey {
+            incarnation: "INC1".into(),
+            session: "S1".into(),
+            turn: "T1".into(),
+            phase: Phase::Start,
+        };
+        match wt
+            .capture(&key, Limits::default(), &PrivatePaths::default())
+            .await
+            .unwrap()
+        {
+            Captured::Published(c) => c,
+            other => panic!("expected a published checkpoint, got {other:?}"),
+        }
+    }
+
+    /// Replaces the directory `name` of the worktree with a link to `outside`.
+    fn swap_for_link(dir: &Path, name: &str, outside: &Path) {
+        std::fs::rename(dir.join(name), dir.parent().unwrap().join("moved")).unwrap();
+        std::os::unix::fs::symlink(outside, dir.join(name)).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_removal_below_a_parent_swapped_for_a_link_after_the_plan_is_refused() {
+        // NV-32
+        let (_t, dir, outside) = repo();
+        let wt = Worktree::open(&dir, GitOptions::isolated()).await.unwrap();
+        let start = start_checkpoint(&wt).await;
+        write(&dir, "a/b.txt", "tracked later\n");
+        git(&dir, &["add", "a/b.txt"]);
+        let plan = wt
+            .plan_restore(&start, Limits::default(), &PrivatePaths::default())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(plan.remove, ["a/b.txt"]);
+        write(&outside, "b.txt", "outside\n");
+        swap_for_link(&dir, "a", &outside);
+        let err = wt
+            .apply_restore(&plan, &PrivatePaths::default())
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("changed during the restore"),
+            "{err}"
+        );
+        assert!(outside.join("b.txt").exists(), "the outside file is kept");
+    }
+
+    #[tokio::test]
+    async fn a_write_below_a_parent_swapped_for_a_link_after_the_plan_is_refused() {
+        // NV-32
+        let (_t, dir, outside) = repo();
+        let wt = Worktree::open(&dir, GitOptions::isolated()).await.unwrap();
+        let start = start_checkpoint(&wt).await;
+        write(&dir, "src/lib.rs", "fn edited() {}\n");
+        let plan = wt
+            .plan_restore(&start, Limits::default(), &PrivatePaths::default())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(plan.write, ["src/lib.rs"]);
+        swap_for_link(&dir, "src", &outside);
+        let err = wt
+            .apply_restore(&plan, &PrivatePaths::default())
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("changed during the restore"),
+            "{err}"
+        );
+        assert!(
+            std::fs::read_dir(&outside).unwrap().next().is_none(),
+            "nothing is written outside"
+        );
     }
 }

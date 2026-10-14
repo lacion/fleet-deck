@@ -43,6 +43,10 @@ use crate::store::{RowSide, Store, TurnCheckpointRow};
 
 /// The longest a session diff may take.
 pub const DIFF_TIMEOUT: Duration = Duration::from_secs(15);
+/// At most two session diffs run at once per station (NV-34): each one can
+/// stage up to 512 MiB through `git hash-object -w`. The objects that a diff
+/// writes are not removed; Git gc removes the unreachable ones.
+static DIFFS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
 /// The most untracked files that one diff renders.
 pub const MAX_UNTRACKED: usize = 200;
 /// The most `git` output that a file listing or a numstat reads.
@@ -145,7 +149,14 @@ pub async fn run_as(
     } else {
         DiffScope::Worktree
     };
-    let work = compute(root, base.oid.clone(), options, max, shared, private);
+    // The wait for a permit counts against the timeout (NV-34).
+    let work = async {
+        let _permit = DIFFS
+            .acquire()
+            .await
+            .map_err(|e| FileError::new("internal", e.to_string()))?;
+        compute(root, base.oid.clone(), options, max, shared, private).await
+    };
     let (mut summary, mut patch, truncated) = tokio::time::timeout(DIFF_TIMEOUT, work)
         .await
         .map_err(|_| FileError::new(code::TIMEOUT, "the diff took too long"))??;

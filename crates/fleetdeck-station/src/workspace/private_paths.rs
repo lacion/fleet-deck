@@ -74,6 +74,10 @@ pub struct PrivatePaths {
     /// `glab-cli` config directories): every file below them is registered
     /// by [`Self::scan`] (PRE-PR r3 finding 1).
     credential_dirs: Vec<PathBuf>,
+    /// True when HOME is not known: then every path that ends in a
+    /// credential location of the home directory is private, and the
+    /// pathspecs below match it at any depth (NV-31).
+    home_unknown: bool,
     /// The (device, inode) of every credential file that the station has
     /// seen or written. It is shared by the clones of the set.
     registry: Arc<Registry>,
@@ -126,7 +130,8 @@ impl PrivatePaths {
     /// - `dirs`: the station data directory and the station config file;
     /// - `home`: the home directory, for `~/.config/gh`, `~/.config/glab-cli`,
     ///   `~/.ssh`, `~/.claude/.credentials.json` and `~/.codex/auth.json`
-    ///   (without it those entries are left out and one warning is logged);
+    ///   (without it, every path that ends in such a location is private and
+    ///   one warning is logged, NV-31);
     /// - `deck`: the deck config file and the deck data directory, when the
     ///   deck runs in the same process;
     /// - `env`: the environment values that name more credential directories.
@@ -160,10 +165,14 @@ impl PrivatePaths {
                     out.add_file(&home.join(file));
                 }
             }
-            None => tracing::warn!(
-                "HOME is not set: the credential paths of gh, glab, ssh, claude and codex are \
-                 not private paths"
-            ),
+            None => {
+                // NV-31: fail closed. The allowed roots may hold the real home.
+                out.home_unknown = true;
+                tracing::warn!(
+                    "HOME is not set: every path that ends in a gh, glab, ssh, claude or codex \
+                     credential location is a private path"
+                );
+            }
         }
         if let Some(xdg) = &env.xdg_config_home {
             out.add_credential_dir(&xdg.join("gh"));
@@ -269,6 +278,9 @@ impl PrivatePaths {
             return true;
         }
         let folded = fold(path);
+        if self.home_unknown && has_home_credential_name(&folded) {
+            return true;
+        }
         if self.exact.iter().any(|e| *fold(e) == *folded) {
             return true;
         }
@@ -347,10 +359,50 @@ impl PrivatePaths {
         for (_, prefix) in &self.temp {
             out.push(format!(":({glob})**/{prefix}*"));
         }
+        if self.home_unknown {
+            // NV-31: the home is unknown, so match the names at any depth.
+            for pattern in HOME_CREDENTIAL_GLOBS {
+                out.push(format!(":({glob}){pattern}"));
+            }
+        }
         out.sort();
         out.dedup();
         out
     }
+}
+
+/// The pathspecs for the credential locations of an unknown home (NV-31).
+const HOME_CREDENTIAL_GLOBS: [&str; 5] = [
+    "**/.claude/.credentials.json",
+    "**/.codex/auth.json",
+    "**/.config/gh/**",
+    "**/.config/glab-cli/**",
+    "**/.ssh/**",
+];
+
+/// True when the folded `path` ends in `.claude/.credentials.json` or
+/// `.codex/auth.json`, has `.config/gh` or `.config/glab-cli` anywhere, or
+/// has a `.ssh` component (NV-31).
+fn has_home_credential_name(path: &Path) -> bool {
+    let names: Vec<Cow<'_, str>> = path
+        .components()
+        .filter_map(|c| match c {
+            Component::Normal(name) => Some(name.to_string_lossy()),
+            _ => None,
+        })
+        .collect();
+    if names.iter().any(|n| n == ".ssh") {
+        return true;
+    }
+    if let [.., dir, file] = names.as_slice()
+        && ((dir == ".claude" && file == ".credentials.json")
+            || (dir == ".codex" && file == "auth.json"))
+    {
+        return true;
+    }
+    names
+        .windows(2)
+        .any(|w| w[0] == ".config" && (w[1] == "gh" || w[1] == "glab-cli"))
 }
 
 #[cfg(test)]

@@ -139,13 +139,58 @@ fn xdg_and_gh_config_dir_add_credential_directories() {
 }
 
 #[test]
-fn an_unknown_home_leaves_out_the_home_entries_only() {
+fn an_unknown_home_makes_every_credential_location_private() {
+    // NV-31: fail closed. The station secrets stay private as before.
     let (_t, home) = home();
     let p = PrivatePaths::new(&layout(&home), None, None, &PrivateEnv::default());
     assert!(p.is_private(&home.join(".config/fleetdeck/station.toml")));
     assert!(p.is_private(&home.join(".local/share/fleetdeck/station/secrets/x")));
-    assert!(!p.is_private(&home.join(".config/gh/hosts.yml")));
-    assert!(!p.is_private(&home.join(".codex/auth.json")));
+    for path in [
+        ".claude/.credentials.json",
+        "x/.codex/auth.json",
+        ".config/gh/hosts.yml",
+        ".config/gh",
+        "x/.config/glab-cli/config.yml",
+        ".ssh/id_ed25519",
+    ] {
+        assert!(p.is_private(&home.join(path)), "{path}");
+        assert!(p.is_private_canonical(&home.join(path)), "{path}");
+    }
+    for path in [
+        "src/auth.json",
+        ".codex/config.toml",
+        ".claude/settings.json",
+        ".config/ghost/x",
+        ".config/other/gh",
+    ] {
+        assert!(!p.is_private(&home.join(path)), "{path}");
+    }
+}
+
+#[test]
+fn an_unknown_home_adds_five_glob_excludes_and_a_known_home_does_not() {
+    let (_t, home) = home();
+    let top = home.join("repo");
+    std::fs::create_dir_all(&top).unwrap();
+    let unknown = PrivatePaths::new(&layout(&home), None, None, &PrivateEnv::default());
+    let magic = if cfg!(target_os = "macos") {
+        "exclude,glob,icase"
+    } else {
+        "exclude,glob"
+    };
+    let got = unknown.excludes_for(&top);
+    for pattern in [
+        "**/.claude/.credentials.json",
+        "**/.codex/auth.json",
+        "**/.config/gh/**",
+        "**/.config/glab-cli/**",
+        "**/.ssh/**",
+    ] {
+        assert!(got.contains(&format!(":({magic}){pattern}")), "{pattern}");
+    }
+    let known = private_of(&home).excludes_for(&top);
+    assert!(!known.iter().any(|e| e.contains("**/.ssh/**")));
+    assert!(!known.iter().any(|e| e.contains("**/.codex/auth.json")));
 }
 
 #[test]

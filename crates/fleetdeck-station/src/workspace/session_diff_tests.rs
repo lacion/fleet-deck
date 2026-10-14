@@ -8,7 +8,7 @@ use fleetdeck_proto::event::{Event, FileChange, ProviderKind};
 use fleetdeck_proto::files::{DiffScope, FileContent, SessionDiffQuery, code};
 use fleetdeck_testkit::Det;
 
-use super::{new_file_patch, repo_path, run, run_as};
+use super::{DIFFS, new_file_patch, repo_path, run, run_as};
 use crate::manager::policy::Policy;
 use crate::store::{NewEvent, NewSession, OfflineApprovalPolicy, Store, StoreConfig};
 use crate::workspace::private_paths::private_paths_tests::{
@@ -537,4 +537,25 @@ async fn a_member_session_diff_loses_the_files_of_the_deny_list() {
         owner.summary.files_changed
     );
     assert_eq!(member.base_oid, owner.base_oid);
+}
+
+#[tokio::test]
+async fn a_third_diff_waits_for_a_permit_and_gives_it_back() {
+    // NV-34: at most two diffs run at once.
+    assert_eq!(DIFFS.available_permits(), 2);
+    let r = rig(true).await;
+    r.own_worktree().await;
+    std::fs::write(r.dir.join("new.txt"), "hello\n").unwrap();
+    let held = DIFFS.acquire_many(2).await.unwrap();
+    let diff = r.diff(None);
+    tokio::pin!(diff);
+    let waited = tokio::time::timeout(std::time::Duration::from_millis(300), &mut diff).await;
+    assert!(
+        waited.is_err(),
+        "the diff must wait while no permit is free"
+    );
+    drop(held);
+    let d = diff.await.unwrap();
+    assert!(d.patch.contains("new.txt"), "{}", d.patch);
+    assert_eq!(DIFFS.available_permits(), 2);
 }
