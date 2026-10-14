@@ -16,6 +16,7 @@ pub mod assist_routes;
 pub mod auth_routes;
 pub mod body_deadline;
 pub mod command_routes;
+pub mod execution_routes;
 pub mod file_routes;
 pub mod fleet_routes;
 pub mod grant_routes;
@@ -474,6 +475,10 @@ pub fn router(board: Arc<Board>) -> Router {
         .route(
             "/api/stations/{station}/sessions/{session}/turn-diff",
             get(review_routes::turn_diff),
+        )
+        .route(
+            "/api/sessions/{station}/{session}/execution",
+            get(execution_routes::check),
         )
         .route_layer(middleware::from_fn_with_state(
             Arc::clone(&board),

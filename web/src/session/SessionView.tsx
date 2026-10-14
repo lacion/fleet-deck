@@ -35,6 +35,7 @@ import { Composer } from './Composer';
 import { useSessionController } from './controller';
 import { FilesPanel } from './FilesPanel';
 import { handoverFlow } from './handoverFlow';
+import { ExecutionDialog } from './ExecutionDialog';
 import { SessionHeader } from './SessionHeader';
 import { buildTimeline, sessionModels, slashCommands } from './timeline';
 import { RevertStatus, TurnsPanel } from './TurnsPanel';
@@ -208,6 +209,7 @@ export function SessionView(props: SessionViewProps) {
     : null;
   const hold = s.terminal ?? null;
   const [confirmRelease, setConfirmRelease] = useState(false);
+  const [checking, setChecking] = useState(false);
   const ids = useId();
   const tabs = useRef<Record<string, HTMLButtonElement | null>>({});
   const changed = turns.filter((t) => !t.reverted && hasChanges(t.diff)).length;
@@ -312,7 +314,13 @@ export function SessionView(props: SessionViewProps) {
         onNewShell={onNewShell}
         {...(sidePanel ? { filesPanel: { open: filesOpen, toggle: toggleFiles } } : {})}
         models={s.models ?? sessionModels(events)}
+        onCheckExecution={
+          guest === null && actions?.canAdmin === true ? () => setChecking(true) : undefined
+        }
       />
+      {checking && actions ? (
+        <ExecutionDialog actions={actions} onClose={() => setChecking(false)} />
+      ) : null}
       {hold ? (
         <div className="fd-pane-notice" role="note">
           <p>

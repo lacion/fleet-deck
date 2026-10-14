@@ -1267,3 +1267,27 @@ button.fd-cchip:hover:not(:disabled) {
 .fd-files-view .fd-files {
   margin-bottom: 0;
 }
+
+/* The check of the previous run (DL-182). */
+.fd-exec-body {
+  display: grid;
+  gap: var(--sp-2);
+}
+.fd-exec-body p {
+  margin: 0;
+}
+.fd-exec-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--font-data);
+  font-size: 12px;
+}
+.fd-exec-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+}
+.fd-overlay .fd-exec > .fd-exec-foot {
+  justify-self: stretch;
+}

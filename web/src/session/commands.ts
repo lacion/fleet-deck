@@ -5,7 +5,14 @@
 // shown as such (A9, PLAN §8). The station answers a refused command with a
 // receipt; its message is shown as is.
 import { ApiError } from '../runtime/api';
-import type { DeckCommand, ImageInput, RevertResolution, SessionCommand, SessionKey } from '../gen';
+import type {
+  DeckCommand,
+  ExecutionCheck,
+  ImageInput,
+  RevertResolution,
+  SessionCommand,
+  SessionKey,
+} from '../gen';
 import type { Reply } from './question';
 import { type FileActions, fileActions } from './workspace';
 
@@ -18,6 +25,8 @@ export type InputKind = 'prompt' | 'steer' | 'follow_up';
 export type SessionActions = {
   readonly canDrive: boolean;
   readonly canApprove: boolean;
+  /** The `admin` scope: the owner checks a previous run of the session (DL-182). */
+  readonly canAdmin: boolean;
   /** Pasted images go with the text (M3 6-10, DL-304). */
   send(kind: InputKind, text: string, images?: readonly ImageInput[]): Promise<Outcome>;
   interrupt(): Promise<Outcome>;
@@ -39,6 +48,10 @@ export type SessionActions = {
   resolveRevert(revertId: string, resolution: RevertResolution): Promise<Outcome>;
   /** A generated summary of the session (R10.2, DL-167). The station stores it as the digest. */
   summarize(): Promise<Outcome>;
+  /** What the station sees of the previous run of the session (DL-182, owner only). */
+  checkExecution(): Promise<ExecutionCheck>;
+  /** Mark the previous run (shim `shimId`) as ended; the station checks the processes again. */
+  reconcileExecution(shimId: string): Promise<Outcome>;
   /** The file service of the session; `null` without a reader (tests). */
   readonly files: FileActions | null;
 };
@@ -108,6 +121,14 @@ export function outcomeOf(v: unknown): Outcome {
   }
 }
 
+const isExecutionCheck = (v: unknown): v is ExecutionCheck =>
+  record(v) &&
+  typeof v['reason'] === 'string' &&
+  typeof v['complete'] === 'boolean' &&
+  Array.isArray(v['group_members']) &&
+  Array.isArray(v['session_members']) &&
+  Array.isArray(v['escaped']);
+
 export function sessionActions(
   post: Post,
   key: SessionKey,
@@ -131,6 +152,7 @@ export function sessionActions(
   return {
     canDrive: scopes.includes('drive'),
     canApprove: scopes.includes('approve'),
+    canAdmin: scopes.includes('admin'),
     send: (kind, text, images = []) =>
       run({
         op: kind,
@@ -169,6 +191,14 @@ export function sessionActions(
         return { ok: false, text: `No summary was made: ${reason}` };
       }
     },
+    checkExecution: async () => {
+      if (get === null) throw new Error('No reader.');
+      const path = `/api/sessions/${encodeURIComponent(key.station_id)}/${encodeURIComponent(session_id)}/execution`;
+      const v = await get(path);
+      if (!isExecutionCheck(v)) throw new Error('The deck sent an invalid execution check.');
+      return v;
+    },
+    reconcileExecution: (shim_id) => run({ op: 'reconcile_execution', session_id, shim_id }),
     files: get ? fileActions(get, key) : null,
   };
 }
