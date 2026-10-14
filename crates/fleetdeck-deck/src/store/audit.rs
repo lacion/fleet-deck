@@ -8,6 +8,12 @@ use serde::{Deserialize, Serialize};
 
 use super::{DeckStore, Result, call};
 
+/// How long an audit row stays (NV-11).
+pub const AUDIT_RETENTION_MS: i64 = 90 * 24 * 60 * 60 * 1000;
+
+/// The most audit rows that stay (NV-11). The newest rows win.
+pub const AUDIT_MAX_ROWS: i64 = 200_000;
+
 /// The outcome of an audited action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -158,5 +164,99 @@ impl DeckStore {
             Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
         })
         .await
+    }
+
+    /// Removes the audit rows older than [`AUDIT_RETENTION_MS`], then the
+    /// oldest rows above [`AUDIT_MAX_ROWS`], in one transaction. Returns the
+    /// number of removed rows (NV-11).
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn prune_audit(&self) -> Result<usize> {
+        self.prune_audit_with(AUDIT_RETENTION_MS, AUDIT_MAX_ROWS)
+            .await
+    }
+
+    async fn prune_audit_with(&self, retention_ms: i64, max_rows: i64) -> Result<usize> {
+        let cutoff = self.now_ms().saturating_sub(retention_ms);
+        call(&self.inner.db, move |conn| {
+            let tx = conn.transaction()?;
+            let mut removed = tx.execute("DELETE FROM audit WHERE at < ?1", [cutoff])?;
+            removed += tx.execute(
+                "DELETE FROM audit WHERE audit_id <= (
+                     SELECT audit_id FROM audit ORDER BY audit_id DESC LIMIT 1 OFFSET ?1)",
+                [max_rows],
+            )?;
+            tx.commit()?;
+            Ok(removed)
+        })
+        .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use std::time::Duration;
+
+    use fleetdeck_testkit::Det;
+
+    use super::*;
+
+    const DAY: Duration = Duration::from_secs(24 * 60 * 60);
+
+    async fn store(det: &Det) -> DeckStore {
+        DeckStore::open_in_memory(det.clock(), det.ids())
+            .await
+            .unwrap()
+    }
+
+    async fn add(s: &DeckStore, n: usize) {
+        for i in 0..n {
+            s.audit(NewAudit::new(
+                "anonymous",
+                format!("a{i}"),
+                AuditResult::Refused,
+            ))
+            .await
+            .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn the_audit_prune_removes_rows_older_than_the_retention() {
+        let det = Det::new();
+        let s = store(&det).await;
+        add(&s, 10).await;
+        det.advance(91 * DAY);
+        add(&s, 5).await;
+        assert_eq!(s.prune_audit().await.unwrap(), 10);
+        assert_eq!(s.audit_log(100).await.unwrap().len(), 5);
+        assert_eq!(s.prune_audit().await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn the_audit_prune_keeps_only_the_newest_rows_above_the_row_cap() {
+        let det = Det::new();
+        let s = store(&det).await;
+        add(&s, 12).await;
+        assert_eq!(s.prune_audit_with(AUDIT_RETENTION_MS, 5).await.unwrap(), 7);
+        let rows = s.audit_log(100).await.unwrap();
+        let actions: Vec<_> = rows.iter().map(|r| r.action.as_str()).collect();
+        assert_eq!(actions, ["a11", "a10", "a9", "a8", "a7"]);
+        // At the cap nothing goes.
+        assert_eq!(s.prune_audit_with(AUDIT_RETENTION_MS, 5).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn the_audit_prune_counts_the_age_and_the_cap_removals_together() {
+        let det = Det::new();
+        let s = store(&det).await;
+        add(&s, 4).await;
+        det.advance(91 * DAY);
+        add(&s, 6).await;
+        assert_eq!(s.prune_audit_with(AUDIT_RETENTION_MS, 3).await.unwrap(), 7);
+        assert_eq!(s.audit_log(100).await.unwrap().len(), 3);
     }
 }

@@ -8,6 +8,7 @@ pub mod link;
 pub mod live;
 pub mod local;
 pub mod local_auth;
+pub mod maintenance;
 pub mod oauth;
 pub mod peers;
 pub mod routing;
