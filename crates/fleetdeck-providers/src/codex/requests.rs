@@ -18,8 +18,8 @@ use std::collections::{BTreeMap, HashMap};
 
 use fleetdeck_proto::command::UserInput;
 use fleetdeck_proto::event::{
-    ApprovalOption, ExpiredReason, ProviderRefs, RequestKind, ResponseChannel, RunOrigin, ToolKind,
-    ToolStatus,
+    ApprovalOption, ExpiredReason, OptionKind, ProviderRefs, RequestKind, ResponseChannel,
+    RunOrigin, ToolKind, ToolStatus,
 };
 use fleetdeck_proto::{Event, NodeId, Operation, RequestId, Unsupported};
 use serde_json::{Value, json};
@@ -140,6 +140,20 @@ fn label(option_id: &str) -> String {
     }
 }
 
+/// The semantic kind of a Codex decision id (ADR-008 §5.1). Only the two
+/// amendment ids are `Amend`; any other id, including another object-valued
+/// decision, is `Other`, so a coordinator fails closed.
+#[must_use]
+pub(super) fn option_kind(option_id: &str) -> OptionKind {
+    match option_id {
+        "accept" => OptionKind::AllowOnce,
+        "acceptForSession" => OptionKind::AllowSession,
+        "acceptWithExecpolicyAmendment" | "applyNetworkPolicyAmendment" => OptionKind::Amend,
+        "decline" | "cancel" => OptionKind::Deny,
+        _ => OptionKind::Other,
+    }
+}
+
 /// The free-text details of a request: its reason and, for a command, the
 /// working directory.
 fn details(params: &Value) -> String {
@@ -215,6 +229,7 @@ impl CodexCore {
                 .map(|(id, _)| ApprovalOption {
                     option_id: id.clone(),
                     label: label(id),
+                    kind: (req.kind != RequestKind::Question).then(|| option_kind(id)),
                 })
                 .collect(),
             response: req.channel,

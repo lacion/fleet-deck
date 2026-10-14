@@ -93,6 +93,7 @@ fn samples() -> Vec<Event> {
             options: vec![ApprovalOption {
                 option_id: "allow".into(),
                 label: "Allow".into(),
+                kind: None,
             }],
             response: ResponseChannel::RpcReply,
             provider_refs: refs(),

@@ -82,6 +82,7 @@ async fn a_refused_title_changes_nothing_and_a_repeat_gets_the_same_receipt() {
     assert_eq!(renames(&st, &s).await.len(), 2);
     // The same command id again returns the stored rejection.
     let envelope = CommandEnvelope {
+        authority: None,
         command_id: CommandId::from("rename-bad"),
         target_incarnation: None,
         retry_until: i64::try_from(st.det.now_ms()).unwrap() + RETRY_WINDOW_MS,

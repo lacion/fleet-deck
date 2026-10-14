@@ -214,6 +214,7 @@ async fn live_round(kind: ProviderKind) {
 
     let decide = async |id: &str, command: SessionCommand| {
         let envelope = CommandEnvelope {
+            authority: None,
             command_id: CommandId::from(id.to_owned()),
             target_incarnation: None,
             retry_until: i64::try_from(det.now_ms()).unwrap() + RETRY_WINDOW_MS,

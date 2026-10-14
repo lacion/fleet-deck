@@ -22,6 +22,7 @@ use fleetdeck_providers::host::{DirectChildHost, StopPolicy};
 use fleetdeck_testkit::fake::SCENARIO_ENV;
 use fleetdeck_testkit::{Det, FakeAgent};
 
+pub(super) use super::coordinator_spec_tests::coordinator_spec;
 use super::*;
 use crate::store::{EffectState, OfflineApprovalPolicy, ReadResult, StoreConfig};
 
@@ -109,6 +110,7 @@ impl Station {
     async fn send(&mut self, command: SessionCommand) -> Decided {
         self.next += 1;
         let envelope = CommandEnvelope {
+            authority: None,
             command_id: CommandId::from(format!("cmd-{}", self.next)),
             target_incarnation: None,
             retry_until: i64::try_from(self.det.now_ms()).unwrap() + RETRY_WINDOW_MS,
@@ -754,20 +756,6 @@ mod revert_wired;
 mod setup;
 #[path = "workspace_tests.rs"]
 mod workspace_provision;
-
-/// A coordinator spec for the start checks (ADR-006 §4).
-pub(super) fn coordinator_spec() -> fleetdeck_proto::command::CoordinatorSpec {
-    fleetdeck_proto::command::CoordinatorSpec {
-        grant_id: "grant-1".to_owned(),
-        classes: vec!["read".to_owned()],
-        idle_ttl_ms: 60_000,
-        expires_at: 4_102_444_800_000,
-        control_skill: fleetdeck_proto::command::ControlSkill {
-            version: "1".to_owned(),
-            text: "You coordinate the fleet.".to_owned(),
-        },
-    }
-}
 
 /// ADR-006 §8.2 test 13: the station-local socket (DL-038) never starts a
 /// session with a coordinator grant, and the refusal starts nothing.

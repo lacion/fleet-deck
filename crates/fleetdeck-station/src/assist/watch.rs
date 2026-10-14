@@ -139,6 +139,7 @@ pub async fn title_session(assist: &Assist, manager: &SessionManager, session: S
         Err(e) => return tracing::warn!(error = %e, "model help: summary"),
     }
     let envelope = CommandEnvelope {
+        authority: None,
         command_id: manager.new_id::<CommandId>(),
         target_incarnation: None,
         retry_until: store.now_ms().saturating_add(RETRY_WINDOW_MS),

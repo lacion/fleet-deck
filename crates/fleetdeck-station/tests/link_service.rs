@@ -167,6 +167,7 @@ impl Fixture {
 
     fn prompt(&self, id: &str, target: Option<IncarnationId>, retry_until: i64) -> CommandEnvelope {
         CommandEnvelope {
+            authority: None,
             command_id: CommandId::from(id),
             target_incarnation: target,
             retry_until,

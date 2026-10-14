@@ -109,6 +109,7 @@ fn envelope(
     command: SessionCommand,
 ) -> CommandEnvelope {
     CommandEnvelope {
+        authority: None,
         command_id: CommandId::from(id),
         target_incarnation: None,
         retry_until: i64::try_from(det.now_ms()).unwrap() + RETRY_WINDOW_MS,

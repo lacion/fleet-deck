@@ -240,6 +240,7 @@ impl Rig {
             worktree_root: self.dir.display().to_string(),
         };
         let envelope = CommandEnvelope {
+            authority: None,
             command_id: CommandId::from(format!("c-{id}").as_str()),
             target_incarnation: None,
             retry_until: i64::try_from(self.det.now_ms()).unwrap() + 60_000,
@@ -649,6 +650,7 @@ async fn a_second_open_revert_of_the_session_is_refused_by_the_store() {
     rig.admit().await;
     let rows = rig.rows().await;
     let envelope = CommandEnvelope {
+        authority: None,
         command_id: CommandId::from("c-other"),
         target_incarnation: None,
         retry_until: i64::try_from(rig.det.now_ms()).unwrap() + 60_000,

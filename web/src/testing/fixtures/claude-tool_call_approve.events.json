@@ -423,15 +423,18 @@
       "options": [
         {
           "option_id": "allow",
-          "label": "Allow once"
+          "label": "Allow once",
+          "kind": "allow_once"
         },
         {
           "option_id": "allow_always",
-          "label": "Allow always (this session)"
+          "label": "Allow always (this session)",
+          "kind": "allow_always"
         },
         {
           "option_id": "deny",
-          "label": "Deny"
+          "label": "Deny",
+          "kind": "deny"
         }
       ],
       "response": "rpc_reply",

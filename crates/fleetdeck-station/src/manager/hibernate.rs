@@ -117,6 +117,7 @@ pub async fn sweep(
         }
         let session_id = summary.session_id.clone();
         let envelope = CommandEnvelope {
+            authority: None,
             command_id: CommandId::from(format!(
                 "{COMMAND_PREFIX}{session_id}:{}",
                 summary.session_seq

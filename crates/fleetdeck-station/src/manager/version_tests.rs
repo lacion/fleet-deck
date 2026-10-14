@@ -119,6 +119,7 @@ async fn a_start_on_a_broken_version_is_refused_with_the_reason() {
         .target
         .mark_broken(&"claude".into(), ProviderKind::Claude);
     let envelope = CommandEnvelope {
+        authority: None,
         command_id: CommandId::from("cmd-1".to_owned()),
         target_incarnation: None,
         retry_until: i64::try_from(det.now_ms()).unwrap() + RETRY_WINDOW_MS,

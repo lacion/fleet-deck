@@ -36,6 +36,8 @@ mod tests;
 #[cfg(test)]
 mod tests_models;
 #[cfg(test)]
+mod tests_options;
+#[cfg(test)]
 mod tests_traps;
 #[cfg(test)]
 mod tests_usage;

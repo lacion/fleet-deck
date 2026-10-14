@@ -259,6 +259,7 @@ async fn without_a_paired_deck_only_the_window_counts() {
 
 fn envelope(det: &Det, id: &str, text: &str) -> CommandEnvelope {
     CommandEnvelope {
+        authority: None,
         command_id: CommandId::from(id),
         target_incarnation: None,
         retry_until: i64::try_from(det.now_ms()).unwrap() + RETRY_WINDOW_MS,

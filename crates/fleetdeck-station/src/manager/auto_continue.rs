@@ -209,6 +209,7 @@ pub async fn evaluate(
             .as_ref()
             .map_or_else(|| format!("none-{}", w.lost_seq), |t| t.as_str().to_owned());
         let envelope = CommandEnvelope {
+            authority: None,
             command_id: CommandId::from(format!("{COMMAND_PREFIX}{session_id}:{turn}")),
             target_incarnation: None,
             retry_until: store

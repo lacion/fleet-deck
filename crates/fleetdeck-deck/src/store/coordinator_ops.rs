@@ -73,6 +73,14 @@ fn class_of(op: &CoordinatorOp) -> GrantClass {
         | CoordinatorOp::CompleteTask { .. } => GrantClass::Mail,
         CoordinatorOp::Interrupt { .. } | CoordinatorOp::Stop { .. } => GrantClass::Drive,
         CoordinatorOp::Spawn { .. } => GrantClass::Spawn,
+        // Placeholder until the ADR-008 deck task: the new ops are refused in
+        // `decide` before the class matters.
+        CoordinatorOp::Resume { .. }
+        | CoordinatorOp::Rename { .. }
+        | CoordinatorOp::SetMode { .. }
+        | CoordinatorOp::ProjectAssign { .. }
+        | CoordinatorOp::ProjectStart { .. }
+        | CoordinatorOp::Answer { .. } => GrantClass::Drive,
     }
 }
 
@@ -300,6 +308,23 @@ pub(crate) fn decide(
                 prompt.clone(),
                 command_id,
                 now,
+            )
+        }
+        // Placeholder until the ADR-008 deck task replaces it: a stored
+        // rejection.
+        CoordinatorOp::Resume { .. }
+        | CoordinatorOp::Rename { .. }
+        | CoordinatorOp::SetMode { .. }
+        | CoordinatorOp::ProjectAssign { .. }
+        | CoordinatorOp::ProjectStart { .. }
+        | CoordinatorOp::Answer { .. } => {
+            let name = serde_json::to_value(op)
+                .ok()
+                .and_then(|v| v.get("op").and_then(|n| n.as_str().map(str::to_owned)))
+                .unwrap_or_default();
+            no(
+                RejectCode::Unsupported,
+                format!("{name} is not implemented yet"),
             )
         }
         CoordinatorOp::AssignAuto { task, requirements } => {

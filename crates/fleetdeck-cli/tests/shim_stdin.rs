@@ -141,6 +141,7 @@ impl Rig {
 
     async fn queue(&self, n: u32) {
         let envelope = CommandEnvelope {
+            authority: None,
             command_id: CommandId::from(format!("cmd-{n}").as_str()),
             target_incarnation: None,
             retry_until: i64::try_from(self.det.now_ms()).unwrap() + RETRY_WINDOW_MS,

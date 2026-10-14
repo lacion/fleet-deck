@@ -21,7 +21,7 @@ use fleetdeck_providers::host::DirectChildHost;
 use fleetdeck_testkit::fake::{LAUNCH_LOG_ENV, SCENARIO_ENV};
 use fleetdeck_testkit::{Det, FakeAgent};
 
-use super::tests::coordinator_spec;
+use super::coordinator_spec_tests::coordinator_spec;
 use super::*;
 use crate::coordinator::{BindingState, Bindings, digest};
 use crate::store::{Caller, OfflineApprovalPolicy, ReadResult, StoreConfig};
@@ -105,6 +105,7 @@ async fn a_deck_start_with_a_grant_hands_the_credential_to_the_child_environment
     };
     spec.title = Some("coordinator".to_owned());
     let envelope = CommandEnvelope {
+        authority: None,
         command_id: CommandId::from("cmd-coord".to_owned()),
         target_incarnation: None,
         retry_until: i64::try_from(det.now_ms()).unwrap() + RETRY_WINDOW_MS,
@@ -230,6 +231,7 @@ async fn a_deck_start_with_a_grant_hands_the_credential_to_the_child_environment
     ));
 
     let stop = CommandEnvelope {
+        authority: None,
         command_id: CommandId::from("cmd-stop".to_owned()),
         target_incarnation: None,
         retry_until: i64::try_from(det.now_ms()).unwrap() + RETRY_WINDOW_MS,

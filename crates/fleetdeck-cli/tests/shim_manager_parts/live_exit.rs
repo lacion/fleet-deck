@@ -30,6 +30,7 @@ async fn ended_row(
 async fn resume(rig: &mut Rig, station: &Station, session: &SessionId) -> Decided {
     rig.next += 1;
     let envelope = CommandEnvelope {
+        authority: None,
         command_id: CommandId::from(format!("cmd-{}", rig.next)),
         target_incarnation: None,
         retry_until: i64::try_from(rig.det.now_ms()).unwrap() + RETRY_WINDOW_MS,

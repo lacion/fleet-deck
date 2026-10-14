@@ -166,6 +166,7 @@ impl DeckLink {
             CommandKind::Session { command } => (
                 command.method().to_owned(),
                 serde_json::to_value(CommandEnvelope {
+                    authority: None,
                     command_id: command_id.clone(),
                     target_incarnation: Some(target),
                     retry_until,

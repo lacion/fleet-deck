@@ -273,6 +273,7 @@ async fn a_codex_question_takes_its_answers_and_an_approval_refuses_an_input_edi
 /// Submits `command` under the fixed command id `id`.
 async fn submit_as(st: &Station, id: &str, command: SessionCommand) -> crate::store::Decided {
     let envelope = CommandEnvelope {
+        authority: None,
         command_id: CommandId::from(id),
         target_incarnation: None,
         retry_until: i64::try_from(st.det.now_ms()).unwrap() + RETRY_WINDOW_MS,
@@ -440,6 +441,7 @@ async fn an_empty_free_answer_to_a_message_question_is_refused_before_the_claim(
             .map(|o| ApprovalOption {
                 option_id: (*o).to_owned(),
                 label: (*o).to_owned(),
+                kind: None,
             })
             .collect(),
         response: ResponseChannel::Message,

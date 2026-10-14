@@ -105,6 +105,7 @@ Every step after TLS has the bound `NodeConfig::handshake_timeout` (default 10 s
 | `auto_continue.v1` | `session.set_auto_continue` (M3, ADR-007, DL-127; the per-session restart auto-continuation preference, events `session.auto_continue_changed` and `session.auto_continue_skipped`, input origin `continuation`) |
 | `import.v1` | `session.import` (M3, DL-308; a new driven session that continues an existing native CLI session id) |
 | `coordinator.v1` | `session.coordinator_renew`, `session.coordinator_revoke`, `coordinator.query`, `coordinator.call` (M3, ADR-006 §6.1 `coordinator_v1`, DL-212, DL-214; the owner's renewal and revocation of a coordinator binding) |
+| `coordinator.v2` | `coordinator.authority_check`, `coordinator.policy_now` (ADR-008 fleet control: the new coordinator ops and queries, `authority` on routed session commands, `coordinator.authority_check` and `coordinator.policy_now`) |
 | `files.v1` | `files.list`, `files.read`, `files.search`, `files.diff` (M3, DL-088; PLAN §6.6 file browse, search, read and per-turn diffs) |
 | `workspace.worktrees.v1` | `workspace.worktrees` (DL-142; the read-only inventory of the worktrees that the station created for sessions) |
 | `workspace.preflight.v1` | `workspace.preflight` (DL-144; the Git access check of a clone URL, before a clone) |
@@ -428,6 +429,8 @@ close             { reason, detail }
 | `shell.handover`, `shell.release` | deck → station | drive | `shell.handover.v1` | yes |
 | `coordinator.query` | station → deck | coordinate | `coordinator.v1` | no |
 | `coordinator.call` | station → deck | coordinate | `coordinator.v1` | yes |
+| `coordinator.authority_check` | station → deck | coordinate | `coordinator.v2` | no |
+| `coordinator.policy_now` | deck → station | read | `coordinator.v2` | no |
 
 - **`workspace.list` (added in M2 P4-4, DL-061, under the extension rule of §3: "every new method must declare a scope and, if needed, a feature"):** the directory picker of the board's spawn form. It lists the sub-directories of a path inside the station's allowed roots (`WorkspaceQuery` → `WorkspaceListing`). It reads only, but it needs `drive` because only a caller that may start a session needs the station's directory names. Errors: `missing_workspace`, `outside_roots`, `timeout`.
 - **`workspace.worktrees` (DL-142; feature `workspace.worktrees.v1`):** `workspace.worktrees` (DL-142) is read only: it lists the worktrees that the station created for sessions, with what Git reports about each (dirty and ignored entries, commits on no fetched remote ref, registration, last commit). It runs no Git command that writes.

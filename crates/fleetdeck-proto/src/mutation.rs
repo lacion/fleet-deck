@@ -12,7 +12,7 @@ use ts_rs::TS;
 
 use crate::command::{CommandEnvelope, Reject, RejectCode, SessionSpec, UserInput, admit};
 use crate::event::ProviderKind;
-use crate::ids::{CommandId, IncarnationId, ProviderInstanceId, SessionId, StationId};
+use crate::ids::{CommandId, IncarnationId, ProviderInstanceId, RequestId, SessionId, StationId};
 use crate::orchestration::{MailGroup, TaskState};
 use crate::shell::ShellEnvelope;
 
@@ -286,6 +286,134 @@ pub enum CoordinatorOp {
         text: String,
         delivery: CoordinatorDelivery,
     },
+    /// Resume a session (`manage` class, ADR-008 §4.1, §5.2).
+    Resume {
+        station: StationId,
+        session_id: SessionId,
+    },
+    /// Rename a session (`manage` class).
+    Rename {
+        station: StationId,
+        session_id: SessionId,
+        title: String,
+    },
+    /// Set the mode of a session (`manage` class, ADR-008 §5.2).
+    SetMode {
+        station: StationId,
+        session_id: SessionId,
+        mode: String,
+    },
+    /// Move a session to a project, or out of it (`manage` class).
+    ProjectAssign {
+        station: StationId,
+        session_id: SessionId,
+        target: ProjectTarget,
+    },
+    /// Start a session in a project (`spawn` and `manage` classes; counts
+    /// against the spawn cap).
+    ProjectStart {
+        project_id: String,
+        prompt: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        provider_instance: Option<ProviderInstanceId>,
+        worktree: bool,
+    },
+    /// Answer an approval or a question of a session (`answer` class,
+    /// ADR-008 §5).
+    Answer {
+        station: StationId,
+        session_id: SessionId,
+        request_id: RequestId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        option_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        question_answers: Option<Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        text: Option<String>,
+    },
+}
+
+/// Where `project_assign` moves a session (ADR-008 §4.1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[ts(export_to = "mutation/")]
+pub enum ProjectTarget {
+    /// The project with this id.
+    Project { id: String },
+    /// Out of every project.
+    None,
+    /// The project that the board's `assign auto` rules pick.
+    Auto,
+}
+
+/// The list that `project_items` reads (ADR-008 §4.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "mutation/")]
+pub enum ProjectItemKind {
+    Issues,
+    Prs,
+}
+
+/// The authority that a fleet-control command carries from the deck to the
+/// target station (ADR-008 §6.1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "mutation/")]
+pub struct CommandAuthority {
+    pub grant_id: String,
+    pub caller_station: StationId,
+    pub caller_session: SessionId,
+    pub generation: u32,
+}
+
+/// `coordinator.authority_check` params (ADR-008 §6.2): the target station
+/// asks the deck whether the authority of a command still holds.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "mutation/")]
+pub struct AuthorityCheck {
+    pub grant_id: String,
+    pub generation: u32,
+    pub caller_station: StationId,
+    pub caller_session: SessionId,
+    pub target_session: SessionId,
+    pub command_id: CommandId,
+}
+
+/// The answer to [`AuthorityCheck`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "mutation/")]
+pub struct AuthorityAnswer {
+    pub valid: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub reason: Option<String>,
+}
+
+/// `coordinator.policy_now` params (ADR-008 §6.2): the deck asks the caller
+/// station for its live fleet-control policy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "mutation/")]
+pub struct PolicyNow {
+    pub caller_session: SessionId,
+}
+
+/// The answer to [`PolicyNow`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "mutation/")]
+pub struct PolicyNowAnswer {
+    /// The live station setting `allow_fleet_control`.
+    pub fleet_control: bool,
+    /// The caller session still holds its binding.
+    pub bound: bool,
 }
 
 /// The binding facts of a coordinator session: the deck checks them
@@ -341,6 +469,45 @@ pub enum CoordinatorQuery {
     WaitTasks { task_ids: Vec<String> },
     /// The receipt of an own `coordinator.call` (any mutating class).
     CommandStatus { command_id: CommandId },
+    /// The last items of a session (`inspect` class, ADR-008 §4.1).
+    SessionTail {
+        session_id: SessionId,
+        max_items: u32,
+    },
+    /// The diff of a session against its base (`inspect` class, ADR-008
+    /// §4.4).
+    SessionDiff { session_id: SessionId },
+    /// The open requests of the sessions that the grant may answer for.
+    NeedsYou,
+    /// The projects on the grant's stations.
+    Projects,
+    /// The issues or PRs of a project.
+    ProjectItems {
+        project_id: String,
+        kind: ProjectItemKind,
+    },
+    /// The artifacts of one session, or of every session on the grant's
+    /// stations.
+    Artifacts {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        session_id: Option<SessionId>,
+    },
+    /// One artifact, at its latest version or at `version`.
+    Artifact {
+        artifact_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        version: Option<u32>,
+    },
+    /// A file in the session root.
+    FileRead { session_id: SessionId, path: String },
+    /// A search in the session root.
+    FileSearch {
+        session_id: SessionId,
+        pattern: String,
+        mode: String,
+    },
 }
 
 /// The `params` of `coordinator.query`. `deadline` ≤ arrival + 30 s, or
@@ -461,3 +628,7 @@ impl Mutation {
 #[cfg(test)]
 #[path = "mutation_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "fleet_control_tests.rs"]
+mod fleet_control_tests;

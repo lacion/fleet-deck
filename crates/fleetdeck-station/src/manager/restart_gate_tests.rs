@@ -99,6 +99,7 @@ async fn a_queued_start_is_not_claimed_while_held_and_is_claimed_after() {
         ("q-interrupt", EffectPayload::Interrupt),
     ] {
         let envelope = CommandEnvelope {
+            authority: None,
             command_id: CommandId::from(id),
             target_incarnation: None,
             retry_until: i64::try_from(det.now_ms()).unwrap() + RETRY_WINDOW_MS,

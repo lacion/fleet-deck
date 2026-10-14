@@ -172,6 +172,7 @@ async fn the_watcher_titles_a_session_once_and_digests_it_when_it_ends() {
     let watcher = tokio::spawn(watch::run(assist, Arc::clone(&manager), stop_rx));
     let send = |n: u32, command| {
         let envelope = CommandEnvelope {
+            authority: None,
             command_id: CommandId::from(format!("watch-{n}")),
             target_incarnation: None,
             retry_until: i64::try_from(det.now_ms()).unwrap() + RETRY_WINDOW_MS,

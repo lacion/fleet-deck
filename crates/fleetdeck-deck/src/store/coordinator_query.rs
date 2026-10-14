@@ -233,6 +233,25 @@ impl DeckStore {
                     }
                 }
             }
+            // Placeholder until the ADR-008 deck task replaces it.
+            CoordinatorQuery::SessionTail { .. }
+            | CoordinatorQuery::SessionDiff { .. }
+            | CoordinatorQuery::NeedsYou
+            | CoordinatorQuery::Projects
+            | CoordinatorQuery::ProjectItems { .. }
+            | CoordinatorQuery::Artifacts { .. }
+            | CoordinatorQuery::Artifact { .. }
+            | CoordinatorQuery::FileRead { .. }
+            | CoordinatorQuery::FileSearch { .. } => {
+                let name = serde_json::to_value(&env.query)
+                    .ok()
+                    .and_then(|v| v.get("query").and_then(|n| n.as_str().map(str::to_owned)))
+                    .unwrap_or_default();
+                return Ok(Err(reject(
+                    RejectCode::Unsupported,
+                    &format!("{name} is not implemented yet"),
+                )));
+            }
         };
         let now = self.now_ms();
         call(&self.inner.db, move |conn| touch(conn, &grant, now)).await?;

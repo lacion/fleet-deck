@@ -148,6 +148,7 @@ impl Rig {
     ) -> Decided {
         self.next += 1;
         let envelope = CommandEnvelope {
+            authority: None,
             command_id: CommandId::from(format!("01JTRASH{:05}", self.next)),
             target_incarnation: None,
             retry_until: i64::try_from(self.det.now_ms()).unwrap() + RETRY_WINDOW_MS,
@@ -466,6 +467,7 @@ async fn a_start_resume_shell_open_and_handover_are_refused_while_a_row_is_open(
         r.store
             .decide(
                 CommandEnvelope {
+                    authority: None,
                     command_id: CommandId::from("01JTRASHFREE1"),
                     target_incarnation: None,
                     retry_until: i64::try_from(r.det.now_ms()).unwrap() + RETRY_WINDOW_MS,

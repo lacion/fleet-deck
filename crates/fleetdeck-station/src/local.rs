@@ -349,6 +349,7 @@ async fn handle(
     };
     let command_id = command_id.unwrap_or_else(|| manager.new_id());
     let envelope = CommandEnvelope {
+        authority: None,
         command_id,
         target_incarnation: None,
         retry_until: manager.store().now_ms().saturating_add(RETRY_WINDOW_MS),

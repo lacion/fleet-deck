@@ -46,6 +46,10 @@ pub mod feature {
     /// `coordinator.call` (ADR-006 §6.1 `coordinator_v1`, M3 DL-212,
     /// DL-214).
     pub const COORDINATOR: &str = "coordinator.v1";
+    /// ADR-008 fleet control: the new coordinator ops and queries,
+    /// `authority` on routed session commands, `coordinator.authority_check`
+    /// and `coordinator.policy_now`.
+    pub const COORDINATOR_V2: &str = "coordinator.v2";
     /// `workspace.worktrees`: the read-only inventory of the worktrees that
     /// the station created for sessions (DL-142).
     pub const WORKTREES: &str = "workspace.worktrees.v1";
@@ -96,6 +100,7 @@ pub mod feature {
         SHELL,
         SHELL_HANDOVER,
         COORDINATOR,
+        COORDINATOR_V2,
         AUTO_CONTINUE,
         IMPORT,
         WORKTREES,
