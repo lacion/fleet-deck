@@ -6,8 +6,11 @@
 //! effect worker runs `git` before the provider starts.
 
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
+use rustix::process::{Pid, Signal, kill_process_group, test_kill_process_group};
 use tokio::sync::watch;
 
 use crate::store::WorkspacePlan;
@@ -25,6 +28,9 @@ pub const MAX_URL_CHARS: usize = 2048;
 pub const WORKTREE_TIMEOUT: Duration = Duration::from_secs(120);
 /// The time limit of `git clone`.
 pub const CLONE_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+/// How long a stopped provision waits for its Git process group to end after
+/// each signal (TERM, then KILL).
+const GROUP_WAIT: Duration = Duration::from_secs(5);
 
 /// Why a plan is refused; `forbidden` maps to `RejectCode::Forbidden`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -286,12 +292,20 @@ pub(crate) fn check_url(
 }
 
 /// Does the Git work of `plan` (the start effect, DL-200). A worktree that
-/// exists on the planned branch counts as done (a repeated effect).
+/// exists on the planned branch counts as done (a repeated effect). Each `git`
+/// call runs in its own process group, and `group` holds the group id of the
+/// call that runs.
 ///
 /// # Errors
 /// The `git` failure as text.
-pub async fn provision(plan: &WorkspacePlan, program: &Path) -> Result<(), String> {
-    let options = |timeout| git_options(program, timeout);
+pub async fn provision(
+    plan: &WorkspacePlan,
+    program: &Path,
+    group: &Arc<AtomicU32>,
+) -> Result<(), String> {
+    let grouped = |dir: &Path, timeout| {
+        Git::new(dir, git_options(program, timeout)).with_group(Arc::clone(group))
+    };
     match plan {
         WorkspacePlan::Worktree {
             repo,
@@ -300,7 +314,7 @@ pub async fn provision(plan: &WorkspacePlan, program: &Path) -> Result<(), Strin
             base,
         } => {
             if Path::new(path).is_dir() {
-                let git = Git::new(path, options(WORKTREE_TIMEOUT));
+                let git = grouped(Path::new(path), WORKTREE_TIMEOUT);
                 let head = git
                     .text(&["rev-parse", "--abbrev-ref", "HEAD"])
                     .await
@@ -311,7 +325,7 @@ pub async fn provision(plan: &WorkspacePlan, program: &Path) -> Result<(), Strin
                     Err(format!("`{path}` exists on another branch"))
                 };
             }
-            let git = Git::new(repo, options(WORKTREE_TIMEOUT));
+            let git = grouped(Path::new(repo), WORKTREE_TIMEOUT);
             let heads_ref = format!("refs/heads/{branch}");
             let exists = git
                 .status(&["show-ref", "--verify", "--quiet", &heads_ref], &[], None)
@@ -363,7 +377,7 @@ pub async fn provision(plan: &WorkspacePlan, program: &Path) -> Result<(), Strin
         }
         WorkspacePlan::Clone { url, path } => {
             let parent = Path::new(path).parent().unwrap_or(Path::new("/"));
-            Git::new(parent, options(CLONE_TIMEOUT))
+            grouped(parent, CLONE_TIMEOUT)
                 .run(&[
                     "-c",
                     "protocol.ext.allow=never",
@@ -400,11 +414,15 @@ pub enum ProvisionError {
 }
 
 /// [`provision`] that a cancel signal (`true` on `cancel`) stops. Dropping the
-/// `provision` future kills the `git` child (`kill_on_drop`).
+/// `provision` future kills the `git` child (`kill_on_drop`); the rest of its
+/// process group (transport, checkout and hook processes) is then stopped
+/// before the caller undoes the work.
 ///
 /// # Errors
-/// [`ProvisionError::Failed`] with the `git` failure, or
-/// [`ProvisionError::Stopped`] when the cancel came first.
+/// [`ProvisionError::Failed`] with the `git` failure, or with the text that
+/// `git` processes are still running after a cancel (the caller must keep the
+/// workspace); [`ProvisionError::Stopped`] when the cancel came first and the
+/// `git` processes are gone.
 pub async fn provision_cancellable(
     plan: &WorkspacePlan,
     program: &Path,
@@ -413,10 +431,59 @@ pub async fn provision_cancellable(
     if *cancel.borrow() {
         return Err(ProvisionError::Stopped);
     }
-    tokio::select! {
-        r = provision(plan, program) => r.map_err(ProvisionError::Failed),
-        _ = cancel.wait_for(|c| *c) => Err(ProvisionError::Stopped),
+    let group = Arc::new(AtomicU32::new(0));
+    let done = tokio::select! {
+        r = provision(plan, program, &group) => Some(r),
+        _ = cancel.wait_for(|c| *c) => None,
+    };
+    match done {
+        Some(r) => r.map_err(ProvisionError::Failed),
+        None => Err(after_cancel(group.load(Ordering::SeqCst), GROUP_WAIT).await),
     }
+}
+
+/// The error of a cancelled provision whose `git` call ran in the process
+/// group `pgid` (0: none): [`ProvisionError::Stopped`] when the group is gone,
+/// else a failure, so that the caller keeps the workspace.
+pub(crate) async fn after_cancel(pgid: u32, wait: Duration) -> ProvisionError {
+    if stop_group(pgid, wait).await {
+        return ProvisionError::Stopped;
+    }
+    tracing::warn!(
+        pgid,
+        "git processes are still running after a stop; the workspace is kept"
+    );
+    ProvisionError::Failed(
+        "the start was stopped, but git processes are still running; the workspace was kept"
+            .to_owned(),
+    )
+}
+
+/// Stops the process group `pgid` (0: none): TERM, wait up to `wait` for the
+/// group to be empty, KILL, wait up to `wait` again. Returns whether the group
+/// is gone.
+pub(crate) async fn stop_group(pgid: u32, wait: Duration) -> bool {
+    let Some(pgid) = i32::try_from(pgid).ok().and_then(Pid::from_raw) else {
+        return true;
+    };
+    for sig in [Signal::TERM, Signal::KILL] {
+        if let Err(e) = kill_process_group(pgid, sig)
+            && e != rustix::io::Errno::SRCH
+        {
+            tracing::warn!(?sig, error = %e, "cannot signal the git process group");
+        }
+        let deadline = tokio::time::Instant::now() + wait;
+        loop {
+            if matches!(test_kill_process_group(pgid), Err(rustix::io::Errno::SRCH)) {
+                return true;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+    false
 }
 
 /// What existed before the Git work of a plan, so that [`undo_partial`]
