@@ -217,3 +217,59 @@ async fn a_second_address_is_tried_when_the_first_does_not_connect() {
         .unwrap();
     assert_eq!(joined.addr, deck.addr());
 }
+
+#[tokio::test]
+async fn a_refused_upgrade_keeps_the_retry_file_and_a_later_run_resumes_it() {
+    // The window is closed: the deck ends the connection after TLS.
+    let deck = deck(HubConfig::default()).await;
+    let dir = tempfile::tempdir().unwrap();
+    let station = node(Role::Station);
+    let p = plan(&deck, dir.path(), "laptop");
+    // A request of an earlier run, whose answer was lost.
+    let req = CanonicalRequest::generate("laptop", p.scopes.clone()).unwrap();
+    retry_file::write(
+        dir.path(),
+        &RetryRecord::new(&p.host, p.port, &p.deck.to_string(), &req),
+    )
+    .unwrap();
+    let err = drive(&station.config, &p).await.unwrap_err();
+    assert_eq!(err.code(), "not_accepted", "{err:?}");
+    assert!(matches!(err, JoinError::Link(_)), "{err:?}");
+    let saved = retry_file::read(dir.path())
+        .unwrap()
+        .expect("the retry file stays");
+    assert_eq!(saved.request_id, req.id_hex());
+    // The window opens; the same plan sends the stored request again.
+    open(&deck).await;
+    let config = station.config.clone();
+    let task = tokio::spawn(async move { drive(&config, &p).await });
+    let view = pending(&deck, 1).await.remove(0);
+    assert_eq!(view.request_id, saved.request_id, "the stored request");
+    approve_first(&deck).await;
+    tokio::time::timeout(T, task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+}
+
+#[tokio::test]
+async fn an_explicit_window_closed_answer_still_removes_the_retry_file() {
+    let deck = deck(HubConfig::default()).await;
+    open(&deck).await;
+    let dir = tempfile::tempdir().unwrap();
+    let station = node(Role::Station);
+    let p = plan(&deck, dir.path(), "laptop");
+    let config = station.config.clone();
+    let task = tokio::spawn(async move { drive(&config, &p).await });
+    pending(&deck, 1).await;
+    assert!(retry_file::read(dir.path()).unwrap().is_some());
+    assert!(deck.hub.close_window().await);
+    let err = tokio::time::timeout(T, task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(err.code(), "window_closed");
+    assert!(retry_file::read(dir.path()).unwrap().is_none());
+}

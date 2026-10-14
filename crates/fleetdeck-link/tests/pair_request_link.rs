@@ -68,7 +68,7 @@ async fn no_request_outside_the_window_or_on_a_lan_listener() {
     let station = node(Role::Station);
     // The window is closed: TLS refuses the unknown key; the station says so.
     let r = result(ask(&station, &deck, &request("a"), PairMode::Request)).await;
-    assert_eq!(code(&r), "window_closed");
+    assert_eq!(code(&r), "not_accepted");
     // The window is open, but a LAN listener never accepts a request.
     open(&deck).await;
     let lan = deck.listen_as(ListenerKind::Other).await;
@@ -80,7 +80,7 @@ async fn no_request_outside_the_window_or_on_a_lan_listener() {
         PairMode::Request,
     ))
     .await;
-    assert_eq!(code(&r), "window_closed");
+    assert_eq!(code(&r), "not_accepted");
     assert!(deck.hub.list().await.is_empty());
     assert!(deck.node.config.pins.is_empty());
 }
@@ -432,7 +432,7 @@ async fn a_resume_is_accepted_on_a_listener_that_is_not_a_tailnet_listener() {
         PairMode::Request,
     ))
     .await;
-    assert_eq!(code(&r), "window_closed");
+    assert_eq!(code(&r), "not_accepted");
 }
 
 #[tokio::test]

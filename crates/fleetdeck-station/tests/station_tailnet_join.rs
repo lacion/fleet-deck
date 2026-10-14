@@ -234,7 +234,7 @@ async fn an_approved_request_stores_the_deck_pin_the_grants_and_the_dial_target_
     let station = station(STATUS).await;
     let join = station.join(&deck, "deck-box.tail1234.ts.net", true);
     let node = Arc::clone(&station.node);
-    let task = tokio::spawn(async move { node.join_tailnet(&join).await });
+    let task = tokio::spawn(async move { node.join_tailnet(&join, std::future::pending()).await });
 
     let view = pending(&deck).await;
     assert_eq!(view.requested_name, "laptop");
@@ -286,7 +286,12 @@ async fn a_host_that_is_not_a_peer_of_tailscale_status_is_refused_before_anythin
     let station = station(STATUS).await;
     for host in ["example.com", "100.64.0.99", "box.tail1234.ts.net", "box"] {
         let join = station.join(&deck, host, true);
-        let (code, _) = refused(station.node.join_tailnet(&join).await);
+        let (code, _) = refused(
+            station
+                .node
+                .join_tailnet(&join, std::future::pending())
+                .await,
+        );
         assert_eq!(code, "not_in_tailnet", "{host}");
     }
     assert!(deck.hub.list().await.is_empty());
@@ -300,7 +305,12 @@ async fn a_missing_tailscale_is_refused() {
     let station = station(STATUS).await;
     let mut join = station.join(&deck, "deck-box.tail1234.ts.net", true);
     join.cli = TailscaleCli::new("/nonexistent/tailscale");
-    let (code, detail) = refused(station.node.join_tailnet(&join).await);
+    let (code, detail) = refused(
+        station
+            .node
+            .join_tailnet(&join, std::future::pending())
+            .await,
+    );
     assert_eq!(code, "tailscale_unavailable");
     assert!(detail.contains("Tailscale is not available"), "{detail}");
 }
@@ -310,14 +320,22 @@ async fn the_probe_shows_the_key_of_the_deck_and_writes_and_sends_nothing() {
     let deck = deck().await;
     let station = station(STATUS).await;
     let join = station.join(&deck, "deck-box.tail1234.ts.net", false);
-    let result = station.node.join_tailnet(&join).await.unwrap();
+    let result = station
+        .node
+        .join_tailnet(&join, std::future::pending())
+        .await
+        .unwrap();
     assert_eq!(result, TailnetResult::Observed(deck.identity.fingerprint()));
     assert!(deck.hub.list().await.is_empty(), "no request was sent");
     assert!(retry_file::read(station.dir.path()).unwrap().is_none());
     assert!(station.store.paired_keys().await.unwrap().is_empty());
     // The probe also works when the window is closed: it only reads the key.
     deck.hub.close_window().await;
-    let again = station.node.join_tailnet(&join).await.unwrap();
+    let again = station
+        .node
+        .join_tailnet(&join, std::future::pending())
+        .await
+        .unwrap();
     assert_eq!(again, TailnetResult::Observed(deck.identity.fingerprint()));
 }
 
@@ -327,7 +345,12 @@ async fn a_wrong_deck_fingerprint_fails_without_writes() {
     let station = station(STATUS).await;
     let mut join = station.join(&deck, "deck-box.tail1234.ts.net", true);
     join.deck_fingerprint = Some(Identity::generate().unwrap().fingerprint());
-    let (code, _) = refused(station.node.join_tailnet(&join).await);
+    let (code, _) = refused(
+        station
+            .node
+            .join_tailnet(&join, std::future::pending())
+            .await,
+    );
     assert_eq!(code, "fingerprint_mismatch");
     assert!(deck.hub.list().await.is_empty());
     assert!(station.store.paired_keys().await.unwrap().is_empty());
@@ -344,7 +367,7 @@ async fn a_denied_request_ends_with_denied_and_a_cancel_removes_the_file() {
     let join = station.join(&deck, "deck-box.tail1234.ts.net", true);
     let node = Arc::clone(&station.node);
     let j = join.clone();
-    let task = tokio::spawn(async move { node.join_tailnet(&j).await });
+    let task = tokio::spawn(async move { node.join_tailnet(&j, std::future::pending()).await });
     let view = pending(&deck).await;
     deck.hub.deny(&view.request_id).await.unwrap();
     let r = tokio::time::timeout(T, task).await.unwrap().unwrap();
@@ -360,7 +383,12 @@ async fn a_denied_request_ends_with_denied_and_a_cancel_removes_the_file() {
         &retry_file::RetryRecord::new("other.tail1234.ts.net", 7421, &"ab".repeat(32), &req),
     )
     .unwrap();
-    let (code, detail) = refused(station.node.join_tailnet(&join).await);
+    let (code, detail) = refused(
+        station
+            .node
+            .join_tailnet(&join, std::future::pending())
+            .await,
+    );
     assert_eq!(code, "pending");
     assert!(
         detail.contains("station join --tailnet --cancel"),
@@ -390,7 +418,7 @@ async fn a_saved_request_of_the_same_deck_is_resumed_with_its_own_id() {
     .unwrap();
     let join = station.join(&deck, "DECK-BOX.tail1234.ts.net.", true);
     let node = Arc::clone(&station.node);
-    let task = tokio::spawn(async move { node.join_tailnet(&join).await });
+    let task = tokio::spawn(async move { node.join_tailnet(&join, std::future::pending()).await });
     let view = pending(&deck).await;
     assert_eq!(view.request_id, req.id_hex());
     assert_eq!(view.requested_name, "old-name");
@@ -415,7 +443,7 @@ async fn a_station_with_a_deck_refuses_a_second_join() {
     let join = station.join(&deck, "deck-box.tail1234.ts.net", true);
     let node = Arc::clone(&station.node);
     let j = join.clone();
-    let task = tokio::spawn(async move { node.join_tailnet(&j).await });
+    let task = tokio::spawn(async move { node.join_tailnet(&j, std::future::pending()).await });
     pending(&deck).await;
     approve(&deck).await;
     tokio::time::timeout(T, task)
@@ -423,8 +451,75 @@ async fn a_station_with_a_deck_refuses_a_second_join() {
         .unwrap()
         .unwrap()
         .unwrap();
-    let r = station.node.join_tailnet(&join).await;
+    let r = station
+        .node
+        .join_tailnet(&join, std::future::pending())
+        .await;
     assert!(matches!(r, Err(NodeError::AlreadyPaired(_))), "{r:?}");
     let _ = DECK_SCOPES;
     let _: Option<SocketAddr> = None;
+}
+
+#[tokio::test]
+async fn a_client_that_goes_away_while_the_owner_decides_ends_the_join_and_the_deck_sees_it() {
+    let deck = deck().await;
+    let station = station(STATUS).await;
+    let join = station.join(&deck, "deck-box.tail1234.ts.net", true);
+    let node = Arc::clone(&station.node);
+    let (leave, gone) = tokio::sync::oneshot::channel::<()>();
+    let task = tokio::spawn(async move {
+        node.join_tailnet(&join, async {
+            let _ = gone.await;
+        })
+        .await
+    });
+    pending(&deck).await;
+    leave.send(()).unwrap();
+    let r = tokio::time::timeout(T, task).await.unwrap().unwrap();
+    assert_eq!(refused(r).0, "client_gone");
+    // The pair connection closed, so the deck forgets the waiting request.
+    let deadline = tokio::time::Instant::now() + T;
+    while !deck.hub.list().await.is_empty() {
+        assert!(tokio::time::Instant::now() < deadline, "the request stays");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(station.store.paired_keys().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_client_that_goes_away_after_the_approval_was_verified_changes_nothing() {
+    let mut deck = deck().await;
+    let station = station(STATUS).await;
+    let join = station.join(&deck, "deck-box.tail1234.ts.net", true);
+    let node = Arc::clone(&station.node);
+    // The client "goes away" when the pairing row exists: that is after the
+    // verified approval, in the middle of the local steps.
+    let store = station.store.clone();
+    let gone = async move {
+        loop {
+            if !store.paired_keys().await.unwrap().is_empty() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    };
+    let task = tokio::spawn(async move { node.join_tailnet(&join, gone).await });
+    pending(&deck).await;
+    approve(&deck).await;
+    let result = tokio::time::timeout(T, task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert!(matches!(result, TailnetResult::Paired { .. }), "{result:?}");
+    let keys = station.store.paired_keys().await.unwrap();
+    assert_eq!(keys.len(), 1);
+    assert_eq!(keys[0].key, deck.identity.public_key());
+    assert!(retry_file::read(station.dir.path()).unwrap().is_none());
+    // The dialer runs: the station links to the deck.
+    let open = tokio::time::timeout(T, deck.listener.next_link())
+        .await
+        .expect("the station dials the deck")
+        .unwrap();
+    assert_eq!(open.peer, station.identity.public_key());
 }
