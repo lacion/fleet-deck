@@ -2,6 +2,7 @@
 //! inside the caller's transaction (or one statement), so a command decision
 //! and a provider append use the same code.
 
+use fleetdeck_proto::command::check_native_session_id;
 use fleetdeck_proto::event::{Event, RawRef};
 use fleetdeck_proto::{EventBody, EventEnvelope, PROTO_MAX, SessionId, SessionSummary};
 use rusqlite::{Connection, OptionalExtension, params};
@@ -169,10 +170,19 @@ pub(super) fn append_at(
             .or_else(|| provider_refs.get("thread_id"))
             .and_then(serde_json::Value::as_str)
     {
-        conn.execute(
-            "UPDATE sessions SET native_session_id = ?2 WHERE session_id = ?1",
-            params![session_id.as_str(), native],
-        )?;
+        // Only a valid id is stored: a later handover puts it into a command
+        // line (NV-23).
+        if check_native_session_id(native).is_ok() {
+            conn.execute(
+                "UPDATE sessions SET native_session_id = ?2 WHERE session_id = ?1",
+                params![session_id.as_str(), native],
+            )?;
+        } else {
+            tracing::warn!(
+                session = %session_id,
+                "the provider reported a native session id that is not valid; it is not stored"
+            );
+        }
     }
     // The request table first: an answer is confirmed through its node.
     super::requests::observe(conn, &envelope, now, time)?;
@@ -292,6 +302,18 @@ pub(super) fn ack(conn: &mut Connection, deck_key: &str, seq: u64, now: i64) -> 
 /// Removes the longest prefix of events that every paired deck acknowledged
 /// and that is older than the window; the removed prefix stays contiguous, so
 /// `pruned_through` decides between a replay and a snapshot.
+///
+/// The same transaction removes the finished history rows that are older than
+/// the history retention (NV-02, NV-10, NV-26, NV-28): coordinator outbox rows,
+/// shell effects, effects, runtime requests, dead processes and artifact
+/// suggestions. A row that recovery or a live row can still need stays.
+///
+/// An `outcome_unknown` effect is never removed: the station could not prove
+/// what happened, and the row is the only record of that doubt.
+///
+/// These tables are never pruned: `sessions`, `turn_checkpoints`, `reverts`,
+/// `shims` and the `shim_*` tables, `setup_runs`, `worktree_ops` and
+/// `artifacts`. Other rows refer to them, or the user reads them as history.
 pub(super) fn prune(conn: &mut Connection, now: i64, config: StoreConfig) -> Result<PruneReport> {
     let tx = conn.transaction()?;
     let head = head(&tx)?;
@@ -341,8 +363,59 @@ pub(super) fn prune(conn: &mut Connection, now: i64, config: StoreConfig) -> Res
         "DELETE FROM commands WHERE at < ?1",
         [now.saturating_sub(config.receipt_retention_ms)],
     )?;
+    report.history = prune_history_rows(&tx, now.saturating_sub(config.history_retention_ms))?;
     tx.commit()?;
     Ok(report)
+}
+
+/// Removes the finished history rows older than `cutoff`, children before
+/// parents so that no foreign key blocks the prune (NV-26). Returns the number
+/// of removed rows.
+fn prune_history_rows(tx: &rusqlite::Transaction<'_>, cutoff: i64) -> Result<usize> {
+    let mut removed = 0;
+    removed += tx.execute(
+        "DELETE FROM coordinator_outbox
+         WHERE state IN ('done', 'failed', 'ambiguous') AND updated_at < ?1",
+        [cutoff],
+    )?;
+    removed += tx.execute(
+        "DELETE FROM shell_effects
+         WHERE state IN ('confirmed', 'failed', 'retired_not_dispatched', 'outcome_unknown')
+           AND updated_at < ?1",
+        [cutoff],
+    )?;
+    removed += tx.execute(
+        "DELETE FROM effects
+         WHERE state IN ('confirmed', 'retired_not_dispatched') AND updated_at < ?1
+           AND NOT EXISTS (SELECT 1 FROM shim_writes w WHERE w.effect_id = effects.effect_id)
+           AND NOT EXISTS (SELECT 1 FROM shim_transitions t WHERE t.effect_id = effects.effect_id)",
+        [cutoff],
+    )?;
+    removed += tx.execute(
+        "DELETE FROM runtime_requests
+         WHERE state IN ('resolved', 'expired') AND updated_at < ?1
+           AND (process_incarnation IS NULL OR EXISTS (
+                SELECT 1 FROM processes p
+                WHERE p.process_incarnation = runtime_requests.process_incarnation
+                  AND p.state = 'dead'))
+           AND NOT EXISTS (
+                SELECT 1 FROM effects e
+                WHERE e.session_id = runtime_requests.session_id
+                  AND e.state IN ('queued', 'claimed', 'outcome_unknown'))",
+        [cutoff],
+    )?;
+    removed += tx.execute(
+        "DELETE FROM processes
+         WHERE state = 'dead' AND COALESCE(ended_at, started_at) < ?1
+           AND NOT EXISTS (
+                SELECT 1 FROM effects e WHERE e.process_incarnation = processes.process_incarnation)
+           AND NOT EXISTS (
+                SELECT 1 FROM runtime_requests r
+                WHERE r.process_incarnation = processes.process_incarnation)",
+        [cutoff],
+    )?;
+    removed += tx.execute("DELETE FROM artifact_suggestions WHERE at < ?1", [cutoff])?;
+    Ok(removed)
 }
 
 /// Whether a session of this station has `callsign` already.
