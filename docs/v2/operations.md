@@ -133,6 +133,20 @@ Each Linear account remembers the app that made it. A refresh uses that app only
 
 A station stop with `host = "direct"` stops every agent; the sessions become `lost` at the next start, or are continued when auto-continue is on and every recheck passes. With `host = "shim"`, the agents keep running and the next station start reattaches them.
 
+### 4.1 Run as a service (DL-186)
+
+Run `fleetdeck service install` to start Fleet Deck at boot or login. Use `both` (default, runs `fleetdeck up`), `deck` or `station`. You can install `deck` and `station` together; do not mix them with `both`.
+
+- Linux and WSL: a systemd user service (`fleetdeck-up.service`, `fleetdeck-deck.service`, `fleetdeck-station.service`). Linger starts it at boot without a login. Logs: `journalctl --user -u <unit>`.
+- WSL: systemd must be on (`[boot]` and `systemd=true` in `/etc/wsl.conf`). The command also adds a Windows logon task that starts the distro when you sign in to Windows.
+- macOS: a launchd user agent (`dev.fleetdeck.<kind>`). It starts at login and ends at logout. Logs: `~/Library/Logs/fleetdeck/<up|deck|station>.log`.
+- The service runs a copy of the program under `<data>/station/bin/current` (`deck`: `<data>/deck/bin/current`). Run `fleetdeck service install` again after you build or install a new version.
+- The service gets the `PATH` of your shell. Run the command again after you install a provider CLI in a new directory.
+- With `host = "direct"` (default), the station ends its agents when the service stops. Set `host = "shim"` in `station.toml` to keep them running.
+- `fleetdeck service install --dry-run` prints the files and the commands and changes nothing.
+- `fleetdeck service start`, `stop` and `status [--json]` control and show the services. `fleetdeck service uninstall` removes them. Your data stays.
+- If another Fleet Deck process runs, the command installs the service but does not start it. Stop that process, then run `fleetdeck service start`.
+
 ## 5. Board access
 
 1. Set the owner password: `fleetdeck deck password` (from a prompt or `--stdin`). A new password ends every login.

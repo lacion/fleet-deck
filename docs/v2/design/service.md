@@ -1,6 +1,6 @@
 # Design: `fleetdeck service` (start at login or boot)
 
-Status: revision 2 (DL-186). Revision 1 had an advisor review (Codex); §13 maps each point.
+Status: revision 2, built (DL-186). Revision 1 had an advisor review (Codex); §13 maps each point.
 
 ## 1. Goal
 

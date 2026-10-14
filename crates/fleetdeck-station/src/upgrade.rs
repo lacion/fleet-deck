@@ -413,6 +413,15 @@ impl Launcher {
         self.point(&previous)
     }
 
+    /// Points `current` at `release` without an update record (the service
+    /// install, design service.md §4). `previous` follows the old target.
+    ///
+    /// # Errors
+    /// [`UpgradeError::Io`].
+    pub fn set_current(&self, release: &Path) -> Result<(), UpgradeError> {
+        self.point(release)
+    }
+
     fn point(&self, release: &Path) -> Result<(), UpgradeError> {
         fs::create_dir_all(&self.root).map_err(io_err(&self.root))?;
         if let Some(old) = self.current() {
