@@ -266,7 +266,8 @@ impl<'a> Tracker<'a> {
         let secrets: Vec<&str> = secrets.iter().map(String::as_str).collect();
         let (hosts, own) = match self.kind {
             TrackerKind::Jira => {
-                let host = super::util::https_host(&self.base()).ok_or_else(|| {
+                // The origin, so that a site on another port keeps its port (NV-14).
+                let host = super::util::https_origin(&self.base()).ok_or_else(|| {
                     Fail::new(
                         code::UNAVAILABLE,
                         "the tracker site is not a valid https URL",
