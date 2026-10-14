@@ -29,9 +29,9 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 rust-embed = { workspace = true }
+futures-util = { workspace = true }
 
 [dev-dependencies]
-futures-util = { workspace = true }
 tokio-tungstenite = { workspace = true }
 fleetdeck-station = { path = "../fleetdeck-station" }
 fleetdeck-testkit = { path = "../fleetdeck-testkit" }
