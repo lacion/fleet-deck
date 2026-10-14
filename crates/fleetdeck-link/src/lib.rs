@@ -19,8 +19,10 @@
 //! - [`pairing`]: invitations, proofs and pairing admission (G11, G12).
 //! - [`join`]: the pair channel on top of [`node`].
 //! - [`revoke`]: revocation and key rotation (G5).
+//! - [`admission`]: the cap on pending handshakes of a listener (FDV2-001).
 //! - [`reconnect`]: the dialer's backoff with jitter and its redial task.
 
+pub mod admission;
 pub mod control;
 pub mod data;
 pub mod epochs;

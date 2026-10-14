@@ -133,6 +133,14 @@ The deck and the station are the only writers of their config file while they ru
 
 The local socket is the owner on this machine, so these commands need no elevation. A save reads the current revision first. When another change happens in between (`settings_changed`), the command reads again and tries once more. Each deck save writes an audit row with the actor `local` and the keys only.
 
+### Limits
+
+- **Board connections:** at most 256 open connections, and 32 from one IP address. The deck drops a connection over the limit at once. An IPv6 source counts by its /64 prefix.
+- **Header timeout:** a board client has 10 seconds to send the request headers. The same limit ends an idle keep-alive connection. An open WebSocket is not limited by it.
+- **Login:** each flow has its own limit: the password (also the elevation check), the login link, and the member join. One IP address can fail 5 times in 1 minute in one flow; all IP addresses together can fail 50 times. A refused attempt gets HTTP 429 `too_many_attempts` with the wait in seconds. A full flow does not block the other flows.
+- **Password checks:** at most 2 run at the same time. A login that waits more than 2 seconds for a free slot gets HTTP 429 `busy`; this is not a failed attempt.
+- **Link:** a deck or station listener accepts at most 64 pending handshakes, and 16 from one IP address. An established link does not count.
+
 ## 6. Pair a station
 
 Station dials the deck (the station is behind NAT or on a laptop):

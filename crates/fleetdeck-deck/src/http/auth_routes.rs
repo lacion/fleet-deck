@@ -1,10 +1,11 @@
 //! The login methods (M2 P3-8; PLAN §9, A13): password login, one-time
 //! link login (`fleetdeck open`), logout and the session view. Failed
-//! logins are limited: after [`MAX_FAILURES`] failures in
-//! [`FAILURE_WINDOW_MS`] the deck refuses every login with 429 until the
-//! window has passed.
+//! logins are limited for each flow and each source ([`LoginLimits`],
+//! FDV2-002): after 5 failures of one IP in a minute, or 50 failures of all
+//! IPs, the deck refuses that flow with 429 until the window has passed.
 
 use std::collections::VecDeque;
+use std::net::IpAddr;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use axum::Json;
@@ -19,6 +20,7 @@ use fleetdeck_proto::share::{JoinRequest, ShareKind, ShareRole, SharedScope};
 use serde::{Deserialize, Serialize};
 
 use super::Board;
+use super::admission::{Attempt, FlowLimiter, PeerAddr, busy, request_source, too_many_attempts};
 use super::guard::{ApiError, COOKIE, origin_label, owner_only};
 use crate::local_auth::login_url;
 use crate::store::auth::{LOGIN_LINK_TTL_MS, SESSION_MAX_MS};
@@ -26,37 +28,8 @@ use crate::store::{
     AuditResult, DeckError, LoginMethod, NewAudit, NewLogin, Principal, ShareGrant, ShareScope,
 };
 
-/// Failed logins in one window before the deck refuses logins.
-pub const MAX_FAILURES: usize = 5;
-/// The failure window.
+/// The window of the device link limiter.
 pub const FAILURE_WINDOW_MS: i64 = 60_000;
-
-/// The failed login attempts of the last window.
-#[derive(Debug, Default)]
-pub struct LoginLimiter(Mutex<VecDeque<i64>>);
-
-impl LoginLimiter {
-    fn recent(&self, now: i64) -> std::sync::MutexGuard<'_, VecDeque<i64>> {
-        let mut q = self.0.lock().unwrap_or_else(PoisonError::into_inner);
-        while q.front().is_some_and(|t| *t <= now - FAILURE_WINDOW_MS) {
-            q.pop_front();
-        }
-        q
-    }
-
-    /// The seconds to wait, or `None` when a login may be tried.
-    fn locked(&self, now: i64) -> Option<i64> {
-        let q = self.recent(now);
-        (q.len() >= MAX_FAILURES).then(|| {
-            q.front()
-                .map_or(1, |t| (t + FAILURE_WINDOW_MS - now) / 1000 + 1)
-        })
-    }
-
-    fn failed(&self, now: i64) {
-        self.recent(now).push_back(now);
-    }
-}
 
 /// Successful device links in one window.
 pub const MAX_DEVICE_LINKS: usize = 10;
@@ -153,28 +126,38 @@ fn logged_in(login: &NewLogin) -> Response {
     res
 }
 
+/// The action and the flow name of an audit row.
+type Audit = (&'static str, &'static str);
+
 async fn login(
     board: &Board,
-    action: &str,
+    (action, flow): Audit,
     method: LoginMethod,
+    attempt: Attempt,
     valid: Result<bool, ApiError>,
 ) -> Response {
     let now = board.store.now_ms();
-    let refused =
-        |detail: &str| NewAudit::new("anonymous", action, AuditResult::Refused).detail(detail);
+    let refused = |detail: &str| {
+        NewAudit::new("anonymous", action, AuditResult::Refused)
+            .detail(detail)
+            .target(flow)
+    };
     match valid {
-        Ok(true) => match board.store.create_login(method).await {
-            Ok(login) => {
-                board
-                    .store
-                    .audit_or_log(NewAudit::new("owner", action, AuditResult::Ok))
-                    .await;
-                logged_in(&login)
+        Ok(true) => {
+            attempt.succeeded();
+            match board.store.create_login(method).await {
+                Ok(login) => {
+                    board
+                        .store
+                        .audit_or_log(NewAudit::new("owner", action, AuditResult::Ok))
+                        .await;
+                    logged_in(&login)
+                }
+                Err(e) => ApiError::internal(e).into_response(),
             }
-            Err(e) => ApiError::internal(e).into_response(),
-        },
+        }
         Ok(false) => {
-            board.limiter.failed(now);
+            attempt.failed(now);
             board
                 .store
                 .audit_or_log(refused("invalid credentials"))
@@ -186,58 +169,118 @@ async fn login(
             )
             .into_response()
         }
-        Err(e) => e.into_response(),
+        Err(e) => {
+            // Nothing was checked: no failure.
+            attempt.release();
+            e.into_response()
+        }
     }
 }
 
-fn throttled(board: &Board) -> Option<ApiError> {
-    let wait = board.limiter.locked(board.store.now_ms())?;
-    Some(ApiError::new(
-        StatusCode::TOO_MANY_REQUESTS,
-        "too_many_attempts",
-        format!("too many failed logins; try again in {wait} s"),
-    ))
+/// The audit row of a refusal by a limit; returns the error to answer.
+async fn limit_refusal(board: &Board, (action, flow): Audit, actor: &str, e: ApiError) -> ApiError {
+    board
+        .store
+        .audit_or_log(
+            NewAudit::new(actor, action, AuditResult::Refused)
+                .detail(e.code)
+                .target(flow),
+        )
+        .await;
+    e
+}
+
+/// Starts an attempt in `limiter`, or the refusal (429 `too_many_attempts`).
+async fn start_attempt(
+    board: &Board,
+    limiter: &FlowLimiter,
+    ip: IpAddr,
+    audit: Audit,
+    actor: &str,
+) -> Result<Attempt, ApiError> {
+    match limiter.begin(ip, board.store.now_ms()) {
+        Ok(attempt) => Ok(attempt),
+        Err(wait) => Err(limit_refusal(board, audit, actor, too_many_attempts(wait)).await),
+    }
+}
+
+/// Checks the owner password while it holds a verification permit. The
+/// check runs in its own task that owns the permit, so a request that the
+/// client cancels does not free the slot while the hash still runs.
+///
+/// # Errors
+/// 429 `busy` when no permit is free in time (the attempt is released and
+/// the refusal is audited); 500 `internal` (the attempt is released).
+async fn verify_password(
+    board: &Board,
+    attempt: Attempt,
+    audit: Audit,
+    actor: &str,
+    password: String,
+) -> Result<(Attempt, bool), ApiError> {
+    let Some(permit) = board.limiter.hash_permit().await else {
+        attempt.release();
+        return Err(limit_refusal(board, audit, actor, busy()).await);
+    };
+    let store = board.store.clone();
+    let check = tokio::spawn(async move {
+        let valid = store.check_password(Secret::new(password)).await;
+        drop(permit);
+        valid
+    });
+    match check.await {
+        Ok(Ok(valid)) => Ok((attempt, valid)),
+        Ok(Err(e)) => {
+            attempt.release();
+            Err(ApiError::internal(e))
+        }
+        Err(e) => {
+            attempt.release();
+            Err(ApiError::internal(e))
+        }
+    }
 }
 
 /// `POST /api/auth/login { password }`.
 pub async fn password(
     State(board): State<Arc<Board>>,
+    peer: Option<Extension<PeerAddr>>,
     Json(body): Json<PasswordLogin>,
 ) -> Response {
-    if let Some(e) = throttled(&board) {
-        board
-            .store
-            .audit_or_log(
-                NewAudit::new("anonymous", "auth.login", AuditResult::Refused).detail(e.code),
-            )
-            .await;
-        return e.into_response();
+    const AUDIT: Audit = ("auth.login", "password");
+    let ip = request_source(peer);
+    let attempt = match start_attempt(&board, &board.limiter.password, ip, AUDIT, "anonymous").await
+    {
+        Ok(a) => a,
+        Err(e) => return e.into_response(),
+    };
+    match verify_password(&board, attempt, AUDIT, "anonymous", body.password).await {
+        Ok((attempt, valid)) => {
+            login(&board, AUDIT, LoginMethod::Password, attempt, Ok(valid)).await
+        }
+        Err(e) => e.into_response(),
     }
-    let valid = board
-        .store
-        .check_password(Secret::new(body.password))
-        .await
-        .map_err(ApiError::internal);
-    login(&board, "auth.login", LoginMethod::Password, valid).await
 }
 
 /// `POST /api/auth/link { token }`: the token of a `fleetdeck open` link.
-pub async fn link(State(board): State<Arc<Board>>, Json(body): Json<LinkLogin>) -> Response {
-    if let Some(e) = throttled(&board) {
-        board
-            .store
-            .audit_or_log(
-                NewAudit::new("anonymous", "auth.link", AuditResult::Refused).detail(e.code),
-            )
-            .await;
-        return e.into_response();
-    }
+pub async fn link(
+    State(board): State<Arc<Board>>,
+    peer: Option<Extension<PeerAddr>>,
+    Json(body): Json<LinkLogin>,
+) -> Response {
+    const AUDIT: Audit = ("auth.link", "login_link");
+    let ip = request_source(peer);
+    let attempt =
+        match start_attempt(&board, &board.limiter.login_link, ip, AUDIT, "anonymous").await {
+            Ok(a) => a,
+            Err(e) => return e.into_response(),
+        };
     let valid = board
         .store
         .redeem_login_link(&Secret::new(body.token))
         .await
         .map_err(ApiError::internal);
-    login(&board, "auth.link", LoginMethod::Link, valid).await
+    login(&board, AUDIT, LoginMethod::Link, attempt, valid).await
 }
 
 /// What a member's share covers, for the session view and the join answer.
@@ -293,21 +336,26 @@ async fn member_view(board: &Board, grant: &ShareGrant) -> Result<SessionView, A
 /// 400 `invalid_display_name`; 401 `invalid_invite`; 409
 /// `display_name_taken`; 429
 /// `too_many_attempts`; 500 `internal`.
-pub async fn join(State(board): State<Arc<Board>>, Json(body): Json<JoinRequest>) -> Response {
+pub async fn join(
+    State(board): State<Arc<Board>>,
+    peer: Option<Extension<PeerAddr>>,
+    Json(body): Json<JoinRequest>,
+) -> Response {
     const ACTION: &str = "auth.join";
-    if let Some(e) = throttled(&board) {
-        board
-            .store
-            .audit_or_log(NewAudit::new("anonymous", ACTION, AuditResult::Refused).detail(e.code))
-            .await;
-        return e.into_response();
-    }
+    const AUDIT: Audit = (ACTION, "member_join");
+    let ip = request_source(peer);
+    let attempt =
+        match start_attempt(&board, &board.limiter.member_join, ip, AUDIT, "anonymous").await {
+            Ok(a) => a,
+            Err(e) => return e.into_response(),
+        };
     let joined = board
         .store
         .join(&Secret::new(body.token), &body.display_name)
         .await;
     match joined {
         Ok(Some(login)) => {
+            attempt.succeeded();
             let grant = login.grant;
             board
                 .store
@@ -329,12 +377,13 @@ pub async fn join(State(board): State<Arc<Board>>, Json(body): Json<JoinRequest>
             res
         }
         Ok(None) => {
-            board.limiter.failed(board.store.now_ms());
+            attempt.failed(board.store.now_ms());
             board
                 .store
                 .audit_or_log(
                     NewAudit::new("anonymous", ACTION, AuditResult::Refused)
-                        .detail("invalid invite"),
+                        .detail("invalid invite")
+                        .target("member_join"),
                 )
                 .await;
             ApiError::new(
@@ -345,15 +394,23 @@ pub async fn join(State(board): State<Arc<Board>>, Json(body): Json<JoinRequest>
             .into_response()
         }
         Err(DeckError::Invalid(message)) => {
+            // The invite was not judged: no failure.
+            attempt.release();
             ApiError::new(StatusCode::BAD_REQUEST, "invalid_display_name", message).into_response()
         }
-        Err(DeckError::NameTaken(_)) => ApiError::new(
-            StatusCode::CONFLICT,
-            "display_name_taken",
-            "a member of another share uses this name; pick another",
-        )
-        .into_response(),
-        Err(e) => ApiError::internal(e).into_response(),
+        Err(DeckError::NameTaken(_)) => {
+            attempt.release();
+            ApiError::new(
+                StatusCode::CONFLICT,
+                "display_name_taken",
+                "a member of another share uses this name; pick another",
+            )
+            .into_response()
+        }
+        Err(e) => {
+            attempt.release();
+            ApiError::internal(e).into_response()
+        }
     }
 }
 
@@ -441,8 +498,8 @@ async fn refused_elevation(board: &Board, code: &'static str) {
 
 /// `POST /api/auth/elevate { password }` or `{ code }` (DL-172): an
 /// elevation for the danger changes and the restart of the settings. Only
-/// the owner's board login may call it. A failure counts in the same limiter
-/// as a failed login. Neither the password, the code nor the elevation goes
+/// the owner's board login may call it. A failure counts in the `password`
+/// flow of the login limits. Neither the password, the code nor the elevation goes
 /// to a log or to the audit row.
 ///
 /// # Errors
@@ -450,17 +507,19 @@ async fn refused_elevation(board: &Board, code: &'static str) {
 /// `too_many_attempts`; 500 `internal`.
 pub async fn elevate(
     State(board): State<Arc<Board>>,
+    peer: Option<Extension<PeerAddr>>,
     Extension(principal): Extension<Principal>,
     body: Result<Json<ElevateBody>, JsonRejection>,
 ) -> Result<Json<Elevated>, ApiError> {
     const ACTION: &str = "auth.elevate";
+    const AUDIT: Audit = (ACTION, "password");
     let session =
         super::settings_routes::owner(&board, &principal, ACTION, "", "can ask for an elevation")
             .await?;
     let refuse = |code: &'static str| refused_elevation(&board, code);
-    if let Some(e) = throttled(&board) {
-        refuse(e.code).await;
-        return Err(e);
+    let ip = request_source(peer);
+    if let Some(wait) = board.limiter.password.locked(ip, board.store.now_ms()) {
+        return Err(limit_refusal(&board, AUDIT, "owner", too_many_attempts(wait)).await);
     }
     let invalid = || {
         ApiError::new(
@@ -473,28 +532,41 @@ pub async fn elevate(
         refuse("invalid_request").await;
         return Err(invalid());
     };
-    let now = board.store.now_ms();
-    let valid = match (body.password, body.code) {
-        (Some(password), None) => board
-            .store
-            .check_password(Secret::new(password))
-            .await
-            .map_err(ApiError::internal)?,
-        (None, Some(code)) => board.elevations.redeem_code(&code, now),
+    let (attempt, valid) = match (body.password, body.code) {
+        (Some(password), None) => {
+            let attempt =
+                start_attempt(&board, &board.limiter.password, ip, AUDIT, "owner").await?;
+            verify_password(&board, attempt, AUDIT, "owner", password).await?
+        }
+        (None, Some(code)) => {
+            let attempt =
+                start_attempt(&board, &board.limiter.password, ip, AUDIT, "owner").await?;
+            let valid = board.elevations.redeem_code(&code, board.store.now_ms());
+            (attempt, valid)
+        }
         _ => {
             refuse("invalid_request").await;
             return Err(invalid());
         }
     };
+    let now = board.store.now_ms();
     if !valid {
-        board.limiter.failed(now);
-        refuse("invalid_credentials").await;
+        attempt.failed(now);
+        board
+            .store
+            .audit_or_log(
+                NewAudit::new("owner", ACTION, AuditResult::Refused)
+                    .detail("invalid_credentials")
+                    .target("password"),
+            )
+            .await;
         return Err(ApiError::new(
             StatusCode::UNAUTHORIZED,
             "invalid_credentials",
             "the password or the code is not valid",
         ));
     }
+    attempt.succeeded();
     let (token, expires_at) = board
         .elevations
         .issue(&session.session_hash, now)
@@ -576,17 +648,8 @@ mod tests {
         assert!(l.reserve(60_000));
         assert!(!l.reserve(60_001));
     }
-
-    #[test]
-    fn five_failures_lock_logins_until_the_window_passes() {
-        let l = LoginLimiter::default();
-        for t in 0..5 {
-            assert_eq!(l.locked(t * 1000), None);
-            l.failed(t * 1000);
-        }
-        assert_eq!(l.locked(5000), Some(56));
-        assert_eq!(l.locked(59_999), Some(1));
-        // The first failure leaves the window.
-        assert_eq!(l.locked(60_000), None);
-    }
 }
+
+#[cfg(test)]
+#[path = "login_limits_tests.rs"]
+mod limits_tests;

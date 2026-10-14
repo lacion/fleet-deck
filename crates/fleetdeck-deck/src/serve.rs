@@ -22,7 +22,7 @@ use fleetdeck_proto::StationId;
 use tokio::sync::watch;
 
 use crate::http::tls::TlsError;
-use crate::http::{Board, BoardServer, BoardTls, LoginLimiter, Origins};
+use crate::http::{Board, BoardServer, BoardTls, LoginLimits, Origins};
 use crate::link::{DeckNode, NodeError};
 use crate::local::{self, LocalDeck};
 use crate::local_auth::BoardEndpoint;
@@ -166,7 +166,7 @@ impl RunningDeck {
                     store: board_store,
                     link: board_link,
                     origins: Origins::new(bound, tailnet.as_deref()),
-                    limiter: LoginLimiter::default(),
+                    limiter: LoginLimits::default(),
                     device_links: crate::http::DeviceLinkLimiter::default(),
                     certificate_sha256: tls.sha256.clone(),
                     self_signed: tls.self_signed,

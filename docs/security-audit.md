@@ -35,7 +35,7 @@ Severity reflects practical impact and exploit prerequisites in Fleet Deck's int
 ### FDV2-001 — Board connections have no post-TLS admission cap or header timeout
 
 - **Severity:** Medium
-- **Status:** Open
+- **Status:** Fixed in a1e3eae3. The board admits at most 256 connections (32 per IP) before any TLS work and closes a client that sends no complete header in 10 s, also between two requests; the link listener admits at most 64 pending handshakes (16 per IP).
 - **Impact:** Remote denial of service from an address allowed by the D13 network policy
 
 The board gives each TLS handshake a ten-second timeout, but after a handshake succeeds it spawns an HTTP/1 connection task with no connection semaphore, request-header timeout, or idle lifetime. A peer on an allowed LAN or tailnet can complete TLS and then hold many connections open while sending no headers or sending them slowly. Each connection consumes a task and file descriptor indefinitely. A sufficiently large set can prevent legitimate browser and API use or exhaust the process.
@@ -57,7 +57,7 @@ Recommended remediation:
 ### FDV2-002 — Login throttling permits global lockout and concurrent password-hash flooding
 
 - **Severity:** Medium
-- **Status:** Open
+- **Status:** Fixed in a1e3eae3. Each login flow has its own limiter (5 failures per IP and 50 in all in 1 minute, running attempts counted), and 2 permits cap the concurrent password checks.
 - **Impact:** Login denial of service and CPU exhaustion without credentials
 
 All login methods share one process-wide queue of failed attempts. Five bad attempts in sixty seconds block every new password, login-link, and join attempt. Any peer that can reach the board can maintain that lockout with a small request rate. Existing sessions continue to work, but a logged-out owner cannot sign in while the attack continues.

@@ -9,7 +9,7 @@ use fleetdeck_deck::DeckStore;
 use fleetdeck_deck::http::assets::BoardAssets;
 use fleetdeck_deck::http::settings_routes::DeckSettings;
 use fleetdeck_deck::http::tls::pinned_client;
-use fleetdeck_deck::http::{Board, BoardServer, BoardTls, LoginLimiter, Origins};
+use fleetdeck_deck::http::{Board, BoardServer, BoardTls, LoginLimits, Origins};
 use fleetdeck_deck::link::DeckLink;
 use fleetdeck_deck::store::AuditResult;
 use fleetdeck_proto::StationId;
@@ -167,7 +167,7 @@ async fn serve_with(
                 store: s,
                 link,
                 origins: Origins::new(bound, Some("deck.tail1234.ts.net")),
-                limiter: LoginLimiter::default(),
+                limiter: LoginLimits::default(),
                 device_links: fleetdeck_deck::http::DeviceLinkLimiter::default(),
                 certificate_sha256: "00".repeat(32),
                 self_signed: true,
@@ -214,6 +214,18 @@ async fn serve_with(
 }
 
 impl BoardClient {
+    /// The open board connections (live admission guards).
+    #[allow(dead_code)]
+    pub fn admitted(&self) -> usize {
+        self._server.admitted()
+    }
+
+    /// The TLS client that trusts the board certificate.
+    #[allow(dead_code)]
+    pub fn tls(&self) -> &TlsConnector {
+        &self.tls
+    }
+
     pub async fn req(
         &self,
         method: &str,
