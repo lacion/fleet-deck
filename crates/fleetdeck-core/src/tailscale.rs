@@ -329,14 +329,16 @@ fn ambient_env() -> ChildEnv {
 }
 
 /// True when `ip` is assigned to an interface of this machine (design
-/// section 14.3): it is in the kernel's local tables. Where the tables are
-/// not available the answer is the bind check: a socket can bind it. An
+/// section 14.3): it is in the kernel's local table of its address family.
+/// On Linux a table that cannot be read means "not usable" (fail closed). On
+/// another platform the answer is the bind check: a socket can bind it. An
 /// address that Tailscale gives in userspace networking is not local.
 #[must_use]
 pub fn is_usable(ip: IpAddr) -> bool {
-    match local_addrs::local_addresses() {
-        Some(local) => local.contains(&ip),
-        None => UdpSocket::bind((ip, 0)).is_ok(),
+    if cfg!(target_os = "linux") {
+        local_addrs::local_addresses().contains(ip)
+    } else {
+        UdpSocket::bind((ip, 0)).is_ok()
     }
 }
 

@@ -373,6 +373,27 @@ async fn a_manual_save_keeps_only_the_provenance_entries_that_stay() {
     assert_eq!(r.body["values"]["tailnet_auto_listen"], json!([]));
 }
 
+/// A reset of `tailnet_auto` (the change that `fleetdeck settings` sends for
+/// `null`) empties both provenance lists in the same save.
+#[tokio::test]
+async fn resetting_the_mode_empties_both_lists() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_f, c) = board(tmp.path(), AUTO_TOML, Extras::default()).await;
+    set_password(&c).await;
+    let h = owner(&c).await;
+    let r = save(&c, &h, json!({ "tailnet_auto": null })).await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert_eq!(r.body["values"]["tailnet_auto"], false);
+    assert_eq!(r.body["values"]["tailnet_auto_listen"], json!([]));
+    assert_eq!(r.body["values"]["tailnet_auto_link_listen"], json!([]));
+    assert!(!deck_file(tmp.path()).contains("tailnet_auto ="));
+    // Every entry is manual now: the lists are as they were.
+    assert_eq!(
+        r.body["values"]["listen"],
+        json!(["127.0.0.1:7420", "100.64.0.9:7420", "100.64.0.10:7420"])
+    );
+}
+
 /// The values of the provenance lists of a `deck.toml`.
 struct DeckFile {
     auto_listen: Vec<String>,

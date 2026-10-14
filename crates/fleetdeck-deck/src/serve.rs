@@ -9,6 +9,7 @@ use std::future::Future;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
+use std::time::Instant;
 
 use fleetdeck_core::config::DeckConfig;
 use fleetdeck_core::identity::{Identity, IdentityError};
@@ -147,12 +148,14 @@ impl RunningDeck {
         let listener = local::bind(&socket).await?;
         let identity = Arc::new(Identity::load_or_create(&deck_dir)?);
         let overridden = |key: &str| deck_settings.overrides.iter().any(|(k, _)| k == key);
-        let (link_manual, link_auto) = if overridden("link_listen") {
+        // With the mode off every entry is manual: the provenance lists are
+        // ignored.
+        let (link_manual, link_auto) = if overridden("link_listen") || !config.tailnet_auto {
             (config.link_listen.clone(), Vec::new())
         } else {
             split(&config.link_listen, &config.tailnet_auto_link_listen)
         };
-        let (board_manual, board_auto) = if overridden("listen") {
+        let (board_manual, board_auto) = if overridden("listen") || !config.tailnet_auto {
             (config.listen.clone(), Vec::new())
         } else {
             split(&config.listen, &config.tailnet_auto_listen)
@@ -290,6 +293,9 @@ async fn automatic_start(
     if !config.tailnet_auto {
         return (config.clone(), TailnetStart::default());
     }
+    // The one deadline of the program lookup, the status call and the save.
+    // The host checks below keep their own deadline.
+    let deadline = Instant::now() + tailnet_auto::DEADLINE;
     let facts = tokio::time::timeout(
         tailnet_auto::DEADLINE,
         tokio::task::spawn_blocking(tailscale_wsl::detect),
@@ -313,6 +319,7 @@ async fn automatic_start(
         &settings.overrides,
         &facts,
         &tailscale::is_usable,
+        deadline,
     )
     .await;
     tailnet_auto::audit(store, config, &next).await;

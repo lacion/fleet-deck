@@ -15,8 +15,9 @@
 
 use std::collections::BTreeSet;
 use std::net::{IpAddr, SocketAddr};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use fleetdeck_core::config::DeckConfig;
 use fleetdeck_core::tailscale::{
@@ -167,13 +168,39 @@ fn off(reason: impl Into<String>) -> TailnetStart {
 /// Runs the automatic start. Returns the config (updated when a save
 /// happened) and what to tell the card. `overrides` are the settings that
 /// the command line gave: a channel that the command line set is left
-/// alone.
+/// alone. `deadline` is the one absolute deadline of the whole check (the
+/// program lookup, the status call and the save): after it nothing is
+/// saved.
 pub async fn apply_at_start(
     settings: &DeckSettings,
     config: DeckConfig,
     overrides: &[(String, String)],
     facts: &HostFacts,
     is_usable: &(dyn Fn(IpAddr) -> bool + Sync),
+    deadline: Instant,
+) -> (DeckConfig, TailnetStart) {
+    apply_at_start_with(
+        settings,
+        config,
+        overrides,
+        facts,
+        is_usable,
+        deadline,
+        TailscaleCli::locate,
+    )
+    .await
+}
+
+/// [`apply_at_start`] with the program lookup `locate` (a test gives a slow
+/// one). The lookup runs in a blocking task, inside `deadline`.
+pub async fn apply_at_start_with(
+    settings: &DeckSettings,
+    config: DeckConfig,
+    overrides: &[(String, String)],
+    facts: &HostFacts,
+    is_usable: &(dyn Fn(IpAddr) -> bool + Sync),
+    deadline: Instant,
+    locate: impl FnOnce(Option<&Path>) -> TailscaleCli + Send + 'static,
 ) -> (DeckConfig, TailnetStart) {
     if !config.tailnet_auto {
         return (config, TailnetStart::default());
@@ -181,8 +208,14 @@ pub async fn apply_at_start(
     if facts.nonlocal_bind {
         return (config, off(NONLOCAL));
     }
-    let cli = TailscaleCli::locate(config.tailscale_bin.as_deref());
-    let status = match tokio::time::timeout(DEADLINE, cli.status()).await {
+    let until = tokio::time::Instant::from_std(deadline);
+    let configured = config.tailscale_bin.clone();
+    let lookup = tokio::task::spawn_blocking(move || locate(configured.as_deref()));
+    let cli = match tokio::time::timeout_at(until, lookup).await {
+        Ok(Ok(cli)) => cli,
+        Ok(Err(_)) | Err(_) => return (config, off(TIMEOUT)),
+    };
+    let status = match tokio::time::timeout_at(until, cli.status()).await {
         Err(_) | Ok(Err(TailscaleError::Timeout)) => return (config, off(TIMEOUT)),
         Ok(Err(e)) => {
             return (
@@ -233,6 +266,9 @@ pub async fn apply_at_start(
                 ..TailnetStart::default()
             },
         );
+    }
+    if Instant::now() >= deadline {
+        return (config, off(TIMEOUT));
     }
     match save(settings, &next, &keys).await {
         Ok(()) => (
@@ -322,14 +358,18 @@ fn addresses(value: &Value) -> Option<Vec<SocketAddr>> {
 
 /// The manual-save rule of design 14.4, for the settings routes: `old` are
 /// the values before the save and `changes` the keys of the save. A change
-/// that sets `tailnet_auto` to `false` sets both provenance lists to empty.
+/// that sets `tailnet_auto` to `false`, or resets it (`null`: back to the
+/// default, which is false), sets both provenance lists to empty.
 /// A change of `listen` (or `link_listen`) that does not set the matching
 /// provenance list sets it to its old entries that are still in the new
 /// list: an entry that the owner removed is forgotten, an entry that the
 /// owner kept stays automatic. A value that does not parse is left for the
 /// writer to refuse.
 pub fn reconcile(old: &Map<String, Value>, changes: &mut Map<String, Value>) {
-    if changes.get("tailnet_auto") == Some(&Value::Bool(false)) {
+    if matches!(
+        changes.get("tailnet_auto"),
+        Some(Value::Bool(false) | Value::Null)
+    ) {
         for (_, provenance) in LISTS {
             changes.insert(provenance.to_owned(), json!([]));
         }
