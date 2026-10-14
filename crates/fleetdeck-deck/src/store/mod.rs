@@ -173,6 +173,9 @@ struct Inner {
     /// The features that each live link of a station negotiated, by link
     /// token (ADR-008 §3 "every send needs v2"); in memory only.
     link_features: Mutex<BTreeMap<StationId, BTreeMap<u64, BTreeSet<String>>>>,
+    /// The remote address of each live link of a station, by link token; in
+    /// memory only (the devices list reads it).
+    link_peers: Mutex<BTreeMap<StationId, BTreeMap<u64, std::net::IpAddr>>>,
     /// Presence, chat and mob-driver updates for the board sockets (R11).
     social: broadcast::Sender<Arc<presence::SocialEvent>>,
     /// Who has a session open now (R11.5); in memory only.
@@ -282,6 +285,7 @@ impl DeckStore {
                 conflict_mail: AtomicBool::new(true),
                 fleet_control: AtomicBool::new(false),
                 link_features: Mutex::default(),
+                link_peers: Mutex::default(),
                 social: broadcast::channel(LIVE_BUFFER).0,
                 presence: Mutex::default(),
                 sockets: std::sync::atomic::AtomicU64::new(1),
@@ -328,8 +332,35 @@ impl DeckStore {
             .insert(token, features.into_iter().collect());
     }
 
-    /// Forgets link `token` of `station` (the link ended).
+    /// Records the remote address of link `token` of `station`.
+    pub fn set_link_peer(&self, station: &StationId, token: u64, ip: std::net::IpAddr) {
+        let mut map = self.link_peers();
+        map.entry(station.clone())
+            .or_default()
+            .insert(token, ip.to_canonical());
+    }
+
+    /// The remote addresses of every live station link.
+    #[must_use]
+    pub fn link_peer_ips(&self) -> BTreeSet<std::net::IpAddr> {
+        let map = self.link_peers();
+        map.values()
+            .flat_map(|links| links.values().copied())
+            .collect()
+    }
+
+    /// Forgets link `token` of `station` (the link ended), with its remote
+    /// address.
     pub fn clear_link_features(&self, station: &StationId, token: u64) {
+        {
+            let mut peers = self.link_peers();
+            if let Some(links) = peers.get_mut(station) {
+                links.remove(&token);
+                if links.is_empty() {
+                    peers.remove(station);
+                }
+            }
+        }
         let mut map = self.link_features();
         if let Some(links) = map.get_mut(station) {
             links.remove(&token);
@@ -346,6 +377,15 @@ impl DeckStore {
     pub fn link_v2(&self, station: &StationId) -> LinkV2 {
         let map = self.link_features();
         map.get(station).map_or(LinkV2::Down, v2_state)
+    }
+
+    fn link_peers(
+        &self,
+    ) -> std::sync::MutexGuard<'_, BTreeMap<StationId, BTreeMap<u64, std::net::IpAddr>>> {
+        self.inner
+            .link_peers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     fn link_features(

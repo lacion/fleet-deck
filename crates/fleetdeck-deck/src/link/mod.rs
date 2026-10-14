@@ -31,6 +31,7 @@ pub mod runtime;
 pub mod streams;
 
 use std::collections::{HashMap, VecDeque};
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -91,6 +92,7 @@ impl DeckLink {
         id: &StationId,
         control: &Control,
         data: Option<Arc<streams::DataHub>>,
+        remote: Option<SocketAddr>,
     ) -> LiveGuard {
         let token = self.next_token.fetch_add(1, Ordering::Relaxed);
         let mut live = self.live.lock().unwrap_or_else(PoisonError::into_inner);
@@ -101,6 +103,9 @@ impl DeckLink {
         // section 3).
         self.store
             .set_link_features(id, token, control.params().negotiated.features.clone());
+        if let Some(addr) = remote {
+            self.store.set_link_peer(id, token, addr.ip());
+        }
         self.store.set_reachable(id, true);
         LiveGuard {
             ctx: Arc::clone(self),
@@ -152,6 +157,7 @@ pub async fn serve(ctx: Arc<DeckLink>, link: LiveLink) -> Closing {
         control,
         mut inbound,
         data,
+        remote,
         ..
     } = link;
     let data = data.map(streams::DataHub::start);
@@ -167,7 +173,7 @@ pub async fn serve(ctx: Arc<DeckLink>, link: LiveLink) -> Closing {
         }
     };
     let id = station.station_id.clone();
-    let _live = ctx.up(&id, &control, data);
+    let _live = ctx.up(&id, &control, data, remote);
     if let Err(e) = ctx.store.touch_station(id.clone()).await {
         tracing::warn!(error = %e, "station last_seen");
     }

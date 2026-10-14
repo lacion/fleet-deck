@@ -15,7 +15,7 @@
 //! Tailscale is a display source here. Nothing in an answer of Tailscale
 //! authorizes anything.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -490,13 +490,18 @@ fn host_of(dial_url: &str) -> Host {
 }
 
 /// A device is `paired` when a paired station is dialed at one of its
-/// addresses or at its DNS name. Every other device is `none`.
-fn state_of(device: &Node, hosts: &[Host]) -> &'static str {
+/// addresses or at its DNS name, or when a live station link comes from one
+/// of its addresses (a station that dials the deck has no stored address).
+/// Every other device is `none`.
+fn state_of(device: &Node, hosts: &[Host], live: &BTreeSet<IpAddr>) -> &'static str {
     let dns = device.dns_name.to_ascii_lowercase();
     let paired = hosts.iter().any(|h| match h {
         Host::Ip(ip) => device.ips.contains(ip),
         Host::Name(name) => !dns.is_empty() && *name == dns,
-    });
+    }) || device
+        .ips
+        .iter()
+        .any(|ip| live.contains(&ip.to_canonical()));
     if paired { "paired" } else { "none" }
 }
 
@@ -536,6 +541,7 @@ pub async fn devices(
         .filter_map(|s| s.dial_url.as_deref())
         .map(host_of)
         .collect();
+    let live = board.store.link_peer_ips();
     let hub = board.pairing.as_ref().map(|n| n.pair_requests());
     let command = match hub {
         Some(hub) if hub.is_open() => join_command(&status.this, hub),
@@ -545,7 +551,7 @@ pub async fn devices(
     peers.sort_by(|a, b| (&a.host_name, &a.dns_name).cmp(&(&b.host_name, &b.dns_name)));
     let mut devices = Vec::new();
     for d in &peers {
-        let mut state = state_of(d, &hosts);
+        let mut state = state_of(d, &hosts, &live);
         if state != "paired"
             && let Some(hub) = hub
         {
