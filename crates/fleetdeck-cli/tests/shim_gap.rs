@@ -368,6 +368,7 @@ async fn a_below_floor_gap_invalidates_the_adapter_state_at_once_while_the_provi
     // A claimed command whose outcome only the lost state could prove.
     let fence = rig.store.register_worker().await.unwrap();
     let envelope = CommandEnvelope {
+        authority: None,
         command_id: "cmd-1".into(),
         target_incarnation: None,
         retry_until: i64::try_from(rig._det.now_ms()).unwrap() + RETRY_WINDOW_MS,
@@ -530,6 +531,7 @@ async fn a_dispatch_racing_an_adapter_state_gap_sends_nothing() {
     let (driver, shim_id, pid) = rig.drive(&format!("cat > '{}'", out.display())).await;
     let fence = rig.store.register_worker().await.unwrap();
     let envelope = CommandEnvelope {
+        authority: None,
         command_id: "cmd-1".into(),
         target_incarnation: None,
         retry_until: i64::try_from(rig._det.now_ms()).unwrap() + RETRY_WINDOW_MS,
@@ -637,6 +639,7 @@ async fn a_gap_after_an_earlier_input_block_still_stops_every_dispatch() {
     );
     let fence = rig.store.register_worker().await.unwrap();
     let envelope = CommandEnvelope {
+        authority: None,
         command_id: "cmd-1".into(),
         target_incarnation: None,
         retry_until: i64::try_from(rig._det.now_ms()).unwrap() + RETRY_WINDOW_MS,

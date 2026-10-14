@@ -129,6 +129,7 @@ async fn a_claude_revert_is_a_stored_rejection_that_changes_nothing() {
     let before_events = st.events().await.len();
     let before_effects = st.effect_states(&s).await;
     let envelope = CommandEnvelope {
+        authority: None,
         command_id: CommandId::from("revert-1"),
         target_incarnation: None,
         retry_until: i64::try_from(st.det.now_ms()).unwrap() + RETRY_WINDOW_MS,

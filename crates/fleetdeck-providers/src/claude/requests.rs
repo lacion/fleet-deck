@@ -3,7 +3,7 @@
 //! Unknown permission requests fail closed.
 
 use fleetdeck_proto::event::{
-    ApprovalOption, ExpiredReason, RequestKind, ResponseChannel, ToolKind,
+    ApprovalOption, ExpiredReason, OptionKind, RequestKind, ResponseChannel, ToolKind,
 };
 use fleetdeck_proto::{Event, RequestId};
 use serde_json::Value;
@@ -51,19 +51,37 @@ pub(super) fn session_rules(suggestions: Option<&Value>) -> Option<Value> {
     (!kept.is_empty()).then_some(Value::Array(kept))
 }
 
-fn option(id: &str, label: &str) -> ApprovalOption {
-    ApprovalOption {
-        option_id: id.to_owned(),
-        label: label.to_owned(),
+/// The semantic kind of a Claude option id (ADR-008 §5.1). Any id that this
+/// adapter does not offer is `Other`, so a coordinator fails closed.
+#[must_use]
+pub(super) fn option_kind(id: &str) -> OptionKind {
+    match id {
+        "allow" => OptionKind::AllowOnce,
+        "allow_always" => OptionKind::AllowAlways,
+        "deny" => OptionKind::Deny,
+        _ => OptionKind::Other,
     }
 }
 
-fn options_for(session_rules: Option<&Value>) -> Vec<ApprovalOption> {
-    let mut options = vec![option("allow", "Allow once")];
-    if session_rules.is_some() {
-        options.push(option("allow_always", "Allow always (this session)"));
+/// `classify` is false for a question request: its options get no kind.
+fn option(id: &str, label: &str, classify: bool) -> ApprovalOption {
+    ApprovalOption {
+        option_id: id.to_owned(),
+        label: label.to_owned(),
+        kind: classify.then(|| option_kind(id)),
     }
-    options.push(option("deny", "Deny"));
+}
+
+fn options_for(session_rules: Option<&Value>, classify: bool) -> Vec<ApprovalOption> {
+    let mut options = vec![option("allow", "Allow once", classify)];
+    if session_rules.is_some() {
+        options.push(option(
+            "allow_always",
+            "Allow always (this session)",
+            classify,
+        ));
+    }
+    options.push(option("deny", "Deny", classify));
     options
 }
 
@@ -90,7 +108,10 @@ pub(super) fn on_control_request(
                 .and_then(|t| core.tools.get(t))
                 .map(|n| n.node_id.clone());
             let rules = session_rules(permission_suggestions.as_ref());
-            let options = options_for(rules.as_ref());
+            let options = options_for(
+                rules.as_ref(),
+                request_kind(&tool_name) != RequestKind::Question,
+            );
             let details = input_summary(&tool_name, &input);
             core.native_to_app
                 .insert(native_id.to_owned(), request_id.clone());

@@ -79,6 +79,7 @@ fn start_with_setup(cwd: &str, cmd: &str) -> SessionCommand {
 async fn send_as(st: &mut Station, origin: CommandOrigin, command: SessionCommand) -> RejectCode {
     st.next += 1;
     let envelope = CommandEnvelope {
+        authority: None,
         command_id: CommandId::from(format!("origin-{}", st.next)),
         target_incarnation: None,
         retry_until: i64::try_from(st.det.now_ms()).unwrap() + RETRY_WINDOW_MS,

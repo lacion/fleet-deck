@@ -224,6 +224,7 @@ impl Rig {
 
     async fn start_session(&self, id: &str) -> Result<(), RejectCode> {
         let envelope = CommandEnvelope {
+            authority: None,
             command_id: CommandId::from(id),
             target_incarnation: None,
             retry_until: self.manager.store().now_ms() + RETRY_WINDOW_MS,

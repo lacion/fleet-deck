@@ -54,6 +54,7 @@ async fn rig(det: &Det) -> (Store, Policy) {
 
 async fn send(det: &Det, s: &Store, policy: &Policy, id: &str, command: SessionCommand) -> Receipt {
     let envelope = CommandEnvelope {
+        authority: None,
         command_id: id.into(),
         target_incarnation: None,
         retry_until: i64::try_from(det.now_ms()).unwrap() + RETRY_WINDOW_MS,

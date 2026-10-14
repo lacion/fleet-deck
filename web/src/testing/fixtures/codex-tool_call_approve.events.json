@@ -185,15 +185,18 @@
       "options": [
         {
           "option_id": "accept",
-          "label": "Allow once"
+          "label": "Allow once",
+          "kind": "allow_once"
         },
         {
           "option_id": "acceptWithExecpolicyAmendment",
-          "label": "Allow and remember this command"
+          "label": "Allow and remember this command",
+          "kind": "amend"
         },
         {
           "option_id": "cancel",
-          "label": "Deny and stop the turn"
+          "label": "Deny and stop the turn",
+          "kind": "deny"
         }
       ],
       "response": "rpc_reply",

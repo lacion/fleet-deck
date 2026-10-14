@@ -7,9 +7,24 @@ use fleetdeck_proto::RejectCode;
 use fleetdeck_proto::event::{ProviderKind, RunOrigin};
 
 use super::coordinator_command::check_spec;
-use super::tests::coordinator_spec;
 use crate::coordinator::Bindings;
 use crate::store::DecideError;
+
+/// A coordinator spec for the start checks (ADR-006 §4).
+pub(super) fn coordinator_spec() -> fleetdeck_proto::command::CoordinatorSpec {
+    fleetdeck_proto::command::CoordinatorSpec {
+        grant_id: "grant-1".to_owned(),
+        classes: vec!["read".to_owned()],
+        idle_ttl_ms: 60_000,
+        expires_at: 4_102_444_800_000,
+        control_skill: fleetdeck_proto::command::ControlSkill {
+            version: "1".to_owned(),
+            text: "You coordinate the fleet.".to_owned(),
+        },
+        scope: fleetdeck_proto::command::GrantScope::Lineage,
+        answer_cap: None,
+    }
+}
 
 fn code(r: Result<(), DecideError>) -> (RejectCode, String) {
     match r {

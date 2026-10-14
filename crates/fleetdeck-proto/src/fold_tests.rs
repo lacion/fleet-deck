@@ -76,6 +76,7 @@ fn request(id: &str) -> Event {
         options: vec![ApprovalOption {
             option_id: "allow".to_owned(),
             label: "Allow".to_owned(),
+            kind: None,
         }],
         response: ResponseChannel::RpcReply,
         provider_refs: ProviderRefs::new(),

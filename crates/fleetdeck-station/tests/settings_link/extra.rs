@@ -42,6 +42,7 @@ impl Rig {
             .await
             .unwrap();
         let envelope = CommandEnvelope {
+            authority: None,
             command_id: CommandId::from(format!("queue-{id}")),
             target_incarnation: None,
             retry_until: store.now_ms() + RETRY_WINDOW_MS,

@@ -51,6 +51,7 @@ async fn running(det: &Det, policy: OfflineApprovalPolicy) -> Store {
 
 fn envelope(det: &Det, id: &str) -> CommandEnvelope {
     CommandEnvelope {
+        authority: None,
         command_id: CommandId::from(id),
         target_incarnation: None,
         retry_until: i64::try_from(det.now_ms()).unwrap() + RETRY_WINDOW_MS,
@@ -118,6 +119,7 @@ fn options(ids: &[&str]) -> Vec<ApprovalOption> {
         .map(|id| ApprovalOption {
             option_id: (*id).to_owned(),
             label: (*id).to_owned(),
+            kind: None,
         })
         .collect()
 }

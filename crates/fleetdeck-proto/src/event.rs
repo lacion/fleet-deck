@@ -128,6 +128,26 @@ pub enum ResponseChannel {
 pub struct ApprovalOption {
     pub option_id: String,
     pub label: String,
+    /// What the option means, set by the provider adapter (ADR-008 §5.1).
+    /// `None`: a request stored before the field, a question option, or an
+    /// option that the adapter cannot classify.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub kind: Option<OptionKind>,
+}
+
+/// The semantic kind of an approval option (ADR-008 §5.1). The provider
+/// adapter owns the classification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "event/")]
+pub enum OptionKind {
+    AllowOnce,
+    AllowSession,
+    AllowAlways,
+    Deny,
+    Amend,
+    Other,
 }
 
 /// Who answered a runtime request.

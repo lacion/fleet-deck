@@ -34,6 +34,8 @@ mod tests_checkpoint;
 #[cfg(test)]
 mod tests_models;
 #[cfg(test)]
+mod tests_options;
+#[cfg(test)]
 mod tests_review;
 #[cfg(test)]
 mod tests_rollback;

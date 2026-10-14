@@ -177,6 +177,7 @@ impl Rig {
             .commands
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let envelope = CommandEnvelope {
+            authority: None,
             command_id: CommandId::from(format!("cmd-{n}").as_str()),
             target_incarnation: None,
             retry_until: i64::try_from(self.det.now_ms()).unwrap() + RETRY_WINDOW_MS,
@@ -437,6 +438,7 @@ async fn an_unreadable_checkpoint_at_a_station_start_loses_the_session_and_leave
         std::collections::BTreeMap::from([("codex".into(), ProviderKind::Codex)]),
     );
     let envelope = CommandEnvelope {
+        authority: None,
         command_id: CommandId::from("resume-1"),
         target_incarnation: None,
         retry_until: i64::try_from(rig.det.now_ms()).unwrap() + RETRY_WINDOW_MS,

@@ -74,6 +74,7 @@ fn queue_open(r: &Rig, effect: &str, cwd: &Path) -> impl std::future::Future<Out
     let now = r.det.now_ms();
     let (policy, store, id) = (r.policy.clone(), r.store.clone(), effect.to_owned());
     let envelope = CommandEnvelope {
+        authority: None,
         command_id: CommandId::from(format!("01JQ{id}")),
         target_incarnation: None,
         retry_until: i64::try_from(now).unwrap() + RETRY_WINDOW_MS,
@@ -175,6 +176,7 @@ async fn a_queued_shell_open_fails_when_a_row_holds_its_folder() {
     r.store
         .decide(
             CommandEnvelope {
+                authority: None,
                 command_id: CommandId::from("01JHOLDCMD"),
                 target_incarnation: None,
                 retry_until: i64::try_from(now).unwrap() + RETRY_WINDOW_MS,

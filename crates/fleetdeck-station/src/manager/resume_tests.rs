@@ -218,6 +218,7 @@ async fn a_resume_is_refused_unless_the_session_ended_and_its_execution_is_prove
         .manager
         .submit(
             CommandEnvelope {
+                authority: None,
                 command_id: CommandId::from(format!("cmd-{}", st.next)),
                 target_incarnation: None,
                 retry_until: i64::try_from(st.det.now_ms()).unwrap() + RETRY_WINDOW_MS,

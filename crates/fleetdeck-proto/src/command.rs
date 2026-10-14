@@ -15,6 +15,7 @@ use crate::ids::{
 };
 pub use crate::input::{ImageInput, UserInput};
 use crate::integrations::IssueRef;
+use crate::mutation::CommandAuthority;
 use crate::session::BatchRef;
 
 /// The deck retries a command for at most this long after it accepted it (G3).
@@ -56,6 +57,36 @@ pub struct CoordinatorSpec {
     #[ts(type = "number")]
     pub expires_at: i64,
     pub control_skill: ControlSkill,
+    /// The reach of the grant (ADR-008 §3). Skipped when `lineage`, so a
+    /// lineage grant serializes as under `coordinator.v1`.
+    #[serde(default, skip_serializing_if = "GrantScope::is_lineage")]
+    #[ts(optional, as = "Option<GrantScope>")]
+    pub scope: GrantScope,
+    /// The answer budget of a fleet-control grant (ADR-008 §3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub answer_cap: Option<u32>,
+}
+
+/// The reach of a coordinator grant (ADR-008 §2, §3).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "command/")]
+pub enum GrantScope {
+    /// The ADR-006 drive rule: the target has this grant in its lineage.
+    #[default]
+    Lineage,
+    /// Any session on a station of the grant, minus the ADR-008 §4.2
+    /// exclusions.
+    Fleet,
+}
+
+impl GrantScope {
+    /// True for the default scope; the serde skip rule of `scope`.
+    #[must_use]
+    pub fn is_lineage(&self) -> bool {
+        matches!(self, Self::Lineage)
+    }
 }
 
 /// The versioned control skill that the coordinator MCP endpoint serves as
@@ -407,6 +438,11 @@ pub struct CommandEnvelope {
     /// Unix ms after which the station refuses the command without a receipt.
     pub retry_until: i64,
     pub origin: CommandOrigin,
+    /// The authority of a fleet-control command (ADR-008 §6.1), sent only
+    /// on `coordinator.v2` links.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub authority: Option<CommandAuthority>,
     pub command: SessionCommand,
 }
 
@@ -627,6 +663,7 @@ mod tests {
 
     fn envelope(retry_until: i64, target: Option<&str>) -> CommandEnvelope {
         CommandEnvelope {
+            authority: None,
             command_id: "01J0000000000000000000000A".into(),
             target_incarnation: target.map(IncarnationId::from),
             retry_until,

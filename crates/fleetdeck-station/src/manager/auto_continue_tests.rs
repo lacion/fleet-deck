@@ -183,6 +183,7 @@ impl Rig {
     async fn admit(&mut self, s: &SessionId, payload: EffectPayload) {
         self.next += 1;
         let envelope = CommandEnvelope {
+            authority: None,
             command_id: CommandId::from(format!("owner-{}", self.next)),
             target_incarnation: None,
             retry_until: self.store.now_ms() + RETRY_WINDOW_MS,
@@ -311,6 +312,7 @@ async fn a_coordinator_or_the_local_socket_cannot_enable_auto_continue() {
         .await
         .unwrap();
     let send = |origin: CommandOrigin, enabled: bool, n: u32| CommandEnvelope {
+        authority: None,
         command_id: CommandId::from(format!("set-{n}")),
         target_incarnation: None,
         retry_until: rig.store.now_ms() + RETRY_WINDOW_MS,

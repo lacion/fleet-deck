@@ -84,6 +84,7 @@ async fn running(det: &Det) -> Store {
 
 async fn queue(s: &Store, det: &Det, id: &str) -> Effect {
     let envelope = CommandEnvelope {
+        authority: None,
         command_id: CommandId::from(id),
         target_incarnation: None,
         retry_until: i64::try_from(det.now_ms()).unwrap() + RETRY_WINDOW_MS,

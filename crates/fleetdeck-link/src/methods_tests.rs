@@ -223,3 +223,49 @@ fn every_mutating_method_has_exactly_its_envelope_and_no_other_method_has_one() 
         assert!(method(name).is_some_and(|s| s.mutating), "{name}");
     }
 }
+
+/// ADR-008 §6.2: the two non-mutating `coordinator.v2` methods.
+#[test]
+fn the_fleet_control_methods_have_the_adr_008_rows() {
+    let check = method("coordinator.authority_check").unwrap();
+    assert_eq!(check.callers, Callers::StationToDeck);
+    assert_eq!(check.scope, Scope::Coordinate);
+    assert_eq!(check.feature, Some(feature::COORDINATOR_V2));
+    assert!(!check.mutating);
+    let policy = method("coordinator.policy_now").unwrap();
+    assert_eq!(policy.callers, Callers::DeckToStation);
+    assert_eq!(policy.scope, Scope::Read);
+    assert_eq!(policy.feature, Some(feature::COORDINATOR_V2));
+    assert!(!policy.mutating);
+}
+
+#[test]
+fn a_peer_without_coordinator_v2_gets_feature_not_negotiated_for_the_new_methods() {
+    let (d, s) = (Role::Deck, Role::Station);
+    let v1 = negotiated(&[feature::CONTROL, feature::COORDINATOR]);
+    let both = negotiated(&[
+        feature::CONTROL,
+        feature::COORDINATOR,
+        feature::COORDINATOR_V2,
+    ]);
+    let coordinate = scopes(&[Scope::Coordinate]);
+    let read = scopes(&[Scope::Read]);
+    let check = "coordinator.authority_check";
+    let policy = "coordinator.policy_now";
+    assert_eq!(
+        code_of(authorize(check, s, d, None, &v1, Some(&coordinate))),
+        code::FEATURE_NOT_NEGOTIATED
+    );
+    assert_eq!(
+        code_of(authorize(check, s, d, None, &both, Some(&coordinate))),
+        "ok"
+    );
+    assert_eq!(
+        code_of(authorize(policy, d, s, None, &v1, Some(&read))),
+        code::FEATURE_NOT_NEGOTIATED
+    );
+    assert_eq!(
+        code_of(authorize(policy, d, s, None, &both, Some(&read))),
+        "ok"
+    );
+}

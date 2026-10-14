@@ -563,6 +563,23 @@ pub const METHODS: &[MethodSpec] = &[
         Some(feature::COORDINATOR),
         true,
     ),
+    // ADR-008 §6.2: the target station asks the deck whether the authority of
+    // a routed command still holds, and the deck asks the caller station for
+    // its live policy.
+    m(
+        "coordinator.authority_check",
+        StationToDeck,
+        Scope::Coordinate,
+        Some(feature::COORDINATOR_V2),
+        false,
+    ),
+    m(
+        "coordinator.policy_now",
+        DeckToStation,
+        Scope::Read,
+        Some(feature::COORDINATOR_V2),
+        false,
+    ),
 ];
 
 /// The row of `name`.

@@ -165,6 +165,7 @@ async fn a_request_kind_is_read_from_the_stored_timeline() {
             options: vec![ApprovalOption {
                 option_id: "allow".to_owned(),
                 label: "Allow".to_owned(),
+                kind: None,
             }],
             response: ResponseChannel::RpcReply,
             provider_refs: serde_json::Map::new(),

@@ -203,6 +203,7 @@ async fn a_queued_start_is_refused_at_dispatch_when_the_roots_narrowed() {
         .into_owned();
     let command = start_command(&cwd);
     let envelope = CommandEnvelope {
+        authority: None,
         command_id: CommandId::from("cmd-1".to_owned()),
         target_incarnation: None,
         retry_until: i64::try_from(det.now_ms()).unwrap() + RETRY_WINDOW_MS,

@@ -167,6 +167,7 @@ impl Rig {
     async fn send(&mut self, station: &Station, command: SessionCommand) -> Decided {
         self.next += 1;
         let envelope = CommandEnvelope {
+            authority: None,
             command_id: CommandId::from(format!("cmd-{}", self.next)),
             target_incarnation: None,
             retry_until: i64::try_from(self.det.now_ms()).unwrap() + RETRY_WINDOW_MS,
