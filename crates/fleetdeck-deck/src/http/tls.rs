@@ -8,6 +8,7 @@
 //!    address, `localhost` and the tailnet host name; when that name list
 //!    changes, the deck makes a new one. `fleetdeck open` prints its
 //!    SHA-256 fingerprint so that the owner can check the browser warning.
+//!    A failed update leaves no pair that a later start takes as current.
 
 use std::fs;
 use std::io::Write;
@@ -145,14 +146,41 @@ impl BoardTls {
         );
         if fs::read_to_string(&kept).ok().as_deref() == Some(list.as_str())
             && let (Ok(c), Ok(k)) = (fs::read_to_string(&cert), read_private(&key))
+            && let Ok(tls) = Self::from_pem(&c, &k, true)
         {
-            return Self::from_pem(&c, &k, true);
+            return Ok(tls);
         }
         let (c, k) = Self::generate(names)?;
+        // The names go first and come back last: a pair that an interrupted
+        // update left behind is never taken as current.
+        match fs::remove_file(&kept) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
         write_file(&key, &k, 0o600)?;
         write_file(&cert, &c, 0o644)?;
         write_file(&kept, &list, 0o644)?;
         Self::from_pem(&c, &k, true)
+    }
+
+    /// The stored pair as it is, without a name check and without a write:
+    /// the owner's pair when both files exist, else the kept self-signed
+    /// pair. `None` when there is no usable pair (design 15.3).
+    #[must_use]
+    pub fn load_kept(dir: &Path) -> Option<Self> {
+        let (cert, key) = (dir.join(OWNER_CERT), dir.join(OWNER_KEY));
+        if cert.exists() && key.exists() {
+            return Self::from_pem(
+                &fs::read_to_string(cert).ok()?,
+                &read_private(&key).ok()?,
+                false,
+            )
+            .ok();
+        }
+        let c = fs::read_to_string(dir.join(SELF_CERT)).ok()?;
+        let k = read_private(&dir.join(SELF_KEY)).ok()?;
+        Self::from_pem(&c, &k, true).ok()
     }
 }
 
@@ -173,7 +201,9 @@ fn read_private(path: &Path) -> Result<String, TlsError> {
 }
 
 fn write_file(path: &Path, text: &str, mode: u32) -> Result<(), TlsError> {
-    let tmp = path.with_extension("tmp");
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(".tmp");
+    let tmp = path.with_file_name(name);
     let _ = fs::remove_file(&tmp);
     let mut f = fs::OpenOptions::new()
         .write(true)
@@ -311,6 +341,56 @@ mod tests {
         assert!(e.to_string().contains("chmod 600"), "{e}");
         write_file(&dir.path().join(OWNER_KEY), &k, 0o600).unwrap();
         let t = BoardTls::load_or_create(dir.path(), &names()).unwrap();
+        assert!(!t.self_signed);
+        assert_eq!(t.sha256, BoardTls::from_pem(&c, &k, false).unwrap().sha256);
+    }
+
+    fn read(dir: &Path, name: &str) -> Vec<u8> {
+        fs::read(dir.join(name)).unwrap()
+    }
+
+    #[test]
+    fn a_failed_update_keeps_the_stored_pair() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = BoardTls::load_or_create(dir.path(), &names()).unwrap();
+        let (crt, key) = (read(dir.path(), SELF_CERT), read(dir.path(), SELF_KEY));
+        // The key cannot be written: its temporary path is a directory.
+        let blocker = dir.path().join("board-selfsigned.key.tmp");
+        fs::create_dir(&blocker).unwrap();
+        fs::write(blocker.join("x"), "x").unwrap();
+        let mut more = names();
+        more.push("deck.tail1234.ts.net".to_owned());
+        assert!(BoardTls::load_or_create(dir.path(), &more).is_err());
+        assert_eq!(read(dir.path(), SELF_CERT), crt);
+        assert_eq!(read(dir.path(), SELF_KEY), key);
+        assert_eq!(BoardTls::load_kept(dir.path()).unwrap().sha256, a.sha256);
+        assert!(!dir.path().join(SELF_NAMES).exists());
+    }
+
+    #[test]
+    fn a_pair_that_does_not_match_is_made_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let (c1, _) = BoardTls::generate(&names()).unwrap();
+        let (c2, k2) = BoardTls::generate(&names()).unwrap();
+        fs::write(dir.path().join(SELF_CERT), &c1).unwrap();
+        write_file(&dir.path().join(SELF_KEY), &k2, 0o600).unwrap();
+        fs::write(dir.path().join(SELF_NAMES), names().join("\n")).unwrap();
+        assert!(BoardTls::load_kept(dir.path()).is_none());
+        let made = BoardTls::load_or_create(dir.path(), &names()).unwrap();
+        let first = CertificateDer::from_pem_slice(c1.as_bytes()).unwrap();
+        let second = CertificateDer::from_pem_slice(c2.as_bytes()).unwrap();
+        assert_ne!(made.sha256, fingerprint(&first));
+        assert_ne!(made.sha256, fingerprint(&second));
+    }
+
+    #[test]
+    fn load_kept_takes_the_owner_pair_first() {
+        let dir = tempfile::tempdir().unwrap();
+        BoardTls::load_or_create(dir.path(), &names()).unwrap();
+        let (c, k) = BoardTls::generate(&names()).unwrap();
+        fs::write(dir.path().join(OWNER_CERT), &c).unwrap();
+        write_file(&dir.path().join(OWNER_KEY), &k, 0o600).unwrap();
+        let t = BoardTls::load_kept(dir.path()).unwrap();
         assert!(!t.self_signed);
         assert_eq!(t.sha256, BoardTls::from_pem(&c, &k, false).unwrap().sha256);
     }

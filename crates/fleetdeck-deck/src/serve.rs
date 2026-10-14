@@ -196,8 +196,8 @@ impl RunningDeck {
         let tailnet_start: SharedStart = Arc::default();
         // The board state and its certificate, built from the bound
         // addresses. A new closure per try: the certificate fallback binds
-        // again.
-        let build = || {
+        // again. `kept` is the stored pair for the fallback (design 15.3).
+        let build = |kept: Option<BoardTls>| {
             let tailnet = tailnet.clone();
             let board_store = board_store.clone();
             let board_link = Arc::clone(&board_link);
@@ -210,11 +210,16 @@ impl RunningDeck {
             let restart = restart.clone();
             let local_station = Arc::clone(&local_station);
             move |bound: &[SocketAddr]| {
-                if let Some(check) = certificate_check {
-                    check(bound)?;
-                }
-                let tls =
-                    BoardTls::load_or_create(&tls_dir, &cert_names(bound, tailnet.as_deref()))?;
+                let tls = match kept.clone() {
+                    // The fallback (design 15.3): the stored pair, never made again.
+                    Some(tls) => tls,
+                    None => {
+                        if let Some(check) = certificate_check {
+                            check(bound)?;
+                        }
+                        BoardTls::load_or_create(&tls_dir, &cert_names(bound, tailnet.as_deref()))?
+                    }
+                };
                 let board = Arc::new(Board {
                     store: board_store,
                     link: board_link,
@@ -238,17 +243,30 @@ impl RunningDeck {
                 Ok((board, tls))
             }
         };
-        let board = match BoardServer::bind_with(&board_manual, &board_auto, build(), rx.clone())
-            .await
+        // Read before the first try can write (design 15.3).
+        let kept = if board_auto.is_empty() {
+            None
+        } else {
+            BoardTls::load_kept(&deck_dir)
+        };
+        let board = match BoardServer::bind_with(
+            &board_manual,
+            &board_auto,
+            build(None),
+            rx.clone(),
+        )
+        .await
         {
             Ok(board) => board,
             // The certificate for the automatic entries cannot be made
-            // (design 15.3): bind the manual entries only. The existing
-            // certificate names them.
+            // (design 15.3): bind the manual entries only, with the stored
+            // pair that was read before the first try (never made again).
+            // With no stored pair, the pair is made for the manual entries;
+            // a failure then fails the start.
             Err(crate::http::BindError::Build(e)) if !board_auto.is_empty() => {
                 tracing::warn!(error = %e, "the board certificate for the automatic tailnet entries could not be made");
                 start.start_reason = Some(certificate_reason(&e));
-                BoardServer::bind_with(&board_manual, &[], build(), rx.clone())
+                BoardServer::bind_with(&board_manual, &[], build(kept), rx.clone())
                     .await
                     .map_err(ServeError::Board)?
             }

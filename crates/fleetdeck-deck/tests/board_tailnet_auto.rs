@@ -651,6 +651,77 @@ async fn a_certificate_failure_with_an_automatic_entry_falls_back_to_the_manual_
     deck.stop().await;
 }
 
+/// A real write failure while the certificate for an automatic entry is
+/// updated (design 15.3): the deck starts with the stored pair that was read
+/// before the update, and the pair on the disk is not changed.
+#[tokio::test]
+async fn a_real_certificate_write_failure_falls_back_to_the_stored_pair() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dirs = dirs_of(tmp.path());
+    std::fs::create_dir_all(&dirs.config).unwrap();
+    let path = dirs.deck_config();
+    let write = |text: &str| {
+        std::fs::write(&path, text).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    };
+    write(
+        "name = \"d\"\ntailnet_auto = false\nlisten = [\"127.0.0.1:0\"]\nlink_listen = [\"127.0.0.1:0\"]\n",
+    );
+    let first = RunningDeck::start(
+        &dirs,
+        &DeckConfig::load(&path).unwrap(),
+        fast(),
+        StartOptions::default(),
+    )
+    .await
+    .unwrap();
+    let old = first.endpoint.as_ref().unwrap().certificate_sha256.clone();
+    first.stop().await;
+    let deck_dir = dirs.deck();
+    let crt = std::fs::read(deck_dir.join("board-selfsigned.crt")).unwrap();
+    let key = std::fs::read(deck_dir.join("board-selfsigned.key")).unwrap();
+    // The key cannot be written: its temporary path is a directory.
+    let blocker = deck_dir.join("board-selfsigned.key.tmp");
+    std::fs::create_dir(&blocker).unwrap();
+    std::fs::write(blocker.join("x"), "x").unwrap();
+    let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let auto = free.local_addr().unwrap();
+    drop(free);
+    let missing = tmp.path().join("no-such-tailscale").display().to_string();
+    // The host name adds a name to the certificate, so the update must write.
+    write(&format!(
+        "name = \"d\"\ntailnet_auto = true\ntailnet_hostname = \"deck.tail1234.ts.net\"\ntailscale_bin = \"{missing}\"\n\
+         listen = [\"127.0.0.1:0\", \"{auto}\"]\nlink_listen = [\"127.0.0.1:0\"]\n\
+         tailnet_auto_listen = [\"{auto}\"]\n"
+    ));
+    let deck = RunningDeck::start(
+        &dirs,
+        &DeckConfig::load(&path).unwrap(),
+        fast(),
+        StartOptions::default(),
+    )
+    .await
+    .expect("the deck starts with the stored pair");
+    let endpoint = deck.endpoint.as_ref().unwrap();
+    assert_eq!(endpoint.certificate_sha256, old, "the stored certificate");
+    assert_ne!(endpoint.url, format!("https://{auto}"));
+    let start = deck.tailnet_start();
+    assert!(start.enabled);
+    assert_eq!(
+        start.start_reason.as_deref(),
+        Some("the board certificate could not be updated (AlreadyExists)")
+    );
+    deck.stop().await;
+    assert_eq!(
+        std::fs::read(deck_dir.join("board-selfsigned.crt")).unwrap(),
+        crt
+    );
+    assert_eq!(
+        std::fs::read(deck_dir.join("board-selfsigned.key")).unwrap(),
+        key
+    );
+}
+
 /// A certificate failure with the manual entries only still fails the start.
 #[tokio::test]
 async fn a_certificate_failure_with_the_manual_entries_only_still_fails_the_start() {
