@@ -343,9 +343,9 @@ fn every_other_payload_targets_no_session() {
 }
 
 #[test]
-fn only_a_running_session_can_take_input() {
+fn a_running_or_starting_session_can_take_input() {
     for (state, want) in [
-        (SessionState::Starting, false),
+        (SessionState::Starting, true),
         (SessionState::Running, true),
         (SessionState::Stopping, false),
         (SessionState::Exited, false),
@@ -378,31 +378,15 @@ async fn a_stopping_session_does_not_hold_an_invalid_state_rejection() {
 }
 
 #[tokio::test]
-async fn a_starting_summary_does_not_release_a_held_item_but_running_does() {
+async fn a_starting_summary_releases_a_held_item_and_a_stopping_one_does_not() {
     let det = Det::new();
     let (s, st) = setup(&det).await;
     show(&s, &st, &[("s1", SessionState::Exited)]).await;
     let item = queue(&s, &st, follow_up("s1"), TTL_MS).await;
     assert_held(&rejected(&s, &st, &item, RejectCode::InvalidState).await);
 
-    // A resume emits `starting` before a process exists: the item stays held.
+    // A stopping summary releases nothing.
     let inc: IncarnationId = "inc".into();
-    s.apply_events(
-        st.clone(),
-        inc.clone(),
-        vec![state_event(1, "s1", SessionState::Starting)],
-    )
-    .await
-    .unwrap();
-    assert_held(
-        &s.outbox_item(item.outbox_id.clone())
-            .await
-            .unwrap()
-            .unwrap(),
-    );
-    assert!(due(&s, &st).await.is_empty());
-
-    // A stopping summary releases nothing either.
     s.apply_events(
         st.clone(),
         inc.clone(),
@@ -421,7 +405,7 @@ async fn a_starting_summary_does_not_release_a_held_item_but_running_does() {
     s.apply_events(
         st.clone(),
         inc,
-        vec![state_event(3, "s1", SessionState::Running)],
+        vec![state_event(3, "s1", SessionState::Starting)],
     )
     .await
     .unwrap();

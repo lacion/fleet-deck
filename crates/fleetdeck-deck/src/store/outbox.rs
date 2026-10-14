@@ -18,7 +18,7 @@
 //! - `done` rejected with `invalid_state` while the deck shows the target
 //!   session `starting`, `exited` or `lost` → `queued` and held (`reason =
 //!   session_ended`, `next_at = expires_at`) until the session can take
-//!   input ([`can_take_input`]: `running` only; [`DeckStore::release_held`]);
+//!   input ([`can_take_input`]: `running` or `starting`; [`DeckStore::release_held`]);
 //!   only a follow-up or a steer is held ([`target_session`]);
 //! - `failed` with a reason that proves the station never ran it
 //!   (`not_sent`, `station_reset`, `expired`) → `queued` again with a new
@@ -295,12 +295,15 @@ fn target_session(payload: &Value) -> Option<SessionId> {
     }
 }
 
-/// Whether a session in `state` can take input now. `starting` cannot (a
-/// resume emits it before a process exists), `stopping` cannot, and an ended
-/// session cannot.
+/// Whether a held item may try again for a session in `state`. `starting`
+/// may: a Claude process reports `session.started` only after its first
+/// input, so waiting for `running` could wait forever; a try before the
+/// process exists is refused `invalid_state` and held again ([`holds`]),
+/// and the next summary of the session releases it once more. `stopping`
+/// and an ended session may not.
 #[must_use]
 pub(crate) fn can_take_input(state: SessionState) -> bool {
-    matches!(state, SessionState::Running)
+    matches!(state, SessionState::Running | SessionState::Starting)
 }
 
 /// Whether the done command `cmd` of `item` holds the item instead of
