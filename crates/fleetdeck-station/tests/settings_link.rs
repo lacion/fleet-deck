@@ -106,6 +106,9 @@ impl Rig {
         std::fs::create_dir_all(&cfg_dir).unwrap();
         let config = cfg_dir.join("station.toml");
         std::fs::write(&config, config_text(&root, max_sessions)).unwrap();
+        // Plain env values: only the owner may read the file (NV-08).
+        std::fs::set_permissions(&config, std::os::unix::fs::PermissionsExt::from_mode(0o600))
+            .unwrap();
         let store_dir = root.join("data/station/secrets");
         std::fs::create_dir_all(root.join("data/station")).unwrap();
         let private = Arc::new(PrivatePaths::new(
