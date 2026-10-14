@@ -274,6 +274,7 @@ pub(super) async fn recheck(
         caller_session: authority.caller_session.clone(),
         target_session: effect.session_id.clone(),
         command_id,
+        launch: None,
     };
     match bindings.authority_check(&check).await {
         Authority::Valid => Ok(()),

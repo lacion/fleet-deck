@@ -548,6 +548,7 @@ async fn the_authority_check_asks_the_caller_station_for_its_live_policy() {
         caller_session: "coord-1".into(),
         target_session: "w1".into(),
         command_id: id.clone(),
+        launch: None,
     };
     let live = Some(json!({"fleet_control": true, "bound": true}));
     let valid = authority_check(&mut r, &check, live.clone()).await;
@@ -562,6 +563,7 @@ async fn the_authority_check_asks_the_caller_station_for_its_live_policy() {
     // Not the command that the deck sent, or another target or generation.
     let other = AuthorityCheck {
         command_id: "nope".into(),
+        launch: None,
         ..check.clone()
     };
     assert_eq!(
@@ -638,6 +640,7 @@ async fn a_caller_station_that_cannot_answer_makes_the_check_invalid() {
         caller_session: "boss".into(),
         target_session: "w1".into(),
         command_id: id,
+        launch: None,
     };
     let got = authority_check(&mut r, &check, None).await;
     assert_eq!(got, json!({"valid": false, "reason": "caller_unreachable"}));

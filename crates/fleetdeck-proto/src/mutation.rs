@@ -384,6 +384,23 @@ pub struct AuthorityCheck {
     pub caller_session: SessionId,
     pub target_session: SessionId,
     pub command_id: CommandId,
+    /// The provider launch or mode change that the target station is about
+    /// to make, with the mode it will really use: the deck checks it
+    /// against the grant's mode ceiling and the bypass rule (ADR-008 §5.2).
+    /// Absent for a write that changes no mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub launch: Option<LaunchMode>,
+}
+
+/// The provider family and the effective mode of a launch or a mode change
+/// (`mode: None`: the provider default).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "mutation/")]
+pub struct LaunchMode {
+    pub provider: crate::event::ProviderKind,
+    pub mode: Option<String>,
 }
 
 /// The answer to [`AuthorityCheck`].

@@ -351,6 +351,7 @@ async fn an_effect_with_authority_runs_only_when_the_deck_confirms_it() {
             caller_session: "coord-1".into(),
             target_session: s.clone(),
             command_id: d.receipt.command_id.clone(),
+            launch: None,
         }
     );
 

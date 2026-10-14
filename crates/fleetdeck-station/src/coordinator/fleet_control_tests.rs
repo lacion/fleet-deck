@@ -472,6 +472,7 @@ fn check() -> AuthorityCheck {
         caller_session: "coord-1".into(),
         target_session: "worker-1".into(),
         command_id: "cmd-1".into(),
+        launch: None,
     }
 }
 
