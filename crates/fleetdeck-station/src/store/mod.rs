@@ -608,6 +608,8 @@ fn to_i64(v: u64) -> Result<i64> {
 #[cfg(test)]
 mod effects_tests;
 #[cfg(test)]
+mod retention_tests;
+#[cfg(test)]
 mod tests;
 #[cfg(test)]
 #[path = "turn_checkpoints_tests.rs"]
