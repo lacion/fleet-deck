@@ -13,7 +13,7 @@ use std::time::Duration;
 use fleetdeck_core::childenv::ChildEnv;
 use fleetdeck_core::config::Driver;
 use serde_json::Value;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 
 /// The longest one call may run.
@@ -54,6 +54,12 @@ pub enum RunError {
     Parse(&'static str),
     #[error("the CLI reported an error")]
     Reported,
+    /// The CLI used a tool (NV-03).
+    #[error("codex used a tool; model help allows none")]
+    ToolUse,
+    /// The CLI printed too much (NV-04).
+    #[error("the provider printed more than 256 KiB")]
+    TooLarge,
     #[error("private directory: {0}")]
     Dir(std::io::Error),
 }
@@ -88,6 +94,7 @@ impl Runner for CliRunner {
         let name = call.binary.display().to_string();
         let mut child = command.spawn().map_err(|e| RunError::Spawn(name, e))?;
         let stdin = child.stdin.take();
+        let stdout = child.stdout.take();
         let prompt = call.prompt.clone();
         let feed = async move {
             if let Some(mut stdin) = stdin {
@@ -97,17 +104,45 @@ impl Runner for CliRunner {
                 let _ = stdin.shutdown().await;
             }
         };
+        // The read stops one byte after the limit, so a CLI cannot fill the
+        // memory of the station (NV-04).
+        let read = async move {
+            let mut bytes = Vec::new();
+            if let Some(stdout) = stdout {
+                stdout
+                    .take(MAX_OUTPUT_BYTES as u64 + 1)
+                    .read_to_end(&mut bytes)
+                    .await?;
+            }
+            Ok::<_, std::io::Error>(bytes)
+        };
         let finished = tokio::time::timeout(CALL_TIMEOUT, async {
-            let (_, out) = tokio::join!(feed, child.wait_with_output());
-            out
+            // The feed runs beside the read, but only the read decides: a
+            // CLI that prints too much and ignores its stdin must not hold
+            // the call until the time limit.
+            tokio::pin!(feed, read);
+            let mut fed = false;
+            let bytes = loop {
+                tokio::select! {
+                    done = &mut read => break done?,
+                    () = &mut feed, if !fed => fed = true,
+                }
+            };
+            if bytes.len() > MAX_OUTPUT_BYTES {
+                let _ = child.kill().await;
+                return Ok(Err(RunError::TooLarge));
+            }
+            let status = child.wait().await?;
+            Ok::<_, std::io::Error>(Ok((status, bytes)))
         })
         .await
         .map_err(|_| RunError::Timeout)?;
-        let output = finished.map_err(|e| RunError::Spawn(call.binary.display().to_string(), e))?;
-        if !output.status.success() {
+        let (status, bytes) =
+            finished.map_err(|e| RunError::Spawn(call.binary.display().to_string(), e))??;
+        if !status.success() {
             // The JSON `result` of a failed Claude call names the reason
             // (for example a failed login); keep its first line, cut.
-            let reason = serde_json::from_slice::<Value>(&output.stdout)
+            let reason = serde_json::from_slice::<Value>(&bytes)
                 .ok()
                 .and_then(|v| v.get("result").and_then(Value::as_str).map(str::to_owned))
                 .and_then(|r| {
@@ -117,12 +152,11 @@ impl Runner for CliRunner {
                 })
                 .filter(|r| !r.trim().is_empty());
             return Err(RunError::Exit(match reason {
-                Some(reason) => format!("{} ({reason})", output.status),
-                None => output.status.to_string(),
+                Some(reason) => format!("{status} ({reason})"),
+                None => status.to_string(),
             }));
         }
-        let stdout = &output.stdout[..output.stdout.len().min(MAX_OUTPUT_BYTES)];
-        let stdout = String::from_utf8_lossy(stdout);
+        let stdout = String::from_utf8_lossy(&bytes);
         match call.driver {
             Driver::Claude => parse_claude(&stdout),
             Driver::Codex => parse_codex(&stdout),
@@ -156,6 +190,11 @@ fn claude_command(call: &Call) -> Command {
 
 /// `codex exec` with a read-only sandbox and JSONL output; the prompt is
 /// read from stdin (`-`).
+///
+/// Model help allows no tools (NV-03). Codex has no switch for that, so the
+/// `-c` flags turn the Codex tools off one by one, and [`parse_codex`]
+/// refuses a run that used one anyway. A feature name that this Codex does
+/// not know is ignored.
 fn codex_command(call: &Call) -> Command {
     let mut command = Command::new(&call.binary);
     command
@@ -163,10 +202,27 @@ fn codex_command(call: &Call) -> Command {
         .args(["--model", &call.model])
         .arg("--json")
         .arg("--skip-git-repo-check")
-        .args(["--sandbox", "read-only"])
-        .arg("-");
+        .args(["--sandbox", "read-only"]);
+    for flag in CODEX_TOOLS_OFF {
+        command.args(["-c", flag]);
+    }
+    command.arg("-");
     command
 }
+
+/// The `-c` overrides that turn the Codex tools off (NV-03).
+const CODEX_TOOLS_OFF: [&str; 10] = [
+    "features.shell_tool=false",
+    "features.unified_exec=false",
+    "features.apply_patch_freeform=false",
+    "features.view_image=false",
+    "features.apps=false",
+    "features.plugins=false",
+    "features.browser_use=false",
+    "features.computer_use=false",
+    "features.hooks=false",
+    r#"web_search="disabled""#,
+];
 
 /// The environment of a Claude call: the instance environment plus the
 /// output limit of the call.
@@ -210,7 +266,9 @@ pub fn parse_claude(stdout: &str) -> Result<Run, RunError> {
 
 /// The JSONL of `codex exec --json`: the last `agent_message` item is the
 /// text, and `turn.completed` holds the tokens (the cached part of the
-/// input is already inside `input_tokens`).
+/// input is already inside `input_tokens`). An item of any type other than
+/// `agent_message` and `reasoning` is a tool use: the run fails and its text
+/// is never returned (NV-03).
 pub fn parse_codex(stdout: &str) -> Result<Run, RunError> {
     let mut text = None;
     let mut usage = None;
@@ -219,9 +277,14 @@ pub fn parse_codex(stdout: &str) -> Result<Run, RunError> {
             continue;
         };
         match value.get("type").and_then(Value::as_str) {
-            Some("item.completed") => {
+            Some(kind @ ("item.started" | "item.completed")) => {
                 let item = value.get("item").unwrap_or(&Value::Null);
-                if item.get("type").and_then(Value::as_str) == Some("agent_message")
+                let item_type = item.get("type").and_then(Value::as_str);
+                if !matches!(item_type, Some("agent_message" | "reasoning")) {
+                    return Err(RunError::ToolUse);
+                }
+                if kind == "item.completed"
+                    && item_type == Some("agent_message")
                     && let Some(t) = item.get("text").and_then(Value::as_str)
                 {
                     text = Some(t.to_owned());
@@ -330,6 +393,103 @@ mod tests {
             parse_codex(r#"{"type":"turn.failed","error":{"message":"x"}}"#),
             Err(RunError::Reported)
         ));
+    }
+
+    #[test]
+    fn a_codex_tool_item_fails_the_run_and_gives_no_text() {
+        let out = r#"{"type":"item.started","item":{"id":"i0","type":"command_execution","command":"cat x"}}
+{"type":"item.completed","item":{"id":"i0","type":"command_execution","command":"cat x"}}
+{"type":"item.completed","item":{"id":"i1","type":"agent_message","text":"secret"}}
+{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}
+"#;
+        assert!(matches!(parse_codex(out), Err(RunError::ToolUse)));
+        for kind in ["file_change", "mcp_tool_call", "web_search", "todo_list"] {
+            let out = format!(
+                r#"{{"type":"item.completed","item":{{"type":"{kind}"}}}}
+{{"type":"item.completed","item":{{"type":"agent_message","text":"x"}}}}
+{{"type":"turn.completed","usage":{{}}}}"#
+            );
+            assert!(
+                matches!(parse_codex(&out), Err(RunError::ToolUse)),
+                "{kind}"
+            );
+        }
+        // A tool that only started is a tool use too.
+        let out = r#"{"type":"item.started","item":{"type":"web_search"}}"#;
+        assert!(matches!(parse_codex(out), Err(RunError::ToolUse)));
+    }
+
+    fn call_of(driver: Driver, binary: PathBuf) -> Call {
+        Call {
+            driver,
+            binary,
+            env: ChildEnv::empty(),
+            model: "m".to_owned(),
+            prompt: "hello".to_owned(),
+            max_output_tokens: 10,
+        }
+    }
+
+    #[test]
+    fn the_codex_command_turns_the_tools_off_before_the_prompt_marker() {
+        let command = codex_command(&call_of(Driver::Codex, PathBuf::from("codex")));
+        let args: Vec<String> = command
+            .as_std()
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(args.last().map(String::as_str), Some("-"));
+        for flag in [
+            "features.shell_tool=false",
+            "features.unified_exec=false",
+            "features.apply_patch_freeform=false",
+            "features.view_image=false",
+            "features.apps=false",
+            "features.plugins=false",
+            "features.browser_use=false",
+            "features.computer_use=false",
+            "features.hooks=false",
+            r#"web_search="disabled""#,
+        ] {
+            let at = args.iter().position(|a| a == flag).expect(flag);
+            assert_eq!(args[at - 1], "-c", "{flag}");
+        }
+    }
+
+    /// A fake provider CLI: a shell script that runs `body`.
+    #[cfg(unix)]
+    fn fake_cli(dir: &Path, body: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join("fake-cli");
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_cli_that_prints_more_than_the_limit_is_cut_and_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cli = fake_cli(tmp.path(), "head -c 307200 /dev/zero | tr '\\0' 'a'");
+        let err = CliRunner
+            .run(call_of(Driver::Claude, cli))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, RunError::TooLarge), "{err}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_cli_that_prints_small_json_gives_the_text() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cli = fake_cli(
+            tmp.path(),
+            r#"cat > /dev/null
+printf '%s' '{"is_error":false,"result":"A title","usage":{"input_tokens":3,"output_tokens":4}}'"#,
+        );
+        let run = CliRunner.run(call_of(Driver::Claude, cli)).await.unwrap();
+        assert_eq!(run.text, "A title");
+        assert_eq!((run.input_tokens, run.output_tokens), (3, 4));
     }
 
     #[test]

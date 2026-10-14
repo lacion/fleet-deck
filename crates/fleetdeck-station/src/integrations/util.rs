@@ -206,6 +206,20 @@ pub fn https_host(url: &str) -> Option<String> {
     fleetdeck_proto::integrations::valid_host(authority).then(|| host.to_ascii_lowercase())
 }
 
+/// The origin of an `https://` URL as lower case `host:port`: port 443 when
+/// the URL has none. The same rules as [`https_host`]; `None` for any other
+/// form (NV-14).
+#[must_use]
+pub fn https_origin(url: &str) -> Option<String> {
+    let host = https_host(url)?;
+    let authority = url
+        .strip_prefix("https://")?
+        .split(['/', '?', '#'])
+        .next()?;
+    let port = authority.split_once(':').map_or("443", |(_, port)| port);
+    Some(format!("{host}:{port}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -293,5 +307,25 @@ mod tests {
         assert_eq!(https_host("https://u:p@host/x"), None);
         assert_eq!(https_host("http://host/x"), None);
         assert_eq!(https_host("https:///x"), None);
+    }
+
+    #[test]
+    fn the_https_origin_has_a_lower_case_host_and_a_port() {
+        assert_eq!(
+            https_origin("https://T.example/x"),
+            Some("t.example:443".into())
+        );
+        assert_eq!(
+            https_origin("https://t.example:8443/x"),
+            Some("t.example:8443".into())
+        );
+        assert_eq!(
+            https_origin("https://t.example:443?a"),
+            Some("t.example:443".into())
+        );
+        assert_eq!(https_origin("https://u:p@host/x"), None);
+        assert_eq!(https_origin("http://host/x"), None);
+        assert_eq!(https_origin("https:///x"), None);
+        assert_eq!(https_origin("https://host:80a/x"), None);
     }
 }

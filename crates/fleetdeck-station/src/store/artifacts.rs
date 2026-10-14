@@ -16,6 +16,9 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use super::{NewEvent, Result, Store, StoreError, call, log, to_i64};
 
+/// The most suggestion rows that one session keeps (NV-02).
+const MAX_SUGGESTIONS_PER_SESSION: i64 = 200;
+
 /// One file of a staged bundle.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StagedFile {
@@ -250,7 +253,9 @@ impl Store {
     }
 
     /// Records a suggestion for `path` and appends `artifact.suggested`
-    /// when this session had none for the path. Returns true if it did.
+    /// when this session had none for the path. Returns true if it did. A
+    /// session that already has 200 suggestions gets no new row and no
+    /// event, the same as a repeated path (NV-02).
     ///
     /// # Errors
     /// A database error, or an unknown session.
@@ -258,6 +263,14 @@ impl Store {
         let now = self.now();
         let out = call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
+            let held: i64 = tx.query_row(
+                "SELECT COUNT(*) FROM artifact_suggestions WHERE session_id = ?1",
+                [session_id.as_str()],
+                |r| r.get(0),
+            )?;
+            if held >= MAX_SUGGESTIONS_PER_SESSION {
+                return Ok(None);
+            }
             let inserted = tx.execute(
                 "INSERT OR IGNORE INTO artifact_suggestions (session_id, path, at)
                  VALUES (?1, ?2, ?3)",

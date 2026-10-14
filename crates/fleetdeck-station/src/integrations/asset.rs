@@ -18,7 +18,7 @@ use fleetdeck_proto::integrations::{Asset, MAX_ASSET_BYTES, code};
 
 use super::exec::{Fail, Programs};
 use super::http::{self, MAX_IMAGE, Request};
-use super::util::{https_host, sniff_image};
+use super::util::{https_host, https_origin, sniff_image};
 
 /// The most redirects that one fetch follows.
 const MAX_REDIRECTS: usize = 3;
@@ -26,7 +26,8 @@ const MAX_REDIRECTS: usize = 3;
 const LOOKUP_WAIT: Duration = Duration::from_secs(20);
 
 /// Fetches `url` from one of `hosts` with `auth` (a header line and the
-/// host that may receive it) when given.
+/// host that may receive it) when given. A host name of `hosts` or of `auth`
+/// may have a `:port`; without one it means port 443 (NV-14).
 ///
 /// curl never follows a redirect. The station follows at most
 /// [`MAX_REDIRECTS`] itself and checks every target (FDV2-004): a host of
@@ -46,13 +47,13 @@ pub async fn fetch(
     auth: Option<(&str, &str)>,
     secrets: &[&str],
 ) -> Result<Asset, Fail> {
-    let host = https_host(url).ok_or_else(|| {
+    let origin = https_origin(url).ok_or_else(|| {
         Fail::new(
             code::INVALID_PARAMS,
             "the asset URL must be a plain https URL",
         )
     })?;
-    if !in_hosts(hosts, &host) {
+    if !in_hosts(hosts, &origin) {
         return Err(Fail::new(
             code::INVALID_PARAMS,
             "the asset URL is not on a host of this binding",
@@ -61,7 +62,7 @@ pub async fn fetch(
     let mut request = Request {
         url: url.to_owned(),
         method: "GET",
-        headers: auth_headers(auth, &host),
+        headers: auth_headers(auth, &origin),
         content_type: true,
         ..Request::default()
     };
@@ -92,14 +93,27 @@ pub async fn fetch(
     })
 }
 
-fn in_hosts(hosts: &[String], host: &str) -> bool {
-    hosts.iter().any(|h| h.eq_ignore_ascii_case(host))
+/// The origin (`host:port`, lower case) of a `hosts` entry or of the auth
+/// host: a host name with an optional `:port`. Without a port it means port
+/// 443.
+fn origin_of_entry(entry: &str) -> String {
+    let entry = entry.to_ascii_lowercase();
+    if entry.contains(':') {
+        entry
+    } else {
+        format!("{entry}:443")
+    }
 }
 
-/// The auth header, only for the host that may receive it.
-fn auth_headers(auth: Option<(&str, &str)>, host: &str) -> Vec<String> {
+/// True when `origin` (see [`https_origin`]) is an origin of `hosts`.
+fn in_hosts(hosts: &[String], origin: &str) -> bool {
+    hosts.iter().any(|h| origin_of_entry(h) == origin)
+}
+
+/// The auth header, only for the origin that may receive it.
+fn auth_headers(auth: Option<(&str, &str)>, origin: &str) -> Vec<String> {
     match auth {
-        Some((header, only)) if only.eq_ignore_ascii_case(host) => vec![header.to_owned()],
+        Some((header, only)) if origin_of_entry(only) == origin => vec![header.to_owned()],
         _ => Vec::new(),
     }
 }
@@ -131,14 +145,15 @@ async fn next_request(
     auth: Option<(&str, &str)>,
 ) -> Result<Request, Fail> {
     let host = https_host(target).ok_or_else(not_allowed)?;
+    let origin = https_origin(target).ok_or_else(not_allowed)?;
     let mut request = Request {
         url: target.to_owned(),
         method: "GET",
         content_type: true,
         ..Request::default()
     };
-    if in_hosts(hosts, &host) {
-        request.headers = auth_headers(auth, &host);
+    if in_hosts(hosts, &origin) {
+        request.headers = auth_headers(auth, &origin);
         return Ok(request);
     }
     if explicit_port(target).is_some_and(|port| port != "443") {
