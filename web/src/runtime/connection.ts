@@ -1,5 +1,6 @@
 import type { BoardClientMessage, SessionKey } from '../gen';
 import { ApiError, authView, type Fetch, request } from './api';
+import { clearAuthoringState } from './authoringState';
 import { boardMessage } from './decode';
 import {
   emptyState,
@@ -87,6 +88,8 @@ export class Connection {
   start(token: string | null = null): void {
     if (this.running) return;
     this.running = true;
+    // NV-05: a link token starts a new login. A cookie session is a reconnect.
+    if (token !== null) clearAuthoringState();
     void this.connect(
       token === null ? '/api/auth/session' : '/api/auth/link',
       token === null ? undefined : { token },
@@ -104,9 +107,13 @@ export class Connection {
   }
   login(password: string): Promise<void> {
     this.running = true;
+    // NV-05: a login starts a new account.
+    clearAuthoringState();
     return this.connect('/api/auth/login', { password });
   }
   async logout(): Promise<void> {
+    // NV-05: drafts and legacy notes do not outlive the login.
+    clearAuthoringState();
     const csrf = this.state.login?.csrf;
     this.cancelTransport();
     const gen = this.generation;

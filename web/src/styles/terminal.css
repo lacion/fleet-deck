@@ -73,6 +73,28 @@
   display: flex;
   gap: var(--sp-2);
 }
+/* The ask bar over the terminal: a program asks to copy text (NV-06). */
+.fd-term-copy {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-2);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--dim);
+  font-family: var(--font-ui);
+  font-size: var(--fs-body);
+}
+.fd-term-copy p {
+  margin: 0;
+}
+.fd-term-copy-preview {
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
 
 /* key bar */
 .fd-keybar {

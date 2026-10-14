@@ -1,10 +1,11 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
+import type { ReactElement, ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { SessionSummary } from '../gen';
 import type { ShellActions } from '../shell/shell';
 import { releaseHold, returnToBoard, startHandover, waitFor } from './handover';
 import { KeyBar, ctrlByte } from './KeyBar';
-import { PasteNote, Terminal, termTheme } from './Terminal';
+import { CopyAsk, copyPreview, PasteNote, Terminal, termTheme } from './Terminal';
 import { TerminalDock } from './TerminalDock';
 import { type DockState, type TermTab, createTerminalStore, tabId } from './store';
 
@@ -567,6 +568,98 @@ describe('image paste note (DL-147)', () => {
     );
     expect(html).toContain('fd-term-host');
     expect(html).not.toContain('fd-term-note');
+  });
+});
+
+/** The button elements of a rendered tree, found by their text. */
+function buttons(
+  node: ReactNode,
+  found: Record<string, () => void> = {},
+): Record<string, () => void> {
+  if (node === null || typeof node !== 'object' || !('props' in node)) return found;
+  const el = node as ReactElement<{ children?: ReactNode; onClick?: () => void }>;
+  if (el.type === 'button' && el.props.onClick) {
+    found[String(el.props.children)] = el.props.onClick;
+  }
+  for (const child of [el.props.children].flat()) buttons(child, found);
+  return found;
+}
+
+describe('terminal copy ask (NV-06)', () => {
+  const nav = globalThis as { navigator?: unknown };
+  const savedNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  afterEach(() => {
+    if (savedNavigator) Object.defineProperty(globalThis, 'navigator', savedNavigator);
+    else nav.navigator = undefined;
+  });
+  function stubClipboard(): string[] {
+    const calls: string[] = [];
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: {
+        clipboard: {
+          writeText: (text: string) => {
+            calls.push(text);
+            return Promise.resolve();
+          },
+        },
+      },
+    });
+    return calls;
+  }
+
+  test('no bar without a request', () => {
+    expect(renderToStaticMarkup(<CopyAsk text={null} onDone={() => undefined} />)).toBe('');
+  });
+
+  test('the bar shows the count and the preview and does not write the clipboard', () => {
+    const calls = stubClipboard();
+    const html = renderToStaticMarkup(<CopyAsk text={'rm -rf /\nx'} onDone={() => undefined} />);
+    expect(html).toContain('role="status"');
+    expect(html).toContain('aria-live="polite"');
+    expect(html).toContain('asks to copy 10');
+    expect(html).toContain('characters to your clipboard.');
+    expect(html).toContain('rm -rf / x');
+    expect(html).toContain('>Copy<');
+    expect(html).toContain('>Ignore<');
+    expect(calls).toEqual([]);
+  });
+
+  test('the count uses the locale format', () => {
+    const text = 'a'.repeat(12_345);
+    const html = renderToStaticMarkup(<CopyAsk text={text} onDone={() => undefined} />);
+    expect(html).toContain(`asks to copy ${(12_345).toLocaleString()}`);
+  });
+
+  test('the preview cuts at 120 characters and replaces control characters', () => {
+    expect(copyPreview('a\tb\u0000c\u007fd')).toBe('a b c d');
+    expect(copyPreview('x'.repeat(120))).toBe('x'.repeat(120));
+    expect(copyPreview('x'.repeat(121))).toBe(`${'x'.repeat(120)}…`);
+  });
+
+  test('Copy writes the clipboard once with the text and hides the bar', () => {
+    const calls = stubClipboard();
+    let done = 0;
+    const tree = CopyAsk({ text: 'hello', onDone: () => (done += 1) });
+    buttons(tree)['Copy']?.();
+    expect(calls).toEqual(['hello']);
+    expect(done).toBe(1);
+  });
+
+  test('Ignore hides the bar and does not write the clipboard', () => {
+    const calls = stubClipboard();
+    let done = 0;
+    const tree = CopyAsk({ text: 'hello', onDone: () => (done += 1) });
+    buttons(tree)['Ignore']?.();
+    expect(calls).toEqual([]);
+    expect(done).toBe(1);
+  });
+
+  test('a terminal starts without a copy bar', () => {
+    const html = renderToStaticMarkup(
+      <Terminal station="s" shellId="sh-1" actions={{} as ShellActions} active touch={false} />,
+    );
+    expect(html).not.toContain('fd-term-copy');
   });
 });
 
