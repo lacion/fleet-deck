@@ -1,13 +1,19 @@
 //! "Use Tailscale automatically" at the start of the deck (tailnet design
 //! section 14.4).
 //!
-//! When the deck setting `tailnet_auto` is on, [`apply_at_start`] runs before
-//! any listener binds. It reads `tailscale status` inside one deadline of
-//! 3 s and, per channel (`listen` and `link_listen`), replaces only the
+//! When the deck setting `tailnet_auto` is on (the default, design section
+//! 15.2), [`apply_at_start`] runs before any listener binds. It reads
+//! `tailscale status` inside one absolute deadline of 3 s and, per channel (`listen` and `link_listen`), replaces only the
 //! entries that the mode added earlier (the provenance lists) with the
 //! current tailnet addresses. Manual entries stay as they are. The result is
 //! saved in one save through the normal settings writer: revision checked,
 //! no elevation (the owner gave it when turning the mode on).
+//!
+//! The whole Tailscale call (the program choice with its file checks, the
+//! process start, the output read, the child cleanup) runs on a dedicated
+//! thread (design section 15.3). The start waits for it until the deadline
+//! and then goes on without it; a generation number makes a late answer
+//! inert.
 //!
 //! Nothing is saved when Tailscale is not available, runs in userspace
 //! networking, does not answer in time, or when non-local binding is on. The
@@ -15,17 +21,19 @@
 
 use std::collections::BTreeSet;
 use std::net::{IpAddr, SocketAddr};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use fleetdeck_core::config::DeckConfig;
 use fleetdeck_core::tailscale::{
-    self, DEFAULT_BOARD_PORT, DEFAULT_LINK_PORT, Plan, TailscaleCli, TailscaleError,
+    self, DEFAULT_BOARD_PORT, DEFAULT_LINK_PORT, Plan, Status, TailscaleCli, TailscaleError,
 };
 use fleetdeck_core::tailscale_wsl::HostFacts;
 use fleetdeck_proto::settings::SettingsChange;
 use serde_json::{Map, Value, json};
+use tokio::sync::oneshot;
 
 use crate::http::settings_routes::{DeckSettings, deck_view};
 use crate::store::{AuditResult, DeckStore, NewAudit};
@@ -191,8 +199,55 @@ pub async fn apply_at_start(
     .await
 }
 
-/// [`apply_at_start`] with the program lookup `locate` (a test gives a slow
-/// one). The lookup runs in a blocking task, inside `deadline`.
+/// The generation of the one call of a start. The start moves it on when it
+/// stops waiting, so that a late answer is inert.
+const FIRST: u64 = 1;
+
+/// The whole Tailscale call, on the thread of the call: the program choice
+/// `locate`, then `tailscale status` under `deadline` (the runner kills the
+/// child when the time is gone).
+fn call(
+    configured: Option<&Path>,
+    deadline: Instant,
+    locate: impl FnOnce(Option<&Path>) -> TailscaleCli,
+) -> Result<Status, TailscaleError> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| TailscaleError::Spawn(e.to_string()))?;
+    runtime.block_on(async {
+        let cli = locate(configured);
+        if Instant::now() >= deadline {
+            return Err(TailscaleError::Timeout);
+        }
+        cli.status_until(deadline).await
+    })
+}
+
+/// Starts the dedicated thread of [`call`]. The answer comes on the channel
+/// while `generation` is still [`FIRST`]; the thread is never joined.
+fn spawn_call(
+    configured: Option<PathBuf>,
+    deadline: Instant,
+    locate: impl FnOnce(Option<&Path>) -> TailscaleCli + Send + 'static,
+    generation: Arc<AtomicU64>,
+) -> std::io::Result<oneshot::Receiver<Result<Status, TailscaleError>>> {
+    let (tx, rx) = oneshot::channel();
+    std::thread::Builder::new()
+        .name("tailnet-start".to_owned())
+        .spawn(move || {
+            let answer = call(configured.as_deref(), deadline, locate);
+            if generation.load(Ordering::SeqCst) == FIRST {
+                // The start may have gone on already: the answer is dropped.
+                let _ = tx.send(answer);
+            }
+        })?;
+    Ok(rx)
+}
+
+/// [`apply_at_start`] with the program choice `locate` (a test gives a slow
+/// one). `locate` runs on the thread of the Tailscale call, inside
+/// `deadline`.
 pub async fn apply_at_start_with(
     settings: &DeckSettings,
     config: DeckConfig,
@@ -208,22 +263,34 @@ pub async fn apply_at_start_with(
     if facts.nonlocal_bind {
         return (config, off(NONLOCAL));
     }
-    let until = tokio::time::Instant::from_std(deadline);
-    let configured = config.tailscale_bin.clone();
-    let lookup = tokio::task::spawn_blocking(move || locate(configured.as_deref()));
-    let cli = match tokio::time::timeout_at(until, lookup).await {
-        Ok(Ok(cli)) => cli,
-        Ok(Err(_)) | Err(_) => return (config, off(TIMEOUT)),
+    let generation = Arc::new(AtomicU64::new(FIRST));
+    let rx = match spawn_call(
+        config.tailscale_bin.clone(),
+        deadline,
+        locate,
+        Arc::clone(&generation),
+    ) {
+        Ok(rx) => rx,
+        Err(e) => {
+            tracing::warn!(error = %e, "automatic tailnet start: thread");
+            let reason = format!("Tailscale could not be started: {:?}.", e.kind());
+            return (config, off(reason));
+        }
     };
-    let status = match tokio::time::timeout_at(until, cli.status()).await {
-        Err(_) | Ok(Err(TailscaleError::Timeout)) => return (config, off(TIMEOUT)),
-        Ok(Err(e)) => {
+    let waited = tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), rx).await;
+    let status = match waited {
+        Ok(Ok(Ok(status))) => status,
+        Ok(Ok(Err(TailscaleError::Timeout))) | Ok(Err(_)) | Err(_) => {
+            // Go on without the answer; the thread sends nothing now.
+            generation.fetch_add(1, Ordering::SeqCst);
+            return (config, off(TIMEOUT));
+        }
+        Ok(Ok(Err(e))) => {
             return (
                 config,
                 off(format!("Tailscale is not available: {}.", e.reason())),
             );
         }
-        Ok(Ok(status)) => status,
     };
     let plan = tailscale::plan_use(&status, &[], &[], is_usable);
     if plan.userspace {
@@ -267,7 +334,10 @@ pub async fn apply_at_start_with(
             },
         );
     }
-    if Instant::now() >= deadline {
+    // A late answer is inert: the generation and the deadline are checked
+    // before the save.
+    if generation.load(Ordering::SeqCst) != FIRST || Instant::now() >= deadline {
+        generation.fetch_add(1, Ordering::SeqCst);
         return (config, off(TIMEOUT));
     }
     match save(settings, &next, &keys).await {
@@ -356,20 +426,18 @@ fn addresses(value: &Value) -> Option<Vec<SocketAddr>> {
         .collect()
 }
 
-/// The manual-save rule of design 14.4, for the settings routes: `old` are
-/// the values before the save and `changes` the keys of the save. A change
-/// that sets `tailnet_auto` to `false`, or resets it (`null`: back to the
-/// default, which is false), sets both provenance lists to empty.
+/// The manual-save rule of design 14.4 and 15.2, for the settings routes:
+/// `old` are the values before the save and `changes` the keys of the save.
+/// A change that sets `tailnet_auto` to `false` (the resulting effective
+/// value is off) sets both provenance lists to empty. `true` and a reset
+/// (`null`: back to the default, which is on) clear nothing.
 /// A change of `listen` (or `link_listen`) that does not set the matching
 /// provenance list sets it to its old entries that are still in the new
 /// list: an entry that the owner removed is forgotten, an entry that the
 /// owner kept stays automatic. A value that does not parse is left for the
 /// writer to refuse.
 pub fn reconcile(old: &Map<String, Value>, changes: &mut Map<String, Value>) {
-    if matches!(
-        changes.get("tailnet_auto"),
-        Some(Value::Bool(false) | Value::Null)
-    ) {
+    if matches!(changes.get("tailnet_auto"), Some(Value::Bool(false))) {
         for (_, provenance) in LISTS {
             changes.insert(provenance.to_owned(), json!([]));
         }

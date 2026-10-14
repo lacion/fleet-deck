@@ -1,24 +1,31 @@
 //! The tailnet routes on WSL and with "Use Tailscale automatically"
-//! (tailnet design 14.1 to 14.5): the hint about the Windows program, the NAT
-//! text, the card data of the automatic mode, the provenance lists that a
-//! manual save and "Use tailnet" write, and the elevation rules.
+//! (tailnet design 14 and 15): the program kind of the card, the NAT text,
+//! the child kill at the deadline, the certificate fallback at start,
+//! the card data of the automatic mode (on when the key is absent), the
+//! provenance lists that a manual save and "Use tailnet" write, and the
+//! elevation rules.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 mod common;
 mod settings_support;
 
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::path::Path;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use common::board::{BoardClient, Extras, board_with_extras};
 use common::*;
-use fleetdeck_core::tailscale;
+use fleetdeck_core::config::DeckConfig;
+use fleetdeck_core::paths::NodeDirs;
 use fleetdeck_core::tailscale_wsl::HostFacts;
 use fleetdeck_deck::http::tailnet_routes::use_with;
-use fleetdeck_deck::tailnet_auto::TailnetStart;
+use fleetdeck_deck::http::tls::TlsError;
+use fleetdeck_deck::serve::{RunningDeck, StartOptions};
+use fleetdeck_deck::tailnet_auto::{TailnetStart, apply_at_start};
+use fleetdeck_link::reconnect::BackoffPolicy;
 use serde_json::{Value, json};
 use settings_support::*;
 
@@ -76,111 +83,43 @@ fn wsl_only() -> HostFacts {
     }
 }
 
-/// The path of the fake Windows program of the one test that needs it.
-static WINDOWS_FAKE: OnceLock<PathBuf> = OnceLock::new();
-
-fn wsl_with_windows_program() -> HostFacts {
-    HostFacts {
-        wsl: true,
-        windows_program: WINDOWS_FAKE.get().cloned(),
-        nonlocal_bind: false,
-    }
-}
-
+/// The card reports how the program was chosen, and no Windows hint exists:
+/// a set `tailscale_bin` is `configured`; a program that does not exist is
+/// "not installed" and no program is chosen.
 #[tokio::test]
-async fn the_windows_program_is_a_hint_and_is_not_run_until_the_owner_chooses_it() {
-    if tailscale::is_installed() {
-        eprintln!("note: tailscale is on PATH of this machine; the test needs it absent");
-        return;
-    }
+async fn the_card_reports_the_program_kind_and_has_no_windows_hint() {
     let tmp = tempfile::tempdir().unwrap();
-    let marker = tmp.path().join("ran");
-    let exe = fake(tmp.path(), "tailscale.exe", STATUS, Some(&marker));
-    WINDOWS_FAKE.set(PathBuf::from(&exe)).unwrap();
-    let (_f, c) = board(
-        tmp.path(),
-        DECK_TOML,
-        Extras {
-            host: Some(wsl_with_windows_program),
-            ..Extras::default()
-        },
-    )
-    .await;
-    set_password(&c).await;
-    let h = owner(&c).await;
-
-    // No program is found: the hint, and the program is not touched.
-    let r = get(&c, &h, "/api/tailnet").await;
-    assert_eq!(r.status, 200, "{}", r.body);
-    assert_eq!(r.body["available"], false);
-    assert_eq!(r.body["reason"], "windows_tailscale");
-    assert_eq!(r.body["windows_program"], json!(exe));
-    assert_eq!(r.body["userspace"], false);
-    assert_eq!(r.body["auto"]["enabled"], false);
-    let r = get(&c, &h, "/api/tailnet/devices").await;
-    assert_eq!(r.status, 200, "{}", r.body);
-    assert_eq!(r.body["available"], false);
-    assert_eq!(r.body["reason"], "windows_tailscale");
-    assert_eq!(r.body["windows_program"], json!(exe));
-    assert_eq!(r.body["devices"], json!([]));
-    assert!(
-        !marker.exists(),
-        "the Windows program ran without the setting"
-    );
-
-    // "Use this program" is a settings save of `tailscale_bin`: it needs the
-    // elevation.
-    let view = get(&c, &h, "/api/settings/deck").await;
-    let revision = view.body["revision"].as_str().unwrap().to_owned();
-    let save = |elevation: Option<&str>| {
-        let mut body = json!({ "changes": { "tailscale_bin": exe }, "revision": revision });
-        if let Some(e) = elevation {
-            body["elevation"] = json!(e);
-        }
-        body
-    };
-    let r = post(&c, &h, "/api/settings/deck", save(None)).await;
-    expect(&r, 400, "elevation_required");
-    assert_eq!(r.body["keys"], json!(["tailscale_bin"]));
-    assert!(!marker.exists());
-    let token = elevate(&c, &h).await;
-    let r = post(&c, &h, "/api/settings/deck", save(Some(&token))).await;
-    assert_eq!(r.status, 200, "{}", r.body);
-    assert!(deck_file(tmp.path()).contains(&exe));
-    // Now the program is the owner's choice: it runs, and the hint is gone.
-    let r = get(&c, &h, "/api/tailnet").await;
-    assert_eq!(r.body["available"], true, "{}", r.body);
-    assert!(r.body.get("windows_program").is_none());
-    assert!(marker.exists(), "the chosen program did not run");
-}
-
-#[tokio::test]
-async fn a_set_tailscale_bin_that_is_missing_keeps_the_not_installed_reason() {
-    let tmp = tempfile::tempdir().unwrap();
-    let missing = tmp.path().join("no-such-tailscale").display().to_string();
-    let toml = format!("{DECK_TOML}tailscale_bin = \"{missing}\"\n");
+    let bin = fake(tmp.path(), "tailscale", STATUS, None);
+    let toml = format!("{DECK_TOML}tailscale_bin = \"{bin}\"\n");
     let (_f, c) = board(
         tmp.path(),
         &toml,
         Extras {
-            host: Some(|| HostFacts {
-                wsl: true,
-                windows_program: Some(PathBuf::from(
-                    "/mnt/c/Program Files/Tailscale/tailscale.exe",
-                )),
-                nonlocal_bind: false,
-            }),
+            host: Some(wsl_only),
             ..Extras::default()
         },
     )
     .await;
     let h = owner(&c).await;
     let r = get(&c, &h, "/api/tailnet").await;
-    assert_eq!(r.body["available"], false);
-    assert_eq!(r.body["reason"], "not installed");
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert_eq!(r.body["program"], "configured");
     assert!(r.body.get("windows_program").is_none());
     let r = get(&c, &h, "/api/tailnet/devices").await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert_eq!(r.body["available"], true);
+    assert!(r.body.get("windows_program").is_none());
+
+    let tmp2 = tempfile::tempdir().unwrap();
+    let missing = tmp2.path().join("no-such-tailscale").display().to_string();
+    let toml = format!("{DECK_TOML}tailscale_bin = \"{missing}\"\n");
+    let (_f2, c2) = board(tmp2.path(), &toml, Extras::default()).await;
+    let h2 = owner(&c2).await;
+    let r = get(&c2, &h2, "/api/tailnet").await;
+    assert_eq!(r.body["available"], false);
     assert_eq!(r.body["reason"], "not installed");
+    assert!(r.body.get("program").is_none());
+    assert!(r.body.get("windows_program").is_none());
 }
 
 #[tokio::test]
@@ -274,13 +213,28 @@ async fn the_card_data_of_the_automatic_mode() {
 
     // The saved setting, not the start fact, is `enabled`.
     let tmp3 = tempfile::tempdir().unwrap();
-    let (_f3, c3) = board(tmp3.path(), DECK_TOML, Extras::default()).await;
+    let toml3 = format!("{DECK_TOML}tailnet_auto = false\n");
+    let (_f3, c3) = board(tmp3.path(), &toml3, Extras::default()).await;
     let h3 = owner(&c3).await;
     let r = get(&c3, &h3, "/api/tailnet").await;
     assert_eq!(
         r.body["auto"],
         json!({ "enabled": false, "skipped": [], "changed": false })
     );
+}
+
+/// The key is absent: the mode is on (design 15.2), on the card and in the
+/// settings view.
+#[tokio::test]
+async fn the_mode_is_on_when_the_key_is_absent() {
+    let tmp = tempfile::tempdir().unwrap();
+    assert!(!DECK_TOML.contains("tailnet_auto"));
+    let (_f, c) = board(tmp.path(), DECK_TOML, Extras::default()).await;
+    let h = owner(&c).await;
+    let r = get(&c, &h, "/api/tailnet").await;
+    assert_eq!(r.body["auto"]["enabled"], true);
+    let view = get(&c, &h, "/api/settings/deck").await;
+    assert_eq!(view.body["values"]["tailnet_auto"], true);
 }
 
 const AUTO_TOML: &str = "name = \"alpha\"\ntailnet_auto = true\n\
@@ -374,24 +328,62 @@ async fn a_manual_save_keeps_only_the_provenance_entries_that_stay() {
 }
 
 /// A reset of `tailnet_auto` (the change that `fleetdeck settings` sends for
-/// `null`) empties both provenance lists in the same save.
+/// `null`) goes back to the default, which is on: the provenance lists stay
+/// (design 15.2), and no elevation is needed from an effective `true`.
 #[tokio::test]
-async fn resetting_the_mode_empties_both_lists() {
+async fn resetting_the_mode_to_the_default_keeps_both_lists() {
     let tmp = tempfile::tempdir().unwrap();
     let (_f, c) = board(tmp.path(), AUTO_TOML, Extras::default()).await;
     set_password(&c).await;
     let h = owner(&c).await;
     let r = save(&c, &h, json!({ "tailnet_auto": null })).await;
     assert_eq!(r.status, 200, "{}", r.body);
-    assert_eq!(r.body["values"]["tailnet_auto"], false);
-    assert_eq!(r.body["values"]["tailnet_auto_listen"], json!([]));
-    assert_eq!(r.body["values"]["tailnet_auto_link_listen"], json!([]));
+    assert_eq!(r.body["values"]["tailnet_auto"], true);
+    assert_eq!(
+        r.body["values"]["tailnet_auto_listen"],
+        json!(["100.64.0.9:7420", "100.64.0.10:7420"])
+    );
+    assert_eq!(
+        r.body["values"]["tailnet_auto_link_listen"],
+        json!(["100.64.0.9:7421"])
+    );
     assert!(!deck_file(tmp.path()).contains("tailnet_auto ="));
-    // Every entry is manual now: the lists are as they were.
     assert_eq!(
         r.body["values"]["listen"],
         json!(["127.0.0.1:7420", "100.64.0.9:7420", "100.64.0.10:7420"])
     );
+}
+
+/// A saved `false` reset to the default (on) needs the elevation, and a
+/// `false` save empties both lists.
+#[tokio::test]
+async fn resetting_a_saved_false_needs_the_elevation() {
+    let tmp = tempfile::tempdir().unwrap();
+    let toml = AUTO_TOML.replace("tailnet_auto = true", "tailnet_auto = false");
+    let (_f, c) = board(tmp.path(), &toml, Extras::default()).await;
+    set_password(&c).await;
+    let h = owner(&c).await;
+    let r = save(&c, &h, json!({ "tailnet_auto": null })).await;
+    expect(&r, 400, "elevation_required");
+    assert_eq!(r.body["keys"], json!(["tailnet_auto"]));
+    assert!(deck_file(tmp.path()).contains("tailnet_auto = false"));
+    let token = elevate(&c, &h).await;
+    let rev = revision(&c, &h).await;
+    let r = post(
+        &c,
+        &h,
+        "/api/settings/deck",
+        json!({ "changes": { "tailnet_auto": null }, "revision": rev, "elevation": token }),
+    )
+    .await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert_eq!(r.body["values"]["tailnet_auto"], true);
+    // Turning it off again empties both lists, as an explicit `false` does.
+    let r = save(&c, &h, json!({ "tailnet_auto": false })).await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert_eq!(r.body["values"]["tailnet_auto"], false);
+    assert_eq!(r.body["values"]["tailnet_auto_listen"], json!([]));
+    assert_eq!(r.body["values"]["tailnet_auto_link_listen"], json!([]));
 }
 
 /// The values of the provenance lists of a `deck.toml`.
@@ -506,4 +498,205 @@ async fn use_tailnet_writes_the_provenance_lists() {
             .iter()
             .any(|a| a.to_string() == "192.168.5.5:7420")
     );
+}
+
+fn a(text: &str) -> SocketAddr {
+    text.parse().unwrap()
+}
+
+fn all_usable(_: IpAddr) -> bool {
+    true
+}
+
+fn head(bin: &str) -> String {
+    format!("name = \"d\"\ntailnet_auto = true\ntailscale_bin = \"{bin}\"\n")
+}
+
+fn dirs_of(root: &Path) -> NodeDirs {
+    NodeDirs {
+        config: root.join("config"),
+        data: root.join("data"),
+    }
+}
+
+fn fast() -> BackoffPolicy {
+    BackoffPolicy {
+        base: Duration::from_millis(50),
+        cap: Duration::from_millis(200),
+        stable: Duration::from_secs(60),
+    }
+}
+
+/// The automatic start on a `deck.toml` of `toml`, with every address usable.
+async fn run(dir: &Path, toml: &str) -> (DeckConfig, TailnetStart) {
+    let settings = deck_settings(dir, toml);
+    let config = DeckConfig::load(&settings.path).unwrap();
+    let deadline = Instant::now() + fleetdeck_deck::tailnet_auto::DEADLINE;
+    apply_at_start(
+        &settings,
+        config,
+        &[],
+        &HostFacts::default(),
+        &all_usable,
+        deadline,
+    )
+    .await
+}
+
+/// The child is killed when the deadline is gone: the process of a program
+/// that outlives the deadline does not stay.
+#[tokio::test]
+async fn the_child_is_killed_at_the_deadline() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pid_file = tmp.path().join("pid");
+    let bin = script(
+        &tmp.path().join("tailscale"),
+        &format!("echo $$ > '{}'\nexec sleep 30", pid_file.display()),
+    );
+    let settings = deck_settings(tmp.path(), &head(&bin));
+    let config = DeckConfig::load(&settings.path).unwrap();
+    let (_, start) = apply_at_start(
+        &settings,
+        config,
+        &[],
+        &HostFacts::default(),
+        &all_usable,
+        Instant::now() + Duration::from_millis(500),
+    )
+    .await;
+    assert_eq!(
+        start.start_reason.as_deref(),
+        Some("Tailscale did not answer within 3 seconds.")
+    );
+    let pid = std::fs::read_to_string(&pid_file)
+        .unwrap()
+        .trim()
+        .to_owned();
+    let proc = Path::new("/proc").join(&pid);
+    let mut gone = false;
+    for _ in 0..40 {
+        if !proc.exists() {
+            gone = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(gone, "the child {pid} is still running");
+}
+
+fn fail_with_automatic_entries(bound: &[SocketAddr]) -> Result<(), TlsError> {
+    if bound.len() > 1 {
+        return Err(TlsError::File {
+            file: "board-selfsigned.crt".to_owned(),
+            reason: "test".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+/// The board certificate cannot be prepared with an automatic entry (design
+/// 15.3): the deck starts with the manual entries and the existing
+/// certificate, and the card says why.
+#[tokio::test]
+async fn a_certificate_failure_with_an_automatic_entry_falls_back_to_the_manual_entries() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dirs = dirs_of(tmp.path());
+    std::fs::create_dir_all(&dirs.config).unwrap();
+    let path = dirs.deck_config();
+    let write = |text: &str| {
+        std::fs::write(&path, text).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    };
+    // A first start makes the certificate for the manual entries.
+    write(
+        "name = \"d\"\ntailnet_auto = false\nlisten = [\"127.0.0.1:0\"]\nlink_listen = [\"127.0.0.1:0\"]\n",
+    );
+    let first = RunningDeck::start(
+        &dirs,
+        &DeckConfig::load(&path).unwrap(),
+        fast(),
+        StartOptions::default(),
+    )
+    .await
+    .unwrap();
+    let old = first.endpoint.as_ref().unwrap().certificate_sha256.clone();
+    first.stop().await;
+    // The second start has an automatic board entry (a local address with a
+    // free port) and a certificate hook that fails when it is bound.
+    let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let auto = free.local_addr().unwrap();
+    drop(free);
+    let missing = tmp.path().join("no-such-tailscale").display().to_string();
+    write(&format!(
+        "name = \"d\"\ntailnet_auto = true\ntailscale_bin = \"{missing}\"\n\
+         listen = [\"127.0.0.1:0\", \"{auto}\"]\nlink_listen = [\"127.0.0.1:0\"]\n\
+         tailnet_auto_listen = [\"{auto}\"]\n"
+    ));
+    let options = StartOptions {
+        certificate_check: Some(fail_with_automatic_entries),
+        ..StartOptions::default()
+    };
+    let deck = RunningDeck::start(&dirs, &DeckConfig::load(&path).unwrap(), fast(), options)
+        .await
+        .expect("the deck starts with the manual entries");
+    let endpoint = deck.endpoint.as_ref().unwrap();
+    assert_eq!(endpoint.certificate_sha256, old, "the old certificate");
+    assert_ne!(endpoint.url, format!("https://{auto}"));
+    let start = deck.tailnet_start();
+    assert!(start.enabled);
+    assert_eq!(
+        start.start_reason.as_deref(),
+        Some("the board certificate could not be updated (file)")
+    );
+    deck.stop().await;
+}
+
+/// A certificate failure with the manual entries only still fails the start.
+#[tokio::test]
+async fn a_certificate_failure_with_the_manual_entries_only_still_fails_the_start() {
+    fn always_fail(_: &[SocketAddr]) -> Result<(), TlsError> {
+        Err(TlsError::File {
+            file: "board.crt".to_owned(),
+            reason: "test".to_owned(),
+        })
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let dirs = dirs_of(tmp.path());
+    std::fs::create_dir_all(&dirs.config).unwrap();
+    let path = dirs.deck_config();
+    let toml = "name = \"d\"\ntailnet_auto = false\nlisten = [\"127.0.0.1:0\"]\nlink_listen = [\"127.0.0.1:0\"]\n";
+    std::fs::write(&path, toml).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let options = StartOptions {
+        certificate_check: Some(always_fail),
+        ..StartOptions::default()
+    };
+    let err = RunningDeck::start(&dirs, &DeckConfig::load(&path).unwrap(), fast(), options)
+        .await
+        .expect_err("the start fails");
+    assert!(err.to_string().contains("board.crt"), "{err}");
+}
+
+/// The migration from an absent key: the mode is on, and a first start with
+/// the default saves the tailnet addresses (design 15.2).
+#[tokio::test]
+async fn an_absent_key_is_on_at_the_start() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = fake(tmp.path(), "tailscale", STATUS, None);
+    let toml = format!("name = \"d\"\ntailscale_bin = \"{bin}\"\n");
+    let r = run(tmp.path(), &toml).await;
+    assert!(r.0.tailnet_auto);
+    assert!(r.1.enabled && r.1.start_reason.is_none(), "{:?}", r.1);
+    assert_eq!(
+        r.0.tailnet_auto_listen,
+        vec![a("100.64.0.10:7420"), a("[fd7a:115c:a1e0::a]:7420")]
+    );
+    // A saved `false` runs nothing.
+    let tmp2 = tempfile::tempdir().unwrap();
+    let marker = tmp2.path().join("ran");
+    let bin2 = fake(tmp2.path(), "tailscale", STATUS, Some(&marker));
+    let toml = format!("name = \"d\"\ntailnet_auto = false\ntailscale_bin = \"{bin2}\"\n");
+    let r = run(tmp2.path(), &toml).await;
+    assert_eq!(r.1, TailnetStart::default());
+    assert!(!marker.exists());
 }

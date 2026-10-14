@@ -9,8 +9,8 @@ import {
   autoNotes,
   clockText,
   groupFingerprint,
-  offersWindows,
   useButton,
+  usesWindows,
   windowText,
 } from './model';
 import { saveDeckKey } from './save';
@@ -25,7 +25,8 @@ const VIEW: TailnetView = {
   userspace: false,
   managed: { listen: ['100.64.0.1:7420'], link_listen: ['100.64.0.1:7421'] },
   current: { listen: ['127.0.0.1:7420'], link_listen: ['127.0.0.1:7421'] },
-  auto: { enabled: false, skipped: [], changed: false },
+  // The key is absent from deck.toml: the mode is on (design 15.2).
+  auto: { enabled: true, skipped: [], changed: false },
 };
 
 const view = (extra: Partial<TailnetView> = {}): TailnetView => ({ ...VIEW, ...extra });
@@ -174,14 +175,7 @@ describe('approveError', () => {
 describe('TailnetCardView', () => {
   const card = (v: TailnetView, note: string | null = null) =>
     renderToStaticMarkup(
-      <TailnetCardView
-        view={v}
-        busy={false}
-        note={note}
-        onUse={noop}
-        onUseProgram={noop}
-        onAuto={noop}
-      />,
+      <TailnetCardView view={v} busy={false} note={note} onUse={noop} onAuto={noop} />,
     );
 
   test('Tailscale is not available', () => {
@@ -231,44 +225,40 @@ describe('TailnetCardView', () => {
   });
 });
 
-describe('the Windows program (design 14.1)', () => {
-  const windows = view({
-    available: false,
-    reason: 'windows_tailscale',
-    windows_program: '/mnt/c/Program Files/Tailscale/tailscale.exe',
-  });
+describe('Tailscale for Windows (design 15.1)', () => {
+  const windows = view({ program: 'windows' });
   const card = (v: TailnetView) =>
     renderToStaticMarkup(
-      <TailnetCardView
-        view={v}
-        busy={false}
-        note={null}
-        onUse={noop}
-        onUseProgram={noop}
-        onAuto={noop}
-      />,
+      <TailnetCardView view={v} busy={false} note={null} onUse={noop} onAuto={noop} />,
     );
 
-  test('the text and the button "Use this program"', () => {
-    expect(offersWindows(windows)).toBe(true);
+  test('the text, and no "Use this program" button', () => {
+    expect(usesWindows(windows)).toBe(true);
     const html = card(windows);
     expect(html).toContain(
-      'Tailscale for Windows is installed. Fleet Deck can use it from WSL. It then runs as your Windows user, with your Windows environment, the same as in a Windows terminal.',
+      'Using Tailscale for Windows. It runs as your Windows user, with your Windows environment, the same as in a Windows terminal.',
     );
     expect(WINDOWS_TEXT).toContain('the same as in a Windows terminal.');
-    expect(html).toContain('>Use this program</button>');
-    expect(html).toContain('/mnt/c/Program Files/Tailscale/tailscale.exe');
-    // Not the generic "not available" text, and no "Use tailnet".
-    expect(html).not.toContain('Tailscale is not available on the deck machine');
-    expect(html).not.toContain('Use tailnet');
+    expect(html).not.toContain('Use this program');
+    expect(html).not.toContain('Tailscale for Windows is installed');
+    // The normal card follows the text.
+    expect(html).toContain('Board address');
+    // The text shows also when Tailscale is not running.
+    const down = card(view({ program: 'windows', available: false, reason: 'not running' }));
+    expect(down).toContain('Using Tailscale for Windows.');
+    expect(down).toContain('Tailscale is not available on the deck machine: not running.');
+    expect(down).not.toContain('Use this program');
   });
 
-  test('another reason, or no path, is the generic text', () => {
-    expect(offersWindows(view({ available: false, reason: 'not installed' }))).toBe(false);
-    expect(offersWindows(view({ available: false, reason: 'windows_tailscale' }))).toBe(false);
-    expect(offersWindows(view())).toBe(false);
-    const html = card(view({ available: false, reason: 'windows_tailscale' }));
-    expect(html).toContain('Tailscale is not available on the deck machine: windows_tailscale.');
+  test('another program, or none, has no Windows text', () => {
+    for (const program of ['configured', 'path', 'macos_app'] as const) {
+      const v = view({ program });
+      expect(usesWindows(v)).toBe(false);
+      expect(card(v)).not.toContain('Using Tailscale for Windows');
+    }
+    expect(usesWindows(view())).toBe(false);
+    const html = card(view({ available: false, reason: 'not installed' }));
+    expect(html).toContain('Tailscale is not available on the deck machine: not installed.');
     expect(html).not.toContain('Use this program');
   });
 
@@ -284,18 +274,11 @@ describe('the Windows program (design 14.1)', () => {
 describe('the toggle "Use Tailscale automatically" (design 14.4)', () => {
   const card = (v: TailnetView, busy = false) =>
     renderToStaticMarkup(
-      <TailnetCardView
-        view={v}
-        busy={busy}
-        note={null}
-        onUse={noop}
-        onUseProgram={noop}
-        onAuto={noop}
-      />,
+      <TailnetCardView view={v} busy={busy} note={null} onUse={noop} onAuto={noop} />,
     );
 
   test('off and on, with the help text', () => {
-    const off = card(view());
+    const off = card(view({ auto: { enabled: false, skipped: [], changed: false } }));
     expect(off).toContain('Use Tailscale automatically');
     expect(off).toContain('type="checkbox"');
     expect(off).not.toContain('checked=""');
@@ -304,6 +287,8 @@ describe('the toggle "Use Tailscale automatically" (design 14.4)', () => {
     );
     const on = card(view({ auto: { enabled: true, skipped: [], changed: false } }));
     expect(on).toContain('checked=""');
+    // The deck sends the effective value: the key absent is on.
+    expect(card(view())).toContain('checked=""');
     expect(card(view(), true)).toContain('disabled=""');
   });
 
@@ -385,22 +370,21 @@ describe('saveDeckKey', () => {
     return { actions, calls, sent, asked, ask, cancel };
   }
 
-  test('"Use this program" asks first, then saves tailscale_bin', async () => {
+  test('turning it on asks first, then saves the key', async () => {
     const t = setup([SAVED]);
-    const program = '/mnt/c/Program Files/Tailscale/tailscale.exe';
     const out = await saveDeckKey(
       t.actions,
       t.ask,
-      'tailscale_bin',
-      program,
-      ['Tailscale program'],
+      'tailnet_auto',
+      true,
+      ['Tailscale: use automatically'],
       true,
     );
     expect(out).toEqual({ kind: 'saved' });
     expect(t.calls).toEqual(['ask', 'view', 'save']);
-    expect(t.asked).toEqual([['Tailscale program']]);
+    expect(t.asked).toEqual([['Tailscale: use automatically']]);
     expect(t.sent).toEqual([
-      { changes: { tailscale_bin: program }, revision: 'rev-1', elevation: 'el-1' },
+      { changes: { tailnet_auto: true }, revision: 'rev-1', elevation: 'el-1' },
     ]);
   });
 

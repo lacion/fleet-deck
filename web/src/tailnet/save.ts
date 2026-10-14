@@ -1,6 +1,5 @@
-// DL-178, tailnet design 14: one deck key saved from the Tailnet card ("Use this program" saves
-// `tailscale_bin`, the toggle saves `tailnet_auto`) through the normal settings save, with the
-// elevation of DL-172.
+// DL-178, tailnet design 14 and 15: one deck key saved from the Tailnet card (the toggle saves
+// `tailnet_auto`) through the normal settings save, with the elevation of DL-172.
 import { DECK, type SettingsActions } from '../settings/actions';
 import type { ElevationAsk } from '../settings/elevation';
 import { trySave } from '../settings/flow';

@@ -53,6 +53,9 @@ pub enum ServeError {
     Board(crate::http::BindError<TlsError>),
 }
 
+/// A test hook of the board certificate (see [`StartOptions::certificate_check`]).
+pub type CertificateCheck = fn(&[SocketAddr]) -> Result<(), TlsError>;
+
 /// What the process that runs the deck tells it (DL-172).
 #[derive(Debug, Clone, Default)]
 pub struct StartOptions {
@@ -66,6 +69,10 @@ pub struct StartOptions {
     /// it after the pairing. A restart of the deck then restarts that
     /// station.
     pub local_station: Arc<OnceLock<StationId>>,
+    /// A test hook: runs with the bound board addresses before the board
+    /// certificate is prepared; an error is a certificate failure.
+    #[doc(hidden)]
+    pub certificate_check: Option<CertificateCheck>,
 }
 
 /// Runs the deck until `stop` completes.
@@ -96,6 +103,8 @@ pub struct RunningDeck {
     /// self-signed (`None` without a board listener).
     pub endpoint: Option<BoardEndpoint>,
     board: BoardServer,
+    /// What the automatic tailnet start did (the Tailnet card shows it).
+    tailnet_start: SharedStart,
     server: tokio::task::JoinHandle<()>,
     /// The automations scheduler (R5, DL-168).
     scheduler: tokio::task::JoinHandle<()>,
@@ -127,6 +136,7 @@ impl RunningDeck {
             overrides,
             restart,
             local_station,
+            certificate_check,
         } = options;
         let deck_settings = crate::http::settings_routes::DeckSettings {
             writer: Arc::new(SettingsWriter::<DeckHolder>::new(
@@ -184,11 +194,25 @@ impl RunningDeck {
         let live_cell = crate::live::LiveCell::new(live);
         let board_live = live_cell.clone();
         let tailnet_start: SharedStart = Arc::default();
-        let board_start = Arc::clone(&tailnet_start);
-        let board = BoardServer::bind_with(
-            &board_manual,
-            &board_auto,
-            move |bound| {
+        // The board state and its certificate, built from the bound
+        // addresses. A new closure per try: the certificate fallback binds
+        // again.
+        let build = || {
+            let tailnet = tailnet.clone();
+            let board_store = board_store.clone();
+            let board_link = Arc::clone(&board_link);
+            let board_node = Arc::clone(&board_node);
+            let tls_dir = tls_dir.clone();
+            let board_elevations = Arc::clone(&board_elevations);
+            let board_settings = board_settings.clone();
+            let board_live = board_live.clone();
+            let board_start = Arc::clone(&tailnet_start);
+            let restart = restart.clone();
+            let local_station = Arc::clone(&local_station);
+            move |bound: &[SocketAddr]| {
+                if let Some(check) = certificate_check {
+                    check(bound)?;
+                }
                 let tls =
                     BoardTls::load_or_create(&tls_dir, &cert_names(bound, tailnet.as_deref()))?;
                 let board = Arc::new(Board {
@@ -212,11 +236,24 @@ impl RunningDeck {
                     host: tailscale_wsl::detect,
                 });
                 Ok((board, tls))
-            },
-            rx.clone(),
-        )
-        .await
-        .map_err(ServeError::Board)?;
+            }
+        };
+        let board = match BoardServer::bind_with(&board_manual, &board_auto, build(), rx.clone())
+            .await
+        {
+            Ok(board) => board,
+            // The certificate for the automatic entries cannot be made
+            // (design 15.3): bind the manual entries only. The existing
+            // certificate names them.
+            Err(crate::http::BindError::Build(e)) if !board_auto.is_empty() => {
+                tracing::warn!(error = %e, "the board certificate for the automatic tailnet entries could not be made");
+                start.start_reason = Some(certificate_reason(&e));
+                BoardServer::bind_with(&board_manual, &[], build(), rx.clone())
+                    .await
+                    .map_err(ServeError::Board)?
+            }
+            Err(e) => return Err(ServeError::Board(e)),
+        };
         start.skipped = node
             .skipped()
             .iter()
@@ -255,11 +292,21 @@ impl RunningDeck {
             store,
             endpoint,
             board,
+            tailnet_start,
             server,
             scheduler,
             shutdown,
             socket,
         })
+    }
+
+    /// What the automatic tailnet start did, as the Tailnet card shows it.
+    #[must_use]
+    pub fn tailnet_start(&self) -> TailnetStart {
+        self.tailnet_start
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     /// Stops the board, the local socket and the link node.
@@ -274,6 +321,18 @@ impl RunningDeck {
             tracing::debug!(error = %e, "socket file");
         }
     }
+}
+
+/// The reason on the Tailnet card when the board certificate for the
+/// automatic entries could not be made (design 15.3).
+fn certificate_reason(error: &TlsError) -> String {
+    let kind = match error {
+        TlsError::File { .. } => "file".to_owned(),
+        TlsError::Generate(_) => "generate".to_owned(),
+        TlsError::Rustls(_) => "tls".to_owned(),
+        TlsError::Io(e) => format!("{:?}", e.kind()),
+    };
+    format!("the board certificate could not be updated ({kind})")
 }
 
 /// Splits `list` into the entries that the automatic mode added (`auto`) and

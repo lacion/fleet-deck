@@ -28,7 +28,7 @@ use axum::http::StatusCode;
 use fleetdeck_core::netscope::{self, AddrClass};
 use fleetdeck_core::settings::SaveError;
 use fleetdeck_core::tailscale::{self, Node, Status, TailscaleCli, TailscaleError};
-use fleetdeck_core::tailscale_wsl::{self, HostFacts};
+use fleetdeck_core::tailscale_wsl::HostFacts;
 use fleetdeck_proto::settings::SettingsChange;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -196,9 +196,10 @@ pub struct TailnetView {
     available: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     reason: Option<String>,
-    /// The Windows program that the owner can choose (WSL only).
+    /// How the program was chosen: `configured`, `path`, `macos_app` or
+    /// `windows` (design 15.1).
     #[serde(skip_serializing_if = "Option::is_none")]
-    windows_program: Option<String>,
+    program: Option<&'static str>,
     #[serde(rename = "self", skip_serializing_if = "Option::is_none")]
     this: Option<SelfView>,
     userspace: bool,
@@ -206,15 +207,6 @@ pub struct TailnetView {
     current: Lists,
     auto: AutoView,
 }
-
-/// The Windows program to offer: no `tailscale_bin`, no program found and a
-/// Windows program in the facts of this machine.
-fn windows_of(saved: Option<&Saved>, facts: &HostFacts) -> Option<PathBuf> {
-    let configured = saved.and_then(|s| s.tailscale_bin.as_deref());
-    tailscale_wsl::windows_choice(configured, tailscale::is_installed(), facts)
-}
-
-const WINDOWS_REASON: &str = "windows_tailscale";
 
 /// `GET /api/tailnet`.
 ///
@@ -239,20 +231,24 @@ pub async fn get(
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .clone();
-    // The Windows program is never run here: only the hint is answered.
-    let status = match windows_of(saved.as_ref(), &facts) {
-        Some(program) => Err(Hint(program)),
-        None => Ok(status_fresh(&cli_of(saved.as_ref())).await),
-    };
-    Ok(Json(view_of(saved.as_ref(), status, &facts, &start)))
+    let cli = cli_of(saved.as_ref());
+    let status = status_fresh(&cli).await;
+    // A program was chosen unless the lookup found nothing to run.
+    let program =
+        (!matches!(status, Err(TailscaleError::NotInstalled))).then(|| cli.kind().as_str());
+    Ok(Json(view_of(
+        saved.as_ref(),
+        status,
+        program,
+        &facts,
+        &start,
+    )))
 }
-
-/// The hint about the Windows program, in place of a Tailscale answer.
-struct Hint(PathBuf);
 
 fn view_of(
     saved: Option<&Saved>,
-    status: Result<Result<Status, TailscaleError>, Hint>,
+    status: Result<Status, TailscaleError>,
+    program: Option<&'static str>,
     facts: &HostFacts,
     start: &TailnetStart,
 ) -> TailnetView {
@@ -282,10 +278,10 @@ fn view_of(
             })
             .collect();
     }
-    let unchanged = |reason: Option<String>, windows: Option<String>, auto: AutoView| TailnetView {
+    let unchanged = |reason: Option<String>, auto: AutoView| TailnetView {
         available: reason.is_none(),
         reason: reason.clone(),
-        windows_program: windows,
+        program,
         this: None,
         userspace: false,
         managed: Managed {
@@ -300,15 +296,8 @@ fn view_of(
         auto,
     };
     let status = match status {
-        Ok(Ok(s)) => s,
-        Ok(Err(e)) => return unchanged(Some(e.reason()), None, auto),
-        Err(Hint(program)) => {
-            return unchanged(
-                Some(WINDOWS_REASON.to_owned()),
-                Some(program.display().to_string()),
-                auto,
-            );
-        }
+        Ok(s) => s,
+        Err(e) => return unchanged(Some(e.reason()), auto),
     };
     let plan = tailscale::plan_use(&status, listen, link_listen, tailscale::is_usable);
     let this = SelfView {
@@ -342,7 +331,7 @@ fn view_of(
         available: true,
         // On WSL with NAT networking the Windows addresses are not here.
         reason: (plan.userspace && facts.wsl).then(|| WSL_NAT.to_owned()),
-        windows_program: None,
+        program,
         this: Some(this),
         userspace: plan.userspace,
         managed,
@@ -592,9 +581,6 @@ pub struct DevicesView {
     available: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     reason: Option<String>,
-    /// The Windows program that the owner can choose (WSL only).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    windows_program: Option<String>,
     devices: Vec<DeviceView>,
 }
 
@@ -650,22 +636,12 @@ pub async fn devices(
     )
     .await?;
     let saved = read_saved(&board).await?;
-    if let Some(program) = windows_of(saved.as_ref(), &(board.host)()) {
-        // The Windows program is never run here: only the hint is answered.
-        return Ok(Json(DevicesView {
-            available: false,
-            reason: Some(WINDOWS_REASON.to_owned()),
-            windows_program: Some(program.display().to_string()),
-            devices: Vec::new(),
-        }));
-    }
     let status = match status_cached(&cli_of(saved.as_ref())).await {
         Ok(s) => s,
         Err(e) => {
             return Ok(Json(DevicesView {
                 available: false,
                 reason: Some(e.reason()),
-                windows_program: None,
                 devices: Vec::new(),
             }));
         }
@@ -719,7 +695,6 @@ pub async fn devices(
     Ok(Json(DevicesView {
         available: true,
         reason: None,
-        windows_program: None,
         devices,
     }))
 }

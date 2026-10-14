@@ -14,12 +14,8 @@ export function useButton(view: TailnetView): 'use' | 'update' | 'none' {
   return present === 0 ? 'use' : 'update';
 }
 
-/** The reason that the deck gives when only the Windows program of WSL exists. */
-export const WINDOWS_REASON = 'windows_tailscale';
-
-/** True when the card offers the Windows program: the reason and the path are both there. */
-export const offersWindows = (view: TailnetView): boolean =>
-  !view.available && view.reason === WINDOWS_REASON && view.windows_program !== undefined;
+/** True when the deck uses Tailscale for Windows from WSL (design 15.1). */
+export const usesWindows = (view: TailnetView): boolean => view.program === 'windows';
 
 /** The notes under the toggle: why it did not apply, the skipped addresses, and a change. */
 export function autoNotes(auto: AutoView): string[] {

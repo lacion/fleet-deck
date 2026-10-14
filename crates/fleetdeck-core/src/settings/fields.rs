@@ -332,7 +332,7 @@ pub fn deck_fields() -> Vec<FieldMeta> {
             "Use Tailscale automatically",
             K::Bool,
             Restart,
-            "At each start, put the tailnet addresses of this machine in the listen lists.",
+            "On by default. At each start, put the tailnet addresses of this machine in the listen lists.",
         )
         .danger(),
         field(

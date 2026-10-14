@@ -40,9 +40,15 @@ fn the_field_table_has_the_three_keys() {
 }
 
 #[test]
-fn the_keys_default_to_off_and_empty() {
+fn the_mode_defaults_to_on_and_the_lists_to_empty() {
     let c = DeckConfig::parse("").unwrap();
-    assert!(!c.tailnet_auto);
+    assert!(c.tailnet_auto);
+    // A saved `false` stays `false`.
+    assert!(
+        !DeckConfig::parse("tailnet_auto = false\n")
+            .unwrap()
+            .tailnet_auto
+    );
     assert!(c.tailnet_auto_listen.is_empty() && c.tailnet_auto_link_listen.is_empty());
     let c = DeckConfig::parse(
         "tailnet_auto = true\ntailnet_auto_listen = [\"100.64.0.5:7420\"]\ntailnet_auto_link_listen = [\"[fd7a:115c:a1e0::5]:7421\"]\n",
@@ -77,7 +83,7 @@ fn the_view_shows_the_values_of_the_three_keys() {
 
 #[test]
 fn turning_the_mode_on_needs_the_elevation_and_off_does_not() {
-    let (_dir, path, w) = deck_writer("name = \"d\"\n");
+    let (_dir, path, w) = deck_writer("name = \"d\"\ntailnet_auto = false\n");
     let view = view_deck(&path, &[]).unwrap();
     let on = change_with(&view.revision, json!({ "tailnet_auto": true }));
     assert_eq!(
@@ -89,6 +95,39 @@ fn turning_the_mode_on_needs_the_elevation_and_off_does_not() {
     let (saved, new, ()) = w.save(&on, true, ok_prepare).unwrap();
     assert!(new.tailnet_auto);
     assert_eq!(saved.restart_needed, vec!["tailnet_auto"]);
+    let view = view_deck(&path, &[]).unwrap();
+    let off = change_with(&view.revision, json!({ "tailnet_auto": false }));
+    let (_, new, ()) = w.save(&off, false, ok_prepare).unwrap();
+    assert!(!new.tailnet_auto);
+}
+
+#[test]
+fn an_absent_key_is_on_and_a_reset_of_a_saved_false_needs_the_elevation() {
+    // Absent: on. The view shows the effective value.
+    let (_dir, path, w) = deck_writer("name = \"d\"\n");
+    let view = view_deck(&path, &[]).unwrap();
+    assert_eq!(view.values["tailnet_auto"], json!(true));
+    // On to the default (`null`), and on to `true`: no elevation.
+    let c = change_with(&view.revision, json!({ "tailnet_auto": null }));
+    w.save(&c, false, ok_prepare).unwrap();
+    let view = view_deck(&path, &[]).unwrap();
+    let c = change_with(&view.revision, json!({ "tailnet_auto": true }));
+    w.save(&c, false, ok_prepare).unwrap();
+    // A saved `false` reset to the default (on) needs the elevation.
+    let (_dir, path, w) = deck_writer("name = \"d\"\ntailnet_auto = false\n");
+    let view = view_deck(&path, &[]).unwrap();
+    assert_eq!(view.values["tailnet_auto"], json!(false));
+    let reset = change_with(&view.revision, json!({ "tailnet_auto": null }));
+    assert_eq!(
+        w.save(&reset, false, ok_prepare).unwrap_err(),
+        SaveError::ElevationRequired {
+            keys: vec!["tailnet_auto".into()]
+        }
+    );
+    let (_, new, ()) = w.save(&reset, true, ok_prepare).unwrap();
+    assert!(new.tailnet_auto);
+    // Off from on does not need it.
+    let (_dir, path, w) = deck_writer("name = \"d\"\n");
     let view = view_deck(&path, &[]).unwrap();
     let off = change_with(&view.revision, json!({ "tailnet_auto": false }));
     let (_, new, ()) = w.save(&off, false, ok_prepare).unwrap();

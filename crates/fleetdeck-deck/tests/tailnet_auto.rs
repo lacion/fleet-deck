@@ -10,13 +10,13 @@ mod settings_support;
 
 use std::net::{IpAddr, SocketAddr};
 use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use fleetdeck_core::config::DeckConfig;
 use fleetdeck_core::paths::NodeDirs;
-use fleetdeck_core::tailscale::{self, TailscaleCli};
-use fleetdeck_core::tailscale_wsl::{HostFacts, WINDOWS_PROGRAM};
+use fleetdeck_core::tailscale::TailscaleCli;
+use fleetdeck_core::tailscale_wsl::HostFacts;
 use fleetdeck_deck::serve::{RunningDeck, StartOptions};
 use fleetdeck_deck::tailnet_auto::{self, TailnetStart, apply_at_start, apply_at_start_with};
 use fleetdeck_link::reconnect::BackoffPolicy;
@@ -295,7 +295,7 @@ async fn the_mode_off_runs_nothing_and_saves_nothing() {
     let tmp = tempfile::tempdir().unwrap();
     let marker = tmp.path().join("ran");
     let bin = fake(tmp.path(), "tailscale", STATUS, Some(&marker));
-    let toml = format!("name = \"d\"\ntailscale_bin = \"{bin}\"\n");
+    let toml = format!("name = \"d\"\ntailnet_auto = false\ntailscale_bin = \"{bin}\"\n");
     let r = run(tmp.path(), &toml, &[], &HostFacts::default(), &all_usable).await;
     assert_eq!(r.start, TailnetStart::default());
     assert_eq!(r.text, r.before);
@@ -518,32 +518,43 @@ async fn a_status_answer_after_the_deadline_is_not_saved() {
     assert_eq!(std::fs::read_to_string(&settings.path).unwrap(), before);
 }
 
-/// The Windows program is not run unless `tailscale_bin` names it.
+/// A late result saves nothing (design 15.3): the program choice blocks the
+/// thread past the deadline, the start goes on at the deadline, and when the
+/// thread ends later nothing is written.
 #[tokio::test]
-async fn the_windows_program_is_not_run_without_the_setting() {
-    if tailscale::is_installed() {
-        eprintln!("note: tailscale is on PATH of this machine; the test needs it absent");
-        return;
-    }
+async fn a_late_result_of_the_thread_saves_nothing() {
     let tmp = tempfile::tempdir().unwrap();
-    let marker = tmp.path().join("ran");
-    let windows = fake(tmp.path(), "tailscale.exe", STATUS, Some(&marker));
-    let facts = HostFacts {
-        wsl: true,
-        windows_program: Some(PathBuf::from(windows)),
-        nonlocal_bind: false,
-    };
-    // No `tailscale_bin`: the program is looked up, not found, not run.
-    nothing_saved(
-        tmp.path(),
-        "name = \"d\"\ntailnet_auto = true\n",
-        &facts,
+    let bin = fake(tmp.path(), "tailscale", STATUS, None);
+    let settings = deck_settings(tmp.path(), &head(&bin));
+    let config = DeckConfig::load(&settings.path).unwrap();
+    let before = std::fs::read_to_string(&settings.path).unwrap();
+    let started = Instant::now();
+    let (next, start) = apply_at_start_with(
+        &settings,
+        config.clone(),
+        &[],
+        &HostFacts::default(),
         &all_usable,
-        "Tailscale is not available: not installed.",
+        Instant::now() + Duration::from_millis(200),
+        |configured| {
+            std::thread::sleep(Duration::from_millis(700));
+            TailscaleCli::new(configured.unwrap())
+        },
     )
     .await;
-    assert!(!marker.exists(), "the Windows program ran");
-    assert_ne!(WINDOWS_PROGRAM, "");
+    assert!(
+        started.elapsed() < Duration::from_millis(600),
+        "{:?}",
+        started.elapsed()
+    );
+    assert_eq!(next, config);
+    assert_eq!(
+        start.start_reason.as_deref(),
+        Some("Tailscale did not answer within 3 seconds.")
+    );
+    // The thread ends after the start went on: the file does not change.
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    assert_eq!(std::fs::read_to_string(&settings.path).unwrap(), before);
 }
 
 fn dirs_of(root: &Path) -> NodeDirs {
@@ -608,8 +619,9 @@ async fn a_manual_entry_that_cannot_be_bound_still_fails_the_start() {
     std::fs::create_dir_all(&dirs.config).unwrap();
     let busy = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = busy.local_addr().unwrap().port();
-    let toml =
-        format!("name = \"d\"\nlisten = [\"127.0.0.1:0\"]\nlink_listen = [\"127.0.0.1:{port}\"]\n");
+    let toml = format!(
+        "name = \"d\"\ntailnet_auto = false\nlisten = [\"127.0.0.1:0\"]\nlink_listen = [\"127.0.0.1:{port}\"]\n"
+    );
     let path = dirs.deck_config();
     std::fs::write(&path, &toml).unwrap();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
@@ -763,7 +775,7 @@ async fn with_the_mode_off_a_provenance_entry_that_cannot_bind_fails_the_start()
     std::fs::create_dir_all(&dirs.config).unwrap();
     let gone_link = "100.127.254.254:7421";
     let toml = format!(
-        "name = \"d\"\nlisten = [\"127.0.0.1:0\"]\n\
+        "name = \"d\"\ntailnet_auto = false\nlisten = [\"127.0.0.1:0\"]\n\
          link_listen = [\"127.0.0.1:0\", \"{gone_link}\"]\n\
          tailnet_auto_link_listen = [\"{gone_link}\"]\n"
     );
