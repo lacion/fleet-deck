@@ -28,6 +28,50 @@ export type PasteNoteState = { readonly tone: 'busy' | 'error'; readonly text: s
 
 const PASTE_ERROR_MS = 6000;
 
+/** The characters of an OSC 52 text that the ask bar shows before it cuts the preview. */
+const COPY_PREVIEW_CHARS = 120;
+
+/** The one line preview of a text: control characters are spaces, a long text is cut. */
+export function copyPreview(text: string): string {
+  const flat = text.slice(0, COPY_PREVIEW_CHARS).replace(/[\u0000-\u001f\u007f]/g, ' ');
+  return text.length > COPY_PREVIEW_CHARS ? `${flat}…` : flat;
+}
+
+/** The bar over the terminal while a program asks to copy text (NV-06). The person decides. */
+export function CopyAsk({
+  text,
+  onDone,
+}: {
+  readonly text: string | null;
+  /** The person chose: the bar goes away. */
+  readonly onDone: () => void;
+}) {
+  if (text === null) return null;
+  return (
+    <div className="fd-term-copy" role="status" aria-live="polite">
+      <p>
+        The program in this terminal asks to copy {text.length.toLocaleString()} characters to your
+        clipboard.
+      </p>
+      <p className="fd-term-copy-preview">{copyPreview(text)}</p>
+      <div className="fd-term-actions">
+        <button
+          type="button"
+          onClick={() => {
+            void navigator.clipboard?.writeText(text)?.catch(() => undefined);
+            onDone();
+          }}
+        >
+          Copy
+        </button>
+        <button type="button" onClick={onDone}>
+          Ignore
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /** The note when the key bar cannot read the clipboard. */
 const PASTE_BLOCKED = 'Paste is blocked by the browser. Long-press the terminal to paste.';
 
@@ -115,6 +159,7 @@ export function Terminal({ station, shellId, kind, actions, active, touch, onEnd
   const [attempt, setAttempt] = useState(0);
   const [ctrl, setCtrlState] = useState(false);
   const [note, setNote] = useState<PasteNoteState | null>(null);
+  const [copyAsk, setCopyAsk] = useState<string | null>(null);
   const ctrlRef = useRef(false);
   const activeRef = useRef(active);
   const handles = useRef<Handles | null>(null);
@@ -133,6 +178,7 @@ export function Terminal({ station, shellId, kind, actions, active, touch, onEnd
     let cleanup = () => {};
     setStatus('connecting');
     setNote(null);
+    setCopyAsk(null);
     void (async () => {
       const [{ Terminal: XTerm }, { FitAddon }] = await Promise.all([
         import('@xterm/xterm'),
@@ -239,10 +285,11 @@ export function Terminal({ station, shellId, kind, actions, active, touch, onEnd
         }
         return true;
       });
-      // OSC 52: the agent copies to the clipboard. A read request gets no answer.
+      // OSC 52: the program asks to copy; the person decides (NV-06). A read request gets no
+      // answer. A new request replaces an older one that is still shown.
       const osc = term.parser.registerOscHandler(52, (data) => {
         const text = oscCopyText(data);
-        if (text !== null) void navigator.clipboard?.writeText(text)?.catch(() => undefined);
+        if (text !== null && !disposed) setCopyAsk(text);
         return true;
       });
       const onTheme = () => {
@@ -403,6 +450,7 @@ export function Terminal({ station, shellId, kind, actions, active, touch, onEnd
   };
   return (
     <div className="fd-term" style={{ height: '100%' }} data-terminal={shellId}>
+      <CopyAsk text={copyAsk} onDone={() => setCopyAsk(null)} />
       <div className="fd-term-host" ref={host} />
       <PasteNote note={note} />
       {status === 'connecting' ? (
