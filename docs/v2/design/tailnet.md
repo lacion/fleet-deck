@@ -133,3 +133,7 @@
 | --- | --- |
 | B request id must exist before the send | §5.3 the station makes `request_id`, persists it, then sends; the deck binds and refuses conflicts. |
 | B retry file lacks the signed context | §5.4 the retry file holds the complete canonical request and its hash; verification uses it. |
+
+## 13. Architect refinement during the build (2026-10-14)
+
+§3's stored key `tailnet_managed` is dropped: the settings writer refuses read-only keys and has no hidden field. The managed entries are instead every `listen` / `link_listen` entry in the Tailscale address range (`netscope::classify == Tailnet`); "Use tailnet"/"Update" replaces those in each list and keeps every other entry. The effect is the same as §3 for every address the deck added, and a hand-written tailnet-range address is treated as managed. Only locally assigned tailnet IPs are added; when none is assigned the deck reports userspace networking.
