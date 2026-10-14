@@ -481,10 +481,18 @@ fn start(
     };
     let (mut cwd, mut plan) = match &workspace {
         Some(WorkspaceRequest::Clone { url }) => {
-            match clone_reuse::clone_or_reuse(url, &spec.cwd, canonical_inside).map_err(refused)? {
+            let (path, plan) = match clone_reuse::clone_or_reuse(url, &spec.cwd, canonical_inside)
+                .map_err(refused)?
+            {
                 CloneTarget::Clone(plan, path) => (path, Some(plan)),
                 CloneTarget::Reuse(path) => (path, None),
+            };
+            // A clone that another start still runs owns its directory.
+            let key = path.to_string_lossy();
+            if crate::store::provisioning::clone_pending_for(d.connection(), &key)? {
+                return Err(refused(clone_reuse::being_cloned(&path)));
             }
+            (path, plan)
         }
         _ => (
             policy.workspace(&spec.cwd).map_err(|e| match e {

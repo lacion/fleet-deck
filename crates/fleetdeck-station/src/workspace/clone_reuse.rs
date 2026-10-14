@@ -33,6 +33,16 @@ fn forbidden(message: impl Into<String>) -> Refused {
     }
 }
 
+/// The refusal of a clone start into `path` while another start clones into
+/// it: the directory is not ready, whatever Git has written so far.
+#[must_use]
+pub fn being_cloned(path: &Path) -> Refused {
+    invalid(format!(
+        "`{}` is being cloned by another session; try again when it is ready",
+        path.display()
+    ))
+}
+
 /// The plan of a clone start into `target`: a clone when `target` does not
 /// exist, else the reuse of `target` when it is a plain clone of `url`.
 ///
