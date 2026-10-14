@@ -198,16 +198,20 @@
 | --- | --- |
 | BLOCKER one provenance list for two channels | §14.4 `tailnet_auto_listen` and `tailnet_auto_link_listen`; an address already manual in a channel is never recorded as automatic there; manual saves and turning the mode off reconcile the provenance in the same save; §14.5 regression test |
 
-## 15. Owner decision: automatic by default (revision 2, proposed, 2026-10-14)
+## 15. Owner decision: automatic by default (revision 3, proposed, 2026-10-14)
 
 - **Owner decision (2026-10-14):** "this should be all automatically detected, and in any case overriden. the user experience is paramount, they should not be experts". It changes §14.1 (the Windows program needed the owner's elevated "Use this program") and the default of §14.4 (`tailnet_auto` off).
 - **Review finding overridden by the owner:** the §14 revision-1 BLOCKER "a regular-file check does not establish trust in the Windows executable" was closed by the elevated choice. The owner now accepts automatic use, with the limits of §15.1. The Windows-environment exposure (§14.1) is the same as running `tailscale` in a Windows terminal; the card states it.
-- **Revision 1** got DESIGN REVIEW FAIL (1 blocker, 3 major; `/tmp/fd-goal/adversary-report-tn15.md`); §15.5 maps each finding.
+- **Revision 1** got DESIGN REVIEW FAIL (1 blocker, 3 major; `/tmp/fd-goal/adversary-report-tn15.md`); revision 2 got RE-REVIEW FAIL (1 blocker: mount redirection; `/tmp/fd-goal/adversary-report-tn15-r2.md`). §15.5 and §15.6 map the findings.
 
 ### 15.1 Program choice
 
 - The program choice of §2 is: `tailscale_bin` (when set); else `tailscale` on `PATH`; else (macOS) the app's program; else, **only when the process runs in WSL (§14.1 detection)**, the Windows program at the standard install path, after these checks (all in the shared core resolver, `TailscaleCli::locate`, so the deck, the station and the CLI use the same rule):
-  1. `/mnt/c` is a mount point of the WSL drive C: (`/proc/self/mountinfo` has an entry with mount point `/mnt/c` and file system type `9p` or `drvfs`).
+  1. `/mnt/c` is the WSL mount of the root of drive C:, read from `/proc/self/mountinfo` (fields unescaped, `\134` = `\`):
+     - exactly one entry has the mount point `/mnt/c` (no stacked mount), and it has the root `/`, the file system type `9p` or `drvfs`, and the mount source `C:\` (case-insensitive); for `9p`, its super options also hold `path=C:\` (case-insensitive);
+     - no entry has the mount point `/`-relative ancestor `/mnt`, and none has a mount point below `/mnt/c` that is the executable path or one of its directories (`/mnt/c/Program Files`, `/mnt/c/Program Files/Tailscale`, the `.exe`): no bind or other mount redirects a component;
+     - when `/proc/self/mountinfo` cannot be read or parsed, no Windows program is used.
+     (On the owner's machine the entry is `131 80 0:70 / /mnt/c rw,noatime - 9p C:\134 rw,aname=drvfs;path=C:\;…`.)
   2. Each of `/mnt/c/Program Files`, `/mnt/c/Program Files/Tailscale` is a real directory and `/mnt/c/Program Files/Tailscale/tailscale.exe` a regular file, checked component by component with `symlink_metadata` (no component is a symbolic link; WSL shows Windows junctions and symbolic links as symbolic links, so a reparse point fails the check).
   3. Else no Windows program is used. No other Windows path is ever tried.
 - **Residual risk (accepted, stated):** between the check and the start, the file or a directory could be replaced by someone who can write to `C:\Program Files\Tailscale`; on Windows only administrators can, and a Windows administrator already controls the machine and WSL. Fleet Deck does not try to defend against a Windows administrator.
@@ -227,7 +231,7 @@
 
 ### 15.4 Tests
 
-- Program choice: WSL + the standard tree → `windows`; a symbolic link at any component → not used; `/mnt/c` not a drvfs/9p mount → not used; not WSL → not used; `tailscale_bin` and `PATH` win; the station and the CLI use the same choice.
+- Program choice: WSL + the standard tree → `windows`; a symbolic link at any component → not used; `/mnt/c` not a drvfs/9p mount → not used; a wrong drive (`D:\` as the source), a subtree (root not `/` or `path=C:\Users\x`), a stacked second `/mnt/c` entry, a mount on `/mnt`, and a bind mount on `/mnt/c/Program Files/Tailscale` → not used; an unreadable `mountinfo` → not used (fixture-driven parser tests); not WSL → not used; `tailscale_bin` and `PATH` win; the station and the CLI use the same choice.
 - `tailnet_auto` absent → on; saved `false` → off; on → `null` keeps the provenance; `false` → `null` (on) needs elevation and keeps nothing to clear; turning on from `false` needs elevation.
 - A stalled launch (a fake program on a path whose start blocks, or a test hook that blocks the thread past the deadline): the deck starts with the manual listeners at the deadline; a late answer saves nothing.
 - A certificate write failure with an automatic entry: the deck starts with the manual entries and the old certificate; the card reason; the migration from an absent key.
@@ -241,3 +245,9 @@
 | MAJOR reset to `null` erases provenance while on | §15.2 provenance follows the resulting effective value |
 | MAJOR deadline not enforced during the launch | §15.3 a dedicated thread under the absolute deadline; late answers inert |
 | MAJOR TLS update can stop the start | §15.3 fall back to the manual entries and the existing certificate; card reason |
+
+### 15.6 Re-review map (revision 2 → revision 3)
+
+| Finding | Change |
+| --- | --- |
+| BLOCKER mount checks permit execution outside the protected install | §15.1 step 1: exactly one `/mnt/c` entry with root `/`, source `C:\`, `path=C:\`; no mount on `/mnt` or on any component of the path; unreadable `mountinfo` → no Windows program; §15.4 fixture tests |
