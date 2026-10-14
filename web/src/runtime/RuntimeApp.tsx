@@ -27,6 +27,8 @@ import { archived } from '../ui/archive';
 import type { Connection } from './connection';
 import { deviceLinkAction } from './deviceLink';
 import { viewsActions } from './views';
+import { ReviewProvider } from '../review/context';
+import { reviewActions, reviewHttp } from '../review/api';
 import { JoinPage } from '../sharing/JoinPage';
 import { join, joinToken } from '../sharing/join';
 import { type PeopleEnv, PeopleProvider } from '../sharing/context';
@@ -194,6 +196,20 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
             scopeText.split(' '),
           ),
     [connection, scopeText, guest],
+  );
+  // DL-179: review comments. The deck decides who may write, for every kind of login.
+  const review = useMemo(
+    () =>
+      reviewActions({
+        get: (path, timeoutMs) => connection.get(path, timeoutMs),
+        post: (path, body) => connection.post(path, body),
+        ...reviewHttp(
+          (path, init) => fetch(path, init),
+          () => connection.getSnapshot().login?.csrf ?? null,
+          10_000,
+        ),
+      }),
+    [connection],
   );
   const conflicts = useMemo(
     () => (guest ? undefined : conflictLoader((path) => connection.get(path))),
@@ -423,33 +439,35 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
   };
   return (
     <PeopleProvider value={people}>
-      <App
-        sessions={state.sessions}
-        stations={state.stations}
-        freshness={state.freshness}
-        actions={actions}
-        timelines={state.timelines}
-        watch={watch}
-        sessionActions={commands}
-        filesFor={filesFor}
-        spawn={spawn}
-        assign={assign}
-        fleet={fleet}
-        feed={state.feed}
-        artifacts={artifacts}
-        integrations={integrations}
-        plans={plans}
-        automations={automations}
-        conflicts={conflicts}
-        extras={extras}
-        chrome={chrome}
-        terminals={terminals}
-        summaryWatch={summaryWatch}
-        onReturnTerminal={returnTerminal}
-        race={race}
-        views={views}
-        settings={settings}
-      />
+      <ReviewProvider value={review}>
+        <App
+          sessions={state.sessions}
+          stations={state.stations}
+          freshness={state.freshness}
+          actions={actions}
+          timelines={state.timelines}
+          watch={watch}
+          sessionActions={commands}
+          filesFor={filesFor}
+          spawn={spawn}
+          assign={assign}
+          fleet={fleet}
+          feed={state.feed}
+          artifacts={artifacts}
+          integrations={integrations}
+          plans={plans}
+          automations={automations}
+          conflicts={conflicts}
+          extras={extras}
+          chrome={chrome}
+          terminals={terminals}
+          summaryWatch={summaryWatch}
+          onReturnTerminal={returnTerminal}
+          race={race}
+          views={views}
+          settings={settings}
+        />
+      </ReviewProvider>
     </PeopleProvider>
   );
 }

@@ -469,3 +469,20 @@ describe('hibernation (R6.6)', () => {
     ]);
   });
 });
+
+describe('the run item and input_id (DL-179)', () => {
+  const runOf = (extra: Record<string, unknown>) => {
+    const tree = buildTimeline(
+      envelopes('s', [
+        { kind: 'run.started', run_id: 'run-1', input_summary: 'go', origin: 'board', ...extra },
+      ]),
+    );
+    return tree.items.find((i) => i.type === 'run');
+  };
+  test('the run item keeps the input_id of the event', () => {
+    expect(runOf({ input_id: 'in-1' })).toMatchObject({ type: 'run', input_id: 'in-1' });
+  });
+  test('an older event has no input_id', () => {
+    expect(runOf({})).not.toHaveProperty('input_id');
+  });
+});

@@ -7,10 +7,13 @@ import {
   memo,
   type ReactNode,
   useEffect,
+  useMemo,
   useState,
 } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { CommentChip } from '../review/CommentChip';
+import { remarkCommentChips } from '../review/tokens';
 import { Check, Copy, Icon } from '../ui/icons';
 
 const COPIED_MS = 1500;
@@ -92,10 +95,48 @@ const components: Components = {
   ),
 };
 
-export const Markdown = memo(function Markdown({ text }: { text: string }) {
+/**
+ * `comments` (DL-179): the short ids of the comments that the caller may see. A token of one of
+ * them in the text becomes a chip; `onComment` opens the thread. Without `comments` nothing changes.
+ */
+export const Markdown = memo(function Markdown({
+  text,
+  comments,
+  onComment,
+}: {
+  text: string;
+  comments?: ReadonlySet<string>;
+  onComment?: (shortId: string) => void;
+}) {
+  const chips = comments !== undefined && comments.size > 0 ? comments : undefined;
+  const plugins = useMemo(
+    () => (chips === undefined ? PLUGINS : [...PLUGINS, remarkCommentChips(chips)]),
+    [chips],
+  );
+  const parts = useMemo<Components>(
+    () =>
+      chips === undefined
+        ? components
+        : {
+            ...components,
+            span: ({
+              node: _node,
+              children,
+              ...rest
+            }: ComponentProps<'span'> & { node?: unknown }) => {
+              const id = (rest as { 'data-comment'?: string })['data-comment'];
+              return id === undefined ? (
+                <span>{children}</span>
+              ) : (
+                <CommentChip shortId={id} onOpen={onComment} />
+              );
+            },
+          },
+    [chips, onComment],
+  );
   return (
     <div className="fd-md">
-      <ReactMarkdown remarkPlugins={PLUGINS} skipHtml components={components}>
+      <ReactMarkdown remarkPlugins={plugins} skipHtml components={parts}>
         {text}
       </ReactMarkdown>
     </div>

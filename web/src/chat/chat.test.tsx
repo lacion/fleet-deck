@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
+import type { ReviewComment, ReviewSummary } from '../gen';
 import type { Item } from '../session/timeline';
 import { ChatView } from './ChatView';
 import { Markdown } from './Markdown';
@@ -230,5 +231,110 @@ describe('ChatView', () => {
     const html = view({ items });
     expect(html).toContain('>Thinking</summary>');
     expect(html).not.toContain(' open');
+  });
+});
+
+describe('ChatView and review comments (DL-179)', () => {
+  const comment: ReviewComment = {
+    comment_id: '01J0000000000000000000000A',
+    short_id: 'c-abc234',
+    thread_id: '01J0000000000000000000000A',
+    snapshot: 'spawn:base',
+    path: 'src/a.ts',
+    side: 'new',
+    line_start: 3,
+    line_end: 5,
+    anchor_text: '',
+    anchor_kind: 'diff',
+    body: `${'x'.repeat(100)}\nsecond`,
+    author_kind: 'owner',
+    state: 'sent',
+    resolved: false,
+    created_at: 1,
+    updated_at: 1,
+  };
+  const sent: ReviewSummary = {
+    review_id: '01J0000000000000000000000B',
+    short_id: 'r-xyz789',
+    principal: 'owner',
+    delivery: 'delivered',
+    attempts: 1,
+    input_id: 'in-1',
+    sent_at: 1,
+    comment_ids: ['c-abc234', 'c-zzz999'],
+    command_id: 'cmd',
+  };
+  const review = (over: Partial<NonNullable<Parameters<typeof ChatView>[0]['review']>> = {}) => ({
+    reviews: [sent],
+    byShort: new Map([[comment.short_id, comment]]),
+    known: new Set([comment.short_id]),
+    onOpen: () => {},
+    ...over,
+  });
+  const run = (input: string, input_id?: string): Item => ({
+    type: 'run',
+    key: 'r1',
+    run_id: 'run-1',
+    input,
+    origin: 'board',
+    ...(input_id === undefined ? {} : { input_id }),
+  });
+
+  test('a run whose input_id matches a review is a Review card', () => {
+    const html = view({
+      items: [run('Review r-xyz789\n- c-abc234 src/a.ts L3-5: fix', 'in-1')],
+      review: review(),
+    });
+    expect(html).toContain('class="fd-review-card"');
+    expect(html).toContain('Review r-xyz789');
+    // The count is the number of comment_ids, even when one is not visible.
+    expect(html).toContain('2 comments');
+    expect(html).toContain('src/a.ts:3-5');
+    // The first line of the body is cut to 80 characters in total.
+    expect(html).toContain(`${'x'.repeat(79)}…`);
+    expect(html).not.toContain('second</span>');
+    expect(html).toContain('Show the text that the agent received');
+    expect(html).toContain('<pre class="fd-review-text">Review r-xyz789');
+    expect(html).not.toContain('fd-chat-bubble');
+  });
+
+  test('one comment says "1 comment"', () => {
+    const html = view({
+      items: [run('text', 'in-1')],
+      review: review({ reviews: [{ ...sent, comment_ids: ['c-abc234'] }] }),
+    });
+    expect(html).toContain('1 comment<');
+  });
+
+  test('a run with the same header text but no matching input_id is plain text', () => {
+    const text = 'Review r-xyz789\n- c-abc234 src/a.ts L3-5: fix';
+    for (const item of [run(text), run(text, 'in-other')]) {
+      const html = view({ items: [item], review: review() });
+      expect(html).not.toContain('fd-review-card');
+      expect(html).toContain('class="fd-chat-bubble"');
+    }
+  });
+
+  test('a plain run shows a known token as a chip and keeps an unknown one as text', () => {
+    const html = view({ items: [run('look at c-abc234 and c-zzz999')], review: review() });
+    expect(html).toContain('data-comment="c-abc234"');
+    expect(html).not.toContain('data-comment="c-zzz999"');
+    expect(html).toContain('c-zzz999');
+  });
+
+  test('a message shows a chip that calls onOpen', () => {
+    const items: Item[] = [{ type: 'message', key: 'm', text: 'see [c-abc234]', done: true }];
+    const html = view({ items, review: review() });
+    expect(html).toContain('<button type="button" class="fd-cchip" data-comment="c-abc234">');
+  });
+
+  test('without review nothing changes', () => {
+    const items: Item[] = [
+      run('look at c-abc234', 'in-1'),
+      { type: 'message', key: 'm', text: 'see c-abc234', done: true },
+    ];
+    const html = view({ items });
+    expect(html).not.toContain('fd-cchip');
+    expect(html).not.toContain('fd-review-card');
   });
 });

@@ -1,6 +1,21 @@
 import { Fragment, useMemo, useState } from 'react';
+import { CommentEditor } from '../review/CommentEditor';
+import { arrange, rowIndex } from '../review/diffThreads';
+import {
+  type EditorState,
+  editorTitle,
+  nextEditor,
+  RANGE_HINT,
+  RANGE_TOO_LONG,
+  rangeTooLong,
+  spotLabel,
+} from '../review/editor';
+import { Thread } from '../review/Thread';
+import { ThreadLists } from '../review/ThreadLists';
+import type { DiffReview } from '../review/types';
 import { diffLineKind } from './diffLines';
-import { MAX_NOTE_CHARS, type Note, linePositions } from './notes';
+
+export type { DiffReview } from '../review/types';
 
 const FILE_LINE = /^(diff --git a\/.* b\/)(.+)$/;
 
@@ -14,94 +29,71 @@ export function splitDiffFileLine(
     : null;
 }
 
-/** Line notes (R1.3): a click on a line number opens a one-line editor under the line. */
-export type DiffNotes = {
-  readonly notes: readonly Note[];
-  /** Sets the note of one line; an empty text removes it. */
-  readonly onSet: (file: string, line: number, text: string) => void;
-};
-
-type Spot = { readonly file: string; readonly line: number };
-
-function NoteEditor({
-  initial,
-  onSave,
-  onCancel,
-}: {
-  readonly initial: string;
-  readonly onSave: (text: string) => void;
-  readonly onCancel: () => void;
-}) {
-  const [text, setText] = useState(initial);
-  return (
-    <span className="fd-dl-note" data-editing="true">
-      <input
-        type="text"
-        className="fd-dl-input"
-        value={text}
-        maxLength={MAX_NOTE_CHARS}
-        aria-label="Note"
-        placeholder="One line"
-        ref={(el) => el?.focus()}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') onSave(text);
-          else if (e.key === 'Escape') onCancel();
-        }}
-      />
-      <button type="button" className="fd-sm" onClick={() => onSave(text)}>
-        Save
-      </button>
-      <button type="button" className="fd-sm" onClick={onCancel}>
-        Cancel
-      </button>
-    </span>
-  );
-}
-
 /**
  * A unified diff with colored lines (UI-DESIGN §2.5). A file name opens the file when `onOpenFile` is given.
- * With `notes`, a line that exists in the new file has its number as a button that opens a note editor.
+ * With `review` (DL-179), a line that can take a comment has its number as a button that opens the
+ * comment editor, and the threads show under their last line.
  */
 export function Diff({
   patch,
   truncated,
   id,
   onOpenFile,
-  notes,
+  review,
 }: {
   readonly patch: string;
   readonly truncated: boolean;
   readonly id: string;
   readonly onOpenFile?: ((path: string) => void) | undefined;
-  readonly notes?: DiffNotes | undefined;
+  readonly review?: DiffReview | undefined;
 }) {
   const lines = patch.split('\n');
-  const noted = notes !== undefined;
-  const spots = useMemo(() => (noted ? linePositions(patch) : []), [patch, noted]);
-  const [editing, setEditing] = useState<Spot | null>(null);
-  return (
+  const threads = review?.threads;
+  const snapshot = review?.snapshot;
+  const arranged = useMemo(
+    () =>
+      threads === undefined || snapshot === undefined
+        ? null
+        : arrange(patch, truncated, snapshot, threads),
+    [patch, truncated, snapshot, threads],
+  );
+  const [editor, setEditor] = useState<{ state: EditorState; text: string } | null>(null);
+  const editorAt =
+    editor !== null && arranged !== null
+      ? rowIndex(arranged.rows, editor.state.side, editor.state.path, editor.state.end)
+      : undefined;
+  const pre = (
     <pre className="fd-diff" data-diff={id}>
       {lines.map((line, n) => {
         const kind = diffLineKind(line);
         const file = kind === 'file' && onOpenFile ? splitDiffFileLine(line) : null;
-        const spot = spots[n] ?? null;
-        const note =
-          notes && spot
-            ? notes.notes.find((x) => x.file === spot.file && x.line === spot.line)
-            : undefined;
+        const row = review && arranged ? (arranged.rows[n] ?? null) : null;
+        const here = arranged?.under.get(n);
         return (
           <Fragment key={n}>
             <span className="fd-dl" data-kind={kind}>
-              {notes && spot ? (
-                <button
-                  type="button"
-                  className="fd-dl-n"
-                  aria-label={`Note on ${spot.file} line ${spot.line}`}
-                  onClick={() => setEditing(spot)}
-                >
-                  {spot.line}
-                </button>
+              {review && row ? (
+                review.canWrite ? (
+                  <button
+                    type="button"
+                    className="fd-dl-n"
+                    aria-label={spotLabel(row)}
+                    onClick={() =>
+                      setEditor((now) => {
+                        const next = nextEditor(now?.state ?? null, row, (now?.text ?? '') !== '');
+                        return next === null
+                          ? null
+                          : next === now?.state
+                            ? now
+                            : { state: next, text: now?.text ?? '' };
+                      })
+                    }
+                  >
+                    {row.line}
+                  </button>
+                ) : (
+                  <span className="fd-dl-n">{row.line}</span>
+                )
               ) : null}
               {file ? (
                 <>
@@ -120,20 +112,38 @@ export function Diff({
                 line
               )}
             </span>
-            {notes && spot && editing?.file === spot.file && editing.line === spot.line ? (
-              <NoteEditor
-                initial={note?.text ?? ''}
-                onSave={(text) => {
-                  notes.onSet(spot.file, spot.line, text);
-                  setEditing(null);
-                }}
-                onCancel={() => setEditing(null)}
+            {review && here
+              ? here.map((t) => (
+                  <Thread
+                    key={t.thread_id}
+                    thread={t}
+                    env={review}
+                    focused={review.focus === t.thread_id}
+                    anchor={false}
+                  />
+                ))
+              : null}
+            {review && editor !== null && editorAt === n ? (
+              <CommentEditor
+                initial={editor.text}
+                submitLabel="Add comment"
+                title={editorTitle(editor.state)}
+                hint={RANGE_HINT}
+                blocked={rangeTooLong(editor.state) ? RANGE_TOO_LONG : undefined}
+                onText={(text) => setEditor((now) => (now === null ? null : { ...now, text }))}
+                onSubmit={(body) =>
+                  review.onAdd(
+                    {
+                      side: editor.state.side,
+                      path: editor.state.path,
+                      line_start: editor.state.start,
+                      line_end: editor.state.end,
+                    },
+                    body,
+                  )
+                }
+                onClose={() => setEditor(null)}
               />
-            ) : note ? (
-              <span className="fd-dl-note" data-sent={note.sent ? 'true' : undefined}>
-                {note.text}
-                {note.sent ? <span className="fd-dl-sent"> (sent)</span> : null}
-              </span>
             ) : null}
           </Fragment>
         );
@@ -144,5 +154,12 @@ export function Diff({
         </span>
       ) : null}
     </pre>
+  );
+  if (!review || !arranged) return pre;
+  return (
+    <div className="fd-diffwrap">
+      <ThreadLists arranged={arranged} review={review} />
+      {pre}
+    </div>
   );
 }

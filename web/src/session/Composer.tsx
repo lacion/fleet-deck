@@ -14,6 +14,7 @@ import type { InputKind } from './commands';
 import { IMAGE_TYPES, imageFiles, imagesProblem, readImage, toDataUrl } from './images';
 import { MAX_AT_OPTIONS, matchAt, MIN_AT_QUERY } from './at';
 import { matchSlash } from './slash';
+import { type CommentOption, hashMenu, pickComment } from '../review/hashMenu';
 
 type Props = {
   readonly enabled: boolean;
@@ -29,6 +30,8 @@ type Props = {
   readonly skills?: readonly string[];
   /** The file name search of the session root (DL-174); `null` or absent: `@` has no menu. */
   readonly searchFiles?: ((query: string, maxHits: number) => Promise<readonly string[]>) | null;
+  /** The comments of the session for the `#` menu (DL-179), newest first; absent or empty: no menu. */
+  readonly comments?: readonly CommentOption[];
   /** With a key, the text is kept in `sessionStorage` until it is sent. */
   readonly draftKey?: string;
 };
@@ -164,7 +167,9 @@ export function Composer(props: Props) {
   const hasCommands = commands.length > 0;
   const slash = hasCommands ? matchSlash(text, commands, props.skills) : null;
   const canSearch = props.searchFiles != null;
-  const at = canSearch && slash === null ? matchAt(text, cursor) : null;
+  // Precedence: the `/` menu, then the `#` menu, then the `@` menu.
+  const hash = hashMenu(text, cursor, props.comments ?? [], slash !== null);
+  const at = canSearch && slash === null && hash === null ? matchAt(text, cursor) : null;
   const atQuery = at !== null && at.query.length >= MIN_AT_QUERY ? at.query : null;
   const choices: MenuRow[] =
     slash !== null
@@ -173,9 +178,11 @@ export function Composer(props: Props) {
           text: `/${o.name}`,
           ...(o.skill ? { badge: 'skill' } : {}),
         }))
-      : atQuery !== null
-        ? found.paths.map((path) => ({ key: path, text: path }))
-        : [];
+      : hash !== null
+        ? hash.rows
+        : atQuery !== null
+          ? found.paths.map((path) => ({ key: path, text: path }))
+          : [];
   // `@` status: how many letters are missing, the search runs, it found nothing, or it failed.
   const status: string | null =
     slash !== null || at === null
@@ -274,6 +281,10 @@ export function Composer(props: Props) {
     if (row === undefined) return;
     if (slash !== null) {
       edit(`${row.text} `);
+    } else if (hash !== null) {
+      const picked = pickComment(text, cursor, hash.match, row.text);
+      caretTo.current = picked.caret;
+      edit(picked.text, picked.caret);
     } else if (at !== null) {
       const insert = `@${row.text} `;
       const next = text.slice(0, at.start) + insert + text.slice(cursor);
@@ -349,7 +360,7 @@ export function Composer(props: Props) {
       {menuOpen ? (
         <ComposerMenu
           id={listId}
-          label={slash !== null ? 'Commands' : 'Files'}
+          label={slash !== null ? 'Commands' : hash !== null ? 'Comments' : 'Files'}
           rows={rows}
           current={current}
           onChoose={choose}

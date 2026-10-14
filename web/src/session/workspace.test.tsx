@@ -1,6 +1,5 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { notesStorageKey, resetNotes, setNotes } from '../chat/notes';
 import type { CheckpointSide, DeckSession, DiffSummary, Event, SessionRevert } from '../gen';
 import type { Timeline } from '../runtime/state';
 import { claudeCaps, codexCaps } from '../testing/capabilities';
@@ -318,43 +317,6 @@ describe('the diff since the session started (R1.2)', () => {
     setDiffTotal('station-a/s1', { files_changed: 2, insertions: 5, deletions: 1 });
     expect(totalOf('station-a/s1')).toBe('<b>2/5/1</b>');
     expect(totalOf('station-a/other')).toBe('<b>none</b>');
-  });
-});
-
-describe('line notes in the Changes tab (R1.3)', () => {
-  afterEach(() => resetNotes());
-
-  test('the notes bar lists the notes, marks the sent ones and offers Send notes and Clear', () => {
-    setNotes(notesStorageKey('station-a', 's1'), [
-      { file: 'a.ts', line: 3, text: 'rename it', sent: false },
-      { file: 'b.ts', line: 9, text: 'why?', sent: true },
-    ]);
-    const html = view(codex(), [finalized('t1')]);
-    expect(html).toContain('Notes (2)');
-    expect(html).toContain('a.ts L3: rename it');
-    expect(html).toContain('b.ts L9: why?<span class="fd-note-sent"> (sent)</span>');
-    expect(html).toMatch(/<button type="button" class="fd-sm">Send notes<\/button>/);
-    expect(html).toContain('>Clear</button>');
-  });
-
-  test('Send notes is disabled without drive or when every note is sent', () => {
-    setNotes(notesStorageKey('station-a', 's1'), [
-      { file: 'a.ts', line: 3, text: 'rename it', sent: false },
-    ]);
-    const readOnly = view(codex(), [finalized('t1')], ['read']);
-    expect(readOnly).toMatch(
-      /<button type="button" class="fd-sm" disabled="" title="[^"]*">Send notes/,
-    );
-    setNotes(notesStorageKey('station-a', 's1'), [
-      { file: 'a.ts', line: 3, text: 'rename it', sent: true },
-    ]);
-    expect(view(codex(), [finalized('t1')])).toMatch(
-      /<button type="button" class="fd-sm" disabled="">Send notes/,
-    );
-  });
-
-  test('without notes there is no bar', () => {
-    expect(view(codex(), [finalized('t1')])).not.toContain('Notes (');
   });
 });
 

@@ -1,14 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { Diff } from '../chat/Diff';
-import {
-  type Note,
-  notesMessage,
-  notesStorageKey,
-  setNotes,
-  useNotes,
-  withNote,
-} from '../chat/notes';
 import type { RevertResolution, SessionBase, SessionDiff, SessionSummary, TurnDiff } from '../gen';
+import { diffReview, type ReviewProps } from '../review/diffReview';
+import { ImportPrompt } from '../review/ImportPrompt';
+import { spawnSnapshot, turnSnapshot } from '../review/placement';
+import { ReviewBar } from '../review/ReviewBar';
 import { sessionRef } from '../ui/localSet';
 import type { Outcome, SessionActions } from './commands';
 import { hasChanges } from './changes';
@@ -32,8 +28,10 @@ type Props = {
   readonly act: (call: () => Promise<Outcome>) => void;
   /** A file name of a diff opens that file in the Files panel. */
   readonly onOpenFile?: ((path: string) => void) | undefined;
-  /** The station of the session: the key of its line notes and of its card total. */
+  /** The station of the session: the key of its card total. */
   readonly station?: string | undefined;
+  /** The review comments of the session (DL-179); absent: the diffs have no comment controls. */
+  readonly review?: ReviewProps | undefined;
 };
 
 /** The latest revert, and the owner's resolution of one that needs reconciliation (DL-097). */
@@ -75,49 +73,6 @@ export function RevertStatus({ summary, actions, live, busy, act }: Props) {
   );
 }
 
-/** The notes bar of the Changes tab: the notes of the session, sent as one follow-up (R1.3). */
-function NotesBar({
-  notes,
-  canSend,
-  onSend,
-  onClear,
-}: {
-  readonly notes: readonly Note[];
-  readonly canSend: boolean;
-  readonly onSend: () => void;
-  readonly onClear: () => void;
-}) {
-  if (notes.length === 0) return null;
-  const unsent = notes.filter((n) => !n.sent).length;
-  return (
-    <section className="fd-notes" aria-label="Notes">
-      <h3 className="fd-label">Notes ({notes.length})</h3>
-      <ul>
-        {notes.map((n) => (
-          <li key={`${n.file}:${n.line}`} data-sent={n.sent ? 'true' : undefined}>
-            {n.file} L{n.line}: {n.text}
-            {n.sent ? <span className="fd-note-sent"> (sent)</span> : null}
-          </li>
-        ))}
-      </ul>
-      <div className="fd-notes-actions">
-        <button
-          type="button"
-          className="fd-sm"
-          disabled={!canSend || unsent === 0}
-          title={canSend ? undefined : 'Sending notes needs a live board and the drive scope.'}
-          onClick={onSend}
-        >
-          Send notes
-        </button>
-        <button type="button" className="fd-sm" onClick={onClear}>
-          Clear
-        </button>
-      </div>
-    </section>
-  );
-}
-
 /** The notes above a "Since spawn" diff: a shared folder (DL-159) and a guessed start commit. */
 export function SinceNotes({
   base,
@@ -144,22 +99,19 @@ export function SinceNotes({
   );
 }
 
-/** The working tree of the session against its base commit, with line notes (R1.2, R1.3). */
+/** The working tree of the session against its base commit, with review comments (R1.2, DL-179). */
 function SinceSpawn({
   summary,
   actions,
   station,
-  notes,
+  review,
   onOpenFile,
   onRefresh,
 }: {
   readonly summary: SessionSummary;
   readonly actions: SessionActions | undefined;
   readonly station: string | undefined;
-  readonly notes: {
-    readonly list: readonly Note[];
-    readonly onSet: (file: string, line: number, text: string) => void;
-  };
+  readonly review: ReviewProps | undefined;
   readonly onOpenFile?: ((path: string) => void) | undefined;
   readonly onRefresh: () => void;
 }) {
@@ -214,6 +166,15 @@ function SinceSpawn({
         </button>
       </p>
       <SinceNotes base={base} scope={diff?.scope} />
+      {review !== undefined && diff !== null ? (
+        <ImportPrompt
+          actions={review.actions}
+          session={review.key}
+          snapshot={spawnSnapshot(diff.base_oid)}
+          canWrite={review.canWrite}
+          onDone={review.state.reload}
+        />
+      ) : null}
       {error !== null ? (
         <p role="alert" className="fd-since-alert">
           {error}
@@ -245,7 +206,9 @@ function SinceSpawn({
             truncated={diff.truncated}
             id="since-spawn"
             onOpenFile={onOpenFile}
-            notes={{ notes: notes.list, onSet: notes.onSet }}
+            review={
+              review === undefined ? undefined : diffReview(review, spawnSnapshot(diff.base_oid))
+            }
           />
         </>
       ) : null}
@@ -253,45 +216,113 @@ function SinceSpawn({
   );
 }
 
+/** `turn:<from>..<to>` as its two commits; `null` for another text. */
+function parseTurnSnapshot(snapshot: string): { from: string; to: string } | null {
+  const [from, to, ...rest] = snapshot.replace(/^turn:/, '').split('..');
+  return from !== undefined && to !== undefined && rest.length === 0 ? { from, to } : null;
+}
+
+/** A turn diff that the Changes tab loaded; `snapshot` is set when its comments are available. */
+type LoadedDiff = {
+  readonly diff: TurnDiff;
+  readonly snapshot: string | null;
+  /** The comments of this turn could not be loaded: the plain diff shows with a note. */
+  readonly fellBack: boolean;
+};
+
+/** The review bar of the Changes tab. */
+function Bar({ review }: { readonly review: ReviewProps | undefined }) {
+  return review === undefined ? null : (
+    <ReviewBar
+      state={review.state}
+      actions={review.actions}
+      session={review.key}
+      canWrite={review.canWrite}
+      self={review.self}
+    />
+  );
+}
+
 /** The Changes tab: the diff since the session started, or the finalized turns (a diff and a revert each). */
 export function TurnsPanel(props: Props) {
-  const { summary, turns, actions, drive, busy, act, onOpenFile, station } = props;
+  const { summary, turns, actions, drive, busy, act, onOpenFile, station, review } = props;
   const [confirm, setConfirm] = useState<string | null>(null);
-  const [diffs, setDiffs] = useState<Record<string, TurnDiff | string>>({});
+  const [diffs, setDiffs] = useState<Record<string, LoadedDiff | string>>({});
   const [chosen, setChosen] = useState<'spawn' | 'turns' | null>(null);
   const [loads, setLoads] = useState(0);
-  const notesKey = notesStorageKey(station ?? '', summary.session_id);
-  const noteList = useNotes(notesKey);
   const hasBase = Boolean(summary.base);
+  const files = actions?.files ?? null;
+  const showDiff = (turnId: string) => {
+    if (!files) return;
+    const turn = turns.find((t) => t.turnId === turnId);
+    const from = turn?.start?.state === 'available' ? turn.start.commit : null;
+    const to = turn?.end?.state === 'available' ? turn.end.commit : null;
+    const fail = (e: unknown) =>
+      setDiffs((all) => ({
+        ...all,
+        [turnId]: e instanceof Error ? e.message : 'The diff request failed.',
+      }));
+    const plain = (fellBack: boolean) =>
+      files
+        .diff(turnId)
+        .then(
+          (diff) => setDiffs((all) => ({ ...all, [turnId]: { diff, snapshot: null, fellBack } })),
+          fail,
+        );
+    if (review === undefined || from === null || to === null) {
+      void plain(false);
+      return;
+    }
+    // The stable checkpoint selector; any failure shows the plain diff without comment controls.
+    review.actions.turnDiff(review.key, from, to).then(
+      (diff) =>
+        setDiffs((all) => ({
+          ...all,
+          [turnId]: {
+            diff,
+            snapshot: turnSnapshot(diff.from_commit, diff.to_commit),
+            fellBack: false,
+          },
+        })),
+      () => void plain(true),
+    );
+  };
+  // A click on a comment chip chooses the view of its thread and loads the diff of its turn.
+  const latest = useRef(showDiff);
+  latest.current = showDiff;
+  const turnList = useRef(turns);
+  turnList.current = turns;
+  const focusNonce = review?.focus?.nonce;
+  const focusThread = review?.focus?.threadId;
+  const threadList = review?.state.data?.threads;
+  useEffect(() => {
+    if (focusNonce === undefined || focusThread === undefined) return;
+    const first = threadList?.find((t) => t.thread_id === focusThread)?.comments[0];
+    if (first === undefined) return;
+    if (first.snapshot.startsWith('spawn:')) {
+      setChosen('spawn');
+      return;
+    }
+    setChosen('turns');
+    const pair = parseTurnSnapshot(first.snapshot);
+    const turn =
+      pair === null
+        ? undefined
+        : turnList.current.find(
+            (t) =>
+              t.start?.state === 'available' &&
+              t.start.commit === pair.from &&
+              t.end?.state === 'available' &&
+              t.end.commit === pair.to,
+          );
+    if (turn !== undefined) latest.current(turn.turnId);
+    // Only a new click (the nonce) moves the view; a reload of the threads does not.
+  }, [focusNonce]);
   // A guessed start commit makes the whole-session diff unreliable: open "By turn" (DL-159).
   const view = hasBase
     ? (chosen ?? (summary.base?.inferred === true ? 'turns' : 'spawn'))
     : 'turns';
   if (turns.length === 0 && !hasBase) return null;
-  const onSet = (file: string, line: number, text: string) =>
-    setNotes(notesKey, withNote(noteList, file, line, text));
-  const sendNotes = () => {
-    const unsent = noteList.filter((n) => !n.sent);
-    if (!actions || unsent.length === 0) return;
-    act(async () => {
-      const outcome = await actions.send('follow_up', notesMessage(unsent));
-      if (outcome.ok) {
-        setNotes(
-          notesKey,
-          noteList.map((n) => (n.sent ? n : { ...n, sent: true })),
-        );
-      }
-      return outcome;
-    });
-  };
-  const notesBar = (
-    <NotesBar
-      notes={noteList}
-      canSend={drive && !busy && actions?.canDrive === true}
-      onSend={sendNotes}
-      onClear={() => setNotes(notesKey, [])}
-    />
-  );
   const toggle = hasBase ? (
     <div className="fd-viewtoggle" role="group" aria-label="Changes view">
       {(['spawn', 'turns'] as const).map((v) => (
@@ -316,11 +347,11 @@ export function TurnsPanel(props: Props) {
           summary={summary}
           actions={actions}
           station={station}
-          notes={{ list: noteList, onSet }}
+          review={review}
           onOpenFile={onOpenFile}
           onRefresh={() => setLoads((n) => n + 1)}
         />
-        {notesBar}
+        <Bar review={review} />
       </section>
     );
   }
@@ -329,23 +360,11 @@ export function TurnsPanel(props: Props) {
       <section className="fd-turns" aria-label="Turns">
         {toggle}
         <p className="fd-note">No finished turns yet. Changes appear here when a turn ends.</p>
-        {notesBar}
+        <Bar review={review} />
       </section>
     );
   }
   const caps = summary.capabilities;
-  const files = actions?.files ?? null;
-  const showDiff = (turnId: string) => {
-    if (!files) return;
-    void files.diff(turnId).then(
-      (d) => setDiffs((all) => ({ ...all, [turnId]: d })),
-      (e: unknown) =>
-        setDiffs((all) => ({
-          ...all,
-          [turnId]: e instanceof Error ? e.message : 'The diff request failed.',
-        })),
-    );
-  };
   return (
     <section className="fd-turns" aria-label="Turns">
       {toggle}
@@ -424,13 +443,24 @@ export function TurnsPanel(props: Props) {
               ) : null}
               {typeof diff === 'string' ? <p role="alert">{diff}</p> : null}
               {diff && typeof diff !== 'string' ? (
-                <Diff
-                  patch={diff.patch}
-                  truncated={diff.truncated}
-                  id={t.turnId}
-                  onOpenFile={onOpenFile}
-                  notes={{ notes: noteList, onSet }}
-                />
+                <>
+                  {diff.fellBack ? (
+                    <p className="fd-note">
+                      Comments are not available for this turn on this station.
+                    </p>
+                  ) : null}
+                  <Diff
+                    patch={diff.diff.patch}
+                    truncated={diff.diff.truncated}
+                    id={t.turnId}
+                    onOpenFile={onOpenFile}
+                    review={
+                      review === undefined || diff.snapshot === null
+                        ? undefined
+                        : diffReview(review, diff.snapshot)
+                    }
+                  />
+                </>
               ) : null}
             </li>
           );
@@ -439,7 +469,7 @@ export function TurnsPanel(props: Props) {
       {revertHolds(summary.revert?.state) ? (
         <p className="fd-note">A revert holds the session; no new revert starts.</p>
       ) : null}
-      {notesBar}
+      <Bar review={review} />
     </section>
   );
 }
