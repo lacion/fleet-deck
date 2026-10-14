@@ -50,23 +50,17 @@ async fn the_owner_gets_a_link_whose_token_logs_in_once() {
     assert_eq!(r.body["self_signed"], true);
     assert_eq!(r.body["certificate_sha256"], "00".repeat(32));
     let links = r.body["links"].as_array().unwrap();
-    // The test board has the tailnet name and the loopback addresses.
+    // The test board listens on loopback only: the tailnet name resolves to
+    // a tailnet address that the board does not serve, so no link offers it.
     let labels: Vec<&str> = links.iter().map(|l| l["label"].as_str().unwrap()).collect();
-    assert_eq!(
-        labels,
-        [
-            "Tailnet deck.tail1234.ts.net",
-            "This computer",
-            "This computer"
-        ]
-    );
+    assert_eq!(labels, ["This computer", "This computer"]);
     let port = c.addr.port();
-    assert!(
-        links[0]["url"]
+    assert!(links.iter().all(|l| {
+        !l["url"]
             .as_str()
             .unwrap()
-            .starts_with(&format!("https://deck.tail1234.ts.net:{port}/#login="))
-    );
+            .starts_with(&format!("https://deck.tail1234.ts.net:{port}/"))
+    }));
     // Every link carries the same token.
     let token = token_of(links[0]["url"].as_str().unwrap()).to_owned();
     assert!(!token.is_empty());

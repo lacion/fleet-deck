@@ -128,11 +128,20 @@ impl Origins {
         Self(set)
     }
 
-    /// Every origin, in the order of a device link: the tailnet host names,
-    /// then the non-loopback addresses, then loopback and `localhost`.
+    /// The origins that a link may name, in the order of a device link: the
+    /// tailnet host names, then the non-loopback addresses, then loopback and
+    /// `localhost`. A tailnet name resolves to a tailnet address, so it is
+    /// listed only when the board also listens beyond loopback; it stays an
+    /// allowed origin either way ([`Self::allows`]).
     #[must_use]
     pub fn list(&self) -> Vec<String> {
-        let mut origins: Vec<String> = self.0.iter().cloned().collect();
+        let beyond_loopback = self.0.iter().any(|o| origin_kind(o) == OriginKind::Network);
+        let mut origins: Vec<String> = self
+            .0
+            .iter()
+            .filter(|o| beyond_loopback || origin_kind(o) != OriginKind::Tailnet)
+            .cloned()
+            .collect();
         origins.sort_by_key(|o| origin_kind(o));
         origins
     }
@@ -450,6 +459,18 @@ mod tests {
     fn origins(addrs: &[&str], tailnet: Option<&str>) -> Origins {
         let addrs: Vec<SocketAddr> = addrs.iter().map(|a| a.parse().unwrap()).collect();
         Origins::new(&addrs, tailnet)
+    }
+
+    #[test]
+    fn a_link_names_the_tailnet_only_when_the_board_listens_beyond_loopback() {
+        let local = origins(&["127.0.0.1:7420"], Some("deck.tail1234.ts.net"));
+        assert!(local.allows("https://deck.tail1234.ts.net:7420"));
+        assert!(!local.list().iter().any(|o| o.contains("ts.net")));
+        let tailnet = origins(
+            &["127.0.0.1:7420", "100.89.30.8:7420"],
+            Some("deck.tail1234.ts.net"),
+        );
+        assert_eq!(tailnet.list()[0], "https://deck.tail1234.ts.net:7420");
     }
 
     #[test]
