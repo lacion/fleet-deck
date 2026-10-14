@@ -11,6 +11,7 @@
 
 use fleetdeck_proto::artifacts::{ArtifactGetQuery, ArtifactKind};
 use fleetdeck_proto::command::GrantScope;
+use fleetdeck_proto::event::RequestKind;
 use fleetdeck_proto::files::{
     CoordinatorDiffQuery, FileReadQuery, FileRoot, FileSearchQuery, SearchMode,
 };
@@ -294,26 +295,37 @@ impl DeckStore {
                     text.push_str(&serde_json::to_string(input)?);
                 }
                 let source = format!("request:{station}/{session}/{}", r.request_id);
-                let options: Vec<Value> = r
-                    .options
-                    .iter()
-                    .map(|o| {
-                        let label = fence(&format!("{source}/option"), &o.label);
-                        json!({"option_id": o.option_id, "label": label, "kind": o.kind})
-                    })
-                    .collect();
+                // A question carries no `options`: its option ids come from
+                // the worker, and a coordinator answers it with
+                // `question_answers` or `text`. The labels go into the
+                // fenced input instead (ADR-008 section 17, round 2).
+                let is_question = r.request_kind == RequestKind::Question;
+                if is_question {
+                    for o in &r.options {
+                        text.push_str("\n- ");
+                        text.push_str(&o.label);
+                    }
+                }
                 let tool = fence(&format!("{source}/title"), &r.title);
-                found.push((
-                    r.requested_at,
-                    json!({
-                        "station": station, "session_id": session, "title": title,
-                        "request_id": r.request_id, "request_kind": r.request_kind,
-                        "tool": tool,
-                        "input": fence_cut(&source, &text, REQUEST_CHARS),
-                        "options": options,
-                        "age_ms": now.saturating_sub(r.requested_at).max(0),
-                    }),
-                ));
+                let mut item = json!({
+                    "station": station, "session_id": session, "title": title,
+                    "request_id": r.request_id, "request_kind": r.request_kind,
+                    "tool": tool,
+                    "input": fence_cut(&source, &text, REQUEST_CHARS),
+                    "age_ms": now.saturating_sub(r.requested_at).max(0),
+                });
+                if !is_question {
+                    let options: Vec<Value> = r
+                        .options
+                        .iter()
+                        .map(|o| {
+                            let label = fence(&format!("{source}/option"), &o.label);
+                            json!({"option_id": o.option_id, "label": label, "kind": o.kind})
+                        })
+                        .collect();
+                    item["options"] = Value::Array(options);
+                }
+                found.push((r.requested_at, item));
             }
         }
         found.sort_by_key(|(at, _)| *at);

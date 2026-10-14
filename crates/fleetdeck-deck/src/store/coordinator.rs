@@ -756,6 +756,19 @@ impl DeckStore {
             if !same || !same_target {
                 return Ok(Err("unknown_command"));
             }
+            // A command that launches a provider needs the real launch mode.
+            // A station that sends none is older than the deck (version
+            // skew): fail closed (ADR-008 section 17, round 2).
+            let launches = matches!(
+                command,
+                SessionCommand::Start { .. }
+                    | SessionCommand::Resume { .. }
+                    | SessionCommand::Import { .. }
+                    | SessionCommand::SetMode { .. }
+            );
+            if launches && check.launch.is_none() {
+                return Ok(Err("launch_mode_missing"));
+            }
             if let Some(launch) = &check.launch {
                 let family = serde_json::to_value(launch.provider)
                     .ok()

@@ -13,9 +13,10 @@ use fleetdeck_deck::store::{GrantClass, NewGrant, QueryAnswer};
 use fleetdeck_link::LiveLink;
 use fleetdeck_proto::command::{GrantScope, RETRY_WINDOW_MS};
 use fleetdeck_proto::event::{
-    ApprovalOption, Event, EventBody, OptionKind, RequestKind, ResponseChannel, SessionState,
+    ApprovalOption, Event, EventBody, OptionKind, ProviderKind, RequestKind, ResponseChannel,
+    SessionState,
 };
-use fleetdeck_proto::link::{Outcome, Scope, WireError};
+use fleetdeck_proto::link::{Outcome, Scope, StationInfo, StationProvider, WireError};
 use fleetdeck_proto::mutation::{
     AuthorityCheck, CoordinatorBinding, CoordinatorCall, CoordinatorCallEnvelope, CoordinatorOp,
     CoordinatorQuery, CoordinatorQueryEnvelope,
@@ -38,6 +39,32 @@ pub fn card(id: &str) -> SessionSummary {
     let mut s = SessionSummary::new(id.into());
     s.state = SessionState::Running;
     s
+}
+
+/// The `station.info` of the fixture station: a signed-in `claude` instance.
+/// The coordinator ops that name a provider (`spawn`, `resume`, `set_mode`)
+/// read it.
+pub fn claude_info() -> StationInfo {
+    StationInfo {
+        name: "fake".to_owned(),
+        incarnation: "inc".to_owned().into(),
+        head: 0,
+        live_sessions: 2,
+        version: None,
+        max_sessions: Some(8),
+        allow_shell: None,
+        allow_setup_cmd: None,
+        providers: vec![StationProvider {
+            instance: "claude".to_owned().into(),
+            provider: ProviderKind::Claude,
+            version: Some("1.0.0".to_owned()),
+            auth: "signed_in".to_owned(),
+            capabilities: None,
+            version_status: Default::default(),
+        }],
+        assist_tokens_today: None,
+        assist_cap: None,
+    }
 }
 
 pub struct Rig {
