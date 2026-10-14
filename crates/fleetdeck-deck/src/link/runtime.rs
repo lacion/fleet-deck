@@ -78,6 +78,12 @@ pub enum NodeError {
     Listen { addr: SocketAddr, reason: String },
     #[error(transparent)]
     Store(#[from] DeckError),
+    /// A revocation whose store write failed (NV-15). The key is unpinned
+    /// in memory, but the station stays in the store.
+    #[error(
+        "the revocation was not stored: {0}. The key is unpinned until the deck restarts. Run the command again."
+    )]
+    Revoke(String),
 }
 
 /// What a test changes in the link node: the limits of the pairing window
@@ -397,7 +403,8 @@ impl DeckNode {
     /// links. Returns the removed record.
     ///
     /// # Errors
-    /// [`NodeError::UnknownStation`], or a database error.
+    /// [`NodeError::UnknownStation`], a database error, or
+    /// [`NodeError::Revoke`] when the revocation was not stored (NV-15).
     pub async fn remove_station(&self, name_or_id: &str) -> Result<StationRecord, NodeError> {
         let st = self
             .ctx
@@ -405,7 +412,9 @@ impl DeckNode {
             .find_station(name_or_id.to_owned())
             .await?
             .ok_or_else(|| NodeError::UnknownStation(name_or_id.to_owned()))?;
-        revoke(&self.ctx.node, &st.key).await;
+        revoke(&self.ctx.node, &st.key)
+            .await
+            .map_err(NodeError::Revoke)?;
         tracing::info!(station = %st.name, "station removed");
         Ok(st)
     }

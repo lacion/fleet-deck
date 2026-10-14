@@ -47,6 +47,7 @@ fn refusal(e: &NodeError) -> ApiError {
         NodeError::NameTaken(_) => (StatusCode::CONFLICT, "name_taken"),
         NodeError::UnknownStation(_) => (StatusCode::NOT_FOUND, "unknown_station"),
         NodeError::Pairing(_) => (StatusCode::BAD_GATEWAY, "pairing_failed"),
+        NodeError::Revoke(_) => (StatusCode::INTERNAL_SERVER_ERROR, "revoke_failed"),
         NodeError::Listen { .. } | NodeError::Store(_) => return ApiError::internal(e),
     };
     ApiError::new(status, code, e.to_string())
@@ -161,7 +162,8 @@ async fn add_station(
 /// closes its link and drops its cards.
 ///
 /// # Errors
-/// 404 `unknown_station`, 503 `pairing_unavailable`.
+/// 404 `unknown_station`, 500 `revoke_failed` when the revocation was not
+/// stored (NV-15), 503 `pairing_unavailable`.
 pub async fn remove(
     State(board): State<Arc<Board>>,
     Extension(principal): Extension<Principal>,

@@ -302,8 +302,9 @@ pub trait PairingSink: fmt::Debug + Send + Sync {
     /// Stores the pin and the grants of a new peer. An error fails the
     /// pairing.
     async fn paired(&self, peer: &PairedPeer) -> Result<(), String>;
-    /// Removes the pin and every grant of `peer`. An error is logged; the
-    /// link layer unpins the key and closes its link anyway (fail closed).
+    /// Removes the pin and every grant of `peer`. An error is returned to
+    /// the caller of `revoke`; the link layer unpins the key and closes its
+    /// link anyway (fail closed).
     async fn revoked(&self, peer: &PeerKey) -> Result<(), String>;
     /// Gives the role and the grants of `old` to `new` (only those; G5) and
     /// revokes `old`.

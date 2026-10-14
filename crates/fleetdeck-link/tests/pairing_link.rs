@@ -10,9 +10,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use common::{Node, T, code, link, listen, next_request, node, paired};
+use fleetdeck_core::identity::PeerKey;
 use fleetdeck_core::secret::Secret;
 use fleetdeck_link::node::{self as link_node, NodeConfig};
-use fleetdeck_link::pairing::{DEFAULT_TTL, MAX_ATTEMPTS_PER_IP};
+use fleetdeck_link::pairing::{DEFAULT_TTL, MAX_ATTEMPTS_PER_IP, PairedPeer, PairingSink};
 use fleetdeck_link::tls::Role;
 use fleetdeck_link::{
     BackoffPolicy, DialerEvent, GrantSource, Invitation, Invitations, LinkError, LinkListener,
@@ -63,6 +64,23 @@ fn reason(r: Result<(), LinkError>) -> String {
     match r {
         Ok(()) => "ok".into(),
         Err(e) => e.reason().unwrap_or("none").to_owned(),
+    }
+}
+
+/// A store whose revocation write fails.
+#[derive(Debug)]
+struct FailingSink;
+
+#[async_trait::async_trait]
+impl PairingSink for FailingSink {
+    async fn paired(&self, _peer: &PairedPeer) -> Result<(), String> {
+        Ok(())
+    }
+    async fn revoked(&self, _peer: &PeerKey) -> Result<(), String> {
+        Err("disk full".to_owned())
+    }
+    async fn rotated(&self, _old: &PeerKey, _new: &PeerKey) -> Result<(), String> {
+        Ok(())
     }
 }
 
@@ -233,6 +251,27 @@ async fn an_expired_invitation_never_reaches_the_wire() {
 }
 
 #[tokio::test]
+async fn a_failed_revocation_store_write_is_an_error_after_the_key_is_unpinned_and_its_link_closed()
+{
+    let (deck, mut station) = paired();
+    station.config.sink = Arc::new(FailingSink);
+    let mut l = listen(&station).await;
+    let (at_deck, _at_station) = link(&deck, &station, &mut l).await;
+    let deck_key = deck.config.identity.public_key();
+
+    // NV-15: the caller sees the store error, not a success.
+    assert_eq!(
+        revoke(&station.config, &deck_key).await,
+        Err("disk full".to_owned())
+    );
+    assert_eq!(station.config.pins.role_of(&deck_key), None);
+    let closing = tokio::time::timeout(Duration::from_secs(1), at_deck.control.closed())
+        .await
+        .expect("the link closes within 1 s");
+    assert_eq!(closing.reason, REVOKED);
+}
+
+#[tokio::test]
 async fn revocation_closes_the_link_within_one_second_and_the_queued_request_fails() {
     let (deck, station) = paired();
     let mut l = listen(&station).await;
@@ -248,7 +287,7 @@ async fn revocation_closes_the_link_within_one_second_and_the_queued_request_fai
     // `station forget-deck` while the request waits.
     let deck_key = deck.config.identity.public_key();
     let t0 = tokio::time::Instant::now();
-    assert!(revoke(&station.config, &deck_key).await);
+    assert!(revoke(&station.config, &deck_key).await.unwrap());
     let closing = tokio::time::timeout(Duration::from_secs(1), at_deck.control.closed())
         .await
         .expect("the link closes within 1 s");
@@ -402,7 +441,7 @@ async fn the_dialer_redials_with_a_higher_epoch_and_stops_when_revoked() {
     );
 
     // The deck removes the station: the link closes and the dialer stops.
-    assert!(revoke(&deck.config, &station_key).await);
+    assert!(revoke(&deck.config, &station_key).await.unwrap());
     match next_event(&mut events).await {
         DialerEvent::Lost { reason, .. } => assert_eq!(reason, REVOKED),
         other => panic!("expected Lost, got {other:?}"),

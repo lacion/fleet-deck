@@ -65,6 +65,12 @@ pub enum NodeError {
     Listen { addr: SocketAddr, reason: String },
     #[error(transparent)]
     Store(#[from] StoreError),
+    /// A revocation whose store write failed (NV-15). The key is unpinned
+    /// in memory, but the pairing stays in the store.
+    #[error(
+        "the revocation was not stored: {0}. The key is unpinned until the station restarts. Run the command again."
+    )]
+    Revoke(String),
     #[error("the coordinator endpoint did not start: {0}")]
     Coordinator(std::io::Error),
     /// `station join --tailnet` did not finish; `code` is the stable code
@@ -622,16 +628,28 @@ impl StationNode {
     /// Returns how many keys were revoked.
     ///
     /// # Errors
-    /// A database error while the keys are read.
+    /// A database error while the keys are read, or [`NodeError::Revoke`]
+    /// when a revocation was not stored. Every key is revoked in memory
+    /// anyway; the error holds the first store error (NV-15).
     pub async fn forget_deck(&self) -> Result<usize, NodeError> {
         let keys = self.ctx.peers.store().paired_keys().await?;
         let mut count = 0;
+        let mut first_error = None;
         for key in keys.into_iter().filter(|k| k.role == Role::Deck) {
-            revoke(&self.ctx.node, &key.key).await;
-            tracing::info!(deck = %key.key.fingerprint().short(), "deck forgotten");
-            count += 1;
+            match revoke(&self.ctx.node, &key.key).await {
+                Ok(_) => {
+                    tracing::info!(deck = %key.key.fingerprint().short(), "deck forgotten");
+                    count += 1;
+                }
+                Err(e) => {
+                    first_error.get_or_insert(e);
+                }
+            }
         }
-        Ok(count)
+        match first_error {
+            Some(e) => Err(NodeError::Revoke(e)),
+            None => Ok(count),
+        }
     }
 
     /// Stops the listeners and the dialers.

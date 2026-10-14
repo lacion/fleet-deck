@@ -548,7 +548,7 @@ async fn a_command_queued_after_forget_deck_is_forbidden_and_the_link_closes_wit
 
     // `forget-deck` through the link layer closes the link within 1 s.
     let t0 = tokio::time::Instant::now();
-    revoke(&f.ctx.node, &f.deck.public_key()).await;
+    revoke(&f.ctx.node, &f.deck.public_key()).await.unwrap();
     let closing = tokio::time::timeout(Duration::from_secs(1), deck.control.closed())
         .await
         .expect("closed within 1 s");
