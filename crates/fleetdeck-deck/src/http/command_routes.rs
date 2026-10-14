@@ -237,6 +237,17 @@ async fn route(
         .await
         .map_err(|e| (station.clone(), id.clone(), e))?;
     }
+    if matches!(command, SessionCommand::ReconcileExecution { .. }) && !owner {
+        return Err((
+            station.clone(),
+            id.clone(),
+            ApiError::new(
+                StatusCode::FORBIDDEN,
+                "owner_only",
+                "only the owner's board login marks a previous run as ended".to_owned(),
+            ),
+        ));
+    }
     let kind = CommandKind::Session { command };
     board
         .link

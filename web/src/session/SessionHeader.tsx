@@ -22,6 +22,7 @@ import {
   Pencil,
   Play,
   Power,
+  Search,
   Send,
   Square,
   SquareTerminal,
@@ -70,6 +71,8 @@ type Props = {
   readonly filesPanel?: { readonly open: boolean; readonly toggle: () => void };
   /** The models that the provider harness reports (`session.models`). */
   readonly models?: readonly ModelChoice[] | null;
+  /** Opens the check of the previous run (DL-182); the menu offers it when given (owner only). */
+  readonly onCheckExecution?: (() => void) | undefined;
 };
 
 /** The status update that "Ask for a status update" sends. */
@@ -186,6 +189,7 @@ export function SessionHeader({
   onNewShell,
   filesPanel,
   models = null,
+  onCheckExecution,
 }: Props) {
   const s = session.summary;
   const caps = s.capabilities;
@@ -306,6 +310,17 @@ export function SessionHeader({
             Force stop…
           </button>
         </>
+      ) : null}
+      {!guest && onCheckExecution !== undefined ? (
+        <button
+          type="button"
+          onClick={() => {
+            close();
+            onCheckExecution();
+          }}
+        >
+          <Icon of={Search} /> Check the previous run
+        </button>
       ) : null}
       {flags.drive && mayPrompt ? (
         <button

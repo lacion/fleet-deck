@@ -417,6 +417,13 @@ pub const API_REST: &[ApiMethod] = &[
         Some(Scope::Read),
         false,
     ),
+    m(
+        "session.execution_check",
+        Method::GET,
+        "/api/sessions/{station}/{session}/execution",
+        Some(Scope::Admin),
+        false,
+    ),
     cmd("session.start", Scope::Drive),
     cmd("session.resume", Scope::Drive),
     cmd("session.import", Scope::Drive),
@@ -432,6 +439,9 @@ pub const API_REST: &[ApiMethod] = &[
     cmd("session.rename", Scope::Drive),
     cmd("session.resolve_revert", Scope::Drive),
     cmd("session.set_auto_continue", Scope::Drive),
+    // The owner marks the previous run of a session as ended (DL-182); the
+    // handler refuses a token (`owner_only`).
+    cmd("session.reconcile_execution", Scope::Admin),
     // `session.coordinator_renew` / `_revoke` have no generic route: only
     // the owner-checked grant routes send them (ADR-006 §3, DL-138).
     // A member answers a question as a collaborator and a tool approval as
