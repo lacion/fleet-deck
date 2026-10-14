@@ -14,7 +14,7 @@
 //! value unchanged. A request that the core does not model is refused (fail
 //! closed).
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use fleetdeck_proto::command::UserInput;
 use fleetdeck_proto::event::{
@@ -32,6 +32,14 @@ use crate::adapter::{Answer, HostInput, ProviderError, Result, answer_input_id};
 
 /// The longest request detail text.
 const DETAIL_CHARS: usize = 2_000;
+
+/// How many closed requests the core keeps (NV-18). The oldest ones are
+/// dropped. An open request is never dropped.
+const MAX_CLOSED_REQUESTS: usize = 256;
+
+/// JSON-RPC "invalid request": the code of the reply to a server request
+/// whose id is still open (NV-21).
+const DUPLICATE_ID: i64 = -32600;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(super) struct OpenRequest {
@@ -63,6 +71,9 @@ pub(super) struct Requests {
     /// Requests that left `open`: app id → how. A late answer to a closed
     /// request is a duplicate (no write) or [`ProviderError::RequestClosed`].
     closed: HashMap<String, Closed>,
+    /// The app ids of `closed`, oldest first (NV-18).
+    #[serde(default)]
+    closed_order: VecDeque<String>,
 }
 
 impl Requests {
@@ -245,6 +256,20 @@ impl CodexCore {
         method: &str,
         params: &Value,
     ) -> Vec<Output> {
+        // A second request with an id that is still open would replace the
+        // reverse mapping of the first one (NV-21): refuse it, with no event.
+        if self
+            .requests
+            .by_native
+            .get(&native_key(&id))
+            .is_some_and(|app_id| self.requests.get(app_id).is_some())
+        {
+            return vec![Output::Write(rpc::reply_error(
+                &id,
+                DUPLICATE_ID,
+                "a request with this id is still open",
+            ))];
+        }
         let item = params.get("itemId").and_then(Value::as_str);
         let mut started = Vec::new();
         // Codex starts no item for a question tool call. The core opens a
@@ -469,6 +494,21 @@ impl CodexCore {
             Closed::Expired(reason)
         };
         self.requests.closed.insert(app_id.to_owned(), how);
+        self.requests.closed_order.push_back(app_id.to_owned());
+        while self.requests.closed_order.len() > MAX_CLOSED_REQUESTS {
+            let Some(old) = self.requests.closed_order.pop_front() else {
+                break;
+            };
+            self.requests.closed.remove(&old);
+        }
+        // The native id of a closed request maps to nothing (NV-18, NV-21),
+        // unless a newer request has it.
+        if !r.native_id.is_null() {
+            let key = native_key(&r.native_id);
+            if self.requests.by_native.get(&key).map(String::as_str) == Some(app_id) {
+                self.requests.by_native.remove(&key);
+            }
+        }
         Some(r)
     }
 
@@ -603,4 +643,146 @@ pub fn validate_question_answer(params: &Value, input: Option<&Value>) -> Result
         }
     }
     Ok(json!({ "answers": answers }))
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::super::checkpoint::CHECKPOINT_VERSION;
+    use super::super::tests::{ans, config, emits, feed, notify, ready_core, writes};
+    use super::*;
+    use crate::checkpoint::AdapterCheckpoint;
+
+    /// A command approval request with the native id `id`.
+    fn request(core: &mut CodexCore, id: Value) -> Vec<Output> {
+        feed(
+            core,
+            json!({"id": id, "method": "item/commandExecution/requestApproval", "params": {
+                "threadId": "thr-1", "turnId": "n1", "itemId": "c1", "command": "touch x",
+                "availableDecisions": ["accept", "cancel"]
+            }}),
+        )
+    }
+
+    fn requested(out: &[Output]) -> RequestId {
+        emits(out)
+            .into_iter()
+            .find_map(|e| match e {
+                Event::ApprovalRequested { request_id, .. } => Some(request_id),
+                _ => None,
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn closed_requests_are_bounded_and_a_closed_request_has_no_native_mapping() {
+        // NV-18.
+        let mut core = ready_core();
+        let mut first = None;
+        for n in 0..300 {
+            let id = requested(&request(&mut core, json!(n)));
+            first.get_or_insert_with(|| id.clone());
+            if n % 2 == 0 {
+                core.answer(&ans(&id, "accept")).unwrap();
+            }
+            notify(&mut core, "serverRequest/resolved", json!({"requestId": n}));
+            assert!(core.requests.by_native.is_empty());
+        }
+        assert_eq!(core.requests.closed.len(), MAX_CLOSED_REQUESTS);
+        assert_eq!(core.requests.closed_order.len(), MAX_CLOSED_REQUESTS);
+        assert!(core.requests.open.is_empty());
+        // The oldest closed request is forgotten; the newest is still known.
+        let first = first.unwrap();
+        assert!(matches!(
+            core.answer(&ans(&first, "accept")),
+            Err(ProviderError::UnknownRequest(_))
+        ));
+        assert!(matches!(
+            core.answer(&ans(&request_id("req-300"), "accept")),
+            Err(ProviderError::RequestClosed { .. })
+        ));
+        assert!(
+            core.answer(&ans(&request_id("req-299"), "accept"))
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_turn_end_closes_the_requests_without_a_native_mapping_left() {
+        let mut core = ready_core();
+        request(&mut core, json!(1));
+        request(&mut core, json!(2));
+        core.expire_open(ExpiredReason::ProcessLost);
+        assert!(core.requests.by_native.is_empty());
+        assert_eq!(core.requests.closed.len(), 2);
+        assert_eq!(core.requests.closed_order.len(), 2);
+    }
+
+    #[test]
+    fn the_closed_order_survives_a_checkpoint_round_trip() {
+        let mut core = ready_core();
+        for n in 0..5 {
+            requested(&request(&mut core, json!(n)));
+            notify(&mut core, "serverRequest/resolved", json!({"requestId": n}));
+        }
+        let text = core.checkpoint().unwrap().to_json().unwrap();
+        let stored = AdapterCheckpoint::from_json(&text).unwrap();
+        let restored = CodexCore::restore(config("/w"), &stored).unwrap();
+        assert_eq!(restored.requests.closed_order.len(), 5);
+        assert_eq!(restored.requests.closed.len(), 5);
+    }
+
+    #[test]
+    fn a_checkpoint_without_the_closed_order_loads() {
+        let mut core = ready_core();
+        requested(&request(&mut core, json!(1)));
+        notify(&mut core, "serverRequest/resolved", json!({"requestId": 1}));
+        let mut stored = core.checkpoint().unwrap();
+        assert_eq!(stored.version, CHECKPOINT_VERSION);
+        stored
+            .state
+            .pointer_mut("/requests")
+            .and_then(Value::as_object_mut)
+            .unwrap()
+            .remove("closed_order");
+        let restored = CodexCore::restore(config("/w"), &stored).unwrap();
+        assert!(restored.requests.closed_order.is_empty());
+        assert_eq!(restored.requests.closed.len(), 1);
+    }
+
+    #[test]
+    fn a_second_request_with_an_open_id_is_refused_without_an_event() {
+        // NV-21.
+        let mut core = ready_core();
+        let first = requested(&request(&mut core, json!(7)));
+        let out = request(&mut core, json!(7));
+        assert!(emits(&out).is_empty(), "{out:?}");
+        let w = writes(&out);
+        assert_eq!(w.len(), 1, "{w:?}");
+        assert_eq!(w[0]["id"], 7);
+        assert_eq!(w[0]["error"]["code"], -32600);
+        assert_eq!(
+            w[0]["error"]["message"],
+            "a request with this id is still open"
+        );
+        assert_eq!(core.open_requests(), std::slice::from_ref(&first));
+        // The first request still answers, and its reply names id 7 once.
+        let out = core.answer(&ans(&first, "accept")).unwrap();
+        let w = writes(&out);
+        assert_eq!(w.len(), 1, "{w:?}");
+        assert_eq!(w[0]["id"], 7);
+        assert_eq!(w[0]["result"]["decision"], "accept");
+        assert_eq!(core.request_for_native(&json!(7)), Some(first));
+    }
+
+    #[test]
+    fn a_request_with_the_id_of_a_closed_request_is_registered() {
+        let mut core = ready_core();
+        requested(&request(&mut core, json!(7)));
+        notify(&mut core, "serverRequest/resolved", json!({"requestId": 7}));
+        let again = requested(&request(&mut core, json!(7)));
+        assert_eq!(core.request_for_native(&json!(7)), Some(again));
+    }
 }

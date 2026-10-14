@@ -14,6 +14,11 @@ use super::frames::ControlRequest;
 use super::map::{input_summary, refs, tool_kind};
 use crate::adapter::{Answer, ProviderError, Result};
 
+/// How many answered or expired requests the core keeps (NV-18). The
+/// oldest ones are dropped, with their native id mapping. An open request
+/// is never dropped.
+const MAX_CLOSED_REQUESTS: usize = 256;
+
 /// Maps a Claude tool name to the kind of its permission request.
 #[must_use]
 pub fn request_kind(name: &str) -> RequestKind {
@@ -171,6 +176,7 @@ pub(super) fn on_cancel(core: &mut ClaudeCore, native_id: &str) -> Vec<Output> {
         Some(req) if req.state == ReqState::Open => {
             let reason = ExpiredReason::CancelledByProvider;
             req.state = ReqState::Expired(reason);
+            core.note_closed(app.clone());
             vec![Output::Emit(Event::ApprovalExpired {
                 request_id: app,
                 reason,
@@ -181,6 +187,20 @@ pub(super) fn on_cancel(core: &mut ClaudeCore, native_id: &str) -> Vec<Output> {
 }
 
 impl ClaudeCore {
+    /// Notes that a request is answered or expired. When more than
+    /// [`MAX_CLOSED_REQUESTS`] are closed, the oldest one is forgotten
+    /// (NV-18).
+    pub(super) fn note_closed(&mut self, id: RequestId) {
+        self.closed_order.push_back(id);
+        while self.closed_order.len() > MAX_CLOSED_REQUESTS {
+            let Some(old) = self.closed_order.pop_front() else {
+                break;
+            };
+            self.requests.remove(&old);
+            self.native_to_app.retain(|_, app| *app != old);
+        }
+    }
+
     /// Answers a runtime request with a native option id. Idempotent: a second
     /// answer writes nothing and emits nothing (L3).
     ///
@@ -249,6 +269,7 @@ impl ClaudeCore {
             node.denied = true;
         }
         req.state = ReqState::Answered(option_id.to_owned());
+        self.note_closed(request_id.clone());
         Ok(vec![
             Output::Write(frame),
             Output::Emit(Event::ApprovalResolved {
@@ -258,5 +279,82 @@ impl ClaudeCore {
                 answered_by: answer.decision.answered_by.clone(),
             }),
         ])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::super::checkpoint::CHECKPOINT_VERSION;
+    use super::super::tests::{answer, can_use_tool, config, feed, running_core};
+    use super::*;
+    use crate::checkpoint::AdapterCheckpoint;
+
+    /// Opens request `n` and returns its app id.
+    fn open(core: &mut ClaudeCore, n: usize) -> RequestId {
+        let ev = can_use_tool(core, &format!("n-{n}"), "tu-none");
+        ev.into_iter()
+            .find_map(|e| match e {
+                Event::ApprovalRequested { request_id, .. } => Some(request_id),
+                _ => None,
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn answered_and_cancelled_requests_are_bounded_and_the_open_ones_stay() {
+        // NV-18.
+        let mut core = running_core();
+        let kept = open(&mut core, 0);
+        for n in 1..=300 {
+            let id = open(&mut core, n);
+            if n % 2 == 0 {
+                core.answer(&answer(id.as_str(), "allow")).unwrap();
+            } else {
+                feed(
+                    &mut core,
+                    json!({"type":"control_cancel_request","request_id":format!("n-{n}")}),
+                );
+            }
+        }
+        assert_eq!(core.closed_order.len(), MAX_CLOSED_REQUESTS);
+        assert_eq!(core.requests.len(), MAX_CLOSED_REQUESTS + 1);
+        assert_eq!(core.native_to_app.len(), MAX_CLOSED_REQUESTS + 1);
+        assert_eq!(core.open_requests(), std::slice::from_ref(&kept));
+        assert_eq!(core.native_request_id(&kept), Some("n-0"));
+        // The oldest closed request is forgotten; the newest is kept.
+        assert!(core.request_for_native("n-1").is_none());
+        assert!(core.request_for_native("n-300").is_some());
+        // The open request still answers.
+        let out = core.answer(&answer(kept.as_str(), "deny")).unwrap();
+        assert_eq!(out.len(), 2);
+    }
+
+    #[test]
+    fn the_closed_order_survives_a_checkpoint_round_trip() {
+        let mut core = running_core();
+        for n in 0..10 {
+            let id = open(&mut core, n);
+            core.answer(&answer(id.as_str(), "allow")).unwrap();
+        }
+        let text = core.checkpoint().unwrap().to_json().unwrap();
+        let stored = AdapterCheckpoint::from_json(&text).unwrap();
+        let restored = ClaudeCore::restore(config(false), &stored).unwrap();
+        assert_eq!(restored.closed_order.len(), 10);
+        assert_eq!(restored.closed_order, core.closed_order);
+    }
+
+    #[test]
+    fn a_checkpoint_without_the_closed_order_loads() {
+        let mut core = running_core();
+        let id = open(&mut core, 0);
+        core.answer(&answer(id.as_str(), "allow")).unwrap();
+        let mut stored = core.checkpoint().unwrap();
+        stored.state.as_object_mut().unwrap().remove("closed_order");
+        assert_eq!(stored.version, CHECKPOINT_VERSION);
+        let restored = ClaudeCore::restore(config(false), &stored).unwrap();
+        assert!(restored.closed_order.is_empty());
+        assert_eq!(restored.requests.len(), 1);
     }
 }
