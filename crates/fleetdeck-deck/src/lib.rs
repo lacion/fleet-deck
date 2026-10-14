@@ -14,6 +14,7 @@ pub mod routing;
 pub mod scheduler;
 pub mod serve;
 pub mod store;
+pub mod tailnet_auto;
 
 pub use link::{DeckLink, DeckNode, NodeError};
 pub use peers::{DeckPeers, Expected};

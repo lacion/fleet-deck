@@ -25,17 +25,20 @@ use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Extension, State};
 use axum::http::StatusCode;
+use fleetdeck_core::netscope::{self, AddrClass};
 use fleetdeck_core::settings::SaveError;
 use fleetdeck_core::tailscale::{self, Node, Status, TailscaleCli, TailscaleError};
+use fleetdeck_core::tailscale_wsl::{self, HostFacts};
 use fleetdeck_proto::settings::SettingsChange;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use super::Board;
 use super::guard::ApiError;
-use super::settings_routes::{audit, deck_view, is_elevated, owner, save_and_publish};
+use super::settings_routes::{audit, deck_view, is_elevated, owner, save_unreconciled};
 use crate::store::Principal;
 use crate::store::auth::LoginSession;
+use crate::tailnet_auto::{self, TailnetStart, WSL_NAT};
 
 /// How long an answer of `tailscale status` stays for the devices route.
 const CACHE_TTL: Duration = Duration::from_secs(5);
@@ -79,6 +82,9 @@ pub(super) struct Saved {
     link_listen: Vec<SocketAddr>,
     tailnet_hostname: Option<String>,
     tailscale_bin: Option<PathBuf>,
+    tailnet_auto: bool,
+    auto_listen: Vec<SocketAddr>,
+    auto_link_listen: Vec<SocketAddr>,
     revision: String,
 }
 
@@ -124,6 +130,9 @@ pub(super) async fn read_saved(board: &Board) -> Result<Option<Saved>, ApiError>
         link_listen,
         tailnet_hostname: text("tailnet_hostname"),
         tailscale_bin: text("tailscale_bin").map(PathBuf::from),
+        tailnet_auto: v.get("tailnet_auto").and_then(Value::as_bool) == Some(true),
+        auto_listen: addresses(v, "tailnet_auto_listen").unwrap_or_default(),
+        auto_link_listen: addresses(v, "tailnet_auto_link_listen").unwrap_or_default(),
         revision: view.revision,
     }))
 }
@@ -160,18 +169,52 @@ struct Managed {
     tailnet_hostname: Option<String>,
 }
 
+/// One automatic address that was not used at start.
+#[derive(Serialize)]
+struct SkippedView {
+    address: String,
+    reason: String,
+}
+
+/// The state of "Use Tailscale automatically" (design 14.4).
+#[derive(Serialize)]
+struct AutoView {
+    /// The saved setting `tailnet_auto`.
+    enabled: bool,
+    /// Why the mode did not apply at start (shown only when it was on).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    start_reason: Option<String>,
+    /// The automatic addresses that were not used at start.
+    skipped: Vec<SkippedView>,
+    /// The usable tailnet addresses now differ from the automatic entries.
+    changed: bool,
+}
+
 /// The answer of `GET /api/tailnet`.
 #[derive(Serialize)]
 pub struct TailnetView {
     available: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     reason: Option<String>,
+    /// The Windows program that the owner can choose (WSL only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    windows_program: Option<String>,
     #[serde(rename = "self", skip_serializing_if = "Option::is_none")]
     this: Option<SelfView>,
     userspace: bool,
     managed: Managed,
     current: Lists,
+    auto: AutoView,
 }
+
+/// The Windows program to offer: no `tailscale_bin`, no program found and a
+/// Windows program in the facts of this machine.
+fn windows_of(saved: Option<&Saved>, facts: &HostFacts) -> Option<PathBuf> {
+    let configured = saved.and_then(|s| s.tailscale_bin.as_deref());
+    tailscale_wsl::windows_choice(configured, tailscale::is_installed(), facts)
+}
+
+const WINDOWS_REASON: &str = "windows_tailscale";
 
 /// `GET /api/tailnet`.
 ///
@@ -190,11 +233,29 @@ pub async fn get(
     )
     .await?;
     let saved = read_saved(&board).await?;
-    let status = status_fresh(&cli_of(saved.as_ref())).await;
-    Ok(Json(view_of(saved.as_ref(), status)))
+    let facts = (board.host)();
+    let start = board
+        .tailnet_start
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone();
+    // The Windows program is never run here: only the hint is answered.
+    let status = match windows_of(saved.as_ref(), &facts) {
+        Some(program) => Err(Hint(program)),
+        None => Ok(status_fresh(&cli_of(saved.as_ref())).await),
+    };
+    Ok(Json(view_of(saved.as_ref(), status, &facts, &start)))
 }
 
-fn view_of(saved: Option<&Saved>, status: Result<Status, TailscaleError>) -> TailnetView {
+/// The hint about the Windows program, in place of a Tailscale answer.
+struct Hint(PathBuf);
+
+fn view_of(
+    saved: Option<&Saved>,
+    status: Result<Result<Status, TailscaleError>, Hint>,
+    facts: &HostFacts,
+    start: &TailnetStart,
+) -> TailnetView {
     let (listen, link_listen) = saved.map_or((&[][..], &[][..]), |s| {
         (s.listen.as_slice(), s.link_listen.as_slice())
     });
@@ -203,9 +264,28 @@ fn view_of(saved: Option<&Saved>, status: Result<Status, TailscaleError>) -> Tai
         listen: texts(listen),
         link_listen: texts(link_listen),
     };
-    let unchanged = |reason: Option<String>| TailnetView {
+    let enabled = saved.is_some_and(|s| s.tailnet_auto);
+    let mut auto = AutoView {
+        enabled,
+        start_reason: None,
+        skipped: Vec::new(),
+        changed: false,
+    };
+    if start.enabled {
+        auto.start_reason = start.start_reason.clone();
+        auto.skipped = start
+            .skipped
+            .iter()
+            .map(|(address, reason)| SkippedView {
+                address: address.to_string(),
+                reason: reason.clone(),
+            })
+            .collect();
+    }
+    let unchanged = |reason: Option<String>, windows: Option<String>, auto: AutoView| TailnetView {
         available: reason.is_none(),
         reason: reason.clone(),
+        windows_program: windows,
         this: None,
         userspace: false,
         managed: Managed {
@@ -217,12 +297,20 @@ fn view_of(saved: Option<&Saved>, status: Result<Status, TailscaleError>) -> Tai
             listen: texts(listen),
             link_listen: texts(link_listen),
         },
+        auto,
     };
     let status = match status {
-        Ok(s) => s,
-        Err(e) => return unchanged(Some(e.reason())),
+        Ok(Ok(s)) => s,
+        Ok(Err(e)) => return unchanged(Some(e.reason()), None, auto),
+        Err(Hint(program)) => {
+            return unchanged(
+                Some(WINDOWS_REASON.to_owned()),
+                Some(program.display().to_string()),
+                auto,
+            );
+        }
     };
-    let plan = tailscale::plan_use(&status, listen, link_listen, tailscale::is_assigned_locally);
+    let plan = tailscale::plan_use(&status, listen, link_listen, tailscale::is_usable);
     let this = SelfView {
         dns_name: status.this.dns_name.clone(),
         ips: texts(&status.this.ips),
@@ -242,13 +330,24 @@ fn view_of(saved: Option<&Saved>, status: Result<Status, TailscaleError>) -> Tai
             tailnet_hostname: plan.tailnet_hostname.or(hostname),
         }
     };
+    if let Some(saved) = saved {
+        auto.changed = tailnet_auto::changed(
+            saved.tailnet_auto,
+            plan.userspace,
+            &plan.usable_ips,
+            saved.auto_listen.iter().chain(&saved.auto_link_listen),
+        );
+    }
     TailnetView {
         available: true,
-        reason: None,
+        // On WSL with NAT networking the Windows addresses are not here.
+        reason: (plan.userspace && facts.wsl).then(|| WSL_NAT.to_owned()),
+        windows_program: None,
         this: Some(this),
         userspace: plan.userspace,
         managed,
         current,
+        auto,
     }
 }
 
@@ -299,14 +398,9 @@ pub async fn use_tailnet(
     )
     .await?;
     let Json(body) = body.map_err(|e| body_error(&e))?;
-    use_with(
-        &board,
-        &session,
-        body.elevation,
-        tailscale::is_assigned_locally,
-    )
-    .await
-    .map(Json)
+    use_with(&board, &session, body.elevation, tailscale::is_usable)
+        .await
+        .map(Json)
 }
 
 /// The audit action of "Use tailnet".
@@ -314,7 +408,7 @@ const USE_ACTION: &str = "tailnet.use";
 
 /// "Use tailnet" for the owner `session`: `is_usable` tells whether a
 /// tailnet address of this machine is assigned to a local interface (the
-/// route passes [`tailscale::is_assigned_locally`]). The audit row has the
+/// route passes [`tailscale::is_usable`]). The audit row has the
 /// keys that really changed, never a value.
 ///
 /// # Errors
@@ -355,10 +449,15 @@ async fn apply_use(
     })?;
     let plan = tailscale::plan_use(&status, &saved.listen, &saved.link_listen, is_usable);
     if plan.userspace {
+        let text = if (board.host)().wsl {
+            WSL_NAT
+        } else {
+            "Tailscale runs in userspace networking: set the listen addresses by hand"
+        };
         return Err(ApiError::new(
             StatusCode::CONFLICT,
             "tailnet_userspace",
-            "Tailscale runs in userspace networking: set the listen addresses by hand",
+            text,
         ));
     }
     let mut changes = Map::new();
@@ -367,6 +466,31 @@ async fn apply_use(
     }
     if plan.link_listen != saved.link_listen {
         changes.insert("link_listen".to_owned(), json!(texts(&plan.link_listen)));
+    }
+    // The entries that "Use tailnet" put in each list are the ones that the
+    // automatic mode may replace later (design 14.4): every entry of the
+    // tailnet range, as the plan replaces every one.
+    let added = |list: &[SocketAddr]| -> Vec<SocketAddr> {
+        list.iter()
+            .copied()
+            .filter(|a| netscope::classify(a.ip()) == AddrClass::Tailnet)
+            .collect()
+    };
+    for (key, list, saved_list) in [
+        (
+            "tailnet_auto_listen",
+            added(&plan.listen),
+            &saved.auto_listen,
+        ),
+        (
+            "tailnet_auto_link_listen",
+            added(&plan.link_listen),
+            &saved.auto_link_listen,
+        ),
+    ] {
+        if list != *saved_list {
+            changes.insert(key.to_owned(), json!(texts(&list)));
+        }
     }
     if let Some(name) = plan
         .tailnet_hostname
@@ -393,7 +517,8 @@ async fn apply_use(
         revision: saved.revision,
         elevation,
     };
-    let done = save_and_publish(settings, &board.store, &board.live, change, elevated)
+    // This save writes the provenance lists itself.
+    let done = save_unreconciled(settings, &board.store, &board.live, change, elevated)
         .await
         .map_err(|e| save_error(&e))?;
     let list = |key: &str| -> Vec<String> {
@@ -467,6 +592,9 @@ pub struct DevicesView {
     available: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     reason: Option<String>,
+    /// The Windows program that the owner can choose (WSL only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    windows_program: Option<String>,
     devices: Vec<DeviceView>,
 }
 
@@ -522,12 +650,22 @@ pub async fn devices(
     )
     .await?;
     let saved = read_saved(&board).await?;
+    if let Some(program) = windows_of(saved.as_ref(), &(board.host)()) {
+        // The Windows program is never run here: only the hint is answered.
+        return Ok(Json(DevicesView {
+            available: false,
+            reason: Some(WINDOWS_REASON.to_owned()),
+            windows_program: Some(program.display().to_string()),
+            devices: Vec::new(),
+        }));
+    }
     let status = match status_cached(&cli_of(saved.as_ref())).await {
         Ok(s) => s,
         Err(e) => {
             return Ok(Json(DevicesView {
                 available: false,
                 reason: Some(e.reason()),
+                windows_program: None,
                 devices: Vec::new(),
             }));
         }
@@ -581,6 +719,7 @@ pub async fn devices(
     Ok(Json(DevicesView {
         available: true,
         reason: None,
+        windows_program: None,
         devices,
     }))
 }

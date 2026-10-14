@@ -5,23 +5,74 @@ import type { SettingsEnv } from '../settings/context';
 import { useElevation } from '../settings/elevation';
 import { DeckError, describe } from '../settings/http';
 import type { TailnetView } from './api';
-import { useButton } from './model';
+import { autoNotes, offersWindows, useButton } from './model';
+import { saveDeckKey } from './save';
 
 const list = (items: readonly string[]) => items.join(', ');
 
-/** The body of the card for one answer of the deck. It shows what it is given. */
-export function TailnetCardView({
+/** The text of the card when only the Windows program of WSL exists (design 14.1). */
+export const WINDOWS_TEXT =
+  'Tailscale for Windows is installed. Fleet Deck can use it from WSL. It then runs as your Windows user, with your Windows environment, the same as in a Windows terminal.';
+
+/** The toggle "Use Tailscale automatically" with its help and its notes (design 14.4). */
+function AutoSection({
   view,
   busy,
-  note,
-  onUse,
+  onAuto,
 }: {
   readonly view: TailnetView;
   readonly busy: boolean;
-  readonly note: string | null;
+  readonly onAuto: (on: boolean) => void;
+}) {
+  const notes = autoNotes(view.auto);
+  return (
+    <div className="fd-tailnet-auto">
+      <label>
+        <input
+          type="checkbox"
+          checked={view.auto.enabled}
+          disabled={busy}
+          onChange={(e) => onAuto(e.target.checked)}
+        />{' '}
+        Use Tailscale automatically
+      </label>
+      <p className="fd-note">
+        Keeps the tailnet addresses current at each start. Applies after a restart.
+      </p>
+      {notes.map((text) => (
+        <p className="fd-note" key={text}>
+          {text}
+        </p>
+      ))}
+    </div>
+  );
+}
+
+function CardBody({
+  view,
+  busy,
+  onUse,
+  onUseProgram,
+}: {
+  readonly view: TailnetView;
+  readonly busy: boolean;
   readonly onUse: () => void;
+  readonly onUseProgram: () => void;
 }) {
   const button = useButton(view);
+  if (offersWindows(view)) {
+    return (
+      <>
+        <p className="fd-note">{WINDOWS_TEXT}</p>
+        <p>
+          <code>{view.windows_program}</code>
+        </p>
+        <button type="button" disabled={busy} onClick={onUseProgram}>
+          Use this program
+        </button>
+      </>
+    );
+  }
   if (!view.available) {
     return (
       <p className="fd-note">
@@ -33,7 +84,7 @@ export function TailnetCardView({
   if (view.userspace) {
     return (
       <p className="fd-note">
-        Tailscale runs in userspace networking: set the listen addresses by hand.
+        {view.reason ?? 'Tailscale runs in userspace networking: set the listen addresses by hand.'}
       </p>
     );
   }
@@ -72,6 +123,30 @@ export function TailnetCardView({
           {button === 'use' ? 'Use tailnet' : 'Update'}
         </button>
       )}
+    </>
+  );
+}
+
+/** The body of the card for one answer of the deck. It shows what it is given. */
+export function TailnetCardView({
+  view,
+  busy,
+  note,
+  onUse,
+  onUseProgram,
+  onAuto,
+}: {
+  readonly view: TailnetView;
+  readonly busy: boolean;
+  readonly note: string | null;
+  readonly onUse: () => void;
+  readonly onUseProgram: () => void;
+  readonly onAuto: (on: boolean) => void;
+}) {
+  return (
+    <>
+      <CardBody view={view} busy={busy} onUse={onUse} onUseProgram={onUseProgram} />
+      <AutoSection view={view} busy={busy} onAuto={onAuto} />
       {note === null ? null : <p role="status">{note}</p>}
     </>
   );
@@ -134,12 +209,60 @@ export function TailnetCard({ env }: { readonly env: SettingsEnv }) {
     }
   };
 
+  // One deck key from the card: the program of Windows, or the automatic mode.
+  const saveKey = async (
+    key: string,
+    value: unknown,
+    labels: readonly string[],
+    askFirst: boolean,
+    done: string,
+  ) => {
+    setBusy(true);
+    setError(null);
+    setNote(null);
+    try {
+      const out = await saveDeckKey(env.settings, ask, key, value, labels, askFirst);
+      if (!alive.current) return;
+      if (out.kind === 'failed') setError(out.text);
+      if (out.kind === 'saved') {
+        setNote(done);
+        await load();
+      }
+    } finally {
+      if (alive.current) setBusy(false);
+    }
+  };
+
   return (
     <section className="fd-panel fd-tailnet" aria-label="Tailnet">
       <h2>Tailnet</h2>
       {view === null && error === null ? <p className="fd-note">Checking Tailscale…</p> : null}
       {view === null ? null : (
-        <TailnetCardView view={view} busy={busy} note={note} onUse={() => void use()} />
+        <TailnetCardView
+          view={view}
+          busy={busy}
+          note={note}
+          onUse={() => void use()}
+          onUseProgram={() => {
+            if (view.windows_program === undefined) return;
+            void saveKey(
+              'tailscale_bin',
+              view.windows_program,
+              ['Tailscale program'],
+              true,
+              'Saved. Fleet Deck uses the Tailscale program of Windows.',
+            );
+          }}
+          onAuto={(on) =>
+            void saveKey(
+              'tailnet_auto',
+              on,
+              ['Tailscale: use automatically'],
+              on,
+              on ? 'Saved. The tailnet addresses are set at the next start of the deck.' : 'Saved.',
+            )
+          }
+        />
       )}
       {error === null ? null : <p role="alert">{error}</p>}
       {node}

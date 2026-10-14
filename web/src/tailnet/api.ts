@@ -2,15 +2,31 @@
 // (`GET /api/tailnet`, `/api/tailnet/devices`, `/api/pairing/*`); all routes are owner only.
 import type { DeckIo } from '../settings/http';
 
+/** The state of "Use Tailscale automatically" (tailnet design 14.4). */
+export type AutoView = {
+  /** The saved setting `tailnet_auto`. */
+  enabled: boolean;
+  /** Why the mode did not apply at start (only when it was on at start). */
+  start_reason?: string;
+  /** The automatic addresses that were not used at start. */
+  skipped: { address: string; reason: string }[];
+  /** The usable tailnet addresses differ from the automatic entries: restart to use them. */
+  changed: boolean;
+};
+
 export type TailnetView = {
   available: boolean;
+  /** `windows_tailscale` when only the Windows program exists; else a text of the deck. */
   reason?: string;
+  /** The Windows program of WSL that the owner can choose (with `windows_tailscale`). */
+  windows_program?: string;
   self?: { dns_name: string; ips: string[]; login?: string; os?: string };
   userspace: boolean;
   /** What "Use tailnet" would save now. */
   managed: { listen: string[]; link_listen: string[]; tailnet_hostname?: string };
   /** The saved deck.toml values. */
   current: { listen: string[]; link_listen: string[] };
+  auto: AutoView;
 };
 
 export type UseAnswer = {
@@ -93,7 +109,7 @@ export function tailnetActions(io: DeckIo): TailnetActions {
     view: async () =>
       shaped<TailnetView>(
         await io.get('/api/tailnet'),
-        ['available', 'userspace', 'managed', 'current'],
+        ['available', 'userspace', 'managed', 'current', 'auto'],
         'tailnet view',
       ),
     use: async (elevation) =>

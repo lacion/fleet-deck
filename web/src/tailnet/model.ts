@@ -1,5 +1,5 @@
 // DL-178: the pure rules of the tailnet card and the pairing tab.
-import type { TailnetView, WindowView } from './api';
+import type { AutoView, TailnetView, WindowView } from './api';
 
 /** Which button the Tailnet card shows: "Use tailnet", "Update", or none. */
 export function useButton(view: TailnetView): 'use' | 'update' | 'none' {
@@ -12,6 +12,22 @@ export function useButton(view: TailnetView): 'use' | 'update' | 'none' {
     view.managed.link_listen.filter((a) => link.has(a)).length;
   if (present === total) return 'none';
   return present === 0 ? 'use' : 'update';
+}
+
+/** The reason that the deck gives when only the Windows program of WSL exists. */
+export const WINDOWS_REASON = 'windows_tailscale';
+
+/** True when the card offers the Windows program: the reason and the path are both there. */
+export const offersWindows = (view: TailnetView): boolean =>
+  !view.available && view.reason === WINDOWS_REASON && view.windows_program !== undefined;
+
+/** The notes under the toggle: why it did not apply, the skipped addresses, and a change. */
+export function autoNotes(auto: AutoView): string[] {
+  const notes: string[] = [];
+  if (auto.start_reason !== undefined) notes.push(`Not applied at start: ${auto.start_reason}`);
+  for (const s of auto.skipped) notes.push(`${s.address} not used: ${s.reason}`);
+  if (auto.changed) notes.push('Your tailnet address changed. Restart the deck to use it.');
+  return notes;
 }
 
 /** The 64 hex characters in groups of 4 separated by one space. */

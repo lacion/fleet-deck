@@ -108,6 +108,19 @@ describe('the sections of the page (DL-172)', () => {
     expect(deck[0]?.fields.map((f) => f.key)).toEqual(['link_listen', 'tailnet_hostname']);
   });
 
+  test('a hidden field is left out, also from Other, and tailnet_auto is in Network', () => {
+    const groups = groupFields([
+      meta('listen', 'Listen', 'addresses'),
+      meta('tailnet_auto', 'Use Tailscale automatically', 'bool'),
+      meta('tailnet_auto_listen', 'Added automatically', 'addresses', { hidden: true }),
+      meta('zz_hidden', 'Hidden future key', 'text', { hidden: true }),
+      meta('zz_shown', 'Shown future key', 'text', { hidden: false }),
+    ]);
+    expect(groups.map((g) => g.title)).toEqual(['Network', 'Other']);
+    expect(groups[0]?.fields.map((f) => f.key)).toEqual(['listen', 'tailnet_auto']);
+    expect(groups[1]?.fields.map((f) => f.key)).toEqual(['zz_shown']);
+  });
+
   test('the fleet control keys have their section and tailscale_bin is in Network (ADR-008)', () => {
     const groups = groupFields([
       meta('allow_fleet_control', 'Allow fleet control', 'bool'),

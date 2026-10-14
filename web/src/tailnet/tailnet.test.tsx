@@ -1,9 +1,20 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import type { DeckIo } from '../settings/http';
+import type { SettingsSaved } from '../gen';
+import type { SettingsActions } from '../settings/actions';
+import { DeckError, type DeckIo } from '../settings/http';
 import { type PairRequest, type TailnetView, type WindowView, tailnetActions } from './api';
-import { approveError, clockText, groupFingerprint, useButton, windowText } from './model';
-import { TailnetCardView } from './TailnetCard';
+import {
+  approveError,
+  autoNotes,
+  clockText,
+  groupFingerprint,
+  offersWindows,
+  useButton,
+  windowText,
+} from './model';
+import { saveDeckKey } from './save';
+import { TailnetCardView, WINDOWS_TEXT } from './TailnetCard';
 import { RequestCard } from './TailnetPairing';
 
 const noop = () => {};
@@ -14,6 +25,7 @@ const VIEW: TailnetView = {
   userspace: false,
   managed: { listen: ['100.64.0.1:7420'], link_listen: ['100.64.0.1:7421'] },
   current: { listen: ['127.0.0.1:7420'], link_listen: ['127.0.0.1:7421'] },
+  auto: { enabled: false, skipped: [], changed: false },
 };
 
 const view = (extra: Partial<TailnetView> = {}): TailnetView => ({ ...VIEW, ...extra });
@@ -161,7 +173,16 @@ describe('approveError', () => {
 
 describe('TailnetCardView', () => {
   const card = (v: TailnetView, note: string | null = null) =>
-    renderToStaticMarkup(<TailnetCardView view={v} busy={false} note={note} onUse={noop} />);
+    renderToStaticMarkup(
+      <TailnetCardView
+        view={v}
+        busy={false}
+        note={note}
+        onUse={noop}
+        onUseProgram={noop}
+        onAuto={noop}
+      />,
+    );
 
   test('Tailscale is not available', () => {
     const html = card(view({ available: false, reason: 'tailscale is not installed' }));
@@ -207,6 +228,228 @@ describe('TailnetCardView', () => {
     expect(html).toContain('The deck listens on its tailnet addresses.');
     expect(html).not.toContain('<button');
     expect(html).toContain('Saved.');
+  });
+});
+
+describe('the Windows program (design 14.1)', () => {
+  const windows = view({
+    available: false,
+    reason: 'windows_tailscale',
+    windows_program: '/mnt/c/Program Files/Tailscale/tailscale.exe',
+  });
+  const card = (v: TailnetView) =>
+    renderToStaticMarkup(
+      <TailnetCardView
+        view={v}
+        busy={false}
+        note={null}
+        onUse={noop}
+        onUseProgram={noop}
+        onAuto={noop}
+      />,
+    );
+
+  test('the text and the button "Use this program"', () => {
+    expect(offersWindows(windows)).toBe(true);
+    const html = card(windows);
+    expect(html).toContain(
+      'Tailscale for Windows is installed. Fleet Deck can use it from WSL. It then runs as your Windows user, with your Windows environment, the same as in a Windows terminal.',
+    );
+    expect(WINDOWS_TEXT).toContain('the same as in a Windows terminal.');
+    expect(html).toContain('>Use this program</button>');
+    expect(html).toContain('/mnt/c/Program Files/Tailscale/tailscale.exe');
+    // Not the generic "not available" text, and no "Use tailnet".
+    expect(html).not.toContain('Tailscale is not available on the deck machine');
+    expect(html).not.toContain('Use tailnet');
+  });
+
+  test('another reason, or no path, is the generic text', () => {
+    expect(offersWindows(view({ available: false, reason: 'not installed' }))).toBe(false);
+    expect(offersWindows(view({ available: false, reason: 'windows_tailscale' }))).toBe(false);
+    expect(offersWindows(view())).toBe(false);
+    const html = card(view({ available: false, reason: 'windows_tailscale' }));
+    expect(html).toContain('Tailscale is not available on the deck machine: windows_tailscale.');
+    expect(html).not.toContain('Use this program');
+  });
+
+  test('the WSL NAT reason shows in place of the userspace text', () => {
+    const nat =
+      'Tailscale runs on Windows and WSL uses NAT networking, so the tailnet address is not on this machine.';
+    const html = card(view({ userspace: true, reason: nat }));
+    expect(html).toContain(nat);
+    expect(html).not.toContain('<button');
+  });
+});
+
+describe('the toggle "Use Tailscale automatically" (design 14.4)', () => {
+  const card = (v: TailnetView, busy = false) =>
+    renderToStaticMarkup(
+      <TailnetCardView
+        view={v}
+        busy={busy}
+        note={null}
+        onUse={noop}
+        onUseProgram={noop}
+        onAuto={noop}
+      />,
+    );
+
+  test('off and on, with the help text', () => {
+    const off = card(view());
+    expect(off).toContain('Use Tailscale automatically');
+    expect(off).toContain('type="checkbox"');
+    expect(off).not.toContain('checked=""');
+    expect(off).toContain(
+      'Keeps the tailnet addresses current at each start. Applies after a restart.',
+    );
+    const on = card(view({ auto: { enabled: true, skipped: [], changed: false } }));
+    expect(on).toContain('checked=""');
+    expect(card(view(), true)).toContain('disabled=""');
+  });
+
+  test('the toggle shows when Tailscale is not available or in userspace', () => {
+    expect(card(view({ available: false, reason: 'not installed' }))).toContain('type="checkbox"');
+    expect(card(view({ userspace: true }))).toContain('type="checkbox"');
+  });
+
+  test('the notes: the start reason, a skipped address and a change', () => {
+    const auto = {
+      enabled: true,
+      start_reason: 'Tailscale did not answer within 3 seconds.',
+      skipped: [{ address: '100.64.0.9:7420', reason: 'the address is not on this machine' }],
+      changed: true,
+    };
+    expect(autoNotes(auto)).toEqual([
+      'Not applied at start: Tailscale did not answer within 3 seconds.',
+      '100.64.0.9:7420 not used: the address is not on this machine',
+      'Your tailnet address changed. Restart the deck to use it.',
+    ]);
+    const html = card(view({ auto }));
+    expect(html).toContain('Not applied at start: Tailscale did not answer within 3 seconds.');
+    expect(html).toContain('100.64.0.9:7420 not used: the address is not on this machine');
+    expect(html).toContain('Your tailnet address changed. Restart the deck to use it.');
+    expect(autoNotes({ enabled: false, skipped: [], changed: false })).toEqual([]);
+  });
+});
+
+describe('saveDeckKey', () => {
+  const SAVED: SettingsSaved = {
+    values: {},
+    applied: [],
+    restart_needed: [],
+    unapplied: [],
+    revision: 'rev-2',
+    durability: 'confirmed',
+  };
+
+  /** `answers` are the replies of the saves, in order; a string is the code of a refusal. */
+  function setup(answers: (SettingsSaved | string)[], held: string | null = null) {
+    const calls: string[] = [];
+    let elevation = held;
+    const sent: unknown[] = [];
+    const actions: SettingsActions = {
+      view: async () => {
+        calls.push('view');
+        return { values: {}, fields: [], revision: 'rev-1', overrides: [] };
+      },
+      save: async (_t, change) => {
+        calls.push('save');
+        sent.push(change);
+        const next = answers.shift();
+        if (typeof next === 'string') {
+          throw new DeckError(400, 'No.', next, next === 'elevation_required' ? { keys: [] } : {});
+        }
+        return next ?? SAVED;
+      },
+      setSecret: async () => SAVED,
+      elevate: async () => {
+        elevation = 'el-1';
+      },
+      elevation: () => elevation,
+      forgetElevation: () => {
+        elevation = null;
+      },
+      restart: async () => ({ restarting: true, would_stop: [] }),
+    };
+    const asked: (readonly string[])[] = [];
+    const ask = async (labels: readonly string[] = []) => {
+      calls.push('ask');
+      asked.push(labels);
+      elevation = 'el-1';
+      return elevation;
+    };
+    const cancel = async () => {
+      calls.push('ask');
+      return null;
+    };
+    return { actions, calls, sent, asked, ask, cancel };
+  }
+
+  test('"Use this program" asks first, then saves tailscale_bin', async () => {
+    const t = setup([SAVED]);
+    const program = '/mnt/c/Program Files/Tailscale/tailscale.exe';
+    const out = await saveDeckKey(
+      t.actions,
+      t.ask,
+      'tailscale_bin',
+      program,
+      ['Tailscale program'],
+      true,
+    );
+    expect(out).toEqual({ kind: 'saved' });
+    expect(t.calls).toEqual(['ask', 'view', 'save']);
+    expect(t.asked).toEqual([['Tailscale program']]);
+    expect(t.sent).toEqual([
+      { changes: { tailscale_bin: program }, revision: 'rev-1', elevation: 'el-1' },
+    ]);
+  });
+
+  test('a cancelled confirmation saves nothing', async () => {
+    const t = setup([SAVED]);
+    const out = await saveDeckKey(t.actions, t.cancel, 'tailnet_auto', true, ['x'], true);
+    expect(out).toEqual({ kind: 'cancelled' });
+    expect(t.calls).toEqual(['ask']);
+  });
+
+  test('turning it off asks only when the deck wants it, and retries once', async () => {
+    const quiet = setup([SAVED]);
+    expect(
+      await saveDeckKey(quiet.actions, quiet.ask, 'tailnet_auto', false, ['x'], false),
+    ).toEqual({ kind: 'saved' });
+    expect(quiet.calls).toEqual(['view', 'save']);
+    expect(quiet.sent).toEqual([
+      { changes: { tailnet_auto: false }, revision: 'rev-1', elevation: null },
+    ]);
+
+    const asked = setup(['elevation_required', SAVED]);
+    expect(
+      await saveDeckKey(asked.actions, asked.ask, 'tailnet_auto', false, ['x'], false),
+    ).toEqual({ kind: 'saved' });
+    expect(asked.calls).toEqual(['view', 'save', 'ask', 'view', 'save']);
+
+    // A second refusal is a failure, not a loop.
+    const twice = setup(['elevation_required', 'elevation_required']);
+    const out = await saveDeckKey(twice.actions, twice.ask, 'tailnet_auto', false, ['x'], false);
+    expect(out.kind).toBe('failed');
+    expect(twice.calls.filter((c) => c === 'ask')).toHaveLength(1);
+
+    // A cancelled retry saves nothing more.
+    const cancelled = setup(['elevation_required', SAVED]);
+    expect(
+      await saveDeckKey(cancelled.actions, cancelled.cancel, 'tailnet_auto', false, ['x'], false),
+    ).toEqual({ kind: 'cancelled' });
+    expect(cancelled.calls.filter((c) => c === 'save')).toHaveLength(1);
+  });
+
+  test('the failures have a text', async () => {
+    const changed = setup(['settings_changed']);
+    expect(await saveDeckKey(changed.actions, changed.ask, 'k', 1, [], false)).toEqual({
+      kind: 'failed',
+      text: 'These settings changed since you opened them.',
+    });
+    const bad = setup(['cannot_apply']);
+    const out = await saveDeckKey(bad.actions, bad.ask, 'k', 1, [], false);
+    expect(out.kind).toBe('failed');
   });
 });
 

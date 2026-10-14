@@ -20,6 +20,10 @@ danger: boolean,
  */
 secret: boolean, read_only: boolean, 
 /**
+ * The board does not show the field (a key that only the deck writes).
+ */
+hidden?: boolean, 
+/**
  * The command-line flag that sets the field in the running process.
  */
 cli_flag: string | null, };

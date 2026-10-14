@@ -1,9 +1,10 @@
 //! The `tailscale_bin` key of `station.toml` and `deck.toml` (tailnet design
 //! section 2): the absolute path of the `tailscale` program.
 
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
-use super::{ConfigError, invalid};
+use super::{ConfigError, invalid, parse_listen};
 use crate::paths::{PathError, expand_path};
 
 const KEY: &str = "tailscale_bin";
@@ -54,6 +55,19 @@ pub(super) fn parse_hostname(raw: Option<String>) -> Result<Option<String>, Conf
             format!("`{h}` is not a DNS name"),
         )),
     }
+}
+
+/// The two lists of the entries that the automatic mode added to `listen`
+/// and to `link_listen` (an unset list is empty). Each entry follows the
+/// bind rule of the listen lists.
+pub(super) fn parse_provenance(
+    listen: Option<Vec<String>>,
+    link_listen: Option<Vec<String>>,
+) -> Result<(Vec<SocketAddr>, Vec<SocketAddr>), ConfigError> {
+    Ok((
+        parse_listen("tailnet_auto_listen", listen.unwrap_or_default())?,
+        parse_listen("tailnet_auto_link_listen", link_listen.unwrap_or_default())?,
+    ))
 }
 
 /// A DNS name of up to 253 bytes: labels of 1 to 63 letters, digits and `-`.

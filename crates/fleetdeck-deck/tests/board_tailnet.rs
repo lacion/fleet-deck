@@ -426,7 +426,10 @@ async fn use_tailnet_is_an_elevated_save_that_keeps_manual_entries() {
     let ok = c.audited("tailnet.use", AuditResult::Ok).await;
     assert_eq!(
         ok,
-        vec![Some("link_listen,listen,tailnet_hostname".to_owned())]
+        vec![Some(
+            "link_listen,listen,tailnet_auto_link_listen,tailnet_auto_listen,tailnet_hostname"
+                .to_owned()
+        )]
     );
     let all = format!("{:?}", c.store.audit_log(100).await.unwrap());
     assert!(!all.contains("100.64.0.10"), "{all}");

@@ -57,10 +57,17 @@ export type FakeTailnet = {
   view: {
     available: boolean;
     reason?: string;
+    windows_program?: string;
     self?: { dns_name: string; ips: string[] };
     userspace: boolean;
     managed: { listen: string[]; link_listen: string[] };
     current: { listen: string[]; link_listen: string[] };
+    auto: {
+      enabled: boolean;
+      start_reason?: string;
+      skipped: { address: string; reason: string }[];
+      changed: boolean;
+    };
   };
   windowOpen: boolean;
   generation: number;
@@ -257,6 +264,7 @@ export class FakeDeck {
         userspace: false,
         managed: { listen: ['100.64.0.1:7420'], link_listen: ['100.64.0.1:7421'] },
         current: { listen: ['127.0.0.1:7420'], link_listen: ['127.0.0.1:7421'] },
+        auto: { enabled: false, skipped: [], changed: false },
       },
       windowOpen: false,
       generation: 0,
@@ -276,10 +284,46 @@ export class FakeDeck {
         ? { status: 200, body: { elevation: ELEVATION, expires_at: Date.now() + 300_000 } }
         : { status: 401, body: { code: 'bad_password', message: 'The password is wrong.' } };
     });
-    this.on('/api/settings/deck', () => ({
-      status: 200,
-      body: { values: {}, fields: [], revision: 'rev-e2e', overrides: [] },
-    }));
+    this.on('/api/settings/deck', (raw) => {
+      if (raw === null) {
+        return {
+          status: 200,
+          body: { values: {}, fields: [], revision: 'rev-e2e', overrides: [] },
+        };
+      }
+      // A save of one key from the Tailnet card: `tailscale_bin` and turning
+      // `tailnet_auto` on need the elevation, as in the real deck.
+      state.posted.push({ path: '/api/settings/deck', body: raw });
+      const b = raw as { changes?: Record<string, unknown>; elevation?: unknown };
+      const changes = b.changes ?? {};
+      const needs = 'tailscale_bin' in changes || changes['tailnet_auto'] === true;
+      if (needs && b.elevation !== ELEVATION) {
+        return {
+          status: 400,
+          body: { error: 'elevation_required', message: 'Confirm it is you.', keys: [] },
+        };
+      }
+      if (typeof changes['tailscale_bin'] === 'string') {
+        // The program of Windows runs now: the card shows the normal view.
+        delete state.view.windows_program;
+        delete state.view.reason;
+        state.view.available = true;
+      }
+      if (typeof changes['tailnet_auto'] === 'boolean') {
+        state.view.auto.enabled = changes['tailnet_auto'];
+      }
+      return {
+        status: 200,
+        body: {
+          values: {},
+          applied: [],
+          restart_needed: Object.keys(changes),
+          unapplied: [],
+          revision: 'rev-e2e-2',
+          durability: 'confirmed',
+        },
+      };
+    });
     this.on('/api/tailnet', () => ({ status: 200, body: state.view }));
     this.on('/api/tailnet/use', (raw) => {
       state.posted.push({ path: '/api/tailnet/use', body: raw });
@@ -299,6 +343,7 @@ export class FakeDeck {
       status: 200,
       body: {
         available: state.view.available,
+        ...(state.view.reason === undefined ? {} : { reason: state.view.reason }),
         devices: state.devices.map((d) => ({
           ...d,
           command:

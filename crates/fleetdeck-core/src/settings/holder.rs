@@ -254,6 +254,12 @@ impl Holder for DeckHolder {
         m.insert("clone_org".into(), json!(c.clone_org));
         m.insert("clone_transport".into(), json!(c.clone_transport.as_str()));
         m.insert("tailscale_bin".into(), tailscale_bin_text(&c.tailscale_bin));
+        m.insert("tailnet_auto".into(), json!(c.tailnet_auto));
+        m.insert("tailnet_auto_listen".into(), addrs(&c.tailnet_auto_listen));
+        m.insert(
+            "tailnet_auto_link_listen".into(),
+            addrs(&c.tailnet_auto_link_listen),
+        );
         m
     }
 
@@ -274,6 +280,11 @@ impl Holder for DeckHolder {
         // the elevation (tailnet design section 2).
         if old.tailscale_bin != new.tailscale_bin {
             keys.push("tailscale_bin".to_owned());
+        }
+        // Turning the automatic tailnet mode on needs the elevation; off
+        // does not (tailnet design section 14.4).
+        if !old.tailnet_auto && new.tailnet_auto {
+            keys.push("tailnet_auto".to_owned());
         }
         keys
     }

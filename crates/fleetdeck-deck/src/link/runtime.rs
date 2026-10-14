@@ -89,6 +89,20 @@ pub struct NodeOptions {
     pub hub: HubConfig,
     pub tailnet: Option<TailnetLimits>,
     pub listener_kind: Option<ListenerKind>,
+    /// Listen addresses that the automatic tailnet mode added (design 14.4).
+    /// Each one is checked and bound after the `link_listen` addresses; an
+    /// address that is not local, or that cannot be bound, is skipped with a
+    /// warning ([`DeckNode::skipped`]) and never stops the start.
+    pub optional_listen: Vec<SocketAddr>,
+}
+
+/// The `io::ErrorKind` of a failed bind; `Other` for an error that is not an
+/// I/O error.
+fn link_error_kind(e: &LinkError) -> std::io::ErrorKind {
+    match e {
+        LinkError::Net(fleetdeck_link::net::NetError::Io(io)) => io.kind(),
+        _ => std::io::ErrorKind::Other,
+    }
 }
 
 /// The running link node of the deck.
@@ -97,6 +111,7 @@ pub struct DeckNode {
     invitations: Arc<Invitations>,
     pair_requests: Arc<PairRequests>,
     listening: Vec<SocketAddr>,
+    skipped: Vec<(SocketAddr, String)>,
     tasks: Mutex<Vec<JoinHandle<()>>>,
     backoff: BackoffPolicy,
 }
@@ -180,11 +195,31 @@ impl DeckNode {
             tracing::info!(addr = %listener.local_addr, "deck listens for stations");
             listeners.push(listener);
         }
+        let mut skipped = Vec::new();
+        for addr in &options.optional_listen {
+            let outcome = match crate::tailnet_auto::unusable(*addr) {
+                Some(reason) => Err(reason),
+                None => node::listen(ctx.node.clone(), *addr)
+                    .await
+                    .map_err(|e| crate::tailnet_auto::bind_failed(link_error_kind(&e))),
+            };
+            match outcome {
+                Ok(listener) => {
+                    tracing::info!(addr = %listener.local_addr, "deck listens for stations");
+                    listeners.push(listener);
+                }
+                Err(reason) => {
+                    tracing::warn!(%addr, %reason, "an automatic tailnet link address is not used");
+                    skipped.push((*addr, reason));
+                }
+            }
+        }
         let this = Arc::new(Self {
             ctx,
             invitations,
             pair_requests,
             listening: listeners.iter().map(|l| l.local_addr).collect(),
+            skipped,
             tasks: Mutex::default(),
             backoff,
         });
@@ -222,6 +257,12 @@ impl DeckNode {
     #[must_use]
     pub fn listen_addrs(&self) -> &[SocketAddr] {
         &self.listening
+    }
+
+    /// The automatic addresses that were not used, with the reason.
+    #[must_use]
+    pub fn skipped(&self) -> &[(SocketAddr, String)] {
+        &self.skipped
     }
 
     fn spawn(&self, task: JoinHandle<()>) {

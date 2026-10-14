@@ -83,6 +83,84 @@ function suite() {
     expect(await fitsWidth(page)).toBe(true);
   });
 
+  test('the Windows program: the hint, "Use this program" and the elevation', async ({ page }) => {
+    const { state } = await start(page);
+    state.view = {
+      ...state.view,
+      available: false,
+      reason: 'windows_tailscale',
+      windows_program: '/mnt/c/Program Files/Tailscale/tailscale.exe',
+    };
+    delete state.view.self;
+    await go(page, '#/settings');
+    const card = page.getByRole('region', { name: 'Tailnet' });
+    await expect(card).toContainText(
+      'Tailscale for Windows is installed. Fleet Deck can use it from WSL. It then runs as your Windows user, with your Windows environment, the same as in a Windows terminal.',
+    );
+    await expect(card).not.toContainText('Tailscale is not available');
+    await card.getByRole('button', { name: 'Use this program' }).click();
+    await confirm(page);
+    await expect(card).toContainText('Saved. Fleet Deck uses the Tailscale program of Windows.');
+    expect(state.posted).toEqual([
+      {
+        path: '/api/settings/deck',
+        body: {
+          changes: { tailscale_bin: '/mnt/c/Program Files/Tailscale/tailscale.exe' },
+          revision: 'rev-e2e',
+          elevation: ELEVATION,
+        },
+      },
+    ]);
+    // The card reloads: the normal view, and no hint.
+    await expect(card).toContainText('Board address');
+    await expect(card.getByRole('button', { name: 'Use this program' })).toHaveCount(0);
+    expect(await fitsWidth(page)).toBe(true);
+  });
+
+  test('the toggle "Use Tailscale automatically" and its notes', async ({ page }) => {
+    const { state } = await start(page);
+    state.view.auto = {
+      enabled: false,
+      start_reason: 'Tailscale did not answer within 3 seconds.',
+      skipped: [{ address: '100.64.0.9:7420', reason: 'the address is not on this machine' }],
+      changed: true,
+    };
+    await go(page, '#/settings');
+    const card = page.getByRole('region', { name: 'Tailnet' });
+    const toggle = card.getByRole('checkbox', { name: 'Use Tailscale automatically' });
+    await expect(toggle).not.toBeChecked();
+    await expect(card).toContainText(
+      'Keeps the tailnet addresses current at each start. Applies after a restart.',
+    );
+    await expect(card).toContainText(
+      'Not applied at start: Tailscale did not answer within 3 seconds.',
+    );
+    await expect(card).toContainText(
+      '100.64.0.9:7420 not used: the address is not on this machine',
+    );
+    await expect(card).toContainText('Your tailnet address changed. Restart the deck to use it.');
+    // On: the confirmation, then the save.
+    await toggle.click();
+    await confirm(page);
+    await expect(toggle).toBeChecked();
+    await expect(card).toContainText('Saved. The tailnet addresses are set at the next start');
+    expect(state.posted).toEqual([
+      {
+        path: '/api/settings/deck',
+        body: { changes: { tailnet_auto: true }, revision: 'rev-e2e', elevation: ELEVATION },
+      },
+    ]);
+    // Off: no confirmation dialog.
+    await toggle.click();
+    await expect(toggle).not.toBeChecked();
+    await expect(page.getByRole('dialog', { name: 'Confirm it is you' })).toHaveCount(0);
+    expect(state.posted[1]).toEqual({
+      path: '/api/settings/deck',
+      body: { changes: { tailnet_auto: false }, revision: 'rev-e2e', elevation: ELEVATION },
+    });
+    expect(await fitsWidth(page)).toBe(true);
+  });
+
   test('Add station: the window, a device command, and approving a request', async ({ page }) => {
     const { state } = await start(page);
     await go(page, '#/stations');

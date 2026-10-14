@@ -67,6 +67,10 @@ pub struct FieldMeta {
     /// The value holds secret entries; a view shows `{ "set": true }`.
     pub secret: bool,
     pub read_only: bool,
+    /// The board does not show the field (a key that only the deck writes).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(optional, as = "Option<bool>")]
+    pub hidden: bool,
     /// The command-line flag that sets the field in the running process.
     pub cli_flag: Option<String>,
 }

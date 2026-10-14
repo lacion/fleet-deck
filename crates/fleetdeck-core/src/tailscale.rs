@@ -27,6 +27,7 @@ use tokio::process::{Child, Command};
 
 use crate::childenv::ChildEnv;
 use crate::config::valid_dns_name;
+use crate::local_addrs;
 use crate::netscope::{self, AddrClass};
 
 /// The longest run of one call.
@@ -275,6 +276,13 @@ pub fn select_program(
     if let Some(path) = configured {
         return path.to_path_buf();
     }
+    find_program(path_var, bundled).unwrap_or_else(|| PathBuf::from("tailscale"))
+}
+
+/// The program that the lookup finds: `tailscale` on `path_var`, else
+/// `bundled` when that file exists.
+#[must_use]
+pub fn find_program(path_var: Option<&OsStr>, bundled: Option<&Path>) -> Option<PathBuf> {
     let found = path_var.and_then(|paths| {
         std::env::split_paths(paths)
             .filter(|dir| dir.is_absolute())
@@ -284,13 +292,15 @@ pub fn select_program(
                     .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
             })
     });
-    if let Some(path) = found {
-        return path;
-    }
-    match bundled {
-        Some(path) if path.is_file() => path.to_path_buf(),
-        _ => PathBuf::from("tailscale"),
-    }
+    found.or_else(|| bundled.filter(|p| p.is_file()).map(Path::to_path_buf))
+}
+
+/// True when the lookup of this machine finds a program without a setting:
+/// `tailscale` on `PATH`, or the macOS app.
+#[must_use]
+pub fn is_installed() -> bool {
+    let bundled = cfg!(target_os = "macos").then(|| Path::new(MACOS_BUNDLED));
+    find_program(std::env::var_os("PATH").as_deref(), bundled).is_some()
 }
 
 /// The environment of a child: `PATH`, `HOME` and `LANG` of `parent`, and
@@ -318,11 +328,22 @@ fn ambient_env() -> ChildEnv {
     child_env(std::env::vars_os(), cfg!(target_os = "macos"))
 }
 
-/// True when `ip` is assigned to a local interface: a socket can bind it.
-/// An address that Tailscale gives in userspace networking is not.
+/// True when `ip` is assigned to an interface of this machine (design
+/// section 14.3): it is in the kernel's local tables. Where the tables are
+/// not available the answer is the bind check: a socket can bind it. An
+/// address that Tailscale gives in userspace networking is not local.
+#[must_use]
+pub fn is_usable(ip: IpAddr) -> bool {
+    match local_addrs::local_addresses() {
+        Some(local) => local.contains(&ip),
+        None => UdpSocket::bind((ip, 0)).is_ok(),
+    }
+}
+
+/// The same as [`is_usable`] (the name that the CLI uses).
 #[must_use]
 pub fn is_assigned_locally(ip: IpAddr) -> bool {
-    UdpSocket::bind((ip, 0)).is_ok()
+    is_usable(ip)
 }
 
 /// A JSON value that refuses a duplicate key at any depth (`serde_json`'s own
