@@ -55,13 +55,15 @@ pub struct ChatQuery {
 /// side chat after `after`, oldest first.
 ///
 /// # Errors
-/// 404 `unknown_station` / `unknown_session`.
+/// 403 `owner_only` for a bearer token (NV-07); 404 `unknown_station` /
+/// `unknown_session`.
 pub async fn chat(
     State(board): State<Arc<Board>>,
     Extension(principal): Extension<Principal>,
     Path((station, session)): Path<(String, String)>,
     Query(q): Query<ChatQuery>,
 ) -> Result<Json<Vec<ChatMessage>>, ApiError> {
+    person(&principal)?;
     let station_id = session_of(
         &board,
         &principal,
@@ -82,8 +84,8 @@ pub async fn chat(
 /// `POST /api/sessions/{station}/{session}/chat { text }`.
 ///
 /// # Errors
-/// 400 `invalid_body` / `invalid_text`; 404 `unknown_station` /
-/// `unknown_session`.
+/// 400 `invalid_body` / `invalid_text`; 403 `owner_only` for a bearer token
+/// (NV-07); 404 `unknown_station` / `unknown_session`.
 pub async fn post_chat(
     State(board): State<Arc<Board>>,
     Extension(principal): Extension<Principal>,
@@ -91,6 +93,7 @@ pub async fn post_chat(
     body: Result<Json<ChatPost>, JsonRejection>,
 ) -> Result<Json<ChatMessage>, ApiError> {
     let result = async {
+        person(&principal)?;
         let Json(post) = body.map_err(|e| bad("invalid_body", e.body_text()))?;
         let station_id = session_of(
             &board,

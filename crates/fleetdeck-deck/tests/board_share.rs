@@ -8,6 +8,7 @@
 
 mod common;
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use common::board::{BoardClient, Http, board};
@@ -15,6 +16,7 @@ use common::*;
 use fleetdeck_deck::store::AuditResult;
 use fleetdeck_proto::SessionSummary;
 use fleetdeck_proto::event::{ProviderKind, SessionState};
+use fleetdeck_proto::link::Scope;
 use serde_json::{Value, json};
 
 fn card(id: &str) -> SessionSummary {
@@ -618,6 +620,51 @@ async fn the_side_chat_is_for_people_and_never_reaches_the_agent() {
     );
     // Nothing went to the station.
     no_request(&mut station, std::time::Duration::from_millis(300)).await;
+}
+
+#[tokio::test]
+async fn a_bearer_token_cannot_read_or_post_in_the_side_chat() {
+    let (f, mut station, c, h) = setup().await;
+    let st = f.station.0.clone();
+    let path = format!("/api/sessions/{st}/s1/chat");
+    let day = 86_400_000;
+    let (_, read) = f
+        .store
+        .create_token("reader".into(), BTreeSet::from([Scope::Read]), day)
+        .await
+        .unwrap();
+    let (_, drive) = f
+        .store
+        .create_token(
+            "driver".into(),
+            BTreeSet::from([Scope::Read, Scope::Drive]),
+            day,
+        )
+        .await
+        .unwrap();
+    let read_auth = format!("Bearer {}", read.expose());
+    let drive_auth = format!("Bearer {}", drive.expose());
+    let r = c.get(&path, &[("Authorization", read_auth.as_str())]).await;
+    expect(&r, 403, "owner_only");
+    let r = c
+        .post(
+            &path,
+            &[("Authorization", drive_auth.as_str())],
+            json!({ "text": "hello" }),
+        )
+        .await;
+    expect(&r, 403, "owner_only");
+    assert_eq!(
+        c.audited("chat.post", AuditResult::Refused).await.len(),
+        1,
+        "the refusal is audited"
+    );
+    // The owner still reads and posts.
+    let r = post(&c, &h, &path, json!({ "text": "from the owner" })).await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    let list = get(&c, &h, &path).await;
+    assert_eq!(list.body.as_array().unwrap().len(), 1);
+    no_request(&mut station, std::time::Duration::from_millis(100)).await;
 }
 
 #[tokio::test]

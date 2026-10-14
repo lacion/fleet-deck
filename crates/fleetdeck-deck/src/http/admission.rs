@@ -391,8 +391,11 @@ impl Attempt {
 /// limiter ([`super::DeviceLinkLimiter`]).
 #[derive(Debug)]
 pub struct LoginLimits {
-    /// The password login and the elevation (a password or a code).
+    /// The password login.
     pub password: FlowLimiter,
+    /// The owner's elevation (a password or a code): its own window, so
+    /// failures of anonymous logins cannot lock the owner out (NV-13).
+    pub elevate: FlowLimiter,
     pub login_link: FlowLimiter,
     pub member_join: FlowLimiter,
     hashing: Arc<Semaphore>,
@@ -408,6 +411,7 @@ impl Default for LoginLimits {
     fn default() -> Self {
         Self {
             password: FlowLimiter::default(),
+            elevate: FlowLimiter::default(),
             login_link: FlowLimiter::default(),
             member_join: FlowLimiter::default(),
             hashing: Arc::new(Semaphore::new(HASH_PERMITS)),

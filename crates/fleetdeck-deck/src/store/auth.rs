@@ -440,7 +440,8 @@ impl DeckStore {
         let row = token.clone();
         let hash = secret_hash(&value);
         call(&self.inner.db, move |conn| {
-            let n = conn.execute(
+            let tx = conn.transaction()?;
+            let n = tx.execute(
                 "INSERT OR IGNORE INTO api_tokens (name, token_hash, scopes, created_at, expires_at)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
                 params![row.name, hash, scopes_json(&row.scopes)?, row.created_at, row.expires_at],
@@ -451,6 +452,13 @@ impl DeckStore {
                     row.name
                 )));
             }
+            // A new token starts with no read cursors, also when an older
+            // token of this name left some (NV-16).
+            tx.execute(
+                "DELETE FROM read_cursors WHERE principal = ?1",
+                [format!("token:{}", row.name)],
+            )?;
+            tx.commit()?;
             Ok(())
         })
         .await?;
@@ -498,13 +506,23 @@ impl DeckStore {
         .await
     }
 
-    /// Deletes an API token. True when it existed.
+    /// Deletes an API token and its read cursors (NV-16). True when it
+    /// existed.
     ///
     /// # Errors
     /// A database error.
     pub async fn revoke_token(&self, name: String) -> Result<bool> {
         call(&self.inner.db, move |conn| {
-            Ok(conn.execute("DELETE FROM api_tokens WHERE name = ?1", [name])? == 1)
+            let tx = conn.transaction()?;
+            let deleted = tx.execute("DELETE FROM api_tokens WHERE name = ?1", [&name])? == 1;
+            if deleted {
+                tx.execute(
+                    "DELETE FROM read_cursors WHERE principal = ?1",
+                    [format!("token:{name}")],
+                )?;
+            }
+            tx.commit()?;
+            Ok(deleted)
         })
         .await
     }

@@ -289,7 +289,7 @@ async fn an_elevation_by_password_or_by_code_has_the_documented_limits() {
         "invalid_credentials",
     );
 
-    // Failures count in the limiter of the login: the fifth locks.
+    // Failures count in the limiter of the elevation: the fifth locks.
     for _ in 0..3 {
         expect(
             &ask(json!({ "password": "wrong" })).await,
@@ -307,14 +307,51 @@ async fn an_elevation_by_password_or_by_code_has_the_documented_limits() {
         429,
         "too_many_attempts",
     );
-    // The same limiter locks the login.
+    // The login has its own limiter: failed elevations do not lock it (NV-13).
+    let login = c
+        .post("/api/auth/login", &[], json!({ "password": PASSWORD }))
+        .await;
+    assert_eq!(login.status, 200, "{}", login.body);
+    let refused = c.audited("auth.elevate", AuditResult::Refused).await;
+    assert!(refused.contains(&Some("invalid_credentials".to_owned())));
+    assert!(refused.contains(&Some("too_many_attempts".to_owned())));
+}
+
+#[tokio::test]
+async fn failed_anonymous_logins_do_not_lock_the_owner_elevation() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_f, c) = deck_board(tmp.path()).await;
+    set_password(&c).await;
+    let h = owner(&c).await;
+    // 50 failed password logins from 10 sources fill the global window of
+    // the login flow (NV-13).
+    let now = c.store.now_ms();
+    for source in 1..=10u8 {
+        let ip = std::net::IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, source));
+        for _ in 0..5 {
+            c.state.limiter.password.begin(ip, now).unwrap().failed(now);
+        }
+    }
     let login = c
         .post("/api/auth/login", &[], json!({ "password": PASSWORD }))
         .await;
     expect(&login, 429, "too_many_attempts");
-    let refused = c.audited("auth.elevate", AuditResult::Refused).await;
-    assert!(refused.contains(&Some("invalid_credentials".to_owned())));
-    assert!(refused.contains(&Some("too_many_attempts".to_owned())));
+    // The owner still elevates.
+    let elevation = elevate(&c, &h).await;
+    assert!(!elevation.is_empty());
+    // Five failed elevations from one source lock the sixth.
+    for _ in 0..5 {
+        expect(
+            &post(&c, &h, "/api/auth/elevate", json!({ "password": "wrong" })).await,
+            401,
+            "invalid_credentials",
+        );
+    }
+    expect(
+        &post(&c, &h, "/api/auth/elevate", json!({ "password": PASSWORD })).await,
+        429,
+        "too_many_attempts",
+    );
 }
 
 #[tokio::test]

@@ -128,8 +128,8 @@ fn denies() -> &'static DenyCache {
     CACHE.get_or_init(Mutex::default)
 }
 
-/// Forgets what the caches hold for one station (tests).
-#[doc(hidden)]
+/// Forgets what the caches hold for one station: a settings change may
+/// change the member deny list (NV-33).
 pub fn clear_station(station: &StationId) {
     diffs()
         .lock()
@@ -140,6 +140,24 @@ pub fn clear_station(station: &StationId) {
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .remove(station);
+}
+
+/// How many entries the caches hold for one station: its diffs and its
+/// deny list (tests).
+#[doc(hidden)]
+pub fn cached_entries(station: &StationId) -> usize {
+    let diffs = diffs()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .map
+        .keys()
+        .filter(|(s, ..)| s == station)
+        .count();
+    let deny = denies()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .contains_key(station);
+    diffs + usize::from(deny)
 }
 
 fn unreachable_error(station: &StationId) -> ApiError {
