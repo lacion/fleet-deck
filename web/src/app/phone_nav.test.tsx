@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { canGoBack, noteNavigation, resetBackNav } from './backNav';
+import { canGoBack, noteNavigation, resetBackNav, startBackNav } from './backNav';
 import { Layout } from './Layout';
 import { More } from './More';
 import type { Route } from './routes';
@@ -70,16 +70,85 @@ describe('the More page search and help buttons', () => {
   });
 });
 
-describe('back navigation counter', () => {
+/** A history with a stack of entries, like a browser: push, replace, back and forward. */
+function fakeHistory() {
+  const entries: unknown[] = [null];
+  let at = 0;
+  return {
+    get state(): unknown {
+      return entries[at];
+    },
+    replaceState(state: unknown, _title: string) {
+      entries[at] = state;
+    },
+    push() {
+      entries.splice(at + 1);
+      entries.push(null);
+      at += 1;
+    },
+    go(delta: number) {
+      at += delta;
+    },
+  };
+}
+
+describe('back navigation position', () => {
   afterEach(resetBackNav);
 
-  test('starts at zero, counts navigations and resets', () => {
-    expect(canGoBack()).toBe(false);
-    noteNavigation();
-    expect(canGoBack()).toBe(true);
-    noteNavigation();
-    expect(canGoBack()).toBe(true);
-    resetBackNav();
-    expect(canGoBack()).toBe(false);
+  test('the first entry is position 0, each new entry is one more', () => {
+    const h = fakeHistory();
+    startBackNav(h);
+    expect(h.state).toEqual({ fdPos: 0 });
+    expect(canGoBack(h)).toBe(false);
+    h.push();
+    noteNavigation(h);
+    expect(h.state).toEqual({ fdPos: 1 });
+    expect(canGoBack(h)).toBe(true);
+    h.push();
+    noteNavigation(h);
+    expect(h.state).toEqual({ fdPos: 2 });
+  });
+
+  test('browser Back to the first entry cannot go back; Forward can again', () => {
+    const h = fakeHistory();
+    startBackNav(h);
+    h.push();
+    noteNavigation(h);
+    h.go(-1);
+    noteNavigation(h);
+    expect(canGoBack(h)).toBe(false);
+    h.go(1);
+    noteNavigation(h);
+    expect(canGoBack(h)).toBe(true);
+    expect(h.state).toEqual({ fdPos: 1 });
+  });
+
+  test('a new entry after Back takes the position of the entry that it follows', () => {
+    const h = fakeHistory();
+    startBackNav(h);
+    h.push();
+    noteNavigation(h);
+    h.push();
+    noteNavigation(h);
+    h.go(-1);
+    noteNavigation(h);
+    h.push();
+    noteNavigation(h);
+    expect(h.state).toEqual({ fdPos: 2 });
+  });
+
+  test('a reload starts at position 0 and keeps other state keys', () => {
+    const h = fakeHistory();
+    h.replaceState({ other: 'kept', fdPos: 3 }, '');
+    startBackNav(h);
+    expect(h.state).toEqual({ other: 'kept', fdPos: 0 });
+    expect(canGoBack(h)).toBe(false);
+  });
+
+  test('an entry without a position cannot go back', () => {
+    const h = fakeHistory();
+    expect(canGoBack(h)).toBe(false);
+    h.replaceState('text', '');
+    expect(canGoBack(h)).toBe(false);
   });
 });

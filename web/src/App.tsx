@@ -36,7 +36,7 @@ import { FleetHome } from './app/FleetHome';
 import { HelpNotice, useHelpNotice } from './app/HelpNotice';
 import { HelpOverlay } from './app/HelpOverlay';
 import { useGlobalKeys } from './app/keys';
-import { noteNavigation } from './app/backNav';
+import { noteNavigation, startBackNav } from './app/backNav';
 import { Layout } from './app/Layout';
 import { More } from './app/More';
 import { Palette } from './app/Palette';
@@ -175,10 +175,13 @@ export function App({
   settings,
 }: Props) {
   const [urlRoute, navigate] = useRoute(initialRoute);
-  // The phone's Back of a session goes back in the history only after the board navigated.
+  // The phone's Back of a session goes back in the history only while the current entry is not the
+  // first one of this board start.
   useEffect(() => {
-    window.addEventListener('hashchange', noteNavigation);
-    return () => window.removeEventListener('hashchange', noteNavigation);
+    startBackNav();
+    const onHashChange = () => noteNavigation();
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
   const artifactsEnv = useMemo(
     () => (artifacts === undefined ? undefined : { actions: artifacts }),

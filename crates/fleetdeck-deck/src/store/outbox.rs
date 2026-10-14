@@ -16,10 +16,10 @@
 //! - `done` with an accepted receipt → `delivered`;
 //! - `done` with a stored rejection → `dead` (`rejected: <code>`);
 //! - `done` rejected with `invalid_state` while the deck shows the target
-//!   session `exited` or `lost` → `queued` and held (`reason =
-//!   session_ended`, `next_at = expires_at`) until the session runs again
-//!   ([`DeckStore::release_held`]); only a follow-up or a steer is held
-//!   ([`target_session`]);
+//!   session `starting`, `exited` or `lost` → `queued` and held (`reason =
+//!   session_ended`, `next_at = expires_at`) until the session can take
+//!   input ([`can_take_input`]: `running` only; [`DeckStore::release_held`]);
+//!   only a follow-up or a steer is held ([`target_session`]);
 //! - `failed` with a reason that proves the station never ran it
 //!   (`not_sent`, `station_reset`, `expired`) → `queued` again with a new
 //!   command on the next attempt, after a backoff of
@@ -295,10 +295,19 @@ fn target_session(payload: &Value) -> Option<SessionId> {
     }
 }
 
+/// Whether a session in `state` can take input now. `starting` cannot (a
+/// resume emits it before a process exists), `stopping` cannot, and an ended
+/// session cannot.
+#[must_use]
+pub(crate) fn can_take_input(state: SessionState) -> bool {
+    matches!(state, SessionState::Running)
+}
+
 /// Whether the done command `cmd` of `item` holds the item instead of
 /// making it `dead`: the station rejected it with `invalid_state`, the
-/// payload targets one session, and the deck shows that session `exited`
-/// or `lost`.
+/// payload targets one session, and the deck shows that session `starting`,
+/// `exited` or `lost` (it cannot take input yet; [`can_take_input`] releases
+/// the item when it can).
 fn holds(conn: &Connection, item: &OutboxItem, cmd: &commands::DeckCommand) -> Result<bool> {
     let invalid_state = cmd.state == DeckCommandState::Done
         && cmd.receipt.as_ref().is_some_and(|r| {
@@ -330,7 +339,7 @@ fn holds(conn: &Connection, item: &OutboxItem, cmd: &commands::DeckCommand) -> R
     };
     Ok(matches!(
         summary.state,
-        SessionState::Exited | SessionState::Lost
+        SessionState::Starting | SessionState::Exited | SessionState::Lost
     ))
 }
 

@@ -462,3 +462,167 @@ async fn a_directory_that_existed_before_is_not_removed_after_a_cancel() {
     provision::undo_partial(&plan, program, &before).await;
     assert!(path.join("mine.txt").is_file());
 }
+
+/// Sends a clone start and returns the reject text, or `None` when accepted.
+async fn clone_start_reject(st: &mut Station, target: &Path, url: &str) -> Option<String> {
+    let request = WorkspaceRequest::Clone {
+        url: url.to_owned(),
+    };
+    let decided = st.send(start_cmd(&target.to_string_lossy(), request)).await;
+    decided.receipt.reject.map(|r| {
+        assert_eq!(r.code, RejectCode::InvalidCommand);
+        r.message
+    })
+}
+
+#[tokio::test]
+async fn a_clone_into_a_directory_that_a_pending_clone_owns_is_refused_until_it_is_ready() {
+    let mut st = Station::new(4).await;
+    let ws = st.workspace();
+    init_repo(Path::new(&ws));
+    let target = Path::new(&ws).parent().unwrap().join("copy");
+    let url = format!("file://{ws}");
+    let request = WorkspaceRequest::Clone { url: url.clone() };
+    let first = held_start(&mut st, &target.to_string_lossy(), request).await;
+
+    // A new clone into the same path is refused while the first one waits.
+    let message = clone_start_reject(&mut st, &target, &url).await.unwrap();
+    assert!(
+        message.ends_with("is being cloned by another session; try again when it is ready"),
+        "{message}"
+    );
+    assert!(message.contains("copy"), "{message}");
+
+    release(&st);
+    wait_started(&st, &first).await;
+    st.settled(&first).await;
+    assert!(target.join("a.txt").is_file());
+
+    // The first clone is done: the same start reuses the directory.
+    assert_eq!(clone_start_reject(&mut st, &target, &url).await, None);
+    st.manager.shutdown(StopMode::Kill).await;
+}
+
+#[tokio::test]
+async fn a_reuse_of_a_directory_that_a_pending_clone_already_wrote_is_refused() {
+    let mut st = Station::new(4).await;
+    let ws = st.workspace();
+    init_repo(Path::new(&ws));
+    let target = Path::new(&ws).parent().unwrap().join("copy");
+    let url = format!("file://{ws}");
+    let request = WorkspaceRequest::Clone { url: url.clone() };
+    let first = held_start(&mut st, &target.to_string_lossy(), request).await;
+
+    // Git has written the origin into `.git/config`, the clone still runs.
+    std::fs::create_dir_all(target.join(".git")).unwrap();
+    std::fs::write(
+        target.join(".git/config"),
+        format!("[remote \"origin\"]\n\turl = {url}\n"),
+    )
+    .unwrap();
+    let message = clone_start_reject(&mut st, &target, &url).await.unwrap();
+    assert!(
+        message.ends_with("is being cloned by another session; try again when it is ready"),
+        "{message}"
+    );
+
+    // The stop of the first start removes the directory, and no other
+    // session works in it.
+    stop_held(&mut st, &first).await;
+    assert!(!target.exists());
+    st.manager.shutdown(StopMode::Kill).await;
+}
+
+/// A `git` that, after a clone that worked, starts a `sleep 600` in its own
+/// process group (like a transport or hook process of Git), writes the pid of
+/// the `sleep` next to the script, and waits.
+fn group_git(dir: &Path) -> std::path::PathBuf {
+    let script = dir.join("group-git");
+    std::fs::write(
+        &script,
+        "#!/bin/sh\ngit \"$@\" || exit $?\ncase \" $* \" in\n  *\" clone \"*)\n    sleep 600 &\n    echo $! > \"$(dirname \"$0\")/sleep.pid\"\n    wait ;;\nesac\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    script
+}
+
+#[tokio::test]
+async fn a_cancel_stops_the_git_descendants_before_the_directory_is_removed() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = root.path().join("app");
+    std::fs::create_dir_all(&repo).unwrap();
+    init_repo(&repo);
+    let path = root.path().join("copy");
+    let plan = WorkspacePlan::Clone {
+        url: format!("file://{}", repo.display()),
+        path: path.to_string_lossy().into_owned(),
+    };
+    let program = group_git(root.path());
+    let pid_file = root.path().join("sleep.pid");
+    let before = provision::before(&plan, &program).await;
+    let (cancel, rx) = watch::channel(false);
+    let run = provision::provision_cancellable(&plan, &program, rx);
+    let stopper = async {
+        let deadline = tokio::time::Instant::now() + WAIT;
+        let pid = loop {
+            if let Some(pid) = std::fs::read_to_string(&pid_file)
+                .ok()
+                .and_then(|t| t.trim().parse::<i32>().ok())
+            {
+                break pid;
+            }
+            assert!(tokio::time::Instant::now() < deadline, "no sleep started");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        };
+        cancel.send_replace(true);
+        pid
+    };
+    let (result, pid) = tokio::join!(run, stopper);
+    assert_eq!(result, Err(ProvisionError::Stopped));
+    // The `sleep` was never a child of the `git` call itself: only the
+    // process group reaches it.
+    let sleep = rustix::process::Pid::from_raw(pid).unwrap();
+    assert!(
+        matches!(
+            rustix::process::test_kill_process(sleep),
+            Err(rustix::io::Errno::SRCH)
+        ),
+        "the git descendant is gone"
+    );
+    provision::undo_partial(&plan, &program, &before).await;
+    assert!(!path.exists());
+}
+
+#[tokio::test]
+async fn a_group_that_cannot_be_emptied_keeps_the_workspace() {
+    use std::os::unix::process::CommandExt;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("mine.txt"), "mine").unwrap();
+    // The parent does not reap the child, so the group keeps a zombie.
+    let mut child = Command::new("sleep")
+        .arg("600")
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    let pgid = child.id();
+    let wait = Duration::from_millis(100);
+    assert!(!provision::stop_group(pgid, wait).await);
+    let error = provision::after_cancel(pgid, wait).await;
+    assert_eq!(
+        error,
+        ProvisionError::Failed(
+            "the start was stopped, but git processes are still running; the workspace was kept"
+                .to_owned()
+        )
+    );
+    // No `undo_partial` follows a failure: the directory stays.
+    assert!(dir.path().join("mine.txt").is_file());
+    child.wait().unwrap();
+    assert!(provision::stop_group(pgid, wait).await);
+    assert_eq!(
+        provision::after_cancel(pgid, wait).await,
+        ProvisionError::Stopped
+    );
+    assert!(provision::stop_group(0, wait).await);
+}

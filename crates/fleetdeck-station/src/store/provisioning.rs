@@ -7,6 +7,7 @@ use fleetdeck_proto::SessionId;
 use rusqlite::{Connection, params};
 
 use super::effects::EffectPayload;
+use super::payload::WorkspacePlan;
 use super::{Result, Store, call};
 
 /// The sessions whose claimed start effect carries a workspace plan, oldest
@@ -41,6 +42,27 @@ fn workspace_starts(conn: &Connection, only: Option<&SessionId>) -> Result<Vec<S
 /// its start prepares the workspace and a stop is possible without a process.
 pub(crate) fn provisioning_for(conn: &Connection, session: &SessionId) -> Result<bool> {
     Ok(!workspace_starts(conn, Some(session))?.is_empty())
+}
+
+/// Whether a start effect that waits (`queued`) or runs (`claimed`) clones
+/// into `path`: such a directory is not ready, so no other start may use it.
+pub(crate) fn clone_pending_for(conn: &Connection, path: &str) -> Result<bool> {
+    let mut stmt = conn.prepare(
+        "SELECT payload FROM effects
+         WHERE state IN ('queued', 'claimed') AND kind = 'start'",
+    )?;
+    let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+    for row in rows {
+        if let EffectPayload::Start {
+            workspace: Some(WorkspacePlan::Clone { path: planned, .. }),
+            ..
+        } = serde_json::from_str::<EffectPayload>(&row?)?
+            && planned == path
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 impl Store {

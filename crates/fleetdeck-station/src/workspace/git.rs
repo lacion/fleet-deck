@@ -15,6 +15,8 @@
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use tokio::io::AsyncWriteExt;
@@ -102,6 +104,9 @@ impl GitOptions {
 pub struct Git {
     dir: PathBuf,
     options: GitOptions,
+    /// With a slot, each call runs in its own process group and the slot
+    /// holds the pid (the group id) of the running child, else 0.
+    group: Option<Arc<AtomicU32>>,
 }
 
 impl Git {
@@ -110,6 +115,38 @@ impl Git {
         Self {
             dir: dir.into(),
             options,
+            group: None,
+        }
+    }
+
+    /// Runs each call in its own process group and writes the pid of the
+    /// child (the group id) into `slot` right after the spawn. The slot is 0
+    /// before a spawn and after a call that ended; a dropped call leaves its
+    /// pid there, so the owner can stop the group.
+    #[must_use]
+    pub fn with_group(mut self, slot: Arc<AtomicU32>) -> Self {
+        self.group = Some(slot);
+        self
+    }
+
+    /// Puts the child in its own process group when a slot is set.
+    fn grouped(&self, cmd: &mut Command) {
+        if self.group.is_some() {
+            cmd.process_group(0);
+        }
+    }
+
+    /// Records the pid of a new child in the slot.
+    fn spawned(&self, child: &tokio::process::Child) {
+        if let Some(slot) = &self.group {
+            slot.store(child.id().unwrap_or(0), Ordering::SeqCst);
+        }
+    }
+
+    /// Clears the slot: no child runs.
+    fn ended(&self) {
+        if let Some(slot) = &self.group {
+            slot.store(0, Ordering::SeqCst);
         }
     }
 
@@ -166,6 +203,7 @@ impl Git {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        self.grouped(&mut cmd);
         for name in REDIRECTING_VARS {
             cmd.env_remove(name);
         }
@@ -180,6 +218,7 @@ impl Git {
             cmd.env(name, value);
         }
         let mut child = cmd.spawn().map_err(GitError::Spawn)?;
+        self.spawned(&child);
         if let (Some(bytes), Some(mut pipe)) = (stdin, child.stdin.take()) {
             // A writer task, so a large stdin cannot block against a full
             // stdout pipe.
@@ -196,6 +235,7 @@ impl Git {
                 secs,
             })?
             .map_err(GitError::Spawn)?;
+        self.ended();
         let mut stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         if stderr.len() > STDERR_KEEP {
             let mut cut = STDERR_KEEP;
@@ -226,6 +266,7 @@ impl Git {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .kill_on_drop(true);
+        self.grouped(&mut cmd);
         for name in REDIRECTING_VARS {
             cmd.env_remove(name);
         }
@@ -237,6 +278,7 @@ impl Git {
                 .env("GIT_CONFIG_GLOBAL", "/dev/null");
         }
         let mut child = cmd.spawn().map_err(GitError::Spawn)?;
+        self.spawned(&child);
         let Some(stdout) = child.stdout.take() else {
             return Err(GitError::Spawn(std::io::Error::other("no stdout pipe")));
         };
@@ -262,9 +304,11 @@ impl Git {
             let status = child.wait().await.map_err(GitError::Spawn)?;
             Ok::<_, GitError>((status.code().unwrap_or(-1), out, cut))
         };
-        tokio::time::timeout(self.options.timeout, work)
+        let result = tokio::time::timeout(self.options.timeout, work)
             .await
-            .map_err(|_| timeout())?
+            .map_err(|_| timeout())?;
+        self.ended();
+        result
     }
 }
 
