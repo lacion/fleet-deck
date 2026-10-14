@@ -1,6 +1,6 @@
 # Built-in Linear app (DL-185)
 
-- **Status:** Proposed (revision 2, 2026-10-14). Revision 1 got DESIGN REVIEW FAIL (2 blockers, 3 major, 1 unverified, 1 minor; `/tmp/fd-goal/adversary-report-linear-design.md`); §8 maps each finding. Needs a PASS before code.
+- **Status:** Proposed (revision 3, 2026-10-14). Revision 1 got DESIGN REVIEW FAIL (2 blockers, 3 major, 1 unverified, 1 minor; `/tmp/adversary-report-linear-design.md`); revision 2 got RE-REVIEW FAIL (1 blocker: the migration invents the issuing app; 1 minor: `app_changed` cannot reach the board; `/tmp/fd-goal/adversary-report-linear-design2.md`). §8 and §9 map the findings. Needs a PASS before code; the next review is the last round allowed.
 - **Owner request (2026-10-14):** "for jira and linear, github and gitlab can we create oauth apps that will just work for everyone? apps that we can publish?" Owner choices: "Linear public app, no broker", then for the redirect "Localhost only".
 - **Changes:** DL-173 (the owner registers a Jira or Linear OAuth app before a sign-in). Jira, GitHub and GitLab are unchanged.
 
@@ -36,12 +36,15 @@
 - A stored Linear account gets two fields: `app_source: "builtin" | "owner"` and `app_client_id: String` (the client id that made it). They are written in the same atomic file write as the account (the existing `put_account`).
 - **Identity:** the upsert of `save_account` matches only an account with the same kind, method, site, cloud id, email, `app_source` and `app_client_id`. Connecting the same workspace with another app makes a new account record; nothing is silently replaced. The board lists both; the owner removes the one that is not wanted.
 - **Refresh:** `refresh` uses the account's own app: `builtin` → `client_id` = the account's `app_client_id` (the built-in id when it was made), no secret; `owner` → the stored owner app only when its `client_id` equals the account's `app_client_id`, else the stable code `app_changed` with the fixed text "The Linear app of this account changed. Connect the account again." (no request to Linear).
-- **Migration (once, at station start, before any command is served):** every Linear account file without `app_source` is rewritten in one atomic write per file to `app_source = "owner"` and `app_client_id` = the client id of the owner app stored at that moment. This is the same app that today's refresh would use, so the behaviour is unchanged. If no owner app is stored, the account gets `app_client_id = ""` and its refresh answers `app_changed` (today it fails too: no app). A file that cannot be rewritten stays as it is and is listed as unusable (the existing rule).
+- **Old accounts (no `app_source` field):** they read as `app_source = "legacy"` with no `app_client_id`: the app that issued them is unknown, and the station never guesses it. Nothing is rewritten at start.
+  - **Upsert:** a `legacy` record never matches an app-specific upsert, so connecting a workspace again (with any app) makes a new record; the owner removes the old one.
+  - **Refresh of a `legacy` account:** only when an owner app is stored, the station refreshes once with that app (as today). If Linear accepts it, the refresh token was issued for that client id, so the account is bound in the same atomic write that stores the new tokens: `app_source = "owner"`, `app_client_id` = that client id. If Linear refuses it (any non-2xx answer) or no owner app is stored, the account answers `app_changed` and stays `legacy`; no second app is tried.
 - Setting, replacing or removing the owner app does not touch accounts made with the built-in app, and the reverse.
 
 ### 2.4 Errors
 
 - Every new error is a stable code with a fixed text: `builtin_needs_localhost`, `app_changed`. The deck relays these two codes and their texts to the board unchanged (they carry no credential); every other station error keeps today's handling.
+- `app_changed` survives the station paths: `Accounts::fresh` and the refresh error mapping (`oauth.rs:416-421`) keep the code `app_changed` instead of turning it into `unavailable`, and the account's needs-login state (`mod.rs:297-318`) records the reason `reconnect` (`AccountView.needs: "login" | "reconnect"`), so the board can show "Connect again" with no free text.
 - Linear's answers are never returned or logged: a failed token exchange or refresh is `upstream` "the server answered HTTP <status>" or `timeout`, as `accounts/http.rs` does today. No code, verifier, token or secret appears in an error, a log, an audit row, an argv or a response.
 
 ### 2.5 Board
@@ -81,7 +84,8 @@ If check 2 shows a loose match, the built-in app does not ship and this design r
 - Start: built-in app used without an owner app; each non-registered redirect (other host, port, scheme, `[::1]`, a path suffix) gets `builtin_needs_localhost`; the owner app still wins when set; Jira without an app is still refused.
 - Finish and refresh: the form body has no `client_secret` for a built-in account (fake curl body capture) and has it for an owner account; refresh of a built-in account after an owner app is set still uses the account's `app_client_id`; an owner account after the owner app's client id changed gets `app_changed` and sends nothing.
 - Identity: connecting the same workspace with the built-in app and then with an owner app gives two records; reconnecting with the same app replaces the same record.
-- Migration: an old file without `app_source` is rewritten once to `owner` with the stored owner app's client id; without an owner app it gets `""` and refresh answers `app_changed`; a second start changes nothing.
+- Legacy accounts: an old file reads as `legacy`; a reconnect of its workspace makes a new record; its refresh with the stored owner app binds it to that app when Linear accepts, and leaves it `legacy` with `app_changed` when Linear refuses or no owner app is stored; nothing is rewritten at start.
+- `app_changed` reaches the board: a refresh that fails with `app_changed` sets `needs: "reconnect"` on the account view through `fresh`, and the board shows "Connect again".
 - Errors: a fake Linear answer whose body contains a canary token, code and verifier gives an error, log line and response with none of them.
 - Board: the "built-in" text, the localhost note by origin, "Connect again" for `app_changed`.
 
@@ -100,3 +104,10 @@ If check 2 shows a loose match, the built-in app does not ship and this design r
 | MAJOR certificate, listener, IPv6 | §2.1 IPv6 not supported; §2.2 the redirect equals the starting origin (certificate and session already accepted there); restart → `invalid_state`; §5 rows |
 | UNVERIFIED redirect matching | §4 release gate with the exact checks; no ship on a loose match |
 | MINOR recovery messages hidden | §2.4 the two new codes pass the relay unchanged; §2.5 board texts |
+
+## 9. Re-review map (revision 2 → revision 3)
+
+| Finding | Change |
+| --- | --- |
+| BLOCKER migration invents the issuing app | §2.3 old accounts are `legacy` (unknown app); never matched by an upsert; bound to an app only after Linear accepts a refresh with it; else `app_changed` |
+| MINOR `app_changed` cannot reach the board | §2.4 `fresh` and the refresh mapping keep `app_changed`; `AccountView.needs = "reconnect"`; §6 end-to-end test |
