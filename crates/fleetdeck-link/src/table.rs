@@ -241,6 +241,34 @@ pub struct TableGuard {
 impl TableGuard {
     /// Whether this guard's link is still the current link of its peer.
     pub fn is_current(&self) -> bool {
+        self.check().is_current()
+    }
+
+    /// A cloneable check of the same test, for tasks that outlive the guard's
+    /// owner.
+    pub fn check(&self) -> CurrentCheck {
+        CurrentCheck {
+            table: self.table.clone(),
+            peer: self.peer,
+            generation: self.generation,
+        }
+    }
+}
+
+/// Tells whether a link is still the current link of its peer.
+///
+/// The generation is fixed when the link wins admission. A later winner
+/// changes the entry, so a delayed task of an old link sees `false` (NV-12).
+#[derive(Debug, Clone)]
+pub struct CurrentCheck {
+    table: LinkTable,
+    peer: Fingerprint,
+    generation: u64,
+}
+
+impl CurrentCheck {
+    /// Whether the peer's entry still has this check's generation.
+    pub fn is_current(&self) -> bool {
         self.table
             .lock()
             .entries

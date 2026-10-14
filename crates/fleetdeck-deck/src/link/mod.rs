@@ -196,6 +196,10 @@ pub async fn serve(ctx: Arc<DeckLink>, link: LiveLink) -> Closing {
     tokio::spawn(async move { router.dispatch_pending(pending_of).await });
     let mut held = VecDeque::new();
     while let Some(message) = next(&mut held, &mut inbound).await {
+        // A frame that was queued before the link ended is not handled (NV-12).
+        if control.ended().is_some() {
+            break;
+        }
         match message {
             Inbound::Request(req) => {
                 let (ctx, control, station) =
@@ -400,6 +404,10 @@ impl Sync {
                         .negotiated
                         .has(fleetdeck_proto::version::feature::COORDINATOR)
                 }),
+                Some(Arc::new({
+                    let control = self.control.clone();
+                    move || control.is_current()
+                })),
             )
             .await;
         match result {
@@ -407,7 +415,16 @@ impl Sync {
                 self.resyncing = false;
                 self.ack(incarnation, watermark).await;
             }
-            Err(e) => self.fail(&e),
+            Err(e) => {
+                if matches!(e, DeckError::StaleSnapshot | DeckError::Superseded) {
+                    tracing::warn!(
+                        error = %e,
+                        station = %self.station,
+                        "a snapshot was not applied"
+                    );
+                }
+                self.fail(&e);
+            }
         }
     }
 
