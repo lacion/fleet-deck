@@ -510,7 +510,9 @@ async fn revoking_a_key_cancels_its_waiting_request() {
     let station = node(Role::Station);
     let asked = ask(&station, &deck, &request("a"), PairMode::Request);
     pending(&deck, 1).await;
-    fleetdeck_link::revoke(&deck.node.config, &station.config.identity.public_key()).await;
+    fleetdeck_link::revoke(&deck.node.config, &station.config.identity.public_key())
+        .await
+        .unwrap();
     assert_eq!(code(&result(asked).await), "cancelled");
 }
 

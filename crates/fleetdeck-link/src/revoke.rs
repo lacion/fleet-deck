@@ -49,11 +49,17 @@ pub enum RotateError {
 
 /// Revokes `key`: removes its pin and grants through the node's
 /// [`PairingSink`] (one transaction in a store), unpins it and closes its
-/// active link. Returns `false` when the key was not pinned. A sink error
-/// is logged; the key is unpinned and its link closed anyway (fail closed).
-pub async fn revoke(node: &NodeConfig, key: &PeerKey) -> bool {
+/// active link. Returns `Ok(false)` when the key was not pinned.
+///
+/// # Errors
+/// The text of a sink error. It is returned after the key is unpinned and
+/// its link is closed: the caller must not report success (NV-15). The
+/// durable pairing stays until a later revoke succeeds.
+pub async fn revoke(node: &NodeConfig, key: &PeerKey) -> Result<bool, String> {
     let fp = key.fingerprint();
-    if let Err(e) = node.sink.revoked(key).await {
+    // Fail closed: every step below runs also when the sink fails (NV-15).
+    let stored = node.sink.revoked(key).await;
+    if let Err(e) = &stored {
         tracing::error!(peer = %fp.short(), error = %e, "revocation store");
     }
     let was_pinned = node.pins.unpin(key);
@@ -63,7 +69,7 @@ pub async fn revoke(node: &NodeConfig, key: &PeerKey) -> bool {
         hub.cancel_key(key).await;
     }
     tracing::info!(peer = %fp.short(), "key revoked");
-    was_pinned
+    stored.map(|()| was_pinned)
 }
 
 fn close_revoked(node: &NodeConfig, key: &PeerKey) {
