@@ -151,6 +151,12 @@ impl BoardTls {
             return Ok(tls);
         }
         let (c, k) = Self::generate(names)?;
+        // Both new files are written before the stored pair is touched: a
+        // failed write leaves the stored pair as it was.
+        let key_tmp = stage(&key, &k, 0o600)?;
+        let cert_tmp = stage(&cert, &c, 0o644).inspect_err(|_| {
+            let _ = fs::remove_file(&key_tmp);
+        })?;
         // The names go first and come back last: a pair that an interrupted
         // update left behind is never taken as current.
         match fs::remove_file(&kept) {
@@ -158,8 +164,8 @@ impl BoardTls {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => return Err(e.into()),
         }
-        write_file(&key, &k, 0o600)?;
-        write_file(&cert, &c, 0o644)?;
+        fs::rename(&key_tmp, &key)?;
+        fs::rename(&cert_tmp, &cert)?;
         write_file(&kept, &list, 0o644)?;
         Self::from_pem(&c, &k, true)
     }
@@ -201,6 +207,13 @@ fn read_private(path: &Path) -> Result<String, TlsError> {
 }
 
 fn write_file(path: &Path, text: &str, mode: u32) -> Result<(), TlsError> {
+    let tmp = stage(path, text, mode)?;
+    fs::rename(&tmp, path)?;
+    Ok(())
+}
+
+/// Writes `text` to `<path>.tmp` (synced) and returns that path.
+fn stage(path: &Path, text: &str, mode: u32) -> Result<std::path::PathBuf, TlsError> {
     let mut name = path.file_name().unwrap_or_default().to_os_string();
     name.push(".tmp");
     let tmp = path.with_file_name(name);
@@ -212,8 +225,7 @@ fn write_file(path: &Path, text: &str, mode: u32) -> Result<(), TlsError> {
         .open(&tmp)?;
     f.write_all(text.as_bytes())?;
     f.sync_all()?;
-    fs::rename(&tmp, path)?;
-    Ok(())
+    Ok(tmp)
 }
 
 /// A client configuration that accepts exactly `cert` (CLI and tests).
@@ -353,18 +365,25 @@ mod tests {
     fn a_failed_update_keeps_the_stored_pair() {
         let dir = tempfile::tempdir().unwrap();
         let a = BoardTls::load_or_create(dir.path(), &names()).unwrap();
-        let (crt, key) = (read(dir.path(), SELF_CERT), read(dir.path(), SELF_KEY));
-        // The key cannot be written: its temporary path is a directory.
-        let blocker = dir.path().join("board-selfsigned.key.tmp");
-        fs::create_dir(&blocker).unwrap();
-        fs::write(blocker.join("x"), "x").unwrap();
+        let stored = [SELF_CERT, SELF_KEY, SELF_NAMES].map(|f| read(dir.path(), f));
         let mut more = names();
         more.push("deck.tail1234.ts.net".to_owned());
-        assert!(BoardTls::load_or_create(dir.path(), &more).is_err());
-        assert_eq!(read(dir.path(), SELF_CERT), crt);
-        assert_eq!(read(dir.path(), SELF_KEY), key);
-        assert_eq!(BoardTls::load_kept(dir.path()).unwrap().sha256, a.sha256);
-        assert!(!dir.path().join(SELF_NAMES).exists());
+        // The key, then the certificate cannot be written: its temporary
+        // path is a directory.
+        for file in [SELF_KEY, SELF_CERT] {
+            let blocker = dir.path().join(format!("{file}.tmp"));
+            fs::create_dir(&blocker).unwrap();
+            fs::write(blocker.join("x"), "x").unwrap();
+            assert!(BoardTls::load_or_create(dir.path(), &more).is_err());
+            let now = [SELF_CERT, SELF_KEY, SELF_NAMES].map(|f| read(dir.path(), f));
+            assert_eq!(now, stored, "{file}");
+            assert_eq!(BoardTls::load_kept(dir.path()).unwrap().sha256, a.sha256);
+            assert!(!dir.path().join(format!("{SELF_KEY}.tmp")).is_file());
+            fs::remove_dir_all(&blocker).unwrap();
+        }
+        // The same start again takes the stored pair as current.
+        let b = BoardTls::load_or_create(dir.path(), &names()).unwrap();
+        assert_eq!(b.sha256, a.sha256);
     }
 
     #[test]
