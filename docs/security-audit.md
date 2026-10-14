@@ -105,7 +105,7 @@ Recommended remediation:
 ### FDV2-004 — Tracker asset redirects are not checked against the host allowlist
 
 - **Severity:** Low
-- **Status:** Open
+- **Status:** Fixed in 73d5abd4. curl no longer follows redirects; the station follows at most 3 itself, sends the auth header only to the auth host, and allows another host only on port 443 when every address is public, pinned with `resolve`.
 - **Impact:** Limited server-side request forgery through an allowed upstream redirect
 
 The tracker asset loader validates that the initial URL is HTTPS and belongs to the configured Jira host or `uploads.linear.app`. It then lets curl follow up to three redirects to any HTTPS destination. A caller who can identify an open redirect on an allowed host can make the station request an otherwise disallowed HTTPS URL. If that destination presents a trusted certificate and returns a PNG, JPEG, GIF, or WebP body of at most 5 MiB, the response is returned as base64.
@@ -125,7 +125,7 @@ Disable automatic redirects for authenticated asset requests. Follow redirects i
 ### FDV2-005 — Scheduled prechecks can leave detached descendants running
 
 - **Severity:** Low
-- **Status:** Open; also acknowledged in `docs/v2/SECURITY-CHECKLIST.md`
+- **Status:** Fixed in 73d5abd4. Every precheck carries `FLEETDECK_PRECHECK_ID`; the marker cleanup kills detached descendants after the group stops, on a dropped run and at station shutdown, and a process that stays fails the precheck.
 - **Impact:** A timed-out or stopped precheck can retain a background process
 
 Prechecks run in their own process group, with a timeout and TERM/KILL cleanup of that group. A command can create a new session or process group and escape that cleanup. The setup-command runner has marker-based cleanup for detached children, but the precheck runner does not.
