@@ -180,6 +180,7 @@ impl Rig {
                     &policy,
                     &crate::coordinator::Bindings::default(),
                     origin,
+                    false,
                     command,
                 )
             })

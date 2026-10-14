@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use fleetdeck_proto::SessionId;
-use fleetdeck_proto::command::{CommandResult, RejectCode};
+use fleetdeck_proto::command::{CommandResult, Reject, RejectCode};
 use fleetdeck_proto::shell::{ShellChange, ShellEnvelope};
 
 use super::handover;
@@ -143,6 +143,24 @@ async fn custody_refusal(
     Ok(None)
 }
 
+/// The stored folder of a handover under the current policy: it must be
+/// text and inside the allowed roots now (NV-24). The result is the
+/// canonical path.
+fn launch_workspace(policy: &Policy, cwd: &std::path::Path) -> Result<std::path::PathBuf, Reject> {
+    let Some(text) = cwd.to_str() else {
+        return Err(reject(
+            RejectCode::InvalidState,
+            "the session directory is not valid text",
+        ));
+    };
+    policy.workspace(text).map_err(|e| {
+        reject(
+            RejectCode::InvalidState,
+            format!("the session directory is not allowed now: {e}"),
+        )
+    })
+}
+
 /// The PTY I/O of one `shell.handover`: starts the TUI and records its pid
 /// in the hold, or ends the hold when the TUI did not start.
 async fn start_terminal(
@@ -167,20 +185,33 @@ async fn start_terminal(
                 RejectCode::InvalidState,
                 "the session has no resume identity",
             ))),
-            Some(launch) => {
-                let (shell, session) = (shell_id.to_owned(), session_id.clone());
-                tokio::task::spawn_blocking(move || {
-                    shells.handover(&shell, &session, &launch, (cols, rows), now, max_shells)
-                })
-                .await
-                .unwrap_or_else(|e| {
-                    // The task may have died after the child started.
-                    Err(StartError::MayRun {
-                        pid: None,
-                        message: format!("shell task: {e}"),
+            Some(mut launch) => match launch_workspace(policy, &launch.cwd) {
+                Err(refusal) => Err(StartError::NotStarted(refusal)),
+                Ok(cwd) => {
+                    launch.cwd = cwd;
+                    let allow_bypass = policy.allow_bypass_permissions();
+                    let (shell, session) = (shell_id.to_owned(), session_id.clone());
+                    tokio::task::spawn_blocking(move || {
+                        shells.handover(
+                            &shell,
+                            &session,
+                            &launch,
+                            (cols, rows),
+                            now,
+                            max_shells,
+                            allow_bypass,
+                        )
                     })
-                })
-            }
+                    .await
+                    .unwrap_or_else(|e| {
+                        // The task may have died after the child started.
+                        Err(StartError::MayRun {
+                            pid: None,
+                            message: format!("shell task: {e}"),
+                        })
+                    })
+                }
+            },
         }
     };
     match started {

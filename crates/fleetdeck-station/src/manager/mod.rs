@@ -140,6 +140,8 @@ pub struct SessionManager {
     /// The provider report of `station.info`, probed once per process.
     providers: tokio::sync::OnceCell<Vec<StationProvider>>,
     draining: std::sync::atomic::AtomicBool,
+    /// The submits that create work and are not decided yet (NV-25).
+    drain_submits: std::sync::atomic::AtomicUsize,
     /// The restart freeze and its counts, shared with the target (finding 3
     /// of PRE-PR r1).
     restart: Arc<restart_gate::RestartState>,
@@ -370,6 +372,7 @@ impl SessionManager {
             tasks: std::sync::Mutex::new(tasks),
             providers: tokio::sync::OnceCell::new(),
             draining: std::sync::atomic::AtomicBool::new(false),
+            drain_submits: std::sync::atomic::AtomicUsize::new(0),
             restart,
             shells,
             artifacts: std::sync::OnceLock::new(),
@@ -580,13 +583,18 @@ impl SessionManager {
         let origin = envelope.origin;
         let command = envelope.command.clone();
         // The count comes before the flag is read: the restart admission
-        // sets the flag, then waits for the count (restart_gate).
-        let _creating =
-            restart_gate::creates_session(&command).then(|| self.restart.enter_submit());
+        // sets the flag, then waits for the count (restart_gate). An input
+        // may resume a hibernated session, so it counts too (NV-27).
+        let _creating = (restart_gate::creates_session(&command)
+            || restart_gate::may_resume(&command))
+        .then(|| self.restart.enter_submit());
+        // The same for the drain: it waits for the count (NV-25).
+        let _deciding = drain::creates_work(&command).then(|| self.enter_drain_submit());
+        let restarting = self.restart.restarting();
         let guard = auto_continue::guard(&command, &caller)
             .and_then(|()| coordinator_command::guard(&command, &caller))
             .and_then(|()| drain::guard(self.draining(), &command))
-            .and_then(|()| restart_gate::guard(self.restart.restarting(), &command));
+            .and_then(|()| restart_gate::guard(restarting, &command));
         let shells = self.shells.get();
         // The process check of a reconciliation runs here, outside the
         // writer transaction; the decision rechecks only the row state
@@ -606,7 +614,9 @@ impl SessionManager {
                     | SessionCommand::WorktreeRelease { .. }) => {
                         trash::decide(d, &policy, origin, shells.as_deref(), command)
                     }
-                    command => decide::decide(d, &policy, &coordinator, origin, command),
+                    command => {
+                        decide::decide(d, &policy, &coordinator, origin, restarting, command)
+                    }
                 }
             })
             .await

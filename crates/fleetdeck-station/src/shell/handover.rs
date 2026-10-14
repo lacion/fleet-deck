@@ -29,8 +29,8 @@ use fleetdeck_core::childenv::ChildEnv;
 use fleetdeck_core::config::Driver;
 use fleetdeck_proto::command::{Reject, RejectCode};
 use fleetdeck_proto::{Event, ProviderInstanceId, SessionId};
-use fleetdeck_providers::claude::args::{NATIVE_MODES, SAFEST_MODE};
-use fleetdeck_providers::codex::Mode;
+use fleetdeck_providers::claude::args::{BYPASS_MODE, NATIVE_MODES, SAFEST_MODE};
+use fleetdeck_providers::codex::{FULL_ACCESS_SANDBOX, Mode};
 use rustix::io::Errno;
 use rustix::process::{
     Pid, Signal, WaitId, WaitIdOptions, kill_process_group, test_kill_process, waitid,
@@ -82,7 +82,9 @@ fn model_args(flag: &str, model: Option<&str>, args: &mut Vec<OsString>) {
 
 /// The program and arguments of the provider TUI that continues `native`
 /// with the stored `mode` and `model`. An unknown mode becomes the most
-/// restrictive one (L8), never a more permissive one.
+/// restrictive one (L8), never a more permissive one. A bypass or
+/// full-access mode becomes the most restrictive one too, unless
+/// `allow_bypass` is set (NV-24).
 #[must_use]
 pub fn tui_command(
     driver: Driver,
@@ -90,6 +92,7 @@ pub fn tui_command(
     native: &str,
     mode: Option<&str>,
     model: Option<&str>,
+    allow_bypass: bool,
 ) -> (OsString, Vec<OsString>) {
     let mut args: Vec<OsString> = Vec::new();
     match driver {
@@ -97,11 +100,23 @@ pub fn tui_command(
             let mode = mode
                 .filter(|m| NATIVE_MODES.contains(m))
                 .unwrap_or(SAFEST_MODE);
+            // The bypass setting may be off now (NV-24).
+            let mode = if mode == BYPASS_MODE && !allow_bypass {
+                SAFEST_MODE
+            } else {
+                mode
+            };
             args.extend(["--resume", native, "--permission-mode", mode].map(OsString::from));
             model_args("--model", model, &mut args);
         }
         Driver::Codex => {
             let mode = mode.and_then(Mode::parse).unwrap_or_else(Mode::safest);
+            // The full-access setting may be off now (NV-24).
+            let mode = if mode.sandbox == FULL_ACCESS_SANDBOX && !allow_bypass {
+                Mode::safest()
+            } else {
+                mode
+            };
             args.extend(
                 [
                     "resume",
@@ -443,6 +458,7 @@ mod tests {
             "native-1",
             mode,
             model,
+            true,
         ))
     }
 
@@ -453,6 +469,7 @@ mod tests {
             "thread-1",
             mode,
             model,
+            true,
         ))
     }
 
@@ -464,6 +481,7 @@ mod tests {
             "native-1",
             Some("plan"),
             None,
+            false,
         );
         assert_eq!(command.0, OsString::from("/bin/claude"));
         assert_eq!(
@@ -505,6 +523,7 @@ mod tests {
             "thread-1",
             Some("on-request/workspace-write"),
             None,
+            false,
         );
         assert_eq!(command.0, OsString::from("/bin/codex"));
         assert_eq!(
@@ -544,6 +563,64 @@ mod tests {
             ]
         );
         assert!(!codex(None, Some("default")).contains(&"-m".to_owned()));
+    }
+
+    #[test]
+    fn claude_keeps_the_bypass_mode_only_when_bypass_is_allowed() {
+        let command = |allow| {
+            text(&tui_command(
+                Driver::Claude,
+                Path::new("/bin/claude"),
+                "native-1",
+                Some("bypassPermissions"),
+                None,
+                allow,
+            ))
+        };
+        assert_eq!(
+            command(true),
+            [
+                "--resume",
+                "native-1",
+                "--permission-mode",
+                "bypassPermissions"
+            ]
+        );
+        // NV-24: the setting is off now.
+        assert_eq!(
+            command(false),
+            ["--resume", "native-1", "--permission-mode", SAFEST_MODE]
+        );
+    }
+
+    #[test]
+    fn codex_keeps_the_full_access_mode_only_when_bypass_is_allowed() {
+        let command = |allow| {
+            text(&tui_command(
+                Driver::Codex,
+                Path::new("/bin/codex"),
+                "thread-1",
+                Some("never/danger-full-access"),
+                None,
+                allow,
+            ))
+        };
+        assert_eq!(
+            command(true),
+            [
+                "resume",
+                "-a",
+                "never",
+                "-s",
+                "danger-full-access",
+                "thread-1"
+            ]
+        );
+        // NV-24: the setting is off now.
+        assert_eq!(
+            command(false),
+            ["resume", "-a", "untrusted", "-s", "read-only", "thread-1"]
+        );
     }
 
     #[test]

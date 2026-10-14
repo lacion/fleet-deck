@@ -95,7 +95,7 @@ fn decide_hibernate(
         session_id: session_id.clone(),
         how: StopMode::Graceful,
     };
-    let done = decide::decide(d, policy, bindings, CommandOrigin::Local, stop)?;
+    let done = decide::decide(d, policy, bindings, CommandOrigin::Local, false, stop)?;
     d.append(session_id, Event::SessionHibernated { after_min }.into())?;
     Ok(done)
 }

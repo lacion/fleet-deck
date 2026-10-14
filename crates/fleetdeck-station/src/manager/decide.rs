@@ -53,6 +53,7 @@ pub fn decide(
     policy: &Policy,
     bindings: &Bindings,
     origin: CommandOrigin,
+    restarting: bool,
     command: SessionCommand,
 ) -> Result<CommandResult, DecideError> {
     let origin_run = run_origin(origin);
@@ -144,6 +145,7 @@ pub fn decide(
             grant_id,
         } => super::coordinator_command::revoke(d, bindings, origin, &session_id, &grant_id),
         SessionCommand::Prompt { session_id, input } => {
+            refuse_resume_while_restarting(d, restarting, &session_id, origin_run)?;
             if let Some(resumed) = resume_hibernated(d, policy, &session_id, origin_run, &input)? {
                 return Ok(resumed);
             }
@@ -151,6 +153,7 @@ pub fn decide(
             input_effect(d, &s, origin_run, input, EffectPayload::prompt)
         }
         SessionCommand::Steer { session_id, input } => {
+            refuse_resume_while_restarting(d, restarting, &session_id, origin_run)?;
             if let Some(resumed) = resume_hibernated(d, policy, &session_id, origin_run, &input)? {
                 return Ok(resumed);
             }
@@ -158,6 +161,7 @@ pub fn decide(
             input_effect(d, &s, origin_run, input, EffectPayload::steer)
         }
         SessionCommand::FollowUp { session_id, input } => {
+            refuse_resume_while_restarting(d, restarting, &session_id, origin_run)?;
             if let Some(resumed) = resume_hibernated(d, policy, &session_id, origin_run, &input)? {
                 return Ok(resumed);
             }
@@ -698,6 +702,40 @@ pub(super) fn live_session(
     Ok(s)
 }
 
+/// True when an input from `origin` resumes the session: it is exited and
+/// hibernated, and no rule keeps the input from resuming it.
+pub(super) fn resumes_hibernated(
+    d: &mut Decision<'_>,
+    session_id: &SessionId,
+    origin: RunOrigin,
+) -> Result<bool, DecideError> {
+    // ADR-008 §5.2: no implicit continuation by a coordinator.
+    if origin == RunOrigin::Coordinator || d.authority().is_some() {
+        return Ok(false);
+    }
+    let Some(summary) = d.summary(session_id)? else {
+        return Ok(false);
+    };
+    Ok(summary.state == SessionState::Exited && summary.hibernated)
+}
+
+/// An input that would resume a hibernated session starts a process, so
+/// the restart freeze refuses it like a resume (NV-27).
+fn refuse_resume_while_restarting(
+    d: &mut Decision<'_>,
+    restarting: bool,
+    session_id: &SessionId,
+    origin: RunOrigin,
+) -> Result<(), DecideError> {
+    if restarting && resumes_hibernated(d, session_id, origin)? {
+        return Err(reject(
+            RejectCode::InvalidState,
+            super::restart_gate::RESTARTING,
+        ));
+    }
+    Ok(())
+}
+
 /// An input for a hibernated session resumes it with that input as the first
 /// input of the new process. `None`: the session is not hibernated (or does
 /// not exist), and the normal input checks apply.
@@ -708,14 +746,7 @@ fn resume_hibernated(
     origin: RunOrigin,
     input: &fleetdeck_proto::command::UserInput,
 ) -> Result<Option<CommandResult>, DecideError> {
-    // ADR-008 §5.2: no implicit continuation by a coordinator.
-    if origin == RunOrigin::Coordinator || d.authority().is_some() {
-        return Ok(None);
-    }
-    let Some(summary) = d.summary(session_id)? else {
-        return Ok(None);
-    };
-    if summary.state != SessionState::Exited || !summary.hibernated {
+    if !resumes_hibernated(d, session_id, origin)? {
         return Ok(None);
     }
     let record = InputRecord {

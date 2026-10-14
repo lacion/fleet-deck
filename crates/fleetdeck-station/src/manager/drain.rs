@@ -7,7 +7,7 @@
 //! auto-continue preference. [`SessionManager::drain`] waits until no
 //! session has open work, or until the bound.
 
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use fleetdeck_proto::command::SessionCommand;
@@ -46,6 +46,29 @@ pub fn creates_work(command: &SessionCommand) -> bool {
     )
 }
 
+/// One submit that creates work and is not decided yet (NV-25). The count
+/// ends at drop.
+#[derive(Debug)]
+pub(super) struct DrainSubmit<'a>(&'a AtomicUsize);
+
+impl<'a> DrainSubmit<'a> {
+    /// Counts one submit.
+    pub(super) fn enter(count: &'a AtomicUsize) -> Self {
+        count.fetch_add(1, Ordering::SeqCst);
+        Self(count)
+    }
+}
+
+impl Drop for DrainSubmit<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// The text in `busy` when only a submit that is not decided yet holds the
+/// drain.
+const DECIDING: &str = "(a command was being decided)";
+
 /// The refusal of new work while the station drains.
 ///
 /// # Errors
@@ -78,9 +101,17 @@ impl SessionManager {
         self.draining.load(Ordering::SeqCst)
     }
 
+    /// Counts a submit that creates work, until the guard drops. The count
+    /// comes before the flag is read: [`Self::drain`] sets the flag, then
+    /// reads the count, so one of the two always sees the other (NV-25).
+    pub(super) fn enter_drain_submit(&self) -> DrainSubmit<'_> {
+        DrainSubmit::enter(&self.drain_submits)
+    }
+
     /// Refuses new work from now on and waits until no session has open
-    /// work, at most `bound`. The drain never ends: a drained station is
-    /// stopped and replaced.
+    /// work and no submit that creates work is being decided, at most
+    /// `bound`. The drain never ends: a drained station is stopped and
+    /// replaced.
     ///
     /// # Errors
     /// A database error while the sessions are read.
@@ -88,7 +119,10 @@ impl SessionManager {
         self.draining.store(true, Ordering::SeqCst);
         let deadline = tokio::time::Instant::now() + bound;
         loop {
-            let busy: Vec<String> = self
+            // The count is read before the snapshot: a submit that ended
+            // before this read has committed its work (NV-25).
+            let deciding = self.drain_submits.load(Ordering::SeqCst) > 0;
+            let mut busy: Vec<String> = self
                 .store()
                 .snapshot()
                 .await?
@@ -97,7 +131,10 @@ impl SessionManager {
                 .filter(|s| busy(s))
                 .map(|s| s.session_id.to_string())
                 .collect();
-            if busy.is_empty() || tokio::time::Instant::now() >= deadline {
+            if (busy.is_empty() && !deciding) || tokio::time::Instant::now() >= deadline {
+                if deciding && busy.is_empty() {
+                    busy.push(DECIDING.to_owned());
+                }
                 return Ok(DrainReport {
                     idle: busy.is_empty(),
                     busy,
