@@ -107,7 +107,7 @@ async fn a_redirect_inside_the_binding_keeps_the_auth_header_for_the_auth_host_o
     assert!(cfgs[2].contains("header = \"Authorization"));
     for cfg in &cfgs {
         assert!(!cfg.contains("resolve"), "{cfg}");
-        assert!(!cfg.contains("location"), "{cfg}");
+        assert!(cfg.lines().any(|l| l == "no-location"), "{cfg}");
     }
 }
 
@@ -236,4 +236,102 @@ async fn a_redirect_status_without_a_target_is_the_answer() {
         .unwrap_err();
     assert_eq!(err.code, code::BAD_ANSWER);
     assert_eq!(configs(tmp.path()).len(), 1);
+}
+
+#[tokio::test]
+async fn curl_gets_q_first_and_a_config_that_turns_redirects_off() {
+    let tmp = tempfile::tempdir().unwrap();
+    let curl = tmp.path().join("curl");
+    let script = format!(
+        "#!/bin/sh\necho \"$@\" >> '{d}/argv.log'\ncat >> '{d}/stdin.log'\nprintf '\\ntext/html\\n200\\n'\n",
+        d = tmp.path().display()
+    );
+    std::fs::write(&curl, script).unwrap();
+    std::fs::set_permissions(&curl, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let programs = Programs {
+        curl,
+        ..Programs::default()
+    };
+    let req = http::Request {
+        url: "https://a.test/x".into(),
+        method: "GET",
+        content_type: true,
+        ..http::Request::default()
+    };
+    http::send(&programs, &req, &[], 1024).await.unwrap();
+    let argv = std::fs::read_to_string(tmp.path().join("argv.log")).unwrap();
+    assert_eq!(argv.trim(), "-q -sS --fail-with-body -K -");
+    let cfg = std::fs::read_to_string(tmp.path().join("stdin.log")).unwrap();
+    assert!(cfg.lines().any(|l| l == "no-location"), "{cfg}");
+}
+
+/// True when a real `curl` is on the path.
+fn real_curl() -> bool {
+    std::process::Command::new("curl")
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success())
+}
+
+#[tokio::test]
+async fn a_user_curlrc_with_location_does_not_make_the_real_curl_follow() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    if !real_curl() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("home");
+    std::fs::create_dir(&home).unwrap();
+    std::fs::write(home.join(".curlrc"), "location\n").unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = tokio::spawn(async move {
+        let mut requests = 0_u32;
+        while let Ok(Ok((mut tcp, _))) =
+            tokio::time::timeout(std::time::Duration::from_secs(3), listener.accept()).await
+        {
+            requests += 1;
+            let mut buf = [0_u8; 2048];
+            let _ = tcp.read(&mut buf).await;
+            let answer = format!(
+                "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{port}/next\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            );
+            let _ = tcp.write_all(answer.as_bytes()).await;
+        }
+        requests
+    });
+    // The config of a request, with the URL on the local server and without
+    // the `https` pin (the test server has no TLS).
+    let req = http::Request {
+        url: format!("http://127.0.0.1:{port}/first"),
+        method: "GET",
+        content_type: true,
+        ..http::Request::default()
+    };
+    let cfg: String = http::config(&req)
+        .lines()
+        .filter(|l| !l.starts_with("proto"))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    let mut child = tokio::process::Command::new("curl")
+        .args(http::ARGS)
+        .env("HOME", &home)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    stdin.write_all(cfg.as_bytes()).await.unwrap();
+    drop(stdin);
+    let out = child.wait_with_output().await.unwrap();
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    let (_, trailer) = http::split_trailer(&out.stdout);
+    assert_eq!(trailer.status, 302, "{text}");
+    assert!(
+        trailer.redirect_url.ends_with("/next"),
+        "{}",
+        trailer.redirect_url
+    );
+    assert_eq!(server.await.unwrap(), 1, "curl made one request only");
 }

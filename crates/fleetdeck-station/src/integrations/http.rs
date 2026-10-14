@@ -1,8 +1,10 @@
 //! HTTPS calls to Jira and Linear through `curl`.
 //!
 //! The URL, the method, the headers (with the auth header) and the body go
-//! to curl's stdin as a config file (`curl -sS --fail-with-body -K -`), so
+//! to curl's stdin as a config file (`curl -q -sS --fail-with-body -K -`), so
 //! the token is never in the argv or the environment of the child (R3).
+//! `-q` is the first argument: curl then ignores the user's `.curlrc`, which
+//! could turn on redirect following. The config also says `no-location`.
 
 use fleetdeck_proto::integrations::MAX_ASSET_BYTES;
 
@@ -50,6 +52,8 @@ pub fn config(req: &Request) -> String {
     let mut out = String::new();
     out.push_str(&format!("proto = {}\n", quote("=https")));
     out.push_str("max-time = 20\n");
+    // Never follow a redirect: the caller checks each target itself.
+    out.push_str("no-location\n");
     if let Some(pin) = &req.resolve {
         out.push_str(&format!("resolve = {}\n", quote(pin)));
     }
@@ -124,6 +128,10 @@ pub fn split_trailer(stdout: &[u8]) -> (&[u8], Trailer) {
     )
 }
 
+/// The argv of every tracker call. `-q` must be first: curl then reads no
+/// `.curlrc` (a `location` line there would make curl follow redirects).
+pub(crate) const ARGS: [&str; 5] = ["-q", "-sS", "--fail-with-body", "-K", "-"];
+
 /// Sends `req`. A non-2xx answer is a [`Fail`] with the scrubbed body or
 /// error text; `secrets` are values that must not appear in it.
 ///
@@ -137,9 +145,7 @@ pub async fn send(
 ) -> Result<Vec<u8>, Fail> {
     let spec = Spec {
         program: programs.curl.clone(),
-        args: ["-sS", "--fail-with-body", "-K", "-"]
-            .map(str::to_owned)
-            .to_vec(),
+        args: ARGS.map(str::to_owned).to_vec(),
         cwd: None,
         env: curl_env(),
         stdin: Some(config(req).into_bytes()),
@@ -216,7 +222,7 @@ mod tests {
         assert!(
             text.contains("write-out = \"\\n%{content_type}\\n%{http_code}\\n%{redirect_url}\"\n")
         );
-        assert!(!text.contains("location"));
+        assert!(text.lines().any(|l| l == "no-location"), "{text}");
         assert!(!text.contains("max-redirs"));
         assert!(!config(&Request::default()).contains("resolve"));
     }

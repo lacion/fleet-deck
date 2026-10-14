@@ -30,6 +30,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::git::{Git, GitError, GitOptions, nul_fields};
 use super::private_paths::PrivatePaths;
+use super::stage::IndexTrust;
 
 /// The root of every checkpoint ref.
 pub const REF_ROOT: &str = "refs/fleetdeck/checkpoints";
@@ -406,7 +407,10 @@ impl Worktree {
             return Ok(Err(why));
         }
         let index = PrivateIndex::copy_of(&self.git_dir)?;
-        let hidden = match self.stage_changes(&index, limits, private).await? {
+        let hidden = match self
+            .stage_changes(&index, limits, private, IndexTrust::Untrusted)
+            .await?
+        {
             Ok(hidden) => hidden,
             Err(why) => return Ok(Err(why)),
         };

@@ -20,7 +20,7 @@ use crate::store::{
     Which,
 };
 use crate::workspace::restore::Rejected;
-use crate::workspace::stage::{AfterOpen, check_change_count};
+use crate::workspace::stage::{AfterOpen, BeforeWalk, IndexTrust, check_change_count};
 
 const SECRET: &str = "SECRET-CREDENTIAL-BYTES-7f3a9c";
 
@@ -185,7 +185,14 @@ async fn the_bytes_come_from_the_opened_file_when_the_path_is_replaced_after_the
         }
     });
     let hidden = wt
-        .stage_changes_with(&index, Limits::default(), &PrivatePaths::default(), hook)
+        .stage_changes_with(
+            &index,
+            Limits::default(),
+            &PrivatePaths::default(),
+            IndexTrust::Untrusted,
+            hook,
+            Arc::new(|_| {}),
+        )
         .await
         .unwrap()
         .unwrap();
@@ -466,6 +473,19 @@ async fn the_session_diff_does_not_contain_the_bytes_of_a_private_file() {
 /// A finalized turn of `s1` whose two checkpoints are of capture
 /// `capture` (1: the old commit body; 2: a real capture).
 async fn finalized_turn(det: &Det, dir: &Path, legacy: bool) -> Store {
+    let edit = |dir: &Path| write(dir, "a.txt", "one, turn edit\n");
+    finalized_turn_with(det, dir, legacy, &PrivatePaths::default(), &edit).await
+}
+
+/// [`finalized_turn`] with the edit that the turn makes and the private
+/// paths of the captures.
+async fn finalized_turn_with(
+    det: &Det,
+    dir: &Path,
+    legacy: bool,
+    private: &PrivatePaths,
+    edit: &dyn Fn(&Path),
+) -> Store {
     let store = store_with_session(det, dir).await;
     let wt = open(dir).await;
     let planned = store
@@ -489,14 +509,13 @@ async fn finalized_turn(det: &Det, dir: &Path, legacy: bool) -> Store {
         turn: "T1".into(),
         phase,
     };
-    let private = PrivatePaths::default();
     let mut commits = Vec::new();
     for (phase, which) in [
         (Phase::Start, Which::Start),
         (Phase::Completion, Which::End),
     ] {
         if phase == Phase::Completion {
-            write(dir, "a.txt", "one, turn edit\n");
+            edit(dir);
             store
                 .record_checkpoint_side(planned.clone(), Which::End, RowSide::Capturing)
                 .await
@@ -504,10 +523,10 @@ async fn finalized_turn(det: &Det, dir: &Path, legacy: bool) -> Store {
         }
         let k = key(phase);
         let commit = if legacy {
-            let snap = snapshot(&wt, &private).await;
+            let snap = snapshot(&wt, private).await;
             legacy_commit(&wt, dir, &k, &snap.tree)
         } else {
-            match wt.capture(&k, Limits::default(), &private).await.unwrap() {
+            match wt.capture(&k, Limits::default(), private).await.unwrap() {
                 Captured::Published(c) => c.commit,
                 other => panic!("{other:?}"),
             }
@@ -604,7 +623,12 @@ async fn files_that_were_only_touched_are_not_changes() {
     // After the refresh no path differs, so none counts toward the limit.
     let index = PrivateIndex::copy_of(wt.git_dir()).unwrap();
     let hidden = wt
-        .stage_changes(&index, Limits::default(), &PrivatePaths::default())
+        .stage_changes(
+            &index,
+            Limits::default(),
+            &PrivatePaths::default(),
+            IndexTrust::Untrusted,
+        )
         .await
         .unwrap()
         .unwrap();
@@ -615,4 +639,161 @@ async fn files_that_were_only_touched_are_not_changes() {
         "",
         "the refresh left no stat-only difference"
     );
+}
+
+/// True when a blob that the tree `tree` reaches holds `needle`.
+fn tree_holds(dir: &Path, tree: &str, needle: &str) -> bool {
+    let names = git(dir, &["ls-tree", "-r", "--name-only", tree]);
+    names
+        .lines()
+        .any(|path| blob(dir, tree, path).contains(needle))
+}
+
+#[tokio::test]
+async fn a_credential_blob_that_the_agent_staged_is_not_kept_from_the_copied_index() {
+    let (_t, dir, cred) = world();
+    let private = PrivatePaths::default();
+    private.register(&cred);
+    replace_with_link(&dir, "a.txt", &cred);
+    std::fs::remove_file(&cred).unwrap();
+    // The agent stages the link: the real index holds the credential blob
+    // and `diff-files` shows the path as clean.
+    git(&dir, &["add", "-u"]);
+    assert_eq!(git(&dir, &["diff-files", "--name-only"]), "");
+    write(&dir, "b.txt", "two, edited\n");
+    let wt = open(&dir).await;
+    let snap = snapshot(&wt, &private).await;
+    assert_eq!(snap.hidden, ["a.txt"]);
+    assert_eq!(blob(&dir, &snap.tree, "a.txt"), "one\n", "the HEAD blob");
+    assert_eq!(blob(&dir, &snap.tree, "b.txt"), "two, edited\n");
+    assert!(!tree_holds(&dir, &snap.tree, SECRET));
+    let key = key("T1", Phase::Start);
+    let Captured::Published(c) = wt.capture(&key, Limits::default(), &private).await.unwrap()
+    else {
+        panic!("not published");
+    };
+    assert!(!tree_holds(&dir, &c.tree, SECRET));
+}
+
+#[tokio::test]
+async fn a_staged_credential_at_a_path_that_head_lacks_is_removed_and_hidden() {
+    let (_t, dir, cred) = world();
+    let private = PrivatePaths::default();
+    private.register(&cred);
+    std::fs::hard_link(&cred, dir.join("new.txt")).unwrap();
+    std::fs::remove_file(&cred).unwrap();
+    git(&dir, &["add", "new.txt"]);
+    let wt = open(&dir).await;
+    let snap = snapshot(&wt, &private).await;
+    assert_eq!(snap.hidden, ["new.txt"]);
+    let names = git(&dir, &["ls-tree", "-r", "--name-only", &snap.tree]);
+    assert!(!names.contains("new.txt"), "{names}");
+    assert!(!tree_holds(&dir, &snap.tree, SECRET));
+}
+
+#[tokio::test]
+async fn a_staged_credential_in_a_repository_without_a_commit_is_hidden() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    let dir = root.join("repo");
+    std::fs::create_dir(&dir).unwrap();
+    git(&dir, &["init", "-q", "-b", "main"]);
+    write(&root, "cred/secret", &format!("{SECRET}\n"));
+    let cred = root.join("cred/secret");
+    let private = PrivatePaths::default();
+    private.register(&cred);
+    write(&dir, "ok.txt", "fine\n");
+    std::fs::hard_link(&cred, dir.join("key.txt")).unwrap();
+    std::fs::remove_file(&cred).unwrap();
+    git(&dir, &["add", "."]);
+    let wt = open(&dir).await;
+    let snap = snapshot(&wt, &private).await;
+    assert_eq!(snap.hidden, ["key.txt"]);
+    assert_eq!(blob(&dir, &snap.tree, "ok.txt"), "fine\n");
+    assert!(!tree_holds(&dir, &snap.tree, SECRET));
+}
+
+#[tokio::test]
+async fn a_file_that_the_agent_staged_is_captured_from_the_work_tree_bytes() {
+    let (_t, dir, _cred) = world();
+    write(&dir, "b.txt", "two, staged\n");
+    git(&dir, &["add", "-u"]);
+    write(&dir, "b.txt", "two, after the staging\n");
+    write(&dir, "a.txt", "one, staged and kept\n");
+    git(&dir, &["add", "-u"]);
+    let wt = open(&dir).await;
+    let snap = snapshot(&wt, &PrivatePaths::default()).await;
+    assert!(snap.hidden.is_empty());
+    assert_eq!(blob(&dir, &snap.tree, "b.txt"), "two, after the staging\n");
+    assert_eq!(blob(&dir, &snap.tree, "a.txt"), "one, staged and kept\n");
+    // A path that the agent staged and then deleted is gone from the tree.
+    std::fs::remove_file(dir.join("a.txt")).unwrap();
+    let snap = snapshot(&wt, &PrivatePaths::default()).await;
+    let names = git(&dir, &["ls-tree", "-r", "--name-only", &snap.tree]);
+    assert!(!names.contains("a.txt"), "{names}");
+}
+
+#[tokio::test]
+async fn the_turn_diffs_against_a_benign_start_do_not_contain_a_staged_credential() {
+    use crate::manager::files::diff_as;
+    let det = Det::new();
+    let (t, dir, cred) = world();
+    let private = PrivatePaths::default();
+    private.register(&cred);
+    let secret = cred.clone();
+    let edit = move |dir: &Path| {
+        replace_with_link(dir, "a.txt", &secret);
+        std::fs::remove_file(&secret).unwrap();
+        git(dir, &["add", "-u"]);
+        write(dir, "b.txt", "two, turn edit\n");
+    };
+    let store = finalized_turn_with(&det, &dir, false, &private, &edit).await;
+    let root = t.path().canonicalize().unwrap();
+    let p = policy(&root);
+    let git_options = GitOptions::isolated();
+    for member in [true, false] {
+        let diff = diff_as(&store, &p, &private, &git_options, turn_query(), member)
+            .await
+            .unwrap();
+        assert!(diff.patch.contains("+two, turn edit"), "{}", diff.patch);
+        assert!(!diff.patch.contains(SECRET), "{}", diff.patch);
+        assert!(!diff.patch.contains("a.txt"), "{}", diff.patch);
+    }
+}
+
+#[tokio::test]
+async fn an_ancestor_swapped_for_a_symlink_before_the_walk_never_reads_outside() {
+    let (_t, dir, _cred) = world();
+    let outside = dir.parent().unwrap().join("outside");
+    write(&outside, "lib.rs", "outside content\n");
+    write(&dir, "src/lib.rs", "fn a() { changed }\n");
+    let wt = open(&dir).await;
+    let index = PrivateIndex::copy_of(wt.git_dir()).unwrap();
+    let swap = dir.clone();
+    let target = outside.clone();
+    let hook: BeforeWalk = Arc::new(move |rel: &str| {
+        if rel == "src/lib.rs" {
+            std::fs::remove_dir_all(swap.join("src")).unwrap();
+            std::os::unix::fs::symlink(&target, swap.join("src")).unwrap();
+        }
+    });
+    let hidden = wt
+        .stage_changes_with(
+            &index,
+            Limits::default(),
+            &PrivatePaths::default(),
+            IndexTrust::Untrusted,
+            Arc::new(|_| {}),
+            hook,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(hidden.is_empty());
+    let env = [("GIT_INDEX_FILE", index.path().as_os_str())];
+    let tree = wt.git().call(&["write-tree"], &env, None).await.unwrap();
+    let tree = String::from_utf8_lossy(&tree).trim().to_owned();
+    let names = git(&dir, &["ls-tree", "-r", "--name-only", &tree]);
+    assert!(!names.contains("src/lib.rs"), "{names}");
+    assert!(!some_object_holds(&dir, "outside content"));
 }

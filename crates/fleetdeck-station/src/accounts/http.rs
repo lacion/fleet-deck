@@ -73,7 +73,7 @@ pub async fn json(programs: &Programs, req: &Request) -> Result<Value, HttpFail>
     config.push_str("write-out = \"\\nFD-STATUS:%{http_code}\"\n");
     let spec = Spec {
         program: programs.curl.clone(),
-        args: ["-sS", "-K", "-"].map(str::to_owned).to_vec(),
+        args: ["-q", "-sS", "-K", "-"].map(str::to_owned).to_vec(),
         cwd: None,
         env: curl_env(),
         stdin: Some(config.into_bytes()),

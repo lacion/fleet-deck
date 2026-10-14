@@ -36,7 +36,7 @@ Severity reflects practical impact and exploit prerequisites in Fleet Deck's int
 ### FDV2-001 — Board connections have no post-TLS admission cap or header timeout
 
 - **Severity:** Medium
-- **Status:** Fixed in a1e3eae3. The board admits at most 256 connections (32 per IP) before any TLS work and closes a client that sends no complete header in 10 s, also between two requests; the link listener admits at most 64 pending handshakes (16 per IP).
+- **Status:** Fixed in a1e3eae3. The board admits at most 256 connections (32 per IP) before any TLS work and closes a client that sends no complete header in 10 s, also between two requests; the link listener admits at most 64 pending handshakes (16 per IP). PRE-PR review fix: fa7d6768 ends a connection whose request body is not received in time (10 s for `/api/auth/*`, 60 s elsewhere; answer `408 request_timeout`), so a stalled body cannot hold a permit.
 - **Impact:** Remote denial of service from an address allowed by the D13 network policy
 
 The board gives each TLS handshake a ten-second timeout, but after a handshake succeeds it spawns an HTTP/1 connection task with no connection semaphore, request-header timeout, or idle lifetime. A peer on an allowed LAN or tailnet can complete TLS and then hold many connections open while sending no headers or sending them slowly. Each connection consumes a task and file descriptor indefinitely. A sufficiently large set can prevent legitimate browser and API use or exhaust the process.
@@ -82,7 +82,7 @@ Recommended remediation:
 ### FDV2-003 — A tracked hard link to a private file can enter checkpoints and diffs
 
 - **Severity:** Medium
-- **Status:** Fixed in 1d9bcbf1: changed tracked paths are staged from the opened file (no `git add -u`), a private file is left out of the snapshot, and checkpoints without `capture: 2` are not shown to members or restored.
+- **Status:** Fixed in 1d9bcbf1: changed tracked paths are staged from the opened file (no `git add -u`), a private file is left out of the snapshot, and checkpoints without `capture: 2` are not shown to members or restored. PRE-PR review fix: fa7d6768 also checks every index entry that differs from HEAD (an agent-staged credential blob is reset to the HEAD blob or removed) and walks to each path from a pinned root with directory descriptors.
 - **Impact:** Disclosure of local credentials through a session diff or retained Git checkpoint
 
 Direct file reads, search, and artifact staging inspect the opened file's device, inode, and link count. They refuse known credential inodes and conservatively refuse regular files with more than one hard link. The tracked Git snapshot path does not apply that check. It asks Git to update a private index from all tracked paths; the later diff excludes private *names* only.
@@ -106,7 +106,7 @@ Recommended remediation:
 ### FDV2-004 — Tracker asset redirects are not checked against the host allowlist
 
 - **Severity:** Low
-- **Status:** Fixed in 73d5abd4. curl no longer follows redirects; the station follows at most 3 itself, sends the auth header only to the auth host, and allows another host only on port 443 when every address is public, pinned with `resolve`.
+- **Status:** Fixed in 73d5abd4. curl no longer follows redirects; the station follows at most 3 itself, sends the auth header only to the auth host, and allows another host only on port 443 when every address is public, pinned with `resolve`. PRE-PR review fix: fa7d6768 starts every curl call with `-q` (no user `.curlrc`) and adds `no-location` to the generated config.
 - **Impact:** Limited server-side request forgery through an allowed upstream redirect
 
 The tracker asset loader validates that the initial URL is HTTPS and belongs to the configured Jira host or `uploads.linear.app`. It then lets curl follow up to three redirects to any HTTPS destination. A caller who can identify an open redirect on an allowed host can make the station request an otherwise disallowed HTTPS URL. If that destination presents a trusted certificate and returns a PNG, JPEG, GIF, or WebP body of at most 5 MiB, the response is returned as base64.

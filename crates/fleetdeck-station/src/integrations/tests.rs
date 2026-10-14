@@ -651,7 +651,7 @@ async fn jira_sends_the_token_on_stdin_only_and_builds_quoted_jql() {
     let argv = log(&curl, "argv.log");
     assert_eq!(
         argv.trim(),
-        "-sS --fail-with-body -K -",
+        "-q -sS --fail-with-body -K -",
         "no URL, header or token in argv"
     );
     assert!(!argv.contains(TOKEN));
