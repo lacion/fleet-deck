@@ -63,6 +63,10 @@ pub fn install(
     ulid: &str,
     out: &mut dyn Write,
 ) -> anyhow::Result<()> {
+    // The service leaves these entries out of its PATH (NV-22).
+    for note in &ctx.path_dropped {
+        writeln!(out, "warning: PATH entry {note}; the service leaves it out")?;
+    }
     if ctx.platform == Platform::Systemd {
         systemd::checks(ctx, deps)?;
     }

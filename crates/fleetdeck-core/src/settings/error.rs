@@ -61,7 +61,10 @@ pub(super) fn key_of(e: &ConfigError, fallback: &str) -> String {
         ConfigError::Invalid { field, .. }
         | ConfigError::Path { field, .. }
         | ConfigError::Addr { field, .. } => field,
-        ConfigError::Io { .. } | ConfigError::Mode { .. } | ConfigError::Toml { .. } => {
+        ConfigError::Io { .. }
+        | ConfigError::Mode { .. }
+        | ConfigError::ReadableSecrets { .. }
+        | ConfigError::Toml { .. } => {
             return fallback.to_owned();
         }
     };

@@ -20,7 +20,7 @@ mod fake;
 #[cfg(test)]
 mod tests;
 
-use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
+use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -61,7 +61,10 @@ pub struct Context {
     pub home: PathBuf,
     pub uid: u32,
     pub user: String,
+    /// The `PATH` of the service: only the safe entries (see [`safe_path`]).
     pub path: Option<String>,
+    /// One note for each `PATH` entry that the service leaves out.
+    pub path_dropped: Vec<String>,
     /// The raw `$XDG_CONFIG_HOME` (checked in the plan: it must be absolute).
     pub xdg_config_home: Option<String>,
     pub xdg_data_home: Option<String>,
@@ -75,6 +78,40 @@ pub struct Context {
     pub host: Option<HostChoice>,
     pub ready_limit: Duration,
     pub ready_step: Duration,
+}
+
+/// Keeps the `PATH` entries that only this user or root can change (NV-22).
+/// An entry stays when it is an absolute path to a directory that no group
+/// or other user can write, and that `uid` or root owns. Each dropped entry
+/// gives one note. An empty entry gives no note. The result is `None` when
+/// no entry stays.
+fn safe_path(path: &str, uid: u32) -> (Option<String>, Vec<String>) {
+    let mut kept = Vec::new();
+    let mut notes = Vec::new();
+    for entry in path.split(':').filter(|e| !e.is_empty()) {
+        let reason = if !Path::new(entry).is_absolute() {
+            Some("not an absolute path")
+        } else {
+            match std::fs::metadata(entry) {
+                Ok(meta) if meta.is_dir() => {
+                    if meta.mode() & 0o022 != 0 {
+                        Some("the group or others can write it")
+                    } else if meta.uid() != uid && meta.uid() != 0 {
+                        Some("another user owns it")
+                    } else {
+                        None
+                    }
+                }
+                _ => Some("not a directory"),
+            }
+        };
+        match reason {
+            None => kept.push(entry),
+            Some(reason) => notes.push(format!("{entry}: {reason}")),
+        }
+    }
+    let path = (!kept.is_empty()).then(|| kept.join(":"));
+    (path, notes)
 }
 
 /// A text variable that is set and not empty. A value that is not UTF-8 is
@@ -98,6 +135,10 @@ impl Context {
         let exe = std::env::current_exe()
             .map_err(|e| anyhow!("Cannot find the path of this program ({e})."))?;
         let kernel = std::fs::read_to_string(tailscale_wsl::OSRELEASE).unwrap_or_default();
+        let (path, path_dropped) = match text_var("PATH")? {
+            Some(raw) => safe_path(&raw, uid),
+            None => (None, Vec::new()),
+        };
         let host = StationConfig::load(&dirs.station_config(), env)
             .ok()
             .map(|config| config.host);
@@ -112,7 +153,8 @@ impl Context {
             home,
             uid,
             user: text_var("USER")?.unwrap_or_else(|| uid.to_string()),
-            path: text_var("PATH")?,
+            path,
+            path_dropped,
             xdg_config_home: text_var("XDG_CONFIG_HOME")?,
             xdg_data_home: text_var("XDG_DATA_HOME")?,
             wsl: tailscale_wsl::is_wsl(),

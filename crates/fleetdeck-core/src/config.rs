@@ -12,9 +12,7 @@
 //!   of the secret store (DL-172).
 
 use std::collections::BTreeMap;
-use std::fs;
 use std::net::SocketAddr;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -44,10 +42,13 @@ mod fleet_cfg;
 #[path = "config_tailnet.rs"]
 mod tailnet_cfg;
 pub(crate) use tailnet_cfg::valid_dns_name;
+#[path = "config_owner_file.rs"]
+mod owner_file;
 #[path = "config_toml.rs"]
 mod toml_text;
 #[path = "config_trackers.rs"]
 mod trackers_cfg;
+use owner_file::{has_plain_env, read_owner_file};
 use toml_text::toml_error;
 use trackers_cfg::{RawTracker, parse_trackers};
 pub use trackers_cfg::{TokenError, TokenSource, TrackerConfig};
@@ -89,6 +90,12 @@ pub enum ConfigError {
     },
     #[error("{path} is writable by other users (mode {mode:o}); use mode 600 or 644")]
     Mode { path: PathBuf, mode: u32 },
+    #[error(
+        "{path} holds a plain `env` value of a provider instance and has mode {mode:o}: other \
+         users can read it. Run `chmod 600 {path}`, or use a secret reference \
+         (`{{ secret = \"name\" }}`)."
+    )]
+    ReadableSecrets { path: PathBuf, mode: u32 },
     #[error("{path}: {message}")]
     Toml { path: PathBuf, message: String },
     #[error("`{field}`: {message}")]
@@ -342,7 +349,16 @@ impl StationConfig {
 
     fn load_inner(path: &Path, env: &Env, store: Option<&Path>) -> Result<Self, ConfigError> {
         match read_owner_file(path)? {
-            Some(text) => Self::parse_with_store(&text, env, store).map_err(|e| with_path(e, path)),
+            Some((text, mode)) => {
+                // A plain `env` value in a readable file leaks to other users (NV-08).
+                if mode & 0o044 != 0 && has_plain_env(&text) {
+                    return Err(ConfigError::ReadableSecrets {
+                        path: path.to_path_buf(),
+                        mode,
+                    });
+                }
+                Self::parse_with_store(&text, env, store).map_err(|e| with_path(e, path))
+            }
             None => Self::parse_with_store("", env, store),
         }
     }
@@ -633,7 +649,7 @@ struct RawDeck {
 impl DeckConfig {
     pub fn load(path: &Path) -> Result<Self, ConfigError> {
         match read_owner_file(path)? {
-            Some(text) => Self::parse(&text).map_err(|e| with_path(e, path)),
+            Some((text, _)) => Self::parse(&text).map_err(|e| with_path(e, path)),
             None => Self::parse(""),
         }
     }
@@ -693,26 +709,6 @@ impl DeckConfig {
             tailnet_auto_link_listen,
         })
     }
-}
-
-fn read_owner_file(path: &Path) -> Result<Option<String>, ConfigError> {
-    let io = |source| ConfigError::Io {
-        path: path.to_path_buf(),
-        source,
-    };
-    let meta = match fs::metadata(path) {
-        Ok(m) => m,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(io(e)),
-    };
-    let mode = meta.permissions().mode() & 0o777;
-    if mode & 0o022 != 0 {
-        return Err(ConfigError::Mode {
-            path: path.to_path_buf(),
-            mode,
-        });
-    }
-    fs::read_to_string(path).map(Some).map_err(io)
 }
 
 fn with_path(err: ConfigError, path: &Path) -> ConfigError {
