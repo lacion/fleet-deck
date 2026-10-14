@@ -76,6 +76,7 @@ async fn seed(f: &Fixture) {
                     input_summary: "go".to_owned(),
                     origin: RunOrigin::Board,
                     author: None,
+                    input_id: None,
                 },
             ),
             env(

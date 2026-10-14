@@ -39,6 +39,11 @@ pub mod project_sessions;
 pub mod projects;
 pub mod read_cursors;
 pub mod read_model;
+pub mod review;
+pub mod review_anchor;
+mod review_edit;
+pub mod review_send;
+pub mod review_text;
 pub mod schedules;
 pub mod schema;
 pub mod shares;
@@ -402,5 +407,9 @@ pub(crate) fn to_i64(v: u64) -> Result<i64> {
     i64::try_from(v).map_err(|_| DeckError::Corrupt(format!("sequence {v} too large")))
 }
 
+#[cfg(test)]
+mod review_send_tests;
+#[cfg(test)]
+mod review_tests;
 #[cfg(test)]
 mod tests;

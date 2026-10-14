@@ -113,6 +113,11 @@ impl DeckStore {
             card.unread = counts.get(&key).copied().filter(|n| *n > 0);
         }
         self.fill_projects(principal, &mut cards).await?;
+        let revs = self.review_revs().await?;
+        for card in &mut cards {
+            let key = (card.station_id.clone(), card.summary.session_id.clone());
+            card.review_rev = revs.get(&key).copied().filter(|n| *n > 0);
+        }
         Ok(cards)
     }
 }
@@ -190,6 +195,7 @@ mod tests {
                 input_summary: "hi".to_owned(),
                 origin: RunOrigin::Board,
                 author: None,
+                input_id: None,
             },
         )
     }

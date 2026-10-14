@@ -435,6 +435,7 @@ fn card(id: &str, provider: ProviderKind, state: SessionState, activity: Activit
         summary,
         unread: None,
         project_id: None,
+        review_rev: None,
     }
 }
 

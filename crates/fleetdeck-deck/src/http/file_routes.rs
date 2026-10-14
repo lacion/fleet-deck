@@ -318,7 +318,8 @@ pub async fn diff(
     }
     let query = TurnDiffQuery {
         session_id: SessionId::from(session.as_str()),
-        turn_id: TurnId::from(turn.as_str()),
+        turn_id: Some(TurnId::from(turn.as_str())),
+        checkpoint: None,
         max_bytes: p.max_bytes,
     };
     forward(&board, &station, "files.diff", params(&query)?, member).await

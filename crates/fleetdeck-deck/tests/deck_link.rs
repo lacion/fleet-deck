@@ -117,6 +117,7 @@ impl Station {
     async fn run(&self, id: &str, n: u32) -> u64 {
         let e: NewEvent = Event::RunStarted {
             author: None,
+            input_id: None,
             run_id: format!("run-{n}").into(),
             input_summary: "hi".to_owned(),
             origin: RunOrigin::Board,

@@ -2900,7 +2900,7 @@ Owner review: pending.
 
 - Context: owner request 2026-10-14 ("add comments to the diff in changes, similar to a PR github and be able to reference that in the chat").
 - Choice: `docs/v2/design/review-comments.md`: deck table V20 `review_comments`/`reviews`, server-derived anchors from a diff snapshot fetched as the caller, threads, drafts per author, an atomic and idempotent "Send review" follow-up, `review_rev` on the card for live updates, a Review card and `c-xxxxxx` chips in the chat, a `#` composer menu. Replaces the R1.3 local line notes (explicit import of old notes).
-- Status: revision 1 failed the DESIGN REVIEW (6 blockers); revision 2 in re-review; no code.
+- Status: backend built (deck migration V21, routes, Send, live `review_rev`, station checkpoint selector, `run.started.input_id`); no board yet.
 
 ## DL-180 — v1 parity defects: workspace work off the effect worker, input to a hibernated session, held mail
 

@@ -464,4 +464,63 @@ pub const API_REST: &[ApiMethod] = &[
         true,
     )
     .member(),
+    // Review comments on the Changes diff (DL-179): a read needs `read`, a
+    // write `drive`; the handlers check the share, the role and the author.
+    m(
+        "review.list",
+        Method::GET,
+        "/api/sessions/{station}/{session}/review",
+        Some(Scope::Read),
+        false,
+    )
+    .member(),
+    m(
+        "review.comment",
+        Method::POST,
+        "/api/sessions/{station}/{session}/review/comments",
+        Some(Scope::Drive),
+        true,
+    )
+    .member(),
+    m(
+        "review.edit",
+        Method::PATCH,
+        "/api/sessions/{station}/{session}/review/comments/{comment}",
+        Some(Scope::Drive),
+        true,
+    )
+    .member(),
+    m(
+        "review.delete",
+        Method::DELETE,
+        "/api/sessions/{station}/{session}/review/comments/{comment}",
+        Some(Scope::Drive),
+        true,
+    )
+    .member(),
+    m(
+        "review.send",
+        Method::POST,
+        "/api/sessions/{station}/{session}/review/send",
+        Some(Scope::Drive),
+        true,
+    )
+    .member(),
+    m(
+        "review.retry",
+        Method::POST,
+        "/api/sessions/{station}/{session}/review/reviews/{review}/send-again",
+        Some(Scope::Drive),
+        true,
+    )
+    .member(),
+    // The turn diff by checkpoint commit pair, the stable selector.
+    m(
+        "files.turn_diff",
+        Method::GET,
+        "/api/stations/{station}/sessions/{session}/turn-diff",
+        Some(Scope::Drive),
+        false,
+    )
+    .member(),
 ];
