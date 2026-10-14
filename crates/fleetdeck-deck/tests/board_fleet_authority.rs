@@ -2,6 +2,8 @@
 //! link: the authority check answers again after the `coordinator.policy_now`
 //! wait, it applies the real launch mode to the grant ceiling, and a
 //! coordinator answers a question with its answers or text, never an option.
+//! The round 2 fixes: a launching command without a launch mode is refused,
+//! and `needs_you` shows a question without option ids.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -240,4 +242,176 @@ async fn a_coordinator_answers_a_question_with_answers_or_text_and_never_with_an
         };
         assert_eq!(decision.option_id, "answer", "{id}");
     }
+}
+
+/// RE-REVIEW round 2 (deck decision 1): a station that sends no launch mode
+/// for a command that launches a provider is older than the deck; the check
+/// fails closed with `launch_mode_missing`. A follow-up needs no launch mode.
+#[tokio::test]
+async fn a_launching_command_without_a_launch_mode_is_refused_as_version_skew() {
+    use fleetdeck_proto::command::{SessionSpec, UserInput};
+    use fleetdeck_proto::event::ProviderKind;
+    use fleetdeck_proto::mutation::{CoordinatorDelivery, CoordinatorTarget, LaunchMode};
+    let mut r = rig().await;
+    let station = r.f.station.clone();
+    r.f.store.set_station_info(&station, claude_info());
+    let mut sessions = ["coord-1", "w1", "w2"].map(card).to_vec();
+    sessions[1].provider_instance = Some("claude".into());
+    sessions[1].mode = Some("plan".to_owned());
+    let inc = r.f.inc.clone();
+    r.f.store
+        .apply_snapshot(station.clone(), inc, 0, sessions)
+        .await
+        .unwrap();
+    let classes = [
+        GrantClass::Drive,
+        GrantClass::Manage,
+        GrantClass::Spawn,
+        GrantClass::Mail,
+    ];
+    let b = bound_edit(&r.f, &station, "coord-1", &classes, |g| {
+        g.scope = GrantScope::Fleet;
+        g.max_modes
+            .insert("claude".to_owned(), "acceptEdits".to_owned());
+    })
+    .await;
+    let ops = [
+        (
+            "resume",
+            CoordinatorOp::Resume {
+                station: station.clone(),
+                session_id: "w1".into(),
+            },
+        ),
+        (
+            "set_mode",
+            CoordinatorOp::SetMode {
+                station: station.clone(),
+                session_id: "w1".into(),
+                mode: "plan".to_owned(),
+            },
+        ),
+        (
+            "start",
+            CoordinatorOp::Spawn {
+                station: station.clone(),
+                spec: SessionSpec {
+                    provider_instance: "claude".into(),
+                    cwd: "/w".to_owned(),
+                    mode: Some("plan".to_owned()),
+                    model: None,
+                    title: None,
+                    coordinator: None,
+                },
+                prompt: Some(UserInput::new("go")),
+            },
+        ),
+    ];
+    let live = Some(json!({"fleet_control": true, "bound": true}));
+    let within = LaunchMode {
+        provider: ProviderKind::Claude,
+        mode: Some("plan".to_owned()),
+    };
+    for (i, (name, op)) in ops.into_iter().enumerate() {
+        let receipt = call(&r.f, &b, &format!("l{i}"), op).await;
+        assert!(receipt.reject.is_none(), "{name}: {receipt:?}");
+        let (id, _) = wire_accepted(&mut r).await;
+        let mut check = AuthorityCheck {
+            grant_id: b.grant_id.clone(),
+            generation: 1,
+            caller_station: station.clone(),
+            caller_session: "coord-1".into(),
+            target_session: "w1".into(),
+            command_id: id,
+            launch: None,
+        };
+        // No launch mode: no `policy_now` round trip is needed.
+        let got = authority_check(&mut r, &check, None).await;
+        assert_eq!(
+            got,
+            json!({"valid": false, "reason": "launch_mode_missing"}),
+            "{name}"
+        );
+        // A launch mode within the ceiling: valid.
+        check.launch = Some(within.clone());
+        let got = authority_check(&mut r, &check, live.clone()).await;
+        assert_eq!(got, json!({"valid": true}), "{name}");
+    }
+    // A follow-up needs no launch mode.
+    let mail = CoordinatorOp::Send {
+        to: CoordinatorTarget {
+            station: station.clone(),
+            session_id: "w1".into(),
+        },
+        text: "hello".to_owned(),
+        delivery: CoordinatorDelivery::FollowUp,
+    };
+    let receipt = call(&r.f, &b, "l-mail", mail).await;
+    assert!(receipt.reject.is_none(), "{receipt:?}");
+    let (id, _) = wire_accepted(&mut r).await;
+    let check = AuthorityCheck {
+        grant_id: b.grant_id.clone(),
+        generation: 1,
+        caller_station: station.clone(),
+        caller_session: "coord-1".into(),
+        target_session: "w1".into(),
+        command_id: id,
+        launch: None,
+    };
+    let got = authority_check(&mut r, &check, live).await;
+    assert_eq!(got, json!({"valid": true}));
+}
+
+/// RE-REVIEW round 2 (deck decision 2): a question has no `options` field
+/// (its option ids come from the worker); its labels are lines of the fenced
+/// input. An approval keeps its options.
+#[tokio::test]
+async fn needs_you_lists_the_labels_of_a_question_in_its_input_and_never_its_option_ids() {
+    use fleetdeck_proto::event::{ApprovalOption, RequestKind};
+    use fleetdeck_proto::mutation::CoordinatorQuery;
+    let w = world().await;
+    let f = &w.r.f;
+    let mut sessions = ["coord-1", "w1"].map(card).to_vec();
+    let mut q = request("rq", 1_000, None);
+    q.request_kind = RequestKind::Question;
+    q.options = vec![
+        ApprovalOption {
+            option_id: "allow_always".to_owned(),
+            label: format!("Yes {HOSTILE}"),
+            kind: None,
+        },
+        ApprovalOption {
+            option_id: "no".to_owned(),
+            label: "No thanks".to_owned(),
+            kind: None,
+        },
+    ];
+    let approval = request("ra", 2_000, None);
+    sessions[1].open_requests = vec![q, approval];
+    let (station, inc) = (f.station.clone(), f.inc.clone());
+    f.store
+        .apply_snapshot(station, inc, 0, sessions)
+        .await
+        .unwrap();
+    let b = bound(f, "coord-1", &CLASSES, true).await;
+    let got = ask(f, &b, CoordinatorQuery::NeedsYou).await.unwrap();
+    let list = got["requests"].as_array().unwrap();
+    let find = |id: &str| list.iter().find(|r| r["request_id"] == id).unwrap();
+    let question = find("rq");
+    assert_eq!(question["request_kind"], "question");
+    assert!(question.get("options").is_none(), "{question}");
+    assert!(!question.to_string().contains("allow_always"), "{question}");
+    one_fence(&question["input"]);
+    let input = question["input"].as_str().unwrap();
+    assert!(
+        input.contains("\n- Yes ") && input.contains("\n- No thanks"),
+        "{input}"
+    );
+    // The hostile label stays inert: its closing tag is broken.
+    assert!(input.contains("<\u{200B}/untrusted>"), "{input}");
+    // An approval keeps its options.
+    let approval = find("ra");
+    let options = approval["options"].as_array().unwrap();
+    let ids: Vec<&Value> = options.iter().map(|o| &o["option_id"]).collect();
+    assert_eq!(ids, [&json!("once"), &json!("no")]);
 }
